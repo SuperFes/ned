@@ -1,0 +1,36 @@
+#include "Node.h"
+
+namespace ned::editor::treesitter {
+
+Node::Node(TSNode node) noexcept : node_(node) {
+}
+
+std::string_view Node::Type() const {
+    return ts_node_type(node_);
+}
+
+std::size_t Node::StartByte() const {
+    return ts_node_start_byte(node_);
+}
+
+std::size_t Node::EndByte() const {
+    return ts_node_end_byte(node_);
+}
+
+std::size_t Node::ChildCount() const {
+    return ts_node_child_count(node_);
+}
+
+Node Node::Child(std::size_t index) const {
+    return Node(ts_node_child(node_, static_cast<uint32_t>(index)));
+}
+
+bool Node::IsNull() const {
+    return ts_node_is_null(node_);
+}
+
+TSNode Node::Raw() const noexcept {
+    return node_;
+}
+
+} // namespace ned::editor::treesitter
