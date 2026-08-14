@@ -1,90 +1,136 @@
 #include "KeyTranslation.h"
 
 #include <cstdint>
+#include <string_view>
 
 namespace ned::ui {
 
-std::optional<editor::KeyChord> TranslateKey(esc::Key key) {
+namespace {
+
     using editor::KeyChord;
     using editor::SpecialKey;
 
-    switch (key) {
-        case esc::Key::Tab:
-            return KeyChord{.Special = SpecialKey::Tab};
-        case esc::Key::BackTab:
-            return KeyChord{.Shift = true, .Special = SpecialKey::Tab};
-        case esc::Key::Enter:
-            return KeyChord{.Special = SpecialKey::Enter};
-        case esc::Key::Escape:
-            return KeyChord{.Special = SpecialKey::Escape};
-        case esc::Key::Backspace:
-        case esc::Key::Backspace1:
-        case esc::Key::Backspace2:
+    // Decodes a "base" key (no Meta applied) from raw input bytes: a single
+    // C0 control byte 1-26 is Ctrl+<letter>, the same convention every
+    // terminal uses (confirmed against real byte sequences during the
+    // migration's pre-work spike) -- byte 8 is included alongside the
+    // standard DEL (127, handled separately by the named Event::Backspace
+    // check before this ever runs) since some terminals send one, some the
+    // other, for the same physical Backspace key; the pre-migration
+    // TermOx/escape-backed translator tolerated both (Backspace1/
+    // Backspace2) and this preserves that. Anything else is decoded as one
+    // UTF-8 codepoint -- Ned's own KeyChord doesn't track Shift separately
+    // for printable characters (a capital letter's codepoint already
+    // encodes it), matching the pre-migration translator's behavior.
+    std::optional<KeyChord> DecodeBaseKey(std::string_view bytes) {
+        if (bytes.empty()) {
+            return std::nullopt;
+        }
+
+        const auto b0 = static_cast<std::uint8_t>(bytes[0]);
+
+        if (bytes.size() == 1 && b0 == 8) {
             return KeyChord{.Special = SpecialKey::Backspace};
-        case esc::Key::Delete:
-            return KeyChord{.Special = SpecialKey::Delete};
-        case esc::Key::Home:
-            return KeyChord{.Special = SpecialKey::Home};
-        case esc::Key::End:
-            return KeyChord{.Special = SpecialKey::End};
-        case esc::Key::PageUp:
-            return KeyChord{.Special = SpecialKey::PageUp};
-        case esc::Key::PageDown:
-            return KeyChord{.Special = SpecialKey::PageDown};
-        case esc::Key::ArrowUp:
-            return KeyChord{.Special = SpecialKey::Up};
-        case esc::Key::ArrowDown:
-            return KeyChord{.Special = SpecialKey::Down};
-        case esc::Key::ArrowLeft:
-            return KeyChord{.Special = SpecialKey::Left};
-        case esc::Key::ArrowRight:
-            return KeyChord{.Special = SpecialKey::Right};
-        case esc::Key::Function1:
-            return KeyChord{.Special = SpecialKey::F1};
-        case esc::Key::Function2:
-            return KeyChord{.Special = SpecialKey::F2};
-        case esc::Key::Function3:
-            return KeyChord{.Special = SpecialKey::F3};
-        case esc::Key::Function4:
-            return KeyChord{.Special = SpecialKey::F4};
-        case esc::Key::Function5:
-            return KeyChord{.Special = SpecialKey::F5};
-        case esc::Key::Function6:
-            return KeyChord{.Special = SpecialKey::F6};
-        case esc::Key::Function7:
-            return KeyChord{.Special = SpecialKey::F7};
-        case esc::Key::Function8:
-            return KeyChord{.Special = SpecialKey::F8};
-        case esc::Key::Function9:
-            return KeyChord{.Special = SpecialKey::F9};
-        case esc::Key::Function10:
-            return KeyChord{.Special = SpecialKey::F10};
-        case esc::Key::Function11:
-            return KeyChord{.Special = SpecialKey::F11};
-        case esc::Key::Function12:
-            return KeyChord{.Special = SpecialKey::F12};
-        default:
-            break;
+        }
+        if (bytes.size() == 1 && b0 >= 1 && b0 <= 26) {
+            return KeyChord{.Control = true, .Codepoint = static_cast<char32_t>('a' + b0 - 1)};
+        }
+
+        // Standard UTF-8 decode of the leading codepoint -- FTXUI hands us
+        // raw encoded bytes here (unlike the old esc::Key, whose value was
+        // already a decoded codepoint), so this step is new.
+        char32_t    codepoint = 0;
+        std::size_t length    = 0;
+        if (b0 < 0x80) {
+            codepoint = b0;
+            length    = 1;
+        }
+        else if ((b0 & 0xE0) == 0xC0 && bytes.size() >= 2) {
+            codepoint = b0 & 0x1F;
+            length    = 2;
+        }
+        else if ((b0 & 0xF0) == 0xE0 && bytes.size() >= 3) {
+            codepoint = b0 & 0x0F;
+            length    = 3;
+        }
+        else if ((b0 & 0xF8) == 0xF0 && bytes.size() >= 4) {
+            codepoint = b0 & 0x07;
+            length    = 4;
+        }
+        else {
+            return std::nullopt; // malformed or an unrecognized multi-byte control sequence
+        }
+
+        for (std::size_t i = 1; i < length; ++i) {
+            const auto continuation = static_cast<std::uint8_t>(bytes[i]);
+            if ((continuation & 0xC0) != 0x80) {
+                return std::nullopt;
+            }
+            codepoint = static_cast<char32_t>((codepoint << 6) | (continuation & 0x3F));
+        }
+        return KeyChord{.Codepoint = codepoint};
     }
 
-    const auto raw = static_cast<std::uint32_t>(key);
+} // namespace
 
-    // C0 control codes 1-26 are Ctrl+a..Ctrl+z. The named ones among them
-    // (Tab=9, Enter=13) were already handled by the switch above and never
-    // reach here.
-    if (raw >= 1 && raw <= 26) {
-        return KeyChord{.Control = true, .Codepoint = static_cast<char32_t>('a' + raw - 1)};
+std::optional<KeyChord> TranslateKey(const ftxui::Event& event) {
+    if (event.is_mouse()) {
+        return std::nullopt;
     }
 
-    // Graphic characters and general Unicode codepoints -- Key's underlying
-    // value is the literal codepoint for anything printable. 0x40000 and up
-    // are raw-mode-only modifier/lock-key sentinels (LCtrl, CapsLock, ...),
-    // not real codepoints, even though they're numerically within range.
-    if (raw >= 32 && raw < 0x40000) {
-        return KeyChord{.Codepoint = static_cast<char32_t>(raw)};
+    // Named multi-byte sequences -- arrows (plain and Ctrl+), navigation
+    // keys, and function keys -- matched directly against FTXUI's own
+    // pre-parsed constants rather than hand-decoding CSI/SS3 escape
+    // sequences ourselves. Ctrl+Arrow support is new (the old translator
+    // had no equivalent esc::Key cases for it) -- a real, additive upgrade,
+    // not a parity requirement, and effectively free since FTXUI already
+    // hands it to us pre-parsed.
+    if (event == ftxui::Event::ArrowUp) return KeyChord{.Special = SpecialKey::Up};
+    if (event == ftxui::Event::ArrowDown) return KeyChord{.Special = SpecialKey::Down};
+    if (event == ftxui::Event::ArrowLeft) return KeyChord{.Special = SpecialKey::Left};
+    if (event == ftxui::Event::ArrowRight) return KeyChord{.Special = SpecialKey::Right};
+    if (event == ftxui::Event::ArrowUpCtrl) return KeyChord{.Control = true, .Special = SpecialKey::Up};
+    if (event == ftxui::Event::ArrowDownCtrl) return KeyChord{.Control = true, .Special = SpecialKey::Down};
+    if (event == ftxui::Event::ArrowLeftCtrl) return KeyChord{.Control = true, .Special = SpecialKey::Left};
+    if (event == ftxui::Event::ArrowRightCtrl) return KeyChord{.Control = true, .Special = SpecialKey::Right};
+    if (event == ftxui::Event::Tab) return KeyChord{.Special = SpecialKey::Tab};
+    if (event == ftxui::Event::TabReverse) return KeyChord{.Shift = true, .Special = SpecialKey::Tab};
+    if (event == ftxui::Event::Return) return KeyChord{.Special = SpecialKey::Enter};
+    if (event == ftxui::Event::Escape) return KeyChord{.Special = SpecialKey::Escape};
+    if (event == ftxui::Event::Backspace) return KeyChord{.Special = SpecialKey::Backspace};
+    if (event == ftxui::Event::Delete) return KeyChord{.Special = SpecialKey::Delete};
+    if (event == ftxui::Event::Home) return KeyChord{.Special = SpecialKey::Home};
+    if (event == ftxui::Event::End) return KeyChord{.Special = SpecialKey::End};
+    if (event == ftxui::Event::PageUp) return KeyChord{.Special = SpecialKey::PageUp};
+    if (event == ftxui::Event::PageDown) return KeyChord{.Special = SpecialKey::PageDown};
+    if (event == ftxui::Event::F1) return KeyChord{.Special = SpecialKey::F1};
+    if (event == ftxui::Event::F2) return KeyChord{.Special = SpecialKey::F2};
+    if (event == ftxui::Event::F3) return KeyChord{.Special = SpecialKey::F3};
+    if (event == ftxui::Event::F4) return KeyChord{.Special = SpecialKey::F4};
+    if (event == ftxui::Event::F5) return KeyChord{.Special = SpecialKey::F5};
+    if (event == ftxui::Event::F6) return KeyChord{.Special = SpecialKey::F6};
+    if (event == ftxui::Event::F7) return KeyChord{.Special = SpecialKey::F7};
+    if (event == ftxui::Event::F8) return KeyChord{.Special = SpecialKey::F8};
+    if (event == ftxui::Event::F9) return KeyChord{.Special = SpecialKey::F9};
+    if (event == ftxui::Event::F10) return KeyChord{.Special = SpecialKey::F10};
+    if (event == ftxui::Event::F11) return KeyChord{.Special = SpecialKey::F11};
+    if (event == ftxui::Event::F12) return KeyChord{.Special = SpecialKey::F12};
+
+    const std::string_view input = event.input();
+
+    // A leading Escape byte followed by more bytes is Meta/Alt+<key> -- see
+    // this file's header comment for why this is reliably distinguishable
+    // from a real, separate Escape keystroke followed later by an
+    // unrelated key.
+    if (!input.empty() && static_cast<std::uint8_t>(input[0]) == 0x1B && input.size() > 1) {
+        std::optional<KeyChord> base = DecodeBaseKey(input.substr(1));
+        if (base) {
+            base->Meta = true;
+        }
+        return base;
     }
 
-    return std::nullopt; // unmapped control code (Null, FileSeparator, ...) or raw-mode-only key
+    return DecodeBaseKey(input);
 }
 
 } // namespace ned::ui

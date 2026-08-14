@@ -10,7 +10,7 @@ option(NED_BUILD_TESTS "Build the ned_tests target" ON)
 option(NED_ENABLE_SANITIZERS "Build with AddressSanitizer/UndefinedBehaviorSanitizer" OFF)
 
 # Use ccache automatically when it's on PATH -- this project's FetchContent
-# deps (TermOx, tree-sitter + grammars, Catch2, utf8proc) make clean rebuilds
+# deps (FTXUI, tree-sitter + grammars, Catch2, utf8proc) make clean rebuilds
 # expensive; ccache mainly pays off on incremental/branch-switch rebuilds.
 find_program(CCACHE_PROGRAM ccache)
 if(CCACHE_PROGRAM)
@@ -23,14 +23,19 @@ include(FetchContent)
 set(FETCHCONTENT_UPDATES_DISCONNECTED ON)
 set(FETCHCONTENT_QUIET OFF)
 
-#--- Fetch TermOx ------------------------------------------------------------
-FetchContent_Declare(TermOx
-        GIT_REPOSITORY https://github.com/a-n-t-h-o-n-y/TermOx.git
-        GIT_TAG main
+#--- Fetch FTXUI ---------------------------------------------------------------
+# TermOx -> FTXUI migration (Phase 7): TermOx's input-processing model (pop one
+# event, repaint once, no batching -- see ROADMAP.md's "TUI library: migrate
+# from TermOx to FTXUI" entry) caused real, felt lag during daily use. Pinned
+# to a real tagged release (unlike TermOx's own "main" pin, which had no
+# tagged releases to pin to) since FTXUI has a normal release cadence.
+FetchContent_Declare(ftxui
+        GIT_REPOSITORY https://github.com/ArthurSonzogni/FTXUI.git
+        GIT_TAG v7.0.3
         GIT_PROGRESS TRUE
         GIT_SHALLOW TRUE
         EXCLUDE_FROM_ALL)
-FetchContent_MakeAvailable(TermOx)
+FetchContent_MakeAvailable(ftxui)
 #------------------------------------------------------------------------------
 
 #--- Fetch utf8proc -----------------------------------------------------------
@@ -347,6 +352,7 @@ add_library(ned_lib STATIC
         Source/Janet/EditorBindings.cpp
         Source/Janet/InitFile.cpp
         Source/UI/KeyTranslation.cpp
+        Source/UI/Widget.cpp
         Source/UI/BufferView.cpp
         Source/UI/TabBar.cpp
         Source/UI/ScrollArrowButton.cpp
@@ -364,7 +370,9 @@ target_include_directories(ned_lib
 
 target_link_libraries(ned_lib
         PUBLIC ${Janet_LIBRARIES}
-        PUBLIC TermOx
+        PUBLIC ftxui::component
+        PUBLIC ftxui::dom
+        PUBLIC ftxui::screen
         PUBLIC utf8proc
         PUBLIC tree-sitter
         PUBLIC tree-sitter-json

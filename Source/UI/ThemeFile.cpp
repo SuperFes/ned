@@ -15,7 +15,7 @@ namespace {
         return static_cast<char>(nibble < 10 ? '0' + nibble : 'a' + (nibble - 10));
     }
 
-    std::string TrueColorToHex(ox::TrueColor c) {
+    std::string TrueColorToHex(const Color& c) {
         std::string                       out = "#000000";
         const std::array<std::uint8_t, 3> channels{c.red, c.green, c.blue};
         for (std::size_t i = 0; i < channels.size(); ++i) {
@@ -25,14 +25,16 @@ namespace {
         return out;
     }
 
-    std::string ColorToToken(const ox::Color& color) {
-        if (const auto* trueColor = std::get_if<ox::TrueColor>(&color)) {
-            return TrueColorToHex(*trueColor);
+    std::string ColorToToken(const Color& color) {
+        switch (color.kind) {
+            case Color::Kind::TrueColor:
+                return TrueColorToHex(color);
+            case Color::Kind::Palette16:
+                return "x:" + std::to_string(color.paletteIndex);
+            case Color::Kind::Default:
+            default:
+                return "default";
         }
-        if (const auto* xColor = std::get_if<ox::XColor>(&color)) {
-            return "x:" + std::to_string(xColor->value);
-        }
-        return "default"; // ox::TermColor
     }
 
     std::optional<int> ParseHexNibble(char c) {
@@ -60,7 +62,7 @@ namespace {
         return static_cast<std::uint8_t>((*high << 4) | *low);
     }
 
-    std::optional<ox::TrueColor> ParseHexColor(std::string_view token) {
+    std::optional<Color> ParseHexColor(std::string_view token) {
         if (token.size() != 7 || token[0] != '#') {
             return std::nullopt;
         }
@@ -70,15 +72,15 @@ namespace {
         if (!r || !g || !b) {
             return std::nullopt;
         }
-        return ox::TrueColor{ox::RGB{*r, *g, *b}};
+        return Color::RGB(*r, *g, *b);
     }
 
-    std::optional<ox::Color> ParseColorToken(std::string_view token) {
+    std::optional<Color> ParseColorToken(std::string_view token) {
         if (token == "default") {
-            return ox::Color{ox::TermColor::Default};
+            return Color::Default;
         }
         if (const auto trueColor = ParseHexColor(token)) {
-            return ox::Color{*trueColor};
+            return trueColor;
         }
         if (token.starts_with("x:")) {
             const std::string digits(token.substr(2));
@@ -87,15 +89,16 @@ namespace {
             if (end != digits.c_str() + digits.size() || value < 0 || value > 255) {
                 return std::nullopt;
             }
-            return ox::Color{ox::XColor{static_cast<std::uint8_t>(value)}};
+            return Color::Palette(static_cast<std::uint8_t>(value));
         }
         return std::nullopt;
     }
 
-    // mode_line_gradient_start/end are ox::TrueColor, not the general ox::Color
-    // variant -- a gradient endpoint can't meaningfully be "default" or a
-    // palette index, so only the hex form is accepted for these two keys.
-    std::optional<ox::TrueColor> ParseTrueColorToken(std::string_view token) {
+    // mode_line_gradient_start/end only ever accept the hex form -- a
+    // gradient endpoint can't meaningfully be "default" or a palette index,
+    // even though Theme.h's own field type (Color) doesn't restrict that at
+    // the type level (see that field's own comment for why).
+    std::optional<Color> ParseTrueColorToken(std::string_view token) {
         return ParseHexColor(token);
     }
 

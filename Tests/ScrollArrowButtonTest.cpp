@@ -1,142 +1,193 @@
 #include <catch2/catch_test_macros.hpp>
 
-#include <ox/ox.hpp>
+#include <ftxui/component/animation.hpp>
+#include <ftxui/component/event.hpp>
+#include <ftxui/component/mouse.hpp>
+#include <ftxui/screen/screen.hpp>
 
 #include "UI/ScrollArrowButton.h"
 
+namespace {
+
+using ned::ui::Brush;
+using ned::ui::Canvas;
+using ned::ui::ScrollArrowButton;
+
+ftxui::Event MousePress(int x, int y, ftxui::Mouse::Button button = ftxui::Mouse::Left) {
+    ftxui::Mouse mouse;
+    mouse.button = button;
+    mouse.motion = ftxui::Mouse::Pressed;
+    mouse.x      = x;
+    mouse.y      = y;
+    return ftxui::Event::Mouse("", mouse);
+}
+
+ftxui::Event MouseRelease(int x, int y, ftxui::Mouse::Button button = ftxui::Mouse::Left) {
+    ftxui::Mouse mouse;
+    mouse.button = button;
+    mouse.motion = ftxui::Mouse::Released;
+    mouse.x      = x;
+    mouse.y      = y;
+    return ftxui::Event::Mouse("", mouse);
+}
+
+// Every test uses a 1x1 widget positioned at the screen origin, so
+// LocalMouseEvent's own bounds check (Widget.h) always hits for (0, 0).
+void PlaceAtOrigin(ScrollArrowButton& button) {
+    button.SetBox_(ftxui::Box{.x_min = 0, .x_max = 0, .y_min = 0, .y_max = 0});
+}
+
+} // namespace
+
 TEST_CASE("ScrollArrowButton paints its symbol at column 0 with the enabled brush by default", "[ScrollArrowButton]") {
-    const ox::Brush            brush{.foreground = ox::XColor::BrightBlack};
-    const ox::Brush            disabledBrush{.foreground = ox::XColor::BrightBlue};
-    ned::ui::ScrollArrowButton button(U'▲', brush, disabledBrush);
-    button.size = {.width = 1, .height = 1};
+    const Brush       brush{.foreground = ned::ui::Color::BrightBlack};
+    const Brush       disabledBrush{.foreground = ned::ui::Color::BrightBlue};
+    ScrollArrowButton button(U'▲', brush, disabledBrush);
 
-    ox::ScreenBuffer screen({.width = 1, .height = 1});
-    ox::Canvas       canvas{.buffer = screen, .at = {.x = 0, .y = 0}, .size = {.width = 1, .height = 1}};
-    button.paint(canvas);
+    ftxui::Screen screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(1), ftxui::Dimension::Fixed(1));
+    Canvas        canvas(screen, ftxui::Box{.x_min = 0, .x_max = 0, .y_min = 0, .y_max = 0});
+    button.Paint(canvas);
 
-    REQUIRE(screen[{.x = 0, .y = 0}].symbol == U'▲');
-    REQUIRE(screen[{.x = 0, .y = 0}].brush == brush);
+    REQUIRE(screen.PixelAt(0, 0).character == "▲");
+    REQUIRE(screen.PixelAt(0, 0).foreground_color == brush.foreground.ToFtxui());
 }
 
 TEST_CASE("SetEnabled(false) switches to the disabled brush", "[ScrollArrowButton]") {
-    const ox::Brush            brush{.foreground = ox::XColor::BrightBlack};
-    const ox::Brush            disabledBrush{.foreground = ox::XColor::BrightBlue};
-    ned::ui::ScrollArrowButton button(U'▼', brush, disabledBrush);
-    button.size = {.width = 1, .height = 1};
+    const Brush       brush{.foreground = ned::ui::Color::BrightBlack};
+    const Brush       disabledBrush{.foreground = ned::ui::Color::BrightBlue};
+    ScrollArrowButton button(U'▼', brush, disabledBrush);
 
     button.SetEnabled(false);
 
-    ox::ScreenBuffer screen({.width = 1, .height = 1});
-    ox::Canvas       canvas{.buffer = screen, .at = {.x = 0, .y = 0}, .size = {.width = 1, .height = 1}};
-    button.paint(canvas);
+    ftxui::Screen screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(1), ftxui::Dimension::Fixed(1));
+    Canvas        canvas(screen, ftxui::Box{.x_min = 0, .x_max = 0, .y_min = 0, .y_max = 0});
+    button.Paint(canvas);
 
-    REQUIRE(screen[{.x = 0, .y = 0}].brush == disabledBrush);
+    REQUIRE(screen.PixelAt(0, 0).foreground_color == disabledBrush.foreground.ToFtxui());
 
     button.SetEnabled(true);
-    button.paint(canvas);
-    REQUIRE(screen[{.x = 0, .y = 0}].brush == brush);
+    button.Paint(canvas);
+    REQUIRE(screen.PixelAt(0, 0).foreground_color == brush.foreground.ToFtxui());
 }
 
-TEST_CASE("Left mouse_press invokes the registered callback while enabled", "[ScrollArrowButton]") {
-    const ox::Brush            brush{};
-    ned::ui::ScrollArrowButton button(U'▼', brush, brush);
+TEST_CASE("Left mouse press invokes the registered callback while enabled", "[ScrollArrowButton]") {
+    const Brush        brush{};
+    ScrollArrowButton button(U'▼', brush, brush);
+    PlaceAtOrigin(button);
 
     int clicks = 0;
     button.SetOnClick([&clicks] { ++clicks; });
 
-    button.mouse_press(ox::Mouse{.at = {.x = 0, .y = 0}, .button = ox::Mouse::Button::Left});
+    button.OnEvent(MousePress(0, 0));
     REQUIRE(clicks == 1);
-    button.mouse_release(ox::Mouse{.at = {.x = 0, .y = 0}, .button = ox::Mouse::Button::Left});
+    button.OnEvent(MouseRelease(0, 0));
 
-    button.mouse_press(ox::Mouse{.at = {.x = 0, .y = 0}, .button = ox::Mouse::Button::Left});
+    button.OnEvent(MousePress(0, 0));
     REQUIRE(clicks == 2);
-    button.mouse_release(ox::Mouse{.at = {.x = 0, .y = 0}, .button = ox::Mouse::Button::Left});
+    button.OnEvent(MouseRelease(0, 0));
 }
 
-TEST_CASE("Left mouse_press does not invoke the callback while disabled", "[ScrollArrowButton]") {
-    const ox::Brush            brush{};
-    ned::ui::ScrollArrowButton button(U'▲', brush, brush);
+TEST_CASE("Left mouse press does not invoke the callback while disabled", "[ScrollArrowButton]") {
+    const Brush        brush{};
+    ScrollArrowButton button(U'▲', brush, brush);
+    PlaceAtOrigin(button);
 
     int clicks = 0;
     button.SetOnClick([&clicks] { ++clicks; });
     button.SetEnabled(false);
 
-    button.mouse_press(ox::Mouse{.at = {.x = 0, .y = 0}, .button = ox::Mouse::Button::Left});
+    button.OnEvent(MousePress(0, 0));
     REQUIRE(clicks == 0);
 }
 
-TEST_CASE("mouse_press with a non-Left button does not invoke the callback", "[ScrollArrowButton]") {
-    const ox::Brush            brush{};
-    ned::ui::ScrollArrowButton button(U'▲', brush, brush);
+TEST_CASE("mouse press with a non-Left button does not invoke the callback", "[ScrollArrowButton]") {
+    const Brush        brush{};
+    ScrollArrowButton button(U'▲', brush, brush);
+    PlaceAtOrigin(button);
 
     int clicks = 0;
     button.SetOnClick([&clicks] { ++clicks; });
 
-    button.mouse_press(ox::Mouse{.at = {.x = 0, .y = 0}, .button = ox::Mouse::Button::Right});
-    button.mouse_press(ox::Mouse{.at = {.x = 0, .y = 0}, .button = ox::Mouse::Button::ScrollDown});
+    button.OnEvent(MousePress(0, 0, ftxui::Mouse::Right));
+    button.OnEvent(MousePress(0, 0, ftxui::Mouse::WheelDown));
 
     REQUIRE(clicks == 0);
 }
 
-TEST_CASE("mouse_press with no callback registered is a safe no-op", "[ScrollArrowButton]") {
-    const ox::Brush            brush{};
-    ned::ui::ScrollArrowButton button(U'▲', brush, brush);
+TEST_CASE("mouse press with no callback registered is a safe no-op", "[ScrollArrowButton]") {
+    const Brush        brush{};
+    ScrollArrowButton button(U'▲', brush, brush);
+    PlaceAtOrigin(button);
 
-    button.mouse_press(ox::Mouse{.at = {.x = 0, .y = 0}, .button = ox::Mouse::Button::Left}); // must not crash
+    button.OnEvent(MousePress(0, 0)); // must not crash
 }
 
-TEST_CASE("A held Left press starts the repeat timer; mouse_release stops it", "[ScrollArrowButton]") {
-    const ox::Brush            brush{};
-    ned::ui::ScrollArrowButton button(U'▼', brush, brush);
+TEST_CASE("A held Left press starts repeating; mouse release stops it", "[ScrollArrowButton]") {
+    const Brush        brush{};
+    ScrollArrowButton button(U'▼', brush, brush);
+    PlaceAtOrigin(button);
     button.SetOnClick([] {});
 
     REQUIRE_FALSE(button.IsRepeating());
 
-    button.mouse_press(ox::Mouse{.at = {.x = 0, .y = 0}, .button = ox::Mouse::Button::Left});
+    button.OnEvent(MousePress(0, 0));
     REQUIRE(button.IsRepeating());
 
-    button.mouse_release(ox::Mouse{.at = {.x = 0, .y = 0}, .button = ox::Mouse::Button::Left});
+    button.OnEvent(MouseRelease(0, 0));
     REQUIRE_FALSE(button.IsRepeating());
 }
 
-TEST_CASE("mouse_leave stops the repeat timer -- there's no mouse-capture to rely on", "[ScrollArrowButton]") {
-    const ox::Brush            brush{};
-    ned::ui::ScrollArrowButton button(U'▲', brush, brush);
+TEST_CASE("A release anywhere stops the repeat -- there's no mouse-capture to rely on", "[ScrollArrowButton]") {
+    // FTXUI delivers every mouse event to every leaf widget regardless of
+    // position (see Widget.h's own header comment) -- unlike the old
+    // TermOx-backed version, which needed a dedicated mouse_leave override
+    // for exactly this drag-off-the-button-before-releasing scenario, a
+    // release anywhere already reaches this widget's OnEvent.
+    const Brush        brush{};
+    ScrollArrowButton button(U'▲', brush, brush);
+    PlaceAtOrigin(button);
     button.SetOnClick([] {});
 
-    button.mouse_press(ox::Mouse{.at = {.x = 0, .y = 0}, .button = ox::Mouse::Button::Left});
+    button.OnEvent(MousePress(0, 0));
     REQUIRE(button.IsRepeating());
 
-    button.mouse_leave(); // e.g. dragged off the button before releasing
+    button.OnEvent(MouseRelease(50, 50)); // released far away from the button
     REQUIRE_FALSE(button.IsRepeating());
 }
 
-TEST_CASE("A disabled button does not start the repeat timer on press", "[ScrollArrowButton]") {
-    const ox::Brush            brush{};
-    ned::ui::ScrollArrowButton button(U'▲', brush, brush);
+TEST_CASE("A disabled button does not start repeating on press", "[ScrollArrowButton]") {
+    const Brush        brush{};
+    ScrollArrowButton button(U'▲', brush, brush);
+    PlaceAtOrigin(button);
     button.SetOnClick([] {});
     button.SetEnabled(false);
 
-    button.mouse_press(ox::Mouse{.at = {.x = 0, .y = 0}, .button = ox::Mouse::Button::Left});
+    button.OnEvent(MousePress(0, 0));
     REQUIRE_FALSE(button.IsRepeating());
 }
 
-TEST_CASE("timer() invokes the callback while enabled and stops itself if disabled mid-hold", "[ScrollArrowButton]") {
-    const ox::Brush            brush{};
-    ned::ui::ScrollArrowButton button(U'▼', brush, brush);
+TEST_CASE("OnAnimation invokes the callback once the interval elapses, and stops itself if disabled mid-hold",
+          "[ScrollArrowButton]") {
+    const Brush        brush{};
+    ScrollArrowButton button(U'▼', brush, brush);
+    PlaceAtOrigin(button);
 
     int clicks = 0;
     button.SetOnClick([&clicks] { ++clicks; });
 
-    button.mouse_press(ox::Mouse{.at = {.x = 0, .y = 0}, .button = ox::Mouse::Button::Left});
+    button.OnEvent(MousePress(0, 0));
     REQUIRE(clicks == 1);
 
-    button.timer(); // simulates a repeat tick, without a real sleep
+    // Simulates a repeat tick (one animation step past the repeat interval)
+    // without a real sleep.
+    ftxui::animation::Params tick(ftxui::animation::Duration{0.15F});
+    button.OnAnimation(tick);
     REQUIRE(clicks == 2);
     REQUIRE(button.IsRepeating());
 
     button.SetEnabled(false); // e.g. the buffer scrolled to the point this direction is exhausted
-    button.timer();
+    ftxui::animation::Params tick2(ftxui::animation::Duration{0.15F});
+    button.OnAnimation(tick2);
     REQUIRE(clicks == 2); // no further click
     REQUIRE_FALSE(button.IsRepeating());
 }
