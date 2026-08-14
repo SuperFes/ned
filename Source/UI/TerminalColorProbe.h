@@ -3,11 +3,13 @@
 // the 16-slot ANSI palette) via OSC 10/11/4 queries, for the `--detect-theme`
 // CLI mode (see main.cpp) -- not run on every launch, since it requires
 // putting stdin into raw mode and racing a bounded timeout against a
-// terminal that may not reply at all. TermOx/escape have no support for
-// this: escape's input lexer doesn't parse OSC replies (it will mangle one
-// into a stream of garbage key events), and ox::Terminal starts a background
-// thread reading stdin the moment it's constructed, so this must run and
-// finish *before* ox::Terminal exists.
+// terminal that may not reply at all. FTXUI has no support for this: its
+// terminal input parser doesn't parse OSC replies (it will mangle one into a
+// stream of garbage key events), and its own App/ScreenInteractive starts
+// reading stdin the moment its event loop runs, so this must run and finish
+// *before* that starts -- the same "before the TUI library's own terminal
+// setup" constraint this file has always documented, just against a
+// different library now.
 //
 // Split in two deliberately: BuildColorQuery/ParseColorReplies are pure and
 // unit-testable; ProbeTerminalColors is the raw termios/poll/read half that
@@ -25,16 +27,14 @@
 #include <string>
 #include <string_view>
 
-#include <ox/ox.hpp>
-
 #include "Theme.h"
 
 namespace ned::ui {
 
 struct DetectedColors {
-    std::optional<ox::TrueColor>                  foreground; // OSC 10
-    std::optional<ox::TrueColor>                  background; // OSC 11
-    std::array<std::optional<ox::TrueColor>, 16>   palette;    // OSC 4;0 .. OSC 4;15
+    std::optional<Color>                foreground; // OSC 10
+    std::optional<Color>                background; // OSC 11
+    std::array<std::optional<Color>, 16> palette;    // OSC 4;0 .. OSC 4;15
 };
 
 // The raw OSC 10/11/4;0-15 query string to write to the terminal, all
@@ -53,7 +53,7 @@ struct DetectedColors {
 // with a bounded total timeout, and restores the original terminal mode via
 // RAII regardless of how this returns (including on exception) -- a
 // terminal must never be left in raw mode. POSIX-only. Must be called before
-// constructing ox::Terminal.
+// FTXUI's own event loop starts reading stdin.
 [[nodiscard]] DetectedColors ProbeTerminalColors(std::chrono::milliseconds timeout = std::chrono::milliseconds{300});
 
 // Maps DetectedColors onto a Theme's fields, following the same semantic

@@ -7,19 +7,19 @@
 #ifndef NED_UI_ECHOAREA_H
 #define NED_UI_ECHOAREA_H
 
-#include <ox/ox.hpp>
 #include <string>
 
 #include "Theme.h"
+#include "Widget.h"
 
 namespace ned::ui {
 
-class EchoArea : public ox::Widget {
+class EchoArea : public Widget {
   public:
     // theme must outlive this EchoArea (same requirement as message).
     EchoArea(const std::string& message, const Theme& theme);
 
-    void paint(ox::Canvas c) override;
+    void Paint(Canvas c) override;
 
   private:
     const std::string& message_;

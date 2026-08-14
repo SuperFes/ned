@@ -1,6 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
-#include <ox/ox.hpp>
+#include <ftxui/screen/screen.hpp>
 #include <string>
 
 #include "Editor/Mode.h"
@@ -11,12 +11,16 @@
 
 namespace {
 
-std::u32string RowText(ox::ScreenBuffer& screen, int row, int width) {
-    std::u32string out;
+std::string RowText(ftxui::Screen& screen, int row, int width) {
+    std::string out;
     for (int col = 0; col < width; ++col) {
-        out.push_back(screen[{.x = col, .y = row}].symbol);
+        out += screen.PixelAt(col, row).character;
     }
     return out;
+}
+
+ftxui::Screen MakeScreen(int width, int height) {
+    return ftxui::Screen::Create(ftxui::Dimension::Fixed(width), ftxui::Dimension::Fixed(height));
 }
 
 } // namespace
@@ -30,19 +34,19 @@ TEST_CASE("ModeLine shows the buffer name and 1-indexed line:column", "[ModeLine
     ned::ui::Theme        theme = ned::ui::DarkTheme();
     ned::ui::ModeLine     modeLine(activeBuffer, mode, theme);
 
-    ox::ScreenBuffer screen({.width = 40, .height = 1});
-    ox::Canvas       canvas{.buffer = screen, .at = {.x = 0, .y = 0}, .size = {.width = 40, .height = 1}};
+    ftxui::Screen    screen = MakeScreen(40, 1);
+    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
 
-    modeLine.paint(canvas);
+    modeLine.Paint(canvas);
 
-    const std::u32string row = RowText(screen, 0, 40);
-    REQUIRE(row.find(U"myfile.txt") != std::u32string::npos);
-    REQUIRE(row.find(U"L2:C3") != std::u32string::npos);
+    const std::string row = RowText(screen, 0, 40);
+    REQUIRE(row.find("myfile.txt") != std::string::npos);
+    REQUIRE(row.find("L2:C3") != std::string::npos);
 
     // Endpoints of the gradient should match the theme's declared colors.
-    REQUIRE(screen[{.x = 0, .y = 0}].brush.background == ox::Color{theme.modeLineGradientStart});
-    REQUIRE(screen[{.x = 39, .y = 0}].brush.background == ox::Color{theme.modeLineGradientEnd});
-    REQUIRE(screen[{.x = 0, .y = 0}].brush.foreground == ox::Color{theme.modeLineForeground});
+    REQUIRE(screen.PixelAt(0, 0).background_color == theme.modeLineGradientStart.ToFtxui());
+    REQUIRE(screen.PixelAt(39, 0).background_color == theme.modeLineGradientEnd.ToFtxui());
+    REQUIRE(screen.PixelAt(0, 0).foreground_color == theme.modeLineForeground.ToFtxui());
 }
 
 TEST_CASE("ModeLine shows the active mode's name", "[ModeLine]") {
@@ -52,12 +56,12 @@ TEST_CASE("ModeLine shows the active mode's name", "[ModeLine]") {
     ned::ui::Theme        theme = ned::ui::DarkTheme();
     ned::ui::ModeLine     modeLine(activeBuffer, mode, theme);
 
-    ox::ScreenBuffer screen({.width = 40, .height = 1});
-    ox::Canvas       canvas{.buffer = screen, .at = {.x = 0, .y = 0}, .size = {.width = 40, .height = 1}};
+    ftxui::Screen    screen = MakeScreen(40, 1);
+    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
 
-    modeLine.paint(canvas);
+    modeLine.Paint(canvas);
 
-    REQUIRE(RowText(screen, 0, 40).find(U"(c-mode)") != std::u32string::npos);
+    REQUIRE(RowText(screen, 0, 40).find("(c-mode)") != std::string::npos);
 }
 
 TEST_CASE("ModeLine recomputes its text fresh on every paint call", "[ModeLine]") {
@@ -67,15 +71,15 @@ TEST_CASE("ModeLine recomputes its text fresh on every paint call", "[ModeLine]"
     ned::ui::Theme        theme = ned::ui::DarkTheme();
     ned::ui::ModeLine     modeLine(activeBuffer, mode, theme);
 
-    ox::ScreenBuffer screen({.width = 40, .height = 1});
-    ox::Canvas       canvas{.buffer = screen, .at = {.x = 0, .y = 0}, .size = {.width = 40, .height = 1}};
+    ftxui::Screen    screen = MakeScreen(40, 1);
+    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
 
-    modeLine.paint(canvas);
-    REQUIRE(RowText(screen, 0, 40).find(U"L1:C1") != std::u32string::npos);
+    modeLine.Paint(canvas);
+    REQUIRE(RowText(screen, 0, 40).find("L1:C1") != std::string::npos);
 
     buffer.SetPoint(3); // end of "abc"
-    modeLine.paint(canvas);
-    REQUIRE(RowText(screen, 0, 40).find(U"L1:C4") != std::u32string::npos);
+    modeLine.Paint(canvas);
+    REQUIRE(RowText(screen, 0, 40).find("L1:C4") != std::string::npos);
 }
 
 TEST_CASE("ModeLine shows a modified marker only when the buffer has unsaved changes", "[ModeLine]") {
@@ -85,15 +89,15 @@ TEST_CASE("ModeLine shows a modified marker only when the buffer has unsaved cha
     ned::ui::Theme        theme = ned::ui::DarkTheme();
     ned::ui::ModeLine     modeLine(activeBuffer, mode, theme);
 
-    ox::ScreenBuffer screen({.width = 40, .height = 1});
-    ox::Canvas       canvas{.buffer = screen, .at = {.x = 0, .y = 0}, .size = {.width = 40, .height = 1}};
+    ftxui::Screen    screen = MakeScreen(40, 1);
+    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
 
     REQUIRE_FALSE(buffer.Modified());
-    modeLine.paint(canvas);
-    REQUIRE(RowText(screen, 0, 40).find(U"*scratch") == std::u32string::npos);
+    modeLine.Paint(canvas);
+    REQUIRE(RowText(screen, 0, 40).find("*scratch") == std::string::npos);
 
     buffer.InsertAtPoint("!");
     REQUIRE(buffer.Modified());
-    modeLine.paint(canvas);
-    REQUIRE(RowText(screen, 0, 40).find(U"*scratch") != std::u32string::npos);
+    modeLine.Paint(canvas);
+    REQUIRE(RowText(screen, 0, 40).find("*scratch") != std::string::npos);
 }

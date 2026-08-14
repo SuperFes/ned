@@ -19,7 +19,7 @@
 namespace ned::ui {
 
 // Renders a Theme as "key=value" lines: hex colors ("#rrggbb") or the
-// sentinel "default" for ox::TermColor::Default, which lets a background (or
+// sentinel "default" for ui::Color::Default, which lets a background (or
 // the echo area's) stay a pass-through rather than an opaque snapshot -- the
 // only way to preserve a terminal's own transparency/blur, since no OSC
 // query reliably reports an actual alpha value (Konsole's transparency, for

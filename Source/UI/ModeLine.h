@@ -6,16 +6,15 @@
 #ifndef NED_UI_MODELINE_H
 #define NED_UI_MODELINE_H
 
-#include <ox/ox.hpp>
-
 #include "ActiveBuffer.h"
 #include "Editor/Mode.h"
 #include "Text/Buffer.h"
 #include "Theme.h"
+#include "Widget.h"
 
 namespace ned::ui {
 
-class ModeLine : public ox::Widget {
+class ModeLine : public Widget {
   public:
     // activeBuffer, mode, and theme must outlive this ModeLine. mode is the
     // same Mode main.cpp picks once at startup and never rebinds per-buffer
@@ -24,7 +23,7 @@ class ModeLine : public ox::Widget {
     // line convention of naming the active major mode.
     ModeLine(const ActiveBuffer& activeBuffer, const editor::Mode& mode, const Theme& theme);
 
-    void paint(ox::Canvas c) override;
+    void Paint(Canvas c) override;
 
   private:
     const ActiveBuffer& activeBuffer_;

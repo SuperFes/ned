@@ -37,7 +37,7 @@ namespace {
     // Only the first two hex digits of each channel group are used regardless
     // of the group's length, which is the usual convention for truncating a
     // wider-than-8-bit channel value down to a byte.
-    std::optional<ox::TrueColor> ExtractColorReply(std::string_view buffer, std::string_view prefix) {
+    std::optional<Color> ExtractColorReply(std::string_view buffer, std::string_view prefix) {
         const auto pos = buffer.find(prefix);
         if (pos == std::string_view::npos) {
             return std::nullopt;
@@ -80,14 +80,14 @@ namespace {
             return std::nullopt;
         }
 
-        return ox::TrueColor{ox::RGB{*r, *g, *b}};
+        return Color::RGB(*r, *g, *b);
     }
 
-    ox::TrueColor Tint(ox::TrueColor base, int delta) {
+    Color Tint(const Color& base, int delta) {
         const auto clamp = [delta](std::uint8_t channel) {
             return static_cast<std::uint8_t>(std::clamp(static_cast<int>(channel) + delta, 0, 255));
         };
-        return ox::TrueColor{ox::RGB{clamp(base.red), clamp(base.green), clamp(base.blue)}};
+        return Color::RGB(clamp(base.red), clamp(base.green), clamp(base.blue));
     }
 
     // RAII: puts stdin into raw/non-canonical mode for the probe and restores
@@ -208,9 +208,9 @@ Theme BuildDetectedTheme(const DetectedColors& detected, const Theme& fallback) 
     }
 
     // Same semantic slots DarkTheme() already references symbolically via
-    // ox::XColor (whose indices match the standard ANSI palette numbering
-    // OSC 4 uses): 2=green, 3=yellow, 4=blue, 5=magenta, 8=bright black,
-    // 11=bright yellow, 15=bright white.
+    // Color's own named palette constants (whose indices match the standard
+    // ANSI palette numbering OSC 4 uses): 2=green, 3=yellow, 4=blue,
+    // 5=magenta, 8=bright black, 11=bright yellow, 15=bright white.
     if (detected.palette[8]) {
         result.commentForeground    = *detected.palette[8];
         result.lineNumberForeground = *detected.palette[8]; // gutter reads as muted, like comments
