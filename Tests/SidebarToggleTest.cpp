@@ -1,6 +1,8 @@
 #include <catch2/catch_test_macros.hpp>
 
-#include <ox/ox.hpp>
+#include <ftxui/component/event.hpp>
+#include <ftxui/component/mouse.hpp>
+#include <ftxui/screen/screen.hpp>
 #include <string>
 
 #include "Text/BufferList.h"
@@ -9,24 +11,47 @@
 #include "UI/SidebarToggle.h"
 #include "UI/Theme.h"
 
-TEST_CASE("SidebarToggle paints the closed symbol before any sidebar is registered", "[SidebarToggle]") {
-    const ox::Brush        brush{.foreground = ox::XColor::BrightBlack};
-    ned::ui::SidebarToggle toggle(brush);
-    toggle.size = {.width = 1, .height = 1};
+namespace {
 
-    ox::ScreenBuffer screen({.width = 1, .height = 1});
-    ox::Canvas       canvas{.buffer = screen, .at = {.x = 0, .y = 0}, .size = {.width = 1, .height = 1}};
-    toggle.paint(canvas);
-
-    REQUIRE(screen[{.x = 0, .y = 0}].symbol == U'»');
-    REQUIRE(screen[{.x = 0, .y = 0}].brush == brush);
+ftxui::Event MousePress(int x, int y, ftxui::Mouse::Button button = ftxui::Mouse::Left) {
+    ftxui::Mouse mouse;
+    mouse.button = button;
+    mouse.motion = ftxui::Mouse::Pressed;
+    mouse.x      = x;
+    mouse.y      = y;
+    return ftxui::Event::Mouse("", mouse);
 }
 
-TEST_CASE("mouse_press with no sidebar registered is a safe no-op", "[SidebarToggle]") {
-    const ox::Brush        brush{};
-    ned::ui::SidebarToggle toggle(brush);
+ftxui::Event MouseRelease(int x, int y) {
+    ftxui::Mouse mouse;
+    mouse.button = ftxui::Mouse::Left;
+    mouse.motion = ftxui::Mouse::Released;
+    mouse.x      = x;
+    mouse.y      = y;
+    return ftxui::Event::Mouse("", mouse);
+}
 
-    toggle.mouse_press(ox::Mouse{.at = {.x = 0, .y = 0}, .button = ox::Mouse::Button::Left}); // must not crash
+} // namespace
+
+TEST_CASE("SidebarToggle paints the closed symbol before any sidebar is registered", "[SidebarToggle]") {
+    const ned::ui::Brush   brush{.foreground = ned::ui::Color::BrightBlack};
+    ned::ui::SidebarToggle toggle(brush);
+    toggle.SetBox_(ftxui::Box{.x_min = 0, .x_max = 0, .y_min = 0, .y_max = 0});
+
+    ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(1), ftxui::Dimension::Fixed(1));
+    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 0, .y_min = 0, .y_max = 0});
+    toggle.Paint(canvas);
+
+    REQUIRE(screen.PixelAt(0, 0).character == "»");
+    REQUIRE(screen.PixelAt(0, 0).foreground_color == brush.foreground.ToFtxui());
+}
+
+TEST_CASE("mouse press with no sidebar registered is a safe no-op", "[SidebarToggle]") {
+    const ned::ui::Brush   brush{};
+    ned::ui::SidebarToggle toggle(brush);
+    toggle.SetBox_(ftxui::Box{.x_min = 0, .x_max = 0, .y_min = 0, .y_max = 0});
+
+    toggle.OnEvent(MousePress(0, 0)); // must not crash
 }
 
 TEST_CASE("SidebarToggle's symbol tracks the registered sidebar's active flag", "[SidebarToggle]") {
@@ -37,24 +62,24 @@ TEST_CASE("SidebarToggle's symbol tracks the registered sidebar's active flag", 
     std::string             statusMessage;
     ned::ui::ProjectSidebar sidebar(activeBuffer, list, statusMessage, theme);
 
-    const ox::Brush        brush{};
+    const ned::ui::Brush   brush{};
     ned::ui::SidebarToggle toggle(brush);
-    toggle.size = {.width = 1, .height = 1};
+    toggle.SetBox_(ftxui::Box{.x_min = 0, .x_max = 0, .y_min = 0, .y_max = 0});
     toggle.SetSidebar(&sidebar);
 
-    ox::ScreenBuffer screen({.width = 1, .height = 1});
-    ox::Canvas       canvas{.buffer = screen, .at = {.x = 0, .y = 0}, .size = {.width = 1, .height = 1}};
+    ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(1), ftxui::Dimension::Fixed(1));
+    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 0, .y_min = 0, .y_max = 0});
 
-    REQUIRE(sidebar.active); // ox::Widget::active defaults to true
-    toggle.paint(canvas);
-    REQUIRE(screen[{.x = 0, .y = 0}].symbol == U'«');
+    REQUIRE(sidebar.active); // Widget::active defaults to true
+    toggle.Paint(canvas);
+    REQUIRE(screen.PixelAt(0, 0).character == "«");
 
     sidebar.active = false;
-    toggle.paint(canvas);
-    REQUIRE(screen[{.x = 0, .y = 0}].symbol == U'»');
+    toggle.Paint(canvas);
+    REQUIRE(screen.PixelAt(0, 0).character == "»");
 }
 
-TEST_CASE("Left mouse_press flips the registered sidebar's active flag", "[SidebarToggle]") {
+TEST_CASE("Left press flips the registered sidebar's active flag", "[SidebarToggle]") {
     ned::text::BufferList   list;
     ned::text::Buffer&      scratch = list.CreateBuffer("scratch");
     ned::ui::ActiveBuffer   activeBuffer(scratch);
@@ -62,49 +87,31 @@ TEST_CASE("Left mouse_press flips the registered sidebar's active flag", "[Sideb
     std::string             statusMessage;
     ned::ui::ProjectSidebar sidebar(activeBuffer, list, statusMessage, theme);
 
-    const ox::Brush        brush{};
+    const ned::ui::Brush   brush{};
     ned::ui::SidebarToggle toggle(brush);
+    toggle.SetBox_(ftxui::Box{.x_min = 0, .x_max = 0, .y_min = 0, .y_max = 0});
     toggle.SetSidebar(&sidebar);
 
     REQUIRE(sidebar.active);
-    toggle.mouse_press(ox::Mouse{.at = {.x = 0, .y = 0}, .button = ox::Mouse::Button::Left});
+    toggle.OnEvent(MousePress(0, 0));
     REQUIRE_FALSE(sidebar.active);
-    toggle.mouse_press(ox::Mouse{.at = {.x = 0, .y = 0}, .button = ox::Mouse::Button::Left});
+    toggle.OnEvent(MousePress(0, 0));
     REQUIRE(sidebar.active);
 }
 
-TEST_CASE("Left mouse_press with a registered sidebarRow reflows widths immediately, not just on the next terminal resize",
-          "[SidebarToggle]") {
-    ned::text::BufferList list;
-    ned::text::Buffer&    scratch = list.CreateBuffer("scratch");
-    ned::ui::ActiveBuffer activeBuffer(scratch);
-    ned::ui::Theme        theme = ned::ui::DarkTheme();
-    std::string           statusMessage;
+// The pre-migration "reflows widths immediately" test doesn't have an
+// equivalent anymore: it existed specifically to verify SetSidebarRow's own
+// forced-reflow workaround, which TermOx needed (flipping a plain field
+// never triggered a relayout on its own) but FTXUI doesn't -- confirmed
+// empirically during the migration (a real spike: toggling a child's
+// inclusion in an hbox and letting the very next frame render naturally was
+// enough for siblings to reclaim/cede the space). SetSidebarRow itself was
+// removed along with the workaround it existed for; the underlying
+// behavior -- a hidden sidebar's space actually getting reclaimed -- is
+// exercised at the composition level once main.cpp's real widget tree is
+// wired up, not as a SidebarToggle-level unit test.
 
-    const ox::Brush brush{};
-    ox::Row         row{
-        ned::ui::SidebarToggle(brush) | ox::SizePolicy::fixed(1),
-        ned::ui::ProjectSidebar(activeBuffer, list, statusMessage, theme) | ox::SizePolicy::fixed(20),
-        ox::Widget{}, // stand-in for BufferView -- the flexible neighbor that reclaims freed space
-    };
-    auto& [toggle, sidebar, filler] = row.children;
-    row.size                        = {.width = 30, .height = 3};
-    row.resize(row.size);
-
-    REQUIRE(filler.size.width == 9);
-
-    toggle.SetSidebar(&sidebar);
-    toggle.SetSidebarRow(&row);
-    toggle.mouse_press(ox::Mouse{.at = {.x = 0, .y = 0}, .button = ox::Mouse::Button::Left});
-
-    REQUIRE_FALSE(sidebar.active);
-    // The filler reclaimed the sidebar's 20 columns without any separate
-    // resize() call from the test -- proving SetSidebarRow's own resize()
-    // call, not just the .active flip, is what made this happen.
-    REQUIRE(filler.size.width == 29);
-}
-
-TEST_CASE("mouse_release ends an in-progress sidebar resize even when the cursor ends up over this widget",
+TEST_CASE("A release ends an in-progress sidebar resize even when the cursor ends up over this widget",
           "[SidebarToggle]") {
     ned::text::BufferList   list;
     ned::text::Buffer&      scratch = list.CreateBuffer("scratch");
@@ -112,24 +119,25 @@ TEST_CASE("mouse_release ends an in-progress sidebar resize even when the cursor
     ned::ui::Theme          theme = ned::ui::DarkTheme();
     std::string             statusMessage;
     ned::ui::ProjectSidebar sidebar(activeBuffer, list, statusMessage, theme);
-    sidebar.size = {.width = 20, .height = 3};
+    sidebar.SetBox_(ftxui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 2});
 
-    const ox::Brush        brush{};
+    const ned::ui::Brush   brush{};
     ned::ui::SidebarToggle toggle(brush);
     toggle.SetSidebar(&sidebar);
 
     // A shrinking drag that ends up back over SidebarToggle's own column --
-    // without this widget also handling mouse_release, IsResizing() would
-    // stay stuck true forever (no mouse-capture in TermOx means the release
-    // is simply hit-tested to wherever the cursor happens to be).
-    sidebar.mouse_press(ox::Mouse{.at = {.x = 19, .y = 0}, .button = ox::Mouse::Button::Left});
+    // without this widget also handling a release, IsResizing() would stay
+    // stuck true forever (FTXUI has no mouse-capture concept either: every
+    // mouse event, including release, is delivered to every leaf widget
+    // regardless of position; see Widget.h's own header comment).
+    sidebar.OnEvent(MousePress(19, 0));
     REQUIRE(sidebar.IsResizing());
 
-    toggle.mouse_release(ox::Mouse{.at = {.x = 0, .y = 0}, .button = ox::Mouse::Button::Left});
+    toggle.OnEvent(MouseRelease(0, 0));
     REQUIRE_FALSE(sidebar.IsResizing());
 }
 
-TEST_CASE("mouse_press with a non-Left button does not flip the sidebar", "[SidebarToggle]") {
+TEST_CASE("mouse press with a non-Left button does not flip the sidebar", "[SidebarToggle]") {
     ned::text::BufferList   list;
     ned::text::Buffer&      scratch = list.CreateBuffer("scratch");
     ned::ui::ActiveBuffer   activeBuffer(scratch);
@@ -137,10 +145,10 @@ TEST_CASE("mouse_press with a non-Left button does not flip the sidebar", "[Side
     std::string             statusMessage;
     ned::ui::ProjectSidebar sidebar(activeBuffer, list, statusMessage, theme);
 
-    const ox::Brush        brush{};
+    const ned::ui::Brush   brush{};
     ned::ui::SidebarToggle toggle(brush);
     toggle.SetSidebar(&sidebar);
 
-    toggle.mouse_press(ox::Mouse{.at = {.x = 0, .y = 0}, .button = ox::Mouse::Button::Right});
+    toggle.OnEvent(MousePress(0, 0, ftxui::Mouse::Right));
     REQUIRE(sidebar.active);
 }

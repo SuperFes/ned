@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include "Text/Utf8.h"
+
 namespace ned::ui {
 
 namespace {
@@ -39,7 +41,7 @@ namespace {
 
 } // namespace
 
-TabBar::TabBar(ActiveBuffer& activeBuffer, const text::BufferList& bufferList, const Theme& theme) : Widget{ox::FocusPolicy::None, ox::SizePolicy::flex()}, activeBuffer_(activeBuffer), bufferList_(bufferList), theme_(theme) {
+TabBar::TabBar(ActiveBuffer& activeBuffer, const text::BufferList& bufferList, const Theme& theme) : activeBuffer_(activeBuffer), bufferList_(bufferList), theme_(theme) {
 }
 
 std::vector<TabBar::TabLayout> TabBar::ComputeTabLayout() const {
@@ -54,9 +56,11 @@ std::vector<TabBar::TabLayout> TabBar::ComputeTabLayout() const {
     return layout;
 }
 
-void TabBar::paint(ox::Canvas c) {
-    for (int x = 0; x < c.size.width; ++x) {
-        c[{.x = x, .y = 0}] = ox::Glyph{.symbol = U' ', .brush = ox::Brush{.background = theme_.tabBar.background}};
+void TabBar::Paint(Canvas c) {
+    for (int x = 0; x < c.size().width; ++x) {
+        ftxui::Cell& cell     = c[{.x = x, .y = 0}];
+        cell.character        = " ";
+        cell.background_color = theme_.tabBar.background.ToFtxui();
     }
 
     const text::Buffer*          active  = &activeBuffer_.Get();
@@ -64,22 +68,24 @@ void TabBar::paint(ox::Canvas c) {
     const std::vector<TabLayout> layout  = ComputeTabLayout();
 
     for (const TabLayout& tab : layout) {
-        ox::Brush brush = (tab.buffer == active) ? theme_.activeTab : theme_.tabBar;
+        Brush brush = (tab.buffer == active) ? theme_.activeTab : theme_.tabBar;
         if (tab.buffer == preview) {
             // Single-click-preview follow-up: italic marks a tab as
             // transient (VS Code's own convention for the same concept) --
             // no new Theme color needed, just a trait layered onto whatever
             // brush this tab would otherwise use.
-            brush.traits = brush.traits | ox::Trait::Italic;
+            brush.italic = true;
         }
         const std::u32string label = TabLabel(*tab.buffer);
 
         for (std::size_t i = 0; i < label.size(); ++i) {
             const int col = tab.startColumn + static_cast<int>(i) - scrollOffset_;
-            if (col < 0 || col >= c.size.width) {
+            if (col < 0 || col >= c.size().width) {
                 continue;
             }
-            c[{.x = col, .y = 0}] = ox::Glyph{.symbol = label[i], .brush = brush};
+            ftxui::Cell& cell = c[{.x = col, .y = 0}];
+            cell.character    = text::EncodeCodepointUtf8(label[i]);
+            brush.ApplyTo(cell);
         }
     }
 
@@ -88,57 +94,65 @@ void TabBar::paint(ox::Canvas c) {
     // wheel already scrolls this row, but nothing made that discoverable or
     // even visible that there was more to scroll to.
     const int totalWidth = layout.empty() ? 0 : layout.back().endColumn;
-    if (c.size.width > 0) {
+    if (c.size().width > 0) {
         if (scrollOffset_ > 0) {
-            c[{.x = 0, .y = 0}] = ox::Glyph{.symbol = kMoreLeft, .brush = theme_.tabBar};
+            ftxui::Cell& cell = c[{.x = 0, .y = 0}];
+            cell.character    = text::EncodeCodepointUtf8(kMoreLeft);
+            theme_.tabBar.ApplyTo(cell);
         }
-        if (totalWidth - scrollOffset_ > c.size.width) {
-            c[{.x = c.size.width - 1, .y = 0}] = ox::Glyph{.symbol = kMoreRight, .brush = theme_.tabBar};
+        if (totalWidth - scrollOffset_ > c.size().width) {
+            ftxui::Cell& cell = c[{.x = c.size().width - 1, .y = 0}];
+            cell.character    = text::EncodeCodepointUtf8(kMoreRight);
+            theme_.tabBar.ApplyTo(cell);
         }
     }
 }
 
-void TabBar::mouse_press(ox::Mouse mouse) {
-    if (mouse.button != ox::Mouse::Button::Left) {
-        return;
+bool TabBar::OnEvent(ftxui::Event event) {
+    const auto mouse = LocalMouseEvent(event);
+    if (!mouse) {
+        return false;
     }
 
-    const int clickedColumn = mouse.at.x + scrollOffset_;
+    if (mouse->button == ftxui::Mouse::WheelDown || mouse->button == ftxui::Mouse::WheelUp) {
+        constexpr int kScrollStep = 4;
+
+        // No tilt-wheel distinction is available (see BufferView's own
+        // WheelUp/WheelDown use for vertical scrolling) -- WheelDown reveals
+        // later tabs, WheelUp reveals earlier ones, an arbitrary but
+        // consistent mapping for a horizontal-only widget.
+        if (mouse->button == ftxui::Mouse::WheelDown) {
+            scrollOffset_ += kScrollStep;
+        }
+        else {
+            scrollOffset_ -= kScrollStep;
+        }
+
+        const std::vector<TabLayout> layout     = ComputeTabLayout();
+        const int                    totalWidth = layout.empty() ? 0 : layout.back().endColumn;
+        const int                    maxScroll  = std::max(0, totalWidth - size().width);
+        scrollOffset_                           = std::clamp(scrollOffset_, 0, maxScroll);
+        return true;
+    }
+
+    if (mouse->button != ftxui::Mouse::Left || mouse->motion != ftxui::Mouse::Pressed) {
+        return false;
+    }
+
+    const int clickedColumn = mouse->at.x + scrollOffset_;
     for (const TabLayout& tab : ComputeTabLayout()) {
         if (clickedColumn == tab.closeColumn) {
             if (onCloseRequest_) {
                 onCloseRequest_(*tab.buffer);
             }
-            return;
+            return true;
         }
         if (clickedColumn >= tab.startColumn && clickedColumn < tab.endColumn) {
             activeBuffer_.Set(*tab.buffer);
-            return;
+            return true;
         }
     }
-}
-
-void TabBar::mouse_wheel(ox::Mouse mouse) {
-    constexpr int kScrollStep = 4;
-
-    // No tilt-wheel distinction is available (see BufferView's own
-    // ScrollUp/ScrollDown use for vertical scrolling) -- ScrollDown reveals
-    // later tabs, ScrollUp reveals earlier ones, an arbitrary but consistent
-    // mapping for a horizontal-only widget.
-    if (mouse.button == ox::Mouse::Button::ScrollDown) {
-        scrollOffset_ += kScrollStep;
-    }
-    else if (mouse.button == ox::Mouse::Button::ScrollUp) {
-        scrollOffset_ -= kScrollStep;
-    }
-    else {
-        return;
-    }
-
-    const std::vector<TabLayout> layout     = ComputeTabLayout();
-    const int                    totalWidth = layout.empty() ? 0 : layout.back().endColumn;
-    const int                    maxScroll  = std::max(0, totalWidth - this->size.width);
-    scrollOffset_                           = std::clamp(scrollOffset_, 0, maxScroll);
+    return true;
 }
 
 void TabBar::SetOnCloseRequest(std::function<void(text::Buffer&)> handler) {

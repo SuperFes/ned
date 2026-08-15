@@ -9,6 +9,7 @@
 
 #include "Editor/ProjectRoot.h"
 #include "Editor/ProjectTree.h"
+#include "Text/Utf8.h"
 
 namespace ned::ui {
 
@@ -22,7 +23,7 @@ namespace {
     // glyphs. Per-file-type emoji icons were considered too and rejected
     // for a second reason on top of that: most terminals render emoji as
     // double-width, which would break this widget's precise column-by-
-    // column Glyph placement. Disclosure triangles are the same BMP
+    // column Cell placement. Disclosure triangles are the same BMP
     // "Geometric Shapes" family ScrollArrowButton's own ▲/▼ already use.
     constexpr char32_t kTreeContinue      = U'│';
     constexpr char32_t kTreeBranch        = U'├';
@@ -35,13 +36,20 @@ namespace {
     // A floor on drag-resized width, not a real design limit -- just enough
     // to keep the divider itself and a sliver of content visible so the
     // handle never becomes unreachable. There's no matching hard ceiling:
-    // the containing Row's own distribute_length naturally shrinks an
+    // the containing composition's own layout naturally shrinks an
     // over-large request back down to whatever the terminal actually has.
     constexpr int kMinSidebarWidth = 4;
 
+    // See CachedTree()'s own comment (ProjectSidebar.h) for why this exists
+    // at all. 500ms is a deliberately unscientific pick -- fast enough that
+    // the sidebar never feels stale to a human, slow enough (well under
+    // typical keystroke rate) to actually eliminate the per-keystroke
+    // directory-walk cost that motivated this in the first place.
+    constexpr std::chrono::milliseconds kTreeCacheThrottle{500};
+
     // How close together two clicks on the same file need to land to count
-    // as a double click (single-click-preview follow-up) -- TermOx has no
-    // built-in double-click detection to defer to. A conventional desktop
+    // as a double click (single-click-preview follow-up) -- no built-in
+    // double-click detection to defer to. A conventional desktop
     // double-click interval, not tuned against anything in this codebase.
     constexpr std::chrono::milliseconds kDoubleClickWindow{400};
 
@@ -152,9 +160,8 @@ namespace {
     // `viewportHeight`-tall viewport shows, given `layout`: the first
     // layout.stickyAncestors.size() rows (capped to the viewport height) are
     // the pinned ancestor chain, the rest are ordinary scrolled content
-    // starting at layout.scrollIndex. Shared between paint() and
-    // mouse_press() so clicking a row always resolves to the same entry
-    // paint() drew there.
+    // starting at layout.scrollIndex. Shared between Paint() and OnEvent()
+    // so clicking a row always resolves to the same entry Paint() drew there.
     std::optional<std::size_t> EntryIndexAtRow(const RowLayout& layout, const std::vector<editor::ProjectTreeEntry>& entries,
                                                int viewportHeight, int row) {
         const int stickyCount = std::min<int>(static_cast<int>(layout.stickyAncestors.size()), viewportHeight);
@@ -171,11 +178,7 @@ namespace {
 } // namespace
 
 ProjectSidebar::ProjectSidebar(ActiveBuffer& activeBuffer, text::BufferList& bufferList, std::string& statusMessage,
-                               const Theme& theme) : Widget{ox::FocusPolicy::None, ox::SizePolicy::flex()},
-                                                     activeBuffer_(activeBuffer),
-                                                     bufferList_(bufferList),
-                                                     statusMessage_(statusMessage),
-                                                     theme_(theme) {
+                               const Theme& theme) : activeBuffer_(activeBuffer), bufferList_(bufferList), statusMessage_(statusMessage), theme_(theme) {
 }
 
 std::vector<editor::ProjectTreeEntry> ProjectSidebar::VisibleEntries(const std::vector<editor::ProjectTreeEntry>& all) const {
@@ -196,72 +199,133 @@ std::vector<editor::ProjectTreeEntry> ProjectSidebar::VisibleEntries(const std::
     return visible;
 }
 
-void ProjectSidebar::paint(ox::Canvas c) {
-    for (int row = 0; row < c.size.height; ++row) {
-        for (int col = 0; col < c.size.width; ++col) {
-            c[{.x = col, .y = row}] = ox::Glyph{.symbol = U' ', .brush = ox::Brush{.background = theme_.background}};
+int ProjectSidebar::Width() const {
+    return width_;
+}
+
+const std::vector<editor::ProjectTreeEntry>& ProjectSidebar::CachedTree() {
+    const std::filesystem::path root = editor::ProjectRoot();
+    const auto                  now  = std::chrono::steady_clock::now();
+    if (!treeCacheValid_ || root != treeCacheRoot_ || (now - treeCacheTime_) >= kTreeCacheThrottle) {
+        treeCache_      = editor::BuildProjectTree(root);
+        treeCacheRoot_  = root;
+        treeCacheTime_  = now;
+        treeCacheValid_ = true;
+    }
+    return treeCache_;
+}
+
+void ProjectSidebar::InvalidateTree() {
+    treeCacheValid_ = false;
+}
+
+void ProjectSidebar::Paint(Canvas c) {
+    for (int row = 0; row < c.size().height; ++row) {
+        for (int col = 0; col < c.size().width; ++col) {
+            ftxui::Cell& cell     = c[{.x = col, .y = row}];
+            cell.character        = " ";
+            cell.background_color = theme_.background.ToFtxui();
         }
     }
 
     // Rightmost column is reserved for the divider marking the sidebar/
     // buffer boundary -- content renders into [0, dividerColumn).
-    const int dividerColumn = c.size.width - 1;
+    const int dividerColumn = c.size().width - 1;
 
-    const std::vector<editor::ProjectTreeEntry> entries    = VisibleEntries(editor::BuildProjectTree(editor::ProjectRoot()));
+    const std::vector<editor::ProjectTreeEntry> entries    = VisibleEntries(CachedTree());
     const std::optional<std::filesystem::path>& activePath = activeBuffer_.Get().Path();
 
     const RowLayout layout      = ComputeRowLayout(entries, scrollOffset_);
-    const int       stickyCount = std::min<int>(static_cast<int>(layout.stickyAncestors.size()), c.size.height);
+    const int       stickyCount = std::min<int>(static_cast<int>(layout.stickyAncestors.size()), c.size().height);
 
-    for (int row = 0; row < c.size.height; ++row) {
-        const std::optional<std::size_t> index = EntryIndexAtRow(layout, entries, c.size.height, row);
+    for (int row = 0; row < c.size().height; ++row) {
+        const std::optional<std::size_t> index = EntryIndexAtRow(layout, entries, c.size().height, row);
         if (!index) {
             break; // sticky rows always come first; once content runs out, so do all later rows
         }
         const editor::ProjectTreeEntry& entry    = entries[*index];
         const bool                      isSticky = row < stickyCount;
 
-        const bool      isActiveFile = !entry.isDirectory && activePath && *activePath == entry.path;
-        const ox::Brush brush =
+        const bool  isActiveFile = !entry.isDirectory && activePath && *activePath == entry.path;
+        const Brush brush =
             isActiveFile ? theme_.activeTab
             : isSticky   ? theme_.tabBar // pinned ancestor header -- same chrome family as TabBar's own row
-                         : ox::Brush{.background = theme_.background,
-                                     .foreground = entry.isDirectory ? theme_.lineNumberForeground : theme_.defaultForeground};
+                         : Brush{.background = theme_.background,
+                                 .foreground = entry.isDirectory ? theme_.lineNumberForeground : theme_.defaultForeground};
 
         const std::u32string label = BuildLabel(entries, *index, expandedDirs_);
         for (std::size_t i = 0; i < label.size() && static_cast<int>(i) < dividerColumn; ++i) {
-            c[{.x = static_cast<int>(i), .y = row}] = ox::Glyph{.symbol = label[i], .brush = brush};
+            ftxui::Cell& cell = c[{.x = static_cast<int>(i), .y = row}];
+            cell.character    = text::EncodeCodepointUtf8(label[i]);
+            brush.ApplyTo(cell);
         }
     }
 
     // Distinct brush while a drag is live -- the same "show it's grabbed"
     // feedback a real terminal/window-manager resize handle gives.
-    const ox::Brush dividerBrush =
-        resizing_ ? theme_.activeTab : ox::Brush{.background = theme_.background, .foreground = theme_.lineNumberForeground};
-    for (int row = 0; row < c.size.height; ++row) {
-        c[{.x = dividerColumn, .y = row}] = ox::Glyph{.symbol = kDividerLine, .brush = dividerBrush};
+    const Brush       dividerBrush = resizing_ ? theme_.activeTab
+                                               : Brush{.background = theme_.background, .foreground = theme_.lineNumberForeground};
+    const std::string dividerChar  = text::EncodeCodepointUtf8(kDividerLine);
+    for (int row = 0; row < c.size().height; ++row) {
+        ftxui::Cell& cell = c[{.x = dividerColumn, .y = row}];
+        cell.character    = dividerChar;
+        dividerBrush.ApplyTo(cell);
     }
 }
 
-void ProjectSidebar::mouse_press(ox::Mouse mouse) {
-    if (mouse.button != ox::Mouse::Button::Left) {
-        return;
+bool ProjectSidebar::OnEvent(ftxui::Event event) {
+    if (!event.is_mouse()) {
+        return false;
+    }
+    const ftxui::Mouse& rawMouse = event.mouse();
+
+    if (rawMouse.motion == ftxui::Mouse::Moved && resizing_) {
+        UpdateResize(rawMouse.x);
+        return true;
+    }
+    if (rawMouse.motion == ftxui::Mouse::Released && resizing_) {
+        EndResize();
+        return true;
     }
 
-    if (mouse.at.x == this->size.width - 1) {
-        BeginResize(this->at.x + mouse.at.x);
-        return;
+    const auto mouse = LocalMouseEvent(event);
+    if (!mouse) {
+        return false;
     }
 
-    const std::vector<editor::ProjectTreeEntry> entries = VisibleEntries(editor::BuildProjectTree(editor::ProjectRoot()));
+    if (mouse->button == ftxui::Mouse::WheelUp || mouse->button == ftxui::Mouse::WheelDown) {
+        constexpr int kWheelScrollLines = 3;
+
+        const std::vector<editor::ProjectTreeEntry> entries   = VisibleEntries(CachedTree());
+        const int                                   maxScroll = std::max(0, static_cast<int>(entries.size()) - size().height);
+
+        if (mouse->button == ftxui::Mouse::WheelDown) {
+            scrollOffset_ = std::min(scrollOffset_ + kWheelScrollLines, maxScroll);
+        }
+        else {
+            scrollOffset_ = std::max(scrollOffset_ - kWheelScrollLines, 0);
+        }
+        return true;
+    }
+
+    if (mouse->button != ftxui::Mouse::Left || mouse->motion != ftxui::Mouse::Pressed) {
+        return false;
+    }
+
+    if (mouse->at.x == size().width - 1) {
+        BeginResize(rawMouse.x);
+        return true;
+    }
+
+    const std::vector<editor::ProjectTreeEntry> entries = VisibleEntries(CachedTree());
     if (entries.empty()) {
-        return;
+        return true;
     }
 
     const RowLayout                  layout = ComputeRowLayout(entries, scrollOffset_);
-    const std::optional<std::size_t> index  = EntryIndexAtRow(layout, entries, this->size.height, std::max(mouse.at.y, 0));
+    const std::optional<std::size_t> index  = EntryIndexAtRow(layout, entries, size().height, std::max(mouse->at.y, 0));
     if (!index) {
-        return;
+        return true;
     }
 
     const editor::ProjectTreeEntry& entry = entries[*index];
@@ -274,12 +338,15 @@ void ProjectSidebar::mouse_press(ox::Mouse mouse) {
             expandedDirs_.insert(entry.path);
         }
 
-        // Collapsing can shrink the visible list out from under scrollOffset_.
-        const std::vector<editor::ProjectTreeEntry> after = VisibleEntries(editor::BuildProjectTree(editor::ProjectRoot()));
+        // Collapsing can shrink the visible list out from under scrollOffset_
+        // -- re-filters the same (unchanged-on-disk) CachedTree() result
+        // through VisibleEntries() again, now reflecting the just-toggled
+        // expandedDirs_; no fresh disk walk needed, nothing on disk changed.
+        const std::vector<editor::ProjectTreeEntry> after = VisibleEntries(CachedTree());
         if (!after.empty() && scrollOffset_ >= static_cast<int>(after.size())) {
             scrollOffset_ = static_cast<int>(after.size()) - 1;
         }
-        return;
+        return true;
     }
 
     const auto now = std::chrono::steady_clock::now();
@@ -289,6 +356,7 @@ void ProjectSidebar::mouse_press(ox::Mouse mouse) {
     lastFileClickTime_ = now;
 
     OpenFileEntry(entry.path, isDoubleClick);
+    return true;
 }
 
 void ProjectSidebar::OpenFileEntry(const std::filesystem::path& path, bool isDoubleClick) {
@@ -325,40 +393,6 @@ void ProjectSidebar::OpenFileEntry(const std::filesystem::path& path, bool isDou
     }
 }
 
-void ProjectSidebar::mouse_wheel(ox::Mouse mouse) {
-    constexpr int kWheelScrollLines = 3;
-
-    if (mouse.button != ox::Mouse::Button::ScrollUp && mouse.button != ox::Mouse::Button::ScrollDown) {
-        return;
-    }
-
-    const std::vector<editor::ProjectTreeEntry> entries   = VisibleEntries(editor::BuildProjectTree(editor::ProjectRoot()));
-    const int                                   maxScroll = std::max(0, static_cast<int>(entries.size()) - this->size.height);
-
-    if (mouse.button == ox::Mouse::Button::ScrollDown) {
-        scrollOffset_ = std::min(scrollOffset_ + kWheelScrollLines, maxScroll);
-    }
-    else {
-        scrollOffset_ = std::max(scrollOffset_ - kWheelScrollLines, 0);
-    }
-}
-
-void ProjectSidebar::mouse_move(ox::Mouse mouse) {
-    if (resizing_) {
-        UpdateResize(this->at.x + mouse.at.x);
-    }
-}
-
-void ProjectSidebar::mouse_release(ox::Mouse) {
-    if (resizing_) {
-        EndResize();
-    }
-}
-
-void ProjectSidebar::SetSidebarRow(ox::Widget* sidebarRow) {
-    sidebarRow_ = sidebarRow;
-}
-
 bool ProjectSidebar::IsResizing() const {
     return resizing_;
 }
@@ -366,24 +400,32 @@ bool ProjectSidebar::IsResizing() const {
 void ProjectSidebar::BeginResize(int globalMouseX) {
     resizing_            = true;
     resizeAnchorGlobalX_ = globalMouseX;
-    resizeAnchorWidth_   = this->size.width;
+    // Anchored to size().width (the box this widget is actually currently
+    // rendered at), not the internal width_ field directly: main.cpp's
+    // composition root reads Width() fresh every frame to size the box (see
+    // this class's own header comment), so in real, running-editor usage
+    // the two always agree by the time a drag could ever start. They can
+    // disagree for exactly one frame at startup, or whenever a caller
+    // constructs this widget and calls SetBox_ directly without going
+    // through that same per-frame feedback loop first (every unit test) --
+    // anchoring on width_ in that case silently resized from a stale value
+    // instead of wherever the divider visually was, a real, confirmed bug
+    // (not just a test-affecting one: the same staleness would apply to the
+    // very first resize drag after startup, before Width() has been read by
+    // the composition root even once).
+    resizeAnchorWidth_ = size().width;
 }
 
 void ProjectSidebar::UpdateResize(int globalMouseX) {
     // Anchored to the drag's total displacement from its start, not applied
-    // as a per-event delta: mouse_move fires once per real cursor movement,
-    // and once a growing drag crosses into BufferView's territory this and
-    // BufferView's own mouse_move both feed the same session, so there's no
+    // as a per-event delta: a move fires once per real cursor movement, and
+    // once a growing drag crosses into BufferView's territory this and
+    // BufferView's own OnEvent both feed the same session, so there's no
     // single, consistent "previous event" to diff against across the
     // handoff. Recomputing from the fixed start point each time sidesteps
     // that entirely.
-    const int delta    = globalMouseX - resizeAnchorGlobalX_;
-    const int newWidth = std::max(kMinSidebarWidth, resizeAnchorWidth_ + delta);
-    this->size_policy  = ox::SizePolicy::fixed(newWidth);
-
-    if (sidebarRow_ != nullptr) {
-        sidebarRow_->resize(sidebarRow_->size);
-    }
+    const int delta = globalMouseX - resizeAnchorGlobalX_;
+    width_          = std::max(kMinSidebarWidth, resizeAnchorWidth_ + delta);
 }
 
 void ProjectSidebar::EndResize() {

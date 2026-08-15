@@ -2,10 +2,13 @@
 
 #include <algorithm>
 #include <chrono>
+#include <condition_variable>
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <limits>
+#include <mutex>
 #include <regex>
 #include <utility>
 #include <vector>
@@ -16,6 +19,7 @@
 #include "Editor/ScratchPad.h"
 #include "Editor/TabWidth.h"
 #include "KeyTranslation.h"
+#include "Text/Utf8.h"
 
 namespace ned::ui {
 
@@ -43,7 +47,7 @@ namespace {
     // line is untouched, partially, or fully covered by the current region.
     // lineEndExclusive is the offset just past the line's own newline (or
     // ByteLength() for the last line) -- deliberately *including* the
-    // newline, unlike paint()'s content-rendering lineEnd, so that selecting
+    // newline, unlike Paint()'s content-rendering lineEnd, so that selecting
     // through to the start of the next line still counts this one as fully
     // selected, matching how selecting a whole line normally feels.
     enum class GutterSelection { None,
@@ -120,7 +124,7 @@ namespace {
 
     // Columns a single codepoint occupies when rendered: editor::TabWidth()
     // for a tab, 4 (open bracket + 2 hex digits + close bracket) for a
-    // binary placeholder, 1 for every ordinary glyph. Shared by paint()'s
+    // binary placeholder, 1 for every ordinary glyph. Shared by Paint()'s
     // render loop and VisualColumn below so the two can never disagree
     // about column math.
     int CodepointColumns(char32_t cp) {
@@ -137,14 +141,14 @@ namespace {
     // renders at within the line starting at lineStart -- see
     // CodepointColumns for why this can't be a plain codepoint count.
     // Returns nullopt once the column would reach maxColumns before
-    // byteOffset does, matching the horizontal-scroll cutoff paint()
+    // byteOffset does, matching the horizontal-scroll cutoff Paint()
     // already applies to the cursor (there's no point computing an exact
     // value for a column that won't be shown anyway) -- critically, this
     // bound is also what keeps the scan O(maxColumns) instead of
     // O(byteOffset - lineStart): point can be millions of bytes into a
     // single pathologically long line while still being nowhere near the
     // visible viewport width, and this must not re-scan that whole distance
-    // on every paint() call to find out.
+    // on every Paint() call to find out.
     std::optional<int> VisualColumn(const text::Rope& content, std::size_t lineStart, std::size_t byteOffset,
                                     int maxColumns) {
         int         col    = 0;
@@ -162,15 +166,9 @@ namespace {
 
     // Filters mode_.highlight's whole-buffer HighlightSpan list down to just
     // the spans overlapping [lineStart, lineEnd) -- called once per visible
-    // row from paint(), *not* once per rendered codepoint, so ClassAtOffset
+    // row from Paint(), *not* once per rendered codepoint, so ClassAtOffset
     // below only ever scans a small, per-line list rather than the whole
-    // file's spans on every single codepoint. An earlier version had
-    // ClassAtOffset scan the full (unfiltered) span list per codepoint
-    // directly; correct, but regressed a large-JSON [Performance] test to
-    // ~44ms/paint() call (~8,000 spans x up to 1,920 rendered codepoints per
-    // frame) even after the per-paint caching fix below it was written
-    // alongside -- caught by that same test before shipping, the fix
-    // narrowed further to this two-tier filter.
+    // file's spans on every single codepoint.
     std::vector<editor::HighlightSpan> SpansForLine(const std::vector<editor::HighlightSpan>& spans,
                                                     std::size_t lineStart, std::size_t lineEnd) {
         std::vector<editor::HighlightSpan> lineSpans;
@@ -186,14 +184,7 @@ namespace {
     // already line-filtered -- see SpansForLine) HighlightSpan list, Default
     // if none covers it. Spans overlapping the same byte resolve in `spans`'
     // own order, later wins -- see HighlightSpan's own doc comment in Mode.h
-    // for why. Deliberately not a precomputed per-line array indexed by byte
-    // offset: an earlier version built one sized to the whole line
-    // regardless of how much of it is actually visible, which regressed the
-    // "pathologically long single line" [Performance] test to multiple
-    // seconds (a 5-million-entry allocation-and-fill per row, per paint()
-    // call) -- the exact same class of bug VisualColumn's own unbounded scan
-    // was before it was bounded to the viewport, caught here the same way:
-    // by that pre-existing test, before shipping.
+    // for why.
     editor::SyntaxClass ClassAtOffset(const std::vector<editor::HighlightSpan>& spans, std::size_t byteOffset) {
         editor::SyntaxClass cls = editor::SyntaxClass::Default;
         for (const editor::HighlightSpan& span : spans) {
@@ -204,50 +195,86 @@ namespace {
         return cls;
     }
 
+    // Tag string for LogMouseEvent, derived from the raw event rather than
+    // passed in separately at each call site (was four distinct
+    // mouse_press/mouse_move/mouse_release/mouse_wheel overrides, now one
+    // unified OnMouseEvent).
+    std::string_view MouseEventTag(const ftxui::Mouse& mouse) {
+        if (mouse.button == ftxui::Mouse::WheelUp || mouse.button == ftxui::Mouse::WheelDown) {
+            return "wheel";
+        }
+        switch (mouse.motion) {
+            case ftxui::Mouse::Pressed:
+                return "press";
+            case ftxui::Mouse::Released:
+                return "release";
+            case ftxui::Mouse::Moved:
+            default:
+                return "move";
+        }
+    }
+
 } // namespace
 
 BufferView::BufferView(ActiveBuffer& activeBuffer, text::KillRing& killRing, text::BufferList& bufferList,
                        editor::Dispatcher& dispatcher, std::string& statusMessage, const editor::Mode& mode,
-                       const Theme& theme) : Widget{ox::FocusPolicy::Strong, ox::SizePolicy::flex()},
-                                             activeBuffer_(activeBuffer),
-                                             killRing_(killRing),
-                                             bufferList_(bufferList),
-                                             dispatcher_(dispatcher),
-                                             statusMessage_(statusMessage),
-                                             mode_(mode),
-                                             theme_(theme),
-                                             autoSaveTimer_(*this, kScratchAutoSaveInterval) {
+                       const Theme& theme) : activeBuffer_(activeBuffer), killRing_(killRing), bufferList_(bufferList), dispatcher_(dispatcher),
+                                             statusMessage_(statusMessage), mode_(mode), theme_(theme) {
     if (const char* path = std::getenv("NED_DEBUG_MOUSE"); path && *path) {
         debugMouseLogPath_ = path;
     }
+}
+
+BufferView::~BufferView() {
+    if (autoSaveThread_.joinable()) {
+        autoSaveThread_.request_stop();
+    }
+    // std::jthread's own destructor joins after requesting stop; the
+    // explicit request_stop() above is just so the interruptible wait in
+    // StartAutoSaveTimer's loop wakes immediately rather than sitting out
+    // whatever's left of the current 5-second interval.
 }
 
 editor::CommandContext BufferView::MakeContext() {
     return editor::CommandContext{activeBuffer_.Get(), killRing_, bufferList_, editor::KeyChord{}, &statusMessage_};
 }
 
-void BufferView::StartAutoSaveTimer() {
-    autoSaveTimer_.start();
+void BufferView::StartAutoSaveTimer(ftxui::ScreenInteractive& screen) {
+    autoSaveThread_ = std::jthread([this, &screen](std::stop_token stopToken) {
+        std::mutex                  mutex;
+        std::condition_variable_any cv;
+        while (!stopToken.stop_requested()) {
+            std::unique_lock lock(mutex);
+            // Interruptible sleep -- wakes immediately on stop_requested()
+            // (BufferView's destructor) rather than blocking shutdown for up
+            // to the full interval, unlike a plain sleep_for would.
+            if (cv.wait_for(lock, stopToken, kScratchAutoSaveInterval, [&stopToken] { return stopToken.stop_requested(); })) {
+                return;
+            }
+            // PostEvent is documented thread-safe by FTXUI (confirmed by
+            // reading app.cpp, not assumed) -- this marshals the actual
+            // buffer-touching work onto the main loop thread rather than
+            // calling AutoSaveScratchBuffers directly from this background
+            // thread, avoiding any data race with the editor's own state.
+            screen.Post([this] { editor::AutoSaveScratchBuffers(bufferList_); });
+        }
+    });
 }
 
-void BufferView::timer() {
-    editor::AutoSaveScratchBuffers(bufferList_);
-}
-
-void BufferView::paint(ox::Canvas c) {
+void BufferView::Paint(Canvas c) {
     text::Buffer&     buffer     = activeBuffer_.Get();
     const text::Rope& content    = buffer.Content();
     const std::size_t totalLines = content.LineCount();
-    const ox::Brush   emptyBrush = theme_.BrushFor(editor::SyntaxClass::Default);
+    const Brush       emptyBrush = theme_.BrushFor(editor::SyntaxClass::Default);
     const std::size_t point      = buffer.Point();
     const std::size_t pointLine  = content.ByteOffsetToLine(point);
 
     if (scrollBar_ != nullptr) {
-        // scrollable_length is fed as MaxTopLine() + 1, not totalLines: ox::ScrollBar
-        // internally clamps a user-driven drag/wheel's target position to
-        // [0, scrollable_length - 1], so this is what makes the bar's own
-        // built-in range match ours exactly -- dragging all the way down
-        // actually reaches true end-of-file, not one line short of it.
+        // scrollable_length is fed as MaxTopLine() + 1, not totalLines: the
+        // scroll bar internally clamps a user-driven drag/click's target
+        // position to [0, scrollable_length - 1], so this is what makes its
+        // own built-in range match ours exactly -- dragging all the way
+        // down actually reaches true end-of-file, not one line short of it.
         scrollBar_->scrollable_length  = static_cast<int>(MaxTopLine()) + 1;
         scrollBar_->position           = static_cast<int>(topLine_);
         scrollBar_->item_visual_length = 1; // one buffer line per canvas row
@@ -263,7 +290,7 @@ void BufferView::paint(ox::Canvas c) {
     const std::size_t gutterDigits = gutterWidth - 1; // trailing column is a separating space
 
     // Recomputed only when the active buffer or its content has actually
-    // changed since the last paint() call -- see highlightCacheBuffer_'s own
+    // changed since the last Paint() call -- see highlightCacheBuffer_'s own
     // doc comment in BufferView.h for why this caching exists at all (a real,
     // measured perf fix, not a preemptive one).
     if (!mode_.highlight) {
@@ -277,9 +304,11 @@ void BufferView::paint(ox::Canvas c) {
     }
     const std::vector<editor::HighlightSpan>& highlightSpans = highlightCacheSpans_;
 
-    for (int row = 0; row < c.size.height; ++row) {
-        for (int col = 0; col < c.size.width; ++col) {
-            c[{.x = col, .y = row}] = ox::Glyph{.brush = emptyBrush};
+    for (int row = 0; row < c.size().height; ++row) {
+        for (int col = 0; col < c.size().width; ++col) {
+            ftxui::Cell& cell = c[{.x = col, .y = row}];
+            cell.character    = " ";
+            emptyBrush.ApplyTo(cell);
         }
 
         const std::size_t line = topLine_ + static_cast<std::size_t>(row);
@@ -296,41 +325,47 @@ void BufferView::paint(ox::Canvas c) {
         const std::size_t     lineEndWithNewline = (line + 1 < totalLines) ? content.LineToByteOffset(line + 1) : content.ByteLength();
         const GutterSelection gutterSelection    = ClassifyGutterSelection(buffer, lineStart, lineEndWithNewline);
 
-        const ox::Color gutterForeground =
+        const Color gutterForeground =
             (line == pointLine) ? theme_.currentLineNumberForeground : theme_.lineNumberForeground;
         // Digits+padding get the full selection background only when the
         // whole line is covered; the one-column gap after them gets it for
         // Partial too, so a partially-selected line still shows a thin
         // highlighted edge instead of no indication at all.
-        const ox::Brush gutterBrush{
+        const Brush gutterBrush{
             .background = (gutterSelection == GutterSelection::Full) ? theme_.selectionBackground : theme_.background,
             .foreground = gutterForeground,
         };
-        const ox::Brush gutterGapBrush{
+        const Brush gutterGapBrush{
             .background = (gutterSelection != GutterSelection::None) ? theme_.selectionBackground : theme_.background,
             .foreground = gutterForeground,
         };
         const std::string number  = std::to_string(line + 1); // 1-indexed, matches ModeLine's L/C convention
         const std::size_t padding = gutterDigits > number.size() ? gutterDigits - number.size() : 0;
-        for (std::size_t i = 0; i < padding && static_cast<int>(i) < c.size.width; ++i) {
-            c[{.x = static_cast<int>(i), .y = row}] = ox::Glyph{.symbol = U' ', .brush = gutterBrush};
+        for (std::size_t i = 0; i < padding && static_cast<int>(i) < c.size().width; ++i) {
+            ftxui::Cell& cell = c[{.x = static_cast<int>(i), .y = row}];
+            cell.character    = " ";
+            gutterBrush.ApplyTo(cell);
         }
-        for (std::size_t i = 0; i < number.size() && static_cast<int>(padding + i) < c.size.width; ++i) {
-            c[{.x = static_cast<int>(padding + i), .y = row}] = ox::Glyph{.symbol = static_cast<char32_t>(number[i]), .brush = gutterBrush};
+        for (std::size_t i = 0; i < number.size() && static_cast<int>(padding + i) < c.size().width; ++i) {
+            ftxui::Cell& cell = c[{.x = static_cast<int>(padding + i), .y = row}];
+            cell.character    = std::string(1, number[i]);
+            gutterBrush.ApplyTo(cell);
         }
-        if (static_cast<int>(gutterDigits) < c.size.width) {
-            c[{.x = static_cast<int>(gutterDigits), .y = row}] = ox::Glyph{.symbol = U' ', .brush = gutterGapBrush};
+        if (static_cast<int>(gutterDigits) < c.size().width) {
+            ftxui::Cell& cell = c[{.x = static_cast<int>(gutterDigits), .y = row}];
+            cell.character    = " ";
+            gutterGapBrush.ApplyTo(cell);
         }
 
         const std::vector<editor::HighlightSpan> lineSpans = SpansForLine(highlightSpans, lineStart, lineEnd);
 
         std::size_t offset = lineStart;
         int         col    = static_cast<int>(gutterWidth);
-        while (offset < lineEnd && col < c.size.width) {
+        while (offset < lineEnd && col < c.size().width) {
             const auto decoded = content.CodepointAt(offset);
 
             const editor::SyntaxClass cls   = ClassAtOffset(lineSpans, offset);
-            ox::Brush                 brush = theme_.BrushFor(cls);
+            Brush                     brush = theme_.BrushFor(cls);
             if (InIsearchMatch(offset)) {
                 brush.background = theme_.isearchMatchBackground;
             }
@@ -343,18 +378,18 @@ void BufferView::paint(ox::Canvas c) {
                 // tab stop" (consuming several columns), not "print one
                 // glyph and advance by one" -- sending it through unexpanded
                 // desyncs the terminal's actual cursor position from what
-                // Terminal::commit_changes()'s own per-cell diff bookkeeping
+                // the terminal library's own per-cell diff bookkeeping
                 // believes was written, which then corrupts unrelated cells
-                // on later frames (stale content from an earlier scroll
-                // position "shows through" because the diff thinks those
-                // cells are already correct). Expanding to literal space
-                // glyphs keeps this widget's one-codepoint-per-column model
-                // -- and the real terminal's actual column count -- in
-                // agreement. editor::TabWidth() is a *display* setting only;
-                // the buffer's real tab byte is untouched.
+                // on later frames. Expanding to literal space glyphs keeps
+                // this widget's one-codepoint-per-column model -- and the
+                // real terminal's actual column count -- in agreement.
+                // editor::TabWidth() is a *display* setting only; the
+                // buffer's real tab byte is untouched.
                 const int tabWidth = editor::TabWidth();
-                for (int i = 0; i < tabWidth && col < c.size.width; ++i) {
-                    c[{.x = col, .y = row}] = ox::Glyph{.symbol = U' ', .brush = brush};
+                for (int i = 0; i < tabWidth && col < c.size().width; ++i) {
+                    ftxui::Cell& cell = c[{.x = col, .y = row}];
+                    cell.character    = " ";
+                    brush.ApplyTo(cell);
                     ++col;
                 }
             }
@@ -368,23 +403,24 @@ void BufferView::paint(ox::Canvas c) {
                 // not literal text; whatever background isearch/selection
                 // already chose above is kept so an active highlight still
                 // shows through it.
-                ox::Brush binaryBrush    = brush;
+                Brush binaryBrush        = brush;
                 binaryBrush.foreground   = theme_.binaryForeground;
                 const char32_t glyphs[4] = {kBinaryOpen, HexDigit((decoded.codepoint >> 4) & 0xF),
                                             HexDigit(decoded.codepoint & 0xF), kBinaryClose};
                 for (const char32_t glyph : glyphs) {
-                    if (col >= c.size.width) {
+                    if (col >= c.size().width) {
                         break;
                     }
-                    c[{.x = col, .y = row}] = ox::Glyph{.symbol = glyph, .brush = binaryBrush};
+                    ftxui::Cell& cell = c[{.x = col, .y = row}];
+                    cell.character    = text::EncodeCodepointUtf8(glyph);
+                    binaryBrush.ApplyTo(cell);
                     ++col;
                 }
             }
             else {
-                ox::Glyph glyph;
-                glyph.symbol            = decoded.codepoint;
-                glyph.brush             = brush;
-                c[{.x = col, .y = row}] = glyph;
+                ftxui::Cell& cell = c[{.x = col, .y = row}];
+                cell.character    = text::EncodeCodepointUtf8(decoded.codepoint);
+                brush.ApplyTo(cell);
                 ++col;
             }
 
@@ -392,66 +428,124 @@ void BufferView::paint(ox::Canvas c) {
         }
     }
 
-    if (pointLine >= topLine_ && pointLine - topLine_ < static_cast<std::size_t>(c.size.height)) {
-        const std::size_t        lineStart = content.LineToByteOffset(pointLine);
-        const std::optional<int> visualCol = VisualColumn(content, lineStart, point, c.size.width - static_cast<int>(gutterWidth));
-        const std::size_t        col       = visualCol ? gutterWidth + static_cast<std::size_t>(*visualCol) : 0;
-
-        if (visualCol && col < static_cast<std::size_t>(c.size.width)) {
-            this->cursor = ox::Point{.x = static_cast<int>(col), .y = static_cast<int>(pointLine - topLine_)};
-        }
-        else {
-            this->cursor = std::nullopt; // scrolled off horizontally; no horizontal scroll in v1
-        }
-    }
-    else {
-        this->cursor = std::nullopt;
-    }
 }
 
-void BufferView::key_press(ox::Key key) {
+std::optional<Point> BufferView::CursorPosition() const {
+    // A pure, independently-callable query, deliberately NOT a value cached
+    // as a Paint() side effect (a real, reported bug fixed here: FTXUI's
+    // Node lifecycle always calls ComputeRequirement/SetBox -- which is what
+    // reads this -- *before* Render (which calls Paint()) on every single
+    // frame, so a Paint()-time cache would always be exactly one frame
+    // stale, showing where point was during the *previous* frame's Paint()
+    // call rather than where it is now; felt live as "press Right and
+    // nothing happens, press it again and the cursor jumps to where the
+    // first press should have gone"). Cheap enough to recompute on every
+    // call -- buffer/content access, one GutterWidth() call, one
+    // ByteOffsetToLine/LineToByteOffset pair, one bounded VisualColumn scan
+    // -- nowhere near Paint()'s own per-visible-row cost.
+    const text::Buffer& buffer      = activeBuffer_.Get();
+    const text::Rope&   content     = buffer.Content();
+    const std::size_t   point       = buffer.Point();
+    const std::size_t   pointLine   = content.ByteOffsetToLine(point);
+    const std::size_t   gutterWidth = GutterWidth();
+
+    if (pointLine < topLine_) {
+        return std::nullopt;
+    }
+
+    // size() -- inherited from Widget, persisted on this long-lived object
+    // rather than the transient per-frame PaintNode -- is still its
+    // default-constructed {0,0} the very first time this is ever called:
+    // FTXUI always calls ComputeRequirement (which is what reads
+    // CursorPosition) before SetBox has run even once, on every frame, and
+    // for every frame after the first, size() happens to already hold the
+    // *previous* frame's real value (close enough in practice -- viewport
+    // dimensions essentially never change mid-session outside a terminal
+    // resize). Frame one has no previous frame to fall back on, so treating
+    // an unknown ({0,0}) size as "don't bound at all" rather than "assume
+    // everything is off-screen" is what makes the cursor visible starting
+    // on the very first rendered frame, not only once some later event
+    // triggers a second Draw() call -- a real, reported bug (no terminal
+    // ever sent a "show cursor" escape sequence in its very first frame,
+    // confirmed via a raw pty capture, not assumed) that otherwise made the
+    // cursor (and, per Focused()'s own aggregation depending on this same
+    // enabled flag, arguably the sense that the editor was "ready" at all)
+    // appear to not exist until the user did something.
+    const Size sizeNow    = size();
+    const bool sizeIsKnown = sizeNow.height > 0 && sizeNow.width > 0;
+    if (sizeIsKnown && pointLine - topLine_ >= static_cast<std::size_t>(sizeNow.height)) {
+        return std::nullopt;
+    }
+
+    const std::size_t lineStart = content.LineToByteOffset(pointLine);
+    const int          maxColumns =
+        sizeIsKnown ? sizeNow.width - static_cast<int>(gutterWidth) : std::numeric_limits<int>::max();
+    const std::optional<int> visualCol = VisualColumn(content, lineStart, point, maxColumns);
+    if (!visualCol) {
+        return std::nullopt;
+    }
+
+    const std::size_t col = gutterWidth + static_cast<std::size_t>(*visualCol);
+    if (sizeIsKnown && col >= static_cast<std::size_t>(sizeNow.width)) {
+        return std::nullopt; // scrolled off horizontally; no horizontal scroll in v1
+    }
+    return Point{.x = static_cast<int>(col), .y = static_cast<int>(pointLine - topLine_)};
+}
+
+bool BufferView::Focusable() const {
+    return true; // was FocusPolicy::Strong
+}
+
+bool BufferView::OnEvent(ftxui::Event event) {
+    if (event.is_mouse()) {
+        return OnMouseEvent(event);
+    }
+    return OnKeyEvent(event);
+}
+
+bool BufferView::OnKeyEvent(ftxui::Event event) {
+    const auto chord = TranslateKey(event);
+    if (!chord) {
+        return false;
+    }
+
     if (inputMode_ == InputMode::IsearchForward || inputMode_ == InputMode::IsearchBackward) {
-        HandleSearchKey(key);
-        return;
+        HandleSearchKey(*chord);
+        return true;
     }
     if (inputMode_ == InputMode::QueryReplace) {
-        HandleQueryReplaceKey(key);
-        return;
+        HandleQueryReplaceKey(*chord);
+        return true;
     }
     if (inputMode_ == InputMode::ProjectReplace) {
-        HandleProjectReplaceKey(key);
-        return;
+        HandleProjectReplaceKey(*chord);
+        return true;
     }
     if (inputMode_ == InputMode::ConfirmQuit) {
-        HandleConfirmQuitKey(key);
-        return;
+        HandleConfirmQuitKey(*chord);
+        return true;
     }
     if (inputMode_ == InputMode::ConfirmCloseBuffer) {
-        HandleConfirmCloseBufferKey(key);
-        return;
+        HandleConfirmCloseBufferKey(*chord);
+        return true;
     }
     if (inputMode_ == InputMode::FindFile || inputMode_ == InputMode::SwitchToBuffer ||
         inputMode_ == InputMode::ProjectSearch || inputMode_ == InputMode::CreateDirectory ||
         inputMode_ == InputMode::FindScratch) {
-        HandlePromptKey(key);
-        return;
+        HandlePromptKey(*chord);
+        return true;
     }
     if (inputMode_ == InputMode::DeleteFile) {
-        HandleDeleteFileKey(key);
-        return;
+        HandleDeleteFileKey(*chord);
+        return true;
     }
     if (inputMode_ == InputMode::RenameFile) {
-        HandleRenameFileKey(key);
-        return;
-    }
-
-    const auto chord = TranslateKey(key);
-    if (!chord) {
-        return;
+        HandleRenameFileKey(*chord);
+        return true;
     }
 
     editor::CommandContext context = MakeContext();
-    context.viewportHeight         = this->size.height > 0 ? static_cast<std::size_t>(this->size.height) : 0;
+    context.viewportHeight         = size().height > 0 ? static_cast<std::size_t>(size().height) : 0;
 
     try {
         dispatcher_.Feed(*chord, context);
@@ -461,16 +555,27 @@ void BufferView::key_press(ox::Key key) {
     }
 
     if (context.quit) {
-        ox::Application::quit(0);
-        return;
+        // Active() is nullptr outside a live ScreenInteractive::Loop() --
+        // every unit test, and any other headless use of BufferView. It is
+        // never null during real, running-editor usage (main.cpp's own
+        // screen.Loop(head) is what drives every key_press that could ever
+        // set context.quit in the first place), but skipping the null check
+        // entirely crashed the whole process the instant a test exercised
+        // `quit` -- confirmed via a real SIGSEGV while porting this file's
+        // own test suite off TermOx, not assumed.
+        if (ftxui::ScreenInteractive* screen = ftxui::ScreenInteractive::Active()) {
+            screen->Exit();
+        }
+        return true;
     }
 
     if (context.interactiveRequest != editor::InteractiveRequest::None) {
         StartInteractiveSession(context.interactiveRequest);
-        return;
+        return true;
     }
 
     ScrollToShowPoint();
+    return true;
 }
 
 void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
@@ -525,11 +630,11 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             statusMessage_ = projectReplace_->StatusText();
             return;
         case editor::InteractiveRequest::ToggleProjectSidebar:
+            // Flipping .active alone is sufficient -- unlike the
+            // pre-migration version, no forced-reflow equivalent is needed
+            // (see BufferView.h's own comment on SetProjectSidebar).
             if (projectSidebar_ != nullptr) {
                 projectSidebar_->active = !projectSidebar_->active;
-                if (sidebarRow_ != nullptr) {
-                    sidebarRow_->resize(sidebarRow_->size); // see SetSidebarRow -- active alone doesn't reflow
-                }
             }
             return;
         case editor::InteractiveRequest::CreateDirectory:
@@ -575,34 +680,29 @@ void BufferView::EndInteractiveSession() {
     ScrollToShowPoint();
 }
 
-void BufferView::HandleSearchKey(ox::Key key) {
-    const auto chord = TranslateKey(key);
-    if (!chord) {
-        return;
-    }
-
-    if (chord->Special == editor::SpecialKey::Enter) {
+void BufferView::HandleSearchKey(const editor::KeyChord& chord) {
+    if (chord.Special == editor::SpecialKey::Enter) {
         search_->Accept();
         EndInteractiveSession();
         return;
     }
-    if (IsQuit(*chord)) {
+    if (IsQuit(chord)) {
         search_->Cancel();
         EndInteractiveSession();
         return;
     }
 
-    if (chord->Special == editor::SpecialKey::Backspace) {
+    if (chord.Special == editor::SpecialKey::Backspace) {
         search_->DeleteChar();
     }
-    else if (chord->Control && chord->Codepoint == U's' && inputMode_ == InputMode::IsearchForward) {
+    else if (chord.Control && chord.Codepoint == U's' && inputMode_ == InputMode::IsearchForward) {
         search_->RepeatSearch();
     }
-    else if (chord->Control && chord->Codepoint == U'r' && inputMode_ == InputMode::IsearchBackward) {
+    else if (chord.Control && chord.Codepoint == U'r' && inputMode_ == InputMode::IsearchBackward) {
         search_->RepeatSearch();
     }
-    else if (IsPlainCharacter(*chord)) {
-        search_->AppendChar(chord->Codepoint);
+    else if (IsPlainCharacter(chord)) {
+        search_->AppendChar(chord.Codepoint);
     }
     // Anything else (arrow keys, unrelated control combos) is ignored mid-search.
 
@@ -610,16 +710,11 @@ void BufferView::HandleSearchKey(ox::Key key) {
     ScrollToShowPoint();
 }
 
-void BufferView::HandleQueryReplaceKey(ox::Key key) {
-    const auto chord = TranslateKey(key);
-    if (!chord) {
-        return;
-    }
-
+void BufferView::HandleQueryReplaceKey(const editor::KeyChord& chord) {
     const auto stage = queryReplace_->CurrentStage();
 
     if (stage == editor::QueryReplace::Stage::EnteringPattern || stage == editor::QueryReplace::Stage::EnteringReplacement) {
-        if (chord->Special == editor::SpecialKey::Enter) {
+        if (chord.Special == editor::SpecialKey::Enter) {
             if (stage == editor::QueryReplace::Stage::EnteringPattern) {
                 try {
                     queryReplace_->ConfirmPattern();
@@ -633,27 +728,27 @@ void BufferView::HandleQueryReplaceKey(ox::Key key) {
                 queryReplace_->ConfirmReplacement();
             }
         }
-        else if (IsQuit(*chord)) {
+        else if (IsQuit(chord)) {
             queryReplace_->Cancel();
         }
-        else if (chord->Special == editor::SpecialKey::Backspace) {
+        else if (chord.Special == editor::SpecialKey::Backspace) {
             queryReplace_->DeleteChar();
         }
-        else if (IsPlainCharacter(*chord)) {
-            queryReplace_->AppendChar(chord->Codepoint);
+        else if (IsPlainCharacter(chord)) {
+            queryReplace_->AppendChar(chord.Codepoint);
         }
     }
     else if (stage == editor::QueryReplace::Stage::Confirming) {
-        if (chord->Codepoint == U'y') {
+        if (chord.Codepoint == U'y') {
             queryReplace_->ReplaceAndNext();
         }
-        else if (chord->Codepoint == U'n') {
+        else if (chord.Codepoint == U'n') {
             queryReplace_->SkipAndNext();
         }
-        else if (chord->Codepoint == U'!') {
+        else if (chord.Codepoint == U'!') {
             queryReplace_->ReplaceAll();
         }
-        else if (chord->Codepoint == U'q' || IsQuit(*chord)) {
+        else if (chord.Codepoint == U'q' || IsQuit(chord)) {
             queryReplace_->Finish();
         }
     }
@@ -668,13 +763,8 @@ void BufferView::HandleQueryReplaceKey(ox::Key key) {
     ScrollToShowPoint();
 }
 
-void BufferView::HandlePromptKey(ox::Key key) {
-    const auto chord = TranslateKey(key);
-    if (!chord) {
-        return;
-    }
-
-    if (chord->Special == editor::SpecialKey::Enter) {
+void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
+    if (chord.Special == editor::SpecialKey::Enter) {
         const std::string input = prompt_->Text();
 
         if (inputMode_ == InputMode::FindFile) {
@@ -701,6 +791,9 @@ void BufferView::HandlePromptKey(ox::Key key) {
             try {
                 editor::CreateProjectDirectory(input);
                 statusMessage_ = "Created directory " + input;
+                if (projectSidebar_) {
+                    projectSidebar_->InvalidateTree();
+                }
             }
             catch (const std::exception& e) {
                 statusMessage_ = e.what();
@@ -744,22 +837,22 @@ void BufferView::HandlePromptKey(ox::Key key) {
         EndInteractiveSession();
         return;
     }
-    if (IsQuit(*chord)) {
+    if (IsQuit(chord)) {
         statusMessage_.clear();
         EndInteractiveSession();
         return;
     }
-    if (chord->Special == editor::SpecialKey::Tab && inputMode_ != InputMode::ProjectSearch &&
+    if (chord.Special == editor::SpecialKey::Tab && inputMode_ != InputMode::ProjectSearch &&
         inputMode_ != InputMode::CreateDirectory) {
         CompletePrompt();
         return;
     }
 
-    if (chord->Special == editor::SpecialKey::Backspace) {
+    if (chord.Special == editor::SpecialKey::Backspace) {
         prompt_->DeleteChar();
     }
-    else if (IsPlainCharacter(*chord)) {
-        prompt_->AppendChar(chord->Codepoint);
+    else if (IsPlainCharacter(chord)) {
+        prompt_->AppendChar(chord.Codepoint);
     }
     // Anything else is ignored -- stay in the prompt.
 
@@ -840,13 +933,8 @@ void BufferView::BuildResultsBuffer(const std::vector<editor::SearchMatch>& matc
     activeBuffer_.Set(results);
 }
 
-void BufferView::HandleProjectReplaceKey(ox::Key key) {
-    const auto chord = TranslateKey(key);
-    if (!chord) {
-        return;
-    }
-
-    if (IsQuit(*chord)) {
+void BufferView::HandleProjectReplaceKey(const editor::KeyChord& chord) {
+    if (IsQuit(chord)) {
         projectReplace_->Cancel();
         statusMessage_ = "Project replace cancelled.";
         EndInteractiveSession();
@@ -857,7 +945,7 @@ void BufferView::HandleProjectReplaceKey(ox::Key key) {
 
     if (stage == editor::ProjectReplace::Stage::EnteringPattern ||
         stage == editor::ProjectReplace::Stage::EnteringReplacement) {
-        if (chord->Special == editor::SpecialKey::Enter) {
+        if (chord.Special == editor::SpecialKey::Enter) {
             if (stage == editor::ProjectReplace::Stage::EnteringPattern) {
                 try {
                     projectReplace_->ConfirmPattern();
@@ -878,11 +966,11 @@ void BufferView::HandleProjectReplaceKey(ox::Key key) {
                 projectReplace_->ConfirmReplacement();
             }
         }
-        else if (chord->Special == editor::SpecialKey::Backspace) {
+        else if (chord.Special == editor::SpecialKey::Backspace) {
             projectReplace_->DeleteChar();
         }
-        else if (IsPlainCharacter(*chord)) {
-            projectReplace_->AppendChar(chord->Codepoint);
+        else if (IsPlainCharacter(chord)) {
+            projectReplace_->AppendChar(chord.Codepoint);
         }
 
         statusMessage_ = projectReplace_->StatusText();
@@ -894,14 +982,14 @@ void BufferView::HandleProjectReplaceKey(ox::Key key) {
     }
 
     // Confirming: a single whole-batch y/n, not QueryReplace's per-match y/n/!/q.
-    if (chord->Codepoint == U'y') {
+    if (chord.Codepoint == U'y') {
         const editor::ReplaceSummary summary = projectReplace_->Confirm();
         statusMessage_                       = "Replaced " + std::to_string(summary.replacementCount) + " occurrence" +
                                                (summary.replacementCount == 1 ? "" : "s") + " in " + std::to_string(summary.filesChanged) +
                                                " file" + (summary.filesChanged == 1 ? "" : "s") + ".";
         EndInteractiveSession();
     }
-    else if (chord->Codepoint == U'n') {
+    else if (chord.Codepoint == U'n') {
         projectReplace_->Cancel();
         statusMessage_ = "Project replace cancelled.";
         EndInteractiveSession();
@@ -909,9 +997,9 @@ void BufferView::HandleProjectReplaceKey(ox::Key key) {
     // Anything else is ignored -- stay in Confirming.
 }
 
-std::size_t BufferView::ByteOffsetForMouse(ox::Mouse mouse) const {
-    const std::size_t line        = topLine_ + static_cast<std::size_t>(std::max(mouse.at.y, 0));
-    const std::size_t x           = static_cast<std::size_t>(std::max(mouse.at.x, 0));
+std::size_t BufferView::ByteOffsetForPoint(Point at) const {
+    const std::size_t line        = topLine_ + static_cast<std::size_t>(std::max(at.y, 0));
+    const std::size_t x           = static_cast<std::size_t>(std::max(at.x, 0));
     const std::size_t gutterWidth = GutterWidth();
     // A click inside the gutter itself lands on that line's first column,
     // same as clicking right at the start of the line's text.
@@ -924,73 +1012,70 @@ std::size_t BufferView::GutterWidth() const {
     return std::to_string(totalLines).size() + 1; // digits + one separating column
 }
 
-void BufferView::mouse_press(ox::Mouse mouse) {
-    LogMouseEvent("press", mouse);
+bool BufferView::OnMouseEvent(ftxui::Event event) {
+    const ftxui::Mouse& rawMouse = event.mouse();
+    LogMouseEvent(MouseEventTag(rawMouse), rawMouse);
 
-    if (inputMode_ != InputMode::Normal || mouse.button != ox::Mouse::Button::Left) {
-        return;
-    }
-
-    text::Buffer&     buffer = activeBuffer_.Get();
-    const std::size_t offset = ByteOffsetForMouse(mouse);
-    buffer.ClearMark();
-    buffer.SetPoint(offset);
-    dragAnchor_ = offset;
-}
-
-void BufferView::mouse_release(ox::Mouse mouse) {
-    LogMouseEvent("release", mouse);
-
-    // A growing sidebar-resize drag (round-2 sidebar follow-up) can end with
-    // the cursor over BufferView, not ProjectSidebar itself -- see
-    // ProjectSidebar's own header comment for why (no mouse-capture in
-    // TermOx). Ending it here regardless of inputMode_/button takes
-    // priority over BufferView's own release handling, which currently has
-    // none anyway.
+    // A growing sidebar-resize drag (round-2 sidebar follow-up) can deliver
+    // move/release events while the cursor is over BufferView, not
+    // ProjectSidebar itself -- checked first, regardless of position (every
+    // leaf widget receives every mouse event in FTXUI; see Widget.h's own
+    // header comment), taking priority over BufferView's own handling.
     if (projectSidebar_ != nullptr && projectSidebar_->IsResizing()) {
-        projectSidebar_->EndResize();
-        return;
+        if (rawMouse.motion == ftxui::Mouse::Moved) {
+            projectSidebar_->UpdateResize(rawMouse.x);
+            return true;
+        }
+        if (rawMouse.motion == ftxui::Mouse::Released) {
+            projectSidebar_->EndResize();
+            return true;
+        }
     }
+
+    const auto mouse = LocalMouseEvent(event);
+    if (!mouse) {
+        return false;
+    }
+
+    // Wheel scrolls the viewport without moving point, regardless of
+    // InputMode -- unlike click/drag below, which only make sense in
+    // Normal mode.
+    if (mouse->button == ftxui::Mouse::WheelUp || mouse->button == ftxui::Mouse::WheelDown) {
+        constexpr std::size_t kWheelScrollLines = 3;
+        if (mouse->button == ftxui::Mouse::WheelUp) {
+            SetTopLine((topLine_ > kWheelScrollLines) ? topLine_ - kWheelScrollLines : 0);
+        }
+        else {
+            SetTopLine(topLine_ + kWheelScrollLines);
+        }
+        return true;
+    }
+
+    if (inputMode_ != InputMode::Normal || mouse->button != ftxui::Mouse::Left) {
+        return false;
+    }
+
+    if (mouse->motion == ftxui::Mouse::Pressed) {
+        text::Buffer&     buffer = activeBuffer_.Get();
+        const std::size_t offset = ByteOffsetForPoint(mouse->at);
+        buffer.ClearMark();
+        buffer.SetPoint(offset);
+        dragAnchor_ = offset;
+        return true;
+    }
+    if (mouse->motion == ftxui::Mouse::Moved) {
+        text::Buffer& buffer = activeBuffer_.Get();
+        if (!buffer.HasMark()) {
+            buffer.SetMark(dragAnchor_);
+        }
+        buffer.SetPoint(ByteOffsetForPoint(mouse->at));
+        ScrollToShowPoint();
+        return true;
+    }
+    return false; // Released -- no behavior beyond the resize handoff above
 }
 
-void BufferView::mouse_move(ox::Mouse mouse) {
-    LogMouseEvent("move", mouse);
-
-    // Same handoff as mouse_release above: a growing resize drag delivers
-    // its move events here once the cursor crosses out of ProjectSidebar's
-    // bounds. Checked before the InputMode/button gate below since a resize
-    // in progress always takes priority over normal selection handling.
-    if (projectSidebar_ != nullptr && projectSidebar_->IsResizing()) {
-        projectSidebar_->UpdateResize(this->at.x + mouse.at.x);
-        return;
-    }
-
-    if (inputMode_ != InputMode::Normal || mouse.button != ox::Mouse::Button::Left) {
-        return;
-    }
-
-    text::Buffer& buffer = activeBuffer_.Get();
-    if (!buffer.HasMark()) {
-        buffer.SetMark(dragAnchor_);
-    }
-    buffer.SetPoint(ByteOffsetForMouse(mouse));
-    ScrollToShowPoint();
-}
-
-void BufferView::mouse_wheel(ox::Mouse mouse) {
-    LogMouseEvent("wheel", mouse);
-
-    constexpr std::size_t kWheelScrollLines = 3;
-
-    if (mouse.button == ox::Mouse::Button::ScrollUp) {
-        SetTopLine((topLine_ > kWheelScrollLines) ? topLine_ - kWheelScrollLines : 0);
-    }
-    else if (mouse.button == ox::Mouse::Button::ScrollDown) {
-        SetTopLine(topLine_ + kWheelScrollLines);
-    }
-}
-
-void BufferView::LogMouseEvent(std::string_view event, ox::Mouse mouse) const {
+void BufferView::LogMouseEvent(std::string_view event, const ftxui::Mouse& mouse) const {
     if (!debugMouseLogPath_) {
         return;
     }
@@ -1001,23 +1086,27 @@ void BufferView::LogMouseEvent(std::string_view event, ox::Mouse mouse) const {
     }
 
     const text::Buffer& buffer = activeBuffer_.Get();
-    log << event << " at=(" << mouse.at.x << ',' << mouse.at.y << ')' << " button=" << static_cast<int>(mouse.button)
+    // mouse.x/y are absolute (screen-space) coordinates here, unlike the
+    // pre-migration version's already-widget-local ox::Mouse::at -- FTXUI
+    // doesn't translate mouse coordinates before delivery (see Widget.h's
+    // own header comment), and this logs the raw event as received, before
+    // LocalMouseEvent's own translation.
+    log << event << " at=(" << mouse.x << ',' << mouse.y << ')' << " button=" << static_cast<int>(mouse.button)
         << " inputMode=" << static_cast<int>(inputMode_) << " point=" << buffer.Point()
         << " mark=" << (buffer.HasMark() ? static_cast<long long>(buffer.Mark()) : -1LL) << " topLine=" << topLine_
-        << " size=" << this->size.width << 'x' << this->size.height << '\n';
+        << " size=" << size().width << 'x' << size().height << '\n';
 }
 
-void BufferView::HandleConfirmQuitKey(ox::Key key) {
-    const auto chord = TranslateKey(key);
-    if (!chord) {
+void BufferView::HandleConfirmQuitKey(const editor::KeyChord& chord) {
+    if (chord.Codepoint == U'y' || chord.Codepoint == U'Y') {
+        // See the identical null check in OnKeyEvent's own context.quit
+        // branch for why this is required, not defensive.
+        if (ftxui::ScreenInteractive* screen = ftxui::ScreenInteractive::Active()) {
+            screen->Exit();
+        }
         return;
     }
-
-    if (chord->Codepoint == U'y' || chord->Codepoint == U'Y') {
-        ox::Application::quit(0);
-        return;
-    }
-    if (chord->Codepoint == U'n' || chord->Codepoint == U'N' || IsQuit(*chord)) {
+    if (chord.Codepoint == U'n' || chord.Codepoint == U'N' || IsQuit(chord)) {
         statusMessage_ = "Quit cancelled.";
         EndInteractiveSession();
         return;
@@ -1041,13 +1130,8 @@ void BufferView::RequestCloseBuffer(text::Buffer& buffer) {
     statusMessage_ = "Buffer \"" + buffer.Name() + "\" has unsaved changes; close anyway? (y/n)";
 }
 
-void BufferView::HandleConfirmCloseBufferKey(ox::Key key) {
-    const auto chord = TranslateKey(key);
-    if (!chord) {
-        return;
-    }
-
-    if (chord->Codepoint == U'y' || chord->Codepoint == U'Y') {
+void BufferView::HandleConfirmCloseBufferKey(const editor::KeyChord& chord) {
+    if (chord.Codepoint == U'y' || chord.Codepoint == U'Y') {
         text::Buffer* buffer = pendingClose_;
         EndInteractiveSession(); // clears pendingClose_ and inputMode_ before CloseBufferNow touches activeBuffer_
         if (buffer != nullptr) {
@@ -1055,7 +1139,7 @@ void BufferView::HandleConfirmCloseBufferKey(ox::Key key) {
         }
         return;
     }
-    if (chord->Codepoint == U'n' || chord->Codepoint == U'N' || IsQuit(*chord)) {
+    if (chord.Codepoint == U'n' || chord.Codepoint == U'N' || IsQuit(chord)) {
         statusMessage_ = "Close cancelled.";
         EndInteractiveSession();
         return;
@@ -1063,14 +1147,9 @@ void BufferView::HandleConfirmCloseBufferKey(ox::Key key) {
     // Anything else is ignored -- stay in the prompt.
 }
 
-void BufferView::HandleDeleteFileKey(ox::Key key) {
-    const auto chord = TranslateKey(key);
-    if (!chord) {
-        return;
-    }
-
+void BufferView::HandleDeleteFileKey(const editor::KeyChord& chord) {
     if (deleteStage_ == DeleteFileStage::EnteringPath) {
-        if (chord->Special == editor::SpecialKey::Enter) {
+        if (chord.Special == editor::SpecialKey::Enter) {
             const std::string input = prompt_->Text();
             if (!std::filesystem::exists(input)) {
                 statusMessage_ = "No such file or directory: " + input;
@@ -1083,26 +1162,29 @@ void BufferView::HandleDeleteFileKey(ox::Key key) {
             statusMessage_ = "Delete \"" + deleteTarget_.string() + "\"? (y/n)";
             return;
         }
-        if (IsQuit(*chord)) {
+        if (IsQuit(chord)) {
             statusMessage_.clear();
             EndInteractiveSession();
             return;
         }
-        if (chord->Special == editor::SpecialKey::Backspace) {
+        if (chord.Special == editor::SpecialKey::Backspace) {
             prompt_->DeleteChar();
         }
-        else if (IsPlainCharacter(*chord)) {
-            prompt_->AppendChar(chord->Codepoint);
+        else if (IsPlainCharacter(chord)) {
+            prompt_->AppendChar(chord.Codepoint);
         }
         statusMessage_ = prompt_->StatusText();
         return;
     }
 
     // Confirming
-    if (chord->Codepoint == U'y' || chord->Codepoint == U'Y') {
+    if (chord.Codepoint == U'y' || chord.Codepoint == U'Y') {
         try {
             editor::DeleteProjectPath(deleteTarget_);
             statusMessage_ = "Deleted " + deleteTarget_.string();
+            if (projectSidebar_) {
+                projectSidebar_->InvalidateTree();
+            }
         }
         catch (const std::exception& e) {
             statusMessage_ = e.what();
@@ -1110,7 +1192,7 @@ void BufferView::HandleDeleteFileKey(ox::Key key) {
         EndInteractiveSession();
         return;
     }
-    if (chord->Codepoint == U'n' || chord->Codepoint == U'N' || IsQuit(*chord)) {
+    if (chord.Codepoint == U'n' || chord.Codepoint == U'N' || IsQuit(chord)) {
         statusMessage_ = "Delete cancelled.";
         EndInteractiveSession();
         return;
@@ -1118,13 +1200,8 @@ void BufferView::HandleDeleteFileKey(ox::Key key) {
     // Anything else is ignored -- stay in the prompt.
 }
 
-void BufferView::HandleRenameFileKey(ox::Key key) {
-    const auto chord = TranslateKey(key);
-    if (!chord) {
-        return;
-    }
-
-    if (chord->Special == editor::SpecialKey::Enter) {
+void BufferView::HandleRenameFileKey(const editor::KeyChord& chord) {
+    if (chord.Special == editor::SpecialKey::Enter) {
         const std::string input = prompt_->Text();
 
         if (renameStage_ == RenameFileStage::EnteringSource) {
@@ -1179,6 +1256,9 @@ void BufferView::HandleRenameFileKey(ox::Key key) {
             }
 
             statusMessage_ = "Renamed to " + destination.string();
+            if (projectSidebar_) {
+                projectSidebar_->InvalidateTree();
+            }
         }
         catch (const std::exception& e) {
             statusMessage_ = e.what();
@@ -1186,16 +1266,16 @@ void BufferView::HandleRenameFileKey(ox::Key key) {
         EndInteractiveSession();
         return;
     }
-    if (IsQuit(*chord)) {
+    if (IsQuit(chord)) {
         statusMessage_.clear();
         EndInteractiveSession();
         return;
     }
-    if (chord->Special == editor::SpecialKey::Backspace) {
+    if (chord.Special == editor::SpecialKey::Backspace) {
         prompt_->DeleteChar();
     }
-    else if (IsPlainCharacter(*chord)) {
-        prompt_->AppendChar(chord->Codepoint);
+    else if (IsPlainCharacter(chord)) {
+        prompt_->AppendChar(chord.Codepoint);
     }
     statusMessage_ = prompt_->StatusText();
 }
@@ -1235,8 +1315,8 @@ void BufferView::ScrollToShowPoint() {
     if (pointLine < topLine_) {
         topLine_ = pointLine;
     }
-    else if (this->size.height > 0) {
-        const auto visibleLines = static_cast<std::size_t>(this->size.height);
+    else if (size().height > 0) {
+        const auto visibleLines = static_cast<std::size_t>(size().height);
         if (pointLine >= topLine_ + visibleLines) {
             topLine_ = pointLine - visibleLines + 1;
         }
@@ -1253,11 +1333,11 @@ void BufferView::SetTopLine(std::size_t line) {
 
 std::size_t BufferView::MaxTopLine() const {
     const std::size_t totalLines   = activeBuffer_.Get().Content().LineCount();
-    const auto        visibleLines = this->size.height > 0 ? static_cast<std::size_t>(this->size.height) : 0;
+    const auto        visibleLines = size().height > 0 ? static_cast<std::size_t>(size().height) : 0;
     return (totalLines > visibleLines) ? totalLines - visibleLines : 0;
 }
 
-void BufferView::SetScrollBar(ox::ScrollBar* scrollBar) {
+void BufferView::SetScrollBar(ScrollBar* scrollBar) {
     scrollBar_ = scrollBar;
 }
 
@@ -1268,10 +1348,6 @@ void BufferView::SetScrollArrows(ScrollArrowButton* up, ScrollArrowButton* down)
 
 void BufferView::SetProjectSidebar(ProjectSidebar* sidebar) {
     projectSidebar_ = sidebar;
-}
-
-void BufferView::SetSidebarRow(ox::Widget* sidebarRow) {
-    sidebarRow_ = sidebarRow;
 }
 
 bool BufferView::InSelection(std::size_t byteOffset) const {

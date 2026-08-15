@@ -37,9 +37,9 @@ struct Size {
 // mirrors ox::Canvas's own role exactly.
 class Canvas {
   public:
-    Canvas(ftxui::Screen& screen, ftxui::Box box)
-        : screen_(screen), box_(box),
-          size_{std::max(0, box.x_max - box.x_min + 1), std::max(0, box.y_max - box.y_min + 1)} {}
+    Canvas(ftxui::Screen& screen, ftxui::Box box) : screen_(screen), box_(box),
+                                                    size_{std::max(0, box.x_max - box.x_min + 1), std::max(0, box.y_max - box.y_min + 1)} {
+    }
 
     [[nodiscard]] const Size& size() const {
         return size_;
@@ -71,12 +71,12 @@ class Canvas {
 // exactly these fields; button/motion reuse FTXUI's own enums directly
 // rather than redefining equivalents.
 struct MouseEvent {
-    Point                 at; // LOCAL to the widget, like ox::Mouse::at was
-    ftxui::Mouse::Button  button;
-    ftxui::Mouse::Motion  motion;
-    bool                  shift   = false;
-    bool                  meta    = false;
-    bool                  control = false;
+    Point                at; // LOCAL to the widget, like ox::Mouse::at was
+    ftxui::Mouse::Button button;
+    ftxui::Mouse::Motion motion;
+    bool                 shift   = false;
+    bool                 meta    = false;
+    bool                 control = false;
 };
 
 // The replacement for ox::Widget. Every Source/UI/ widget derives from this
@@ -127,11 +127,11 @@ class Widget : public ftxui::ComponentBase {
     // just an internal framework seam, so the slightly looser access is a
     // reasonable, deliberate trade against friend-declaration ceremony.
     void SetBox_(ftxui::Box box) {
-        box_               = box;
+        box_ = box;
         const Size newSize{std::max(0, box.x_max - box.x_min + 1), std::max(0, box.y_max - box.y_min + 1)};
         if (newSize.width != size_.width || newSize.height != size_.height) {
             const Size previous = size_;
-            size_                = newSize;
+            size_               = newSize;
             OnResize(previous);
         }
     }
@@ -164,7 +164,8 @@ class Widget : public ftxui::ComponentBase {
     // Override for widgets that need to react to a size change explicitly
     // (mirrors ox::Widget::resize(previous_size), which some widgets used
     // to reflow cached layout state) -- default no-op.
-    virtual void OnResize(Size /*previous*/) {}
+    virtual void OnResize(Size /*previous*/) {
+    }
 
     // Minimum size this widget reports to FTXUI's layout system --
     // ox::Widget's own SizePolicy was set per-instance at construction, but
@@ -176,6 +177,26 @@ class Widget : public ftxui::ComponentBase {
     // once main.cpp's own override was applied.
     virtual Size MinimumSize() const {
         return Size{0, 0};
+    }
+
+    // Local (widget-relative) position the real terminal cursor should be
+    // placed at, or std::nullopt to leave it hidden -- was ox::Widget's own
+    // `cursor` field. Confirmed against FTXUI's real dom/frame.cpp (not
+    // guessed): a Node reports a desired cursor position/shape by setting
+    // requirement_.focused.{enabled,box,cursor_shape} in ComputeRequirement,
+    // which is how PaintNode (Widget.cpp) wires this in. Only BufferView
+    // overrides this today.
+    virtual std::optional<Point> CursorPosition() const {
+        return std::nullopt;
+    }
+
+    // Cursor glyph shape -- Bar (a thin vertical caret) rather than Block,
+    // matching how most modern GUI text editors render an insertion point;
+    // TermOx's own ox::Widget::cursor had no shape concept at all to match
+    // against, so this is a deliberate small visual upgrade, not a parity
+    // requirement (the user gave explicit latitude for this kind of thing).
+    virtual ftxui::Screen::Cursor::Shape CursorShape() const {
+        return ftxui::Screen::Cursor::Bar;
     }
 
   private:

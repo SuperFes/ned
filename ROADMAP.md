@@ -7,7 +7,8 @@ keymaps, modes, minibuffer, kill-ring, undo, isearch, "everything is a programma
 command") with obvious exceptions where 45 years of Elisp packages don't translate.
 Janet fills Elisp's role — the whole editor is a Janet-scriptable environment, not a
 C++ app with a config file bolted on. Implementation is modern, memory-safe C++23
-(stdlib containers/smart pointers, no raw `new`/`delete` in editor code). TermOx gets
+(stdlib containers/smart pointers, no raw `new`/`delete` in editor code). The terminal UI
+is rendered with FTXUI (migrated from TermOx in Phase 7 — see that phase's own entry),
 pushed toward gradients/fades/advanced theming, but only after the editing core works.
 
 ## Guiding constraints (apply to every phase)
@@ -27,14 +28,15 @@ pushed toward gradients/fades/advanced theming, but only after the editing core 
   (default `~/.local/state`) — always under a `ned/` subdirectory, always reading the
   env var first and falling back to the spec default. Applies the first time any phase
   needs to read/write a file outside the project or an explicitly-given path.
-- **Keep `Source/UI/` loosely coupled from TermOx specifics where it's cheap to do so.**
-  No retroactive refactor of existing widgets, and no new abstraction layer built ahead
-  of need — but when a choice is free or nearly free, prefer the one that doesn't wire a
-  TermOx-specific type/idiom deeper into `Source/Editor/`-facing code than it needs to
-  be. Motivated by a real, planned future migration to FTXUI (see the "TUI library:
-  migrate from TermOx to FTXUI" entry near the end of this file) — the goal is that
-  migration being a contained, `Source/UI/`-scoped rewrite rather than one that also
-  touches `Source/Editor/`/`Source/Text/`/`Source/Janet/`.
+- **Keep `Source/UI/` loosely coupled from the TUI library's own specifics where it's
+  cheap to do so.** No retroactive refactor of existing widgets, and no new abstraction
+  layer built ahead of need — but when a choice is free or nearly free, prefer the one
+  that doesn't wire a TUI-library-specific type/idiom deeper into `Source/Editor/`-facing
+  code than it needs to be. This constraint did its job once already: it's exactly what
+  kept the Phase 7 TermOx → FTXUI migration a contained, `Source/UI/`-scoped rewrite
+  that never touched `Source/Editor/`/`Source/Text/`/`Source/Janet/` — see that phase's
+  own entry for how it played out. Kept as a standing constraint rather than retired,
+  since the same discipline is what would make any *future* TUI library swap cheap too.
 
 ## Phase 0 — Foundations
 - [x] Bump `CMAKE_CXX_STANDARD` to 23; confirm TermOx/Janet build cleanly under it.
@@ -366,7 +368,7 @@ limitation documented in Phase 4.
   modern editors' default) and only strips a UTF-8 BOM; no encoding-sniffing.
 - **Highlighting is one proof-of-concept mode, not a language-highlighting subsystem.**
   `JanetMode`'s highlighter is a hand-written byte-scanning state machine covering `#`
-  comments and `"string"` literals — real language support is Phase 8's tree-sitter
+  comments and `"string"` literals — real language support is Phase 9's tree-sitter
   item.
 
 167 test cases total across Phases 0–5, clean under `-DNED_ENABLE_SANITIZERS=ON`, plus a
@@ -675,7 +677,7 @@ the rendered gutter).
 ## Unsaved-changes safety net, and a mouse-selection follow-on fix — done
 
 User asked "what's next" after the mouse/gutter/file-creation work; recommended (with
-reasoning, not just picked) this over Phase 7/8 candidates: no unsaved-changes
+reasoning, not just picked) this over Phase 8/9 candidates: no unsaved-changes
 protection at all (`quit` silently discarded edits) and no way to open a second file or
 switch buffers without relaunching. User picked the unsaved-changes fix to start.
 While dogfooding it, a second real bug surfaced (mouse-drag selection never collapsing
@@ -852,7 +854,7 @@ names.
 
 ## Tab bar — done
 
-User request, added to the Phase 8 wishlist and implemented the same day: a visual
+User request, added to the Phase 9 wishlist and implemented the same day: a visual
 complement to `switch-to-buffer`, not a replacement for it -- there's still no way to
 close a buffer from the tab bar, and no drag-to-reorder.
 
@@ -1026,7 +1028,7 @@ stopped exactly at release with no further drift; repeated the same for the up a
 
 ## Format-on-save — done
 
-Picked from the Phase 8 wishlist ("Format-on-save via external formatters," under Editor
+Picked from the Phase 9 wishlist ("Format-on-save via external formatters," under Editor
 ergonomics) after the scroll-bar/gutter/tab-completion follow-ups were all done and there
 was no other small, already-scoped item left -- the rest of the backlog is genuinely
 open-ended (Dired-like file browser, fuzzy finder, tree-sitter, LSP, ...), so this was
@@ -1084,7 +1086,7 @@ command failed)`.
 
 ## Project-wide search — done
 
-Picked from the Phase 8 wishlist ("Project-wide search and replace," under Navigation &
+Picked from the Phase 9 wishlist ("Project-wide search and replace," under Navigation &
 search) after format-on-save, with no other small pre-scoped item left. Bigger than the
 last several passes, so scope was discussed and narrowed up front rather than after the
 fact: **search only**, with project-wide **replace** explicitly deferred (see the Phase
@@ -2503,7 +2505,209 @@ mode too. Both are the same underlying mechanism widened, not two separate featu
       verified clean. Manual `screen` smoke test: opened a real `.h` file, confirmed
       `(c-mode)` rendered in the mode line.
 
-## Phase 7 — Emacs feature parity + Org-like structured editing
+## Phase 7 — TermOx → FTXUI migration — done
+
+Promoted from the "planned, unsequenced" backlog to the immediate next phase mid-session,
+ahead of the original Phase 7 (Emacs parity, which shifted to Phase 8) and the original
+Phase 8 (Zed-inspired wishlist, shifted to Phase 9) — the user's own words, after
+dogfooding the editor daily: "I have been using the editor, and the input processing is a
+big problem for me, let's reorder the phases... target the largest breaking changes
+first, since we won't be able to test much while breakages exist... feel free to use
+modern TUI elements as you're working through here, it's not 1970 anymore, we can really
+make things look modern, even in the terminal." TermOx had already been evaluated against
+FTXUI/notcurses once and kept (see "TermOx vs alternatives," evaluated 2026-08-14); the
+same memory file was updated afterward with the reversal, once real use — not just
+source-reading — showed FTXUI's benefits outweighing the cost. The two real,
+source-verified gaps that tipped this from "aspirational" to "worth doing now": TermOx has
+no overlay/popup/modal widget concept at all (every widget gets a fixed rectangle from its
+parent `Row`/`Column`, confirmed while scoping the project sidebar's context menu), and no
+event-batching before repaint (`ox::process_events` pops and repaints exactly one event at
+a time from a blocking-only queue — confirmed by reading `include/ox/core/terminal.hpp` —
+so a fast scroll/type burst does one full terminal write per keystroke/tick, the actual
+felt lag the user was reporting; FTXUI's `App::RunOnce()` drains the whole pending queue
+before a single `Draw()` call, native to its design).
+
+Executed as four steps, each gated on a green `ctest`/single-process `ned_tests` run
+before moving to the next, per this project's existing per-phase discipline:
+
+1. **Safety net + risk spike.** No git repository existed yet — `git init` plus one
+   commit capturing the fully-working TermOx state first, so every later step became a
+   real, revertable, bisectable commit. Then an isolated FTXUI spike (outside the repo,
+   not wired into `CMakeLists.txt`) de-risked the one real unknown flagged going in:
+   whether FTXUI's `Event` (built mainly around a table of pre-named per-letter modifier
+   constants — `Event::CtrlA`, `AltA`, `CtrlAltA`, ...) could still parse *arbitrary*
+   Emacs-`kbd`-style chords the way `escape`/`ParseKeyChord` could. It can: the underlying
+   raw bytes (`event.input()`) are always available underneath the named-constant
+   convenience layer, confirmed against real captured byte sequences for Ctrl+X, Ctrl+S,
+   Alt+A, and Ctrl+Alt+A (`[27, 1]` — not a named constant, but a clean, distinguishable
+   raw sequence). The spike also confirmed FTXUI's per-cell paint primitive is
+   `ftxui::Screen`/`Cell`, *not* `ftxui::Canvas` (a separate, sub-cell braille/ASCII-art
+   tool — a real trap avoided before any production code was written against it) and that
+   headless unit testing (constructing a `Screen`/`Node`/`Component` directly, no live
+   `App::Loop()`) works the same way this project's existing TermOx-based tests already
+   relied on.
+2. **Dependency swap + foundations.** `CMakeLists.txt`'s TermOx `FetchContent` replaced
+   with FTXUI (pinned to tagged release `v7.0.3`, unlike TermOx's own `GIT_TAG main` —
+   TermOx never had tagged releases). `Source/UI/Widget.h/.cpp` (new) is the shared
+   `Canvas`/`Widget` foundation every other widget now derives from, built specifically so
+   each widget's `Paint()` body could read almost identically to its pre-migration
+   `paint(ox::Canvas)` body. `Theme.h`'s `Color`/`Brush` types are new too, built because
+   `ftxui::Color` is deliberately opaque (no accessor for its stored kind/RGB), which
+   `ThemeFile.cpp`'s round-trip serialization genuinely needs. `KeyTranslation.cpp`'s
+   rewrite turned out to be a real upgrade, not just a port: Alt/Meta is now reliably
+   detected as one keypress (an `ESC`-prefixed `Event` whose `input()` contains both
+   bytes), not only via the old two-separate-keystroke Escape-then-key fallback (which
+   still works too, nothing lost).
+3. **Small widgets, then the big ones.** `EchoArea`/`ModeLine`/`SidebarToggle`/
+   `ScrollArrowButton` ported first to establish the `Widget`/`Canvas` idioms on low-stakes
+   files (`ScrollArrowButton`'s press-and-hold repeat moved from a dedicated `ox::Timer` to
+   `animation::RequestAnimationFrame`/`OnAnimation`, FTXUI's closest equivalent). Then
+   `BufferView` (the largest, most load-bearing file, ~1300 lines), `ProjectSidebar`, and
+   `TabBar` — full feature parity was a hard requirement, not a stripped rewrite: isearch,
+   query-replace, every prompt/confirm flow, gutter selection highlighting, binary-byte
+   placeholders, tab-width-aware rendering, sticky-scroll, single-click-preview,
+   drag-resize, tab-close confirmation, all carried over. `Source/UI/ScrollBar.h/.cpp` is
+   a genuinely new file, not a port — no FTXUI equivalent to the vendored `ox::ScrollBar`
+   existed, so it was rebuilt from scratch to the same public `scrollable_length`/
+   `position`/`item_visual_length` shape. BufferView's scratch auto-save moved from an
+   `ox::Timer` to a real `std::jthread` + FTXUI's documented-thread-safe
+   `ScreenInteractive::Post()`, since a 5-second wall-clock interval that must keep firing
+   even while fully idle can't be driven by FTXUI's per-frame animation hook without
+   busy-looping. Every test file got the same treatment (`TabBarTest.cpp`,
+   `SidebarToggleTest.cpp`, `ProjectSidebarTest.cpp`, `KeyTranslationTest.cpp`,
+   `ThemeTest.cpp`, `TerminalColorProbeTest.cpp`, `ThemeFileTest.cpp`,
+   `PerformanceTest.cpp`, `BufferViewTest.cpp` — the last one alone was 99 `TEST_CASE`s);
+   two test cases across the whole suite were dropped rather than ported, both because the
+   TermOx-era mechanism they tested (`SetSidebarRow`'s forced-reflow workaround,
+   `BufferView`'s `timer()`-driven autosave test hook) has no equivalent need in FTXUI's
+   fresh-tree-per-frame model or no synchronous test hook left, respectively — each drop
+   left with an explanatory comment in place, and the underlying behavior either
+   unnecessary (reflow) or still covered elsewhere (`ScratchPadTest.cpp`'s own
+   `AutoSaveScratchBuffers` tests).
+4. **Composition root + verification.** `main.cpp`'s widget tree rebuilt against FTXUI's
+   `Container::Vertical`/`Horizontal` (which render as `vbox`/`hbox` of children, confirmed
+   by reading `container.cpp`) with every widget now a `std::shared_ptr`-owned `Component`
+   (required — FTXUI's `Component` *is* `shared_ptr<ComponentBase>`, unlike TermOx's
+   stack-allocated-aggregate-plus-structured-bindings pattern). `ProjectSidebar`'s
+   drag-resizable width is sized via a custom per-frame `ElementDecorator` lambda rather
+   than a plain `size()` call, since `size()`'s int argument is otherwise evaluated once at
+   composition time (confirmed by reading `renderer.cpp`'s real
+   `ComponentDecorator Renderer(ElementDecorator)`, which re-invokes a hand-written
+   decorator fresh every frame); `ftxui::Maybe(component, &widget->active)` replaces the
+   old `.active`-flag-checked-by-the-composition-root pattern, confirmed via `maybe.cpp` to
+   gate both rendering and event delivery on the same predicate.
+
+   Four real, previously-undiscovered production bugs surfaced only once the full app
+   actually ran and was exercised by hand in a real terminal (`screen`-based pty, this
+   project's own established verification method for anything touching real terminal
+   I/O) — none caught by the 484-case automated suite, all four fixed the same session:
+   - **Cursor placement crashed the whole process** (`Widget.cpp`): `Requirement::Focused::
+     node`, a raw `Node*` FTXUI's own `Render()` dereferences unconditionally once the
+     cursor is visible, was never being set — a null-pointer SIGSEGV the instant point
+     moved onscreen (e.g. `C-e`), confirmed via `gdb` against a real coredump, not guessed.
+     Fixed with a dedicated `cursorAnchor_` `Node` member.
+   - **Cursor rendered in the wrong place even after that fix** — a line too high with
+     the sidebar collapsed, far to the left with it open, reported live during manual
+     testing. Root cause: `Widget::OnRender()` constructs a brand-new `PaintNode` every
+     single frame (FTXUI rebuilds its whole Element tree from scratch each frame,
+     confirmed by reading `App::Internal::Draw`), so the widget's own `box_` is always
+     `{0,0,0,0}` during `ComputeRequirement()` — not "the previous frame's box" as an
+     earlier version of this fix incorrectly assumed. The real fix needed a two-part split
+     confirmed against `hbox.cpp`/`vbox.cpp`'s real focus-aggregation code: cursor
+     *presence* (`enabled`/`node`/`cursor_shape`) has to be set in `ComputeRequirement`
+     (so a parent container's own aggregation, which runs during its own
+     `ComputeRequirement` pass, sees it at all), while the actual absolute box can only be
+     computed later, in `SetBox`, once the widget's real position is known — verified with
+     a standalone repro nesting a fake widget inside an `hbox`/`vbox` exactly like
+     `BufferView` really sits, checking `Screen::cursor()` directly against the expected
+     absolute row/column.
+   - **`ForceHandleCtrlC(true)`/`ForceHandleCtrlZ(true)` was backwards.** The intent
+     (replicating TermOx's `Signals::Off`, so `C-c`/`C-z`-prefixed bindings like
+     `toggle-project-sidebar` reach our own keymap instead of the OS/terminal) needed
+     `force=false`: reading `app.cpp`'s real event loop shows `force=true` means "always
+     run FTXUI's own exit-on-Ctrl+C handling regardless of whether the component's
+     `OnEvent` claimed the event" — the doc comment reads ambiguously enough that this was
+     initially gotten backwards, then caught and fixed via the same manual pty testing
+     (any `C-c`-prefixed binding was silently exiting the whole process on the very first
+     chord).
+   - **`BufferView::` quit-handling crashed outside a live event loop.**
+     `ftxui::ScreenInteractive::Active()->Exit()`, called unconditionally from both the
+     `context.quit` branch and the confirm-quit `y`/`Y` branch, dereferences a pointer
+     that's nullptr whenever there's no live `Loop()` running — which is every unit test,
+     surfaced while porting `BufferViewTest.cpp`. Fixed with a null check at both sites.
+   - **`ProjectSidebar::BeginResize` anchored a drag on stale internal state.** It read the
+     widget's own `width_` field rather than `size().width` (its actual, currently-rendered
+     box width) — invisible in real usage (`main.cpp`'s composition root syncs the box to
+     `width_` every frame, so they can't drift before a human could start a drag) but a
+     real, confirmed bug for anything that sets the box independently first, which is
+     exactly what a unit test does. Fixed by anchoring on `size().width` instead.
+
+   Two more bugs, both in test code rather than production code, surfaced during the same
+   pass: `ModeLineTest.cpp` asserted a gradient's endpoint colors matched the theme's raw
+   declared colors exactly, not accounting for `ftxui::Color::Interpolate`'s own gamma
+   correction (`pow`/`uint8_t`-truncation) not always round-tripping losslessly at `t=0`/
+   `t=1` for an arbitrary starting RGB value — fixed by asserting against
+   `Interpolate(0.0F/1.0F, ...)` directly instead. `ProjectSidebarTest.cpp`'s own
+   `RowText` helper concatenates each screen cell's (possibly multi-byte UTF-8)
+   character into one `std::string`, so `std::string::find` on the result returns a byte
+   offset, not a column — meaningless to compare across two rows whose tree-connector
+   prefixes contain a different number of multi-byte glyphs (`│├└▸▾`); fixed with a
+   proper cell-by-cell `ColumnOf` helper for the one assertion that needed a true column
+   comparison.
+
+   Final state (of this first verification pass): 484/484 tests passing (`ctest
+   --test-dir build` and single-process `./build/ned_tests` both clean),
+   `-DNED_ENABLE_SANITIZERS=ON` clean, and a real `screen`-based pty smoke test covering
+   rendering (tab bar, sidebar, gutter, mode line all correctly composed), typing, cursor
+   movement, sidebar toggle (both directions, correct reflow with no manual
+   `SetSidebarRow`-equivalent trigger needed — confirmed FTXUI's fresh-tree-per-frame
+   model makes that entirely unnecessary), save, and quit-with-unsaved-changes-
+   confirmation (both the cancel and confirm paths).
+
+   Three more real bugs surfaced only once the user actually dogfooded the migrated build
+   day-to-day — none of them caught by `screen`'s own pty emulation, the automated suite,
+   or the sanitizer build, underscoring why this project's verification ritual treats real
+   manual testing as load-bearing rather than a formality:
+   - **Felt typing/cursor lag, reported directly.** Root-caused (not guessed) by directly
+     timing `BuildProjectTree` against this repo's own `Native Text Editor` directory: ~45ms
+     per call, given `build/`'s ~4,900 FetchContent'd files. `ProjectSidebar::Paint()`/
+     `OnEvent()` called it unconditionally on every invocation — under FTXUI that means every
+     single frame, i.e. every keystroke, even ones with nothing to do with the sidebar,
+     since FTXUI repaints the whole component tree fresh each frame. Fixed with a
+     `CachedTree()` (rebuilds at most once per 500ms, or immediately if `ProjectRoot()`
+     changed) plus explicit `InvalidateTree()` calls from `BufferView`'s own
+     create-directory/delete-file/rename-file flows, so the app's own file operations still
+     show up instantly rather than waiting out the throttle.
+   - **Cursor movement felt exactly one keystroke behind** ("press Right, nothing happens;
+     press it again, the cursor jumps to where the first press should have gone").
+     `BufferView::CursorPosition()` was returning a member (`cursorPosition_`) cached as a
+     side effect of `Paint()` — but FTXUI's Node lifecycle always runs
+     `ComputeRequirement`/`SetBox` (which is what reads this) *before* `Render` (which calls
+     `Paint()`) on every single frame, so the cached value was always exactly one frame
+     stale. Fixed by making `CursorPosition()` a pure, independently-recomputed query (cheap
+     enough — one `GutterWidth()` call, one bounded `VisualColumn` scan — to not need
+     caching at all), removing `cursorPosition_` entirely.
+   - **Tab bar and cursor both invisible on first launch, only in Konsole specifically**
+     (other terminals showed the tab bar fine but still had the cursor bug above, since
+     that one was universal). Root-caused by reading `Screen::ToString()` (FTXUI's own
+     `screen.cpp`): it paints every frame via plain `\r\n` line breaks with no absolute
+     cursor-positioning escape of its own, trusting the cursor is already homed at (0,0) —
+     true for every frame after the first (which explicitly re-homes first) but, for frame
+     0 specifically, resting entirely on the terminal's own alternate-screen-buffer switch
+     (`\033[?1049h`) having homed it as a side effect. A real user-triggered terminal resize
+     (which forces FTXUI's full re-home-and-redraw path on the next frame) reliably fixed
+     it every time — strong, user-confirmed evidence for the theory, not a guess. Fixed
+     with a small `main.cpp`-only workaround: enter the alternate screen buffer and home
+     the cursor explicitly, ourselves, before `ScreenInteractive::Fullscreen()`'s own
+     (apparently-unreliable-in-Konsole) later entry into the same buffer — which becomes a
+     harmless, idempotent no-op once we've already set it up correctly. No FTXUI source
+     touched. User-confirmed fixed on Konsole, no regression on other terminals.
+
+   None of these three required reopening the "largest breaking changes first" plan or
+   touching anything outside `Source/UI/` — exactly the contained blast radius the
+   guiding-constraints section (top of this file) was designed to produce.
+
+## Phase 8 — Emacs feature parity + Org-like structured editing
 
 Fleshed out from a 2-line stub once the tree-sitter arc (#118-121 + mode-overrides)
 freed up room for the next real phase. Triage below is checked against the actual GNU
@@ -2516,12 +2720,12 @@ Must/Maybe/Won't below is exactly the kind of call the user should keep final sa
 ### Emacs feature parity triage
 
 **Must** — real gaps against daily-driver Emacs usage, not covered by an existing
-Phase 8 item, reasonably scoped against this codebase's existing architecture:
+Phase 9 item, reasonably scoped against this codebase's existing architecture:
 - [ ] **Window splitting** (horizontal/vertical splits, multiple views onto the same or
       different buffers). Arguably the single biggest gap on this list — every other
       "must" below is a nice-to-have by comparison, but an editor with no split-pane
       story at all feels genuinely crippled to anyone coming from Emacs (or any other
-      editor built after 1990). No existing TermOx layout code assumes a fixed single
+      editor built after 1990). No existing FTXUI layout code assumes a fixed single
       `BufferView`, but nothing in `Source/UI/` was designed with *multiple* live
       `BufferView`s in mind either — needs a real design pass before implementation,
       not a quick bolt-on.
@@ -2531,7 +2735,7 @@ Phase 8 item, reasonably scoped against this codebase's existing architecture:
       unified, always-available command-execution UI — every "prompt" today is a
       one-off `MinibufferPrompt` session wired up ad hoc per command. Consolidating
       onto one real minibuffer widget, with fuzzy (not just prefix) matching, is both a
-      genuine parity gap and a foundation Phase 8's "fuzzy file finder / command
+      genuine parity gap and a foundation Phase 9's "fuzzy file finder / command
       palette" wishlist item can build directly on rather than duplicate.
 - [ ] **Keyboard macros** (record/replay a sequence of commands). Comparatively cheap
       given the existing architecture — `Dispatcher`/`KeymapStack` already resolve
@@ -2558,7 +2762,7 @@ Must list is solid, not scheduled yet:
   buffer is a bigger, keyboard-driven, Emacs-buffer-native experience on top of that,
   not a replacement for it.
 - `compile-mode` (run a build command, parse errors, jump to them) — likely worth
-  merging with Phase 8's existing "Task runner" wishlist item rather than tracking
+  merging with Phase 9's existing "Task runner" wishlist item rather than tracking
   twice.
 - Session/desktop save-restore (reopen buffers/windows on next launch).
 - Abbrev expansion.
@@ -2571,7 +2775,7 @@ Must list is solid, not scheduled yet:
   no plausible demand here.
 - Recursive editing levels as a literal user-facing concept — an Emacs internals
   mechanism most Emacs users never invoke directly; nothing to port.
-- TRAMP/remote-file editing as a literal port — superseded by Phase 8's own "Remote
+- TRAMP/remote-file editing as a literal port — superseded by Phase 9's own "Remote
   development (SSH remote editing)" wishlist item; don't track the same feature twice
   under two names.
 - An Emacs-Lisp-package-manager equivalent — Janet has its own module story; this
@@ -2648,7 +2852,7 @@ in their own right:
 - The table formula/spreadsheet engine — a small programming language of its own.
 - Export backends and the publishing pipeline — each a standalone tool-sized effort.
 
-## Phase 8 — Zed-inspired features (aspirational, unsequenced)
+## Phase 9 — Zed-inspired features (aspirational, unsequenced)
 A running wishlist, not yet prioritized or scheduled against the phases above — draw
 from this once the Emacs-parity core (Phases 1–5) is solid, per the "editing features
 before extras" guiding principle. Grouped by how big a foundational lift each is:
@@ -2684,51 +2888,13 @@ before extras" guiding principle. Grouped by how big a foundational lift each is
 - **Visual**
   - [ ] Minimap. Rich built-in theme set. (Overlaps with Phase 6.)
 
-## TUI library: migrate from TermOx to FTXUI (planned, unsequenced)
-
-Aspirational, like Phase 8 — not scheduled against any phase above, revisit once there's
-a concrete forcing function (a Phase 8 feature TermOx genuinely can't support, or the
-event-batching gap below causing real, reported lag). TermOx was evaluated against
-FTXUI/notcurses early on and TermOx was kept (see "TermOx vs alternatives" — evaluated
-2026-08-14); two more real, source-verified gaps surfaced since, both against FTXUI
-specifically, and both are the reason this is now tracked as a real future migration
-rather than a closed question:
-
-- **No overlay/popup/modal widget concept at all.** Confirmed while scoping the project
-  sidebar's context menu (see "Project sidebar" above) — every TermOx widget gets a
-  fixed rectangle from its parent `Row`/`Column` layout, with no floating-render
-  mechanism to build a real dropdown/modal on top of. FTXUI has a genuine `Modal()`
-  overlay component built in.
-- **No event-batching before repaint.** Confirmed by reading both libraries' real event
-  loops (not assumed): TermOx's `ox::process_events` (`include/ox/core/terminal.hpp`)
-  pops exactly one event from a blocking-only queue, then does one full repaint +
-  terminal write, every single time — a fast mouse-wheel flick genuinely triggers one
-  repaint per tick, no way to coalesce from our side without patching vendored TermOx
-  (its `ConcurrentQueue` has no non-blocking peek). FTXUI's `task::TaskRunner::
-  RunUntilIdle()` + `App::RunOnce()` (`src/ftxui/component/task_runner.cpp`,
-  `app.cpp`) already drain the entire pending queue before a single `Draw()` call, and
-  skip the redraw outright if nothing was pending — this is native to FTXUI's design,
-  not something bolted on. A minimal patch to TermOx's queue could get us the same
-  behavior for comparatively little code (discussed and available if the lag becomes a
-  real problem before this migration happens), but the user chose to track this as a
-  future library switch instead of patching a vendored dependency now.
-
-Cost, and why "later" rather than "now": FTXUI's widget/rendering model differs enough
-from TermOx's (`Widget`/`Canvas`/`Glyph`/`Signal`-based wiring, `ox::Timer`,
-`ox::ScrollBar`, ...) that this would be a real rewrite of everything in `Source/UI/`,
-not a drop-in swap — sized similarly to Phase 4's original TermOx wiring, just done a
-second time against a different library. The "keep `Source/UI/` loosely coupled from
-TermOx specifics where it's cheap" guiding constraint (top of this file) exists
-specifically to keep that rewrite's blast radius contained to `Source/UI/` when it
-happens, rather than also touching `Source/Editor/`/`Source/Text/`/`Source/Janet/`.
-
 ## Companion tooling: environment setup + tree-sitter-assisted formatter (planned, unsequenced)
 
 Two standalone utility programs shipped alongside `ned`, not part of the editor binary
 itself — the user's own framing: "towards the end of our dev, maybe they even belong in
 their own phase, when we're starting to setup the outside tooling." Aspirational, like
-Phase 8 and the FTXUI migration above — not scheduled against any phase, revisit once
-the editor core itself is solid.
+Phase 9 above — not scheduled against any phase, revisit once the editor core itself is
+solid.
 
 - **Environment setup tool** (name TBD, e.g. `ned-setup`). Detects and initializes the
   first-run environment: shell integration, and — the piece that directly builds on the

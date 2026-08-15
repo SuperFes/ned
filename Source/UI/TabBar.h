@@ -10,10 +10,10 @@
 //
 // Each tab also has a close icon (`×`, tab-close follow-up) -- clicking it
 // requests closing that buffer via SetOnCloseRequest's handler rather than
-// closing it directly here: TabBar is FocusPolicy::None and never receives
-// key events, so it cannot itself drive the keyboard y/n confirmation a
-// modified buffer needs before being discarded (see BufferView::
-// RequestCloseBuffer, the handler main.cpp wires in).
+// closing it directly here: TabBar takes no keyboard focus, so it cannot
+// itself drive the keyboard y/n confirmation a modified buffer needs before
+// being discarded (see BufferView::RequestCloseBuffer, the handler main.cpp
+// wires in).
 //
 
 #ifndef NED_UI_TABBAR_H
@@ -22,23 +22,21 @@
 #include <functional>
 #include <vector>
 
-#include <ox/ox.hpp>
-
 #include "ActiveBuffer.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
 #include "Theme.h"
+#include "Widget.h"
 
 namespace ned::ui {
 
-class TabBar : public ox::Widget {
+class TabBar : public Widget {
   public:
     // activeBuffer, bufferList, and theme must outlive this TabBar.
     TabBar(ActiveBuffer& activeBuffer, const text::BufferList& bufferList, const Theme& theme);
 
-    void paint(ox::Canvas c) override;
-    void mouse_press(ox::Mouse mouse) override;
-    void mouse_wheel(ox::Mouse mouse) override;
+    void Paint(Canvas c) override;
+    bool OnEvent(ftxui::Event event) override;
 
     // Called with the buffer whose close icon was clicked. Unset (the
     // default) means clicking a close icon is a no-op -- TabBar has no way
@@ -48,9 +46,8 @@ class TabBar : public ox::Widget {
   private:
     // One tab's horizontal extent in unscrolled column space (i.e. before
     // subtracting scrollOffset_), plus which buffer it represents. Recomputed
-    // fresh by paint()/mouse_press()/mouse_wheel() rather than cached, same
-    // "no persisted layout state" approach BufferView's own gutter/click
-    // translation uses.
+    // fresh by Paint()/OnEvent() rather than cached, same "no persisted
+    // layout state" approach BufferView's own gutter/click translation uses.
     struct TabLayout {
         int           startColumn;
         int           endColumn;   // exclusive

@@ -15,7 +15,7 @@
 #include <chrono>
 #include <string>
 
-#include <ox/ox.hpp>
+#include <ftxui/screen/screen.hpp>
 
 #include "Editor/Commands.h"
 #include "Editor/Dispatcher.h"
@@ -166,10 +166,10 @@ TEST_CASE("BufferView::paint on a pathologically long single line stays fast", "
 
     ned::ui::ActiveBuffer activeBuffer(buffer);
     ned::ui::BufferView   view(activeBuffer, killRing, bufferList, dispatcher, statusMessage, mode, theme);
-    view.size = {.width = 80, .height = 24};
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 23});
 
-    ox::ScreenBuffer screen({.width = 80, .height = 24});
-    ox::Canvas       canvas{.buffer = screen, .at = {.x = 0, .y = 0}, .size = {.width = 80, .height = 24}};
+    ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(80), ftxui::Dimension::Fixed(24));
+    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 23});
 
     // Put point far into the line so paint (if it ever regressed to scanning
     // from the line start) would have real work to redo on every call.
@@ -177,7 +177,7 @@ TEST_CASE("BufferView::paint on a pathologically long single line stays fast", "
 
     const auto start = steady_clock::now();
     for (int i = 0; i < 200; ++i) {
-        view.paint(canvas);
+        view.Paint(canvas);
     }
     const auto elapsed = steady_clock::now() - start;
 
@@ -218,14 +218,14 @@ TEST_CASE("BufferView::paint with JsonMode's tree-sitter highlighting stays fast
 
     ned::ui::ActiveBuffer activeBuffer(buffer);
     ned::ui::BufferView   view(activeBuffer, killRing, bufferList, dispatcher, statusMessage, mode, theme);
-    view.size = {.width = 80, .height = 24};
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 23});
 
-    ox::ScreenBuffer screen({.width = 80, .height = 24});
-    ox::Canvas       canvas{.buffer = screen, .at = {.x = 0, .y = 0}, .size = {.width = 80, .height = 24}};
+    ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(80), ftxui::Dimension::Fixed(24));
+    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 23});
 
     const auto start = steady_clock::now();
     for (int i = 0; i < 50; ++i) {
-        view.paint(canvas);
+        view.Paint(canvas);
     }
     const auto elapsed = steady_clock::now() - start;
 

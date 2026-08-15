@@ -24,9 +24,9 @@ TEST_CASE("Theme::BrushFor maps each syntax class to its themed foreground, shar
 TEST_CASE("Theme::BrushFor makes Keyword bold, and nothing else", "[Theme]") {
     const Theme theme = DarkTheme();
 
-    REQUIRE(theme.BrushFor(SyntaxClass::Keyword).traits == ox::Traits{ox::Trait::Bold});
-    REQUIRE(theme.BrushFor(SyntaxClass::Default).traits == ox::Traits{ox::Trait::None});
-    REQUIRE(theme.BrushFor(SyntaxClass::Comment).traits == ox::Traits{ox::Trait::None});
+    REQUIRE(theme.BrushFor(SyntaxClass::Keyword).bold);
+    REQUIRE_FALSE(theme.BrushFor(SyntaxClass::Default).bold);
+    REQUIRE_FALSE(theme.BrushFor(SyntaxClass::Comment).bold);
 }
 
 TEST_CASE("DarkTheme and LightTheme are distinct palettes", "[Theme]") {

@@ -353,6 +353,7 @@ add_library(ned_lib STATIC
         Source/Janet/InitFile.cpp
         Source/UI/KeyTranslation.cpp
         Source/UI/Widget.cpp
+        Source/UI/ScrollBar.cpp
         Source/UI/BufferView.cpp
         Source/UI/TabBar.cpp
         Source/UI/ScrollArrowButton.cpp
