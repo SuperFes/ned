@@ -4,7 +4,7 @@
 //
 // Also drives interactive sub-sessions (isearch, query-replace, quit
 // confirmation, find-file, switch-to-buffer) directly: while one is active,
-// key_press routes to it instead of Dispatcher. There is no separate
+// key events route to it instead of Dispatcher. There is no separate
 // minibuffer widget for this -- live status text is written into the same
 // shared status-message string EchoArea already displays.
 //
@@ -12,13 +12,15 @@
 #ifndef NED_UI_BUFFERVIEW_H
 #define NED_UI_BUFFERVIEW_H
 
+#include <atomic>
 #include <cstddef>
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
-#include <ox/ox.hpp>
+#include <ftxui/component/screen_interactive.hpp>
 
 #include "ActiveBuffer.h"
 #include "Editor/Command.h"
@@ -30,6 +32,7 @@
 #include "Editor/QueryReplace.h"
 #include "ProjectSidebar.h"
 #include "ScrollArrowButton.h"
+#include "ScrollBar.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
 #include "Text/KillRing.h"
@@ -37,7 +40,7 @@
 
 namespace ned::ui {
 
-class BufferView : public ox::Widget {
+class BufferView : public Widget {
   public:
     // statusMessage is where a caught command exception, a command like
     // save-buffer reporting its own outcome, or live isearch/query-replace/
@@ -49,34 +52,34 @@ class BufferView : public ox::Widget {
     BufferView(ActiveBuffer& activeBuffer, text::KillRing& killRing, text::BufferList& bufferList,
                editor::Dispatcher& dispatcher, std::string& statusMessage, const editor::Mode& mode,
                const Theme& theme);
+    ~BufferView() override;
 
-    void paint(ox::Canvas c) override;
-    void key_press(ox::Key key) override;
-    void timer() override; // periodic scratch auto-save tick -- see StartAutoSaveTimer
+    BufferView(const BufferView&)            = delete;
+    BufferView& operator=(const BufferView&) = delete;
 
-    // Click moves point (and clears any selection); click-and-drag extends a
-    // selection from the press position; wheel scrolls the viewport without
-    // moving point. All three are no-ops (except wheel) during an isearch/
-    // query-replace session -- clicking around mid-session doesn't have a
-    // sensible meaning, the same reason key_press routes elsewhere then too.
-    void mouse_press(ox::Mouse mouse) override;
-    void mouse_release(ox::Mouse mouse) override; // no behavior yet -- logged only, see LogMouseEvent
-    void mouse_move(ox::Mouse mouse) override;
-    void mouse_wheel(ox::Mouse mouse) override;
+    void Paint(Canvas c) override;
+    bool OnEvent(ftxui::Event event) override;
+    bool Focusable() const override; // was FocusPolicy::Strong
+
+    // Local cursor position for the real terminal caret -- was ox::Widget's
+    // own `cursor` field. A pure, independent computation, deliberately NOT
+    // cached from Paint() -- see the .cpp definition's own comment for why
+    // that caused a real, reported one-frame-stale cursor bug.
+    [[nodiscard]] std::optional<Point> CursorPosition() const override;
 
     // Scroll-bar follow-up: topLine_ read/write for an externally-owned
-    // ox::ScrollBar to sync against. SetTopLine clamps the same way
-    // mouse_wheel already does. SetScrollBar registers the bar paint() keeps
+    // ScrollBar to sync against. SetTopLine clamps the same way wheel
+    // scrolling already does. SetScrollBar registers the bar Paint() keeps
     // in sync each frame (scrollable_length/position/item_visual_length) --
     // nullptr (the default) means no scroll bar is wired in, a no-op in
-    // paint(). The reverse direction (bar drag/wheel -> BufferView) is wired
-    // by the caller connecting ox::ScrollBar::on_scroll to SetTopLine
-    // directly; BufferView has no dependency on sl::Signal for that.
+    // Paint(). The reverse direction (bar drag/wheel -> BufferView) is wired
+    // by the caller connecting ScrollBar::SetOnScroll to SetTopLine
+    // directly.
     [[nodiscard]] std::size_t TopLine() const;
     void                      SetTopLine(std::size_t line);
-    void                      SetScrollBar(ox::ScrollBar* scrollBar);
+    void                      SetScrollBar(ScrollBar* scrollBar);
 
-    // Registers the up/down arrow caps flanking the scroll bar so paint()
+    // Registers the up/down arrow caps flanking the scroll bar so Paint()
     // can keep their enabled state in sync each frame: up is enabled only
     // when topLine_ > 0, down only when topLine_ < MaxTopLine() -- both
     // false at once when the whole buffer already fits on screen. Either or
@@ -84,50 +87,42 @@ class BufferView : public ox::Widget {
     void SetScrollArrows(ScrollArrowButton* up, ScrollArrowButton* down);
 
     // Registers the left-side project tree so toggle-project-sidebar
-    // (project-sidebar follow-up) can flip its ox::Widget::active flag;
-    // nullptr (the default) means the toggle command is a no-op.
+    // (project-sidebar follow-up) can flip its Widget::active flag; nullptr
+    // (the default) means the toggle command is a no-op. Unlike the
+    // pre-migration version, flipping .active alone is now sufficient --
+    // no SetSidebarRow/forced-reflow equivalent is needed (FTXUI rebuilds
+    // its element tree fresh every frame; confirmed during the TermOx ->
+    // FTXUI migration, see ROADMAP.md).
     void SetProjectSidebar(ProjectSidebar* sidebar);
-
-    // Registers the ox::Row containing ProjectSidebar (round-2 sidebar
-    // follow-up) so toggling the sidebar's active flag can force that Row to
-    // immediately re-run its own resize() and reclaim/return BufferView's
-    // width -- flipping .active alone is *not* enough: TermOx only
-    // recomputes a layout's child widths/positions in response to an actual
-    // terminal resize event (see Row::resize/distribute_length in the
-    // vendored layout.hpp), never automatically on a plain field write, so
-    // without this the freed column stays a dead gap until the user happens
-    // to resize their terminal. resize()'s Area parameter is discarded by
-    // Row's own implementation (each child's *own* previous size is what
-    // matters, captured internally), so passing the Row's current size back
-    // to itself here is a safe, if slightly unusual-looking, way to request
-    // "recompute now" without needing to track a real previous size.
-    // nullptr (the default) means toggling only flips the flag, matching the
-    // pre-fix (buggy) behavior.
-    void SetSidebarRow(ox::Widget* sidebarRow);
 
     // Entry point for TabBar's close-icon click (tab-close follow-up) --
     // TabBar only ever signals *intent*, the same "mouse-driven widget hands
-    // off to BufferView" shape SetProjectSidebar/SetSidebarRow's callers
-    // already establish, since only BufferView can drive a keyboard y/n
-    // confirmation (TabBar is FocusPolicy::None, it never receives key
-    // events). An unmodified buffer closes immediately; a modified one
-    // starts a ConfirmCloseBuffer prompt, mirroring ConfirmQuit but scoped
-    // to this one buffer rather than every buffer in the list. Closing the
-    // last remaining buffer conjures a fresh scratch buffer as its
-    // replacement rather than refusing -- BufferList must always have at
-    // least one buffer, and there's nothing meaningful to show otherwise,
-    // the same call Emacs itself makes for *scratch*. A no-op (reports via
-    // statusMessage_ instead of silently doing nothing) if another
-    // interactive session is already in progress.
+    // off to BufferView" shape SetProjectSidebar's callers already
+    // establish, since only BufferView can drive a keyboard y/n
+    // confirmation (TabBar takes no keyboard focus). An unmodified buffer
+    // closes immediately; a modified one starts a ConfirmCloseBuffer
+    // prompt, mirroring ConfirmQuit but scoped to this one buffer rather
+    // than every buffer in the list. Closing the last remaining buffer
+    // conjures a fresh scratch buffer as its replacement rather than
+    // refusing -- BufferList must always have at least one buffer, and
+    // there's nothing meaningful to show otherwise, the same call Emacs
+    // itself makes for *scratch*. A no-op (reports via statusMessage_
+    // instead of silently doing nothing) if another interactive session is
+    // already in progress.
     void RequestCloseBuffer(text::Buffer& buffer);
 
     // Starts the periodic scratch auto-save timer (auto-saved-scratch-pads
     // follow-up) -- not started automatically at construction, since that
     // would spin up a real background thread for every BufferView built in
-    // tests; main.cpp calls this once for the real, running editor, the same
-    // "inert until explicitly wired up" pattern SetScrollBar/SetProjectSidebar
-    // already establish for other main.cpp-only wiring.
-    void StartAutoSaveTimer();
+    // tests; main.cpp calls this once for the real, running editor, the
+    // same "inert until explicitly wired up" pattern SetScrollBar/
+    // SetProjectSidebar already establish for other main.cpp-only wiring.
+    // Takes the owning ScreenInteractive so the background thread this
+    // starts can safely marshal the actual auto-save call back onto the
+    // main loop thread via PostEvent (documented thread-safe by FTXUI,
+    // confirmed by reading app.cpp, not assumed) rather than touching
+    // bufferList_ directly from a second thread.
+    void StartAutoSaveTimer(ftxui::ScreenInteractive& screen);
 
   private:
     enum class InputMode { Normal,
@@ -157,16 +152,22 @@ class BufferView : public ox::Widget {
     // directly, since they don't go through CommandRegistry.
     [[nodiscard]] editor::CommandContext MakeContext();
 
+    // Keyboard/mouse handling split out of OnEvent for readability -- was
+    // key_press/mouse_press/mouse_move/mouse_release/mouse_wheel.
+    bool OnKeyEvent(ftxui::Event event);
+    bool OnMouseEvent(ftxui::Event event);
+
     void StartInteractiveSession(editor::InteractiveRequest request);
     void EndInteractiveSession();
-    void HandleSearchKey(ox::Key key);
-    void HandleQueryReplaceKey(ox::Key key);
-    void HandleConfirmQuitKey(ox::Key key);
+    void HandleSearchKey(const editor::KeyChord& chord);
+    void HandleQueryReplaceKey(const editor::KeyChord& chord);
+    void HandleConfirmQuitKey(const editor::KeyChord& chord);
     void HandlePromptKey(
-        ox::Key key);      // shared by FindFile/SwitchToBuffer/ProjectSearch/CreateDirectory/FindScratch -- see prompt_
+        const editor::KeyChord&
+            chord);        // shared by FindFile/SwitchToBuffer/ProjectSearch/CreateDirectory/FindScratch -- see prompt_
     void CompletePrompt(); // Tab in HandlePromptKey -- find-file paths, buffer names, or scratch names, by inputMode_
-    void HandleProjectReplaceKey(ox::Key key);
-    void HandleConfirmCloseBufferKey(ox::Key key); // see RequestCloseBuffer/pendingClose_
+    void HandleProjectReplaceKey(const editor::KeyChord& chord);
+    void HandleConfirmCloseBufferKey(const editor::KeyChord& chord); // see RequestCloseBuffer/pendingClose_
 
     // Both project-file-ops follow-up, both a simple two-stage flow driven
     // directly on BufferView (no dedicated state-machine class, unlike
@@ -184,8 +185,8 @@ class BufferView : public ox::Widget {
     // second Enter; if the renamed file is the currently active buffer,
     // Buffer::SetPath/Rename follow it to the new location rather than
     // leaving that buffer pointing at a now-nonexistent path.
-    void HandleDeleteFileKey(ox::Key key);
-    void HandleRenameFileKey(ox::Key key);
+    void HandleDeleteFileKey(const editor::KeyChord& chord);
+    void HandleRenameFileKey(const editor::KeyChord& chord);
 
     // The actual close: removes buffer from bufferList_ and, if it was the
     // active one, switches activeBuffer_ to whatever remains (the first
@@ -216,14 +217,15 @@ class BufferView : public ox::Widget {
 
     // The largest valid topLine_: the buffer's last line stops exactly at
     // the bottom of the viewport rather than scrolling past it into blank
-    // filler rows. Used by both SetTopLine and paint()'s scroll-bar sync, so
+    // filler rows. Used by both SetTopLine and Paint()'s scroll-bar sync, so
     // wheel/scroll-bar-driven scrolling and the bar's own visual range agree
     // on where "the bottom" is.
     [[nodiscard]] std::size_t MaxTopLine() const;
 
-    // Translates an on-screen mouse position into a buffer byte offset,
-    // accounting for the current scroll position and the line-number gutter.
-    [[nodiscard]] std::size_t ByteOffsetForMouse(ox::Mouse mouse) const;
+    // Translates an on-screen (LOCAL to this widget) mouse position into a
+    // buffer byte offset, accounting for the current scroll position and the
+    // line-number gutter.
+    [[nodiscard]] std::size_t ByteOffsetForPoint(Point at) const;
 
     // Width in columns of the line-number gutter (digits needed for the
     // buffer's last line number, plus one separating column). Always
@@ -236,9 +238,9 @@ class BufferView : public ox::Widget {
     // that call. Added to chase down an intermittent, real-terminal-only
     // (not reproducible headlessly) selection-highlight rendering glitch --
     // see ROADMAP.md. A no-op, effectively free, when the env var is unset.
-    void LogMouseEvent(std::string_view event, ox::Mouse mouse) const;
+    void LogMouseEvent(std::string_view event, const ftxui::Mouse& mouse) const;
 
-    // Highlight-overlay predicates used by paint(); byteOffset is a byte
+    // Highlight-overlay predicates used by Paint(); byteOffset is a byte
     // offset into the buffer's current content.
     [[nodiscard]] bool InSelection(std::size_t byteOffset) const;
     [[nodiscard]] bool InIsearchMatch(std::size_t byteOffset) const;
@@ -252,13 +254,12 @@ class BufferView : public ox::Widget {
     const Theme&        theme_;
 
     std::size_t                topLine_    = 0;            // first visible buffer line (0-indexed)
-    std::size_t                dragAnchor_ = 0;            // point position at the last mouse_press, for drag-selection
+    std::size_t                dragAnchor_ = 0;            // point position at the last mouse press, for drag-selection
     std::optional<std::string> debugMouseLogPath_;         // see LogMouseEvent
-    ox::ScrollBar*             scrollBar_       = nullptr; // see SetScrollBar
+    ScrollBar*                 scrollBar_       = nullptr; // see SetScrollBar
     ScrollArrowButton*         scrollUpArrow_   = nullptr; // see SetScrollArrows
     ScrollArrowButton*         scrollDownArrow_ = nullptr;
     ProjectSidebar*            projectSidebar_  = nullptr; // see SetProjectSidebar
-    ox::Widget*                sidebarRow_      = nullptr; // see SetSidebarRow
 
     InputMode                                inputMode_ = InputMode::Normal;
     std::optional<editor::IncrementalSearch> search_;
@@ -273,17 +274,28 @@ class BufferView : public ox::Widget {
     RenameFileStage       renameStage_ = RenameFileStage::EnteringSource;
     std::filesystem::path renameSource_; // path entered in RenameFileStage::EnteringSource
 
-    ox::Timer autoSaveTimer_; // see StartAutoSaveTimer
+    // Scratch auto-save (see StartAutoSaveTimer) -- a real background
+    // std::jthread rather than an FTXUI animation-frame hook (unlike
+    // ScrollArrowButton's repeat): this needs to keep firing on a fixed
+    // wall-clock interval even while the app is otherwise fully idle (no
+    // keyboard/mouse activity, no animation in progress), which an
+    // animation-frame-driven approach can only do by continuously
+    // requesting new frames forever -- keeping the whole app busy-looping
+    // just to watch a clock. jthread's own stop_token makes shutdown
+    // automatic and safe on destruction; the thread itself never touches
+    // bufferList_ directly, only ever through a PostEvent-marshaled
+    // closure run on the main loop thread.
+    std::jthread autoSaveThread_;
 
-    // Caches mode_.highlight's result across paint() calls (tree-sitter
-    // foundation follow-up) -- paint() runs far more often than the buffer's
+    // Caches mode_.highlight's result across Paint() calls (tree-sitter
+    // foundation follow-up) -- Paint() runs far more often than the buffer's
     // content actually changes (cursor blink, scrolling, mouse move, an
     // unrelated widget repainting), and mode_.highlight can be a real
     // tree-sitter parse + query run, not a free call. Recomputed only when
     // either the active buffer's identity or its Buffer::ContentGeneration()
-    // has changed since the last paint() -- a real, measured fix, not a
+    // has changed since the last Paint() -- a real, measured fix, not a
     // preemptive one: an earlier version recomputed unconditionally every
-    // paint() call and regressed a large-JSON [Performance] test to ~217ms
+    // Paint() call and regressed a large-JSON [Performance] test to ~217ms
     // per call (10.9s for 50 calls), caught before shipping the same way
     // this project's other perf regressions have been.
     text::Buffer*                      highlightCacheBuffer_     = nullptr;

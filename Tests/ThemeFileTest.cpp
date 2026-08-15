@@ -8,6 +8,7 @@
 
 #include "UI/ThemeFile.h"
 
+using ned::ui::Color;
 using ned::ui::DarkTheme;
 using ned::ui::LightTheme;
 using ned::ui::LoadThemeFile;
@@ -122,14 +123,14 @@ TEST_CASE("ParseTheme keeps base's value for a malformed or unrecognized entry",
         "string_foreground=#00ff00\n",
         base);
 
-    REQUIRE(result.background == base.background);                                   // malformed -- kept base's value
-    REQUIRE(result.stringForeground == ox::Color{ox::TrueColor{ox::RGB{0x00ff00}}}); // valid -- overridden
+    REQUIRE(result.background == base.background);            // malformed -- kept base's value
+    REQUIRE(result.stringForeground == Color::RGB(0x00ff00)); // valid -- overridden
 }
 
-TEST_CASE("ParseTheme understands the \"default\" sentinel as TermColor::Default", "[ThemeFile]") {
+TEST_CASE("ParseTheme understands the \"default\" sentinel as a pass-through Color", "[ThemeFile]") {
     const Theme result = ParseTheme("background=default\n", LightTheme()); // LightTheme's own background is opaque RGB
 
-    REQUIRE(result.background == ox::Color{ox::TermColor::Default});
+    REQUIRE(result.background == Color::Default);
 }
 
 TEST_CASE("SaveThemeFile/LoadThemeFile round-trip through a real file", "[ThemeFile]") {

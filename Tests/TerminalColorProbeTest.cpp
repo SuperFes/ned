@@ -6,6 +6,7 @@
 
 using ned::ui::BuildColorQuery;
 using ned::ui::BuildDetectedTheme;
+using ned::ui::Color;
 using ned::ui::DetectedColors;
 using ned::ui::ParseColorReplies;
 
@@ -68,24 +69,24 @@ TEST_CASE("ParseColorReplies leaves everything unset for an empty or garbage buf
 
 TEST_CASE("BuildDetectedTheme maps palette slots onto the same fields DarkTheme references symbolically", "[TerminalColorProbe]") {
     DetectedColors detected;
-    detected.background    = ox::TrueColor{ox::RGB{0x10, 0x10, 0x10}};
-    detected.foreground    = ox::TrueColor{ox::RGB{0xe0, 0xe0, 0xe0}};
-    detected.palette[2]    = ox::TrueColor{ox::RGB{0x00, 0xff, 0x00}}; // green -> string
-    detected.palette[4]    = ox::TrueColor{ox::RGB{0x00, 0x00, 0xff}}; // blue -> keyword/selection
+    detected.background = Color::RGB(0x10, 0x10, 0x10);
+    detected.foreground = Color::RGB(0xe0, 0xe0, 0xe0);
+    detected.palette[2] = Color::RGB(0x00, 0xff, 0x00); // green -> string
+    detected.palette[4] = Color::RGB(0x00, 0x00, 0xff); // blue -> keyword/selection
 
     const auto theme = BuildDetectedTheme(detected, ned::ui::DarkTheme());
 
-    REQUIRE(theme.background == ox::Color{*detected.background});
-    REQUIRE(theme.defaultForeground == ox::Color{*detected.foreground});
-    REQUIRE(theme.stringForeground == ox::Color{*detected.palette[2]});
-    REQUIRE(theme.keywordForeground == ox::Color{*detected.palette[4]});
-    REQUIRE(theme.selectionBackground == ox::Color{*detected.palette[4]});
+    REQUIRE(theme.background == *detected.background);
+    REQUIRE(theme.defaultForeground == *detected.foreground);
+    REQUIRE(theme.stringForeground == *detected.palette[2]);
+    REQUIRE(theme.keywordForeground == *detected.palette[4]);
+    REQUIRE(theme.selectionBackground == *detected.palette[4]);
 }
 
 TEST_CASE("BuildDetectedTheme keeps the fallback's value for anything not detected", "[TerminalColorProbe]") {
     const DetectedColors detected; // nothing set
-    const auto            fallback = ned::ui::LightTheme();
-    const auto             theme    = BuildDetectedTheme(detected, fallback);
+    const auto           fallback = ned::ui::LightTheme();
+    const auto           theme    = BuildDetectedTheme(detected, fallback);
 
     REQUIRE(theme.background == fallback.background);
     REQUIRE(theme.stringForeground == fallback.stringForeground);
@@ -94,7 +95,7 @@ TEST_CASE("BuildDetectedTheme keeps the fallback's value for anything not detect
 
 TEST_CASE("BuildDetectedTheme derives the mode-line gradient from the detected background", "[TerminalColorProbe]") {
     DetectedColors detected;
-    detected.background = ox::TrueColor{ox::RGB{0x80, 0x80, 0x80}};
+    detected.background = Color::RGB(0x80, 0x80, 0x80);
 
     const auto theme = BuildDetectedTheme(detected, ned::ui::DarkTheme());
 

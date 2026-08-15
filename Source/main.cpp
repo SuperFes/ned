@@ -2,11 +2,14 @@
 #include <exception>
 #include <filesystem>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <system_error>
 
-#include <ox/ox.hpp>
+#include <ftxui/component/component.hpp>
+#include <ftxui/component/screen_interactive.hpp>
+#include <ftxui/dom/elements.hpp>
 
 #include "Application.h"
 #include "Editor/Commands.h"
@@ -27,13 +30,14 @@
 #include "UI/ModeLine.h"
 #include "UI/ProjectSidebar.h"
 #include "UI/ScrollArrowButton.h"
+#include "UI/ScrollBar.h"
 #include "UI/SidebarToggle.h"
 #include "UI/TabBar.h"
 #include "UI/TerminalColorProbe.h"
 #include "UI/Theme.h"
 #include "UI/ThemeFile.h"
 
-using namespace ox;
+using namespace ftxui;
 
 namespace {
 
@@ -41,7 +45,9 @@ namespace {
 // actual configured colors (see UI/TerminalColorProbe.h for why this can't
 // just happen on every launch) and writes a Theme file, then exits without
 // starting the editor UI at all -- this must run and finish strictly before
-// any ox::Terminal is constructed.
+// any ftxui::ScreenInteractive is constructed (TermOx -> FTXUI migration:
+// was "before any ox::Terminal is constructed" -- same constraint, ScreenInteractive
+// is what starts reading stdin now).
 int RunDetectTheme(int argc, char** argv) {
     bool                       transparent = false;
     std::optional<std::string> outputPath;
@@ -60,8 +66,8 @@ int RunDetectTheme(int argc, char** argv) {
     ned::ui::Theme                theme    = ned::ui::BuildDetectedTheme(detected, ned::ui::DarkTheme());
 
     if (transparent) {
-        theme.background          = ox::TermColor::Default;
-        theme.echoArea.background = ox::TermColor::Default;
+        theme.background          = ned::ui::Color::Default;
+        theme.echoArea.background = ned::ui::Color::Default;
     }
 
     try {
@@ -256,90 +262,168 @@ int main(int argc, char** argv) {
         return ned::ui::DarkTheme();
     }();
 
-    auto head = Column{
-        ned::ui::TabBar{activeBuffer, bufferList, theme} | SizePolicy::fixed(1),
-        Row{
-            // Always visible, even with the sidebar hidden -- the
-            // mouse-clickable way to show/hide ProjectSidebar (round-2
-            // sidebar follow-up); C-c C-p does the same thing from the
-            // keyboard. Must live outside ProjectSidebar itself: once that
-            // widget's own .active flips false it stops being laid out
-            // entirely, so a toggle drawn inside it would disappear along
-            // with it.
-            ned::ui::SidebarToggle{theme.scrollBar} | SizePolicy::fixed(1),
-            // Starting width: 30 columns total, 29 for the tree itself and 1
-            // reserved for the divider against BufferView (see
-            // ProjectSidebar::paint). Just the initial value -- dragging the
-            // divider (round-2 sidebar follow-up) overwrites size_policy at
-            // runtime; see ProjectSidebar::UpdateResize.
-            ned::ui::ProjectSidebar{activeBuffer, bufferList, statusMessage, theme} | SizePolicy::fixed(30),
-            ned::ui::BufferView{activeBuffer, killRing, bufferList, dispatcher, statusMessage, mode, theme},
-            Column{
-                ned::ui::ScrollArrowButton{U'▲', theme.scrollBar, theme.scrollBarDisabled} | SizePolicy::fixed(1),
-                // ScrollBar's own default SizePolicy is fixed(1), meant for
-                // its usual position as a direct Row child (1 column wide).
-                // Nested one level deeper inside this Column, that same
-                // fixed(1) would instead pin its *height* to 1 row -- override
-                // it to flex so it fills the space between the two arrows.
-                ScrollBar{ScrollBar::Options{.brush = theme.scrollBar}} | SizePolicy::flex(),
-                ned::ui::ScrollArrowButton{U'▼', theme.scrollBar, theme.scrollBarDisabled} | SizePolicy::fixed(1),
-            } | SizePolicy::fixed(1),
-        },
-        ned::ui::ModeLine{activeBuffer, mode, theme} | SizePolicy::fixed(1),
-        ned::ui::EchoArea{statusMessage, theme} | SizePolicy::fixed(1),
-    };
+    // TermOx -> FTXUI migration: every widget is now a heap-allocated,
+    // shared_ptr-owned ftxui::Component (Widget derives from ComponentBase,
+    // which requires shared_ptr ownership throughout FTXUI) rather than a
+    // stack-allocated aggregate member decomposed via structured bindings.
+    // Typed shared_ptrs are kept around so widget-specific methods
+    // (SetScrollBar, RevealPath, etc.) can still be called directly, the
+    // same cross-widget wiring the pre-migration version did through its
+    // own structured-binding references.
+    auto tabBar = std::make_shared<ned::ui::TabBar>(activeBuffer, bufferList, theme);
 
-    auto& [tabBar, bufferRow, modeLine, echoArea]                   = head.children;
-    auto& [sidebarToggle, projectSidebar, bufferView, scrollColumn] = bufferRow.children;
-    auto& [scrollUpArrow, scrollBar, scrollDownArrow]               = scrollColumn.children;
+    // Always visible, even with the sidebar hidden -- the mouse-clickable
+    // way to show/hide ProjectSidebar (round-2 sidebar follow-up); C-c C-p
+    // does the same thing from the keyboard. Must live outside
+    // ProjectSidebar itself: once that widget's own .active flips false it
+    // stops being rendered entirely (see the Maybe() wrapping below), so a
+    // toggle drawn inside it would disappear along with it.
+    auto sidebarToggle = std::make_shared<ned::ui::SidebarToggle>(theme.scrollBar);
+
+    auto projectSidebar = std::make_shared<ned::ui::ProjectSidebar>(activeBuffer, bufferList, statusMessage, theme);
+
+    auto bufferView =
+        std::make_shared<ned::ui::BufferView>(activeBuffer, killRing, bufferList, dispatcher, statusMessage, mode, theme);
+
+    auto scrollUpArrow   = std::make_shared<ned::ui::ScrollArrowButton>(U'▲', theme.scrollBar, theme.scrollBarDisabled);
+    auto scrollBar       = std::make_shared<ned::ui::ScrollBar>(theme.scrollBar);
+    auto scrollDownArrow = std::make_shared<ned::ui::ScrollArrowButton>(U'▼', theme.scrollBar, theme.scrollBarDisabled);
+
+    auto modeLine = std::make_shared<ned::ui::ModeLine>(activeBuffer, mode, theme);
+    auto echoArea = std::make_shared<ned::ui::EchoArea>(statusMessage, theme);
 
     // Two-way sync, both driven from outside BufferView so it stays unaware
-    // of sl::Signal: paint() pushes topLine_/total lines into the bar every
-    // frame (see BufferView::SetScrollBar), and dragging/wheeling the bar
-    // itself calls back into SetTopLine here. The arrow caps step by a
-    // single line per click, deliberately finer-grained than the bar's own
-    // wheel/drag gestures.
-    bufferView.SetScrollBar(&scrollBar);
-    bufferView.SetScrollArrows(&scrollUpArrow, &scrollDownArrow);
-    bufferView.SetProjectSidebar(&projectSidebar);
-    bufferView.SetSidebarRow(&bufferRow);
-    sidebarToggle.SetSidebar(&projectSidebar);
-    sidebarToggle.SetSidebarRow(&bufferRow);
-    projectSidebar.SetSidebarRow(&bufferRow);
+    // of any TUI-library-specific signal mechanism: Paint() pushes
+    // topLine_/total lines into the bar every frame (see
+    // BufferView::SetScrollBar), and dragging/wheeling the bar itself calls
+    // back into SetTopLine here. The arrow caps step by a single line per
+    // click, deliberately finer-grained than the bar's own wheel/drag
+    // gestures.
+    bufferView->SetScrollBar(scrollBar.get());
+    bufferView->SetScrollArrows(scrollUpArrow.get(), scrollDownArrow.get());
+    bufferView->SetProjectSidebar(projectSidebar.get());
+    sidebarToggle->SetSidebar(projectSidebar.get());
     // project-root-detection follow-up: makes it clear, right at startup,
     // which file in the (possibly VCS-root-detected, not just the opened
     // file's own directory) project tree corresponds to what's actually
     // open -- otherwise the file could be buried behind several collapsed
     // ancestor directories with no visible indication of where it is.
     if (buffer->Path()) {
-        projectSidebar.RevealPath(*buffer->Path());
+        projectSidebar->RevealPath(*buffer->Path());
     }
-    tabBar.SetOnCloseRequest([&bufferView](ned::text::Buffer& buffer) { bufferView.RequestCloseBuffer(buffer); });
-    scrollBar.on_scroll.connect([&bufferView](int position) { bufferView.SetTopLine(static_cast<std::size_t>(position)); });
-    scrollUpArrow.SetOnClick([&bufferView] {
-        const std::size_t top = bufferView.TopLine();
-        bufferView.SetTopLine(top > 0 ? top - 1 : 0);
+    tabBar->SetOnCloseRequest([bufferView](ned::text::Buffer& buffer) { bufferView->RequestCloseBuffer(buffer); });
+    scrollBar->SetOnScroll(
+        [bufferView](int position) { bufferView->SetTopLine(static_cast<std::size_t>(position)); });
+    scrollUpArrow->SetOnClick([bufferView] {
+        const std::size_t top = bufferView->TopLine();
+        bufferView->SetTopLine(top > 0 ? top - 1 : 0);
     });
-    scrollDownArrow.SetOnClick([&bufferView] { bufferView.SetTopLine(bufferView.TopLine() + 1); });
+    scrollDownArrow->SetOnClick([bufferView] { bufferView->SetTopLine(bufferView->TopLine() + 1); });
+
+    // ProjectSidebar's own width is drag-resizable at runtime (divider drag
+    // -- see ProjectSidebar::UpdateResize), so its size() decorator can't be
+    // a fixed value computed once at composition time the way every other
+    // widget's is -- the lambda below is re-invoked fresh every frame (this
+    // project's own FTXUI migration confirmed operator|(Component,
+    // ElementDecorator) rebuilds the wrapping Renderer's Element fresh per
+    // Render() call, by reading FTXUI's actual renderer.cpp source, not
+    // assumed), so it always reflects whatever ProjectSidebar::Width()
+    // currently is. Maybe(..., &projectSidebar->active) is the direct FTXUI
+    // answer to the old TermOx ox::Widget::active flag: when false, it
+    // swaps in an empty zero-size placeholder instead of ever calling
+    // ProjectSidebar::Render() at all, matching the old "excluded from
+    // layout entirely" behavior exactly, and (per FTXUI's own Maybe
+    // implementation) suppresses OnEvent delivery to it too while hidden.
+    Component projectSidebarSized = projectSidebar | [raw = projectSidebar.get()](Element e) {
+        return e | size(WIDTH, EQUAL, raw->Width());
+    };
+    Component projectSidebarFinal = Maybe(projectSidebarSized, &projectSidebar->active);
+
+    Component scrollColumn = Container::Vertical({
+        scrollUpArrow | size(HEIGHT, EQUAL, 1),
+        scrollBar | [](Element e) { return flex(std::move(e)); },
+        scrollDownArrow | size(HEIGHT, EQUAL, 1),
+    });
+
+    Component bufferRow = Container::Horizontal({
+        sidebarToggle | size(WIDTH, EQUAL, 1),
+        projectSidebarFinal,
+        bufferView | [](Element e) { return flex(std::move(e)); },
+        scrollColumn | size(WIDTH, EQUAL, 1),
+    });
+
+    Component head = Container::Vertical({
+        tabBar | size(HEIGHT, EQUAL, 1),
+        bufferRow | [](Element e) { return flex(std::move(e)); },
+        modeLine | size(HEIGHT, EQUAL, 1),
+        echoArea | size(HEIGHT, EQUAL, 1),
+    });
+
+    bufferView->TakeFocus();
+
+    // Konsole-specific workaround, user-confirmed: TabBar (and everything
+    // else) failed to show up at all on first launch, until the terminal
+    // window was resized -- other terminals showed TabBar fine but still
+    // had the (separately fixed, see BufferView::CursorPosition's own
+    // comment) missing-cursor bug, so this is specifically about Konsole.
+    // Root cause, traced through FTXUI's own source rather than guessed:
+    // Screen::ToString() (screen.cpp) -- what paints every single frame --
+    // emits row content via plain \r\n line breaks with no absolute
+    // cursor-positioning escape of its own, entirely trusting the cursor is
+    // already at (0,0) before the first byte is written. Every frame after
+    // the first explicitly re-homes the cursor first (App::Internal::
+    // Draw's own ResetPosition() call), but that call is unconditionally
+    // skipped for frame 0, which instead relies entirely on entering the
+    // terminal's alternate screen buffer (\033[?1049h, sent moments later
+    // by ScreenInteractive::Fullscreen()'s own startup) having already
+    // homed the cursor as a side effect -- true per the xterm spec and most
+    // terminals' own behavior (confirmed: a real resize, which forces
+    // FTXUI's full ResetPosition(resized=true) path on the very next frame,
+    // fixes it every time), but apparently not reliably true in Konsole.
+    // Entering the alternate screen buffer and homing the cursor ourselves,
+    // first, sidesteps the bug entirely: FTXUI's own \033[?1049h moments
+    // later becomes a harmless, idempotent re-entry into the buffer we
+    // already switched to, leaving our own explicit home in place
+    // regardless of whether Konsole's own entry would have preserved it.
+    std::cout << "\033[?1049h\033[H" << std::flush;
+
+    auto screen = ScreenInteractive::Fullscreen();
 
     // Auto-saved-scratch-pads follow-up: not started by BufferView's own
     // constructor (every test-constructed BufferView would otherwise spin up
     // a real background thread) -- only the real, running editor opts in.
-    bufferView.StartAutoSaveTimer();
+    // Needs the owning ScreenInteractive so its background thread can
+    // safely marshal the actual auto-save call back onto the main loop
+    // thread via Post (documented thread-safe by FTXUI).
+    bufferView->StartAutoSaveTimer(screen);
 
-    Focus::set(bufferView);
+    // ForceHandleCtrlC/Z(false) is required, not cosmetic -- TermOx ->
+    // FTXUI migration: was Terminal::Options{.signals = Signals::Off}.
+    // Confirmed by reading App::Internal's real event loop (app.cpp), not
+    // assumed from the (easy-to-misread-backwards) header doc comment
+    // alone: `force_handle_ctrl_c_` defaults to true, and true means
+    // "always run FTXUI's own exit-on-Ctrl+C handling, even if the
+    // component's OnEvent claims the event" -- i.e. the default is the
+    // TermOx Signals::On-style trap this project needs off, not already
+    // off. Leaving this at its default caused a real, reproducible crash-
+    // shaped bug during this migration's own manual pty smoke test: any
+    // C-c-prefixed binding (e.g. C-c C-p, toggle-project-sidebar) exited
+    // the whole process the instant the first chord's Ctrl+C byte arrived,
+    // before Dispatcher ever saw the full two-chord sequence. false makes
+    // FTXUI only fall back to its own SIGINT/SIGTSTP handling when our own
+    // component genuinely didn't handle the event, matching Signals::Off's
+    // original intent (bindings we own always win).
+    //
+    // TrackMouse(true) is FTXUI's equivalent of TermOx's non-default
+    // MouseMode::Drag -- motion events reported while a button is held,
+    // which BufferView needs for click-and-drag selection (already FTXUI's
+    // own default, set explicitly here so the intent isn't silently
+    // dependent on that default never changing).
+    screen.ForceHandleCtrlC(false);
+    screen.ForceHandleCtrlZ(false);
+    screen.TrackMouse(true);
 
-    // Signals::Off is required, not cosmetic: with the default Signals::On,
-    // the OS tty driver intercepts C-c/C-z/C-s/C-q/C-v itself (SIGINT/SIGTSTP/
-    // XON-XOFF flow control) and they never reach key_press at all -- e.g.
-    // C-x C-s (save-buffer) would silently never fire. Real terminal Emacs
-    // disables this for the same reason; we bind what these keys do ourselves.
-    // MouseMode::Drag (TermOx's default is already Basic -- press/release/wheel
-    // for all buttons; Drag additionally reports move events while a button is
-    // held, which BufferView needs for click-and-drag selection) rather than
-    // Move, which would report movement even with no button held and isn't
-    // needed here.
-    auto terminal = Terminal{Terminal::Options{.mouse_mode = MouseMode::Drag, .signals = Signals::Off}};
+    screen.Loop(head);
 
-    return Application{head, std::move(terminal)}.run();
+    return 0;
 }
