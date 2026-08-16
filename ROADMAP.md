@@ -3397,6 +3397,98 @@ registers resolve a buffer *by name* via `BufferList::Find` rather than holding 
 `Buffer*`). Left for the slice that actually implements fold/unfold rather than decided
 speculatively here.
 
+### Org: TODO/priority cycling, checkboxes, and a real org-mode — done
+
+Second slice, landed the same session. Extends `Org.h/.cpp` with a Buffer-mutating layer
+on top of the pure structural model above, and wires it into a real, keybindable
+`Mode` for the first time.
+
+**Checkboxes** (new to this slice, not just the headline model's own follow-up): a
+`Checkbox{indent, state, text, lineNumber, stateByte}` struct, `-`/`+` bullets only (not
+Org's numbered-list checkboxes — matches the ROADMAP's own stated v1 syntax), nesting
+inferred purely from indent depth at use time, never stored as a real tree — the same
+"flat list, depth is a field" shape `ProjectTreeEntry` already establishes for the
+unrelated project file tree. `ReflectParentCheckboxStates` recomputes every checkbox
+with children from its *direct* children only (processed bottom-up, in reverse file
+order, so a multi-level chain propagates correctly): all checked -> `'X'`, all
+unchecked -> `' '`, anything else -> `'-'` (partial).
+
+**The Buffer-mutating layer**: `HeadlineAtPoint`/`SetHeadlineTodoKeyword`/
+`SetHeadlinePriority`/`CycleTodoKeywordAtPoint`/`CyclePriorityAtPoint`/
+`ToggleCheckboxAtPoint` all edit an already-parsed `Headline`/`Checkbox`'s own byte
+range in place via `Buffer`'s existing public `DeleteRange`/`InsertAt` — `Buffer` gains
+zero Org-specific knowledge, the same "no new text-manipulation primitives" precedent
+`Rectangle.h`/`ProjectReplace.h` already set. A shared `ReplaceOptionalToken` helper
+handles the one genuinely fiddly bit both the TODO-keyword and priority-cookie mutators
+need: a present token is always followed by exactly one separating space *unless* it
+runs to the line's own end (nothing after it) — inserting a brand-new token always adds
+its own trailing space, removing an existing one also consumes that trailing space if
+one exists, so title/tag text already on the line never ends up with a stray leading
+space either way. `SetTodoKeywords`/`TodoKeywords()` (`Org.h`) is a new process-wide,
+mutex-guarded setting mirroring `TabWidth.h`'s exact pattern, defaulting to
+`DefaultTodoKeywords()` — deliberately kept separate from `DefaultTodoKeywords()` itself
+so the pure parsing functions' own default argument stays decoupled from any global
+mutable state. **No `ned/set-org-todo-keywords` Janet binding yet** — `Value.h` has no
+`std::vector<std::string>` marshalling to build one on top of, a real (if mechanical)
+piece of follow-up work, not attempted here; same "hardcoded C++ for now" scope cut this
+codebase has made repeatedly (the page-scroll fraction, initial `Theme` selection).
+
+**`Mode::OrgMode()`** (`Mode.h/.cpp`) is the first `Mode` in this codebase to actually
+construct a *non-empty* `Keymap` — every other `*Mode()` factory still builds a plain
+`Keymap()`. Binds `org-cycle-todo` to real Org's own `C-c C-t`, `org-toggle-checkbox` to
+`C-c C-c` (matching real Org's context-sensitive `C-c C-c`), and `org-cycle-priority` to
+`C-c C-p`. `C-c C-p` deliberately **shadows** the global `toggle-project-sidebar` binding while an org-mode buffer is
+active — confirmed intentional, not a bug: `KeymapStack` was built from Phase 2 onward
+specifically so a mode layer can override the global layer per buffer (real Emacs major
+modes do this constantly, e.g. `C-c C-c` means something different in every major mode),
+this is simply the first `Mode` to actually exercise that with a real conflicting
+binding rather than only adding bindings the global map never had. Manually verified via
+a `screen`-based pty smoke test that `toggle-project-sidebar` is completely unaffected
+in a non-org buffer. `main.cpp`'s `ModeForPath` gained `.org` -> `OrgMode()`.
+
+**The three new commands** (`Commands.cpp`) act directly on `context.buffer`, *not*
+through `InteractiveRequest` the way rectangle/register/narrowing commands do — a
+deliberate difference, not an inconsistency: those need state that only lives on
+`BufferView` (`RectangleClipboard`, `RegisterTable`, or narrowing's own post-edit
+viewport scroll), while `org::Cycle*AtPoint`/`ToggleCheckboxAtPoint` need nothing beyond
+the buffer itself, so routing them through an interactive session would add a layer of
+indirection for no reason — same direct "do the work, report through `context.message`"
+shape `save-buffer` already uses. Each reports `"Not on a headline."`/`"Not on a
+checkbox."` via `context.message` when point isn't on the relevant kind of line.
+
+Verification: 32 new test cases (`Tests/OrgTest.cpp`'s checkbox/mutation coverage, plus
+4 new `Tests/CommandsTest.cpp` cases exercising the registered commands and `OrgMode`'s
+own keymap), 617 total, clean — plus a `screen`-based pty smoke test against the real
+binary: opened a real `.org` file, confirmed the mode line reads `(org-mode)`, drove
+`C-c C-t`/`C-c C-p`/`C-n` + `C-c C-c` to cycle a headline's TODO keyword and priority and
+toggle a checkbox, all landing exactly as expected in the actual rendered buffer content
+— and confirmed `C-c C-p` still opens the project sidebar normally in a plain-text
+buffer, proving the shadowing is genuinely scoped to org-mode buffers only.
+
+**What's still not here:** subtree fold/unfold (blocked on the fold-state design
+question above), tables, links, and real tree-sitter-org highlighting.
+
+**User wishlist, recorded for later, not started this slice:**
+- **Universal clickable in-buffer affordances, not just Org.** The user's own framing:
+  if Org gets links/checkboxes, every mode should get equivalent "fanciness" where it
+  makes sense — a file path under the cursor opening that file, a URL in a comment
+  becoming a real hyperlink, possibly XDG-opening it (`xdg-open`-style) on click. Not
+  scoped or designed yet; would need the same kind of click-to-action plumbing Org's own
+  link-follow will eventually need, generalized across every `Mode` rather than built
+  Org-specific from the start.
+- **Exhaustive, per-capture-name-configurable tree-sitter highlighting.** Today's
+  `SyntaxClass` (23 members, `Mode.h`) is a curated, hand-picked set of categories, not
+  an exhaustive mirror of every capture name a real grammar's `highlights.scm` can
+  produce (see that file's own header comment). The ask: a sensible default mapping for
+  *every* capture kind tree-sitter can produce, PLUS a way to configure/override any of
+  it — explicitly framed by the user as groundwork for an eventual tree-sitter-driven
+  formatter ("a dprint clone that is actually awesome"), which is exactly the kind of
+  thing that needs fine-grained, complete node/capture classification to do well. Ties
+  directly into the existing "Companion tooling: ... tree-sitter-assisted formatter"
+  entry further down this file. Not designed yet — a real scoping pass (what does
+  "every possible kind of highlight" concretely enumerate to, across the 13 bundled
+  grammars) would be the right first step whenever this is picked up.
+
 **v1 must** (the actual daily-use core of Org, per the user's own likely usage pattern
 of notes/outlines/task lists, not the whole feature list above):
 - [ ] Headline/outline structure (`*`/`**`/`***` stars) with subtree fold/unfold.

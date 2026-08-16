@@ -154,6 +154,9 @@ ned::editor::Mode ModeForPath(const std::filesystem::path& path) {
     if (extension == ".md" || extension == ".markdown") {
         return ned::editor::MarkdownMode();
     }
+    if (extension == ".org") {
+        return ned::editor::OrgMode();
+    }
     return ned::editor::FundamentalMode();
 }
 
