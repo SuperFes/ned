@@ -7,6 +7,7 @@
 #include "Editor/Commands.h"
 #include "Editor/Dispatcher.h"
 #include "Editor/FormatOnSave.h"
+#include "Editor/Mode.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
 #include "Text/KillRing.h"
@@ -453,4 +454,90 @@ TEST_CASE("scroll-page-down is a small, sane fallback when CommandContext::viewp
 
     // PageLineCount clamps to at least 1 line rather than moving by 0.
     REQUIRE(fixture.buffer.Content().ByteOffsetToLine(fixture.buffer.Point()) == 1);
+}
+
+// org-cycle-todo/org-cycle-priority/org-toggle-checkbox aren't in the
+// global keymap -- they're bound in OrgMode's own keymap (Mode.cpp), only
+// layered in for a real .org buffer -- so these invoke the registry
+// directly by name rather than feeding key chords through a Dispatcher,
+// the same way this file already tests registry-level behavior that isn't
+// keymap-specific.
+
+TEST_CASE("org-cycle-todo cycles the headline at point and reports failure off a headline", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    std::string    message;
+    context.message = &message;
+
+    fixture.buffer.InsertAtPoint("* Buy milk\n");
+    fixture.buffer.SetPoint(2);
+
+    registry.Invoke("org-cycle-todo", context);
+    REQUIRE(fixture.buffer.Text() == "* TODO Buy milk\n");
+    REQUIRE(message.empty());
+
+    message.clear();
+    fixture.buffer.SetPoint(fixture.buffer.Size());
+    fixture.buffer.InsertAtPoint("plain text\n");
+    fixture.buffer.SetPoint(fixture.buffer.Size() - 5); // inside "plain text", not the headline above
+
+    registry.Invoke("org-cycle-todo", context);
+    REQUIRE(message == "Not on a headline.");
+}
+
+TEST_CASE("org-cycle-priority cycles the headline at point", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    fixture.buffer.InsertAtPoint("* Buy milk\n");
+    fixture.buffer.SetPoint(2);
+
+    registry.Invoke("org-cycle-priority", context);
+    REQUIRE(fixture.buffer.Text() == "* [#A] Buy milk\n");
+}
+
+TEST_CASE("org-toggle-checkbox toggles the checkbox at point and reports failure off a checkbox", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    std::string    message;
+    context.message = &message;
+
+    fixture.buffer.InsertAtPoint("- [ ] Buy milk\n");
+    fixture.buffer.SetPoint(0);
+
+    registry.Invoke("org-toggle-checkbox", context);
+    REQUIRE(fixture.buffer.Text() == "- [X] Buy milk\n");
+    REQUIRE(message.empty());
+
+    fixture.buffer.SetPoint(fixture.buffer.Size());
+    fixture.buffer.InsertAtPoint("plain text");
+    fixture.buffer.SetPoint(fixture.buffer.Size() - 3);
+    registry.Invoke("org-toggle-checkbox", context);
+    REQUIRE(message == "Not on a checkbox.");
+}
+
+TEST_CASE("OrgMode binds C-c C-t/C-c C-c/C-c C-p to the three org commands", "[Commands]") {
+    const Mode mode = OrgMode();
+    REQUIRE(mode.name == "org-mode");
+
+    const auto todo = mode.keymap.Resolve(ParseKeySequence("C-c C-t"));
+    REQUIRE(todo.result == Keymap::LookupResult::Match);
+    REQUIRE(todo.commandName == "org-cycle-todo");
+
+    const auto priority = mode.keymap.Resolve(ParseKeySequence("C-c C-p"));
+    REQUIRE(priority.result == Keymap::LookupResult::Match);
+    REQUIRE(priority.commandName == "org-cycle-priority");
+
+    const auto checkbox = mode.keymap.Resolve(ParseKeySequence("C-c C-c"));
+    REQUIRE(checkbox.result == Keymap::LookupResult::Match);
+    REQUIRE(checkbox.commandName == "org-toggle-checkbox");
 }

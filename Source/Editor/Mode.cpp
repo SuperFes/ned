@@ -5,6 +5,7 @@
 #include <unordered_map>
 #include <utility>
 
+#include "Key.h"
 #include "TreeSitter/Languages.h"
 #include "TreeSitter/Parser.h"
 #include "TreeSitter/Queries.h"
@@ -228,6 +229,14 @@ Mode BashMode() {
 
 Mode MarkdownMode() {
     return TreeSitterMode("markdown-mode", "markdown", treesitter::queries::kMarkdown);
+}
+
+Mode OrgMode() {
+    Keymap keymap;
+    keymap.Bind(ParseKeySequence("C-c C-t"), "org-cycle-todo");
+    keymap.Bind(ParseKeySequence("C-c C-p"), "org-cycle-priority"); // deliberately shadows toggle-project-sidebar; see Mode.h
+    keymap.Bind(ParseKeySequence("C-c C-c"), "org-toggle-checkbox");
+    return Mode{.name = "org-mode", .keymap = std::move(keymap), .highlight = HighlightFunction()};
 }
 
 } // namespace ned::editor

@@ -6,6 +6,7 @@
 #include <string>
 
 #include "FormatOnSave.h"
+#include "Org.h"
 #include "TabWidth.h"
 #include "Text/Utf8.h"
 
@@ -324,6 +325,33 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     registry.Register("widen", "Remove any narrowing, restoring the full buffer.", [](CommandContext& context) {
         context.interactiveRequest = InteractiveRequest::Widen;
     });
+
+    // Org's three editing commands act directly on context.buffer, unlike
+    // the interactiveRequest-routed commands above (rectangle/register/
+    // narrowing) -- those need state (RectangleClipboard, RegisterTable, or
+    // BufferView's own viewport for narrowing's post-edit scroll) that only
+    // lives on BufferView, but org::Cycle*AtPoint/ToggleCheckboxAtPoint need
+    // nothing beyond the buffer itself, so there's no reason to round-trip
+    // through an interactive session for them -- same direct "do the work,
+    // report through context.message" shape save-buffer already uses.
+    registry.Register("org-cycle-todo", "Cycle the TODO keyword of the headline at point.",
+                      [](CommandContext& context) {
+                          if (!org::CycleTodoKeywordAtPoint(context.buffer) && context.message) {
+                              *context.message = "Not on a headline.";
+                          }
+                      });
+    registry.Register("org-cycle-priority", "Cycle the [#A]/[#B]/[#C] priority cookie of the headline at point.",
+                      [](CommandContext& context) {
+                          if (!org::CyclePriorityAtPoint(context.buffer) && context.message) {
+                              *context.message = "Not on a headline.";
+                          }
+                      });
+    registry.Register("org-toggle-checkbox", "Toggle the checkbox at point, reflecting the change up into any parent.",
+                      [](CommandContext& context) {
+                          if (!org::ToggleCheckboxAtPoint(context.buffer) && context.message) {
+                              *context.message = "Not on a checkbox.";
+                          }
+                      });
 }
 
 Keymap BuildDefaultGlobalKeymap() {

@@ -162,6 +162,23 @@ struct Mode {
 [[nodiscard]] Mode BashMode();
 [[nodiscard]] Mode MarkdownMode();
 
+// Org-like structured editing (v1 slice, see Org.h and ROADMAP.md's
+// "Org-like structured editing" entry): no highlighting yet (real
+// tree-sitter-org integration is a separate follow-up slice), but a real,
+// non-empty keymap -- the first Mode in this codebase to actually have one
+// (every *Mode() function above still constructs a plain empty Keymap()).
+// Binds org-cycle-todo/org-cycle-priority/org-toggle-checkbox under real
+// Org's own C-c C-t/C-c C-c bindings, plus C-c C-p for priority -- which
+// deliberately SHADOWS the global toggle-project-sidebar binding while an
+// Org buffer is active. That's intentional, not an oversight: KeymapStack
+// was built from Phase 2 onward specifically so a mode layer can override
+// the global layer per buffer (exactly how real Emacs major modes work,
+// e.g. C-c C-c means something different in every major mode) -- this is
+// simply the first Mode to actually exercise that with a real conflicting
+// binding, rather than only ever adding new bindings the global map never
+// had. toggle-project-sidebar is unaffected everywhere else.
+[[nodiscard]] Mode OrgMode();
+
 } // namespace ned::editor
 
 #endif // NED_EDITOR_MODE_H
