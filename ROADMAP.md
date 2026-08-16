@@ -3349,6 +3349,54 @@ no rebuild needed to iterate), promoting it to a real bundled grammar in `CMakeL
 only once Org-mode support is a committed, real feature rather than still being designed
 — the same "prove it, then commit" discipline this project already applies elsewhere.
 
+### Org: headline/outline model (first slice) — done
+
+The first real slice of work, started once the Phase 8 "Must" items above all landed.
+Headline structure is the one piece every other v1 item below ultimately keys off
+(fold/unfold, tag display, an eventual agenda-shaped view), so it came first, ahead of
+checkboxes/tables/links/highlighting — none of which need it, but all of which are more
+useful once it exists, and none of which are started yet.
+
+New `Source/Editor/Org.h/.cpp` (`ned::editor::org` namespace): pure functions over plain
+buffer text, the same "UI-agnostic, string_view/struct in and out" shape `ProjectTree.h`/
+`ProjectSearch.h` already establish, and specifically *not* over `Buffer&` — nothing here
+needs live point/mark/undo, only the text, matching `Mode.h`'s `HighlightFunction` shape
+for the same reason. `ParseOutline(bufferText, todoKeywords = DefaultTodoKeywords())`
+scans every line for real Org's own headline rule — one or more `*` at column 0 (no
+leading whitespace — that's what actually distinguishes a headline from an indented list
+item), followed by a mandatory space — and, once a headline is found, peels off an
+optional leading TODO keyword (checked against a configurable list, defaulting to
+`{"TODO", "DONE"}`; `"TODOING"` is never misread as keyword `"TODO"` + title `"ING"`,
+since a keyword match requires a following space or end-of-line), an optional `[#A]`-style
+priority cookie, and an optional trailing `:tag1:tag2:` block — parsed via one
+`std::regex` (`^(.*?)\s*((?::[A-Za-z0-9_@#%]+)+:)\s*$`, ECMAScript syntax, matching this
+codebase's existing `QueryReplace`/`ProjectSearch` convention) rather than hand-rolled
+backward scanning, since the lazy `.*?` combined with anchoring both ends is what
+guarantees a stray `"Note: something"`-style colon in the middle of a title is never
+misread as the start of a tags block (a real case this file's own tests cover).
+`NextTodoKeyword(current, todoKeywords)`/`NextPriority(current)` are the two pure
+state-transition helpers ("" -> `"TODO"` -> `"DONE"` -> "", and `nullopt` -> `'A'` ->
+`'B'` -> `'C'` -> `nullopt`); an unrecognized/stale current value is treated the same as
+"none" and restarts the cycle rather than silently no-op'ing, since a headline with a
+keyword no longer in `todoKeywords` (e.g. after a user reconfigures it) shouldn't get
+permanently stuck.
+
+**What's deliberately not here yet, and why:** any `Buffer`-mutating operation (actually
+rewriting a headline's TODO keyword/priority in place, wired to real editing commands)
+— this slice is the structural model only, proven with 19 new `Tests/OrgTest.cpp` cases
+(585 total, clean) but not yet reachable from a keybinding. Checkboxes, tables, and links
+are separate, independent follow-up slices, not started. **A real open design question,
+flagged rather than guessed at:** where per-buffer fold state (which subtrees are
+collapsed) should live once fold/unfold lands. `Buffer` already carries some non-text
+state (`Point_`/`Mark_`/`narrowedRange_`), which argues for keeping fold state there too
+(a navigation/view concern, but tied to *this specific buffer's* content) — but a naive
+`ProjectSidebar`-style `set<Buffer*>`-keyed cache owned by `BufferView` would repeat a bug
+class this codebase has already hit and fixed twice (dangling-buffer-pointer bugs in
+window-splitting's `ActiveBuffer` retargeting, and the reason `RegisterTable`'s point
+registers resolve a buffer *by name* via `BufferList::Find` rather than holding a raw
+`Buffer*`). Left for the slice that actually implements fold/unfold rather than decided
+speculatively here.
+
 **v1 must** (the actual daily-use core of Org, per the user's own likely usage pattern
 of notes/outlines/task lists, not the whole feature list above):
 - [ ] Headline/outline structure (`*`/`**`/`***` stars) with subtree fold/unfold.
