@@ -85,6 +85,38 @@ class Buffer {
     [[nodiscard]] std::size_t                         Mark() const;   // precondition: HasMark()
     [[nodiscard]] std::pair<std::size_t, std::size_t> Region() const; // precondition: HasMark()
 
+    // Narrowing (narrow-to-region/widen follow-up): temporarily restricts
+    // where point can go and what BufferView displays to a sub-range of the
+    // buffer, Emacs-style. Always whole-line-aligned: start snaps down to
+    // its containing line's own start byte offset, end snaps up to the
+    // start of the line after the last affected one (or the buffer's own
+    // end) -- a deliberate scope simplification. Real Emacs narrows to an
+    // exact, possibly mid-line byte range; this codebase's line-oriented
+    // BufferView display has no per-line partial-content clipping, and
+    // building that would be a substantially bigger lift for a feature
+    // whose own stated purpose ("restrict... to e.g. one function") is
+    // inherently a whole-lines concept for source code anyway.
+    //
+    // Deliberately does NOT restrict Size()/ByteLength()/Text() or raw
+    // DeleteRange/InsertAt at an arbitrary offset -- those keep operating on
+    // the whole buffer regardless, matching this feature's own "not new
+    // text-manipulation primitives" scope. What IS restricted: InsertAt/
+    // InsertAtPoint/DeleteRange keep the narrowed range itself shifted
+    // correctly across edits, the exact same treatment Point_/Mark_ already
+    // get (typing at the narrowed range's own boundary has to grow it, not
+    // desync from it -- extending a narrowed function is the single most
+    // common narrowing workflow there is, not an edge case). Point itself
+    // is NOT clamped here -- Point_ is mutated by direct assignment in most
+    // of Buffer's own motion methods, not funneled through SetPoint, so
+    // BufferView::ClampPointToNarrowing (called once per key event, after
+    // whichever handler just ran) is what actually keeps point confined;
+    // see its own doc comment for why that's the correct, centralized place
+    // for it instead of here.
+    void                                              NarrowToRegion(std::size_t start, std::size_t end);
+    void                                              Widen();
+    [[nodiscard]] bool                                IsNarrowed() const;
+    [[nodiscard]] std::pair<std::size_t, std::size_t> NarrowedRange() const; // precondition: IsNarrowed()
+
     // Inserts at point; point moves to the end of the inserted text. Runs of
     // consecutive InsertAtPoint calls (uninterrupted by any other mutating or
     // cursor-moving call) coalesce into a single undo step.
@@ -150,6 +182,26 @@ class Buffer {
     [[nodiscard]] std::size_t ByteOffsetForLineAndColumn(std::size_t line, std::size_t column,
                                                          std::size_t tabWidth = 1) const;
 
+    // The visual column byteOffset renders at, walking from lineStart (which
+    // must be a line-start byte offset at or before byteOffset) -- the
+    // reverse of ByteOffsetForLineAndColumn's landing walk. Originally a
+    // MoveToLine-only implementation detail (capturing its own goal column);
+    // public since the rectangle-editing follow-up (Editor/Rectangle.h),
+    // which needs the same byte-offset-to-column query to compute a
+    // rectangular region's own column bounds from point/mark. tabWidth <= 1
+    // takes an O(1) fast path (plain codepoint counting via the rope's
+    // cached counts, exactly the original pre-tab-aware behavior); tabWidth
+    // > 1 walks codepoint-by-codepoint, bounded by kMaxTabAwareColumnScan
+    // (Buffer.cpp) so that capturing the goal column while point sits deep
+    // inside a pathologically long single line can't regress into an
+    // O(line length) scan -- past that bound it falls back to a plain
+    // codepoint-distance approximation for the remainder, matching
+    // BufferView::VisualColumn's own precedent of trading exactness for
+    // boundedness far past anything a real column position could mean
+    // visually anyway.
+    [[nodiscard]] std::size_t VisualColumnForByteOffset(std::size_t lineStart, std::size_t byteOffset,
+                                                        std::size_t tabWidth) const;
+
     [[nodiscard]] bool CanUndo() const;
     [[nodiscard]] bool CanRedo() const;
     void               Undo();
@@ -159,29 +211,14 @@ class Buffer {
     void ClampCursorsToContent();
     void MoveToLine(std::size_t targetLine, std::size_t tabWidth);
 
-    // The visual column byteOffset renders at, walking from lineStart (which
-    // must be a line-start byte offset at or before byteOffset) -- the
-    // reverse of ByteOffsetForLineAndColumn's landing walk, used to capture
-    // MoveToLine's goal column. tabWidth <= 1 takes an O(1) fast path (plain
-    // codepoint counting via the rope's cached counts, exactly the original
-    // pre-tab-aware behavior); tabWidth > 1 walks codepoint-by-codepoint,
-    // bounded by kMaxTabAwareColumnScan (Buffer.cpp) so that capturing the
-    // goal column while point sits deep inside a pathologically long single
-    // line can't regress into an O(line length) scan -- past that bound it
-    // falls back to a plain codepoint-distance approximation for the
-    // remainder, matching BufferView::VisualColumn's own precedent of
-    // trading exactness for boundedness far past anything a real column
-    // position could mean visually anyway.
-    [[nodiscard]] std::size_t VisualColumnForByteOffset(std::size_t lineStart, std::size_t byteOffset,
-                                                        std::size_t tabWidth) const;
-
-    std::string                          Name_;
-    std::optional<std::filesystem::path> Path_;
-    Rope                                 Rope_;
-    UndoTree                             UndoTree_;
-    std::size_t                          Point_ = 0;
-    std::optional<std::size_t>           Mark_;
-    bool                                 CanAmend_ = false;
+    std::string                                        Name_;
+    std::optional<std::filesystem::path>               Path_;
+    Rope                                               Rope_;
+    UndoTree                                           UndoTree_;
+    std::size_t                                        Point_ = 0;
+    std::optional<std::size_t>                         Mark_;
+    std::optional<std::pair<std::size_t, std::size_t>> NarrowedRange_; // see NarrowToRegion's own doc comment
+    bool                                               CanAmend_ = false;
     // Set by MoveToNextLine/MoveToPreviousLine, cleared by every other
     // point-moving or editing call -- see their doc comment above.
     std::optional<std::size_t> GoalColumn_;

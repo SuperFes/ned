@@ -1,7 +1,12 @@
 //
 // The "interactive defun" equivalent: every editor action is a named Command
 // registered here, invocable either from a keybinding (via Dispatcher) or by
-// name (M-x-style, via CompleteCommandNames + CommandRegistry::Invoke).
+// name -- M-x-style, via BufferView's own fuzzy-filtered
+// (Editor/FuzzyMatch.h) CommandRegistry::Invoke, see the
+// execute-extended-command command in Commands.cpp and
+// BufferView::HandleExecuteCommandKey. CompleteCommandNames below is a
+// separate, simpler exact-prefix completion utility, not what M-x itself
+// uses.
 //
 
 #ifndef NED_EDITOR_COMMAND_H
@@ -40,7 +45,58 @@ enum class InteractiveRequest { None,
                                 CreateDirectory,
                                 DeleteFile,
                                 RenameFile,
-                                FindScratch };
+                                FindScratch,
+                                // execute-extended-command follow-up: another prompt-shaped
+                                // one-shot request, not a structural window-management one --
+                                // placed here rather than after the window-management block
+                                // below for that reason.
+                                ExecuteCommand,
+                                // kmacro-start-macro/kmacro-end-or-call-macro follow-up: also
+                                // one-shot direct actions (BufferView::StartInteractiveSession
+                                // acts on them immediately, inputMode_ stays Normal), not
+                                // prompt-shaped sessions -- see Dispatcher::StartRecording/
+                                // StopRecording/LastMacro for where the actual recording state
+                                // lives.
+                                StartKbdMacro,
+                                EndOrCallKbdMacro,
+                                // point-to-register/jump-to-register/copy-to-register/
+                                // insert-register follow-up: also prompt-shaped one-shot
+                                // requests -- each reads exactly one further character (the
+                                // register name) and acts, no MinibufferPrompt needed. See
+                                // Editor/Register.h for where the actual register storage
+                                // lives.
+                                PointToRegister,
+                                JumpToRegister,
+                                CopyToRegister,
+                                InsertRegister,
+                                // kill-rectangle/delete-rectangle/yank-rectangle/
+                                // string-rectangle follow-up: KillRectangle/DeleteRectangle/
+                                // YankRectangle are one-shot direct actions, no further
+                                // prompting needed at all (unlike the register requests above,
+                                // there's no name character to read) -- same shape as
+                                // ToggleProjectSidebar. StringRectangle is the one prompt-shaped
+                                // exception (needs one line of typed replacement text). See
+                                // Editor/Rectangle.h for where the actual operations live.
+                                KillRectangle,
+                                DeleteRectangle,
+                                YankRectangle,
+                                StringRectangle,
+                                // narrow-to-region/widen follow-up: also one-shot direct actions,
+                                // same shape as ToggleProjectSidebar. See Buffer::NarrowToRegion/
+                                // Widen for where the actual restriction lives.
+                                NarrowToRegion,
+                                Widen,
+                                // Window-splitting follow-up: structural window-management
+                                // actions, not single-buffer interactive sessions -- BufferView
+                                // just forwards these to whatever registered
+                                // SetOnWindowRequest (see BufferView.h), the same "command
+                                // signals intent, host UI acts on it" shape every other
+                                // InteractiveRequest already uses.
+                                SplitBelow,
+                                SplitRight,
+                                DeleteWindow,
+                                DeleteOtherWindows,
+                                OtherWindow };
 
 // Everything a command implementation might need. Built fresh per invocation
 // from live references -- never stored, so there's no lifetime concern beyond

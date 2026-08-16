@@ -508,3 +508,72 @@ TEST_CASE("Undo/redo mark the buffer modified even when they land back on the sa
 
     std::filesystem::remove(path);
 }
+
+// narrow-to-region/widen follow-up. Content used throughout:
+// "line0\nline1\nline2\nline3" -- line0 [0,6), line1 [6,12), line2 [12,18),
+// line3 [18,23) (no trailing newline, ByteLength() == 23).
+
+TEST_CASE("NarrowToRegion snaps a mid-line region to whole lines", "[Buffer]") {
+    Buffer buffer("scratch", ned::text::Rope("line0\nline1\nline2\nline3"));
+
+    buffer.NarrowToRegion(8, 15); // mid-line1 to mid-line2
+
+    REQUIRE(buffer.IsNarrowed());
+    REQUIRE(buffer.NarrowedRange() == std::pair<std::size_t, std::size_t>{6, 18});
+}
+
+TEST_CASE("Widen clears narrowing", "[Buffer]") {
+    Buffer buffer("scratch", ned::text::Rope("line0\nline1\nline2\nline3"));
+    REQUIRE_FALSE(buffer.IsNarrowed());
+
+    buffer.NarrowToRegion(6, 12);
+    REQUIRE(buffer.IsNarrowed());
+
+    buffer.Widen();
+    REQUIRE_FALSE(buffer.IsNarrowed());
+}
+
+TEST_CASE("InsertAtPoint at the exact narrowed-range boundary extends the range", "[Buffer]") {
+    Buffer buffer("scratch", ned::text::Rope("line0\nline1\nline2\nline3"));
+    buffer.NarrowToRegion(0, 10); // snaps to lines 0-1: [0, 12)
+    REQUIRE(buffer.NarrowedRange() == std::pair<std::size_t, std::size_t>{0, 12});
+
+    buffer.SetPoint(12);
+    buffer.InsertAtPoint("XX");
+
+    // The narrowed range grows to keep including the newly-typed text,
+    // rather than desyncing from it -- extending a narrowed region by
+    // typing at its own boundary is the single most common narrowing
+    // workflow there is, not an edge case.
+    REQUIRE(buffer.NarrowedRange() == std::pair<std::size_t, std::size_t>{0, 14});
+}
+
+TEST_CASE("DeleteRange spanning across the narrowed start shifts it the same way Point_/Mark_ already do",
+          "[Buffer]") {
+    Buffer buffer("scratch", ned::text::Rope("line0\nline1\nline2\nline3"));
+    buffer.NarrowToRegion(6, 12); // snaps to lines 1-2: [6, 18)
+    REQUIRE(buffer.NarrowedRange() == std::pair<std::size_t, std::size_t>{6, 18});
+
+    buffer.DeleteRange(3, 6); // deletes bytes [3, 9) -- spans across the narrowed start (byte 6)
+
+    REQUIRE(buffer.NarrowedRange() == std::pair<std::size_t, std::size_t>{3, 12});
+}
+
+TEST_CASE("Undo restoring shorter content auto-widens a narrowed range that would otherwise become degenerate",
+          "[Buffer]") {
+    Buffer buffer("scratch");
+    buffer.InsertAtPoint("line0\nline1"); // one real undo step
+    REQUIRE(buffer.CanUndo());
+
+    buffer.NarrowToRegion(6, 11); // narrow to line1: [6, 11)
+    REQUIRE(buffer.NarrowedRange() == std::pair<std::size_t, std::size_t>{6, 11});
+
+    // Narrowing isn't part of undo history (a deliberate design choice,
+    // matching real Emacs) -- undoing back to the empty buffer leaves the
+    // recorded range referencing byte offsets past the new (zero-length)
+    // content entirely.
+    buffer.Undo();
+
+    REQUIRE(buffer.Text().empty());
+    REQUIRE_FALSE(buffer.IsNarrowed());
+}

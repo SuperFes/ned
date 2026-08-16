@@ -15,12 +15,11 @@
 #include <atomic>
 #include <cstddef>
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <string>
-#include <thread>
+#include <utility>
 #include <vector>
-
-#include <ftxui/component/screen_interactive.hpp>
 
 #include "ActiveBuffer.h"
 #include "Editor/Command.h"
@@ -30,6 +29,7 @@
 #include "Editor/Mode.h"
 #include "Editor/ProjectReplace.h"
 #include "Editor/QueryReplace.h"
+#include "Editor/Register.h"
 #include "ProjectSidebar.h"
 #include "ScrollArrowButton.h"
 #include "ScrollBar.h"
@@ -49,10 +49,9 @@ class BufferView : public Widget {
     // outlive this BufferView (matches how killRing/bufferList/dispatcher/
     // statusMessage are already externally-owned references with the same
     // requirement).
-    BufferView(ActiveBuffer& activeBuffer, text::KillRing& killRing, text::BufferList& bufferList,
-               editor::Dispatcher& dispatcher, std::string& statusMessage, const editor::Mode& mode,
-               const Theme& theme);
-    ~BufferView() override;
+    BufferView(ActiveBuffer& activeBuffer, text::KillRing& killRing, editor::RegisterTable& registers,
+               text::BufferList& bufferList, editor::Dispatcher& dispatcher, std::string& statusMessage,
+               const editor::Mode& mode, const Theme& theme);
 
     BufferView(const BufferView&)            = delete;
     BufferView& operator=(const BufferView&) = delete;
@@ -111,18 +110,24 @@ class BufferView : public Widget {
     // already in progress.
     void RequestCloseBuffer(text::Buffer& buffer);
 
-    // Starts the periodic scratch auto-save timer (auto-saved-scratch-pads
-    // follow-up) -- not started automatically at construction, since that
-    // would spin up a real background thread for every BufferView built in
-    // tests; main.cpp calls this once for the real, running editor, the
-    // same "inert until explicitly wired up" pattern SetScrollBar/
-    // SetProjectSidebar already establish for other main.cpp-only wiring.
-    // Takes the owning ScreenInteractive so the background thread this
-    // starts can safely marshal the actual auto-save call back onto the
-    // main loop thread via PostEvent (documented thread-safe by FTXUI,
-    // confirmed by reading app.cpp, not assumed) rather than touching
-    // bufferList_ directly from a second thread.
-    void StartAutoSaveTimer(ftxui::ScreenInteractive& screen);
+    // Window-splitting follow-up: called with the same InteractiveRequest
+    // whenever StartInteractiveSession sees one of the five structural
+    // window-management values (SplitBelow/SplitRight/DeleteWindow/
+    // DeleteOtherWindows/OtherWindow) -- these operate above the level of a
+    // single BufferView, so unlike every other InteractiveRequest this
+    // class doesn't act on them itself, it just forwards. Mirrors
+    // SetProjectSidebar/SetOnCloseRequest's own "connect after construction,
+    // unset is a safe no-op" convention exactly. WindowManager (the owner of
+    // however many BufferViews exist) is the intended registrant.
+    void SetOnWindowRequest(std::function<void(editor::InteractiveRequest)> handler);
+
+    // Window-splitting follow-up: called from CloseBufferNow, before the
+    // buffer is actually erased from bufferList_, with the buffer that's
+    // about to close -- so a multi-pane owner can retarget any *other* pane
+    // whose ActiveBuffer also pointed at it (this BufferView's own
+    // activeBuffer_ is already handled internally by CloseBufferNow). Unset
+    // is a safe no-op, matching every other Set* hook here.
+    void SetOnBufferClosed(std::function<void(text::Buffer&)> handler);
 
   private:
     enum class InputMode { Normal,
@@ -138,7 +143,13 @@ class BufferView : public Widget {
                            CreateDirectory,
                            DeleteFile,
                            RenameFile,
-                           FindScratch };
+                           FindScratch,
+                           ExecuteCommand,
+                           PointToRegister,
+                           JumpToRegister,
+                           CopyToRegister,
+                           InsertRegister,
+                           StringRectangle };
 
     enum class DeleteFileStage { EnteringPath,
                                  Confirming };
@@ -164,7 +175,7 @@ class BufferView : public Widget {
     void HandleConfirmQuitKey(const editor::KeyChord& chord);
     void HandlePromptKey(
         const editor::KeyChord&
-            chord);        // shared by FindFile/SwitchToBuffer/ProjectSearch/CreateDirectory/FindScratch -- see prompt_
+            chord);        // shared by FindFile/SwitchToBuffer/ProjectSearch/CreateDirectory/FindScratch/StringRectangle -- see prompt_
     void CompletePrompt(); // Tab in HandlePromptKey -- find-file paths, buffer names, or scratch names, by inputMode_
     void HandleProjectReplaceKey(const editor::KeyChord& chord);
     void HandleConfirmCloseBufferKey(const editor::KeyChord& chord); // see RequestCloseBuffer/pendingClose_
@@ -187,6 +198,83 @@ class BufferView : public Widget {
     // leaving that buffer pointing at a now-nonexistent path.
     void HandleDeleteFileKey(const editor::KeyChord& chord);
     void HandleRenameFileKey(const editor::KeyChord& chord);
+
+    // point-to-register/jump-to-register/copy-to-register/insert-register
+    // follow-up: one shared method for all four (mirrors HandlePromptKey's
+    // own "several related modes, one handler that switches on inputMode_
+    // internally" shape) rather than four near-duplicate methods, since each
+    // operation's own interaction shape is identical -- read exactly one
+    // more character (the register name, no MinibufferPrompt needed, there's
+    // nothing to accumulate), act, end the session. Only what happens with
+    // that character differs per inputMode_. See Editor/Register.h for where
+    // the actual register storage lives (registers_ below).
+    void HandleRegisterKey(const editor::KeyChord& chord);
+
+    // execute-extended-command follow-up (M-x): given its own dedicated
+    // method rather than folded into HandlePromptKey, since HandlePromptKey's
+    // Enter-branch has an unconditional catch-all else currently reached only
+    // by FindScratch -- silently misrouting a new mode into it would be a
+    // real bug -- and because its key semantics (Up/Down candidate
+    // selection, re-ranking on every keystroke) genuinely differ from every
+    // HandlePromptKey mode's shared shape, the same reason
+    // DeleteFile/RenameFile already get their own methods. Prompts for a
+    // command name, fuzzy-matched (Editor/FuzzyMatch.h) against
+    // dispatcher_.Registry().Names() and re-ranked on every keystroke; Enter
+    // invokes whichever ranked candidate is currently selected. Shown inline
+    // via statusMessage_ using the same "label + text + {candidates}"
+    // convention CompletePrompt already established, since this codebase has
+    // no floating/popup widget concept to show a real dropdown in (see
+    // ProjectSidebar's own context-menu descoping history).
+    void HandleExecuteCommandKey(const editor::KeyChord& chord);
+
+    // Refreshes statusMessage_ from the current prompt_ text and
+    // executeCommandSelection_ -- shared by StartInteractiveSession's
+    // ExecuteCommand case and every branch of HandleExecuteCommandKey that
+    // changes either one.
+    void RefreshExecuteCommandStatus();
+
+    // Shared by OnKeyEvent's Normal-mode tail (Dispatcher::Feed) and
+    // HandleExecuteCommandKey's Enter branch (CommandRegistry::Invoke by
+    // name): applies the two dispatch-level side effects a command can
+    // request -- context.quit (exit the app) and a chained
+    // context.interactiveRequest (immediately start that request's own
+    // session, letting an M-x-invoked command like find-file chain straight
+    // into its own prompt) -- and catches std::exception into
+    // statusMessage_, regardless of how the command was found. invoke is the
+    // actual dispatch call, run inside the try.
+    void RunCommandAndHandleOutcome(editor::CommandContext& context, const std::function<void()>& invoke);
+
+    // kmacro-end-or-call-macro follow-up: replays dispatcher_.LastMacro(),
+    // one chord at a time, each through a fresh MakeContext() +
+    // RunCommandAndHandleOutcome -- exactly what a real keystroke does.
+    // Reports "No keyboard macro has been recorded yet." via statusMessage_
+    // if nothing's been recorded (mirrors delete-window's own "Cannot delete
+    // the only window." can't-do-that-right-now convention). Stops early,
+    // leaving the rest of the macro un-replayed, the instant a replayed
+    // command opens an interactive session (inputMode_ != Normal) or
+    // requests quit -- a macro's own recording never captured what happens
+    // *inside* such a session (see Dispatcher::StartRecording's own doc
+    // comment), so blindly continuing to feed the macro's remaining chords
+    // through Dispatcher::Feed underneath a now-live session would be
+    // feeding them to the wrong place entirely; this leaves that session
+    // genuinely live for the user to finish by hand instead.
+    void ReplayMacro();
+
+    // narrow-to-region/widen follow-up: keeps point confined to a narrowed
+    // buffer's own NarrowedRange() -- a no-op if the active buffer isn't
+    // narrowed. Called once before each of OnKeyEvent's own return
+    // statements, and once per chord inside ReplayMacro's own loop -- these
+    // are the two real entry points for anything that could move point
+    // (every key-driven Handle*Key method, plus macro replay, which
+    // bypasses OnKeyEvent entirely). Most of Buffer's own motion methods
+    // mutate Point_ by direct assignment rather than through the one public
+    // SetPoint() setter (confirmed by reading Buffer.cpp directly), so
+    // clamping only inside SetPoint would silently miss most of them --
+    // this is the actual, correct, centralized place instead. Deliberately
+    // not inside Paint(): giving rendering code a buffer-mutating side
+    // effect would make repeated Paint() calls with no intervening input
+    // non-idempotent.
+    void ClampPointToNarrowing();
 
     // The actual close: removes buffer from bufferList_ and, if it was the
     // active one, switches activeBuffer_ to whatever remains (the first
@@ -219,8 +307,18 @@ class BufferView : public Widget {
     // the bottom of the viewport rather than scrolling past it into blank
     // filler rows. Used by both SetTopLine and Paint()'s scroll-bar sync, so
     // wheel/scroll-bar-driven scrolling and the bar's own visual range agree
-    // on where "the bottom" is.
+    // on where "the bottom" is. narrow-to-region/widen follow-up: when the
+    // active buffer is narrowed, this is computed against the narrowed
+    // range's own line span instead of the whole buffer -- see
+    // NarrowedLineRange.
     [[nodiscard]] std::size_t MaxTopLine() const;
+
+    // narrow-to-region/widen follow-up: {0, Content().LineCount()} if the
+    // active buffer isn't narrowed, otherwise the narrowed range's own
+    // [startLine, endLine) span (endLine exclusive) -- shared by MaxTopLine,
+    // SetTopLine, and Paint()'s own "blank past this line" cutoff so all
+    // three agree on exactly the same bounds.
+    [[nodiscard]] std::pair<std::size_t, std::size_t> NarrowedLineRange() const;
 
     // Translates an on-screen (LOCAL to this widget) mouse position into a
     // buffer byte offset, accounting for the current scroll position and the
@@ -245,13 +343,14 @@ class BufferView : public Widget {
     [[nodiscard]] bool InSelection(std::size_t byteOffset) const;
     [[nodiscard]] bool InIsearchMatch(std::size_t byteOffset) const;
 
-    ActiveBuffer&       activeBuffer_;
-    text::KillRing&     killRing_;
-    text::BufferList&   bufferList_;
-    editor::Dispatcher& dispatcher_;
-    std::string&        statusMessage_;
-    const editor::Mode& mode_;
-    const Theme&        theme_;
+    ActiveBuffer&          activeBuffer_;
+    text::KillRing&        killRing_;
+    editor::RegisterTable& registers_;
+    text::BufferList&      bufferList_;
+    editor::Dispatcher&    dispatcher_;
+    std::string&           statusMessage_;
+    const editor::Mode&    mode_;
+    const Theme&           theme_;
 
     std::size_t                topLine_    = 0;            // first visible buffer line (0-indexed)
     std::size_t                dragAnchor_ = 0;            // point position at the last mouse press, for drag-selection
@@ -274,18 +373,25 @@ class BufferView : public Widget {
     RenameFileStage       renameStage_ = RenameFileStage::EnteringSource;
     std::filesystem::path renameSource_; // path entered in RenameFileStage::EnteringSource
 
-    // Scratch auto-save (see StartAutoSaveTimer) -- a real background
-    // std::jthread rather than an FTXUI animation-frame hook (unlike
-    // ScrollArrowButton's repeat): this needs to keep firing on a fixed
-    // wall-clock interval even while the app is otherwise fully idle (no
-    // keyboard/mouse activity, no animation in progress), which an
-    // animation-frame-driven approach can only do by continuously
-    // requesting new frames forever -- keeping the whole app busy-looping
-    // just to watch a clock. jthread's own stop_token makes shutdown
-    // automatic and safe on destruction; the thread itself never touches
-    // bufferList_ directly, only ever through a PostEvent-marshaled
-    // closure run on the main loop thread.
-    std::jthread autoSaveThread_;
+    // execute-extended-command follow-up: index into the ranked candidate
+    // list FuzzyFilterAndRank produces fresh from prompt_->Text() on every
+    // keystroke/render -- the ranked list itself isn't cached as a member,
+    // it's cheap to recompute (a few dozen short strings), matching this
+    // codebase's established "recompute, don't cache" convention for cheap
+    // per-frame/per-keystroke work (e.g. ScrollArrowButton, WindowManager's
+    // own tree walks).
+    std::size_t executeCommandSelection_ = 0;
+
+    // kmacro-end-or-call-macro follow-up: reentrancy guard for ReplayMacro --
+    // a macro can never structurally contain a call to replay itself (see
+    // that method's own doc comment for why), but this is kept anyway as a
+    // cheap, unconditional backstop rather than resting entirely on that
+    // argument.
+    bool replayingMacro_ = false;
+
+    // Window-splitting follow-up: see SetOnWindowRequest/SetOnBufferClosed.
+    std::function<void(editor::InteractiveRequest)> onWindowRequest_;
+    std::function<void(text::Buffer&)>              onBufferClosed_;
 
     // Caches mode_.highlight's result across Paint() calls (tree-sitter
     // foundation follow-up) -- Paint() runs far more often than the buffer's

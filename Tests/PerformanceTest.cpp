@@ -20,6 +20,7 @@
 #include "Editor/Commands.h"
 #include "Editor/Dispatcher.h"
 #include "Editor/Mode.h"
+#include "Editor/Register.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
 #include "Text/KillRing.h"
@@ -151,9 +152,10 @@ TEST_CASE("Vertical motion out of a pathologically long single line with tab-awa
 }
 
 TEST_CASE("BufferView::paint on a pathologically long single line stays fast", "[Performance]") {
-    ned::text::Buffer     buffer("scratch", ned::text::Rope(MakeSingleLongLine(5'000'000)));
-    ned::text::KillRing   killRing;
-    ned::text::BufferList bufferList;
+    ned::text::Buffer          buffer("scratch", ned::text::Rope(MakeSingleLongLine(5'000'000)));
+    ned::text::KillRing        killRing;
+    ned::editor::RegisterTable registers;
+    ned::text::BufferList      bufferList;
 
     ned::editor::CommandRegistry registry;
     ned::editor::RegisterBuiltinCommands(registry);
@@ -165,7 +167,7 @@ TEST_CASE("BufferView::paint on a pathologically long single line stays fast", "
     std::string statusMessage;
 
     ned::ui::ActiveBuffer activeBuffer(buffer);
-    ned::ui::BufferView   view(activeBuffer, killRing, bufferList, dispatcher, statusMessage, mode, theme);
+    ned::ui::BufferView   view(activeBuffer, killRing, registers, bufferList, dispatcher, statusMessage, mode, theme);
     view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 23});
 
     ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(80), ftxui::Dimension::Fixed(24));
@@ -203,9 +205,10 @@ TEST_CASE("BufferView::paint with JsonMode's tree-sitter highlighting stays fast
     // 2,000 originally measured with) to leave real margin under
     // -DNED_ENABLE_SANITIZERS=ON's ~3x instrumentation overhead, not just
     // the un-instrumented build.
-    ned::text::Buffer     buffer("scratch", ned::text::Rope(MakeLargeJsonArray(500)));
-    ned::text::KillRing   killRing;
-    ned::text::BufferList bufferList;
+    ned::text::Buffer          buffer("scratch", ned::text::Rope(MakeLargeJsonArray(500)));
+    ned::text::KillRing        killRing;
+    ned::editor::RegisterTable registers;
+    ned::text::BufferList      bufferList;
 
     ned::editor::CommandRegistry registry;
     ned::editor::RegisterBuiltinCommands(registry);
@@ -217,7 +220,7 @@ TEST_CASE("BufferView::paint with JsonMode's tree-sitter highlighting stays fast
     std::string statusMessage;
 
     ned::ui::ActiveBuffer activeBuffer(buffer);
-    ned::ui::BufferView   view(activeBuffer, killRing, bufferList, dispatcher, statusMessage, mode, theme);
+    ned::ui::BufferView   view(activeBuffer, killRing, registers, bufferList, dispatcher, statusMessage, mode, theme);
     view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 23});
 
     ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(80), ftxui::Dimension::Fixed(24));

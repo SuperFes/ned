@@ -60,7 +60,7 @@ TEST_CASE("SidebarToggle's symbol tracks the registered sidebar's active flag", 
     ned::ui::ActiveBuffer   activeBuffer(scratch);
     ned::ui::Theme          theme = ned::ui::DarkTheme();
     std::string             statusMessage;
-    ned::ui::ProjectSidebar sidebar(activeBuffer, list, statusMessage, theme);
+    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
 
     const ned::ui::Brush   brush{};
     ned::ui::SidebarToggle toggle(brush);
@@ -85,7 +85,7 @@ TEST_CASE("Left press flips the registered sidebar's active flag", "[SidebarTogg
     ned::ui::ActiveBuffer   activeBuffer(scratch);
     ned::ui::Theme          theme = ned::ui::DarkTheme();
     std::string             statusMessage;
-    ned::ui::ProjectSidebar sidebar(activeBuffer, list, statusMessage, theme);
+    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
 
     const ned::ui::Brush   brush{};
     ned::ui::SidebarToggle toggle(brush);
@@ -118,7 +118,7 @@ TEST_CASE("A release ends an in-progress sidebar resize even when the cursor end
     ned::ui::ActiveBuffer   activeBuffer(scratch);
     ned::ui::Theme          theme = ned::ui::DarkTheme();
     std::string             statusMessage;
-    ned::ui::ProjectSidebar sidebar(activeBuffer, list, statusMessage, theme);
+    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     sidebar.SetBox_(ftxui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 2});
 
     const ned::ui::Brush   brush{};
@@ -143,7 +143,7 @@ TEST_CASE("mouse press with a non-Left button does not flip the sidebar", "[Side
     ned::ui::ActiveBuffer   activeBuffer(scratch);
     ned::ui::Theme          theme = ned::ui::DarkTheme();
     std::string             statusMessage;
-    ned::ui::ProjectSidebar sidebar(activeBuffer, list, statusMessage, theme);
+    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
 
     const ned::ui::Brush   brush{};
     ned::ui::SidebarToggle toggle(brush);

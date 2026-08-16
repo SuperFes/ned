@@ -136,7 +136,7 @@ TEST_CASE("ProjectSidebar renders a collapsed tree by default, with a disclosure
     ned::ui::ActiveBuffer   activeBuffer(buffer);
     ned::ui::Theme          theme = ned::ui::DarkTheme();
     std::string             statusMessage;
-    ned::ui::ProjectSidebar sidebar(activeBuffer, list, statusMessage, theme);
+    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlaceSidebar(sidebar, 28, 5);
 
     ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(28), ftxui::Dimension::Fixed(5));
@@ -174,7 +174,7 @@ TEST_CASE("Clicking a collapsed directory expands it, revealing indented childre
     ned::ui::ActiveBuffer   activeBuffer(scratch);
     ned::ui::Theme          theme = ned::ui::DarkTheme();
     std::string             statusMessage;
-    ned::ui::ProjectSidebar sidebar(activeBuffer, list, statusMessage, theme);
+    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlaceSidebar(sidebar, 28, 5);
 
     ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(28), ftxui::Dimension::Fixed(5));
@@ -222,7 +222,7 @@ TEST_CASE("ProjectSidebar highlights the entry matching the active buffer's file
     ned::ui::ActiveBuffer   activeBuffer(opened);
     ned::ui::Theme          theme = ned::ui::DarkTheme();
     std::string             statusMessage;
-    ned::ui::ProjectSidebar sidebar(activeBuffer, list, statusMessage, theme);
+    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlaceSidebar(sidebar, 28, 5);
 
     ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(28), ftxui::Dimension::Fixed(5));
@@ -252,7 +252,7 @@ TEST_CASE("Clicking a file entry opens it and switches the active buffer", "[Pro
     ned::ui::ActiveBuffer   activeBuffer(scratch);
     ned::ui::Theme          theme = ned::ui::DarkTheme();
     std::string             statusMessage;
-    ned::ui::ProjectSidebar sidebar(activeBuffer, list, statusMessage, theme);
+    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlaceSidebar(sidebar, 28, 5);
 
     sidebar.OnEvent(MousePress(0, 0));
@@ -278,7 +278,7 @@ TEST_CASE("Single-clicking a file marks it as the preview buffer", "[ProjectSide
     ned::ui::ActiveBuffer   activeBuffer(scratch);
     ned::ui::Theme          theme = ned::ui::DarkTheme();
     std::string             statusMessage;
-    ned::ui::ProjectSidebar sidebar(activeBuffer, list, statusMessage, theme);
+    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlaceSidebar(sidebar, 28, 5);
 
     sidebar.OnEvent(MousePress(0, 0));
@@ -306,7 +306,7 @@ TEST_CASE("A second single click on a different file replaces the preview, closi
     ned::ui::ActiveBuffer   activeBuffer(scratch);
     ned::ui::Theme          theme = ned::ui::DarkTheme();
     std::string             statusMessage;
-    ned::ui::ProjectSidebar sidebar(activeBuffer, list, statusMessage, theme);
+    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlaceSidebar(sidebar, 28, 5);
 
     sidebar.OnEvent(MousePress(0, 0)); // "a.txt"
@@ -337,7 +337,7 @@ TEST_CASE("Double-clicking (two clicks on the same file) promotes the preview in
     ned::ui::ActiveBuffer   activeBuffer(scratch);
     ned::ui::Theme          theme = ned::ui::DarkTheme();
     std::string             statusMessage;
-    ned::ui::ProjectSidebar sidebar(activeBuffer, list, statusMessage, theme);
+    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlaceSidebar(sidebar, 28, 5);
 
     sidebar.OnEvent(MousePress(0, 0));
@@ -367,7 +367,7 @@ TEST_CASE("Clicking an already-open, non-preview buffer switches to it without d
     ned::ui::ActiveBuffer   activeBuffer(scratch);
     ned::ui::Theme          theme = ned::ui::DarkTheme();
     std::string             statusMessage;
-    ned::ui::ProjectSidebar sidebar(activeBuffer, list, statusMessage, theme);
+    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlaceSidebar(sidebar, 28, 5);
 
     sidebar.OnEvent(MousePress(0, 0));
@@ -390,7 +390,7 @@ TEST_CASE("Clicking a directory entry toggles it without opening any buffer", "[
     ned::ui::ActiveBuffer   activeBuffer(scratch);
     ned::ui::Theme          theme = ned::ui::DarkTheme();
     std::string             statusMessage;
-    ned::ui::ProjectSidebar sidebar(activeBuffer, list, statusMessage, theme);
+    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlaceSidebar(sidebar, 28, 5);
 
     sidebar.OnEvent(MousePress(0, 0)); // "sub/"
@@ -414,7 +414,7 @@ TEST_CASE("Clicking past the end of the tree is a safe no-op", "[ProjectSidebar]
     ned::ui::ActiveBuffer   activeBuffer(scratch);
     ned::ui::Theme          theme = ned::ui::DarkTheme();
     std::string             statusMessage;
-    ned::ui::ProjectSidebar sidebar(activeBuffer, list, statusMessage, theme);
+    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlaceSidebar(sidebar, 28, 5);
 
     sidebar.OnEvent(MousePress(0, 4)); // past the one entry
@@ -438,7 +438,7 @@ TEST_CASE("Wheel scrolls the tree and clamps at both ends", "[ProjectSidebar]") 
     ned::ui::ActiveBuffer   activeBuffer(scratch);
     ned::ui::Theme          theme = ned::ui::DarkTheme();
     std::string             statusMessage;
-    ned::ui::ProjectSidebar sidebar(activeBuffer, list, statusMessage, theme);
+    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlaceSidebar(sidebar, 28, 5); // fewer rows than the 20 files
 
     ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(28), ftxui::Dimension::Fixed(5));
@@ -476,7 +476,7 @@ TEST_CASE("Scrolling past an expanded directory's own row pins it at the top (st
     ned::ui::ActiveBuffer   activeBuffer(scratch);
     ned::ui::Theme          theme = ned::ui::DarkTheme();
     std::string             statusMessage;
-    ned::ui::ProjectSidebar sidebar(activeBuffer, list, statusMessage, theme);
+    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlaceSidebar(sidebar, 28, 5);
 
     sidebar.OnEvent(MousePress(0, 0)); // expand "sub/"
@@ -510,7 +510,7 @@ TEST_CASE("Pressing the divider column starts a resize instead of opening/toggli
     ned::ui::ActiveBuffer   activeBuffer(scratch);
     ned::ui::Theme          theme = ned::ui::DarkTheme();
     std::string             statusMessage;
-    ned::ui::ProjectSidebar sidebar(activeBuffer, list, statusMessage, theme);
+    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlaceSidebar(sidebar, 28, 5);
 
     REQUIRE_FALSE(sidebar.IsResizing());
@@ -530,7 +530,7 @@ TEST_CASE("Shrinking the divider updates Width(), anchored to the drag's total d
     ned::ui::ActiveBuffer   activeBuffer(scratch);
     ned::ui::Theme          theme = ned::ui::DarkTheme();
     std::string             statusMessage;
-    ned::ui::ProjectSidebar sidebar(activeBuffer, list, statusMessage, theme);
+    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlaceSidebar(sidebar, 20, 5);
 
     sidebar.OnEvent(MousePress(19, 0)); // divider column
@@ -552,7 +552,7 @@ TEST_CASE("Dragging the divider clamps to a minimum width", "[ProjectSidebar]") 
     ned::ui::ActiveBuffer   activeBuffer(scratch);
     ned::ui::Theme          theme = ned::ui::DarkTheme();
     std::string             statusMessage;
-    ned::ui::ProjectSidebar sidebar(activeBuffer, list, statusMessage, theme);
+    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlaceSidebar(sidebar, 20, 5);
 
     sidebar.OnEvent(MousePress(19, 0));
@@ -567,7 +567,7 @@ TEST_CASE("A move without a resize in progress is a safe no-op", "[ProjectSideba
     ned::ui::ActiveBuffer   activeBuffer(scratch);
     ned::ui::Theme          theme = ned::ui::DarkTheme();
     std::string             statusMessage;
-    ned::ui::ProjectSidebar sidebar(activeBuffer, list, statusMessage, theme);
+    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlaceSidebar(sidebar, 20, 5);
     const int before = sidebar.Width();
 
@@ -602,7 +602,7 @@ TEST_CASE("RevealPath expands every ancestor directory down to the target file",
     ned::ui::ActiveBuffer   activeBuffer(scratch);
     ned::ui::Theme          theme = ned::ui::DarkTheme();
     std::string             statusMessage;
-    ned::ui::ProjectSidebar sidebar(activeBuffer, list, statusMessage, theme);
+    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlaceSidebar(sidebar, 28, 5);
 
     ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(28), ftxui::Dimension::Fixed(5));
@@ -638,7 +638,7 @@ TEST_CASE("RevealPath is a no-op when the target's own directory is already the 
     ned::ui::ActiveBuffer   activeBuffer(scratch);
     ned::ui::Theme          theme = ned::ui::DarkTheme();
     std::string             statusMessage;
-    ned::ui::ProjectSidebar sidebar(activeBuffer, list, statusMessage, theme);
+    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlaceSidebar(sidebar, 28, 5);
 
     sidebar.RevealPath(dir / "file.txt"); // must not crash -- nothing to expand
@@ -662,7 +662,7 @@ TEST_CASE("RevealPath is a safe no-op for a path outside the current project roo
     ned::ui::ActiveBuffer   activeBuffer(scratch);
     ned::ui::Theme          theme = ned::ui::DarkTheme();
     std::string             statusMessage;
-    ned::ui::ProjectSidebar sidebar(activeBuffer, list, statusMessage, theme);
+    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlaceSidebar(sidebar, 28, 5);
 
     sidebar.RevealPath(std::filesystem::temp_directory_path() / "somewhere_else_entirely" / "file.txt");
@@ -711,7 +711,7 @@ TEST_CASE("A failed open reports an error via statusMessage without crashing", "
     ned::ui::ActiveBuffer   activeBuffer(scratch);
     ned::ui::Theme          theme = ned::ui::DarkTheme();
     std::string             statusMessage;
-    ned::ui::ProjectSidebar sidebar(activeBuffer, list, statusMessage, theme);
+    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlaceSidebar(sidebar, 28, 5);
 
     sidebar.OnEvent(MousePress(0, 0)); // must not crash

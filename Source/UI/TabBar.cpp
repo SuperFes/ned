@@ -41,7 +41,8 @@ namespace {
 
 } // namespace
 
-TabBar::TabBar(ActiveBuffer& activeBuffer, const text::BufferList& bufferList, const Theme& theme) : activeBuffer_(activeBuffer), bufferList_(bufferList), theme_(theme) {
+TabBar::TabBar(std::function<ActiveBuffer&()> activeBufferProvider, const text::BufferList& bufferList,
+               const Theme& theme) : activeBufferProvider_(std::move(activeBufferProvider)), bufferList_(bufferList), theme_(theme) {
 }
 
 std::vector<TabBar::TabLayout> TabBar::ComputeTabLayout() const {
@@ -63,7 +64,7 @@ void TabBar::Paint(Canvas c) {
         cell.background_color = theme_.tabBar.background.ToFtxui();
     }
 
-    const text::Buffer*          active  = &activeBuffer_.Get();
+    const text::Buffer*          active  = &activeBufferProvider_().Get();
     const text::Buffer*          preview = bufferList_.PreviewBuffer();
     const std::vector<TabLayout> layout  = ComputeTabLayout();
 
@@ -148,7 +149,7 @@ bool TabBar::OnEvent(ftxui::Event event) {
             return true;
         }
         if (clickedColumn >= tab.startColumn && clickedColumn < tab.endColumn) {
-            activeBuffer_.Set(*tab.buffer);
+            activeBufferProvider_().Set(*tab.buffer);
             return true;
         }
     }

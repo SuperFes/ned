@@ -36,10 +36,55 @@ class Dispatcher {
 
     [[nodiscard]] const std::vector<KeyChord>& Pending() const;
 
+    // execute-extended-command follow-up: read-only access to the same
+    // registry Feed already invokes commands through, so BufferView's M-x
+    // session can invoke a fuzzy-matched command by name directly (skipping
+    // the KeymapStack::Resolve step Feed itself does) without needing a
+    // second CommandRegistry& threaded into BufferView's own constructor.
+    [[nodiscard]] const CommandRegistry& Registry() const;
+
+    // Keyboard macros (kmacro-start-macro/kmacro-end-or-call-macro
+    // follow-up). StartRecording begins/restarts capturing every
+    // subsequently *resolved* chord sequence Feed invokes a command through
+    // (an unbound/still-pending sequence is never recorded -- only a
+    // sequence that actually completes a bound command becomes part of the
+    // macro). StopRecording finalizes the in-progress capture into
+    // LastMacro() and turns recording off; a safe no-op if not currently
+    // recording. Starting a new recording does not clear the previous
+    // LastMacro() until the new one actually finishes via StopRecording --
+    // matches Emacs' own "last completed macro stays callable while a new
+    // one is mid-recording" behavior.
+    void                                       StartRecording();
+    void                                       StopRecording();
+    [[nodiscard]] bool                         IsRecording() const;
+    [[nodiscard]] const std::vector<KeyChord>& LastMacro() const;
+
+    // The command that stops recording (kmacro-end-or-call-macro) is itself
+    // invoked through the exact same Match path every other command is --
+    // its own triggering chord(s) get appended to the in-progress macro by
+    // Feed, same as any other resolved sequence, since Dispatcher can't tell
+    // in advance which command a caller is about to treat as "the one that
+    // ends recording." Real recording start/stop doesn't happen inside a
+    // command's own CommandFunction though (CommandContext carries no
+    // Dispatcher& -- by design, see Command.h) -- it happens one level up,
+    // in BufferView::StartInteractiveSession, *after* Feed has already
+    // returned for that keypress. So the caller (BufferView), which is the
+    // only place that actually knows "this keypress is the one ending
+    // recording," must call this *before* StopRecording() to strip that
+    // keypress's own chord(s) back out -- removes exactly however many
+    // chords the most recent recording Match-append added, a safe no-op if
+    // nothing's been recorded yet.
+    void DiscardMostRecentlyRecordedChords();
+
   private:
     const CommandRegistry& registry_;
-    KeymapStack             keymaps_;
-    std::vector<KeyChord>   pending_;
+    KeymapStack            keymaps_;
+    std::vector<KeyChord>  pending_;
+
+    bool                  recording_ = false;
+    std::vector<KeyChord> currentMacro_;
+    std::vector<KeyChord> lastMacro_;
+    std::size_t           lastRecordedChordCount_ = 0; // see DiscardMostRecentlyRecordedChords
 };
 
 } // namespace ned::editor

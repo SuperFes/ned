@@ -32,8 +32,15 @@ namespace ned::ui {
 
 class TabBar : public Widget {
   public:
-    // activeBuffer, bufferList, and theme must outlive this TabBar.
-    TabBar(ActiveBuffer& activeBuffer, const text::BufferList& bufferList, const Theme& theme);
+    // activeBufferProvider, bufferList, and theme must outlive this TabBar.
+    // activeBufferProvider (window-splitting follow-up; was a fixed
+    // ActiveBuffer&) is called fresh on every click/paint rather than bound
+    // once at construction, since which ActiveBuffer a tab click should
+    // retarget changes as keyboard focus moves between panes -- there is no
+    // single, permanently-correct ActiveBuffer to hold a direct reference
+    // to anymore. main.cpp wires this to WindowManager::FocusedActiveBuffer.
+    TabBar(std::function<ActiveBuffer&()> activeBufferProvider, const text::BufferList& bufferList,
+           const Theme& theme);
 
     void Paint(Canvas c) override;
     bool OnEvent(ftxui::Event event) override;
@@ -57,9 +64,9 @@ class TabBar : public Widget {
 
     [[nodiscard]] std::vector<TabLayout> ComputeTabLayout() const;
 
-    ActiveBuffer&           activeBuffer_;
-    const text::BufferList& bufferList_;
-    const Theme&            theme_;
+    std::function<ActiveBuffer&()> activeBufferProvider_;
+    const text::BufferList&        bufferList_;
+    const Theme&                   theme_;
 
     int scrollOffset_ = 0; // columns of tab content scrolled past on the left
 

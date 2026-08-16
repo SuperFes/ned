@@ -18,6 +18,7 @@
 #include "Editor/Mode.h"
 #include "Editor/ModeOverrides.h"
 #include "Editor/ProjectRoot.h"
+#include "Editor/Register.h"
 #include "Editor/ScriptingSession.h"
 #include "Janet/EditorBindings.h"
 #include "Janet/Environment.h"
@@ -25,17 +26,14 @@
 #include "Text/BufferList.h"
 #include "Text/KillRing.h"
 #include "UI/ActiveBuffer.h"
-#include "UI/BufferView.h"
 #include "UI/EchoArea.h"
-#include "UI/ModeLine.h"
 #include "UI/ProjectSidebar.h"
-#include "UI/ScrollArrowButton.h"
-#include "UI/ScrollBar.h"
 #include "UI/SidebarToggle.h"
 #include "UI/TabBar.h"
 #include "UI/TerminalColorProbe.h"
 #include "UI/Theme.h"
 #include "UI/ThemeFile.h"
+#include "UI/WindowManager.h"
 
 using namespace ftxui;
 
@@ -209,7 +207,8 @@ int main(int argc, char** argv) {
     ned::editor::SetProjectRoot(
         ned::editor::DetectProjectRoot(argc > 1 ? std::filesystem::path(argv[1]) : std::filesystem::current_path()));
 
-    ned::text::KillRing killRing;
+    ned::text::KillRing        killRing;
+    ned::editor::RegisterTable registers;
 
     ned::editor::CommandRegistry registry;
     ned::editor::RegisterBuiltinCommands(registry);
@@ -236,15 +235,13 @@ int main(int argc, char** argv) {
     // file's extension, not per-buffer -- switching to a differently-typed
     // file via find-file/switch-to-buffer (multi-file-support follow-up)
     // does not change which Mode/highlighting is active. A known, explicit
-    // v1 scope cut, not an oversight; per-buffer Mode selection needs
-    // BufferView to hold a rebindable Mode the same way ActiveBuffer now
-    // makes the buffer rebindable, which is its own unit of work.
-    ned::ui::ActiveBuffer activeBuffer(*buffer);
-
-    // Priority order: the user's own Janet-defined bindings win over the
-    // major mode's, which win over the global defaults.
-    ned::editor::Dispatcher dispatcher(registry, ned::editor::KeymapStack({&janetKeymap, &mode.keymap, &globalKeymap}));
-
+    // v1 scope cut, not an oversight (window-splitting follow-up: each
+    // WindowManager pane now owns its own independent copy of whatever Mode
+    // it was created with -- see WindowManager.h's own header comment -- so
+    // this gap is now "a pane keeps the Mode it was split/created with,
+    // even after switching buffers inside it," the same shape as before,
+    // just genuinely per-pane instead of a single global).
+    //
     // Uses a previously `ned --detect-theme`-generated file if one exists
     // (never probes the terminal on a normal launch -- see
     // UI/TerminalColorProbe.h), else the fixed DarkTheme() default. Theme
@@ -270,7 +267,32 @@ int main(int argc, char** argv) {
     // (SetScrollBar, RevealPath, etc.) can still be called directly, the
     // same cross-widget wiring the pre-migration version did through its
     // own structured-binding references.
-    auto tabBar = std::make_shared<ned::ui::TabBar>(activeBuffer, bufferList, theme);
+    //
+    // Window-splitting follow-up: WindowManager now owns everything that
+    // used to be a single BufferView/ModeLine/ScrollBar/pair-of-
+    // ScrollArrowButtons -- see WindowManager.h's own header comment for
+    // why each of those had to become genuinely per-pane rather than one
+    // shared instance (a prefix-key sequence in progress belongs to
+    // whichever pane is receiving keystrokes, a rebindable ActiveBuffer
+    // belongs to whichever pane is showing it, etc.). mode is moved in,
+    // not copied here -- WindowManager's own initial pane takes ownership
+    // of exactly this one value; every later pane created by a split gets
+    // its own independent copy (see WindowManager.cpp's own comment on
+    // where that copy is taken from).
+    auto windowManager = std::make_shared<ned::ui::WindowManager>(
+        *buffer, killRing, registers, bufferList, registry, janetKeymap, globalKeymap, std::move(mode),
+        statusMessage, theme);
+
+    // TabBar/ProjectSidebar are still single, shared-app-wide widgets (real
+    // Emacs has no per-window tab strip or file browser either) -- but a
+    // click on either should always target whichever pane currently has
+    // keyboard focus, which changes over time as the user splits/switches
+    // windows. Both now take a provider callback instead of a fixed
+    // ActiveBuffer& for exactly this reason (see TabBar.h/ProjectSidebar.h's
+    // own header comments).
+    auto tabBar = std::make_shared<ned::ui::TabBar>(
+        [wm = windowManager.get()]() -> ned::ui::ActiveBuffer& { return wm->FocusedActiveBuffer(); }, bufferList,
+        theme);
 
     // Always visible, even with the sidebar hidden -- the mouse-clickable
     // way to show/hide ProjectSidebar (round-2 sidebar follow-up); C-c C-p
@@ -280,28 +302,15 @@ int main(int argc, char** argv) {
     // toggle drawn inside it would disappear along with it.
     auto sidebarToggle = std::make_shared<ned::ui::SidebarToggle>(theme.scrollBar);
 
-    auto projectSidebar = std::make_shared<ned::ui::ProjectSidebar>(activeBuffer, bufferList, statusMessage, theme);
+    auto projectSidebar = std::make_shared<ned::ui::ProjectSidebar>(
+        [wm = windowManager.get()]() -> ned::ui::ActiveBuffer& { return wm->FocusedActiveBuffer(); }, bufferList,
+        statusMessage, theme);
 
-    auto bufferView =
-        std::make_shared<ned::ui::BufferView>(activeBuffer, killRing, bufferList, dispatcher, statusMessage, mode, theme);
-
-    auto scrollUpArrow   = std::make_shared<ned::ui::ScrollArrowButton>(U'▲', theme.scrollBar, theme.scrollBarDisabled);
-    auto scrollBar       = std::make_shared<ned::ui::ScrollBar>(theme.scrollBar);
-    auto scrollDownArrow = std::make_shared<ned::ui::ScrollArrowButton>(U'▼', theme.scrollBar, theme.scrollBarDisabled);
-
-    auto modeLine = std::make_shared<ned::ui::ModeLine>(activeBuffer, mode, theme);
     auto echoArea = std::make_shared<ned::ui::EchoArea>(statusMessage, theme);
 
-    // Two-way sync, both driven from outside BufferView so it stays unaware
-    // of any TUI-library-specific signal mechanism: Paint() pushes
-    // topLine_/total lines into the bar every frame (see
-    // BufferView::SetScrollBar), and dragging/wheeling the bar itself calls
-    // back into SetTopLine here. The arrow caps step by a single line per
-    // click, deliberately finer-grained than the bar's own wheel/drag
-    // gestures.
-    bufferView->SetScrollBar(scrollBar.get());
-    bufferView->SetScrollArrows(scrollUpArrow.get(), scrollDownArrow.get());
-    bufferView->SetProjectSidebar(projectSidebar.get());
+    windowManager->SetProjectSidebar(projectSidebar.get());
+    projectSidebar->SetOnBufferClosed(
+        [wm = windowManager.get()](ned::text::Buffer& buffer) { wm->NotifyBufferClosing(buffer); });
     sidebarToggle->SetSidebar(projectSidebar.get());
     // project-root-detection follow-up: makes it clear, right at startup,
     // which file in the (possibly VCS-root-detected, not just the opened
@@ -311,14 +320,8 @@ int main(int argc, char** argv) {
     if (buffer->Path()) {
         projectSidebar->RevealPath(*buffer->Path());
     }
-    tabBar->SetOnCloseRequest([bufferView](ned::text::Buffer& buffer) { bufferView->RequestCloseBuffer(buffer); });
-    scrollBar->SetOnScroll(
-        [bufferView](int position) { bufferView->SetTopLine(static_cast<std::size_t>(position)); });
-    scrollUpArrow->SetOnClick([bufferView] {
-        const std::size_t top = bufferView->TopLine();
-        bufferView->SetTopLine(top > 0 ? top - 1 : 0);
-    });
-    scrollDownArrow->SetOnClick([bufferView] { bufferView->SetTopLine(bufferView->TopLine() + 1); });
+    tabBar->SetOnCloseRequest(
+        [wm = windowManager.get()](ned::text::Buffer& buffer) { wm->RequestCloseBuffer(buffer); });
 
     // ProjectSidebar's own width is drag-resizable at runtime (divider drag
     // -- see ProjectSidebar::UpdateResize), so its size() decorator can't be
@@ -339,27 +342,25 @@ int main(int argc, char** argv) {
     };
     Component projectSidebarFinal = Maybe(projectSidebarSized, &projectSidebar->active);
 
-    Component scrollColumn = Container::Vertical({
-        scrollUpArrow | size(HEIGHT, EQUAL, 1),
-        scrollBar | [](Element e) { return flex(std::move(e)); },
-        scrollDownArrow | size(HEIGHT, EQUAL, 1),
-    });
-
     Component bufferRow = Container::Horizontal({
         sidebarToggle | size(WIDTH, EQUAL, 1),
         projectSidebarFinal,
-        bufferView | [](Element e) { return flex(std::move(e)); },
-        scrollColumn | size(WIDTH, EQUAL, 1),
+        windowManager->RootComponent() | [](Element e) { return flex(std::move(e)); },
     });
 
     Component head = Container::Vertical({
         tabBar | size(HEIGHT, EQUAL, 1),
         bufferRow | [](Element e) { return flex(std::move(e)); },
-        modeLine | size(HEIGHT, EQUAL, 1),
         echoArea | size(HEIGHT, EQUAL, 1),
     });
 
-    bufferView->TakeFocus();
+    // Must run here, after head is fully assembled -- not any earlier, and
+    // WindowManager's own constructor deliberately doesn't call this either
+    // (see WindowManager::TakeFocus's own doc comment for the real,
+    // confirmed-via-manual-pty-testing reason: ComponentBase::TakeFocus()
+    // walks up through real parent pointers, and none of bufferRow/head's
+    // exist as real ancestors until this exact point).
+    windowManager->TakeFocus();
 
     // Konsole-specific workaround, user-confirmed: TabBar (and everything
     // else) failed to show up at all on first launch, until the terminal
@@ -394,8 +395,11 @@ int main(int argc, char** argv) {
     // a real background thread) -- only the real, running editor opts in.
     // Needs the owning ScreenInteractive so its background thread can
     // safely marshal the actual auto-save call back onto the main loop
-    // thread via Post (documented thread-safe by FTXUI).
-    bufferView->StartAutoSaveTimer(screen);
+    // thread via Post (documented thread-safe by FTXUI). Window-splitting
+    // follow-up: moved from BufferView to WindowManager, the genuinely
+    // whole-session-lifetime owner this timer semantically needs (see
+    // WindowManager.h's own header comment).
+    windowManager->StartAutoSaveTimer(screen);
 
     // ForceHandleCtrlC/Z(false) is required, not cosmetic -- TermOx ->
     // FTXUI migration: was Terminal::Options{.signals = Signals::Off}.

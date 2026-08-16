@@ -247,6 +247,83 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
         [](CommandContext& context) {
             context.interactiveRequest = InteractiveRequest::FindScratch;
         });
+
+    registry.Register("split-window-below", "Split the current window into two, one above the other.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::SplitBelow;
+                      });
+    registry.Register("split-window-right", "Split the current window into two, side by side.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::SplitRight;
+                      });
+    registry.Register("delete-window", "Close the current window (does nothing if it's the only one).",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::DeleteWindow;
+                      });
+    registry.Register("delete-other-windows", "Close every window except the current one.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::DeleteOtherWindows;
+                      });
+    registry.Register("other-window", "Move focus to the next window.", [](CommandContext& context) {
+        context.interactiveRequest = InteractiveRequest::OtherWindow;
+    });
+
+    registry.Register("execute-extended-command",
+                      "Run a command by name (M-x), narrowed by fuzzy matching as you type.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::ExecuteCommand;
+                      });
+
+    registry.Register("kmacro-start-macro", "Begin recording a keyboard macro.", [](CommandContext& context) {
+        context.interactiveRequest = InteractiveRequest::StartKbdMacro;
+    });
+    registry.Register("kmacro-end-or-call-macro",
+                      "Stop recording a keyboard macro, or replay the last recorded one if not currently recording.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::EndOrCallKbdMacro;
+                      });
+
+    registry.Register("point-to-register", "Save point in a register (prompts for the register name).",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::PointToRegister;
+                      });
+    registry.Register("jump-to-register", "Jump to the point saved in a register (prompts for the register name).",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::JumpToRegister;
+                      });
+    registry.Register("copy-to-register", "Copy the region into a register (prompts for the register name).",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::CopyToRegister;
+                      });
+    registry.Register("insert-register", "Insert the text saved in a register (prompts for the register name).",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::InsertRegister;
+                      });
+
+    registry.Register("kill-rectangle", "Kill the rectangle defined by point and mark, saving it for yank-rectangle.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::KillRectangle;
+                      });
+    registry.Register("delete-rectangle", "Delete the rectangle defined by point and mark, without saving it.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::DeleteRectangle;
+                      });
+    registry.Register("yank-rectangle", "Insert the last killed rectangle at point.", [](CommandContext& context) {
+        context.interactiveRequest = InteractiveRequest::YankRectangle;
+    });
+    registry.Register("string-rectangle",
+                      "Replace the rectangle defined by point and mark with a typed string on every line.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::StringRectangle;
+                      });
+
+    registry.Register("narrow-to-region", "Restrict editing/display to the region defined by point and mark.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::NarrowToRegion;
+                      });
+    registry.Register("widen", "Remove any narrowing, restoring the full buffer.", [](CommandContext& context) {
+        context.interactiveRequest = InteractiveRequest::Widen;
+    });
 }
 
 Keymap BuildDefaultGlobalKeymap() {
@@ -294,8 +371,44 @@ Keymap BuildDefaultGlobalKeymap() {
     // reports SpecialKey::Enter instead, and that binding would be dead.
     keymap.Bind(ParseKeySequence("C-c C-n"), "rename-file");
     keymap.Bind(ParseKeySequence("C-c C-o"), "find-scratch");
+    keymap.Bind(ParseKeySequence("C-x 2"), "split-window-below");
+    keymap.Bind(ParseKeySequence("C-x 3"), "split-window-right");
+    keymap.Bind(ParseKeySequence("C-x 0"), "delete-window");
+    keymap.Bind(ParseKeySequence("C-x 1"), "delete-other-windows");
+    keymap.Bind(ParseKeySequence("C-x o"), "other-window");
     keymap.Bind(ParseKeySequence("ESC f"), "forward-word");
     keymap.Bind(ParseKeySequence("ESC b"), "backward-word");
+    // Unlike the ESC-only bindings above (whose own comment is stale --
+    // real Alt/Meta detection is reliable post-FTXUI-migration, see
+    // Source/UI/KeyTranslation.h's own header comment -- flagged here, not
+    // fixed, to keep this change focused), M-x is bound both ways
+    // deliberately: a real fast Alt+x press arrives as a single Meta-chord
+    // ("M-x"), while a genuinely separate Escape-then-x press arrives as two
+    // chords ("ESC x") -- Keymap/KeymapStack::Resolve do pure exact-chord
+    // matching with no Escape<->Meta equivalence, so both bindings are
+    // needed for both real input shapes to work.
+    keymap.Bind(ParseKeySequence("M-x"), "execute-extended-command");
+    keymap.Bind(ParseKeySequence("ESC x"), "execute-extended-command");
+    // Real Emacs binds C-x (/C-x )/C-x e -- unreachable here on purpose:
+    // this codebase's terminal-input decoding (KeyTranslation.cpp's
+    // DecodeBaseKey) only ever produces Control=true for C0 control bytes
+    // 1-26 (Control+<a-z>), and real terminals don't send a distinguishable
+    // byte for Ctrl+parenthesis at all -- the same class of gap already
+    // documented at rename-file's own C-c C-n binding (not C-c C-m, same
+    // byte as Enter). F3/F4 are modern Emacs' own real alternate bindings
+    // (kmacro-start-macro / kmacro-end-or-call-macro) and map cleanly here.
+    keymap.Bind(ParseKeySequence("F3"), "kmacro-start-macro");
+    keymap.Bind(ParseKeySequence("F4"), "kmacro-end-or-call-macro");
+    keymap.Bind(ParseKeySequence("C-x r SPC"), "point-to-register");
+    keymap.Bind(ParseKeySequence("C-x r j"), "jump-to-register");
+    keymap.Bind(ParseKeySequence("C-x r s"), "copy-to-register");
+    keymap.Bind(ParseKeySequence("C-x r i"), "insert-register");
+    keymap.Bind(ParseKeySequence("C-x r k"), "kill-rectangle");
+    keymap.Bind(ParseKeySequence("C-x r d"), "delete-rectangle");
+    keymap.Bind(ParseKeySequence("C-x r y"), "yank-rectangle");
+    keymap.Bind(ParseKeySequence("C-x r t"), "string-rectangle");
+    keymap.Bind(ParseKeySequence("C-x n n"), "narrow-to-region");
+    keymap.Bind(ParseKeySequence("C-x n w"), "widen");
 
     // Every printable ASCII character self-inserts by default, same as Emacs'
     // global map: this isn't a fallback, each one is a real keymap entry.

@@ -188,6 +188,47 @@ std::pair<std::size_t, std::size_t> Buffer::Region() const {
     return Point_ <= mark ? std::pair{Point_, mark} : std::pair{mark, Point_};
 }
 
+void Buffer::NarrowToRegion(std::size_t start, std::size_t end) {
+    if (start > end) {
+        std::swap(start, end);
+    }
+    start = std::min(start, Rope_.ByteLength());
+    end   = std::min(end, Rope_.ByteLength());
+
+    const std::size_t totalLines   = Rope_.LineCount();
+    const std::size_t startLine    = Rope_.ByteOffsetToLine(start);
+    const std::size_t snappedStart = Rope_.LineToByteOffset(startLine);
+
+    const std::size_t endLine = Rope_.ByteOffsetToLine(end);
+    const std::size_t snappedEnd =
+        (endLine + 1 < totalLines) ? Rope_.LineToByteOffset(endLine + 1) : Rope_.ByteLength();
+
+    NarrowedRange_ = std::pair{snappedStart, snappedEnd};
+    // snappedEnd is exclusive (the excluded next line's own start byte, or
+    // ByteLength() if there is none) -- clamping point to snappedEnd itself
+    // would let it sit exactly at that excluded line's start, which
+    // ByteOffsetToLine correctly (if confusingly) classifies as *being on*
+    // the excluded line, not the narrowed range's own last line. The
+    // largest valid point is one byte before that -- always still within
+    // the last included line's own content or its trailing newline, never
+    // past it, for the same reason BufferView::Paint's own lineEnd
+    // computation already subtracts 1 from a next-line boundary.
+    const std::size_t maxPoint = snappedEnd > snappedStart ? snappedEnd - 1 : snappedStart;
+    Point_                     = std::clamp(Point_, snappedStart, maxPoint);
+}
+
+void Buffer::Widen() {
+    NarrowedRange_.reset();
+}
+
+bool Buffer::IsNarrowed() const {
+    return NarrowedRange_.has_value();
+}
+
+std::pair<std::size_t, std::size_t> Buffer::NarrowedRange() const {
+    return *NarrowedRange_;
+}
+
 void Buffer::InsertAtPoint(std::string_view text) {
     if (text.empty()) {
         return;
@@ -199,6 +240,15 @@ void Buffer::InsertAtPoint(std::string_view text) {
 
     if (Mark_ && *Mark_ >= insertOffset) {
         *Mark_ += text.size();
+    }
+    if (NarrowedRange_) {
+        auto& [narrowStart, narrowEnd] = *NarrowedRange_;
+        if (narrowStart >= insertOffset) {
+            narrowStart += text.size();
+        }
+        if (narrowEnd >= insertOffset) {
+            narrowEnd += text.size();
+        }
     }
 
     if (CanAmend_) {
@@ -290,6 +340,29 @@ std::string Buffer::DeleteRange(std::size_t byteOffset, std::size_t byteLength) 
         }
     }
 
+    if (NarrowedRange_) {
+        auto& [narrowStart, narrowEnd] = *NarrowedRange_;
+        if (narrowStart >= rangeEnd) {
+            narrowStart -= byteLength;
+        }
+        else if (narrowStart > byteOffset) {
+            narrowStart = byteOffset;
+        }
+        if (narrowEnd >= rangeEnd) {
+            narrowEnd -= byteLength;
+        }
+        else if (narrowEnd > byteOffset) {
+            narrowEnd = byteOffset;
+        }
+        // A delete that consumes the narrowed range's entire content
+        // (narrowStart no longer strictly before narrowEnd) leaves nothing
+        // meaningful to stay narrowed to -- auto-widen rather than leaving
+        // the editor in a broken, everything-hidden state.
+        if (narrowStart >= narrowEnd) {
+            NarrowedRange_.reset();
+        }
+    }
+
     CanAmend_ = false;
     GoalColumn_.reset();
     Modified_ = true;
@@ -312,6 +385,15 @@ void Buffer::InsertAt(std::size_t byteOffset, std::string_view text) {
     }
     if (Mark_ && *Mark_ >= byteOffset) {
         *Mark_ += text.size();
+    }
+    if (NarrowedRange_) {
+        auto& [narrowStart, narrowEnd] = *NarrowedRange_;
+        if (narrowStart >= byteOffset) {
+            narrowStart += text.size();
+        }
+        if (narrowEnd >= byteOffset) {
+            narrowEnd += text.size();
+        }
     }
 
     CanAmend_ = false;
@@ -488,6 +570,19 @@ void Buffer::ClampCursorsToContent() {
     Point_ = SnapToGraphemeBoundary(Rope_, std::min(Point_, Rope_.ByteLength()));
     if (Mark_) {
         Mark_ = SnapToGraphemeBoundary(Rope_, std::min(*Mark_, Rope_.ByteLength()));
+    }
+    if (NarrowedRange_) {
+        // Undo/redo can swap in content of a completely different length --
+        // clamp the range into whatever's now valid, and auto-widen if it
+        // would otherwise become degenerate (start no longer strictly
+        // before end), the same rule DeleteRange's own narrowing-tracking
+        // uses.
+        auto& [narrowStart, narrowEnd] = *NarrowedRange_;
+        narrowStart                    = std::min(narrowStart, Rope_.ByteLength());
+        narrowEnd                      = std::min(narrowEnd, Rope_.ByteLength());
+        if (narrowStart >= narrowEnd) {
+            NarrowedRange_.reset();
+        }
     }
 }
 

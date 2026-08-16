@@ -2721,37 +2721,147 @@ Must/Maybe/Won't below is exactly the kind of call the user should keep final sa
 
 **Must** — real gaps against daily-driver Emacs usage, not covered by an existing
 Phase 9 item, reasonably scoped against this codebase's existing architecture:
-- [ ] **Window splitting** (horizontal/vertical splits, multiple views onto the same or
-      different buffers). Arguably the single biggest gap on this list — every other
-      "must" below is a nice-to-have by comparison, but an editor with no split-pane
-      story at all feels genuinely crippled to anyone coming from Emacs (or any other
-      editor built after 1990). No existing FTXUI layout code assumes a fixed single
-      `BufferView`, but nothing in `Source/UI/` was designed with *multiple* live
-      `BufferView`s in mind either — needs a real design pass before implementation,
-      not a quick bolt-on.
-- [ ] **A real `M-x`-style minibuffer with fuzzy completion.** `CompleteCommandNames`
-      has existed since Phase 2 and per-prompt tab-completion exists for
-      `find-file`/`switch-to-buffer` (tab-completion follow-up), but there's still no
-      unified, always-available command-execution UI — every "prompt" today is a
-      one-off `MinibufferPrompt` session wired up ad hoc per command. Consolidating
-      onto one real minibuffer widget, with fuzzy (not just prefix) matching, is both a
-      genuine parity gap and a foundation Phase 9's "fuzzy file finder / command
-      palette" wishlist item can build directly on rather than duplicate.
-- [ ] **Keyboard macros** (record/replay a sequence of commands). Comparatively cheap
-      given the existing architecture — `Dispatcher`/`KeymapStack` already resolve
-      every keystroke to a `KeyChord` before invoking a command, so recording is
-      "capture the fed `KeyChord` sequence between start/stop," and replay is "feed it
-      back through the same `Dispatcher`."
-- [ ] **Registers** (store point/text/a rectangle under a single character, jump back
-      to it later). Small, cheap, surprisingly high daily value — no real architectural
-      lift beyond a new `Source/Editor/Register.h/.cpp` sitting next to `KillRing.h`.
-- [ ] **Rectangle/column editing.** Commonly used, and `Buffer`'s existing
-      grapheme-cluster/byte-offset machinery already does most of the hard work; the
-      new piece is purely the "operate on a column range across multiple lines"
-      selection concept, not new text-manipulation primitives.
-- [ ] **Narrowing** (temporarily restrict editing/display to a region, e.g. one
-      function). Cheap on top of the existing `Buffer`/`BufferView` split — mostly a
-      `BufferView` viewport concern once a narrowed range exists on `Buffer`.
+- [x] **Window splitting** (horizontal/vertical splits, multiple views onto the same or
+      different buffers) — done, see "Window splitting" below.
+- [x] **A real `M-x`-style minibuffer with fuzzy completion** — done, see
+      "M-x fuzzy-completion minibuffer" below.
+- [x] **Keyboard macros** (record/replay a sequence of commands) — done, see
+      "Keyboard macros" below.
+- [x] **Registers** (point and text; rectangle registers deferred to
+      Rectangle/column editing below) — done, see "Registers" below.
+- [x] **Rectangle/column editing** (`kill-rectangle`/`delete-rectangle`/`yank-rectangle`/
+      `string-rectangle`; `open-rectangle`/`clear-rectangle` deferred) — done, see
+      "Rectangle/column editing" below.
+- [x] **Narrowing** (`narrow-to-region`/`widen`) — done, see "Narrowing" below.
+
+### Window splitting — done
+
+Standard Emacs keybindings shipped: `C-x 2` split-window-below, `C-x 3` split-window-right,
+`C-x 0` delete-window, `C-x 1` delete-other-windows, `C-x o` other-window. Recursive splits
+(any pane can be split again), each pane a fully independent `BufferView` with its own
+`Dispatcher` (a prefix-key sequence in progress genuinely belongs to whichever pane is
+receiving keystrokes) and `ActiveBuffer`. A real design pass preceded implementation (see
+`/home/Fester/.claude/plans/atomic-wandering-spark.md` if still present) rather than a
+bolt-on, per this entry's own original framing above.
+
+New file pair `Source/UI/WindowManager.h/.cpp`: `Pane` (a private implementation detail,
+not its own file — same call `TabBar.h` already makes for its own `TabLayout`) owns one
+`BufferView`/`ModeLine`/`ScrollBar`/pair of `ScrollArrowButton`s/`ActiveBuffer`/`Dispatcher`/
+`Mode`; `WindowNode` is a recursive binary tree (`Leaf` or `SplitBelow`/`SplitRight`);
+`WindowManager` owns the tree root and one *stable* `ftxui::Component rootComponent_` handle
+that `main.cpp` embeds exactly once — every split/close mutates `root_` then rebuilds
+`rootComponent_`'s children via `DetachAllChildren()`+`Add()` (confirmed safe: FTXUI's
+Component tree can be mutated at runtime, not just built once). No hand-rolled "current
+window" pointer anywhere — focus is derived on demand by walking the tree and testing each
+pane's real `ComponentBase::Focused()`, confirmed sound by reading `BufferView::OnKeyEvent`'s
+own source: it unconditionally returns `true` for any translatable key chord (even
+`Unbound`), so FTXUI's own container-level Tab/arrow-key focus-stealing can never fire
+underneath a focused `BufferView`.
+
+Four scope decisions made explicitly, not defaulted into:
+1. **Mode per pane, not per buffer.** Each `Pane` owns an independent *copy* of `editor::Mode`
+   (copied from the source pane at split time), fixing "one global Mode" just enough that
+   split panes don't fight over syntax highlighting. Does *not* implement
+   Mode-recompute-on-buffer-switch inside a pane — the identical, pre-existing,
+   already-documented single-window gap, just now visible side-by-side instead of hidden.
+2. **`TabBar`/`ProjectSidebar` stay single, shared widgets** (matches Emacs — no per-window
+   tab strip or file browser), retargeted via a `std::function<ActiveBuffer&()>` provider
+   (constructor signature change from a fixed `ActiveBuffer&`) resolving to whichever pane
+   currently has focus. No `BufferList` API changes needed — its existing single
+   `previewBuffer_` slot is already correct once targeting is fixed this way.
+3. **Every pane gets its own scroll bar** (matches Emacs' own `scroll-bar-mode` more
+   faithfully than a shared one would, and the wiring is a direct copy of a block that
+   already existed once in `main.cpp`).
+4. **Fixed 50/50 splits only** — no drag-to-resize yet, mirroring `ProjectSidebar`'s own
+   precedent (its drag-resize divider was explicitly a round-2 follow-up on top of an
+   initial fixed-width v1).
+
+One more scope note, discovered rather than planned, worth stating plainly rather than
+leaving implicit: splitting a pane shows the *same* `Buffer` object in both panes (Emacs'
+own "multiple views of one buffer" model), but `Buffer::Point()`/`Mark()` live on `Buffer`
+itself, not per-viewer — so, unlike real Emacs, two panes on the same buffer currently share
+one cursor position, not independent ones. Fixing that properly means moving point/mark
+tracking off `Buffer` onto something per-viewer, a genuinely bigger, separate piece of work
+outside this feature's own scope (`Source/Text/Buffer.h/.cpp` was deliberately never touched
+by this work at all, keeping the whole change contained to `Source/UI/`+`Source/Editor/`,
+per the guiding-constraints section's own "keep `Source/UI/` loosely coupled" principle).
+
+Two real bugs found only via manual `screen`-based pty testing, neither caught by the
+headless `Tests/WindowManagerTest.cpp` suite (12 cases, all passing) despite it exercising
+the same split/close/focus/Dispatcher paths — both are documented in detail at their fix
+sites (`WindowManager.cpp`'s own comments), summarized here:
+- **A single, unsplit pane rendered squished to just its own content's line count**, with
+  the mode line appearing right after it instead of at the bottom of the screen. Root cause:
+  `RebuildComponentTree()` added the rebuilt tree into `rootComponent_` (a `Vertical`
+  container) with no `flex()` decorator at that specific embedding point, so it took its own
+  natural minimum height instead of stretching to fill the available space — the
+  `SplitBelow`/`SplitRight` cases already applied `flex()` to their own two children, but the
+  single-leaf (no split yet) case had nowhere that did the equivalent. Fixed by applying
+  `flex()` once, centrally, at `RebuildComponentTree()`'s own call site.
+- **Every `C-x 2`/`3`/`0`/`1`/`o` keybinding silently did nothing in the real running app**,
+  despite the identical sequence passing in every headless test. Root cause:
+  `ComponentBase::TakeFocus()` walks *up* through real parent pointers, calling
+  `SetActiveChild()` at every ancestor along the way — but `WindowManager`'s own constructor
+  called this on its initial pane *before* `main.cpp` had embedded `RootComponent()` into the
+  rest of the app's composition tree, so the walk terminated immediately at `rootComponent_`
+  itself (which had no parent yet) instead of reaching all the way up through `bufferRow` and
+  `head`. Every real ancestor container's own focus-selector was left at its untouched
+  default (child 0) as a result, so keyboard events sent to `head` never actually reached any
+  `BufferView` at all. `WindowManagerTest.cpp`'s own tests never caught this because they feed
+  events directly to `RootComponent()`, never embedding it in a larger tree — there was no
+  "real ancestor that doesn't exist yet" for the bug to manifest against. Fixed with a new
+  public `WindowManager::TakeFocus()`, deliberately *not* called from the constructor, called
+  by `main.cpp` once instead, at the exact point the pre-window-splitting code's own
+  `bufferView->TakeFocus()` used to sit — after `head` is fully assembled, when every real
+  ancestor genuinely exists.
+
+Final verification: 501/501 tests passing (`ctest --test-dir build`, plus single-process
+`./build/ned_tests`), `-DNED_ENABLE_SANITIZERS=ON` clean, and a real `screen`-based pty smoke
+test covering split-below, split-right (with a visible divider), delete-window,
+delete-other-windows, other-window, mouse-click-to-refocus (confirmed both focus and
+click-to-point-position together), and quit-with-unsaved-changes-confirmation (both cancel
+and confirm) against the new multi-pane composition.
+
+**Two more real bugs found via actual dogfooding after shipping** (the user hit both live,
+supplied real `coredumpctl`-captured coredumps rather than a description alone — the
+backtraces are what actually found the root causes below, not guesswork):
+
+- **`ProjectSidebar`'s single-click-preview close could dangle another pane's `ActiveBuffer`.**
+  `ProjectSidebar::OpenFileEntry` closes the outgoing preview buffer directly
+  (`bufferList_.Close(oldPreview->Name())`) — written before window-splitting existed, with no
+  self-reassignment step of its own, unlike `BufferView::CloseBufferNow`'s already-existing
+  `WindowManager::HandleBufferClosed` wiring. If a *different* pane also happened to be showing
+  that same outgoing preview buffer, it was left with a dangling `ActiveBuffer` the instant
+  `Close()` actually freed it — surfacing later as heap corruption inside `ModeLine::Paint`'s own
+  string-building the next time that pane repainted (confirmed via two real coredumps, one
+  SIGABRT inside `std::string::_M_mutate`, one SIGSEGV inside `std::char_traits<char>::copy`,
+  both crashing at the identical site). Fixed with a new `WindowManager::NotifyBufferClosing`
+  (public) built on a `ReassignPanesShowing(Buffer&, Pane* skip)` helper shared with
+  `HandleBufferClosed` — the two differ only in which pane, if any, gets skipped:
+  `HandleBufferClosed` skips the originating/focused pane (its own `CloseBufferNow` already
+  reassigns that one), `NotifyBufferClosing` skips none (nothing else reassigns any pane in
+  `ProjectSidebar`'s own flow). `ProjectSidebar::SetOnBufferClosed` is the new hook `main.cpp`
+  wires to it, called right before the existing `bufferList_.Close(...)`.
+- **Splitting a pane that wasn't first in the tree's depth-first order silently dropped the new
+  pane**, crashing the very next `RebuildComponentTree()` call — `Pane::Component()` called on a
+  null `this` (confirmed via register inspection on the coredump: the crashing
+  `shared_ptr<ComponentBase>` copy constructor's source-argument register held `0x128`, exactly
+  consistent with `this == nullptr` plus `component_`'s own offset). Root cause:
+  `SplitLeafInTree`'s `newPane` parameter was taken *by value* and `std::move`'d into both of its
+  own recursive calls (`node->first` then `node->second`) unconditionally — moving into the first
+  call left the caller's `newPane` moved-from (null) the instant that call returned, regardless of
+  whether it actually found `target` in that subtree, so any search that had to pass over even one
+  non-matching sibling before reaching the real target handed that target a null `newPane`,
+  splicing a `WindowNode{kind = Leaf, pane = nullptr}` into the live tree. The existing "Recursive
+  splits produce three windows" test never caught this because it always re-splits the
+  still-focused *first* leaf, never the second. Fixed by taking `newPane` by reference instead —
+  it's now only actually consumed at the one successful-match branch, left untouched by an
+  unsuccessful sibling search. New regression test: "Splitting a pane that isn't first in tree
+  order doesn't drop the new pane" (`Tests/WindowManagerTest.cpp`).
+
+Re-verified after both fixes: 503/503 tests passing, plus a fresh `screen`-based pty smoke test
+specifically re-running both original crash sequences (splitting a non-first-in-tree-order pane
+four panes deep; sidebar single-click-preview switching across multiple panes) with no crash.
 
 **Maybe** — real value, bigger or more speculative; revisit by actual demand once the
 Must list is solid, not scheduled yet:
@@ -2781,6 +2891,427 @@ Must list is solid, not scheduled yet:
 - An Emacs-Lisp-package-manager equivalent — Janet has its own module story; this
   isn't really an "editor parity" feature so much as a scripting-ecosystem question,
   and out of scope for this phase either way.
+
+### Keyboard macros — done
+
+`F3` (`kmacro-start-macro`) starts recording; `F4` (`kmacro-end-or-call-macro`, matching
+real modern Emacs' own actual dual-behavior command/binding, not an invented
+simplification) stops recording if currently recording, otherwise replays the last
+completed macro. Real Emacs' own `C-x (`/`C-x )`/`C-x e` were deliberately not used:
+verified directly against `Source/UI/KeyTranslation.cpp`'s `DecodeBaseKey` that this
+codebase's terminal-input decoding only ever produces `Control=true` for C0 control
+bytes 1-26 (`Control+<a-z>`) — real terminals don't send a distinguishable byte for
+Ctrl+parenthesis at all, so `"C-x ("`/`"C-x )"` would parse fine but be unreachable from
+real keyboard input, the same class of gap already documented at `rename-file`'s own
+`C-c C-n` binding (not `C-c C-m`, same byte as Enter). `F3`/`F4` map cleanly instead —
+both `SpecialKey::F3`/`F4` and `ftxui::Event::F3`/`F4` already existed and were already
+correctly wired end-to-end, and no F-key was bound to anything before this.
+
+Recording lives on `Dispatcher` (`StartRecording`/`StopRecording`/`IsRecording`/
+`LastMacro`, `Source/Editor/Dispatcher.h/.cpp`), which already resolves every Normal-mode
+key chord against a `KeymapStack` before invoking a command by name — the natural single
+choke point. `Feed`'s `Match` case batch-appends the *whole* consumed chord sequence
+(not one chord at a time as `Prefix` results arrive) whenever `recording_` is true at the
+start of that call — a multi-chord binding like `C-x C-s` has to be replayed as both
+chords together, since feeding only the last one alone with no `pending_` state at
+replay time would resolve completely differently. An unbound/still-`Prefix` sequence is
+never recorded at all, which is also the behaviorally correct outcome (a mis-key during
+recording doesn't pollute the macro), not merely a simplification.
+
+A real, non-obvious bug was found (and fixed) working through the start/stop keystrokes'
+own exclusion from the recorded macro. The original design tried to have `Feed` notice
+its own `recording_` state flipping from true to false *during* the `Invoke` call for
+the stop command, and self-trim the chords it had just speculatively appended — clean in
+theory, but wrong in practice: neither `kmacro-start-macro` nor `kmacro-end-or-call-macro`
+actually touch `Dispatcher` from inside their own `CommandFunction` at all (`CommandContext`
+carries no `Dispatcher&`, by design) — they just set `context.interactiveRequest`, and the
+*real* `StartRecording`/`StopRecording` calls happen one level up, in
+`BufferView::StartInteractiveSession`, *after* `Feed` has already returned for that
+keypress. `Feed` therefore never actually observes the transition, and the stop
+keypress's own chord silently stayed in the recording (caught immediately by
+`Tests/DispatcherTest.cpp`'s own new cases, not in manual testing — an off-by-one "3 keys"
+instead of "2 keys" on the very first test run). Fixed by moving the responsibility to
+where the real transition actually happens: a new `Dispatcher::DiscardMostRecentlyRecordedChords()`
+that `BufferView`'s `EndOrCallKbdMacro` handler calls explicitly, immediately before
+`StopRecording()`, removing exactly however many chords `Feed`'s most recent
+recording-append added (tracked via a small `lastRecordedChordCount_` member) — the
+start side still needs no equivalent correction, since `recording_` is false throughout
+the entire `Feed` call for `kmacro-start-macro` regardless of when `StartRecording`
+itself actually runs.
+
+Replay (`BufferView::ReplayMacro`) snapshots `LastMacro()` and, for each stored chord,
+does exactly what one real keystroke does — a fresh `MakeContext()` +
+`RunCommandAndHandleOutcome` (the same helper extracted for M-x's own by-name invocation)
+per chord. A documented, deliberate scope cut, matching the original ROADMAP framing's
+own "Dispatcher-level" shape: keystrokes typed *inside* an interactive session (an
+isearch query, a find-file path, ...) are never recorded, since they never reach
+`Dispatcher::Feed` at all — only the command that *enters* such a session is captured.
+Replay honors this explicitly rather than silently misbehaving: it stops early, leaving
+the rest of the macro un-replayed, the instant a replayed command opens an interactive
+session (checked via `inputMode_ != Normal`) or requests quit — confirmed via manual pty
+testing that this leaves a genuinely live, usable isearch prompt rather than a corrupted
+one. A `replayingMacro_` reentrancy guard on `BufferView` forecloses any possible
+infinite-recursion path (a macro can never structurally contain a call to replay itself,
+since `recording_` is continuously true for the entire span a macro is being recorded, so
+any `F4` press during that span always *stops* recording rather than being recorded as a
+"call" — but the guard is kept anyway as a cheap, unconditional backstop rather than
+resting entirely on that argument, matching this project's own demonstrated
+crash-safety diligence).
+
+Scope cuts, explicit rather than defaulted into: no named/multiple macros, no macro
+editing or counter-insertion (matches Emacs' own basic "last kbd macro" model exactly,
+not the separate, more advanced named-macro-ring feature); no mode-line recording
+indicator (the one-time `"Recording keyboard macro..."` status message is the only
+in-progress feedback).
+
+Verification: 529/529 tests passing (`ctest --test-dir build`, including 5 new
+`Tests/DispatcherTest.cpp` cases and 4 new `Tests/BufferViewTest.cpp` cases), plus a
+`screen`-based pty smoke test: `F3`, a short multi-key edit, `F4` to stop (confirmed the
+"(N keys)" count), three repeated `F4` replays each correctly re-applying the edit to a
+different line, `F4` with nothing ever recorded reporting "No keyboard macro has been
+recorded yet.", and a macro containing `C-s` (isearch-forward) replaying its leading
+edit, entering isearch, and stopping cleanly there with a genuinely live `"I-search: "`
+prompt rather than continuing to blindly feed the macro's remaining chords underneath it.
+
+### Registers — done
+
+`point-to-register`/`jump-to-register`/`copy-to-register`/`insert-register` (Emacs' own
+real command names), bound to a new `C-x r` prefix (`C-x r SPC`/`j`/`s`/`i`) — `r` was
+free under `C-x`, confirmed against this session's own earlier keymap survey. Rectangle
+registers are deliberately not included: `Rectangle/column editing` (the selection
+concept a rectangle register would need) is still its own unchecked, un-designed Must
+item further down this same list.
+
+New `Source/Editor/Register.h/.cpp`, `ned::editor` namespace: `RegisterTable` maps a
+`char32_t` register name (matches `KeyChord::Codepoint`'s own type exactly — no
+narrowing, non-ASCII register names work for free) to either a `PointRegisterValue`
+(buffer name + byte offset) or a text `std::string`, never both — setting one kind
+overwrites the other, matching `CommandRegistry::Register`'s own established overwrite
+convention. A point register stores its buffer **by name**, not a raw `Buffer*` —
+resolved via `BufferList::Find` only at jump time. Not a hypothetical caution: this same
+session already root-caused and fixed two real dangling-buffer-pointer crashes
+(window-splitting's `ActiveBuffer` retargeting bugs) earlier in Phase 8, and a register
+is exactly the same kind of long-lived, cross-command state that bit those — holding a
+name and re-resolving it is the same lesson already applied elsewhere in this codebase
+(`BufferList::FindByPath`).
+
+Each of the four operations reads exactly one further character (the register name) --
+no `MinibufferPrompt` needed, there's nothing to accumulate, the same "wait for one
+keypress, act, end session" shape `ConfirmQuit`/`HandleDeleteFileKey`'s own confirm stage
+already use. One shared `BufferView::HandleRegisterKey`, not four near-duplicate
+methods, mirroring `HandlePromptKey`'s own "several related modes, one handler that
+switches on `inputMode_` internally" shape.
+
+**A real, deliberate scope narrowing found during design, not just assumed from
+`KillRing`'s own precedent**: `RegisterTable&` is threaded as a plain constructor
+reference through `WindowManager` → `Pane` → `BufferView`, exactly the same path
+`KillRing&` already travels — but, unlike `KillRing`, it was **not** added to
+`CommandContext`. Tracing every one of `CommandContext`'s 6 real construction sites and
+every command lambda in `Commands.cpp` directly (not assumed) showed no existing command
+needs direct register access — every comparable "needs live `BufferView`-level state"
+feature already in this codebase (`ToggleProjectSidebar`, `ExecuteCommand`,
+`StartKbdMacro`/`EndOrCallKbdMacro`) already follows the same shape: the command lambda
+just sets `context.interactiveRequest`, and the real work happens in
+`BufferView::StartInteractiveSession`/a dedicated `Handle*Key`, using that class's own
+member references directly, with nothing routed through `CommandContext` at all.
+Registers fit this exact pattern, so `Command.h`'s `CommandContext` struct was left
+completely unmodified — a smaller, more precisely-scoped change than the ROADMAP's own
+original "sits next to `KillRing.h`" framing alone would have suggested, confirmed by
+actually tracing the data flow rather than pattern-matching on file placement.
+
+`RegisterTable&` still had to be threaded through the same constructor chain `KillRing&`
+travels (`WindowManager`, `Pane`, `BufferView`, `main.cpp`), which is a real, if
+mechanical, ripple — every direct `BufferView`/`WindowManager` construction site across
+`Tests/BufferViewTest.cpp` (23 sites, all sharing an identical `fixture.killRing,
+fixture.bufferList,` substring, fixed with one project-wide exact-match replace),
+`Tests/WindowManagerTest.cpp`, and `Tests/PerformanceTest.cpp` (2 sites) needed a
+`RegisterTable` added and threaded through too — compiler-enforced (a missed site is a
+build error, not a silent bug), and confirmed to be the *complete* set by tracing every
+`CommandContext{`/`BufferView(`/`WindowManager(` construction site directly before
+starting, rather than fixing sites one at a time as the compiler found them.
+
+Verification: 540/540 tests passing (`ctest --test-dir build`, including 5 new
+`Tests/RegisterTest.cpp` cases and 6 new `Tests/BufferViewTest.cpp` cases — one of which,
+"jump-to-register to a buffer that's since been closed reports an error instead of
+crashing," gets real, deliberate rigor given this session's own history with exactly
+this dangling-buffer-reference bug class), plus a `screen`-based pty smoke test:
+`C-x r SPC a` on one line of one file, switching to a second file via `C-x C-f`, `C-x r j
+a` correctly switching back to the first file at the exact saved line/column. (The
+text-register round-trip and the buffer-closed error path were both left to their
+existing automated coverage for this manual pass, rather than fought through raw SGR
+mouse-escape-sequence scripting for the former or additional buffer-closing plumbing for
+the latter — both already exercise the real production code path directly and
+deterministically, and the manual pass's own unique value, confirming real terminal byte
+sequences reach the new `C-x r` prefix and real cross-buffer navigation works, was
+already demonstrated by the point-register round trip above.)
+
+### Rectangle/column editing — done
+
+`kill-rectangle`/`delete-rectangle`/`yank-rectangle`/`string-rectangle` (Emacs' own real
+command names), bound under the existing `C-x r` prefix (`k`/`d`/`y`/`t`). `open-rectangle`
+and `clear-rectangle` are deliberately not included — lower daily value, rarer even among
+Emacs power users; a documented cut, not an oversight.
+
+No new selection mechanism at all: a rectangle command reuses the exact same point/mark
+region mouse-drag selection and `copy-to-register` already set on a `Buffer`, just
+*reinterpreting* it as a bounding box of (line, column) pairs instead of a linear byte
+span — matching real Emacs' classic rectangle commands (without the newer, optional
+`rectangle-mark-mode`) exactly. The only `Buffer.h` change at all: `VisualColumnForByteOffset`
+(byte offset → column) moved from `private` to `public` — it was already exactly the right
+shape, a `MoveToLine`-only implementation detail until now. No new `Buffer`-level
+text-manipulation primitives were added, matching the ROADMAP's own original framing for
+this item precisely.
+
+New `Source/Editor/Rectangle.h/.cpp`: pure functions over `Buffer`'s already-public surface
+(`Content()`, `ByteOffsetForLineAndColumn`, `VisualColumnForByteOffset`, `DeleteRange`,
+`InsertAt`, ...), the same "UI-agnostic, composes `Buffer`'s public API, `Buffer` itself
+stays unaware" shape `ProjectSearch.h`/`ProjectReplace.h` already establish. `ComputeRectangleBounds`
+computes the rectangle's bounds from point's and mark's own (line, column) **independently**
+— not from `Region()`'s linear byte-order min/max — since point's and mark's byte order
+and column order aren't always the same relation (mark on an earlier, longer line at a
+high column; point on a later, shorter line at a low column produces a rectangle a
+byte-linear min/max would get wrong). `DeleteRectangleLines` (shared by
+`KillRectangle`/`DeleteRectangle`/`StringRectangle`) recomputes each line's own byte
+offsets fresh, immediately before that line's own edit, rather than precomputing all of
+them up front — safe despite earlier lines' edits shifting later lines' absolute byte
+offsets, since line *numbers* stay stable (a rectangle delete never removes a newline). A
+line shorter than the rectangle's own start column naturally produces a zero-length
+delete, already a safe no-op in `Buffer::DeleteRange` — no special-casing needed, confirmed
+by reading `DeleteRange`'s own implementation before relying on it.
+
+`YankRectangle` pads a destination line shorter than the target column with spaces before
+inserting, so the yanked columns stay visually aligned — real Emacs' own behavior, not an
+invented simplification — and extends the buffer with a fresh blank line at its end if the
+clipboard has more lines than remain below point; both confirmed live in a real terminal
+(a short line correctly padded, and a brand-new line both created *and* padded in the same
+operation). The one non-obvious implementation fact this relies on: the *starting* line of
+a yank can never itself need padding (its own target column is, by construction, derived
+from point's own real position on that exact line, which can therefore never be short of
+it) — only lines *after* the first can ever be shorter than the target column, which is
+where the actual padding logic is exercised and tested.
+
+`RectangleClipboard` (the "last killed rectangle," kept entirely separate from the main
+kill-ring, matching real Emacs' own `killed-rectangle`) is **not** constructor-threaded
+through `WindowManager`/`Pane`/`BufferView` the way `KillRing`/`RegisterTable` are — a
+deliberate, reasoned scope call, not an oversight: it's process-wide, mutex-guarded static
+state accessed via free functions, mirroring `TabWidth.h`/`ProjectRoot.h`'s exact simpler
+pattern instead. `KillRing`'s own constructor-threading predates this codebase's later
+`TabWidth`/`ProjectRoot`/`FormatOnSave`/`ScratchPad`-style convention, and `RegisterTable`
+mirrored `KillRing` specifically because *that* ROADMAP entry said "sits next to
+`KillRing.h`" — this entry carried no such instruction, and a single "last killed
+rectangle" slot is materially simpler than `RegisterTable`'s own named multi-entry map.
+This also sidesteps repeating the real, roughly-25-site constructor-threading ripple
+`RegisterTable` required (`WindowManager`/`Pane` constructors, `main.cpp`, every
+`BufferView`/`WindowManager`-constructing test fixture) for a feature this ROADMAP entry
+itself frames as "no real architectural lift."
+
+`kill-rectangle`/`delete-rectangle`/`yank-rectangle` are one-shot direct actions (same
+shape as `ToggleProjectSidebar` — no further prompting needed, unlike register commands,
+there's no name character to read); `string-rectangle` is the one real prompt session
+(one line of typed replacement text, `create-directory`'s own interaction shape exactly),
+added as an explicit new branch inside the existing shared `HandlePromptKey` rather than
+silently omitted — this session's own M-x work already found that method's Enter-branch
+has an *unconditional* catch-all `else` (currently reached only by `FindScratch`), so a
+missing explicit branch for a new mode is a real, previously-hit bug class here, not a
+hypothetical one.
+
+Verification: 557/557 tests passing (`ctest --test-dir build`, including 13 new
+`Tests/RectangleTest.cpp` cases — one of which caught a genuine test-authoring mistake on
+the first run, not a production bug: placing the "too-short" line at a rectangle *endpoint*
+silently let that same short line clamp the endpoint's own intended column down before the
+rectangle's bounds were even computed, fixed by placing the short line *between* two
+longer endpoint lines instead — and 4 new `Tests/BufferViewTest.cpp` cases), plus a
+`screen`-based pty smoke test: a real mouse-drag rectangle selection spanning three lines
+of different lengths (including one shorter than the selection), `C-x r k` correctly
+removing exactly the selected columns from each (the short line clamping safely), `C-x r y`
+correctly re-inserting the killed rectangle with real space-padding on both an existing
+short line and a freshly-created one, and `C-x r t` correctly replacing the selected
+columns on every line (including appending past a line shorter than the selection) with
+typed replacement text.
+
+### Narrowing — done
+
+`narrow-to-region`/`widen` (Emacs' own real command names), bound to a new `C-x n`
+prefix (`n`/`w`). This was the last unchecked Phase 8 "Must" item.
+
+The ROADMAP's own original framing — "cheap... mostly a `BufferView` viewport concern" —
+undersells one real complication, found by reading `Buffer.cpp` directly rather than
+assumed: `Point_` is mutated by **direct assignment** in at least 9 separate places
+(`MoveForward`, `MoveBackward`, `MoveToLine`, `DeleteBackward/ForwardAtPoint`,
+`InsertAtPoint`, `DeleteRange`, `ClampCursorsToContent`, ...), not funneled through the
+one public `SetPoint()` setter — so confining point to a narrowed range needed a
+centralized fix at the `BufferView` level, not inside `Buffer` itself (which would have
+meant refactoring ~9 already-shipped, working call sites, not "cheap" at all). The actual
+fix: a new private `BufferView::ClampPointToNarrowing()`, called once after every
+key-driven `Handle*Key` method in `OnKeyEvent` and once per replayed chord in
+`ReplayMacro`'s own loop — the confirmed single common ancestor of every path that can
+move point in this codebase, covering real typing, isearch/query-replace landing on a
+match, `jump-to-register`, M-x, and keyboard-macro replay uniformly. Motion past the
+boundary is silently clamped rather than rejected with a beep the way real Emacs does —
+an accepted v1 simplification, not a correctness gap: the end state (point stays at the
+boundary) is identical either way, and this codebase has no existing "beep"/error-signal
+convention to hook into.
+
+`Buffer.h`/`.cpp` gained `NarrowToRegion`/`Widen`/`IsNarrowed`/`NarrowedRange` and a
+`narrowedRange_` member — always whole-line-aligned (`start` snaps down to its own
+line's start, `end` snaps up to the start of the line after the last affected one, or
+the buffer's own end), a deliberate simplification against real Emacs' exact,
+possibly-mid-line narrowing: this codebase's line-oriented `BufferView` has no per-line
+partial-content clipping, and building that would be a substantially bigger lift for a
+feature whose own purpose ("restrict... to e.g. one function") is inherently a
+whole-lines concept for source code anyway. `InsertAt`/`InsertAtPoint`/`DeleteRange` keep
+`narrowedRange_` shifted correctly across edits, mirroring the exact
+shift-or-clamp treatment `Point_`/`Mark_` already get in those same three methods —
+required for real correctness, not a nice-to-have: typing at a narrowed region's own
+boundary to extend it (e.g. adding a line to a narrowed function) is the single most
+common narrowing workflow there is. `ClampCursorsToContent` (already used by
+`Undo`/`Redo`) auto-widens if undo ever restores content short enough to make the
+recorded range degenerate. Deliberately **not** restricted: `Size()`/`ByteLength()`/
+`Text()` and raw `DeleteRange`/`InsertAt` at an arbitrary offset all keep operating on
+the whole buffer regardless of narrowing — kill-ring/register/rectangle commands (which
+already work via `Buffer`'s public byte-offset API, not exclusively through point)
+continue working normally while narrowed, matching this feature's own "not new
+text-manipulation primitives" framing.
+
+`BufferView`'s own viewport changes were genuinely small: `MaxTopLine`/`SetTopLine`
+compute against the narrowed range's own line span instead of the whole buffer when
+narrowed, and `Paint()` reuses its own *existing* "blank rows past the buffer's real
+end" mechanism (`if (line >= totalLines) continue;`) for the narrowed end too — just fed
+a different cutoff value, with **no new blanking logic needed at all**. A real
+correctness trap found while making that last change: `Paint()`'s existing `totalLines`
+local is used for *two* different purposes (the render cutoff, and finding each line's
+real content boundary via `LineToByteOffset(line + 1)`) — blindly narrowing both would
+have broken content-boundary lookups for the narrowed range's own last line (which is
+usually not the buffer's real last line at all). Fixed by introducing a second, separate
+`renderEndLine` value used only for the cutoff, leaving the original `totalLines`
+untouched for boundary lookups. Gutter line numbers deliberately stay absolute (not
+renumbered from 1), confirmed live: narrowing to lines 3-8 of a 20-line file shows a
+gutter reading "3".."8", not "1".."6".
+
+**Two real bugs found only through actual use — a live SIGSEGV and a live off-by-one
+mode-line glitch — neither caught by the unit test suite that was passing at the time**,
+both documented in detail at their fix sites, summarized here:
+
+- **A real SIGSEGV**, hit while running the full suite right after implementation:
+  `delete-window`/`split-window`/`other-window` forward to `WindowManager` and can
+  synchronously destroy the `Pane` (and its owned `BufferView`) that's *currently
+  running the very keypress that triggered them* — meaning `ClampPointToNarrowing()`,
+  called unconditionally after dispatch in `OnKeyEvent`'s Normal-mode tail and in
+  `HandleExecuteCommandKey`'s own M-x-invoke path, could dereference an already-destroyed
+  `this`. Fixed with a new shared `IsWindowManagementRequest` check, read from the
+  *caller's own local* `CommandContext` (never a member of `this`, so always safe to
+  read regardless of what just happened to the object it was called on) — skipping the
+  clamp specifically for the five window-management requests, both inside
+  `RunCommandAndHandleOutcome` (the one real chokepoint all three trigger paths — normal
+  dispatch, M-x, and macro replay — already funnel through) and in `ReplayMacro`'s own
+  loop, which turned out to have the *identical*, pre-existing (not introduced by
+  narrowing) latent bug in its own `inputMode_` check — a recorded macro replaying a
+  `delete-window` step would have hit the same use-after-free; found and fixed alongside
+  the narrowing-specific one, not separately.
+- **A live off-by-one**, caught only by actually typing into a live terminal and reading
+  the mode line, not by the unit tests written first (which encoded the identical wrong
+  assumption in their own assertions, and so didn't catch it either): `NarrowedRange()`'s
+  `end` is exclusive (the *excluded* next line's own start byte) but the original clamp
+  treated it as an inclusive bound, letting point rest exactly on that excluded line's
+  own start — which `ByteOffsetToLine` then correctly, if confusingly, reports as
+  *being on* the excluded line (confirmed live: the mode line read "L9" while the screen
+  correctly showed only narrowed lines 3-8). Fixed by capping the clamp at `end - 1` in
+  both `Buffer::NarrowToRegion`'s own internal point-clamp and
+  `BufferView::ClampPointToNarrowing`, and by tightening the relevant test assertions
+  from `<=` to strict `<` so this exact class of regression would actually be caught
+  again if reintroduced.
+
+Verification: 566/566 tests passing (`ctest --test-dir build`, including 5 new
+`Tests/BufferTest.cpp` cases and 4 new `Tests/BufferViewTest.cpp` cases), a full
+`-DNED_ENABLE_SANITIZERS=ON` run clean (one `[Performance]` test missed its wall-clock
+bound only when run under the full suite's sanitizer overhead, confirmed passing
+standalone — not a memory-safety finding), and a `screen`-based pty smoke test: a real
+mouse-drag region narrowed via `C-x n n`, confirmed the gutter shows real (not
+renumbered) line numbers and everything outside the range renders blank, confirmed
+repeated `C-n`/`C-p` past either boundary stays confined (mode line never leaks past the
+narrowed lines, the exact bug the off-by-one fix above targets), and `C-x n w` restoring
+full-buffer scrolling and motion all the way to the real last line.
+
+### M-x fuzzy-completion minibuffer — done
+
+`M-x` (`execute-extended-command`) prompts for a command name and invokes it via
+`CommandRegistry::Invoke`, ranked by a new fuzzy (subsequence) matcher as you type —
+not the exact-prefix matching every other completion in this codebase uses. Bound both
+ways: `M-x` (a real fast Alt+x press, reliably detected as a single Meta-chord
+post-FTXUI-migration) and `ESC x` (the slow two-separate-keystroke fallback) — both
+needed since `Keymap`/`KeymapStack::Resolve` do pure exact-chord matching with no
+Escape<->Meta equivalence of their own.
+
+New pure module `Source/Editor/FuzzyMatch.h/.cpp` (`ProjectSearch.h/.cpp`'s own
+"UI-agnostic, independently unit tested" convention): `FuzzyScore(candidate, query)` is
+a single greedy left-to-right subsequence scan rewarding word-boundary-start matches
+(start-of-string, or right after `-`/`_` — this codebase's command names are
+consistently kebab-case), consecutive matched runs, and tighter (fewer skipped
+characters) matches; `FuzzyFilterAndRank` filters+sorts by score descending, ties
+broken alphabetically. Deliberately not a full alignment search (e.g. dynamic
+programming) — for a few dozen short command names recomputed on every keystroke, the
+greedy alignment is simple, fast, and never actually disagrees with an optimal one on
+which candidates match at all, only occasionally on relative order among matches, which
+isn't worth the complexity here.
+
+`BufferView` gained a dedicated `InputMode::ExecuteCommand` and
+`HandleExecuteCommandKey` — deliberately *not* folded into the existing shared
+`HandlePromptKey` (whose Enter-branch has an unconditional catch-all `else` currently
+reached only by `FindScratch`; silently misrouting a new mode into it would have been a
+real bug), the same reasoning `DeleteFile`/`RenameFile` already got their own methods
+for. Typing always re-snaps the selection to the top-ranked match (index 0) — the same
+footgun VSCode/Sublime-style command palettes avoid by resetting on every keystroke,
+since preserving a numeric index across a re-sorted list would silently select an
+unrelated command; Down/Up move the selection without re-snapping; Enter invokes
+whichever candidate is currently selected. Tab is deliberately not bound to anything
+new here — since typing already re-snaps to the top match, Enter with no arrow presses
+already invokes it directly, making a Tab-completes-to-top-match affordance redundant.
+Display stays entirely inside the single shared `statusMessage_`/`EchoArea` line, the
+same as every other prompt in this codebase (there's no floating/popup widget concept
+in FTXUI or TermOx before it — see the sidebar context-menu descoping entry above for
+the fuller story): the selected candidate gets a leading `*` marker, and the visible
+list is capped at `kMaxVisibleCandidates = 6` with a `"+K more"` suffix, since dumping
+dozens of command names into one terminal-width line is unreadable — arrow keys still
+reach every ranked candidate regardless of what's currently displayed.
+
+A new `Dispatcher::Registry()` const accessor exposes the same `CommandRegistry&`
+`Feed` already invokes commands through, so M-x's by-name invocation
+(`registry.Invoke(name, context)`) didn't need a second registry reference threaded
+into `BufferView`'s constructor. Post-invoke handling (a command's own `context.quit` /
+chained `context.interactiveRequest` — letting `M-x find-file` chain straight into
+`find-file`'s own prompt, confirmed working manually — / a thrown exception into
+`statusMessage_`) was extracted out of `OnKeyEvent`'s existing Normal-mode tail into one
+shared private helper, `RunCommandAndHandleOutcome`, reused by both the normal
+`Dispatcher::Feed` path and M-x's `Registry().Invoke` path.
+
+Scope cuts, both explicit rather than defaulted into:
+- **`find-file`'s file-path completion is untouched** (`CompleteFilePath`, exact-prefix)
+  — fuzzy file finding is Phase 9's own separate "fuzzy file finder / command palette"
+  wishlist item, not this one.
+- **`switch-to-buffer` was not converted to fuzzy matching.** It currently shares
+  `HandlePromptKey`/`CompletePrompt` (longest-common-prefix + Tab) with four other
+  prompt modes; bolting fuzzy display+arrow-selection onto just one of those five modes
+  would mean either awkwardly special-casing it out of the shared method (duplicating a
+  similar amount of logic to what this task already added) or contorting the shared
+  method to support two incompatible completion UX models. A clean, template-able
+  follow-up once wanted, not bundled in here.
+
+A real, pre-existing bug was found (not fixed) during this work: the comment above the
+existing `ESC %`/`ESC f`/`ESC b` bindings claims "Alt isn't reliably detectable here" —
+stale since the FTXUI migration made real Alt/Meta detection reliable (confirmed by
+reading `KeyTranslation.h`'s own current header comment and `Keymap.cpp`'s pure
+exact-chord matching). Those three bindings only match the slow Escape-then-key
+fallback today; a real fast Alt+%/Alt+f/Alt+b press currently has no matching binding
+at all. Flagged here as a real gap, left unfixed to keep this change focused — a quick
+follow-up.
+
+Verification: 520/520 tests passing (`ctest --test-dir build`, including 10 new
+`FuzzyMatchTest.cpp` cases and 7 new `BufferViewTest.cpp` cases), plus a `screen`-based
+pty smoke test confirming both `M-x` (real fast Alt+x) and `ESC x` (slow fallback) enter
+the prompt, live fuzzy narrowing and the `*selected` marker render correctly, Down moves
+the selection and Enter invokes whichever candidate is currently marked, chaining into
+`switch-to-buffer`'s own prompt works, and an unmatched query reports
+`"No command matching "..."` and returns cleanly to normal editing.
 
 ### Org-like structured editing
 
