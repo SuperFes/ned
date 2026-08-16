@@ -51,7 +51,7 @@ TEST_CASE("TabBar renders each open buffer as a tab, highlighting the active one
 
     ned::ui::ActiveBuffer activeBuffer(alpha);
     ned::ui::Theme        theme = ned::ui::DarkTheme();
-    ned::ui::TabBar       tabBar(activeBuffer, list, theme);
+    ned::ui::TabBar       tabBar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, theme);
     PlaceRow(tabBar, 40);
 
     ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(40), ftxui::Dimension::Fixed(1));
@@ -76,7 +76,7 @@ TEST_CASE("TabBar shows a modified marker on a tab whose buffer has unsaved chan
 
     ned::ui::ActiveBuffer activeBuffer(alpha);
     ned::ui::Theme        theme = ned::ui::DarkTheme();
-    ned::ui::TabBar       tabBar(activeBuffer, list, theme);
+    ned::ui::TabBar       tabBar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, theme);
     PlaceRow(tabBar, 40);
 
     ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(40), ftxui::Dimension::Fixed(1));
@@ -93,7 +93,7 @@ TEST_CASE("A press on a tab switches the active buffer", "[TabBar]") {
 
     ned::ui::ActiveBuffer activeBuffer(alpha);
     ned::ui::Theme        theme = ned::ui::DarkTheme();
-    ned::ui::TabBar       tabBar(activeBuffer, list, theme);
+    ned::ui::TabBar       tabBar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, theme);
     PlaceRow(tabBar, 40);
 
     // Layout: " alpha ×" (cols 0-7), gap (8), " beta ×" starts at col 9;
@@ -111,7 +111,7 @@ TEST_CASE("A press outside any tab is a no-op", "[TabBar]") {
 
     ned::ui::ActiveBuffer activeBuffer(alpha);
     ned::ui::Theme        theme = ned::ui::DarkTheme();
-    ned::ui::TabBar       tabBar(activeBuffer, list, theme);
+    ned::ui::TabBar       tabBar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, theme);
     PlaceRow(tabBar, 40);
 
     tabBar.OnEvent(MousePress(39, 0));
@@ -127,7 +127,7 @@ TEST_CASE("The preview buffer's tab renders in italic, others don't", "[TabBar]"
 
     ned::ui::ActiveBuffer activeBuffer(alpha);
     ned::ui::Theme        theme = ned::ui::DarkTheme();
-    ned::ui::TabBar       tabBar(activeBuffer, list, theme);
+    ned::ui::TabBar       tabBar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, theme);
     PlaceRow(tabBar, 40);
 
     ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(40), ftxui::Dimension::Fixed(1));
@@ -147,7 +147,7 @@ TEST_CASE("A close icon is rendered at the end of each tab", "[TabBar]") {
 
     ned::ui::ActiveBuffer activeBuffer(alpha);
     ned::ui::Theme        theme = ned::ui::DarkTheme();
-    ned::ui::TabBar       tabBar(activeBuffer, list, theme);
+    ned::ui::TabBar       tabBar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, theme);
     PlaceRow(tabBar, 40);
 
     ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(40), ftxui::Dimension::Fixed(1));
@@ -165,7 +165,7 @@ TEST_CASE("Clicking a tab's close icon invokes the registered handler with that 
 
     ned::ui::ActiveBuffer activeBuffer(alpha);
     ned::ui::Theme        theme = ned::ui::DarkTheme();
-    ned::ui::TabBar       tabBar(activeBuffer, list, theme);
+    ned::ui::TabBar       tabBar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, theme);
     PlaceRow(tabBar, 40);
 
     ned::text::Buffer* closed = nullptr;
@@ -186,7 +186,7 @@ TEST_CASE("Clicking a close icon with no handler registered is a safe no-op", "[
 
     ned::ui::ActiveBuffer activeBuffer(alpha);
     ned::ui::Theme        theme = ned::ui::DarkTheme();
-    ned::ui::TabBar       tabBar(activeBuffer, list, theme);
+    ned::ui::TabBar       tabBar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, theme);
     PlaceRow(tabBar, 40);
 
     tabBar.OnEvent(MousePress(7, 0)); // must not crash
@@ -201,7 +201,7 @@ TEST_CASE("An overflow indicator appears only on the edge(s) with scrolled-past 
 
     ned::ui::ActiveBuffer activeBuffer(first);
     ned::ui::Theme        theme = ned::ui::DarkTheme();
-    ned::ui::TabBar       tabBar(activeBuffer, list, theme);
+    ned::ui::TabBar       tabBar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, theme);
     PlaceRow(tabBar, 20);
 
     ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(20), ftxui::Dimension::Fixed(1));
@@ -227,7 +227,7 @@ TEST_CASE("Wheel scrolls the tab bar horizontally when tabs overflow the width, 
 
     ned::ui::ActiveBuffer activeBuffer(first);
     ned::ui::Theme        theme = ned::ui::DarkTheme();
-    ned::ui::TabBar       tabBar(activeBuffer, list, theme);
+    ned::ui::TabBar       tabBar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, theme);
     PlaceRow(tabBar, 20); // narrower than the total tab content
 
     ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(20), ftxui::Dimension::Fixed(1));
@@ -257,7 +257,7 @@ TEST_CASE("Wheel is a no-op when the tabs already fit the viewport", "[TabBar]")
 
     ned::ui::ActiveBuffer activeBuffer(alpha);
     ned::ui::Theme        theme = ned::ui::DarkTheme();
-    ned::ui::TabBar       tabBar(activeBuffer, list, theme);
+    ned::ui::TabBar       tabBar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, theme);
     PlaceRow(tabBar, 40);
 
     ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(40), ftxui::Dimension::Fixed(1));
@@ -285,7 +285,7 @@ TEST_CASE("Stress: hundreds of tabs in a narrow viewport stay memory-safe under 
 
     ned::ui::ActiveBuffer activeBuffer(first);
     ned::ui::Theme        theme = ned::ui::DarkTheme();
-    ned::ui::TabBar       tabBar(activeBuffer, list, theme);
+    ned::ui::TabBar       tabBar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, theme);
     PlaceRow(tabBar, 60);
 
     ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(60), ftxui::Dimension::Fixed(1));

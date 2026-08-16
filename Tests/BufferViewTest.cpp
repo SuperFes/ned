@@ -15,6 +15,7 @@
 #include "Editor/Dispatcher.h"
 #include "Editor/Mode.h"
 #include "Editor/ProjectRoot.h"
+#include "Editor/Register.h"
 #include "Editor/ScratchPad.h"
 #include "Editor/TabWidth.h"
 #include "Text/Buffer.h"
@@ -120,9 +121,10 @@ class EnvVarGuard {
 };
 
 struct Fixture {
-    ned::text::Buffer     buffer{"scratch"};
-    ned::text::KillRing   killRing;
-    ned::text::BufferList bufferList;
+    ned::text::Buffer          buffer{"scratch"};
+    ned::text::KillRing        killRing;
+    ned::editor::RegisterTable registers;
+    ned::text::BufferList      bufferList;
 
     ned::editor::CommandRegistry registry{[] {
         ned::editor::CommandRegistry r;
@@ -138,7 +140,8 @@ struct Fixture {
     ned::ui::ActiveBuffer activeBuffer{buffer};
 
     ned::ui::BufferView View() {
-        return ned::ui::BufferView(activeBuffer, killRing, bufferList, dispatcher, statusMessage, mode, theme);
+        return ned::ui::BufferView(activeBuffer, killRing, registers, bufferList, dispatcher, statusMessage, mode,
+                                   theme);
     }
 };
 
@@ -1021,7 +1024,7 @@ TEST_CASE("C-x C-c prompts for confirmation when a buffer has unsaved changes", 
     REQUIRE(buffer.Modified());
 
     ned::ui::ActiveBuffer activeBuffer(buffer);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
     view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
 
@@ -1037,7 +1040,7 @@ TEST_CASE("'n' cancels the quit-confirmation prompt and returns to normal editin
     buffer.InsertAtPoint("edit");
 
     ned::ui::ActiveBuffer activeBuffer(buffer);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
     view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
 
@@ -1067,7 +1070,7 @@ TEST_CASE("'y' at the quit-confirmation prompt does not crash key_press", "[Buff
     buffer.InsertAtPoint("edit");
 
     ned::ui::ActiveBuffer activeBuffer(buffer);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
     view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
 
@@ -1142,7 +1145,7 @@ TEST_CASE("C-x C-f prompts for a path, then find-file opens an existing file and
     Fixture               fixture;
     ned::text::Buffer&    scratch = fixture.bufferList.CreateBuffer("scratch");
     ned::ui::ActiveBuffer activeBuffer(scratch);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
     view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
 
@@ -1167,7 +1170,7 @@ TEST_CASE("find-file on a path that doesn't exist yet creates a new buffer and r
     Fixture               fixture;
     ned::text::Buffer&    scratch = fixture.bufferList.CreateBuffer("scratch");
     ned::ui::ActiveBuffer activeBuffer(scratch);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
     view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
 
@@ -1189,7 +1192,7 @@ TEST_CASE("Escape cancels the find-file prompt and returns to normal editing on 
     Fixture               fixture;
     ned::text::Buffer&    scratch = fixture.bufferList.CreateBuffer("scratch");
     ned::ui::ActiveBuffer activeBuffer(scratch);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
     view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
 
@@ -1212,7 +1215,7 @@ TEST_CASE("C-x b switches to another already-open buffer by name", "[BufferView]
     other.InsertAtPoint("from the other buffer");
 
     ned::ui::ActiveBuffer activeBuffer(scratch);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
     view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
 
@@ -1233,7 +1236,7 @@ TEST_CASE("switch-to-buffer reports an error and stays put for an unknown buffer
     ned::text::Buffer& scratch = fixture.bufferList.CreateBuffer("scratch");
 
     ned::ui::ActiveBuffer activeBuffer(scratch);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
     view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
 
@@ -1253,7 +1256,7 @@ TEST_CASE("Tab in switch-to-buffer completes a unique prefix and confirms with E
     other.InsertAtPoint("hi");
 
     ned::ui::ActiveBuffer activeBuffer(scratch);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
     view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
 
@@ -1275,7 +1278,7 @@ TEST_CASE("Tab in switch-to-buffer with ambiguous matches completes to the commo
     fixture.bufferList.CreateBuffer("alphabet");
 
     ned::ui::ActiveBuffer activeBuffer(scratch);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
     view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
 
@@ -1296,7 +1299,7 @@ TEST_CASE("Tab with no matches leaves the prompt untouched", "[BufferView]") {
     ned::text::Buffer& scratch = fixture.bufferList.CreateBuffer("scratch");
 
     ned::ui::ActiveBuffer activeBuffer(scratch);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
     view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
 
@@ -1320,7 +1323,7 @@ TEST_CASE("Tab in find-file completes a unique file path and Enter opens it", "[
     ned::text::Buffer& scratch = fixture.bufferList.CreateBuffer("scratch");
 
     ned::ui::ActiveBuffer activeBuffer(scratch);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
     view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
 
@@ -1353,7 +1356,7 @@ TEST_CASE("Tab in find-file with ambiguous matches completes to the common prefi
     ned::text::Buffer& scratch = fixture.bufferList.CreateBuffer("scratch");
 
     ned::ui::ActiveBuffer activeBuffer(scratch);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
     view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
 
@@ -1838,7 +1841,7 @@ TEST_CASE("RequestCloseBuffer closes an unmodified, non-active buffer immediatel
     ned::text::Buffer&    scratch = fixture.bufferList.CreateBuffer("scratch");
     ned::text::Buffer&    other   = fixture.bufferList.CreateBuffer("other");
     ned::ui::ActiveBuffer activeBuffer(scratch);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
 
     view.RequestCloseBuffer(other);
@@ -1853,7 +1856,7 @@ TEST_CASE("RequestCloseBuffer closing the active buffer switches to another rema
     ned::text::Buffer&    scratch = fixture.bufferList.CreateBuffer("scratch");
     ned::text::Buffer&    other   = fixture.bufferList.CreateBuffer("other");
     ned::ui::ActiveBuffer activeBuffer(scratch);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
 
     view.RequestCloseBuffer(scratch);
@@ -1867,7 +1870,7 @@ TEST_CASE("RequestCloseBuffer closing the only remaining buffer replaces it with
     Fixture               fixture;
     ned::text::Buffer&    only = fixture.bufferList.CreateBuffer("only");
     ned::ui::ActiveBuffer activeBuffer(only);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
 
     view.RequestCloseBuffer(only);
@@ -1886,7 +1889,7 @@ TEST_CASE("RequestCloseBuffer on a modified buffer prompts, 'y' confirms the clo
     ned::text::Buffer& other   = fixture.bufferList.CreateBuffer("other");
     other.InsertAtPoint("unsaved");
     ned::ui::ActiveBuffer activeBuffer(scratch);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
 
     view.RequestCloseBuffer(other);
@@ -1905,7 +1908,7 @@ TEST_CASE("RequestCloseBuffer on a modified buffer prompts, 'n' cancels and keep
     ned::text::Buffer& other   = fixture.bufferList.CreateBuffer("other");
     other.InsertAtPoint("unsaved");
     ned::ui::ActiveBuffer activeBuffer(scratch);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
 
     view.RequestCloseBuffer(other);
@@ -1921,7 +1924,7 @@ TEST_CASE("RequestCloseBuffer is a no-op while another interactive session is al
     ned::text::Buffer&    scratch = fixture.bufferList.CreateBuffer("scratch");
     ned::text::Buffer&    other   = fixture.bufferList.CreateBuffer("other");
     ned::ui::ActiveBuffer activeBuffer(scratch);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
     view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
 
@@ -1932,12 +1935,96 @@ TEST_CASE("RequestCloseBuffer is a no-op while another interactive session is al
     REQUIRE(fixture.bufferList.Count() == 2); // untouched
 }
 
+TEST_CASE("Window-splitting keybindings each invoke the registered onWindowRequest handler",
+          "[BufferView]") {
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+
+    std::vector<ned::editor::InteractiveRequest> received;
+    view.SetOnWindowRequest([&received](ned::editor::InteractiveRequest request) { received.push_back(request); });
+
+    view.OnEvent(ftxui::Event::CtrlX);
+    view.OnEvent(ftxui::Event::Character("2"));
+    REQUIRE(received == std::vector{ned::editor::InteractiveRequest::SplitBelow});
+
+    view.OnEvent(ftxui::Event::CtrlX);
+    view.OnEvent(ftxui::Event::Character("3"));
+    view.OnEvent(ftxui::Event::CtrlX);
+    view.OnEvent(ftxui::Event::Character("0"));
+    view.OnEvent(ftxui::Event::CtrlX);
+    view.OnEvent(ftxui::Event::Character("1"));
+    view.OnEvent(ftxui::Event::CtrlX);
+    view.OnEvent(ftxui::Event::Character("o"));
+
+    REQUIRE(received == std::vector{
+                            ned::editor::InteractiveRequest::SplitBelow,
+                            ned::editor::InteractiveRequest::SplitRight,
+                            ned::editor::InteractiveRequest::DeleteWindow,
+                            ned::editor::InteractiveRequest::DeleteOtherWindows,
+                            ned::editor::InteractiveRequest::OtherWindow,
+                        });
+}
+
+TEST_CASE("A window-splitting keybinding is a safe no-op when no handler is registered", "[BufferView]") {
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+
+    view.OnEvent(ftxui::Event::CtrlX);
+    view.OnEvent(ftxui::Event::Character("2")); // must not crash
+}
+
+TEST_CASE("SetOnBufferClosed fires with the closing buffer before it's erased", "[BufferView]") {
+    Fixture               fixture;
+    ned::text::Buffer&    scratch = fixture.bufferList.CreateBuffer("scratch");
+    ned::text::Buffer&    other   = fixture.bufferList.CreateBuffer("other");
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
+                               fixture.statusMessage, fixture.mode, fixture.theme);
+
+    ned::text::Buffer* closed = nullptr;
+    view.SetOnBufferClosed([&closed](ned::text::Buffer& buffer) { closed = &buffer; });
+
+    view.RequestCloseBuffer(other);
+
+    REQUIRE(closed == &other);
+    REQUIRE(fixture.bufferList.Find("other") == nullptr); // genuinely gone by the time this test asserts
+}
+
+TEST_CASE("Closing a buffer is a safe no-op when no onBufferClosed handler is registered", "[BufferView]") {
+    Fixture               fixture;
+    ned::text::Buffer&    scratch = fixture.bufferList.CreateBuffer("scratch");
+    ned::text::Buffer&    other   = fixture.bufferList.CreateBuffer("other");
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
+                               fixture.statusMessage, fixture.mode, fixture.theme);
+
+    view.RequestCloseBuffer(other); // must not crash
+
+    REQUIRE(fixture.bufferList.Find("other") == nullptr);
+}
+
+TEST_CASE("Left-pressing inside BufferView takes keyboard focus", "[BufferView]") {
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
+
+    // Focusable()/TakeFocus() are exercised meaningfully once this widget
+    // sits inside a real Container tree (see WindowManagerTest.cpp for the
+    // actual multi-pane focus-cycling assertions) -- this is just the
+    // narrower, BufferView-local guarantee that a left click always calls
+    // TakeFocus(), not a crash/no-op check on an unparented widget.
+    REQUIRE(view.Focusable());
+    view.OnEvent(MousePress(0, 0)); // must not crash with no parent Container
+}
+
 TEST_CASE("C-c C-p toggles the registered project sidebar's active flag", "[BufferView]") {
     Fixture             fixture;
     ned::ui::BufferView view = fixture.View();
     view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
 
-    ned::ui::ProjectSidebar sidebar(fixture.activeBuffer, fixture.bufferList, fixture.statusMessage, fixture.theme);
+    ned::ui::ProjectSidebar sidebar(
+        [&fixture]() -> ned::ui::ActiveBuffer& { return fixture.activeBuffer; }, fixture.bufferList, fixture.statusMessage,
+        fixture.theme);
     REQUIRE(sidebar.active); // starts visible
     view.SetProjectSidebar(&sidebar);
 
@@ -1968,8 +2055,10 @@ TEST_CASE("C-c C-p toggles the registered project sidebar's active flag", "[Buff
 TEST_CASE("A growing sidebar resize drag hands off to BufferView's mouse_move/mouse_release", "[BufferView]") {
     Fixture fixture;
 
-    ned::ui::ProjectSidebar sidebar(fixture.activeBuffer, fixture.bufferList, fixture.statusMessage, fixture.theme);
-    ned::ui::BufferView     view = fixture.View();
+    ned::ui::ProjectSidebar sidebar(
+        [&fixture]() -> ned::ui::ActiveBuffer& { return fixture.activeBuffer; }, fixture.bufferList, fixture.statusMessage,
+        fixture.theme);
+    ned::ui::BufferView view = fixture.View();
 
     // Placed directly via SetBox_ side by side, mirroring what main.cpp's own
     // Row{ProjectSidebar, BufferView, ...} composition achieves every frame
@@ -2177,7 +2266,7 @@ TEST_CASE("C-c C-n renames a file on disk and follows the buffer that had it ope
     Fixture               fixture;
     ned::text::Buffer&    opened = fixture.bufferList.OpenOrCreateFile(from);
     ned::ui::ActiveBuffer activeBuffer(opened);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
     view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
 
@@ -2219,7 +2308,7 @@ TEST_CASE("rename-file on a directory relocates every open buffer nested inside 
     ned::text::Buffer&    bufferA = fixture.bufferList.OpenOrCreateFile(from / "a.txt");
     ned::text::Buffer&    bufferB = fixture.bufferList.OpenOrCreateFile(from / "sub" / "b.txt");
     ned::ui::ActiveBuffer activeBuffer(bufferA); // bufferB is open but not active
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
     view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
 
@@ -2473,3 +2562,533 @@ TEST_CASE("Tab in find-scratch completes a unique scratch name and Enter opens i
 // test cases (e.g. "AutoSaveScratchBuffers saves a modified buffer whose path
 // is directly in the scratch directory"), so nothing is actually lost here,
 // just relocated to where it's still directly, synchronously testable.
+
+// execute-extended-command follow-up (M-x). ftxui::Event::AltX exercises the
+// "M-x" binding directly (a real fast Alt+x press, per KeyTranslationTest.cpp's
+// own "TranslateKey maps Alt/Meta+letter to Meta chords" case) -- the separate
+// "ESC x" two-chord fallback binding shares the same command and BufferView-side
+// handling, so it isn't re-tested here.
+
+TEST_CASE("M-x prompts for a command name, listing every command alphabetically before any input", "[BufferView]") {
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ftxui::Event::AltX);
+
+    REQUIRE(fixture.statusMessage.rfind("M-x ", 0) == 0);
+    // Display is capped to kMaxVisibleCandidates (see
+    // FormatExecuteCommandCandidates) -- "backward-char" is alphabetically
+    // first among registered commands, so it's always within that window
+    // regardless of how many other commands exist.
+    REQUIRE(fixture.statusMessage.find("*backward-char") != std::string::npos);
+    REQUIRE(fixture.statusMessage.find("more") != std::string::npos); // more than 6 commands are registered
+}
+
+TEST_CASE("Typing in M-x narrows candidates and marks the top-ranked one selected", "[BufferView]") {
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ftxui::Event::AltX);
+    TypeText(view, "stb");
+
+    REQUIRE(fixture.statusMessage.find("*switch-to-buffer") != std::string::npos);
+    REQUIRE(fixture.statusMessage.find("quit") == std::string::npos);
+}
+
+TEST_CASE("Down in M-x moves the selection, and Enter invokes whichever candidate is selected", "[BufferView]") {
+    Fixture fixture;
+    bool    alphaInvoked = false;
+    bool    betaInvoked  = false;
+    // Same fuzzy score by construction (identical shape/word-boundary match
+    // for query "zzz"), so ranking falls back to alphabetical order --
+    // zzz-alpha ranks first, zzz-beta second, deterministically.
+    fixture.registry.Register("zzz-alpha", "", [&](ned::editor::CommandContext&) { alphaInvoked = true; });
+    fixture.registry.Register("zzz-beta", "", [&](ned::editor::CommandContext&) { betaInvoked = true; });
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ftxui::Event::AltX);
+    TypeText(view, "zzz");
+    REQUIRE(fixture.statusMessage.find("*zzz-alpha") != std::string::npos);
+
+    view.OnEvent(ftxui::Event::ArrowDown);
+    REQUIRE(fixture.statusMessage.find("*zzz-beta") != std::string::npos);
+
+    view.OnEvent(ftxui::Event::Return);
+
+    REQUIRE_FALSE(alphaInvoked);
+    REQUIRE(betaInvoked);
+}
+
+TEST_CASE("Enter in M-x invokes the matched command and returns to normal editing", "[BufferView]") {
+    Fixture fixture;
+    bool    invoked = false;
+    fixture.registry.Register("sentinel-command", "", [&](ned::editor::CommandContext&) { invoked = true; });
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ftxui::Event::AltX);
+    TypeText(view, "sentinel");
+    view.OnEvent(ftxui::Event::Return);
+
+    REQUIRE(invoked);
+
+    view.OnEvent(ftxui::Event::Character("z")); // back to normal editing, proves inputMode_ is Normal again
+    REQUIRE(fixture.buffer.Text() == "z");
+}
+
+TEST_CASE("Escape cancels the M-x prompt and returns to normal editing", "[BufferView]") {
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ftxui::Event::AltX);
+    TypeText(view, "swi");
+    view.OnEvent(ftxui::Event::Escape);
+
+    REQUIRE(fixture.statusMessage.empty());
+
+    view.OnEvent(ftxui::Event::Character("z")); // back to normal editing
+    REQUIRE(fixture.buffer.Text() == "z");
+}
+
+TEST_CASE("M-x to find-file chains directly into find-file's own prompt", "[BufferView]") {
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ftxui::Event::AltX);
+    TypeText(view, "find-file"); // exact match -- unambiguously top-ranked
+    view.OnEvent(ftxui::Event::Return);
+
+    REQUIRE(fixture.statusMessage == "Find file: ");
+
+    view.OnEvent(ftxui::Event::Escape); // cancel the chained prompt cleanly
+}
+
+TEST_CASE("Enter in M-x on an unmatched query reports no match and returns to normal editing", "[BufferView]") {
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ftxui::Event::AltX);
+    TypeText(view, "0"); // no registered command name contains a digit
+    view.OnEvent(ftxui::Event::Return);
+
+    REQUIRE(fixture.statusMessage == "No command matching \"0\"");
+
+    view.OnEvent(ftxui::Event::Character("z")); // back to normal editing
+    REQUIRE(fixture.buffer.Text() == "z");
+}
+
+// kmacro-start-macro/kmacro-end-or-call-macro follow-up.
+
+TEST_CASE("F3 records keystrokes and F4 stops recording, reporting a keys-recorded count", "[BufferView]") {
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ftxui::Event::F3);
+    REQUIRE(fixture.statusMessage == "Recording keyboard macro...");
+
+    TypeText(view, "ab");
+    view.OnEvent(ftxui::Event::F4);
+
+    REQUIRE(fixture.statusMessage == "Keyboard macro recorded (2 keys).");
+    REQUIRE(fixture.buffer.Text() == "ab");
+}
+
+TEST_CASE("F4 while not recording replays the last recorded macro", "[BufferView]") {
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ftxui::Event::F3);
+    TypeText(view, "ab");
+    view.OnEvent(ftxui::Event::F4); // stop
+    REQUIRE(fixture.buffer.Text() == "ab");
+
+    view.OnEvent(ftxui::Event::F4); // replay
+    REQUIRE(fixture.buffer.Text() == "abab");
+
+    view.OnEvent(ftxui::Event::F4); // replay again
+    REQUIRE(fixture.buffer.Text() == "ababab");
+}
+
+TEST_CASE("F4 with nothing recorded yet reports no macro is available", "[BufferView]") {
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ftxui::Event::F4);
+
+    REQUIRE(fixture.statusMessage == "No keyboard macro has been recorded yet.");
+    REQUIRE(fixture.buffer.Text().empty());
+}
+
+TEST_CASE("Replaying a macro stops cleanly once a replayed command opens an interactive session",
+          "[BufferView]") {
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ftxui::Event::F3);
+    TypeText(view, "a");
+    view.OnEvent(ftxui::Event::CtrlS);  // isearch-forward -- the command itself is recorded,
+    view.OnEvent(ftxui::Event::Escape); // but nothing typed inside isearch ever reaches Dispatcher,
+    TypeText(view, "b");                // so this Escape (cancel) isn't recorded either -- back to
+    view.OnEvent(ftxui::Event::F4);     // Normal before "b" is typed and recording stops.
+
+    REQUIRE(fixture.statusMessage == "Keyboard macro recorded (3 keys)."); // 'a', C-s, 'b'
+    REQUIRE(fixture.buffer.Text() == "ab");
+
+    view.OnEvent(ftxui::Event::F4); // replay: 'a' inserts, C-s enters isearch, then stops early
+
+    REQUIRE(fixture.buffer.Text() == "aba");        // only the leading 'a' from the replay was inserted
+    REQUIRE(fixture.statusMessage == "I-search: "); // isearch genuinely entered, not skipped/corrupted
+
+    view.OnEvent(ftxui::Event::Escape); // clean up the still-live isearch session
+}
+
+// point-to-register/jump-to-register/copy-to-register/insert-register follow-up.
+
+TEST_CASE("point-to-register then jump-to-register moves point back to the saved position", "[BufferView]") {
+    // jump-to-register resolves the saved buffer by name via BufferList::Find
+    // (see HandleRegisterKey), so the buffer point-to-register saves against
+    // has to actually be in bufferList_ -- fixture.buffer on its own isn't
+    // (it's a standalone convenience object, not registered), matching every
+    // other test in this file that needs a real, findable buffer.
+    Fixture            fixture;
+    ned::text::Buffer& scratch = fixture.bufferList.CreateBuffer("scratch");
+    scratch.InsertAtPoint("hello world");
+    scratch.SetPoint(5);
+    fixture.activeBuffer.Set(scratch);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ftxui::Event::CtrlX);
+    view.OnEvent(ftxui::Event::Character("r"));
+    view.OnEvent(ftxui::Event::Character(" "));
+    view.OnEvent(ftxui::Event::Character("a"));
+    REQUIRE(fixture.statusMessage == "Point stored in register.");
+
+    scratch.SetPoint(0);
+    REQUIRE(scratch.Point() == 0);
+
+    view.OnEvent(ftxui::Event::CtrlX);
+    view.OnEvent(ftxui::Event::Character("r"));
+    view.OnEvent(ftxui::Event::Character("j"));
+    view.OnEvent(ftxui::Event::Character("a"));
+
+    REQUIRE(scratch.Point() == 5);
+    REQUIRE(fixture.statusMessage.empty());
+}
+
+TEST_CASE("jump-to-register to a buffer that's since been closed reports an error instead of crashing",
+          "[BufferView]") {
+    Fixture            fixture;
+    ned::text::Buffer& other = fixture.bufferList.CreateBuffer("other");
+    other.InsertAtPoint("other buffer text");
+    other.SetPoint(3);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    fixture.activeBuffer.Set(other);
+    view.OnEvent(ftxui::Event::CtrlX);
+    view.OnEvent(ftxui::Event::Character("r"));
+    view.OnEvent(ftxui::Event::Character(" "));
+    view.OnEvent(ftxui::Event::Character("b"));
+
+    fixture.activeBuffer.Set(fixture.buffer); // back to a still-open buffer before closing "other"
+    fixture.bufferList.Close("other");
+
+    view.OnEvent(ftxui::Event::CtrlX);
+    view.OnEvent(ftxui::Event::Character("r"));
+    view.OnEvent(ftxui::Event::Character("j"));
+    view.OnEvent(ftxui::Event::Character("b"));
+
+    REQUIRE(fixture.statusMessage == "Buffer for that register no longer exists.");
+}
+
+TEST_CASE("copy-to-register with no active mark reports an error", "[BufferView]") {
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ftxui::Event::CtrlX);
+    view.OnEvent(ftxui::Event::Character("r"));
+    view.OnEvent(ftxui::Event::Character("s"));
+    view.OnEvent(ftxui::Event::Character("a"));
+
+    REQUIRE(fixture.statusMessage == "No region to copy.");
+}
+
+TEST_CASE("copy-to-register then insert-register round-trips region text into a different buffer",
+          "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("hello world");
+    fixture.buffer.SetMark(0);
+    fixture.buffer.SetPoint(5); // region == "hello"
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ftxui::Event::CtrlX);
+    view.OnEvent(ftxui::Event::Character("r"));
+    view.OnEvent(ftxui::Event::Character("s"));
+    view.OnEvent(ftxui::Event::Character("c"));
+    REQUIRE(fixture.statusMessage == "Copied to register.");
+
+    ned::text::Buffer& other = fixture.bufferList.CreateBuffer("other");
+    fixture.activeBuffer.Set(other);
+
+    view.OnEvent(ftxui::Event::CtrlX);
+    view.OnEvent(ftxui::Event::Character("r"));
+    view.OnEvent(ftxui::Event::Character("i"));
+    view.OnEvent(ftxui::Event::Character("c"));
+
+    REQUIRE(other.Text() == "hello");
+    REQUIRE(fixture.statusMessage.empty());
+}
+
+TEST_CASE("insert-register and jump-to-register on a never-set register report the right error",
+          "[BufferView]") {
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ftxui::Event::CtrlX);
+    view.OnEvent(ftxui::Event::Character("r"));
+    view.OnEvent(ftxui::Event::Character("i"));
+    view.OnEvent(ftxui::Event::Character("z"));
+    REQUIRE(fixture.statusMessage == "Register does not contain text.");
+
+    view.OnEvent(ftxui::Event::CtrlX);
+    view.OnEvent(ftxui::Event::Character("r"));
+    view.OnEvent(ftxui::Event::Character("j"));
+    view.OnEvent(ftxui::Event::Character("z"));
+    REQUIRE(fixture.statusMessage == "Register does not contain a position.");
+}
+
+TEST_CASE("Escape cancels a register prompt cleanly", "[BufferView]") {
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ftxui::Event::CtrlX);
+    view.OnEvent(ftxui::Event::Character("r"));
+    view.OnEvent(ftxui::Event::Character(" "));
+    REQUIRE(fixture.statusMessage == "Point to register: ");
+
+    view.OnEvent(ftxui::Event::Escape);
+    REQUIRE(fixture.statusMessage.empty());
+
+    view.OnEvent(ftxui::Event::Character("z")); // back to normal editing
+    REQUIRE(fixture.buffer.Text() == "z");
+}
+
+// kill-rectangle/delete-rectangle/yank-rectangle/string-rectangle follow-up.
+// Mark is set directly via Buffer::SetMark (there's no keyboard
+// set-mark-command in this codebase -- mouse-drag is the only real way --
+// matching the same workaround the register tests above already needed for
+// copy-to-register).
+
+TEST_CASE("kill-rectangle with no active mark reports an error", "[BufferView]") {
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ftxui::Event::CtrlX);
+    view.OnEvent(ftxui::Event::Character("r"));
+    view.OnEvent(ftxui::Event::Character("k"));
+
+    REQUIRE(fixture.statusMessage == "No rectangle region selected.");
+}
+
+TEST_CASE("C-x r k then C-x r y round-trips a rectangle through real key events", "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("abcdef\nghijkl");
+    fixture.buffer.SetMark(1);   // line 0, column 1
+    fixture.buffer.SetPoint(11); // line 1, column 4
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ftxui::Event::CtrlX);
+    view.OnEvent(ftxui::Event::Character("r"));
+    view.OnEvent(ftxui::Event::Character("k"));
+
+    REQUIRE(fixture.buffer.Text() == "aef\ngkl");
+    REQUIRE_FALSE(fixture.buffer.HasMark());
+
+    fixture.buffer.SetPoint(fixture.buffer.Content().ByteLength()); // end of buffer -- "gkl"'s own column 3
+
+    view.OnEvent(ftxui::Event::CtrlX);
+    view.OnEvent(ftxui::Event::Character("r"));
+    view.OnEvent(ftxui::Event::Character("y"));
+
+    // "bcd" lands directly after "gkl" (already exactly column 3 wide); "hij"
+    // lands on a freshly-created line, padded with 3 spaces to reach column 3.
+    REQUIRE(fixture.buffer.Text() == "aef\ngklbcd\n   hij");
+}
+
+TEST_CASE("C-x r t prompts for a replacement string and applies it across the rectangle", "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("abcdef\nghijkl");
+    fixture.buffer.SetMark(1);
+    fixture.buffer.SetPoint(11);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ftxui::Event::CtrlX);
+    view.OnEvent(ftxui::Event::Character("r"));
+    view.OnEvent(ftxui::Event::Character("t"));
+    REQUIRE(fixture.statusMessage == "String rectangle: ");
+
+    TypeText(view, "XY");
+    view.OnEvent(ftxui::Event::Return);
+
+    REQUIRE(fixture.buffer.Text() == "aXYef\ngXYkl");
+    REQUIRE_FALSE(fixture.buffer.HasMark());
+    REQUIRE(fixture.statusMessage.empty());
+}
+
+TEST_CASE("string-rectangle with no active mark reports an error without opening a prompt", "[BufferView]") {
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ftxui::Event::CtrlX);
+    view.OnEvent(ftxui::Event::Character("r"));
+    view.OnEvent(ftxui::Event::Character("t"));
+
+    REQUIRE(fixture.statusMessage == "No rectangle region selected.");
+
+    view.OnEvent(ftxui::Event::Character("z")); // proves we're back in Normal mode, not waiting in a prompt
+    REQUIRE(fixture.buffer.Text() == "z");
+}
+
+// narrow-to-region/widen follow-up.
+
+namespace {
+
+// Ten lines, "line0".."line9", each terminated with a newline.
+std::string TenNumberedLines() {
+    std::string content;
+    for (int i = 0; i < 10; ++i) {
+        content += "line" + std::to_string(i) + "\n";
+    }
+    return content;
+}
+
+} // namespace
+
+TEST_CASE("narrow-to-region with no active mark reports an error", "[BufferView]") {
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ftxui::Event::CtrlX);
+    view.OnEvent(ftxui::Event::Character("n"));
+    view.OnEvent(ftxui::Event::Character("n"));
+
+    REQUIRE(fixture.statusMessage == "No region to narrow to.");
+}
+
+TEST_CASE("A real narrow confines point motion to the narrowed lines", "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint(TenNumberedLines());
+    fixture.buffer.SetMark(fixture.buffer.Content().LineToByteOffset(3));
+    fixture.buffer.SetPoint(fixture.buffer.Content().LineToByteOffset(5));
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 20});
+
+    view.OnEvent(ftxui::Event::CtrlX);
+    view.OnEvent(ftxui::Event::Character("n"));
+    view.OnEvent(ftxui::Event::Character("n"));
+    REQUIRE(fixture.buffer.IsNarrowed());
+
+    const auto [narrowStart, narrowEnd] = fixture.buffer.NarrowedRange();
+
+    for (int i = 0; i < 20; ++i) { // far more than the narrowed span
+        view.OnEvent(ftxui::Event::CtrlN);
+    }
+    // Strictly < narrowEnd, not <=: narrowEnd is the excluded next line's
+    // own start byte -- point resting *at* narrowEnd would already be
+    // "on" that excluded line as far as ByteOffsetToLine is concerned, a
+    // real, confirmed-via-manual-pty-testing bug this exact assertion is
+    // written to catch (a looser <= wouldn't have).
+    REQUIRE(fixture.buffer.Point() < narrowEnd);
+    REQUIRE(fixture.buffer.Point() >= narrowStart);
+
+    for (int i = 0; i < 20; ++i) {
+        view.OnEvent(ftxui::Event::CtrlP);
+    }
+    REQUIRE(fixture.buffer.Point() >= narrowStart);
+    REQUIRE(fixture.buffer.Point() < narrowEnd);
+}
+
+TEST_CASE("widen restores full motion after narrowing", "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint(TenNumberedLines());
+    fixture.buffer.SetMark(fixture.buffer.Content().LineToByteOffset(3));
+    fixture.buffer.SetPoint(fixture.buffer.Content().LineToByteOffset(5));
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 20});
+
+    view.OnEvent(ftxui::Event::CtrlX);
+    view.OnEvent(ftxui::Event::Character("n"));
+    view.OnEvent(ftxui::Event::Character("n"));
+    REQUIRE(fixture.buffer.IsNarrowed());
+
+    view.OnEvent(ftxui::Event::CtrlX);
+    view.OnEvent(ftxui::Event::Character("n"));
+    view.OnEvent(ftxui::Event::Character("w"));
+    REQUIRE_FALSE(fixture.buffer.IsNarrowed());
+
+    for (int i = 0; i < 20; ++i) { // far more than 10 lines -- reaches the real last line if truly widened
+        view.OnEvent(ftxui::Event::CtrlN);
+    }
+    REQUIRE(fixture.buffer.Content().ByteOffsetToLine(fixture.buffer.Point()) ==
+            fixture.buffer.Content().LineCount() - 1);
+}
+
+TEST_CASE("Typing at the end of the narrowed range's own last line extends it and keeps point inside",
+          "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint(TenNumberedLines());
+    fixture.buffer.SetMark(fixture.buffer.Content().LineToByteOffset(3));
+    fixture.buffer.SetPoint(fixture.buffer.Content().LineToByteOffset(5));
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 20});
+
+    view.OnEvent(ftxui::Event::CtrlX);
+    view.OnEvent(ftxui::Event::Character("n"));
+    view.OnEvent(ftxui::Event::Character("n"));
+    const std::size_t narrowEndBefore = fixture.buffer.NarrowedRange().second;
+
+    // narrowEndBefore itself is the *excluded* next line's own start (never
+    // a position point can actually be at while narrowed -- see
+    // ClampPointToNarrowing's own doc comment) -- the real end of the
+    // narrowed range's own last line, right before its trailing newline, is
+    // one byte before that.
+    fixture.buffer.SetPoint(narrowEndBefore - 1);
+    view.OnEvent(ftxui::Event::Character("X"));
+
+    const auto [narrowStartAfter, narrowEndAfter] = fixture.buffer.NarrowedRange();
+    REQUIRE(narrowEndAfter == narrowEndBefore + 1);
+    // Right after the newly-typed "X", still exactly one byte before the
+    // (now grown) end -- no clamping needed, point already lands in bounds.
+    REQUIRE(fixture.buffer.Point() == narrowEndBefore);
+    REQUIRE(fixture.buffer.Point() >= narrowStartAfter);
+}

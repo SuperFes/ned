@@ -1,21 +1,22 @@
 #include "BufferView.h"
 
 #include <algorithm>
-#include <chrono>
-#include <condition_variable>
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
 #include <fstream>
 #include <limits>
-#include <mutex>
 #include <regex>
 #include <utility>
 #include <vector>
 
+#include <ftxui/component/screen_interactive.hpp>
+
+#include "Editor/FuzzyMatch.h"
 #include "Editor/ProjectFileOps.h"
 #include "Editor/ProjectRoot.h"
 #include "Editor/ProjectSearch.h"
+#include "Editor/Rectangle.h"
 #include "Editor/ScratchPad.h"
 #include "Editor/TabWidth.h"
 #include "KeyTranslation.h"
@@ -25,14 +26,6 @@ namespace ned::ui {
 
 namespace {
 
-    // Auto-saved-scratch-pads follow-up: frequent enough that a scratch note
-    // never sits unsaved for long, infrequent enough that it's just a cheap
-    // periodic sweep (checking Modified() on each open buffer) rather than
-    // anything that needs to be debounced against every keystroke -- there's
-    // no per-buffer "on modified" hook in this codebase to debounce against
-    // anyway, see Text/Buffer.h.
-    constexpr std::chrono::milliseconds kScratchAutoSaveInterval{5000};
-
     // Plain, non-modifier printable input: the only kind of chord that should
     // feed into a query string during isearch/query-replace/prompt text entry.
     bool IsPlainCharacter(const editor::KeyChord& chord) {
@@ -41,6 +34,23 @@ namespace {
 
     bool IsQuit(const editor::KeyChord& chord) {
         return chord.Special == editor::SpecialKey::Escape || (chord.Control && chord.Codepoint == U'g');
+    }
+
+    // Window-splitting requests forward to WindowManager (see
+    // BufferView::StartInteractiveSession's own switch) and can
+    // synchronously destroy the BufferView that's currently handling the
+    // very keypress that triggered them -- delete-window/delete-other-windows
+    // on the pane running this call, or a split/other-window reshaping the
+    // tree out from under it. Confirmed by a real SIGSEGV in
+    // WindowManagerTest.cpp, not assumed. Callers use this to decide
+    // whether it's safe to touch `this` again after dispatching a command
+    // that might have set one of these -- see RunCommandAndHandleOutcome's
+    // and ReplayMacro's own doc comments.
+    bool IsWindowManagementRequest(editor::InteractiveRequest request) {
+        using editor::InteractiveRequest;
+        return request == InteractiveRequest::SplitBelow || request == InteractiveRequest::SplitRight ||
+               request == InteractiveRequest::DeleteWindow || request == InteractiveRequest::DeleteOtherWindows ||
+               request == InteractiveRequest::OtherWindow;
     }
 
     // Gutter selection highlighting (gutter-highlight follow-up): whether a
@@ -91,6 +101,49 @@ namespace {
                 joined += ' ';
             }
             joined += candidates[i];
+        }
+        return joined;
+    }
+
+    // execute-extended-command follow-up: M-x's own version of
+    // JoinCandidates -- marks the currently-selected entry with a leading
+    // '*' (there's no floating widget to highlight a row in, so the marker
+    // has to live inside the same one echo-area line everything else here
+    // already renders through), and caps how many of the ranked list are
+    // actually shown: dumping dozens of command names into one
+    // terminal-width line is unreadable. Only a window of up to
+    // kMaxVisibleCandidates is shown, scrolled to keep the selected entry
+    // visible, with a "+K more" suffix for whatever's left out -- arrow keys
+    // still reach every ranked candidate regardless of what's currently
+    // visible. kMaxVisibleCandidates=6 is a judgment call: this codebase's
+    // command names run roughly 10-25 characters, and 6 of them plus
+    // markers/spaces/braces comfortably fits an 80-column terminal alongside
+    // "M-x " and the typed query.
+    constexpr std::size_t kMaxVisibleCandidates = 6;
+
+    std::string FormatExecuteCommandCandidates(const std::vector<std::string>& ranked, std::size_t selected) {
+        if (ranked.empty()) {
+            return {};
+        }
+
+        const std::size_t windowStart =
+            (selected < kMaxVisibleCandidates) ? 0 : selected - kMaxVisibleCandidates + 1;
+        const std::size_t windowEnd = std::min(ranked.size(), windowStart + kMaxVisibleCandidates);
+
+        std::string joined;
+        for (std::size_t i = windowStart; i < windowEnd; ++i) {
+            if (i > windowStart) {
+                joined += ' ';
+            }
+            if (i == selected) {
+                joined += '*';
+            }
+            joined += ranked[i];
+        }
+
+        const std::size_t hidden = ranked.size() - (windowEnd - windowStart);
+        if (hidden > 0) {
+            joined += " +" + std::to_string(hidden) + " more";
         }
         return joined;
     }
@@ -216,49 +269,25 @@ namespace {
 
 } // namespace
 
-BufferView::BufferView(ActiveBuffer& activeBuffer, text::KillRing& killRing, text::BufferList& bufferList,
-                       editor::Dispatcher& dispatcher, std::string& statusMessage, const editor::Mode& mode,
-                       const Theme& theme) : activeBuffer_(activeBuffer), killRing_(killRing), bufferList_(bufferList), dispatcher_(dispatcher),
-                                             statusMessage_(statusMessage), mode_(mode), theme_(theme) {
+BufferView::BufferView(ActiveBuffer& activeBuffer, text::KillRing& killRing, editor::RegisterTable& registers,
+                       text::BufferList& bufferList, editor::Dispatcher& dispatcher, std::string& statusMessage,
+                       const editor::Mode& mode, const Theme& theme) : activeBuffer_(activeBuffer), killRing_(killRing), registers_(registers), bufferList_(bufferList),
+                                                                       dispatcher_(dispatcher), statusMessage_(statusMessage), mode_(mode), theme_(theme) {
     if (const char* path = std::getenv("NED_DEBUG_MOUSE"); path && *path) {
         debugMouseLogPath_ = path;
     }
-}
-
-BufferView::~BufferView() {
-    if (autoSaveThread_.joinable()) {
-        autoSaveThread_.request_stop();
-    }
-    // std::jthread's own destructor joins after requesting stop; the
-    // explicit request_stop() above is just so the interruptible wait in
-    // StartAutoSaveTimer's loop wakes immediately rather than sitting out
-    // whatever's left of the current 5-second interval.
 }
 
 editor::CommandContext BufferView::MakeContext() {
     return editor::CommandContext{activeBuffer_.Get(), killRing_, bufferList_, editor::KeyChord{}, &statusMessage_};
 }
 
-void BufferView::StartAutoSaveTimer(ftxui::ScreenInteractive& screen) {
-    autoSaveThread_ = std::jthread([this, &screen](std::stop_token stopToken) {
-        std::mutex                  mutex;
-        std::condition_variable_any cv;
-        while (!stopToken.stop_requested()) {
-            std::unique_lock lock(mutex);
-            // Interruptible sleep -- wakes immediately on stop_requested()
-            // (BufferView's destructor) rather than blocking shutdown for up
-            // to the full interval, unlike a plain sleep_for would.
-            if (cv.wait_for(lock, stopToken, kScratchAutoSaveInterval, [&stopToken] { return stopToken.stop_requested(); })) {
-                return;
-            }
-            // PostEvent is documented thread-safe by FTXUI (confirmed by
-            // reading app.cpp, not assumed) -- this marshals the actual
-            // buffer-touching work onto the main loop thread rather than
-            // calling AutoSaveScratchBuffers directly from this background
-            // thread, avoiding any data race with the editor's own state.
-            screen.Post([this] { editor::AutoSaveScratchBuffers(bufferList_); });
-        }
-    });
+void BufferView::SetOnWindowRequest(std::function<void(editor::InteractiveRequest)> handler) {
+    onWindowRequest_ = std::move(handler);
+}
+
+void BufferView::SetOnBufferClosed(std::function<void(text::Buffer&)> handler) {
+    onBufferClosed_ = std::move(handler);
 }
 
 void BufferView::Paint(Canvas c) {
@@ -268,6 +297,17 @@ void BufferView::Paint(Canvas c) {
     const Brush       emptyBrush = theme_.BrushFor(editor::SyntaxClass::Default);
     const std::size_t point      = buffer.Point();
     const std::size_t pointLine  = content.ByteOffsetToLine(point);
+
+    // narrow-to-region/widen follow-up: caps which rows actually get
+    // painted -- deliberately a *separate* value from totalLines above,
+    // which stays the real, whole-buffer line count. lineEnd/
+    // lineEndWithNewline below still need to know whether `line` is the
+    // buffer's own real last line (to fall back to content.ByteLength())
+    // regardless of narrowing -- the narrowed range's own last line is
+    // usually not the buffer's real last line at all, just the last one
+    // currently visible, and still needs its real next-line boundary looked
+    // up correctly.
+    const std::size_t renderEndLine = NarrowedLineRange().second;
 
     if (scrollBar_ != nullptr) {
         // scrollable_length is fed as MaxTopLine() + 1, not totalLines: the
@@ -312,7 +352,7 @@ void BufferView::Paint(Canvas c) {
         }
 
         const std::size_t line = topLine_ + static_cast<std::size_t>(row);
-        if (line >= totalLines) {
+        if (line >= renderEndLine) {
             continue;
         }
 
@@ -427,7 +467,6 @@ void BufferView::Paint(Canvas c) {
             offset += decoded.byteLength;
         }
     }
-
 }
 
 std::optional<Point> BufferView::CursorPosition() const {
@@ -471,14 +510,14 @@ std::optional<Point> BufferView::CursorPosition() const {
     // cursor (and, per Focused()'s own aggregation depending on this same
     // enabled flag, arguably the sense that the editor was "ready" at all)
     // appear to not exist until the user did something.
-    const Size sizeNow    = size();
+    const Size sizeNow     = size();
     const bool sizeIsKnown = sizeNow.height > 0 && sizeNow.width > 0;
     if (sizeIsKnown && pointLine - topLine_ >= static_cast<std::size_t>(sizeNow.height)) {
         return std::nullopt;
     }
 
     const std::size_t lineStart = content.LineToByteOffset(pointLine);
-    const int          maxColumns =
+    const int         maxColumns =
         sizeIsKnown ? sizeNow.width - static_cast<int>(gutterWidth) : std::numeric_limits<int>::max();
     const std::optional<int> visualCol = VisualColumn(content, lineStart, point, maxColumns);
     if (!visualCol) {
@@ -511,44 +550,80 @@ bool BufferView::OnKeyEvent(ftxui::Event event) {
 
     if (inputMode_ == InputMode::IsearchForward || inputMode_ == InputMode::IsearchBackward) {
         HandleSearchKey(*chord);
+        ClampPointToNarrowing();
         return true;
     }
     if (inputMode_ == InputMode::QueryReplace) {
         HandleQueryReplaceKey(*chord);
+        ClampPointToNarrowing();
         return true;
     }
     if (inputMode_ == InputMode::ProjectReplace) {
         HandleProjectReplaceKey(*chord);
+        ClampPointToNarrowing();
         return true;
     }
     if (inputMode_ == InputMode::ConfirmQuit) {
         HandleConfirmQuitKey(*chord);
+        ClampPointToNarrowing();
         return true;
     }
     if (inputMode_ == InputMode::ConfirmCloseBuffer) {
         HandleConfirmCloseBufferKey(*chord);
+        ClampPointToNarrowing();
         return true;
     }
     if (inputMode_ == InputMode::FindFile || inputMode_ == InputMode::SwitchToBuffer ||
         inputMode_ == InputMode::ProjectSearch || inputMode_ == InputMode::CreateDirectory ||
-        inputMode_ == InputMode::FindScratch) {
+        inputMode_ == InputMode::FindScratch || inputMode_ == InputMode::StringRectangle) {
         HandlePromptKey(*chord);
+        ClampPointToNarrowing();
         return true;
     }
     if (inputMode_ == InputMode::DeleteFile) {
         HandleDeleteFileKey(*chord);
+        ClampPointToNarrowing();
         return true;
     }
     if (inputMode_ == InputMode::RenameFile) {
         HandleRenameFileKey(*chord);
+        ClampPointToNarrowing();
+        return true;
+    }
+    if (inputMode_ == InputMode::ExecuteCommand) {
+        // No ClampPointToNarrowing() here: HandleExecuteCommandKey's own
+        // Enter branch already routes through RunCommandAndHandleOutcome
+        // internally (M-x invoking a command by name), which handles the
+        // clamp itself -- see that method's own doc comment for why it has
+        // to be the one doing it, not a caller after the fact.
+        HandleExecuteCommandKey(*chord);
+        return true;
+    }
+    if (inputMode_ == InputMode::PointToRegister || inputMode_ == InputMode::JumpToRegister ||
+        inputMode_ == InputMode::CopyToRegister || inputMode_ == InputMode::InsertRegister) {
+        HandleRegisterKey(*chord);
+        ClampPointToNarrowing();
         return true;
     }
 
+    // No ClampPointToNarrowing() here either: RunCommandAndHandleOutcome
+    // handles it internally now (see its own doc comment) -- required,
+    // not just tidier, since a dispatched command can be split-window/
+    // delete-window/other-window, which synchronously destroys *this*
+    // BufferView via StartInteractiveSession's own window-forwarding path;
+    // a clamp call made from out here, after the dispatch returns, would be
+    // touching an already-destroyed object in exactly that case (a real,
+    // SIGSEGV-confirmed bug caught by this session's own WindowManagerTest.cpp
+    // suite, not a hypothetical one).
     editor::CommandContext context = MakeContext();
     context.viewportHeight         = size().height > 0 ? static_cast<std::size_t>(size().height) : 0;
+    RunCommandAndHandleOutcome(context, [&] { dispatcher_.Feed(*chord, context); });
+    return true;
+}
 
+void BufferView::RunCommandAndHandleOutcome(editor::CommandContext& context, const std::function<void()>& invoke) {
     try {
-        dispatcher_.Feed(*chord, context);
+        invoke();
     }
     catch (const std::exception& e) {
         statusMessage_ = e.what();
@@ -566,16 +641,85 @@ bool BufferView::OnKeyEvent(ftxui::Event event) {
         if (ftxui::ScreenInteractive* screen = ftxui::ScreenInteractive::Active()) {
             screen->Exit();
         }
-        return true;
+        return;
     }
 
     if (context.interactiveRequest != editor::InteractiveRequest::None) {
+        // context is a reference to the *caller's* own local CommandContext
+        // (never a member of this), so reading context.interactiveRequest
+        // is always safe regardless of what StartInteractiveSession just
+        // did -- but calling ClampPointToNarrowing() (which touches
+        // activeBuffer_, a real member) afterward is not, for exactly the
+        // IsWindowManagementRequest cases (see that function's own doc
+        // comment). Skip it there; every other request is a normal,
+        // still-alive-*this* interactive session (isearch, a prompt, ...).
+        const bool destroysThisPane = IsWindowManagementRequest(context.interactiveRequest);
         StartInteractiveSession(context.interactiveRequest);
-        return true;
+        if (!destroysThisPane) {
+            ClampPointToNarrowing();
+        }
+        return;
     }
 
+    ClampPointToNarrowing();
     ScrollToShowPoint();
-    return true;
+}
+
+void BufferView::ReplayMacro() {
+    if (replayingMacro_) {
+        return;
+    }
+
+    const std::vector<editor::KeyChord> macro = dispatcher_.LastMacro();
+    if (macro.empty()) {
+        statusMessage_ = "No keyboard macro has been recorded yet.";
+        return;
+    }
+
+    replayingMacro_ = true;
+    for (const editor::KeyChord& chord : macro) {
+        editor::CommandContext context = MakeContext();
+        context.viewportHeight         = size().height > 0 ? static_cast<std::size_t>(size().height) : 0;
+        RunCommandAndHandleOutcome(context, [&] { dispatcher_.Feed(chord, context); });
+
+        // context.quit/interactiveRequest are the caller's own local copies
+        // (see RunCommandAndHandleOutcome's own doc comment), always safe to
+        // read even if *this* was just destroyed -- checked first and
+        // exclusively in that case. A recorded macro can perfectly well
+        // contain a delete-window/split/other-window step, and touching
+        // inputMode_ below afterward would otherwise be a real, if narrow,
+        // use-after-free (this bug predates narrowing -- found and fixed
+        // alongside it, not introduced by it).
+        if (context.quit || IsWindowManagementRequest(context.interactiveRequest)) {
+            break;
+        }
+        if (inputMode_ != InputMode::Normal) {
+            break;
+        }
+    }
+    replayingMacro_ = false;
+}
+
+void BufferView::ClampPointToNarrowing() {
+    text::Buffer& buffer = activeBuffer_.Get();
+    if (!buffer.IsNarrowed()) {
+        return;
+    }
+    const auto [start, end] = buffer.NarrowedRange();
+    // end is exclusive (the excluded next line's own start byte, or
+    // ByteLength() if there is none) -- allowing point to sit exactly at
+    // end would let it rest at that excluded line's own start, which
+    // Content().ByteOffsetToLine (and so the mode line's own L: indicator)
+    // correctly, if confusingly, reports as *being on* the excluded line --
+    // a real, confirmed-via-manual-pty-testing bug, not a hypothetical one.
+    // The largest valid point is one byte before end: the end of the
+    // narrowed range's own last line, right before its trailing newline,
+    // matching Buffer::NarrowToRegion's own identical clamp.
+    const std::size_t maxPoint = end > start ? end - 1 : start;
+    const std::size_t point    = buffer.Point();
+    if (point < start || point > maxPoint) {
+        buffer.SetPoint(std::clamp(point, start, maxPoint));
+    }
 }
 
 void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
@@ -659,7 +803,147 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             prompt_.emplace("Find scratch: ");
             statusMessage_ = prompt_->StatusText();
             return;
+        case editor::InteractiveRequest::ExecuteCommand:
+            // Deviates from the other cases' bare-label shape: an
+            // immediately-visible, browsable candidate list is central to
+            // this feature (unlike FindFile/SwitchToBuffer/etc., where
+            // there's no meaningful "top" completion to show before any
+            // input, or it'd mean an eager filesystem scan) -- so this
+            // populates the ranked list (empty query -> every registered
+            // command, alphabetical) right away via RefreshExecuteCommandStatus
+            // rather than just prompt_->StatusText().
+            inputMode_ = InputMode::ExecuteCommand;
+            prompt_.emplace("M-x ");
+            executeCommandSelection_ = 0;
+            RefreshExecuteCommandStatus();
+            return;
+        // kmacro-start-macro/kmacro-end-or-call-macro follow-up: one-shot
+        // direct actions, same shape as ToggleProjectSidebar -- inputMode_
+        // stays Normal, no prompt session. The actual recording state lives
+        // on dispatcher_ (Dispatcher::StartRecording/StopRecording/
+        // IsRecording/LastMacro), not here.
+        case editor::InteractiveRequest::StartKbdMacro:
+            dispatcher_.StartRecording();
+            statusMessage_ = "Recording keyboard macro...";
+            return;
+        case editor::InteractiveRequest::EndOrCallKbdMacro:
+            if (dispatcher_.IsRecording()) {
+                // This very keypress's own chord(s) were just appended to
+                // the in-progress recording by Feed (recording_ was still
+                // true throughout that call) -- strip them back out before
+                // finalizing, so the macro's own terminator never ends up
+                // inside it. See Dispatcher::DiscardMostRecentlyRecordedChords's
+                // own doc comment for why this has to happen here, not
+                // inside Dispatcher::Feed/StopRecording themselves.
+                dispatcher_.DiscardMostRecentlyRecordedChords();
+                dispatcher_.StopRecording();
+                statusMessage_ =
+                    "Keyboard macro recorded (" + std::to_string(dispatcher_.LastMacro().size()) + " keys).";
+            }
+            else {
+                ReplayMacro();
+            }
+            return;
+        // point-to-register/jump-to-register/copy-to-register/insert-register
+        // follow-up: each just waits for one more character (the register
+        // name) via the shared HandleRegisterKey -- no MinibufferPrompt,
+        // there's nothing to accumulate, just a bare label like every other
+        // prompt-shaped case here uses.
+        case editor::InteractiveRequest::PointToRegister:
+            inputMode_     = InputMode::PointToRegister;
+            statusMessage_ = "Point to register: ";
+            return;
+        case editor::InteractiveRequest::JumpToRegister:
+            inputMode_     = InputMode::JumpToRegister;
+            statusMessage_ = "Jump to register: ";
+            return;
+        case editor::InteractiveRequest::CopyToRegister:
+            inputMode_     = InputMode::CopyToRegister;
+            statusMessage_ = "Copy to register: ";
+            return;
+        case editor::InteractiveRequest::InsertRegister:
+            inputMode_     = InputMode::InsertRegister;
+            statusMessage_ = "Insert register: ";
+            return;
+        // kill-rectangle/delete-rectangle/yank-rectangle follow-up: one-shot
+        // direct actions, same shape as ToggleProjectSidebar -- inputMode_
+        // stays Normal, no prompt session. See Editor/Rectangle.h for where
+        // the actual operations live.
+        case editor::InteractiveRequest::KillRectangle:
+            if (!activeBuffer_.Get().HasMark()) {
+                statusMessage_ = "No rectangle region selected.";
+            }
+            else {
+                editor::KillRectangle(activeBuffer_.Get(), editor::TabWidth());
+                statusMessage_.clear();
+            }
+            return;
+        case editor::InteractiveRequest::DeleteRectangle:
+            if (!activeBuffer_.Get().HasMark()) {
+                statusMessage_ = "No rectangle region selected.";
+            }
+            else {
+                editor::DeleteRectangle(activeBuffer_.Get(), editor::TabWidth());
+                statusMessage_.clear();
+            }
+            return;
+        case editor::InteractiveRequest::YankRectangle:
+            if (editor::GlobalRectangleClipboard().Empty()) {
+                statusMessage_ = "No rectangle to yank.";
+            }
+            else {
+                editor::YankRectangle(activeBuffer_.Get(), editor::TabWidth());
+                statusMessage_.clear();
+            }
+            return;
+        // string-rectangle follow-up: the one rectangle command that's a
+        // real prompt session (needs one line of typed replacement text) --
+        // HasMark() is checked here, before ever opening the prompt, so
+        // there's nothing to cancel out of if there's no region at all.
+        case editor::InteractiveRequest::StringRectangle:
+            if (!activeBuffer_.Get().HasMark()) {
+                statusMessage_ = "No rectangle region selected.";
+            }
+            else {
+                inputMode_ = InputMode::StringRectangle;
+                prompt_.emplace("String rectangle: ");
+                statusMessage_ = prompt_->StatusText();
+            }
+            return;
+        // narrow-to-region/widen follow-up: one-shot direct actions, same
+        // shape as ToggleProjectSidebar -- inputMode_ stays Normal, no
+        // prompt session for either.
+        case editor::InteractiveRequest::NarrowToRegion:
+            if (!activeBuffer_.Get().HasMark()) {
+                statusMessage_ = "No region to narrow to.";
+            }
+            else {
+                const auto [start, end] = activeBuffer_.Get().Region();
+                activeBuffer_.Get().NarrowToRegion(start, end);
+                const std::size_t narrowedStart = activeBuffer_.Get().NarrowedRange().first;
+                SetTopLine(activeBuffer_.Get().Content().ByteOffsetToLine(narrowedStart));
+                statusMessage_.clear();
+            }
+            return;
+        case editor::InteractiveRequest::Widen:
+            activeBuffer_.Get().Widen();
+            statusMessage_.clear();
+            return;
         case editor::InteractiveRequest::None:
+            return;
+        // Window-splitting follow-up: structural, operate above the level
+        // of a single BufferView -- just forward to whoever registered
+        // SetOnWindowRequest (WindowManager), the same "signal intent, host
+        // acts on it" shape every InteractiveRequest already uses. inputMode_
+        // deliberately stays Normal -- these aren't interactive sessions.
+        case editor::InteractiveRequest::SplitBelow:
+        case editor::InteractiveRequest::SplitRight:
+        case editor::InteractiveRequest::DeleteWindow:
+        case editor::InteractiveRequest::DeleteOtherWindows:
+        case editor::InteractiveRequest::OtherWindow:
+            if (onWindowRequest_) {
+                onWindowRequest_(request);
+            }
             return;
     }
 
@@ -677,6 +961,7 @@ void BufferView::EndInteractiveSession() {
     deleteTarget_.clear();
     renameStage_ = RenameFileStage::EnteringSource;
     renameSource_.clear();
+    executeCommandSelection_ = 0;
     ScrollToShowPoint();
 }
 
@@ -817,6 +1102,10 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
                 statusMessage_ = std::string("Invalid regex: ") + e.what();
             }
         }
+        else if (inputMode_ == InputMode::StringRectangle) {
+            editor::StringRectangle(activeBuffer_.Get(), input, editor::TabWidth());
+            statusMessage_.clear();
+        }
         else { // FindScratch
             if (!editor::IsValidScratchName(input)) {
                 statusMessage_ = "Invalid scratch name: \"" + input + "\"";
@@ -843,7 +1132,7 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
         return;
     }
     if (chord.Special == editor::SpecialKey::Tab && inputMode_ != InputMode::ProjectSearch &&
-        inputMode_ != InputMode::CreateDirectory) {
+        inputMode_ != InputMode::CreateDirectory && inputMode_ != InputMode::StringRectangle) {
         CompletePrompt();
         return;
     }
@@ -1056,6 +1345,11 @@ bool BufferView::OnMouseEvent(ftxui::Event event) {
     }
 
     if (mouse->motion == ftxui::Mouse::Pressed) {
+        // Window-splitting follow-up: harmless/no-op today (the sole
+        // focusable widget already), necessary once multiple BufferViews
+        // exist side by side -- a click into a pane is how focus moves
+        // there, mirroring real Emacs' own "clicking a window selects it."
+        TakeFocus();
         text::Buffer&     buffer = activeBuffer_.Get();
         const std::size_t offset = ByteOffsetForPoint(mouse->at);
         buffer.ClearMark();
@@ -1280,6 +1574,138 @@ void BufferView::HandleRenameFileKey(const editor::KeyChord& chord) {
     statusMessage_ = prompt_->StatusText();
 }
 
+void BufferView::HandleRegisterKey(const editor::KeyChord& chord) {
+    if (IsQuit(chord)) {
+        statusMessage_.clear();
+        EndInteractiveSession();
+        return;
+    }
+    if (!IsPlainCharacter(chord)) {
+        return; // ignore, keep waiting for a register name
+    }
+
+    const char32_t name = chord.Codepoint;
+    switch (inputMode_) {
+        case InputMode::PointToRegister:
+            registers_.SetPoint(name, activeBuffer_.Get().Name(), activeBuffer_.Get().Point());
+            statusMessage_ = "Point stored in register.";
+            break;
+        case InputMode::JumpToRegister:
+            if (const editor::PointRegisterValue* value = registers_.Point(name)) {
+                if (text::Buffer* target = bufferList_.Find(value->bufferName)) {
+                    activeBuffer_.Set(*target);
+                    target->SetPoint(value->byteOffset); // Buffer::SetPoint already clamps out-of-range offsets
+                    statusMessage_.clear();
+                }
+                else {
+                    statusMessage_ = "Buffer for that register no longer exists.";
+                }
+            }
+            else {
+                statusMessage_ = "Register does not contain a position.";
+            }
+            break;
+        case InputMode::CopyToRegister:
+            if (!activeBuffer_.Get().HasMark()) {
+                statusMessage_ = "No region to copy.";
+            }
+            else {
+                const auto [start, end] = activeBuffer_.Get().Region();
+                registers_.SetText(name, activeBuffer_.Get().Content().Substring(start, end - start));
+                statusMessage_ = "Copied to register.";
+            }
+            break;
+        case InputMode::InsertRegister:
+            if (const std::string* text = registers_.Text(name)) {
+                activeBuffer_.Get().InsertAtPoint(*text);
+                statusMessage_.clear();
+            }
+            else {
+                statusMessage_ = "Register does not contain text.";
+            }
+            break;
+        default:
+            break; // unreachable -- OnKeyEvent only routes here for the four modes above
+    }
+
+    EndInteractiveSession();
+}
+
+void BufferView::RefreshExecuteCommandStatus() {
+    const std::vector<std::string> ranked =
+        editor::FuzzyFilterAndRank(dispatcher_.Registry().Names(), prompt_->Text());
+    executeCommandSelection_ = ranked.empty() ? 0 : std::min(executeCommandSelection_, ranked.size() - 1);
+
+    statusMessage_ = ranked.empty() ? prompt_->StatusText()
+                                    : prompt_->StatusText() + "  {" +
+                                          FormatExecuteCommandCandidates(ranked, executeCommandSelection_) + "}";
+}
+
+void BufferView::HandleExecuteCommandKey(const editor::KeyChord& chord) {
+    if (chord.Special == editor::SpecialKey::Enter) {
+        const std::vector<std::string> ranked =
+            editor::FuzzyFilterAndRank(dispatcher_.Registry().Names(), prompt_->Text());
+
+        if (ranked.empty()) {
+            statusMessage_ = "No command matching \"" + prompt_->Text() + "\"";
+            EndInteractiveSession();
+            return;
+        }
+
+        const std::string name = ranked[std::min(executeCommandSelection_, ranked.size() - 1)];
+        EndInteractiveSession();
+
+        editor::CommandContext context = MakeContext();
+        context.viewportHeight         = size().height > 0 ? static_cast<std::size_t>(size().height) : 0;
+        RunCommandAndHandleOutcome(context, [&] { dispatcher_.Registry().Invoke(name, context); });
+        return;
+    }
+    if (IsQuit(chord)) {
+        statusMessage_.clear();
+        EndInteractiveSession();
+        return;
+    }
+
+    if (chord.Special == editor::SpecialKey::Down) {
+        const std::vector<std::string> ranked =
+            editor::FuzzyFilterAndRank(dispatcher_.Registry().Names(), prompt_->Text());
+        if (!ranked.empty() && executeCommandSelection_ + 1 < ranked.size()) {
+            ++executeCommandSelection_;
+        }
+        RefreshExecuteCommandStatus();
+        return;
+    }
+    if (chord.Special == editor::SpecialKey::Up) {
+        if (executeCommandSelection_ > 0) {
+            --executeCommandSelection_;
+        }
+        RefreshExecuteCommandStatus();
+        return;
+    }
+
+    // Typing always re-snaps the selection back to the top-ranked match
+    // (index 0) -- preserving a numeric index across a re-sorted candidate
+    // list would silently select an unrelated command, the same footgun
+    // VSCode/Sublime-style command palettes avoid by resetting to the top
+    // match on every keystroke. Tab is deliberately not bound to anything
+    // here: since typing already re-snaps to the top match, Enter with no
+    // arrow presses already invokes it directly -- a Tab-jumps-to-top-match
+    // affordance would be redundant.
+    if (chord.Special == editor::SpecialKey::Backspace) {
+        prompt_->DeleteChar();
+        executeCommandSelection_ = 0;
+        RefreshExecuteCommandStatus();
+        return;
+    }
+    if (IsPlainCharacter(chord)) {
+        prompt_->AppendChar(chord.Codepoint);
+        executeCommandSelection_ = 0;
+        RefreshExecuteCommandStatus();
+        return;
+    }
+    // Anything else is ignored -- stay in the prompt.
+}
+
 void BufferView::CloseBufferNow(text::Buffer& buffer) {
     const bool        wasActive = (&activeBuffer_.Get() == &buffer);
     const std::string name      = buffer.Name();
@@ -1299,6 +1725,15 @@ void BufferView::CloseBufferNow(text::Buffer& buffer) {
         if (replacement == nullptr) {
             replacement = &bufferList_.CreateBuffer("scratch");
         }
+    }
+
+    // Window-splitting follow-up: fired before the actual erase, while
+    // `buffer` is still genuinely alive -- so a multi-pane owner can
+    // retarget any *other* pane whose own ActiveBuffer also pointed at it.
+    // This BufferView's own activeBuffer_ is already handled below,
+    // independently of this hook.
+    if (onBufferClosed_) {
+        onBufferClosed_(buffer);
     }
 
     bufferList_.Close(name);
@@ -1328,13 +1763,32 @@ std::size_t BufferView::TopLine() const {
 }
 
 void BufferView::SetTopLine(std::size_t line) {
-    topLine_ = std::min(line, MaxTopLine());
+    const std::size_t rangeStart = NarrowedLineRange().first;
+    topLine_                     = std::clamp(line, rangeStart, MaxTopLine());
+}
+
+std::pair<std::size_t, std::size_t> BufferView::NarrowedLineRange() const {
+    const text::Buffer& buffer = activeBuffer_.Get();
+    if (!buffer.IsNarrowed()) {
+        return {0, buffer.Content().LineCount()};
+    }
+    const auto [narrowedStart, narrowedEnd] = buffer.NarrowedRange();
+    const std::size_t startLine             = buffer.Content().ByteOffsetToLine(narrowedStart);
+    // narrowedEnd is a byte offset at a line's own start (see
+    // Buffer::NarrowToRegion's whole-line-snapping doc comment) -- except
+    // when it's the buffer's own real end, which may fall mid-line. Either
+    // way, the line *containing* the byte just before it is the narrowed
+    // range's own last line; +1 makes this exclusive, matching
+    // Content().LineCount()'s own convention.
+    const std::size_t endLine = buffer.Content().ByteOffsetToLine(narrowedEnd > 0 ? narrowedEnd - 1 : 0) + 1;
+    return {startLine, endLine};
 }
 
 std::size_t BufferView::MaxTopLine() const {
-    const std::size_t totalLines   = activeBuffer_.Get().Content().LineCount();
-    const auto        visibleLines = size().height > 0 ? static_cast<std::size_t>(size().height) : 0;
-    return (totalLines > visibleLines) ? totalLines - visibleLines : 0;
+    const auto [rangeStart, rangeEnd] = NarrowedLineRange();
+    const std::size_t totalLines      = rangeEnd - rangeStart;
+    const auto        visibleLines    = size().height > 0 ? static_cast<std::size_t>(size().height) : 0;
+    return rangeStart + ((totalLines > visibleLines) ? totalLines - visibleLines : 0);
 }
 
 void BufferView::SetScrollBar(ScrollBar* scrollBar) {

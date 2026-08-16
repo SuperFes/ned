@@ -324,12 +324,15 @@ add_library(ned_lib STATIC
         Source/Text/Utf8.cpp
         Source/Editor/Key.cpp
         Source/Editor/Command.cpp
+        Source/Editor/FuzzyMatch.cpp
         Source/Editor/Keymap.cpp
         Source/Editor/Dispatcher.cpp
         Source/Editor/Commands.cpp
         Source/Editor/ScriptingSession.cpp
         Source/Editor/IncrementalSearch.cpp
         Source/Editor/QueryReplace.cpp
+        Source/Editor/Register.cpp
+        Source/Editor/Rectangle.cpp
         Source/Editor/MinibufferPrompt.cpp
         Source/Editor/Mode.cpp
         Source/Editor/ModeOverrides.cpp
@@ -355,6 +358,7 @@ add_library(ned_lib STATIC
         Source/UI/Widget.cpp
         Source/UI/ScrollBar.cpp
         Source/UI/BufferView.cpp
+        Source/UI/WindowManager.cpp
         Source/UI/TabBar.cpp
         Source/UI/ScrollArrowButton.cpp
         Source/UI/ProjectSidebar.cpp
@@ -411,10 +415,13 @@ if (NED_BUILD_TESTS)
             Tests/GraphemeTest.cpp
             Tests/UndoTreeTest.cpp
             Tests/KillRingTest.cpp
+            Tests/RegisterTest.cpp
+            Tests/RectangleTest.cpp
             Tests/BufferTest.cpp
             Tests/BufferListTest.cpp
             Tests/KeyTest.cpp
             Tests/CommandTest.cpp
+            Tests/FuzzyMatchTest.cpp
             Tests/KeymapTest.cpp
             Tests/DispatcherTest.cpp
             Tests/CommandsTest.cpp
@@ -426,6 +433,7 @@ if (NED_BUILD_TESTS)
             Tests/InitFileTest.cpp
             Tests/KeyTranslationTest.cpp
             Tests/BufferViewTest.cpp
+            Tests/WindowManagerTest.cpp
             Tests/ModeLineTest.cpp
             Tests/EchoAreaTest.cpp
             Tests/Utf8Test.cpp

@@ -177,8 +177,9 @@ namespace {
 
 } // namespace
 
-ProjectSidebar::ProjectSidebar(ActiveBuffer& activeBuffer, text::BufferList& bufferList, std::string& statusMessage,
-                               const Theme& theme) : activeBuffer_(activeBuffer), bufferList_(bufferList), statusMessage_(statusMessage), theme_(theme) {
+ProjectSidebar::ProjectSidebar(std::function<ActiveBuffer&()> activeBufferProvider, text::BufferList& bufferList,
+                               std::string& statusMessage, const Theme& theme) : activeBufferProvider_(std::move(activeBufferProvider)), bufferList_(bufferList), statusMessage_(statusMessage),
+                                                                                 theme_(theme) {
 }
 
 std::vector<editor::ProjectTreeEntry> ProjectSidebar::VisibleEntries(const std::vector<editor::ProjectTreeEntry>& all) const {
@@ -219,6 +220,10 @@ void ProjectSidebar::InvalidateTree() {
     treeCacheValid_ = false;
 }
 
+void ProjectSidebar::SetOnBufferClosed(std::function<void(text::Buffer&)> handler) {
+    onBufferClosed_ = std::move(handler);
+}
+
 void ProjectSidebar::Paint(Canvas c) {
     for (int row = 0; row < c.size().height; ++row) {
         for (int col = 0; col < c.size().width; ++col) {
@@ -233,7 +238,7 @@ void ProjectSidebar::Paint(Canvas c) {
     const int dividerColumn = c.size().width - 1;
 
     const std::vector<editor::ProjectTreeEntry> entries    = VisibleEntries(CachedTree());
-    const std::optional<std::filesystem::path>& activePath = activeBuffer_.Get().Path();
+    const std::optional<std::filesystem::path>& activePath = activeBufferProvider_().Get().Path();
 
     const RowLayout layout      = ComputeRowLayout(entries, scrollOffset_);
     const int       stickyCount = std::min<int>(static_cast<int>(layout.stickyAncestors.size()), c.size().height);
@@ -362,7 +367,7 @@ bool ProjectSidebar::OnEvent(ftxui::Event event) {
 void ProjectSidebar::OpenFileEntry(const std::filesystem::path& path, bool isDoubleClick) {
     try {
         if (text::Buffer* existing = bufferList_.FindByPath(path)) {
-            activeBuffer_.Set(*existing);
+            activeBufferProvider_().Set(*existing);
             if (isDoubleClick && bufferList_.PreviewBuffer() == existing) {
                 bufferList_.SetPreviewBuffer(nullptr); // promote the existing preview in place
             }
@@ -377,12 +382,18 @@ void ProjectSidebar::OpenFileEntry(const std::filesystem::path& path, bool isDou
         // outright is always safe, never silent data loss.
         if (!isDoubleClick) {
             if (text::Buffer* oldPreview = bufferList_.PreviewBuffer()) {
+                // Must run before Close() actually frees it -- see
+                // SetOnBufferClosed's own doc comment for why skipping this
+                // was a real, confirmed dangling-ActiveBuffer crash.
+                if (onBufferClosed_) {
+                    onBufferClosed_(*oldPreview);
+                }
                 bufferList_.Close(oldPreview->Name());
             }
         }
 
         text::Buffer& opened = bufferList_.OpenOrCreateFile(path);
-        activeBuffer_.Set(opened);
+        activeBufferProvider_().Set(opened);
         statusMessage_.clear();
         if (!isDoubleClick) {
             bufferList_.SetPreviewBuffer(&opened);

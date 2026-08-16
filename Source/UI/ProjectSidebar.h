@@ -55,6 +55,7 @@
 
 #include <chrono>
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <set>
 #include <string>
@@ -70,13 +71,19 @@ namespace ned::ui {
 
 class ProjectSidebar : public Widget {
   public:
-    // activeBuffer, bufferList, statusMessage, and theme must outlive this
-    // widget (the usual convention). statusMessage is where a failed file
-    // open gets reported (e.g. permission denied) -- the one operation here
-    // that can actually fail, unlike TabBar's clicks, which only ever
-    // switch between already-open buffers.
-    ProjectSidebar(ActiveBuffer& activeBuffer, text::BufferList& bufferList, std::string& statusMessage,
-                   const Theme& theme);
+    // activeBufferProvider, bufferList, statusMessage, and theme must
+    // outlive this widget (the usual convention). statusMessage is where a
+    // failed file open gets reported (e.g. permission denied) -- the one
+    // operation here that can actually fail, unlike TabBar's clicks, which
+    // only ever switch between already-open buffers. activeBufferProvider
+    // (window-splitting follow-up; was a fixed ActiveBuffer&) is called
+    // fresh on every click rather than bound once at construction, for the
+    // exact same reason TabBar's own provider exists: a sidebar click
+    // should always open into whichever pane currently has keyboard focus,
+    // which changes over time. main.cpp wires this to
+    // WindowManager::FocusedActiveBuffer.
+    ProjectSidebar(std::function<ActiveBuffer&()> activeBufferProvider, text::BufferList& bufferList,
+                   std::string& statusMessage, const Theme& theme);
 
     void Paint(Canvas c) override;
     bool OnEvent(ftxui::Event event) override;
@@ -131,11 +138,27 @@ class ProjectSidebar : public Widget {
     // nothing calls it there.
     void InvalidateTree();
 
+    // Window-splitting follow-up: called with the outgoing single-click-
+    // preview buffer immediately *before* OpenFileEntry closes it directly
+    // (bufferList_.Close(...) -- this widget's own preview-replacement
+    // logic, unrelated to BufferView::CloseBufferNow/SetOnBufferClosed
+    // entirely). Unset (the default) is a safe no-op, matching every other
+    // Set* hook in this codebase -- but leaving it unset while multiple
+    // panes exist is a real, confirmed bug: any *other* pane that happened
+    // to also be showing the outgoing preview is left with a dangling
+    // ActiveBuffer the instant bufferList_.Close() actually frees it,
+    // crashing the next time that pane repaints (confirmed via two real
+    // coredumps -- heap corruption manifesting inside ModeLine::Paint's own
+    // string building -- not a hypothetical). main.cpp wires this to
+    // WindowManager::NotifyBufferClosing.
+    void SetOnBufferClosed(std::function<void(text::Buffer&)> handler);
+
   private:
-    ActiveBuffer&     activeBuffer_;
-    text::BufferList& bufferList_;
-    std::string&      statusMessage_;
-    const Theme&      theme_;
+    std::function<ActiveBuffer&()>     activeBufferProvider_;
+    text::BufferList&                  bufferList_;
+    std::string&                       statusMessage_;
+    const Theme&                       theme_;
+    std::function<void(text::Buffer&)> onBufferClosed_;
 
     int scrollOffset_ = 0; // first visible row (post-sticky-headers), in *visible* (post-collapse) tree-entry units
 
