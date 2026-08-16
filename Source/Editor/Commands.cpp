@@ -5,6 +5,7 @@
 #include <exception>
 #include <string>
 
+#include "FinalNewline.h"
 #include "FormatOnSave.h"
 #include "Org.h"
 #include "TabWidth.h"
@@ -165,7 +166,7 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                 }
             }
 
-            context.buffer.Save();
+            context.buffer.Save(EnsureFinalNewline());
             if (context.message) {
                 *context.message = "Wrote " + context.buffer.Name() + (formatFailed ? " (format command failed)" : "");
             }

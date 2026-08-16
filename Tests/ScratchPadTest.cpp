@@ -210,7 +210,7 @@ TEST_CASE("AutoSaveScratchBuffers saves a modified buffer whose path is directly
     {
         std::ifstream in(ScratchPathForName("todo"));
         std::string   content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-        REQUIRE(content == "buy milk");
+        REQUIRE(content == "buy milk\n"); // Buffer::Save ensures a trailing newline on disk by default
     }
 
     std::filesystem::remove_all(dataDir);

@@ -201,7 +201,7 @@ TEST_CASE("save-buffer formats the buffer through the configured command before 
 
     std::ifstream file(path);
     std::string   written((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-    REQUIRE(written == "HELLO");
+    REQUIRE(written == "HELLO\n"); // save-buffer ensures a trailing newline on disk by default (EnsureFinalNewline())
 
     std::filesystem::remove(path);
 }
@@ -233,7 +233,7 @@ TEST_CASE("save-buffer still saves the original content and reports failure when
 
     std::ifstream file(path);
     std::string   written((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-    REQUIRE(written == "hello");
+    REQUIRE(written == "hello\n"); // save-buffer ensures a trailing newline on disk by default (EnsureFinalNewline())
 
     std::filesystem::remove(path);
 }

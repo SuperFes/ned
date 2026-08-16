@@ -80,7 +80,7 @@ Buffer Buffer::NewFile(std::filesystem::path path) {
     return buffer;
 }
 
-void Buffer::SaveToFile(const std::filesystem::path& path) {
+void Buffer::SaveToFile(const std::filesystem::path& path, bool ensureFinalNewline) {
     // Write to a sibling temp file and rename over the target so a failure
     // partway through (e.g. disk full) can't leave the original truncated or
     // corrupted -- std::filesystem::rename is atomic on POSIX when both
@@ -93,7 +93,14 @@ void Buffer::SaveToFile(const std::filesystem::path& path) {
             throw std::runtime_error("ned: cannot open file for writing: " + tempPath.string());
         }
 
-        const std::string content = Rope_.ToString();
+        std::string content = Rope_.ToString();
+        // An empty buffer stays empty (not turned into a bare "\n") -- and
+        // Rope_ itself is never touched, only this local copy that's about
+        // to be written; see the ensureFinalNewline doc comment on the
+        // header for why that's deliberate.
+        if (ensureFinalNewline && !content.empty() && content.back() != '\n') {
+            content.push_back('\n');
+        }
         file.write(content.data(), static_cast<std::streamsize>(content.size()));
 
         if (!file) {
@@ -114,11 +121,11 @@ void Buffer::SaveToFile(const std::filesystem::path& path) {
     Modified_ = false;
 }
 
-void Buffer::Save() {
+void Buffer::Save(bool ensureFinalNewline) {
     if (!Path_) {
         throw std::runtime_error("ned: buffer \"" + Name_ + "\" has no associated file path");
     }
-    SaveToFile(*Path_);
+    SaveToFile(*Path_, ensureFinalNewline);
 }
 
 const std::string& Buffer::Name() const {

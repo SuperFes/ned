@@ -39,10 +39,19 @@ class Buffer {
 
     // Writes to path and remembers it as the buffer's associated file.
     // Throws std::runtime_error if the file can't be opened for writing.
-    void SaveToFile(const std::filesystem::path& path);
+    // ensureFinalNewline (default true) appends a trailing '\n' to what's
+    // WRITTEN, if the content is non-empty and doesn't already end with
+    // one -- deliberately disk-only, this buffer's own live content
+    // (Text()/Point()/Modified()/undo history) is never touched by it; see
+    // Editor/FinalNewline.h's own header comment for why. Buffer itself
+    // stays unaware of the real, configured, Janet-settable default the way
+    // it already does for tabWidth elsewhere -- callers that want that pass
+    // editor::EnsureFinalNewline() in explicitly (Commands.cpp's
+    // save-buffer does).
+    void SaveToFile(const std::filesystem::path& path, bool ensureFinalNewline = true);
     // Writes to the buffer's associated file. Throws std::runtime_error if
     // the buffer has none (i.e. FromFile/SaveToFile were never called).
-    void Save();
+    void Save(bool ensureFinalNewline = true);
 
     [[nodiscard]] const std::string&                          Name() const;
     void                                                      Rename(std::string name);

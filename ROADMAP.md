@@ -3523,6 +3523,57 @@ in their own right:
 - The table formula/spreadsheet engine — a small programming language of its own.
 - Export backends and the publishing pipeline — each a standalone tool-sized effort.
 
+## Save-time final newline — done
+
+Unrelated, small, user-requested follow-up landed the same session as the Org-mode work
+above: "always having a newline at the end of the file should be configurable, but by
+default on" — matching Emacs' `require-final-newline`/VSCode's `files.insertFinalNewline`.
+
+New `Source/Editor/FinalNewline.h/.cpp`: `SetEnsureFinalNewline`/`EnsureFinalNewline`,
+process-wide mutex-guarded bool mirroring `ScratchPad.h`'s `SetScratchAutoSaveEnabled`
+pattern exactly, default **on**. `Buffer::SaveToFile`/`Save` (`Text/Buffer.h/.cpp`) gained
+an `ensureFinalNewline` parameter, default `true` (a plain literal, not a read of the
+`Editor`-layer setting — `Text/` still has zero dependency on `Source/Editor/`, the same
+layering `tabWidth` parameters already preserve) — `Commands.cpp`'s `save-buffer` is what
+actually passes the real, Janet-configurable value through, via `EnsureFinalNewline()`.
+`ned/set-ensure-final-newline` (`EditorBindings.cpp`) is the Janet binding, real this
+time (unlike Org's still-missing `ned/set-org-todo-keywords`) since `Value.h` already
+marshals `bool` — no new marshalling work needed.
+
+**Deliberately disk-only, not a live buffer edit** — the one real design decision here,
+found by actually tracing what the "obvious" alternative would break rather than assumed:
+a version that called `Buffer::InsertAt` to make the added newline a real, visible,
+undoable edit was tried first, then rejected after walking it through this codebase's own
+pre-existing `"Undo/redo mark the buffer modified..."` test (`Tests/BufferTest.cpp`) — that
+approach pushes a save-time-only edit onto the undo tree the user never typed, meaning the
+very next `Undo` after a save would undo the newline instead of the user's actual last real
+edit, silently breaking that test's own documented assumption about what a single `Undo`
+lands on. Fixed by keeping the whole thing disk-only: `SaveToFile` builds its own local
+copy of the content (already computed for the write, regardless), appends `'\n'` to *that*
+copy only if non-empty and not already newline-terminated, and never touches `Rope_`
+itself — `Point_`/`Mark_`/`Modified_`/`ContentGeneration_`/the undo tree are all completely
+unaffected by a save. The tradeoff, stated plainly rather than glossed over: the live,
+still-open buffer's own `Text()` doesn't visibly gain the newline until closed and
+reopened (a `Buffer::FromFile` reload of the just-saved file will show it) — accepted as
+the right v1 call given the undo-pollution alternative, not treated as equivalent options.
+
+Ripple effects, all confirmed and fixed rather than merely anticipated: existing tests
+asserting exact on-disk byte content after a save (`Tests/BufferTest.cpp`'s round-trip and
+atomic-save-failure cases, `Tests/CommandsTest.cpp`'s format-command cases,
+`Tests/ScratchPadTest.cpp`'s auto-save case) all needed either an explicit
+`ensureFinalNewline=false` argument (for the two tests that are really about round-trip
+fidelity/atomicity, not this feature) or an updated expected string with a trailing `\n`
+(for the ones going through the real `save-buffer` command/`AutoSaveScratchBuffers`, which
+now genuinely do write one). Found by grepping every test file for a disk-content
+assertion after a `.Save(`/`.SaveToFile(` call (direct or indirect, e.g. through
+`AutoSaveScratchBuffers`), not by waiting for `ctest` to report failures one at a time.
+
+Verification: 7 new test cases (`Tests/FinalNewlineTest.cpp`, 5 new `Tests/BufferTest.cpp`
+cases, 1 new `Tests/EditorBindingsTest.cpp` case), 624 total, clean — plus a `screen`-based
+pty smoke test against the real binary: `C-x C-s` on a file with no trailing newline
+correctly appended one on disk by default, and `(ned/set-ensure-final-newline false)` in
+`init.janet` correctly suppressed it on a second real save.
+
 ## Phase 9 — Zed-inspired features (aspirational, unsequenced)
 A running wishlist, not yet prioritized or scheduled against the phases above — draw
 from this once the Emacs-parity core (Phases 1–5) is solid, per the "editing features
