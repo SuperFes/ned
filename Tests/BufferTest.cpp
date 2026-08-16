@@ -138,7 +138,9 @@ TEST_CASE("Buffer round-trips through SaveToFile/FromFile", "[Buffer]") {
 
     {
         Buffer buffer("scratch", ned::text::Rope("hello, file"));
-        buffer.SaveToFile(path);
+        // ensureFinalNewline=false: this test is about round-trip fidelity,
+        // not the final-newline feature (see FinalNewlineTest.cpp for that).
+        buffer.SaveToFile(path, false);
         REQUIRE(buffer.Path().has_value());
         REQUIRE(*buffer.Path() == path);
     }
@@ -183,6 +185,63 @@ TEST_CASE("FromFile reads a file with no BOM unchanged", "[Buffer]") {
     std::filesystem::remove(path);
 }
 
+TEST_CASE("SaveToFile appends a trailing newline by default when the content is missing one", "[Buffer]") {
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_buffer_test_final_newline.txt";
+
+    Buffer buffer("scratch", ned::text::Rope("no newline here"));
+    buffer.SaveToFile(path);
+
+    std::ifstream     file(path, std::ios::binary);
+    const std::string written((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    REQUIRE(written == "no newline here\n");
+
+    // Disk-only: the buffer's own live content is untouched (see
+    // Editor/FinalNewline.h for why).
+    REQUIRE(buffer.Text() == "no newline here");
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("SaveToFile doesn't duplicate an already-present trailing newline", "[Buffer]") {
+    const std::filesystem::path path =
+        std::filesystem::temp_directory_path() / "ned_buffer_test_final_newline_present.txt";
+
+    Buffer buffer("scratch", ned::text::Rope("already has one\n"));
+    buffer.SaveToFile(path);
+
+    std::ifstream     file(path, std::ios::binary);
+    const std::string written((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    REQUIRE(written == "already has one\n");
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("SaveToFile(path, false) leaves content without a trailing newline as-is", "[Buffer]") {
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_buffer_test_final_newline_off.txt";
+
+    Buffer buffer("scratch", ned::text::Rope("no newline here"));
+    buffer.SaveToFile(path, false);
+
+    std::ifstream     file(path, std::ios::binary);
+    const std::string written((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    REQUIRE(written == "no newline here");
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("SaveToFile doesn't turn an empty buffer into a bare newline", "[Buffer]") {
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_buffer_test_final_newline_empty.txt";
+
+    Buffer buffer("scratch");
+    buffer.SaveToFile(path);
+
+    std::ifstream     file(path, std::ios::binary);
+    const std::string written((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    REQUIRE(written.empty());
+
+    std::filesystem::remove(path);
+}
+
 TEST_CASE("SaveToFile leaves no leftover temp file after a successful save", "[Buffer]") {
     const std::filesystem::path path     = std::filesystem::temp_directory_path() / "ned_buffer_test_no_leftover.txt";
     const std::filesystem::path tempPath = path.string() + ".ned-tmp";
@@ -207,7 +266,10 @@ TEST_CASE("A failed save doesn't corrupt or replace the original file", "[Buffer
 
     {
         Buffer original("scratch", ned::text::Rope("original content"));
-        original.SaveToFile(path);
+        // ensureFinalNewline=false: this test asserts the raw on-disk bytes
+        // exactly match what was written, unrelated to the final-newline
+        // feature (see FinalNewlineTest.cpp for that).
+        original.SaveToFile(path, false);
     }
 
     // Occupy the exact temp-file path with a directory, so opening it as a

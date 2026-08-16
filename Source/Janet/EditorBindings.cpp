@@ -6,6 +6,7 @@
 #include <string>
 #include <utility>
 
+#include "Editor/FinalNewline.h"
 #include "Editor/FormatOnSave.h"
 #include "Editor/ModeOverrides.h"
 #include "Editor/ProjectRoot.h"
@@ -129,6 +130,10 @@ namespace {
         editor::SetScratchAutoSaveEnabled(enabled);
     }
 
+    void NedSetEnsureFinalNewline(bool enabled) {
+        editor::SetEnsureFinalNewline(enabled);
+    }
+
     void NedRegisterLanguageGrammar(std::string name, std::string libraryPath, std::string queryPath) {
         editor::RegisterDynamicMode(name, libraryPath, queryPath);
     }
@@ -169,6 +174,10 @@ void InstallEditorBindings(Environment& env) {
         "ned", "set-scratch-auto-save",
         "Enable/disable automatically saving modified scratch notes (find-scratch) on a periodic timer (default "
         "true).");
+    env.Register<&NedSetEnsureFinalNewline>(
+        "ned", "set-ensure-final-newline",
+        "Enable/disable appending a trailing newline to a file's written content on save if it's missing one "
+        "(default true).");
     env.Register<&NedRegisterLanguageGrammar>(
         "ned", "register-language-grammar",
         "Load a tree-sitter grammar at runtime: (name library-path query-path). library-path is a shared library "

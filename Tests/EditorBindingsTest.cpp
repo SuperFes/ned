@@ -4,6 +4,7 @@
 #include <string>
 
 #include "Editor/Dispatcher.h"
+#include "Editor/FinalNewline.h"
 #include "Editor/FormatOnSave.h"
 #include "Editor/Key.h"
 #include "Editor/Keymap.h"
@@ -210,4 +211,23 @@ TEST_CASE("ned/set-scratch-auto-save configures the process-wide toggle", "[Edit
 
     env.DoString(R"((ned/set-scratch-auto-save true))");
     REQUIRE(ned::editor::ScratchAutoSaveEnabled());
+}
+
+TEST_CASE("ned/set-ensure-final-newline configures the process-wide toggle", "[EditorBindings]") {
+    // EnsureFinalNewline is process-wide state (see FinalNewline.h);
+    // guaranteed reset via RAII so this doesn't leak into other tests.
+    struct FinalNewlineGuard {
+        ~FinalNewlineGuard() {
+            ned::editor::SetEnsureFinalNewline(true);
+        }
+    } guard;
+
+    Environment& env = ned_tests::TestEnvironment();
+    InstallEditorBindings(env);
+
+    env.DoString(R"((ned/set-ensure-final-newline false))");
+    REQUIRE_FALSE(ned::editor::EnsureFinalNewline());
+
+    env.DoString(R"((ned/set-ensure-final-newline true))");
+    REQUIRE(ned::editor::EnsureFinalNewline());
 }

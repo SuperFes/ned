@@ -337,6 +337,7 @@ add_library(ned_lib STATIC
         Source/Editor/Mode.cpp
         Source/Editor/ModeOverrides.cpp
         Source/Editor/Org.cpp
+        Source/Editor/FinalNewline.cpp
         Source/Editor/FormatOnSave.cpp
         Source/Editor/TabWidth.cpp
         Source/Editor/ProjectSearch.cpp
@@ -450,6 +451,7 @@ if (NED_BUILD_TESTS)
             Tests/MinibufferPromptTest.cpp
             Tests/TabBarTest.cpp
             Tests/ScrollArrowButtonTest.cpp
+            Tests/FinalNewlineTest.cpp
             Tests/FormatOnSaveTest.cpp
             Tests/TabWidthTest.cpp
             Tests/ProjectSearchTest.cpp
