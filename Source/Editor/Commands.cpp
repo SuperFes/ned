@@ -5,8 +5,10 @@
 #include <exception>
 #include <string>
 
+#include "CodeFold.h"
 #include "FinalNewline.h"
 #include "FormatOnSave.h"
+#include "Markdown.h"
 #include "Org.h"
 #include "TabWidth.h"
 #include "Text/Utf8.h"
@@ -230,6 +232,14 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           context.interactiveRequest = InteractiveRequest::ToggleProjectSidebar;
                       });
 
+    // org-agenda follow-up: global, not gated to org-mode's own keymap --
+    // useful from any buffer, same "reachable from every mode" precedent
+    // project-search/toggle-project-sidebar already follow.
+    registry.Register("org-agenda", "List active (non-DONE) TODO headlines across every .org file in the project.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::ProjectAgenda;
+                      });
+
     registry.Register("create-directory", "Create a new directory (prompts for its path).",
                       [](CommandContext& context) {
                           context.interactiveRequest = InteractiveRequest::CreateDirectory;
@@ -353,6 +363,101 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                               *context.message = "Not on a checkbox.";
                           }
                       });
+    // Real Org's own command name -- same direct "act on context.buffer,
+    // report through context.message" shape as the three commands above.
+    // Tables follow-up: TAB is a single, context-dispatching command in
+    // real Emacs Org too, not two competing bindings -- this is that same
+    // idiom, not a workaround. AlignOrgTableAtPoint is only ever tried once
+    // CycleFoldAtPoint has already reported point isn't on a headline, so a
+    // point that's genuinely on both a headline line and inside a table
+    // (can't really happen -- a headline is never itself a table row) has
+    // no ambiguity to resolve.
+    registry.Register("org-cycle", "Cycle the fold state of the subtree at point, or realign the table at point.",
+                      [](CommandContext& context) {
+                          if (org::CycleFoldAtPoint(context.buffer))
+                              return;
+                          if (org::AlignOrgTableAtPoint(context.buffer))
+                              return;
+                          if (context.message) {
+                              *context.message = "Not on a headline.";
+                          }
+                      });
+    // generic-code-folding follow-up: the keyboard/M-x/Janet path onto the
+    // same gutter-click fold BufferView drives directly (see that class's
+    // own OnMouseEvent) -- not bound to any default key, since there's no
+    // obviously-free global chord to claim; reachable via M-x or
+    // ned/define-key. Needs context.mode (unlike org-cycle, which is
+    // entirely self-contained) since which blocks are foldable depends on
+    // the active Mode's own fold query -- see CommandContext::mode's own
+    // doc comment.
+    registry.Register(
+        "code-fold-toggle", "Toggle folding the code block starting on the line at point.", [](CommandContext& context) {
+            if (context.mode == nullptr || !context.mode->fold) {
+                if (context.message) {
+                    *context.message = "No folding available in this mode.";
+                }
+                return;
+            }
+            const text::Rope& content = context.buffer.Content();
+            const std::size_t line    = content.ByteOffsetToLine(context.buffer.Point());
+            const auto blocks = codefold::FoldableBlocks(*context.mode, context.buffer.Text());
+            if (!codefold::ToggleFoldAtLine(context.buffer, content, blocks, line) && context.message) {
+                *context.message = "No foldable block starts here.";
+            }
+        });
+    // Real Org's own C-c C-q ("org-set-tags-command"): unlike the direct
+    // commands above, tags are free-form text, so this just checks the
+    // precondition (same "Not on a headline." report) and hands off to a
+    // real prompt -- BufferView::StartInteractiveSession's own
+    // SetHeadlineTags case pre-fills it with the headline's current tags.
+    registry.Register("org-set-tags", "Set the tags of the headline at point (colon-separated, e.g. \"work:urgent\").",
+                      [](CommandContext& context) {
+                          if (org::HeadlineAtPoint(context.buffer)) {
+                              context.interactiveRequest = InteractiveRequest::SetHeadlineTags;
+                          }
+                          else if (context.message) {
+                              *context.message = "Not on a headline.";
+                          }
+                      });
+    // Tables follow-up: registered separately from org-cycle's own
+    // fallback branch above too -- M-x / explicit binding / Janet
+    // scripting reachability, the same "manually invoked, available
+    // regardless of the default keybinding" shape every command in this
+    // registry already has (CommandRegistry is one global namespace; Mode
+    // only gates default keybindings, never which commands can run).
+    registry.Register("org-table-align", "Realign the columns of the table at point to their content width.",
+                      [](CommandContext& context) {
+                          if (!org::AlignOrgTableAtPoint(context.buffer) && context.message) {
+                              *context.message = "Not in a table.";
+                          }
+                      });
+    // Tables follow-up: Markdown's own equivalent -- see Editor/Markdown.h.
+    // Not gated on the active Mode in any way (this function, like every
+    // other command here, operates on context.buffer directly); it works
+    // in any buffer containing a real GFM table, not only ones opened as
+    // .md files.
+    registry.Register("markdown-table-align", "Realign the columns of the GFM table at point to their content width.",
+                      [](CommandContext& context) {
+                          if (!markdown::AlignTableAtPoint(context.buffer) && context.message) {
+                              *context.message = "Not in a table.";
+                          }
+                      });
+
+    // Links follow-up: a no-op-everywhere-until-acted-on signal, the same
+    // "just set interactiveRequest" shape project-search-visit-result/
+    // toggle-project-sidebar above already use -- see
+    // BufferView::OpenLinkAtPoint for the actual detect-and-open logic
+    // (Org's own [[target][description]] bracket syntax first in an
+    // org-mode buffer, Editor/Link.h's generic bare-URL/file detection
+    // everywhere else). Bound globally (below) so it's reachable from any
+    // mode, matching the user's own "any feature available to any mode
+    // should be available to all modes" principle -- Org additionally binds
+    // its own real C-c C-o to this same command, see OrgMode()'s own doc
+    // comment in Mode.h/.cpp.
+    registry.Register("open-link-at-point", "Follow the link (Org bracket link, URL, or file path) at point.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::OpenLinkAtPoint;
+                      });
 }
 
 Keymap BuildDefaultGlobalKeymap() {
@@ -362,6 +467,7 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("C-b"), "backward-char");
     keymap.Bind(ParseKeySequence("C-d"), "delete-char");
     keymap.Bind(ParseKeySequence("DEL"), "backward-delete-char");
+    keymap.Bind(ParseKeySequence("DELETE"), "delete-char");
     keymap.Bind(ParseKeySequence("C-a"), "beginning-of-line");
     keymap.Bind(ParseKeySequence("C-e"), "end-of-line");
     keymap.Bind(ParseKeySequence("HOME"), "beginning-of-line");
@@ -392,6 +498,7 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("C-c C-v"), "project-search-visit-result");
     keymap.Bind(ParseKeySequence("C-c C-r"), "project-replace");
     keymap.Bind(ParseKeySequence("C-c C-p"), "toggle-project-sidebar");
+    keymap.Bind(ParseKeySequence("C-c a"), "org-agenda"); // real Org's own actual binding
     keymap.Bind(ParseKeySequence("C-c C-d"), "create-directory");
     keymap.Bind(ParseKeySequence("C-c C-k"), "delete-file");
     // Not "C-c C-m": Ctrl+M and Enter are the same byte at the terminal
@@ -400,6 +507,11 @@ Keymap BuildDefaultGlobalKeymap() {
     // reports SpecialKey::Enter instead, and that binding would be dead.
     keymap.Bind(ParseKeySequence("C-c C-n"), "rename-file");
     keymap.Bind(ParseKeySequence("C-c C-o"), "find-scratch");
+    // Links follow-up: free everywhere else in this keymap (confirmed by
+    // reading the full bind list above) -- see open-link-at-point's own
+    // registration comment above and OrgMode()'s doc comment for why Org
+    // additionally binds its own real C-c C-o to the same command.
+    keymap.Bind(ParseKeySequence("C-c C-l"), "open-link-at-point");
     keymap.Bind(ParseKeySequence("C-x 2"), "split-window-below");
     keymap.Bind(ParseKeySequence("C-x 3"), "split-window-right");
     keymap.Bind(ParseKeySequence("C-x 0"), "delete-window");

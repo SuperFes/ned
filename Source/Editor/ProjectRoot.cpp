@@ -65,10 +65,25 @@ bool AutoDetectProjectRoot() {
 }
 
 std::filesystem::path DetectProjectRoot(const std::filesystem::path& openedPath) {
+    // weakly_canonical, not plain absolute: absolute() only prepends the cwd
+    // and leaves any "." / ".." components in place, so opening "../README.md"
+    // left the detected root's own parent_path() literally ending in "..",
+    // which then surfaced verbatim as the sidebar header's project name
+    // (ProjectSidebar's own ProjectNameLabel takes root.filename(), and ".."
+    // is its own last path component as far as std::filesystem is concerned,
+    // not resolved away). weakly_canonical resolves the real, existing
+    // portion of the path (symlinks included) and only falls back to lexical
+    // normalization for a trailing portion that doesn't exist yet -- doesn't
+    // throw for a not-yet-existing file the way canonical() would, which
+    // matters since openedPath may be a new-file path (see
+    // BufferList::OpenOrCreateFile) that doesn't exist on disk yet.
     std::error_code       ec;
-    std::filesystem::path start = std::filesystem::absolute(openedPath, ec);
+    std::filesystem::path start = std::filesystem::weakly_canonical(openedPath, ec);
     if (ec) {
-        start = openedPath;
+        start = std::filesystem::absolute(openedPath, ec);
+        if (ec) {
+            start = openedPath;
+        }
     }
 
     if (std::filesystem::is_directory(start, ec)) {

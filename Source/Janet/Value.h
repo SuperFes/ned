@@ -12,7 +12,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
+#include <vector>
 
 namespace ned::janet {
 
@@ -24,6 +26,18 @@ Janet ToJanet(std::int64_t value);
 Janet ToJanet(std::size_t value);
 Janet ToJanet(double value);
 Janet ToJanet(const std::string& value);
+
+// nil when unset -- syntax-theme-overrides follow-up: the "safely nil,
+// not an error, for a class/field that simply has nothing configured yet"
+// contract the ned/syntax-* Janet getters need (Editor/SyntaxTheme.h's own
+// header comment has the full nil-vs-throw rationale).
+Janet ToJanet(const std::optional<std::string>& value);
+Janet ToJanet(const std::optional<bool>& value);
+
+// A real Janet array of strings -- ned/syntax-classes' own return type
+// (syntax-theme-overrides follow-up), the first ToJanet overload in this
+// codebase to return a container rather than a scalar.
+Janet ToJanet(const std::vector<std::string>& value);
 
 // Shared ownership of a Janet value kept alive against Janet's GC
 // (janet_gcroot/janet_gcunroot) for as long as any copy of this survives.

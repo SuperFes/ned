@@ -37,8 +37,13 @@ namespace ned::editor {
 // (propagated from the grammar load, queryPath's read, or a malformed
 // query) -- a bad Janet call here is expected to surface as a real error to
 // the user, not fail silently.
+// foldQueryPath (generic-code-folding follow-up): optional, same "@fold"-
+// capture query convention TreeSitterModeFromLanguage's own foldQuerySource
+// parameter uses -- an empty path (the default) means this dynamically
+// registered grammar gets no fold support, the same "no gutter affordance"
+// outcome any bundled mode with no fold query already has.
 void RegisterDynamicMode(const std::string& name, const std::filesystem::path& libraryPath,
-                         const std::filesystem::path& queryPath);
+                         const std::filesystem::path& queryPath, const std::filesystem::path& foldQueryPath = {});
 
 // Looks up a Mode by name. Checks names registered via RegisterDynamicMode
 // first, then the bundled *Mode() functions' own names ("c-mode",

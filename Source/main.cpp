@@ -345,14 +345,22 @@ int main(int argc, char** argv) {
     };
     Component projectSidebarFinal = Maybe(projectSidebarSized, &projectSidebar->active);
 
-    Component bufferRow = Container::Horizontal({
-        sidebarToggle | size(WIDTH, EQUAL, 1),
-        projectSidebarFinal,
+    // sidebar-header follow-up: tabBar now sits only above the pane area,
+    // not above ProjectSidebar too -- ProjectSidebar spans the row that
+    // used to belong to tabBar instead, using it for its own header (see
+    // ProjectSidebar::Paint's own comment on that row).
+    Component mainColumn = Container::Vertical({
+        tabBar | size(HEIGHT, EQUAL, 1),
         windowManager->RootComponent() | [](Element e) { return flex(std::move(e)); },
     });
 
+    Component bufferRow = Container::Horizontal({
+        sidebarToggle | size(WIDTH, EQUAL, 1),
+        projectSidebarFinal,
+        mainColumn | [](Element e) { return flex(std::move(e)); },
+    });
+
     Component head = Container::Vertical({
-        tabBar | size(HEIGHT, EQUAL, 1),
         bufferRow | [](Element e) { return flex(std::move(e)); },
         echoArea | size(HEIGHT, EQUAL, 1),
     });

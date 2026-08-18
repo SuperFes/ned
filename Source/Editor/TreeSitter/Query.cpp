@@ -1,7 +1,10 @@
 #include "Query.h"
 
+#include <optional>
+#include <regex>
 #include <stdexcept>
 #include <utility>
+#include <vector>
 
 namespace ned::editor::treesitter {
 
@@ -25,6 +28,217 @@ namespace {
                 return "language version mismatch";
         }
         return "unknown";
+    }
+
+    // The node a given match actually bound to capture index captureId, or a
+    // null TSNode if that capture never fired in this match (possible for a
+    // capture inside an optional/alternation branch of the pattern).
+    TSNode CapturedNode(const TSQueryMatch& match, uint32_t captureId) {
+        for (uint16_t i = 0; i < match.capture_count; ++i) {
+            if (match.captures[i].index == captureId) {
+                return match.captures[i].node;
+            }
+        }
+        return TSNode{};
+    }
+
+    // A predicate operand is either a literal string (a String step) or
+    // whatever text a capture actually matched (a Capture step) -- #eq?/
+    // #match?/#any-of? all just compare text either way, so both resolve to
+    // the same std::string_view. nullopt for a capture that never fired --
+    // deliberately not treated as an empty string, so a predicate involving
+    // it can choose to no-op rather than false-compare against "".
+    std::optional<std::string_view> ResolveTextOperand(const TSQuery* query, const TSQueryMatch& match,
+                                                       const TSQueryPredicateStep& step,
+                                                       std::string_view            sourceText) {
+        if (step.type == TSQueryPredicateStepTypeString) {
+            uint32_t    length = 0;
+            const char* value  = ts_query_string_value_for_id(query, step.value_id, &length);
+            return std::string_view(value, length);
+        }
+        const TSNode node = CapturedNode(match, step.value_id);
+        if (ts_node_is_null(node)) {
+            return std::nullopt;
+        }
+        const uint32_t start = ts_node_start_byte(node);
+        const uint32_t end   = ts_node_end_byte(node);
+        if (start > end || end > sourceText.size()) {
+            return std::nullopt; // defensive -- a stale/mismatched sourceText should never crash a repaint
+        }
+        return sourceText.substr(start, end - start);
+    }
+
+    // Lua's %-prefixed character classes (%u uppercase, %l lowercase, %d
+    // digit, %a letter, %s whitespace, %w alnum, %p punctuation) have no
+    // ECMAScript equivalent syntax -- translated to the nearest bracket-
+    // expression form here for the handful of real query files (confirmed
+    // in the vendored nvim-treesitter cpp query: "^%u"/"^[%u]", used for
+    // constructor/type-name uppercase-first detection) that actually use
+    // one. Handles both "[%u]" (already inside a bracket expression) and
+    // bare "%u" (needs one added) without double-bracketing -- the
+    // bracketed form is substituted first, so a bare-form pass afterward
+    // can never re-match what it already consumed. Every other Lua pattern
+    // construct (character sets beyond these, anchors within a class,
+    // non-greedy captures, ...) is deliberately not translated -- falls
+    // through to std::regex throwing on whatever's left, caught by the
+    // caller and treated as "don't block on it," same as any other
+    // predicate this doesn't fully understand.
+    std::string TranslateLuaPatternClasses(std::string pattern) {
+        static constexpr std::pair<std::string_view, std::string_view> kClasses[] = {
+            {"%u", "A-Z"},
+            {"%l", "a-z"},
+            {"%d", "0-9"},
+            {"%a", "A-Za-z"},
+            {"%s", " \\t\\n\\r\\f\\v"},
+            {"%w", "A-Za-z0-9"},
+            {"%p", "!-/:-@\\[-`{-~"},
+        };
+        for (const auto& [luaClass, body] : kClasses) {
+            const std::string bracketed        = "[" + std::string(luaClass) + "]";
+            const std::string bracketedReplace = "[" + std::string(body) + "]";
+            for (std::size_t pos = 0; (pos = pattern.find(bracketed, pos)) != std::string::npos;) {
+                pattern.replace(pos, bracketed.size(), bracketedReplace);
+                pos += bracketedReplace.size();
+            }
+            const std::string bareReplace = "[" + std::string(body) + "]";
+            for (std::size_t pos = 0; (pos = pattern.find(luaClass, pos)) != std::string::npos;) {
+                pattern.replace(pos, luaClass.size(), bareReplace);
+                pos += bareReplace.size();
+            }
+        }
+        return pattern;
+    }
+
+    bool NodeHasAncestorOfType(TSNode node, std::string_view typeName, bool immediateOnly) {
+        for (TSNode current = ts_node_parent(node); !ts_node_is_null(current); current = ts_node_parent(current)) {
+            if (ts_node_type(current) == typeName) {
+                return true;
+            }
+            if (immediateOnly) {
+                return false;
+            }
+        }
+        return false;
+    }
+
+    // Evaluates one already-split-out "#name? operand..." predicate call
+    // against a specific match. True both when the predicate genuinely
+    // passes AND when it's a predicate this doesn't recognize (including
+    // #set!, a non-filtering directive real query files use for match
+    // priority) -- an unrecognized predicate must never suppress a match;
+    // see Query.h's own header comment for why that's the only safe
+    // default (Captures() evaluated zero predicates before this existed at
+    // all, so "include it" is the pre-existing behavior for anything not
+    // explicitly handled here, not a new risk).
+    bool EvaluateOnePredicate(const TSQuery* query, const TSQueryMatch& match, std::string_view predicateName,
+                              const std::vector<TSQueryPredicateStep>& operands, std::string_view sourceText) {
+        if (!predicateName.empty() && predicateName.front() == '#') {
+            predicateName.remove_prefix(1); // tolerate either spelling -- not assumed which one ts_query_string_value_for_id returns
+        }
+        const bool             negated  = predicateName.starts_with("not-");
+        const std::string_view baseName = negated ? predicateName.substr(4) : predicateName;
+
+        if (baseName == "eq?") {
+            if (operands.size() != 2) {
+                return true;
+            }
+            const auto a = ResolveTextOperand(query, match, operands[0], sourceText);
+            const auto b = ResolveTextOperand(query, match, operands[1], sourceText);
+            if (!a || !b) {
+                return true;
+            }
+            return negated ? (*a != *b) : (*a == *b);
+        }
+
+        if (baseName == "match?" || baseName == "lua-match?") {
+            if (operands.size() != 2) {
+                return true;
+            }
+            const auto text    = ResolveTextOperand(query, match, operands[0], sourceText);
+            const auto pattern = ResolveTextOperand(query, match, operands[1], sourceText);
+            if (!text || !pattern) {
+                return true;
+            }
+            try {
+                // ECMAScript, not a Lua-pattern engine -- matches this
+                // project's own existing QueryReplace.h precedent; the
+                // patterns real query files actually use for this
+                // (anchored character classes like "^[A-Z][A-Z0-9_]*$", or
+                // Lua's own %u-style classes via TranslateLuaPatternClasses)
+                // translate directly.
+                const std::regex compiled(TranslateLuaPatternClasses(std::string(*pattern)), std::regex::ECMAScript);
+                const bool       matched = std::regex_search(text->begin(), text->end(), compiled);
+                return negated ? !matched : matched;
+            }
+            catch (const std::regex_error&) {
+                return true; // a Lua-only pattern construct std::regex can't parse -- don't block on it
+            }
+        }
+
+        if (baseName == "any-of?") {
+            if (operands.empty()) {
+                return true;
+            }
+            const auto text = ResolveTextOperand(query, match, operands[0], sourceText);
+            if (!text) {
+                return true;
+            }
+            bool found = false;
+            for (std::size_t i = 1; i < operands.size(); ++i) {
+                const auto candidate = ResolveTextOperand(query, match, operands[i], sourceText);
+                if (candidate && *candidate == *text) {
+                    found = true;
+                    break;
+                }
+            }
+            return negated ? !found : found;
+        }
+
+        if (baseName == "has-ancestor?" || baseName == "has-parent?") {
+            if (operands.size() != 2 || operands[0].type != TSQueryPredicateStepTypeCapture ||
+                operands[1].type != TSQueryPredicateStepTypeString) {
+                return true;
+            }
+            const TSNode node = CapturedNode(match, operands[0].value_id);
+            if (ts_node_is_null(node)) {
+                return true;
+            }
+            uint32_t    length   = 0;
+            const char* typeName = ts_query_string_value_for_id(query, operands[1].value_id, &length);
+            const bool  has      = NodeHasAncestorOfType(node, std::string_view(typeName, length), baseName == "has-parent?");
+            return negated ? !has : has;
+        }
+
+        return true; // unrecognized predicate name (e.g. "set!") -- inert
+    }
+
+    // Splits pattern's flat predicate-step array (Done steps are the
+    // separators between individual "#name? operand..." calls) and
+    // evaluates each one against match, short-circuiting on the first
+    // failure (AND semantics -- tree-sitter's own documented predicate
+    // contract).
+    bool EvaluatePredicates(const TSQuery* query, const TSQueryMatch& match, std::string_view sourceText) {
+        uint32_t                    stepCount = 0;
+        const TSQueryPredicateStep* steps     = ts_query_predicates_for_pattern(query, match.pattern_index, &stepCount);
+
+        std::size_t start = 0;
+        for (uint32_t i = 0; i < stepCount; ++i) {
+            if (steps[i].type != TSQueryPredicateStepTypeDone) {
+                continue;
+            }
+            // steps[start] is always the predicate's own name (a String
+            // step); steps[start+1 .. i) are its operands.
+            if (i > start && steps[start].type == TSQueryPredicateStepTypeString) {
+                uint32_t                                nameLength = 0;
+                const char*                             name       = ts_query_string_value_for_id(query, steps[start].value_id, &nameLength);
+                const std::vector<TSQueryPredicateStep> operands(steps + start + 1, steps + i);
+                if (!EvaluateOnePredicate(query, match, std::string_view(name, nameLength), operands, sourceText)) {
+                    return false;
+                }
+            }
+            start = i + 1;
+        }
+        return true;
     }
 
 } // namespace
@@ -57,15 +271,33 @@ Query& Query::operator=(Query&& other) noexcept {
     return *this;
 }
 
-std::vector<QueryCapture> Query::Captures(const Node& root) const {
+std::vector<QueryCapture> Query::Captures(const Node& root, std::string_view sourceText) const {
     std::vector<QueryCapture> captures;
 
     TSQueryCursor* cursor = ts_query_cursor_new();
     ts_query_cursor_exec(cursor, query_, root.Raw());
 
+    // ts_query_cursor_next_capture yields one capture per call but can call
+    // back with the *same* match (same match.id) repeatedly for a match
+    // with several captures -- predicates are evaluated once per match, not
+    // once per capture, both for correctness (a failing predicate must
+    // suppress every capture of that match, not just whichever one happened
+    // to be current) and to avoid redundant re-evaluation.
     TSQueryMatch match;
-    uint32_t     captureIndex = 0;
+    uint32_t     captureIndex    = 0;
+    uint32_t     lastMatchId     = 0;
+    bool         havePassResult  = false;
+    bool         lastMatchPassed = false;
     while (ts_query_cursor_next_capture(cursor, &match, &captureIndex)) {
+        if (!havePassResult || match.id != lastMatchId) {
+            lastMatchId     = match.id;
+            lastMatchPassed = EvaluatePredicates(query_, match, sourceText);
+            havePassResult  = true;
+        }
+        if (!lastMatchPassed) {
+            continue;
+        }
+
         const TSQueryCapture& capture = match.captures[captureIndex];
 
         uint32_t          nameLength = 0;

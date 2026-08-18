@@ -639,3 +639,133 @@ TEST_CASE("Undo restoring shorter content auto-widens a narrowed range that woul
     REQUIRE(buffer.Text().empty());
     REQUIRE_FALSE(buffer.IsNarrowed());
 }
+
+TEST_CASE("DeleteBackwardAtPoint/DeleteForwardAtPoint shrink a narrowed range that crosses the delete point",
+          "[Buffer]") {
+    // Before the Buffer::RelocateForInsert/RelocateForDelete consolidation,
+    // DeleteBackwardAtPoint/DeleteForwardAtPoint adjusted Point_/Mark_ but
+    // never touched NarrowedRange_ at all -- a real latent gap, since a
+    // single-grapheme delete right at a narrowed boundary should shrink it
+    // exactly like a larger DeleteRange spanning the same boundary already
+    // correctly does (see the DeleteRange/"shifts it the same way
+    // Point_/Mark_ already do" case above).
+    Buffer buffer("scratch", ned::text::Rope("line0\nline1\nline2\nline3"));
+    buffer.NarrowToRegion(6, 12); // snaps to lines 1-2: [6, 18)
+    REQUIRE(buffer.NarrowedRange() == std::pair<std::size_t, std::size_t>{6, 18});
+
+    buffer.SetPoint(7); // just past the narrowed start
+    buffer.DeleteBackwardAtPoint(); // deletes byte 6, the narrowed start itself
+    REQUIRE(buffer.NarrowedRange() == std::pair<std::size_t, std::size_t>{6, 17});
+
+    buffer.SetPoint(16); // just before the narrowed end
+    buffer.DeleteForwardAtPoint(); // deletes byte 16
+    REQUIRE(buffer.NarrowedRange() == std::pair<std::size_t, std::size_t>{6, 16});
+}
+
+TEST_CASE("SetFoldMarker/FoldMarkerAt/FoldMarkers round-trip and erase via nullopt", "[Buffer]") {
+    Buffer buffer("scratch", ned::text::Rope("* a\n* b\n"));
+    REQUIRE(buffer.FoldMarkers().empty());
+    REQUIRE_FALSE(buffer.FoldMarkerAt(0).has_value());
+
+    const std::size_t generationBefore = buffer.FoldGeneration();
+    buffer.SetFoldMarker(0, Buffer::FoldMarker::Collapsed);
+    REQUIRE(buffer.FoldGeneration() > generationBefore);
+    REQUIRE(buffer.FoldMarkerAt(0) == Buffer::FoldMarker::Collapsed);
+    REQUIRE(buffer.FoldMarkers().size() == 1);
+
+    buffer.SetFoldMarker(4, Buffer::FoldMarker::ChildrenVisible);
+    REQUIRE(buffer.FoldMarkers().size() == 2);
+
+    buffer.SetFoldMarker(0, std::nullopt);
+    REQUIRE_FALSE(buffer.FoldMarkerAt(0).has_value());
+    REQUIRE(buffer.FoldMarkers().size() == 1);
+}
+
+TEST_CASE("Fold markers relocate across inserts and deletes the same way Mark_ does", "[Buffer]") {
+    Buffer buffer("scratch", ned::text::Rope("* a\n* b\n* c\n"));
+    buffer.SetFoldMarker(4, Buffer::FoldMarker::Collapsed); // "* b"'s own line start
+
+    buffer.InsertAt(0, "XX");
+    REQUIRE(buffer.FoldMarkerAt(6) == Buffer::FoldMarker::Collapsed);
+    REQUIRE_FALSE(buffer.FoldMarkerAt(4).has_value());
+
+    buffer.DeleteRange(0, 2); // remove the just-inserted "XX", back to the original offsets
+    REQUIRE(buffer.FoldMarkerAt(4) == Buffer::FoldMarker::Collapsed);
+
+    // A delete that spans across the marker's own offset collapses it to
+    // the delete's start, same as Mark_'s own precedent.
+    buffer.DeleteRange(2, 4); // deletes bytes [2, 6), which includes offset 4
+    REQUIRE(buffer.FoldMarkerAt(2) == Buffer::FoldMarker::Collapsed);
+}
+
+TEST_CASE("A fresh buffer has no unsaved changes; an insert marks a range", "[Buffer]") {
+    Buffer buffer("scratch", ned::text::Rope("hello world"));
+    REQUIRE(buffer.UnsavedChangeRanges().empty());
+
+    const std::size_t generationBefore = buffer.UnsavedChangeGeneration();
+    buffer.InsertAt(5, "XXX");
+    REQUIRE(buffer.UnsavedChangeGeneration() > generationBefore);
+    REQUIRE(buffer.UnsavedChangeRanges() == std::vector<std::pair<std::size_t, std::size_t>>{{5, 8}});
+}
+
+TEST_CASE("Consecutive nearby inserts merge into one unsaved-change range", "[Buffer]") {
+    Buffer buffer("scratch", ned::text::Rope("hello world"));
+    buffer.InsertAt(5, "A");
+    buffer.InsertAt(6, "B"); // right after the first insert -- adjacent, should merge
+    REQUIRE(buffer.UnsavedChangeRanges() == std::vector<std::pair<std::size_t, std::size_t>>{{5, 7}});
+}
+
+TEST_CASE("A delete marks the collapse point, not an empty range", "[Buffer]") {
+    Buffer buffer("scratch", ned::text::Rope("hello world"));
+    buffer.DeleteRange(0, 5); // "hello" -- collapses to offset 0
+    REQUIRE(buffer.UnsavedChangeRanges() == std::vector<std::pair<std::size_t, std::size_t>>{{0, 1}});
+}
+
+TEST_CASE("Unsaved-change ranges relocate across an edit before the tracked range", "[Buffer]") {
+    Buffer buffer("scratch", ned::text::Rope("hello world"));
+    buffer.InsertAt(6, "X"); // marks [6, 7)
+    REQUIRE(buffer.UnsavedChangeRanges() == std::vector<std::pair<std::size_t, std::size_t>>{{6, 7}});
+
+    buffer.InsertAt(0, "AB"); // shifts everything after it forward by 2
+    REQUIRE(buffer.UnsavedChangeRanges() == std::vector<std::pair<std::size_t, std::size_t>>{{0, 2}, {8, 9}});
+}
+
+TEST_CASE("SaveToFile clears unsaved-change ranges on success", "[Buffer]") {
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned-unsaved-change-test.txt";
+    Buffer                      buffer("scratch", ned::text::Rope("hello"));
+    buffer.InsertAt(5, " world");
+    REQUIRE_FALSE(buffer.UnsavedChangeRanges().empty());
+
+    buffer.SaveToFile(path, /*ensureFinalNewline=*/false);
+    REQUIRE(buffer.UnsavedChangeRanges().empty());
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("Undo/Redo conservatively mark the whole buffer as an unsaved change", "[Buffer]") {
+    Buffer buffer("scratch", ned::text::Rope("hello"));
+    buffer.InsertAt(5, " world");
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned-unsaved-change-undo-test.txt";
+    buffer.SaveToFile(path, /*ensureFinalNewline=*/false);
+    REQUIRE(buffer.UnsavedChangeRanges().empty());
+
+    buffer.InsertAt(0, "X");
+    buffer.Undo(); // restores a full prior Rope_ snapshot -- no principled incremental range without a real diff
+    REQUIRE(buffer.UnsavedChangeRanges() == std::vector<std::pair<std::size_t, std::size_t>>{{0, buffer.Size()}});
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("Undo restoring shorter content drops a fold marker past the new end", "[Buffer]") {
+    Buffer buffer("scratch");
+    buffer.InsertAtPoint("* a\n* b\n"); // one real undo step
+    REQUIRE(buffer.CanUndo());
+
+    buffer.SetFoldMarker(4, Buffer::FoldMarker::Collapsed); // "* b"'s own line start
+    REQUIRE(buffer.FoldMarkerAt(4).has_value());
+
+    buffer.Undo(); // back to the empty buffer -- offset 4 no longer exists
+
+    REQUIRE(buffer.Text().empty());
+    REQUIRE(buffer.FoldMarkers().empty());
+}

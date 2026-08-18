@@ -33,6 +33,31 @@ namespace {
     // "hold next-line/previous-line" shape of the [Performance]
     // vertical-motion test to multiple seconds before it was caught.
     constexpr std::size_t kMaxTabAwareColumnScan = 512;
+
+    // status-gutter unsaved-change-indicator follow-up: merges [start, end)
+    // into ranges, which must stay sorted by .first -- a plain linear scan
+    // for the merge point, not a binary search, matching this codebase's
+    // "prove it before optimizing" discipline: real edits almost always
+    // touch the same small handful of ranges (typing extends the one range
+    // already there), so this list stays tiny in practice; revisit only if
+    // a real [Performance] test says otherwise.
+    void MergeUnsavedRange(std::vector<std::pair<std::size_t, std::size_t>>& ranges, std::size_t start,
+                           std::size_t end) {
+        auto it = ranges.begin();
+        while (it != ranges.end() && it->second < start) {
+            ++it;
+        }
+        std::size_t mergedStart = start;
+        std::size_t mergedEnd   = end;
+        auto        mergeBegin  = it;
+        while (it != ranges.end() && it->first <= mergedEnd) {
+            mergedStart = std::min(mergedStart, it->first);
+            mergedEnd   = std::max(mergedEnd, it->second);
+            ++it;
+        }
+        ranges.erase(mergeBegin, it);
+        ranges.insert(mergeBegin, {mergedStart, mergedEnd});
+    }
 } // namespace
 
 Buffer::Buffer(std::string name, Rope initialContent) : Name_(std::move(name)),
@@ -119,6 +144,8 @@ void Buffer::SaveToFile(const std::filesystem::path& path, bool ensureFinalNewli
 
     Path_     = path;
     Modified_ = false;
+    UnsavedChangeRanges_.clear();
+    ++UnsavedChangeGeneration_;
 }
 
 void Buffer::Save(bool ensureFinalNewline) {
@@ -236,6 +263,102 @@ std::pair<std::size_t, std::size_t> Buffer::NarrowedRange() const {
     return *NarrowedRange_;
 }
 
+void Buffer::SetFoldMarker(std::size_t byteOffset, std::optional<FoldMarker> marker) {
+    if (marker) {
+        FoldMarkers_[byteOffset] = *marker;
+    }
+    else {
+        FoldMarkers_.erase(byteOffset);
+    }
+    ++FoldGeneration_;
+}
+
+std::optional<Buffer::FoldMarker> Buffer::FoldMarkerAt(std::size_t byteOffset) const {
+    const auto it = FoldMarkers_.find(byteOffset);
+    return it != FoldMarkers_.end() ? std::optional{it->second} : std::nullopt;
+}
+
+const std::map<std::size_t, Buffer::FoldMarker>& Buffer::FoldMarkers() const {
+    return FoldMarkers_;
+}
+
+std::size_t Buffer::FoldGeneration() const {
+    return FoldGeneration_;
+}
+
+const std::vector<std::pair<std::size_t, std::size_t>>& Buffer::UnsavedChangeRanges() const {
+    return UnsavedChangeRanges_;
+}
+
+std::size_t Buffer::UnsavedChangeGeneration() const {
+    return UnsavedChangeGeneration_;
+}
+
+std::size_t Buffer::RelocateForInsert(std::size_t offset, std::size_t insertOffset, std::size_t length) {
+    return offset >= insertOffset ? offset + length : offset;
+}
+
+std::size_t Buffer::RelocateForDelete(std::size_t offset, std::size_t rangeStart, std::size_t rangeEnd) {
+    if (offset >= rangeEnd) {
+        return offset - (rangeEnd - rangeStart);
+    }
+    if (offset > rangeStart) {
+        return rangeStart;
+    }
+    return offset;
+}
+
+void Buffer::RelocateFoldMarkersForInsert(std::size_t insertOffset, std::size_t length) {
+    if (FoldMarkers_.empty()) {
+        return;
+    }
+    std::map<std::size_t, FoldMarker> relocated;
+    for (const auto& [offset, marker] : FoldMarkers_) {
+        relocated.emplace(RelocateForInsert(offset, insertOffset, length), marker);
+    }
+    FoldMarkers_ = std::move(relocated);
+    ++FoldGeneration_;
+}
+
+void Buffer::RelocateFoldMarkersForDelete(std::size_t rangeStart, std::size_t rangeEnd) {
+    if (FoldMarkers_.empty()) {
+        return;
+    }
+    std::map<std::size_t, FoldMarker> relocated;
+    for (const auto& [offset, marker] : FoldMarkers_) {
+        relocated.emplace(RelocateForDelete(offset, rangeStart, rangeEnd), marker);
+    }
+    FoldMarkers_ = std::move(relocated);
+    ++FoldGeneration_;
+}
+
+void Buffer::MarkUnsavedRangeInserted(std::size_t insertOffset, std::size_t length) {
+    for (auto& [start, end] : UnsavedChangeRanges_) {
+        start = RelocateForInsert(start, insertOffset, length);
+        end   = RelocateForInsert(end, insertOffset, length);
+    }
+    MergeUnsavedRange(UnsavedChangeRanges_, insertOffset, insertOffset + length);
+    ++UnsavedChangeGeneration_;
+}
+
+void Buffer::MarkUnsavedRangeDeleted(std::size_t rangeStart, std::size_t rangeEnd) {
+    for (auto& [start, end] : UnsavedChangeRanges_) {
+        start = RelocateForDelete(start, rangeStart, rangeEnd);
+        end   = RelocateForDelete(end, rangeStart, rangeEnd);
+    }
+    std::erase_if(UnsavedChangeRanges_, [](const auto& range) { return range.first >= range.second; });
+
+    // A delete removes content -- there's no span left to mark, only the
+    // position it collapsed to. One byte is enough for the line it maps to
+    // at render time; clamped so deleting at the very end of the buffer
+    // doesn't mark a byte past it.
+    const std::size_t markEnd = std::min(rangeStart + 1, Rope_.ByteLength());
+    if (markEnd > rangeStart) {
+        MergeUnsavedRange(UnsavedChangeRanges_, rangeStart, markEnd);
+    }
+    ++UnsavedChangeGeneration_;
+}
+
 void Buffer::InsertAtPoint(std::string_view text) {
     if (text.empty()) {
         return;
@@ -243,20 +366,18 @@ void Buffer::InsertAtPoint(std::string_view text) {
 
     const std::size_t insertOffset = Point_;
     Rope_                          = Rope_.Inserted(insertOffset, text);
-    Point_                         = insertOffset + text.size();
+    Point_                         = RelocateForInsert(Point_, insertOffset, text.size());
 
-    if (Mark_ && *Mark_ >= insertOffset) {
-        *Mark_ += text.size();
+    if (Mark_) {
+        *Mark_ = RelocateForInsert(*Mark_, insertOffset, text.size());
     }
     if (NarrowedRange_) {
         auto& [narrowStart, narrowEnd] = *NarrowedRange_;
-        if (narrowStart >= insertOffset) {
-            narrowStart += text.size();
-        }
-        if (narrowEnd >= insertOffset) {
-            narrowEnd += text.size();
-        }
+        narrowStart                    = RelocateForInsert(narrowStart, insertOffset, text.size());
+        narrowEnd                      = RelocateForInsert(narrowEnd, insertOffset, text.size());
     }
+    RelocateFoldMarkersForInsert(insertOffset, text.size());
+    MarkUnsavedRangeInserted(insertOffset, text.size());
 
     if (CanAmend_) {
         UndoTree_.Amend(Rope_);
@@ -276,18 +397,24 @@ void Buffer::DeleteBackwardAtPoint() {
     }
 
     const std::size_t start = PreviousGraphemeBoundary(Rope_, Point_);
-    Rope_                   = Rope_.Erased(start, Point_ - start);
+    const std::size_t end   = Point_;
+    Rope_                   = Rope_.Erased(start, end - start);
 
+    Point_ = RelocateForDelete(Point_, start, end);
     if (Mark_) {
-        if (*Mark_ > Point_) {
-            *Mark_ -= (Point_ - start);
-        }
-        else if (*Mark_ > start) {
-            *Mark_ = start;
+        *Mark_ = RelocateForDelete(*Mark_, start, end);
+    }
+    if (NarrowedRange_) {
+        auto& [narrowStart, narrowEnd] = *NarrowedRange_;
+        narrowStart                    = RelocateForDelete(narrowStart, start, end);
+        narrowEnd                      = RelocateForDelete(narrowEnd, start, end);
+        if (narrowStart >= narrowEnd) {
+            NarrowedRange_.reset();
         }
     }
+    RelocateFoldMarkersForDelete(start, end);
+    MarkUnsavedRangeDeleted(start, end);
 
-    Point_    = start;
     CanAmend_ = false;
     GoalColumn_.reset();
     Modified_ = true;
@@ -300,17 +427,24 @@ void Buffer::DeleteForwardAtPoint() {
         return;
     }
 
-    const std::size_t end = NextGraphemeBoundary(Rope_, Point_);
-    Rope_                 = Rope_.Erased(Point_, end - Point_);
+    const std::size_t start = Point_;
+    const std::size_t end   = NextGraphemeBoundary(Rope_, Point_);
+    Rope_                   = Rope_.Erased(start, end - start);
 
+    Point_ = RelocateForDelete(Point_, start, end);
     if (Mark_) {
-        if (*Mark_ >= end) {
-            *Mark_ -= (end - Point_);
-        }
-        else if (*Mark_ > Point_) {
-            *Mark_ = Point_;
+        *Mark_ = RelocateForDelete(*Mark_, start, end);
+    }
+    if (NarrowedRange_) {
+        auto& [narrowStart, narrowEnd] = *NarrowedRange_;
+        narrowStart                    = RelocateForDelete(narrowStart, start, end);
+        narrowEnd                      = RelocateForDelete(narrowEnd, start, end);
+        if (narrowStart >= narrowEnd) {
+            NarrowedRange_.reset();
         }
     }
+    RelocateFoldMarkersForDelete(start, end);
+    MarkUnsavedRangeDeleted(start, end);
 
     CanAmend_ = false;
     GoalColumn_.reset();
@@ -331,36 +465,15 @@ std::string Buffer::DeleteRange(std::size_t byteOffset, std::size_t byteLength) 
     std::string       deleted  = Rope_.Substring(byteOffset, byteLength);
     Rope_                      = Rope_.Erased(byteOffset, byteLength);
 
-    if (Point_ >= rangeEnd) {
-        Point_ -= byteLength;
-    }
-    else if (Point_ > byteOffset) {
-        Point_ = byteOffset;
-    }
-
+    Point_ = RelocateForDelete(Point_, byteOffset, rangeEnd);
     if (Mark_) {
-        if (*Mark_ >= rangeEnd) {
-            *Mark_ -= byteLength;
-        }
-        else if (*Mark_ > byteOffset) {
-            *Mark_ = byteOffset;
-        }
+        *Mark_ = RelocateForDelete(*Mark_, byteOffset, rangeEnd);
     }
 
     if (NarrowedRange_) {
         auto& [narrowStart, narrowEnd] = *NarrowedRange_;
-        if (narrowStart >= rangeEnd) {
-            narrowStart -= byteLength;
-        }
-        else if (narrowStart > byteOffset) {
-            narrowStart = byteOffset;
-        }
-        if (narrowEnd >= rangeEnd) {
-            narrowEnd -= byteLength;
-        }
-        else if (narrowEnd > byteOffset) {
-            narrowEnd = byteOffset;
-        }
+        narrowStart                    = RelocateForDelete(narrowStart, byteOffset, rangeEnd);
+        narrowEnd                      = RelocateForDelete(narrowEnd, byteOffset, rangeEnd);
         // A delete that consumes the narrowed range's entire content
         // (narrowStart no longer strictly before narrowEnd) leaves nothing
         // meaningful to stay narrowed to -- auto-widen rather than leaving
@@ -369,6 +482,8 @@ std::string Buffer::DeleteRange(std::size_t byteOffset, std::size_t byteLength) 
             NarrowedRange_.reset();
         }
     }
+    RelocateFoldMarkersForDelete(byteOffset, rangeEnd);
+    MarkUnsavedRangeDeleted(byteOffset, rangeEnd);
 
     CanAmend_ = false;
     GoalColumn_.reset();
@@ -387,21 +502,17 @@ void Buffer::InsertAt(std::size_t byteOffset, std::string_view text) {
 
     Rope_ = Rope_.Inserted(byteOffset, text);
 
-    if (Point_ >= byteOffset) {
-        Point_ += text.size();
-    }
-    if (Mark_ && *Mark_ >= byteOffset) {
-        *Mark_ += text.size();
+    Point_ = RelocateForInsert(Point_, byteOffset, text.size());
+    if (Mark_) {
+        *Mark_ = RelocateForInsert(*Mark_, byteOffset, text.size());
     }
     if (NarrowedRange_) {
         auto& [narrowStart, narrowEnd] = *NarrowedRange_;
-        if (narrowStart >= byteOffset) {
-            narrowStart += text.size();
-        }
-        if (narrowEnd >= byteOffset) {
-            narrowEnd += text.size();
-        }
+        narrowStart                    = RelocateForInsert(narrowStart, byteOffset, text.size());
+        narrowEnd                      = RelocateForInsert(narrowEnd, byteOffset, text.size());
     }
+    RelocateFoldMarkersForInsert(byteOffset, text.size());
+    MarkUnsavedRangeInserted(byteOffset, text.size());
 
     CanAmend_ = false;
     GoalColumn_.reset();
@@ -591,6 +702,15 @@ void Buffer::ClampCursorsToContent() {
             NarrowedRange_.reset();
         }
     }
+    // Undo/redo can swap in content shorter than some fold-marker offsets
+    // were relocated against -- unlike Point_/Mark_/NarrowedRange_, there's
+    // no single sensible position to clamp a marker down to (it would
+    // collide arbitrarily with whatever's left), so a marker past the new
+    // end is simply dropped rather than clamped.
+    if (!FoldMarkers_.empty()) {
+        const std::size_t length = Rope_.ByteLength();
+        std::erase_if(FoldMarkers_, [length](const auto& entry) { return entry.first > length; });
+    }
 }
 
 void Buffer::Undo() {
@@ -604,6 +724,13 @@ void Buffer::Undo() {
     GoalColumn_.reset();
     Modified_ = true;
     ++ContentGeneration_;
+    // Restoring a full prior Rope_ snapshot has no principled incremental
+    // range to compute without a real diff -- matching Modified_'s own
+    // coarse "undo/redo always marks modified" precedent, conservatively
+    // mark the entire buffer dirty rather than silently under-report. A
+    // documented v1 scope cut, not an oversight.
+    UnsavedChangeRanges_.assign(Rope_.ByteLength() > 0 ? 1 : 0, {0, Rope_.ByteLength()});
+    ++UnsavedChangeGeneration_;
 }
 
 void Buffer::Redo() {
@@ -617,6 +744,9 @@ void Buffer::Redo() {
     GoalColumn_.reset();
     Modified_ = true;
     ++ContentGeneration_;
+    // See Undo()'s own comment above -- same coarse whole-buffer mark.
+    UnsavedChangeRanges_.assign(Rope_.ByteLength() > 0 ? 1 : 0, {0, Rope_.ByteLength()});
+    ++UnsavedChangeGeneration_;
 }
 
 } // namespace ned::text

@@ -103,6 +103,22 @@ TEST_CASE("SerializeTheme/ParseTheme round-trips DarkTheme exactly", "[ThemeFile
     REQUIRE(restored.scrollBarDisabled.background == original.scrollBarDisabled.background);
     REQUIRE(restored.scrollBarDisabled.foreground == original.scrollBarDisabled.foreground);
     REQUIRE(restored.binaryForeground == original.binaryForeground);
+    REQUIRE(restored.linkForeground == original.linkForeground);
+    REQUIRE(restored.unsavedChangeIndicator == original.unsavedChangeIndicator);
+    REQUIRE(restored.headlineLevel1Foreground == original.headlineLevel1Foreground);
+    REQUIRE(restored.headlineLevel2Foreground == original.headlineLevel2Foreground);
+    REQUIRE(restored.headlineLevel3Foreground == original.headlineLevel3Foreground);
+    REQUIRE(restored.todoKeywordForeground == original.todoKeywordForeground);
+    REQUIRE(restored.doneKeywordForeground == original.doneKeywordForeground);
+    REQUIRE(restored.checkboxForeground == original.checkboxForeground);
+    REQUIRE(restored.underlineForeground == original.underlineForeground);
+    REQUIRE(restored.strikethroughForeground == original.strikethroughForeground);
+    REQUIRE(restored.keywordModifierForeground == original.keywordModifierForeground);
+    REQUIRE(restored.methodForeground == original.methodForeground);
+    REQUIRE(restored.constructorForeground == original.constructorForeground);
+    REQUIRE(restored.labelForeground == original.labelForeground);
+    REQUIRE(restored.returnTypeForeground == original.returnTypeForeground);
+    REQUIRE(restored.includePathForeground == original.includePathForeground);
 }
 
 TEST_CASE("SerializeTheme/ParseTheme round-trips LightTheme's TrueColor palette exactly", "[ThemeFile]") {

@@ -1,11 +1,13 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <ftxui/component/event.hpp>
 #include <ftxui/component/mouse.hpp>
 #include <ftxui/screen/screen.hpp>
 #include <string>
+#include <thread>
 
 #include "Editor/ProjectRoot.h"
 #include "Text/BufferList.h"
@@ -143,17 +145,23 @@ TEST_CASE("ProjectSidebar renders a collapsed tree by default, with a disclosure
     ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 27, .y_min = 0, .y_max = 4});
     sidebar.Paint(canvas);
 
-    const std::string row0 = RowText(screen, 0, 28);
+    // Row 0 is always the project-name header (sidebar-header follow-up) --
+    // tree content starts at row 1. dir's own filename is longer than the
+    // 27-column content width, so it renders truncated -- checking a
+    // guaranteed-to-fit prefix rather than the full name.
+    REQUIRE(RowText(screen, 0, 28).find("ned_project_sidebar") != std::string::npos);
+
     const std::string row1 = RowText(screen, 1, 28);
+    const std::string row2 = RowText(screen, 2, 28);
 
     // "sub/" is collapsed by default -- its child never renders, and
     // "top.txt" (sub's only sibling) is the very next visible row.
-    REQUIRE(row0.find("sub/") != std::string::npos);
-    REQUIRE(row0.find("▸") != std::string::npos); // collapsed disclosure triangle
-    REQUIRE(row1.find("top.txt") != std::string::npos);
-    REQUIRE(RowText(screen, 2, 28).find("nested.txt") == std::string::npos);
+    REQUIRE(row1.find("sub/") != std::string::npos);
+    REQUIRE(row1.find("▸") != std::string::npos); // collapsed disclosure triangle
+    REQUIRE(row2.find("top.txt") != std::string::npos);
+    REQUIRE(RowText(screen, 3, 28).find("nested.txt") == std::string::npos);
     // Tree-connector lines (box-drawing, not plain-space indentation).
-    const std::string firstChar = screen.PixelAt(0, 0).character;
+    const std::string firstChar = screen.PixelAt(0, 1).character;
     REQUIRE((firstChar == "│" || firstChar == "└" || firstChar == "├"));
 
     std::filesystem::remove_all(dir);
@@ -180,13 +188,13 @@ TEST_CASE("Clicking a collapsed directory expands it, revealing indented childre
     ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(28), ftxui::Dimension::Fixed(5));
     ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 27, .y_min = 0, .y_max = 4});
 
-    sidebar.OnEvent(MousePress(0, 0)); // expand "sub/"
+    sidebar.OnEvent(MousePress(0, 1)); // expand "sub/" (row 1 -- row 0 is the header)
     sidebar.Paint(canvas);
 
-    const std::string row0 = RowText(screen, 0, 28);
     const std::string row1 = RowText(screen, 1, 28);
-    REQUIRE(row0.find("▾") != std::string::npos); // expanded disclosure triangle
-    REQUIRE(row1.find("nested.txt") != std::string::npos);
+    const std::string row2 = RowText(screen, 2, 28);
+    REQUIRE(row1.find("▾") != std::string::npos); // expanded disclosure triangle
+    REQUIRE(row2.find("nested.txt") != std::string::npos);
     // The nested entry's tree-connector prefix pushes its name at least as
     // far right as its parent's -- exactly equal in this case, since a
     // directory's own disclosure triangle ("▾ ") occupies the same two
@@ -196,11 +204,11 @@ TEST_CASE("Clicking a collapsed directory expands it, revealing indented childre
     // glyphs with plain ASCII, so find() returns byte offsets that don't
     // correspond to columns once the two rows' prefixes contain a different
     // number of multi-byte characters.
-    REQUIRE(ColumnOf(screen, 1, 28, "nested.txt") >= ColumnOf(screen, 0, 28, "sub/"));
+    REQUIRE(ColumnOf(screen, 2, 28, "nested.txt") >= ColumnOf(screen, 1, 28, "sub/"));
 
-    sidebar.OnEvent(MousePress(0, 0)); // collapse it again
+    sidebar.OnEvent(MousePress(0, 1)); // collapse it again
     sidebar.Paint(canvas);
-    REQUIRE(RowText(screen, 1, 28).find("nested.txt") == std::string::npos);
+    REQUIRE(RowText(screen, 2, 28).find("nested.txt") == std::string::npos);
 
     std::filesystem::remove_all(dir);
 }
@@ -229,11 +237,11 @@ TEST_CASE("ProjectSidebar highlights the entry matching the active buffer's file
     ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 27, .y_min = 0, .y_max = 4});
     sidebar.Paint(canvas);
 
-    // a.txt sorts before b.txt -- row 0.
-    REQUIRE(RowText(screen, 0, 28).find("a.txt") != std::string::npos);
-    REQUIRE(screen.PixelAt(0, 0).foreground_color == theme.activeTab.foreground.ToFtxui());
-    REQUIRE(RowText(screen, 1, 28).find("b.txt") != std::string::npos);
-    REQUIRE_FALSE(screen.PixelAt(0, 1).foreground_color == theme.activeTab.foreground.ToFtxui());
+    // a.txt sorts before b.txt -- row 1 (row 0 is the header).
+    REQUIRE(RowText(screen, 1, 28).find("a.txt") != std::string::npos);
+    REQUIRE(screen.PixelAt(0, 1).foreground_color == theme.activeTab.foreground.ToFtxui());
+    REQUIRE(RowText(screen, 2, 28).find("b.txt") != std::string::npos);
+    REQUIRE_FALSE(screen.PixelAt(0, 2).foreground_color == theme.activeTab.foreground.ToFtxui());
 
     std::filesystem::remove_all(dir);
 }
@@ -255,7 +263,7 @@ TEST_CASE("Clicking a file entry opens it and switches the active buffer", "[Pro
     ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlaceSidebar(sidebar, 28, 5);
 
-    sidebar.OnEvent(MousePress(0, 0));
+    sidebar.OnEvent(MousePress(0, 1)); // row 0 is the header
 
     REQUIRE(&activeBuffer.Get() != &scratch);
     REQUIRE(activeBuffer.Get().Text() == "hello from disk");
@@ -281,7 +289,7 @@ TEST_CASE("Single-clicking a file marks it as the preview buffer", "[ProjectSide
     ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlaceSidebar(sidebar, 28, 5);
 
-    sidebar.OnEvent(MousePress(0, 0));
+    sidebar.OnEvent(MousePress(0, 1)); // row 0 is the header
 
     REQUIRE(list.PreviewBuffer() == &activeBuffer.Get());
 
@@ -309,11 +317,11 @@ TEST_CASE("A second single click on a different file replaces the preview, closi
     ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlaceSidebar(sidebar, 28, 5);
 
-    sidebar.OnEvent(MousePress(0, 0)); // "a.txt"
+    sidebar.OnEvent(MousePress(0, 1)); // "a.txt" (row 0 is the header)
     REQUIRE(list.PreviewBuffer() != nullptr);
     REQUIRE(list.Count() == 2); // scratch + a.txt
 
-    sidebar.OnEvent(MousePress(0, 1)); // "b.txt"
+    sidebar.OnEvent(MousePress(0, 2)); // "b.txt"
 
     REQUIRE(list.Count() == 2);             // scratch + b.txt -- a.txt's preview was closed, not kept
     REQUIRE(list.Find("a.txt") == nullptr); // the old preview is gone
@@ -340,13 +348,50 @@ TEST_CASE("Double-clicking (two clicks on the same file) promotes the preview in
     ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlaceSidebar(sidebar, 28, 5);
 
-    sidebar.OnEvent(MousePress(0, 0));
+    sidebar.OnEvent(MousePress(0, 1)); // row 0 is the header
     REQUIRE(list.PreviewBuffer() != nullptr);
 
-    sidebar.OnEvent(MousePress(0, 0)); // same file, rapid second click
+    sidebar.OnEvent(MousePress(0, 1)); // same file, rapid second click
 
     REQUIRE(list.PreviewBuffer() == nullptr); // promoted -- no longer just a preview
     REQUIRE(list.Count() == 2);               // scratch + target.txt, never duplicated
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("Re-clicking a still-preview file resets point to the top instead of carrying over where it was left",
+          "[ProjectSidebar]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_sidebar_test_preview_reclick";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    {
+        std::ofstream(dir / "target.txt") << "line one\nline two\nline three\n";
+    }
+    const CurrentPathGuard cwdGuard(dir);
+
+    ned::text::BufferList   list;
+    ned::text::Buffer&      scratch = list.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer   activeBuffer(scratch);
+    ned::ui::Theme          theme = ned::ui::DarkTheme();
+    std::string             statusMessage;
+    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    PlaceSidebar(sidebar, 28, 5);
+
+    sidebar.OnEvent(MousePress(0, 1)); // single click -- opens target.txt as a preview (row 0 is the header)
+    REQUIRE(list.PreviewBuffer() == &activeBuffer.Get());
+
+    // "Tooling around" -- point moves away from the top without ever
+    // modifying the buffer, so it stays a preview.
+    activeBuffer.Get().SetPoint(activeBuffer.Get().Content().ByteLength());
+    REQUIRE(!activeBuffer.Get().Modified());
+
+    // A genuinely separate click, not a rapid double click -- past
+    // kDoubleClickWindow, so this must not promote the preview.
+    std::this_thread::sleep_for(std::chrono::milliseconds(450));
+    sidebar.OnEvent(MousePress(0, 1));
+
+    REQUIRE(list.PreviewBuffer() == &activeBuffer.Get()); // still just a preview, not promoted
+    REQUIRE(activeBuffer.Get().Point() == 0);             // back to the top, not wherever it was left
 
     std::filesystem::remove_all(dir);
 }
@@ -370,7 +415,7 @@ TEST_CASE("Clicking an already-open, non-preview buffer switches to it without d
     ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlaceSidebar(sidebar, 28, 5);
 
-    sidebar.OnEvent(MousePress(0, 0));
+    sidebar.OnEvent(MousePress(0, 1)); // row 0 is the header
 
     REQUIRE(&activeBuffer.Get() == &already);
     REQUIRE(list.Count() == 2); // no duplicate buffer created
@@ -393,7 +438,7 @@ TEST_CASE("Clicking a directory entry toggles it without opening any buffer", "[
     ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlaceSidebar(sidebar, 28, 5);
 
-    sidebar.OnEvent(MousePress(0, 0)); // "sub/"
+    sidebar.OnEvent(MousePress(0, 1)); // "sub/" (row 0 is the header)
 
     REQUIRE(&activeBuffer.Get() == &scratch);
 
@@ -445,19 +490,19 @@ TEST_CASE("Wheel scrolls the tree and clamps at both ends", "[ProjectSidebar]") 
     ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 27, .y_min = 0, .y_max = 4});
 
     sidebar.Paint(canvas);
-    REQUIRE(RowText(screen, 0, 28).find("0.txt") != std::string::npos);
+    REQUIRE(RowText(screen, 1, 28).find("0.txt") != std::string::npos); // row 0 is the header
 
     for (int i = 0; i < 10; ++i) {
         sidebar.OnEvent(MouseWheel(0, 0, ftxui::Mouse::WheelDown));
     }
     sidebar.Paint(canvas);
-    REQUIRE(RowText(screen, 0, 28).find("0.txt") == std::string::npos); // scrolled past it
+    REQUIRE(RowText(screen, 1, 28).find("0.txt") == std::string::npos); // scrolled past it
 
     for (int i = 0; i < 20; ++i) {
         sidebar.OnEvent(MouseWheel(0, 0, ftxui::Mouse::WheelUp));
     }
     sidebar.Paint(canvas);
-    REQUIRE(RowText(screen, 0, 28).find("0.txt") != std::string::npos); // clamped back to the top
+    REQUIRE(RowText(screen, 1, 28).find("0.txt") != std::string::npos); // clamped back to the top
 
     std::filesystem::remove_all(dir);
 }
@@ -479,7 +524,7 @@ TEST_CASE("Scrolling past an expanded directory's own row pins it at the top (st
     ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlaceSidebar(sidebar, 28, 5);
 
-    sidebar.OnEvent(MousePress(0, 0)); // expand "sub/"
+    sidebar.OnEvent(MousePress(0, 1)); // expand "sub/" (row 0 is the header)
     for (int i = 0; i < 5; ++i) {
         sidebar.OnEvent(MouseWheel(0, 0, ftxui::Mouse::WheelDown));
     }
@@ -489,9 +534,10 @@ TEST_CASE("Scrolling past an expanded directory's own row pins it at the top (st
     sidebar.Paint(canvas);
 
     // "sub/" itself has scrolled out of the ordinary content area, but stays
-    // pinned as a sticky header on row 0 instead of disappearing.
-    REQUIRE(RowText(screen, 0, 28).find("sub/") != std::string::npos);
-    REQUIRE(screen.PixelAt(0, 0).foreground_color == theme.tabBar.foreground.ToFtxui());
+    // pinned as a sticky header on the first content row (row 1 -- row 0 is
+    // the project-name header) instead of disappearing.
+    REQUIRE(RowText(screen, 1, 28).find("sub/") != std::string::npos);
+    REQUIRE(screen.PixelAt(0, 1).foreground_color == theme.tabBar.foreground.ToFtxui());
 
     std::filesystem::remove_all(dir);
 }
@@ -609,17 +655,18 @@ TEST_CASE("RevealPath expands every ancestor directory down to the target file",
     ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 27, .y_min = 0, .y_max = 4});
 
     sidebar.Paint(canvas);
-    REQUIRE(RowText(screen, 1, 28).find("nested") == std::string::npos); // collapsed by default
+    REQUIRE(RowText(screen, 2, 28).find("nested") == std::string::npos); // collapsed by default
 
     sidebar.RevealPath(dir / "src" / "nested" / "file.txt");
     sidebar.Paint(canvas);
 
-    // "src/" (row 0) and "nested/" (row 1) are both now expanded, so
-    // "file.txt" (row 2) is directly visible without any manual clicking.
-    REQUIRE(RowText(screen, 0, 28).find("▾") != std::string::npos); // "src/" expanded
-    REQUIRE(RowText(screen, 1, 28).find("nested") != std::string::npos);
-    REQUIRE(RowText(screen, 1, 28).find("▾") != std::string::npos); // "nested/" expanded too
-    REQUIRE(RowText(screen, 2, 28).find("file.txt") != std::string::npos);
+    // Row 0 is always the header. "src/" (row 1) and "nested/" (row 2) are
+    // both now expanded, so "file.txt" (row 3) is directly visible without
+    // any manual clicking.
+    REQUIRE(RowText(screen, 1, 28).find("▾") != std::string::npos); // "src/" expanded
+    REQUIRE(RowText(screen, 2, 28).find("nested") != std::string::npos);
+    REQUIRE(RowText(screen, 2, 28).find("▾") != std::string::npos); // "nested/" expanded too
+    REQUIRE(RowText(screen, 3, 28).find("file.txt") != std::string::npos);
 
     std::filesystem::remove_all(dir);
 }
@@ -646,7 +693,7 @@ TEST_CASE("RevealPath is a no-op when the target's own directory is already the 
     ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(28), ftxui::Dimension::Fixed(5));
     ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 27, .y_min = 0, .y_max = 4});
     sidebar.Paint(canvas);
-    REQUIRE(RowText(screen, 0, 28).find("file.txt") != std::string::npos);
+    REQUIRE(RowText(screen, 1, 28).find("file.txt") != std::string::npos); // row 0 is the header
 
     std::filesystem::remove_all(dir);
 }
@@ -670,7 +717,7 @@ TEST_CASE("RevealPath is a safe no-op for a path outside the current project roo
     ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(28), ftxui::Dimension::Fixed(5));
     ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 27, .y_min = 0, .y_max = 4});
     sidebar.Paint(canvas);
-    REQUIRE(RowText(screen, 0, 28).find("▸") != std::string::npos); // "src/" still collapsed
+    REQUIRE(RowText(screen, 1, 28).find("▸") != std::string::npos); // "src/" still collapsed (row 0 is the header)
 
     std::filesystem::remove_all(dir);
 }
@@ -714,7 +761,7 @@ TEST_CASE("A failed open reports an error via statusMessage without crashing", "
     ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlaceSidebar(sidebar, 28, 5);
 
-    sidebar.OnEvent(MousePress(0, 0)); // must not crash
+    sidebar.OnEvent(MousePress(0, 1)); // must not crash (row 0 is the header)
 
     REQUIRE(&activeBuffer.Get() == &scratch);
     REQUIRE_FALSE(statusMessage.empty());
