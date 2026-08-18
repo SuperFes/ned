@@ -236,6 +236,35 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
         }
     });
 
+    // format-buffer follow-up: save-buffer's own formatting step, exposed
+    // standalone so it can run without also saving -- reuses the exact
+    // same FormatCommand()/RunFormatCommand()/whole-buffer-replace shape,
+    // just without the Save() call at the end. Unlike save-buffer (silent
+    // when nothing's configured, since formatting there is a side effect
+    // of a save the user wanted regardless), this reports "no format
+    // command configured" explicitly: a user invoking format-buffer
+    // directly is asking specifically for formatting, so silence would
+    // read as "did nothing happened," not "nothing to do."
+    registry.Register("format-buffer", "Run the configured format command over the whole buffer, without saving.",
+                      [](CommandContext& context) {
+                          if (!FormatCommand()) {
+                              if (context.message) {
+                                  *context.message = "No format command configured.";
+                              }
+                              return;
+                          }
+                          if (const std::optional<std::string> formatted = RunFormatCommand(context.buffer.Text())) {
+                              context.buffer.DeleteRange(0, context.buffer.Size());
+                              context.buffer.InsertAt(0, *formatted);
+                              if (context.message) {
+                                  *context.message = "Formatted " + context.buffer.Name();
+                              }
+                          }
+                          else if (context.message) {
+                              *context.message = "Format command failed.";
+                          }
+                      });
+
     registry.Register("isearch-forward", "Incrementally search forward.", [](CommandContext& context) {
         context.interactiveRequest = InteractiveRequest::IsearchForward;
     });
@@ -287,6 +316,14 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                       [](CommandContext& context) {
                           context.interactiveRequest = InteractiveRequest::ToggleProjectSidebar;
                       });
+
+    // kill-buffer follow-up: the actual close-with-confirmation logic
+    // already lives in BufferView (RequestCloseBuffer/CloseBufferNow),
+    // previously reachable only via TabBar's own close-icon click -- this
+    // just signals intent the same "just set interactiveRequest" way every
+    // one-shot direct action here does.
+    registry.Register("kill-buffer", "Close the current buffer, prompting to save first if it has unsaved changes.",
+                      [](CommandContext& context) { context.interactiveRequest = InteractiveRequest::KillBuffer; });
 
     // org-agenda follow-up: global, not gated to org-mode's own keymap --
     // useful from any buffer, same "reachable from every mode" precedent
@@ -558,12 +595,22 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("TAB"), "indent-for-tab-command");
     keymap.Bind(ParseKeySequence("LEFT"), "backward-char");
     keymap.Bind(ParseKeySequence("RIGHT"), "forward-char");
+    // KeyTranslation.cpp already decodes Control+Arrow (ArrowLeftCtrl/
+    // ArrowRightCtrl) into Control+Special::Left/Right chords -- ParseKeyChord
+    // resolves "C-LEFT"/"C-RIGHT" the same way (the C- prefix strips off
+    // first, then LEFT/RIGHT resolve via NamedKeys()), so this is just
+    // wiring an already-decodable chord to a command, not new decoding work.
+    keymap.Bind(ParseKeySequence("C-LEFT"), "backward-word");
+    keymap.Bind(ParseKeySequence("C-RIGHT"), "forward-word");
     keymap.Bind(ParseKeySequence("C-n"), "next-line");
     keymap.Bind(ParseKeySequence("C-p"), "previous-line");
     keymap.Bind(ParseKeySequence("DOWN"), "next-line");
     keymap.Bind(ParseKeySequence("UP"), "previous-line");
     keymap.Bind(ParseKeySequence("PAGEDOWN"), "scroll-page-down");
     keymap.Bind(ParseKeySequence("PAGEUP"), "scroll-page-up");
+    keymap.Bind(ParseKeySequence("C-v"), "scroll-page-down");
+    keymap.Bind(ParseKeySequence("M-v"), "scroll-page-up");
+    keymap.Bind(ParseKeySequence("ESC v"), "scroll-page-up");
     keymap.Bind(ParseKeySequence("C-x C-s"), "save-buffer");
     keymap.Bind(ParseKeySequence("C-x C-c"), "quit");
     keymap.Bind(ParseKeySequence("C-x C-x"), "exchange-point-and-mark");
@@ -573,9 +620,14 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("ESC >"), "end-of-buffer");
     keymap.Bind(ParseKeySequence("C-s"), "isearch-forward");
     keymap.Bind(ParseKeySequence("C-r"), "isearch-backward");
-    // Emacs binds these to M-%/M-f/M-b; Alt isn't reliably detectable here
-    // (see Source/UI/KeyTranslation.h), so ESC-prefix is the fallback, same
-    // as every other Meta binding.
+    // Emacs binds these to M-%/M-f/M-b. Both real Meta chords and the
+    // ESC-prefix fallback are bound (same "cover both real input shapes"
+    // reasoning as M-x/M-w/M-/ elsewhere in this function) -- the comment
+    // this replaces called Alt-detection unreliable, which was stale even
+    // when written (KeyTranslation.h's own header comment already
+    // documents real, reliable Meta detection post-FTXUI-migration); only
+    // M-x had actually gotten the dual-binding treatment until now.
+    keymap.Bind(ParseKeySequence("M-%"), "query-replace-regexp");
     keymap.Bind(ParseKeySequence("ESC %"), "query-replace-regexp");
     keymap.Bind(ParseKeySequence("C-x C-f"), "find-file");
     keymap.Bind(ParseKeySequence("C-x b"), "switch-to-buffer");
@@ -583,6 +635,7 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("C-c C-v"), "project-search-visit-result");
     keymap.Bind(ParseKeySequence("C-c C-r"), "project-replace");
     keymap.Bind(ParseKeySequence("C-c C-p"), "toggle-project-sidebar");
+    keymap.Bind(ParseKeySequence("C-x k"), "kill-buffer");
     keymap.Bind(ParseKeySequence("C-c a"), "org-agenda"); // real Org's own actual binding
     keymap.Bind(ParseKeySequence("C-c C-d"), "create-directory");
     keymap.Bind(ParseKeySequence("C-c C-k"), "delete-file");
@@ -602,7 +655,9 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("C-x 0"), "delete-window");
     keymap.Bind(ParseKeySequence("C-x 1"), "delete-other-windows");
     keymap.Bind(ParseKeySequence("C-x o"), "other-window");
+    keymap.Bind(ParseKeySequence("M-f"), "forward-word");
     keymap.Bind(ParseKeySequence("ESC f"), "forward-word");
+    keymap.Bind(ParseKeySequence("M-b"), "backward-word");
     keymap.Bind(ParseKeySequence("ESC b"), "backward-word");
     // Unlike the ESC-only bindings above (whose own comment is stale --
     // real Alt/Meta detection is reliable post-FTXUI-migration, see

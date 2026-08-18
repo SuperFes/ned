@@ -653,6 +653,141 @@ TEST_CASE("save-buffer does not touch the buffer when no format command is confi
     std::filesystem::remove(path);
 }
 
+TEST_CASE("format-buffer formats without saving", "[Commands]") {
+    const FormatCommandGuard guard;
+    SetFormatCommand(std::string("tr 'a-z' 'A-Z'"));
+
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_commands_test_format_buffer.txt";
+    std::filesystem::remove(path);
+
+    ned::text::Buffer buffer("scratch", ned::text::Rope("hello"));
+    buffer.SaveToFile(path);
+
+    ned::text::KillRing   killRing;
+    ned::text::BufferList bufferList;
+    std::string           message;
+    CommandContext        context{buffer, killRing, bufferList, KeyChord{}, &message};
+
+    registry.Invoke("format-buffer", context);
+
+    REQUIRE(buffer.Text() == "HELLO");
+    REQUIRE(message.find("Formatted") != std::string::npos);
+
+    std::ifstream file(path);
+    std::string   written((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    REQUIRE(written == "hello\n"); // never saved -- disk content is untouched (SaveToFile's own default trailing newline)
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("format-buffer reports failure and leaves the buffer untouched when the formatter fails", "[Commands]") {
+    const FormatCommandGuard guard;
+    SetFormatCommand(std::string("false"));
+
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    std::string    message;
+    context.message = &message;
+
+    fixture.buffer.InsertAtPoint("hello");
+    registry.Invoke("format-buffer", context);
+
+    REQUIRE(fixture.buffer.Text() == "hello");
+    REQUIRE(message.find("failed") != std::string::npos);
+}
+
+TEST_CASE("format-buffer reports explicitly when no format command is configured", "[Commands]") {
+    const FormatCommandGuard guard;
+
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    std::string    message;
+    context.message = &message;
+
+    fixture.buffer.InsertAtPoint("hello");
+    registry.Invoke("format-buffer", context);
+
+    REQUIRE(fixture.buffer.Text() == "hello");
+    REQUIRE(message.find("No format command configured") != std::string::npos);
+}
+
+TEST_CASE("kill-buffer sets InteractiveRequest::KillBuffer, bound to C-x k", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+    Keymap     keymap = BuildDefaultGlobalKeymap();
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    REQUIRE(dispatcher.Feed(ParseKeyChord("C-x"), context) == Dispatcher::Outcome::Pending);
+    REQUIRE(dispatcher.Feed(ParseKeyChord("k"), context) == Dispatcher::Outcome::Invoked);
+    REQUIRE(context.interactiveRequest == InteractiveRequest::KillBuffer);
+}
+
+TEST_CASE("C-v/M-v are bound to scroll-page-down/up", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+    Keymap     keymap = BuildDefaultGlobalKeymap();
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    REQUIRE(dispatcher.Feed(ParseKeyChord("C-v"), context) == Dispatcher::Outcome::Invoked);
+    REQUIRE(dispatcher.Feed(ParseKeyChord("M-v"), context) == Dispatcher::Outcome::Invoked);
+}
+
+TEST_CASE("C-LEFT/C-RIGHT are bound to word motion", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+    Keymap     keymap = BuildDefaultGlobalKeymap();
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    Type(dispatcher, context, "hello world");
+    fixture.buffer.SetPoint(0);
+
+    REQUIRE(dispatcher.Feed(ParseKeyChord("C-RIGHT"), context) == Dispatcher::Outcome::Invoked);
+    REQUIRE(fixture.buffer.Point() == 5);
+
+    REQUIRE(dispatcher.Feed(ParseKeyChord("C-LEFT"), context) == Dispatcher::Outcome::Invoked);
+    REQUIRE(fixture.buffer.Point() == 0);
+}
+
+TEST_CASE("M-f/M-b/M-% are bound as real Meta chords, not just ESC-prefix", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+    Keymap     keymap = BuildDefaultGlobalKeymap();
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    Type(dispatcher, context, "hello world");
+    fixture.buffer.SetPoint(0);
+
+    REQUIRE(dispatcher.Feed(ParseKeyChord("M-f"), context) == Dispatcher::Outcome::Invoked);
+    REQUIRE(fixture.buffer.Point() == 5);
+
+    REQUIRE(dispatcher.Feed(ParseKeyChord("M-b"), context) == Dispatcher::Outcome::Invoked);
+    REQUIRE(fixture.buffer.Point() == 0);
+
+    REQUIRE(dispatcher.Feed(ParseKeyChord("M-%"), context) == Dispatcher::Outcome::Invoked);
+    REQUIRE(context.interactiveRequest == InteractiveRequest::QueryReplace);
+}
+
 TEST_CASE("C-x C-s is bound to save-buffer in the default keymap", "[Commands]") {
     CommandRegistry registry;
     RegisterBuiltinCommands(registry);
