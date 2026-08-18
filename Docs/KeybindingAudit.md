@@ -58,7 +58,7 @@ already reports `Control+Special::Left/Right` for Ctrl+Arrow).
 | `C-x r SPC/j/s/i/k/d/y/t` | registers + rectangles | **Bound** | full set: point-to-register, jump-to-register, copy-to-register, insert-register, kill/delete/yank-rectangle, string-rectangle |
 | `C-x n n` / `C-x n w` | narrow-to-region / widen | **Bound** | |
 | `M-x` | execute-extended-command | **Bound, both forms** | `M-x` and `ESC x` |
-| `C-g` | keyboard-quit | **Partial** | Handled ad hoc inside `BufferView` (`IsCancelKey` helper) to cancel an in-progress interactive session (isearch, prompts, etc.) — not a registered command, doesn't do anything in Normal mode (e.g. no "cancel prefix key" or "deselect region" behavior) |
+| `C-g` | keyboard-quit | **Bound** | Interactive sessions (isearch, prompts, etc.) still cancel via `BufferView`'s own `IsQuit` helper, unaffected since `inputMode_ != Normal` there; a real `keyboard-quit` command now handles the Normal-mode case, deactivating an active mark — the one piece that was missing, reported live: no way to stop an in-progress `C-SPC`/`Shift`-arrow selection short of an editing command or mouse click. A pending prefix key already self-resets on the next `Unbound` chord, so no extra handling was needed there. |
 | `TAB` | indent-for-tab-command | **Bound** | Inserts a literal tab; no per-mode indent logic yet |
 
 ## 2. "Normal" (non-Emacs) editor conventions

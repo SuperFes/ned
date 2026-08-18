@@ -210,6 +210,22 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
         context.buffer.SetMark(oldPoint);
     });
 
+    // keyboard-quit follow-up: real Emacs' C-g aborts several things at
+    // once (the current command, a pending prefix key, an active
+    // minibuffer) -- the prefix-key/minibuffer cases are already handled
+    // elsewhere (a pending Dispatcher sequence resets itself on the next
+    // Unbound chord; minibuffer-shaped sessions -- isearch, prompts,
+    // confirmations -- have their own dedicated Escape/C-g handling inside
+    // BufferView's HandleXKey routines, none of which reach this command
+    // at all since inputMode_ isn't Normal while they're active). This is
+    // the one piece that was genuinely missing: deactivating an active
+    // mark set via C-SPC/shift-select-*, reported live -- there was no way
+    // to stop an in-progress selection short of an editing command, mouse
+    // click, or actually killing/copying the region. Silent no-op without
+    // a mark, matching kill-region's own "nothing to do" convention.
+    registry.Register("keyboard-quit", "Deactivate the current selection, if any.",
+                      [](CommandContext& context) { context.buffer.ClearMark(); });
+
     registry.Register("kill-ring-save", "Copy the region between point and mark into the kill ring, without deleting it.", [](CommandContext& context) {
         if (!context.buffer.HasMark()) {
             return;
@@ -818,6 +834,7 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("M-/"), "redo");
     keymap.Bind(ParseKeySequence("ESC /"), "redo");
     keymap.Bind(ParseKeySequence("C-SPC"), "set-mark-command");
+    keymap.Bind(ParseKeySequence("C-g"), "keyboard-quit");
     keymap.Bind(ParseKeySequence("C-w"), "kill-region");
     // Same "bind both real input shapes" reasoning as M-x below -- a fast
     // Alt+w press arrives as one Meta-chord, a genuinely separate Escape-
