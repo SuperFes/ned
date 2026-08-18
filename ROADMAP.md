@@ -1012,8 +1012,16 @@ Verification: full suite (917 test cases) and a clean `./test-asan.sh` pass (one
 already-confirmed-flaky ASan-timing performance test at its threshold, unrelated to this
 work) — no sanitizer findings at all, notable given how much of this slice is real fds,
 pipes, a spawned subprocess, and background-thread lifecycle code, exactly the class of bug
-ASan/UBSan is best at catching. A manual smoke test against a real language server (e.g.
-`clangd`) is still outstanding — the one thing the automated suite can't verify on its own.
+ASan/UBSan is best at catching. Manually smoke-tested against a real, installed `clangd`
+(v22.1.8) via a standalone scratch program driving `Transport` directly against a real spawned
+process (not a test-mocked pipe pair): `initialize`/`initialized` handshake, `textDocument/
+didOpen` on a C file with a deliberate error, and a real `textDocument/publishDiagnostics`
+came back with the exact expected message ("Use of undeclared identifier
+'undeclared_identifier'") on the exact expected `uri`. Also confirmed, incidentally: clangd
+sends an unrelated `publishDiagnostics` for its own `~/.config/clangd/config.yaml` on
+startup, which `LspManager::HandlePublishDiagnostics`'s `BufferList::FindByPath`-based URI
+lookup already handles correctly (silently dropped, since it's not an open buffer) —
+matches the real behavior observed, not just the intended design.
 
 ## Wishlist (unsequenced)
 
