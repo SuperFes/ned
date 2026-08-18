@@ -120,7 +120,15 @@ enum class InteractiveRequest { None,
                                 // detection everywhere else. See Editor/Org.h's LinkAtPoint and
                                 // Editor/Link.h's DetectLinkAtPoint for where the actual detection
                                 // lives.
-                                OpenLinkAtPoint };
+                                OpenLinkAtPoint,
+                                // kill-buffer follow-up: another one-shot direct action, same
+                                // shape as ToggleProjectSidebar -- BufferView already has the
+                                // real close-with-confirmation logic (RequestCloseBuffer/
+                                // CloseBufferNow, driving InputMode::ConfirmCloseBuffer for a
+                                // modified buffer), previously reachable only via TabBar's own
+                                // close-icon click; this is the keyboard/M-x path onto that
+                                // exact same logic, not new logic of its own.
+                                KillBuffer };
 
 // Everything a command implementation might need. Built fresh per invocation
 // from live references -- never stored, so there's no lifetime concern beyond

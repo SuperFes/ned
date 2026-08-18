@@ -29,8 +29,8 @@ already reports `Control+Special::Left/Right` for Ctrl+Arrow).
 | `C-f` / `C-b` | forward/backward-char | **Bound** | `Commands.cpp` |
 | `C-n` / `C-p` | next/previous-line | **Bound** | |
 | `C-a` / `C-e` | beginning/end-of-line | **Bound** | also `HOME`/`END` |
-| `M-f` / `M-b` | forward/backward-word | **Bound**, ESC-prefix only | Bound as `ESC f`/`ESC b`, not `M-f`/`M-b` — comment in `Commands.cpp` calls this stale (real Meta detection is reliable post-FTXUI per `KeyTranslation.h`) but only `M-x` got the dual binding treatment |
-| `C-v` / `M-v` | scroll page down/up | **Not bound to these keys** | Commands exist (`scroll-page-down`/`up`) but bound only to `PAGEDOWN`/`PAGEUP`, not `C-v`/`M-v` |
+| `M-f` / `M-b` | forward/backward-word | **Bound** | Real `M-f`/`M-b` chords now, plus `ESC f`/`ESC b` |
+| `C-v` / `M-v` | scroll page down/up | **Bound** | Also still bound to `PAGEDOWN`/`PAGEUP`; `ESC v` too |
 | `M-<` / `M->` | beginning/end-of-buffer | **Bound** | `ESC <`/`ESC >` also bound |
 | `C-l` | recenter | **Missing** | No command |
 | `C-d` | delete-char | **Bound** | |
@@ -45,11 +45,11 @@ already reports `Control+Special::Left/Right` for Ctrl+Arrow).
 | `C-x h` | mark-whole-buffer | **Missing** | No command |
 | `C-_` / `C-x u` | undo | **Bound (`C-_`)** | Was bound to `C-/`, which turned out to be unreachable from a real terminal — no terminal byte distinguishes Ctrl+/ from Ctrl+_, and the codebase only decoded the latter; confirmed against a live terminal, then fixed by decoding byte 0x1F as Control+'_' (`KeyTranslation.cpp`) and rebinding to `C-_`, real Emacs' own actual undo chord. `redo` is bound to `M-/`/`ESC /`. |
 | `C-s` / `C-r` | isearch forward/backward | **Bound** | |
-| `M-%` | query-replace | **Bound, ESC-prefix only** | `ESC %`, not `M-%`, same stale-comment situation as `M-f`/`M-b` |
+| `M-%` | query-replace | **Bound** | Real `M-%` chord now, plus `ESC %` |
 | `C-x C-f` | find-file | **Bound** | |
 | `C-x C-s` | save-buffer | **Bound** | |
 | `C-x b` | switch-to-buffer | **Bound** | |
-| `C-x k` | kill-buffer | **Missing as a keybinding** | Closing exists (`TabBar` close-icon → `BufferView::RequestCloseBuffer`) but there is no `kill-buffer` command reachable from the keyboard/M-x |
+| `C-x k` | kill-buffer | **Bound** | Routes to the same `BufferView::RequestCloseBuffer`/`CloseBufferNow` flow the tab-bar close icon already used |
 | `C-x C-c` | save-buffers-kill-terminal (quit) | **Bound** | |
 | `C-x 2` / `C-x 3` | split-window-below/right | **Bound** | Phase 8 |
 | `C-x 0` / `C-x 1` | delete-window / delete-other-windows | **Bound** | |
@@ -71,7 +71,7 @@ already reports `Control+Special::Left/Right` for Ctrl+Arrow).
 | `Ctrl+F` | find | **Missing**, and collides | Ned's `C-f` is `forward-char`; `C-s` fills this role Emacs-style instead |
 | `Ctrl+S` | save | **Missing**, and collides | Ned's `C-s` is `isearch-forward`; this is the single most-cited Emacs-vs-everyone-else collision |
 | `Home` / `End` / `PageUp` / `PageDown` | line/page motion | **Bound** | Already wired to the Emacs-equivalent commands |
-| `Ctrl+Left` / `Ctrl+Right` | word motion | **Expressible but unbound** | `KeyTranslation.cpp` already decodes `Control+Left/Right`; nothing in `BuildDefaultGlobalKeymap()` binds them to `forward-word`/`backward-word` |
+| `Ctrl+Left` / `Ctrl+Right` | word motion | **Bound** | `forward-word`/`backward-word` |
 | `Shift+arrows` | extend selection | **Missing entirely** | No shift-modified arrow handling anywhere; selection today is mouse-drag-only (`BufferView::OnMouseEvent`) — there is no keyboard-driven selection extension at all (downstream of `C-SPC`/set-mark also being missing) |
 | `Ctrl+Home` / `Ctrl+End` | buffer start/end | **Missing** | Same underlying gap as `M-<`/`M->` above — no beginning/end-of-buffer command exists at all, Emacs-style or otherwise |
 
@@ -82,7 +82,7 @@ already reports `Control+Special::Left/Right` for Ctrl+Arrow).
 | Multi-cursor / select-next-occurrence | `Ctrl+D`, Alt+Click | **Missing** | On the wishlist: "Multiple cursors / multi-cursor editing" under Editor ergonomics |
 | Go-to-definition / hover / rename symbol | varies, usually `F12`/LSP-bound | **Missing** | On the wishlist as part of "LSP client: autocomplete, diagnostics, go-to-definition, hover docs, code actions, rename, multi-language support" |
 | Fuzzy file finder / command palette | `Ctrl+P` / `Ctrl+Shift+P` | **Missing** | On the wishlist: "Fast fuzzy file finder / command palette" — note Ned already has `find-file`'s path-completion (`Tab`) and `M-x`'s fuzzy-narrowed `execute-extended-command`, so the foundation is closer than "missing" alone suggests |
-| Format document (on demand, not just on save) | `Ctrl+Shift+I` / `Alt+Shift+F` | **Partial** | `FormatOnSave.h` + `save-buffer` runs the configured formatter automatically on save; there's no standalone "format buffer now" command independent of saving |
+| Format document (on demand, not just on save) | `Ctrl+Shift+I` / `Alt+Shift+F` | **Bound** | `format-buffer`, M-x-only (no default keybinding) |
 | Toggle line comment | `Ctrl+/` | **Missing** | No comment-toggle command exists; `Ctrl+/` no longer collides with `undo` (moved to `C-_`, see the canonical-Emacs table above) but binding literal `C-/` would hit the exact same real-terminal-unreachability problem that move fixed — no terminal byte distinguishes Ctrl+/ from Ctrl+_, and only the latter is decoded |
 | Duplicate line | `Ctrl+D` / `Ctrl+Shift+D` | **Missing** | No command |
 | Move line up/down | `Alt+Up`/`Alt+Down` | **Missing** | No command |
@@ -143,29 +143,33 @@ the gap.
 ### Want
 Real value, natural next step, several already named on Ned's own Phase 9 wishlist.
 
-- **`C-v`/`M-v` aliases for scroll-page-down/up** — the commands exist and are already
-  bound to `PAGEDOWN`/`PAGEUP`; adding the canonical Emacs chords is a one-line addition
-  reusing existing commands, not new design.
-- **`Ctrl+Left`/`Ctrl+Right` bound to word motion** — already fully decodable per
-  `KeyTranslation.cpp`; just unbound. Low-risk, high-value since it's the most common
-  "non-Emacs muscle memory that still feels natural in Emacs" motion.
-- **`M-f`/`M-b`/`M-%` as real Meta chords, not just ESC-prefix** — the code's own comment
-  flags this as stale now that Meta detection is reliable; `M-x` already gets the
-  dual-binding treatment, the other Meta bindings should too for consistency.
+- ~~**`C-v`/`M-v` aliases for scroll-page-down/up**~~ — **done.** Both bound (`M-v` also
+  gets the usual `ESC v` dual binding), reusing the existing `scroll-page-down`/
+  `scroll-page-up` commands unchanged.
+- ~~**`Ctrl+Left`/`Ctrl+Right` bound to word motion**~~ — **done.** `ParseKeyChord`
+  already resolved `"C-LEFT"`/`"C-RIGHT"` correctly (the `C-` prefix strips off first,
+  then `LEFT`/`RIGHT` resolve via `NamedKeys()`) — this was purely a missing
+  `keymap.Bind` call, no new decoding.
+- ~~**`M-f`/`M-b`/`M-%` as real Meta chords, not just ESC-prefix**~~ — **done.** All
+  three now get the same dual-binding treatment `M-x` already had (real Meta chord +
+  `ESC`-prefix fallback), closing the stale-comment gap the code itself flagged.
 - **Structural/AST-aware selection expansion** — already Phase 9 wishlist, and Ned's
   tree-sitter foundation (real parse trees per buffer) makes this a comparatively natural
   fit rather than a bolt-on.
 - **Fuzzy file finder / command palette** — already Phase 9 wishlist; worth noting the
   groundwork (`CompleteCommandNames`, `M-x`'s fuzzy narrowing, `find-file`'s path
   completion) is further along than a from-scratch feature would be.
-- **`kill-buffer` as a real command** (not just the tab-bar close icon) — closing a
-  buffer currently requires a mouse click on its tab; a keyboard-reachable
-  `C-x k`/`kill-buffer` is standard Emacs and there's no structural reason it's missing
-  (`BufferView::RequestCloseBuffer`/`CloseBufferNow` already implement the logic the
-  tab-bar close icon calls).
-- **Format document on demand** — `FormatOnSave`'s machinery already does the hard part
-  (shelling out, temp-file safety); exposing it as a standalone command independent of
-  saving is a small, high-value addition.
+- ~~**`kill-buffer` as a real command**~~ — **done.** Registered, bound to `C-x k` —
+  just signals `InteractiveRequest::KillBuffer`, which `BufferView::StartInteractiveSession`
+  routes straight to the existing `RequestCloseBuffer`/`CloseBufferNow`/
+  `ConfirmCloseBuffer` flow the tab-bar close icon already used, no new close logic.
+- ~~**Format document on demand**~~ — **done.** `format-buffer` registered (M-x-only,
+  no default keybinding — none of the usual GUI-editor chords for this are free here),
+  reuses `FormatCommand()`/`RunFormatCommand()`/the same whole-buffer-replace
+  `save-buffer` already does, just without the `Save()` call. Reports "No format
+  command configured" explicitly rather than staying silent the way `save-buffer` does
+  — a direct format request with nothing configured should say so, not look like it
+  silently did nothing.
 
 ### Maybe want
 Plausible, but a real tradeoff either way — worth an explicit decision, not a default yes.

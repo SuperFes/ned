@@ -1450,6 +1450,9 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         case editor::InteractiveRequest::ProjectAgenda:
             BuildResultsBuffer(editor::CollectProjectTodos(editor::ProjectRoot()), "*agenda*");
             return;
+        case editor::InteractiveRequest::KillBuffer:
+            RequestCloseBuffer(activeBuffer_.Get());
+            return;
         case editor::InteractiveRequest::CreateDirectory:
             inputMode_ = InputMode::CreateDirectory;
             prompt_.emplace("Create directory: ");
