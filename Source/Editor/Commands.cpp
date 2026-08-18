@@ -69,6 +69,12 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
         context.buffer.MoveUpLines(PageLineCount(context.viewportHeight), TabWidth());
     });
 
+    registry.Register("beginning-of-buffer", "Move point to the start of the buffer.",
+                      [](CommandContext& context) { context.buffer.SetPoint(0); });
+
+    registry.Register("end-of-buffer", "Move point to the end of the buffer.",
+                      [](CommandContext& context) { context.buffer.SetPoint(context.buffer.Content().ByteLength()); });
+
     registry.Register("delete-char", "Delete the grapheme cluster at point.", [](CommandContext& context) {
         context.buffer.DeleteForwardAtPoint();
     });
@@ -121,6 +127,16 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
         context.buffer.ClearMark();
     });
 
+    registry.Register("exchange-point-and-mark", "Swap point and mark.", [](CommandContext& context) {
+        if (!context.buffer.HasMark()) {
+            return;
+        }
+        const std::size_t oldPoint = context.buffer.Point();
+        const std::size_t oldMark  = context.buffer.Mark();
+        context.buffer.SetPoint(oldMark);
+        context.buffer.SetMark(oldPoint);
+    });
+
     registry.Register("kill-ring-save", "Copy the region between point and mark into the kill ring, without deleting it.", [](CommandContext& context) {
         if (!context.buffer.HasMark()) {
             return;
@@ -147,6 +163,17 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
             context.buffer.InsertAtPoint(text::EncodeCodepointUtf8(context.triggeringKey.Codepoint));
         }
     });
+
+    // A literal-tab insert, not real indent logic (Emacs' own
+    // indent-for-tab-command computes indentation; this codebase has no
+    // per-mode indent rules yet) -- the v1 scope call is just "typing Tab
+    // in Normal mode does something sane" rather than being silently
+    // swallowed as Unbound. Global, but a mode's own keymap (e.g.
+    // org-mode's org-cycle, markdown-mode's markdown-table-align) still
+    // wins via KeymapStack's priority order, so this only ever fires where
+    // nothing more specific claimed TAB first.
+    registry.Register("indent-for-tab-command", "Insert a tab character at point.",
+                      [](CommandContext& context) { context.buffer.InsertAtPoint("\t"); });
 
     registry.Register("quit", "Exit the editor, or prompt for confirmation if any buffer has unsaved changes.",
                       [](CommandContext& context) {
@@ -489,6 +516,20 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("C-k"), "kill-line");
     keymap.Bind(ParseKeySequence("C-y"), "yank");
     keymap.Bind(ParseKeySequence("C-/"), "undo");
+    // redo has no standard Emacs binding (stock Emacs has no built-in redo
+    // at all -- undo-tree/undo-fu-style packages each pick their own key).
+    // M-/ chosen over a Control-modified-punctuation chord like C-? on
+    // purpose: DecodeBaseKey (KeyTranslation.cpp) only ever produces
+    // Control=true for C0 control bytes 1-26 (Control+<a-z>), so a real
+    // terminal's Ctrl+/ byte (0x1F, outside that range) would never
+    // actually produce a KeyChord matching a Control-parsed "/" binding --
+    // this is a latent, pre-existing gap in C-/'s own undo binding above,
+    // flagged here rather than fixed, out of scope for this change. M-/
+    // has no such problem: Meta is detected via a leading ESC byte (see
+    // KeyTranslation.h's own header comment), so a real Alt+/ press decodes
+    // cleanly regardless of what byte Ctrl+/ would have sent.
+    keymap.Bind(ParseKeySequence("M-/"), "redo");
+    keymap.Bind(ParseKeySequence("ESC /"), "redo");
     keymap.Bind(ParseKeySequence("C-SPC"), "set-mark-command");
     keymap.Bind(ParseKeySequence("C-w"), "kill-region");
     // Same "bind both real input shapes" reasoning as M-x below -- a fast
@@ -497,6 +538,7 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("M-w"), "kill-ring-save");
     keymap.Bind(ParseKeySequence("ESC w"), "kill-ring-save");
     keymap.Bind(ParseKeySequence("RET"), "newline");
+    keymap.Bind(ParseKeySequence("TAB"), "indent-for-tab-command");
     keymap.Bind(ParseKeySequence("LEFT"), "backward-char");
     keymap.Bind(ParseKeySequence("RIGHT"), "forward-char");
     keymap.Bind(ParseKeySequence("C-n"), "next-line");
@@ -507,6 +549,11 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("PAGEUP"), "scroll-page-up");
     keymap.Bind(ParseKeySequence("C-x C-s"), "save-buffer");
     keymap.Bind(ParseKeySequence("C-x C-c"), "quit");
+    keymap.Bind(ParseKeySequence("C-x C-x"), "exchange-point-and-mark");
+    keymap.Bind(ParseKeySequence("M-<"), "beginning-of-buffer");
+    keymap.Bind(ParseKeySequence("ESC <"), "beginning-of-buffer");
+    keymap.Bind(ParseKeySequence("M->"), "end-of-buffer");
+    keymap.Bind(ParseKeySequence("ESC >"), "end-of-buffer");
     keymap.Bind(ParseKeySequence("C-s"), "isearch-forward");
     keymap.Bind(ParseKeySequence("C-r"), "isearch-backward");
     // Emacs binds these to M-%/M-f/M-b; Alt isn't reliably detectable here

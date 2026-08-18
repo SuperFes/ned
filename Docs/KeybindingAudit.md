@@ -115,18 +115,28 @@ the gap.
   `C-w`/`M-w`+`ESC w` bound, act on `Buffer::Region()` when a mark is set (silent no-op
   otherwise, matching `kill-line`'s own "nothing to do" convention) and clear the mark
   afterward.
-- **Redo keybinding** — the `redo` command is fully registered and functional but bound
-  to nothing; this is a one-line fix, not a design question, and "undo works, redo
-  doesn't" is a jarring first-five-minutes bug report waiting to happen.
-- **`M-<` / `M->` (beginning/end-of-buffer)** — completely absent, not even under an
-  ESC-prefix fallback. Combined with the missing `Ctrl+Home`/`Ctrl+End` equivalent, there
-  is currently *no* keyboard way to jump to the start or end of a buffer at all.
-- **`C-x C-x` (exchange-point-and-mark)** — small, but a real everyday Emacs reflex,
-  and cheap once mark-setting exists.
-- **`TAB` doing nothing in Normal mode** — pressing literal Tab while editing is silently
-  swallowed (`Dispatcher` reports Unbound); needs at minimum a bound
-  `indent-for-tab-command`/self-insert-tab behavior, since right now there is no way to
-  type a tab character interactively at all outside a minibuffer prompt.
+- ~~**Redo keybinding**~~ — **done.** Bound to `M-/`+`ESC /`, not a Control-modified
+  chord (`C-?`/`C-x C-/`) on purpose: while implementing this, reading
+  `KeyTranslation.cpp`'s `DecodeBaseKey` turned up a real, pre-existing, unrelated gap —
+  it only ever produces `Control=true` for C0 control bytes 1-26 (`Control+<a-z>`), so a
+  real terminal's Ctrl+/ byte (0x1F, outside that range) can never actually match the
+  existing `C-/` (undo) binding above. That binding is left as-is (out of scope for this
+  change, flagged in a comment at the new `M-/` binding site instead) — worth its own
+  follow-up if `C-/` turns out to be genuinely unreachable from real keyboards, which
+  hasn't been independently confirmed against a live terminal yet, only via code reading.
+- ~~**`M-<` / `M->` (beginning/end-of-buffer)**~~ — **done.** `beginning-of-buffer`/
+  `end-of-buffer` registered, bound to `M-<`/`M->` + `ESC <`/`ESC >`. `Ctrl+Home`/
+  `Ctrl+End` are still unbound (tracked separately below, "Normal" editor conventions
+  table).
+- ~~**`C-x C-x` (exchange-point-and-mark)**~~ — **done.** Swaps point and mark via
+  `Buffer::SetPoint`/`SetMark`; a no-op without a mark, same convention `kill-region`/
+  `kill-ring-save` already established.
+- ~~**`TAB` doing nothing in Normal mode**~~ — **done.** `indent-for-tab-command`
+  registered (inserts a literal `\t`, not real indent logic — this codebase has no
+  per-mode indent rules yet, a deliberate v1 scope cut) and bound globally to `TAB`; a
+  mode's own keymap (`org-cycle`, `markdown-table-align`) still wins via
+  `KeymapStack`'s priority order, so this only fires where nothing more specific already
+  claimed `TAB`.
 
 ### Want
 Real value, natural next step, several already named on Ned's own Phase 9 wishlist.
