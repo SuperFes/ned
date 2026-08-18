@@ -435,3 +435,53 @@ TEST_CASE("Each *Mode() sets lineCommentPrefix to its language's real line-comme
     REQUIRE(MarkdownMode().lineCommentPrefix.empty());
     REQUIRE(FundamentalMode().lineCommentPrefix.empty());
 }
+
+// structural-selection-expansion follow-up: every TreeSitterModeFromLanguage-
+// built mode gets a real expandSelection hook for free; FundamentalMode (no
+// parser at all) and OrgMode (its own separate, non-shared highlight
+// closure -- see Mode.cpp's own comment) are the documented v1 scope cut.
+TEST_CASE("Tree-sitter-backed modes have an expandSelection hook installed; Fundamental/Org don't", "[Mode]") {
+    REQUIRE(static_cast<bool>(CMode().expandSelection));
+    REQUIRE(static_cast<bool>(JsonMode().expandSelection));
+    REQUIRE(static_cast<bool>(ned::editor::PythonMode().expandSelection));
+
+    REQUIRE_FALSE(static_cast<bool>(FundamentalMode().expandSelection));
+    REQUIRE_FALSE(static_cast<bool>(OrgMode().expandSelection));
+}
+
+TEST_CASE("JsonMode's expandSelection grows step by step from a point and terminates at the root", "[Mode]") {
+    const auto        mode = JsonMode();
+    const std::string text = R"({"a": 1})";
+
+    std::optional<std::pair<std::size_t, std::size_t>> range = std::make_pair(std::size_t{6}, std::size_t{6}); // inside the "1"
+    std::vector<std::string>                            steps;
+    for (int i = 0; i < 10 && range.has_value(); ++i) {
+        range = mode.expandSelection(text, range->first, range->second);
+        if (range.has_value()) {
+            steps.push_back(text.substr(range->first, range->second - range->first));
+        }
+    }
+
+    REQUIRE_FALSE(range.has_value()); // eventually runs out of enclosing nodes
+    REQUIRE_FALSE(steps.empty());
+    REQUIRE(steps.front() == "1");
+    REQUIRE(steps.back() == text);
+    for (std::size_t i = 1; i < steps.size(); ++i) {
+        REQUIRE(steps[i].size() >= steps[i - 1].size()); // never shrinks or repeats a step
+    }
+}
+
+TEST_CASE("JsonMode's expandSelection grows an existing selection to its next enclosing node", "[Mode]") {
+    const auto        mode = JsonMode();
+    const std::string text = R"({"a": 1})";
+
+    // The "1" number literal is already selected -- expanding once more
+    // should grow to the enclosing "a": 1 pair, not just re-select "1".
+    const std::optional<std::pair<std::size_t, std::size_t>> numberRange = mode.expandSelection(text, 6, 6);
+    REQUIRE(numberRange.has_value());
+    REQUIRE(text.substr(numberRange->first, numberRange->second - numberRange->first) == "1");
+
+    const std::optional<std::pair<std::size_t, std::size_t>> pairRange = mode.expandSelection(text, numberRange->first, numberRange->second);
+    REQUIRE(pairRange.has_value());
+    REQUIRE(text.substr(pairRange->first, pairRange->second - pairRange->first) == "\"a\": 1");
+}

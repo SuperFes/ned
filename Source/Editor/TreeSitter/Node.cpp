@@ -25,6 +25,18 @@ Node Node::Child(std::size_t index) const {
     return Node(ts_node_child(node_, static_cast<uint32_t>(index)));
 }
 
+bool Node::IsNamed() const {
+    return ts_node_is_named(node_);
+}
+
+Node Node::Parent() const {
+    return Node(ts_node_parent(node_));
+}
+
+Node Node::NamedDescendantForByteRange(std::size_t start, std::size_t end) const {
+    return Node(ts_node_named_descendant_for_byte_range(node_, static_cast<uint32_t>(start), static_cast<uint32_t>(end)));
+}
+
 bool Node::IsNull() const {
     return ts_node_is_null(node_);
 }
