@@ -314,6 +314,138 @@ TEST_CASE("M-w copies the region via kill-ring-save", "[Commands]") {
     REQUIRE(fixture.killRing.Current() == "hello");
 }
 
+TEST_CASE("M-/ and ESC / both invoke redo", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+    Keymap     keymap = BuildDefaultGlobalKeymap();
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    Type(dispatcher, context, "hi");
+    dispatcher.Feed(ParseKeyChord("C-/"), context); // undo the typing
+    REQUIRE(fixture.buffer.Text().empty());
+
+    REQUIRE(dispatcher.Feed(ParseKeyChord("M-/"), context) == Dispatcher::Outcome::Invoked);
+    REQUIRE(fixture.buffer.Text() == "hi");
+
+    dispatcher.Feed(ParseKeyChord("C-/"), context);
+    REQUIRE(fixture.buffer.Text().empty());
+    REQUIRE(dispatcher.Feed(ParseKeyChord("ESC"), context) == Dispatcher::Outcome::Pending);
+    REQUIRE(dispatcher.Feed(ParseKeyChord("/"), context) == Dispatcher::Outcome::Invoked);
+    REQUIRE(fixture.buffer.Text() == "hi");
+}
+
+TEST_CASE("beginning-of-buffer and end-of-buffer move point to the extremes", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    ned::text::Buffer     buffer("scratch", ned::text::Rope("hello world"));
+    ned::text::KillRing   killRing;
+    ned::text::BufferList bufferList;
+    CommandContext        context{buffer, killRing, bufferList};
+
+    buffer.SetPoint(5);
+    registry.Invoke("beginning-of-buffer", context);
+    REQUIRE(buffer.Point() == 0);
+
+    registry.Invoke("end-of-buffer", context);
+    REQUIRE(buffer.Point() == buffer.Content().ByteLength());
+}
+
+TEST_CASE("M-< and M-> are bound to beginning/end-of-buffer", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+    Keymap     keymap = BuildDefaultGlobalKeymap();
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    Type(dispatcher, context, "hello world");
+    dispatcher.Feed(ParseKeyChord("M-<"), context);
+    REQUIRE(fixture.buffer.Point() == 0);
+
+    dispatcher.Feed(ParseKeyChord("M->"), context);
+    REQUIRE(fixture.buffer.Point() == fixture.buffer.Content().ByteLength());
+}
+
+TEST_CASE("exchange-point-and-mark without a mark is a no-op", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    fixture.buffer.InsertAtPoint("hello");
+    fixture.buffer.SetPoint(2);
+    registry.Invoke("exchange-point-and-mark", context);
+
+    REQUIRE(fixture.buffer.Point() == 2);
+    REQUIRE_FALSE(fixture.buffer.HasMark());
+}
+
+TEST_CASE("exchange-point-and-mark swaps point and mark", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    fixture.buffer.InsertAtPoint("hello world");
+    fixture.buffer.SetPoint(3);
+    fixture.buffer.SetMark(8);
+    registry.Invoke("exchange-point-and-mark", context);
+
+    REQUIRE(fixture.buffer.Point() == 8);
+    REQUIRE(fixture.buffer.HasMark());
+    REQUIRE(fixture.buffer.Mark() == 3);
+}
+
+TEST_CASE("C-x C-x is bound to exchange-point-and-mark", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+    Keymap     keymap = BuildDefaultGlobalKeymap();
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    Type(dispatcher, context, "hello world");
+    fixture.buffer.SetPoint(3);
+    fixture.buffer.SetMark(8);
+    REQUIRE(dispatcher.Feed(ParseKeyChord("C-x"), context) == Dispatcher::Outcome::Pending);
+    REQUIRE(dispatcher.Feed(ParseKeyChord("C-x"), context) == Dispatcher::Outcome::Invoked);
+
+    REQUIRE(fixture.buffer.Point() == 8);
+    REQUIRE(fixture.buffer.Mark() == 3);
+}
+
+TEST_CASE("indent-for-tab-command inserts a literal tab", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    registry.Invoke("indent-for-tab-command", context);
+    REQUIRE(fixture.buffer.Text() == "\t");
+}
+
+TEST_CASE("TAB in Normal mode inserts a tab via the global keymap", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+    Keymap     keymap = BuildDefaultGlobalKeymap();
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    REQUIRE(dispatcher.Feed(ParseKeyChord("TAB"), context) == Dispatcher::Outcome::Invoked);
+    REQUIRE(fixture.buffer.Text() == "\t");
+}
+
 TEST_CASE("save-buffer writes the file and reports a confirmation message", "[Commands]") {
     CommandRegistry registry;
     RegisterBuiltinCommands(registry);
