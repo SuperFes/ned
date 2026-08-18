@@ -828,7 +828,44 @@ before extras" guiding principle. Grouped by how big a foundational lift each is
         fit for Janet given "everything programmable," likely implementable as a Janet-
         scriptable integration rather than something hardcoded in C++.
 - **Editor ergonomics**
-  - [ ] Multiple cursors / multi-cursor editing.
+  - [ ] Multiple cursors / multi-cursor editing — explicitly deferred, not started, after
+        a real design pass during the keybinding-audit follow-up (see
+        `Docs/KeybindingAudit.md`'s "Maybe want" bucket) surfaced enough real scope to be
+        its own phase rather than a session's work. What's already in place, and what
+        genuinely isn't:
+        - **Already there**: the riskiest-looking piece turns out to already be solved.
+          `Buffer::RelocateForInsert`/`RelocateForDelete` (private static helpers,
+          generic-code-folding follow-up, see that entry above) are the one shared
+          relocation primitive `Point_`/`Mark_`/`NarrowedRange_`/`FoldMarkers_` already
+          all route through on every edit — explicitly justified at the time by this
+          exact future need (multi-cursors named directly in that entry's own
+          reasoning). A `Buffer::Cursor{point, optional<mark>}` list could reuse this
+          primitive unchanged, just looped over N entries instead of 2 fixed fields.
+        - **Still genuinely missing**:
+          - *Undo grouping.* `UndoTree` records/amends one Rope snapshot per logical
+            edit; a single keystroke applied at N cursor positions needs to undo as one
+            step, not N — no batching mechanism exists today, and every content-mutating
+            `Buffer` method (`InsertAt`, `InsertAtPoint`, `DeleteRange`,
+            `DeleteForwardAtPoint`, `DeleteBackwardAtPoint`) currently records/amends
+            individually per call.
+          - *Downstream single-mark assumptions.* `kill-region`/`kill-ring-save`/
+            rectangles/registers/`narrow-to-region`/`toggle-line-comment`'s region logic
+            (Phase 9 keybinding-audit follow-up work) all assume exactly one point/mark
+            pair — multi-cursor needs an explicit decision on whether these become
+            per-cursor, stay single-cursor-only, or are simply unsupported while
+            multiple cursors are active.
+          - *Rendering + input.* `BufferView` paints one caret and one selection
+            highlight per frame today; N of each, plus new cursor-management commands
+            (select-next-occurrence, add-cursor-above/below, collapse-to-one) and their
+            keybindings, none of which exist yet.
+          - Mouse-driven cursor creation (Alt+Click, the common cross-editor
+            convention) is separately flagged **Don't want** in the keybinding audit —
+            downstream of this feature and additionally mouse-dependent in a terminal
+            app where a meaningful fraction of usage is over SSH/tmux with imperfect
+            mouse passthrough.
+        - Revisit as its own phase once picked up, not folded into an unrelated
+          feature's scope — closer in size to Phase 7 (TermOx → FTXUI migration) or
+          Phase 8 (window splitting) than to a single keybinding follow-up.
   - [ ] Built-in terminal panel.
   - [ ] Task runner (build/test tasks from within the editor).
   - [ ] Remote development (SSH remote editing).

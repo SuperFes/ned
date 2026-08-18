@@ -191,10 +191,16 @@ Plausible, but a real tradeoff either way — worth an explicit decision, not a 
   *non*-shifted command runs (tracked via its own extra bit distinguishing a
   shift-started mark from an explicit `C-SPC` one) -- not implemented here, so a
   shift-extended region persists exactly as long as any other mark would.
-- **Multi-cursor editing** — already Phase 9 wishlist and has real value, but is a
-  substantial design lift (editing model, not just a keybinding) or gets deferred with a
-  simple 20-minute analysis; flagged here rather than under Want because the *keybinding*
-  question genuinely depends on unresolved design questions.
+- ~~**Multi-cursor editing**~~ — **discussed, explicitly deferred.** Real design pass
+  done rather than a keybinding-only look: the riskiest-seeming piece
+  (`Buffer::RelocateForInsert`/`RelocateForDelete`, already the shared relocation
+  primitive `Point_`/`Mark_`/`NarrowedRange_`/`FoldMarkers_` route through) turns out
+  to already be in place and reusable as-is. What's still genuinely missing —
+  undo-step grouping for one keystroke applied at N cursors, a decision on how
+  kill-region/rectangles/registers/narrowing/toggle-line-comment's region logic behave
+  with multiple cursors active, and N-caret/N-selection rendering plus new
+  cursor-management commands — adds up to its own phase, not a session's work; see
+  `ROADMAP.md`'s Phase 9 "Editor ergonomics" entry for the full breakdown.
 - ~~**Move line up/down, duplicate line**~~ — **done.** `move-line-up`/`move-line-down`
   (`M-UP`/`M-DOWN` + `ESC UP`/`ESC DOWN`) swap the current line with its neighbor,
   preserving point's column within the moved line; `duplicate-line` (`C-c d` — no
