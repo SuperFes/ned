@@ -453,6 +453,64 @@ TEST_CASE("M-< and M-> are bound to beginning/end-of-buffer", "[Commands]") {
     REQUIRE(fixture.buffer.Point() == fixture.buffer.Content().ByteLength());
 }
 
+TEST_CASE("keyboard-quit deactivates an active mark", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    fixture.buffer.InsertAtPoint("hello");
+    fixture.buffer.SetMark(0);
+    REQUIRE(fixture.buffer.HasMark());
+
+    registry.Invoke("keyboard-quit", context);
+    REQUIRE_FALSE(fixture.buffer.HasMark());
+}
+
+TEST_CASE("keyboard-quit without a mark is a no-op", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    fixture.buffer.InsertAtPoint("hello");
+    fixture.buffer.SetPoint(2);
+    registry.Invoke("keyboard-quit", context);
+
+    REQUIRE(fixture.buffer.Point() == 2);
+    REQUIRE_FALSE(fixture.buffer.HasMark());
+}
+
+TEST_CASE("C-g is bound to keyboard-quit, stopping a shift-select in progress", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+    Keymap     keymap = BuildDefaultGlobalKeymap();
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    Type(dispatcher, context, "hello world");
+    fixture.buffer.SetPoint(0);
+
+    KeyChord shiftRight;
+    shiftRight.Shift   = true;
+    shiftRight.Special = SpecialKey::Right;
+    dispatcher.Feed(shiftRight, context);
+    dispatcher.Feed(shiftRight, context);
+    REQUIRE(fixture.buffer.HasMark());
+
+    REQUIRE(dispatcher.Feed(ParseKeyChord("C-g"), context) == Dispatcher::Outcome::Invoked);
+    REQUIRE_FALSE(fixture.buffer.HasMark());
+
+    // The next Shift+Right starts a brand new selection from here, not a
+    // resumption of the cancelled one.
+    dispatcher.Feed(shiftRight, context);
+    REQUIRE(fixture.buffer.Mark() == 2);
+}
+
 TEST_CASE("exchange-point-and-mark without a mark is a no-op", "[Commands]") {
     CommandRegistry registry;
     RegisterBuiltinCommands(registry);
