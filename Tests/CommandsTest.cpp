@@ -156,6 +156,164 @@ TEST_CASE("kill-line at end of line kills the newline, joining with the next lin
     REQUIRE(buffer.Text() == "hibye");
 }
 
+TEST_CASE("set-mark-command sets the mark at point", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    fixture.buffer.InsertAtPoint("hello");
+    fixture.buffer.SetPoint(2);
+    registry.Invoke("set-mark-command", context);
+
+    REQUIRE(fixture.buffer.HasMark());
+    REQUIRE(fixture.buffer.Mark() == 2);
+}
+
+TEST_CASE("Plain motion commands no longer clear an existing mark", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+    Keymap     keymap = BuildDefaultGlobalKeymap();
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    Type(dispatcher, context, "hello world");
+    fixture.buffer.SetPoint(0);
+    dispatcher.Feed(ParseKeyChord("C-SPC"), context);
+    REQUIRE(fixture.buffer.HasMark());
+
+    dispatcher.Feed(ParseKeyChord("RIGHT"), context);
+    dispatcher.Feed(ParseKeyChord("RIGHT"), context);
+    dispatcher.Feed(ParseKeyChord("C-f"), context);
+    REQUIRE(fixture.buffer.HasMark());
+    REQUIRE(fixture.buffer.Mark() == 0);
+    REQUIRE(fixture.buffer.Point() == 3);
+}
+
+TEST_CASE("kill-region without a mark is a no-op", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    fixture.buffer.InsertAtPoint("hello");
+    registry.Invoke("kill-region", context);
+
+    REQUIRE(fixture.buffer.Text() == "hello");
+    REQUIRE(fixture.killRing.Empty());
+}
+
+TEST_CASE("kill-region deletes the region, pushes it to the kill ring, and clears the mark", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    fixture.buffer.InsertAtPoint("hello world");
+    fixture.buffer.SetPoint(6);
+    fixture.buffer.SetMark(0);
+    registry.Invoke("kill-region", context);
+
+    REQUIRE(fixture.buffer.Text() == "world");
+    REQUIRE(fixture.buffer.Point() == 0);
+    REQUIRE_FALSE(fixture.buffer.HasMark());
+    REQUIRE(fixture.killRing.Current() == "hello ");
+}
+
+TEST_CASE("kill-region works with mark after point, same as mark before point", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    fixture.buffer.InsertAtPoint("hello world");
+    fixture.buffer.SetPoint(0);
+    fixture.buffer.SetMark(6);
+    registry.Invoke("kill-region", context);
+
+    REQUIRE(fixture.buffer.Text() == "world");
+    REQUIRE(fixture.killRing.Current() == "hello ");
+}
+
+TEST_CASE("kill-ring-save copies the region without deleting it, and clears the mark", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    fixture.buffer.InsertAtPoint("hello world");
+    fixture.buffer.SetPoint(6);
+    fixture.buffer.SetMark(0);
+    registry.Invoke("kill-ring-save", context);
+
+    REQUIRE(fixture.buffer.Text() == "hello world");
+    REQUIRE_FALSE(fixture.buffer.HasMark());
+    REQUIRE(fixture.killRing.Current() == "hello ");
+}
+
+TEST_CASE("kill-ring-save without a mark is a no-op", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    fixture.buffer.InsertAtPoint("hello");
+    registry.Invoke("kill-ring-save", context);
+
+    REQUIRE(fixture.killRing.Empty());
+}
+
+TEST_CASE("C-SPC, move, C-w round-trips through yank", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+    Keymap     keymap = BuildDefaultGlobalKeymap();
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    Type(dispatcher, context, "hello world");
+    fixture.buffer.SetPoint(0);
+    dispatcher.Feed(ParseKeyChord("C-SPC"), context);
+    for (int i = 0; i < 5; ++i) {
+        dispatcher.Feed(ParseKeyChord("C-f"), context);
+    }
+    dispatcher.Feed(ParseKeyChord("C-w"), context);
+    REQUIRE(fixture.buffer.Text() == " world");
+
+    dispatcher.Feed(ParseKeyChord("C-y"), context);
+    REQUIRE(fixture.buffer.Text() == "hello world");
+}
+
+TEST_CASE("M-w copies the region via kill-ring-save", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+    Keymap     keymap = BuildDefaultGlobalKeymap();
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    Type(dispatcher, context, "hello world");
+    fixture.buffer.SetPoint(0);
+    dispatcher.Feed(ParseKeyChord("C-SPC"), context);
+    for (int i = 0; i < 5; ++i) {
+        dispatcher.Feed(ParseKeyChord("C-f"), context);
+    }
+    dispatcher.Feed(ParseKeyChord("M-w"), context);
+
+    REQUIRE(fixture.buffer.Text() == "hello world");
+    REQUIRE(fixture.killRing.Current() == "hello");
+}
+
 TEST_CASE("save-buffer writes the file and reports a confirmation message", "[Commands]") {
     CommandRegistry registry;
     RegisterBuiltinCommands(registry);

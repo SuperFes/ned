@@ -36,43 +36,36 @@ namespace {
 } // namespace
 
 void RegisterBuiltinCommands(CommandRegistry& registry) {
-    registry.Register("forward-char", "Move point forward one grapheme cluster.", [](CommandContext& context) {
-        context.buffer.ClearMark();
-        context.buffer.MoveForward();
-    });
+    // Deliberately does not ClearMark(): with set-mark-command (C-SPC) now
+    // keyboard-reachable, the mark must survive ordinary keyboard motion so
+    // kill-region/kill-ring-save can act on a real, moved-to region -- see
+    // set-mark-command's own registration below. Only an explicit mouse
+    // click (BufferView::OnMouseEvent) or kill-region/kill-ring-save
+    // themselves clear it now; mouse-drag never went through these commands
+    // at all (BufferView::OnMouseEvent calls Buffer::SetPoint directly).
+    registry.Register("forward-char", "Move point forward one grapheme cluster.",
+                      [](CommandContext& context) { context.buffer.MoveForward(); });
 
-    registry.Register("backward-char", "Move point backward one grapheme cluster.", [](CommandContext& context) {
-        context.buffer.ClearMark();
-        context.buffer.MoveBackward();
-    });
+    registry.Register("backward-char", "Move point backward one grapheme cluster.",
+                      [](CommandContext& context) { context.buffer.MoveBackward(); });
 
-    registry.Register("next-line", "Move point down one line, preserving column across a run.", [](CommandContext& context) {
-        context.buffer.ClearMark();
-        context.buffer.MoveToNextLine(TabWidth());
-    });
+    registry.Register("next-line", "Move point down one line, preserving column across a run.",
+                      [](CommandContext& context) { context.buffer.MoveToNextLine(TabWidth()); });
 
-    registry.Register("previous-line", "Move point up one line, preserving column across a run.", [](CommandContext& context) {
-        context.buffer.ClearMark();
-        context.buffer.MoveToPreviousLine(TabWidth());
-    });
+    registry.Register("previous-line", "Move point up one line, preserving column across a run.",
+                      [](CommandContext& context) { context.buffer.MoveToPreviousLine(TabWidth()); });
 
-    registry.Register("forward-word", "Move point forward one word.", [](CommandContext& context) {
-        context.buffer.ClearMark();
-        context.buffer.MoveForwardWord();
-    });
+    registry.Register("forward-word", "Move point forward one word.",
+                      [](CommandContext& context) { context.buffer.MoveForwardWord(); });
 
-    registry.Register("backward-word", "Move point backward one word.", [](CommandContext& context) {
-        context.buffer.ClearMark();
-        context.buffer.MoveBackwardWord();
-    });
+    registry.Register("backward-word", "Move point backward one word.",
+                      [](CommandContext& context) { context.buffer.MoveBackwardWord(); });
 
     registry.Register("scroll-page-down", "Move point down by roughly a page.", [](CommandContext& context) {
-        context.buffer.ClearMark();
         context.buffer.MoveDownLines(PageLineCount(context.viewportHeight), TabWidth());
     });
 
     registry.Register("scroll-page-up", "Move point up by roughly a page.", [](CommandContext& context) {
-        context.buffer.ClearMark();
         context.buffer.MoveUpLines(PageLineCount(context.viewportHeight), TabWidth());
     });
 
@@ -87,13 +80,11 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     registry.Register("beginning-of-line", "Move point to the beginning of the current line.", [](CommandContext& context) {
         const auto&       content = context.buffer.Content();
         const std::size_t line    = content.ByteOffsetToLine(context.buffer.Point());
-        context.buffer.ClearMark();
         context.buffer.SetPoint(content.LineToByteOffset(line));
     });
 
     registry.Register("end-of-line", "Move point to the end of the current line.", [](CommandContext& context) {
         const std::size_t target = LineContentEnd(context.buffer.Content(), context.buffer.Point());
-        context.buffer.ClearMark();
         context.buffer.SetPoint(target);
     });
 
@@ -114,6 +105,29 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
         if (!context.killRing.Empty()) {
             context.buffer.InsertAtPoint(context.killRing.Current());
         }
+    });
+
+    registry.Register("set-mark-command", "Set the mark at point.", [](CommandContext& context) { context.buffer.SetMark(context.buffer.Point()); });
+
+    // A no-op without a mark, matching kill-line's own "nothing to do" silence
+    // rather than surfacing a status message for what's a routine, frequent
+    // no-op (pressing C-w before ever setting a mark).
+    registry.Register("kill-region", "Kill (cut) the region between point and mark into the kill ring.", [](CommandContext& context) {
+        if (!context.buffer.HasMark()) {
+            return;
+        }
+        const auto [start, end] = context.buffer.Region();
+        context.killRing.Kill(context.buffer.DeleteRange(start, end - start));
+        context.buffer.ClearMark();
+    });
+
+    registry.Register("kill-ring-save", "Copy the region between point and mark into the kill ring, without deleting it.", [](CommandContext& context) {
+        if (!context.buffer.HasMark()) {
+            return;
+        }
+        const auto [start, end] = context.buffer.Region();
+        context.killRing.Kill(context.buffer.Content().Substring(start, end - start));
+        context.buffer.ClearMark();
     });
 
     registry.Register("undo", "Undo the last change.", [](CommandContext& context) {
@@ -475,6 +489,13 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("C-k"), "kill-line");
     keymap.Bind(ParseKeySequence("C-y"), "yank");
     keymap.Bind(ParseKeySequence("C-/"), "undo");
+    keymap.Bind(ParseKeySequence("C-SPC"), "set-mark-command");
+    keymap.Bind(ParseKeySequence("C-w"), "kill-region");
+    // Same "bind both real input shapes" reasoning as M-x below -- a fast
+    // Alt+w press arrives as one Meta-chord, a genuinely separate Escape-
+    // then-w press arrives as two.
+    keymap.Bind(ParseKeySequence("M-w"), "kill-ring-save");
+    keymap.Bind(ParseKeySequence("ESC w"), "kill-ring-save");
     keymap.Bind(ParseKeySequence("RET"), "newline");
     keymap.Bind(ParseKeySequence("LEFT"), "backward-char");
     keymap.Bind(ParseKeySequence("RIGHT"), "forward-char");
