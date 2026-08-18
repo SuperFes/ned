@@ -22,6 +22,27 @@ namespace {
         return (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
     }
 
+    // move-line-up/move-line-down/duplicate-line follow-up: a line's own
+    // content, *not* including its trailing newline byte if it has one --
+    // shared groundwork for all three, each of which needs to reconstruct
+    // text around a line boundary without assuming every line ends in a
+    // newline (only the buffer's very last line can lack one, but getting
+    // that case right is exactly the subtlety here: naively concatenating
+    // raw substrings across a swap can silently drop or duplicate a
+    // newline right at that boundary).
+    struct LineSpan {
+        std::size_t start;
+        std::size_t contentEnd; // excludes the trailing newline, if any
+        bool        hasTrailingNewline;
+    };
+
+    LineSpan GetLineSpan(const text::Rope& content, std::size_t line) {
+        const std::size_t start              = content.LineToByteOffset(line);
+        const bool         hasTrailingNewline = line + 1 < content.LineCount();
+        const std::size_t  contentEnd = hasTrailingNewline ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
+        return LineSpan{start, contentEnd, hasTrailingNewline};
+    }
+
     // Fraction of the viewport height a page up/down moves -- a fixed constant
     // for now rather than user-configurable (same "hardcoded C++ for now"
     // scope call as Theme selection in Phase 6; see ROADMAP.md). Emacs' own
@@ -231,6 +252,84 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     registry.Register("indent-for-tab-command", "Insert a tab character at point.", [](CommandContext& context) {
         context.buffer.ClearMark();
         context.buffer.InsertAtPoint("\t");
+    });
+
+    // move-line-up/move-line-down follow-up: swaps the current line with
+    // its neighbor by replacing the byte span covering both with them
+    // reordered, reconstructed via GetLineSpan rather than raw substring
+    // concatenation across the swap -- gets the "current line is the
+    // buffer's last, trailing-newline-less line" edge case right on
+    // whichever side it ends up on after the swap. Point's column *within*
+    // the moved line is preserved; a no-op at the buffer's first/last line
+    // respectively, not an error.
+    registry.Register("move-line-up", "Move the current line up, swapping it with the line above.", [](CommandContext& context) {
+        auto&             buffer  = context.buffer;
+        const auto&       content = buffer.Content();
+        const std::size_t line    = content.ByteOffsetToLine(buffer.Point());
+        if (line == 0) {
+            return;
+        }
+        const LineSpan    prev   = GetLineSpan(content, line - 1);
+        const LineSpan    curr   = GetLineSpan(content, line);
+        const std::size_t column = std::min(buffer.Point() - curr.start, curr.contentEnd - curr.start);
+
+        const std::string prevText = content.Substring(prev.start, curr.start - 1 - prev.start); // excludes prev's own newline
+        const std::string currText = content.Substring(curr.start, curr.contentEnd - curr.start);
+        std::string       replacement = currText + "\n" + prevText;
+        if (curr.hasTrailingNewline) {
+            replacement += "\n";
+        }
+
+        buffer.ClearMark();
+        buffer.DeleteRange(prev.start, curr.contentEnd + (curr.hasTrailingNewline ? 1 : 0) - prev.start);
+        buffer.InsertAt(prev.start, replacement);
+        buffer.SetPoint(prev.start + column);
+    });
+
+    registry.Register("move-line-down", "Move the current line down, swapping it with the line below.", [](CommandContext& context) {
+        auto&             buffer  = context.buffer;
+        const auto&       content = buffer.Content();
+        const std::size_t line    = content.ByteOffsetToLine(buffer.Point());
+        if (line + 1 >= content.LineCount()) {
+            return;
+        }
+        const LineSpan    curr   = GetLineSpan(content, line);
+        const LineSpan    next   = GetLineSpan(content, line + 1);
+        const std::size_t column = std::min(buffer.Point() - curr.start, curr.contentEnd - curr.start);
+
+        const std::string currText = content.Substring(curr.start, curr.contentEnd - curr.start);
+        const std::string nextText = content.Substring(next.start, next.contentEnd - next.start);
+        std::string       replacement = nextText + "\n" + currText;
+        if (next.hasTrailingNewline) {
+            replacement += "\n";
+        }
+
+        buffer.ClearMark();
+        buffer.DeleteRange(curr.start, next.contentEnd + (next.hasTrailingNewline ? 1 : 0) - curr.start);
+        buffer.InsertAt(curr.start, replacement);
+        buffer.SetPoint(curr.start + (nextText.size() + 1) + column);
+    });
+
+    // duplicate-line follow-up: inserts a copy of the current line
+    // immediately below it, moving point into the duplicate at the same
+    // column -- VSCode/Sublime/JetBrains' own "duplicate down" convention.
+    // Uses GetLineSpan for the same trailing-newline-edge-case reason
+    // move-line-up/down do.
+    registry.Register("duplicate-line", "Duplicate the current line, moving point into the copy.", [](CommandContext& context) {
+        auto&             buffer  = context.buffer;
+        const auto&       content = buffer.Content();
+        const std::size_t line    = content.ByteOffsetToLine(buffer.Point());
+        const LineSpan    curr    = GetLineSpan(content, line);
+        const std::size_t column  = std::min(buffer.Point() - curr.start, curr.contentEnd - curr.start);
+
+        const std::string lineText     = content.Substring(curr.start, curr.contentEnd - curr.start);
+        const std::string insertion    = curr.hasTrailingNewline ? lineText + "\n" : "\n" + lineText;
+        const std::size_t insertOffset = curr.hasTrailingNewline ? curr.contentEnd + 1 : curr.contentEnd;
+        const std::size_t duplicateStart = curr.hasTrailingNewline ? insertOffset : insertOffset + 1;
+
+        buffer.ClearMark();
+        buffer.InsertAt(insertOffset, insertion);
+        buffer.SetPoint(duplicateStart + column);
     });
 
     registry.Register("quit", "Exit the editor, or prompt for confirmation if any buffer has unsaved changes.",
@@ -702,6 +801,20 @@ Keymap BuildDefaultGlobalKeymap() {
     // registration comment above and OrgMode()'s doc comment for why Org
     // additionally binds its own real C-c C-o to the same command.
     keymap.Bind(ParseKeySequence("C-c C-l"), "open-link-at-point");
+    // move-line-up/move-line-down/duplicate-line follow-up: M-UP/M-DOWN
+    // aren't a real Emacs binding for anything already, and the usual
+    // "cover both real input shapes" dual binding applies the same as
+    // every other Meta chord above. duplicate-line has no standard
+    // cross-editor chord to align with (Ctrl+D is already delete-char
+    // here, and Ctrl+Shift+<letter> isn't reliably decodable from a real
+    // terminal at all -- same class of gap as Ctrl+Shift+Z for redo would
+    // hit) -- C-c d picked as a free, mnemonic chord under this codebase's
+    // own C-c-prefix convention instead.
+    keymap.Bind(ParseKeySequence("M-UP"), "move-line-up");
+    keymap.Bind(ParseKeySequence("ESC UP"), "move-line-up");
+    keymap.Bind(ParseKeySequence("M-DOWN"), "move-line-down");
+    keymap.Bind(ParseKeySequence("ESC DOWN"), "move-line-down");
+    keymap.Bind(ParseKeySequence("C-c d"), "duplicate-line");
     keymap.Bind(ParseKeySequence("C-x 2"), "split-window-below");
     keymap.Bind(ParseKeySequence("C-x 3"), "split-window-right");
     keymap.Bind(ParseKeySequence("C-x 0"), "delete-window");

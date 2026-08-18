@@ -84,8 +84,8 @@ already reports `Control+Special::Left/Right` for Ctrl+Arrow).
 | Fuzzy file finder / command palette | `Ctrl+P` / `Ctrl+Shift+P` | **Missing** | On the wishlist: "Fast fuzzy file finder / command palette" — note Ned already has `find-file`'s path-completion (`Tab`) and `M-x`'s fuzzy-narrowed `execute-extended-command`, so the foundation is closer than "missing" alone suggests |
 | Format document (on demand, not just on save) | `Ctrl+Shift+I` / `Alt+Shift+F` | **Bound** | `format-buffer`, M-x-only (no default keybinding) |
 | Toggle line comment | `Ctrl+/` | **Missing** | No comment-toggle command exists; `Ctrl+/` no longer collides with `undo` (moved to `C-_`, see the canonical-Emacs table above) but binding literal `C-/` would hit the exact same real-terminal-unreachability problem that move fixed — no terminal byte distinguishes Ctrl+/ from Ctrl+_, and only the latter is decoded |
-| Duplicate line | `Ctrl+D` / `Ctrl+Shift+D` | **Missing** | No command |
-| Move line up/down | `Alt+Up`/`Alt+Down` | **Missing** | No command |
+| Duplicate line | `Ctrl+D` / `Ctrl+Shift+D` | **Bound** | `duplicate-line`, bound to `C-c d` instead (both usual chords already taken/unreachable) |
+| Move line up/down | `Alt+Up`/`Alt+Down` | **Bound** | `move-line-up`/`move-line-down`; `ESC UP`/`ESC DOWN` too |
 | Expand selection (AST-aware) | `Alt+Shift+Right`/`Ctrl+W` in some IDEs | **Missing** | Explicitly on the wishlist: "Structural/AST-aware selection expansion (expand-to-next-syntax-node)" |
 | Quick-fix / code actions | `Ctrl+.` | **Missing** | Covered under the LSP wishlist item's "code actions" |
 | Git gutter actions (stage hunk, blame, diff) | varies | **Missing** | On the wishlist: "Git integration: inline blame, diff gutters, hunk staging, a git status panel" |
@@ -195,10 +195,16 @@ Plausible, but a real tradeoff either way — worth an explicit decision, not a 
   substantial design lift (editing model, not just a keybinding) or gets deferred with a
   simple 20-minute analysis; flagged here rather than under Want because the *keybinding*
   question genuinely depends on unresolved design questions.
-- **Move line up/down, duplicate line** — genuinely useful, low collision risk (no
-  standard Emacs binding at those keys to protect), but not on ROADMAP at all yet —
-  worth a deliberate decision to adopt rather than assuming they belong just because
-  they're common elsewhere.
+- ~~**Move line up/down, duplicate line**~~ — **done.** `move-line-up`/`move-line-down`
+  (`M-UP`/`M-DOWN` + `ESC UP`/`ESC DOWN`) swap the current line with its neighbor,
+  preserving point's column within the moved line; `duplicate-line` (`C-c d` — no
+  standard cross-editor chord was free here: `Ctrl+D` is already `delete-char`,
+  `Ctrl+Shift+<letter>` isn't reliably decodable from a real terminal) copies the
+  current line below it, moving point into the copy (VSCode/Sublime/JetBrains'
+  "duplicate down" convention). All three get the buffer's last (trailing-newline-less)
+  line's edge case right via a shared `GetLineSpan` helper, not raw substring
+  concatenation across the swap/insert boundary — traced by hand and covered by tests
+  for both directions landing on that line.
 - **Toggle line comment** — high real-world value. `Ctrl+/` no longer collides with
   `undo` (moved to `C-_`, see the canonical-Emacs table's `undo` row), so the obvious
   chord is actually free now — but comment-syntax-per-language is still a real design

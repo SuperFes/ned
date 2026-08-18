@@ -803,6 +803,140 @@ TEST_CASE("shift-select commands extend an existing mark rather than resetting i
     REQUIRE(fixture.buffer.Point() == 6);
 }
 
+TEST_CASE("move-line-up swaps the current line with the line above, preserving column", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    fixture.buffer.InsertAtPoint("a\nb\nc"); // last line, "c", has no trailing newline
+    fixture.buffer.SetPoint(4);              // start of "c"
+
+    registry.Invoke("move-line-up", context);
+
+    REQUIRE(fixture.buffer.Text() == "a\nc\nb");
+    REQUIRE(fixture.buffer.Point() == 2); // start of "c", now the second line
+}
+
+TEST_CASE("move-line-up on the first line is a no-op", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    fixture.buffer.InsertAtPoint("a\nb\nc");
+    fixture.buffer.SetPoint(0);
+
+    registry.Invoke("move-line-up", context);
+
+    REQUIRE(fixture.buffer.Text() == "a\nb\nc");
+    REQUIRE(fixture.buffer.Point() == 0);
+}
+
+TEST_CASE("move-line-down swaps the current line with the line below, preserving column", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    fixture.buffer.InsertAtPoint("a\nb\nc"); // "c" (below "b") has no trailing newline
+    fixture.buffer.SetPoint(2);              // start of "b"
+
+    registry.Invoke("move-line-down", context);
+
+    REQUIRE(fixture.buffer.Text() == "a\nc\nb");
+    REQUIRE(fixture.buffer.Point() == 4); // start of "b", now the last line
+}
+
+TEST_CASE("move-line-down on the last line is a no-op", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    fixture.buffer.InsertAtPoint("a\nb\nc");
+    fixture.buffer.SetPoint(4);
+
+    registry.Invoke("move-line-down", context);
+
+    REQUIRE(fixture.buffer.Text() == "a\nb\nc");
+    REQUIRE(fixture.buffer.Point() == 4);
+}
+
+TEST_CASE("move-line-up/down clear an existing mark", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    fixture.buffer.InsertAtPoint("a\nb\nc");
+    fixture.buffer.SetPoint(2);
+    fixture.buffer.SetMark(0);
+
+    registry.Invoke("move-line-down", context);
+    REQUIRE_FALSE(fixture.buffer.HasMark());
+}
+
+TEST_CASE("duplicate-line copies the current line below it, moving point into the copy", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    fixture.buffer.InsertAtPoint("a\nb\nc");
+    fixture.buffer.SetPoint(0); // start of "a"
+
+    registry.Invoke("duplicate-line", context);
+
+    REQUIRE(fixture.buffer.Text() == "a\na\nb\nc");
+    REQUIRE(fixture.buffer.Point() == 2); // start of the duplicate "a"
+}
+
+TEST_CASE("duplicate-line on the last (trailing-newline-less) line still terminates correctly", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    fixture.buffer.InsertAtPoint("a\nb\nc"); // "c" has no trailing newline
+    fixture.buffer.SetPoint(4);              // start of "c"
+
+    registry.Invoke("duplicate-line", context);
+
+    REQUIRE(fixture.buffer.Text() == "a\nb\nc\nc");
+    REQUIRE(fixture.buffer.Point() == 6); // start of the duplicate "c"
+}
+
+TEST_CASE("M-UP/M-DOWN are bound to move-line-up/down, C-c d to duplicate-line", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+    Keymap     keymap = BuildDefaultGlobalKeymap();
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    fixture.buffer.InsertAtPoint("a\nb");
+    fixture.buffer.SetPoint(2);
+
+    REQUIRE(dispatcher.Feed(ParseKeyChord("M-UP"), context) == Dispatcher::Outcome::Invoked);
+    REQUIRE(fixture.buffer.Text() == "b\na");
+
+    REQUIRE(dispatcher.Feed(ParseKeyChord("M-DOWN"), context) == Dispatcher::Outcome::Invoked);
+    REQUIRE(fixture.buffer.Text() == "a\nb");
+
+    REQUIRE(dispatcher.Feed(ParseKeyChord("C-c"), context) == Dispatcher::Outcome::Pending);
+    REQUIRE(dispatcher.Feed(ParseKeyChord("d"), context) == Dispatcher::Outcome::Invoked);
+    REQUIRE(fixture.buffer.Text() == "a\nb\nb");
+}
+
 TEST_CASE("S-LEFT/S-RIGHT/S-UP/S-DOWN are bound to the shift-select commands", "[Commands]") {
     CommandRegistry registry;
     RegisterBuiltinCommands(registry);
