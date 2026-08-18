@@ -255,7 +255,7 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
     FoldFunction fold;
     if (!foldQuerySource.empty()) {
         const auto foldQuery = std::make_shared<treesitter::Query>(language, foldQuerySource);
-        fold = [parser, foldQuery, sharedParse](std::string_view bufferText) -> std::vector<std::pair<std::size_t, std::size_t>> {
+        fold                 = [parser, foldQuery, sharedParse](std::string_view bufferText) -> std::vector<std::pair<std::size_t, std::size_t>> {
             if (!sharedParse->lastTree.has_value() || sharedParse->lastText != bufferText) {
                 sharedParse->lastTree = parser->Parse(bufferText);
                 sharedParse->lastText.assign(bufferText);
@@ -276,7 +276,41 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
         };
     }
 
-    return Mode{.name = std::move(name), .keymap = Keymap(), .highlight = std::move(highlight), .fold = std::move(fold)};
+    // structural-selection-expansion follow-up: a third closure sharing the
+    // same parser/sharedParse as highlight/fold above, so an expand-selection
+    // keypress that happens to land on the same Paint() cycle as a
+    // highlight/fold recompute (the common case -- nothing else invalidates
+    // sharedParse's cache) doesn't trigger a third redundant full reparse.
+    // Named-node-only walk (NamedDescendantForByteRange/Parent, not
+    // Child/ChildCount, which are unnamed-inclusive) -- this is what keeps a
+    // lone punctuation token (";", "(", ...) from ever being its own
+    // expansion step, with no per-language "skip list" needed.
+    ExpandSelectionFunction expandSelection = [parser, sharedParse](std::string_view bufferText, std::size_t startByte,
+                                                                    std::size_t endByte) -> std::optional<std::pair<std::size_t, std::size_t>> {
+        if (!sharedParse->lastTree.has_value() || sharedParse->lastText != bufferText) {
+            sharedParse->lastTree = parser->Parse(bufferText);
+            sharedParse->lastText.assign(bufferText);
+        }
+        const treesitter::Tree& tree = *sharedParse->lastTree;
+        if (tree.IsNull()) {
+            return std::nullopt;
+        }
+
+        treesitter::Node node = tree.RootNode().NamedDescendantForByteRange(startByte, endByte);
+        while (!node.IsNull() && node.StartByte() == startByte && node.EndByte() == endByte) {
+            node = node.Parent();
+        }
+        if (node.IsNull()) {
+            return std::nullopt; // already at the root -- nothing bigger to expand to
+        }
+        return std::make_pair(node.StartByte(), node.EndByte());
+    };
+
+    return Mode{.name            = std::move(name),
+                .keymap          = Keymap(),
+                .highlight       = std::move(highlight),
+                .fold            = std::move(fold),
+                .expandSelection = std::move(expandSelection)};
 }
 
 Mode TreeSitterMode(std::string name, std::string_view languageName, const char* querySource,
@@ -292,7 +326,7 @@ Mode TreeSitterMode(std::string name, std::string_view languageName, const char*
 }
 
 Mode JanetMode() {
-    Mode mode = TreeSitterMode("janet-mode", "janet", treesitter::queries::kJanet);
+    Mode mode              = TreeSitterMode("janet-mode", "janet", treesitter::queries::kJanet);
     mode.lineCommentPrefix = ";"; // Lisp-family convention
     return mode;
 }
@@ -305,39 +339,39 @@ Mode JsonMode() {
 }
 
 Mode CMode() {
-    Mode mode = TreeSitterMode("c-mode", "c", treesitter::queries::kC, treesitter::queries::kCFolds);
+    Mode mode              = TreeSitterMode("c-mode", "c", treesitter::queries::kC, treesitter::queries::kCFolds);
     mode.lineCommentPrefix = "//";
     return mode;
 }
 
 Mode CppMode() {
-    Mode mode = TreeSitterMode("cpp-mode", "cpp", treesitter::queries::kCpp, treesitter::queries::kCppFolds);
+    Mode mode              = TreeSitterMode("cpp-mode", "cpp", treesitter::queries::kCpp, treesitter::queries::kCppFolds);
     mode.lineCommentPrefix = "//";
     return mode;
 }
 
 Mode PhpMode() {
-    Mode mode = TreeSitterMode("php-mode", "php", treesitter::queries::kPhp);
+    Mode mode              = TreeSitterMode("php-mode", "php", treesitter::queries::kPhp);
     mode.lineCommentPrefix = "//";
     return mode;
 }
 
 Mode JavaScriptMode() {
-    Mode mode = TreeSitterMode("javascript-mode", "javascript", treesitter::queries::kJavaScript,
-                               treesitter::queries::kJavaScriptFolds);
+    Mode mode              = TreeSitterMode("javascript-mode", "javascript", treesitter::queries::kJavaScript,
+                                            treesitter::queries::kJavaScriptFolds);
     mode.lineCommentPrefix = "//";
     return mode;
 }
 
 Mode TypeScriptMode() {
-    Mode mode = TreeSitterMode("typescript-mode", "typescript", treesitter::queries::kTypeScript,
-                               treesitter::queries::kTypeScriptFolds);
+    Mode mode              = TreeSitterMode("typescript-mode", "typescript", treesitter::queries::kTypeScript,
+                                            treesitter::queries::kTypeScriptFolds);
     mode.lineCommentPrefix = "//";
     return mode;
 }
 
 Mode TsxMode() {
-    Mode mode = TreeSitterMode("tsx-mode", "tsx", treesitter::queries::kTypeScript, treesitter::queries::kTypeScriptFolds);
+    Mode mode              = TreeSitterMode("tsx-mode", "tsx", treesitter::queries::kTypeScript, treesitter::queries::kTypeScriptFolds);
     mode.lineCommentPrefix = "//";
     return mode;
 }
@@ -355,13 +389,13 @@ Mode CssMode() {
 }
 
 Mode PythonMode() {
-    Mode mode = TreeSitterMode("python-mode", "python", treesitter::queries::kPython, treesitter::queries::kPythonFolds);
+    Mode mode              = TreeSitterMode("python-mode", "python", treesitter::queries::kPython, treesitter::queries::kPythonFolds);
     mode.lineCommentPrefix = "#";
     return mode;
 }
 
 Mode BashMode() {
-    Mode mode = TreeSitterMode("bash-mode", "bash", treesitter::queries::kBash);
+    Mode mode              = TreeSitterMode("bash-mode", "bash", treesitter::queries::kBash);
     mode.lineCommentPrefix = "#";
     return mode;
 }

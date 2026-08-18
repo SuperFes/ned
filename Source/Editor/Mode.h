@@ -12,8 +12,10 @@
 
 #include <cstddef>
 #include <functional>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "Keymap.h"
@@ -141,11 +143,24 @@ using HighlightFunction = std::function<std::vector<HighlightSpan>(std::string_v
 // such a mode, not merely an inert one -- see CodeFold.h.
 using FoldFunction = std::function<std::vector<std::pair<std::size_t, std::size_t>>(std::string_view bufferText)>;
 
+// structural-selection-expansion follow-up. Given a buffer's full text and
+// the current selection's byte range [startByte, endByte) (a zero-width
+// range at point when there's no mark), returns the byte range of the next
+// enclosing named node to expand the selection to -- or std::nullopt if
+// [startByte, endByte) already is (or is past) the root node, i.e. there's
+// nothing bigger left to expand to. Shrinking back down is not this
+// function's job -- BufferView keeps its own expansion-history stack (see
+// BufferView.h) rather than asking the tree "what came before," since a
+// node can have multiple children and the tree alone can't say which one
+// was actually selected on the way up.
+using ExpandSelectionFunction =
+    std::function<std::optional<std::pair<std::size_t, std::size_t>>(std::string_view bufferText, std::size_t startByte, std::size_t endByte)>;
+
 struct Mode {
     std::string       name;
     Keymap            keymap;
     HighlightFunction highlight; // empty function = no highlighting
-    FoldFunction       fold;     // empty function = no folding
+    FoldFunction      fold;      // empty function = no folding
     // toggle-line-comment follow-up: the token toggle-line-comment prefixes
     // a line with (plus one following space on insert -- see that
     // command's own doc comment in Commands.cpp), e.g. "//" for C-family
@@ -154,6 +169,11 @@ struct Mode {
     // convention) means toggle-line-comment reports there's nothing
     // configured rather than guessing.
     std::string lineCommentPrefix;
+    // structural-selection-expansion follow-up: empty function (the
+    // default) means expand-selection/shrink-selection report there's no
+    // structural selection support configured for this mode, same
+    // "empty means not configured" convention as highlight/fold above.
+    ExpandSelectionFunction expandSelection;
 };
 
 // The default mode: no special keybindings, no highlighting.

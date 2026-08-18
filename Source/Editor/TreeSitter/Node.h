@@ -41,6 +41,21 @@ class Node {
     [[nodiscard]] std::size_t ChildCount() const;
     [[nodiscard]] Node        Child(std::size_t index) const; // precondition: index < ChildCount()
 
+    // structural-selection-expansion follow-up. True for a real grammar rule
+    // (e.g. "binary_expression"), false for an anonymous/punctuation token
+    // (e.g. a literal ";" or "("). NamedDescendantForByteRange/Parent below
+    // are meant to be walked together, named-node-only, so a selection
+    // expansion step never stops on a lone punctuation token.
+    [[nodiscard]] bool IsNamed() const;
+
+    // The immediate parent, or a null Node (see IsNull()) at the root.
+    [[nodiscard]] Node Parent() const;
+
+    // The smallest named node whose byte range fully contains [start, end].
+    // A null Node (see IsNull()) if the tree has no such node (e.g. an
+    // out-of-range request).
+    [[nodiscard]] Node NamedDescendantForByteRange(std::size_t start, std::size_t end) const;
+
     // True for a node returned by a failed/out-of-range lookup (e.g.
     // Tree::RootNode() on a parse that produced no tree) -- every other
     // accessor is only meaningful when this is false.

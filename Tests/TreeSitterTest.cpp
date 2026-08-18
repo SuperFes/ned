@@ -51,6 +51,51 @@ TEST_CASE("Node::Child navigates into the parse tree", "[TreeSitter]") {
     REQUIRE(object.Type() == "object");
 }
 
+TEST_CASE("Node::Parent walks up to the enclosing node, and to a null Node at the root", "[TreeSitter]") {
+    Parser            parser(*LanguageByName("json"));
+    const std::string text = R"({"a": 1})";
+    Tree              tree = parser.Parse(text);
+
+    const Node root   = tree.RootNode();
+    const Node object = root.Child(0);
+    REQUIRE(object.Type() == "object");
+
+    const Node parentOfObject = object.Parent();
+    REQUIRE_FALSE(parentOfObject.IsNull());
+    REQUIRE(parentOfObject.Type() == "document");
+
+    REQUIRE(root.Parent().IsNull());
+}
+
+TEST_CASE("Node::IsNamed distinguishes a grammar rule from an anonymous punctuation token", "[TreeSitter]") {
+    Parser            parser(*LanguageByName("json"));
+    const std::string text = R"({"a": 1})";
+    Tree              tree = parser.Parse(text);
+
+    const Node object = tree.RootNode().Child(0);
+    REQUIRE(object.IsNamed());
+
+    // The object's own first/last children are the literal "{"/"}" tokens --
+    // unnamed, unlike every real grammar rule.
+    REQUIRE_FALSE(object.Child(0).IsNamed());
+}
+
+TEST_CASE("Node::NamedDescendantForByteRange finds the smallest named node containing a byte range", "[TreeSitter]") {
+    Parser            parser(*LanguageByName("json"));
+    const std::string text = R"({"a": 1})";
+    Tree              tree = parser.Parse(text);
+
+    // Byte 6 is inside the "1" number literal.
+    const Node number = tree.RootNode().NamedDescendantForByteRange(6, 6);
+    REQUIRE_FALSE(number.IsNull());
+    REQUIRE(number.Type() == "number");
+
+    // A range spanning the whole "1" should resolve to that same node.
+    const Node exact = tree.RootNode().NamedDescendantForByteRange(number.StartByte(), number.EndByte());
+    REQUIRE(exact.StartByte() == number.StartByte());
+    REQUIRE(exact.EndByte() == number.EndByte());
+}
+
 TEST_CASE("Query::Captures finds string and number literals with correct byte ranges", "[TreeSitter]") {
     const Language    language = *LanguageByName("json");
     Parser            parser(language);
