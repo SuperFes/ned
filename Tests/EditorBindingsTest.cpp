@@ -3,6 +3,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include "Editor/CodeFoldSettings.h"
 #include "Editor/Dispatcher.h"
@@ -11,6 +12,7 @@
 #include "Editor/Key.h"
 #include "Editor/Keymap.h"
 #include "Editor/Link.h"
+#include "Editor/Lsp/LspServerConfig.h"
 #include "Editor/ProjectRoot.h"
 #include "Editor/ScratchPad.h"
 #include "Editor/ScriptingSession.h"
@@ -331,8 +333,51 @@ TEST_CASE("ned/syntax-classes lists every valid class name", "[EditorBindings]")
     Environment& env = ned_tests::TestEnvironment();
     InstallEditorBindings(env);
 
-    const Janet       result = env.DoString(R"((ned/syntax-classes))");
+    const Janet result = env.DoString(R"((ned/syntax-classes))");
     REQUIRE(janet_checktype(result, JANET_ARRAY));
     const JanetArray* array = janet_unwrap_array(result);
     REQUIRE(array->count == static_cast<std::int32_t>(ned::editor::SyntaxClassNames().size()));
+}
+
+TEST_CASE("ned/set-lsp-command configures a per-language LSP server command", "[EditorBindings]") {
+    struct LspCommandGuard {
+        ~LspCommandGuard() {
+            ned::editor::lsp::SetLspServerCommand("ned-editor-bindings-test-c", {});
+        }
+    } guard;
+
+    Environment& env = ned_tests::TestEnvironment();
+    InstallEditorBindings(env);
+
+    env.DoString(R"((ned/set-lsp-command "ned-editor-bindings-test-c" ["clangd"]))");
+    const auto command = ned::editor::lsp::LspServerCommand("ned-editor-bindings-test-c");
+    REQUIRE(command.has_value());
+    REQUIRE(*command == std::vector<std::string>{"clangd"});
+}
+
+TEST_CASE("ned/set-lsp-command accepts a real Janet array too, not just a tuple", "[EditorBindings]") {
+    struct LspCommandGuard {
+        ~LspCommandGuard() {
+            ned::editor::lsp::SetLspServerCommand("ned-editor-bindings-test-py", {});
+        }
+    } guard;
+
+    Environment& env = ned_tests::TestEnvironment();
+    InstallEditorBindings(env);
+
+    env.DoString(R"((ned/set-lsp-command "ned-editor-bindings-test-py" @["pyright-langserver" "--stdio"]))");
+    const auto command = ned::editor::lsp::LspServerCommand("ned-editor-bindings-test-py");
+    REQUIRE(command.has_value());
+    REQUIRE(*command == std::vector<std::string>{"pyright-langserver", "--stdio"});
+}
+
+TEST_CASE("ned/set-lsp-command with an empty argv clears the configured command", "[EditorBindings]") {
+    Environment& env = ned_tests::TestEnvironment();
+    InstallEditorBindings(env);
+
+    env.DoString(R"((ned/set-lsp-command "ned-editor-bindings-test-clear" ["some-server"]))");
+    REQUIRE(ned::editor::lsp::LspServerCommand("ned-editor-bindings-test-clear").has_value());
+
+    env.DoString(R"((ned/set-lsp-command "ned-editor-bindings-test-clear" []))");
+    REQUIRE_FALSE(ned::editor::lsp::LspServerCommand("ned-editor-bindings-test-clear").has_value());
 }

@@ -50,6 +50,21 @@ std::string FromJanet<std::string>(Janet value) {
 }
 
 template <>
+std::vector<std::string> FromJanet<std::vector<std::string>>(Janet value) {
+    const Janet* items = nullptr;
+    std::int32_t count = 0;
+    if (!janet_indexed_view(value, &items, &count)) {
+        throw std::runtime_error("ned: expected an array or tuple of strings");
+    }
+    std::vector<std::string> result;
+    result.reserve(static_cast<std::size_t>(count));
+    for (std::int32_t i = 0; i < count; ++i) {
+        result.push_back(FromJanet<std::string>(items[i]));
+    }
+    return result;
+}
+
+template <>
 Janet FromJanet<Janet>(Janet value) {
     return value;
 }
@@ -106,7 +121,8 @@ RootedValue::Root::~Root() {
     janet_gcunroot(value);
 }
 
-RootedValue::RootedValue(Janet value) : root_(std::make_shared<Root>(value)) {}
+RootedValue::RootedValue(Janet value) : root_(std::make_shared<Root>(value)) {
+}
 
 Janet RootedValue::Get() const {
     return root_->value;

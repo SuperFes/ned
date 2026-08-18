@@ -28,8 +28,9 @@ namespace {
 Pane::Pane(text::Buffer& buffer, text::KillRing& killRing, editor::RegisterTable& registers,
            text::BufferList& bufferList, const editor::CommandRegistry& registry, const editor::Keymap& janetKeymap,
            const editor::Keymap& globalKeymap, editor::Mode mode, std::string& statusMessage, const Theme& theme,
-           ProjectSidebar* projectSidebar, std::function<void(editor::InteractiveRequest)> onWindowRequest,
-           std::function<void(text::Buffer&)> onBufferClosed) : activeBuffer_(buffer), mode_(std::move(mode)),
+           ProjectSidebar* projectSidebar, editor::lsp::LspManager* lspManager,
+           std::function<void(editor::InteractiveRequest)> onWindowRequest,
+           std::function<void(text::Buffer&)>              onBufferClosed) : activeBuffer_(buffer), mode_(std::move(mode)),
                                                                 dispatcher_(registry, editor::KeymapStack({&janetKeymap, &mode_.keymap, &globalKeymap})),
                                                                 bufferView_(std::make_shared<BufferView>(activeBuffer_, killRing, registers, bufferList, dispatcher_,
                                                                                                          statusMessage, mode_, theme)),
@@ -40,6 +41,7 @@ Pane::Pane(text::Buffer& buffer, text::KillRing& killRing, editor::RegisterTable
     bufferView_->SetScrollBar(scrollBar_.get());
     bufferView_->SetScrollArrows(scrollUp_.get(), scrollDown_.get());
     bufferView_->SetProjectSidebar(projectSidebar);
+    bufferView_->SetLspManager(lspManager);
     bufferView_->SetOnWindowRequest(std::move(onWindowRequest));
     bufferView_->SetOnBufferClosed(std::move(onBufferClosed));
 
@@ -244,7 +246,7 @@ WindowManager::WindowManager(text::Buffer& initialBuffer, text::KillRing& killRi
 std::unique_ptr<Pane> WindowManager::MakePane(text::Buffer& buffer, editor::Mode mode) {
     return std::make_unique<Pane>(
         buffer, killRing_, registers_, bufferList_, registry_, janetKeymap_, globalKeymap_, std::move(mode),
-        statusMessage_, theme_, projectSidebar_,
+        statusMessage_, theme_, projectSidebar_, lspManager_,
         [this](editor::InteractiveRequest request) { HandleWindowRequest(request); },
         [this](text::Buffer& closedBuffer) { HandleBufferClosed(closedBuffer); });
 }
@@ -253,6 +255,13 @@ void WindowManager::SetProjectSidebar(ProjectSidebar* sidebar) {
     projectSidebar_ = sidebar;
     for (Pane* pane : Leaves()) {
         pane->Buffer().SetProjectSidebar(sidebar);
+    }
+}
+
+void WindowManager::SetLspManager(editor::lsp::LspManager* lspManager) {
+    lspManager_ = lspManager;
+    for (Pane* pane : Leaves()) {
+        pane->Buffer().SetLspManager(lspManager);
     }
 }
 
@@ -360,6 +369,11 @@ void WindowManager::ReassignPanesShowing(text::Buffer& closingBuffer, Pane* skip
 }
 
 void WindowManager::HandleBufferClosed(text::Buffer& closedBuffer) {
+    // LSP client follow-up: sends textDocument/didClose (if this buffer was
+    // ever synced) before any pane reassignment below touches it.
+    if (lspManager_) {
+        lspManager_->NotifyBufferClosed(closedBuffer);
+    }
     // The pane whose own CloseBufferNow triggered this already handles its
     // own ActiveBuffer reassignment independently -- skip it here so a
     // single-buffer-in-the-whole-app close doesn't conjure two separate
@@ -383,6 +397,12 @@ void WindowManager::NotifyBufferClosing(text::Buffer& closingBuffer) {
     // manifesting inside ModeLine::Paint's own string building, confirmed
     // via two real coredumps, not guessed) the next time that pane's own
     // ModeLine/BufferView painted.
+    // LSP client follow-up: same reasoning as HandleBufferClosed above --
+    // this is a real close too (ProjectSidebar's own bufferList_.Close()
+    // call), it just isn't pane-driven.
+    if (lspManager_) {
+        lspManager_->NotifyBufferClosed(closingBuffer);
+    }
     ReassignPanesShowing(closingBuffer, nullptr);
 }
 

@@ -38,8 +38,8 @@ namespace {
 
     LineSpan GetLineSpan(const text::Rope& content, std::size_t line) {
         const std::size_t start              = content.LineToByteOffset(line);
-        const bool         hasTrailingNewline = line + 1 < content.LineCount();
-        const std::size_t  contentEnd = hasTrailingNewline ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
+        const bool        hasTrailingNewline = line + 1 < content.LineCount();
+        const std::size_t contentEnd         = hasTrailingNewline ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
         return LineSpan{start, contentEnd, hasTrailingNewline};
     }
 
@@ -289,8 +289,8 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
         const LineSpan    curr   = GetLineSpan(content, line);
         const std::size_t column = std::min(buffer.Point() - curr.start, curr.contentEnd - curr.start);
 
-        const std::string prevText = content.Substring(prev.start, curr.start - 1 - prev.start); // excludes prev's own newline
-        const std::string currText = content.Substring(curr.start, curr.contentEnd - curr.start);
+        const std::string prevText    = content.Substring(prev.start, curr.start - 1 - prev.start); // excludes prev's own newline
+        const std::string currText    = content.Substring(curr.start, curr.contentEnd - curr.start);
         std::string       replacement = currText + "\n" + prevText;
         if (curr.hasTrailingNewline) {
             replacement += "\n";
@@ -313,8 +313,8 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
         const LineSpan    next   = GetLineSpan(content, line + 1);
         const std::size_t column = std::min(buffer.Point() - curr.start, curr.contentEnd - curr.start);
 
-        const std::string currText = content.Substring(curr.start, curr.contentEnd - curr.start);
-        const std::string nextText = content.Substring(next.start, next.contentEnd - next.start);
+        const std::string currText    = content.Substring(curr.start, curr.contentEnd - curr.start);
+        const std::string nextText    = content.Substring(next.start, next.contentEnd - next.start);
         std::string       replacement = nextText + "\n" + currText;
         if (next.hasTrailingNewline) {
             replacement += "\n";
@@ -338,9 +338,9 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
         const LineSpan    curr    = GetLineSpan(content, line);
         const std::size_t column  = std::min(buffer.Point() - curr.start, curr.contentEnd - curr.start);
 
-        const std::string lineText     = content.Substring(curr.start, curr.contentEnd - curr.start);
-        const std::string insertion    = curr.hasTrailingNewline ? lineText + "\n" : "\n" + lineText;
-        const std::size_t insertOffset = curr.hasTrailingNewline ? curr.contentEnd + 1 : curr.contentEnd;
+        const std::string lineText       = content.Substring(curr.start, curr.contentEnd - curr.start);
+        const std::string insertion      = curr.hasTrailingNewline ? lineText + "\n" : "\n" + lineText;
+        const std::size_t insertOffset   = curr.hasTrailingNewline ? curr.contentEnd + 1 : curr.contentEnd;
         const std::size_t duplicateStart = curr.hasTrailingNewline ? insertOffset : insertOffset + 1;
 
         buffer.ClearMark();
@@ -537,6 +537,17 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           context.interactiveRequest = InteractiveRequest::ExecuteCommand;
                       });
 
+    // project-find-file follow-up: same "just signal intent" shape as
+    // execute-extended-command above -- the candidate list (every file
+    // under ProjectRoot()) and the fuzzy-narrow/open-on-Enter logic both
+    // live in BufferView, which is what actually owns BufferList/
+    // ActiveBuffer.
+    registry.Register("project-find-file",
+                      "Open a file under the project root, narrowed by fuzzy matching as you type.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::ProjectFindFile;
+                      });
+
     registry.Register("kmacro-start-macro", "Begin recording a keyboard macro.", [](CommandContext& context) {
         context.interactiveRequest = InteractiveRequest::StartKbdMacro;
     });
@@ -587,6 +598,45 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     registry.Register("widen", "Remove any narrowing, restoring the full buffer.", [](CommandContext& context) {
         context.interactiveRequest = InteractiveRequest::Widen;
     });
+
+    // structural-selection-expansion follow-up: expand-selection needs
+    // BufferView's own expansion-history stack (see BufferView.h) to shrink
+    // back down correctly, so -- same reasoning as the rectangle/register/
+    // narrowing commands just above -- this just signals intent rather than
+    // acting directly on context.buffer.
+    registry.Register("expand-selection",
+                      "Grow the selection to the next enclosing syntax node (word, expression, statement, ...).",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::ExpandSelection;
+                      });
+    registry.Register("shrink-selection", "Shrink the selection back to the node it was expanded from.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::ShrinkSelection;
+                      });
+
+    // LSP client follow-up: same direct "act on context.buffer, report
+    // through context.message" shape the Org commands just below use --
+    // Buffer::Diagnostics() needs nothing beyond the buffer itself, so
+    // there's no reason to round-trip through an interactive session for
+    // this either.
+    registry.Register("lsp-show-diagnostic", "Show the LSP diagnostic message at point, if any.",
+                      [](CommandContext& context) {
+                          const std::size_t point = context.buffer.Point();
+                          for (const text::Buffer::Diagnostic& diagnostic : context.buffer.Diagnostics()) {
+                              const bool atPoint = (diagnostic.startByte == diagnostic.endByte)
+                                                       ? (point == diagnostic.startByte)
+                                                       : (diagnostic.startByte <= point && point < diagnostic.endByte);
+                              if (atPoint) {
+                                  if (context.message) {
+                                      *context.message = diagnostic.message;
+                                  }
+                                  return;
+                              }
+                          }
+                          if (context.message) {
+                              *context.message = "No diagnostic at point.";
+                          }
+                      });
 
     // Org's three editing commands act directly on context.buffer, unlike
     // the interactiveRequest-routed commands above (rectangle/register/
@@ -651,7 +701,7 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
             }
             const text::Rope& content = context.buffer.Content();
             const std::size_t line    = content.ByteOffsetToLine(context.buffer.Point());
-            const auto blocks = codefold::FoldableBlocks(*context.mode, context.buffer.Text());
+            const auto        blocks  = codefold::FoldableBlocks(*context.mode, context.buffer.Text());
             if (!codefold::ToggleFoldAtLine(context.buffer, content, blocks, line) && context.message) {
                 *context.message = "No foldable block starts here.";
             }
@@ -684,13 +734,13 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           }
                           const std::string& prefix = context.mode->lineCommentPrefix;
 
-                          text::Buffer&      buffer  = context.buffer;
-                          const text::Rope&  content = buffer.Content();
-                          std::size_t        firstLine, lastLine;
+                          text::Buffer&     buffer  = context.buffer;
+                          const text::Rope& content = buffer.Content();
+                          std::size_t       firstLine, lastLine;
                           if (buffer.HasMark()) {
                               const auto [start, end] = buffer.Region();
-                              firstLine                = content.ByteOffsetToLine(start);
-                              lastLine                 = content.ByteOffsetToLine(end);
+                              firstLine               = content.ByteOffsetToLine(start);
+                              lastLine                = content.ByteOffsetToLine(end);
                               // A region end sitting exactly at the start of
                               // a line (e.g. two S-DOWN presses from column
                               // 0) shouldn't pull that line into the range --
@@ -709,9 +759,9 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           // in range already commented?
                           bool anyUncommented = false;
                           for (std::size_t line = firstLine; line <= lastLine; ++line) {
-                              const std::size_t start = content.LineToByteOffset(line);
-                              const std::size_t end   = LineContentEnd(content, start);
-                              const std::string text  = content.Substring(start, end - start);
+                              const std::size_t start  = content.LineToByteOffset(line);
+                              const std::size_t end    = LineContentEnd(content, start);
+                              const std::string text   = content.Substring(start, end - start);
                               const std::size_t indent = text.find_first_not_of(" \t");
                               if (indent == std::string::npos) {
                                   continue; // blank line -- doesn't count either way
@@ -727,9 +777,9 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           // offsets are never invalidated by editing a
                           // later one): apply the toggle.
                           for (std::size_t line = lastLine + 1; line-- > firstLine;) {
-                              const std::size_t start = content.LineToByteOffset(line);
-                              const std::size_t end   = LineContentEnd(content, start);
-                              const std::string text  = content.Substring(start, end - start);
+                              const std::size_t start  = content.LineToByteOffset(line);
+                              const std::size_t end    = LineContentEnd(content, start);
+                              const std::string text   = content.Substring(start, end - start);
                               const std::size_t indent = text.find_first_not_of(" \t");
                               if (indent == std::string::npos) {
                                   continue;
@@ -833,6 +883,17 @@ Keymap BuildDefaultGlobalKeymap() {
     // decodes correctly either way.
     keymap.Bind(ParseKeySequence("M-/"), "redo");
     keymap.Bind(ParseKeySequence("ESC /"), "redo");
+
+    // structural-selection-expansion follow-up: M-=/M-- are the real
+    // er/expand-region Emacs package's own actual keybinding, not an
+    // arbitrary choice -- also, unlike Ctrl+=/Ctrl+-, real terminals send no
+    // distinguishable C0 byte at all for Ctrl+=/Ctrl+- (see
+    // KeyTranslation.cpp's DecodeBaseKey), so a Control-chord binding here
+    // could never actually fire from real input.
+    keymap.Bind(ParseKeySequence("M-="), "expand-selection");
+    keymap.Bind(ParseKeySequence("ESC ="), "expand-selection");
+    keymap.Bind(ParseKeySequence("M--"), "shrink-selection");
+    keymap.Bind(ParseKeySequence("ESC -"), "shrink-selection");
     keymap.Bind(ParseKeySequence("C-SPC"), "set-mark-command");
     keymap.Bind(ParseKeySequence("C-g"), "keyboard-quit");
     keymap.Bind(ParseKeySequence("C-w"), "kill-region");
@@ -891,6 +952,8 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("C-x C-f"), "find-file");
     keymap.Bind(ParseKeySequence("C-x b"), "switch-to-buffer");
     keymap.Bind(ParseKeySequence("C-c C-s"), "project-search");
+    keymap.Bind(ParseKeySequence("C-c C-f"), "project-find-file");
+    keymap.Bind(ParseKeySequence("C-c C-e"), "lsp-show-diagnostic");
     keymap.Bind(ParseKeySequence("C-c C-v"), "project-search-visit-result");
     keymap.Bind(ParseKeySequence("C-c C-r"), "project-replace");
     keymap.Bind(ParseKeySequence("C-c C-p"), "toggle-project-sidebar");

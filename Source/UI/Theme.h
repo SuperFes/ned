@@ -239,6 +239,15 @@ struct Theme {
     // doc comment).
     Color unsavedChangeIndicator;
 
+    // LSP client follow-up: solid-block severity markers (same "background
+    // color, not a glyph" shape as unsavedChangeIndicator above) for the
+    // diagnostics gutter column -- one color per Buffer::Diagnostic::Severity
+    // value, in the same order that enum declares them.
+    Color diagnosticError;
+    Color diagnosticWarning;
+    Color diagnosticInformation;
+    Color diagnosticHint;
+
     // Org-mode syntax-highlighting follow-up: one Color per new
     // Org-specific SyntaxClass member (Mode.h) -- headline levels cycle
     // through 3 distinct, bold hues; TodoKeyword/DoneKeyword use the
@@ -278,7 +287,7 @@ struct Theme {
 // ThemeFile's own save/load; ThemeFile.cpp now calls these instead of
 // keeping a private duplicate. See ThemeFile.cpp's own header comment for
 // the wire format's full rationale (this is the same one, unchanged).
-[[nodiscard]] std::string           ColorToToken(const Color& color);
+[[nodiscard]] std::string          ColorToToken(const Color& color);
 [[nodiscard]] std::optional<Color> ParseColorToken(std::string_view token);
 
 } // namespace ned::ui

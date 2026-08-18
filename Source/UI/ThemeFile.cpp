@@ -52,6 +52,10 @@ std::string SerializeTheme(const Theme& theme) {
     out << "binary_foreground=" << ColorToToken(theme.binaryForeground) << '\n';
     out << "link_foreground=" << ColorToToken(theme.linkForeground) << '\n';
     out << "unsaved_change_indicator=" << ColorToToken(theme.unsavedChangeIndicator) << '\n';
+    out << "diagnostic_error=" << ColorToToken(theme.diagnosticError) << '\n';
+    out << "diagnostic_warning=" << ColorToToken(theme.diagnosticWarning) << '\n';
+    out << "diagnostic_information=" << ColorToToken(theme.diagnosticInformation) << '\n';
+    out << "diagnostic_hint=" << ColorToToken(theme.diagnosticHint) << '\n';
     out << "headline_level1_foreground=" << ColorToToken(theme.headlineLevel1Foreground) << '\n';
     out << "headline_level2_foreground=" << ColorToToken(theme.headlineLevel2Foreground) << '\n';
     out << "headline_level3_foreground=" << ColorToToken(theme.headlineLevel3Foreground) << '\n';
@@ -185,6 +189,22 @@ Theme ParseTheme(std::string_view text, const Theme& base) {
         else if (key == "unsaved_change_indicator") {
             if (const auto c = ParseColorToken(value))
                 result.unsavedChangeIndicator = *c;
+        }
+        else if (key == "diagnostic_error") {
+            if (const auto c = ParseColorToken(value))
+                result.diagnosticError = *c;
+        }
+        else if (key == "diagnostic_warning") {
+            if (const auto c = ParseColorToken(value))
+                result.diagnosticWarning = *c;
+        }
+        else if (key == "diagnostic_information") {
+            if (const auto c = ParseColorToken(value))
+                result.diagnosticInformation = *c;
+        }
+        else if (key == "diagnostic_hint") {
+            if (const auto c = ParseColorToken(value))
+                result.diagnosticHint = *c;
         }
         else if (key == "headline_level1_foreground") {
             if (const auto c = ParseColorToken(value))

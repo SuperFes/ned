@@ -1262,6 +1262,56 @@ TEST_CASE("scroll-page-down is a small, sane fallback when CommandContext::viewp
     REQUIRE(fixture.buffer.Content().ByteOffsetToLine(fixture.buffer.Point()) == 1);
 }
 
+TEST_CASE("lsp-show-diagnostic reports the message of a diagnostic covering point", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    std::string    message;
+    context.message = &message;
+
+    fixture.buffer.InsertAtPoint("int x = 1;\n");
+    fixture.buffer.SetDiagnostics({
+        ned::text::Buffer::Diagnostic{
+            .startByte = 4, .endByte = 5, .severity = ned::text::Buffer::Diagnostic::Severity::Warning, .message = "unused variable x"},
+    });
+
+    fixture.buffer.SetPoint(4); // right at the diagnostic's own start
+    registry.Invoke("lsp-show-diagnostic", context);
+    REQUIRE(message == "unused variable x");
+
+    message.clear();
+    fixture.buffer.SetPoint(0); // well outside the diagnostic's range
+    registry.Invoke("lsp-show-diagnostic", context);
+    REQUIRE(message == "No diagnostic at point.");
+}
+
+TEST_CASE("lsp-show-diagnostic matches a zero-width diagnostic only exactly at its own offset", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    std::string    message;
+    context.message = &message;
+
+    fixture.buffer.InsertAtPoint("abc\n");
+    fixture.buffer.SetDiagnostics({
+        ned::text::Buffer::Diagnostic{
+            .startByte = 2, .endByte = 2, .severity = ned::text::Buffer::Diagnostic::Severity::Hint, .message = "zero-width hint"},
+    });
+
+    fixture.buffer.SetPoint(2);
+    registry.Invoke("lsp-show-diagnostic", context);
+    REQUIRE(message == "zero-width hint");
+
+    message.clear();
+    fixture.buffer.SetPoint(3);
+    registry.Invoke("lsp-show-diagnostic", context);
+    REQUIRE(message == "No diagnostic at point.");
+}
+
 // org-cycle-todo/org-cycle-priority/org-toggle-checkbox aren't in the
 // global keymap -- they're bound in OrgMode's own keymap (Mode.cpp), only
 // layered in for a real .org buffer -- so these invoke the registry
@@ -1383,7 +1433,7 @@ TEST_CASE("code-fold-toggle folds the block starting at point when context.mode 
     CommandContext context = fixture.Context();
     std::string    message;
     context.message = &message;
-    context.mode     = &mode;
+    context.mode    = &mode;
 
     fixture.buffer.InsertAtPoint("int main(void) {\n    return 0;\n}\n");
     fixture.buffer.SetPoint(0); // on the function's own opening line
@@ -1413,7 +1463,7 @@ TEST_CASE("toggle-line-comment reports explicitly when no mode/comment syntax is
     REQUIRE(fixture.buffer.Text() == "hello");
 
     const Mode json = JsonMode(); // has no lineCommentPrefix -- JSON has no comment syntax
-    context.mode     = &json;
+    context.mode    = &json;
     registry.Invoke("toggle-line-comment", context);
     REQUIRE(message == "No comment syntax configured for this mode.");
     REQUIRE(fixture.buffer.Text() == "hello");
@@ -1427,7 +1477,7 @@ TEST_CASE("toggle-line-comment comments then uncomments a single line", "[Comman
 
     Fixture        fixture;
     CommandContext context = fixture.Context();
-    context.mode            = &cMode;
+    context.mode           = &cMode;
 
     fixture.buffer.InsertAtPoint("int x = 1;");
     fixture.buffer.SetPoint(0);
@@ -1447,7 +1497,7 @@ TEST_CASE("toggle-line-comment preserves indentation", "[Commands]") {
 
     Fixture        fixture;
     CommandContext context = fixture.Context();
-    context.mode            = &pyMode;
+    context.mode           = &pyMode;
 
     fixture.buffer.InsertAtPoint("    x = 1");
     fixture.buffer.SetPoint(4);
@@ -1467,7 +1517,7 @@ TEST_CASE("toggle-line-comment leaves a blank line untouched", "[Commands]") {
 
     Fixture        fixture;
     CommandContext context = fixture.Context();
-    context.mode            = &cMode;
+    context.mode           = &cMode;
 
     fixture.buffer.InsertAtPoint("   ");
     fixture.buffer.SetPoint(0);
@@ -1484,7 +1534,7 @@ TEST_CASE("toggle-line-comment over a region comments every uncommented line, sk
 
     Fixture        fixture;
     CommandContext context = fixture.Context();
-    context.mode            = &cMode;
+    context.mode           = &cMode;
 
     fixture.buffer.InsertAtPoint("a\n\nb\n// c");
     fixture.buffer.SetPoint(0);
@@ -1503,7 +1553,7 @@ TEST_CASE("toggle-line-comment uncomments every line only once all non-blank lin
 
     Fixture        fixture;
     CommandContext context = fixture.Context();
-    context.mode            = &cMode;
+    context.mode           = &cMode;
 
     fixture.buffer.InsertAtPoint("// a\n// b");
     fixture.buffer.SetPoint(0);
@@ -1521,7 +1571,7 @@ TEST_CASE("toggle-line-comment's region excludes a line the selection end merely
 
     Fixture        fixture;
     CommandContext context = fixture.Context();
-    context.mode            = &cMode;
+    context.mode           = &cMode;
 
     fixture.buffer.InsertAtPoint("a\nb\nc");
     fixture.buffer.SetPoint(0);
@@ -1541,7 +1591,7 @@ TEST_CASE("M-;/ESC ; are bound to toggle-line-comment", "[Commands]") {
 
     Fixture        fixture;
     CommandContext context = fixture.Context();
-    context.mode            = &cMode;
+    context.mode           = &cMode;
 
     fixture.buffer.InsertAtPoint("x");
     fixture.buffer.SetPoint(0);

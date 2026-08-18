@@ -691,11 +691,11 @@ TEST_CASE("DeleteBackwardAtPoint/DeleteForwardAtPoint shrink a narrowed range th
     buffer.NarrowToRegion(6, 12); // snaps to lines 1-2: [6, 18)
     REQUIRE(buffer.NarrowedRange() == std::pair<std::size_t, std::size_t>{6, 18});
 
-    buffer.SetPoint(7); // just past the narrowed start
+    buffer.SetPoint(7);             // just past the narrowed start
     buffer.DeleteBackwardAtPoint(); // deletes byte 6, the narrowed start itself
     REQUIRE(buffer.NarrowedRange() == std::pair<std::size_t, std::size_t>{6, 17});
 
-    buffer.SetPoint(16); // just before the narrowed end
+    buffer.SetPoint(16);           // just before the narrowed end
     buffer.DeleteForwardAtPoint(); // deletes byte 16
     REQUIRE(buffer.NarrowedRange() == std::pair<std::size_t, std::size_t>{6, 16});
 }
@@ -717,6 +717,34 @@ TEST_CASE("SetFoldMarker/FoldMarkerAt/FoldMarkers round-trip and erase via nullo
     buffer.SetFoldMarker(0, std::nullopt);
     REQUIRE_FALSE(buffer.FoldMarkerAt(0).has_value());
     REQUIRE(buffer.FoldMarkers().size() == 1);
+}
+
+TEST_CASE("SetDiagnostics/Diagnostics/DiagnosticsGeneration round-trip and replace wholesale", "[Buffer]") {
+    Buffer buffer("scratch", ned::text::Rope("int x = 1;\nint y = 2;\n"));
+    REQUIRE(buffer.Diagnostics().empty());
+
+    const std::size_t generationBefore = buffer.DiagnosticsGeneration();
+    buffer.SetDiagnostics({
+        Buffer::Diagnostic{.startByte = 4, .endByte = 5, .severity = Buffer::Diagnostic::Severity::Warning, .message = "unused variable x"},
+    });
+    REQUIRE(buffer.DiagnosticsGeneration() > generationBefore);
+    REQUIRE(buffer.Diagnostics().size() == 1);
+    REQUIRE(buffer.Diagnostics()[0].message == "unused variable x");
+    REQUIRE(buffer.Diagnostics()[0].severity == Buffer::Diagnostic::Severity::Warning);
+
+    // A second SetDiagnostics call replaces the set wholesale, not merges
+    // with the first -- matches LSP's own publishDiagnostics semantics
+    // ("here is the full current set"), see Diagnostic's own doc comment.
+    const std::size_t generationAfterFirst = buffer.DiagnosticsGeneration();
+    buffer.SetDiagnostics({
+        Buffer::Diagnostic{.startByte = 15, .endByte = 16, .severity = Buffer::Diagnostic::Severity::Error, .message = "unused variable y"},
+    });
+    REQUIRE(buffer.DiagnosticsGeneration() > generationAfterFirst);
+    REQUIRE(buffer.Diagnostics().size() == 1);
+    REQUIRE(buffer.Diagnostics()[0].message == "unused variable y");
+
+    buffer.SetDiagnostics({});
+    REQUIRE(buffer.Diagnostics().empty());
 }
 
 TEST_CASE("Fold markers relocate across inserts and deletes the same way Mark_ does", "[Buffer]") {
@@ -814,7 +842,7 @@ TEST_CASE("Undo/Redo mark only the byte range that actually differs, not the who
 }
 
 TEST_CASE("Undoing an edit that leaves content identical to before reports no unsaved change", "[Buffer]") {
-    Buffer buffer("scratch", ned::text::Rope("hello world"));
+    Buffer                      buffer("scratch", ned::text::Rope("hello world"));
     const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned-unsaved-change-undo-noop-test.txt";
     buffer.SaveToFile(path, /*ensureFinalNewline=*/false);
     REQUIRE(buffer.UnsavedChangeRanges().empty());

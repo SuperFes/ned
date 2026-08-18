@@ -11,6 +11,7 @@
 #include "Editor/FinalNewline.h"
 #include "Editor/FormatOnSave.h"
 #include "Editor/Link.h"
+#include "Editor/Lsp/LspServerConfig.h"
 #include "Editor/ModeOverrides.h"
 #include "Editor/ProjectRoot.h"
 #include "Editor/ScratchPad.h"
@@ -158,6 +159,15 @@ namespace {
         editor::SetModeForFilename(filename, modeName);
     }
 
+    // LSP client follow-up: argv[0] is the server executable, remaining
+    // elements its arguments, e.g. (ned/set-lsp-command "python"
+    // ["pyright-langserver" "--stdio"]). An empty argv clears any existing
+    // registration for language, mirroring NedSetFormatCommand's own
+    // empty-clears convention.
+    void NedSetLspCommand(std::string language, std::vector<std::string> argv) {
+        editor::lsp::SetLspServerCommand(language, std::move(argv));
+    }
+
     // syntax-theme-overrides follow-up: "each themeable entry" (Comment,
     // DocComment, Keyword, ...) reachable from Janet through one generic,
     // class-name-string-keyed mechanism (Editor/SyntaxTheme.h) rather than
@@ -286,6 +296,12 @@ void InstallEditorBindings(Environment& env) {
         "Map an exact, full filename (e.g. \"CMakeLists.txt\", not a pattern/glob) to a mode name, the same way "
         "ned/set-mode-for-extension does for an extension -- checked first, before any extension mapping, for files "
         "identified by name rather than by a distinguishing extension.");
+    env.Register<&NedSetLspCommand>(
+        "ned", "set-lsp-command",
+        "Set the command used to launch a language's LSP server: (language argv), e.g. (ned/set-lsp-command \"c\" "
+        "[\"clangd\"]). argv is an array or tuple of strings -- argv[0] the executable (resolved against $PATH), the "
+        "rest its arguments. ned never installs or updates a language server itself; this only configures which "
+        "already-installed one to run. An empty argv clears the configured command for language.");
 
     env.Register<&NedSetSyntaxForeground>(
         "ned", "set-syntax-foreground",

@@ -799,34 +799,288 @@ pty smoke test against the real binary: `C-x C-s` on a file with no trailing new
 correctly appended one on disk by default, and `(ned/set-ensure-final-newline false)` in
 `init.janet` correctly suppressed it on a second real save.
 
-## Phase 9 — Zed-inspired features (aspirational, unsequenced)
-A running wishlist, not yet prioritized or scheduled against the phases above — draw
-from this once the Emacs-parity core (Phases 1–5) is solid, per the "editing features
-before extras" guiding principle. Grouped by how big a foundational lift each is:
+## Phase 10 — Structural selection expansion + fuzzy finder — done
+
+Pulled out of Phase 9's aspirational wishlist and sequenced, in this order:
+
+1. **Structural/AST-aware selection expansion** (`expand-selection`/`shrink-selection`,
+   `M-=`/`M--`) — done. A natural fit given the tree-sitter foundation already in place
+   (real parse trees per buffer via `Source/Editor/TreeSitter/`), flagged as such in the
+   keybinding-audit follow-up's "Want" bucket (`Docs/KeybindingAudit.md`). `Node` gained
+   `Parent()`/`IsNamed()`/`NamedDescendantForByteRange()`; `Mode` gained a third
+   `expandSelection` closure (alongside `highlight`/`fold`, sharing the same parse cache),
+   built generically by `TreeSitterModeFromLanguage` for all 12 tree-sitter-backed modes —
+   `FundamentalMode`/`OrgMode` stay unsupported, a documented scope cut (`OrgMode`'s own
+   separate, non-shared highlight closure would need its own follow-up). `BufferView` owns
+   the expansion-history stack (session/UI state, not `Buffer` state — `Buffer::SetPoint`
+   unconditionally resets its own transient run-state, `GoalColumn_`/`CanAmend_`, on every
+   call, which would erase the history the instant expand/shrink's own repositioning ran),
+   staleness-checked by buffer identity + `ContentGeneration()` the same way
+   `highlightCacheBuffer_` already is, and cleared by `RunCommandAndHandleOutcome` whenever
+   a *genuinely invoked* command (`Dispatcher::Outcome::Invoked`, not `Pending`) isn't
+   expand/shrink itself — the `Pending`-vs-`Invoked` distinction was a real bug caught
+   during testing: the bare `Escape` half of the `ESC =`/`ESC -` two-chord fallback binding
+   was clearing the history before the second chord ever arrived.
+2. **Fast fuzzy file finder** (`project-find-file`, `C-c C-f`) — done. Turned out to need
+   far less new machinery than scoped: `Source/Editor/FuzzyMatch.h` (generic
+   subsequence-match scorer) and the M-x `execute-extended-command` flow's entire
+   interaction shape (type-to-narrow-and-reset-to-top, arrow-key selection, one-line
+   `EchoArea` rendering via `FormatFuzzyCandidates` — renamed from
+   `FormatExecuteCommandCandidates` once it turned out to be fully generic already) were
+   reused as-is, not rebuilt; `editor::BuildProjectTree` (already powering `ProjectSidebar`)
+   supplied the file walk. The one real new piece: `BufferView` caches the candidate list
+   itself (`projectFindFileCandidates_`, project-relative path strings) for the duration of
+   one session, populated once when the session starts rather than re-walking the project
+   on every keystroke the way M-x's cheap in-memory `Registry().Names()` lookup can afford
+   to — a real recursive directory walk is not free at project scale. No separate "command
+   palette" work was needed at all: it already existed as `execute-extended-command`.
+
+**fuzzy-candidate-list-styling follow-up** (post-Phase-10 polish, same session): the shared
+`FormatFuzzyCandidates` candidate list, used by both M-x and `project-find-file`, had two
+real, user-reported problems. First, the selected entry's leading `*` read as noise rather
+than a clear grouping marker — replaced with real `[brackets]`, plus actual bold
+(`EmphasizeForEchoArea`) on the selection and a dimmed foreground
+(`DimForEchoArea`, blended halfway toward the background via the same
+`ftxui::Color::Interpolate` mechanism `ModeLine`'s gradient already uses) on every other
+visible candidate — the "already bold" the user expected turned out not to actually exist;
+`EchoArea` applied exactly one uniform brush to the whole row. `EchoArea` (`Source/UI/
+EchoArea.h/.cpp`) gained a small, closed, private rich-text mechanism to make this possible
+without turning `statusMessage_` into a rich-text type every other writer (isearch,
+`save-buffer`, error messages, ...) would then have to participate in: `EmphasizeForEchoArea`/
+`DimForEchoArea` wrap a substring in a pair of C0 control-byte sentinels (never legitimately
+present in any real status message), and `EchoArea::Paint` strips them at render time,
+applying the style to the span between. Second, and the more substantive bug: the visible
+window used to cap at a *fixed count* (`kMaxVisibleCandidates = 6`, sized for ~10-25-character
+command names) rather than the real terminal width — fine for M-x, but `project-find-file`'s
+typically-longer path candidates could overflow a real (narrower, or just candidate-heavy)
+terminal well before 6 items were shown, silently clipping mid-filename with no `+K more`
+even visible. `FormatFuzzyCandidates` now grows a window around the selected candidate by an
+actual *column budget* (`BufferView::AvailableCandidateColumns`, derived from this widget's
+own live `size().width` — an approximation, since `EchoArea` spans the full terminal width
+while `BufferView`'s own box is narrower once a sidebar/scrollbar/gutter are subtracted, but
+a safe one: it can only under-, never over-, estimate what's really available) instead of a
+hardcoded item count, reserving headroom up front for the `+K more` suffix so that
+reservation itself can't cause an overflow. The scroll-with-selection behavior itself already
+existed (the window already followed `selected` as arrow keys moved it) — this fixed *how
+much* fits in it, not whether it followed the selection. Raised alongside a broader question
+about this codebase's total lack of any floating/popup/overlay widget concept (`ProjectSidebar`'s
+own context-menu descoping note) — the user's view: worth reconsidering later, once other
+overlay-shaped needs exist (an LLM-integration panel, in-editor debugging tooling), rather
+than treated as settled; flagged here for that future discussion, not resolved by this
+follow-up, which deliberately kept `EchoArea` a single row.
+
+## LSP client — slice 1: core plumbing + diagnostics — done
+
+The first real slice of the LSP client (Wishlist's "Language intelligence" group flagged
+it as "likely a prerequisite for most of the rest of that group"). Genuinely new
+infrastructure, not an extension of anything: nothing in this codebase previously spoke to
+a long-lived subprocess over pipes (`Editor/FormatOnSave.cpp` is one-shot `std::system()`
+through temp files; `Editor/Link.cpp`'s `OpenUrl` is a detached `fork`+`exec` with no pipes
+at all), and no JSON library existed anywhere (every prior "json" hit in the tree was the
+tree-sitter-json *grammar*, for `.json` syntax highlighting only).
+
+**Architecture**, under a new `Source/Editor/Lsp/` directory (mirroring how tree-sitter got
+its own `Source/Editor/TreeSitter/` subdirectory):
+- `Lsp/Transport.h/.cpp` — raw process + pipe mechanics, no JSON/LSP semantics. Spawns via
+  `posix_spawn` (the user's own explicit preference: least overhead/greatest throughput for
+  spawning from a large parent process — avoids `fork`'s full address-space duplication) with
+  a manual `$PATH` search done *before* spawning (`ResolveExecutable`), not `posix_spawnp` --
+  confirmed by reading glibc's real spawn internals that a missing-executable failure isn't
+  reliably reported synchronously by `posix_spawn(p)` itself (the child's failed `execve`
+  only surfaces later via its exit status), so this makes a missing language server binary
+  fail immediately with a clear message instead. `WriteFrame`/`ReadFrame` implement LSP's
+  `Content-Length: N\r\n\r\n` framing directly over the pipes.
+- `Lsp/LspClient.h/.cpp` — one JSON-RPC 2.0 connection. A background `std::jthread` runs a
+  blocking read loop, marshaling each parsed frame onto the main FTXUI thread via
+  `ftxui::ScreenInteractive::Post` — the same mechanism `WindowManager::StartAutoSaveTimer`
+  already established, just event-driven instead of timer-driven. `pending_`/
+  `notificationHandlers_` deliberately have no mutex: everything that touches them, including
+  `DispatchFrame`, only ever runs on the main thread (the background thread only calls
+  `Transport::ReadFrame`, which shares no state with these maps). Member declaration order
+  (`readThread_` before `transport_`) is load-bearing: C++ destroys members in reverse
+  declaration order, so `transport_`'s destructor (closes fds, kills+reaps the child) runs
+  *before* `readThread_`'s own destructor tries to join it — which is what actually unblocks
+  the otherwise-permanently-blocked `ReadFrame()` call sitting in that thread. A `stop_token`
+  alone cannot interrupt a blocking `read()`; this ordering is the real interruption
+  mechanism, confirmed the hard way (see Bugs below).
+- `Lsp/LspServerConfig.h/.cpp` — a mutex-guarded map (language name → argv), mirroring
+  `Editor/ModeOverrides.h`'s shape (a map, not `FormatOnSave.h`'s single-scalar shape, since
+  an LSP command is inherently per-language). `ned/set-lsp-command` (`Janet/
+  EditorBindings.cpp`) is the only way to configure one, e.g.
+  `(ned/set-lsp-command "c" ["clangd"])`. Nothing is bundled, and `ned` never installs or
+  updates a language server itself — same trust boundary `ned/set-format-command` already
+  established, deliberately not re-litigated (raised and confirmed explicitly this session:
+  auto-install was considered and rejected for the same non-portable-system-layout reason
+  dynamic-grammar-loading's own tooling already rejected it for grammars).
+- `Lsp/LspManager.h/.cpp` — owns the running `LspClient`s (keyed by language, one server per
+  language — matches `ProjectRoot()`'s own single-root, process-wide model, no multi-root
+  workspace concept anywhere in this codebase). `SyncBuffer` lazily spawns +
+  `initialize`/`initialized`-handshakes a server, sends `textDocument/didOpen` once per
+  buffer then `textDocument/didChange` (whole-document sync, not incremental — simplest
+  correct choice for v1, matching this project's own repeated "prove it needed before
+  optimizing" discipline) whenever `Buffer::ContentGeneration()` has advanced. Called once
+  per frame from `BufferView::Paint()` for the *active* buffer only — a background buffer
+  won't get live diagnostics until viewed again, a straightforward widening of the same
+  mechanism if ever needed, not a design change. `textDocument/publishDiagnostics` is
+  registered as a notification handler at client-construction time, resolving the
+  notification's URI back to an open `Buffer` via the *existing*
+  `BufferList::FindByPath` (already used by `ProjectSidebar`'s click handling for exactly
+  this URI/path → open-`Buffer` lookup) and converting each LSP `Diagnostic` — a UTF-16-
+  code-unit range, a real, easy-to-get-wrong detail handled via `Rope::CodepointAt`-based
+  code-unit counting, not assumed to be byte offsets — into `Buffer::SetDiagnostics`.
+- **`Text/Buffer.h`** gained a small, editor-agnostic `Diagnostic` struct (byte range +
+  severity + message) plus `SetDiagnostics`/`Diagnostics`/`DiagnosticsGeneration`, the same
+  "structured per-position metadata that happens to live on Buffer" role `FoldMarker`/
+  `NarrowedRange_` already have — no dependency on `Lsp/`/JSON at all, keeping `Text/`'s
+  zero-dependency-on-`Editor/` layering intact. Unlike `FoldMarkers_`, never relocated across
+  edits: `SetDiagnostics` always replaces the set wholesale, matching `publishDiagnostics`'
+  own "here is the full current set" semantics.
+- **`Source/UI/BufferView.h/.cpp`** gained its own dedicated 1-column gutter slot
+  (`kDiagnosticWidth`, between the status column and the line-number gap — layout is now
+  `[status][diagnostic][gap][digits][gap][fold]`), cached the same generation-gated way
+  `foldGutterEntries_`/`unsavedChangeLineRanges_` already are, and a new `lsp-show-diagnostic`
+  command (`C-c C-e`) reporting whatever diagnostic covers point via the shared status
+  string — the same "direct action on `context.buffer`, report through `context.message`"
+  shape `org-cycle-todo` already uses, no new UI surface needed. `Theme` gained four new
+  severity colors (`diagnosticError`/`Warning`/`Information`/`Hint`), persisted by
+  `ThemeFile.cpp` alongside every other standalone `Color` field.
+- **Window-splitting integration**: `LspManager` is wired through `WindowManager`'s existing
+  `SetProjectSidebar`-style "forwarded to every pane, present and future" convention
+  (`WindowManager::SetLspManager`, threaded through `Pane`'s constructor and `MakePane`) —
+  window-splitting already existed by the time this landed, which the original slice-1 plan
+  hadn't accounted for; discovered and correctly integrated during implementation rather than
+  bolted on afterward. Buffer-close notifications (`textDocument/didClose`) are sent from
+  both real close paths this codebase already has — `WindowManager::HandleBufferClosed`
+  (`BufferView::SetOnBufferClosed`, a pane-driven close) and `NotifyBufferClosing`
+  (`ProjectSidebar`'s own preview-buffer-swap close, not pane-driven at all) — rather than
+  inventing a third, since both already existed as real, distinct "a buffer is really about
+  to be gone" entry points.
+- **New dependency**: `nlohmann/json` (`v3.12.0`), via the plain `FetchContent_Declare`/
+  `FetchContent_MakeAvailable` pattern already used for FTXUI/utf8proc/Catch2, not the
+  tree-sitter-specific `ned_add_treesitter_grammar*` functions (which exist only to work
+  around grammar repos' Node-oriented build files). Chosen over `simdjson`/`Glaze` — all
+  three confirmed actively maintained this session, not assumed — because an LSP client
+  hand-writes/reads dozens of small, heterogeneous, mostly-optional-field JSON-RPC message
+  shapes, where `nlohmann::json`'s dynamic, ergonomic `operator[]`-based API matters far more
+  than either alternative's raw parse throughput (`simdjson`) or reflection-based fixed-struct
+  binding (`Glaze`, a worse fit for LSP's numerous, spec-evolving, mostly-dynamic message
+  shapes).
+
+**Deferred, explicitly, not oversights**: hover, go-to-definition, code actions, rename, and
+completion (all become new `SendRequest` call sites plus their own UI wiring — `LspClient`'s
+public surface doesn't need to change shape for any of them); ghost-text completion
+specifically (the user's own stated direction, Copilot-style inline dimmed-text, not a popup
+— this codebase still has no floating/overlay widget concept, and building one just for LSP
+completion isn't the right call with an LLM-panel need already on the horizon) additionally
+needs new `Paint()` rendering and an accept keybinding; syncing every open buffer, not just
+the active one; incremental (vs. whole-document) sync; idle-timeout server teardown; stderr
+capture/a real "show me the server's log" story (redirected to `/dev/null` for now); multi-root
+workspaces.
+
+**Real bugs found during implementation, not hypothetical**:
+- `ftxui::ScreenInteractive` is a type alias (`using ScreenInteractive = App;`), not a
+  forward-declarable class — an initial `namespace ftxui { class ScreenInteractive; }`
+  forward-declare (mirroring how other headers forward-declare types) compiled in isolation
+  but produced a genuine conflicting-declaration error once the real header was also included
+  transitively, with GCC's post-error recovery misattributing later, unrelated errors to the
+  wrong namespace entirely — confusing enough to chase down properly rather than paper over.
+  Fixed by including the real header directly in both `Lsp/LspClient.h` and `Lsp/
+  LspManager.h`, matching `WindowManager.h`'s own existing convention for the same type.
+- A real end-to-end `Transport` test spawning `/bin/cat` as a stand-in echo "server" hung
+  indefinitely on its very first run: `cat`'s stdout is fully buffered (not line-buffered)
+  whenever it isn't a real tty, which a pipe never is, so it silently sat on the test's small
+  payload forever instead of ever echoing it back. Fixed by routing through `stdbuf -o0`.
+- `LspClientTest.cpp`'s own test fixture (an `LspClient` wired to a raw, test-driven pipe
+  pair, no real subprocess) hung on teardown for the same class of reason `Transport`'s own
+  member-ordering trick exists to solve, but in a shape that trick doesn't cover: in
+  production, killing the real child process is what closes the pipe's write end and
+  generates the `EOF` that unblocks the background read thread. In the test, that write end
+  was a plain fd held by the *test itself*, never closed automatically by anything — so the
+  background thread's blocked `read()` (and therefore `LspClient`'s own destructor, which
+  joins that thread) hung forever. Fixed by giving the test fixture its own explicit
+  destructor that closes the test-owned write end first.
+- Adding the new diagnostic gutter column shifted every existing gutter-column pixel
+  position in `BufferViewTest.cpp` by one, breaking 36 pre-existing, unrelated tests at
+  once — not a regression in what they were actually testing, just a stale mirror of
+  `BufferView::GutterWidth()`'s own formula living in the test file itself
+  (`Tests/BufferViewTest.cpp`'s own local `GutterWidth()`/`ContentRowText()` helpers), plus a
+  few tests hardcoding absolute pixel columns/viewport widths directly rather than deriving
+  them. Fixed by updating the test-local formula and the handful of hardcoded expectations to
+  match, once identified as the actual, single root cause rather than 36 independent problems.
+
+Verification: full suite (917 test cases) and a clean `./test-asan.sh` pass (one pre-existing,
+already-confirmed-flaky ASan-timing performance test at its threshold, unrelated to this
+work) — no sanitizer findings at all, notable given how much of this slice is real fds,
+pipes, a spawned subprocess, and background-thread lifecycle code, exactly the class of bug
+ASan/UBSan is best at catching. A manual smoke test against a real language server (e.g.
+`clangd`) is still outstanding — the one thing the automated suite can't verify on its own.
+
+## Wishlist (unsequenced)
+
+Everything left that isn't sequenced or scheduled against a real phase — draw from this
+once whatever's currently sequenced is solid. Phase 9 ("Zed-inspired features") and the
+former standalone "Companion tooling" section have been folded into this one list rather
+than kept as separate headers, now that both of Phase 9's own sequenced items (structural
+selection expansion, the fuzzy file finder) have shipped as Phase 10 above and nothing
+else in either list is scheduled against anything. Grouped by how big a foundational lift
+each is, not by priority.
 
 - **Language intelligence**
   - [x] Tree-sitter-based syntax highlighting — done (see "Tree-sitter foundation",
         "Mode/highlighting redesign for tree-sitter", and "Bundle remaining tree-sitter
         grammars" above); likely a prerequisite for most of the rest of this group.
-  - [ ] LSP client: autocomplete, diagnostics, go-to-definition, hover docs, code
-        actions, rename, multi-language support.
+  - [x] Structural/AST-aware selection expansion (expand-to-next-syntax-node) — done,
+        see Phase 10 above.
+  - [~] LSP client: autocomplete, diagnostics, go-to-definition, hover docs, code
+        actions, rename, multi-language support. Slice 1 (core plumbing + diagnostics) is
+        done — see "LSP client — slice 1" above. Hover/go-to-definition/code actions/
+        rename/completion are all deferred follow-on slices, not yet started; see that
+        section's own "Deferred" list for what's built vs. not, and why.
   - [ ] DAP (Debug Adapter Protocol) client for in-editor debugging.
-  - [ ] Structural/AST-aware selection expansion (expand-to-next-syntax-node).
+  - [ ] Spell-checking, prose-oriented — a separate concern from the LSP client above,
+        not dependent on it: some LSP servers (e.g. `marksman` for Markdown, some prose
+        linters) do speak diagnostics over LSP, but a dedicated checker backed by
+        `hunspell`/`aspell` and whatever dictionaries are already installed locally is a
+        simpler, more direct integration (spawn `hunspell -a` in pipe mode, or link
+        libhunspell directly) than routing prose checking through a language server.
+        Raised by the user alongside the LSP design discussion; not scoped in detail yet.
 - **Navigation & search**
-  - [ ] Fast fuzzy file finder / command palette (a visual layer over the Phase 2
-        command-completion machinery + a project file index).
+  - [x] Fast fuzzy file finder / command palette — done, see Phase 10 above.
   - [ ] Multibuffers: a virtual buffer stitching together excerpts from multiple
         files/locations (e.g. all references, all diagnostics, as one scrollable view)
         — a genuinely interesting fit for our Rope/Buffer design, worth a design pass
         of its own when it comes up.
-- **Version control**
-  - [ ] Git integration: inline blame, diff gutters, hunk staging, a git status panel.
+- **External tool integration (version control and beyond)**
+  - [ ] VCS-agnostic version control, via a plugin system rather than a hardcoded git
+        integration. The user's own framing: stay deliberately agnostic about which VCS
+        a project uses — a small, internally-understood vocabulary of operations
+        (status, diff, blame, stage/unstage a hunk, commit, log, branch, ...) that a
+        plugin translates into whatever a specific VCS actually needs, so the editor-facing
+        commands/keybindings/UI stay the same regardless of git vs. Mercurial vs.
+        Subversion vs. jj vs. whatever else a project happens to use. Plugins are Janet
+        scripts — the natural fit given this project's own "everything is
+        programmable, Janet fills Elisp's role" foundation (`Source/Janet/`) rather than
+        a new, separate plugin-language/runtime built just for this. Explicitly framed by
+        the user as generalizable past version control once the mechanism exists: the same
+        "translate a common internal vocabulary into a specific external tool's actual
+        calls, via a Janet-scriptable plugin" shape could later cover cloud-provider CLIs,
+        Terraform, Docker, or other external tooling entirely — version control is the
+        first, most concrete case to design against, not the only one this is meant for.
+        Needs a real design pass of its own (the vocabulary itself, how a plugin
+        registers/is discovered, how UI surfaces like a status panel or diff gutters stay
+        VCS-agnostic when the underlying data shapes genuinely differ across tools) before
+        any of it is scheduled — flagged here as a real, sequenceable direction, not
+        design-complete.
 - **Collaboration & AI**
   - [ ] Real-time collaborative editing (CRDT-based shared sessions) — the biggest
         lift in this list; revisit only once the single-user core is solid.
   - [ ] AI-assisted editing (inline completion, chat with codebase context) — natural
         fit for Janet given "everything programmable," likely implementable as a Janet-
-        scriptable integration rather than something hardcoded in C++.
+        scriptable integration rather than something hardcoded in C++. Raised alongside
+        the fuzzy-candidate-list-styling follow-up's own note (Phase 10 above) on this
+        codebase's total lack of a floating/popup/overlay widget concept — an
+        LLM-integration panel is exactly the kind of overlay-shaped need that note flagged
+        as worth reconsidering that gap for, not settled by anything shipped so far.
 - **Editor ergonomics**
   - [ ] Multiple cursors / multi-cursor editing — explicitly deferred, not started, after
         a real design pass during the keybinding-audit follow-up (see
@@ -878,43 +1132,37 @@ before extras" guiding principle. Grouped by how big a foundational lift each is
         also persist to disk; scoped as its own slice rather than folded into that fix.
 - **Visual**
   - [ ] Minimap. Rich built-in theme set. (Overlaps with Phase 6.)
-
-## Companion tooling: environment setup + tree-sitter-assisted formatter (planned, unsequenced)
-
-Two standalone utility programs shipped alongside `ned`, not part of the editor binary
-itself — the user's own framing: "towards the end of our dev, maybe they even belong in
-their own phase, when we're starting to setup the outside tooling." Aspirational, like
-Phase 9 above — not scheduled against any phase, revisit once the editor core itself is
-solid.
-
-- **Environment setup tool** (name TBD, e.g. `ned-setup`). Detects and initializes the
-  first-run environment: shell integration, and — the piece that directly builds on the
-  mode-overrides/dynamic-grammar-loading work above — scans for tree-sitter grammars
-  already installed on the system (the same `libtree-sitter-<name>.so` +
-  `queries/<name>/highlights.scm` convention explored while building that phase, though
-  the exact layout varies by distro/OS and isn't something to hardcode into `ned`
-  itself, only into this separate, inspectable tool) and generates a Janet script —
-  loaded *from* `init.janet`, not silently run by `ned` itself — wiring up
-  `ned/register-language-grammar`/`ned/set-mode-for-extension`/`ned/set-mode-for-filename`
-  calls for whatever it found. Runs automatically on first launch if `ned` finds no XDG
-  config for itself yet (per the user's own suggestion), and presumably also runnable
-  standalone/re-runnable later. A real, standalone generator producing a concrete,
-  editable file is the right shape for this — not silent runtime auto-detection baked
-  into `ned`'s own startup path, which was explicitly considered and rejected during the
-  dynamic-grammar-loading follow-up for the same non-portable-system-layout reason (see
-  that phase's own `ROADMAP.md` entry).
-- **Post-save formatter with tree-sitter-assisted, JetBrains-level configurability.** The
-  existing `FormatOnSave.h/.cpp` mechanism (format-on-save follow-up) only ever shells
-  out to one external, already-opinionated formatter (clang-format, dprint,
-  php-cs-fixer, ...) configured via `ned/set-format-command` — this is a different, much
-  larger idea: a real formatter built on `ned`'s own tree-sitter parse, with rule
-  granularity closer to JetBrains' per-language formatters than any single external tool
-  the user's tried has offered. Flagged honestly as the bigger of the two asks —
-  genuinely a large, open-ended undertaking (a real configurable formatter is a
-  substantial project in its own right per language, not a small utility), not something
-  to scope in detail this far out. Revisit once there's a concrete phase for it, likely
-  informed by exactly which per-language formatting gaps external tools kept leaving
-  unfilled.
+- **Companion tooling** (standalone utility programs shipped alongside `ned`, not part of
+  the editor binary itself — the user's own framing: "towards the end of our dev, maybe
+  they even belong in their own phase, when we're starting to setup the outside tooling")
+  - **Environment setup tool** (name TBD, e.g. `ned-setup`). Detects and initializes the
+    first-run environment: shell integration, and — the piece that directly builds on the
+    mode-overrides/dynamic-grammar-loading work above — scans for tree-sitter grammars
+    already installed on the system (the same `libtree-sitter-<name>.so` +
+    `queries/<name>/highlights.scm` convention explored while building that phase, though
+    the exact layout varies by distro/OS and isn't something to hardcode into `ned`
+    itself, only into this separate, inspectable tool) and generates a Janet script —
+    loaded *from* `init.janet`, not silently run by `ned` itself — wiring up
+    `ned/register-language-grammar`/`ned/set-mode-for-extension`/`ned/set-mode-for-filename`
+    calls for whatever it found. Runs automatically on first launch if `ned` finds no XDG
+    config for itself yet (per the user's own suggestion), and presumably also runnable
+    standalone/re-runnable later. A real, standalone generator producing a concrete,
+    editable file is the right shape for this — not silent runtime auto-detection baked
+    into `ned`'s own startup path, which was explicitly considered and rejected during the
+    dynamic-grammar-loading follow-up for the same non-portable-system-layout reason (see
+    that phase's own `ROADMAP.md` entry).
+  - **Post-save formatter with tree-sitter-assisted, JetBrains-level configurability.** The
+    existing `FormatOnSave.h/.cpp` mechanism (format-on-save follow-up) only ever shells
+    out to one external, already-opinionated formatter (clang-format, dprint,
+    php-cs-fixer, ...) configured via `ned/set-format-command` — this is a different, much
+    larger idea: a real formatter built on `ned`'s own tree-sitter parse, with rule
+    granularity closer to JetBrains' per-language formatters than any single external tool
+    the user's tried has offered. Flagged honestly as the bigger of the two asks —
+    genuinely a large, open-ended undertaking (a real configurable formatter is a
+    substantial project in its own right per language, not a small utility), not something
+    to scope in detail this far out. Revisit once there's a concrete phase for it, likely
+    informed by exactly which per-language formatting gaps external tools kept leaving
+    unfilled.
 
 ---
 

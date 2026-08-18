@@ -12,14 +12,17 @@
 
 #include <ftxui/component/screen_interactive.hpp>
 
+#include "EchoArea.h"
 #include "Editor/CodeFoldSettings.h"
 #include "Editor/FuzzyMatch.h"
 #include "Editor/Link.h"
+#include "Editor/Lsp/LspManager.h"
 #include "Editor/Org.h"
-#include "Editor/ProjectFileOps.h"
 #include "Editor/ProjectAgenda.h"
+#include "Editor/ProjectFileOps.h"
 #include "Editor/ProjectRoot.h"
 #include "Editor/ProjectSearch.h"
+#include "Editor/ProjectTree.h"
 #include "Editor/Rectangle.h"
 #include "Editor/ScratchPad.h"
 #include "Editor/TabWidth.h"
@@ -38,6 +41,22 @@ namespace {
 
     bool IsQuit(const editor::KeyChord& chord) {
         return chord.Special == editor::SpecialKey::Escape || (chord.Control && chord.Codepoint == U'g');
+    }
+
+    // LSP client follow-up: LspServerConfig.h's language keys ("c", "python",
+    // ...) are Mode's own name minus its "-mode" suffix -- every bundled
+    // *Mode() factory names itself exactly that way (see ModeOverrides.cpp's
+    // BundledModeFactories table, e.g. "c-mode"/"python-mode"), so this is a
+    // free derivation rather than a second naming table to keep in sync.
+    // Modes with no "-mode" suffix (there are none among the bundled ones,
+    // but a dynamically-registered one -- Editor/ModeOverrides.h -- could in
+    // principle be named anything) are returned unchanged.
+    std::string LanguageForMode(const editor::Mode& mode) {
+        constexpr std::string_view kSuffix = "-mode";
+        if (mode.name.size() > kSuffix.size() && mode.name.ends_with(kSuffix)) {
+            return mode.name.substr(0, mode.name.size() - kSuffix.size());
+        }
+        return mode.name;
     }
 
     // Window-splitting requests forward to WindowManager (see
@@ -110,39 +129,77 @@ namespace {
     }
 
     // execute-extended-command follow-up: M-x's own version of
-    // JoinCandidates -- marks the currently-selected entry with a leading
-    // '*' (there's no floating widget to highlight a row in, so the marker
-    // has to live inside the same one echo-area line everything else here
-    // already renders through), and caps how many of the ranked list are
-    // actually shown: dumping dozens of command names into one
-    // terminal-width line is unreadable. Only a window of up to
-    // kMaxVisibleCandidates is shown, scrolled to keep the selected entry
-    // visible, with a "+K more" suffix for whatever's left out -- arrow keys
-    // still reach every ranked candidate regardless of what's currently
-    // visible. kMaxVisibleCandidates=6 is a judgment call: this codebase's
-    // command names run roughly 10-25 characters, and 6 of them plus
-    // markers/spaces/braces comfortably fits an 80-column terminal alongside
-    // "M-x " and the typed query.
-    constexpr std::size_t kMaxVisibleCandidates = 6;
+    // JoinCandidates -- caps how many of the ranked list are actually shown:
+    // dumping dozens of command names (or, project-find-file follow-up,
+    // project-relative file paths, often much longer) into one
+    // terminal-width line is unreadable, and worse, unbounded, would run
+    // past the edge of the real terminal and get silently clipped mid-word
+    // by EchoArea::Paint. fuzzy-candidate-list-styling follow-up: this used
+    // to cap by a fixed *count* (6 candidates, sized for ~10-25-character
+    // command names) rather than by the real available width -- fine for
+    // M-x, but project-find-file's typically-longer path candidates could
+    // still overflow a real terminal's actual width well before 6 items were
+    // shown, silently truncating mid-filename with no "+K more" even
+    // visible. Caps by *column budget* instead now: grows a window
+    // containing `selected` outward (forward first, matching the old
+    // window's own forward bias) only as long as the next candidate still
+    // fits, reserving kSuffixReserve columns up front for a "+K more" tail
+    // so that reservation itself never causes an overflow. Selection still
+    // "scrolls" the same way it always did -- the window follows `selected`
+    // as arrow keys move it -- just width-aware now instead of count-aware.
+    // The selected entry used to get a leading '*', which read as
+    // confusing/noisy rather than as a clear grouping marker -- wrapped in
+    // real brackets now instead, and bolded (EmphasizeForEchoArea) while
+    // every other visible candidate is dimmed (DimForEchoArea) so the
+    // selection reads at a glance instead of by scanning for a stray
+    // asterisk. See EchoArea.h's own doc comment for how the underlying
+    // markup actually reaches the terminal. Renamed from
+    // FormatExecuteCommandCandidates once project-find-file showed it was
+    // already entirely generic over what's being ranked.
+    constexpr std::size_t kSuffixReserve = 12; // room for " +999 more" plus slack, generous but bounded
 
-    std::string FormatExecuteCommandCandidates(const std::vector<std::string>& ranked, std::size_t selected) {
+    std::string FormatFuzzyCandidates(const std::vector<std::string>& ranked, std::size_t selected, std::size_t columnBudget) {
         if (ranked.empty()) {
             return {};
         }
+        selected = std::min(selected, ranked.size() - 1);
 
-        const std::size_t windowStart =
-            (selected < kMaxVisibleCandidates) ? 0 : selected - kMaxVisibleCandidates + 1;
-        const std::size_t windowEnd = std::min(ranked.size(), windowStart + kMaxVisibleCandidates);
+        const std::size_t usableBudget = columnBudget > kSuffixReserve ? columnBudget - kSuffixReserve : columnBudget;
+        auto              displayWidth = [](const std::string& candidate, bool isSelected) {
+            return candidate.size() + (isSelected ? 2 : 0); // +2 for the selected entry's own brackets
+        };
+
+        std::size_t windowStart = selected;
+        std::size_t windowEnd   = selected + 1;
+        std::size_t width       = displayWidth(ranked[selected], true);
+
+        bool grew = true;
+        while (grew) {
+            grew = false;
+            if (windowEnd < ranked.size()) {
+                const std::size_t next = width + 1 + displayWidth(ranked[windowEnd], false);
+                if (next <= usableBudget) {
+                    width = next;
+                    ++windowEnd;
+                    grew = true;
+                }
+            }
+            if (windowStart > 0) {
+                const std::size_t next = width + 1 + displayWidth(ranked[windowStart - 1], false);
+                if (next <= usableBudget) {
+                    width = next;
+                    --windowStart;
+                    grew = true;
+                }
+            }
+        }
 
         std::string joined;
         for (std::size_t i = windowStart; i < windowEnd; ++i) {
             if (i > windowStart) {
                 joined += ' ';
             }
-            if (i == selected) {
-                joined += '*';
-            }
-            joined += ranked[i];
+            joined += (i == selected) ? EmphasizeForEchoArea("[" + ranked[i] + "]") : DimForEchoArea(ranked[i]);
         }
 
         const std::size_t hidden = ranked.size() - (windowEnd - windowStart);
@@ -475,11 +532,11 @@ void BufferView::EnsureFoldGutterCache() const {
 
     if (!foldableBlocksCache_.empty()) {
         const text::Rope& content = buffer.Content();
-        const auto         regions = editor::codefold::FoldRegionsWithDepth(foldableBlocksCache_);
+        const auto        regions = editor::codefold::FoldRegionsWithDepth(foldableBlocksCache_);
 
         foldGutterEntries_.reserve(regions.size());
         for (const auto& region : regions) {
-            const int          column     = std::min(region.depth, kMaxFoldDepthColumns - 1);
+            const int         column     = std::min(region.depth, kMaxFoldDepthColumns - 1);
             const std::size_t headerLine = content.ByteOffsetToLine(region.startByte);
             const std::size_t closerLine = content.ByteOffsetToLine(region.endByte);
             if (headerLine == closerLine) {
@@ -550,6 +607,58 @@ void BufferView::EnsureUnsavedChangeCache() const {
     unsavedChangeCacheBuffer_            = &buffer;
     unsavedChangeCacheContentGeneration_ = buffer.ContentGeneration();
     unsavedChangeCacheGeneration_        = buffer.UnsavedChangeGeneration();
+}
+
+namespace {
+
+    // Higher rank = more severe = wins when two diagnostics start on the
+    // same line. Matches LSP's own severity ordering (1=Error is the most
+    // severe, 4=Hint the least), just inverted to a "bigger number wins"
+    // comparison for MostSevere below.
+    int DiagnosticSeverityRank(text::Buffer::Diagnostic::Severity severity) {
+        switch (severity) {
+            case text::Buffer::Diagnostic::Severity::Error:
+                return 3;
+            case text::Buffer::Diagnostic::Severity::Warning:
+                return 2;
+            case text::Buffer::Diagnostic::Severity::Information:
+                return 1;
+            case text::Buffer::Diagnostic::Severity::Hint:
+                return 0;
+        }
+        return 0; // unreachable -- silences a "not all enumerators handled" warning on some compilers
+    }
+
+} // namespace
+
+void BufferView::EnsureDiagnosticGutterCache() const {
+    text::Buffer& buffer = activeBuffer_.Get();
+
+    if (diagnosticGutterCacheBuffer_ == &buffer && diagnosticGutterCacheGeneration_ == buffer.DiagnosticsGeneration()) {
+        return;
+    }
+
+    diagnosticLineSeverities_.clear();
+    const text::Rope& content = buffer.Content();
+    // Diagnostics() arrives in whatever order the server reported them, not
+    // necessarily sorted by position -- collapse to at most one {line,
+    // severity} entry per line (keeping the most severe) via a small local
+    // map, then sort by line once at the end for the per-row lower_bound
+    // lookup Paint() does.
+    std::unordered_map<std::size_t, text::Buffer::Diagnostic::Severity> mostSevereByLine;
+    for (const text::Buffer::Diagnostic& diagnostic : buffer.Diagnostics()) {
+        const std::size_t line = content.ByteOffsetToLine(diagnostic.startByte);
+        const auto        it   = mostSevereByLine.find(line);
+        if (it == mostSevereByLine.end() || DiagnosticSeverityRank(diagnostic.severity) > DiagnosticSeverityRank(it->second)) {
+            mostSevereByLine[line] = diagnostic.severity;
+        }
+    }
+    diagnosticLineSeverities_.assign(mostSevereByLine.begin(), mostSevereByLine.end());
+    std::sort(diagnosticLineSeverities_.begin(), diagnosticLineSeverities_.end(),
+              [](const auto& a, const auto& b) { return a.first < b.first; });
+
+    diagnosticGutterCacheBuffer_     = &buffer;
+    diagnosticGutterCacheGeneration_ = buffer.DiagnosticsGeneration();
 }
 
 void BufferView::EnsureHiddenLineRangesCache() const {
@@ -692,7 +801,7 @@ void BufferView::Paint(Canvas c) {
     // agreement with it without a second source of truth. Column offsets,
     // left to right: [status][gap][digits][gap][fold].
     const std::size_t foldColumnWidth = (mode_.fold && editor::CodeFoldingEnabled()) ? kMaxFoldDepthColumns : 0;
-    const std::size_t digitsStart     = kStatusWidth + kLineNumberGap;
+    const std::size_t digitsStart     = kStatusWidth + kDiagnosticWidth + kLineNumberGap;
     const std::size_t gutterDigits    = gutterWidth - digitsStart - kLineNumberGap - foldColumnWidth;
     const std::size_t foldStart       = digitsStart + gutterDigits + kLineNumberGap;
 
@@ -701,6 +810,19 @@ void BufferView::Paint(Canvas c) {
     // doc comment. Unconditional, unlike EnsureFoldGutterCache -- every
     // buffer gets a status column regardless of mode/language.
     EnsureUnsavedChangeCache();
+    // LSP client follow-up: same "unconditional, every buffer gets one"
+    // reasoning as EnsureUnsavedChangeCache above.
+    EnsureDiagnosticGutterCache();
+
+    // LSP client follow-up: syncs the *active* buffer only, once per frame
+    // -- see LspManager::SyncBuffer's own doc comment for why only the
+    // currently-visible buffer, not every open one. A no-op if lspManager_
+    // is unset (ordinary tests) or nothing's configured for this mode's
+    // language (LspServerCommand returns nullopt, checked inside SyncBuffer
+    // itself).
+    if (lspManager_) {
+        lspManager_->SyncBuffer(buffer, LanguageForMode(mode_));
+    }
 
     // depth-aware-fold-gutter follow-up: recomputed once per Paint() call
     // (not per row, and not rebuilt from scratch even across separate
@@ -738,9 +860,9 @@ void BufferView::Paint(Canvas c) {
     // rebuilt per row; see that code's own doc comment for why a plain
     // per-column stack is the correct (and correctly performing) structure
     // here. Plain Paint()-local state, reset fresh every call.
-    std::size_t                                             foldGutterEntryCursor = 0;
-    std::array<const FoldGutterEntry*, kMaxFoldDepthColumns> foldGutterHeaderAtColumn{};
-    std::array<std::size_t, kMaxFoldDepthColumns>            foldColumnCursor{};
+    std::size_t                                                foldGutterEntryCursor = 0;
+    std::array<const FoldGutterEntry*, kMaxFoldDepthColumns>   foldGutterHeaderAtColumn{};
+    std::array<std::size_t, kMaxFoldDepthColumns>              foldColumnCursor{};
     std::array<std::vector<std::size_t>, kMaxFoldDepthColumns> foldColumnOpenEnds;
 
     // A running buffer-line cursor, seeded at topLine_ (already guaranteed
@@ -794,21 +916,57 @@ void BufferView::Paint(Canvas c) {
                 const auto it = std::lower_bound(
                     unsavedChangeLineRanges_.begin(), unsavedChangeLineRanges_.end(), line,
                     [](const auto& range, std::size_t targetLine) { return range.second <= targetLine; });
-                const bool         changed = it != unsavedChangeLineRanges_.end() && it->first <= line;
-                const Color        indicatorColor = changed ? theme_.unsavedChangeIndicator : theme_.background;
-                const Brush        statusBrush{.background = indicatorColor, .foreground = indicatorColor};
-                ftxui::Cell&       cell = c[{.x = 0, .y = row}];
-                cell.character          = " ";
+                const bool   changed        = it != unsavedChangeLineRanges_.end() && it->first <= line;
+                const Color  indicatorColor = changed ? theme_.unsavedChangeIndicator : theme_.background;
+                const Brush  statusBrush{.background = indicatorColor, .foreground = indicatorColor};
+                ftxui::Cell& cell = c[{.x = 0, .y = row}];
+                cell.character    = " ";
                 statusBrush.ApplyTo(cell);
+            }
+
+            // LSP client follow-up: same solid-color-swatch shape as the
+            // status column just above, in its own dedicated column --
+            // see diagnosticLineSeverities_'s own doc comment for why a
+            // plain binary search suffices here too (at most one entry per
+            // line, already sorted).
+            if (static_cast<int>(kStatusWidth) < c.size().width) {
+                const auto it             = std::lower_bound(diagnosticLineSeverities_.begin(), diagnosticLineSeverities_.end(), line,
+                                                             [](const auto& entry, std::size_t targetLine) { return entry.first < targetLine; });
+                const bool hasDiagnostic  = it != diagnosticLineSeverities_.end() && it->first == line;
+                Color      indicatorColor = theme_.background;
+                if (hasDiagnostic) {
+                    switch (it->second) {
+                        case text::Buffer::Diagnostic::Severity::Error:
+                            indicatorColor = theme_.diagnosticError;
+                            break;
+                        case text::Buffer::Diagnostic::Severity::Warning:
+                            indicatorColor = theme_.diagnosticWarning;
+                            break;
+                        case text::Buffer::Diagnostic::Severity::Information:
+                            indicatorColor = theme_.diagnosticInformation;
+                            break;
+                        case text::Buffer::Diagnostic::Severity::Hint:
+                            indicatorColor = theme_.diagnosticHint;
+                            break;
+                    }
+                }
+                const Brush  diagnosticBrush{.background = indicatorColor, .foreground = indicatorColor};
+                ftxui::Cell& cell = c[{.x = static_cast<int>(kStatusWidth), .y = row}];
+                cell.character    = " ";
+                diagnosticBrush.ApplyTo(cell);
             }
 
             const std::string number  = std::to_string(line + 1); // 1-indexed, matches ModeLine's L/C convention
             const std::size_t padding = gutterDigits > number.size() ? gutterDigits - number.size() : 0;
             // Leading gap (status/line-number-spacing follow-up -- the
             // line-number gutter now gets breathing room on BOTH sides,
-            // not just the trailing gap it already had).
-            if (static_cast<int>(kStatusWidth) < c.size().width) {
-                ftxui::Cell& cell = c[{.x = static_cast<int>(kStatusWidth), .y = row}];
+            // not just the trailing gap it already had). Sits right after
+            // the diagnostic column now (LSP client follow-up), not
+            // directly after the status column -- digitsStart itself
+            // already accounts for kDiagnosticWidth, so this is just
+            // "one column before digitsStart."
+            if (static_cast<int>(digitsStart - kLineNumberGap) < c.size().width) {
+                ftxui::Cell& cell = c[{.x = static_cast<int>(digitsStart - kLineNumberGap), .y = row}];
                 cell.character    = " ";
                 gutterGapBrush.ApplyTo(cell);
             }
@@ -1082,10 +1240,10 @@ void BufferView::Paint(Canvas c) {
                 // so the closing line's own indentation would just waste
                 // columns).
                 const std::size_t lastHiddenLine = hiddenEnd - 1;
-                std::size_t       previewOffset   = content.LineToByteOffset(lastHiddenLine);
-                const std::size_t previewEnd       = (lastHiddenLine + 1 < totalLines)
-                                                         ? content.LineToByteOffset(lastHiddenLine + 1) - 1
-                                                         : content.ByteLength();
+                std::size_t       previewOffset  = content.LineToByteOffset(lastHiddenLine);
+                const std::size_t previewEnd     = (lastHiddenLine + 1 < totalLines)
+                                                       ? content.LineToByteOffset(lastHiddenLine + 1) - 1
+                                                       : content.ByteLength();
                 while (previewOffset < previewEnd) {
                     const auto decoded = content.CodepointAt(previewOffset);
                     if (decoded.codepoint != U' ' && decoded.codepoint != U'\t') {
@@ -1265,6 +1423,16 @@ bool BufferView::OnKeyEvent(ftxui::Event event) {
         HandleExecuteCommandKey(*chord);
         return true;
     }
+    if (inputMode_ == InputMode::ProjectFindFile) {
+        // Unlike ExecuteCommand, Enter here just opens a file directly
+        // (BufferList::OpenOrCreateFile + activeBuffer_.Set()) rather than
+        // routing through RunCommandAndHandleOutcome, so the ordinary
+        // after-the-fact ClampPointToNarrowing() every other prompt-shaped
+        // mode uses is correct here too.
+        HandleProjectFindFileKey(*chord);
+        ClampPointToNarrowing();
+        return true;
+    }
     if (inputMode_ == InputMode::PointToRegister || inputMode_ == InputMode::JumpToRegister ||
         inputMode_ == InputMode::CopyToRegister || inputMode_ == InputMode::InsertRegister) {
         HandleRegisterKey(*chord);
@@ -1283,16 +1451,18 @@ bool BufferView::OnKeyEvent(ftxui::Event event) {
     // suite, not a hypothetical one).
     editor::CommandContext context = MakeContext();
     context.viewportHeight         = size().height > 0 ? static_cast<std::size_t>(size().height) : 0;
-    RunCommandAndHandleOutcome(context, [&] { dispatcher_.Feed(*chord, context); });
+    RunCommandAndHandleOutcome(context, [&] { return dispatcher_.Feed(*chord, context) == editor::Dispatcher::Outcome::Invoked; });
     return true;
 }
 
-void BufferView::RunCommandAndHandleOutcome(editor::CommandContext& context, const std::function<void()>& invoke) {
+void BufferView::RunCommandAndHandleOutcome(editor::CommandContext& context, const std::function<bool()>& invoke) {
+    bool ran = false;
     try {
-        invoke();
+        ran = invoke();
     }
     catch (const std::exception& e) {
         statusMessage_ = e.what();
+        ran            = true; // a command did run, it just threw -- still "something happened"
     }
 
     if (context.quit) {
@@ -1308,6 +1478,21 @@ void BufferView::RunCommandAndHandleOutcome(editor::CommandContext& context, con
             screen->Exit();
         }
         return;
+    }
+
+    // structural-selection-expansion follow-up: any dispatched command other
+    // than expand-selection/shrink-selection themselves invalidates the
+    // expansion-history stack -- this is the one choke point every dispatch
+    // (typing, arrow motion, everything) passes through, so it's what
+    // catches ordinary editing/motion, which never touches
+    // interactiveRequest at all (stays InteractiveRequest::None). A
+    // command-driven buffer switch (find-file, switch-to-buffer, ...) is
+    // covered here too; a non-command-driven one (a TabBar/ProjectSidebar
+    // mouse click) is instead caught by ExpandSelection/ShrinkSelection's own
+    // buffer-identity staleness check in StartInteractiveSession.
+    if (ran && context.interactiveRequest != editor::InteractiveRequest::ExpandSelection &&
+        context.interactiveRequest != editor::InteractiveRequest::ShrinkSelection) {
+        expansionHistory_.clear();
     }
 
     if (context.interactiveRequest != editor::InteractiveRequest::None) {
@@ -1346,7 +1531,7 @@ void BufferView::ReplayMacro() {
     for (const editor::KeyChord& chord : macro) {
         editor::CommandContext context = MakeContext();
         context.viewportHeight         = size().height > 0 ? static_cast<std::size_t>(size().height) : 0;
-        RunCommandAndHandleOutcome(context, [&] { dispatcher_.Feed(chord, context); });
+        RunCommandAndHandleOutcome(context, [&] { return dispatcher_.Feed(chord, context) == editor::Dispatcher::Outcome::Invoked; });
 
         // context.quit/interactiveRequest are the caller's own local copies
         // (see RunCommandAndHandleOutcome's own doc comment), always safe to
@@ -1513,6 +1698,33 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             executeCommandSelection_ = 0;
             RefreshExecuteCommandStatus();
             return;
+        // project-find-file follow-up: same "populate and show the full
+        // candidate list right away" shape as ExecuteCommand just above,
+        // but the candidate list is a real recursive directory walk
+        // (editor::BuildProjectTree), not a free in-memory lookup -- done
+        // once here, up front, rather than per keystroke (see
+        // projectFindFileCandidates_'s own doc comment in BufferView.h). A
+        // project with no files at all is a degenerate case with nothing to
+        // pick from, so it's reported directly rather than opening a prompt
+        // session over an empty list.
+        case editor::InteractiveRequest::ProjectFindFile: {
+            projectFindFileCandidates_.clear();
+            const std::filesystem::path root = editor::ProjectRoot();
+            for (const editor::ProjectTreeEntry& entry : editor::BuildProjectTree(root)) {
+                if (!entry.isDirectory) {
+                    projectFindFileCandidates_.push_back(std::filesystem::relative(entry.path, root).generic_string());
+                }
+            }
+            if (projectFindFileCandidates_.empty()) {
+                statusMessage_ = "No files found under " + root.string();
+                return;
+            }
+            inputMode_ = InputMode::ProjectFindFile;
+            prompt_.emplace("Find file (fuzzy): ");
+            projectFindFileSelection_ = 0;
+            RefreshProjectFindFileStatus();
+            return;
+        }
         // kmacro-start-macro/kmacro-end-or-call-macro follow-up: one-shot
         // direct actions, same shape as ToggleProjectSidebar -- inputMode_
         // stays Normal, no prompt session. The actual recording state lives
@@ -1625,6 +1837,47 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             activeBuffer_.Get().Widen();
             statusMessage_.clear();
             return;
+        // structural-selection-expansion follow-up: one-shot direct actions,
+        // same shape as NarrowToRegion/ToggleProjectSidebar above.
+        case editor::InteractiveRequest::ExpandSelection: {
+            if (!mode_.expandSelection) {
+                statusMessage_ = "No structural selection support in this mode.";
+                return;
+            }
+            text::Buffer& buffer = activeBuffer_.Get();
+            if (expansionHistoryBuffer_ != &buffer || expansionHistoryGeneration_ != buffer.ContentGeneration()) {
+                expansionHistory_.clear();
+            }
+            const auto [startByte, endByte]                                   = buffer.HasMark() ? buffer.Region() : std::pair{buffer.Point(), buffer.Point()};
+            const std::optional<std::pair<std::size_t, std::size_t>> expanded = mode_.expandSelection(buffer.Text(), startByte, endByte);
+            if (!expanded) {
+                statusMessage_ = "Already at outermost node.";
+                return;
+            }
+            expansionHistory_.emplace_back(startByte, endByte);
+            buffer.SetMark(expanded->first);
+            buffer.SetPoint(expanded->second);
+            expansionHistoryBuffer_     = &buffer;
+            expansionHistoryGeneration_ = buffer.ContentGeneration();
+            statusMessage_.clear();
+            return;
+        }
+        case editor::InteractiveRequest::ShrinkSelection: {
+            text::Buffer& buffer = activeBuffer_.Get();
+            const bool    stale =
+                expansionHistoryBuffer_ != &buffer || expansionHistoryGeneration_ != buffer.ContentGeneration() || expansionHistory_.empty();
+            if (stale) {
+                statusMessage_ = "No selection to shrink to.";
+                return;
+            }
+            const auto [startByte, endByte] = expansionHistory_.back();
+            expansionHistory_.pop_back();
+            buffer.SetMark(startByte);
+            buffer.SetPoint(endByte);
+            expansionHistoryGeneration_ = buffer.ContentGeneration();
+            statusMessage_.clear();
+            return;
+        }
         case editor::InteractiveRequest::None:
             return;
         // Window-splitting follow-up: structural, operate above the level
@@ -1662,7 +1915,9 @@ void BufferView::EndInteractiveSession() {
     deleteTarget_.clear();
     renameStage_ = RenameFileStage::EnteringSource;
     renameSource_.clear();
-    executeCommandSelection_ = 0;
+    executeCommandSelection_  = 0;
+    projectFindFileSelection_ = 0;
+    projectFindFileCandidates_.clear(); // cached only for the duration of one session -- see its own doc comment in BufferView.h
     ScrollToShowPoint();
 }
 
@@ -2124,8 +2379,10 @@ std::size_t BufferView::ByteOffsetForPoint(Point at) const {
 
 std::size_t BufferView::GutterWidth() const {
     const std::size_t totalLines = activeBuffer_.Get().Content().LineCount();
-    // status/line-number-spacing follow-up: [status][gap][digits][gap][fold],
-    // left to right -- status is always reserved; the fold region
+    // status/line-number-spacing follow-up (LSP client follow-up: gained a
+    // second, dedicated diagnostic column -- see kDiagnosticWidth's own doc
+    // comment): [status][diagnostic][gap][digits][gap][fold], left to right
+    // -- status and diagnostic are always reserved; the fold region
     // (generic-code-folding / depth-aware-fold-gutter follow-ups) only when
     // a mode has a real fold query and the feature is enabled, a fixed
     // kMaxFoldDepthColumns-wide reservation (not one that grows with how
@@ -2133,7 +2390,7 @@ std::size_t BufferView::GutterWidth() const {
     // user choice, so the gutter's own width never jumps around while
     // scrolling past a deeply nested region).
     const std::size_t foldColumn = (mode_.fold && editor::CodeFoldingEnabled()) ? kMaxFoldDepthColumns : 0;
-    return kStatusWidth + kLineNumberGap + std::to_string(totalLines).size() + kLineNumberGap + foldColumn;
+    return kStatusWidth + kDiagnosticWidth + kLineNumberGap + std::to_string(totalLines).size() + kLineNumberGap + foldColumn;
 }
 
 bool BufferView::OnMouseEvent(ftxui::Event event) {
@@ -2204,12 +2461,12 @@ bool BufferView::OnMouseEvent(ftxui::Event event) {
         const std::size_t foldStart = GutterWidth() - foldColumnWidth;
         if (foldColumnWidth > 0 && mouse->at.x >= static_cast<int>(foldStart) &&
             static_cast<std::size_t>(mouse->at.x) < foldStart + foldColumnWidth) {
-            text::Buffer&      buffer     = activeBuffer_.Get();
-            const text::Rope&  content    = buffer.Content();
-            const std::size_t  totalLines = content.LineCount();
-            const std::size_t  line = std::min(AdvanceVisibleLines(topLine_, static_cast<std::size_t>(std::max(mouse->at.y, 0)), totalLines),
-                                               totalLines - 1);
-            const int clickedColumn = mouse->at.x - static_cast<int>(foldStart);
+            text::Buffer&     buffer        = activeBuffer_.Get();
+            const text::Rope& content       = buffer.Content();
+            const std::size_t totalLines    = content.LineCount();
+            const std::size_t line          = std::min(AdvanceVisibleLines(topLine_, static_cast<std::size_t>(std::max(mouse->at.y, 0)), totalLines),
+                                                       totalLines - 1);
+            const int         clickedColumn = mouse->at.x - static_cast<int>(foldStart);
             EnsureFoldGutterCache();
             auto it = std::lower_bound(foldGutterEntries_.begin(), foldGutterEntries_.end(), line,
                                        [](const FoldGutterEntry& entry, std::size_t targetLine) { return entry.headerLine < targetLine; });
@@ -2505,14 +2762,24 @@ void BufferView::HandleRegisterKey(const editor::KeyChord& chord) {
     EndInteractiveSession();
 }
 
+std::size_t BufferView::AvailableCandidateColumns(std::size_t prefixLength) const {
+    const std::size_t     totalWidth    = size().width > 0 ? static_cast<std::size_t>(size().width) : 80;
+    constexpr std::size_t kClosingBrace = 1;
+    return totalWidth > prefixLength + kClosingBrace ? totalWidth - prefixLength - kClosingBrace : 1;
+}
+
 void BufferView::RefreshExecuteCommandStatus() {
     const std::vector<std::string> ranked =
         editor::FuzzyFilterAndRank(dispatcher_.Registry().Names(), prompt_->Text());
     executeCommandSelection_ = ranked.empty() ? 0 : std::min(executeCommandSelection_, ranked.size() - 1);
 
-    statusMessage_ = ranked.empty() ? prompt_->StatusText()
-                                    : prompt_->StatusText() + "  {" +
-                                          FormatExecuteCommandCandidates(ranked, executeCommandSelection_) + "}";
+    if (ranked.empty()) {
+        statusMessage_ = prompt_->StatusText();
+        return;
+    }
+    const std::string prefix  = prompt_->StatusText() + "  {";
+    const std::size_t columns = AvailableCandidateColumns(prefix.size());
+    statusMessage_            = prefix + FormatFuzzyCandidates(ranked, executeCommandSelection_, columns) + "}";
 }
 
 void BufferView::HandleExecuteCommandKey(const editor::KeyChord& chord) {
@@ -2531,7 +2798,10 @@ void BufferView::HandleExecuteCommandKey(const editor::KeyChord& chord) {
 
         editor::CommandContext context = MakeContext();
         context.viewportHeight         = size().height > 0 ? static_cast<std::size_t>(size().height) : 0;
-        RunCommandAndHandleOutcome(context, [&] { dispatcher_.Registry().Invoke(name, context); });
+        RunCommandAndHandleOutcome(context, [&] {
+            dispatcher_.Registry().Invoke(name, context);
+            return true; // Invoke() always runs the command directly -- no Pending concept here
+        });
         return;
     }
     if (IsQuit(chord)) {
@@ -2575,6 +2845,82 @@ void BufferView::HandleExecuteCommandKey(const editor::KeyChord& chord) {
         prompt_->AppendChar(chord.Codepoint);
         executeCommandSelection_ = 0;
         RefreshExecuteCommandStatus();
+        return;
+    }
+    // Anything else is ignored -- stay in the prompt.
+}
+
+void BufferView::RefreshProjectFindFileStatus() {
+    const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(projectFindFileCandidates_, prompt_->Text());
+    projectFindFileSelection_             = ranked.empty() ? 0 : std::min(projectFindFileSelection_, ranked.size() - 1);
+
+    if (ranked.empty()) {
+        statusMessage_ = prompt_->StatusText();
+        return;
+    }
+    const std::string prefix  = prompt_->StatusText() + "  {";
+    const std::size_t columns = AvailableCandidateColumns(prefix.size());
+    statusMessage_            = prefix + FormatFuzzyCandidates(ranked, projectFindFileSelection_, columns) + "}";
+}
+
+void BufferView::HandleProjectFindFileKey(const editor::KeyChord& chord) {
+    if (chord.Special == editor::SpecialKey::Enter) {
+        const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(projectFindFileCandidates_, prompt_->Text());
+
+        if (ranked.empty()) {
+            statusMessage_ = "No file matching \"" + prompt_->Text() + "\"";
+            EndInteractiveSession();
+            return;
+        }
+
+        const std::filesystem::path selected = ranked[std::min(projectFindFileSelection_, ranked.size() - 1)];
+        EndInteractiveSession();
+
+        const std::filesystem::path absolutePath = editor::ProjectRoot() / selected;
+        try {
+            text::Buffer& opened = bufferList_.OpenOrCreateFile(absolutePath);
+            activeBuffer_.Set(opened);
+            statusMessage_ = "Opened " + opened.Name();
+        }
+        catch (const std::exception& e) {
+            statusMessage_ = e.what();
+        }
+        return;
+    }
+    if (IsQuit(chord)) {
+        statusMessage_.clear();
+        EndInteractiveSession();
+        return;
+    }
+
+    if (chord.Special == editor::SpecialKey::Down) {
+        const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(projectFindFileCandidates_, prompt_->Text());
+        if (!ranked.empty() && projectFindFileSelection_ + 1 < ranked.size()) {
+            ++projectFindFileSelection_;
+        }
+        RefreshProjectFindFileStatus();
+        return;
+    }
+    if (chord.Special == editor::SpecialKey::Up) {
+        if (projectFindFileSelection_ > 0) {
+            --projectFindFileSelection_;
+        }
+        RefreshProjectFindFileStatus();
+        return;
+    }
+
+    // Same "typing re-snaps to the top match" reasoning as
+    // HandleExecuteCommandKey above -- see that method's own comment.
+    if (chord.Special == editor::SpecialKey::Backspace) {
+        prompt_->DeleteChar();
+        projectFindFileSelection_ = 0;
+        RefreshProjectFindFileStatus();
+        return;
+    }
+    if (IsPlainCharacter(chord)) {
+        prompt_->AppendChar(chord.Codepoint);
+        projectFindFileSelection_ = 0;
+        RefreshProjectFindFileStatus();
         return;
     }
     // Anything else is ignored -- stay in the prompt.
@@ -2731,6 +3077,10 @@ void BufferView::SetScrollArrows(ScrollArrowButton* up, ScrollArrowButton* down)
 
 void BufferView::SetProjectSidebar(ProjectSidebar* sidebar) {
     projectSidebar_ = sidebar;
+}
+
+void BufferView::SetLspManager(editor::lsp::LspManager* lspManager) {
+    lspManager_ = lspManager;
 }
 
 bool BufferView::InSelection(std::size_t byteOffset) const {

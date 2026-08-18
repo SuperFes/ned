@@ -15,6 +15,7 @@
 #include "Editor/Commands.h"
 #include "Editor/Dispatcher.h"
 #include "Editor/Keymap.h"
+#include "Editor/Lsp/LspManager.h"
 #include "Editor/Mode.h"
 #include "Editor/ModeOverrides.h"
 #include "Editor/ProjectRoot.h"
@@ -400,6 +401,20 @@ int main(int argc, char** argv) {
     std::cout << "\033[?1049h\033[H" << std::flush;
 
     auto screen = ScreenInteractive::Fullscreen();
+
+    // LSP client follow-up: constructed here, not alongside bufferList/
+    // killRing/registers above, since it needs a real ScreenInteractive& to
+    // marshal its background read-loop threads' work back onto the main
+    // thread (LspClient.h's own header comment has the full lifetime
+    // requirement -- must outlive screen.Loop() below, which this satisfies
+    // for free as a plain local: ordinary reverse-declaration-order
+    // destruction at the end of main() runs this after screen.Loop() has
+    // already returned). Wired into windowManager via SetLspManager the same
+    // "connect after construction, unset is a safe no-op" way
+    // SetProjectSidebar already is -- every pane, present and future
+    // (including ones created by a later split), gets it.
+    ned::editor::lsp::LspManager lspManager(bufferList, screen);
+    windowManager->SetLspManager(&lspManager);
 
     // Auto-saved-scratch-pads follow-up: not started by BufferView's own
     // constructor (every test-constructed BufferView would otherwise spin up
