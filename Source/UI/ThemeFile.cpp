@@ -1,7 +1,5 @@
 #include "ThemeFile.h"
 
-#include <array>
-#include <cstdlib>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
@@ -11,95 +9,17 @@ namespace ned::ui {
 
 namespace {
 
-    char HexDigit(int nibble) {
-        return static_cast<char>(nibble < 10 ? '0' + nibble : 'a' + (nibble - 10));
-    }
-
-    std::string TrueColorToHex(const Color& c) {
-        std::string                       out = "#000000";
-        const std::array<std::uint8_t, 3> channels{c.red, c.green, c.blue};
-        for (std::size_t i = 0; i < channels.size(); ++i) {
-            out[1 + i * 2]     = HexDigit(channels[i] >> 4);
-            out[1 + i * 2 + 1] = HexDigit(channels[i] & 0x0F);
-        }
-        return out;
-    }
-
-    std::string ColorToToken(const Color& color) {
-        switch (color.kind) {
-            case Color::Kind::TrueColor:
-                return TrueColorToHex(color);
-            case Color::Kind::Palette16:
-                return "x:" + std::to_string(color.paletteIndex);
-            case Color::Kind::Default:
-            default:
-                return "default";
-        }
-    }
-
-    std::optional<int> ParseHexNibble(char c) {
-        if (c >= '0' && c <= '9') {
-            return c - '0';
-        }
-        if (c >= 'a' && c <= 'f') {
-            return 10 + (c - 'a');
-        }
-        if (c >= 'A' && c <= 'F') {
-            return 10 + (c - 'A');
-        }
-        return std::nullopt;
-    }
-
-    std::optional<std::uint8_t> ParseHexByte(std::string_view text) {
-        if (text.size() != 2) {
-            return std::nullopt;
-        }
-        const auto high = ParseHexNibble(text[0]);
-        const auto low  = ParseHexNibble(text[1]);
-        if (!high || !low) {
-            return std::nullopt;
-        }
-        return static_cast<std::uint8_t>((*high << 4) | *low);
-    }
-
-    std::optional<Color> ParseHexColor(std::string_view token) {
-        if (token.size() != 7 || token[0] != '#') {
-            return std::nullopt;
-        }
-        const auto r = ParseHexByte(token.substr(1, 2));
-        const auto g = ParseHexByte(token.substr(3, 2));
-        const auto b = ParseHexByte(token.substr(5, 2));
-        if (!r || !g || !b) {
-            return std::nullopt;
-        }
-        return Color::RGB(*r, *g, *b);
-    }
-
-    std::optional<Color> ParseColorToken(std::string_view token) {
-        if (token == "default") {
-            return Color::Default;
-        }
-        if (const auto trueColor = ParseHexColor(token)) {
-            return trueColor;
-        }
-        if (token.starts_with("x:")) {
-            const std::string digits(token.substr(2));
-            char*             end   = nullptr;
-            const long        value = std::strtol(digits.c_str(), &end, 10);
-            if (end != digits.c_str() + digits.size() || value < 0 || value > 255) {
-                return std::nullopt;
-            }
-            return Color::Palette(static_cast<std::uint8_t>(value));
-        }
-        return std::nullopt;
-    }
-
     // mode_line_gradient_start/end only ever accept the hex form -- a
     // gradient endpoint can't meaningfully be "default" or a palette index,
     // even though Theme.h's own field type (Color) doesn't restrict that at
-    // the type level (see that field's own comment for why).
+    // the type level (see that field's own comment for why). ColorToToken/
+    // ParseColorToken (used everywhere else in this file) now live in
+    // Theme.h/.cpp -- Janet-configurable-syntax-theme follow-up, needed by
+    // Theme::BrushFor()'s override merge too, not just this file's own
+    // save/load.
     std::optional<Color> ParseTrueColorToken(std::string_view token) {
-        return ParseHexColor(token);
+        const auto color = ParseColorToken(token);
+        return (color && color->kind == Color::Kind::TrueColor) ? color : std::nullopt;
     }
 
 } // namespace
@@ -113,8 +33,8 @@ std::string SerializeTheme(const Theme& theme) {
     out << "keyword_foreground=" << ColorToToken(theme.keywordForeground) << '\n';
     out << "number_foreground=" << ColorToToken(theme.numberForeground) << '\n';
     out << "mode_line_foreground=" << ColorToToken(theme.modeLineForeground) << '\n';
-    out << "mode_line_gradient_start=" << TrueColorToHex(theme.modeLineGradientStart) << '\n';
-    out << "mode_line_gradient_end=" << TrueColorToHex(theme.modeLineGradientEnd) << '\n';
+    out << "mode_line_gradient_start=" << ColorToToken(theme.modeLineGradientStart) << '\n';
+    out << "mode_line_gradient_end=" << ColorToToken(theme.modeLineGradientEnd) << '\n';
     out << "echo_area_background=" << ColorToToken(theme.echoArea.background) << '\n';
     out << "echo_area_foreground=" << ColorToToken(theme.echoArea.foreground) << '\n';
     out << "line_number_foreground=" << ColorToToken(theme.lineNumberForeground) << '\n';
@@ -130,6 +50,22 @@ std::string SerializeTheme(const Theme& theme) {
     out << "scroll_bar_disabled_background=" << ColorToToken(theme.scrollBarDisabled.background) << '\n';
     out << "scroll_bar_disabled_foreground=" << ColorToToken(theme.scrollBarDisabled.foreground) << '\n';
     out << "binary_foreground=" << ColorToToken(theme.binaryForeground) << '\n';
+    out << "link_foreground=" << ColorToToken(theme.linkForeground) << '\n';
+    out << "unsaved_change_indicator=" << ColorToToken(theme.unsavedChangeIndicator) << '\n';
+    out << "headline_level1_foreground=" << ColorToToken(theme.headlineLevel1Foreground) << '\n';
+    out << "headline_level2_foreground=" << ColorToToken(theme.headlineLevel2Foreground) << '\n';
+    out << "headline_level3_foreground=" << ColorToToken(theme.headlineLevel3Foreground) << '\n';
+    out << "todo_keyword_foreground=" << ColorToToken(theme.todoKeywordForeground) << '\n';
+    out << "done_keyword_foreground=" << ColorToToken(theme.doneKeywordForeground) << '\n';
+    out << "checkbox_foreground=" << ColorToToken(theme.checkboxForeground) << '\n';
+    out << "underline_foreground=" << ColorToToken(theme.underlineForeground) << '\n';
+    out << "strikethrough_foreground=" << ColorToToken(theme.strikethroughForeground) << '\n';
+    out << "keyword_modifier_foreground=" << ColorToToken(theme.keywordModifierForeground) << '\n';
+    out << "method_foreground=" << ColorToToken(theme.methodForeground) << '\n';
+    out << "constructor_foreground=" << ColorToToken(theme.constructorForeground) << '\n';
+    out << "label_foreground=" << ColorToToken(theme.labelForeground) << '\n';
+    out << "return_type_foreground=" << ColorToToken(theme.returnTypeForeground) << '\n';
+    out << "include_path_foreground=" << ColorToToken(theme.includePathForeground) << '\n';
     return out.str();
 }
 
@@ -241,6 +177,70 @@ Theme ParseTheme(std::string_view text, const Theme& base) {
         else if (key == "binary_foreground") {
             if (const auto c = ParseColorToken(value))
                 result.binaryForeground = *c;
+        }
+        else if (key == "link_foreground") {
+            if (const auto c = ParseColorToken(value))
+                result.linkForeground = *c;
+        }
+        else if (key == "unsaved_change_indicator") {
+            if (const auto c = ParseColorToken(value))
+                result.unsavedChangeIndicator = *c;
+        }
+        else if (key == "headline_level1_foreground") {
+            if (const auto c = ParseColorToken(value))
+                result.headlineLevel1Foreground = *c;
+        }
+        else if (key == "headline_level2_foreground") {
+            if (const auto c = ParseColorToken(value))
+                result.headlineLevel2Foreground = *c;
+        }
+        else if (key == "headline_level3_foreground") {
+            if (const auto c = ParseColorToken(value))
+                result.headlineLevel3Foreground = *c;
+        }
+        else if (key == "todo_keyword_foreground") {
+            if (const auto c = ParseColorToken(value))
+                result.todoKeywordForeground = *c;
+        }
+        else if (key == "done_keyword_foreground") {
+            if (const auto c = ParseColorToken(value))
+                result.doneKeywordForeground = *c;
+        }
+        else if (key == "checkbox_foreground") {
+            if (const auto c = ParseColorToken(value))
+                result.checkboxForeground = *c;
+        }
+        else if (key == "underline_foreground") {
+            if (const auto c = ParseColorToken(value))
+                result.underlineForeground = *c;
+        }
+        else if (key == "strikethrough_foreground") {
+            if (const auto c = ParseColorToken(value))
+                result.strikethroughForeground = *c;
+        }
+        else if (key == "keyword_modifier_foreground") {
+            if (const auto c = ParseColorToken(value))
+                result.keywordModifierForeground = *c;
+        }
+        else if (key == "method_foreground") {
+            if (const auto c = ParseColorToken(value))
+                result.methodForeground = *c;
+        }
+        else if (key == "constructor_foreground") {
+            if (const auto c = ParseColorToken(value))
+                result.constructorForeground = *c;
+        }
+        else if (key == "label_foreground") {
+            if (const auto c = ParseColorToken(value))
+                result.labelForeground = *c;
+        }
+        else if (key == "return_type_foreground") {
+            if (const auto c = ParseColorToken(value))
+                result.returnTypeForeground = *c;
+        }
+        else if (key == "include_path_foreground") {
+            if (const auto c = ParseColorToken(value))
+                result.includePathForeground = *c;
         }
         // Unrecognized keys are ignored -- forward-compatible with older files.
     }

@@ -82,6 +82,22 @@ Janet ToJanet(const std::string& value) {
     return janet_wrap_string(janet_string(reinterpret_cast<const std::uint8_t*>(value.data()), static_cast<std::int32_t>(value.size())));
 }
 
+Janet ToJanet(const std::optional<std::string>& value) {
+    return value ? ToJanet(*value) : janet_wrap_nil();
+}
+
+Janet ToJanet(const std::optional<bool>& value) {
+    return value ? ToJanet(*value) : janet_wrap_nil();
+}
+
+Janet ToJanet(const std::vector<std::string>& value) {
+    JanetArray* array = janet_array(static_cast<std::int32_t>(value.size()));
+    for (const std::string& item : value) {
+        janet_array_push(array, ToJanet(item));
+    }
+    return janet_wrap_array(array);
+}
+
 RootedValue::Root::Root(Janet v) : value(v) {
     janet_gcroot(value);
 }

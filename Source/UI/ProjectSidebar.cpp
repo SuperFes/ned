@@ -40,6 +40,10 @@ namespace {
     // over-large request back down to whatever the terminal actually has.
     constexpr int kMinSidebarWidth = 4;
 
+    // sidebar-header follow-up: row 0 is always the project-name header,
+    // never tree content -- see ProjectSidebar::Paint's own comment.
+    constexpr int kHeaderHeight = 1;
+
     // See CachedTree()'s own comment (ProjectSidebar.h) for why this exists
     // at all. 500ms is a deliberately unscientific pick -- fast enough that
     // the sidebar never feels stale to a human, slow enough (well under
@@ -123,6 +127,17 @@ namespace {
         return label;
     }
 
+    // The header row's own label -- the project root's directory name (e.g.
+    // opening ~/dev/ned shows "ned"), matching VS Code's own workspace-
+    // sidebar-header convention. filename() is empty for a root path like
+    // "/" itself (no final path component to take), so this falls back to
+    // the full path string in that case rather than showing a blank header.
+    std::u32string ProjectNameLabel() {
+        const std::filesystem::path root     = editor::ProjectRoot();
+        const std::string           filename = root.filename().string();
+        return ToCodepoints(filename.empty() ? root.string() : filename);
+    }
+
     // Ancestor entries of entries[index], returned root-to-leaf (index 0 =
     // shallowest), found by scanning backward for the nearest preceding
     // entry at each successively shallower depth -- depth-first order
@@ -204,6 +219,10 @@ int ProjectSidebar::Width() const {
     return width_;
 }
 
+int ProjectSidebar::ContentHeight() const {
+    return std::max(0, size().height - kHeaderHeight);
+}
+
 const std::vector<editor::ProjectTreeEntry>& ProjectSidebar::CachedTree() {
     const std::filesystem::path root = editor::ProjectRoot();
     const auto                  now  = std::chrono::steady_clock::now();
@@ -237,19 +256,39 @@ void ProjectSidebar::Paint(Canvas c) {
     // buffer boundary -- content renders into [0, dividerColumn).
     const int dividerColumn = c.size().width - 1;
 
+    // sidebar-header follow-up: row 0 is always the project root's own
+    // directory name -- main.cpp's composition now gives ProjectSidebar the
+    // row tabBar used to sit above instead (tabBar itself moved to sit only
+    // above the pane area), matching VS Code's own per-workspace sidebar
+    // header. Same chrome brush TabBar's own row and a sticky pinned
+    // ancestor already use. Not yet clickable for anything beyond
+    // consuming the event (see OnEvent's own comment) -- the intended hook
+    // point for project-settings, once that exists, without needing to
+    // touch this row/height bookkeeping again.
+    {
+        const std::u32string label = ProjectNameLabel();
+        for (std::size_t i = 0; i < label.size() && static_cast<int>(i) < dividerColumn; ++i) {
+            ftxui::Cell& cell = c[{.x = static_cast<int>(i), .y = 0}];
+            cell.character    = text::EncodeCodepointUtf8(label[i]);
+            theme_.tabBar.ApplyTo(cell);
+        }
+    }
+
     const std::vector<editor::ProjectTreeEntry> entries    = VisibleEntries(CachedTree());
     const std::optional<std::filesystem::path>& activePath = activeBufferProvider_().Get().Path();
 
-    const RowLayout layout      = ComputeRowLayout(entries, scrollOffset_);
-    const int       stickyCount = std::min<int>(static_cast<int>(layout.stickyAncestors.size()), c.size().height);
+    const int       contentHeight = ContentHeight();
+    const RowLayout layout        = ComputeRowLayout(entries, scrollOffset_);
+    const int       stickyCount   = std::min<int>(static_cast<int>(layout.stickyAncestors.size()), contentHeight);
 
-    for (int row = 0; row < c.size().height; ++row) {
-        const std::optional<std::size_t> index = EntryIndexAtRow(layout, entries, c.size().height, row);
+    for (int contentRow = 0; contentRow < contentHeight; ++contentRow) {
+        const std::optional<std::size_t> index = EntryIndexAtRow(layout, entries, contentHeight, contentRow);
         if (!index) {
             break; // sticky rows always come first; once content runs out, so do all later rows
         }
         const editor::ProjectTreeEntry& entry    = entries[*index];
-        const bool                      isSticky = row < stickyCount;
+        const bool                      isSticky = contentRow < stickyCount;
+        const int                       row      = contentRow + kHeaderHeight;
 
         const bool  isActiveFile = !entry.isDirectory && activePath && *activePath == entry.path;
         const Brush brush =
@@ -302,7 +341,7 @@ bool ProjectSidebar::OnEvent(ftxui::Event event) {
         constexpr int kWheelScrollLines = 3;
 
         const std::vector<editor::ProjectTreeEntry> entries   = VisibleEntries(CachedTree());
-        const int                                   maxScroll = std::max(0, static_cast<int>(entries.size()) - size().height);
+        const int                                   maxScroll = std::max(0, static_cast<int>(entries.size()) - ContentHeight());
 
         if (mouse->button == ftxui::Mouse::WheelDown) {
             scrollOffset_ = std::min(scrollOffset_ + kWheelScrollLines, maxScroll);
@@ -322,13 +361,22 @@ bool ProjectSidebar::OnEvent(ftxui::Event event) {
         return true;
     }
 
+    if (mouse->at.y < kHeaderHeight) {
+        // Header row -- just the project name today; consuming the click
+        // here (rather than falling through to tree hit-testing below,
+        // which a naive row-0 entry would otherwise resolve to) is what
+        // keeps this the project-settings hook point once that exists.
+        return true;
+    }
+
     const std::vector<editor::ProjectTreeEntry> entries = VisibleEntries(CachedTree());
     if (entries.empty()) {
         return true;
     }
 
     const RowLayout                  layout = ComputeRowLayout(entries, scrollOffset_);
-    const std::optional<std::size_t> index  = EntryIndexAtRow(layout, entries, size().height, std::max(mouse->at.y, 0));
+    const std::optional<std::size_t> index =
+        EntryIndexAtRow(layout, entries, ContentHeight(), std::max(mouse->at.y - kHeaderHeight, 0));
     if (!index) {
         return true;
     }
@@ -367,6 +415,15 @@ bool ProjectSidebar::OnEvent(ftxui::Event event) {
 void ProjectSidebar::OpenFileEntry(const std::filesystem::path& path, bool isDoubleClick) {
     try {
         if (text::Buffer* existing = bufferList_.FindByPath(path)) {
+            // Re-clicking a file that's still just a temp preview (never
+            // promoted) always jumps back to the top rather than carrying
+            // over wherever point/scroll was left from idly looking around
+            // -- a real, promoted buffer's own position is left untouched,
+            // since switching back to an actively-edited file shouldn't
+            // discard where you were in it.
+            if (!isDoubleClick && bufferList_.PreviewBuffer() == existing) {
+                existing->SetPoint(0);
+            }
             activeBufferProvider_().Set(*existing);
             if (isDoubleClick && bufferList_.PreviewBuffer() == existing) {
                 bufferList_.SetPreviewBuffer(nullptr); // promote the existing preview in place
@@ -380,23 +437,33 @@ void ProjectSidebar::OpenFileEntry(const std::filesystem::path& path, bool isDou
         // ever unmodified at this point (any edit already promoted it via
         // BufferList::PreviewBuffer's own self-clearing), so discarding it
         // outright is always safe, never silent data loss.
-        if (!isDoubleClick) {
-            if (text::Buffer* oldPreview = bufferList_.PreviewBuffer()) {
-                // Must run before Close() actually frees it -- see
-                // SetOnBufferClosed's own doc comment for why skipping this
-                // was a real, confirmed dangling-ActiveBuffer crash.
-                if (onBufferClosed_) {
-                    onBufferClosed_(*oldPreview);
-                }
-                bufferList_.Close(oldPreview->Name());
-            }
-        }
+        text::Buffer* oldPreview = !isDoubleClick ? bufferList_.PreviewBuffer() : nullptr;
 
         text::Buffer& opened = bufferList_.OpenOrCreateFile(path);
         activeBufferProvider_().Set(opened);
         statusMessage_.clear();
         if (!isDoubleClick) {
             bufferList_.SetPreviewBuffer(&opened);
+        }
+
+        // Closed only now, after the switch to `opened` above is fully
+        // done -- closing it first (the old order) freed oldPreview's
+        // Buffer right before OpenOrCreateFile's own allocation above,
+        // which could reuse that exact freed address for the new buffer.
+        // That made BufferView's own buffer-identity caches (topLine_,
+        // syntax highlighting, ...), which still held oldPreview's address
+        // from before this click, wrongly conclude nothing had changed --
+        // a real bug, confirmed via a live pty run (switching from a long
+        // buffer to a short one rendered as entirely blank, not merely
+        // unclamped), not hypothetical.
+        if (oldPreview) {
+            // Must run before Close() actually frees it -- see
+            // SetOnBufferClosed's own doc comment for why skipping this
+            // was a real, confirmed dangling-ActiveBuffer crash.
+            if (onBufferClosed_) {
+                onBufferClosed_(*oldPreview);
+            }
+            bufferList_.Close(oldPreview->Name());
         }
     }
     catch (const std::exception& e) {

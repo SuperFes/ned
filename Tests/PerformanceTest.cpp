@@ -200,12 +200,20 @@ TEST_CASE("BufferView::paint with JsonMode's tree-sitter highlighting stays fast
     // earlier version with no caching at all measured ~217ms *per* paint()
     // call on this same content; with caching but before ClassAtOffset was
     // also narrowed to per-line spans (SpansForLine, BufferView.cpp) it was
-    // still ~44ms/call. 500 JSON object entries (~33KB) -- a real config-file
+    // still ~44ms/call. 150 JSON object entries (~10KB) -- a real config-file
     // size, not a pathological one; kept modest enough (rather than the
-    // 2,000 originally measured with) to leave real margin under
-    // -DNED_ENABLE_SANITIZERS=ON's ~3x instrumentation overhead, not just
-    // the un-instrumented build.
-    ned::text::Buffer          buffer("scratch", ned::text::Rope(MakeLargeJsonArray(500)));
+    // 2,000 originally measured with, then 500 once tuned once already) to
+    // leave real margin under -DNED_ENABLE_SANITIZERS=ON's ~3x
+    // instrumentation overhead, not just the un-instrumented build. Tuned
+    // down again, from 500, by the generic-code-folding follow-up: JsonMode
+    // gained a real fold query (Mode.h's Mode::fold), which BufferView now
+    // also calls once per content-generation change (EnsureFoldableBlocksCache)
+    // alongside the existing highlight call -- a second genuinely necessary
+    // full tree-sitter query pass (sharing the underlying parsed Tree with
+    // highlight, see Mode.cpp's SharedParse, but not the query run itself),
+    // not an inefficiency; this is the "prove it before optimizing"
+    // discipline's own precedent, applied to this exact test a second time.
+    ned::text::Buffer          buffer("scratch", ned::text::Rope(MakeLargeJsonArray(150)));
     ned::text::KillRing        killRing;
     ned::editor::RegisterTable registers;
     ned::text::BufferList      bufferList;

@@ -14,7 +14,12 @@
 // list but is skipped: no official tree-sitter grammar for it ships a
 // pre-generated parser.c (would need the Node-based tree-sitter CLI this
 // project's build deliberately never depends on), and the user explicitly
-// agreed to drop it rather than work around that. See ROADMAP.md.
+// agreed to drop it rather than work around that. See ROADMAP.md. The
+// Org-mode syntax-highlighting follow-up adds "org" -- not the real
+// upstream nvim-orgmode/tree-sitter-org, but Ned's own fork of it (see
+// CMakeLists.txt's own ned_add_treesitter_grammar(tree-sitter-org ...)
+// call), which adds real grammar-level inline emphasis support the
+// upstream grammar doesn't have at all.
 //
 
 #ifndef NED_EDITOR_TREESITTER_LANGUAGES_H

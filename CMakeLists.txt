@@ -232,12 +232,29 @@ endfunction()
 
 ned_add_treesitter_grammar(tree-sitter-json https://github.com/tree-sitter/tree-sitter-json.git v0.24.8)
 ned_embed_treesitter_query("${tree-sitter-json_SOURCE_DIR}/queries/highlights.scm" Json)
+# generic-code-folding follow-up: hand-written, not fetched from any repo --
+# see Source/Editor/TreeSitter/queries/json-folds.scm's own header comment.
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/json-folds.scm" JsonFolds)
 
 ned_add_treesitter_grammar(tree-sitter-c https://github.com/tree-sitter/tree-sitter-c.git v0.24.2)
-ned_embed_treesitter_query("${tree-sitter-c_SOURCE_DIR}/queries/highlights.scm" C)
+# generic-tree-sitter-highlighting follow-up: this grammar's own bundled
+# queries/highlights.scm is genuinely sparse (~20 capture names, no
+# access-specifier/return-type distinction) -- Source/Editor/TreeSitter/
+# queries/c.scm is a real, richer query vendored from nvim-treesitter's own
+# (see that file's own header comment for source/license/commit), not this
+# grammar's own file.
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/c.scm" C)
+# generic-code-folding follow-up: hand-written, not fetched from any repo --
+# see Source/Editor/TreeSitter/queries/c-folds.scm's own header comment.
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/c-folds.scm" CFolds)
 
 ned_add_treesitter_grammar(tree-sitter-cpp https://github.com/tree-sitter/tree-sitter-cpp.git v0.23.4)
-ned_embed_treesitter_query("${tree-sitter-cpp_SOURCE_DIR}/queries/highlights.scm" Cpp)
+# Same as C immediately above -- see Source/Editor/TreeSitter/queries/cpp.scm's
+# own header comment.
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/cpp.scm" Cpp)
+# generic-code-folding follow-up: hand-written, not fetched from any repo --
+# see Source/Editor/TreeSitter/queries/cpp-folds.scm's own header comment.
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/cpp-folds.scm" CppFolds)
 
 # php/, not the repo root -- the real grammar, which also handles HTML
 # embedded around <?php ?> tags; the repo root houses a separate php_only/
@@ -248,6 +265,9 @@ ned_embed_treesitter_query("${tree-sitter-php_SOURCE_DIR}/queries/highlights.scm
 
 ned_add_treesitter_grammar(tree-sitter-javascript https://github.com/tree-sitter/tree-sitter-javascript.git v0.25.0)
 ned_embed_treesitter_query("${tree-sitter-javascript_SOURCE_DIR}/queries/highlights.scm" JavaScript)
+# generic-code-folding follow-up: hand-written, not fetched from any repo --
+# see Source/Editor/TreeSitter/queries/javascript-folds.scm's own header comment.
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/javascript-folds.scm" JavaScriptFolds)
 
 # One repo, two grammars (typescript/ and tsx/), sharing one top-level
 # queries/highlights.scm -- confirmed by checking the actual repo, not
@@ -256,6 +276,11 @@ ned_fetch_treesitter_source(tree-sitter-typescript-src https://github.com/tree-s
 ned_add_treesitter_grammar_target(tree-sitter-typescript "${tree-sitter-typescript-src_SOURCE_DIR}/typescript")
 ned_add_treesitter_grammar_target(tree-sitter-tsx "${tree-sitter-typescript-src_SOURCE_DIR}/tsx")
 ned_embed_treesitter_query("${tree-sitter-typescript-src_SOURCE_DIR}/queries/highlights.scm" TypeScript)
+# generic-code-folding follow-up: hand-written, not fetched from any repo --
+# see Source/Editor/TreeSitter/queries/typescript-folds.scm's own header
+# comment. Shared by both the typescript/ and tsx/ grammars, mirroring the
+# highlights query immediately above.
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/typescript-folds.scm" TypeScriptFolds)
 
 ned_add_treesitter_grammar(tree-sitter-html https://github.com/tree-sitter/tree-sitter-html.git v0.23.2)
 ned_embed_treesitter_query("${tree-sitter-html_SOURCE_DIR}/queries/highlights.scm" Html)
@@ -265,6 +290,9 @@ ned_embed_treesitter_query("${tree-sitter-css_SOURCE_DIR}/queries/highlights.scm
 
 ned_add_treesitter_grammar(tree-sitter-python https://github.com/tree-sitter/tree-sitter-python.git v0.25.0)
 ned_embed_treesitter_query("${tree-sitter-python_SOURCE_DIR}/queries/highlights.scm" Python)
+# generic-code-folding follow-up: hand-written, not fetched from any repo --
+# see Source/Editor/TreeSitter/queries/python-folds.scm's own header comment.
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/python-folds.scm" PythonFolds)
 
 ned_add_treesitter_grammar(tree-sitter-bash https://github.com/tree-sitter/tree-sitter-bash.git v0.25.1)
 ned_embed_treesitter_query("${tree-sitter-bash_SOURCE_DIR}/queries/highlights.scm" Bash)
@@ -292,6 +320,22 @@ ned_embed_treesitter_query("${tree-sitter-janet-simple_SOURCE_DIR}/queries/highl
 # ROADMAP.md.
 ned_add_treesitter_grammar(tree-sitter-markdown https://github.com/tree-sitter-grammars/tree-sitter-markdown.git v0.5.3 tree-sitter-markdown)
 ned_embed_treesitter_query("${tree-sitter-markdown_SOURCE_DIR}/tree-sitter-markdown/queries/highlights.scm" Markdown)
+
+# Org-mode syntax-highlighting follow-up: a real fork of
+# nvim-orgmode/tree-sitter-org (v1.3.2), not the upstream repository -- see
+# /Development/NED/tree-sitter-ned-org's own README.md and Mode.cpp's
+# OrgMode() doc comment for the full story. Local filesystem path is a
+# perfectly normal git remote as far as FetchContent's own GIT_REPOSITORY
+# is concerned; ned_add_treesitter_grammar's signature needed no change.
+# The upstream grammar has no dedicated node for inline emphasis markup at
+# all (every `*`/`/`/`_`/`=`/`~`/`+` character is just an ordinary symbol),
+# which is what made a real fork -- not a query-only workaround -- the
+# actual fix. This project's own hand-written highlights.scm
+# (Source/Editor/TreeSitter/OrgHighlights.scm, embedded below) is what
+# consumes the six new emphasis node types this fork adds, alongside the
+# grammar's own original headline/table/checkbox/etc. structure.
+ned_add_treesitter_grammar(tree-sitter-org /Development/NED/tree-sitter-ned-org 05b4c7505c452f42330c681a067842d4cb49b174)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/OrgHighlights.scm" Org)
 #------------------------------------------------------------------------------
 
 #--- Fetch Catch2 --------------------------------------------------------------
@@ -335,12 +379,19 @@ add_library(ned_lib STATIC
         Source/Editor/Rectangle.cpp
         Source/Editor/MinibufferPrompt.cpp
         Source/Editor/Mode.cpp
+        Source/Editor/SyntaxTheme.cpp
         Source/Editor/ModeOverrides.cpp
+        Source/Editor/CodeFold.cpp
+        Source/Editor/CodeFoldSettings.cpp
         Source/Editor/Org.cpp
+        Source/Editor/Table.cpp
+        Source/Editor/Markdown.cpp
+        Source/Editor/Link.cpp
         Source/Editor/FinalNewline.cpp
         Source/Editor/FormatOnSave.cpp
         Source/Editor/TabWidth.cpp
         Source/Editor/ProjectSearch.cpp
+        Source/Editor/ProjectAgenda.cpp
         Source/Editor/ProjectReplace.cpp
         Source/Editor/ProjectTree.cpp
         Source/Editor/ProjectRoot.cpp
@@ -395,6 +446,7 @@ target_link_libraries(ned_lib
         PUBLIC tree-sitter-bash
         PUBLIC tree-sitter-janet-simple
         PUBLIC tree-sitter-markdown
+        PUBLIC tree-sitter-org
         PRIVATE ${CMAKE_DL_LIBS})
 
 if (NED_ENABLE_SANITIZERS)
@@ -442,9 +494,14 @@ if (NED_BUILD_TESTS)
             Tests/IncrementalSearchTest.cpp
             Tests/QueryReplaceTest.cpp
             Tests/ModeTest.cpp
+            Tests/CodeFoldTest.cpp
             Tests/OrgTest.cpp
+            Tests/TableTest.cpp
+            Tests/MarkdownTest.cpp
+            Tests/LinkTest.cpp
             Tests/PerformanceTest.cpp
             Tests/ThemeTest.cpp
+            Tests/SyntaxThemeTest.cpp
             Tests/ThemeFileTest.cpp
             Tests/TerminalColorProbeTest.cpp
             Tests/ActiveBufferTest.cpp
@@ -455,6 +512,7 @@ if (NED_BUILD_TESTS)
             Tests/FormatOnSaveTest.cpp
             Tests/TabWidthTest.cpp
             Tests/ProjectSearchTest.cpp
+            Tests/ProjectAgendaTest.cpp
             Tests/ProjectReplaceTest.cpp
             Tests/ProjectTreeTest.cpp
             Tests/ProjectRootTest.cpp

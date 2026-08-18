@@ -26,6 +26,8 @@
 
 namespace ned::editor {
 
+struct Mode;
+
 // Set by a command that needs to hand control to an interactive sub-session
 // (isearch, query-replace, ...) the host UI drives -- the command layer only
 // requests it, it doesn't know how to run one itself (that needs live key
@@ -42,10 +44,23 @@ enum class InteractiveRequest { None,
                                 VisitSearchResult,
                                 ProjectReplace,
                                 ToggleProjectSidebar,
+                                // org-agenda follow-up: another one-shot direct action, same
+                                // shape as ToggleProjectSidebar -- BufferView builds and
+                                // switches to a synthesized "*agenda*" buffer via
+                                // editor::CollectProjectTodos + its own existing
+                                // BuildResultsBuffer helper (already shared with
+                                // project-search/project-replace).
+                                ProjectAgenda,
                                 CreateDirectory,
                                 DeleteFile,
                                 RenameFile,
                                 FindScratch,
+                                // org-set-tags follow-up: another prompt-shaped request (real
+                                // Org's own C-c C-q) -- tags are free-form text, not a small
+                                // fixed set to cycle through the way org-cycle-todo/
+                                // org-cycle-priority do, so this needs a real prompt. See
+                                // Editor/Org.h's SetHeadlineTags for the actual rewrite.
+                                SetHeadlineTags,
                                 // execute-extended-command follow-up: another prompt-shaped
                                 // one-shot request, not a structural window-management one --
                                 // placed here rather than after the window-management block
@@ -96,7 +111,16 @@ enum class InteractiveRequest { None,
                                 SplitRight,
                                 DeleteWindow,
                                 DeleteOtherWindows,
-                                OtherWindow };
+                                OtherWindow,
+                                // Links follow-up: another one-shot direct action (same shape as
+                                // VisitSearchResult/ToggleProjectSidebar) -- BufferView's own
+                                // OpenLinkAtPoint does the actual detect-and-open, trying Org's
+                                // [[target][description]] bracket syntax first in an org-mode
+                                // buffer, falling back to Editor/Link.h's generic bare-URL/file
+                                // detection everywhere else. See Editor/Org.h's LinkAtPoint and
+                                // Editor/Link.h's DetectLinkAtPoint for where the actual detection
+                                // lives.
+                                OpenLinkAtPoint };
 
 // Everything a command implementation might need. Built fresh per invocation
 // from live references -- never stored, so there's no lifetime concern beyond
@@ -113,6 +137,14 @@ struct CommandContext {
     // each dispatch (0 if unknown/headless) -- scroll-page-up/-down are the
     // only commands that read this; everything else ignores it.
     std::size_t viewportHeight = 0;
+    // generic-code-folding follow-up: the active buffer's Mode, set by the
+    // host UI before each dispatch (nullptr if unknown/headless) -- mirrors
+    // viewportHeight's own "a UI fact a command needs" shape. Only
+    // code-fold-toggle reads this; everything else ignores it. A command
+    // context is never stored past the synchronous call it's used in (see
+    // this struct's own doc comment above), so a raw, non-owning pointer is
+    // fine here the same way it already is for `message` below.
+    const Mode* mode = nullptr;
 };
 
 using CommandFunction = std::function<void(CommandContext&)>;

@@ -25,6 +25,25 @@ extern const char* const kPython;
 extern const char* const kBash;
 extern const char* const kJanet;
 extern const char* const kMarkdown;
+// Org-mode syntax-highlighting follow-up: hand-written against Ned's own
+// forked grammar (Source/Editor/TreeSitter/OrgHighlights.scm), not fetched
+// from any repository -- see that file's own header comment for why.
+extern const char* const kOrg;
+
+// generic-code-folding follow-up: hand-written "@fold" queries, one per
+// in-scope language (Source/Editor/TreeSitter/queries/*-folds.scm) -- no
+// upstream grammar repo or nvim-treesitter/Neovim-core query set ships a
+// folds.scm for any of these (checked directly, not assumed; see
+// ROADMAP.md). kTypeScriptFolds is shared by TypeScriptMode and TsxMode,
+// mirroring kTypeScript's own sharing above. Languages with no fold query
+// yet (PHP/HTML/CSS/Bash/Janet/Markdown) have no corresponding constant
+// here -- their Mode::fold simply stays empty.
+extern const char* const kCFolds;
+extern const char* const kCppFolds;
+extern const char* const kJsonFolds;
+extern const char* const kPythonFolds;
+extern const char* const kJavaScriptFolds;
+extern const char* const kTypeScriptFolds;
 
 } // namespace ned::editor::treesitter::queries
 

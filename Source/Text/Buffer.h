@@ -14,10 +14,12 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "Rope.h"
 #include "UndoTree.h"
@@ -216,9 +218,89 @@ class Buffer {
     void               Undo();
     void               Redo();
 
+    // A generic, Org-agnostic per-position marker (Org-mode fold/unfold
+    // follow-up): Buffer has no idea these represent headline fold state --
+    // it just tracks a sparse {byte offset -> one of two marker values}
+    // map the same way it already tracks Point_/Mark_/NarrowedRange_,
+    // relocating entries across every content-mutating edit via the same
+    // RelocateForInsert/RelocateForDelete rule those use. A third,
+    // unmarked state ("no entry") is free and is what every offset starts
+    // as -- interpreting these two explicit values (and the implicit
+    // third) as Org's real 3-state subtree visibility is entirely
+    // Source/Editor/Org.h's job, not this class's.
+    enum class FoldMarker { Collapsed,
+                            ChildrenVisible };
+
+    // marker == nullopt erases any existing marker at byteOffset (back to
+    // the implicit "unmarked" state); otherwise sets/overwrites it.
+    void                                                   SetFoldMarker(std::size_t byteOffset, std::optional<FoldMarker> marker);
+    [[nodiscard]] std::optional<FoldMarker>                FoldMarkerAt(std::size_t byteOffset) const;
+    [[nodiscard]] const std::map<std::size_t, FoldMarker>& FoldMarkers() const;
+
+    // Bumped by SetFoldMarker only -- mirrors ContentGeneration()'s own
+    // "cheap, monotonic did-it-change signal" shape, but for fold-marker
+    // state, which isn't content and so doesn't bump ContentGeneration()
+    // itself. Lets a caller (BufferView's hidden-line-range cache) detect
+    // "did the fold state change" without re-deriving it from FoldMarkers()
+    // on every frame.
+    [[nodiscard]] std::size_t FoldGeneration() const;
+
+    // status-gutter unsaved-change-indicator follow-up: byte ranges touched
+    // by an edit since this buffer was last loaded/saved -- sorted, merged,
+    // non-overlapping. Relocated across every content-mutating edit the
+    // same way FoldMarkers_ already is; cleared (and UnsavedChangeGeneration_
+    // bumped) on a successful Save()/SaveToFile(). A live edit-tracking
+    // signal, not a real diff against saved content -- typing a character
+    // then deleting it still leaves the line marked touched. Good enough
+    // for "does this line have edits since disk," not a substitute for a
+    // real git-diff-gutter (explicitly deferred -- see ROADMAP.md).
+    [[nodiscard]] const std::vector<std::pair<std::size_t, std::size_t>>& UnsavedChangeRanges() const;
+    // Bumped whenever UnsavedChangeRanges() changes -- mirrors
+    // FoldGeneration()'s own "cheap, did-it-change" signal shape.
+    [[nodiscard]] std::size_t UnsavedChangeGeneration() const;
+
   private:
     void ClampCursorsToContent();
     void MoveToLine(std::size_t targetLine, std::size_t tabWidth);
+
+    // The one relocation rule every tracked position in this class follows
+    // across an edit -- Point_, Mark_, both ends of NarrowedRange_, and
+    // FoldMarkers_' keys -- factored out once FoldMarkers_ was about to
+    // become a fourth hand-duplicated copy of logic that was already
+    // inlined separately (and inconsistently -- see DeleteBackwardAtPoint/
+    // DeleteForwardAtPoint's own use below) in every one of InsertAtPoint/
+    // DeleteBackwardAtPoint/DeleteForwardAtPoint/DeleteRange/InsertAt.
+    //
+    // RelocateForInsert: an offset at or after insertOffset shifts forward
+    // by length; anything strictly before is untouched.
+    [[nodiscard]] static std::size_t RelocateForInsert(std::size_t offset, std::size_t insertOffset,
+                                                       std::size_t length);
+    // RelocateForDelete: an offset at/past rangeEnd shifts back by the
+    // deleted length; an offset strictly inside [rangeStart, rangeEnd)
+    // collapses to rangeStart; anything strictly before rangeStart is
+    // untouched.
+    [[nodiscard]] static std::size_t RelocateForDelete(std::size_t offset, std::size_t rangeStart,
+                                                       std::size_t rangeEnd);
+
+    // FoldMarkers_' keys can't be shifted in place (std::map key mutation
+    // is undefined) -- these rebuild the map through the two relocation
+    // rules above. A delete that collapses two distinct marker offsets onto
+    // the same surviving offset loses one of them (map keys are unique) --
+    // an accepted, documented edge case, the same "collapses toward one
+    // surviving position" behavior Mark_ itself already has.
+    void RelocateFoldMarkersForInsert(std::size_t insertOffset, std::size_t length);
+    void RelocateFoldMarkersForDelete(std::size_t rangeStart, std::size_t rangeEnd);
+
+    // status-gutter unsaved-change-indicator follow-up: relocates
+    // UnsavedChangeRanges_' existing entries (same two relocation rules
+    // above) then merges in the newly-touched span -- MarkUnsavedRangeInserted's
+    // is exactly [insertOffset, insertOffset + length); MarkUnsavedRangeDeleted's
+    // is a single clamped byte at the collapse point (a delete removes
+    // content, so there's no span left to mark, only the position it
+    // collapsed to -- one byte is enough for the line it maps to at render
+    // time). Both bump UnsavedChangeGeneration_.
+    void MarkUnsavedRangeInserted(std::size_t insertOffset, std::size_t length);
+    void MarkUnsavedRangeDeleted(std::size_t rangeStart, std::size_t rangeEnd);
 
     std::string                                        Name_;
     std::optional<std::filesystem::path>               Path_;
@@ -230,9 +312,14 @@ class Buffer {
     bool                                               CanAmend_ = false;
     // Set by MoveToNextLine/MoveToPreviousLine, cleared by every other
     // point-moving or editing call -- see their doc comment above.
-    std::optional<std::size_t> GoalColumn_;
-    bool                       Modified_          = false;
-    std::size_t                ContentGeneration_ = 0; // see ContentGeneration()
+    std::optional<std::size_t>        GoalColumn_;
+    bool                              Modified_          = false;
+    std::size_t                       ContentGeneration_ = 0; // see ContentGeneration()
+    std::map<std::size_t, FoldMarker> FoldMarkers_;           // see FoldMarker's own doc comment above
+    std::size_t                       FoldGeneration_ = 0;    // see FoldGeneration()
+
+    std::vector<std::pair<std::size_t, std::size_t>> UnsavedChangeRanges_;      // see UnsavedChangeRanges()'s own doc comment
+    std::size_t                                       UnsavedChangeGeneration_ = 0; // see UnsavedChangeGeneration()
 };
 
 } // namespace ned::text

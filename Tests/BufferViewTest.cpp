@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -13,6 +14,7 @@
 
 #include "Editor/Commands.h"
 #include "Editor/Dispatcher.h"
+#include "Editor/Link.h"
 #include "Editor/Mode.h"
 #include "Editor/ProjectRoot.h"
 #include "Editor/Register.h"
@@ -81,6 +83,24 @@ struct TabWidthGuard {
     ~TabWidthGuard() {
         ned::editor::SetTabWidth(4);
     }
+};
+
+// UrlOpenCommand is process-wide state too (see Editor/Link.h's own doc
+// comment, mirrors TabWidth.h's exact pattern) -- restores whatever was
+// configured before the test ran, not unconditionally "xdg-open", so tests
+// stay order-independent regardless of what ran before them.
+class UrlOpenCommandGuard {
+  public:
+    UrlOpenCommandGuard() : previous_(ned::editor::link::UrlOpenCommand()) {
+    }
+    ~UrlOpenCommandGuard() {
+        ned::editor::link::SetUrlOpenCommand(previous_);
+    }
+    UrlOpenCommandGuard(const UrlOpenCommandGuard&)            = delete;
+    UrlOpenCommandGuard& operator=(const UrlOpenCommandGuard&) = delete;
+
+  private:
+    std::optional<std::string> previous_;
 };
 
 // find-scratch reads Editor/ScratchPad.h's ScratchDirectory(), which resolves
@@ -153,16 +173,23 @@ std::string RowText(ftxui::Screen& screen, int row, int width) {
     return out;
 }
 
-// Mirrors BufferView::GutterWidth's formula: digits in the last line number,
-// plus one separating column. Content starts at this column, not 0.
-int GutterWidth(std::size_t totalLines) {
-    return static_cast<int>(std::to_string(totalLines).size()) + 1;
+// Mirrors BufferView::GutterWidth's formula -- [status][gap][digits][gap][fold]:
+// a fixed leading status column, a gap, digits in the last line number, a
+// second gap, then foldColumn trailing columns (generic-code-folding
+// follow-up) for a mode with a real fold query -- default 0, since most
+// existing callers exercise a mode without one. Content starts at this
+// column, not 0.
+int GutterWidth(std::size_t totalLines, int foldColumn = 0) {
+    constexpr int kStatusWidth   = 1;
+    constexpr int kLineNumberGap = 1;
+    return kStatusWidth + kLineNumberGap + static_cast<int>(std::to_string(totalLines).size()) + kLineNumberGap +
+           foldColumn;
 }
 
 // Row text starting right after the gutter, rather than from column 0.
-std::string ContentRowText(ftxui::Screen& screen, int row, int width, std::size_t totalLines) {
+std::string ContentRowText(ftxui::Screen& screen, int row, int width, std::size_t totalLines, int foldColumn = 0) {
     std::string out;
-    const int   gutter = GutterWidth(totalLines);
+    const int   gutter = GutterWidth(totalLines, foldColumn);
     for (int col = 0; col < width; ++col) {
         out += screen.PixelAt(gutter + col, row).character;
     }
@@ -621,8 +648,13 @@ TEST_CASE("BufferView consults the active Mode's highlightLine hook when paintin
     view.Paint(canvas);
 
     const int gutter = GutterWidth(1);
-    REQUIRE(screen.PixelAt(gutter + 0, 0).foreground_color == ned::ui::Color::BrightBlack.ToFtxui());
-    REQUIRE(screen.PixelAt(gutter + 5, 0).foreground_color == ned::ui::Color::BrightBlack.ToFtxui()); // still inside the comment
+    // Compares against the theme's own current commentForeground rather
+    // than a hardcoded color literal -- this test is about the highlight
+    // hook actually being consulted, not about pinning DarkTheme's exact
+    // comment color (which is free to change independently).
+    const auto commentColor = fixture.theme.commentForeground.ToFtxui();
+    REQUIRE(screen.PixelAt(gutter + 0, 0).foreground_color == commentColor);
+    REQUIRE(screen.PixelAt(gutter + 5, 0).foreground_color == commentColor); // still inside the comment
 }
 
 TEST_CASE("BufferView renders with no highlighting under FundamentalMode", "[BufferView]") {
@@ -659,7 +691,7 @@ TEST_CASE("BufferView renders JsonMode's tree-sitter highlighting for strings, n
 
     view.Paint(canvas);
 
-    const int gutter = GutterWidth(1);
+    const int gutter = GutterWidth(1, /*foldColumn=*/4); // JsonMode has a fold query -- generic-code-folding follow-up
     REQUIRE(CellMatchesBrush(screen.PixelAt(gutter + 2, 0), fixture.theme.BrushFor(ned::editor::SyntaxClass::String))); // 'a'
     REQUIRE(CellMatchesBrush(screen.PixelAt(gutter + 6, 0), fixture.theme.BrushFor(ned::editor::SyntaxClass::Number))); // '1'
     REQUIRE(CellMatchesBrush(screen.PixelAt(gutter + 15, 0),
@@ -679,7 +711,7 @@ TEST_CASE("BufferView's highlight cache updates after an edit changes the buffer
     ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
 
     view.Paint(canvas);
-    const int gutter = GutterWidth(1);
+    const int gutter = GutterWidth(1, /*foldColumn=*/4); // JsonMode has a fold query -- generic-code-folding follow-up
     REQUIRE(CellMatchesBrush(screen.PixelAt(gutter + 0, 0), fixture.theme.BrushFor(ned::editor::SyntaxClass::String)));
 
     // Replace the whole buffer with something that has no string at all --
@@ -857,18 +889,20 @@ TEST_CASE("The line-number gutter shows right-aligned, 1-indexed line numbers", 
     ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 9});
     view.Paint(canvas);
 
-    REQUIRE(GutterWidth(10) == 3);
+    REQUIRE(GutterWidth(10) == 5); // status(1) + gap(1) + digits(2) + gap(1)
 
-    // Row 0 -> line 1: right-aligned in 2 digit columns, then a separator, then content.
-    REQUIRE(screen.PixelAt(0, 0).character == " ");
-    REQUIRE(screen.PixelAt(1, 0).character == "1");
+    // Row 0 -> line 1: status column, leading gap, right-aligned in 2 digit
+    // columns, then a trailing separator, then content.
+    REQUIRE(screen.PixelAt(1, 0).character == " "); // leading gap
     REQUIRE(screen.PixelAt(2, 0).character == " ");
+    REQUIRE(screen.PixelAt(3, 0).character == "1");
+    REQUIRE(screen.PixelAt(4, 0).character == " "); // trailing gap
     REQUIRE(ContentRowText(screen, 0, 1, 10) == "a");
 
     // Row 9 -> line 10: both digit columns used.
-    REQUIRE(screen.PixelAt(0, 9).character == "1");
-    REQUIRE(screen.PixelAt(1, 9).character == "0");
-    REQUIRE(screen.PixelAt(2, 9).character == " ");
+    REQUIRE(screen.PixelAt(2, 9).character == "1");
+    REQUIRE(screen.PixelAt(3, 9).character == "0");
+    REQUIRE(screen.PixelAt(4, 9).character == " ");
     REQUIRE(ContentRowText(screen, 9, 1, 10) == "j");
 }
 
@@ -891,7 +925,7 @@ TEST_CASE("The gutter widens as the buffer grows past a power of ten lines", "[B
 
     const std::size_t totalLines = fixture.buffer.Content().LineCount();
     REQUIRE(totalLines == 151);
-    REQUIRE(GutterWidth(totalLines) == 4);
+    REQUIRE(GutterWidth(totalLines) == 6); // status(1) + gap(1) + digits(3) + gap(1)
     REQUIRE(ContentRowText(screen, 0, 1, totalLines) == "x");
 }
 
@@ -1249,6 +1283,159 @@ TEST_CASE("switch-to-buffer reports an error and stays put for an unknown buffer
     REQUIRE(fixture.statusMessage == "No buffer named \"no-such-buffer\"");
 }
 
+TEST_CASE("Switching to a shorter buffer clamps the viewport instead of rendering blank rows",
+          "[BufferView]") {
+    // A real reported bug: scroll deep into a long buffer, switch to a much
+    // shorter one (e.g. by clicking its tab -- TabBar's own click handler
+    // calls ActiveBuffer::Set() directly, entirely independent of
+    // BufferView's own topLine_, the same as switch-to-buffer exercises
+    // here) -- topLine_ carried over from the long buffer used to point well
+    // past the short buffer's own last line, rendering nothing but blank
+    // rows instead of its real content.
+    Fixture fixture;
+
+    std::string longContent;
+    for (int i = 0; i < 50; ++i) {
+        longContent += "long line " + std::to_string(i) + "\n";
+    }
+    fixture.buffer.InsertAtPoint(longContent);
+
+    ned::text::Buffer& shortBuffer = fixture.bufferList.CreateBuffer("short");
+    shortBuffer.InsertAtPoint("short line 0\nshort line 1\nshort line 2\n");
+    shortBuffer.SetPoint(0); // InsertAtPoint leaves point at the end -- a fresh file's own point starts at 0
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 4});
+
+    ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(40), ftxui::Dimension::Fixed(5));
+    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 4});
+
+    view.SetTopLine(40); // scroll deep into the long buffer
+    view.Paint(canvas);
+    REQUIRE(view.TopLine() > 30); // sanity check: genuinely scrolled down first
+
+    view.OnEvent(ftxui::Event::CtrlX);
+    view.OnEvent(ftxui::Event::Character("b"));
+    TypeText(view, "short");
+    view.OnEvent(ftxui::Event::Return);
+    REQUIRE(&fixture.activeBuffer.Get() == &shortBuffer);
+
+    view.Paint(canvas);
+    REQUIRE(view.TopLine() <= shortBuffer.Content().LineCount());
+    REQUIRE(ContentRowText(screen, 0, 12, shortBuffer.Content().LineCount()) == "short line 0");
+}
+
+TEST_CASE("Replacing a scrolled-deep preview with a new, not-yet-open, much shorter file renders its real "
+          "content instead of going blank",
+          "[BufferView]") {
+    // A real reported bug, distinct from the one above: ProjectSidebar's own
+    // single-click preview replacement used to close the old preview buffer
+    // (freeing it) *before* opening the new one -- letting the new buffer's
+    // own allocation reuse the exact address just freed. BufferView's
+    // topLineValidatedBuffer_ (still holding that now-reused address from
+    // before the click) would then wrongly compare equal to the new active
+    // buffer's address and skip revalidating topLine_ entirely, leaving it
+    // pointing well past the new, much shorter buffer's own last line --
+    // rendering as entirely blank, not merely unclamped. Fixed by opening
+    // the new buffer and switching to it *before* closing the old preview.
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / "ned_bufferview_test_preview_replace_reuse";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    {
+        std::ofstream large(dir / "large.txt");
+        for (int i = 0; i < 500; ++i) {
+            large << "large line " << i << "\n";
+        }
+    }
+    {
+        std::ofstream(dir / "short.txt") << "short line 0\nshort line 1\nshort line 2\n";
+    }
+    const CurrentPathGuard cwdGuard(dir);
+
+    Fixture                 fixture;
+    ned::ui::ProjectSidebar sidebar(
+        [&fixture]() -> ned::ui::ActiveBuffer& { return fixture.activeBuffer; }, fixture.bufferList,
+        fixture.statusMessage, fixture.theme);
+    sidebar.SetBox_(ftxui::Box{.x_min = 0, .x_max = 27, .y_min = 0, .y_max = 19});
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 19});
+
+    ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(40), ftxui::Dimension::Fixed(20));
+    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 19});
+
+    sidebar.OnEvent(MousePress(0, 1)); // "large.txt" -- opens as a preview (row 0 is the sidebar's own header)
+    ned::text::Buffer* largeBuffer = fixture.bufferList.FindByPath(dir / "large.txt");
+    REQUIRE(largeBuffer != nullptr);
+    REQUIRE(&fixture.activeBuffer.Get() == largeBuffer);
+
+    largeBuffer->SetPoint(largeBuffer->Content().ByteLength()); // scroll deep, same as paging to EOF
+    view.Paint(canvas);
+    REQUIRE(view.TopLine() > 400); // sanity check: genuinely scrolled down first
+
+    sidebar.OnEvent(MousePress(0, 2)); // "short.txt" -- not yet open, replaces the preview
+    ned::text::Buffer* shortBuffer = fixture.bufferList.FindByPath(dir / "short.txt");
+    REQUIRE(shortBuffer != nullptr);
+    REQUIRE(&fixture.activeBuffer.Get() == shortBuffer);
+    REQUIRE(fixture.bufferList.Find("large.txt") == nullptr); // old preview genuinely closed
+
+    view.Paint(canvas);
+    REQUIRE(view.TopLine() <= shortBuffer->Content().LineCount());
+    REQUIRE(ContentRowText(screen, 0, 12, shortBuffer->Content().LineCount()) == "short line 0");
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("Switching to a buffer whose point already falls within the carried-over scroll position "
+          "leaves the viewport untouched",
+          "[BufferView]") {
+    // The other half of the fix above: EnsureTopLineValidForActiveBuffer
+    // shouldn't unconditionally jump back to the top on every switch, only
+    // when the carried-over topLine_ genuinely doesn't work for the newly
+    // active buffer -- switching between two comparably long buffers should
+    // feel like nothing happened to the viewport.
+    Fixture fixture;
+
+    std::string contentA;
+    for (int i = 0; i < 50; ++i) {
+        contentA += "a line " + std::to_string(i) + "\n";
+    }
+    fixture.buffer.InsertAtPoint(contentA);
+    // InsertAtPoint leaves point at the end (line 50) -- every keystroke
+    // (even a prefix key like C-x alone, via RunCommandAndHandleOutcome's
+    // own unconditional post-dispatch ScrollToShowPoint) re-scrolls to keep
+    // point visible, which would corrupt the topLine_=20 set below before
+    // the switch to bufferB ever happens. Point needs to already sit inside
+    // that viewport so this test isolates what it actually claims to test.
+    fixture.buffer.SetPoint(fixture.buffer.Content().LineToByteOffset(25));
+
+    ned::text::Buffer& bufferB = fixture.bufferList.CreateBuffer("b");
+    std::string        contentB;
+    for (int i = 0; i < 50; ++i) {
+        contentB += "b line " + std::to_string(i) + "\n";
+    }
+    bufferB.InsertAtPoint(contentB);
+    bufferB.SetPoint(bufferB.Content().LineToByteOffset(22)); // within the carried-over viewport below
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 19});
+
+    ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(40), ftxui::Dimension::Fixed(20));
+    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 19});
+
+    view.SetTopLine(20);
+    view.Paint(canvas);
+
+    view.OnEvent(ftxui::Event::CtrlX);
+    view.OnEvent(ftxui::Event::Character("b"));
+    TypeText(view, "b");
+    view.OnEvent(ftxui::Event::Return);
+    REQUIRE(&fixture.activeBuffer.Get() == &bufferB);
+
+    view.Paint(canvas);
+    REQUIRE(view.TopLine() == 20); // untouched -- bufferB's own point (line 22) was already visible
+}
+
 TEST_CASE("Tab in switch-to-buffer completes a unique prefix and confirms with Enter", "[BufferView]") {
     Fixture            fixture;
     ned::text::Buffer& scratch = fixture.bufferList.CreateBuffer("scratch");
@@ -1591,6 +1778,41 @@ TEST_CASE("C-c C-s prompts for a pattern, then project-search opens a results bu
     REQUIRE(fixture.activeBuffer.Get().Text().find((dir / "match.txt").string() + ":2: needle here") !=
             std::string::npos);
     REQUIRE(fixture.statusMessage.find("1 match for \"needle\"") == 0);
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("C-c a builds an *agenda* buffer, and C-c C-v on one of its lines jumps to the real headline",
+          "[BufferView]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_bufferview_test_org_agenda";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    {
+        std::ofstream(dir / "tasks.org") << "* DONE Already done\n* TODO Buy milk\n";
+    }
+    const CurrentPathGuard cwdGuard(dir);
+
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ftxui::Event::CtrlC);
+    view.OnEvent(ftxui::Event::Character("a"));
+
+    REQUIRE(&fixture.activeBuffer.Get() != &fixture.buffer);
+    REQUIRE(fixture.activeBuffer.Get().Name().find("*agenda*") == 0);
+    REQUIRE(fixture.activeBuffer.Get().Text().find((dir / "tasks.org").string() + ":2: TODO Buy milk") !=
+            std::string::npos);
+    REQUIRE(fixture.activeBuffer.Get().Text().find("Already done") == std::string::npos); // DONE excluded
+
+    // Reuses project-search-visit-result (C-c C-v) unchanged -- proving the
+    // shared SearchMatch/BuildResultsBuffer pipeline actually works end to
+    // end here, not just that it compiles.
+    view.OnEvent(ftxui::Event::CtrlC);
+    view.OnEvent(ftxui::Event::CtrlV);
+
+    REQUIRE(fixture.activeBuffer.Get().Name() == "tasks.org");
+    REQUIRE(fixture.activeBuffer.Get().Content().ByteOffsetToLine(fixture.activeBuffer.Get().Point()) == 1);
 
     std::filesystem::remove_all(dir);
 }
@@ -2670,6 +2892,66 @@ TEST_CASE("M-x to find-file chains directly into find-file's own prompt", "[Buff
     view.OnEvent(ftxui::Event::Escape); // cancel the chained prompt cleanly
 }
 
+TEST_CASE("M-x org-set-tags chains into a tags prompt pre-filled with the headline's current tags",
+          "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("* Buy milk :errand:home:\n");
+    fixture.buffer.SetPoint(2);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ftxui::Event::AltX);
+    TypeText(view, "org-set-tags");
+    view.OnEvent(ftxui::Event::Return);
+
+    REQUIRE(fixture.statusMessage == "Tags (colon-separated): errand:home");
+
+    view.OnEvent(ftxui::Event::Escape); // cancel -- buffer untouched
+    REQUIRE(fixture.buffer.Text() == "* Buy milk :errand:home:\n");
+}
+
+TEST_CASE("Submitting the org-set-tags prompt rewrites the headline's tags block", "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("* Buy milk :errand:\n");
+    fixture.buffer.SetPoint(2);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ftxui::Event::AltX);
+    TypeText(view, "org-set-tags");
+    view.OnEvent(ftxui::Event::Return);
+
+    // Wholesale-replace the pre-filled text rather than appending to it.
+    for (int i = 0; i < 20; ++i)
+        view.OnEvent(ftxui::Event::Backspace);
+    TypeText(view, "urgent:home");
+    view.OnEvent(ftxui::Event::Return);
+
+    REQUIRE(fixture.buffer.Text() == "* Buy milk :urgent:home:\n");
+    REQUIRE(fixture.statusMessage.empty());
+}
+
+TEST_CASE("M-x org-set-tags off a headline reports failure without opening a prompt", "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("plain text");
+    fixture.buffer.SetPoint(0);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ftxui::Event::AltX);
+    TypeText(view, "org-set-tags");
+    view.OnEvent(ftxui::Event::Return);
+
+    REQUIRE(fixture.statusMessage == "Not on a headline.");
+    // Typing now self-inserts rather than feeding a (nonexistent) prompt --
+    // confirms no interactive session was left open.
+    view.OnEvent(ftxui::Event::Character("X"));
+    REQUIRE(fixture.buffer.Text() == "Xplain text");
+}
+
 TEST_CASE("Enter in M-x on an unmatched query reports no match and returns to normal editing", "[BufferView]") {
     Fixture             fixture;
     ned::ui::BufferView view = fixture.View();
@@ -3091,4 +3373,522 @@ TEST_CASE("Typing at the end of the narrowed range's own last line extends it an
     // (now grown) end -- no clamping needed, point already lands in bounds.
     REQUIRE(fixture.buffer.Point() == narrowEndBefore);
     REQUIRE(fixture.buffer.Point() >= narrowStartAfter);
+}
+
+TEST_CASE("BufferView's gutter is one column wider for a mode with a fold query", "[BufferView]") {
+    Fixture fixture;
+    fixture.mode = ned::editor::CMode();
+    fixture.buffer.InsertAtPoint("x");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 0});
+    ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(20), ftxui::Dimension::Fixed(1));
+    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 0});
+    view.Paint(canvas);
+
+    REQUIRE(screen.PixelAt(GutterWidth(1, /*foldColumn=*/4), 0).character == "x");
+}
+
+TEST_CASE("BufferView shows no fold gutter column for a mode without a fold query", "[BufferView]") {
+    Fixture fixture; // FundamentalMode -- no fold query
+    fixture.buffer.InsertAtPoint("x");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 0});
+    ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(20), ftxui::Dimension::Fixed(1));
+    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 0});
+    view.Paint(canvas);
+
+    REQUIRE(screen.PixelAt(GutterWidth(1), 0).character == "x");
+}
+
+TEST_CASE("Clicking the fold gutter column collapses a code block, hiding its body", "[BufferView]") {
+    Fixture fixture;
+    fixture.mode = ned::editor::CMode();
+    fixture.buffer.InsertAtPoint("int main(void) {\n    return 0;\n}\n");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 29, .y_min = 0, .y_max = 2});
+    ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(30), ftxui::Dimension::Fixed(3));
+    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 29, .y_min = 0, .y_max = 2});
+    view.Paint(canvas); // establishes the foldable-blocks cache before the click
+
+    const int foldStart = GutterWidth(3, /*foldColumn=*/4) - 4;
+    view.OnEvent(MousePress(foldStart, 0)); // fold column, row 0 -- the function's own opening line
+    view.Paint(canvas);
+
+    REQUIRE(screen.PixelAt(foldStart, 0).character == "⊞"); // collapsed glyph
+    // The whole block body, including its own closing "}" line, is hidden
+    // (matches Org's own "hides through the closing line" convention) --
+    // row 0 instead gets the fold ellipsis plus a preview of that closing
+    // line's own trimmed content, and row 1 (nothing left to show -- only
+    // 3 lines exist and 2 are now hidden) is blank.
+    REQUIRE(ContentRowText(screen, 0, 20, 3, /*foldColumn=*/4) == "int main(void) { … }");
+    REQUIRE(ContentRowText(screen, 1, 1, 3, /*foldColumn=*/4) == " ");
+
+    // Clicking again expands it back.
+    view.OnEvent(MousePress(foldStart, 0));
+    view.Paint(canvas);
+    REQUIRE(screen.PixelAt(foldStart, 0).character == "⊟"); // expanded glyph
+    REQUIRE(ContentRowText(screen, 1, 4, 3, /*foldColumn=*/4) == "    ");
+}
+
+TEST_CASE("Nested fold regions render guide lines at increasing depth columns for an expanded block", "[BufferView]") {
+    Fixture fixture;
+    fixture.mode = ned::editor::CMode();
+    fixture.buffer.InsertAtPoint("int main(void) {\n    if (a) {\n        x;\n    }\n}\n");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 4});
+    ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(40), ftxui::Dimension::Fixed(5));
+    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 4});
+    view.Paint(canvas);
+
+    const int foldStart = GutterWidth(5, /*foldColumn=*/4) - 4;
+
+    // Row 0: outer (depth 0) block's own header, column 0.
+    REQUIRE(screen.PixelAt(foldStart, 0).character == "⊟");
+    // Row 1: inner (depth 1) block's own header at column 1 -- column 0
+    // still shows the outer block's guide line, since row 1 also sits
+    // inside the outer block's own expanded span.
+    REQUIRE(screen.PixelAt(foldStart, 1).character == "│");
+    REQUIRE(screen.PixelAt(foldStart + 1, 1).character == "⊟");
+    // Row 2 ("x;"): inside both spans -- guide lines at both columns.
+    REQUIRE(screen.PixelAt(foldStart, 2).character == "│");
+    REQUIRE(screen.PixelAt(foldStart + 1, 2).character == "│");
+    // Row 3 ("    }"): the inner block's own closing row.
+    REQUIRE(screen.PixelAt(foldStart, 3).character == "│");
+    REQUIRE(screen.PixelAt(foldStart + 1, 3).character == "└");
+    // Row 4 ("}"): the outer block's own closing row -- column 1 has
+    // nothing left to show.
+    REQUIRE(screen.PixelAt(foldStart, 4).character == "└");
+    REQUIRE(screen.PixelAt(foldStart + 1, 4).character == " ");
+}
+
+TEST_CASE("Clicking a specific depth column toggles only that column's block", "[BufferView]") {
+    Fixture fixture;
+    fixture.mode = ned::editor::CMode();
+    fixture.buffer.InsertAtPoint("int main(void) {\n    if (a) {\n        x;\n    }\n}\n");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 4});
+    ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(40), ftxui::Dimension::Fixed(5));
+    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 4});
+    view.Paint(canvas);
+
+    const int foldStart = GutterWidth(5, /*foldColumn=*/4) - 4;
+    view.OnEvent(MousePress(foldStart + 1, 1)); // inner block's own header, column 1
+    view.Paint(canvas);
+
+    REQUIRE(screen.PixelAt(foldStart + 1, 1).character == "⊞"); // inner now collapsed
+    REQUIRE(screen.PixelAt(foldStart, 0).character == "⊟");     // outer untouched, still expanded
+    // Collapsing the inner block hides its own body through its own
+    // closing line (rows 2-3, "x;" and "    }") -- same "hides through the
+    // closer" convention every other fold in this codebase already has --
+    // so canvas row 2 now renders buffer line 4 ("}", the outer block's own
+    // closer), not buffer line 3. Column 0 (the outer block, still
+    // expanded) still gets its own closing corner there; column 1 (the
+    // now-fully-consumed inner block) has nothing left to show.
+    REQUIRE(screen.PixelAt(foldStart, 2).character == "└");
+    REQUIRE(screen.PixelAt(foldStart + 1, 2).character == " ");
+}
+
+TEST_CASE("Collapsing an outer block leaves no guide line for its now-hidden nested block", "[BufferView]") {
+    Fixture fixture;
+    fixture.mode = ned::editor::CMode();
+    fixture.buffer.InsertAtPoint("int main(void) {\n    if (a) {\n        x;\n    }\n}\n");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 4});
+    ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(40), ftxui::Dimension::Fixed(5));
+    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 4});
+    view.Paint(canvas);
+
+    const int foldStart = GutterWidth(5, /*foldColumn=*/4) - 4;
+    view.OnEvent(MousePress(foldStart, 0)); // outer block's own header, column 0
+    view.Paint(canvas);
+
+    REQUIRE(screen.PixelAt(foldStart, 0).character == "⊞");     // outer now collapsed
+    REQUIRE(screen.PixelAt(foldStart + 1, 0).character == " "); // no column-1 guide line while the ancestor is folded
+}
+
+TEST_CASE("A block written entirely on one line gets no fold icon", "[BufferView]") {
+    Fixture fixture;
+    fixture.mode = ned::editor::CMode();
+    // "int f(void) { return 1; }" -- header and closer are the same line,
+    // so collapsing it would hide zero lines. No point showing a clickable
+    // affordance that visibly does nothing.
+    fixture.buffer.InsertAtPoint("int f(void) { return 1; }\n");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
+    ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(40), ftxui::Dimension::Fixed(1));
+    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
+    view.Paint(canvas);
+
+    const int foldStart = GutterWidth(1, /*foldColumn=*/4) - 4;
+    REQUIRE(screen.PixelAt(foldStart, 0).character == " ");
+    REQUIRE(screen.PixelAt(foldStart + 1, 0).character == " ");
+}
+
+TEST_CASE("A one-line block nested inside a real multi-line block still lets the outer block fold normally",
+          "[BufferView]") {
+    Fixture fixture;
+    fixture.mode = ned::editor::CMode();
+    // The outer function body spans multiple lines (real fold target); the
+    // one-line "if" body nested inside it has nothing of its own to fold.
+    fixture.buffer.InsertAtPoint("int main(void) {\n    if (a) { return 1; }\n}\n");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(40), ftxui::Dimension::Fixed(3));
+    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+
+    const int foldStart = GutterWidth(3, /*foldColumn=*/4) - 4;
+    REQUIRE(screen.PixelAt(foldStart, 0).character == "⊟");     // outer block's own toggle, unaffected
+    REQUIRE(screen.PixelAt(foldStart + 1, 1).character == " "); // one-line "if" body -- no icon
+}
+
+TEST_CASE("Fold header glyphs still render after scrolling past an earlier foldable block", "[BufferView]") {
+    // Regression test for a real reported bug: a foldable block whose own
+    // header line sits before topLine_ used to permanently stall the
+    // header-glyph streaming cursor (Paint()'s foldGutterEntryCursor), so
+    // every ⊞/⊟ glyph for the rest of the buffer silently stopped
+    // rendering once scrolled past roughly line 50.
+    Fixture fixture;
+    fixture.mode = ned::editor::CMode();
+
+    std::string source = "int early(void) {\n    return 0;\n}\n";
+    for (int i = 0; i < 60; ++i) {
+        source += "int pad" + std::to_string(i) + ";\n";
+    }
+    source += "int late(void) {\n    return 1;\n}\n";
+    // Plenty more trailing lines so SetTopLine(63) below isn't itself
+    // clamped down by MaxTopLine() to something before "int late" -- this
+    // test is about the header-glyph cursor, not scroll clamping.
+    for (int i = 0; i < 40; ++i) {
+        source += "int trail" + std::to_string(i) + ";\n";
+    }
+    fixture.buffer.InsertAtPoint(source);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 4});
+    ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(40), ftxui::Dimension::Fixed(5));
+    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 4});
+
+    view.SetTopLine(63); // scrolled well past "int early(void) {" (line 0)
+    REQUIRE(view.TopLine() == 63);
+    view.Paint(canvas);
+
+    // "int late(void) {" is line 63 -- the first visible row.
+    const int foldStart = GutterWidth(fixture.buffer.Content().LineCount(), /*foldColumn=*/4) - 4;
+    REQUIRE(screen.PixelAt(foldStart, 0).character == "⊟");
+}
+
+TEST_CASE("The status column shows the unsaved-change indicator only on an edited line", "[BufferView]") {
+    Fixture fixture;
+    // Constructed directly with initial content (not via InsertAtPoint,
+    // which would itself mark the whole thing as an unsaved change) so
+    // this starts genuinely clean, the same way a freshly-loaded file would.
+    fixture.buffer = ned::text::Buffer("scratch", ned::text::Rope("one\ntwo\nthree"));
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 2});
+    ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(20), ftxui::Dimension::Fixed(3));
+    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+
+    // No edits yet -- the status column is blank everywhere.
+    REQUIRE(screen.PixelAt(0, 0).background_color == fixture.theme.background.ToFtxui());
+    REQUIRE(screen.PixelAt(0, 1).background_color == fixture.theme.background.ToFtxui());
+
+    fixture.buffer.SetPoint(fixture.buffer.Content().LineToByteOffset(1)); // start of "two"
+    fixture.buffer.InsertAtPoint("X");
+    view.Paint(canvas);
+
+    REQUIRE(screen.PixelAt(0, 0).background_color == fixture.theme.background.ToFtxui());              // "one" untouched
+    REQUIRE(screen.PixelAt(0, 1).background_color == fixture.theme.unsavedChangeIndicator.ToFtxui());   // "two" edited
+    REQUIRE(screen.PixelAt(0, 2).background_color == fixture.theme.background.ToFtxui());               // "three" untouched
+}
+
+TEST_CASE("Saving clears the status column's unsaved-change indicator", "[BufferView]") {
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned-bufferview-unsaved-test.txt";
+
+    Fixture fixture;
+    fixture.buffer.SetPath(path);
+    fixture.buffer.InsertAtPoint("one\ntwo");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 1});
+    ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(20), ftxui::Dimension::Fixed(2));
+    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 1});
+    view.Paint(canvas);
+
+    REQUIRE(screen.PixelAt(0, 0).background_color == fixture.theme.unsavedChangeIndicator.ToFtxui());
+
+    fixture.buffer.Save();
+    view.Paint(canvas);
+    REQUIRE(screen.PixelAt(0, 0).background_color == fixture.theme.background.ToFtxui());
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("Paint skips lines hidden by an Org fold and shows the fold indicator", "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("* Parent\nbody\n* Sibling\n");
+    fixture.buffer.SetFoldMarker(0, ned::text::Buffer::FoldMarker::Collapsed); // "* Parent"'s own line start
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 2});
+
+    ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(20), ftxui::Dimension::Fixed(3));
+    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+
+    const std::size_t totalLines = fixture.buffer.Content().LineCount();
+    const int         gutter     = GutterWidth(totalLines);
+
+    REQUIRE(ContentRowText(screen, 0, 8, totalLines) == "* Parent");
+    REQUIRE(screen.PixelAt(gutter + 8, 0).character == " ");
+    REQUIRE(screen.PixelAt(gutter + 9, 0).character == "…"); // fold indicator, right after "* Parent "
+    // "body" (line 1) is hidden entirely -- row 1 shows "* Sibling" (line 2), not "body".
+    REQUIRE(ContentRowText(screen, 1, 9, totalLines) == "* Sibling");
+}
+
+TEST_CASE("CursorPosition accounts for lines hidden above point by an Org fold", "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("* Parent\nbody\n* Sibling\n");
+    fixture.buffer.SetFoldMarker(0, ned::text::Buffer::FoldMarker::Collapsed);
+    fixture.buffer.SetPoint(fixture.buffer.Text().find("Sibling"));
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 2});
+
+    ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(20), ftxui::Dimension::Fixed(3));
+    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+
+    REQUIRE(view.CursorPosition().has_value());
+    // "body" (line 1) is hidden -- "* Sibling" (line 2) is only 1 visible
+    // row below topLine_ (0), not 2.
+    REQUIRE(view.CursorPosition()->y == 1);
+}
+
+TEST_CASE("Mouse click below an Org fold lands on the correct (visible) buffer line", "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("* Parent\nbody\n* Sibling\n");
+    fixture.buffer.SetFoldMarker(0, ned::text::Buffer::FoldMarker::Collapsed);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 2});
+
+    ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(20), ftxui::Dimension::Fixed(3));
+    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 2});
+    view.Paint(canvas); // establishes the fold cache before the click
+
+    const int gutter = GutterWidth(fixture.buffer.Content().LineCount());
+    view.OnEvent(MousePress(gutter, 1)); // screen row 1 -- "* Sibling" (line 2), since "body" (line 1) is hidden
+
+    REQUIRE(fixture.buffer.Content().ByteOffsetToLine(fixture.buffer.Point()) == 2);
+}
+
+TEST_CASE("Paint collapses an Org link's raw markup down to just its own description", "[BufferView]") {
+    Fixture fixture;
+    fixture.mode = ned::editor::OrgMode();
+    fixture.buffer.InsertAtPoint("x [[https://example.com][a website]] end\n");
+    fixture.buffer.SetPoint(0); // outside the link (which starts at byte 2) -- collapsed
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(40), ftxui::Dimension::Fixed(3));
+    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+
+    REQUIRE(ContentRowText(screen, 0, 15, fixture.buffer.Content().LineCount()) == "x a website end");
+}
+
+TEST_CASE("Paint renders an Org link's raw markup once point moves inside it", "[BufferView]") {
+    Fixture fixture;
+    fixture.mode = ned::editor::OrgMode();
+    fixture.buffer.InsertAtPoint("[[https://example.com][a website]] end\n");
+    fixture.buffer.SetPoint(fixture.buffer.Text().find("example")); // inside the link -- raw
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
+
+    ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(60), ftxui::Dimension::Fixed(3));
+    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+
+    REQUIRE(ContentRowText(screen, 0, 38, fixture.buffer.Content().LineCount()) ==
+            "[[https://example.com][a website]] end");
+}
+
+TEST_CASE("Paint never collapses bracket-shaped text outside an org-mode buffer", "[BufferView]") {
+    Fixture fixture; // fixture.mode stays FundamentalMode()
+    fixture.buffer.InsertAtPoint("[[https://example.com][a website]] end\n");
+    fixture.buffer.SetPoint(0);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
+
+    ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(60), ftxui::Dimension::Fixed(3));
+    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+
+    REQUIRE(ContentRowText(screen, 0, 38, fixture.buffer.Content().LineCount()) ==
+            "[[https://example.com][a website]] end");
+}
+
+TEST_CASE("Clicking a collapsed Org link's own displayText lands point on the link's startByte", "[BufferView]") {
+    Fixture fixture;
+    fixture.mode = ned::editor::OrgMode();
+    fixture.buffer.InsertAtPoint("x [[https://example.com][a website]] end\n");
+    fixture.buffer.SetPoint(0); // outside the link -- collapsed when painted
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
+
+    ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(60), ftxui::Dimension::Fixed(3));
+    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
+    view.Paint(canvas); // establishes the link cache before the click
+
+    const int gutter       = GutterWidth(fixture.buffer.Content().LineCount());
+    const int linkStartCol = gutter + 2;           // "x " (2 columns) precedes the collapsed link
+    view.OnEvent(MousePress(linkStartCol + 3, 0)); // land somewhere in the middle of "a website"
+
+    REQUIRE(fixture.buffer.Point() == fixture.buffer.Text().find("[["));
+}
+
+TEST_CASE("open-link-at-point follows an Org internal link to its target headline", "[BufferView]") {
+    Fixture fixture;
+    fixture.mode = ned::editor::OrgMode();
+    fixture.buffer.InsertAtPoint("* Some Heading\nbody\n[[*Some Heading]]\n");
+    fixture.buffer.SetPoint(fixture.buffer.Text().find("Some Heading]]")); // point on the link's own line
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 4});
+
+    view.OnEvent(ftxui::Event::AltX);
+    TypeText(view, "open-link-at-point");
+    view.OnEvent(ftxui::Event::Return);
+
+    REQUIRE(fixture.buffer.Point() == 0); // "* Some Heading"'s own line start
+    REQUIRE(fixture.statusMessage.empty());
+}
+
+TEST_CASE("open-link-at-point reports failure for an Org internal link with no matching headline", "[BufferView]") {
+    Fixture fixture;
+    fixture.mode = ned::editor::OrgMode();
+    fixture.buffer.InsertAtPoint("[[*Nowhere]]\n");
+    fixture.buffer.SetPoint(2);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ftxui::Event::AltX);
+    TypeText(view, "open-link-at-point");
+    view.OnEvent(ftxui::Event::Return);
+
+    REQUIRE(fixture.statusMessage == "Link target not found: Nowhere");
+}
+
+TEST_CASE("open-link-at-point opens an Org link's URL target via the generic engine", "[BufferView]") {
+    const UrlOpenCommandGuard guard;
+    ned::editor::link::SetUrlOpenCommand("true"); // a real, always-succeeding no-op command
+
+    Fixture fixture;
+    fixture.mode = ned::editor::OrgMode();
+    fixture.buffer.InsertAtPoint("[[https://example.com][site]]\n");
+    fixture.buffer.SetPoint(2);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ftxui::Event::AltX);
+    TypeText(view, "open-link-at-point");
+    view.OnEvent(ftxui::Event::Return);
+
+    REQUIRE(fixture.statusMessage == "Opening https://example.com");
+}
+
+TEST_CASE("open-link-at-point falls back to bare-URL detection in an org-mode buffer off any bracket link",
+          "[BufferView]") {
+    const UrlOpenCommandGuard guard;
+    ned::editor::link::SetUrlOpenCommand("true");
+
+    Fixture fixture;
+    fixture.mode = ned::editor::OrgMode();
+    fixture.buffer.InsertAtPoint("see https://example.com here\n");
+    fixture.buffer.SetPoint(fixture.buffer.Text().find("example"));
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ftxui::Event::AltX);
+    TypeText(view, "open-link-at-point");
+    view.OnEvent(ftxui::Event::Return);
+
+    REQUIRE(fixture.statusMessage == "Opening https://example.com");
+}
+
+TEST_CASE("open-link-at-point opens a bare URL in a non-Org buffer", "[BufferView]") {
+    const UrlOpenCommandGuard guard;
+    ned::editor::link::SetUrlOpenCommand("true");
+
+    Fixture fixture; // FundamentalMode()
+    fixture.buffer.InsertAtPoint("see https://example.com here\n");
+    fixture.buffer.SetPoint(fixture.buffer.Text().find("example"));
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ftxui::Event::AltX);
+    TypeText(view, "open-link-at-point");
+    view.OnEvent(ftxui::Event::Return);
+
+    REQUIRE(fixture.statusMessage == "Opening https://example.com");
+}
+
+TEST_CASE("open-link-at-point opens an existing relative file path, switching to it", "[BufferView]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_bufferview_test_open_link_file";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    {
+        std::ofstream(dir / "notes.txt") << "hello from notes\n";
+    }
+    const CurrentPathGuard pathGuard(dir); // relocates cwd + ProjectRoot() -- scratch buffers fall back to it
+
+    Fixture fixture; // scratch buffer, no Path() of its own
+    fixture.buffer.InsertAtPoint("see notes.txt here\n");
+    fixture.buffer.SetPoint(fixture.buffer.Text().find("notes.txt"));
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ftxui::Event::AltX);
+    TypeText(view, "open-link-at-point");
+    view.OnEvent(ftxui::Event::Return);
+
+    REQUIRE(&fixture.activeBuffer.Get() != &fixture.buffer);
+    REQUIRE(fixture.activeBuffer.Get().Text() == "hello from notes\n");
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("open-link-at-point reports failure when nothing at point looks like a link", "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("just some plain text\n");
+    fixture.buffer.SetPoint(0);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ftxui::Event::AltX);
+    TypeText(view, "open-link-at-point");
+    view.OnEvent(ftxui::Event::Return);
+
+    REQUIRE(fixture.statusMessage == "No link at point.");
 }

@@ -187,6 +187,14 @@ class ProjectSidebar : public Widget {
     [[nodiscard]] std::vector<editor::ProjectTreeEntry> VisibleEntries(
         const std::vector<editor::ProjectTreeEntry>& all) const;
 
+    // sidebar-header follow-up: row 0 is always the project-name header
+    // (see Paint()'s own comment), never tree content -- every tree-row
+    // computation (ComputeRowLayout/EntryIndexAtRow's viewportHeight, the
+    // wheel-scroll clamp) works in this content-only height, not
+    // size().height directly, and every row/y value crossing that boundary
+    // gets shifted by kHeaderHeight exactly once, at the call site.
+    [[nodiscard]] int ContentHeight() const;
+
     // BuildProjectTree does a full recursive directory walk -- cheap for a
     // small project, genuinely expensive (tens of milliseconds, measured)
     // for a large one, and this widget's Paint()/OnEvent() used to call it

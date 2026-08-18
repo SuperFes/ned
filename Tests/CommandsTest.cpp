@@ -123,6 +123,24 @@ TEST_CASE("backward-delete-char via DEL removes the previous grapheme cluster", 
     REQUIRE(fixture.buffer.Text() == "ab");
 }
 
+TEST_CASE("delete-char via DELETE at end of line joins it with the next line", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+    Keymap     keymap = BuildDefaultGlobalKeymap();
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    ned::text::Buffer     buffer("scratch", ned::text::Rope("hi\nbye"));
+    ned::text::KillRing   killRing;
+    ned::text::BufferList bufferList;
+    CommandContext        context{buffer, killRing, bufferList};
+
+    buffer.SetPoint(2); // end of "hi", right before the newline
+    dispatcher.Feed(ParseKeyChord("DELETE"), context);
+
+    REQUIRE(buffer.Text() == "hibye");
+    REQUIRE(buffer.Point() == 2);
+}
+
 TEST_CASE("kill-line at end of line kills the newline, joining with the next line", "[Commands]") {
     CommandRegistry registry;
     RegisterBuiltinCommands(registry);
@@ -274,6 +292,21 @@ TEST_CASE("C-x C-s is bound to save-buffer in the default keymap", "[Commands]")
 
     REQUIRE(dispatcher.Feed(ParseKeyChord("C-x"), context) == Dispatcher::Outcome::Pending);
     REQUIRE(dispatcher.Feed(ParseKeyChord("C-s"), context) == Dispatcher::Outcome::Invoked);
+}
+
+TEST_CASE("org-agenda sets interactiveRequest and is bound to C-c a", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+    Keymap     keymap = BuildDefaultGlobalKeymap();
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    REQUIRE(dispatcher.Feed(ParseKeyChord("C-c"), context) == Dispatcher::Outcome::Pending);
+    REQUIRE(dispatcher.Feed(ParseKeyChord("a"), context) == Dispatcher::Outcome::Invoked);
+    REQUIRE(context.interactiveRequest == InteractiveRequest::ProjectAgenda);
+    REQUIRE(fixture.buffer.Text().empty()); // the command itself doesn't touch the buffer
 }
 
 TEST_CASE("isearch/query-replace commands set interactiveRequest, not the buffer", "[Commands]") {
@@ -525,7 +558,99 @@ TEST_CASE("org-toggle-checkbox toggles the checkbox at point and reports failure
     REQUIRE(message == "Not on a checkbox.");
 }
 
-TEST_CASE("OrgMode binds C-c C-t/C-c C-c/C-c C-p to the three org commands", "[Commands]") {
+TEST_CASE("org-cycle advances the headline at point through the 3-state fold cycle", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    std::string    message;
+    context.message = &message;
+
+    fixture.buffer.InsertAtPoint("* Parent\nbody\n* Sibling\n");
+    fixture.buffer.SetPoint(2); // inside "* Parent"
+
+    registry.Invoke("org-cycle", context);
+    REQUIRE(fixture.buffer.FoldMarkerAt(0) == ned::text::Buffer::FoldMarker::Collapsed);
+    REQUIRE(message.empty());
+
+    fixture.buffer.SetPoint(fixture.buffer.Size());
+    fixture.buffer.InsertAtPoint("plain text");
+    fixture.buffer.SetPoint(fixture.buffer.Size() - 3); // inside "plain text", not a headline
+
+    registry.Invoke("org-cycle", context);
+    REQUIRE(message == "Not on a headline.");
+}
+
+TEST_CASE("code-fold-toggle reports no folding available when context.mode is unset", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    std::string    message;
+    context.message = &message;
+    // context.mode left at its default (nullptr) -- the headless/no-UI case.
+
+    fixture.buffer.InsertAtPoint("int main(void) {\n    return 0;\n}\n");
+    fixture.buffer.SetPoint(0);
+
+    registry.Invoke("code-fold-toggle", context);
+    REQUIRE(message == "No folding available in this mode.");
+    REQUIRE(fixture.buffer.FoldMarkers().empty());
+}
+
+TEST_CASE("code-fold-toggle folds the block starting at point when context.mode has a fold query", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    const Mode mode = CMode();
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    std::string    message;
+    context.message = &message;
+    context.mode     = &mode;
+
+    fixture.buffer.InsertAtPoint("int main(void) {\n    return 0;\n}\n");
+    fixture.buffer.SetPoint(0); // on the function's own opening line
+
+    registry.Invoke("code-fold-toggle", context);
+    REQUIRE(message.empty());
+    REQUIRE(fixture.buffer.FoldMarkers().size() == 1);
+
+    fixture.buffer.SetPoint(fixture.buffer.Text().find("return")); // not a block's own opening line
+    registry.Invoke("code-fold-toggle", context);
+    REQUIRE(message == "No foldable block starts here.");
+}
+
+TEST_CASE("org-set-tags requests a tags prompt on a headline and reports failure off one", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    std::string    message;
+    context.message = &message;
+
+    fixture.buffer.InsertAtPoint("* Buy milk\n");
+    fixture.buffer.SetPoint(2);
+
+    registry.Invoke("org-set-tags", context);
+    REQUIRE(context.interactiveRequest == InteractiveRequest::SetHeadlineTags);
+    REQUIRE(message.empty());
+
+    context.interactiveRequest = InteractiveRequest::None;
+    fixture.buffer.SetPoint(fixture.buffer.Size());
+    fixture.buffer.InsertAtPoint("plain text");
+    fixture.buffer.SetPoint(fixture.buffer.Size() - 3); // inside "plain text", not a headline
+
+    registry.Invoke("org-set-tags", context);
+    REQUIRE(context.interactiveRequest == InteractiveRequest::None);
+    REQUIRE(message == "Not on a headline.");
+}
+
+TEST_CASE("OrgMode binds C-c C-t/C-c C-c/C-c C-p/C-c C-q/TAB to the five org commands", "[Commands]") {
     const Mode mode = OrgMode();
     REQUIRE(mode.name == "org-mode");
 
@@ -540,4 +665,118 @@ TEST_CASE("OrgMode binds C-c C-t/C-c C-c/C-c C-p to the three org commands", "[C
     const auto checkbox = mode.keymap.Resolve(ParseKeySequence("C-c C-c"));
     REQUIRE(checkbox.result == Keymap::LookupResult::Match);
     REQUIRE(checkbox.commandName == "org-toggle-checkbox");
+
+    const auto fold = mode.keymap.Resolve(ParseKeySequence("TAB"));
+    REQUIRE(fold.result == Keymap::LookupResult::Match);
+    REQUIRE(fold.commandName == "org-cycle");
+
+    const auto tags = mode.keymap.Resolve(ParseKeySequence("C-c C-q"));
+    REQUIRE(tags.result == Keymap::LookupResult::Match);
+    REQUIRE(tags.commandName == "org-set-tags");
+}
+
+TEST_CASE("org-cycle falls back to realigning a table when point isn't on a headline", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    std::string    message;
+    context.message = &message;
+
+    fixture.buffer.InsertAtPoint("| N | Age |\n|---|---|\n| Alice | 3 |\n");
+    fixture.buffer.SetPoint(2); // inside the header row, not a headline
+
+    registry.Invoke("org-cycle", context);
+    REQUIRE(fixture.buffer.Text() == "| N     | Age |\n|-------+-----|\n| Alice | 3   |\n");
+    REQUIRE(message.empty());
+}
+
+TEST_CASE("org-cycle reports failure when point is neither on a headline nor in a table", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    std::string    message;
+    context.message = &message;
+
+    fixture.buffer.InsertAtPoint("plain text");
+    fixture.buffer.SetPoint(0);
+
+    registry.Invoke("org-cycle", context);
+    REQUIRE(message == "Not on a headline.");
+}
+
+TEST_CASE("org-table-align realigns the table at point and reports failure off one", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    std::string    message;
+    context.message = &message;
+
+    fixture.buffer.InsertAtPoint("| N | Age |\n|---|---|\n| Alice | 3 |\n");
+    fixture.buffer.SetPoint(2);
+
+    registry.Invoke("org-table-align", context);
+    REQUIRE(fixture.buffer.Text() == "| N     | Age |\n|-------+-----|\n| Alice | 3   |\n");
+    REQUIRE(message.empty());
+
+    fixture.buffer.SetPoint(fixture.buffer.Size());
+    fixture.buffer.InsertAtPoint("\nplain text");
+    fixture.buffer.SetPoint(fixture.buffer.Size() - 3);
+
+    registry.Invoke("org-table-align", context);
+    REQUIRE(message == "Not in a table.");
+}
+
+TEST_CASE("markdown-table-align realigns a GFM table and reports failure off one", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    std::string    message;
+    context.message = &message;
+
+    fixture.buffer.InsertAtPoint("| N | Age |\n|---|---|\n| Alice | 3 |\n");
+    fixture.buffer.SetPoint(2);
+
+    registry.Invoke("markdown-table-align", context);
+    REQUIRE(fixture.buffer.Text() == "| N     | Age |\n|-------|-----|\n| Alice | 3   |\n");
+    REQUIRE(message.empty());
+
+    fixture.buffer.SetPoint(fixture.buffer.Size());
+    fixture.buffer.InsertAtPoint("\nplain text");
+    fixture.buffer.SetPoint(fixture.buffer.Size() - 3);
+
+    registry.Invoke("markdown-table-align", context);
+    REQUIRE(message == "Not in a table.");
+}
+
+TEST_CASE("BuildDefaultGlobalKeymap binds C-c C-l to open-link-at-point", "[Commands]") {
+    const Keymap keymap = BuildDefaultGlobalKeymap();
+
+    const auto link = keymap.Resolve(ParseKeySequence("C-c C-l"));
+    REQUIRE(link.result == Keymap::LookupResult::Match);
+    REQUIRE(link.commandName == "open-link-at-point");
+}
+
+TEST_CASE("OrgMode additionally binds its own C-c C-o to open-link-at-point", "[Commands]") {
+    const Mode mode = OrgMode();
+
+    const auto link = mode.keymap.Resolve(ParseKeySequence("C-c C-o"));
+    REQUIRE(link.result == Keymap::LookupResult::Match);
+    REQUIRE(link.commandName == "open-link-at-point");
+}
+
+TEST_CASE("MarkdownMode binds TAB to markdown-table-align", "[Commands]") {
+    const Mode mode = MarkdownMode();
+    REQUIRE(mode.name == "markdown-mode");
+
+    const auto tab = mode.keymap.Resolve(ParseKeySequence("TAB"));
+    REQUIRE(tab.result == Keymap::LookupResult::Match);
+    REQUIRE(tab.commandName == "markdown-table-align");
 }

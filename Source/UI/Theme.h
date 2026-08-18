@@ -6,16 +6,21 @@
 // purpose (see its header comment).
 //
 // v1 scope: a small, fixed set of hardcoded C++ themes (DarkTheme/LightTheme)
-// selected once at startup, not a Janet-scriptable palette system -- that's a
-// deliberate, documented follow-up (see ROADMAP.md's Phase 6 notes), not an
-// oversight.
+// selected once at startup -- still true for *theme selection* itself
+// (Phase 6 notes, ROADMAP.md). Per-SyntaxClass style overrides ARE now
+// Janet-scriptable, though (Janet-configurable-syntax-theme follow-up):
+// BrushFor() merges editor::SyntaxOverrideFor(cls) (Editor/SyntaxTheme.h) on
+// top of whichever built-in Brush this switch computes below -- see that
+// merge's own comment at BrushFor()'s definition.
 //
 
 #ifndef NED_UI_THEME_H
 #define NED_UI_THEME_H
 
 #include <cstdint>
+#include <optional>
 #include <string>
+#include <string_view>
 
 #include <ftxui/screen/cell.hpp>
 #include <ftxui/screen/color.hpp>
@@ -34,11 +39,13 @@ namespace ned::ui {
 // FTXUI's three color kinds. ToFtxui() is the only place this ever needs to
 // become a real ftxui::Color, at actual paint time.
 struct Color {
-    enum class Kind : std::uint8_t { Default, Palette16, TrueColor };
+    enum class Kind : std::uint8_t { Default,
+                                     Palette16,
+                                     TrueColor };
 
-    Kind          kind         = Kind::Default;
-    std::uint8_t  paletteIndex = 0; // valid when kind == Palette16
-    std::uint8_t  red = 0, green = 0, blue = 0; // valid when kind == TrueColor
+    Kind         kind         = Kind::Default;
+    std::uint8_t paletteIndex = 0;             // valid when kind == Palette16
+    std::uint8_t red = 0, green = 0, blue = 0; // valid when kind == TrueColor
 
     [[nodiscard]] constexpr bool operator==(const Color&) const = default;
 
@@ -105,20 +112,27 @@ inline constexpr Color Color::BrightWhite   = Color::Palette(15);
 struct Brush {
     Color background = Color::Default;
     Color foreground = Color::Default;
-    bool  bold   = false;
-    bool  italic = false;
+    bool  bold       = false;
+    bool  italic     = false;
+    // Org-mode syntax-highlighting follow-up: back Org's own _underline_/
+    // +strikethrough+ inline markup -- confirmed real ftxui::Cell fields
+    // (not assumed) by reading cell.hpp directly before relying on them.
+    bool underlined    = false;
+    bool strikethrough = false;
 
     [[nodiscard]] constexpr bool operator==(const Brush&) const = default;
 
     // Paints this Brush onto a real Cell -- the one place background/
-    // foreground/bold/italic actually become an ftxui::Cell's own fields,
-    // used by every widget's Paint() the same way old widgets wrote
-    // ox::Glyph{.symbol = ..., .brush = someBrush} directly.
+    // foreground/bold/italic/underlined/strikethrough actually become an
+    // ftxui::Cell's own fields, used by every widget's Paint() the same way
+    // old widgets wrote ox::Glyph{.symbol = ..., .brush = someBrush} directly.
     void ApplyTo(ftxui::Cell& cell) const {
         cell.background_color = background.ToFtxui();
         cell.foreground_color = foreground.ToFtxui();
-        cell.bold              = bold;
-        cell.italic             = italic;
+        cell.bold             = bold;
+        cell.italic           = italic;
+        cell.underlined       = underlined;
+        cell.strikethrough    = strikethrough;
     }
 };
 
@@ -157,6 +171,14 @@ struct Theme {
     Color tagForeground;
     Color attributeForeground;
     Color namespaceForeground;
+    // generic-tree-sitter-highlighting follow-up -- see SyntaxClass's own
+    // doc comment in Mode.h for what each newly-split-out class covers.
+    Color keywordModifierForeground;
+    Color methodForeground;
+    Color constructorForeground;
+    Color labelForeground;
+    Color returnTypeForeground;
+    Color includePathForeground;
 
     Color modeLineForeground;
     // A gradient endpoint can't meaningfully be "default" or a palette
@@ -199,11 +221,65 @@ struct Theme {
     // control byte is never sent to the terminal at all.
     Color binaryForeground;
 
+    // Foreground for a collapsed Org link's own displayText (links
+    // follow-up) -- see BufferView::Paint()'s own "descriptive links"
+    // comment. Not a SyntaxClass (links aren't a tree-sitter capture),
+    // hence a dedicated field here rather than a BrushFor() case, the same
+    // "UI chrome, not syntax" reasoning binaryForeground/lineNumberForeground
+    // already establish.
+    Color linkForeground;
+
+    // Status-gutter unsaved-change-indicator follow-up: a solid-block
+    // marker (background color, not a glyph -- see BufferView::Paint()'s
+    // own comment) in the new 1-column status gutter for a line with edits
+    // since the buffer was last loaded/saved. The conventional "modified"
+    // accent color in every mainstream editor's gutter, deliberately not
+    // part of a green-add/red-delete pair -- this is a single-state
+    // indicator, not a real diff (see Buffer::UnsavedChangeRanges()'s own
+    // doc comment).
+    Color unsavedChangeIndicator;
+
+    // Org-mode syntax-highlighting follow-up: one Color per new
+    // Org-specific SyntaxClass member (Mode.h) -- headline levels cycle
+    // through 3 distinct, bold hues; TodoKeyword/DoneKeyword use the
+    // universal not-done/done warm/cool convention; Checkbox is one
+    // neutral, distinct color; Strong/Emphasis reuse defaultForeground
+    // (bold/italic already say "this is emphasized," no new hue needed,
+    // matching how real bold/italic text usually reads); Underline/
+    // Strikethrough need their own Color since Brush's new underlined/
+    // strikethrough bools carry no hue of their own.
+    Color headlineLevel1Foreground;
+    Color headlineLevel2Foreground;
+    Color headlineLevel3Foreground;
+    Color todoKeywordForeground;
+    Color doneKeywordForeground;
+    Color checkboxForeground;
+    Color underlineForeground;
+    Color strikethroughForeground;
+
     [[nodiscard]] Brush BrushFor(editor::SyntaxClass cls) const;
+
+  private:
+    // The switch of built-in Dark/Light values BrushFor() used to
+    // (and still does) compute directly -- split out so BrushFor() can
+    // merge editor::SyntaxOverrideFor(cls) on top of it. Private member
+    // functions don't affect Theme's own aggregate-initializer status
+    // (DarkTheme()/LightTheme()'s Theme{.name = ..., ...} syntax), only
+    // data members do.
+    [[nodiscard]] Brush BuiltinBrushFor(editor::SyntaxClass cls) const;
 };
 
 [[nodiscard]] Theme DarkTheme();
 [[nodiscard]] Theme LightTheme();
+
+// "#rrggbb" / "x:<0-255>" / "default" hex-token round-trip for a Color --
+// moved here from ThemeFile.cpp (Janet-configurable-syntax-theme follow-up)
+// since BrushFor()'s override merge needs the parse side too, not just
+// ThemeFile's own save/load; ThemeFile.cpp now calls these instead of
+// keeping a private duplicate. See ThemeFile.cpp's own header comment for
+// the wire format's full rationale (this is the same one, unchanged).
+[[nodiscard]] std::string           ColorToToken(const Color& color);
+[[nodiscard]] std::optional<Color> ParseColorToken(std::string_view token);
 
 } // namespace ned::ui
 

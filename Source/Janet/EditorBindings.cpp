@@ -5,13 +5,17 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
+#include "Editor/CodeFoldSettings.h"
 #include "Editor/FinalNewline.h"
 #include "Editor/FormatOnSave.h"
+#include "Editor/Link.h"
 #include "Editor/ModeOverrides.h"
 #include "Editor/ProjectRoot.h"
 #include "Editor/ScratchPad.h"
 #include "Editor/ScriptingSession.h"
+#include "Editor/SyntaxTheme.h"
 #include "Editor/TabWidth.h"
 #include "Value.h"
 
@@ -118,6 +122,10 @@ namespace {
         editor::SetFormatCommand(command.empty() ? std::nullopt : std::optional<std::string>(std::move(command)));
     }
 
+    void NedSetUrlOpenCommand(std::string command) {
+        editor::link::SetUrlOpenCommand(command.empty() ? std::nullopt : std::optional<std::string>(std::move(command)));
+    }
+
     void NedSetTabWidth(std::int64_t columns) {
         editor::SetTabWidth(static_cast<int>(columns));
     }
@@ -134,6 +142,10 @@ namespace {
         editor::SetEnsureFinalNewline(enabled);
     }
 
+    void NedSetCodeFoldingEnabled(bool enabled) {
+        editor::SetCodeFoldingEnabled(enabled);
+    }
+
     void NedRegisterLanguageGrammar(std::string name, std::string libraryPath, std::string queryPath) {
         editor::RegisterDynamicMode(name, libraryPath, queryPath);
     }
@@ -144,6 +156,78 @@ namespace {
 
     void NedSetModeForFilename(std::string filename, std::string modeName) {
         editor::SetModeForFilename(filename, modeName);
+    }
+
+    // syntax-theme-overrides follow-up: "each themeable entry" (Comment,
+    // DocComment, Keyword, ...) reachable from Janet through one generic,
+    // class-name-string-keyed mechanism (Editor/SyntaxTheme.h) rather than
+    // one-off bindings per SyntaxClass. SyntaxClassByName throws
+    // std::runtime_error for an unrecognized name -- auto-converted to a
+    // Janet panic by Register<Fn>, the same as every other binding here,
+    // matching this codebase's "a bad call surfaces as a real error"
+    // convention. The two color setters follow NedSetFormatCommand's own
+    // "empty string clears" precedent just above; the four trait setters
+    // take a raw Janet value (nil clears, true/false sets) since there's no
+    // clean empty-string-style sentinel for a bool.
+    void NedSetSyntaxForeground(std::string className, std::string hex) {
+        editor::SetSyntaxForeground(editor::SyntaxClassByName(className),
+                                    hex.empty() ? std::nullopt : std::optional<std::string>(std::move(hex)));
+    }
+
+    void NedSetSyntaxBackground(std::string className, std::string hex) {
+        editor::SetSyntaxBackground(editor::SyntaxClassByName(className),
+                                    hex.empty() ? std::nullopt : std::optional<std::string>(std::move(hex)));
+    }
+
+    std::optional<bool> JanetToOptionalBool(Janet value) {
+        if (janet_checktype(value, JANET_NIL)) {
+            return std::nullopt;
+        }
+        return FromJanet<bool>(value);
+    }
+
+    void NedSetSyntaxBold(std::string className, Janet value) {
+        editor::SetSyntaxBold(editor::SyntaxClassByName(className), JanetToOptionalBool(value));
+    }
+
+    void NedSetSyntaxItalic(std::string className, Janet value) {
+        editor::SetSyntaxItalic(editor::SyntaxClassByName(className), JanetToOptionalBool(value));
+    }
+
+    void NedSetSyntaxUnderlined(std::string className, Janet value) {
+        editor::SetSyntaxUnderlined(editor::SyntaxClassByName(className), JanetToOptionalBool(value));
+    }
+
+    void NedSetSyntaxStrikethrough(std::string className, Janet value) {
+        editor::SetSyntaxStrikethrough(editor::SyntaxClassByName(className), JanetToOptionalBool(value));
+    }
+
+    std::optional<std::string> NedSyntaxForeground(std::string className) {
+        return editor::SyntaxOverrideFor(editor::SyntaxClassByName(className)).foreground;
+    }
+
+    std::optional<std::string> NedSyntaxBackground(std::string className) {
+        return editor::SyntaxOverrideFor(editor::SyntaxClassByName(className)).background;
+    }
+
+    std::optional<bool> NedSyntaxBold(std::string className) {
+        return editor::SyntaxOverrideFor(editor::SyntaxClassByName(className)).bold;
+    }
+
+    std::optional<bool> NedSyntaxItalic(std::string className) {
+        return editor::SyntaxOverrideFor(editor::SyntaxClassByName(className)).italic;
+    }
+
+    std::optional<bool> NedSyntaxUnderlined(std::string className) {
+        return editor::SyntaxOverrideFor(editor::SyntaxClassByName(className)).underlined;
+    }
+
+    std::optional<bool> NedSyntaxStrikethrough(std::string className) {
+        return editor::SyntaxOverrideFor(editor::SyntaxClassByName(className)).strikethrough;
+    }
+
+    std::vector<std::string> NedSyntaxClasses() {
+        return editor::SyntaxClassNames();
     }
 
 } // namespace
@@ -164,6 +248,10 @@ void InstallEditorBindings(Environment& env) {
     env.Register<&NedSetFormatCommand>(
         "ned", "set-format-command",
         "Set the shell command save-buffer pipes buffer content through before writing (empty string clears it).");
+    env.Register<&NedSetUrlOpenCommand>(
+        "ned", "set-url-open-command",
+        "Set the command open-link-at-point launches (as its own argument, never a shell string) to open a URL -- "
+        "defaults to \"xdg-open\"; empty string clears it entirely, disabling URL-following.");
     env.Register<&NedSetTabWidth>("ned", "set-tab-width",
                                   "Set the display width (in columns) a tab character expands to (default 4).");
     env.Register<&NedSetAutoDetectProjectRoot>(
@@ -178,6 +266,9 @@ void InstallEditorBindings(Environment& env) {
         "ned", "set-ensure-final-newline",
         "Enable/disable appending a trailing newline to a file's written content on save if it's missing one "
         "(default true).");
+    env.Register<&NedSetCodeFoldingEnabled>(
+        "ned", "set-code-folding-enabled",
+        "Enable/disable the gutter code-folding affordance for modes with a fold query (default true).");
     env.Register<&NedRegisterLanguageGrammar>(
         "ned", "register-language-grammar",
         "Load a tree-sitter grammar at runtime: (name library-path query-path). library-path is a shared library "
@@ -195,6 +286,35 @@ void InstallEditorBindings(Environment& env) {
         "Map an exact, full filename (e.g. \"CMakeLists.txt\", not a pattern/glob) to a mode name, the same way "
         "ned/set-mode-for-extension does for an extension -- checked first, before any extension mapping, for files "
         "identified by name rather than by a distinguishing extension.");
+
+    env.Register<&NedSetSyntaxForeground>(
+        "ned", "set-syntax-foreground",
+        "Override a syntax class's foreground color (e.g. \"comment\") as \"#rrggbb\" -- empty string clears the "
+        "override. See ned/syntax-classes for every valid class name.");
+    env.Register<&NedSetSyntaxBackground>(
+        "ned", "set-syntax-background",
+        "Override a syntax class's background color as \"#rrggbb\" -- empty string clears the override.");
+    env.Register<&NedSetSyntaxBold>(
+        "ned", "set-syntax-bold", "Override a syntax class's bold trait (true/false) -- nil clears the override.");
+    env.Register<&NedSetSyntaxItalic>(
+        "ned", "set-syntax-italic", "Override a syntax class's italic trait (true/false) -- nil clears the override.");
+    env.Register<&NedSetSyntaxUnderlined>(
+        "ned", "set-syntax-underlined",
+        "Override a syntax class's underlined trait (true/false) -- nil clears the override.");
+    env.Register<&NedSetSyntaxStrikethrough>(
+        "ned", "set-syntax-strikethrough",
+        "Override a syntax class's strikethrough trait (true/false) -- nil clears the override.");
+    env.Register<&NedSyntaxForeground>(
+        "ned", "syntax-foreground", "The syntax class's overridden foreground color, or nil if unset.");
+    env.Register<&NedSyntaxBackground>(
+        "ned", "syntax-background", "The syntax class's overridden background color, or nil if unset.");
+    env.Register<&NedSyntaxBold>("ned", "syntax-bold", "The syntax class's overridden bold trait, or nil if unset.");
+    env.Register<&NedSyntaxItalic>("ned", "syntax-italic", "The syntax class's overridden italic trait, or nil if unset.");
+    env.Register<&NedSyntaxUnderlined>(
+        "ned", "syntax-underlined", "The syntax class's overridden underlined trait, or nil if unset.");
+    env.Register<&NedSyntaxStrikethrough>(
+        "ned", "syntax-strikethrough", "The syntax class's overridden strikethrough trait, or nil if unset.");
+    env.Register<&NedSyntaxClasses>("ned", "syntax-classes", "Every valid syntax class name, sorted.");
 }
 
 } // namespace ned::janet

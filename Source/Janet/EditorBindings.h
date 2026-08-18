@@ -13,9 +13,12 @@ namespace ned::janet {
 
 // Registers ned/insert, ned/forward-char, ned/backward-char, ned/delete-char,
 // ned/backward-delete-char, ned/point, ned/buffer-text, ned/register-command,
-// ned/define-key, and ned/set-format-command (format-on-save follow-up: the
+// ned/define-key, ned/set-format-command (format-on-save follow-up: the
 // shell command save-buffer pipes buffer content through before writing,
-// e.g. clang-format -- one process-wide command, not per-mode) into env.
+// e.g. clang-format -- one process-wide command, not per-mode), and
+// ned/set-url-open-command (links follow-up: the command open-link-at-point
+// launches to open a URL, defaulting to "xdg-open" -- see Editor/Link.h)
+// into env.
 //
 // All but register-command/define-key operate on whatever CommandContext is
 // currently active (see ScriptingSession) -- calling them outside a running

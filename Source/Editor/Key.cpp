@@ -52,7 +52,7 @@ std::optional<char32_t> DecodeSingleCodepoint(std::string_view text) {
 const std::unordered_map<std::string_view, SpecialKey>& NamedKeys() {
     static const std::unordered_map<std::string_view, SpecialKey> table = {
         {"RET", SpecialKey::Enter},     {"TAB", SpecialKey::Tab},        {"DEL", SpecialKey::Backspace},
-        {"ESC", SpecialKey::Escape},    {"UP", SpecialKey::Up},          {"DOWN", SpecialKey::Down},
+        {"DELETE", SpecialKey::Delete}, {"ESC", SpecialKey::Escape},    {"UP", SpecialKey::Up},          {"DOWN", SpecialKey::Down},
         {"LEFT", SpecialKey::Left},     {"RIGHT", SpecialKey::Right},    {"HOME", SpecialKey::Home},
         {"END", SpecialKey::End},       {"PRIOR", SpecialKey::PageUp},   {"PAGEUP", SpecialKey::PageUp},
         {"NEXT", SpecialKey::PageDown}, {"PAGEDOWN", SpecialKey::PageDown},

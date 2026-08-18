@@ -12,6 +12,7 @@
 #ifndef NED_UI_BUFFERVIEW_H
 #define NED_UI_BUFFERVIEW_H
 
+#include <array>
 #include <atomic>
 #include <cstddef>
 #include <filesystem>
@@ -22,11 +23,14 @@
 #include <vector>
 
 #include "ActiveBuffer.h"
+#include "Editor/CodeFold.h"
 #include "Editor/Command.h"
 #include "Editor/Dispatcher.h"
 #include "Editor/IncrementalSearch.h"
+#include "Editor/Link.h"
 #include "Editor/MinibufferPrompt.h"
 #include "Editor/Mode.h"
+#include "Editor/Org.h"
 #include "Editor/ProjectReplace.h"
 #include "Editor/QueryReplace.h"
 #include "Editor/Register.h"
@@ -149,7 +153,8 @@ class BufferView : public Widget {
                            JumpToRegister,
                            CopyToRegister,
                            InsertRegister,
-                           StringRectangle };
+                           StringRectangle,
+                           SetHeadlineTags };
 
     enum class DeleteFileStage { EnteringPath,
                                  Confirming };
@@ -300,8 +305,39 @@ class BufferView : public Widget {
     // which buffer happens to be active.
     void VisitSearchResult();
 
+    // Links follow-up: another one-shot direct action, same shape as
+    // VisitSearchResult -- doesn't touch inputMode_. In an org-mode buffer,
+    // tries org::LinkAtPoint first (an internal "*Heading" target jumps
+    // point in-buffer via org::FindHeadlineByTitle; any other target is
+    // classified and handed to OpenDetectedLink below, reusing the same
+    // logic the generic path uses); falls back to (or, outside org-mode,
+    // goes straight to) editor::link::DetectLinkAtPoint. Reports "No link at
+    // point." via statusMessage_ if nothing is found either way.
+    void OpenLinkAtPoint();
+    // The shared open/report tail both OpenLinkAtPoint paths above funnel
+    // into: a Url opens via editor::link::OpenUrl; a File is resolved via
+    // editor::link::ResolveFileLink against the active buffer's own
+    // containing directory (falling back to editor::ProjectRoot() when the
+    // buffer has no path, e.g. a scratch buffer) and, if found, opened the
+    // same way VisitSearchResult opens a file (bufferList_.OpenOrCreateFile +
+    // activeBuffer_.Set).
+    void OpenDetectedLink(const editor::link::DetectedLink& detected);
+
     // Adjusts the viewport (if needed) so point's line is visible.
     void ScrollToShowPoint();
+
+    // Re-validates topLine_ via ScrollToShowPoint() whenever the active
+    // buffer's identity has changed since the last call -- see
+    // topLineValidatedBuffer_'s own doc comment for why this exists.
+    // Deliberately doesn't reset topLine_ to 0 first: ScrollToShowPoint()
+    // is already safe to call with a stale, possibly out-of-range topLine_
+    // left over from the previous buffer (its own "point is above topLine_"
+    // branch handles that unconditionally), and leaving topLine_ untouched
+    // when it happens to already show the new buffer's point is a nicer
+    // switch between two similarly long buffers than always jumping back to
+    // the top. Called first thing in Paint(), before topLine_ is used for
+    // anything.
+    void EnsureTopLineValidForActiveBuffer();
 
     // The largest valid topLine_: the buffer's last line stops exactly at
     // the bottom of the viewport rather than scrolling past it into blank
@@ -338,6 +374,61 @@ class BufferView : public Widget {
     // see ROADMAP.md. A no-op, effectively free, when the env var is unset.
     void LogMouseEvent(std::string_view event, const ftxui::Mouse& mouse) const;
 
+    // Org-mode fold/unfold follow-up: everywhere in this class that used to
+    // reason in raw "buffer line" units now has to skip lines an active
+    // Org fold hides (org::FoldedLineRanges) -- these five are the single
+    // shared vocabulary for that, used by Paint()'s row loop, CursorPosition(),
+    // ScrollToShowPoint(), TopLine()/SetTopLine()/MaxTopLine(), and
+    // ByteOffsetForPoint() alike, so none of them can disagree about which
+    // lines are actually visible.
+    //
+    // EnsureHiddenLineRangesCache recomputes hiddenLineRanges_ via
+    // org::FoldedLineRanges only when the active buffer pointer, its
+    // ContentGeneration(), or its FoldGeneration() have changed since the
+    // last call -- and skips calling FoldedLineRanges entirely when
+    // buffer.FoldMarkers() is empty, so every buffer that's never had a
+    // fold touched (every non-Org buffer, and Org buffers before the first
+    // TAB) pays exactly zero extra cost, not just an amortized-cheap one.
+    // Marked const/mutable-backed since CursorPosition()/ByteOffsetForPoint()
+    // (both const) need a fresh cache just as much as Paint() (non-const)
+    // does, and all three can run in either order within a frame.
+    void               EnsureHiddenLineRangesCache() const;
+    // generic-code-folding follow-up: recomputes foldableBlocksCache_ via
+    // codefold::FoldableBlocks(mode_, buffer.Text()) only when the active
+    // buffer's identity or its ContentGeneration() changed since the last
+    // call -- mirrors highlightCacheBuffer_'s own caching shape. Leaves
+    // foldableBlocksCache_ empty (and skips calling mode_.fold entirely)
+    // whenever mode_.fold itself is empty or editor::CodeFoldingEnabled()
+    // is false, which is also exactly the "no gutter affordance" condition
+    // Paint()/GutterWidth()/OnMouseEvent all check.
+    void EnsureFoldableBlocksCache() const;
+    // depth-aware-fold-gutter follow-up: calls EnsureFoldableBlocksCache()
+    // first, then (re)derives foldGutterEntries_/foldGutterLineRangesByColumn_
+    // from its result -- gated on the buffer plus BOTH ContentGeneration()
+    // and FoldGeneration(), since which entries are "expanded" (and so get a
+    // line drawn) depends on live FoldMarker state, not just content. See
+    // the member declarations' own doc comment for the full history behind
+    // exactly what's cached here and why.
+    void EnsureFoldGutterCache() const;
+    // status-gutter unsaved-change-indicator follow-up: (re)derives
+    // unsavedChangeLineRanges_ from buffer.UnsavedChangeRanges() -- gated
+    // on the buffer plus BOTH ContentGeneration() and
+    // UnsavedChangeGeneration(), since a save clears the ranges (bumping
+    // the latter) without necessarily changing content. Called
+    // unconditionally every Paint(), unlike EnsureFoldGutterCache -- the
+    // status column isn't gated on mode_.fold, every buffer gets one
+    // regardless of language.
+    void EnsureUnsavedChangeCache() const;
+    [[nodiscard]] bool IsLineHidden(std::size_t line) const;
+    // `line` if already visible, else the first visible line >= line
+    // (capped at limit).
+    [[nodiscard]] std::size_t NextVisibleLine(std::size_t line, std::size_t limit) const;
+    // Steps forward `count` visible lines from an already-visible `line`,
+    // capped at limit.
+    [[nodiscard]] std::size_t AdvanceVisibleLines(std::size_t line, std::size_t count, std::size_t limit) const;
+    // Count of visible (non-hidden) lines in [startLine, endLineExclusive).
+    [[nodiscard]] std::size_t VisibleLineCountBetween(std::size_t startLine, std::size_t endLineExclusive) const;
+
     // Highlight-overlay predicates used by Paint(); byteOffset is a byte
     // offset into the buffer's current content.
     [[nodiscard]] bool InSelection(std::size_t byteOffset) const;
@@ -352,7 +443,29 @@ class BufferView : public Widget {
     const editor::Mode&    mode_;
     const Theme&           theme_;
 
-    std::size_t                topLine_    = 0;            // first visible buffer line (0-indexed)
+    std::size_t topLine_ = 0; // first visible buffer line (0-indexed)
+    // The buffer topLine_ was last validated against -- topLine_ itself is
+    // BufferView-level state, not per-buffer, so switching which buffer is
+    // active (TabBar's own click handler calls ActiveBuffer::Set() directly,
+    // with no relationship to BufferView at all, but every other switch path
+    // -- find-file, switch-to-buffer, ProjectSidebar's click-to-open, etc. --
+    // is exactly as disconnected from topLine_ in principle) can otherwise
+    // leave it pointing at a scroll position that doesn't exist in the newly
+    // active buffer at all -- a real reported bug (switching from a long
+    // file scrolled well past a short file's own last line rendered nothing
+    // but blank rows), not hypothetical. EnsureTopLineValidForActiveBuffer,
+    // called first thing in Paint() the same way highlightCacheBuffer_/
+    // hiddenLineRangesCacheBuffer_/linkCacheBuffer_ already detect "the
+    // active buffer changed since I last looked," re-validates topLine_ via
+    // ScrollToShowPoint() whenever this doesn't match the buffer Paint() is
+    // about to render -- see EnsureTopLineValidForActiveBuffer's own
+    // declaration below, alongside this class's other private methods, for
+    // why that's sufficient without also needing to reset topLine_ first.
+    // Seeded to the buffer active at construction time (not nullptr) so the
+    // very first Paint() call is never itself mistaken for a switch -- see
+    // the constructor's own comment for the real regression that caught.
+    text::Buffer* topLineValidatedBuffer_ = nullptr;
+
     std::size_t                dragAnchor_ = 0;            // point position at the last mouse press, for drag-selection
     std::optional<std::string> debugMouseLogPath_;         // see LogMouseEvent
     ScrollBar*                 scrollBar_       = nullptr; // see SetScrollBar
@@ -407,6 +520,103 @@ class BufferView : public Widget {
     text::Buffer*                      highlightCacheBuffer_     = nullptr;
     std::size_t                        highlightCacheGeneration_ = 0;
     std::vector<editor::HighlightSpan> highlightCacheSpans_;
+
+    // generic-code-folding follow-up: caches mode_.fold's result across
+    // Paint() calls, same shape/reasoning as highlightCacheBuffer_ above --
+    // consumed both for the gutter's ▸/▾ rendering and (passed into
+    // codefold::FoldedLineRanges) for EnsureHiddenLineRangesCache, so
+    // mode_.fold is never called more than once per actually-changed
+    // Paint() call. Empty whenever mode_.fold itself is empty or
+    // editor::CodeFoldingEnabled() is false -- see EnsureFoldableBlocksCache.
+    // Mutable for the same const-query-methods reason
+    // hiddenLineRangesCacheBuffer_ already is (EnsureHiddenLineRangesCache,
+    // a const method, needs a fresh cache too).
+    mutable text::Buffer*                                   foldableBlocksCacheBuffer_     = nullptr;
+    mutable std::size_t                                     foldableBlocksCacheGeneration_ = 0;
+    mutable std::vector<std::pair<std::size_t, std::size_t>> foldableBlocksCache_;
+    // depth-aware-fold-gutter follow-up: a small, fixed number of gutter
+    // columns (not a viewport-dependent width -- an explicit user choice,
+    // so the gutter's own size never jumps around while scrolling past a
+    // deeply nested region) reserved for tracing a fold region's extent,
+    // one column per nesting level, deeper levels sharing the innermost
+    // column.
+    static constexpr int kMaxFoldDepthColumns = 4;
+
+    // status/line-number-spacing follow-up: the gutter's own left-to-right
+    // layout, left to right -- [status][gap][digits][gap][fold]. kStatusWidth
+    // is always reserved (every buffer gets a status column regardless of
+    // mode/language); kLineNumberGap appears on BOTH sides of the digits
+    // (an explicit user request -- "ensure the line number gutter has an
+    // empty space on either side"), not just the trailing one this gutter
+    // used to have alone.
+    static constexpr std::size_t kStatusWidth   = 1;
+    static constexpr std::size_t kLineNumberGap = 1;
+
+    struct FoldGutterEntry {
+        std::size_t headerLine;
+        std::size_t closerLine; // inclusive
+        std::size_t blockStart; // FoldMarker key
+        int         column;    // min(depth, kMaxFoldDepthColumns - 1)
+    };
+
+    // Derived from foldableBlocksCache_ whenever it's recomputed, but gated
+    // on BOTH ContentGeneration and FoldGeneration (mirroring
+    // hiddenLineRangesCacheContentGeneration_/hiddenLineRangesCacheFoldGeneration_'s
+    // own dual-generation pattern below) rather than foldableBlocksCache_'s
+    // own content-only gate: foldGutterLineRangesByColumn_ depends on which
+    // blocks are currently collapsed/expanded (FoldMarker state), which
+    // changes independently of buffer content. Built once per actually-
+    // stale Paint() call, O(blocks) with one allocation each -- the same
+    // "cache the derived structure, don't rebuild it every Paint() call, and
+    // don't reach for a per-element-allocating container under ASan"
+    // discipline foldableBlocksCache_'s own doc comment already documents
+    // finding the hard way for this exact code path.
+    mutable text::Buffer*                    foldGutterCacheBuffer_            = nullptr;
+    mutable std::size_t                      foldGutterCacheContentGeneration_ = 0;
+    mutable std::size_t                      foldGutterCacheFoldGeneration_    = 0;
+    mutable std::vector<FoldGutterEntry>     foldGutterEntries_;                  // sorted by headerLine (free -- blocks arrive startByte-sorted)
+    mutable std::array<std::vector<std::pair<std::size_t, std::size_t>>, kMaxFoldDepthColumns>
+        foldGutterLineRangesByColumn_; // EXPANDED entries only, [headerLine+1, closerLine+1) per column
+
+    // status-gutter unsaved-change-indicator follow-up: converts
+    // buffer.UnsavedChangeRanges()' byte ranges to merged, sorted
+    // [startLine, endLineExclusive) line ranges for the status column's
+    // rendering -- gated on BOTH ContentGeneration() and
+    // UnsavedChangeGeneration() (mirrors foldGutterCacheBuffer_'s own
+    // dual-generation shape just above), since an edit bumps both but a
+    // save only bumps the latter (clearing the ranges without otherwise
+    // touching content). Unlike the fold-depth columns, these ranges are
+    // flat and disjoint by construction (no nesting concept here at all),
+    // so rendering only ever needs a binary search against this cache, no
+    // streaming stack state.
+    mutable text::Buffer*                             unsavedChangeCacheBuffer_            = nullptr;
+    mutable std::size_t                               unsavedChangeCacheContentGeneration_ = 0;
+    mutable std::size_t                               unsavedChangeCacheGeneration_        = 0;
+    mutable std::vector<std::pair<std::size_t, std::size_t>> unsavedChangeLineRanges_;
+
+    // Org-mode fold/unfold follow-up: see EnsureHiddenLineRangesCache's own
+    // doc comment above. mutable because CursorPosition()/ByteOffsetForPoint()
+    // (both const) refresh it too, the same "cache read by const query
+    // methods" shape highlightCacheBuffer_ would also need if any const
+    // method ever read it (none currently do).
+    mutable text::Buffer*                                    hiddenLineRangesCacheBuffer_            = nullptr;
+    mutable std::size_t                                      hiddenLineRangesCacheContentGeneration_ = 0;
+    mutable std::size_t                                      hiddenLineRangesCacheFoldGeneration_    = 0;
+    mutable std::vector<std::pair<std::size_t, std::size_t>> hiddenLineRanges_;
+
+    // Links follow-up: caches org::ParseLinks's result across Paint()/
+    // CursorPosition()/ByteOffsetForPoint() calls, same shape/reasoning as
+    // highlightCacheBuffer_ above. EnsureLinkCache clears linkCache_ and
+    // returns immediately whenever mode_.name != "org-mode" -- a single
+    // string compare, cheaper even than FoldMarkers().empty()'s check, so
+    // every non-Org buffer (the common case across the whole editor) never
+    // calls org::ParseLinks at all. Mutable for the same const-query-methods
+    // reason hiddenLineRangesCacheBuffer_ already is.
+    mutable text::Buffer*                  linkCacheBuffer_     = nullptr;
+    mutable std::size_t                    linkCacheGeneration_ = 0;
+    mutable std::vector<editor::org::Link> linkCache_;
+
+    void EnsureLinkCache() const;
 };
 
 } // namespace ned::ui

@@ -66,6 +66,45 @@ enum class SyntaxClass {
     Tag,       // an HTML/XML/JSX element name -- "tag"
     Attribute, // an HTML/XML attribute name, or a decorator/annotation -- "attribute"
     Namespace, // a module/namespace/package name -- "module"/"namespace"
+
+    // generic-tree-sitter-highlighting follow-up: split out of the coarser
+    // classes above once a real, richer query (Source/Editor/TreeSitter/
+    // queries/c.scm, cpp.scm) actually reached them -- each still maps to a
+    // real, standard tree-sitter/Neovim capture name, not invented (checked
+    // against the vendored nvim-treesitter query files themselves).
+    KeywordModifier, // an access specifier or storage/type qualifier -- public/private/protected/static/const/... -- "keyword.modifier"
+    Method,          // a method (function bound to a type), distinct from a free function -- "function.method"/"function.method.call"
+    Constructor,     // "constructor"
+    Label,           // a goto target -- "label"
+    // Ned's own additions to the vendored query (not a generic tree-sitter/
+    // Neovim capture name either upstream splits out -- see cpp.scm's own
+    // header comment for why both needed a custom pattern).
+    ReturnType,  // a function/method's own return type, distinct from every other @type usage -- "type.return"
+    IncludePath, // a "<system/header>" #include path, distinct from a "\"local/header\"" one -- "string.special.include"
+
+    // Org-mode syntax-highlighting follow-up: genuinely Org-specific
+    // categories, no cross-language generic capture maps to any of these --
+    // the same "real semantic category, not a hue tweak" bar
+    // ControlKeyword/FunctionBuiltin already cleared. HeadlineLevel1/2/3
+    // cycle every 3 stars (real Org itself cycles through 8 level faces;
+    // curated down to 3 here, matching this project's own repeated
+    // curated-v1-subset precedent, e.g. priorities capped at A-C).
+    // TodoKeyword/DoneKeyword are resolved from org::TodoKeywords()'s own
+    // configured list, not hardcoded "TODO"/"DONE" text -- see Mode.cpp's
+    // OrgMode(). Strong/Emphasis/Underline/Strikethrough back Org's own
+    // *bold*//italic//_underline_/+strikethrough+ inline markup (verbatim
+    // and code reuse the existing String class instead -- raw, unformatted
+    // text is close in spirit to their real Org default face anyway).
+    HeadlineLevel1,
+    HeadlineLevel2,
+    HeadlineLevel3,
+    TodoKeyword,
+    DoneKeyword,
+    Checkbox,
+    Strong,
+    Emphasis,
+    Underline,
+    Strikethrough,
 };
 
 // A single highlighted byte range [startByte, endByte) within a buffer's
@@ -91,10 +130,22 @@ struct HighlightSpan {
 // see that function for how the returned spans get sliced per line.
 using HighlightFunction = std::function<std::vector<HighlightSpan>(std::string_view bufferText)>;
 
+// Byte ranges [startByte, endByte) of every foldable block in a buffer's
+// full text (a function body, a class body, an object literal, ...),
+// generic-code-folding follow-up. Unlike HighlightSpan there's no
+// classification -- a fold region either exists or it doesn't -- so this is
+// just the "@fold"-captured node's own byte range, one entry per capture,
+// order unspecified (BufferView/CodeFold.h sort by startByte themselves
+// where it matters). An empty function (the default) means this mode has no
+// fold query at all: BufferView must show NO gutter fold affordance for
+// such a mode, not merely an inert one -- see CodeFold.h.
+using FoldFunction = std::function<std::vector<std::pair<std::size_t, std::size_t>>(std::string_view bufferText)>;
+
 struct Mode {
     std::string       name;
     Keymap            keymap;
     HighlightFunction highlight; // empty function = no highlighting
+    FoldFunction       fold;     // empty function = no folding
 };
 
 // The default mode: no special keybindings, no highlighting.
@@ -109,7 +160,13 @@ struct Mode {
 // otherwise identical, rather than hand-duplicating the same
 // Parser/Query/HighlightFunction-construction logic JsonMode originally
 // wrote out in full during the tree-sitter foundation phase.
-[[nodiscard]] Mode TreeSitterMode(std::string name, std::string_view languageName, const char* querySource);
+// foldQuerySource: same embedded-static-storage-duration contract as
+// querySource, but for a "@fold"-capture query (generic-code-folding
+// follow-up) -- nullptr (the default) means this language has no fold query
+// yet, leaving the returned Mode's .fold empty. Not every bundled language
+// has one; see Mode.cpp's own *Mode() functions for which do.
+[[nodiscard]] Mode TreeSitterMode(std::string name, std::string_view languageName, const char* querySource,
+                                  const char* foldQuerySource = nullptr);
 
 // The shared construction logic TreeSitterMode above delegates to, split out
 // (dynamic-grammar-loading follow-up) so a caller that already has a
@@ -123,7 +180,7 @@ struct Mode {
 // compiles the pattern immediately and doesn't retain the source text past
 // that call.
 [[nodiscard]] Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& language,
-                                              std::string_view querySource);
+                                              std::string_view querySource, std::string_view foldQuerySource = {});
 
 // A real tree-sitter-backed Janet mode (bundle-remaining-grammars
 // follow-up), replacing the original hand-rolled per-line #-comment/
@@ -160,13 +217,32 @@ struct Mode {
 [[nodiscard]] Mode CssMode();
 [[nodiscard]] Mode PythonMode();
 [[nodiscard]] Mode BashMode();
+// Tables follow-up: unlike every other TreeSitterMode() call above, this
+// one's returned Mode gets a real keymap binding (TAB -> markdown-table-
+// align, see Editor/Markdown.h) layered on afterward -- the second Mode in
+// this codebase to ever construct a non-empty Keymap, OrgMode() below was
+// the first.
 [[nodiscard]] Mode MarkdownMode();
 
 // Org-like structured editing (v1 slice, see Org.h and ROADMAP.md's
-// "Org-like structured editing" entry): no highlighting yet (real
-// tree-sitter-org integration is a separate follow-up slice), but a real,
-// non-empty keymap -- the first Mode in this codebase to actually have one
-// (every *Mode() function above still constructs a plain empty Keymap()).
+// "Org-like structured editing" entry) -- a real, non-empty keymap (the
+// first Mode in this codebase to actually have one; every *Mode() function
+// above still constructs a plain empty Keymap()).
+//
+// Org-mode syntax-highlighting follow-up: also a real `.highlight`, unlike
+// every other Mode above, NOT built via the shared TreeSitterMode()/
+// TreeSitterModeFromLanguage() template those all use -- OrgMode() builds
+// its own Parser/Query (against Ned's own forked "org" grammar and
+// Source/Editor/TreeSitter/OrgHighlights.scm) plus a custom
+// HighlightFunction that resolves two capture names
+// ("org.headline.stars"/"org.keyword.candidate") directly in C++ rather
+// than through the shared, generic CaptureTable()/SyntaxClassForCapture()
+// mechanism every other capture still goes through -- see Mode.cpp's own
+// implementation and OrgHighlights.scm's header comment for why (in short:
+// Query::Captures never evaluates tree-sitter predicates, so headline
+// level and TODO-vs-DONE, which every reference query for this grammar
+// resolves via predicates, have to be resolved here instead, from the
+// captured node's own text).
 // Binds org-cycle-todo/org-cycle-priority/org-toggle-checkbox under real
 // Org's own C-c C-t/C-c C-c bindings, plus C-c C-p for priority -- which
 // deliberately SHADOWS the global toggle-project-sidebar binding while an
@@ -176,7 +252,17 @@ struct Mode {
 // e.g. C-c C-c means something different in every major mode) -- this is
 // simply the first Mode to actually exercise that with a real conflicting
 // binding, rather than only ever adding new bindings the global map never
-// had. toggle-project-sidebar is unaffected everywhere else.
+// had. toggle-project-sidebar is unaffected everywhere else. Also binds
+// org-cycle (real Org's own 3-state subtree fold cycle) to TAB, and
+// org-set-tags to C-c C-q (also real Org's own binding) -- neither shadows
+// anything: TAB is unbound in the global keymap (self-insert only covers
+// printable ASCII), and C-c C-q was never bound anywhere. Links follow-up:
+// also binds open-link-at-point to real Org's own C-c C-o -- this DOES
+// shadow the global find-scratch binding while an org-mode buffer is
+// active, the same kind of intentional, smoke-tested mode-over-global
+// shadow C-c C-p already established above (open-link-at-point is also
+// reachable everywhere, Org included, via the global C-c C-l binding --
+// C-c C-o is an additional, not exclusive, path to it in Org buffers).
 [[nodiscard]] Mode OrgMode();
 
 } // namespace ned::editor

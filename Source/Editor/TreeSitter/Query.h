@@ -10,6 +10,19 @@
 // highlighter runs per repaint to get a flat list of (name, byte range)
 // pairs to map onto SyntaxClass.
 //
+// Predicate evaluation (generic-tree-sitter-highlighting follow-up):
+// Captures() evaluates the common tree-sitter query predicates
+// (#eq?/#not-eq?, #match?/#not-match?/#lua-match?/#not-lua-match?,
+// #any-of?/#not-any-of?, #has-ancestor?/#has-parent?/#not-has-ancestor?/
+// #not-has-parent?) against each match before including its captures -- a
+// real capability this project didn't have before (Captures() used to
+// evaluate none of them at all, unconditionally including every match).
+// Any OTHER predicate name, including the non-filtering #set! directive
+// real query files use for match priority, is inert: a predicate this
+// doesn't recognize never suppresses a match, matching the pre-existing
+// "include everything" default exactly for whatever it doesn't understand
+// yet -- see Query.cpp's own comment on why that's the only safe default.
+//
 
 #ifndef NED_EDITOR_TREESITTER_QUERY_H
 #define NED_EDITOR_TREESITTER_QUERY_H
@@ -52,11 +65,17 @@ class Query {
     Query& operator=(const Query&) = delete;
 
     // Runs this query against root's subtree, returning every capture in
-    // tree order. A fresh TSQueryCursor per call -- the simplest correct
-    // thing; revisit only if a real [Performance] test says cursor reuse
-    // matters, matching this project's own "prove it before optimizing"
-    // discipline (see Parser.h's own note on full vs. incremental parsing).
-    [[nodiscard]] std::vector<QueryCapture> Captures(const Node& root) const;
+    // tree order, from matches whose own predicates (see this class's own
+    // header comment) all evaluated true. A fresh TSQueryCursor per call --
+    // the simplest correct thing; revisit only if a real [Performance] test
+    // says cursor reuse matters, matching this project's own "prove it
+    // before optimizing" discipline (see Parser.h's own note on full vs.
+    // incremental parsing). sourceText is the exact same buffer text root
+    // was parsed from -- needed so text-comparison predicates
+    // (#eq?/#match?/#any-of?) have something to read a captured node's
+    // actual text out of; every real caller already has this in scope
+    // (a Mode's HighlightFunction is itself handed the buffer's full text).
+    [[nodiscard]] std::vector<QueryCapture> Captures(const Node& root, std::string_view sourceText) const;
 
   private:
     TSQuery* query_ = nullptr;

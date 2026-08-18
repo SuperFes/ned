@@ -23,6 +23,7 @@ const TSLanguage* tree_sitter_python(void);
 const TSLanguage* tree_sitter_bash(void);
 const TSLanguage* tree_sitter_janet_simple(void);
 const TSLanguage* tree_sitter_markdown(void);
+const TSLanguage* tree_sitter_org(void);
 }
 
 namespace ned::editor::treesitter {
@@ -71,6 +72,12 @@ std::optional<Language> LanguageByName(std::string_view name) {
     }
     if (name == "markdown") {
         return Language(tree_sitter_markdown());
+    }
+    // Org-mode syntax-highlighting follow-up: nvim-orgmode/tree-sitter-org,
+    // forked (not the real upstream repository) -- see CMakeLists.txt's own
+    // ned_add_treesitter_grammar(tree-sitter-org ...) call for why.
+    if (name == "org") {
+        return Language(tree_sitter_org());
     }
     return std::nullopt;
 }

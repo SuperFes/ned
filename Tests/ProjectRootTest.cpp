@@ -23,6 +23,26 @@ struct AutoDetectGuard {
     }
 };
 
+// The process's cwd is likewise shared, global state across the whole test
+// binary (every test case runs in the same process; see
+// BufferViewTest.cpp/ProjectSidebarTest.cpp's own identical CurrentPathGuard
+// for why that matters) -- restored on scope exit even if a REQUIRE fails
+// partway through.
+class CurrentPathGuard {
+  public:
+    explicit CurrentPathGuard(const std::filesystem::path& newPath) : previous_(std::filesystem::current_path()) {
+        std::filesystem::current_path(newPath);
+    }
+    ~CurrentPathGuard() {
+        std::filesystem::current_path(previous_);
+    }
+    CurrentPathGuard(const CurrentPathGuard&)            = delete;
+    CurrentPathGuard& operator=(const CurrentPathGuard&) = delete;
+
+  private:
+    std::filesystem::path previous_;
+};
+
 } // namespace
 
 TEST_CASE("ProjectRoot defaults to the process's current path", "[ProjectRoot]") {
@@ -117,6 +137,30 @@ TEST_CASE("DetectProjectRoot never walks upward when AutoDetectProjectRoot() is 
     // file's containing directory ("src"), same as a directory with no
     // marker at all would.
     REQUIRE(DetectProjectRoot(dir / "src" / "file.txt") == std::filesystem::absolute(dir / "src"));
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("DetectProjectRoot resolves a relative \"..\" path to the real parent directory, not literal \"..\"",
+          "[ProjectRoot]") {
+    // A real reported bug: `cd build && ./ned ../README.md` made the
+    // sidebar header (which reads ProjectRoot().filename()) show ".."
+    // verbatim -- plain std::filesystem::absolute() prepends the cwd but
+    // never resolves "." / ".." components, so the detected root's own
+    // parent_path() ended in a literal "..", whose own filename() is ".."
+    // itself, not the real containing directory's name.
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_root_test_dotdot";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir / "sub");
+    {
+        std::ofstream(dir / "file.txt") << "x";
+    }
+    const CurrentPathGuard cwdGuard(dir / "sub");
+
+    const std::filesystem::path detected = DetectProjectRoot("../file.txt");
+
+    REQUIRE(detected == std::filesystem::canonical(dir));
+    REQUIRE(detected.filename() != "..");
 
     std::filesystem::remove_all(dir);
 }

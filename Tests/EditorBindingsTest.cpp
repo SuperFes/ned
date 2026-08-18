@@ -1,16 +1,20 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <optional>
 #include <stdexcept>
 #include <string>
 
+#include "Editor/CodeFoldSettings.h"
 #include "Editor/Dispatcher.h"
 #include "Editor/FinalNewline.h"
 #include "Editor/FormatOnSave.h"
 #include "Editor/Key.h"
 #include "Editor/Keymap.h"
+#include "Editor/Link.h"
 #include "Editor/ProjectRoot.h"
 #include "Editor/ScratchPad.h"
 #include "Editor/ScriptingSession.h"
+#include "Editor/SyntaxTheme.h"
 #include "Janet/EditorBindings.h"
 #include "Janet/Environment.h"
 #include "Janet/Value.h"
@@ -175,6 +179,28 @@ TEST_CASE("ned/set-format-command configures the process-wide format command", "
     REQUIRE_FALSE(ned::editor::FormatCommand().has_value());
 }
 
+TEST_CASE("ned/set-url-open-command configures the process-wide URL-open command", "[EditorBindings]") {
+    // UrlOpenCommand is process-wide state (see Editor/Link.h) whose true
+    // default is "xdg-open", not nullopt -- restores whatever was actually
+    // configured before this test ran rather than unconditionally clearing
+    // it, so this stays order-independent regardless of what ran before it.
+    struct UrlOpenCommandGuard {
+        std::optional<std::string> previous = ned::editor::link::UrlOpenCommand();
+        ~UrlOpenCommandGuard() {
+            ned::editor::link::SetUrlOpenCommand(previous);
+        }
+    } guard;
+
+    Environment& env = ned_tests::TestEnvironment();
+    InstallEditorBindings(env);
+
+    env.DoString(R"((ned/set-url-open-command "wslview"))");
+    REQUIRE(ned::editor::link::UrlOpenCommand() == std::optional<std::string>("wslview"));
+
+    env.DoString(R"((ned/set-url-open-command ""))"); // empty string clears it
+    REQUIRE_FALSE(ned::editor::link::UrlOpenCommand().has_value());
+}
+
 TEST_CASE("ned/set-auto-detect-project-root configures the process-wide toggle", "[EditorBindings]") {
     // AutoDetectProjectRoot is process-wide state (see ProjectRoot.h);
     // guaranteed reset via RAII so this doesn't leak into other tests.
@@ -230,4 +256,83 @@ TEST_CASE("ned/set-ensure-final-newline configures the process-wide toggle", "[E
 
     env.DoString(R"((ned/set-ensure-final-newline true))");
     REQUIRE(ned::editor::EnsureFinalNewline());
+}
+
+TEST_CASE("ned/set-code-folding-enabled configures the process-wide toggle", "[EditorBindings]") {
+    // CodeFoldingEnabled is process-wide state (see CodeFoldSettings.h);
+    // guaranteed reset via RAII so this doesn't leak into other tests.
+    struct CodeFoldingGuard {
+        ~CodeFoldingGuard() {
+            ned::editor::SetCodeFoldingEnabled(true);
+        }
+    } guard;
+
+    Environment& env = ned_tests::TestEnvironment();
+    InstallEditorBindings(env);
+
+    env.DoString(R"((ned/set-code-folding-enabled false))");
+    REQUIRE_FALSE(ned::editor::CodeFoldingEnabled());
+
+    env.DoString(R"((ned/set-code-folding-enabled true))");
+    REQUIRE(ned::editor::CodeFoldingEnabled());
+}
+
+TEST_CASE("ned/syntax-* bindings set/get/clear overrides, with nil for an unset field", "[EditorBindings]") {
+    // SyntaxTheme overrides are process-wide state; guaranteed reset via RAII.
+    struct SyntaxThemeGuard {
+        ~SyntaxThemeGuard() {
+            ned::editor::SetSyntaxForeground(ned::editor::SyntaxClass::Comment, std::nullopt);
+            ned::editor::SetSyntaxBackground(ned::editor::SyntaxClass::Comment, std::nullopt);
+            ned::editor::SetSyntaxBold(ned::editor::SyntaxClass::Comment, std::nullopt);
+            ned::editor::SetSyntaxItalic(ned::editor::SyntaxClass::Comment, std::nullopt);
+            ned::editor::SetSyntaxUnderlined(ned::editor::SyntaxClass::Comment, std::nullopt);
+            ned::editor::SetSyntaxStrikethrough(ned::editor::SyntaxClass::Comment, std::nullopt);
+        }
+    } guard;
+
+    Environment& env = ned_tests::TestEnvironment();
+    InstallEditorBindings(env);
+
+    // Unset -- nil, not an error.
+    REQUIRE(janet_checktype(env.DoString(R"((ned/syntax-foreground "comment"))"), JANET_NIL));
+    REQUIRE(janet_checktype(env.DoString(R"((ned/syntax-bold "comment"))"), JANET_NIL));
+
+    env.DoString(R"((ned/set-syntax-foreground "comment" "#5c6370"))");
+    REQUIRE(FromJanet<std::string>(env.DoString(R"((ned/syntax-foreground "comment"))")) == "#5c6370");
+
+    env.DoString(R"((ned/set-syntax-background "comment" "#282c34"))");
+    REQUIRE(FromJanet<std::string>(env.DoString(R"((ned/syntax-background "comment"))")) == "#282c34");
+
+    env.DoString(R"((ned/set-syntax-bold "comment" true))");
+    REQUIRE(FromJanet<bool>(env.DoString(R"((ned/syntax-bold "comment"))")));
+
+    env.DoString(R"((ned/set-syntax-italic "comment" false))");
+    REQUIRE_FALSE(FromJanet<bool>(env.DoString(R"((ned/syntax-italic "comment"))")));
+
+    env.DoString(R"((ned/set-syntax-underlined "comment" true))");
+    REQUIRE(FromJanet<bool>(env.DoString(R"((ned/syntax-underlined "comment"))")));
+
+    env.DoString(R"((ned/set-syntax-strikethrough "comment" true))");
+    REQUIRE(FromJanet<bool>(env.DoString(R"((ned/syntax-strikethrough "comment"))")));
+
+    // nil clears a trait override back to unset.
+    env.DoString(R"((ned/set-syntax-bold "comment" nil))");
+    REQUIRE(janet_checktype(env.DoString(R"((ned/syntax-bold "comment"))"), JANET_NIL));
+
+    // Empty string clears a color override back to unset.
+    env.DoString(R"((ned/set-syntax-foreground "comment" ""))");
+    REQUIRE(janet_checktype(env.DoString(R"((ned/syntax-foreground "comment"))"), JANET_NIL));
+
+    // An unrecognized class name is a real error, not nil.
+    REQUIRE_THROWS_AS(env.DoString(R"((ned/set-syntax-foreground "not-a-real-class" "#ffffff"))"), std::runtime_error);
+}
+
+TEST_CASE("ned/syntax-classes lists every valid class name", "[EditorBindings]") {
+    Environment& env = ned_tests::TestEnvironment();
+    InstallEditorBindings(env);
+
+    const Janet       result = env.DoString(R"((ned/syntax-classes))");
+    REQUIRE(janet_checktype(result, JANET_ARRAY));
+    const JanetArray* array = janet_unwrap_array(result);
+    REQUIRE(array->count == static_cast<std::int32_t>(ned::editor::SyntaxClassNames().size()));
 }
