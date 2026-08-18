@@ -345,6 +345,19 @@ std::size_t Buffer::UnsavedChangeGeneration() const {
     return UnsavedChangeGeneration_;
 }
 
+void Buffer::SetDiagnostics(std::vector<Diagnostic> diagnostics) {
+    Diagnostics_ = std::move(diagnostics);
+    ++DiagnosticsGeneration_;
+}
+
+const std::vector<Buffer::Diagnostic>& Buffer::Diagnostics() const {
+    return Diagnostics_;
+}
+
+std::size_t Buffer::DiagnosticsGeneration() const {
+    return DiagnosticsGeneration_;
+}
+
 std::size_t Buffer::RelocateForInsert(std::size_t offset, std::size_t insertOffset, std::size_t length) {
     return offset >= insertOffset ? offset + length : offset;
 }

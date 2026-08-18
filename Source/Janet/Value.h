@@ -21,6 +21,14 @@ namespace ned::janet {
 template <typename T>
 T FromJanet(Janet value);
 
+// LSP client follow-up (ned/set-lsp-command's argv parameter): accepts
+// either a Janet array (@[...]) or tuple ([...]) of strings, via
+// janet_indexed_view's own polymorphic-over-both-types accessor -- the
+// first FromJanet specialization in this codebase to unwrap a container
+// rather than a scalar.
+template <>
+std::vector<std::string> FromJanet<std::vector<std::string>>(Janet value);
+
 Janet ToJanet(bool value);
 Janet ToJanet(std::int64_t value);
 Janet ToJanet(std::size_t value);

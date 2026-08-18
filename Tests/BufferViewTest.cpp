@@ -165,6 +165,22 @@ struct Fixture {
     }
 };
 
+// fuzzy-candidate-list-styling follow-up: statusMessage_ can contain
+// EchoArea's invisible EmphasizeForEchoArea/DimForEchoArea sentinel bytes
+// (see EchoArea.h) -- std::string::size() counts them, but they render as
+// zero width. Strips them so a test can measure the actual visible column
+// count a message will occupy, the same way EchoArea::Paint itself does.
+std::string StripEchoAreaMarkup(const std::string& message) {
+    std::string visible;
+    for (const char ch : message) {
+        if (static_cast<unsigned char>(ch) >= 1 && static_cast<unsigned char>(ch) <= 4) {
+            continue;
+        }
+        visible += ch;
+    }
+    return visible;
+}
+
 std::string RowText(ftxui::Screen& screen, int row, int width) {
     std::string out;
     for (int col = 0; col < width; ++col) {
@@ -173,17 +189,19 @@ std::string RowText(ftxui::Screen& screen, int row, int width) {
     return out;
 }
 
-// Mirrors BufferView::GutterWidth's formula -- [status][gap][digits][gap][fold]:
-// a fixed leading status column, a gap, digits in the last line number, a
-// second gap, then foldColumn trailing columns (generic-code-folding
-// follow-up) for a mode with a real fold query -- default 0, since most
-// existing callers exercise a mode without one. Content starts at this
-// column, not 0.
+// Mirrors BufferView::GutterWidth's formula --
+// [status][diagnostic][gap][digits][gap][fold] (LSP client follow-up added
+// the diagnostic column): a fixed leading status column, a fixed diagnostic
+// column, a gap, digits in the last line number, a second gap, then
+// foldColumn trailing columns (generic-code-folding follow-up) for a mode
+// with a real fold query -- default 0, since most existing callers exercise
+// a mode without one. Content starts at this column, not 0.
 int GutterWidth(std::size_t totalLines, int foldColumn = 0) {
-    constexpr int kStatusWidth   = 1;
-    constexpr int kLineNumberGap = 1;
-    return kStatusWidth + kLineNumberGap + static_cast<int>(std::to_string(totalLines).size()) + kLineNumberGap +
-           foldColumn;
+    constexpr int kStatusWidth     = 1;
+    constexpr int kDiagnosticWidth = 1;
+    constexpr int kLineNumberGap   = 1;
+    return kStatusWidth + kDiagnosticWidth + kLineNumberGap + static_cast<int>(std::to_string(totalLines).size()) +
+           kLineNumberGap + foldColumn;
 }
 
 // Row text starting right after the gutter, rather than from column 0.
@@ -248,10 +266,12 @@ TEST_CASE("BufferView paints the buffer's first line and positions the cursor", 
     fixture.buffer.InsertAtPoint("hello");
 
     ned::ui::BufferView view = fixture.View();
-    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 9, .y_min = 0, .y_max = 2});
+    // Width widened by 1 (LSP client follow-up added a diagnostic gutter
+    // column) to keep the cursor -- at GutterWidth(1) + 5 -- on-screen.
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 10, .y_min = 0, .y_max = 2});
 
-    ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(10), ftxui::Dimension::Fixed(3));
-    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 9, .y_min = 0, .y_max = 2});
+    ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(11), ftxui::Dimension::Fixed(3));
+    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 10, .y_min = 0, .y_max = 2});
 
     view.Paint(canvas);
 
@@ -691,7 +711,7 @@ TEST_CASE("BufferView renders JsonMode's tree-sitter highlighting for strings, n
 
     view.Paint(canvas);
 
-    const int gutter = GutterWidth(1, /*foldColumn=*/4); // JsonMode has a fold query -- generic-code-folding follow-up
+    const int gutter = GutterWidth(1, /*foldColumn=*/4);                                                                // JsonMode has a fold query -- generic-code-folding follow-up
     REQUIRE(CellMatchesBrush(screen.PixelAt(gutter + 2, 0), fixture.theme.BrushFor(ned::editor::SyntaxClass::String))); // 'a'
     REQUIRE(CellMatchesBrush(screen.PixelAt(gutter + 6, 0), fixture.theme.BrushFor(ned::editor::SyntaxClass::Number))); // '1'
     REQUIRE(CellMatchesBrush(screen.PixelAt(gutter + 15, 0),
@@ -889,20 +909,24 @@ TEST_CASE("The line-number gutter shows right-aligned, 1-indexed line numbers", 
     ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 9});
     view.Paint(canvas);
 
-    REQUIRE(GutterWidth(10) == 5); // status(1) + gap(1) + digits(2) + gap(1)
+    // status(1) + diagnostic(1) + gap(1) + digits(2) + gap(1) -- LSP client
+    // follow-up added the diagnostic column between status and the leading
+    // gap.
+    REQUIRE(GutterWidth(10) == 6);
 
-    // Row 0 -> line 1: status column, leading gap, right-aligned in 2 digit
-    // columns, then a trailing separator, then content.
-    REQUIRE(screen.PixelAt(1, 0).character == " "); // leading gap
-    REQUIRE(screen.PixelAt(2, 0).character == " ");
-    REQUIRE(screen.PixelAt(3, 0).character == "1");
-    REQUIRE(screen.PixelAt(4, 0).character == " "); // trailing gap
+    // Row 0 -> line 1: status column, diagnostic column, leading gap,
+    // right-aligned in 2 digit columns, then a trailing separator, then
+    // content.
+    REQUIRE(screen.PixelAt(2, 0).character == " "); // leading gap
+    REQUIRE(screen.PixelAt(3, 0).character == " ");
+    REQUIRE(screen.PixelAt(4, 0).character == "1");
+    REQUIRE(screen.PixelAt(5, 0).character == " "); // trailing gap
     REQUIRE(ContentRowText(screen, 0, 1, 10) == "a");
 
     // Row 9 -> line 10: both digit columns used.
-    REQUIRE(screen.PixelAt(2, 9).character == "1");
-    REQUIRE(screen.PixelAt(3, 9).character == "0");
-    REQUIRE(screen.PixelAt(4, 9).character == " ");
+    REQUIRE(screen.PixelAt(3, 9).character == "1");
+    REQUIRE(screen.PixelAt(4, 9).character == "0");
+    REQUIRE(screen.PixelAt(5, 9).character == " ");
     REQUIRE(ContentRowText(screen, 9, 1, 10) == "j");
 }
 
@@ -925,8 +949,54 @@ TEST_CASE("The gutter widens as the buffer grows past a power of ten lines", "[B
 
     const std::size_t totalLines = fixture.buffer.Content().LineCount();
     REQUIRE(totalLines == 151);
-    REQUIRE(GutterWidth(totalLines) == 6); // status(1) + gap(1) + digits(3) + gap(1)
+    REQUIRE(GutterWidth(totalLines) == 7); // status(1) + diagnostic(1) + gap(1) + digits(3) + gap(1)
     REQUIRE(ContentRowText(screen, 0, 1, totalLines) == "x");
+}
+
+// LSP client follow-up.
+
+TEST_CASE("The diagnostics gutter column shows a severity-colored marker on the diagnostic's own starting line",
+          "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("one\ntwo\nthree");
+    fixture.buffer.SetDiagnostics({
+        ned::text::Buffer::Diagnostic{.startByte = fixture.buffer.Content().LineToByteOffset(1), // "two"
+                                      .endByte   = fixture.buffer.Content().LineToByteOffset(1) + 3,
+                                      .severity  = ned::text::Buffer::Diagnostic::Severity::Error,
+                                      .message   = "boom"},
+    });
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 2});
+
+    ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(20), ftxui::Dimension::Fixed(3));
+    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+
+    // Diagnostic column sits at x=1, immediately after the status column
+    // (x=0) -- see BufferView::GutterWidth's own [status][diagnostic][gap]...
+    // layout comment.
+    REQUIRE(screen.PixelAt(1, 0).background_color == fixture.theme.background.ToFtxui());      // "one" -- no diagnostic
+    REQUIRE(screen.PixelAt(1, 1).background_color == fixture.theme.diagnosticError.ToFtxui()); // "two" -- the diagnostic's own line
+    REQUIRE(screen.PixelAt(1, 2).background_color == fixture.theme.background.ToFtxui());      // "three" -- no diagnostic
+}
+
+TEST_CASE("The diagnostics gutter shows the most severe of two diagnostics sharing a line", "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("one\n");
+    fixture.buffer.SetDiagnostics({
+        ned::text::Buffer::Diagnostic{.startByte = 0, .endByte = 1, .severity = ned::text::Buffer::Diagnostic::Severity::Hint, .message = "a hint"},
+        ned::text::Buffer::Diagnostic{.startByte = 1, .endByte = 2, .severity = ned::text::Buffer::Diagnostic::Severity::Error, .message = "an error"},
+    });
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 1});
+
+    ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(20), ftxui::Dimension::Fixed(2));
+    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 1});
+    view.Paint(canvas);
+
+    REQUIRE(screen.PixelAt(1, 0).background_color == fixture.theme.diagnosticError.ToFtxui());
 }
 
 TEST_CASE("The current line's gutter number is styled distinctly from the rest", "[BufferView]") {
@@ -1050,7 +1120,7 @@ TEST_CASE("A keyboard navigation key after a mouse-drag selection extends it, no
 
     view.OnEvent(ftxui::Event::ArrowRight);
     REQUIRE(fixture.buffer.HasMark());
-    REQUIRE(fixture.buffer.Mark() == 4); // unchanged -- the drag's own start point
+    REQUIRE(fixture.buffer.Mark() == 4);   // unchanged -- the drag's own start point
     REQUIRE(fixture.buffer.Point() == 11); // moved from the drag's endpoint (10)
 }
 
@@ -2806,11 +2876,12 @@ TEST_CASE("M-x prompts for a command name, listing every command alphabetically 
     view.OnEvent(ftxui::Event::AltX);
 
     REQUIRE(fixture.statusMessage.rfind("M-x ", 0) == 0);
-    // Display is capped to kMaxVisibleCandidates (see
-    // FormatExecuteCommandCandidates) -- "backward-char" is alphabetically
-    // first among registered commands, so it's always within that window
-    // regardless of how many other commands exist.
-    REQUIRE(fixture.statusMessage.find("*backward-char") != std::string::npos);
+    // Display is capped to kMaxVisibleCandidates (see FormatFuzzyCandidates)
+    // -- "backward-char" is alphabetically first among registered commands,
+    // so it's always within that window regardless of how many other
+    // commands exist. The selected entry is bracketed, not asterisk-prefixed
+    // (fuzzy-candidate-list-styling follow-up).
+    REQUIRE(fixture.statusMessage.find("[backward-char]") != std::string::npos);
     REQUIRE(fixture.statusMessage.find("more") != std::string::npos); // more than 6 commands are registered
 }
 
@@ -2822,7 +2893,7 @@ TEST_CASE("Typing in M-x narrows candidates and marks the top-ranked one selecte
     view.OnEvent(ftxui::Event::AltX);
     TypeText(view, "stb");
 
-    REQUIRE(fixture.statusMessage.find("*switch-to-buffer") != std::string::npos);
+    REQUIRE(fixture.statusMessage.find("[switch-to-buffer]") != std::string::npos);
     REQUIRE(fixture.statusMessage.find("quit") == std::string::npos);
 }
 
@@ -2841,10 +2912,10 @@ TEST_CASE("Down in M-x moves the selection, and Enter invokes whichever candidat
 
     view.OnEvent(ftxui::Event::AltX);
     TypeText(view, "zzz");
-    REQUIRE(fixture.statusMessage.find("*zzz-alpha") != std::string::npos);
+    REQUIRE(fixture.statusMessage.find("[zzz-alpha]") != std::string::npos);
 
     view.OnEvent(ftxui::Event::ArrowDown);
-    REQUIRE(fixture.statusMessage.find("*zzz-beta") != std::string::npos);
+    REQUIRE(fixture.statusMessage.find("[zzz-beta]") != std::string::npos);
 
     view.OnEvent(ftxui::Event::Return);
 
@@ -3614,9 +3685,9 @@ TEST_CASE("The status column shows the unsaved-change indicator only on an edite
     fixture.buffer.InsertAtPoint("X");
     view.Paint(canvas);
 
-    REQUIRE(screen.PixelAt(0, 0).background_color == fixture.theme.background.ToFtxui());              // "one" untouched
-    REQUIRE(screen.PixelAt(0, 1).background_color == fixture.theme.unsavedChangeIndicator.ToFtxui());   // "two" edited
-    REQUIRE(screen.PixelAt(0, 2).background_color == fixture.theme.background.ToFtxui());               // "three" untouched
+    REQUIRE(screen.PixelAt(0, 0).background_color == fixture.theme.background.ToFtxui());             // "one" untouched
+    REQUIRE(screen.PixelAt(0, 1).background_color == fixture.theme.unsavedChangeIndicator.ToFtxui()); // "two" edited
+    REQUIRE(screen.PixelAt(0, 2).background_color == fixture.theme.background.ToFtxui());             // "three" untouched
 }
 
 TEST_CASE("Saving clears the status column's unsaved-change indicator", "[BufferView]") {
@@ -3898,4 +3969,352 @@ TEST_CASE("open-link-at-point reports failure when nothing at point looks like a
     view.OnEvent(ftxui::Event::Return);
 
     REQUIRE(fixture.statusMessage == "No link at point.");
+}
+
+// structural-selection-expansion follow-up. M-=/M-- are simulated via their
+// ESC-prefix fallback binding (Escape then the literal character), the same
+// real two-chord sequence a slow/non-Meta-capable terminal would send --
+// mirrors how narrow-to-region's tests above simulate "C-x n n" one chord at
+// a time rather than a single synthetic multi-key event.
+
+TEST_CASE("expand-selection with no structural selection support reports an error", "[BufferView]") {
+    Fixture fixture; // FundamentalMode by default -- no expandSelection hook
+    fixture.buffer.InsertAtPoint("hello");
+    fixture.buffer.SetPoint(2);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ftxui::Event::Escape);
+    view.OnEvent(ftxui::Event::Character("="));
+
+    REQUIRE(fixture.statusMessage == "No structural selection support in this mode.");
+    REQUIRE_FALSE(fixture.buffer.HasMark());
+}
+
+TEST_CASE("shrink-selection with no prior expansion reports an error", "[BufferView]") {
+    Fixture fixture;
+    fixture.mode = ned::editor::JsonMode();
+    fixture.buffer.InsertAtPoint(R"({"a": 1})");
+    fixture.buffer.SetPoint(6);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ftxui::Event::Escape);
+    view.OnEvent(ftxui::Event::Character("-"));
+
+    REQUIRE(fixture.statusMessage == "No selection to shrink to.");
+}
+
+TEST_CASE("expand-selection grows the selection step by step; shrink-selection walks it back down exactly",
+          "[BufferView]") {
+    Fixture fixture;
+    fixture.mode = ned::editor::JsonMode();
+    fixture.buffer.InsertAtPoint(R"({"a": 1})");
+    fixture.buffer.SetPoint(6); // inside the "1"
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ftxui::Event::Escape);
+    view.OnEvent(ftxui::Event::Character("="));
+    REQUIRE(fixture.buffer.HasMark());
+    auto [firstStart, firstEnd] = fixture.buffer.Region();
+    REQUIRE(fixture.buffer.Text().substr(firstStart, firstEnd - firstStart) == "1");
+
+    view.OnEvent(ftxui::Event::Escape);
+    view.OnEvent(ftxui::Event::Character("="));
+    auto [secondStart, secondEnd] = fixture.buffer.Region();
+    REQUIRE(fixture.buffer.Text().substr(secondStart, secondEnd - secondStart) == "\"a\": 1");
+
+    // Shrink back down: first shrink restores exactly the pre-second-expand
+    // region, second shrink exactly the pre-first-expand (zero-width) point.
+    view.OnEvent(ftxui::Event::Escape);
+    view.OnEvent(ftxui::Event::Character("-"));
+    REQUIRE(fixture.buffer.Region() == std::pair{firstStart, firstEnd});
+
+    view.OnEvent(ftxui::Event::Escape);
+    view.OnEvent(ftxui::Event::Character("-"));
+    REQUIRE(fixture.buffer.Region() == std::pair{std::size_t{6}, std::size_t{6}});
+
+    // History is now empty -- one more shrink is a no-op reporting as such.
+    view.OnEvent(ftxui::Event::Escape);
+    view.OnEvent(ftxui::Event::Character("-"));
+    REQUIRE(fixture.statusMessage == "No selection to shrink to.");
+}
+
+TEST_CASE("expand-selection reports when it reaches the outermost node", "[BufferView]") {
+    Fixture fixture;
+    fixture.mode = ned::editor::JsonMode();
+    fixture.buffer.InsertAtPoint(R"({"a": 1})");
+    fixture.buffer.SetPoint(6);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    for (int i = 0; i < 10 && fixture.statusMessage != "Already at outermost node."; ++i) {
+        view.OnEvent(ftxui::Event::Escape);
+        view.OnEvent(ftxui::Event::Character("="));
+    }
+
+    REQUIRE(fixture.statusMessage == "Already at outermost node.");
+    const auto [start, end] = fixture.buffer.Region();
+    REQUIRE(fixture.buffer.Text().substr(start, end - start) == fixture.buffer.Text());
+}
+
+TEST_CASE("Ordinary motion after an expand clears the expansion history", "[BufferView]") {
+    Fixture fixture;
+    fixture.mode = ned::editor::JsonMode();
+    fixture.buffer.InsertAtPoint(R"({"a": 1})");
+    fixture.buffer.SetPoint(6);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ftxui::Event::Escape);
+    view.OnEvent(ftxui::Event::Character("="));
+    REQUIRE(fixture.buffer.HasMark());
+
+    view.OnEvent(ftxui::Event::CtrlF); // forward-char -- an ordinary dispatched command, interactiveRequest stays None
+
+    view.OnEvent(ftxui::Event::Escape);
+    view.OnEvent(ftxui::Event::Character("-"));
+    REQUIRE(fixture.statusMessage == "No selection to shrink to.");
+}
+
+TEST_CASE("Switching the active buffer invalidates a stale expansion history", "[BufferView]") {
+    Fixture fixture;
+    fixture.mode = ned::editor::JsonMode();
+    fixture.buffer.InsertAtPoint(R"({"a": 1})");
+    fixture.buffer.SetPoint(6);
+
+    ned::text::Buffer& otherBuffer = fixture.bufferList.CreateBuffer("other");
+    otherBuffer.InsertAtPoint(R"({"b": 2})");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ftxui::Event::Escape);
+    view.OnEvent(ftxui::Event::Character("="));
+    REQUIRE(fixture.buffer.HasMark());
+
+    // A mouse-driven buffer switch (TabBar/ProjectSidebar click) doesn't go
+    // through command dispatch, so RunCommandAndHandleOutcome's own
+    // "any other command clears the history" path never runs for it --
+    // this is exactly what the buffer-identity staleness check in
+    // StartInteractiveSession is for instead.
+    fixture.activeBuffer.Set(otherBuffer);
+
+    view.OnEvent(ftxui::Event::Escape);
+    view.OnEvent(ftxui::Event::Character("-"));
+    REQUIRE(fixture.statusMessage == "No selection to shrink to.");
+}
+
+// project-find-file follow-up. Mirrors the M-x tests above closely -- same
+// fuzzy-narrow/arrow-select/Enter-to-act interaction shape, reusing the same
+// FuzzyFilterAndRank/FormatFuzzyCandidates machinery, just over a cached
+// project file list instead of dispatcher_.Registry().Names().
+
+TEST_CASE("C-c C-f lists every project file before any input, then narrows as you type", "[BufferView]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_bufferview_test_project_find_file";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    std::filesystem::create_directory(dir / "src");
+    {
+        std::ofstream(dir / "src" / "main.cpp") << "int main() {}\n";
+        std::ofstream(dir / "README.md") << "hello\n";
+    }
+    const CurrentPathGuard cwdGuard(dir);
+
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ftxui::Event::CtrlC);
+    view.OnEvent(ftxui::Event::CtrlF);
+
+    REQUIRE(fixture.statusMessage.rfind("Find file (fuzzy): ", 0) == 0);
+    REQUIRE(fixture.statusMessage.find("README.md") != std::string::npos);
+    REQUIRE(fixture.statusMessage.find("src/main.cpp") != std::string::npos);
+
+    TypeText(view, "main");
+    REQUIRE(fixture.statusMessage.find("[src/main.cpp]") != std::string::npos);
+    REQUIRE(fixture.statusMessage.find("README.md") == std::string::npos);
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("Enter in project-find-file opens the selected file", "[BufferView]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_bufferview_test_project_find_file_open";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    {
+        std::ofstream(dir / "target.txt") << "content\n";
+    }
+    const CurrentPathGuard cwdGuard(dir);
+
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ftxui::Event::CtrlC);
+    view.OnEvent(ftxui::Event::CtrlF);
+    TypeText(view, "target");
+    view.OnEvent(ftxui::Event::Return);
+
+    REQUIRE(&fixture.activeBuffer.Get() != &fixture.buffer);
+    REQUIRE(fixture.activeBuffer.Get().Name() == "target.txt");
+    REQUIRE(fixture.activeBuffer.Get().Text() == "content\n");
+    REQUIRE(fixture.statusMessage == "Opened target.txt");
+
+    view.OnEvent(ftxui::Event::Character("z")); // back to normal editing, proves inputMode_ is Normal again
+    REQUIRE(fixture.activeBuffer.Get().Text() == "zcontent\n");
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("Down in project-find-file moves the selection between two equally-ranked files", "[BufferView]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_bufferview_test_project_find_file_arrows";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    {
+        // Same fuzzy score by construction for query "zzz" -- ranking falls
+        // back to alphabetical, same determinism trick the M-x arrow test
+        // above uses.
+        std::ofstream(dir / "zzz-alpha.txt") << "alpha\n";
+        std::ofstream(dir / "zzz-beta.txt") << "beta\n";
+    }
+    const CurrentPathGuard cwdGuard(dir);
+
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ftxui::Event::CtrlC);
+    view.OnEvent(ftxui::Event::CtrlF);
+    TypeText(view, "zzz");
+    REQUIRE(fixture.statusMessage.find("[zzz-alpha.txt]") != std::string::npos);
+
+    view.OnEvent(ftxui::Event::ArrowDown);
+    REQUIRE(fixture.statusMessage.find("[zzz-beta.txt]") != std::string::npos);
+
+    view.OnEvent(ftxui::Event::Return);
+    REQUIRE(fixture.activeBuffer.Get().Name() == "zzz-beta.txt");
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("project-find-file reports when nothing matches the typed query, without switching buffers", "[BufferView]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_bufferview_test_project_find_file_nomatch";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    {
+        std::ofstream(dir / "only.txt") << "x\n";
+    }
+    const CurrentPathGuard cwdGuard(dir);
+
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ftxui::Event::CtrlC);
+    view.OnEvent(ftxui::Event::CtrlF);
+    TypeText(view, "zzzzznomatch");
+    view.OnEvent(ftxui::Event::Return);
+
+    REQUIRE(&fixture.activeBuffer.Get() == &fixture.buffer);
+    REQUIRE(fixture.statusMessage == "No file matching \"zzzzznomatch\"");
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("Escape cancels project-find-file and returns to normal editing", "[BufferView]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_bufferview_test_project_find_file_escape";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    {
+        std::ofstream(dir / "only.txt") << "x\n";
+    }
+    const CurrentPathGuard cwdGuard(dir);
+
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ftxui::Event::CtrlC);
+    view.OnEvent(ftxui::Event::CtrlF);
+    TypeText(view, "onl");
+    view.OnEvent(ftxui::Event::Escape);
+
+    REQUIRE(fixture.statusMessage.empty());
+    REQUIRE(&fixture.activeBuffer.Get() == &fixture.buffer);
+
+    view.OnEvent(ftxui::Event::Character("z")); // back to normal editing
+    REQUIRE(fixture.buffer.Text() == "z");
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("project-find-file with no files under the project root reports so and never opens a prompt", "[BufferView]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_bufferview_test_project_find_file_empty";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    const CurrentPathGuard cwdGuard(dir);
+
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ftxui::Event::CtrlC);
+    view.OnEvent(ftxui::Event::CtrlF);
+
+    REQUIRE(fixture.statusMessage.rfind("No files found under", 0) == 0);
+
+    view.OnEvent(ftxui::Event::Character("z")); // proves we're in Normal mode, not a stuck prompt
+    REQUIRE(fixture.buffer.Text() == "z");
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("The visible candidate window is bounded by the real terminal width, not a fixed count", "[BufferView]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_bufferview_test_project_find_file_width";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    {
+        // Ten 10-character candidates: comfortably fits in a wide terminal,
+        // but ~135 columns' worth once the "Find file (fuzzy): " label and
+        // braces are counted -- too wide for a 50-column one, which the old
+        // fixed-count-of-6 window didn't account for at all.
+        for (int i = 0; i < 10; ++i) {
+            std::ofstream(dir / ("file0" + std::to_string(i) + ".txt")) << "x\n";
+        }
+    }
+    const CurrentPathGuard cwdGuard(dir);
+
+    Fixture             fixture;
+    ned::ui::BufferView narrowView = fixture.View();
+    narrowView.SetBox_(ftxui::Box{.x_min = 0, .x_max = 49, .y_min = 0, .y_max = 2}); // 50 columns
+
+    narrowView.OnEvent(ftxui::Event::CtrlC);
+    narrowView.OnEvent(ftxui::Event::CtrlF);
+
+    // The whole rendered line, including the "Find file (fuzzy): " label,
+    // must fit within the real 50-column width -- this is the actual bug
+    // being fixed: a fixed count-of-6 window could overflow a narrow
+    // terminal well before showing 6 candidates.
+    REQUIRE(StripEchoAreaMarkup(fixture.statusMessage).size() <= 50);
+    REQUIRE(fixture.statusMessage.find("more") != std::string::npos); // all 10 can't fit in 50 columns
+
+    Fixture             wideFixture;
+    ned::ui::BufferView wideView = wideFixture.View();
+    wideView.SetBox_(ftxui::Box{.x_min = 0, .x_max = 199, .y_min = 0, .y_max = 2}); // 200 columns -- fits all 10
+
+    wideView.OnEvent(ftxui::Event::CtrlC);
+    wideView.OnEvent(ftxui::Event::CtrlF);
+
+    REQUIRE(StripEchoAreaMarkup(wideFixture.statusMessage).size() <= 200);
+    REQUIRE(wideFixture.statusMessage.find("more") == std::string::npos); // all 10 fit -- nothing hidden
+
+    std::filesystem::remove_all(dir);
 }

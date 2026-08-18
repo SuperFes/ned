@@ -52,6 +52,21 @@ FetchContent_MakeAvailable(utf8proc)
 unset(CMAKE_POLICY_VERSION_MINIMUM)
 #------------------------------------------------------------------------------
 
+#--- Fetch nlohmann/json (LSP client follow-up) --------------------------------
+# JSON-RPC message construction/parsing for the LSP client (Source/Editor/Lsp/) --
+# chosen over rapidjson/simdjson for its ergonomic operator[]/implicit-conversion
+# API, which matters far more here than either alternative's raw parse throughput:
+# an LSP client hand-writes/reads dozens of small, heterogeneous, mostly-optional-
+# field JSON-RPC message shapes, not a few large documents. Header-only.
+FetchContent_Declare(nlohmann_json
+        GIT_REPOSITORY https://github.com/nlohmann/json.git
+        GIT_TAG v3.12.0
+        GIT_SHALLOW TRUE
+        EXCLUDE_FROM_ALL)
+set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(nlohmann_json)
+#------------------------------------------------------------------------------
+
 #--- Fetch tree-sitter (core) --------------------------------------------------
 # tree-sitter's own CMakeLists.txt lives at lib/CMakeLists.txt, not the repo
 # root (its root has no CMake support at all, only Cargo/Zig/Swift) -- without
@@ -397,6 +412,10 @@ add_library(ned_lib STATIC
         Source/Editor/ProjectRoot.cpp
         Source/Editor/ProjectFileOps.cpp
         Source/Editor/ScratchPad.cpp
+        Source/Editor/Lsp/Transport.cpp
+        Source/Editor/Lsp/LspClient.cpp
+        Source/Editor/Lsp/LspServerConfig.cpp
+        Source/Editor/Lsp/LspManager.cpp
         Source/Editor/TreeSitter/Node.cpp
         Source/Editor/TreeSitter/Tree.cpp
         Source/Editor/TreeSitter/Parser.cpp
@@ -432,6 +451,7 @@ target_link_libraries(ned_lib
         PUBLIC ftxui::dom
         PUBLIC ftxui::screen
         PUBLIC utf8proc
+        PUBLIC nlohmann_json::nlohmann_json
         PUBLIC tree-sitter
         PUBLIC tree-sitter-json
         PUBLIC tree-sitter-c
@@ -518,6 +538,9 @@ if (NED_BUILD_TESTS)
             Tests/ProjectRootTest.cpp
             Tests/ProjectFileOpsTest.cpp
             Tests/ScratchPadTest.cpp
+            Tests/LspTransportTest.cpp
+            Tests/LspClientTest.cpp
+            Tests/LspServerConfigTest.cpp
             Tests/TreeSitterTest.cpp
             Tests/DynamicGrammarTest.cpp
             Tests/ModeOverridesTest.cpp

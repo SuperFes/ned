@@ -42,6 +42,10 @@
 #include "Text/KillRing.h"
 #include "Theme.h"
 
+namespace ned::editor::lsp {
+class LspManager;
+} // namespace ned::editor::lsp
+
 namespace ned::ui {
 
 class BufferView : public Widget {
@@ -98,6 +102,15 @@ class BufferView : public Widget {
     // FTXUI migration, see ROADMAP.md).
     void SetProjectSidebar(ProjectSidebar* sidebar);
 
+    // LSP client follow-up: registers the shared LspManager so Paint() can
+    // call SyncBuffer for the active buffer every frame -- nullptr (the
+    // default) means no-op, the same "unset is a safe no-op" convention
+    // SetProjectSidebar/SetScrollBar already establish. Also every test-
+    // constructed BufferView's own default: no test wires one in unless it
+    // specifically wants to exercise LSP sync, so ordinary tests never touch
+    // Lsp/ at all.
+    void SetLspManager(editor::lsp::LspManager* lspManager);
+
     // Entry point for TabBar's close-icon click (tab-close follow-up) --
     // TabBar only ever signals *intent*, the same "mouse-driven widget hands
     // off to BufferView" shape SetProjectSidebar's callers already
@@ -149,6 +162,7 @@ class BufferView : public Widget {
                            RenameFile,
                            FindScratch,
                            ExecuteCommand,
+                           ProjectFindFile,
                            PointToRegister,
                            JumpToRegister,
                            CopyToRegister,
@@ -238,6 +252,38 @@ class BufferView : public Widget {
     // changes either one.
     void RefreshExecuteCommandStatus();
 
+    // fuzzy-candidate-list-styling follow-up: how many columns
+    // FormatFuzzyCandidates' candidate list actually has to work with --
+    // this widget's own current width (size().width, the same live value
+    // OnKeyEvent already reads into context.viewportHeight for
+    // scroll-page-up/-down) minus prefixLength (the already-composed
+    // "<label>  {" that precedes the candidate list in statusMessage_) and
+    // one more column for the closing "}". EchoArea itself spans the full
+    // terminal width, not just this BufferView's own (narrower, once a
+    // sidebar/scrollbar/gutter are subtracted) box -- using this widget's
+    // own width anyway is a deliberate, safe approximation: it can only
+    // under-estimate the real budget, which means the candidate list might
+    // occasionally show fewer entries than would actually fit, never more
+    // than actually fit (which is what caused the real overflow this
+    // follow-up fixes). Getting the exact real width would mean new
+    // BufferView<->EchoArea wiring for a one-row status list; not worth it
+    // for a safe-direction approximation that's already correct in the only
+    // direction that matters (never overflowing).
+    [[nodiscard]] std::size_t AvailableCandidateColumns(std::size_t prefixLength) const;
+
+    // project-find-file follow-up: same shape as HandleExecuteCommandKey/
+    // RefreshExecuteCommandStatus just above, but fuzzy-matching against a
+    // cached list of project-relative file paths (projectFindFileCandidates_,
+    // populated once when the session starts -- unlike
+    // dispatcher_.Registry().Names(), a real recursive directory walk
+    // (editor::BuildProjectTree) is too expensive to redo on every
+    // keystroke) instead of dispatcher_.Registry().Names(), and opening the
+    // selected file (BufferList::OpenOrCreateFile + ActiveBuffer::Set,
+    // mirroring HandlePromptKey's own FindFile branch) on Enter instead of
+    // invoking a command by name.
+    void HandleProjectFindFileKey(const editor::KeyChord& chord);
+    void RefreshProjectFindFileStatus();
+
     // Shared by OnKeyEvent's Normal-mode tail (Dispatcher::Feed) and
     // HandleExecuteCommandKey's Enter branch (CommandRegistry::Invoke by
     // name): applies the two dispatch-level side effects a command can
@@ -247,7 +293,15 @@ class BufferView : public Widget {
     // into its own prompt) -- and catches std::exception into
     // statusMessage_, regardless of how the command was found. invoke is the
     // actual dispatch call, run inside the try.
-    void RunCommandAndHandleOutcome(editor::CommandContext& context, const std::function<void()>& invoke);
+    // structural-selection-expansion follow-up: invoke now returns whether a
+    // command actually ran (true) as opposed to merely extending a pending
+    // multi-chord prefix sequence (false, e.g. the bare Escape half of an
+    // "ESC =" two-chord binding) -- expansionHistory_'s own clearing logic
+    // below needs that distinction, since a Dispatcher::Outcome::Pending
+    // call leaves context.interactiveRequest at None exactly the same as a
+    // real command that simply doesn't set it, and only the latter should
+    // count as "something else happened."
+    void RunCommandAndHandleOutcome(editor::CommandContext& context, const std::function<bool()>& invoke);
 
     // kmacro-end-or-call-macro follow-up: replays dispatcher_.LastMacro(),
     // one chord at a time, each through a fresh MakeContext() +
@@ -392,7 +446,7 @@ class BufferView : public Widget {
     // Marked const/mutable-backed since CursorPosition()/ByteOffsetForPoint()
     // (both const) need a fresh cache just as much as Paint() (non-const)
     // does, and all three can run in either order within a frame.
-    void               EnsureHiddenLineRangesCache() const;
+    void EnsureHiddenLineRangesCache() const;
     // generic-code-folding follow-up: recomputes foldableBlocksCache_ via
     // codefold::FoldableBlocks(mode_, buffer.Text()) only when the active
     // buffer's identity or its ContentGeneration() changed since the last
@@ -419,6 +473,13 @@ class BufferView : public Widget {
     // status column isn't gated on mode_.fold, every buffer gets one
     // regardless of language.
     void EnsureUnsavedChangeCache() const;
+    // LSP client follow-up: (re)derives diagnosticLineSeverities_ from
+    // buffer.Diagnostics() -- see that member's own doc comment. Called
+    // unconditionally every Paint(), same reasoning as
+    // EnsureUnsavedChangeCache: every buffer gets the diagnostic gutter
+    // column regardless of language, it's just empty when nothing's been
+    // reported.
+    void               EnsureDiagnosticGutterCache() const;
     [[nodiscard]] bool IsLineHidden(std::size_t line) const;
     // `line` if already visible, else the first visible line >= line
     // (capped at limit).
@@ -472,6 +533,7 @@ class BufferView : public Widget {
     ScrollArrowButton*         scrollUpArrow_   = nullptr; // see SetScrollArrows
     ScrollArrowButton*         scrollDownArrow_ = nullptr;
     ProjectSidebar*            projectSidebar_  = nullptr; // see SetProjectSidebar
+    editor::lsp::LspManager*   lspManager_      = nullptr; // see SetLspManager
 
     InputMode                                inputMode_ = InputMode::Normal;
     std::optional<editor::IncrementalSearch> search_;
@@ -494,6 +556,18 @@ class BufferView : public Widget {
     // per-frame/per-keystroke work (e.g. ScrollArrowButton, WindowManager's
     // own tree walks).
     std::size_t executeCommandSelection_ = 0;
+
+    // project-find-file follow-up: mirrors executeCommandSelection_ above,
+    // but projectFindFileCandidates_ itself (project-relative file path
+    // strings, populated once by StartInteractiveSession's ProjectFindFile
+    // case) IS cached as a member, unlike dispatcher_.Registry().Names() --
+    // a real recursive directory walk (editor::BuildProjectTree) is too
+    // expensive to redo on every keystroke, unlike an in-memory registry
+    // lookup. Only the fuzzy filter/rank against this cached list re-runs
+    // per keystroke, matching FuzzyMatch.h's own "cheap to recompute, not
+    // cheap to re-enumerate" framing.
+    std::vector<std::string> projectFindFileCandidates_;
+    std::size_t              projectFindFileSelection_ = 0;
 
     // kmacro-end-or-call-macro follow-up: reentrancy guard for ReplayMacro --
     // a macro can never structurally contain a call to replay itself (see
@@ -521,6 +595,26 @@ class BufferView : public Widget {
     std::size_t                        highlightCacheGeneration_ = 0;
     std::vector<editor::HighlightSpan> highlightCacheSpans_;
 
+    // structural-selection-expansion follow-up: the stack of prior selection
+    // ranges expand-selection has grown through, so shrink-selection can walk
+    // back down exactly (the tree alone can't say which child was actually
+    // selected on the way up when a node has more than one). Session/UI
+    // state, not fundamental Buffer state -- deliberately not stored on
+    // Buffer itself, since SetPoint (Buffer.cpp) unconditionally resets its
+    // own transient run-state (GoalColumn_/CanAmend_) on every call,
+    // including the very SetPoint call expand-selection/shrink-selection
+    // make to move the selection, which would erase this history the instant
+    // it was written. Staleness-checked the same buffer-identity +
+    // ContentGeneration() way as highlightCacheBuffer_ above: a stale
+    // (switched-buffer or edited-since) history means "start fresh," not
+    // "restore a now-wrong byte range." Cleared outright by
+    // RunCommandAndHandleOutcome whenever a dispatched command's own
+    // interactiveRequest isn't ExpandSelection/ShrinkSelection -- covers
+    // ordinary typing/motion, which never touches interactiveRequest at all.
+    text::Buffer*                                    expansionHistoryBuffer_     = nullptr;
+    std::size_t                                      expansionHistoryGeneration_ = 0;
+    std::vector<std::pair<std::size_t, std::size_t>> expansionHistory_;
+
     // generic-code-folding follow-up: caches mode_.fold's result across
     // Paint() calls, same shape/reasoning as highlightCacheBuffer_ above --
     // consumed both for the gutter's ▸/▾ rendering and (passed into
@@ -531,8 +625,8 @@ class BufferView : public Widget {
     // Mutable for the same const-query-methods reason
     // hiddenLineRangesCacheBuffer_ already is (EnsureHiddenLineRangesCache,
     // a const method, needs a fresh cache too).
-    mutable text::Buffer*                                   foldableBlocksCacheBuffer_     = nullptr;
-    mutable std::size_t                                     foldableBlocksCacheGeneration_ = 0;
+    mutable text::Buffer*                                    foldableBlocksCacheBuffer_     = nullptr;
+    mutable std::size_t                                      foldableBlocksCacheGeneration_ = 0;
     mutable std::vector<std::pair<std::size_t, std::size_t>> foldableBlocksCache_;
     // depth-aware-fold-gutter follow-up: a small, fixed number of gutter
     // columns (not a viewport-dependent width -- an explicit user choice,
@@ -551,12 +645,20 @@ class BufferView : public Widget {
     // used to have alone.
     static constexpr std::size_t kStatusWidth   = 1;
     static constexpr std::size_t kLineNumberGap = 1;
+    // LSP client follow-up: a second, dedicated 1-column gutter slot for a
+    // diagnostic severity marker -- deliberately separate from
+    // kStatusWidth's own unsaved-change indicator rather than conflated
+    // with it (a line having unsaved edits and a line having a diagnostic
+    // are different facts; showing both at once needs two columns, not one
+    // shared one). Layout, left to right, is now
+    // [status][diagnostic][gap][digits][gap][fold].
+    static constexpr std::size_t kDiagnosticWidth = 1;
 
     struct FoldGutterEntry {
         std::size_t headerLine;
         std::size_t closerLine; // inclusive
         std::size_t blockStart; // FoldMarker key
-        int         column;    // min(depth, kMaxFoldDepthColumns - 1)
+        int         column;     // min(depth, kMaxFoldDepthColumns - 1)
     };
 
     // Derived from foldableBlocksCache_ whenever it's recomputed, but gated
@@ -571,10 +673,10 @@ class BufferView : public Widget {
     // don't reach for a per-element-allocating container under ASan"
     // discipline foldableBlocksCache_'s own doc comment already documents
     // finding the hard way for this exact code path.
-    mutable text::Buffer*                    foldGutterCacheBuffer_            = nullptr;
-    mutable std::size_t                      foldGutterCacheContentGeneration_ = 0;
-    mutable std::size_t                      foldGutterCacheFoldGeneration_    = 0;
-    mutable std::vector<FoldGutterEntry>     foldGutterEntries_;                  // sorted by headerLine (free -- blocks arrive startByte-sorted)
+    mutable text::Buffer*                foldGutterCacheBuffer_            = nullptr;
+    mutable std::size_t                  foldGutterCacheContentGeneration_ = 0;
+    mutable std::size_t                  foldGutterCacheFoldGeneration_    = 0;
+    mutable std::vector<FoldGutterEntry> foldGutterEntries_; // sorted by headerLine (free -- blocks arrive startByte-sorted)
     mutable std::array<std::vector<std::pair<std::size_t, std::size_t>>, kMaxFoldDepthColumns>
         foldGutterLineRangesByColumn_; // EXPANDED entries only, [headerLine+1, closerLine+1) per column
 
@@ -589,10 +691,26 @@ class BufferView : public Widget {
     // flat and disjoint by construction (no nesting concept here at all),
     // so rendering only ever needs a binary search against this cache, no
     // streaming stack state.
-    mutable text::Buffer*                             unsavedChangeCacheBuffer_            = nullptr;
-    mutable std::size_t                               unsavedChangeCacheContentGeneration_ = 0;
-    mutable std::size_t                               unsavedChangeCacheGeneration_        = 0;
+    mutable text::Buffer*                                    unsavedChangeCacheBuffer_            = nullptr;
+    mutable std::size_t                                      unsavedChangeCacheContentGeneration_ = 0;
+    mutable std::size_t                                      unsavedChangeCacheGeneration_        = 0;
     mutable std::vector<std::pair<std::size_t, std::size_t>> unsavedChangeLineRanges_;
+
+    // LSP client follow-up: converts buffer.Diagnostics()' byte ranges to
+    // (at most) one {line, severity} entry per line -- a diagnostic's own
+    // range can span multiple lines/columns, but the gutter only ever shows
+    // a marker on the line it *starts* on, the same "one glyph per line, not
+    // a highlighted span" convention most editors' diagnostic gutters use.
+    // When more than one diagnostic starts on the same line, the most
+    // severe one wins (Error > Warning > Information > Hint). Gated on
+    // Buffer::DiagnosticsGeneration() alone -- unlike
+    // unsavedChangeCacheContentGeneration_, no separate content-generation
+    // check is needed, since SetDiagnostics always replaces the set
+    // wholesale (see Buffer::Diagnostic's own doc comment) rather than
+    // being incrementally relocated across edits the way fold markers are.
+    mutable text::Buffer*                                                           diagnosticGutterCacheBuffer_     = nullptr;
+    mutable std::size_t                                                             diagnosticGutterCacheGeneration_ = 0;
+    mutable std::vector<std::pair<std::size_t, text::Buffer::Diagnostic::Severity>> diagnosticLineSeverities_; // sorted by line
 
     // Org-mode fold/unfold follow-up: see EnsureHiddenLineRangesCache's own
     // doc comment above. mutable because CursorPosition()/ByteOffsetForPoint()

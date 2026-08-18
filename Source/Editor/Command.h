@@ -66,6 +66,11 @@ enum class InteractiveRequest { None,
                                 // placed here rather than after the window-management block
                                 // below for that reason.
                                 ExecuteCommand,
+                                // project-find-file follow-up: another prompt-shaped one-shot
+                                // request, same shape as ExecuteCommand (fuzzy-narrowed, live
+                                // as-you-type) but over project files instead of command
+                                // names -- see BufferView::HandleProjectFindFileKey.
+                                ProjectFindFile,
                                 // kmacro-start-macro/kmacro-end-or-call-macro follow-up: also
                                 // one-shot direct actions (BufferView::StartInteractiveSession
                                 // acts on them immediately, inputMode_ stays Normal), not
@@ -128,7 +133,14 @@ enum class InteractiveRequest { None,
                                 // modified buffer), previously reachable only via TabBar's own
                                 // close-icon click; this is the keyboard/M-x path onto that
                                 // exact same logic, not new logic of its own.
-                                KillBuffer };
+                                KillBuffer,
+                                // structural-selection-expansion follow-up: one-shot direct
+                                // actions, same shape as ToggleProjectSidebar/NarrowToRegion --
+                                // BufferView keeps its own expansion-history stack and calls
+                                // the active Mode's expandSelection (Mode.h) directly, no
+                                // InputMode session needed for either.
+                                ExpandSelection,
+                                ShrinkSelection };
 
 // Everything a command implementation might need. Built fresh per invocation
 // from live references -- never stored, so there's no lifetime concern beyond

@@ -40,6 +40,7 @@
 #include "Editor/Command.h"
 #include "Editor/Dispatcher.h"
 #include "Editor/Keymap.h"
+#include "Editor/Lsp/LspManager.h"
 #include "Editor/Mode.h"
 #include "Editor/Register.h"
 #include "ModeLine.h"
@@ -76,16 +77,18 @@ class Pane {
     // decision -- see WindowManager.cpp's own comment on WHERE that copy is
     // taken from). killRing/registers/bufferList/registry/janetKeymap/
     // globalKeymap/statusMessage/theme are shared app-wide and must outlive
-    // every Pane; projectSidebar may be nullptr (not yet wired up when the
-    // first Pane is constructed, see WindowManager::SetProjectSidebar).
+    // every Pane; projectSidebar/lspManager may be nullptr (not yet wired up
+    // when the first Pane is constructed, see
+    // WindowManager::SetProjectSidebar/SetLspManager).
     // onWindowRequest/onBufferClosed mirror
     // BufferView::SetOnWindowRequest/SetOnBufferClosed exactly -- forwarded
     // straight through to the BufferView this Pane owns.
     Pane(text::Buffer& buffer, text::KillRing& killRing, editor::RegisterTable& registers,
          text::BufferList& bufferList, const editor::CommandRegistry& registry, const editor::Keymap& janetKeymap,
          const editor::Keymap& globalKeymap, editor::Mode mode, std::string& statusMessage, const Theme& theme,
-         ProjectSidebar* projectSidebar, std::function<void(editor::InteractiveRequest)> onWindowRequest,
-         std::function<void(text::Buffer&)> onBufferClosed);
+         ProjectSidebar* projectSidebar, editor::lsp::LspManager* lspManager,
+         std::function<void(editor::InteractiveRequest)> onWindowRequest,
+         std::function<void(text::Buffer&)>              onBufferClosed);
 
     Pane(const Pane&)            = delete;
     Pane& operator=(const Pane&) = delete;
@@ -144,6 +147,13 @@ class WindowManager {
     // later split are wired up with whatever was registered here, even if
     // that happens after some panes already exist).
     void SetProjectSidebar(ProjectSidebar* sidebar);
+
+    // LSP client follow-up: same "forwarded to every pane, present and
+    // future" shape as SetProjectSidebar above. Also used by
+    // HandleBufferClosed/NotifyBufferClosing to send textDocument/didClose
+    // for a real buffer close, regardless of which pane (or ProjectSidebar's
+    // preview-swap, which isn't pane-driven at all) triggered it.
+    void SetLspManager(editor::lsp::LspManager* lspManager);
 
     // One stable Component handle main.cpp embeds exactly once into its own
     // composition root and never needs to re-fetch -- its own children get
@@ -273,6 +283,7 @@ class WindowManager {
     std::string&                   statusMessage_;
     const Theme&                   theme_;
     ProjectSidebar*                projectSidebar_ = nullptr;
+    editor::lsp::LspManager*       lspManager_     = nullptr;
 
     std::unique_ptr<WindowNode> root_;
     ftxui::Component            rootComponent_;

@@ -276,6 +276,37 @@ class Buffer {
     // FoldGeneration()'s own "cheap, did-it-change" signal shape.
     [[nodiscard]] std::size_t UnsavedChangeGeneration() const;
 
+    // LSP client follow-up: an external tool's report about a byte range in
+    // this buffer -- a plain, editor-agnostic data shape (no dependency on
+    // Source/Editor/Lsp/ or anything JSON-shaped), the same "structured
+    // per-position metadata that happens to live on Buffer" role FoldMarker/
+    // NarrowedRange_ already have. Unlike FoldMarkers_, not relocated across
+    // edits: an LSP server re-reports its full, current diagnostic set after
+    // every textDocument/didChange (see Editor/Lsp/LspManager.h), so
+    // SetDiagnostics always *replaces* the set wholesale rather than being
+    // incrementally maintained -- there's never a reason to relocate a stale
+    // range across an edit when a fresh, correct set is coming right behind
+    // it.
+    struct Diagnostic {
+        std::size_t startByte;
+        std::size_t endByte;
+        enum class Severity { Error,
+                              Warning,
+                              Information,
+                              Hint } severity;
+        std::string message;
+
+        [[nodiscard]] bool operator==(const Diagnostic&) const = default;
+    };
+
+    void                                         SetDiagnostics(std::vector<Diagnostic> diagnostics);
+    [[nodiscard]] const std::vector<Diagnostic>& Diagnostics() const;
+    // Bumped by SetDiagnostics only -- mirrors FoldGeneration()/
+    // UnsavedChangeGeneration()'s own "cheap, did-it-change" signal shape,
+    // so BufferView's gutter cache can detect "did the diagnostic set
+    // change" without re-deriving it from Diagnostics() every Paint() call.
+    [[nodiscard]] std::size_t DiagnosticsGeneration() const;
+
   private:
     void ClampCursorsToContent();
     void MoveToLine(std::size_t targetLine, std::size_t tabWidth);
@@ -340,8 +371,11 @@ class Buffer {
     std::map<std::size_t, FoldMarker> FoldMarkers_;           // see FoldMarker's own doc comment above
     std::size_t                       FoldGeneration_ = 0;    // see FoldGeneration()
 
-    std::vector<std::pair<std::size_t, std::size_t>> UnsavedChangeRanges_;      // see UnsavedChangeRanges()'s own doc comment
-    std::size_t                                       UnsavedChangeGeneration_ = 0; // see UnsavedChangeGeneration()
+    std::vector<Diagnostic> Diagnostics_;               // see Diagnostics()'s own doc comment
+    std::size_t             DiagnosticsGeneration_ = 0; // see DiagnosticsGeneration()
+
+    std::vector<std::pair<std::size_t, std::size_t>> UnsavedChangeRanges_;         // see UnsavedChangeRanges()'s own doc comment
+    std::size_t                                      UnsavedChangeGeneration_ = 0; // see UnsavedChangeGeneration()
     // Content as of the last load/save -- cheap to hold (Rope is
     // structurally shared, not a deep string copy). Undo()/Redo() diff
     // against this after restoring a snapshot to catch "landed back on

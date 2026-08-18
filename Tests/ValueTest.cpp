@@ -4,6 +4,7 @@
 
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include "Janet/Value.h"
 #include "JanetTestSupport.h"
@@ -37,6 +38,20 @@ TEST_CASE("FromJanet<size_t> rejects negative numbers", "[Value]") {
 TEST_CASE("String round-trips through ToJanet/FromJanet", "[Value]") {
     REQUIRE(FromJanet<std::string>(ToJanet(std::string("hello"))) == "hello");
     REQUIRE_THROWS_AS(FromJanet<std::string>(janet_wrap_number(1)), std::runtime_error);
+}
+
+TEST_CASE("FromJanet<vector<string>> accepts both a Janet tuple and a real array", "[Value]") {
+    ned::janet::Environment& env = ned_tests::TestEnvironment();
+
+    const Janet tuple = env.DoString(R"(["clangd" "--flag"])");
+    REQUIRE(FromJanet<std::vector<std::string>>(tuple) == std::vector<std::string>{"clangd", "--flag"});
+
+    const Janet array = env.DoString(R"(@["pyright-langserver" "--stdio"])");
+    REQUIRE(FromJanet<std::vector<std::string>>(array) == std::vector<std::string>{"pyright-langserver", "--stdio"});
+}
+
+TEST_CASE("FromJanet<vector<string>> rejects a non-indexed value", "[Value]") {
+    REQUIRE_THROWS_AS(FromJanet<std::vector<std::string>>(janet_wrap_number(1)), std::runtime_error);
 }
 
 TEST_CASE("RootedValue accepts a function and rejects non-functions", "[Value]") {
