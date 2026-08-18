@@ -56,6 +56,28 @@ TEST_CASE("TranslateKey maps Ctrl+Arrow keys", "[KeyTranslation]") {
     REQUIRE(right->Special == SpecialKey::Right);
 }
 
+TEST_CASE("TranslateKey maps Shift+Arrow keys", "[KeyTranslation]") {
+    const auto up = TranslateKey(ftxui::Event::Special("\x1B[1;2A"));
+    REQUIRE(up.has_value());
+    REQUIRE(up->Shift);
+    REQUIRE(up->Special == SpecialKey::Up);
+
+    const auto down = TranslateKey(ftxui::Event::Special("\x1B[1;2B"));
+    REQUIRE(down.has_value());
+    REQUIRE(down->Shift);
+    REQUIRE(down->Special == SpecialKey::Down);
+
+    const auto left = TranslateKey(ftxui::Event::Special("\x1B[1;2D"));
+    REQUIRE(left.has_value());
+    REQUIRE(left->Shift);
+    REQUIRE(left->Special == SpecialKey::Left);
+
+    const auto right = TranslateKey(ftxui::Event::Special("\x1B[1;2C"));
+    REQUIRE(right.has_value());
+    REQUIRE(right->Shift);
+    REQUIRE(right->Special == SpecialKey::Right);
+}
+
 TEST_CASE("TranslateKey maps BackTab to Shift+Tab", "[KeyTranslation]") {
     const auto chord = TranslateKey(ftxui::Event::TabReverse);
     REQUIRE(chord.has_value());

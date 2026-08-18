@@ -33,6 +33,28 @@ namespace {
         return std::max<std::size_t>(1, static_cast<std::size_t>(static_cast<double>(viewportHeight) * kPageScrollFraction));
     }
 
+    // Shift+Arrow follow-up: shared by the four shift-select-* commands
+    // below. Sets a mark at the current point only if one isn't already
+    // active, so a run of consecutive Shift+Arrow presses extends the same
+    // selection from its original anchor rather than resetting the anchor
+    // to point on every keystroke -- the standard GUI-editor "shift starts,
+    // then extends" convention, layered on top of the same persistent-mark
+    // model set-mark-command (C-SPC) already established rather than a
+    // separate selection concept. A deliberate v1 scope cut, not an
+    // oversight: real Emacs' own shift-select-mode additionally
+    // deactivates a shift-started selection the instant any *non*-shifted
+    // command runs (tracked via its own extra bit of state distinguishing
+    // a shift-started mark from an explicitly C-SPC-set one); this doesn't
+    // track that distinction, so a shift-extended region persists exactly
+    // as long as any other mark would (until an editing command, mouse
+    // click, kill-region, or kill-ring-save clears it) rather than
+    // additionally being cleared by a plain, unshifted motion key.
+    void EnsureMarkForShiftSelect(text::Buffer& buffer) {
+        if (!buffer.HasMark()) {
+            buffer.SetMark(buffer.Point());
+        }
+    }
+
 } // namespace
 
 void RegisterBuiltinCommands(CommandRegistry& registry) {
@@ -54,6 +76,27 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
 
     registry.Register("previous-line", "Move point up one line, preserving column across a run.",
                       [](CommandContext& context) { context.buffer.MoveToPreviousLine(TabWidth()); });
+
+    // Shift+Arrow follow-up -- see EnsureMarkForShiftSelect's own comment
+    // above for the selection model and its documented scope cut.
+    registry.Register("shift-select-forward-char", "Move point forward one grapheme cluster, extending the selection.",
+                      [](CommandContext& context) {
+                          EnsureMarkForShiftSelect(context.buffer);
+                          context.buffer.MoveForward();
+                      });
+    registry.Register("shift-select-backward-char", "Move point backward one grapheme cluster, extending the selection.",
+                      [](CommandContext& context) {
+                          EnsureMarkForShiftSelect(context.buffer);
+                          context.buffer.MoveBackward();
+                      });
+    registry.Register("shift-select-next-line", "Move point down one line, extending the selection.", [](CommandContext& context) {
+        EnsureMarkForShiftSelect(context.buffer);
+        context.buffer.MoveToNextLine(TabWidth());
+    });
+    registry.Register("shift-select-previous-line", "Move point up one line, extending the selection.", [](CommandContext& context) {
+        EnsureMarkForShiftSelect(context.buffer);
+        context.buffer.MoveToPreviousLine(TabWidth());
+    });
 
     registry.Register("forward-word", "Move point forward one word.",
                       [](CommandContext& context) { context.buffer.MoveForwardWord(); });
@@ -602,6 +645,15 @@ Keymap BuildDefaultGlobalKeymap() {
     // wiring an already-decodable chord to a command, not new decoding work.
     keymap.Bind(ParseKeySequence("C-LEFT"), "backward-word");
     keymap.Bind(ParseKeySequence("C-RIGHT"), "forward-word");
+    // Shift+Arrow follow-up: KeyTranslation.cpp now decodes these (built
+    // directly from the raw xterm CSI sequence -- see its own comment,
+    // FTXUI has no pre-built Shift+Arrow constant the way it does for
+    // Ctrl+Arrow); ParseKeyChord resolves "S-LEFT" etc the same way it
+    // already resolves "C-LEFT".
+    keymap.Bind(ParseKeySequence("S-LEFT"), "shift-select-backward-char");
+    keymap.Bind(ParseKeySequence("S-RIGHT"), "shift-select-forward-char");
+    keymap.Bind(ParseKeySequence("S-UP"), "shift-select-previous-line");
+    keymap.Bind(ParseKeySequence("S-DOWN"), "shift-select-next-line");
     keymap.Bind(ParseKeySequence("C-n"), "next-line");
     keymap.Bind(ParseKeySequence("C-p"), "previous-line");
     keymap.Bind(ParseKeySequence("DOWN"), "next-line");

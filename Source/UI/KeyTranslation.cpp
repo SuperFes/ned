@@ -104,6 +104,19 @@ std::optional<KeyChord> TranslateKey(const ftxui::Event& event) {
     if (event == ftxui::Event::ArrowDownCtrl) return KeyChord{.Control = true, .Special = SpecialKey::Down};
     if (event == ftxui::Event::ArrowLeftCtrl) return KeyChord{.Control = true, .Special = SpecialKey::Left};
     if (event == ftxui::Event::ArrowRightCtrl) return KeyChord{.Control = true, .Special = SpecialKey::Right};
+    // Shift+Arrow follow-up: FTXUI has no pre-built Shift+Arrow constants
+    // the way it does for Ctrl+Arrow (ArrowUpCtrl etc.) -- built directly
+    // here the same way those are built internally (see FTXUI's own
+    // event.cpp): standard xterm CSI modifier codes, "\x1B[1;<mod>X" where
+    // 2 is Shift and 5 is Ctrl (confirmed against FTXUI's own ArrowLeftCtrl
+    // = "\x1B[1;5D" definition, not assumed). Event::operator== compares
+    // raw input bytes only, so constructing one inline via Event::Special
+    // and comparing is exactly as valid as comparing against a named
+    // constant.
+    if (event == ftxui::Event::Special("\x1B[1;2A")) return KeyChord{.Shift = true, .Special = SpecialKey::Up};
+    if (event == ftxui::Event::Special("\x1B[1;2B")) return KeyChord{.Shift = true, .Special = SpecialKey::Down};
+    if (event == ftxui::Event::Special("\x1B[1;2D")) return KeyChord{.Shift = true, .Special = SpecialKey::Left};
+    if (event == ftxui::Event::Special("\x1B[1;2C")) return KeyChord{.Shift = true, .Special = SpecialKey::Right};
     if (event == ftxui::Event::Tab) return KeyChord{.Special = SpecialKey::Tab};
     if (event == ftxui::Event::TabReverse) return KeyChord{.Shift = true, .Special = SpecialKey::Tab};
     if (event == ftxui::Event::Return) return KeyChord{.Special = SpecialKey::Enter};

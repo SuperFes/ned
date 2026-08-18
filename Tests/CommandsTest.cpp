@@ -766,6 +766,80 @@ TEST_CASE("C-LEFT/C-RIGHT are bound to word motion", "[Commands]") {
     REQUIRE(fixture.buffer.Point() == 0);
 }
 
+TEST_CASE("shift-select-forward-char sets a mark on first use, then extends past it", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    fixture.buffer.InsertAtPoint("hello world");
+    fixture.buffer.SetPoint(2);
+    REQUIRE_FALSE(fixture.buffer.HasMark());
+
+    registry.Invoke("shift-select-forward-char", context);
+    REQUIRE(fixture.buffer.HasMark());
+    REQUIRE(fixture.buffer.Mark() == 2);
+    REQUIRE(fixture.buffer.Point() == 3);
+
+    registry.Invoke("shift-select-forward-char", context);
+    REQUIRE(fixture.buffer.Mark() == 2); // anchor unchanged -- the same selection keeps extending
+    REQUIRE(fixture.buffer.Point() == 4);
+}
+
+TEST_CASE("shift-select commands extend an existing mark rather than resetting its anchor", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    fixture.buffer.InsertAtPoint("hello world");
+    fixture.buffer.SetPoint(5);
+    fixture.buffer.SetMark(0); // an existing mark, e.g. from C-SPC
+
+    registry.Invoke("shift-select-forward-char", context);
+    REQUIRE(fixture.buffer.Mark() == 0); // untouched, not reset to point
+    REQUIRE(fixture.buffer.Point() == 6);
+}
+
+TEST_CASE("S-LEFT/S-RIGHT/S-UP/S-DOWN are bound to the shift-select commands", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+    Keymap     keymap = BuildDefaultGlobalKeymap();
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    Type(dispatcher, context, "hello world");
+    fixture.buffer.SetPoint(5);
+
+    KeyChord shiftRight;
+    shiftRight.Shift   = true;
+    shiftRight.Special = SpecialKey::Right;
+    REQUIRE(dispatcher.Feed(shiftRight, context) == Dispatcher::Outcome::Invoked);
+    REQUIRE(fixture.buffer.HasMark());
+    REQUIRE(fixture.buffer.Mark() == 5);
+    REQUIRE(fixture.buffer.Point() == 6);
+
+    KeyChord shiftLeft;
+    shiftLeft.Shift   = true;
+    shiftLeft.Special = SpecialKey::Left;
+    REQUIRE(dispatcher.Feed(shiftLeft, context) == Dispatcher::Outcome::Invoked);
+    REQUIRE(fixture.buffer.Point() == 5);
+
+    KeyChord shiftDown;
+    shiftDown.Shift   = true;
+    shiftDown.Special = SpecialKey::Down;
+    REQUIRE(dispatcher.Feed(shiftDown, context) == Dispatcher::Outcome::Invoked);
+
+    KeyChord shiftUp;
+    shiftUp.Shift   = true;
+    shiftUp.Special = SpecialKey::Up;
+    REQUIRE(dispatcher.Feed(shiftUp, context) == Dispatcher::Outcome::Invoked);
+}
+
 TEST_CASE("M-f/M-b/M-% are bound as real Meta chords, not just ESC-prefix", "[Commands]") {
     CommandRegistry registry;
     RegisterBuiltinCommands(registry);

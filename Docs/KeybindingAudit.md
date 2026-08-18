@@ -72,7 +72,7 @@ already reports `Control+Special::Left/Right` for Ctrl+Arrow).
 | `Ctrl+S` | save | **Missing**, and collides | Ned's `C-s` is `isearch-forward`; this is the single most-cited Emacs-vs-everyone-else collision |
 | `Home` / `End` / `PageUp` / `PageDown` | line/page motion | **Bound** | Already wired to the Emacs-equivalent commands |
 | `Ctrl+Left` / `Ctrl+Right` | word motion | **Bound** | `forward-word`/`backward-word` |
-| `Shift+arrows` | extend selection | **Missing entirely** | No shift-modified arrow handling anywhere; selection today is mouse-drag-only (`BufferView::OnMouseEvent`) — there is no keyboard-driven selection extension at all (downstream of `C-SPC`/set-mark also being missing) |
+| `Shift+arrows` | extend selection | **Bound** | `shift-select-forward-char`/`backward-char`/`next-line`/`previous-line` |
 | `Ctrl+Home` / `Ctrl+End` | buffer start/end | **Missing** | Same underlying gap as `M-<`/`M->` above — no beginning/end-of-buffer command exists at all, Emacs-style or otherwise |
 
 ## 3. Advanced/modern editor features
@@ -180,10 +180,17 @@ Plausible, but a real tradeoff either way — worth an explicit decision, not a 
   (e.g. a Janet-toggleable "non-Emacs bindings" layer) rather than a silent swap.
 - **`Ctrl+Z`/`Ctrl+Y` for undo/redo** — `Ctrl+Y` is already `yank` in Ned; same shape of
   collision as `Ctrl+S`, same "additive, not a swap" recommendation if pursued.
-- **`Shift+arrows` for selection extension** — real value and expected by most users, but
-  needs `C-SPC`/mark-setting to land first (they're the same underlying mark mechanism),
-  and needs a design decision on how it interacts with Emacs' own mark/region model
-  rather than just being bolted on as a separate GUI-style selection concept.
+- ~~**`Shift+arrows` for selection extension**~~ — **done.** `S-LEFT`/`S-RIGHT`/`S-UP`/
+  `S-DOWN` bound to new `shift-select-*` commands that set a mark at point only if one
+  isn't already active, then move -- layered on the same persistent-mark model
+  `set-mark-command` already established, not a separate selection concept.
+  `KeyTranslation.cpp` gained Shift+Arrow decoding to make this possible (FTXUI has no
+  pre-built constant for it the way it does `ArrowLeftCtrl`; built directly from the raw
+  xterm CSI modifier sequence instead). Documented v1 scope cut: real Emacs'
+  `shift-select-mode` additionally deactivates a shift-started selection the instant any
+  *non*-shifted command runs (tracked via its own extra bit distinguishing a
+  shift-started mark from an explicit `C-SPC` one) -- not implemented here, so a
+  shift-extended region persists exactly as long as any other mark would.
 - **Multi-cursor editing** — already Phase 9 wishlist and has real value, but is a
   substantial design lift (editing model, not just a keybinding) or gets deferred with a
   simple 20-minute analysis; flagged here rather than under Want because the *keybinding*
@@ -192,10 +199,11 @@ Plausible, but a real tradeoff either way — worth an explicit decision, not a 
   standard Emacs binding at those keys to protect), but not on ROADMAP at all yet —
   worth a deliberate decision to adopt rather than assuming they belong just because
   they're common elsewhere.
-- **Toggle line comment** — high real-world value, but `Ctrl+/` collides directly with
-  `undo` in Ned; a different chord would be needed, and comment-syntax-per-language is
-  a real design question (tree-sitter grammars know comment delimiters, so this is more
-  tractable than it looks, but it's not free).
+- **Toggle line comment** — high real-world value. `Ctrl+/` no longer collides with
+  `undo` (moved to `C-_`, see the canonical-Emacs table's `undo` row), so the obvious
+  chord is actually free now — but comment-syntax-per-language is still a real design
+  question (tree-sitter grammars know comment delimiters, so this is more tractable
+  than it looks, but it's not free).
 
 ### Don't want
 Actively wrong fit for a terminal, Emacs-parity, Janet-scriptable editor, or better
