@@ -101,15 +101,20 @@ Core Emacs-parity gaps that undercut the "Emacs-class parity" claim itself — t
 table-stakes Emacs commands, several with existing infrastructure sitting right next to
 the gap.
 
-- **`C-SPC` / set-mark-command** — `Buffer::SetMark`/`HasMark`/`Region` already exist and
-  are already used by rectangles/registers/narrowing; the only way to populate the mark
-  today is a mouse drag. Without this, Ned has no keyboard-only way to select a region at
-  all, which blocks kill-region/copy-region-as-kill and any future shift-selection work.
-- **`C-w` (kill-region) / `M-w` (kill-ring-save)** — `KillRing` was explicitly designed
-  region-agnostic ("kill/yank commands compose the two via `Buffer::DeleteRange`/
-  `InsertAtPoint`" per `KillRing.h`'s own doc comment) specifically so these could be
-  added; today only line-based `kill-line` exists. A glaring gap once `C-SPC` lands.
-  These three (set-mark, kill-region, kill-ring-save) are really one unit of work.
+- ~~**`C-SPC` / set-mark-command**~~ — **done.** `set-mark-command` registered, bound to
+  `C-SPC`. Landing this required also removing the `ClearMark()` call every plain motion
+  command (`forward-char`, `next-line`, etc.) used to make before moving point — otherwise
+  the very next arrow-key press after `C-SPC` would immediately wipe the mark, making a
+  keyboard-driven region impossible to grow past zero width. Mark now persists across
+  keyboard motion until an explicit mouse click or `kill-region`/`kill-ring-save`
+  clears it — this also changed how a mouse-drag selection behaves afterward: a
+  navigation key now *extends* it (moves point, keeps mark) instead of collapsing it,
+  since both paths share the same mark now (see `Tests/BufferViewTest.cpp`'s updated
+  case).
+- ~~**`C-w` (kill-region) / `M-w` (kill-ring-save)**~~ — **done.** Both registered,
+  `C-w`/`M-w`+`ESC w` bound, act on `Buffer::Region()` when a mark is set (silent no-op
+  otherwise, matching `kill-line`'s own "nothing to do" convention) and clear the mark
+  afterward.
 - **Redo keybinding** — the `redo` command is fully registered and functional but bound
   to nothing; this is a one-line fix, not a design question, and "undo works, redo
   doesn't" is a jarring first-five-minutes bug report waiting to happen.

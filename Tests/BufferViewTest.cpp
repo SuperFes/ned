@@ -1024,7 +1024,15 @@ TEST_CASE("Clicking inside the gutter moves point to the start of that line", "[
     REQUIRE(fixture.buffer.Point() == fixture.buffer.Content().LineToByteOffset(2));
 }
 
-TEST_CASE("A keyboard navigation key after a mouse-drag selection collapses it instead of extending it", "[BufferView]") {
+TEST_CASE("A keyboard navigation key after a mouse-drag selection extends it, not collapses it", "[BufferView]") {
+    // Was "collapses it instead of extending it" -- revised alongside
+    // set-mark-command (C-SPC) landing as a keyboard-reachable way to set
+    // the mark: plain motion commands no longer ClearMark() at all (see
+    // Commands.cpp's own comment on this), so a mouse-drag-set mark now
+    // behaves exactly like a keyboard-set one -- arrow keys move point and
+    // leave the mark in place, matching Emacs' own "mark persists until
+    // explicitly cleared" model, needed so kill-region/kill-ring-save can
+    // act on a region grown by keyboard motion after C-SPC.
     Fixture fixture;
     fixture.buffer.InsertAtPoint("the quick brown fox");
 
@@ -1037,14 +1045,13 @@ TEST_CASE("A keyboard navigation key after a mouse-drag selection collapses it i
     REQUIRE(fixture.buffer.HasMark());
     REQUIRE(fixture.buffer.Region() == std::pair<std::size_t, std::size_t>{4, 10});
 
-    // Mouse release itself doesn't clear the mark -- it's the next real
-    // navigation keypress that does, same as any mouse-drag selection.
     view.OnEvent(MouseRelease(gutter + 10, 0));
     REQUIRE(fixture.buffer.HasMark());
 
     view.OnEvent(ftxui::Event::ArrowRight);
-    REQUIRE_FALSE(fixture.buffer.HasMark());
-    REQUIRE(fixture.buffer.Point() == 11); // moved from the drag's endpoint (10), not from the mark
+    REQUIRE(fixture.buffer.HasMark());
+    REQUIRE(fixture.buffer.Mark() == 4); // unchanged -- the drag's own start point
+    REQUIRE(fixture.buffer.Point() == 11); // moved from the drag's endpoint (10)
 }
 
 // These three tests build their own BufferView from a buffer created via
