@@ -534,6 +534,37 @@ TEST_CASE("A no-op edit (empty insert, delete at buffer edge) does not set Modif
     REQUIRE_FALSE(buffer.Modified());
 }
 
+TEST_CASE("Deleting the very last byte of a non-empty buffer still sets Modified()", "[Buffer]") {
+    // Regression: MarkUnsavedRangeDeleted used to have no byte left after
+    // the collapse point to mark whenever a delete ran through to the end
+    // of whatever content remained, silently recording nothing --
+    // harmless while Modified() was its own separately-tracked bool, but
+    // once Modified() was unified onto UnsavedChangeRanges_ (see that
+    // method's own doc comment) this meant deleting the last character of
+    // a buffer reported Modified() == false for an edit that plainly
+    // happened. Fixed by falling back to marking the preceding byte.
+    Buffer buffer("scratch", ned::text::Rope("hello"));
+    buffer.SetPoint(5);
+    buffer.DeleteBackwardAtPoint(); // "hello" -> "hell"
+    REQUIRE(buffer.Text() == "hell");
+    REQUIRE(buffer.Modified());
+    REQUIRE_FALSE(buffer.UnsavedChangeRanges().empty());
+}
+
+TEST_CASE("Deleting a buffer down to completely empty still sets Modified()", "[Buffer]") {
+    // The one case a byte range genuinely cannot represent (nothing left
+    // anywhere to point at) -- Modified() checks this directly, see its
+    // own doc comment. UnsavedChangeRanges() itself stays empty here: there
+    // really is no line left to highlight in the gutter, which is correct
+    // for that signal even though Modified() must still report true.
+    Buffer buffer("scratch", ned::text::Rope("x"));
+    buffer.SetPoint(1);
+    buffer.DeleteBackwardAtPoint(); // "x" -> ""
+    REQUIRE(buffer.Text().empty());
+    REQUIRE(buffer.Modified());
+    REQUIRE(buffer.UnsavedChangeRanges().empty());
+}
+
 TEST_CASE("FromFile/NewFile start out unmodified", "[Buffer]") {
     const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_buffer_test_modified_fresh.txt";
     {
@@ -550,7 +581,14 @@ TEST_CASE("FromFile/NewFile start out unmodified", "[Buffer]") {
     REQUIRE_FALSE(created.Modified());
 }
 
-TEST_CASE("Undo/redo mark the buffer modified even when they land back on the saved content", "[Buffer]") {
+TEST_CASE("Undo/redo report not modified once they land back on the saved content", "[Buffer]") {
+    // Was "mark the buffer modified even when they land back on the saved
+    // content" -- that was itself a real, user-reported bug (found via
+    // live testing: undoing a single trivial edit still prompted to save,
+    // even though the gutter's own separate tracking correctly showed no
+    // unsaved change). Modified() is now derived from the same
+    // UnsavedChangeRanges_/SavedSnapshot_ tracking the gutter uses -- see
+    // Modified()'s own doc comment -- so the two can no longer disagree.
     const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_buffer_test_modified_undo.txt";
     std::filesystem::remove(path);
 
@@ -565,8 +603,8 @@ TEST_CASE("Undo/redo mark the buffer modified even when they land back on the sa
     buffer.Undo(); // back to "" -- not what's on disk anymore
     REQUIRE(buffer.Modified());
 
-    buffer.Redo(); // back to "x" -- matches disk again, but still reported modified (see Buffer.h)
-    REQUIRE(buffer.Modified());
+    buffer.Redo(); // back to "x" -- matches disk again, no longer modified
+    REQUIRE_FALSE(buffer.Modified());
 
     std::filesystem::remove(path);
 }
@@ -742,16 +780,51 @@ TEST_CASE("SaveToFile clears unsaved-change ranges on success", "[Buffer]") {
     std::filesystem::remove(path);
 }
 
-TEST_CASE("Undo/Redo conservatively mark the whole buffer as an unsaved change", "[Buffer]") {
+TEST_CASE("Undo/Redo mark only the byte range that actually differs, not the whole buffer", "[Buffer]") {
+    // Was "conservatively mark the whole buffer" -- that turned out to be a
+    // real, user-visible bug (reported after live terminal testing:
+    // undoing one trivial edit lit up the entire gutter as changed), not
+    // just an approximation worth tightening later. Undo/Redo now diff the
+    // pre- and post- Rope snapshots (a common-prefix/suffix scan) and feed
+    // the result through the same MarkUnsavedRangeDeleted/Inserted
+    // machinery every real edit already uses. Two separate edits after the
+    // save (rather than one) so undoing just the second one still leaves a
+    // real, non-empty diff from the saved content to assert on -- see the
+    // "back to exactly the saved content" test below for the all-the-way
+    // case.
     Buffer buffer("scratch", ned::text::Rope("hello"));
     buffer.InsertAt(5, " world");
     const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned-unsaved-change-undo-test.txt";
     buffer.SaveToFile(path, /*ensureFinalNewline=*/false);
     REQUIRE(buffer.UnsavedChangeRanges().empty());
 
-    buffer.InsertAt(0, "X");
-    buffer.Undo(); // restores a full prior Rope_ snapshot -- no principled incremental range without a real diff
-    REQUIRE(buffer.UnsavedChangeRanges() == std::vector<std::pair<std::size_t, std::size_t>>{{0, buffer.Size()}});
+    buffer.InsertAt(0, "Y"); // "Yhello world" -- its own undo step
+    buffer.InsertAt(0, "X"); // "XYhello world" -- a separate undo step
+
+    buffer.Undo(); // back to "Yhello world" -- differs from saved by one byte, not the whole buffer
+    REQUIRE(buffer.UnsavedChangeRanges() == std::vector<std::pair<std::size_t, std::size_t>>{{0, 1}});
+
+    // Back to "XYhello world" -- both byte 0 ('X', newly reinserted) and
+    // byte 1 ('Y', already touched before this Redo, correctly relocated
+    // rather than dropped) differ from saved, not the whole buffer.
+    buffer.Redo();
+    REQUIRE(buffer.UnsavedChangeRanges() == std::vector<std::pair<std::size_t, std::size_t>>{{0, 2}});
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("Undoing an edit that leaves content identical to before reports no unsaved change", "[Buffer]") {
+    Buffer buffer("scratch", ned::text::Rope("hello world"));
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned-unsaved-change-undo-noop-test.txt";
+    buffer.SaveToFile(path, /*ensureFinalNewline=*/false);
+    REQUIRE(buffer.UnsavedChangeRanges().empty());
+
+    buffer.SetPoint(buffer.Content().ByteLength());
+    buffer.InsertAtPoint(" there"); // append at the very end
+    REQUIRE_FALSE(buffer.UnsavedChangeRanges().empty());
+
+    buffer.Undo(); // back to exactly the saved content
+    REQUIRE(buffer.UnsavedChangeRanges().empty());
 
     std::filesystem::remove(path);
 }

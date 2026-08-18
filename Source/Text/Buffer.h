@@ -71,19 +71,26 @@ class Buffer {
     [[nodiscard]] std::string Text() const;
     [[nodiscard]] std::size_t Size() const;
 
-    // True if the buffer has unsaved changes: set by any content-changing
-    // operation (inserts, deletes, undo/redo), cleared by a successful save.
-    // Undo/redo back to the exact saved content still counts as modified --
-    // matching Emacs' own (not VSCode-style content-hash-based) behavior,
-    // simpler and consistent with everything else about undo in this codebase.
+    // True if the buffer has unsaved changes -- a pure derived query, not
+    // its own tracked bit: `!UnsavedChangeRanges().empty()`. Was a
+    // separately-maintained bool, set unconditionally by any content-
+    // changing operation (including undo/redo, even one that landed back
+    // on the exact saved content) and cleared only by a save -- a real,
+    // user-reported bug found via live testing: Undo() could report "still
+    // modified" while the gutter's own unsaved-change indicator correctly
+    // showed nothing changed, an inconsistency only possible because the
+    // two were two independent signals that could drift apart. Unified
+    // onto UnsavedChangeRanges_ so there's exactly one source of truth for
+    // "does this buffer differ from what's on disk" -- see
+    // UnsavedChangeRanges()'s own doc comment just below.
     [[nodiscard]] bool Modified() const;
 
-    // Bumped by the exact same set of content-changing operations that set
-    // Modified() (tree-sitter foundation follow-up) -- unlike Modified(),
-    // never reset by a save, so it's a cheap, monotonic "has the content
-    // actually changed since I last looked" signal a caller can cache
-    // against, rather than a byte-for-byte content comparison. Not
-    // meaningful across different Buffer instances or process runs, only as
+    // Bumped by the exact same set of content-changing operations that can
+    // make Modified() true (tree-sitter foundation follow-up) -- unlike
+    // Modified(), never reset by a save, so it's a cheap, monotonic "has
+    // the content actually changed since I last looked" signal a caller
+    // can cache against, rather than a byte-for-byte content comparison.
+    // Not meaningful across different Buffer instances or process runs, only as
     // a before/after comparison on the same instance.
     [[nodiscard]] std::size_t ContentGeneration() const;
 
@@ -249,11 +256,21 @@ class Buffer {
     // by an edit since this buffer was last loaded/saved -- sorted, merged,
     // non-overlapping. Relocated across every content-mutating edit the
     // same way FoldMarkers_ already is; cleared (and UnsavedChangeGeneration_
-    // bumped) on a successful Save()/SaveToFile(). A live edit-tracking
-    // signal, not a real diff against saved content -- typing a character
-    // then deleting it still leaves the line marked touched. Good enough
-    // for "does this line have edits since disk," not a substitute for a
-    // real git-diff-gutter (explicitly deferred -- see ROADMAP.md).
+    // bumped) on a successful Save()/SaveToFile(). Also the single source
+    // of truth Modified() is now derived from (see that method's own doc
+    // comment) -- Modified() used to be tracked independently and could
+    // disagree with this.
+    //
+    // A live edit-tracking signal for ordinary typing/deleting, not a real
+    // diff against saved content -- typing a character then deleting it
+    // still leaves the line marked touched (good enough for "does this
+    // line have edits since disk," not a substitute for a real
+    // git-diff-gutter, explicitly deferred -- see ROADMAP.md). Undo()/
+    // Redo() are the one exception: since they restore a full prior
+    // snapshot rather than replaying one edit, they check directly against
+    // the last-saved content (SavedSnapshot_) first and clear this
+    // entirely when it matches exactly, rather than only ever tracking
+    // incrementally -- see UpdateUnsavedRangesForRestore's own comment.
     [[nodiscard]] const std::vector<std::pair<std::size_t, std::size_t>>& UnsavedChangeRanges() const;
     // Bumped whenever UnsavedChangeRanges() changes -- mirrors
     // FoldGeneration()'s own "cheap, did-it-change" signal shape.
@@ -302,6 +319,12 @@ class Buffer {
     void MarkUnsavedRangeInserted(std::size_t insertOffset, std::size_t length);
     void MarkUnsavedRangeDeleted(std::size_t rangeStart, std::size_t rangeEnd);
 
+    // Shared by Undo()/Redo(): oldText is Rope_'s content just before the
+    // restore that already happened by the time this runs. See
+    // SavedSnapshot_'s own doc comment for why this checks against it
+    // first rather than only ever diffing oldText/Rope_.
+    void UpdateUnsavedRangesForRestore(const std::string& oldText);
+
     std::string                                        Name_;
     std::optional<std::filesystem::path>               Path_;
     Rope                                               Rope_;
@@ -313,13 +336,20 @@ class Buffer {
     // Set by MoveToNextLine/MoveToPreviousLine, cleared by every other
     // point-moving or editing call -- see their doc comment above.
     std::optional<std::size_t>        GoalColumn_;
-    bool                              Modified_          = false;
     std::size_t                       ContentGeneration_ = 0; // see ContentGeneration()
     std::map<std::size_t, FoldMarker> FoldMarkers_;           // see FoldMarker's own doc comment above
     std::size_t                       FoldGeneration_ = 0;    // see FoldGeneration()
 
     std::vector<std::pair<std::size_t, std::size_t>> UnsavedChangeRanges_;      // see UnsavedChangeRanges()'s own doc comment
     std::size_t                                       UnsavedChangeGeneration_ = 0; // see UnsavedChangeGeneration()
+    // Content as of the last load/save -- cheap to hold (Rope is
+    // structurally shared, not a deep string copy). Undo()/Redo() diff
+    // against this after restoring a snapshot to catch "landed back on
+    // exactly the saved content" regardless of the path taken to get
+    // there, clearing UnsavedChangeRanges_ wholesale in that case rather
+    // than leaving a technically-correct-but-misleading residual marker at
+    // wherever the undone edit happened to sit.
+    Rope SavedSnapshot_;
 };
 
 } // namespace ned::text

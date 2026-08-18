@@ -58,11 +58,52 @@ namespace {
         ranges.erase(mergeBegin, it);
         ranges.insert(mergeBegin, {mergedStart, mergedEnd});
     }
+
+    // Undo/Redo restore a full prior Rope snapshot rather than replaying a
+    // single insert/delete, so there's no edit-site offset/length already
+    // in hand the way InsertAtPoint/DeleteRange have -- this recovers one
+    // via a common-prefix/common-suffix scan, the standard cheap
+    // approximation of a real diff (a single O(n) two-pointer pass, not a
+    // full LCS diff). Exact for the overwhelmingly common case an
+    // Undo()/Redo() call actually represents (undoing/redoing one coalesced
+    // edit run); a pathological case with multiple disjoint changes between
+    // the two snapshots would report one range spanning all of them rather
+    // than several -- an accepted over-approximation, not a correctness
+    // bug (the true edit sites are always a subset of the reported range).
+    // Returns nullopt if the two are byte-identical (e.g. undoing straight
+    // back to a state reached by pure point/mark motion, no real content
+    // change). Reports both the old-text span that was effectively
+    // "deleted" and the new-text span that was effectively "inserted" --
+    // together the standard way to express any text replacement, matching
+    // MarkUnsavedRangeDeleted/MarkUnsavedRangeInserted's own respective
+    // parameter shapes so a caller can just feed this straight into both.
+    struct ChangedSpan {
+        std::size_t oldStart, oldEnd;
+        std::size_t newStart, newEnd;
+    };
+
+    std::optional<ChangedSpan> ChangedByteRange(std::string_view oldText, std::string_view newText) {
+        if (oldText == newText) {
+            return std::nullopt;
+        }
+        const std::size_t maxCommon = std::min(oldText.size(), newText.size());
+        std::size_t       prefix    = 0;
+        while (prefix < maxCommon && oldText[prefix] == newText[prefix]) {
+            ++prefix;
+        }
+        const std::size_t maxSuffix = maxCommon - prefix;
+        std::size_t       suffix    = 0;
+        while (suffix < maxSuffix && oldText[oldText.size() - 1 - suffix] == newText[newText.size() - 1 - suffix]) {
+            ++suffix;
+        }
+        return ChangedSpan{prefix, oldText.size() - suffix, prefix, newText.size() - suffix};
+    }
 } // namespace
 
 Buffer::Buffer(std::string name, Rope initialContent) : Name_(std::move(name)),
                                                         Rope_(initialContent),
-                                                        UndoTree_(std::move(initialContent)) {
+                                                        UndoTree_(std::move(initialContent)),
+                                                        SavedSnapshot_(Rope_) {
 }
 
 Buffer Buffer::FromFile(const std::filesystem::path& path) {
@@ -142,8 +183,8 @@ void Buffer::SaveToFile(const std::filesystem::path& path, bool ensureFinalNewli
         throw std::runtime_error("ned: cannot save file: " + path.string() + " (" + ec.message() + ")");
     }
 
-    Path_     = path;
-    Modified_ = false;
+    Path_          = path;
+    SavedSnapshot_ = Rope_;
     UnsavedChangeRanges_.clear();
     ++UnsavedChangeGeneration_;
 }
@@ -184,7 +225,17 @@ std::size_t Buffer::Size() const {
 }
 
 bool Buffer::Modified() const {
-    return Modified_;
+    if (!UnsavedChangeRanges_.empty()) {
+        return true;
+    }
+    // The one case UnsavedChangeRanges_ genuinely cannot represent: a
+    // buffer deleted all the way down to nothing has no byte left
+    // anywhere to mark, even with MarkUnsavedRangeDeleted's own end-of-
+    // buffer fallback (which needs at least one remaining byte to fall
+    // back to). Checked directly against SavedSnapshot_'s length -- still
+    // O(1), not a full content comparison -- rather than left
+    // unrepresented.
+    return Rope_.ByteLength() == 0 && SavedSnapshot_.ByteLength() != 0;
 }
 
 std::size_t Buffer::ContentGeneration() const {
@@ -350,11 +401,26 @@ void Buffer::MarkUnsavedRangeDeleted(std::size_t rangeStart, std::size_t rangeEn
 
     // A delete removes content -- there's no span left to mark, only the
     // position it collapsed to. One byte is enough for the line it maps to
-    // at render time; clamped so deleting at the very end of the buffer
-    // doesn't mark a byte past it.
-    const std::size_t markEnd = std::min(rangeStart + 1, Rope_.ByteLength());
-    if (markEnd > rangeStart) {
-        MergeUnsavedRange(UnsavedChangeRanges_, rangeStart, markEnd);
+    // at render time; deleting through to the end of whatever's left has
+    // no byte *after* the collapse point to mark, so this falls back to
+    // the byte just *before* it instead (still real, still-existing
+    // content on the same line the edit happened on) rather than silently
+    // recording nothing. Was silently recording nothing -- a real bug,
+    // found once Modified() was unified onto UnsavedChangeRanges_ (see
+    // that method's own doc comment): deleting the very last character of
+    // a buffer left no marker at all, so Modified() incorrectly reported
+    // false for an edit that plainly happened. Only the buffer becoming
+    // completely empty (rangeStart == 0 too) has truly nothing left
+    // anywhere to point a byte range at -- Modified() handles that one
+    // remaining case separately, see its own doc comment.
+    std::size_t markStart = rangeStart;
+    std::size_t markEnd   = std::min(rangeStart + 1, Rope_.ByteLength());
+    if (markEnd <= markStart && markStart > 0) {
+        markStart = markStart - 1;
+        markEnd   = markStart + 1;
+    }
+    if (markEnd > markStart) {
+        MergeUnsavedRange(UnsavedChangeRanges_, markStart, markEnd);
     }
     ++UnsavedChangeGeneration_;
 }
@@ -387,7 +453,6 @@ void Buffer::InsertAtPoint(std::string_view text) {
         CanAmend_ = true;
     }
     GoalColumn_.reset();
-    Modified_ = true;
     ++ContentGeneration_;
 }
 
@@ -417,7 +482,6 @@ void Buffer::DeleteBackwardAtPoint() {
 
     CanAmend_ = false;
     GoalColumn_.reset();
-    Modified_ = true;
     ++ContentGeneration_;
     UndoTree_.Record(Rope_);
 }
@@ -448,7 +512,6 @@ void Buffer::DeleteForwardAtPoint() {
 
     CanAmend_ = false;
     GoalColumn_.reset();
-    Modified_ = true;
     ++ContentGeneration_;
     UndoTree_.Record(Rope_);
 }
@@ -487,7 +550,6 @@ std::string Buffer::DeleteRange(std::size_t byteOffset, std::size_t byteLength) 
 
     CanAmend_ = false;
     GoalColumn_.reset();
-    Modified_ = true;
     ++ContentGeneration_;
     UndoTree_.Record(Rope_);
     return deleted;
@@ -516,7 +578,6 @@ void Buffer::InsertAt(std::size_t byteOffset, std::string_view text) {
 
     CanAmend_ = false;
     GoalColumn_.reset();
-    Modified_ = true;
     ++ContentGeneration_;
     UndoTree_.Record(Rope_);
 }
@@ -717,36 +778,78 @@ void Buffer::Undo() {
     if (!UndoTree_.CanUndo()) {
         return;
     }
+    const std::string oldText = Rope_.ToString();
     UndoTree_.Undo();
     Rope_ = UndoTree_.Current();
     ClampCursorsToContent();
     CanAmend_ = false;
     GoalColumn_.reset();
-    Modified_ = true;
     ++ContentGeneration_;
-    // Restoring a full prior Rope_ snapshot has no principled incremental
-    // range to compute without a real diff -- matching Modified_'s own
-    // coarse "undo/redo always marks modified" precedent, conservatively
-    // mark the entire buffer dirty rather than silently under-report. A
-    // documented v1 scope cut, not an oversight.
-    UnsavedChangeRanges_.assign(Rope_.ByteLength() > 0 ? 1 : 0, {0, Rope_.ByteLength()});
-    ++UnsavedChangeGeneration_;
+    UpdateUnsavedRangesForRestore(oldText);
 }
 
 void Buffer::Redo() {
     if (!UndoTree_.CanRedo()) {
         return;
     }
+    const std::string oldText = Rope_.ToString();
     UndoTree_.Redo();
     Rope_ = UndoTree_.Current();
     ClampCursorsToContent();
     CanAmend_ = false;
     GoalColumn_.reset();
-    Modified_ = true;
     ++ContentGeneration_;
-    // See Undo()'s own comment above -- same coarse whole-buffer mark.
-    UnsavedChangeRanges_.assign(Rope_.ByteLength() > 0 ? 1 : 0, {0, Rope_.ByteLength()});
-    ++UnsavedChangeGeneration_;
+    UpdateUnsavedRangesForRestore(oldText);
+}
+
+void Buffer::UpdateUnsavedRangesForRestore(const std::string& oldText) {
+    const std::string newText = Rope_.ToString();
+
+    // Landed back on exactly the last-saved content, regardless of the
+    // path taken to get there (this Undo()/Redo() step, or several
+    // compounded with earlier ones) -- no unsaved change at all, full
+    // stop, not just "nothing changed in this specific step." Found to be
+    // necessary via live testing: the diff-against-oldText path below is
+    // exact for *this* step, but an edit undone anywhere except the very
+    // end of the buffer still left a real, technically-accurate 1-byte
+    // marker at the edit site even once content matched disk again --
+    // correct in isolation, misleading in practice (still showed as an
+    // unsaved change after undoing the exact edit that caused it).
+    if (newText == SavedSnapshot_.ToString()) {
+        if (!UnsavedChangeRanges_.empty()) {
+            UnsavedChangeRanges_.clear();
+            ++UnsavedChangeGeneration_;
+        }
+        return;
+    }
+
+    // Undoing/redoing restores a full prior Rope snapshot rather than
+    // replaying a single insert/delete, so there's no edit-site
+    // offset/length already in hand -- ChangedByteRange recovers one via a
+    // common-prefix/suffix diff against the just-replaced content, then
+    // this composes onto the exact same MarkUnsavedRangeDeleted+
+    // MarkUnsavedRangeInserted machinery every real edit already goes
+    // through (delete-then-insert is the standard way to express a
+    // replacement), including relocating any other still-unsaved ranges
+    // through it. Was a coarse "mark the whole buffer dirty" fallback --
+    // found to be a real, user-visible bug during manual testing (undoing
+    // a single trivial edit lit up the entire gutter as changed), not just
+    // an approximation worth tightening later.
+    if (const auto span = ChangedByteRange(oldText, newText)) {
+        // Only the non-empty side of the replacement -- MarkUnsavedRange*
+        // each unconditionally record a span (MarkUnsavedRangeInserted's
+        // own merge call has no empty-length guard the way InsertAtPoint's
+        // own early return gives it in the normal edit path), so a
+        // zero-width side (a pure insert has no "deleted" span and vice
+        // versa) would otherwise leave a stray empty entry in
+        // UnsavedChangeRanges_.
+        if (span->oldEnd > span->oldStart) {
+            MarkUnsavedRangeDeleted(span->oldStart, span->oldEnd);
+        }
+        if (span->newEnd > span->newStart) {
+            MarkUnsavedRangeInserted(span->newStart, span->newEnd - span->newStart);
+        }
+    }
 }
 
 } // namespace ned::text
