@@ -66,10 +66,10 @@ TEST_CASE("Default keymap + builtin commands support basic editing end to end", 
     dispatcher.Feed(ParseKeyChord("C-y"), context); // yank it back
     REQUIRE(fixture.buffer.Text() == "hello");
 
-    dispatcher.Feed(ParseKeyChord("C-/"), context); // undo the yank
+    dispatcher.Feed(ParseKeyChord("C-_"), context); // undo the yank
     REQUIRE(fixture.buffer.Text().empty());
 
-    dispatcher.Feed(ParseKeyChord("C-/"), context); // undo the kill
+    dispatcher.Feed(ParseKeyChord("C-_"), context); // undo the kill
     REQUIRE(fixture.buffer.Text() == "hello");
 }
 
@@ -191,6 +191,88 @@ TEST_CASE("Plain motion commands no longer clear an existing mark", "[Commands]"
     REQUIRE(fixture.buffer.HasMark());
     REQUIRE(fixture.buffer.Mark() == 0);
     REQUIRE(fixture.buffer.Point() == 3);
+}
+
+// Regression: a mark set via C-SPC used to linger indefinitely through any
+// unrelated edit once plain motion commands stopped clearing it (see the
+// test above) -- since nothing else cleared it either, editing commands
+// (typing, deleting, undo/redo, yank, tab) left a stale, ever-growing
+// region highlighted in BufferView's gutter/selection rendering long after
+// the edit that should have deactivated it. Each editing command below
+// must ClearMark() even though it doesn't touch the region itself.
+TEST_CASE("Editing commands clear a leftover mark, unlike plain motion", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    auto freshMarkedContext = [](Fixture& fixture) {
+        fixture.buffer.InsertAtPoint("hello");
+        fixture.buffer.SetMark(0);
+    };
+
+    {
+        Fixture        fixture;
+        CommandContext context = fixture.Context();
+        freshMarkedContext(fixture);
+        registry.Invoke("self-insert-command", context);
+        REQUIRE_FALSE(fixture.buffer.HasMark());
+    }
+    {
+        Fixture        fixture;
+        CommandContext context = fixture.Context();
+        freshMarkedContext(fixture);
+        registry.Invoke("delete-char", context);
+        REQUIRE_FALSE(fixture.buffer.HasMark());
+    }
+    {
+        Fixture        fixture;
+        CommandContext context = fixture.Context();
+        freshMarkedContext(fixture);
+        registry.Invoke("backward-delete-char", context);
+        REQUIRE_FALSE(fixture.buffer.HasMark());
+    }
+    {
+        Fixture        fixture;
+        CommandContext context = fixture.Context();
+        freshMarkedContext(fixture);
+        registry.Invoke("kill-line", context);
+        REQUIRE_FALSE(fixture.buffer.HasMark());
+    }
+    {
+        Fixture        fixture;
+        CommandContext context = fixture.Context();
+        freshMarkedContext(fixture);
+        registry.Invoke("yank", context);
+        REQUIRE_FALSE(fixture.buffer.HasMark());
+    }
+    {
+        Fixture        fixture;
+        CommandContext context = fixture.Context();
+        freshMarkedContext(fixture);
+        registry.Invoke("undo", context);
+        REQUIRE_FALSE(fixture.buffer.HasMark());
+    }
+    {
+        Fixture        fixture;
+        CommandContext context = fixture.Context();
+        freshMarkedContext(fixture);
+        registry.Invoke("undo", context);
+        registry.Invoke("redo", context);
+        REQUIRE_FALSE(fixture.buffer.HasMark());
+    }
+    {
+        Fixture        fixture;
+        CommandContext context = fixture.Context();
+        freshMarkedContext(fixture);
+        registry.Invoke("newline", context);
+        REQUIRE_FALSE(fixture.buffer.HasMark());
+    }
+    {
+        Fixture        fixture;
+        CommandContext context = fixture.Context();
+        freshMarkedContext(fixture);
+        registry.Invoke("indent-for-tab-command", context);
+        REQUIRE_FALSE(fixture.buffer.HasMark());
+    }
 }
 
 TEST_CASE("kill-region without a mark is a no-op", "[Commands]") {
@@ -324,13 +406,13 @@ TEST_CASE("M-/ and ESC / both invoke redo", "[Commands]") {
     CommandContext context = fixture.Context();
 
     Type(dispatcher, context, "hi");
-    dispatcher.Feed(ParseKeyChord("C-/"), context); // undo the typing
+    dispatcher.Feed(ParseKeyChord("C-_"), context); // undo the typing
     REQUIRE(fixture.buffer.Text().empty());
 
     REQUIRE(dispatcher.Feed(ParseKeyChord("M-/"), context) == Dispatcher::Outcome::Invoked);
     REQUIRE(fixture.buffer.Text() == "hi");
 
-    dispatcher.Feed(ParseKeyChord("C-/"), context);
+    dispatcher.Feed(ParseKeyChord("C-_"), context);
     REQUIRE(fixture.buffer.Text().empty());
     REQUIRE(dispatcher.Feed(ParseKeyChord("ESC"), context) == Dispatcher::Outcome::Pending);
     REQUIRE(dispatcher.Feed(ParseKeyChord("/"), context) == Dispatcher::Outcome::Invoked);

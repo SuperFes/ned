@@ -75,11 +75,18 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     registry.Register("end-of-buffer", "Move point to the end of the buffer.",
                       [](CommandContext& context) { context.buffer.SetPoint(context.buffer.Content().ByteLength()); });
 
+    // Editing commands (as opposed to the plain-motion commands above)
+    // still ClearMark() -- an existing mark should deactivate once the
+    // buffer is actually edited out from under it, the same "mark
+    // survives motion, not editing" split real Emacs makes. Motion-only
+    // commands are the exception, not editing ones.
     registry.Register("delete-char", "Delete the grapheme cluster at point.", [](CommandContext& context) {
+        context.buffer.ClearMark();
         context.buffer.DeleteForwardAtPoint();
     });
 
     registry.Register("backward-delete-char", "Delete the grapheme cluster before point.", [](CommandContext& context) {
+        context.buffer.ClearMark();
         context.buffer.DeleteBackwardAtPoint();
     });
 
@@ -95,6 +102,7 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     });
 
     registry.Register("kill-line", "Kill from point to the end of the line, or the newline if already there.", [](CommandContext& context) {
+        context.buffer.ClearMark();
         const std::size_t point   = context.buffer.Point();
         const auto&       content = context.buffer.Content();
         const std::size_t lineEnd = LineContentEnd(content, point);
@@ -108,6 +116,7 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     });
 
     registry.Register("yank", "Insert the most recent kill-ring entry at point.", [](CommandContext& context) {
+        context.buffer.ClearMark();
         if (!context.killRing.Empty()) {
             context.buffer.InsertAtPoint(context.killRing.Current());
         }
@@ -147,18 +156,22 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     });
 
     registry.Register("undo", "Undo the last change.", [](CommandContext& context) {
+        context.buffer.ClearMark();
         context.buffer.Undo();
     });
 
     registry.Register("redo", "Redo the last undone change.", [](CommandContext& context) {
+        context.buffer.ClearMark();
         context.buffer.Redo();
     });
 
     registry.Register("newline", "Insert a newline at point.", [](CommandContext& context) {
+        context.buffer.ClearMark();
         context.buffer.InsertAtPoint("\n");
     });
 
     registry.Register("self-insert-command", "Insert the character that was pressed.", [](CommandContext& context) {
+        context.buffer.ClearMark();
         if (context.triggeringKey.Special == SpecialKey::None && context.triggeringKey.Codepoint != 0) {
             context.buffer.InsertAtPoint(text::EncodeCodepointUtf8(context.triggeringKey.Codepoint));
         }
@@ -172,8 +185,10 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     // org-mode's org-cycle, markdown-mode's markdown-table-align) still
     // wins via KeymapStack's priority order, so this only ever fires where
     // nothing more specific claimed TAB first.
-    registry.Register("indent-for-tab-command", "Insert a tab character at point.",
-                      [](CommandContext& context) { context.buffer.InsertAtPoint("\t"); });
+    registry.Register("indent-for-tab-command", "Insert a tab character at point.", [](CommandContext& context) {
+        context.buffer.ClearMark();
+        context.buffer.InsertAtPoint("\t");
+    });
 
     registry.Register("quit", "Exit the editor, or prompt for confirmation if any buffer has unsaved changes.",
                       [](CommandContext& context) {
@@ -515,19 +530,21 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("END"), "end-of-line");
     keymap.Bind(ParseKeySequence("C-k"), "kill-line");
     keymap.Bind(ParseKeySequence("C-y"), "yank");
-    keymap.Bind(ParseKeySequence("C-/"), "undo");
+    // C-_, not C-/: real Emacs' own actual undo binding, and the only one
+    // that works from a real terminal -- confirmed against a live terminal
+    // that C-/ (a literal Control+'/' KeyChord) never fires, since no
+    // terminal sends a byte distinguishing Ctrl+/ from Ctrl+_ (both are the
+    // same physical unshifted/shifted key on a US layout, and terminals
+    // don't track Shift on top of a control byte); the byte they do send,
+    // 0x1F, is now decoded as Control+'_' in KeyTranslation.cpp's
+    // DecodeBaseKey specifically to make this binding reachable.
+    keymap.Bind(ParseKeySequence("C-_"), "undo");
     // redo has no standard Emacs binding (stock Emacs has no built-in redo
     // at all -- undo-tree/undo-fu-style packages each pick their own key).
-    // M-/ chosen over a Control-modified-punctuation chord like C-? on
-    // purpose: DecodeBaseKey (KeyTranslation.cpp) only ever produces
-    // Control=true for C0 control bytes 1-26 (Control+<a-z>), so a real
-    // terminal's Ctrl+/ byte (0x1F, outside that range) would never
-    // actually produce a KeyChord matching a Control-parsed "/" binding --
-    // this is a latent, pre-existing gap in C-/'s own undo binding above,
-    // flagged here rather than fixed, out of scope for this change. M-/
-    // has no such problem: Meta is detected via a leading ESC byte (see
-    // KeyTranslation.h's own header comment), so a real Alt+/ press decodes
-    // cleanly regardless of what byte Ctrl+/ would have sent.
+    // M-/ works cleanly regardless of the C-_/C-/ byte ambiguity above:
+    // Meta is detected via a leading ESC byte (see KeyTranslation.h's own
+    // header comment), not a raw control byte, so a real Alt+/ press
+    // decodes correctly either way.
     keymap.Bind(ParseKeySequence("M-/"), "redo");
     keymap.Bind(ParseKeySequence("ESC /"), "redo");
     keymap.Bind(ParseKeySequence("C-SPC"), "set-mark-command");

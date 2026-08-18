@@ -102,6 +102,22 @@ TEST_CASE("TranslateKey maps Ctrl+Alt+letter via the raw escape-prefixed byte se
     REQUIRE(chord->Codepoint == U'a');
 }
 
+// Byte 0x1F (US) is what a real terminal actually sends for Ctrl+_, and --
+// since terminals don't distinguish Shift on top of a control byte -- for a
+// physical Ctrl+/ press too. Decoded as Control+'_' specifically so real
+// Emacs' own C-_ undo binding (Commands.cpp) is reachable from a real
+// terminal; confirmed against a live terminal that the alternative, binding
+// undo to a literal Control+'/' KeyChord, never fires at all, since no real
+// terminal byte can ever produce one.
+TEST_CASE("TranslateKey maps byte 0x1F to Control+underscore", "[KeyTranslation]") {
+    const auto chord = TranslateKey(ftxui::Event::Special({static_cast<char>(0x1F)}));
+    REQUIRE(chord.has_value());
+    REQUIRE(chord->Control);
+    REQUIRE_FALSE(chord->Meta);
+    REQUIRE(chord->Special == SpecialKey::None);
+    REQUIRE(chord->Codepoint == U'_');
+}
+
 TEST_CASE("TranslateKey returns nullopt for mouse events", "[KeyTranslation]") {
     REQUIRE_FALSE(TranslateKey(ftxui::Event::Mouse("", ftxui::Mouse{})).has_value());
 }
