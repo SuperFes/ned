@@ -31,19 +31,19 @@ already reports `Control+Special::Left/Right` for Ctrl+Arrow).
 | `C-a` / `C-e` | beginning/end-of-line | **Bound** | also `HOME`/`END` |
 | `M-f` / `M-b` | forward/backward-word | **Bound**, ESC-prefix only | Bound as `ESC f`/`ESC b`, not `M-f`/`M-b` — comment in `Commands.cpp` calls this stale (real Meta detection is reliable post-FTXUI per `KeyTranslation.h`) but only `M-x` got the dual binding treatment |
 | `C-v` / `M-v` | scroll page down/up | **Not bound to these keys** | Commands exist (`scroll-page-down`/`up`) but bound only to `PAGEDOWN`/`PAGEUP`, not `C-v`/`M-v` |
-| `M-<` / `M->` | beginning/end-of-buffer | **Missing entirely** | No command registered at all |
+| `M-<` / `M->` | beginning/end-of-buffer | **Bound** | `ESC <`/`ESC >` also bound |
 | `C-l` | recenter | **Missing** | No command |
 | `C-d` | delete-char | **Bound** | |
 | `DEL` | backward-delete-char | **Bound** | |
 | `C-k` | kill-line | **Bound** | |
 | `C-y` | yank | **Bound** | |
 | `M-y` | yank-pop | **Missing** | No command |
-| `M-w` | kill-ring-save (copy region) | **Missing** | No command |
-| `C-w` | kill-region | **Missing** | No command — `Buffer::DeleteRange` exists and `KillRing` is region-agnostic by design, nothing wires them together on a keyboard mark |
-| `C-SPC` | set-mark-command | **Missing** | `Buffer::SetMark` is only ever called from mouse-drag in `BufferView.cpp`; no keyboard way to set the mark at all |
-| `C-x C-x` | exchange-point-and-mark | **Missing** | No command |
+| `M-w` | kill-ring-save (copy region) | **Bound** | `M-w`/`ESC w`; no-op without a mark |
+| `C-w` | kill-region | **Bound** | No-op without a mark |
+| `C-SPC` | set-mark-command | **Bound** | Mark now persists across keyboard motion (see `ClearMark` note in `Commands.cpp`) |
+| `C-x C-x` | exchange-point-and-mark | **Bound** | No-op without a mark |
 | `C-x h` | mark-whole-buffer | **Missing** | No command |
-| `C-/` / `C-x u` | undo | **Bound (`C-/` only)** | `redo` command is registered but **not bound to any key** — real gap |
+| `C-_` / `C-x u` | undo | **Bound (`C-_`)** | Was bound to `C-/`, which turned out to be unreachable from a real terminal — no terminal byte distinguishes Ctrl+/ from Ctrl+_, and the codebase only decoded the latter; confirmed against a live terminal, then fixed by decoding byte 0x1F as Control+'_' (`KeyTranslation.cpp`) and rebinding to `C-_`, real Emacs' own actual undo chord. `redo` is bound to `M-/`/`ESC /`. |
 | `C-s` / `C-r` | isearch forward/backward | **Bound** | |
 | `M-%` | query-replace | **Bound, ESC-prefix only** | `ESC %`, not `M-%`, same stale-comment situation as `M-f`/`M-b` |
 | `C-x C-f` | find-file | **Bound** | |
@@ -59,7 +59,7 @@ already reports `Control+Special::Left/Right` for Ctrl+Arrow).
 | `C-x n n` / `C-x n w` | narrow-to-region / widen | **Bound** | |
 | `M-x` | execute-extended-command | **Bound, both forms** | `M-x` and `ESC x` |
 | `C-g` | keyboard-quit | **Partial** | Handled ad hoc inside `BufferView` (`IsCancelKey` helper) to cancel an in-progress interactive session (isearch, prompts, etc.) — not a registered command, doesn't do anything in Normal mode (e.g. no "cancel prefix key" or "deselect region" behavior) |
-| `TAB` | indent-for-tab-command | **Missing in Normal mode** | `TAB` is named and used inside prompt/completion (`BufferView::CompletePrompt`), but the global keymap never binds it — in Normal editing mode, pressing Tab does nothing (`Dispatcher` reports `Unbound`) since the self-insert loop only covers 0x20–0x7E |
+| `TAB` | indent-for-tab-command | **Bound** | Inserts a literal tab; no per-mode indent logic yet |
 
 ## 2. "Normal" (non-Emacs) editor conventions
 
@@ -83,7 +83,7 @@ already reports `Control+Special::Left/Right` for Ctrl+Arrow).
 | Go-to-definition / hover / rename symbol | varies, usually `F12`/LSP-bound | **Missing** | On the wishlist as part of "LSP client: autocomplete, diagnostics, go-to-definition, hover docs, code actions, rename, multi-language support" |
 | Fuzzy file finder / command palette | `Ctrl+P` / `Ctrl+Shift+P` | **Missing** | On the wishlist: "Fast fuzzy file finder / command palette" — note Ned already has `find-file`'s path-completion (`Tab`) and `M-x`'s fuzzy-narrowed `execute-extended-command`, so the foundation is closer than "missing" alone suggests |
 | Format document (on demand, not just on save) | `Ctrl+Shift+I` / `Alt+Shift+F` | **Partial** | `FormatOnSave.h` + `save-buffer` runs the configured formatter automatically on save; there's no standalone "format buffer now" command independent of saving |
-| Toggle line comment | `Ctrl+/` | **Missing**, and would collide | No comment-toggle command exists; `Ctrl+/` is already `undo` in Ned |
+| Toggle line comment | `Ctrl+/` | **Missing** | No comment-toggle command exists; `Ctrl+/` no longer collides with `undo` (moved to `C-_`, see the canonical-Emacs table above) but binding literal `C-/` would hit the exact same real-terminal-unreachability problem that move fixed — no terminal byte distinguishes Ctrl+/ from Ctrl+_, and only the latter is decoded |
 | Duplicate line | `Ctrl+D` / `Ctrl+Shift+D` | **Missing** | No command |
 | Move line up/down | `Alt+Up`/`Alt+Down` | **Missing** | No command |
 | Expand selection (AST-aware) | `Alt+Shift+Right`/`Ctrl+W` in some IDEs | **Missing** | Explicitly on the wishlist: "Structural/AST-aware selection expansion (expand-to-next-syntax-node)" |
@@ -115,15 +115,17 @@ the gap.
   `C-w`/`M-w`+`ESC w` bound, act on `Buffer::Region()` when a mark is set (silent no-op
   otherwise, matching `kill-line`'s own "nothing to do" convention) and clear the mark
   afterward.
-- ~~**Redo keybinding**~~ — **done.** Bound to `M-/`+`ESC /`, not a Control-modified
-  chord (`C-?`/`C-x C-/`) on purpose: while implementing this, reading
-  `KeyTranslation.cpp`'s `DecodeBaseKey` turned up a real, pre-existing, unrelated gap —
-  it only ever produces `Control=true` for C0 control bytes 1-26 (`Control+<a-z>`), so a
-  real terminal's Ctrl+/ byte (0x1F, outside that range) can never actually match the
-  existing `C-/` (undo) binding above. That binding is left as-is (out of scope for this
-  change, flagged in a comment at the new `M-/` binding site instead) — worth its own
-  follow-up if `C-/` turns out to be genuinely unreachable from real keyboards, which
-  hasn't been independently confirmed against a live terminal yet, only via code reading.
+- ~~**Redo keybinding**~~ — **done.** Bound to `M-/`+`ESC /`. While picking this, reading
+  `KeyTranslation.cpp`'s `DecodeBaseKey` turned up a real, pre-existing, unrelated gap in
+  the *existing* `C-/` undo binding: `DecodeBaseKey` only ever produced `Control=true` for
+  C0 control bytes 1-26 (`Control+<a-z>`), so a real terminal's Ctrl+/ byte (0x1F, outside
+  that range) could never match a Control-parsed `/` binding. Left as a flagged, unfixed
+  comment initially — then independently confirmed against a live terminal (multiple real
+  terminal emulators, not simulated) that `C-/` genuinely never fired, and fixed
+  separately: `DecodeBaseKey` now decodes byte 0x1F as `Control+'_'` (the same byte a
+  terminal sends for both Ctrl+/ and Ctrl+_, since Shift isn't tracked on top of a control
+  byte), and undo is rebound to `C-_` — real Emacs' own actual undo chord, not a
+  GUI-Emacs-only convenience alias. See the canonical-Emacs table's `undo` row above.
 - ~~**`M-<` / `M->` (beginning/end-of-buffer)**~~ — **done.** `beginning-of-buffer`/
   `end-of-buffer` registered, bound to `M-<`/`M->` + `ESC <`/`ESC >`. `Ctrl+Home`/
   `Ctrl+End` are still unbound (tracked separately below, "Normal" editor conventions

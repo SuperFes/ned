@@ -35,6 +35,17 @@ namespace {
         if (bytes.size() == 1 && b0 >= 1 && b0 <= 26) {
             return KeyChord{.Control = true, .Codepoint = static_cast<char32_t>('a' + b0 - 1)};
         }
+        // Byte 0x1F (US, "Unit Separator") is what a real terminal actually
+        // sends for Ctrl+_ -- and, since terminals don't distinguish Shift
+        // on top of a control byte, for a physical Ctrl+/ press too (same
+        // key, unshifted vs shifted). Real Emacs' own undo binding is C-_
+        // for exactly this reason; decoded as Control+'_' here to match,
+        // confirmed against a real terminal after C-/ (parsed as a literal
+        // Control+'/' KeyChord, which no real terminal byte can ever
+        // produce) turned out to be dead in practice.
+        if (bytes.size() == 1 && b0 == 0x1F) {
+            return KeyChord{.Control = true, .Codepoint = U'_'};
+        }
 
         // Standard UTF-8 decode of the leading codepoint -- FTXUI hands us
         // raw encoded bytes here (unlike the old esc::Key, whose value was
