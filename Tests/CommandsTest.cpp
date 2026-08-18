@@ -1339,6 +1339,159 @@ TEST_CASE("code-fold-toggle folds the block starting at point when context.mode 
     REQUIRE(message == "No foldable block starts here.");
 }
 
+TEST_CASE("toggle-line-comment reports explicitly when no mode/comment syntax is configured", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    std::string    message;
+    context.message = &message;
+    // context.mode left at its default (nullptr).
+
+    fixture.buffer.InsertAtPoint("hello");
+    registry.Invoke("toggle-line-comment", context);
+    REQUIRE(message == "No comment syntax configured for this mode.");
+    REQUIRE(fixture.buffer.Text() == "hello");
+
+    const Mode json = JsonMode(); // has no lineCommentPrefix -- JSON has no comment syntax
+    context.mode     = &json;
+    registry.Invoke("toggle-line-comment", context);
+    REQUIRE(message == "No comment syntax configured for this mode.");
+    REQUIRE(fixture.buffer.Text() == "hello");
+}
+
+TEST_CASE("toggle-line-comment comments then uncomments a single line", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    const Mode cMode = CMode();
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    context.mode            = &cMode;
+
+    fixture.buffer.InsertAtPoint("int x = 1;");
+    fixture.buffer.SetPoint(0);
+
+    registry.Invoke("toggle-line-comment", context);
+    REQUIRE(fixture.buffer.Text() == "// int x = 1;");
+
+    registry.Invoke("toggle-line-comment", context);
+    REQUIRE(fixture.buffer.Text() == "int x = 1;");
+}
+
+TEST_CASE("toggle-line-comment preserves indentation", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    const Mode pyMode = PythonMode();
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    context.mode            = &pyMode;
+
+    fixture.buffer.InsertAtPoint("    x = 1");
+    fixture.buffer.SetPoint(4);
+
+    registry.Invoke("toggle-line-comment", context);
+    REQUIRE(fixture.buffer.Text() == "    # x = 1");
+
+    registry.Invoke("toggle-line-comment", context);
+    REQUIRE(fixture.buffer.Text() == "    x = 1");
+}
+
+TEST_CASE("toggle-line-comment leaves a blank line untouched", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    const Mode cMode = CMode();
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    context.mode            = &cMode;
+
+    fixture.buffer.InsertAtPoint("   ");
+    fixture.buffer.SetPoint(0);
+
+    registry.Invoke("toggle-line-comment", context);
+    REQUIRE(fixture.buffer.Text() == "   ");
+}
+
+TEST_CASE("toggle-line-comment over a region comments every uncommented line, skipping blanks", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    const Mode cMode = CMode();
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    context.mode            = &cMode;
+
+    fixture.buffer.InsertAtPoint("a\n\nb\n// c");
+    fixture.buffer.SetPoint(0);
+    fixture.buffer.SetMark(fixture.buffer.Content().ByteLength()); // whole buffer
+
+    registry.Invoke("toggle-line-comment", context);
+    REQUIRE(fixture.buffer.Text() == "// a\n\n// b\n// c"); // blank line 2 untouched, already-commented line 4 untouched
+    REQUIRE_FALSE(fixture.buffer.HasMark());
+}
+
+TEST_CASE("toggle-line-comment uncomments every line only once all non-blank lines are commented", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    const Mode cMode = CMode();
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    context.mode            = &cMode;
+
+    fixture.buffer.InsertAtPoint("// a\n// b");
+    fixture.buffer.SetPoint(0);
+    fixture.buffer.SetMark(fixture.buffer.Content().ByteLength());
+
+    registry.Invoke("toggle-line-comment", context);
+    REQUIRE(fixture.buffer.Text() == "a\nb");
+}
+
+TEST_CASE("toggle-line-comment's region excludes a line the selection end merely touches at column 0", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    const Mode cMode = CMode();
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    context.mode            = &cMode;
+
+    fixture.buffer.InsertAtPoint("a\nb\nc");
+    fixture.buffer.SetPoint(0);
+    fixture.buffer.SetMark(4); // start of line "c" (index 4), not into it
+
+    registry.Invoke("toggle-line-comment", context);
+    REQUIRE(fixture.buffer.Text() == "// a\n// b\nc"); // "c" untouched
+}
+
+TEST_CASE("M-;/ESC ; are bound to toggle-line-comment", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+    Keymap     keymap = BuildDefaultGlobalKeymap();
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    const Mode cMode = CMode();
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    context.mode            = &cMode;
+
+    fixture.buffer.InsertAtPoint("x");
+    fixture.buffer.SetPoint(0);
+
+    REQUIRE(dispatcher.Feed(ParseKeyChord("M-;"), context) == Dispatcher::Outcome::Invoked);
+    REQUIRE(fixture.buffer.Text() == "// x");
+}
+
 TEST_CASE("org-set-tags requests a tags prompt on a headline and reports failure off one", "[Commands]") {
     CommandRegistry registry;
     RegisterBuiltinCommands(registry);

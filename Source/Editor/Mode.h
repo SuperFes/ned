@@ -146,6 +146,14 @@ struct Mode {
     Keymap            keymap;
     HighlightFunction highlight; // empty function = no highlighting
     FoldFunction       fold;     // empty function = no folding
+    // toggle-line-comment follow-up: the token toggle-line-comment prefixes
+    // a line with (plus one following space on insert -- see that
+    // command's own doc comment in Commands.cpp), e.g. "//" for C-family
+    // languages, "#" for Python/Bash, ";" for Janet (a Lisp). Empty (the
+    // default, matching FundamentalMode's own "no special support"
+    // convention) means toggle-line-comment reports there's nothing
+    // configured rather than guessing.
+    std::string lineCommentPrefix;
 };
 
 // The default mode: no special keybindings, no highlighting.
