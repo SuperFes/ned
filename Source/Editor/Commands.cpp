@@ -640,6 +640,97 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                 *context.message = "No foldable block starts here.";
             }
         });
+    // toggle-line-comment follow-up: needs context.mode for the same
+    // reason code-fold-toggle above does -- comment-prefix-per-language is
+    // a Mode property (Mode::lineCommentPrefix), not a Command one.
+    // Operates on every line the mark's region spans if one is set,
+    // otherwise just the current line -- standard multi-line toggle
+    // convention, matching how a region-scoped command already behaves
+    // elsewhere in this file (kill-region/kill-ring-save). A blank
+    // (whitespace-only) line is left untouched even when it falls inside
+    // the range, same "nothing meaningful to toggle there" reasoning
+    // real editors use. If *any* non-blank line in range is still
+    // uncommented, the action is "comment" (every uncommented line in
+    // range gets the prefix, already-commented ones are left alone rather
+    // than double-prefixed); only when *every* non-blank line is already
+    // commented does the action flip to "uncomment." Processes bottom-to-
+    // top so editing an earlier line's byte offsets never invalidates a
+    // later line's already-computed ones -- point/mark relocate correctly
+    // regardless, via Buffer::InsertAt/DeleteRange's own existing
+    // relocation, not tracked separately here.
+    registry.Register("toggle-line-comment", "Comment or uncomment the current line, or every line the region spans.",
+                      [](CommandContext& context) {
+                          if (context.mode == nullptr || context.mode->lineCommentPrefix.empty()) {
+                              if (context.message) {
+                                  *context.message = "No comment syntax configured for this mode.";
+                              }
+                              return;
+                          }
+                          const std::string& prefix = context.mode->lineCommentPrefix;
+
+                          text::Buffer&      buffer  = context.buffer;
+                          const text::Rope&  content = buffer.Content();
+                          std::size_t        firstLine, lastLine;
+                          if (buffer.HasMark()) {
+                              const auto [start, end] = buffer.Region();
+                              firstLine                = content.ByteOffsetToLine(start);
+                              lastLine                 = content.ByteOffsetToLine(end);
+                              // A region end sitting exactly at the start of
+                              // a line (e.g. two S-DOWN presses from column
+                              // 0) shouldn't pull that line into the range --
+                              // matches Emacs' own comment-region convention
+                              // for the same "off by one" gotcha.
+                              if (lastLine > firstLine && end == content.LineToByteOffset(lastLine)) {
+                                  --lastLine;
+                              }
+                          }
+                          else {
+                              firstLine = lastLine = content.ByteOffsetToLine(buffer.Point());
+                          }
+                          buffer.ClearMark();
+
+                          // First pass (read-only): is every non-blank line
+                          // in range already commented?
+                          bool anyUncommented = false;
+                          for (std::size_t line = firstLine; line <= lastLine; ++line) {
+                              const std::size_t start = content.LineToByteOffset(line);
+                              const std::size_t end   = LineContentEnd(content, start);
+                              const std::string text  = content.Substring(start, end - start);
+                              const std::size_t indent = text.find_first_not_of(" \t");
+                              if (indent == std::string::npos) {
+                                  continue; // blank line -- doesn't count either way
+                              }
+                              if (text.compare(indent, prefix.size(), prefix) != 0) {
+                                  anyUncommented = true;
+                                  break;
+                              }
+                          }
+                          const bool shouldComment = anyUncommented;
+
+                          // Second pass (bottom-to-top, so earlier lines'
+                          // offsets are never invalidated by editing a
+                          // later one): apply the toggle.
+                          for (std::size_t line = lastLine + 1; line-- > firstLine;) {
+                              const std::size_t start = content.LineToByteOffset(line);
+                              const std::size_t end   = LineContentEnd(content, start);
+                              const std::string text  = content.Substring(start, end - start);
+                              const std::size_t indent = text.find_first_not_of(" \t");
+                              if (indent == std::string::npos) {
+                                  continue;
+                              }
+                              const bool isCommented = text.compare(indent, prefix.size(), prefix) == 0;
+                              if (shouldComment && !isCommented) {
+                                  buffer.InsertAt(start + indent, prefix + " ");
+                              }
+                              else if (!shouldComment && isCommented) {
+                                  std::size_t removeLength = prefix.size();
+                                  if (indent + prefix.size() < text.size() && text[indent + prefix.size()] == ' ') {
+                                      ++removeLength; // symmetric with the inserted "<prefix> "
+                                  }
+                                  buffer.DeleteRange(start + indent, removeLength);
+                              }
+                          }
+                      });
     // Real Org's own C-c C-q ("org-set-tags-command"): unlike the direct
     // commands above, tags are free-form text, so this just checks the
     // precondition (same "Not on a headline." report) and hands off to a
@@ -815,6 +906,17 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("M-DOWN"), "move-line-down");
     keymap.Bind(ParseKeySequence("ESC DOWN"), "move-line-down");
     keymap.Bind(ParseKeySequence("C-c d"), "duplicate-line");
+    // toggle-line-comment follow-up: real Emacs' own actual binding for
+    // comment-dwim/comment-line is M-;, not C-/ (which is a non-Emacs
+    // convention this codebase never adopted anyway) -- chosen over C-/
+    // for a second reason too: C-/ has the exact same real-terminal-
+    // unreachability problem the pre-fix undo binding had (no terminal
+    // byte distinguishes Ctrl+/ from Ctrl+_, and only the latter is
+    // decoded -- see KeyTranslation.cpp's DecodeBaseKey), while M-;
+    // decodes reliably via the ESC-prefix Meta path like every other Meta
+    // chord here.
+    keymap.Bind(ParseKeySequence("M-;"), "toggle-line-comment");
+    keymap.Bind(ParseKeySequence("ESC ;"), "toggle-line-comment");
     keymap.Bind(ParseKeySequence("C-x 2"), "split-window-below");
     keymap.Bind(ParseKeySequence("C-x 3"), "split-window-right");
     keymap.Bind(ParseKeySequence("C-x 0"), "delete-window");

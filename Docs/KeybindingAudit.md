@@ -83,7 +83,7 @@ already reports `Control+Special::Left/Right` for Ctrl+Arrow).
 | Go-to-definition / hover / rename symbol | varies, usually `F12`/LSP-bound | **Missing** | On the wishlist as part of "LSP client: autocomplete, diagnostics, go-to-definition, hover docs, code actions, rename, multi-language support" |
 | Fuzzy file finder / command palette | `Ctrl+P` / `Ctrl+Shift+P` | **Missing** | On the wishlist: "Fast fuzzy file finder / command palette" — note Ned already has `find-file`'s path-completion (`Tab`) and `M-x`'s fuzzy-narrowed `execute-extended-command`, so the foundation is closer than "missing" alone suggests |
 | Format document (on demand, not just on save) | `Ctrl+Shift+I` / `Alt+Shift+F` | **Bound** | `format-buffer`, M-x-only (no default keybinding) |
-| Toggle line comment | `Ctrl+/` | **Missing** | No comment-toggle command exists; `Ctrl+/` no longer collides with `undo` (moved to `C-_`, see the canonical-Emacs table above) but binding literal `C-/` would hit the exact same real-terminal-unreachability problem that move fixed — no terminal byte distinguishes Ctrl+/ from Ctrl+_, and only the latter is decoded |
+| Toggle line comment | `Ctrl+/` | **Bound** | `toggle-line-comment`, bound to `M-;` (real Emacs' own chord) instead of `Ctrl+/`, which would be equally unreachable from a real terminal as `C-/`'s old undo binding was |
 | Duplicate line | `Ctrl+D` / `Ctrl+Shift+D` | **Bound** | `duplicate-line`, bound to `C-c d` instead (both usual chords already taken/unreachable) |
 | Move line up/down | `Alt+Up`/`Alt+Down` | **Bound** | `move-line-up`/`move-line-down`; `ESC UP`/`ESC DOWN` too |
 | Expand selection (AST-aware) | `Alt+Shift+Right`/`Ctrl+W` in some IDEs | **Missing** | Explicitly on the wishlist: "Structural/AST-aware selection expansion (expand-to-next-syntax-node)" |
@@ -205,11 +205,19 @@ Plausible, but a real tradeoff either way — worth an explicit decision, not a 
   line's edge case right via a shared `GetLineSpan` helper, not raw substring
   concatenation across the swap/insert boundary — traced by hand and covered by tests
   for both directions landing on that line.
-- **Toggle line comment** — high real-world value. `Ctrl+/` no longer collides with
-  `undo` (moved to `C-_`, see the canonical-Emacs table's `undo` row), so the obvious
-  chord is actually free now — but comment-syntax-per-language is still a real design
-  question (tree-sitter grammars know comment delimiters, so this is more tractable
-  than it looks, but it's not free).
+- ~~**Toggle line comment**~~ — **done.** `toggle-line-comment` bound to `M-;` +
+  `ESC ;` — real Emacs' own actual `comment-dwim`/`comment-line` chord, not `Ctrl+/`
+  (which would hit the exact same real-terminal-unreachability problem `C-/`'s old
+  undo binding had). `Mode` gained a `lineCommentPrefix` field (empty by default,
+  matching `FundamentalMode`'s own "no special support" convention), set per language
+  by hand rather than pulled from each grammar's own query (`//` for the C-family,
+  `#` for Python/Bash/Org, `;` for Janet; deliberately left empty for JSON/HTML/CSS/
+  Markdown, none of which have a native single-line-comment token to toggle). Toggles
+  every line a region spans if a mark is set, otherwise just the current line;
+  skips blank lines; comments if any non-blank line in range is still uncommented,
+  only uncomments once every one already is; excludes a line the region's end merely
+  touches at column 0 (Emacs' own `comment-region` convention for the same
+  off-by-one gotcha).
 
 ### Don't want
 Actively wrong fit for a terminal, Emacs-parity, Janet-scriptable editor, or better

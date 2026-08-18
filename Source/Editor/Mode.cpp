@@ -292,53 +292,78 @@ Mode TreeSitterMode(std::string name, std::string_view languageName, const char*
 }
 
 Mode JanetMode() {
-    return TreeSitterMode("janet-mode", "janet", treesitter::queries::kJanet);
+    Mode mode = TreeSitterMode("janet-mode", "janet", treesitter::queries::kJanet);
+    mode.lineCommentPrefix = ";"; // Lisp-family convention
+    return mode;
 }
 
 Mode JsonMode() {
+    // No lineCommentPrefix -- JSON has no comment syntax at all, real or
+    // otherwise; toggle-line-comment correctly reports nothing configured
+    // rather than inserting something that would make the file invalid JSON.
     return TreeSitterMode("json-mode", "json", treesitter::queries::kJson, treesitter::queries::kJsonFolds);
 }
 
 Mode CMode() {
-    return TreeSitterMode("c-mode", "c", treesitter::queries::kC, treesitter::queries::kCFolds);
+    Mode mode = TreeSitterMode("c-mode", "c", treesitter::queries::kC, treesitter::queries::kCFolds);
+    mode.lineCommentPrefix = "//";
+    return mode;
 }
 
 Mode CppMode() {
-    return TreeSitterMode("cpp-mode", "cpp", treesitter::queries::kCpp, treesitter::queries::kCppFolds);
+    Mode mode = TreeSitterMode("cpp-mode", "cpp", treesitter::queries::kCpp, treesitter::queries::kCppFolds);
+    mode.lineCommentPrefix = "//";
+    return mode;
 }
 
 Mode PhpMode() {
-    return TreeSitterMode("php-mode", "php", treesitter::queries::kPhp);
+    Mode mode = TreeSitterMode("php-mode", "php", treesitter::queries::kPhp);
+    mode.lineCommentPrefix = "//";
+    return mode;
 }
 
 Mode JavaScriptMode() {
-    return TreeSitterMode("javascript-mode", "javascript", treesitter::queries::kJavaScript,
-                          treesitter::queries::kJavaScriptFolds);
+    Mode mode = TreeSitterMode("javascript-mode", "javascript", treesitter::queries::kJavaScript,
+                               treesitter::queries::kJavaScriptFolds);
+    mode.lineCommentPrefix = "//";
+    return mode;
 }
 
 Mode TypeScriptMode() {
-    return TreeSitterMode("typescript-mode", "typescript", treesitter::queries::kTypeScript,
-                          treesitter::queries::kTypeScriptFolds);
+    Mode mode = TreeSitterMode("typescript-mode", "typescript", treesitter::queries::kTypeScript,
+                               treesitter::queries::kTypeScriptFolds);
+    mode.lineCommentPrefix = "//";
+    return mode;
 }
 
 Mode TsxMode() {
-    return TreeSitterMode("tsx-mode", "tsx", treesitter::queries::kTypeScript, treesitter::queries::kTypeScriptFolds);
+    Mode mode = TreeSitterMode("tsx-mode", "tsx", treesitter::queries::kTypeScript, treesitter::queries::kTypeScriptFolds);
+    mode.lineCommentPrefix = "//";
+    return mode;
 }
 
 Mode HtmlMode() {
+    // No lineCommentPrefix -- HTML only has block comments (<!-- -->), no
+    // single-line comment token to toggle per line.
     return TreeSitterMode("html-mode", "html", treesitter::queries::kHtml);
 }
 
 Mode CssMode() {
+    // No lineCommentPrefix -- same reasoning as HtmlMode, CSS only has
+    // block comments (/* */).
     return TreeSitterMode("css-mode", "css", treesitter::queries::kCss);
 }
 
 Mode PythonMode() {
-    return TreeSitterMode("python-mode", "python", treesitter::queries::kPython, treesitter::queries::kPythonFolds);
+    Mode mode = TreeSitterMode("python-mode", "python", treesitter::queries::kPython, treesitter::queries::kPythonFolds);
+    mode.lineCommentPrefix = "#";
+    return mode;
 }
 
 Mode BashMode() {
-    return TreeSitterMode("bash-mode", "bash", treesitter::queries::kBash);
+    Mode mode = TreeSitterMode("bash-mode", "bash", treesitter::queries::kBash);
+    mode.lineCommentPrefix = "#";
+    return mode;
 }
 
 Mode MarkdownMode() {
@@ -348,6 +373,8 @@ Mode MarkdownMode() {
     // below) -- no shadowing risk, Markdown has no fold-cycle or other TAB
     // use to compete with.
     mode.keymap.Bind(ParseKeySequence("TAB"), "markdown-table-align");
+    // No lineCommentPrefix -- Markdown (unlike Org, see OrgMode() below)
+    // has no native comment-line convention of its own to toggle.
     return mode;
 }
 
@@ -453,7 +480,8 @@ Mode OrgMode() {
         return spans;
     };
 
-    return Mode{.name = "org-mode", .keymap = std::move(keymap), .highlight = std::move(highlight)};
+    // Real Org's own comment-line convention (org-comment-string's default).
+    return Mode{.name = "org-mode", .keymap = std::move(keymap), .highlight = std::move(highlight), .lineCommentPrefix = "#"};
 }
 
 } // namespace ned::editor

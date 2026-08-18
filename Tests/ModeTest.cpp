@@ -4,16 +4,25 @@
 #include "Editor/Mode.h"
 #include "Editor/Org.h"
 
+using ned::editor::BashMode;
 using ned::editor::CMode;
 using ned::editor::CppMode;
+using ned::editor::CssMode;
 using ned::editor::FundamentalMode;
 using ned::editor::HighlightSpan;
+using ned::editor::HtmlMode;
 using ned::editor::JanetMode;
+using ned::editor::JavaScriptMode;
 using ned::editor::JsonMode;
 using ned::editor::Keymap;
+using ned::editor::MarkdownMode;
 using ned::editor::OrgMode;
 using ned::editor::ParseKeySequence;
+using ned::editor::PhpMode;
+using ned::editor::PythonMode;
 using ned::editor::SyntaxClass;
+using ned::editor::TsxMode;
+using ned::editor::TypeScriptMode;
 
 namespace {
 
@@ -406,4 +415,23 @@ TEST_CASE("CppMode classifies a comment as Comment, not clobbered to Default by 
     const auto mode  = CppMode();
     const auto spans = mode.highlight("// a comment\nint x;\n");
     REQUIRE(HasSpan(spans, 0, 12, SyntaxClass::Comment));
+}
+
+TEST_CASE("Each *Mode() sets lineCommentPrefix to its language's real line-comment token, or leaves it empty", "[Mode]") {
+    REQUIRE(CMode().lineCommentPrefix == "//");
+    REQUIRE(CppMode().lineCommentPrefix == "//");
+    REQUIRE(PhpMode().lineCommentPrefix == "//");
+    REQUIRE(JavaScriptMode().lineCommentPrefix == "//");
+    REQUIRE(TypeScriptMode().lineCommentPrefix == "//");
+    REQUIRE(TsxMode().lineCommentPrefix == "//");
+    REQUIRE(PythonMode().lineCommentPrefix == "#");
+    REQUIRE(BashMode().lineCommentPrefix == "#");
+    REQUIRE(JanetMode().lineCommentPrefix == ";");
+    REQUIRE(OrgMode().lineCommentPrefix == "#");
+    // No native single-line-comment token to toggle.
+    REQUIRE(JsonMode().lineCommentPrefix.empty());
+    REQUIRE(HtmlMode().lineCommentPrefix.empty());
+    REQUIRE(CssMode().lineCommentPrefix.empty());
+    REQUIRE(MarkdownMode().lineCommentPrefix.empty());
+    REQUIRE(FundamentalMode().lineCommentPrefix.empty());
 }
