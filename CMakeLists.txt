@@ -284,12 +284,16 @@ add_library(ned_lib STATIC
         Source/Editor/ProjectRoot.cpp
         Source/Editor/ProjectFileOps.cpp
         Source/Editor/ScratchPad.cpp
+        Source/Editor/Process/ChildProcess.cpp
         Source/Editor/Lsp/Transport.cpp
         Source/Editor/Lsp/LspClient.cpp
         Source/Editor/Lsp/LspServerConfig.cpp
         Source/Editor/Lsp/LspPosition.cpp
         Source/Editor/Lsp/LspContent.cpp
         Source/Editor/Lsp/LspManager.cpp
+        Source/Editor/Tasks/TaskConfig.cpp
+        Source/Editor/Tasks/TaskProcess.cpp
+        Source/Editor/Tasks/TaskRunner.cpp
         Source/Editor/TreeSitter/Node.cpp
         Source/Editor/TreeSitter/Tree.cpp
         Source/Editor/TreeSitter/Parser.cpp
@@ -431,6 +435,10 @@ if (NED_BUILD_TESTS)
             Tests/LspPositionTest.cpp
             Tests/LspContentTest.cpp
             Tests/LspManagerTest.cpp
+            Tests/ChildProcessTest.cpp
+            Tests/TaskConfigTest.cpp
+            Tests/TaskProcessTest.cpp
+            Tests/TaskRunnerTest.cpp
             Tests/TreeSitterTest.cpp
             Tests/DynamicGrammarTest.cpp
             Tests/ModeOverridesTest.cpp

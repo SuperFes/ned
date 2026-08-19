@@ -353,7 +353,7 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                       [](CommandContext& context) {
                           const bool anyModified =
                               std::any_of(context.bufferList.Buffers().begin(), context.bufferList.Buffers().end(),
-                                         [](const auto& buffer) { return buffer->Modified() && !buffer->ReadOnly(); });
+                                          [](const auto& buffer) { return buffer->Modified() && !buffer->ReadOnly(); });
                           if (anyModified) {
                               context.interactiveRequest = InteractiveRequest::ConfirmQuit;
                           }
@@ -658,11 +658,11 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           }
                           std::string* message = context.message;
                           context.lspManager->RequestHover(context.buffer, context.buffer.Point(),
-                                                            [message](std::optional<std::string> text) {
-                                                                if (message) {
-                                                                    *message = text.value_or("No hover information available.");
-                                                                }
-                                                            });
+                                                           [message](std::optional<std::string> text) {
+                                                               if (message) {
+                                                                   *message = text.value_or("No hover information available.");
+                                                               }
+                                                           });
                       });
 
     // hover/completion follow-up: a one-shot direct action (see
@@ -703,6 +703,19 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                       [](CommandContext& context) {
                           context.interactiveRequest = InteractiveRequest::LspRename;
                       });
+
+    // task-runner follow-up: two more prompt-shaped one-shot requests, same
+    // "just signal intent" shape as every InteractiveRequest-routed command
+    // above -- BufferView::HandlePromptKey's InputMode::TaskName case is
+    // what actually calls TaskRunner::RunTask/CancelTask, see that method
+    // and Editor/Tasks/TaskRunner.h.
+    registry.Register("run-task", "Run a Janet-configured task (see ned/set-task-command), streaming its output into a buffer.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::RunTask;
+                      });
+    registry.Register("cancel-task", "Cancel a running task started by run-task.", [](CommandContext& context) {
+        context.interactiveRequest = InteractiveRequest::CancelTask;
+    });
 
     // Org's three editing commands act directly on context.buffer, unlike
     // the interactiveRequest-routed commands above (rectangle/register/
@@ -1030,6 +1043,14 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("M-."), "lsp-goto-definition"); // real Emacs' own xref-find-definitions binding
     keymap.Bind(ParseKeySequence("ESC ."), "lsp-goto-definition");
     keymap.Bind(ParseKeySequence("C-c C-M-r"), "lsp-rename"); // C-c C-r is already project-replace
+    keymap.Bind(ParseKeySequence("C-c C-b"), "run-task");
+    // task-runner follow-up: same "shift/meta variant is the stronger
+    // version of the same action" slot lsp-rename's own C-c C-M-r binding
+    // establishes -- cancelling is rare, but not rare enough to leave
+    // M-x-only once it's actually needed (unlike lsp-show-log's own
+    // "no binding yet" precedent, this one's a "stop something running now"
+    // action worth a direct key).
+    keymap.Bind(ParseKeySequence("C-c C-M-b"), "cancel-task");
     keymap.Bind(ParseKeySequence("C-c C-v"), "project-search-visit-result");
     keymap.Bind(ParseKeySequence("C-c C-r"), "project-replace");
     keymap.Bind(ParseKeySequence("C-c C-p"), "toggle-project-sidebar");

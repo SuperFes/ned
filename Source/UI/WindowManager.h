@@ -41,6 +41,7 @@
 #include "Editor/Lsp/LspManager.h"
 #include "Editor/Mode.h"
 #include "Editor/Register.h"
+#include "Editor/Tasks/TaskRunner.h"
 #include "EventLoop.h"
 #include "Layout.h"
 #include "ModeLine.h"
@@ -86,7 +87,7 @@ class Pane {
     Pane(text::Buffer& buffer, text::KillRing& killRing, editor::RegisterTable& registers,
          text::BufferList& bufferList, const editor::CommandRegistry& registry, const editor::Keymap& janetKeymap,
          const editor::Keymap& globalKeymap, editor::Mode mode, std::string& statusMessage, const Theme& theme,
-         ProjectSidebar* projectSidebar, editor::lsp::LspManager* lspManager,
+         ProjectSidebar* projectSidebar, editor::lsp::LspManager* lspManager, editor::tasks::TaskRunner* taskRunner,
          std::function<void(editor::InteractiveRequest)> onWindowRequest,
          std::function<void(text::Buffer&)>              onBufferClosed);
 
@@ -199,6 +200,10 @@ class WindowManager {
     // for a real buffer close, regardless of which pane (or ProjectSidebar's
     // preview-swap, which isn't pane-driven at all) triggered it.
     void SetLspManager(editor::lsp::LspManager* lspManager);
+
+    // task-runner follow-up: same "forwarded to every pane, present and
+    // future" shape as SetProjectSidebar/SetLspManager above.
+    void SetTaskRunner(editor::tasks::TaskRunner* taskRunner);
 
     // FTXUI -> Notcurses migration: forwarded to every pane, present and
     // future, same shape as SetProjectSidebar/SetLspManager above -- see
@@ -372,6 +377,7 @@ class WindowManager {
     const Theme&                   theme_;
     ProjectSidebar*                projectSidebar_ = nullptr;
     editor::lsp::LspManager*       lspManager_     = nullptr;
+    editor::tasks::TaskRunner*     taskRunner_     = nullptr;
     EventLoop*                     eventLoop_      = nullptr; // see SetEventLoop
 
     std::unique_ptr<WindowNode> root_;

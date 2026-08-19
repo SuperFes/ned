@@ -21,6 +21,7 @@
 #include "Editor/ProjectRoot.h"
 #include "Editor/Register.h"
 #include "Editor/ScriptingSession.h"
+#include "Editor/Tasks/TaskRunner.h"
 #include "Janet/EditorBindings.h"
 #include "Janet/Environment.h"
 #include "Janet/InitFile.h"
@@ -421,6 +422,12 @@ int main(int argc, char** argv) {
     // (including ones created by a later split), gets it.
     ned::editor::lsp::LspManager lspManager(bufferList, eventLoop);
     windowManager->SetLspManager(&lspManager);
+
+    // task-runner follow-up: same "constructed here, needs a real EventLoop&"
+    // shape as lspManager just above, and the same "wired into windowManager,
+    // connect after construction" convention.
+    ned::editor::tasks::TaskRunner taskRunner(bufferList, eventLoop);
+    windowManager->SetTaskRunner(&taskRunner);
 
     // FTXUI -> Notcurses migration: BufferView's completion-debounce/
     // status-message-idle-timeout DeadlineTimers and ScrollArrowButton's
