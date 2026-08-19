@@ -227,6 +227,7 @@ add_library(ned_lib STATIC
         Source/Text/KillRing.cpp
         Source/Text/Buffer.cpp
         Source/Text/BufferList.cpp
+        Source/Text/BinaryDetect.cpp
         Source/Text/Utf8.cpp
         Source/Editor/Key.cpp
         Source/Editor/Command.cpp
@@ -284,6 +285,7 @@ add_library(ned_lib STATIC
         Source/UI/ScrollBar.cpp
         Source/UI/BufferView.cpp
         Source/UI/WindowManager.cpp
+        Source/UI/AsyncFileLoader.cpp
         Source/UI/TabBar.cpp
         Source/UI/ScrollArrowButton.cpp
         Source/UI/ProjectSidebar.cpp
@@ -350,6 +352,7 @@ if (NED_BUILD_TESTS)
             Tests/RectangleTest.cpp
             Tests/BufferTest.cpp
             Tests/BufferListTest.cpp
+            Tests/BinaryDetectTest.cpp
             Tests/KeyTest.cpp
             Tests/CommandTest.cpp
             Tests/FuzzyMatchTest.cpp

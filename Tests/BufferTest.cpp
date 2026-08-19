@@ -940,3 +940,62 @@ TEST_CASE("Two AppendWhileReadOnly calls both land at the end, in order", "[Buff
 
     REQUIRE(buffer.Text() == "first\nsecond\n");
 }
+
+TEST_CASE("A fresh buffer is not loading by default", "[Buffer]") {
+    Buffer buffer("scratch");
+    REQUIRE_FALSE(buffer.IsLoading());
+    REQUIRE_FALSE(buffer.ReadOnly());
+}
+
+TEST_CASE("MarkLoading makes IsLoading and ReadOnly both true", "[Buffer]") {
+    Buffer buffer("scratch");
+    buffer.MarkLoading();
+
+    REQUIRE(buffer.IsLoading());
+    REQUIRE(buffer.ReadOnly()); // every mutator must refuse edits while a load is still in flight
+
+    REQUIRE_THROWS_AS(buffer.InsertAtPoint("x"), std::runtime_error);
+}
+
+TEST_CASE("ReplaceContentForLoad swaps content and bumps ContentGeneration without touching undo/modified state",
+          "[Buffer]") {
+    Buffer buffer("scratch");
+    buffer.MarkLoading();
+    const std::size_t generationBefore = buffer.ContentGeneration();
+
+    buffer.ReplaceContentForLoad(ned::text::Rope("partial content"));
+
+    REQUIRE(buffer.Text() == "partial content");
+    REQUIRE(buffer.ContentGeneration() > generationBefore);
+    REQUIRE(buffer.IsLoading()); // ReplaceContentForLoad is a preview swap, not the terminal call
+    REQUIRE_FALSE(buffer.Modified()); // not a real edit -- must not mark the buffer dirty
+}
+
+TEST_CASE("FinishLoad clears IsLoading, restores editability, and leaves the buffer unmodified", "[Buffer]") {
+    Buffer buffer("scratch");
+    buffer.MarkLoading();
+    buffer.ReplaceContentForLoad(ned::text::Rope("first preview"));
+
+    buffer.FinishLoad(ned::text::Rope("final content"));
+
+    REQUIRE(buffer.Text() == "final content");
+    REQUIRE_FALSE(buffer.IsLoading());
+    REQUIRE_FALSE(buffer.ReadOnly());
+    REQUIRE_FALSE(buffer.Modified());
+
+    buffer.InsertAtPoint("x"); // must not throw -- editability is genuinely restored
+    REQUIRE(buffer.Modified());
+}
+
+TEST_CASE("FinishLoad starts undo history clean at the loaded content, not at an earlier preview", "[Buffer]") {
+    Buffer buffer("scratch");
+    buffer.MarkLoading();
+    buffer.ReplaceContentForLoad(ned::text::Rope("preview"));
+    buffer.FinishLoad(ned::text::Rope("final"));
+
+    buffer.SetPoint(buffer.Size());
+    buffer.InsertAtPoint("!");
+    REQUIRE(buffer.Text() == "final!");
+    buffer.Undo();
+    REQUIRE(buffer.Text() == "final"); // undoing the one real edit lands exactly on FinishLoad's content
+}

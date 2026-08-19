@@ -21,6 +21,7 @@
 #include "Janet/EditorBindings.h"
 #include "Janet/Environment.h"
 #include "Janet/InitFile.h"
+#include "Text/BinaryDetect.h"
 #include "Text/BufferList.h"
 #include "Text/KillRing.h"
 #include "UI/ActiveBuffer.h"
@@ -101,23 +102,57 @@ int main(int argc, char** argv) {
     ned::text::BufferList bufferList;
     std::string           statusMessage;
 
-    // Whether argv[1] is a directory decides two independent things below:
-    // it's never handed to OpenOrCreateFile (a directory can't be opened as
-    // a file's content -- Buffer::FromFile would just throw), and per
-    // DetectProjectRoot's own rule it becomes the project root outright,
-    // bypassing VCS detection ("if we just open a directory, that can be
-    // the project root regardless" -- the user's own words).
-    std::error_code argIsDirectoryEc;
-    const bool      argIsDirectory = argc > 1 && std::filesystem::is_directory(argv[1], argIsDirectoryEc);
+    // open-binary-anyway follow-up: --force-binary is the CLI-argument-time
+    // escape hatch for BufferList::OpenOrCreateFile's binary refusal --
+    // there's no interactive session to ask a y/n confirmation through at
+    // this point in startup (no EventLoop, no BufferView yet), so this is
+    // the only override available for a file passed directly on the
+    // command line. Accepted anywhere among the arguments, not just
+    // immediately after the program name, so `ned --force-binary path` and
+    // `ned path --force-binary` both work; the first non-flag argument is
+    // taken as the path.
+    bool        forceBinary = false;
+    const char* pathArg     = nullptr;
+    for (int i = 1; i < argc; ++i) {
+        if (std::string_view(argv[i]) == "--force-binary") {
+            forceBinary = true;
+        }
+        else if (pathArg == nullptr) {
+            pathArg = argv[i];
+        }
+    }
 
-    ned::text::Buffer* buffer = nullptr;
-    if (argc > 1 && !argIsDirectory) {
-        const bool isNewFile = !std::filesystem::exists(argv[1]);
+    // Whether the path argument is a directory decides two independent
+    // things below: it's never handed to OpenOrCreateFile (a directory
+    // can't be opened as a file's content -- Buffer::FromFile would just
+    // throw), and per DetectProjectRoot's own rule it becomes the project
+    // root outright, bypassing VCS detection ("if we just open a
+    // directory, that can be the project root regardless" -- the user's
+    // own words).
+    std::error_code argIsDirectoryEc;
+    const bool      argIsDirectory = pathArg != nullptr && std::filesystem::is_directory(pathArg, argIsDirectoryEc);
+
+    // open-binary-anyway follow-up: a plain BinaryFileError (not
+    // --force-binary'd) falls all the way through to below, after the
+    // whole UI/EventLoop exists, rather than being reported and dropped
+    // here -- see the deferredBinaryOpenPath_ use site (right after
+    // windowManager->TakeFocus()) for why: it hands off to
+    // WindowManager::RequestOpenBinaryFile, the exact same y/n
+    // confirmation pathway find-file and a sidebar click already use, so
+    // `ned somebinaryfile` behaves consistently with every other way of
+    // opening the same file instead of just refusing outright.
+    ned::text::Buffer*    buffer = nullptr;
+    std::filesystem::path deferredBinaryOpenPath;
+    if (pathArg != nullptr && !argIsDirectory) {
+        const bool isNewFile = !std::filesystem::exists(pathArg);
         try {
-            buffer = &bufferList.OpenOrCreateFile(argv[1]);
+            buffer = &bufferList.OpenOrCreateFile(pathArg, forceBinary);
             if (isNewFile) {
                 statusMessage = "(New file)";
             }
+        }
+        catch (const ned::text::BinaryFileError&) {
+            deferredBinaryOpenPath = pathArg;
         }
         catch (const std::exception& e) {
             statusMessage = e.what();
@@ -135,7 +170,7 @@ int main(int argc, char** argv) {
     // outright" rule is specifically for an *explicitly* opened directory,
     // and there's no file path to derive a smarter default from otherwise.
     ned::editor::SetProjectRoot(
-        ned::editor::DetectProjectRoot(argc > 1 ? std::filesystem::path(argv[1]) : std::filesystem::current_path()));
+        ned::editor::DetectProjectRoot(pathArg != nullptr ? std::filesystem::path(pathArg) : std::filesystem::current_path()));
 
     ned::text::KillRing        killRing;
     ned::editor::RegisterTable registers;
@@ -239,6 +274,8 @@ int main(int argc, char** argv) {
     windowManager->SetProjectSidebar(projectSidebar.get());
     projectSidebar->SetOnBufferClosed(
         [wm = windowManager.get()](ned::text::Buffer& buffer) { wm->NotifyBufferClosing(buffer); });
+    projectSidebar->SetOnBinaryFileOpenRequest(
+        [wm = windowManager.get()](const std::filesystem::path& path) { wm->RequestOpenBinaryFile(path); });
     sidebarToggle->SetSidebar(projectSidebar.get());
     // project-root-detection follow-up: makes it clear, right at startup,
     // which file in the (possibly VCS-root-detected, not just the opened
@@ -299,6 +336,16 @@ int main(int argc, char** argv) {
     // no new reasoning to justify.
     windowManager->TakeFocus();
 
+    // open-binary-anyway follow-up: deferred from the initial CLI-argument
+    // open above, now that a focused pane actually exists to drive the y/n
+    // confirmation through (RequestOpenBinaryFile routes to whichever pane
+    // is focused -- see WindowManager.cpp). Must run after TakeFocus(), not
+    // before: RequestOpenBinaryFile is a no-op unless FocusedPane() finds a
+    // real focused pane.
+    if (!deferredBinaryOpenPath.empty()) {
+        windowManager->RequestOpenBinaryFile(deferredBinaryOpenPath);
+    }
+
     // FTXUI -> Notcurses migration: the Konsole-specific workaround that
     // used to live here (entering the alternate screen buffer and homing
     // the cursor manually, before FTXUI's own ScreenInteractive::Fullscreen()
@@ -350,6 +397,17 @@ int main(int argc, char** argv) {
     // WindowManager, the genuinely whole-session-lifetime owner this timer
     // semantically needs (see WindowManager.h's own header comment).
     windowManager->StartAutoSaveTimer(eventLoop);
+
+    // large-file-async-load follow-up: same "only the real, running editor
+    // opts in, needs the owning EventLoop" reasoning as StartAutoSaveTimer
+    // just above. Only takes effect for files opened from here on --
+    // bufferList.OpenOrCreateFile(pathArg) already ran synchronously above
+    // this point (before EventLoop existed at all), a documented, accepted
+    // v1 gap: a huge file passed directly on the command line still blocks
+    // the initial splash briefly, but every interactive open (find-file,
+    // sidebar click, LSP jump-to-definition, etc.) happens well after this
+    // and gets the async path.
+    windowManager->EnableAsyncFileLoading(eventLoop);
 
     // FTXUI -> Notcurses migration: replaces ScreenInteractive::
     // ForceHandleCtrlC(false)/ForceHandleCtrlZ(false) -- see EventLoop's own

@@ -330,6 +330,12 @@ void WindowManager::RequestCloseBuffer(text::Buffer& buffer) {
     }
 }
 
+void WindowManager::RequestOpenBinaryFile(const std::filesystem::path& path) {
+    if (Pane* pane = FocusedPane()) {
+        pane->Buffer().RequestOpenBinaryFile(path);
+    }
+}
+
 void WindowManager::StartAutoSaveTimer(EventLoop& eventLoop) {
     autoSaveThread_ = std::jthread([this, &eventLoop](std::stop_token stopToken) {
         std::mutex                  mutex;
@@ -342,6 +348,17 @@ void WindowManager::StartAutoSaveTimer(EventLoop& eventLoop) {
             eventLoop.Post([this] { editor::AutoSaveScratchBuffers(bufferList_); });
         }
     });
+}
+
+void WindowManager::EnableAsyncFileLoading(EventLoop& eventLoop) {
+    bufferList_.SetAsyncFileOpener([this, &eventLoop](text::Buffer& placeholder, const std::filesystem::path& path) {
+        PurgeFinishedAsyncLoaders();
+        asyncFileLoaders_.push_back(std::make_unique<AsyncFileLoader>(placeholder, bufferList_, path, eventLoop));
+    });
+}
+
+void WindowManager::PurgeFinishedAsyncLoaders() {
+    std::erase_if(asyncFileLoaders_, [](const std::unique_ptr<AsyncFileLoader>& loader) { return loader->Done(); });
 }
 
 void WindowManager::HandleWindowRequest(editor::InteractiveRequest request) {

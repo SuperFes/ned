@@ -153,6 +153,17 @@ class BufferView : public Widget {
     // already in progress.
     void RequestCloseBuffer(text::Buffer& buffer);
 
+    // open-binary-anyway follow-up: entry point for ProjectSidebar's click
+    // handler (mouse-only, same "hands off to BufferView for anything
+    // needing keyboard y/n" shape RequestCloseBuffer's own doc comment
+    // describes) -- offers the same ConfirmOpenBinary y/n confirmation
+    // find-file's own HandlePromptKey already gives a typed path, instead
+    // of the sidebar just reporting BinaryFileError's refusal message and
+    // stopping there. A no-op (reports via statusMessage_ instead of
+    // silently doing nothing) if another interactive session is already in
+    // progress -- same guard RequestCloseBuffer uses.
+    void RequestOpenBinaryFile(const std::filesystem::path& path);
+
     // Window-splitting follow-up: called with the same InteractiveRequest
     // whenever StartInteractiveSession sees one of the five structural
     // window-management values (SplitBelow/SplitRight/DeleteWindow/
@@ -229,7 +240,13 @@ class BufferView : public Widget {
                            // then (from inside its own async callback, once the response
                            // arrives) enters LspRenameConfirm for the final y/n.
                            LspRenameNewName,
-                           LspRenameConfirm };
+                           LspRenameConfirm,
+                           // open-binary-anyway follow-up: entered only from
+                           // inside HandlePromptKey's FindFile branch, when
+                           // BufferList::OpenOrCreateFile throws
+                           // text::BinaryFileError -- see
+                           // pendingBinaryOpenPath_'s own doc comment.
+                           ConfirmOpenBinary };
 
     enum class DeleteFileStage { EnteringPath,
                                  Confirming };
@@ -259,6 +276,11 @@ class BufferView : public Widget {
     void CompletePrompt(); // Tab in HandlePromptKey -- find-file paths, buffer names, or scratch names, by inputMode_
     void HandleProjectReplaceKey(const editor::KeyChord& chord);
     void HandleConfirmCloseBufferKey(const editor::KeyChord& chord); // see RequestCloseBuffer/pendingClose_
+    void HandleConfirmOpenBinaryKey(const editor::KeyChord& chord);  // see pendingBinaryOpenPath_
+    // Shared by HandlePromptKey's FindFile branch and the public
+    // RequestOpenBinaryFile -- enters ConfirmOpenBinary and sets
+    // pendingBinaryOpenPath_/statusMessage_.
+    void BeginConfirmOpenBinary(const std::filesystem::path& path);
 
     // Both project-file-ops follow-up, both a simple two-stage flow driven
     // directly on BufferView (no dedicated state-machine class, unlike
@@ -755,6 +777,14 @@ class BufferView : public Widget {
     std::optional<editor::MinibufferPrompt>  prompt_; // FindFile/SwitchToBuffer/ProjectSearch, distinguished by inputMode_
     std::optional<editor::ProjectReplace>    projectReplace_;
     text::Buffer*                            pendingClose_ = nullptr; // buffer awaiting y/n in ConfirmCloseBuffer
+
+    // open-binary-anyway follow-up: the path awaiting y/n in
+    // ConfirmOpenBinary -- a path, not a Buffer* (unlike pendingClose_),
+    // since BufferList::OpenOrCreateFile never got far enough to create one
+    // when text::BinaryFileError was thrown. Empty means "no confirmation
+    // in flight," the same "unset means not applicable" convention
+    // deleteTarget_/renameSource_ already use.
+    std::filesystem::path pendingBinaryOpenPath_;
 
     DeleteFileStage       deleteStage_ = DeleteFileStage::EnteringPath;
     std::filesystem::path deleteTarget_; // path awaiting y/n in DeleteFileStage::Confirming

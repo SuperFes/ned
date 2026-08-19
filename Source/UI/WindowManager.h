@@ -33,6 +33,7 @@
 #include <vector>
 
 #include "ActiveBuffer.h"
+#include "AsyncFileLoader.h"
 #include "BufferView.h"
 #include "Editor/Command.h"
 #include "Editor/Dispatcher.h"
@@ -261,6 +262,13 @@ class WindowManager {
     // fixed BufferView.
     void RequestCloseBuffer(text::Buffer& buffer);
 
+    // open-binary-anyway follow-up: same "route to whichever pane is
+    // currently focused" shape as RequestCloseBuffer just above -- wired to
+    // ProjectSidebar::SetOnBinaryFileOpenRequest so a sidebar click on a
+    // binary file gets the same y/n confirmation find-file's own
+    // HandlePromptKey already offers, instead of just reporting a refusal.
+    void RequestOpenBinaryFile(const std::filesystem::path& path);
+
     // Called whenever a buffer is about to be closed by a path that doesn't
     // go through BufferView::CloseBufferNow at all -- currently just
     // ProjectSidebar::OpenFileEntry, which closes the outgoing single-
@@ -290,7 +298,23 @@ class WindowManager {
     // once, for the real running editor only.
     void StartAutoSaveTimer(EventLoop& eventLoop);
 
+    // large-file-async-load follow-up: wires bufferList_.SetAsyncFileOpener
+    // to spin up an AsyncFileLoader (Source/UI/AsyncFileLoader.h) per large
+    // file open, owned here in asyncFileLoaders_ for as long as it's still
+    // in flight. Not called from the constructor, for the same "don't
+    // require a live EventLoop in every test that constructs a
+    // WindowManager" reason StartAutoSaveTimer isn't either; main.cpp calls
+    // this once, alongside StartAutoSaveTimer, for the real running editor.
+    void EnableAsyncFileLoading(EventLoop& eventLoop);
+
   private:
+    // Drops any asyncFileLoaders_ entries that have finished (AsyncFileLoader
+    // ::Done()) -- called opportunistically whenever a new load starts,
+    // rather than on a separate timer; there are only ever as many entries
+    // as there are large files currently being opened at once, so an
+    // unbounded-until-next-open backlog is not a real concern.
+    void PurgeFinishedAsyncLoaders();
+
     [[nodiscard]] std::unique_ptr<Pane> MakePane(text::Buffer& buffer, editor::Mode mode);
 
     void HandleWindowRequest(editor::InteractiveRequest request);
@@ -355,6 +379,9 @@ class WindowManager {
 
     // See StartAutoSaveTimer's own comment above.
     std::jthread autoSaveThread_;
+
+    // See EnableAsyncFileLoading's own comment above.
+    std::vector<std::unique_ptr<AsyncFileLoader>> asyncFileLoaders_;
 };
 
 } // namespace ned::ui

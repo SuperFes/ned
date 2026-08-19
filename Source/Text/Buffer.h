@@ -30,8 +30,13 @@ class Buffer {
   public:
     explicit Buffer(std::string name, Rope initialContent = Rope());
 
-    // Throws std::runtime_error if the file can't be opened for reading.
-    [[nodiscard]] static Buffer FromFile(const std::filesystem::path& path);
+    // Throws std::runtime_error if the file can't be opened for reading, or
+    // BinaryFileError (BinaryDetect.h) if it looks binary and allowBinary is
+    // false (the default) -- open-binary-anyway follow-up: pass true to
+    // load it as text anyway (an explicit user override, e.g. a confirmed
+    // "open anyway?" prompt or a --force-binary CLI flag; never set based on
+    // file content itself).
+    [[nodiscard]] static Buffer FromFile(const std::filesystem::path& path, bool allowBinary = false);
 
     // An empty buffer already associated with path (named after path's
     // filename, Path() returns path immediately) without reading or
@@ -103,6 +108,43 @@ class Buffer {
     // nobody is expected to type into in the first place.
     [[nodiscard]] bool ReadOnly() const;
     void               SetReadOnly(bool readOnly);
+
+    // large-file-async-load follow-up: true from the moment BufferList hands
+    // out a placeholder for a file being loaded in the background until
+    // FinishLoad() runs. While true, ReadOnly() also reads true (no command
+    // can edit a buffer that's still filling in) regardless of what
+    // SetReadOnly() was last called with -- restored automatically by
+    // FinishLoad(), not something a caller needs to track separately.
+    [[nodiscard]] bool IsLoading() const;
+
+    // The two operations BufferList's async file loader uses to populate a
+    // placeholder buffer over time -- neither is a normal edit, so neither
+    // goes through InsertAtImpl/UndoTree_/UnsavedChangeRanges_ the way every
+    // other mutator here does.
+    //
+    // ReplaceContentForLoad swaps in a fresh, larger prefix of the file as
+    // it's read -- a periodic, cheap-to-produce preview (see
+    // Source/UI/AsyncFileLoader.h), not a step anyone should be able to
+    // undo back out of. Only touches Rope_ and bumps ContentGeneration_ (so
+    // BufferView's existing highlight-cache/repaint invalidation picks it
+    // up for free, no new plumbing needed there).
+    //
+    // FinishLoad is the terminal call once the whole file has been read:
+    // sets the final content and, unlike ReplaceContentForLoad, resets
+    // UndoTree_ and SavedSnapshot_ against it too -- exactly what
+    // FromFile's own constructor call does for a normal synchronous load,
+    // so Modified() reads false and undo history starts clean at the
+    // loaded content, not at every intermediate preview. Clears
+    // IsLoading() (and, with it, the forced ReadOnly() above).
+    void ReplaceContentForLoad(Rope content);
+    void FinishLoad(Rope content);
+
+    // Called once by BufferList right after constructing a placeholder
+    // buffer for an async load -- sets IsLoading() true. Not meant to be
+    // called at any other point (there's no matching public "start loading
+    // again" use case), which is why this is a bare setter rather than
+    // something exposed as part of a larger state machine.
+    void MarkLoading();
 
     // Bumped by the exact same set of content-changing operations that can
     // make Modified() true (tree-sitter foundation follow-up) -- unlike
@@ -406,6 +448,7 @@ class Buffer {
     std::optional<std::pair<std::size_t, std::size_t>> NarrowedRange_; // see NarrowToRegion's own doc comment
     bool                                               CanAmend_ = false;
     bool                                               ReadOnly_ = false; // see ReadOnly()/SetReadOnly()'s own doc comment above
+    bool                                               Loading_  = false; // see IsLoading()'s own doc comment above
     // Set by MoveToNextLine/MoveToPreviousLine, cleared by every other
     // point-moving or editing call -- see their doc comment above.
     std::optional<std::size_t>        GoalColumn_;

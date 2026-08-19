@@ -20,8 +20,16 @@ void ModeLine::Paint(Canvas c) {
     // narrow v1 rendering limitation, consistent with BufferView's own
     // codepoint-granular rendering simplification.
     const std::string modifiedMarker = buffer.Modified() ? "*" : " "; // fixed width -- keeps L/C from jittering
-    const std::string text           = "  " + modifiedMarker + buffer.Name() + "   L" + std::to_string(line + 1) + ":C" +
-                                       std::to_string(col + 1) + "  (" + mode_.name + ")";
+    // large-file-async-load follow-up: while the buffer is still filling in
+    // from a background AsyncFileLoader, show that instead of the mode name
+    // -- there's nothing meaningful to report for L/C or a mode against
+    // content that isn't fully there yet, and this is the one existing,
+    // already-per-frame-refreshed place a "this is still loading" signal
+    // can surface without any new plumbing (buffer.IsLoading() is a plain
+    // Buffer query, same as Modified()/Point() just above).
+    const std::string text = buffer.IsLoading() ? "  " + buffer.Name() + "   Loading..."
+                                                 : "  " + modifiedMarker + buffer.Name() + "   L" + std::to_string(line + 1) +
+                                                       ":C" + std::to_string(col + 1) + "  (" + mode_.name + ")";
 
     for (int x = 0; x < c.size().width; ++x) {
         Cell& cell     = c[{.x = x, .y = 0}];

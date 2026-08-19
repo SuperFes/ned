@@ -747,3 +747,63 @@ TEST_CASE("A failed open reports an error via statusMessage without crashing", "
     std::filesystem::permissions(unreadable, std::filesystem::perms::owner_all, ec);
     std::filesystem::remove_all(dir);
 }
+
+TEST_CASE("Clicking a binary file reports a message when no open-request handler is set", "[ProjectSidebar]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_sidebar_test_binary1";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    {
+        std::ofstream file(dir / "data.bin", std::ios::binary);
+        file.put('a');
+        file.put('\0');
+    }
+
+    const CurrentPathGuard cwdGuard(dir);
+
+    ned::text::BufferList   list;
+    ned::text::Buffer&      scratch = list.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer   activeBuffer(scratch);
+    ned::ui::Theme          theme = ned::ui::DarkTheme();
+    std::string             statusMessage;
+    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    PlaceSidebar(sidebar, 28, 5);
+
+    sidebar.OnEvent(MousePress(0, 1)); // row 0 is the header
+
+    REQUIRE(&activeBuffer.Get() == &scratch); // never opened
+    REQUIRE(statusMessage.find("binary") != std::string::npos);
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("Clicking a binary file hands off to the open-request handler when one is set", "[ProjectSidebar]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_sidebar_test_binary2";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    {
+        std::ofstream file(dir / "data.bin", std::ios::binary);
+        file.put('a');
+        file.put('\0');
+    }
+
+    const CurrentPathGuard cwdGuard(dir);
+
+    ned::text::BufferList   list;
+    ned::text::Buffer&      scratch = list.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer   activeBuffer(scratch);
+    ned::ui::Theme          theme = ned::ui::DarkTheme();
+    std::string             statusMessage;
+    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    PlaceSidebar(sidebar, 28, 5);
+
+    std::optional<std::filesystem::path> requestedPath;
+    sidebar.SetOnBinaryFileOpenRequest([&](const std::filesystem::path& path) { requestedPath = path; });
+
+    sidebar.OnEvent(MousePress(0, 1));
+
+    REQUIRE(&activeBuffer.Get() == &scratch); // handler is responsible for actually opening it, not this widget
+    REQUIRE(requestedPath.has_value());
+    REQUIRE(requestedPath->filename() == "data.bin");
+
+    std::filesystem::remove_all(dir);
+}
