@@ -1,7 +1,6 @@
 #include "KeyTranslation.h"
 
-#include <cstdint>
-#include <string_view>
+#include <notcurses/notcurses.h>
 
 namespace ned::ui {
 
@@ -10,151 +9,191 @@ namespace {
     using editor::KeyChord;
     using editor::SpecialKey;
 
-    // Decodes a "base" key (no Meta applied) from raw input bytes: a single
-    // C0 control byte 1-26 is Ctrl+<letter>, the same convention every
-    // terminal uses (confirmed against real byte sequences during the
-    // migration's pre-work spike) -- byte 8 is included alongside the
-    // standard DEL (127, handled separately by the named Event::Backspace
-    // check before this ever runs) since some terminals send one, some the
-    // other, for the same physical Backspace key; the pre-migration
-    // TermOx/escape-backed translator tolerated both (Backspace1/
-    // Backspace2) and this preserves that. Anything else is decoded as one
-    // UTF-8 codepoint -- Ned's own KeyChord doesn't track Shift separately
-    // for printable characters (a capital letter's codepoint already
-    // encodes it), matching the pre-migration translator's behavior.
-    std::optional<KeyChord> DecodeBaseKey(std::string_view bytes) {
-        if (bytes.empty()) {
-            return std::nullopt;
+    // Named synthesized keys -- arrows, navigation, function keys -- matched
+    // directly against Notcurses' own NCKEY_* constants rather than
+    // hand-decoding CSI/SS3 escape sequences ourselves, the same "let the
+    // library's own input parser do this" approach the FTXUI-era translator
+    // already used against FTXUI's pre-parsed Event constants. Modifiers
+    // (Ctrl/Shift/Alt) are read once, uniformly, off ncinput::modifiers for
+    // every one of these -- a real simplification over FTXUI, which had no
+    // pre-built Shift+Arrow constants and needed a hand-built raw-CSI
+    // comparison for that case specifically (see this file's old history);
+    // Notcurses reports Shift+Arrow the same modifier-bit way it reports
+    // everything else, no special case needed.
+    std::optional<SpecialKey> SpecialKeyFor(std::uint32_t id) {
+        switch (id) {
+            case NCKEY_UP:
+                return SpecialKey::Up;
+            case NCKEY_DOWN:
+                return SpecialKey::Down;
+            case NCKEY_LEFT:
+                return SpecialKey::Left;
+            case NCKEY_RIGHT:
+                return SpecialKey::Right;
+            case NCKEY_TAB:
+                return SpecialKey::Tab;
+            case NCKEY_ENTER:
+                return SpecialKey::Enter;
+            case NCKEY_ESC:
+                return SpecialKey::Escape;
+            case NCKEY_BACKSPACE:
+                return SpecialKey::Backspace;
+            case NCKEY_DEL:
+                return SpecialKey::Delete;
+            case NCKEY_HOME:
+                return SpecialKey::Home;
+            case NCKEY_END:
+                return SpecialKey::End;
+            case NCKEY_PGUP:
+                return SpecialKey::PageUp;
+            case NCKEY_PGDOWN:
+                return SpecialKey::PageDown;
+            case NCKEY_F01:
+                return SpecialKey::F1;
+            case NCKEY_F02:
+                return SpecialKey::F2;
+            case NCKEY_F03:
+                return SpecialKey::F3;
+            case NCKEY_F04:
+                return SpecialKey::F4;
+            case NCKEY_F05:
+                return SpecialKey::F5;
+            case NCKEY_F06:
+                return SpecialKey::F6;
+            case NCKEY_F07:
+                return SpecialKey::F7;
+            case NCKEY_F08:
+                return SpecialKey::F8;
+            case NCKEY_F09:
+                return SpecialKey::F9;
+            case NCKEY_F10:
+                return SpecialKey::F10;
+            case NCKEY_F11:
+                return SpecialKey::F11;
+            case NCKEY_F12:
+                return SpecialKey::F12;
+            default:
+                return std::nullopt;
         }
+    }
 
-        const auto b0 = static_cast<std::uint8_t>(bytes[0]);
+    // Pure modifier-key-by-itself presses (NCKEY_LSHIFT, NCKEY_LCTRL, ...),
+    // only ever reported at all under the Kitty keyboard protocol -- these
+    // carry no KeyChord meaning of their own (a real modifier press is
+    // always folded into the *next* real key's own ncinput::modifiers
+    // instead), so they're filtered out here rather than falling through to
+    // DecodeBaseKey and being misread as a literal codepoint.
+    bool IsBareModifierKey(std::uint32_t id) {
+        return id >= NCKEY_LSHIFT && id <= NCKEY_L5SHIFT;
+    }
 
-        if (bytes.size() == 1 && b0 == 8) {
+    // Decodes a "base" key (no Meta applied) from an ncinput whose id is a
+    // plain Unicode codepoint (not one of the synthesized NCKEY_* values
+    // SpecialKeyFor already handles) -- Ctrl is read straight off
+    // ncinput::modifiers wherever a real terminal populates it, with a
+    // defensive fallback (id in the raw C0 control-byte range, no modifier
+    // bit set) for terminals that only ever send the bare control byte and
+    // never set NCKEY_MOD_CTRL at all -- the legacy path every terminal the
+    // FTXUI-era translator supported still uses. Ned's own KeyChord doesn't
+    // track Shift separately for printable characters (a capital letter's
+    // codepoint already encodes it), matching that translator's behavior.
+    std::optional<KeyChord> DecodeBaseKey(const ncinput& input) {
+        const std::uint32_t id = input.id;
+
+        if (id == 8 || id == 0x7F) { // some terminals send raw BS/DEL for physical Backspace
             return KeyChord{.Special = SpecialKey::Backspace};
-        }
-        if (bytes.size() == 1 && b0 >= 1 && b0 <= 26) {
-            return KeyChord{.Control = true, .Codepoint = static_cast<char32_t>('a' + b0 - 1)};
         }
         // Byte 0x1F (US, "Unit Separator") is what a real terminal actually
         // sends for Ctrl+_ -- and, since terminals don't distinguish Shift
-        // on top of a control byte, for a physical Ctrl+/ press too (same
-        // key, unshifted vs shifted). Real Emacs' own undo binding is C-_
-        // for exactly this reason; decoded as Control+'_' here to match,
-        // confirmed against a real terminal after C-/ (parsed as a literal
-        // Control+'/' KeyChord, which no real terminal byte can ever
-        // produce) turned out to be dead in practice.
-        if (bytes.size() == 1 && b0 == 0x1F) {
+        // on top of a control byte, for a physical Ctrl+/ press too. Real
+        // Emacs' own undo binding is C-_ for exactly this reason.
+        if (id == 0x1F) {
             return KeyChord{.Control = true, .Codepoint = U'_'};
         }
+        if (ncinput_ctrl_p(&input) && id < 0x80) {
+            // NOT simply "id is already the unmodified base character" --
+            // confirmed by reading Notcurses' own load_ncinput (in.c), not
+            // assumed: for a raw C0 control byte specifically, Notcurses
+            // itself pre-normalizes id to the *uppercase* ASCII letter
+            // (`ni->id = ni->id + 'A' - 1`) before this code ever sees it,
+            // on top of setting NCKEY_MOD_CTRL -- so id here is 'A'-'Z' for
+            // a plain Ctrl+letter press, not 'a'-'z'. Every keymap binding
+            // in this codebase is parsed from lowercase kbd notation
+            // ("C-x" -> Codepoint='x', ParseKeyChord/Key.cpp), so handing
+            // the uppercase codepoint straight through silently failed to
+            // match any Ctrl+letter binding at all -- every C-x/C-s/C-p/...
+            // chord in the entire default keymap, a real, confirmed bug
+            // (not hypothetical) caught via live testing, not headless
+            // tests (which never exercised a real ncinput). Lowercased
+            // here so this always matches what Editor/Key.cpp's own parser
+            // produces; a non-letter Ctrl'd codepoint (rare -- Ctrl+digit
+            // etc., where Notcurses' own uppercasing doesn't apply since
+            // isupper/islower is false for it) passes through unchanged.
+            const char32_t codepoint = (id >= 'A' && id <= 'Z') ? static_cast<char32_t>(id - 'A' + 'a') : static_cast<char32_t>(id);
+            return KeyChord{.Control = true, .Codepoint = codepoint};
+        }
+        if (id >= 1 && id <= 26) {
+            // Defensive fallback for terminals that only ever send the raw
+            // C0 control byte with no modifier bit set at all.
+            return KeyChord{.Control = true, .Codepoint = static_cast<char32_t>('a' + id - 1)};
+        }
 
-        // Standard UTF-8 decode of the leading codepoint -- FTXUI hands us
-        // raw encoded bytes here (unlike the old esc::Key, whose value was
-        // already a decoded codepoint), so this step is new.
-        char32_t    codepoint = 0;
-        std::size_t length    = 0;
-        if (b0 < 0x80) {
-            codepoint = b0;
-            length    = 1;
+        if (id == 0 || nckey_synthesized_p(id)) {
+            return std::nullopt; // an unrecognized synthesized event (resize, signal, eof, media key, ...)
         }
-        else if ((b0 & 0xE0) == 0xC0 && bytes.size() >= 2) {
-            codepoint = b0 & 0x1F;
-            length    = 2;
-        }
-        else if ((b0 & 0xF0) == 0xE0 && bytes.size() >= 3) {
-            codepoint = b0 & 0x0F;
-            length    = 3;
-        }
-        else if ((b0 & 0xF8) == 0xF0 && bytes.size() >= 4) {
-            codepoint = b0 & 0x07;
-            length    = 4;
-        }
-        else {
-            return std::nullopt; // malformed or an unrecognized multi-byte control sequence
-        }
-
-        for (std::size_t i = 1; i < length; ++i) {
-            const auto continuation = static_cast<std::uint8_t>(bytes[i]);
-            if ((continuation & 0xC0) != 0x80) {
-                return std::nullopt;
-            }
-            codepoint = static_cast<char32_t>((codepoint << 6) | (continuation & 0x3F));
-        }
-        return KeyChord{.Codepoint = codepoint};
+        return KeyChord{.Codepoint = static_cast<char32_t>(id)};
     }
 
 } // namespace
 
-std::optional<KeyChord> TranslateKey(const ftxui::Event& event) {
+std::optional<KeyChord> TranslateKey(const Event& event) {
     if (event.is_mouse()) {
         return std::nullopt;
     }
 
-    // Named multi-byte sequences -- arrows (plain and Ctrl+), navigation
-    // keys, and function keys -- matched directly against FTXUI's own
-    // pre-parsed constants rather than hand-decoding CSI/SS3 escape
-    // sequences ourselves. Ctrl+Arrow support is new (the old translator
-    // had no equivalent esc::Key cases for it) -- a real, additive upgrade,
-    // not a parity requirement, and effectively free since FTXUI already
-    // hands it to us pre-parsed.
-    if (event == ftxui::Event::ArrowUp) return KeyChord{.Special = SpecialKey::Up};
-    if (event == ftxui::Event::ArrowDown) return KeyChord{.Special = SpecialKey::Down};
-    if (event == ftxui::Event::ArrowLeft) return KeyChord{.Special = SpecialKey::Left};
-    if (event == ftxui::Event::ArrowRight) return KeyChord{.Special = SpecialKey::Right};
-    if (event == ftxui::Event::ArrowUpCtrl) return KeyChord{.Control = true, .Special = SpecialKey::Up};
-    if (event == ftxui::Event::ArrowDownCtrl) return KeyChord{.Control = true, .Special = SpecialKey::Down};
-    if (event == ftxui::Event::ArrowLeftCtrl) return KeyChord{.Control = true, .Special = SpecialKey::Left};
-    if (event == ftxui::Event::ArrowRightCtrl) return KeyChord{.Control = true, .Special = SpecialKey::Right};
-    // Shift+Arrow follow-up: FTXUI has no pre-built Shift+Arrow constants
-    // the way it does for Ctrl+Arrow (ArrowUpCtrl etc.) -- built directly
-    // here the same way those are built internally (see FTXUI's own
-    // event.cpp): standard xterm CSI modifier codes, "\x1B[1;<mod>X" where
-    // 2 is Shift and 5 is Ctrl (confirmed against FTXUI's own ArrowLeftCtrl
-    // = "\x1B[1;5D" definition, not assumed). Event::operator== compares
-    // raw input bytes only, so constructing one inline via Event::Special
-    // and comparing is exactly as valid as comparing against a named
-    // constant.
-    if (event == ftxui::Event::Special("\x1B[1;2A")) return KeyChord{.Shift = true, .Special = SpecialKey::Up};
-    if (event == ftxui::Event::Special("\x1B[1;2B")) return KeyChord{.Shift = true, .Special = SpecialKey::Down};
-    if (event == ftxui::Event::Special("\x1B[1;2D")) return KeyChord{.Shift = true, .Special = SpecialKey::Left};
-    if (event == ftxui::Event::Special("\x1B[1;2C")) return KeyChord{.Shift = true, .Special = SpecialKey::Right};
-    if (event == ftxui::Event::Tab) return KeyChord{.Special = SpecialKey::Tab};
-    if (event == ftxui::Event::TabReverse) return KeyChord{.Shift = true, .Special = SpecialKey::Tab};
-    if (event == ftxui::Event::Return) return KeyChord{.Special = SpecialKey::Enter};
-    if (event == ftxui::Event::Escape) return KeyChord{.Special = SpecialKey::Escape};
-    if (event == ftxui::Event::Backspace) return KeyChord{.Special = SpecialKey::Backspace};
-    if (event == ftxui::Event::Delete) return KeyChord{.Special = SpecialKey::Delete};
-    if (event == ftxui::Event::Home) return KeyChord{.Special = SpecialKey::Home};
-    if (event == ftxui::Event::End) return KeyChord{.Special = SpecialKey::End};
-    if (event == ftxui::Event::PageUp) return KeyChord{.Special = SpecialKey::PageUp};
-    if (event == ftxui::Event::PageDown) return KeyChord{.Special = SpecialKey::PageDown};
-    if (event == ftxui::Event::F1) return KeyChord{.Special = SpecialKey::F1};
-    if (event == ftxui::Event::F2) return KeyChord{.Special = SpecialKey::F2};
-    if (event == ftxui::Event::F3) return KeyChord{.Special = SpecialKey::F3};
-    if (event == ftxui::Event::F4) return KeyChord{.Special = SpecialKey::F4};
-    if (event == ftxui::Event::F5) return KeyChord{.Special = SpecialKey::F5};
-    if (event == ftxui::Event::F6) return KeyChord{.Special = SpecialKey::F6};
-    if (event == ftxui::Event::F7) return KeyChord{.Special = SpecialKey::F7};
-    if (event == ftxui::Event::F8) return KeyChord{.Special = SpecialKey::F8};
-    if (event == ftxui::Event::F9) return KeyChord{.Special = SpecialKey::F9};
-    if (event == ftxui::Event::F10) return KeyChord{.Special = SpecialKey::F10};
-    if (event == ftxui::Event::F11) return KeyChord{.Special = SpecialKey::F11};
-    if (event == ftxui::Event::F12) return KeyChord{.Special = SpecialKey::F12};
+    const ncinput& input = event.raw();
 
-    const std::string_view input = event.input();
-
-    // A leading Escape byte followed by more bytes is Meta/Alt+<key> -- see
-    // this file's header comment for why this is reliably distinguishable
-    // from a real, separate Escape keystroke followed later by an
-    // unrelated key.
-    if (!input.empty() && static_cast<std::uint8_t>(input[0]) == 0x1B && input.size() > 1) {
-        std::optional<KeyChord> base = DecodeBaseKey(input.substr(1));
-        if (base) {
-            base->Meta = true;
-        }
-        return base;
+    // Only fire on press/repeat -- a held key's repeat should behave like a
+    // fresh press (matches every terminal's/FTXUI's own pre-Notcurses
+    // behavior), but a release carries no KeyChord meaning of its own; only
+    // reported at all under the Kitty keyboard protocol, so most terminals
+    // never produce this case, but it's real input Notcurses can hand us.
+    if (input.evtype == NCTYPE_RELEASE) {
+        return std::nullopt;
     }
 
-    return DecodeBaseKey(input);
+    if (IsBareModifierKey(input.id)) {
+        return std::nullopt;
+    }
+
+    std::optional<KeyChord> result;
+    if (const std::optional<SpecialKey> special = SpecialKeyFor(input.id)) {
+        result = KeyChord{.Special = *special};
+    }
+    else {
+        result = DecodeBaseKey(input);
+    }
+
+    if (result) {
+        // Shift on a plain codepoint is already encoded in the codepoint
+        // itself (e.g. 'A' vs 'a') -- only worth flagging separately when
+        // paired with a Special key (Shift+Arrow etc.), matching the
+        // FTXUI-era translator's own behavior.
+        if (ncinput_shift_p(&input) && result->Special != SpecialKey::None) {
+            result->Shift = true;
+        }
+        if (ncinput_alt_p(&input)) {
+            result->Meta = true;
+        }
+        // Control is already folded in by DecodeBaseKey for a plain
+        // codepoint; a Special key paired with Ctrl (e.g. Ctrl+Arrow) still
+        // needs it applied here, since SpecialKeyFor itself doesn't consult
+        // modifiers at all.
+        if (ncinput_ctrl_p(&input) && result->Special != SpecialKey::None) {
+            result->Control = true;
+        }
+    }
+    return result;
 }
 
 } // namespace ned::ui

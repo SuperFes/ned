@@ -33,7 +33,7 @@ class SidebarToggle : public Widget {
     void SetSidebar(ProjectSidebar* sidebar);
 
     void Paint(Canvas c) override;
-    bool OnEvent(ftxui::Event event) override;
+    bool OnEvent(const Event& event) override;
 
   private:
     const Brush&    brush_;

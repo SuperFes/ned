@@ -1,118 +1,208 @@
 #include "Widget.h"
 
+#include <notcurses/notcurses.h>
+
 namespace ned::ui {
 
 namespace {
-
-    // Bridges Widget's Paint()/MinimumSize()/SetSize_ into the shape FTXUI's
-    // own layout/render pipeline expects (ComputeRequirement/SetBox/Render
-    // on a Node) -- see Widget.h's own comment for why this holds a Widget&
-    // rather than being a base class itself.
-    class PaintNode : public ftxui::Node {
-      public:
-        explicit PaintNode(Widget& owner) : owner_(owner) {
-        }
-
-        void ComputeRequirement() override {
-            const Size minimum = owner_.MinimumSize();
-            requirement_.min_x = minimum.width;
-            requirement_.min_y = minimum.height;
-
-            // Cursor *presence* (enabled/node/cursor_shape) has to be
-            // reported here, in ComputeRequirement, not in SetBox -- even
-            // though the real screen position can only be computed in
-            // SetBox (see that override's own comment). A parent container
-            // (hbox/vbox) aggregates focus from its children by reading
-            // child->requirement() *during its own ComputeRequirement call*
-            // (confirmed against hbox.cpp/vbox.cpp's real
-            // `requirement_.focused.Prefer(child->requirement().focused)`),
-            // which for a simple, non-multi-iteration tree like ours (the
-            // only kind that exists here -- nothing overrides Check() to
-            // request a second layout pass) happens in the SAME single
-            // ComputeRequirement sweep across the whole tree, strictly
-            // before ANY node's SetBox runs at all. Setting focused fields
-            // only in SetBox (a real bug introduced and then caught within
-            // this same session, verified with a standalone repro against a
-            // widget nested inside an hbox/vbox exactly like BufferView
-            // really is) made every parent's aggregation see "not focused"
-            // permanently -- the cursor never propagated up to the root at
-            // all, landing FTXUI's own Render() in its no-cursor fallback
-            // (bottom-right corner, Hidden shape) instead of anywhere near
-            // the real target. `.node`'s VALUE (a stable pointer to
-            // cursorAnchor_) is all a parent's aggregation ever actually
-            // reads/copies at this stage -- the box inside the pointed-to
-            // Node isn't dereferenced until ftxui::Render()'s own final
-            // step, which only runs after the whole tree's SetBox pass has
-            // completed, which is what makes finishing the box's real value
-            // in SetBox (below) still correct.
-            if (const std::optional<Point> cursor = owner_.CursorPosition()) {
-                requirement_.focused.enabled      = true;
-                requirement_.focused.cursor_shape = owner_.CursorShape();
-                requirement_.focused.node         = &cursorAnchor_;
-            }
-            else {
-                requirement_.focused.enabled = false;
-            }
-        }
-
-        void SetBox(ftxui::Box box) override {
-            Node::SetBox(box);
-            owner_.SetBox_(box);
-
-            // Finishes what ComputeRequirement started: the real absolute
-            // cursor box needs box_ as this frame's real assignment, which
-            // only exists from here on (Widget::OnRender() constructs a
-            // brand-new PaintNode every single frame -- FTXUI rebuilds its
-            // whole Element tree from scratch each frame, confirmed by
-            // reading App::Internal::Draw -- so box_ is default-constructed
-            // {0,0,0,0} for the whole ComputeRequirement pass, not "the
-            // previous frame's box" the way an earlier version of this
-            // comment assumed; a real bug, reported live as "cursor renders
-            // a line too high with the sidebar collapsed, and far to the
-            // left with it open" and confirmed by a standalone repro before
-            // being fixed).
-            //
-            // ftxui::Render (dom/node.cpp) places the terminal cursor by
-            // dereferencing requirement().focused.node->box_ directly --
-            // NOT requirement().focused.box (that field is used elsewhere,
-            // e.g. frame.cpp's scroll-into-view calculation) -- and only
-            // after the whole tree's SetBox pass has already finished, so
-            // finalizing cursorAnchor_'s box_ here, this late, is still
-            // correct. Every built-in FTXUI component that reports focus
-            // (Focus, Frame) gets away with never doing this two-step split
-            // at all: they wrap a tightly-bound child element whose own
-            // box_, once the normal recursive SetBox pass reaches it,
-            // already *is* the exact target cell. PaintNode has no such
-            // child -- it's one monolithic Node spanning the whole widget,
-            // with the cursor at some dynamic point inside it -- so
-            // cursorAnchor_ is a plain, otherwise-unused Node that exists
-            // solely to hold that exact absolute box, driven manually
-            // (bypassing FTXUI's normal layout traversal entirely -- it
-            // isn't a child of this node, so nothing else ever calls
-            // SetBox/ComputeRequirement/Render on it).
-            if (const std::optional<Point> cursor = owner_.CursorPosition()) {
-                cursorAnchor_.SetBox(ftxui::Box{
-                    .x_min = box_.x_min + cursor->x,
-                    .x_max = box_.x_min + cursor->x,
-                    .y_min = box_.y_min + cursor->y,
-                    .y_max = box_.y_min + cursor->y,
-                });
-            }
-        }
-
-        void Render(ftxui::Screen& screen) override {
-            owner_.Paint(Canvas(screen, box_));
-        }
-
-      private:
-        Widget&     owner_;
-        ftxui::Node cursorAnchor_; // see ComputeRequirement's own comment
-    };
-
+    // Process-wide "who has keyboard focus" registry -- see Widget::TakeFocus
+    // and FocusedWidget's own doc comments (Widget.h) for why a plain static
+    // is the right shape here, mirroring TabWidth.h/ProjectRoot.h's own
+    // mutex-guarded-static-state convention. Not actually mutex-guarded here:
+    // unlike TabWidth/ProjectRoot (which can be written from a Janet call on
+    // any thread), focus is only ever read/written from the main loop thread
+    // that also drives every Widget's OnEvent/Paint -- the same "main-thread
+    // only, no lock needed" assumption BufferView's own scratch-auto-save
+    // background thread already respects by marshaling back via
+    // ScreenInteractive::Post rather than touching widget state directly.
+    Widget* g_focusedWidget = nullptr;
 } // namespace
 
-ftxui::Element Widget::OnRender() {
-    return std::make_shared<PaintNode>(*this);
+void Widget::TakeFocus() {
+    g_focusedWidget = this;
+}
+
+Widget::~Widget() {
+    if (g_focusedWidget == this) {
+        g_focusedWidget = nullptr;
+    }
+}
+
+Widget* FocusedWidget() {
+    return g_focusedWidget;
+}
+
+namespace {
+    // Standard-ish ANSI 16-color RGB approximations, in Palette16 index
+    // order (0=Black ... 15=BrightWhite) -- xterm's own default palette
+    // values, the same table every terminal-agnostic tool (including
+    // FTXUI's own Color::Interpolate) has to fall back on since there's no
+    // way to query a terminal's actually-configured palette RGB values
+    // in-band. Only used by Color::Interpolate below; Screen::Flush never
+    // needs this; it hands Palette16 indices straight to Notcurses.
+    constexpr std::uint8_t kPalette16Rgb[16][3] = {
+        {0x00, 0x00, 0x00},
+        {0x80, 0x00, 0x00},
+        {0x00, 0x80, 0x00},
+        {0x80, 0x80, 0x00},
+        {0x00, 0x00, 0x80},
+        {0x80, 0x00, 0x80},
+        {0x00, 0x80, 0x80},
+        {0xC0, 0xC0, 0xC0},
+        {0x80, 0x80, 0x80},
+        {0xFF, 0x00, 0x00},
+        {0x00, 0xFF, 0x00},
+        {0xFF, 0xFF, 0x00},
+        {0x00, 0x00, 0xFF},
+        {0xFF, 0x00, 0xFF},
+        {0x00, 0xFF, 0xFF},
+        {0xFF, 0xFF, 0xFF},
+    };
+
+    void ToRgb(const Color& color, std::uint8_t& r, std::uint8_t& g, std::uint8_t& b) {
+        switch (color.kind) {
+            case Color::Kind::TrueColor:
+                r = color.red;
+                g = color.green;
+                b = color.blue;
+                return;
+            case Color::Kind::Palette16:
+                r = kPalette16Rgb[color.paletteIndex % 16][0];
+                g = kPalette16Rgb[color.paletteIndex % 16][1];
+                b = kPalette16Rgb[color.paletteIndex % 16][2];
+                return;
+            case Color::Kind::Default:
+                r = g = b = 0x80; // neutral mid-gray -- Default has no real RGB value to blend from
+                return;
+        }
+    }
+} // namespace
+
+Color Color::Interpolate(float t, const Color& a, const Color& b) {
+    std::uint8_t ar, ag, ab, br, bg, bb;
+    ToRgb(a, ar, ag, ab);
+    ToRgb(b, br, bg, bb);
+    t = std::clamp(t, 0.0F, 1.0F);
+    return Color::RGB(static_cast<std::uint8_t>(ar + (static_cast<float>(br) - ar) * t),
+                      static_cast<std::uint8_t>(ag + (static_cast<float>(bg) - ag) * t),
+                      static_cast<std::uint8_t>(ab + (static_cast<float>(bb) - ab) * t));
+}
+
+bool Event::is_mouse() const {
+    return nckey_mouse_p(input_.id);
+}
+
+MouseEvent Event::mouse() const {
+    MouseEvent result;
+    result.at = Point{input_.x, input_.y};
+
+    switch (input_.id) {
+        case NCKEY_BUTTON1:
+            result.button = MouseEvent::Button::Left;
+            break;
+        case NCKEY_BUTTON2:
+            result.button = MouseEvent::Button::Middle;
+            break;
+        case NCKEY_BUTTON3:
+            result.button = MouseEvent::Button::Right;
+            break;
+        case NCKEY_BUTTON4:
+            result.button = MouseEvent::Button::WheelUp;
+            break;
+        case NCKEY_BUTTON5:
+            result.button = MouseEvent::Button::WheelDown;
+            break;
+        default:
+            result.button = MouseEvent::Button::None;
+            break; // includes NCKEY_MOTION and buttons 6-11 (unmapped)
+    }
+
+    switch (input_.evtype) {
+        case NCTYPE_PRESS:
+        case NCTYPE_REPEAT:
+            result.motion = MouseEvent::Motion::Pressed;
+            break;
+        case NCTYPE_RELEASE:
+            result.motion = MouseEvent::Motion::Released;
+            break;
+        default:
+            result.motion = MouseEvent::Motion::Moved;
+            break; // NCTYPE_UNKNOWN -- plain motion, no button transition
+    }
+
+    result.shift   = ncinput_shift_p(&input_);
+    result.meta    = ncinput_alt_p(&input_);
+    result.control = ncinput_ctrl_p(&input_);
+    return result;
+}
+
+namespace {
+    // Turns a Color into real Notcurses plane state -- the one place a
+    // Color's kind/RGB bytes actually become ncplane_set_fg_*/set_bg_*
+    // calls, mirroring where Color::ToFtxui() used to live under FTXUI. No
+    // public accessor needed elsewhere: Screen::Flush is the only caller.
+    void ApplyForeground(ncplane* plane, const Color& color) {
+        switch (color.kind) {
+            case Color::Kind::Default:
+                ncplane_set_fg_default(plane);
+                break;
+            case Color::Kind::Palette16:
+                ncplane_set_fg_palindex(plane, color.paletteIndex);
+                break;
+            case Color::Kind::TrueColor:
+                ncplane_set_fg_rgb8(plane, color.red, color.green, color.blue);
+                break;
+        }
+    }
+
+    void ApplyBackground(ncplane* plane, const Color& color) {
+        switch (color.kind) {
+            case Color::Kind::Default:
+                ncplane_set_bg_default(plane);
+                break;
+            case Color::Kind::Palette16:
+                ncplane_set_bg_palindex(plane, color.paletteIndex);
+                break;
+            case Color::Kind::TrueColor:
+                ncplane_set_bg_rgb8(plane, color.red, color.green, color.blue);
+                break;
+        }
+    }
+} // namespace
+
+void Screen::Flush(ncplane* plane) {
+    for (int y = 0; y < height_; ++y) {
+        for (int x = 0; x < width_; ++x) {
+            const Cell& cell = cells_[static_cast<std::size_t>(y) * static_cast<std::size_t>(width_) + static_cast<std::size_t>(x)];
+
+            // `inverted` swaps which Color goes to which Notcurses channel
+            // rather than relying on NCSTYLE_ITALIC-style style bit --
+            // Notcurses does have NCSTYLE_ITALIC/NCSTYLE_BOLD/
+            // NCSTYLE_UNDERLINE/NCSTYLE_STRUCK, but no "reverse video" style
+            // bit is applied here since a manual swap composes correctly
+            // with true-color foregrounds/backgrounds the same way
+            // ftxui::Cell's own .inverted field used to (FTXUI applied it
+            // as a post-hoc color swap at its own Screen::ToString() time,
+            // not a terminal-level SGR reverse code either).
+            const Color& fg = cell.inverted ? cell.background_color : cell.foreground_color;
+            const Color& bg = cell.inverted ? cell.foreground_color : cell.background_color;
+            ApplyForeground(plane, fg);
+            ApplyBackground(plane, bg);
+
+            unsigned styles = NCSTYLE_NONE;
+            if (cell.bold)
+                styles |= NCSTYLE_BOLD;
+            if (cell.italic)
+                styles |= NCSTYLE_ITALIC;
+            if (cell.underlined)
+                styles |= NCSTYLE_UNDERLINE;
+            if (cell.strikethrough)
+                styles |= NCSTYLE_STRUCK;
+            ncplane_set_styles(plane, styles);
+
+            ncplane_putstr_yx(plane, y, x, cell.character.c_str());
+        }
+    }
 }
 
 } // namespace ned::ui

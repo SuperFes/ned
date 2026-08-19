@@ -27,8 +27,8 @@
 #include <unordered_map>
 #include <vector>
 
-#include <ftxui/component/screen_interactive.hpp>
 #include <nlohmann/json.hpp>
+#include "UI/EventLoop.h"
 
 #include "LspClient.h"
 #include "LspContent.h"
@@ -54,7 +54,7 @@ class LspManager {
     // outlive this LspManager. See LspClient.h's own header comment for why
     // that's the same requirement its background-thread-marshaling already
     // has.
-    LspManager(text::BufferList& bufferList, ftxui::ScreenInteractive& screen);
+    LspManager(text::BufferList& bufferList, ned::ui::EventLoop& eventLoop);
     ~LspManager() = default;
 
     LspManager(const LspManager&)            = delete;
@@ -137,7 +137,7 @@ class LspManager {
     // ExtractDefinitionLocations' own "skip a malformed entry" convention.
     struct ResolvedLocation {
         std::filesystem::path path;
-        LspPosition            position;
+        LspPosition           position;
     };
     using DefinitionCallback = std::function<void(std::vector<ResolvedLocation> locations)>;
     // Sent for lsp-goto-definition. Same "resolve purely from bufferState_"
@@ -160,8 +160,8 @@ class LspManager {
     };
     struct ResolvedRename {
         std::vector<ResolvedRenameEdit> edits;
-        bool                             touchesUnsupportedForm = false; // see RenameResult's own doc comment in LspContent.h
-        bool                             hasEdit                 = false;
+        bool                            touchesUnsupportedForm = false; // see RenameResult's own doc comment in LspContent.h
+        bool                            hasEdit                = false;
     };
     using RenameCallback = std::function<void(std::optional<ResolvedRename> result)>;
     // Sent for lsp-rename. nullopt on any failure (buffer never synced, no
@@ -188,9 +188,12 @@ class LspManager {
     // timestamped, language-tagged line to its end -- "[HH:MM:SS] language:
     // message". Never throws. Every call site is already established to run
     // on the main thread (see this subsystem's own threading doc comments);
-    // this method does not itself Post, it just requests a repaint via
-    // ftxui::animation::RequestAnimationFrame() so the new line becomes
-    // visible without waiting for an unrelated event. Public (not just
+    // this method does not itself Post -- every real call site already runs
+    // from inside a Post-drained callback (LspClient's onDisconnected_/
+    // ResponseCallback, both only ever invoked that way), and
+    // ned::ui::EventLoop::Run already repaints unconditionally once that
+    // callback returns (see EventLoop.cpp's own needsRepaint comment), so
+    // there is nothing left here to explicitly request. Public (not just
     // called internally) so a test can call it directly without going
     // through a real spawn/disconnect/error-response path.
     void LogError(std::string_view language, std::string_view message);
@@ -245,8 +248,8 @@ class LspManager {
         bool        opened               = false;
     };
 
-    text::BufferList&         bufferList_;
-    ftxui::ScreenInteractive& screen_;
+    text::BufferList&   bufferList_;
+    ned::ui::EventLoop& eventLoop_;
 
     std::unordered_map<std::string, std::unique_ptr<LspClient>> clients_; // keyed by language
     std::unordered_map<text::Buffer*, BufferSyncState>          bufferState_;

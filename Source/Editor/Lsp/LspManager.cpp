@@ -7,9 +7,6 @@
 
 #include <unistd.h>
 
-#include <ftxui/component/animation.hpp>
-#include <ftxui/component/screen_interactive.hpp>
-
 #include "Editor/ProjectRoot.h"
 #include "LspPosition.h"
 #include "LspServerConfig.h"
@@ -77,7 +74,7 @@ namespace {
     // something sharing a home with anything else.
     std::string FormatLogLine(std::string_view language, std::string_view message) {
         const std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-        std::tm            localNow{};
+        std::tm           localNow{};
         localtime_r(&now, &localNow);
         char timestamp[16];
         std::strftime(timestamp, sizeof(timestamp), "%H:%M:%S", &localNow);
@@ -104,7 +101,7 @@ namespace {
 
 } // namespace
 
-LspManager::LspManager(text::BufferList& bufferList, ftxui::ScreenInteractive& screen) : bufferList_(bufferList), screen_(screen) {
+LspManager::LspManager(text::BufferList& bufferList, ned::ui::EventLoop& eventLoop) : bufferList_(bufferList), eventLoop_(eventLoop) {
 }
 
 LspClient* LspManager::ExistingClientForLanguage(const std::string& language) const {
@@ -145,7 +142,7 @@ LspClient* LspManager::ClientForLanguage(const std::string& language) {
 
     std::unique_ptr<LspClient> client;
     try {
-        client = std::make_unique<LspClient>(*command, screen_);
+        client = std::make_unique<LspClient>(*command, eventLoop_);
     }
     catch (const std::exception& e) {
         // Previously uncaught -- Transport's constructor throws
@@ -255,7 +252,6 @@ void LspManager::LogError(std::string_view language, std::string_view message) {
     }
     log->AppendWhileReadOnly(FormatLogLine(language, message));
     hasUnseenLogEntry_ = true;
-    ftxui::animation::RequestAnimationFrame();
 }
 
 bool LspManager::HasUnseenLogEntry() const {
@@ -302,11 +298,11 @@ void LspManager::HandlePublishDiagnostics(const Json& params) {
             const Json& end   = range.value("end", Json::object());
 
             const std::size_t startByte =
-                LspPositionToByte(content, LspPosition{.line = start.value("line", static_cast<std::size_t>(0)),
-                                                        .character = start.value("character", static_cast<std::size_t>(0))});
+                LspPositionToByte(content, LspPosition{.line      = start.value("line", static_cast<std::size_t>(0)),
+                                                       .character = start.value("character", static_cast<std::size_t>(0))});
             const std::size_t endByte =
-                LspPositionToByte(content, LspPosition{.line = end.value("line", static_cast<std::size_t>(0)),
-                                                        .character = end.value("character", static_cast<std::size_t>(0))});
+                LspPositionToByte(content, LspPosition{.line      = end.value("line", static_cast<std::size_t>(0)),
+                                                       .character = end.value("character", static_cast<std::size_t>(0))});
 
             diagnostics.push_back(text::Buffer::Diagnostic{
                 .startByte = startByte,
@@ -398,8 +394,8 @@ void LspManager::RequestCodeActions(text::Buffer& buffer, std::size_t rangeStart
     }
 
     const text::Rope& content = buffer.Content();
-    const LspPosition  start   = BytePositionToLsp(content, rangeStartByte);
-    const LspPosition  end     = BytePositionToLsp(content, rangeEndByte);
+    const LspPosition start   = BytePositionToLsp(content, rangeStartByte);
+    const LspPosition end     = BytePositionToLsp(content, rangeEndByte);
 
     Json diagnostics = Json::array();
     for (const text::Buffer::Diagnostic& diagnostic : buffer.Diagnostics()) {
@@ -410,8 +406,8 @@ void LspManager::RequestCodeActions(text::Buffer& buffer, std::size_t rangeStart
     }
 
     const std::string language = it->second.language;
-    const std::string uri    = it->second.uri;
-    const Json         params = {
+    const std::string uri      = it->second.uri;
+    const Json        params   = {
         {"textDocument", {{"uri", uri}}},
         {"range", {{"start", {{"line", start.line}, {"character", start.character}}}, {"end", {{"line", end.line}, {"character", end.character}}}}},
         {"context", {{"diagnostics", diagnostics}}},
@@ -444,7 +440,7 @@ void LspManager::ResolveCodeAction(text::Buffer& buffer, const CodeAction& actio
     }
 
     const std::string language = it->second.language;
-    const std::string uri = it->second.uri;
+    const std::string uri      = it->second.uri;
     client->SendRequest("codeAction/resolve", action.raw,
                         [this, language, callback = std::move(callback), uri](std::optional<Json> result, std::optional<Json> error) {
                             if (error) {
@@ -531,7 +527,7 @@ void LspManager::RequestRename(text::Buffer& buffer, std::size_t byteOffset, con
                                 return;
                             }
                             const RenameResult parsed = ExtractRenameEdits(*result);
-                            ResolvedRename      resolved;
+                            ResolvedRename     resolved;
                             resolved.touchesUnsupportedForm = parsed.touchesUnsupportedForm;
                             for (const RenameEdit& edit : parsed.edits) {
                                 const std::optional<std::filesystem::path> path = UriToPath(edit.uri);

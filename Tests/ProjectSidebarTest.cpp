@@ -3,13 +3,11 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
-#include <ftxui/component/event.hpp>
-#include <ftxui/component/mouse.hpp>
-#include <ftxui/screen/screen.hpp>
 #include <string>
 #include <thread>
 
 #include "Editor/ProjectRoot.h"
+#include "TestEvents.h"
 #include "Text/BufferList.h"
 #include "UI/ActiveBuffer.h"
 #include "UI/ProjectSidebar.h"
@@ -17,7 +15,7 @@
 
 namespace {
 
-std::string RowText(ftxui::Screen& screen, int row, int width) {
+std::string RowText(ned::ui::Screen& screen, int row, int width) {
     std::string out;
     for (int col = 0; col < width; ++col) {
         out += screen.PixelAt(col, row).character;
@@ -31,7 +29,7 @@ std::string RowText(ftxui::Screen& screen, int row, int width) {
 // tree-connector prefixes (│├└▸▾, all 3-byte glyphs) differ in how many
 // multi-byte characters precede the target text. This scans cell-by-cell
 // instead, returning a true column index (or -1).
-int ColumnOf(ftxui::Screen& screen, int row, int width, const std::string& target) {
+int ColumnOf(ned::ui::Screen& screen, int row, int width, const std::string& target) {
     for (int start = 0; start < width; ++start) {
         std::string joined;
         for (int col = start; col < width && joined.size() < target.size(); ++col) {
@@ -44,40 +42,20 @@ int ColumnOf(ftxui::Screen& screen, int row, int width, const std::string& targe
     return -1;
 }
 
-ftxui::Event MousePress(int x, int y, ftxui::Mouse::Button button = ftxui::Mouse::Left) {
-    ftxui::Mouse mouse;
-    mouse.button = button;
-    mouse.motion = ftxui::Mouse::Pressed;
-    mouse.x      = x;
-    mouse.y      = y;
-    return ftxui::Event::Mouse("", mouse);
+ned::ui::Event MousePress(int x, int y, ned::ui::MouseEvent::Button button = ned::ui::MouseEvent::Button::Left) {
+    return ned::ui::test::Mouse(x, y, button, ned::ui::MouseEvent::Motion::Pressed);
 }
 
-ftxui::Event MouseRelease(int x, int y) {
-    ftxui::Mouse mouse;
-    mouse.button = ftxui::Mouse::Left;
-    mouse.motion = ftxui::Mouse::Released;
-    mouse.x      = x;
-    mouse.y      = y;
-    return ftxui::Event::Mouse("", mouse);
+ned::ui::Event MouseRelease(int x, int y) {
+    return ned::ui::test::Mouse(x, y, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Released);
 }
 
-ftxui::Event MouseMove(int x, int y) {
-    ftxui::Mouse mouse;
-    mouse.button = ftxui::Mouse::None;
-    mouse.motion = ftxui::Mouse::Moved;
-    mouse.x      = x;
-    mouse.y      = y;
-    return ftxui::Event::Mouse("", mouse);
+ned::ui::Event MouseMove(int x, int y) {
+    return ned::ui::test::Mouse(x, y, ned::ui::MouseEvent::Button::None, ned::ui::MouseEvent::Motion::Moved);
 }
 
-ftxui::Event MouseWheel(int x, int y, ftxui::Mouse::Button button) {
-    ftxui::Mouse mouse;
-    mouse.button = button;
-    mouse.motion = ftxui::Mouse::Pressed;
-    mouse.x      = x;
-    mouse.y      = y;
-    return ftxui::Event::Mouse("", mouse);
+ned::ui::Event MouseWheel(int x, int y, ned::ui::MouseEvent::Button button) {
+    return ned::ui::test::Mouse(x, y, button, ned::ui::MouseEvent::Motion::Pressed);
 }
 
 // ProjectSidebar reads ned::editor::ProjectRoot() (project-root-detection
@@ -115,7 +93,7 @@ class CurrentPathGuard {
 };
 
 void PlaceSidebar(ned::ui::ProjectSidebar& sidebar, int width, int height) {
-    sidebar.SetBox_(ftxui::Box{.x_min = 0, .x_max = width - 1, .y_min = 0, .y_max = height - 1});
+    sidebar.SetBox_(ned::ui::Box{.x_min = 0, .x_max = width - 1, .y_min = 0, .y_max = height - 1});
 }
 
 } // namespace
@@ -141,8 +119,8 @@ TEST_CASE("ProjectSidebar renders a collapsed tree by default, with a disclosure
     ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlaceSidebar(sidebar, 28, 5);
 
-    ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(28), ftxui::Dimension::Fixed(5));
-    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 27, .y_min = 0, .y_max = 4});
+    ned::ui::Screen screen = ned::ui::Screen(28, 5);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 27, .y_min = 0, .y_max = 4});
     sidebar.Paint(canvas);
 
     // Row 0 is always the project-name header (sidebar-header follow-up) --
@@ -185,8 +163,8 @@ TEST_CASE("Clicking a collapsed directory expands it, revealing indented childre
     ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlaceSidebar(sidebar, 28, 5);
 
-    ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(28), ftxui::Dimension::Fixed(5));
-    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 27, .y_min = 0, .y_max = 4});
+    ned::ui::Screen screen = ned::ui::Screen(28, 5);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 27, .y_min = 0, .y_max = 4});
 
     sidebar.OnEvent(MousePress(0, 1)); // expand "sub/" (row 1 -- row 0 is the header)
     sidebar.Paint(canvas);
@@ -233,15 +211,15 @@ TEST_CASE("ProjectSidebar highlights the entry matching the active buffer's file
     ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlaceSidebar(sidebar, 28, 5);
 
-    ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(28), ftxui::Dimension::Fixed(5));
-    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 27, .y_min = 0, .y_max = 4});
+    ned::ui::Screen screen = ned::ui::Screen(28, 5);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 27, .y_min = 0, .y_max = 4});
     sidebar.Paint(canvas);
 
     // a.txt sorts before b.txt -- row 1 (row 0 is the header).
     REQUIRE(RowText(screen, 1, 28).find("a.txt") != std::string::npos);
-    REQUIRE(screen.PixelAt(0, 1).foreground_color == theme.activeTab.foreground.ToFtxui());
+    REQUIRE(screen.PixelAt(0, 1).foreground_color == theme.activeTab.foreground);
     REQUIRE(RowText(screen, 2, 28).find("b.txt") != std::string::npos);
-    REQUIRE_FALSE(screen.PixelAt(0, 2).foreground_color == theme.activeTab.foreground.ToFtxui());
+    REQUIRE_FALSE(screen.PixelAt(0, 2).foreground_color == theme.activeTab.foreground);
 
     std::filesystem::remove_all(dir);
 }
@@ -486,20 +464,20 @@ TEST_CASE("Wheel scrolls the tree and clamps at both ends", "[ProjectSidebar]") 
     ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlaceSidebar(sidebar, 28, 5); // fewer rows than the 20 files
 
-    ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(28), ftxui::Dimension::Fixed(5));
-    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 27, .y_min = 0, .y_max = 4});
+    ned::ui::Screen screen = ned::ui::Screen(28, 5);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 27, .y_min = 0, .y_max = 4});
 
     sidebar.Paint(canvas);
     REQUIRE(RowText(screen, 1, 28).find("0.txt") != std::string::npos); // row 0 is the header
 
     for (int i = 0; i < 10; ++i) {
-        sidebar.OnEvent(MouseWheel(0, 0, ftxui::Mouse::WheelDown));
+        sidebar.OnEvent(MouseWheel(0, 0, ned::ui::MouseEvent::Button::WheelDown));
     }
     sidebar.Paint(canvas);
     REQUIRE(RowText(screen, 1, 28).find("0.txt") == std::string::npos); // scrolled past it
 
     for (int i = 0; i < 20; ++i) {
-        sidebar.OnEvent(MouseWheel(0, 0, ftxui::Mouse::WheelUp));
+        sidebar.OnEvent(MouseWheel(0, 0, ned::ui::MouseEvent::Button::WheelUp));
     }
     sidebar.Paint(canvas);
     REQUIRE(RowText(screen, 1, 28).find("0.txt") != std::string::npos); // clamped back to the top
@@ -526,18 +504,18 @@ TEST_CASE("Scrolling past an expanded directory's own row pins it at the top (st
 
     sidebar.OnEvent(MousePress(0, 1)); // expand "sub/" (row 0 is the header)
     for (int i = 0; i < 5; ++i) {
-        sidebar.OnEvent(MouseWheel(0, 0, ftxui::Mouse::WheelDown));
+        sidebar.OnEvent(MouseWheel(0, 0, ned::ui::MouseEvent::Button::WheelDown));
     }
 
-    ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(28), ftxui::Dimension::Fixed(5));
-    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 27, .y_min = 0, .y_max = 4});
+    ned::ui::Screen screen = ned::ui::Screen(28, 5);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 27, .y_min = 0, .y_max = 4});
     sidebar.Paint(canvas);
 
     // "sub/" itself has scrolled out of the ordinary content area, but stays
     // pinned as a sticky header on the first content row (row 1 -- row 0 is
     // the project-name header) instead of disappearing.
     REQUIRE(RowText(screen, 1, 28).find("sub/") != std::string::npos);
-    REQUIRE(screen.PixelAt(0, 1).foreground_color == theme.tabBar.foreground.ToFtxui());
+    REQUIRE(screen.PixelAt(0, 1).foreground_color == theme.tabBar.foreground);
 
     std::filesystem::remove_all(dir);
 }
@@ -651,8 +629,8 @@ TEST_CASE("RevealPath expands every ancestor directory down to the target file",
     ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlaceSidebar(sidebar, 28, 5);
 
-    ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(28), ftxui::Dimension::Fixed(5));
-    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 27, .y_min = 0, .y_max = 4});
+    ned::ui::Screen screen = ned::ui::Screen(28, 5);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 27, .y_min = 0, .y_max = 4});
 
     sidebar.Paint(canvas);
     REQUIRE(RowText(screen, 2, 28).find("nested") == std::string::npos); // collapsed by default
@@ -690,8 +668,8 @@ TEST_CASE("RevealPath is a no-op when the target's own directory is already the 
 
     sidebar.RevealPath(dir / "file.txt"); // must not crash -- nothing to expand
 
-    ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(28), ftxui::Dimension::Fixed(5));
-    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 27, .y_min = 0, .y_max = 4});
+    ned::ui::Screen screen = ned::ui::Screen(28, 5);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 27, .y_min = 0, .y_max = 4});
     sidebar.Paint(canvas);
     REQUIRE(RowText(screen, 1, 28).find("file.txt") != std::string::npos); // row 0 is the header
 
@@ -714,8 +692,8 @@ TEST_CASE("RevealPath is a safe no-op for a path outside the current project roo
 
     sidebar.RevealPath(std::filesystem::temp_directory_path() / "somewhere_else_entirely" / "file.txt");
 
-    ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(28), ftxui::Dimension::Fixed(5));
-    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 27, .y_min = 0, .y_max = 4});
+    ned::ui::Screen screen = ned::ui::Screen(28, 5);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 27, .y_min = 0, .y_max = 4});
     sidebar.Paint(canvas);
     REQUIRE(RowText(screen, 1, 28).find("▸") != std::string::npos); // "src/" still collapsed (row 0 is the header)
 

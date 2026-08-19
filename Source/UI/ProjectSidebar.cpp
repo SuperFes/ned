@@ -246,9 +246,9 @@ void ProjectSidebar::SetOnBufferClosed(std::function<void(text::Buffer&)> handle
 void ProjectSidebar::Paint(Canvas c) {
     for (int row = 0; row < c.size().height; ++row) {
         for (int col = 0; col < c.size().width; ++col) {
-            ftxui::Cell& cell     = c[{.x = col, .y = row}];
+            Cell& cell            = c[{.x = col, .y = row}];
             cell.character        = " ";
-            cell.background_color = theme_.background.ToFtxui();
+            cell.background_color = theme_.background;
         }
     }
 
@@ -268,8 +268,8 @@ void ProjectSidebar::Paint(Canvas c) {
     {
         const std::u32string label = ProjectNameLabel();
         for (std::size_t i = 0; i < label.size() && static_cast<int>(i) < dividerColumn; ++i) {
-            ftxui::Cell& cell = c[{.x = static_cast<int>(i), .y = 0}];
-            cell.character    = text::EncodeCodepointUtf8(label[i]);
+            Cell& cell     = c[{.x = static_cast<int>(i), .y = 0}];
+            cell.character = text::EncodeCodepointUtf8(label[i]);
             theme_.tabBar.ApplyTo(cell);
         }
     }
@@ -299,8 +299,8 @@ void ProjectSidebar::Paint(Canvas c) {
 
         const std::u32string label = BuildLabel(entries, *index, expandedDirs_);
         for (std::size_t i = 0; i < label.size() && static_cast<int>(i) < dividerColumn; ++i) {
-            ftxui::Cell& cell = c[{.x = static_cast<int>(i), .y = row}];
-            cell.character    = text::EncodeCodepointUtf8(label[i]);
+            Cell& cell     = c[{.x = static_cast<int>(i), .y = row}];
+            cell.character = text::EncodeCodepointUtf8(label[i]);
             brush.ApplyTo(cell);
         }
     }
@@ -311,23 +311,23 @@ void ProjectSidebar::Paint(Canvas c) {
                                                : Brush{.background = theme_.background, .foreground = theme_.lineNumberForeground};
     const std::string dividerChar  = text::EncodeCodepointUtf8(kDividerLine);
     for (int row = 0; row < c.size().height; ++row) {
-        ftxui::Cell& cell = c[{.x = dividerColumn, .y = row}];
-        cell.character    = dividerChar;
+        Cell& cell     = c[{.x = dividerColumn, .y = row}];
+        cell.character = dividerChar;
         dividerBrush.ApplyTo(cell);
     }
 }
 
-bool ProjectSidebar::OnEvent(ftxui::Event event) {
+bool ProjectSidebar::OnEvent(const Event& event) {
     if (!event.is_mouse()) {
         return false;
     }
-    const ftxui::Mouse& rawMouse = event.mouse();
+    const MouseEvent rawMouse = event.mouse();
 
-    if (rawMouse.motion == ftxui::Mouse::Moved && resizing_) {
-        UpdateResize(rawMouse.x);
+    if (rawMouse.motion == MouseEvent::Motion::Moved && resizing_) {
+        UpdateResize(rawMouse.at.x);
         return true;
     }
-    if (rawMouse.motion == ftxui::Mouse::Released && resizing_) {
+    if (rawMouse.motion == MouseEvent::Motion::Released && resizing_) {
         EndResize();
         return true;
     }
@@ -337,13 +337,13 @@ bool ProjectSidebar::OnEvent(ftxui::Event event) {
         return false;
     }
 
-    if (mouse->button == ftxui::Mouse::WheelUp || mouse->button == ftxui::Mouse::WheelDown) {
+    if (mouse->button == MouseEvent::Button::WheelUp || mouse->button == MouseEvent::Button::WheelDown) {
         constexpr int kWheelScrollLines = 3;
 
         const std::vector<editor::ProjectTreeEntry> entries   = VisibleEntries(CachedTree());
         const int                                   maxScroll = std::max(0, static_cast<int>(entries.size()) - ContentHeight());
 
-        if (mouse->button == ftxui::Mouse::WheelDown) {
+        if (mouse->button == MouseEvent::Button::WheelDown) {
             scrollOffset_ = std::min(scrollOffset_ + kWheelScrollLines, maxScroll);
         }
         else {
@@ -352,12 +352,12 @@ bool ProjectSidebar::OnEvent(ftxui::Event event) {
         return true;
     }
 
-    if (mouse->button != ftxui::Mouse::Left || mouse->motion != ftxui::Mouse::Pressed) {
+    if (mouse->button != MouseEvent::Button::Left || mouse->motion != MouseEvent::Motion::Pressed) {
         return false;
     }
 
     if (mouse->at.x == size().width - 1) {
-        BeginResize(rawMouse.x);
+        BeginResize(rawMouse.at.x);
         return true;
     }
 

@@ -17,7 +17,8 @@ namespace {
 
 } // namespace
 
-SidebarToggle::SidebarToggle(const Brush& brush) : brush_(brush) {}
+SidebarToggle::SidebarToggle(const Brush& brush) : brush_(brush) {
+}
 
 void SidebarToggle::SetSidebar(ProjectSidebar* sidebar) {
     sidebar_ = sidebar;
@@ -31,15 +32,16 @@ void SidebarToggle::Paint(Canvas c) {
     // text::EncodeCodepointUtf8 already exists for exactly this.
     const std::string encoded = text::EncodeCodepointUtf8(symbol);
     for (int y = 0; y < c.size().height; ++y) {
-        ftxui::Cell& cell = c[{.x = 0, .y = y}];
-        cell.character    = encoded;
+        Cell& cell     = c[{.x = 0, .y = y}];
+        cell.character = encoded;
         brush_.ApplyTo(cell);
     }
 }
 
-bool SidebarToggle::OnEvent(ftxui::Event event) {
+bool SidebarToggle::OnEvent(const Event& event) {
     if (const auto mouse = LocalMouseEvent(event)) {
-        if (sidebar_ != nullptr && mouse->button == ftxui::Mouse::Left && mouse->motion == ftxui::Mouse::Pressed) {
+        if (sidebar_ != nullptr && mouse->button == MouseEvent::Button::Left &&
+            mouse->motion == MouseEvent::Motion::Pressed) {
             sidebar_->active = !sidebar_->active;
             return true;
         }
@@ -52,7 +54,7 @@ bool SidebarToggle::OnEvent(ftxui::Event event) {
         // raw event instead, matching the old mouse_release override's own
         // "no mouse-capture" reasoning.
     }
-    if (event.is_mouse() && event.mouse().motion == ftxui::Mouse::Released) {
+    if (event.is_mouse() && event.mouse().motion == MouseEvent::Motion::Released) {
         if (sidebar_ != nullptr && sidebar_->IsResizing()) {
             sidebar_->EndResize();
             return true;
