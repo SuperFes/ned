@@ -58,6 +58,20 @@ FetchContent_MakeAvailable(utf8proc)
 unset(CMAKE_POLICY_VERSION_MINIMUM)
 #------------------------------------------------------------------------------
 
+#--- Fetch CLI11 (command-line parameter handling follow-up) ------------------
+# Header-only; only main.cpp (the executable target, not ned_lib) needs it --
+# see main.cpp's own argument-parsing section.
+FetchContent_Declare(CLI11
+        GIT_REPOSITORY https://github.com/CLIUtils/CLI11.git
+        GIT_TAG v2.5.0
+        GIT_SHALLOW TRUE
+        EXCLUDE_FROM_ALL)
+set(CLI11_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(CLI11_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(CLI11_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(CLI11)
+#------------------------------------------------------------------------------
+
 #--- Fetch nlohmann/json (LSP client follow-up) --------------------------------
 FetchContent_Declare(nlohmann_json
         GIT_REPOSITORY https://github.com/nlohmann/json.git
@@ -335,7 +349,7 @@ endif()
 
 add_executable(ned Source/main.cpp)
 
-target_link_libraries(ned PRIVATE ned_lib)
+target_link_libraries(ned PRIVATE ned_lib CLI11::CLI11)
 
 if (NED_BUILD_TESTS)
     enable_testing()
