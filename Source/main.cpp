@@ -7,6 +7,9 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <vector>
+
+#include <CLI/CLI.hpp>
 
 #include "Application.h"
 #include "Editor/Commands.h"
@@ -49,18 +52,27 @@ namespace {
 // EventLoop's constructor is what calls notcurses_core_init, which is what
 // starts reading stdin now).
 int RunDetectTheme(int argc, char** argv) {
-    bool                       transparent = false;
-    std::optional<std::string> outputPath;
+    // CLI11 parses argv[0] as the program name and everything from argv[1]
+    // on as real arguments -- argv[1] here is literally the string
+    // "--detect-theme" (that's how main() decided to call this function in
+    // the first place), so it's handed to CLI11 as the (discarded) program
+    // name by starting the parse one element past it, at argv[2].
+    CLI::App app{"Probe the terminal's actual configured colors and write a Theme file, then exit."};
 
-    for (int i = 2; i < argc; ++i) {
-        const std::string_view arg = argv[i];
-        if (arg == "--transparent") {
-            transparent = true;
-        }
-        else if (!outputPath) {
-            outputPath = std::string(arg);
-        }
+    bool        transparent = false;
+    std::string outputPathArg;
+    app.add_flag("--transparent", transparent,
+                 "Treat the detected background as transparent instead of an opaque color");
+    app.add_option("output-path", outputPathArg, "Where to write the theme file (default: the XDG theme file path)");
+
+    try {
+        app.parse(argc - 1, argv + 1);
     }
+    catch (const CLI::ParseError& e) {
+        return app.exit(e);
+    }
+
+    const std::optional<std::string> outputPath = outputPathArg.empty() ? std::nullopt : std::optional(outputPathArg);
 
     const ned::ui::DetectedColors detected = ned::ui::ProbeTerminalColors();
     ned::ui::Theme                theme    = ned::ui::BuildDetectedTheme(detected, ned::ui::DarkTheme());
@@ -102,25 +114,31 @@ int main(int argc, char** argv) {
     ned::text::BufferList bufferList;
     std::string           statusMessage;
 
-    // open-binary-anyway follow-up: --force-binary is the CLI-argument-time
-    // escape hatch for BufferList::OpenOrCreateFile's binary refusal --
-    // there's no interactive session to ask a y/n confirmation through at
-    // this point in startup (no EventLoop, no BufferView yet), so this is
-    // the only override available for a file passed directly on the
-    // command line. Accepted anywhere among the arguments, not just
-    // immediately after the program name, so `ned --force-binary path` and
-    // `ned path --force-binary` both work; the first non-flag argument is
-    // taken as the path.
-    bool        forceBinary = false;
-    const char* pathArg     = nullptr;
-    for (int i = 1; i < argc; ++i) {
-        if (std::string_view(argv[i]) == "--force-binary") {
-            forceBinary = true;
-        }
-        else if (pathArg == nullptr) {
-            pathArg = argv[i];
-        }
+    // command-line-parameter-handling follow-up: CLI11 (header-only,
+    // FetchContent'd in CMakeLists.txt) replaces the old hand-rolled
+    // argv loop -- --force-binary is still the CLI-argument-time escape
+    // hatch for BufferList::OpenOrCreateFile's binary refusal (there's no
+    // interactive session to ask a y/n confirmation through at this point
+    // in startup, no EventLoop, no BufferView yet), and `paths` now accepts
+    // any number of file/directory arguments instead of silently keeping
+    // only the first one -- `ned a.txt b.txt c.txt` opens all three as
+    // buffers (see the extra-paths loop below) instead of just `a.txt`.
+    CLI::App app{"Ned -- a terminal-based, Janet-scriptable text editor.", "ned"};
+
+    bool                     forceBinary = false;
+    std::vector<std::string> paths;
+    app.add_flag("--force-binary", forceBinary,
+                 "Open files that look binary anyway, without an interactive confirmation");
+    app.add_option("paths", paths, "Files or directories to open");
+
+    try {
+        app.parse(argc, argv);
     }
+    catch (const CLI::ParseError& e) {
+        return app.exit(e);
+    }
+
+    const char* pathArg = paths.empty() ? nullptr : paths.front().c_str();
 
     // Whether the path argument is a directory decides two independent
     // things below: it's never handed to OpenOrCreateFile (a directory
@@ -160,6 +178,31 @@ int main(int argc, char** argv) {
     }
     if (buffer == nullptr) {
         buffer = &bufferList.CreateBuffer("scratch");
+    }
+
+    // command-line-parameter-handling follow-up: any path arguments beyond
+    // the first are opened as ordinary background buffers -- not shown in
+    // the initial pane, not consulted for project-root detection (there's
+    // only one root to detect), reachable immediately via the tab bar or
+    // switch-to-buffer once the editor UI exists below. A directory among
+    // them is silently skipped (nothing to open as a file's content). A
+    // binary file among them just gets BufferList::OpenOrCreateFile's normal
+    // refusal (pass --force-binary if that's not wanted) rather than the
+    // interactive y/n confirmation the *first* argument gets further down
+    // via deferredBinaryOpenPath -- there's no focused pane yet to drive
+    // more than one such confirmation through at this point in startup.
+    for (std::size_t i = 1; i < paths.size(); ++i) {
+        std::error_code extraIsDirectoryEc;
+        if (std::filesystem::is_directory(paths[i], extraIsDirectoryEc)) {
+            continue;
+        }
+        try {
+            bufferList.OpenOrCreateFile(paths[i], forceBinary);
+        }
+        catch (const std::exception&) {
+            // Best-effort: one bad extra path shouldn't stop the rest of
+            // startup, including the other paths still left to open.
+        }
     }
 
     // project-root-detection follow-up: computed once here from whatever
