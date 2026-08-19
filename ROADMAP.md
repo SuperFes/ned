@@ -1640,12 +1640,27 @@ each is, not by priority.
           language server is already bound to that buffer for code intelligence —
           this is *not* the existing per-language `LspServerConfig` lookup, which
           picks exactly one server per buffer today.
-        - **Open architectural question, unresolved:** does the current LSP client
-          support more than one concurrent server per buffer? If it's 1:1 today (needs
-          checking in `Source/Editor/Lsp*` before this is scoped further), then the
-          real work here is multi-server-per-buffer diagnostics merging, not adding a
-          checker — that's the actual size of this item, not "just another server
-          config entry."
+        - **Open architectural question, resolved as "not today":** checked directly
+          against `Source/Editor/Lsp/LspManager.h` — it's strictly 1:1, `bufferState_`
+          keyed by `Buffer*` holding one `BufferSyncState{language, ...}`, `clients_`
+          keyed by language name. Real work needed is multi-server-per-buffer
+          diagnostics merging (e.g. harper-ls + clangd both annotating the same whole
+          buffer), not adding a checker — that's the actual size of this item, not
+          "just another server config entry."
+        - **Embedded-language documents (HTML with inline `<script>`/`<style>`, Vue/
+          Svelte-style single-file components) are explicitly a separate, bigger
+          problem from the above**, raised in the same discussion: no LSP server
+          natively spans multiple languages in one file. The real editors that handle
+          this (VS Code's HTML/CSS/JS services, Volar, the Svelte language server) all
+          segment the document into per-language virtual sub-documents and forward
+          each to its own server, remapping every position in the response back
+          through an offset map. Tree-sitter injection queries (the same mechanism
+          `nvim-treesitter` uses) are the natural way to find those region boundaries
+          here, since `ned` already builds a real parse tree per buffer — but the LSP
+          side would need `bufferState_` to go from "one language per buffer" to "N
+          (language, byte-range) regions per buffer," each syncing its own virtual
+          document. Large enough to be its own follow-up once multi-server-per-buffer
+          is solved, not bundled into this entry.
         - **Must never run against binary buffers** — key off the existing
           binary/text classification (`RequestOpenBinaryFile`/large-file-async-load
           machinery) rather than inventing a new check.
@@ -1786,8 +1801,46 @@ each is, not by priority.
         - Revisit as its own phase once picked up, not folded into an unrelated
           feature's scope — closer in size to Phase 7 (TermOx → FTXUI migration) or
           Phase 8 (window splitting) than to a single keybinding follow-up.
-  - [ ] Built-in terminal panel.
-  - [ ] Task runner (build/test tasks from within the editor).
+  - [ ] **Task runner** (build/test tasks from within the editor) — sequenced ahead of
+        the terminal panel below, not bundled with it, after a real discussion of how the
+        two relate. Shape: spawn a subprocess (build/test command, Janet-configured, not
+        hardcoded), stream its stdout/stderr into a read-only, live-appended buffer —
+        Emacs `*compilation*`-style, the same "read-only, tossable buffer" convention
+        project-search results already use — rather than a full interactive session.
+        Deliberately reuses `Source/Editor/Lsp/Transport.h`/`LspClient.h`'s existing
+        async-subprocess/JSON-RPC-over-stdio plumbing as its transport layer instead of
+        writing new process-management code from scratch — the same
+        spawn/read-async/marshal-onto-main-thread-via-`Post` shape `LspManager` already
+        has, just without the JSON-RPC framing for a plain build command (real JSON-RPC
+        framing only matters once this same layer is reused for something that speaks
+        it — see below).
+        - **Deliberately scoped as reusable ACP-client transport groundwork.** Raised by
+          the user alongside interest in a future Agent Client Protocol (ACP) integration
+          for LLM-assisted editing (see "AI-assisted editing" above) — ACP agents, like
+          LSP servers, are a persistent subprocess speaking structured JSON-RPC over
+          stdio, not an interactive pty session. That makes the task runner's own
+          subprocess/streaming transport the right thing to build *now* in a way a
+          future `AcpManager`/`AcpClient` could reuse (mirroring `LspManager`/
+          `LspClient`'s own split), rather than an unrelated one-off. Not building ACP
+          support itself here — just not building the task runner's transport in a way
+          that would need throwing away later.
+        - **Explicitly not a terminal emulator** — no pty, no VT100/xterm escape-sequence
+          interpretation, no interactivity (no stdin forwarding to the child process). A
+          build/test command's own output is what needs to be readable, not a live shell
+          session; see the terminal panel entry below for why that's a genuinely
+          different, much bigger problem deliberately kept separate.
+  - [ ] **Built-in terminal panel** — a real interactive pty
+        (`forkpty`/`posix_openpt`) plus VT100/xterm escape-sequence emulation (cursor
+        movement, colors, resizing, an actual interactive shell), not a variant of the
+        task runner above. Considered together with the task runner and deliberately
+        *not* merged with it: unlike a build command's own output, this needs genuine
+        terminal emulation to be usable for arbitrary shell use, and buys nothing toward
+        a future ACP integration (an ACP agent is a JSON-RPC peer, not something driven
+        through a terminal emulator) — the two were originally one bullet point, split
+        once it was clear they're different-sized problems solving different needs, not
+        two slices of the same feature. No design pass done yet; revisit once the task
+        runner's own subprocess-transport layer exists, since a real terminal panel would
+        still want its own separate pty-backed path rather than reusing that transport.
   - [ ] Remote development (SSH remote editing).
   - [ ] Per-file session persistence: remember each file's last point/scroll position
         (keyed by absolute path) across restarts, restored on `find-file`/`ned <path>`,
