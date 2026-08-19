@@ -186,6 +186,72 @@ TEST_CASE("BufferView::paint on a pathologically long single line stays fast", "
     REQUIRE(duration_cast<milliseconds>(elapsed).count() < 500);
 }
 
+TEST_CASE("BufferView::paint on a large wrap-enabled document stays fast across repeated calls",
+          "[Performance]") {
+    // line-wrap follow-up: BufferView::RowsForLine()/EnsureRowCountCache()
+    // are the one place doing genuinely non-trivial per-line work in that
+    // class (a real word-break scan, not just a boolean range check) --
+    // flagged in their own doc comments for exactly this kind of test
+    // rather than pre-optimized. This proves the "compute lazily, memoize
+    // per line, never eagerly scan the whole buffer up front" design
+    // actually holds: an earlier eager-whole-range version measured over
+    // 2 seconds here before being caught by this exact test and fixed.
+    //
+    // Deliberately FundamentalMode with wrapLines forced on, not
+    // MarkdownMode/OrgMode -- an earlier version of this test used
+    // MarkdownMode and initially (mis-)diagnosed a real slowdown as a wrap
+    // bug, when the actual cost was MarkdownMode's own real tree-sitter
+    // highlight pass parsing the full document (an entirely separate,
+    // pre-existing cost unrelated to wrap). FundamentalMode has no
+    // highlight function at all, so this isolates wrap's own cost cleanly.
+    //
+    // A modest buffer (a few hundred lines -- comfortably more than the
+    // 24-row viewport below, which is the whole point) and 50 Paint()
+    // calls, not the multi-megabyte/200-call scale other tests in this
+    // file use: confirmed directly that this test's own real cost tracks
+    // Paint() call count, not buffer size at all (Paint() only ever visits
+    // the visible rows; MaxTopLine()/ScrollToShowPoint() aren't even
+    // exercised by a bare repeated-Paint()-call loop like this one, since
+    // neither a scroll bar nor a real event ever asks this BufferView to
+    // rescroll) -- so a large buffer here would only inflate the one-time
+    // setup cost, not exercise anything this test actually cares about.
+    // Kept modest specifically to leave real margin under
+    // -DNED_ENABLE_SANITIZERS=ON's `Debug`-build-plus-instrumentation
+    // overhead (unoptimized code paying real heap-allocation/redzone cost
+    // on every ComputeWrapSegments call), the same "tuned down to leave
+    // real margin under ASan" precedent the JsonMode test below already
+    // establishes.
+    ned::text::Buffer          buffer("scratch", ned::text::Rope(MakeMultiLineContent(5'000)));
+    ned::text::KillRing        killRing;
+    ned::editor::RegisterTable registers;
+    ned::text::BufferList      bufferList;
+
+    ned::editor::CommandRegistry registry;
+    ned::editor::RegisterBuiltinCommands(registry);
+    ned::editor::Keymap     keymap = ned::editor::BuildDefaultGlobalKeymap();
+    ned::editor::Dispatcher dispatcher(registry, ned::editor::KeymapStack({&keymap}));
+    ned::editor::Mode       mode  = ned::editor::FundamentalMode();
+    mode.wrapLines                = true;
+    ned::ui::Theme          theme = ned::ui::DarkTheme();
+
+    std::string statusMessage;
+
+    ned::ui::ActiveBuffer activeBuffer(buffer);
+    ned::ui::BufferView   view(activeBuffer, killRing, registers, bufferList, dispatcher, statusMessage, mode, theme);
+    view.SetBox_(ftxui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 23});
+
+    ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(80), ftxui::Dimension::Fixed(24));
+    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 23});
+
+    const auto start = steady_clock::now();
+    for (int i = 0; i < 50; ++i) {
+        view.Paint(canvas);
+    }
+    const auto elapsed = steady_clock::now() - start;
+
+    REQUIRE(duration_cast<milliseconds>(elapsed).count() < 500);
+}
+
 TEST_CASE("BufferView::paint with JsonMode's tree-sitter highlighting stays fast on a large file",
           "[Performance]") {
     // JsonMode::highlight does a full tree-sitter reparse plus a full query

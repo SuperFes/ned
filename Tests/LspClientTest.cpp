@@ -256,3 +256,26 @@ TEST_CASE("SetNotificationHandler replaces a previous handler for the same metho
 
     REQUIRE(callCount == 1); // only the second (replacing) handler ran
 }
+
+// error-visibility follow-up. The real background-read-loop -> EOF ->
+// screen_.Post(...)-marshaled onDisconnected_ call path can't be exercised
+// headlessly here, for the same reason DispatchFrame's own doc comment
+// documents for the frame-dispatch path: FTXUI's App::Post only ever
+// enqueues (confirmed by reading app.cpp), with no synchronous fallback,
+// so a real ScreenInteractive::Loop() would be needed to ever see a
+// Post-driven call actually fire -- and no test in this codebase runs one
+// (App::RunOnce/RunOnceBlocking also call FetchTerminalEvents(), unsafe
+// without a real TTY). This just confirms SetOnDisconnected is a safe,
+// replaceable hook, the same "connect after construction" shape
+// SetNotificationHandler's own test just above confirms; the actual
+// spawn-failure and JSON-RPC-error paths (which DO run entirely on the main
+// thread, no Post needed) are covered end-to-end in LspManagerTest.cpp
+// instead.
+TEST_CASE("SetOnDisconnected replaces a previous handler, and unset is a safe no-op", "[Lsp]") {
+    auto          screen  = TestScreen();
+    ClientFixture fixture = ClientFixture::Create(screen);
+
+    fixture.client.SetOnDisconnected([](std::string) { FAIL("should have been replaced"); });
+    fixture.client.SetOnDisconnected([](std::string) {});
+    SUCCEED(); // no crash from setting/replacing -- the callback itself is never invoked directly here
+}

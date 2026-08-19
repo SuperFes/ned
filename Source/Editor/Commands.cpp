@@ -8,6 +8,7 @@
 #include "CodeFold.h"
 #include "FinalNewline.h"
 #include "FormatOnSave.h"
+#include "Lsp/LspManager.h"
 #include "Markdown.h"
 #include "Org.h"
 #include "TabWidth.h"
@@ -350,8 +351,9 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
 
     registry.Register("quit", "Exit the editor, or prompt for confirmation if any buffer has unsaved changes.",
                       [](CommandContext& context) {
-                          const bool anyModified = std::any_of(context.bufferList.Buffers().begin(), context.bufferList.Buffers().end(),
-                                                               [](const auto& buffer) { return buffer->Modified(); });
+                          const bool anyModified =
+                              std::any_of(context.bufferList.Buffers().begin(), context.bufferList.Buffers().end(),
+                                         [](const auto& buffer) { return buffer->Modified() && !buffer->ReadOnly(); });
                           if (anyModified) {
                               context.interactiveRequest = InteractiveRequest::ConfirmQuit;
                           }
@@ -636,6 +638,70 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           if (context.message) {
                               *context.message = "No diagnostic at point.";
                           }
+                      });
+
+    // hover/completion follow-up. Async: the response arrives well after
+    // this command function itself returns, via LspManager::RequestHover's
+    // callback, so context.message can't be written synchronously the way
+    // lsp-show-diagnostic's is -- captures the raw std::string* instead,
+    // valid for as long as the owning BufferView is (see CommandContext::
+    // lspManager's own doc comment in Command.h for why this is the same
+    // accepted lifetime shape the diagnostics-publish handler already
+    // relies on, not a new risk).
+    registry.Register("lsp-hover", "Show hover information from the language server at point.",
+                      [](CommandContext& context) {
+                          if (!context.lspManager) {
+                              if (context.message) {
+                                  *context.message = "No LSP manager available.";
+                              }
+                              return;
+                          }
+                          std::string* message = context.message;
+                          context.lspManager->RequestHover(context.buffer, context.buffer.Point(),
+                                                            [message](std::optional<std::string> text) {
+                                                                if (message) {
+                                                                    *message = text.value_or("No hover information available.");
+                                                                }
+                                                            });
+                      });
+
+    // hover/completion follow-up: a one-shot direct action (see
+    // InteractiveRequest::LspComplete's own doc comment in Command.h) --
+    // BufferView::StartInteractiveSession is what actually sends the
+    // textDocument/completion request and owns the resulting ghost-text
+    // state, not this command.
+    registry.Register("lsp-complete", "Request completion candidates from the language server at point.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::LspComplete;
+                      });
+
+    // code-actions follow-up: a one-shot direct action (see
+    // InteractiveRequest::LspCodeAction's own doc comment in Command.h) --
+    // BufferView::RequestCodeActionsAtPoint is what actually sends the
+    // textDocument/codeAction request and owns the resulting select/confirm
+    // session, not this command.
+    registry.Register("lsp-code-action", "Show LSP code actions (quick fixes) available at point.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::LspCodeAction;
+                      });
+
+    // error-visibility follow-up: no dedicated keybinding, M-x reachable --
+    // matches org-agenda's own precedent (Commands.cpp/Command.h).
+    registry.Register("lsp-show-log", "Switch to the *lsp log* buffer of LSP errors/disconnects.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::LspShowLog;
+                      });
+
+    // go-to-definition/rename follow-up: two more one-shot direct actions
+    // (see InteractiveRequest::LspGotoDefinition/LspRename's own doc
+    // comment in Command.h) -- BufferView owns the actual request/session.
+    registry.Register("lsp-goto-definition", "Jump to the definition of the symbol at point, via the language server.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::LspGotoDefinition;
+                      });
+    registry.Register("lsp-rename", "Rename the symbol at point across every file the language server reports it in.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::LspRename;
                       });
 
     // Org's three editing commands act directly on context.buffer, unlike
@@ -954,6 +1020,16 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("C-c C-s"), "project-search");
     keymap.Bind(ParseKeySequence("C-c C-f"), "project-find-file");
     keymap.Bind(ParseKeySequence("C-c C-e"), "lsp-show-diagnostic");
+    keymap.Bind(ParseKeySequence("C-c C-j"), "lsp-hover");
+    keymap.Bind(ParseKeySequence("C-c C-a"), "lsp-code-action");
+    // hover/completion follow-up: "M-/" (company-mode's usual manual-
+    // completion binding) is already bound to redo elsewhere in this
+    // function -- C-M-i is Emacs' own traditional complete-symbol binding
+    // instead, confirmed free (grepped the full bind list in this function).
+    keymap.Bind(ParseKeySequence("C-M-i"), "lsp-complete");
+    keymap.Bind(ParseKeySequence("M-."), "lsp-goto-definition"); // real Emacs' own xref-find-definitions binding
+    keymap.Bind(ParseKeySequence("ESC ."), "lsp-goto-definition");
+    keymap.Bind(ParseKeySequence("C-c C-M-r"), "lsp-rename"); // C-c C-r is already project-replace
     keymap.Bind(ParseKeySequence("C-c C-v"), "project-search-visit-result");
     keymap.Bind(ParseKeySequence("C-c C-r"), "project-replace");
     keymap.Bind(ParseKeySequence("C-c C-p"), "toggle-project-sidebar");

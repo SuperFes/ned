@@ -122,6 +122,42 @@ namespace {
             {"emphasis", SyntaxClass::Emphasis},
             {"underline", SyntaxClass::Underline},
             {"strikethrough", SyntaxClass::Strikethrough},
+
+            // Markdown-highlighting follow-up -- real capture names from
+            // both tree-sitter-markdown's and tree-sitter-markdown-inline's
+            // own vendored highlights.scm (checked directly, not invented).
+            // text.title has a CaptureTable entry purely as a defensive
+            // fallback -- MarkdownMode()'s own dedicated heading-level pass
+            // (Mode.cpp) always overrides it with a real HeadlineLevel1/2/3
+            // span per the "later capture wins" overlap rule, since a plain
+            // query capture can't tell H1 from H6. text.strong/text.emphasis
+            // reuse Org's own generic Strong/Emphasis classes -- bold text
+            // is bold text regardless of source language. text.literal
+            // (code spans, fenced/indented code blocks) reuses String, the
+            // same "verbatim/code is close in spirit to String" precedent
+            // Org's own doc comment already establishes.
+            {"text.title", SyntaxClass::HeadlineLevel1},
+            {"text.strong", SyntaxClass::Strong},
+            {"text.emphasis", SyntaxClass::Emphasis},
+            {"text.literal", SyntaxClass::String},
+            {"text.uri", SyntaxClass::Link},
+            {"text.reference", SyntaxClass::Link},
+            // Deliberately NOT a "punctuation.special" entry here -- that
+            // capture name is already shared by other bundled grammars
+            // above (line 104, mapped to the generic Punctuation class),
+            // and markdown's own use of it (list markers/thematic
+            // break/heading markers/blockquote marker) wants the distinct,
+            // dimmed MarkupMarker treatment instead -- CaptureTable has no
+            // per-language scoping, so MarkdownMode()'s own highlight
+            // closure special-cases this one capture name directly rather
+            // than repointing it here and silently changing every other
+            // language's punctuation.special color too.
+            //
+            // Ned's own addition -- the grammar has a real "strikethrough"
+            // node (GFM extension) but the vendored inline query doesn't
+            // capture it; MarkdownMode() appends a small supplemental
+            // pattern of its own using this capture name (see Mode.cpp).
+            {"text.strikethrough", SyntaxClass::Strikethrough},
         };
         return table;
     }
@@ -170,9 +206,16 @@ namespace {
     // just mapping them to Default, which wouldn't fix the clobbering) is
     // the correct, general fix -- not a per-language patch, since this
     // exact convention is universal across every nvim-treesitter query file,
-    // including ones not yet vendored here.
+    // including ones not yet vendored here. Markdown-highlighting follow-up:
+    // "none" joins this filter for the same reason -- tree-sitter-markdown's
+    // own highlights.scm captures a fenced code block's inner content
+    // "(code_fence_content) @none" (deliberately left unhighlighted upstream,
+    // meant for a nested-language injection Ned doesn't implement), and
+    // without filtering it out it would resolve to Default and clobber the
+    // parent fenced_code_block's own real "text.literal" (String) span.
     bool IsHighlightableCapture(std::string_view captureName) {
-        return !captureName.empty() && captureName.front() != '_' && captureName != "spell" && captureName != "nospell";
+        return !captureName.empty() && captureName.front() != '_' && captureName != "spell" && captureName != "nospell" &&
+               captureName != "none";
     }
 
     // Org-mode syntax-highlighting follow-up: cyclic heading-level color
@@ -184,6 +227,98 @@ namespace {
         static constexpr SyntaxClass kLevels[] = {SyntaxClass::HeadlineLevel1, SyntaxClass::HeadlineLevel2,
                                                   SyntaxClass::HeadlineLevel3};
         return kLevels[(starCount - 1) % (sizeof(kLevels) / sizeof(kLevels[0]))];
+    }
+
+    // Markdown-highlighting follow-up. Which atx_h<N>_marker child type
+    // (N = 1..6) an atx_heading node has -- a plain query capture can only
+    // say "this is A heading", not which level, since every level shares
+    // the same "(atx_heading (inline) @text.title)" pattern; the level only
+    // shows up as which specific marker child is present.
+    std::optional<int> AtxHeadingMarkerLevel(std::string_view childType) {
+        static constexpr std::pair<std::string_view, int> kMarkers[] = {
+            {"atx_h1_marker", 1}, {"atx_h2_marker", 2}, {"atx_h3_marker", 3},
+            {"atx_h4_marker", 4}, {"atx_h5_marker", 5}, {"atx_h6_marker", 6},
+        };
+        for (const auto& [name, level] : kMarkers) {
+            if (childType == name) {
+                return level;
+            }
+        }
+        return std::nullopt;
+    }
+
+    // Markdown-highlighting follow-up. Walks the real parsed tree (not just
+    // query captures -- see AtxHeadingMarkerLevel's own doc comment) for the
+    // handful of constructs a plain query can't express: ATX/setext heading
+    // levels (whole-node span, matching Org's own whole-headline-line
+    // convention) and GFM task-list checkboxes (reusing Org's own Checkbox
+    // class -- same visual concept). Recurses over every child regardless
+    // of match, matching-node checks first then recursing unconditionally
+    // -- headings/checkboxes never nest, so this never double-counts.
+    void CollectMarkdownStructuralSpans(const treesitter::Node& node, std::vector<HighlightSpan>& spans) {
+        const std::string_view type = node.Type();
+        if (type == "atx_heading") {
+            for (std::size_t i = 0; i < node.ChildCount(); ++i) {
+                if (const std::optional<int> level = AtxHeadingMarkerLevel(node.Child(i).Type())) {
+                    spans.push_back(HighlightSpan{.startByte   = node.StartByte(),
+                                                   .endByte     = node.EndByte(),
+                                                   .syntaxClass = HeadlineLevelForStarCount(static_cast<std::size_t>(*level))});
+                    break;
+                }
+            }
+        } else if (type == "setext_heading") {
+            for (std::size_t i = 0; i < node.ChildCount(); ++i) {
+                const std::string_view childType = node.Child(i).Type();
+                if (childType == "setext_h1_underline" || childType == "setext_h2_underline") {
+                    const std::size_t level = (childType == "setext_h1_underline") ? 1 : 2;
+                    spans.push_back(HighlightSpan{
+                        .startByte = node.StartByte(), .endByte = node.EndByte(), .syntaxClass = HeadlineLevelForStarCount(level)});
+                    break;
+                }
+            }
+        } else if (type == "task_list_marker_checked" || type == "task_list_marker_unchecked") {
+            spans.push_back(HighlightSpan{.startByte = node.StartByte(), .endByte = node.EndByte(), .syntaxClass = SyntaxClass::Checkbox});
+        }
+
+        for (std::size_t i = 0; i < node.ChildCount(); ++i) {
+            CollectMarkdownStructuralSpans(node.Child(i), spans);
+        }
+    }
+
+    // Markdown-highlighting follow-up. The actual hand-rolled "injection":
+    // markdown's own bold/italic/strikethrough/code-span/link formatting
+    // lives entirely in the separate tree-sitter-markdown-inline grammar,
+    // never in the block grammar walked by CollectMarkdownStructuralSpans
+    // above -- real markdown tooling combines the two via tree-sitter
+    // language injection, which Ned's TreeSitter/ wrapper has no generic
+    // support for (see CMakeLists.txt's own tree-sitter-markdown-inline
+    // entry). Every block-grammar "inline" node is raw text meant for this
+    // second grammar; inline nodes don't nest, so finding one ends this
+    // branch of the walk rather than recursing further.
+    void CollectMarkdownInlineSpans(const treesitter::Node& node, std::string_view bufferText, const treesitter::Parser& inlineParser,
+                                    const treesitter::Query& inlineQuery, std::vector<HighlightSpan>& spans) {
+        if (node.Type() == "inline") {
+            const std::size_t      start      = node.StartByte();
+            const std::size_t      end        = node.EndByte();
+            const std::string_view inlineText = bufferText.substr(start, end - start);
+            const treesitter::Tree inlineTree = inlineParser.Parse(inlineText);
+            if (!inlineTree.IsNull()) {
+                for (const treesitter::QueryCapture& capture : inlineQuery.Captures(inlineTree.RootNode(), inlineText)) {
+                    if (!IsHighlightableCapture(capture.name)) {
+                        continue;
+                    }
+                    spans.push_back(HighlightSpan{
+                        .startByte   = start + capture.startByte,
+                        .endByte     = start + capture.endByte,
+                        .syntaxClass = SyntaxClassForCapture(capture.name),
+                    });
+                }
+            }
+            return;
+        }
+        for (std::size_t i = 0; i < node.ChildCount(); ++i) {
+            CollectMarkdownInlineSpans(node.Child(i), bufferText, inlineParser, inlineQuery, spans);
+        }
     }
 
 } // namespace
@@ -409,6 +544,89 @@ Mode MarkdownMode() {
     mode.keymap.Bind(ParseKeySequence("TAB"), "markdown-table-align");
     // No lineCommentPrefix -- Markdown (unlike Org, see OrgMode() below)
     // has no native comment-line convention of its own to toggle.
+    // line-wrap follow-up: prose benefits far more from wrapping at word
+    // boundaries than from horizontal scrolling -- see WrapOverrides.h for
+    // how a user overrides this per file if they'd rather not.
+    mode.wrapLines = true;
+
+    // Markdown-highlighting follow-up: mode.highlight built by
+    // TreeSitterMode() above gets replaced entirely below -- everything
+    // else (.keymap/.wrapLines/.expandSelection, the last built by
+    // TreeSitterMode() too) is kept exactly as-is. Own separate
+    // parser/query state, own tree walk -- mirrors OrgMode()'s own
+    // precedent of bypassing the shared generic highlight path for logic a
+    // plain query can't express, here: heading levels, GFM checkboxes, and
+    // markdown's own inline-grammar "injection" (see
+    // CollectMarkdownInlineSpans's own doc comment for why that's a whole
+    // second grammar, not just more query patterns).
+    const auto blockLanguage = treesitter::LanguageByName("markdown");
+    const auto blockParser   = std::make_shared<treesitter::Parser>(*blockLanguage);
+    const auto blockQuery    = std::make_shared<treesitter::Query>(*blockLanguage, treesitter::queries::kMarkdown);
+
+    const auto inlineLanguage = treesitter::LanguageByName("markdown-inline");
+    const auto inlineParser   = std::make_shared<treesitter::Parser>(*inlineLanguage);
+    // Ned's own addition -- see CaptureTable()'s "text.strikethrough" doc
+    // comment for why this one extra pattern is appended in C++ rather than
+    // through a CMake-embedded query file.
+    const std::string inlineQuerySource = std::string(treesitter::queries::kMarkdownInline) + "\n(strikethrough) @text.strikethrough\n";
+    const auto        inlineQuery       = std::make_shared<treesitter::Query>(*inlineLanguage, inlineQuerySource);
+
+    // Same cached-tree-by-text-equality idiom TreeSitterModeFromLanguage
+    // uses internally (see its own doc comment) -- this closure does its
+    // own full block parse plus one parse per "inline" node, so skipping
+    // all of that when bufferText is unchanged since the last call matters
+    // here too, not just for the generic path.
+    struct SharedParse {
+        std::string                     lastText;
+        std::optional<treesitter::Tree> lastTree;
+    };
+    const auto sharedParse = std::make_shared<SharedParse>();
+
+    mode.highlight = [blockParser, blockQuery, inlineParser, inlineQuery,
+                      sharedParse](std::string_view bufferText) -> std::vector<HighlightSpan> {
+        if (!sharedParse->lastTree.has_value() || sharedParse->lastText != bufferText) {
+            sharedParse->lastTree = blockParser->Parse(bufferText);
+            sharedParse->lastText.assign(bufferText);
+        }
+        const treesitter::Tree& tree = *sharedParse->lastTree;
+        if (tree.IsNull()) {
+            return {};
+        }
+        const treesitter::Node root = tree.RootNode();
+
+        // Concatenated in this order so a later, narrower span visually
+        // wins over an earlier, broader one via HighlightSpan's own
+        // documented "later wins" overlap rule -- e.g. bold text inside a
+        // heading, or a checkbox inside a list item.
+        std::vector<HighlightSpan> spans;
+
+        // Pass 1: block-level query captures through the shared
+        // CaptureTable, except "punctuation.special" -- see CaptureTable()'s
+        // own doc comment for why that one capture name is special-cased
+        // directly to MarkupMarker here instead of through the shared table
+        // (it's shared with other bundled grammars, where it means
+        // something else).
+        for (const treesitter::QueryCapture& capture : blockQuery->Captures(root, bufferText)) {
+            if (!IsHighlightableCapture(capture.name)) {
+                continue;
+            }
+            const SyntaxClass syntaxClass =
+                (capture.name == "punctuation.special") ? SyntaxClass::MarkupMarker : SyntaxClassForCapture(capture.name);
+            spans.push_back(HighlightSpan{.startByte = capture.startByte, .endByte = capture.endByte, .syntaxClass = syntaxClass});
+        }
+
+        // Pass 2: heading levels + task-list checkboxes, from walking the
+        // real tree rather than query captures.
+        CollectMarkdownStructuralSpans(root, spans);
+
+        // Pass 3: markdown's own inline formatting, re-parsed per "inline"
+        // node with the separate inline grammar. Appended last so it wins
+        // over everything above, including a heading's own whole-line span.
+        CollectMarkdownInlineSpans(root, bufferText, *inlineParser, *inlineQuery, spans);
+
+        return spans;
+    };
+
     return mode;
 }
 
@@ -515,7 +733,9 @@ Mode OrgMode() {
     };
 
     // Real Org's own comment-line convention (org-comment-string's default).
-    return Mode{.name = "org-mode", .keymap = std::move(keymap), .highlight = std::move(highlight), .lineCommentPrefix = "#"};
+    // line-wrap follow-up: same reasoning as MarkdownMode() -- Org files
+    // are prose too.
+    return Mode{.name = "org-mode", .keymap = std::move(keymap), .highlight = std::move(highlight), .lineCommentPrefix = "#", .wrapLines = true};
 }
 
 } // namespace ned::editor

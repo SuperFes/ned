@@ -97,6 +97,10 @@ Brush Theme::BuiltinBrushFor(editor::SyntaxClass cls) const {
             return Brush{.background = background, .foreground = underlineForeground, .underlined = true};
         case editor::SyntaxClass::Strikethrough:
             return Brush{.background = background, .foreground = strikethroughForeground, .strikethrough = true};
+        case editor::SyntaxClass::MarkupMarker:
+            return Brush{.background = background, .foreground = markupMarkerForeground};
+        case editor::SyntaxClass::Link:
+            return Brush{.background = background, .foreground = linkForeground, .underlined = true};
         case editor::SyntaxClass::Default:
         default:
             return Brush{.background = background, .foreground = defaultForeground};
@@ -277,7 +281,9 @@ Theme DarkTheme() {
         .scrollBar                   = Brush{.foreground = Color::BrightBlack},
         .scrollBarDisabled           = Brush{.foreground = Color::RGB(0x333340)},
         .binaryForeground            = Color::BrightRed,
+        .ghostTextForeground         = Color::BrightBlack,
         .linkForeground              = Color::BrightCyan,
+        .truncationIndicatorForeground = Color::RGB(0x8f80e0),
         .unsavedChangeIndicator      = Color::RGB(0xd19a66),
         .diagnosticError             = Color::RGB(0xe06c75),
         .diagnosticWarning           = Color::RGB(0xe5c07b),
@@ -291,6 +297,7 @@ Theme DarkTheme() {
         .checkboxForeground          = Color::BrightYellow,
         .underlineForeground         = Color::White,
         .strikethroughForeground     = Color::BrightBlack,
+        .markupMarkerForeground      = Color::BrightBlack,
     };
 }
 
@@ -342,7 +349,9 @@ Theme LightTheme() {
         .scrollBar                   = Brush{.foreground = Color::RGB(0xa0a0a0)},
         .scrollBarDisabled           = Brush{.foreground = Color::RGB(0xd8d4c8)},
         .binaryForeground            = Color::RGB(0xc03030),
+        .ghostTextForeground         = Color::RGB(0xa0a0a0),
         .linkForeground              = Color::RGB(0x1f6fa0),
+        .truncationIndicatorForeground = Color::RGB(0x6a5acd),
         .unsavedChangeIndicator      = Color::RGB(0xb0651f),
         .diagnosticError             = Color::RGB(0xc0392b),
         .diagnosticWarning           = Color::RGB(0xb58900),
@@ -356,6 +365,7 @@ Theme LightTheme() {
         .checkboxForeground          = Color::RGB(0x8f6f1f),
         .underlineForeground         = Color::RGB(0x202020),
         .strikethroughForeground     = Color::RGB(0x808080),
+        .markupMarkerForeground      = Color::RGB(0xa8a496),
     };
 }
 

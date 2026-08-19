@@ -221,6 +221,12 @@ struct Theme {
     // control byte is never sent to the terminal at all.
     Color binaryForeground;
 
+    // Foreground for LSP ghost-text completion suggestions (hover/
+    // completion follow-up) -- rendered italic (see BufferView::Paint()'s
+    // ghost-text comment) atop this dim color, the same "UI chrome, not
+    // syntax" reasoning binaryForeground/linkForeground already establish.
+    Color ghostTextForeground;
+
     // Foreground for a collapsed Org link's own displayText (links
     // follow-up) -- see BufferView::Paint()'s own "descriptive links"
     // comment. Not a SyntaxClass (links aren't a tree-sitter capture),
@@ -228,6 +234,16 @@ struct Theme {
     // "UI chrome, not syntax" reasoning binaryForeground/lineNumberForeground
     // already establish.
     Color linkForeground;
+
+    // line-truncation-indicator follow-up: foreground for the "»" glyph
+    // overwriting a clipped line's own last column when it's too long for
+    // the viewport and wrap is off (see BufferView::Paint()'s own comment
+    // -- unreachable under wrap, a wrapped segment never exceeds the
+    // viewport width by construction). A muted blue-purple ("blurple"),
+    // deliberately distinct from every syntax/UI-chrome color already in
+    // use here so it can't be mistaken for anything else, but mid-brightness
+    // rather than alarming -- this is a hint, not a warning.
+    Color truncationIndicatorForeground;
 
     // Status-gutter unsaved-change-indicator follow-up: a solid-block
     // marker (background color, not a glyph -- see BufferView::Paint()'s
@@ -265,6 +281,13 @@ struct Theme {
     Color checkboxForeground;
     Color underlineForeground;
     Color strikethroughForeground;
+
+    // Markdown-highlighting follow-up: MarkupMarker's own dim/muted Color --
+    // deliberately not reusing any existing chrome field, since this needs
+    // to read as visually receded relative to everything else, unlike any
+    // existing foreground color. Link reuses the existing linkForeground
+    // field above (Mode.h's SyntaxClass::Link doc comment explains why).
+    Color markupMarkerForeground;
 
     [[nodiscard]] Brush BrushFor(editor::SyntaxClass cls) const;
 

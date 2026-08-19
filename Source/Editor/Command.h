@@ -24,6 +24,10 @@
 #include "Text/BufferList.h"
 #include "Text/KillRing.h"
 
+namespace ned::editor::lsp {
+class LspManager;
+} // namespace ned::editor::lsp
+
 namespace ned::editor {
 
 struct Mode;
@@ -140,7 +144,42 @@ enum class InteractiveRequest { None,
                                 // the active Mode's expandSelection (Mode.h) directly, no
                                 // InputMode session needed for either.
                                 ExpandSelection,
-                                ShrinkSelection };
+                                ShrinkSelection,
+                                // hover/completion follow-up: a one-shot direct action, same
+                                // shape as ToggleProjectSidebar -- BufferView's
+                                // RequestCompletionAtPoint sends the actual
+                                // textDocument/completion request and owns the resulting ghost-
+                                // text state; no InputMode session needed since ghost text
+                                // coexists with ordinary Normal-mode editing rather than
+                                // replacing it. lsp-hover has no InteractiveRequest of its own --
+                                // see its Commands.cpp registration for why.
+                                LspComplete,
+                                // code-actions follow-up: a one-shot direct action, same shape
+                                // as LspComplete -- BufferView's RequestCodeActionsAtPoint sends
+                                // the actual textDocument/codeAction request and owns the
+                                // resulting select/confirm InputMode session, entered only once
+                                // the (async) response actually arrives -- see that method's own
+                                // doc comment in BufferView.h.
+                                LspCodeAction,
+                                // error-visibility follow-up: another one-shot direct action,
+                                // same shape as ProjectAgenda -- BufferView finds-or-creates
+                                // the shared *lsp log* buffer (lsp::kLspLogBufferName) and
+                                // switches to it. Must go through InteractiveRequest rather
+                                // than acting directly in the command function, same reason
+                                // ProjectAgenda does: switching this pane's own active buffer
+                                // needs activeBuffer_, which only BufferView has.
+                                LspShowLog,
+                                // go-to-definition/rename follow-up: two more one-shot direct
+                                // actions, same shape as LspCodeAction -- BufferView's
+                                // RequestDefinitionAtPoint/RequestRenameAtPoint send the actual
+                                // textDocument/definition and textDocument/rename requests and
+                                // own the resulting select/confirm sessions, entered only once
+                                // each (async) response actually arrives. LspRename does open
+                                // with a synchronous "new name" prompt first (HandlePromptKey's
+                                // LspRenameNewName case) -- the request itself isn't sent until
+                                // that's confirmed with Enter.
+                                LspGotoDefinition,
+                                LspRename };
 
 // Everything a command implementation might need. Built fresh per invocation
 // from live references -- never stored, so there's no lifetime concern beyond
@@ -165,6 +204,17 @@ struct CommandContext {
     // this struct's own doc comment above), so a raw, non-owning pointer is
     // fine here the same way it already is for `message` below.
     const Mode* mode = nullptr;
+    // hover/completion follow-up: the editor-wide LspManager, set by the
+    // host UI before each dispatch (nullptr if unset, e.g. headless tests)
+    // -- same "a UI fact/resource a command needs" shape as mode above. Only
+    // lsp-hover/lsp-complete read this. A raw, non-owning pointer is fine
+    // here the same way it already is for message/mode -- lsp-hover does
+    // hand its RequestHover callback a captured std::string* (message) that
+    // outlives this synchronous call, but that's the same accepted "the
+    // owning BufferView outlives the async response" lifetime this
+    // subsystem's diagnostics-publish handler and the scratch-autosave
+    // thread already rely on, not a new risk class this field introduces.
+    lsp::LspManager* lspManager = nullptr;
 };
 
 using CommandFunction = std::function<void(CommandContext&)>;

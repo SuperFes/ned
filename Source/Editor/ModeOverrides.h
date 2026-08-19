@@ -27,6 +27,10 @@
 
 #include "Mode.h"
 
+namespace ned::text {
+class Buffer;
+} // namespace ned::text
+
 namespace ned::editor {
 
 // Loads name's grammar from libraryPath (see TreeSitter/DynamicGrammar.h)
@@ -83,6 +87,21 @@ void SetModeForFilename(const std::string& filename, const std::string& modeName
 // new one. std::nullopt if neither table has an entry for path, or the
 // mapped name doesn't resolve via ModeByName.
 [[nodiscard]] std::optional<Mode> ModeForFileOverride(const std::filesystem::path& path);
+
+// per-buffer-mode follow-up. Checks ModeForFileOverride first, then falls
+// back to a fixed extension table (routed through ModeByName rather than
+// each bundled *Mode() factory directly, so this stays a thin caller of the
+// registry above instead of a second, competing source of truth), then
+// FundamentalMode() if nothing matches. Promoted out of main.cpp (was a
+// local, main.cpp-only anonymous-namespace function) so both startup and
+// BufferView's per-buffer resync path (see BufferView::
+// SetOnActiveBufferChanged) call the exact same table, rather than two
+// copies that could drift.
+[[nodiscard]] Mode ModeForPath(const std::filesystem::path& path);
+
+// FundamentalMode() for a buffer with no associated path (e.g. a scratch
+// buffer), otherwise ModeForPath(*buffer.Path()).
+[[nodiscard]] Mode ModeForBuffer(const text::Buffer& buffer);
 
 } // namespace ned::editor
 

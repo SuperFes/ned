@@ -85,6 +85,25 @@ class Buffer {
     // UnsavedChangeRanges()'s own doc comment just below.
     [[nodiscard]] bool Modified() const;
 
+    // read-only-buffers follow-up: a plain, directly-settable flag (unlike
+    // Modified(), not derived from anything) -- for a synthesized,
+    // no-file-to-save-to buffer (project-search results, project-replace's
+    // preview, project-agenda) that the user should never be able to edit
+    // in the first place, and whose Modified() state (BuildResultsBuffer
+    // itself inserts the synthesized text, which unavoidably marks it
+    // modified) should never trigger the close/quit unsaved-changes prompt
+    // -- see BufferView::RequestCloseBuffer/StartInteractiveSession's
+    // ConfirmQuit case, both of which now gate on `Modified() &&
+    // !ReadOnly()`. Every content-mutating method below throws
+    // std::runtime_error if this is set, checked once per call at each
+    // method's own entry -- the single enforcement point, rather than
+    // duplicating the check in every command that happens to call one of
+    // them (self-insert-command, kill-line, yank, ...). Deliberately does
+    // NOT guard Undo()/Redo() -- out of scope, no real risk for a buffer
+    // nobody is expected to type into in the first place.
+    [[nodiscard]] bool ReadOnly() const;
+    void               SetReadOnly(bool readOnly);
+
     // Bumped by the exact same set of content-changing operations that can
     // make Modified() true (tree-sitter foundation follow-up) -- unlike
     // Modified(), never reset by a save, so it's a cheap, monotonic "has
@@ -149,6 +168,21 @@ class Buffer {
     // on an explicit range (e.g. kill-region). Returns the removed text.
     std::string DeleteRange(std::size_t byteOffset, std::size_t byteLength);
     void        InsertAt(std::size_t byteOffset, std::string_view text);
+
+    // Appends text at the current end of content, regardless of Point.
+    // Requires ReadOnly() already true -- this exists specifically so a
+    // buffer can stay genuinely user-uneditable while still accepting
+    // internally-generated appends (a live log or similar streaming
+    // results buffer); calling it on a writable buffer is a caller bug, not
+    // a normal runtime condition, so it throws std::logic_error (distinct
+    // from every other mutator's std::runtime_error for "user tried to edit
+    // a read-only buffer"). If Point already sat at the buffer's own end
+    // (the common "was already looking at the tail") it moves forward with
+    // the appended text, same tail-follow behavior `tail -f` gives; if
+    // Point was anywhere else (the user scrolled up to read older
+    // entries), it is left untouched -- both are just InsertAt's own
+    // existing RelocateForInsert behavior, not special-cased here.
+    void AppendWhileReadOnly(std::string_view text);
 
     void MoveForward();  // point -> next grapheme boundary
     void MoveBackward(); // point -> previous grapheme boundary
@@ -311,6 +345,13 @@ class Buffer {
     void ClampCursorsToContent();
     void MoveToLine(std::size_t targetLine, std::size_t tabWidth);
 
+    // Shared body of InsertAt/AppendWhileReadOnly -- both public entry
+    // points do their own ReadOnly_ check first (InsertAt throws
+    // std::runtime_error for "user tried to edit a read-only buffer",
+    // AppendWhileReadOnly throws std::logic_error for the opposite caller
+    // mistake), then forward here.
+    void InsertAtImpl(std::size_t byteOffset, std::string_view text);
+
     // The one relocation rule every tracked position in this class follows
     // across an edit -- Point_, Mark_, both ends of NarrowedRange_, and
     // FoldMarkers_' keys -- factored out once FoldMarkers_ was about to
@@ -364,6 +405,7 @@ class Buffer {
     std::optional<std::size_t>                         Mark_;
     std::optional<std::pair<std::size_t, std::size_t>> NarrowedRange_; // see NarrowToRegion's own doc comment
     bool                                               CanAmend_ = false;
+    bool                                               ReadOnly_ = false; // see ReadOnly()/SetReadOnly()'s own doc comment above
     // Set by MoveToNextLine/MoveToPreviousLine, cleared by every other
     // point-moving or editing call -- see their doc comment above.
     std::optional<std::size_t>        GoalColumn_;

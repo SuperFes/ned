@@ -7,6 +7,7 @@
 
 #include <ftxui/dom/elements.hpp>
 
+#include "Editor/ModeOverrides.h"
 #include "Editor/ScratchPad.h"
 
 namespace ned::ui {
@@ -44,6 +45,12 @@ Pane::Pane(text::Buffer& buffer, text::KillRing& killRing, editor::RegisterTable
     bufferView_->SetLspManager(lspManager);
     bufferView_->SetOnWindowRequest(std::move(onWindowRequest));
     bufferView_->SetOnBufferClosed(std::move(onBufferClosed));
+    // per-buffer-mode follow-up: Mode is a property of the buffer being
+    // viewed, not this pane -- reassigning mode_ in place is sufficient to
+    // swap highlighting/folding/keymap/expand-selection all at once, since
+    // dispatcher_'s KeymapStack above already points at &mode_.keymap (the
+    // member's own stable address), not a snapshot taken at construction.
+    bufferView_->SetOnActiveBufferChanged([this](text::Buffer& changedBuffer) { mode_ = editor::ModeForBuffer(changedBuffer); });
 
     scrollBar_->SetOnScroll(
         [this](int position) { bufferView_->SetTopLine(static_cast<std::size_t>(position)); });

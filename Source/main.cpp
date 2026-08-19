@@ -87,80 +87,6 @@ int RunDetectTheme(int argc, char** argv) {
     return 0;
 }
 
-// Picks a Mode by a file's full path (Phase 5, extended by the tree-sitter
-// foundation follow-up, the bundle-remaining-grammars follow-up, and the
-// mode-overrides follow-up) -- still a single lookup done once at startup
-// from the initial file, not per-buffer; see this function's caller for why
-// that scope cut predates tree-sitter and isn't being revisited here. Perl
-// has no extension mapping -- no bundled grammar exists for it, see
-// Languages.h.
-//
-// Checks ned::editor::ModeForFileOverride first (mode-overrides follow-up,
-// widening the dynamic-grammar-loading follow-up's original dynamic-only
-// override into a general one) -- a filename or extension a Janet
-// init.janet mapped via ned/set-mode-for-filename/ned/set-mode-for-extension
-// wins over this function's own hardcoded table below, whether it points at
-// a grammar loaded at runtime (ned/register-language-grammar) or at one of
-// the bundled *Mode() functions by name, so an override can replace a
-// bundled mapping too, not just add a new one. This is also what makes a
-// filename with no distinguishing extension -- "CMakeLists.txt" being the
-// motivating case, ".txt" alone can't tell it apart from any other text
-// file -- reachable at all: ModeForFileOverride checks the *filename* table
-// before the extension table, matching Emacs' auto-mode-alist convention
-// that a more specific pattern wins. Safe to call unconditionally even if
-// nothing was ever registered/mapped -- ModeForFileOverride returns
-// std::nullopt cleanly in that case, falling straight through to the
-// existing bundled table below.
-ned::editor::Mode ModeForPath(const std::filesystem::path& path) {
-    if (auto overrideMode = ned::editor::ModeForFileOverride(path); overrideMode) {
-        return std::move(*overrideMode);
-    }
-    const std::filesystem::path extension = path.extension();
-    if (extension == ".janet") {
-        return ned::editor::JanetMode();
-    }
-    if (extension == ".json") {
-        return ned::editor::JsonMode();
-    }
-    if (extension == ".c" || extension == ".h") {
-        return ned::editor::CMode();
-    }
-    if (extension == ".cpp" || extension == ".cc" || extension == ".cxx" || extension == ".hpp" || extension == ".hh") {
-        return ned::editor::CppMode();
-    }
-    if (extension == ".php" || extension == ".phtml") {
-        return ned::editor::PhpMode();
-    }
-    if (extension == ".js" || extension == ".mjs" || extension == ".cjs") {
-        return ned::editor::JavaScriptMode();
-    }
-    if (extension == ".ts" || extension == ".mts" || extension == ".cts") {
-        return ned::editor::TypeScriptMode();
-    }
-    if (extension == ".tsx") {
-        return ned::editor::TsxMode();
-    }
-    if (extension == ".html" || extension == ".htm") {
-        return ned::editor::HtmlMode();
-    }
-    if (extension == ".css") {
-        return ned::editor::CssMode();
-    }
-    if (extension == ".py" || extension == ".pyw") {
-        return ned::editor::PythonMode();
-    }
-    if (extension == ".sh" || extension == ".bash") {
-        return ned::editor::BashMode();
-    }
-    if (extension == ".md" || extension == ".markdown") {
-        return ned::editor::MarkdownMode();
-    }
-    if (extension == ".org") {
-        return ned::editor::OrgMode();
-    }
-    return ned::editor::FundamentalMode();
-}
-
 } // namespace
 
 int main(int argc, char** argv) {
@@ -233,18 +159,17 @@ int main(int argc, char** argv) {
         statusMessage = std::string("init.janet error: ") + e.what();
     }
 
-    ned::editor::Mode mode = buffer->Path() ? ModeForPath(*buffer->Path()) : ned::editor::FundamentalMode();
+    ned::editor::Mode mode = ned::editor::ModeForBuffer(*buffer);
 
-    // The active Mode is still selected once at startup from the initial
-    // file's extension, not per-buffer -- switching to a differently-typed
-    // file via find-file/switch-to-buffer (multi-file-support follow-up)
-    // does not change which Mode/highlighting is active. A known, explicit
-    // v1 scope cut, not an oversight (window-splitting follow-up: each
-    // WindowManager pane now owns its own independent copy of whatever Mode
-    // it was created with -- see WindowManager.h's own header comment -- so
-    // this gap is now "a pane keeps the Mode it was split/created with,
-    // even after switching buffers inside it," the same shape as before,
-    // just genuinely per-pane instead of a single global).
+    // per-buffer-mode follow-up: this is just the *initial* Mode for
+    // whichever pane WindowManager constructs first -- each Pane resyncs its
+    // own Mode fresh (via ned::editor::ModeForBuffer, the same function used
+    // here) whenever its active buffer actually changes (find-file,
+    // switch-to-buffer, a tab/sidebar click, visiting a search result,
+    // etc.), see BufferView::SetOnActiveBufferChanged and Pane's own wiring
+    // of it in WindowManager.cpp. Mode is a property of the buffer being
+    // viewed, not the pane; a pane's Mode is only ever "whatever its current
+    // buffer resolves to."
     //
     // Uses a previously `ned --detect-theme`-generated file if one exists
     // (never probes the terminal on a normal launch -- see

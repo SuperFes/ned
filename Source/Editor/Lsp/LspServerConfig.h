@@ -42,6 +42,19 @@ void SetLspServerCommand(const std::string& language, std::vector<std::string> a
 // means "not configured" rather than a failure.
 [[nodiscard]] std::optional<std::vector<std::string>> LspServerCommand(const std::string& language);
 
+// hover/completion follow-up. Mutex-guarded process-wide scalars, mirroring
+// Editor/TabWidth.h's exact shape -- unlike the per-language map above,
+// automatic-completion behavior is a single, editor-wide preference, not a
+// per-language one.
+void              SetLspAutoCompleteEnabled(bool enabled); // default true
+[[nodiscard]] bool LspAutoCompleteEnabled();
+
+// Non-positive values are clamped to 1ms rather than rejected -- same
+// "don't throw over a config value, just make it sane" convention
+// TabWidth::SetTabWidth already established.
+void             SetLspCompletionDebounceMs(int milliseconds); // default 350
+[[nodiscard]] int LspCompletionDebounceMs();
+
 } // namespace ned::editor::lsp
 
 #endif // NED_EDITOR_LSP_LSPSERVERCONFIG_H

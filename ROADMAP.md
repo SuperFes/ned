@@ -966,16 +966,16 @@ its own `Source/Editor/TreeSitter/` subdirectory):
   binding (`Glaze`, a worse fit for LSP's numerous, spec-evolving, mostly-dynamic message
   shapes).
 
-**Deferred, explicitly, not oversights**: hover, go-to-definition, code actions, rename, and
-completion (all become new `SendRequest` call sites plus their own UI wiring — `LspClient`'s
-public surface doesn't need to change shape for any of them); ghost-text completion
-specifically (the user's own stated direction, Copilot-style inline dimmed-text, not a popup
-— this codebase still has no floating/overlay widget concept, and building one just for LSP
-completion isn't the right call with an LLM-panel need already on the horizon) additionally
-needs new `Paint()` rendering and an accept keybinding; syncing every open buffer, not just
-the active one; incremental (vs. whole-document) sync; idle-timeout server teardown; stderr
-capture/a real "show me the server's log" story (redirected to `/dev/null` for now); multi-root
-workspaces.
+**Deferred, explicitly, not oversights**: syncing every open buffer, not just the active one;
+incremental (vs. whole-document) sync; idle-timeout server teardown; multi-root workspaces.
+Structured JSON-RPC/lifecycle error visibility (spawn failure, disconnect, error responses)
+shipped in the "error visibility" follow-up, below — **raw subprocess stderr capture remains
+deferred** (still redirected to `/dev/null`; a materially separate piece of work, see that
+follow-up's own entry for why). Hover and ghost-text completion shipped in slice 2; code actions
+in slice 3; go-to-definition and rename in slice 4 — see each entry below. (This paragraph
+originally also listed go-to-definition/code actions/rename themselves as deferred; left
+inaccurate for a while as later slices shipped without this note being updated alongside them —
+corrected here, not a claim any of the underlying work is new.)
 
 **Real bugs found during implementation, not hypothetical**:
 - `ftxui::ScreenInteractive` is a type alias (`using ScreenInteractive = App;`), not a
@@ -1023,6 +1023,571 @@ startup, which `LspManager::HandlePublishDiagnostics`'s `BufferList::FindByPath`
 lookup already handles correctly (silently dropped, since it's not an open buffer) —
 matches the real behavior observed, not just the intended design.
 
+## LSP client — slice 2: hover + completion (ghost text) — done
+
+The two deferrals slice 1 flagged as "new `SendRequest` call sites plus their own UI wiring" —
+no change to `LspClient`'s public surface was needed, exactly as predicted.
+
+- **Hover** (`lsp-hover`, `C-c C-j`): sends `textDocument/hover` for point, reports the result
+  through the shared status string, the exact same "direct action, report via
+  `context.message`" shape `lsp-show-diagnostic` already established — the response arrives
+  async (well after the command function itself returns), so the command captures the raw
+  `std::string*` (`context.message`) directly into `LspManager::RequestHover`'s callback rather
+  than trying to write synchronously; valid for as long as the owning `BufferView` is, the same
+  accepted lifetime shape the diagnostics-publish handler and the scratch-autosave thread
+  already rely on.
+- **Completion** (ghost text): automatic while typing, debounced (`~350ms` default,
+  `ned/set-lsp-completion-debounce`), or forced manually (`lsp-complete`, `C-M-i` — not `M-/`,
+  which is already bound to `redo`). Both configurable from Janet
+  (`ned/set-lsp-auto-complete`). Rendered as dimmed italic inline text right after point
+  (`Theme::ghostTextForeground`, added the same way `binaryForeground` was); `Tab` accepts,
+  `M-n`/`M-p` cycle candidates, any other key dismisses. Debounce timing reuses
+  `ScrollArrowButton::OnAnimation`'s exact shape (`ftxui::animation::RequestAnimationFrame`,
+  self-perpetuating, no dedicated thread) rather than `WindowManager::StartAutoSaveTimer`'s
+  `std::jthread` — a sub-second, cancel-by-overwrite delay fits the animation-frame idiom better
+  than a free-running background timer.
+  - **Suppression heuristic** (the user's own explicit ask: stop firing on numeric literals or
+    mid-string edits): before scheduling, checks the tree-sitter `SyntaxClass` immediately
+    before point (via the same `highlightCacheSpans_`/`SpansForLine`/`ClassAtOffset` machinery
+    `Paint()` already uses for highlighting) for `String`/`StringEscape`/`Comment`/
+    `DocComment`/`Number`, **and**, independent of whether highlighting is even available
+    (`FundamentalMode` and any other mode with no highlighter), whether the ASCII
+    word/identifier token immediately before point is purely digits — the same
+    `WordPrefixStart` helper both this check and ghost-text suffix computation share. Also
+    gated on the triggering keystroke being a plain, unmodified codepoint (no
+    Control/Meta/Special) and the buffer's `ContentGeneration()` actually having advanced, so
+    it only ever fires for organic self-insert typing, never macro replay or M-x-invoked
+    commands (`RunCommandAndHandleOutcome` takes an optional `triggeringChord`, non-null only
+    from `OnKeyEvent`'s own normal-dispatch call site).
+  - **Suffix computation deliberately trusts the server**: no client-side prefix-matching
+    against the completion list (the user's own specific complaint about other editors --
+    "as I prepend something to a string it only takes the chars I've typed into
+    consideration") -- the server already re-filters its own candidate list against the
+    buffer's current, just-synced content on every request. `GhostSuffixFor` only computes
+    *how much of the already-typed prefix to not re-display* (subtracting it from
+    `insertText` when it's a real prefix; showing `insertText` in full otherwise -- a
+    documented v1 gap for a server response using a `textEdit` range instead).
+- **`LspManager`** gained `RequestHover`/`RequestCompletion`, both resolving purely from
+  `bufferState_` (populated by `SyncBuffer`'s prior `didOpen`) rather than taking a language
+  param — a buffer with no sync state, or no running client, resolves to "no results"
+  synchronously rather than spawning a server just to answer one request. Response parsing
+  (`ExtractHoverText`/`ExtractCompletionItems`, handling every shape the LSP spec allows for
+  each — bare string/MarkupContent/MarkedString-array for hover, bare array/`CompletionList`
+  for completion) was factored out to a new, namespace-scope `Lsp/LspContent.h/.cpp` —
+  directly unit-testable against crafted JSON without a live client — the same "extract a pure
+  conversion into its own declared, testable header" precedent `Lsp/LspPosition.h` (itself
+  extracted from `LspManager.cpp`'s original diagnostics-only helpers, now shared by both
+  directions of position conversion) already established. Server-advertised capabilities
+  (`hoverProvider`, `completionProvider.triggerCharacters`) are still not captured from
+  `initialize`'s response — an unsupported request just resolves to "no results," handled
+  identically to any other empty response; a real gap if capability-gated triggering (e.g.
+  honoring the server's own trigger characters instead of this heuristic) is wanted later.
+- **Testing**: `LspManager` had no dedicated test file at all before this (a pre-existing gap,
+  not something this slice introduced) — `Tests/LspManagerTest.cpp` fills it, covering hover/
+  completion/diagnostics together via a new `LspManager::SetClientForTesting` seam (public,
+  "primarily for tests," mirroring `LspClient::DispatchFrame`'s own identical precedent) that
+  injects an already-constructed `LspClient` — wired to a raw pipe pair via the same
+  `Transport`-based constructor `LspClientTest.cpp` already uses, no real subprocess — bypassing
+  `ClientForLanguage`'s normal spawn path entirely. Discovered and fixed along the way: the
+  injection path originally left `textDocument/publishDiagnostics` unrouted (only
+  `ClientForLanguage`'s real spawn path wired the notification handler) — factored into a
+  shared `WireNotificationHandlers` so an injected test client behaves identically to a real
+  one. The same fixture pattern, reused in `Tests/BufferViewTest.cpp`, drives real ghost-text
+  accept/cycle/dismiss behavior end-to-end (a real `textDocument/completion` request sent, a
+  real canned JSON-RPC response delivered via `DispatchFrame`) rather than needing a live
+  language server — `C-M-i` itself is fed as the real raw byte sequence
+  (`ESC` + `0x09`) a terminal would actually produce, exercising the same `TranslateKey` path a
+  live keystroke would, not a hand-built `KeyChord`.
+
+Verification: full suite (945 test cases) and a clean `./test-asan.sh` pass, no findings.
+
+## LSP client — slice 3: code actions (quick fixes) — done
+
+The "fix available" gap — `textDocument/codeAction` (server-suggested fixes, each a named
+action carrying a `WorkspaceEdit`), reachable via `lsp-code-action` (`C-c C-a`).
+
+- **Picking among actions**: not a fuzzy-typed filter like `M-x`/`lsp-complete` — code actions
+  are few and short, so a plain numbered list (`Up`/`Down` to move, a digit `1`-`9` to jump
+  directly, `Enter` to confirm) needs no `MinibufferPrompt` at all, closer in shape to the
+  register-name-entry commands' "read one more keystroke and act" than to
+  `HandleExecuteCommandKey`'s fuzzy-filtered one. Always ends in a y/n confirm on the action's
+  own title (`HandleCodeActionConfirmKey`, mirroring `HandleDeleteFileKey`'s Confirming stage
+  exactly) — no inline diff/highlight-then-confirm, matching how every other LSP-adjacent
+  command in this codebase already reports through the status line rather than needing new
+  rendering infrastructure.
+- **Async, no "waiting" input mode**: `StartInteractiveSession`'s `LspCodeAction` case is a
+  fire-and-forget one-shot (`RequestCodeActionsAtPoint`, mirroring `RequestCompletionAtPoint`'s
+  own shape exactly, including its generation + buffer/point identity staleness guard) —
+  `inputMode_` only actually changes (`LspCodeActionSelect`/`LspCodeActionConfirm`) once the
+  response arrives, inside the callback, so a stale response from a request the user has since
+  moved on from (different point, different buffer) is silently dropped rather than suddenly
+  yanking focus into a selection prompt.
+- **Range sent to the server**: the diagnostic covering point if there is one (same lookup
+  `lsp-show-diagnostic` already does against `Buffer::Diagnostics()`), else a zero-length range
+  at point.
+- **Scope cut, explicit**: only edits touching the *current buffer's own URI* are applied. A
+  `WorkspaceEdit` reaching into other files (`"changes"` naming more than one URI, or the more
+  general `"documentChanges"` form entirely — renames/file-creation, unparsed) is refused
+  wholesale ("edits other files — not supported yet"), not partially applied. A bare
+  `Command`-only action (no `"edit"` at all — the server wants to run its own logic) is refused
+  too; executing arbitrary server-side commands is out of scope. Multi-edit application sorts
+  descending by start byte before applying (`Buffer::DeleteRange`+`Buffer::InsertAt` per edit)
+  so an edit not yet applied keeps a valid offset as an earlier one shifts positions — LSP
+  guarantees edits within one `WorkspaceEdit` don't overlap, so a plain sort suffices, no
+  interval-merging needed. Undo is **not** coalesced across a multi-edit fix
+  (`Buffer.h`'s own documented "deletes always start a fresh step" policy) — an accepted
+  multi-edit fix needs multiple `undo` presses to fully revert; a real, harmless (still fully
+  reversible either way, just not in one step) v1 gap, not silently assumed away.
+- **`Lsp/LspContent.h`** gained `WorkspaceTextEdit`/`CodeAction`/`ExtractCodeActions` alongside
+  the existing `CompletionItem`/`ExtractCompletionItems` — a `WorkspaceTextEdit`'s own
+  start/end deliberately stay `LspPosition`s, not byte offsets, resolved against the buffer's
+  *current* content only at the moment the user actually accepts the fix (which can be well
+  after the response arrived), the same reasoning `GhostCompletion`'s own suffix computation
+  already established for LSP positions vs. byte offsets. `LspManager` gained
+  `RequestCodeActions` (same "resolve purely from `bufferState_`" shape as
+  `RequestHover`/`RequestCompletion`) and a `DiagnosticToLsp` helper — the reverse of
+  `HandlePublishDiagnostics`'s own severity/range conversion — for building the request's
+  `context.diagnostics`.
+- **Testing**: `ExtractCodeActions` unit-tested directly against crafted JSON (same-URI edits,
+  multi-URI refusal, `documentChanges` refusal, a bare `Command` item, title-less items
+  skipped); `LspManager::RequestCodeActions` round-tripped through the same
+  `SetClientForTesting`/`FakeServer` fixture slice 2 built, asserting the outgoing
+  `range`/`context.diagnostics` shape; `BufferView` end-to-end (same fake-server fixture as the
+  ghost-completion tests) covering zero/one/multiple actions, digit-select then confirm
+  applying the right one's edit, and `n` at confirm leaving the buffer untouched.
+
+Verification: full suite (958 test cases) and `./test-asan.sh` — one pre-existing,
+already-documented ASan-timing-flaky performance test at its threshold (unrelated to this
+work, reproduces in isolation on unrelated code); `[Lsp]`/`[BufferView]` alone are fully clean
+under ASan/UBSan, no findings.
+
+## LSP code actions — resolve follow-up — done
+
+Real-world testing against `clangd` immediately surfaced a gap slice 3 missed: `clangd`
+advertises `codeActionProvider.resolveProvider` and deliberately sends a `CodeAction` back with
+no `"edit"` yet, expecting a `codeAction/resolve` round-trip (the exact original item sent back
+verbatim, including any opaque `"data"`) once the user actually picks it — every real fix from
+`clangd` was hitting `ApplyCodeAction`'s "has no edit to apply" refusal. Fixed: `initialize`'s
+capabilities now advertise `textDocument.codeAction.resolveSupport`/`dataSupport`;
+`CodeAction` gained `resolvable` (true for an item shaped like a real `CodeAction` — has
+`"kind"`, a bare `Command` never does — but missing `"edit"`) and `raw` (the original item,
+preserved for resolve); `LspContent.h`'s per-item parsing was factored out to a new
+`ExtractSingleCodeAction`, shared by `ExtractCodeActions`' own loop and the new
+`LspManager::ResolveCodeAction`; `HandleCodeActionConfirmKey`'s `y` branch calls it first
+(fire-and-forget, same async shape as everything else here) when `resolvable`, applying the
+result only once the resolved edit actually arrives.
+
+## Status message lifecycle — done
+
+A pending multi-chord key sequence (`C-x` waiting for its second chord) gave no feedback at
+all, and status messages generally just sat there indefinitely once set, however stale —
+flagged after a real false-alarm ("`C-p` fired on its own after `C-a`") turned out to be by
+design (`C-a` is a direct binding, not a prefix) but exposed the missing feedback as a real gap.
+- `Key.h/.cpp` gained `FormatKeyChord`/`FormatKeySequence`, the reverse of
+  `ParseKeyChord`/`ParseKeySequence` (round-trips for anything a real keystroke can produce).
+  `BufferView::OnKeyEvent`'s normal-dispatch path now shows the accumulated sequence
+  (`"C-x-"`, matching real Emacs' own echo-area convention) while `Dispatcher::Feed` returns
+  `Pending`, and `"<sequence> is undefined"` on `Unbound` — gated on `RunCommandAndHandleOutcome`'s
+  own `ran` return value, not the `Outcome` captured at the call site, since a Match'd command
+  that throws never lets `Dispatcher::Feed` reach its own `return Outcome::Invoked`, which
+  would otherwise clobber the exception's own message with a bogus "is undefined" (a real bug,
+  caught immediately by this session's own pre-existing exception-handling test).
+- Every status message now auto-clears after a short idle timeout (`EnsureStatusMessageFreshness`,
+  called from `Paint()`; the actual clear happens in `OnAnimation`, same self-perpetuating
+  `ftxui::animation::RequestAnimationFrame` shape the ghost-completion debounce already uses) or
+  immediately on the next real dispatched command that doesn't itself report anything new
+  (`RunCommandAndHandleOutcome`'s own post-invoke check) — whichever comes first. Both are
+  diff-based (compares `statusMessage_` against a snapshot) rather than hooking the dozens of
+  call sites that write it directly; the one accepted trade-off is a command that explicitly
+  re-sets the exact same text it already showed is indistinguishable from one that never
+  touched it, so a rare identical re-display can appear to flash-clear.
+- Deliberately excluded while any interactive session is active (`inputMode_ != Normal`) — a
+  live prompt's own text (`"Project search: foo"`) is that session's actively-managed state,
+  re-shown every keystroke by its own `Handle*Key` method regardless, and must never be cleared
+  out from under the user just because they paused mid-typing.
+- Every prompt/session cancel path (`Escape`/`C-g`) now sets a real `"X cancelled."` message
+  instead of blanking immediately, so the auto-clear mechanism gives visible confirmation the
+  cancel actually registered rather than silently going blank.
+
+## project-search .gitignore support — done
+
+`project-search` (and `project-replace`, which calls the exact same `SearchDirectory`) was
+reported "locking up" — investigated and confirmed: `SearchDirectory` only ever skipped
+dot-directories, so a real recursive search walked and opened every file under `build/`,
+`cmake-build-*/`, and similar generated/dependency directories too — 2+ GB and ~12,000 files in
+this repo's own case, scanned synchronously on the UI thread with zero progress feedback. Not
+an infinite loop (no symlink-follow, dot-dirs correctly pruned) — just slow enough to feel
+exactly like a hang. `ProjectTree.cpp`'s `BuildProjectTree` (the sidebar) had the identical gap.
+
+Fixed with a new `Editor/GitIgnore.h/.cpp` (`GitIgnoreMatcher`) rather than a hardcoded
+directory-name list — correct by construction for any repo. Deliberately root-level only (reads
+a single `.gitignore` from the directory passed in, always `editor::ProjectRoot()` in every real
+call site — matches `ProjectRoot.h`'s own single-root model; nested `.gitignore` files aren't
+read, a documented v1 cut). Glob subset: literal segments, `*`/`?`, real git's own anchoring
+rule (a pattern with an interior or leading `/` anchors to root; no `/` at all matches any
+depth), trailing-`/` directory-only patterns, and `!`-negation with later-rule-wins ordering —
+covers what real `.gitignore` files actually use; character classes and a mid-pattern `**` are
+not specially handled (degrades to matching a single path segment). Each pattern compiles to an
+anchored ECMAScript `std::regex` (matching this codebase's existing regex choice elsewhere).
+Wired into both `SearchDirectory` (skip alongside the existing dot-directory/binary-file checks)
+and `BuildProjectTree`/`WalkTree` (threaded through the recursive walk to compute each entry's
+root-relative path) — `ProjectReplace` needed no changes at all, it already calls
+`SearchDirectory`.
+
+Verification: full suite (983 test cases) and `./test-asan.sh` — clean (the one pre-existing,
+already-documented ASan-timing-flaky performance test aside, unrelated to this work).
+
+## Read-only "tossable" buffers + ripgrep-backed project-search — done
+
+Two problems reported from using the just-shipped project-search feature: closing a
+`*search results*` buffer prompted to save (it has no file, and the user never intentionally
+edited it — `BuildResultsBuffer`'s own `InsertAtPoint` unavoidably marks it `Modified()`), and
+project-search itself was slow (a single-threaded C++ walk + `std::regex_search` per line, one
+`ifstream` open per file).
+
+- **`Text/Buffer.h/.cpp`** gained `ReadOnly()`/`SetReadOnly(bool)` — every content-mutating
+  method (`InsertAtPoint`, `DeleteBackwardAtPoint`, `DeleteForwardAtPoint`, `DeleteRange`,
+  `InsertAt`) throws `std::runtime_error("Buffer is read-only.")` up front when set, the single
+  enforcement point rather than duplicating the check in every command that happens to mutate a
+  buffer — the exception surfaces through the exact existing `RunCommandAndHandleOutcome` catch
+  path, itself now covered by this session's own status-message auto-clear.
+- **`ReadOnly()` doubles as "tossable"**, one concept, not two: `RequestCloseBuffer` and
+  `StartInteractiveSession`'s `ConfirmQuit` case, plus (a real gap caught while testing —
+  `quit`'s own separate `anyModified` check in `Commands.cpp` decides whether to even *enter*
+  `ConfirmQuit`, a second call site easy to miss) `Commands.cpp`'s `quit` command itself, all
+  gate their `Modified()` check on `&& !ReadOnly()`. `BuildResultsBuffer` calls
+  `SetReadOnly(true)` right after building content — the one change point, since all three
+  synthesized-buffer call sites (project-search results, project-replace's preview,
+  project-agenda) already route through it.
+- **Fold gutter and syntax highlighting are also suppressed for a read-only buffer** (a
+  follow-up caught from actually using the feature: a real Mode's fold/highlight query run
+  against a results buffer's own "path:line: text" content produces meaningless spans/regions,
+  not an empty result, since Mode is a per-pane property, not per-buffer). Centralized in a new
+  `BufferView::FoldGutterActive()` (`mode_.fold && CodeFoldingEnabled() && !ReadOnly()`),
+  replacing four independent copies of the same condition across `EnsureFoldableBlocksCache`,
+  `Paint()`'s own gutter-width math, `GutterWidth()`, and `OnMouseEvent`'s fold-click hit test
+  that would otherwise have been able to drift out of agreement with each other; the highlight
+  cache's own `!mode_.highlight` check gained the same `|| buffer.ReadOnly()`.
+- **Enter and a mouse click on a read-only buffer now visit the result under
+  point/click** (`project-search-visit-result`/`C-c C-v`'s own existing logic, just reached two
+  more ways) — safe to key off `ReadOnly()` alone, without needing to know which specific kind
+  of results buffer this is, because `VisitSearchResult()` already silently no-ops on any line
+  that isn't shaped like a search result.
+- **`Editor/ProjectSearch.cpp`** now tries `rg` (ripgrep) first if found on `$PATH`
+  (`FindRipgrepOnPath`, a manual `$PATH` walk mirroring `Lsp/Transport.cpp`'s own
+  `ResolveExecutable`) — `posix_spawn` (not `fork`, matching this codebase's established
+  preference), stdin from `/dev/null`, stderr to `/dev/null` (never inherited — a child writing
+  to an inherited stderr fd would corrupt this TUI app's own terminal display), stdout captured
+  via a pipe and parsed as ripgrep's own `--json` output (`nlohmann::json`, already a
+  dependency). `--no-config` keeps behavior predictable regardless of the invoking user's own
+  `~/.config/ripgrep/config`; `--` before the path argument guards a pattern/path starting with
+  `-` from being misparsed as a flag. `SearchDirectory` always constructs its `std::regex`
+  first, unconditionally, so its documented "throws `std::regex_error` on invalid syntax"
+  contract holds identically regardless of which backend ends up running; any `rg` failure (not
+  found, spawn error, real error exit) falls back to the original single-threaded scanner,
+  which keeps using the root-only `GitIgnoreMatcher` built for the previous follow-up — `rg`
+  itself doesn't need it, since its own native `.gitignore` support is more complete (nested
+  files, global gitignore, `.git/info/exclude`). Confirmed directly (not assumed) that `rg`
+  only honors a `.gitignore` file when it can actually detect a VCS repo (a bare `.gitignore`
+  with no `.git` isn't enough) — the two `.gitignore`-specific tests were adjusted to create a
+  `.git` marker in their fixtures to match, since a real `.gitignore` almost always implies a
+  real repo anyway. `ProjectReplace` needed no changes, it already calls `SearchDirectory`.
+
+Verification: full suite (996 test cases) and `./test-asan.sh` — clean (the one pre-existing,
+already-documented ASan-timing-flaky performance test aside); the new subprocess-spawn code
+specifically re-run under ASan/UBSan in isolation, also clean.
+
+## LSP client — repaint-on-background-update follow-up — done
+
+Reported directly from daily use: right after opening a file, the LSP server hasn't finished its
+own initial parse yet (expected — it's spawned lazily), but once it *had* finished, nothing on
+screen changed until the next real keystroke or mouse event — a diagnostic, or a hover/completion/
+code-action response arriving later, silently updated real state with no visible sign anything had
+happened.
+
+Root-caused by reading FTXUI's own `app.cpp`, not assumed: `ScreenInteractive::Post()`'s `Closure`
+task variant runs the posted closure but never sets `frame_valid_ = false` afterward, unlike its
+`Event`/`AnimationTask` variants, both of which do. `LspClient::StartReadLoop`'s background read
+thread already marshals every server-pushed frame onto the main loop via exactly this `Post()` path
+(`LspClient.cpp`) — the fix is one line: the posted closure now also calls
+`ftxui::animation::RequestAnimationFrame()` after dispatching the frame, the same "force a real
+repaint soon, no dedicated event needed" mechanism `ScrollArrowButton`'s press-and-hold repeat and
+ghost-completion's debounce already rely on for an identical reason. Diagnostics, hover text,
+completion candidates, and code actions that arrive from the server now become visible the moment
+they're ready, not on the next unrelated input event.
+
+## Per-buffer Mode resolution — done
+
+Reported directly from daily use, alongside the fix above: opening `CMakeLists.txt` in a pane that
+had previously shown a C++ file rendered it through C++'s own tree-sitter grammar (real, if
+nonsensical, highlighting from an error-tolerant parse against the wrong language) and reserved a
+fold-gutter column that never found anything foldable (C++'s fold query never matches CMake syntax).
+Root cause: `Mode` had been a per-*pane* property since the window-splitting follow-up, resolved
+once from whichever file a pane was created/split showing, and never re-derived when the active
+buffer inside that pane later changed (`find-file`, `switch-to-buffer`, a tab click, a
+project-sidebar click, visiting a search result, ...) — a long-standing, explicitly documented v1
+scope cut. Per the user's own direction, Mode is now a property of the buffer being viewed, not the
+pane.
+
+- **`Editor/ModeOverrides.h/.cpp`** gained `ModeForPath(path)` and `ModeForBuffer(buffer)` —
+  `ModeForPath` is `main.cpp`'s own former anonymous-namespace `ModeForPath` promoted out and
+  reworked to route its bundled extension table through `ModeByName`/`BundledModeFactories()`
+  (which also picked up a missing `"org-mode"` entry along the way — a pre-existing gap, `OrgMode()`
+  had never been registered there) rather than calling each bundled `*Mode()` factory directly, so
+  it stays a thin caller of the existing override registry instead of a second, competing table.
+  `ModeForBuffer` is `buffer.Path() ? ModeForPath(*path) : FundamentalMode()`. `main.cpp` now calls
+  `ModeForBuffer` directly instead of keeping its own copy — one shared table, not two that could
+  drift.
+- **Key finding that made the actual per-buffer wiring cheap**: `Mode` was already owned by value
+  at a stable per-`Pane` member address (`Pane::mode_`), and `Dispatcher`'s `KeymapStack` already
+  stored `&mode_.keymap` — the member's own address, not a snapshot taken at construction — so
+  reassigning `mode_ = someOtherMode;` in place, at any time, is sufficient to swap
+  highlighting/folding/expand-selection/keymap all at once, with **no `Dispatcher`/`KeymapStack`
+  rebuild needed**. `ModeLine` shares that same `Mode&`, so it needed zero changes either —
+  reassigning `Pane::mode_` updates both automatically.
+- **`UI/BufferView.h/.cpp`** gained `SetOnActiveBufferChanged(std::function<void(text::Buffer&)>)`,
+  the same "connect after construction, unset is a safe no-op" convention every other `Set*` hook
+  here already follows, plus a new `modeSyncBuffer_` member mirroring `topLineValidatedBuffer_`'s
+  own "seed at construction so the first `Paint()` is never mistaken for a switch" precedent
+  exactly. `Paint()` now checks `modeSyncBuffer_` against the active buffer's identity first thing,
+  the same "recompute, don't cache, detect via pointer identity" idiom already used pervasively
+  throughout this file, firing the handler (if any) on a real change.
+- **`UI/WindowManager.cpp`**'s `Pane` constructor wires the one-line integration point:
+  `bufferView_->SetOnActiveBufferChanged([this](text::Buffer& buffer) { mode_ = editor::ModeForBuffer(buffer); });`.
+  Every existing buffer-identity-keyed cache in `BufferView` (`highlightCacheBuffer_`,
+  `foldableBlocksCacheBuffer_`, etc.) already correctly invalidates on this same buffer-identity
+  change, since `mode_` in this design only ever changes in lockstep with a real buffer switch —
+  no new cache keys were needed anywhere.
+- **Explicit scope cut, carried forward unchanged**: a Janet call to
+  `ned/set-mode-for-extension`/`ned/set-mode-for-filename` while a buffer of that type is *already*
+  active doesn't immediately re-render it — it takes effect on the next real switch away and back.
+  This was already the case before this fix (Mode never changed at all); it's a strict improvement,
+  just not "live re-apply to the currently-focused buffer mid-session," a different, smaller feature.
+
+Verification: full suite (1003 test cases, 7 new — `ModeOverridesTest.cpp`'s `ModeForPath`/
+`ModeForBuffer` coverage, `BufferViewTest.cpp`'s hook-firing-semantics test, and
+`WindowManagerTest.cpp`'s end-to-end render-based proof that switching a pane's buffer actually
+changes the rendered `ModeLine` text, not just `Pane::ModeRef().name`) and `./test-asan.sh` — clean
+(the one pre-existing, already-documented ASan-timing-flaky performance test aside).
+
+## LSP client — error visibility follow-up — done
+
+Reported directly from daily use: a misconfigured/missing LSP server command crashed the whole
+running editor (`LspManager::ClientForLanguage` constructed `LspClient`/`Transport`, which throws
+`std::runtime_error` on a spawn failure, uncaught the entire way up through `BufferView::Paint()`'s
+per-frame `SyncBuffer` call). Separately, every other LSP failure mode — server crash/EOF, a real
+JSON-RPC `"error"` response — was silently discarded with no visibility at all, and the user asked
+for errors to *stream live* to a dedicated buffer as they happen, not be visible only after the
+fact.
+
+- **Crash fix**: `ClientForLanguage` now wraps `LspClient`'s construction in a `try`/`catch`,
+  reporting via the new `LogError` (below) instead of letting the exception propagate. A new
+  `failedCommands_` map (language -> the exact argv that last failed) stops `SyncBuffer` from
+  retrying (and re-logging) the same known-bad command every single frame, while still trying
+  again once the user reconfigures `ned/set-lsp-command` to something different — a process-lifetime
+  latch, not a timed retry/backoff, matching this subsystem's existing static-config model.
+- **`LspManager::LogError(language, message)`** (public) finds-or-creates a read-only,
+  `kLspLogBufferName` (`"*lsp log*"`) buffer and appends one timestamped line to its end, then
+  requests a repaint (`ftxui::animation::RequestAnimationFrame()`, the same idiom the
+  repaint-on-background-update follow-up above already established) so the new line becomes
+  visible without waiting for an unrelated keystroke. Lives on `LspManager` itself — it already
+  uniquely owns both dependencies this needs (`BufferList&`, and the `ScreenInteractive&` every
+  `LspClient` already threads through for the same reason).
+- **`Text/Buffer` gained `AppendWhileReadOnly(text)`** — appends at the current end of content
+  regardless of `Point`, generic (not LSP-specific, since `*agenda*`/`*search results*`/
+  `*project replace*` could plausibly want the same live-update treatment later), sharing `InsertAt`'s
+  existing body via a new private `InsertAtImpl`. Requires `ReadOnly()` already `true`; throws
+  `std::logic_error` otherwise (distinct from every other mutator's `std::runtime_error` for "user
+  tried to edit a read-only buffer" — this is a caller-bug signal, not a normal runtime condition).
+- **All three failure sources now report**: spawn failure (`ClientForLanguage`'s catch, above);
+  server disconnect (`LspClient` gained `SetOnDisconnected`, invoked from `StartReadLoop`'s two
+  previously-silent exit points — malformed frame, EOF — via the same `screen_.Post(...)` +
+  `RequestAnimationFrame()` marshaling its own frame-dispatch path already uses; `LspManager`'s
+  `ClientDisconnected` erases the dead client and every affected `bufferState_` entry so the next
+  `SyncBuffer` respawns and re-`didOpen`s cleanly); and a real JSON-RPC `"error"` response
+  (`RequestHover`/`RequestCompletion`/`RequestCodeActions`/`ResolveCodeAction` now extract and log
+  `error["message"]`, previously discarded entirely in all four).
+- **Discovery**: a new `lsp-show-log` command (`M-x` only, no dedicated keybinding, matching
+  `org-agenda`'s own precedent) switches to `*lsp log*`, creating it if needed. `BufferView::Paint()`
+  polls a cheap `LspManager::HasUnseenLogEntry()` flag once per frame and, if set and
+  `statusMessage_` is currently empty, sets a one-line hint (`"LSP error -- see *lsp log* (M-x
+  lsp-show-log)"`) and acknowledges it — never forces a buffer switch (would be actively hostile
+  mid-typing), matching this codebase's existing "surface via `statusMessage_`, never forcibly
+  navigate the user's buffer" precedent.
+- **Threading**: confirmed by reading the code, not assumed — every `LogError` call site (the
+  spawn-failure catch, the four response-error branches, `ClientDisconnected`) already runs on the
+  main thread by the time it's reached; the one genuinely background-thread-originated event
+  (`SetOnDisconnected`'s callback) is `Post`-marshaled first, the same pattern the existing
+  frame-dispatch path already established.
+- **Deferred, explicitly**: raw subprocess stderr capture (still redirected to `/dev/null`) — a
+  materially separate piece of work (redirecting `Transport`'s spawned stderr to a pipe instead, a
+  second background drain thread, deciding how raw unstructured stderr text interleaves with the
+  structured log lines this follow-up adds) that isn't needed to answer the user's actual complaint
+  ("errors ... not seen ... stream to error buffer"), which this follow-up already covers for every
+  *structured* (JSON-RPC/lifecycle) failure.
+
+Verification: full suite (1012 test cases, 9 new across `LspManagerTest.cpp` — spawn-failure/gate/
+reconfigure and JSON-RPC-error-message coverage — `LspClientTest.cpp`, `BufferTest.cpp`'s
+`AppendWhileReadOnly` coverage, and `BufferViewTest.cpp`'s status-hint/`lsp-show-log` coverage) and
+`./test-asan.sh` — clean (the one pre-existing, already-documented ASan-timing-flaky performance
+test aside). The real background-thread-EOF-to-`Post`-driven-callback path itself can't be
+exercised headlessly (no test in this codebase runs a real `ScreenInteractive::Loop()`, and FTXUI's
+own `Post` has no synchronous fallback — confirmed by reading `app.cpp`) — `LspClientTest.cpp`
+covers `SetOnDisconnected`'s registration/replacement only, while the actual reporting behavior for
+every path that *doesn't* need `Post` (spawn failure, JSON-RPC errors) is covered end-to-end.
+
+## Horizontal scroll-follow + smart line-wrap — done
+
+Reported directly from daily use editing `init.janet`: typing past the right edge of the viewport
+didn't scroll horizontally to follow point at all — the cursor simply vanished (`CursorPosition()`
+had an honest `// scrolled off horizontally; no horizontal scroll in v1` comment). Org-mode/
+markdown-mode prose benefits far more from real line-wrap with smart word-break than from
+horizontal scrolling, so both now exist, selected per-mode by default and overridable per file
+extension/filename.
+
+- **`Mode` gained `bool wrapLines = false;`** — `MarkdownMode()`/`OrgMode()` set it `true`; every
+  other bundled mode leaves it at its default.
+- **New `Editor/WrapOverrides.h/.cpp`** — a small standalone extension/filename override table
+  mirroring `ModeOverrides.h/.cpp`'s exact shape (deliberately *not* folded into the mode-override
+  mechanism, which resolves an entire named `Mode`, not one field of it). `EffectiveWrapLines(path,
+  mode)` resolves a per-file override first, falling back to the `Mode`'s own default. Exposed to
+  Janet via `ned/set-wrap-for-extension`/`ned/set-wrap-for-filename`.
+- **Horizontal scroll-follow** (the non-wrap path): new `leftColumn_` member mirrors `topLine_`
+  exactly, with `LeftColumn()`/`SetLeftColumn()` and `ScrollToShowPointHorizontally()` (a no-op
+  once `EffectiveWrapLines()` is true — a wrapped line never exceeds the viewport width by
+  construction, so there's nothing left to scroll horizontally). `Paint()`'s content loop gained a
+  leading fast-forward phase that consumes but never draws whatever falls before `leftColumn_`;
+  `CursorPosition()`/`ByteOffsetForPoint()` both account for it symmetrically.
+- **Smart word-break wrapping**: new `ComputeWrapSegments` (whitespace-boundary breaking only —
+  matches this codebase's own already-established word-motion scope cut, not Unicode-aware — with
+  a graceful hard-break fallback for a single token wider than the whole viewport, e.g. a long
+  URL). A `RenderedLink` span is treated as one atomic unbreakable unit, same as the rest of this
+  file already does via `LinkStartingAt`.
+- **Row-count cache generalizes the existing fold quartet**: the pre-existing
+  `IsLineHidden`/`NextVisibleLine`/`AdvanceVisibleLines`/`VisibleLineCountBetween` assumed every
+  visible line is exactly one canvas row (true for fold's collapse, not for wrap's expansion). New
+  `RowsForLine`/`VisibleRowCountBetween`/`VisibleRowCountAtLeast` generalize this; `topLine_` stays
+  strictly line-granular (always a line's first wrap segment, never mid-segment) — a deliberate,
+  documented v1 scope cut. `Paint()`'s row loop, `CursorPosition()`, and `ByteOffsetForPoint()` were
+  all extended to walk wrap segments; gutter line numbers/fold glyphs render only on a line's first
+  segment, matching how real editors visually distinguish a wrapped continuation.
+- **Two real bugs found and fixed during implementation, not hypothetical**:
+  - **A genuine perf regression, caught by its own `[Performance]` test before shipping**: the
+    first version of `RowsForLine`'s cache eagerly computed every line's real word-break scan
+    up front on every content/width change; since `MaxTopLine()`/`ScrollToShowPoint()` run every
+    `Paint()` call, this made every frame on a large wrap-enabled document pay for the whole
+    document's word-break cost. Fixed by making the cache populate lazily (one line's scan,
+    memoized, only the first time that specific line is actually asked about) and adding
+    `VisibleRowCountAtLeast` (an early-exit bounded check) for the "does everything already fit"
+    queries, so a huge document's answer ("no") is discovered within the first viewport-height's
+    worth of lines, never by touching the rest of the buffer.
+  - **A real, user-reported bug**: scrolling to the end of a wrapped document could leave its own
+    trailing lines permanently unreachable. Root cause: `MaxTopLine()`'s backward walk gave a
+    wrapped line "partial credit" toward the viewport budget when only part of it fit — but
+    `topLine_` can only ever start at a line's own first row, so `Paint()` would render that
+    line's *full* row count regardless, silently pushing everything after it off the bottom no
+    matter how far the user scrolled. Fixed by walking backward including only whole lines that
+    fit within the budget (the first line considered is always included in full, even if it alone
+    exceeds the viewport, to guarantee progress); `ScrollToShowPoint()`'s own backward walk had the
+    identical bug and got the identical fix, using `RowsForLine(pointLine)` so it never partially
+    shows point's own line either. A dedicated regression test (`BufferViewTest.cpp`) pins this
+    exact scenario.
+
+Verification: full suite (1033 test cases, 17 new — `ModeTest.cpp`'s `wrapLines`-default coverage,
+new `WrapOverridesTest.cpp`, `BufferViewTest.cpp`'s horizontal-scroll/word-break/hard-break/cursor-
+position/mouse-click/gutter/override/scroll-to-bottom-regression coverage, and a new
+`[Performance]` case) and `./test-asan.sh` — clean (the one pre-existing, already-documented
+ASan-timing-flaky performance test aside; the new wrap `[Performance]` case was itself tuned down
+in scale, the same "leave real margin under ASan's Debug-plus-instrumentation overhead" precedent
+the pre-existing JsonMode `[Performance]` case already established, after confirming directly that
+its own cost tracks `Paint()` call count, not buffer size — `Paint()` only ever visits the visible
+viewport, never the whole document).
+
+## Line-truncation indicator — done
+
+Small follow-up requested right after horizontal-scroll-follow shipped: a clipped (non-wrap), too-
+long line gave no visual sign there was more content past the right edge — it just looked identical
+to a line that happened to end exactly at the viewport's own edge. `Theme` gained
+`truncationIndicatorForeground` (a muted "blurple," deliberately distinct from every existing
+syntax/UI-chrome color but mid-brightness rather than alarming — a hint, not a warning), persisted
+through `ThemeFile.h/.cpp` (`truncation_indicator_foreground` key) like every other theme color.
+`Paint()`'s content loop now overwrites a clipped row's own last-drawn column with a `»` glyph in
+that color whenever the loop exits because it ran out of viewport width rather than reaching the
+end of what the row has to show — unreachable under wrap by construction (a wrapped segment never
+exceeds the viewport width), so this only ever fires on the horizontal-scroll path.
+
+Verification: full suite (1036 test cases, 4 new — a `ThemeFileTest.cpp` round-trip case plus three
+`BufferViewTest.cpp` cases covering the clipped/fits-exactly/wrap-never-clips scenarios) and
+`./test-asan.sh` — clean.
+
+## LSP client — slice 4: go-to-definition + rename — done
+
+The last two items on the LSP client's original "deferred, explicitly" list (see that follow-up's
+own entry above — the note has now been corrected to stop naming them as deferred). Both reachable
+via new commands (`lsp-goto-definition` — `M-.`/`ESC .`, matching real Emacs' own
+`xref-find-definitions` binding; `lsp-rename` — `C-c C-M-r`, since `C-c C-r` was already
+`project-replace`) that just set `InteractiveRequest::LspGotoDefinition`/`LspRename`, the same
+"command signals intent, BufferView owns the actual request/session" shape `LspCodeAction` already
+established.
+
+- **`LspContent.h`** gained `DefinitionLocation`/`ExtractDefinitionLocations` (parses a
+  `textDocument/definition`-shaped result — a bare `Location`, a `Location[]`, or a
+  `LocationLink[]`, which reports its target via `targetUri`/`targetSelectionRange` instead of
+  `uri`/`range` — all three normalized to one loop; a malformed entry is skipped, not treated as a
+  parse error) and `RenameEdit`/`RenameResult`/`ExtractRenameEdits` (parses a bare
+  `WorkspaceEdit`, not wrapped in an item the way a code action response is). `uri` stays a raw
+  string in both, kept URI-agnostic like every other `ExtractX` function in this file —
+  `LspManager` is what resolves a `uri` to a real `std::filesystem::path` (via its own
+  already-existing, file-local `UriToPath`), the same layering split
+  `ExtractCodeActions`/`ExtractSingleCodeAction` already established by taking `ownUri` as a plain
+  string rather than resolving it themselves.
+- **Rename's real scope, deliberately wider than code actions'**: `ExtractCodeActions`' own
+  `WorkspaceEdit` parsing is scoped to one buffer's own URI, refusing wholesale the moment a
+  `"changes"` map names any other URI — the right call for a quick-fix, but rename's entire value
+  is usually renaming a symbol used *across* files, so `ExtractRenameEdits` keeps every URI the
+  response actually named, not just the requesting buffer's own. `LspManager::ResolvedRename`
+  mirrors this: a `ResolvedRenameEdit` per URI. The `"documentChanges"` form (needed for a rename
+  that also creates/renames/deletes files, not just edits existing ones) is still unparsed —
+  `touchesUnsupportedForm=true`, refused wholesale, edits left empty — the one scope cut kept from
+  the code-actions precedent, since parsing it is a materially separate, larger piece of work
+  (versioned document identifiers, file-create/rename/delete operations) than "stop refusing a
+  `"changes"` map just because it names more than one URI."
+- **`BufferView::ApplyRename`** resolves (find-or-open, via `BufferList::FindByPath` then
+  `BufferList::OpenFile`) *every* touched file first, applying nothing until every single one
+  succeeds — a rename either fully applies across every affected file or leaves every buffer
+  untouched, never partially across only some of them. `ApplyWorkspaceTextEdits` (file-local,
+  `BufferView.cpp`) is `ApplyCodeAction`'s own resolve-LspPositions-against-current-content +
+  descending-sort-by-start-byte + `DeleteRange`/`InsertAt` sequence, factored out so both it and
+  `ApplyRename` share the exact same edit-application logic. Every affected buffer is left
+  modified-but-unsaved afterward, same as any other in-editor edit — no auto-save-across-files
+  behavior; this codebase has no "save all" command at all yet, saves are always user-initiated
+  (`C-x C-s`, one buffer at a time), and a rename doesn't get special treatment there.
+- **Go-to-definition's UI shape**: mirrors `RequestCodeActionsAtPoint`'s async/staleness-guard
+  shape (`definitionRequestGeneration_`, a stale response — buffer/point changed, or a newer
+  request already superseded it — discarded rather than surprising the user). Zero locations
+  reports "No definition found."; exactly one jumps directly with **no confirmation** (unlike a
+  code action or a rename, opening a file and moving point is trivially undoable/re-navigable,
+  nothing destructive to confirm — matches `VisitSearchResult`'s own precedent for jumping into a
+  project file); more than one (a real, if less common, case — e.g. a virtual/overridden method
+  with several implementations) enters `LspGotoDefinitionSelect`, the exact same numbered-list/
+  Up-Down/digit-jump interaction `LspCodeActionSelect` already established.
+- **Rename's UI shape**: a new hybrid not seen elsewhere in this codebase — a synchronous prompt
+  stage (`LspRenameNewName`, routed through the existing `HandlePromptKey`, same as
+  `FindFile`/`CreateDirectory`/etc.; excluded from Tab-completion, like `StringRectangle`/
+  `SetHeadlineTags`, since there's nothing meaningful to complete a new symbol name against)
+  followed by an async request/confirm stage (`RequestRenameAtPoint`/`LspRenameConfirm`) once
+  Enter is pressed on the new name. `RefreshRenameConfirmStatus` shows a summary
+  (`"N edits across M files"`) computed once when the response arrives, not recomputed per
+  keystroke — there's nothing to recompute it *for*, unlike `RefreshCodeActionSelectStatus`'s own
+  per-keystroke Up/Down refresh.
+
+Verification: full suite (1064 test cases, 18 new — `LspContentTest.cpp`'s
+`ExtractDefinitionLocations`/`ExtractRenameEdits` parsing coverage including the `LocationLink`/
+multi-URI/`documentChanges` cases, `LspManagerTest.cpp`'s real request/response round-trips for
+both `RequestDefinition` and `RequestRename` via the same injected-`FakeServer` fixture slice 2/3
+built, and `BufferViewTest.cpp`'s end-to-end coverage of direct-jump/select-among-many/no-results
+go-to-definition and prompt-then-confirm/decline multi-file rename) and `./test-asan.sh` — clean.
+
 ## Wishlist (unsequenced)
 
 Everything left that isn't sequenced or scheduled against a real phase — draw from this
@@ -1039,11 +1604,17 @@ each is, not by priority.
         grammars" above); likely a prerequisite for most of the rest of this group.
   - [x] Structural/AST-aware selection expansion (expand-to-next-syntax-node) — done,
         see Phase 10 above.
-  - [~] LSP client: autocomplete, diagnostics, go-to-definition, hover docs, code
-        actions, rename, multi-language support. Slice 1 (core plumbing + diagnostics) is
-        done — see "LSP client — slice 1" above. Hover/go-to-definition/code actions/
-        rename/completion are all deferred follow-on slices, not yet started; see that
-        section's own "Deferred" list for what's built vs. not, and why.
+  - [x] LSP client: autocomplete, diagnostics, go-to-definition, hover docs, code
+        actions, rename, multi-language support. Slice 1 (core plumbing + diagnostics), slice 2
+        (hover + ghost-text completion), slice 3 (code actions/quick fixes), and slice 4
+        (go-to-definition + rename) are all done — see "LSP client — slice 1"/"slice 2"/"slice 3"/
+        "slice 4" above. Multi-language support was never a separate slice of its own — it falls
+        out of `LspServerConfig`'s existing per-language command lookup for free, one config entry
+        per language. Still deliberately out of scope, unrelated to any one slice: DAP debugging
+        (its own wishlist item just below), syncing every open buffer rather than just the active
+        one, incremental sync, idle-timeout server teardown, multi-root workspaces, and raw
+        subprocess stderr capture — see "LSP client" and "LSP client — error visibility
+        follow-up" above for why each of those is a deliberate cut, not an oversight.
   - [ ] DAP (Debug Adapter Protocol) client for in-editor debugging.
   - [ ] Spell-checking, prose-oriented — a separate concern from the LSP client above,
         not dependent on it: some LSP servers (e.g. `marksman` for Markdown, some prose

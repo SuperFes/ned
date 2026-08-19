@@ -180,6 +180,18 @@ ned_add_treesitter_grammar(tree-sitter-markdown https://github.com/tree-sitter-g
 
 ned_embed_treesitter_query("${tree-sitter-markdown_SOURCE_DIR}/tree-sitter-markdown/queries/highlights.scm" Markdown)
 
+# Markdown's inline formatting (bold/italic/strikethrough/code spans/links) is
+# a genuinely separate grammar from Markdown's own block structure -- real
+# markdown tooling combines the two via tree-sitter language injection, which
+# Ned's own TreeSitter/ wrapper doesn't implement generically; MarkdownMode()
+# (Mode.cpp) does the equivalent by hand instead: re-parsing each block-level
+# "inline" node's own byte range with this second grammar. Same repo/tag as
+# tree-sitter-markdown above (a monorepo containing both grammars as sibling
+# subdirectories), fetched under its own content name.
+ned_add_treesitter_grammar(tree-sitter-markdown-inline https://github.com/tree-sitter-grammars/tree-sitter-markdown.git v0.5.3 tree-sitter-markdown-inline)
+
+ned_embed_treesitter_query("${tree-sitter-markdown-inline_SOURCE_DIR}/tree-sitter-markdown-inline/queries/highlights.scm" MarkdownInline)
+
 ned_add_treesitter_grammar(tree-sitter-org /Development/NED/tree-sitter-ned-org 05b4c7505c452f42330c681a067842d4cb49b174)
 
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/OrgHighlights.scm" Org)
@@ -227,6 +239,7 @@ add_library(ned_lib STATIC
         Source/Editor/Mode.cpp
         Source/Editor/SyntaxTheme.cpp
         Source/Editor/ModeOverrides.cpp
+        Source/Editor/WrapOverrides.cpp
         Source/Editor/CodeFold.cpp
         Source/Editor/CodeFoldSettings.cpp
         Source/Editor/Org.cpp
@@ -300,6 +313,7 @@ target_link_libraries(ned_lib
         PUBLIC tree-sitter-bash
         PUBLIC tree-sitter-janet-simple
         PUBLIC tree-sitter-markdown
+        PUBLIC tree-sitter-markdown-inline
         PUBLIC tree-sitter-org
         PRIVATE ${CMAKE_DL_LIBS})
 
@@ -352,6 +366,7 @@ if (NED_BUILD_TESTS)
             Tests/OrgTest.cpp
             Tests/TableTest.cpp
             Tests/MarkdownTest.cpp
+            Tests/MarkdownHighlightTest.cpp
             Tests/LinkTest.cpp
             Tests/PerformanceTest.cpp
             Tests/ThemeTest.cpp
@@ -382,6 +397,7 @@ if (NED_BUILD_TESTS)
             Tests/TreeSitterTest.cpp
             Tests/DynamicGrammarTest.cpp
             Tests/ModeOverridesTest.cpp
+            Tests/WrapOverridesTest.cpp
             Tests/ProjectSidebarTest.cpp
             Tests/SidebarToggleTest.cpp
     )

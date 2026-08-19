@@ -436,6 +436,26 @@ TEST_CASE("Each *Mode() sets lineCommentPrefix to its language's real line-comme
     REQUIRE(FundamentalMode().lineCommentPrefix.empty());
 }
 
+TEST_CASE("MarkdownMode and OrgMode default to wrapLines true; every other bundled mode defaults to false",
+          "[Mode]") {
+    REQUIRE(MarkdownMode().wrapLines);
+    REQUIRE(OrgMode().wrapLines);
+
+    REQUIRE_FALSE(FundamentalMode().wrapLines);
+    REQUIRE_FALSE(JanetMode().wrapLines);
+    REQUIRE_FALSE(JsonMode().wrapLines);
+    REQUIRE_FALSE(CMode().wrapLines);
+    REQUIRE_FALSE(CppMode().wrapLines);
+    REQUIRE_FALSE(PhpMode().wrapLines);
+    REQUIRE_FALSE(JavaScriptMode().wrapLines);
+    REQUIRE_FALSE(TypeScriptMode().wrapLines);
+    REQUIRE_FALSE(TsxMode().wrapLines);
+    REQUIRE_FALSE(HtmlMode().wrapLines);
+    REQUIRE_FALSE(CssMode().wrapLines);
+    REQUIRE_FALSE(PythonMode().wrapLines);
+    REQUIRE_FALSE(BashMode().wrapLines);
+}
+
 // structural-selection-expansion follow-up: every TreeSitterModeFromLanguage-
 // built mode gets a real expandSelection hook for free; FundamentalMode (no
 // parser at all) and OrgMode (its own separate, non-shared highlight

@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <stdexcept>
 #include <string>
 
 #include "Text/Buffer.h"
@@ -869,4 +870,73 @@ TEST_CASE("Undo restoring shorter content drops a fold marker past the new end",
 
     REQUIRE(buffer.Text().empty());
     REQUIRE(buffer.FoldMarkers().empty());
+}
+
+TEST_CASE("A fresh buffer is not read-only by default", "[Buffer]") {
+    Buffer buffer("scratch");
+    REQUIRE_FALSE(buffer.ReadOnly());
+}
+
+TEST_CASE("Every content-mutating method throws once the buffer is read-only", "[Buffer]") {
+    Buffer buffer("scratch", ned::text::Rope("hello"));
+    buffer.SetReadOnly(true);
+    REQUIRE(buffer.ReadOnly());
+
+    REQUIRE_THROWS_AS(buffer.InsertAtPoint("x"), std::runtime_error);
+    REQUIRE_THROWS_AS(buffer.InsertAt(0, "x"), std::runtime_error);
+    REQUIRE_THROWS_AS(buffer.DeleteRange(0, 1), std::runtime_error);
+    buffer.SetPoint(1);
+    REQUIRE_THROWS_AS(buffer.DeleteBackwardAtPoint(), std::runtime_error);
+    REQUIRE_THROWS_AS(buffer.DeleteForwardAtPoint(), std::runtime_error);
+
+    // None of the attempted edits above actually changed anything.
+    REQUIRE(buffer.Text() == "hello");
+}
+
+TEST_CASE("Toggling read-only back off re-allows edits", "[Buffer]") {
+    Buffer buffer("scratch");
+    buffer.SetReadOnly(true);
+    REQUIRE_THROWS_AS(buffer.InsertAtPoint("x"), std::runtime_error);
+
+    buffer.SetReadOnly(false);
+    buffer.InsertAtPoint("x");
+    REQUIRE(buffer.Text() == "x");
+}
+
+TEST_CASE("AppendWhileReadOnly throws std::logic_error on a writable buffer", "[Buffer]") {
+    Buffer buffer("scratch");
+    REQUIRE_FALSE(buffer.ReadOnly());
+    REQUIRE_THROWS_AS(buffer.AppendWhileReadOnly("x"), std::logic_error);
+}
+
+TEST_CASE("AppendWhileReadOnly appends at the end regardless of Point", "[Buffer]") {
+    Buffer buffer("scratch", ned::text::Rope("hello"));
+    buffer.SetReadOnly(true);
+    buffer.SetPoint(2); // not at the end -- must be left untouched by the append below
+
+    buffer.AppendWhileReadOnly(" world");
+
+    REQUIRE(buffer.Text() == "hello world");
+    REQUIRE(buffer.Point() == 2); // Point was NOT at the end -- untouched, per InsertAt's own RelocateForInsert rule
+}
+
+TEST_CASE("AppendWhileReadOnly tail-follows when Point was already at the buffer's end", "[Buffer]") {
+    Buffer buffer("scratch", ned::text::Rope("hello"));
+    buffer.SetReadOnly(true);
+    buffer.SetPoint(5); // exactly at the end
+
+    buffer.AppendWhileReadOnly(" world");
+
+    REQUIRE(buffer.Text() == "hello world");
+    REQUIRE(buffer.Point() == 11); // Point WAS at the end -- moves forward with the appended text, tail -f style
+}
+
+TEST_CASE("Two AppendWhileReadOnly calls both land at the end, in order", "[Buffer]") {
+    Buffer buffer("scratch");
+    buffer.SetReadOnly(true);
+
+    buffer.AppendWhileReadOnly("first\n");
+    buffer.AppendWhileReadOnly("second\n");
+
+    REQUIRE(buffer.Text() == "first\nsecond\n");
 }
