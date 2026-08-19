@@ -102,6 +102,8 @@ function(ned_add_treesitter_grammar name repository tag)
     else()
         ned_add_treesitter_grammar_target(${name} "${${name}_SOURCE_DIR}")
     endif()
+
+    set(${name}_SOURCE_DIR "${${name}_SOURCE_DIR}" PARENT_SCOPE)
 endfunction()
 
 function(ned_embed_treesitter_query query_file symbol)
