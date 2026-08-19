@@ -255,3 +255,110 @@ TEST_CASE("Close clears PreviewBuffer if it was the buffer being closed", "[Buff
 
     REQUIRE(list.PreviewBuffer() == nullptr);
 }
+
+TEST_CASE("OpenFile refuses a binary file even with no async opener set", "[BufferList]") {
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_bufferlist_binary.bin";
+    {
+        std::ofstream file(path, std::ios::binary);
+        file.put('a');
+        file.put('\0');
+        file.put('b');
+    }
+
+    BufferList list;
+    REQUIRE_THROWS_AS(list.OpenFile(path), std::runtime_error);
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("OpenFile with no async opener loads a large file synchronously, unchanged from before", "[BufferList]") {
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_bufferlist_large_sync.txt";
+    {
+        std::ofstream file(path, std::ios::binary);
+        file << std::string(17 * 1024 * 1024, 'x'); // above kAsyncLoadThreshold (16 MiB)
+    }
+
+    BufferList list;
+    Buffer&    buffer = list.OpenFile(path);
+
+    REQUIRE_FALSE(buffer.IsLoading());
+    REQUIRE(buffer.Size() == 17 * 1024 * 1024);
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("OpenFile hands a large file to the async opener hook instead of loading it synchronously", "[BufferList]") {
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_bufferlist_large_async.txt";
+    {
+        std::ofstream file(path, std::ios::binary);
+        file << std::string(17 * 1024 * 1024, 'x');
+    }
+
+    BufferList  list;
+    Buffer*     hookedBuffer = nullptr;
+    std::size_t hookCalls    = 0;
+    list.SetAsyncFileOpener([&](Buffer& buffer, const std::filesystem::path&) {
+        hookedBuffer = &buffer;
+        ++hookCalls;
+    });
+
+    Buffer& buffer = list.OpenFile(path);
+
+    REQUIRE(hookCalls == 1);
+    REQUIRE(hookedBuffer == &buffer);
+    REQUIRE(buffer.IsLoading()); // placeholder handed to the hook, not yet filled in
+    REQUIRE(buffer.Size() == 0); // OpenFile itself never reads the file on the async path
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("OpenFile with allowBinary=true loads a binary file as text anyway", "[BufferList]") {
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_bufferlist_binary_allowed.bin";
+    {
+        std::ofstream file(path, std::ios::binary);
+        file.put('a');
+        file.put('\0');
+        file.put('b');
+    }
+
+    BufferList list;
+    Buffer&    buffer = list.OpenFile(path, /*allowBinary=*/true);
+    REQUIRE(buffer.Size() == 3);
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("OpenOrCreateFile forwards allowBinary through to OpenFile", "[BufferList]") {
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_bufferlist_binary_allowed2.bin";
+    {
+        std::ofstream file(path, std::ios::binary);
+        file.put('\0');
+    }
+
+    BufferList list;
+    REQUIRE_THROWS_AS(list.OpenOrCreateFile(path), std::runtime_error);
+    Buffer& buffer = list.OpenOrCreateFile(path, /*allowBinary=*/true);
+    REQUIRE(buffer.Size() == 1);
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("OpenFile does not invoke the async opener for a small file even with a hook set", "[BufferList]") {
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_bufferlist_small_with_hook.txt";
+    {
+        std::ofstream file(path, std::ios::binary);
+        file << "just a small file\n";
+    }
+
+    BufferList  list;
+    std::size_t hookCalls = 0;
+    list.SetAsyncFileOpener([&](Buffer&, const std::filesystem::path&) { ++hookCalls; });
+
+    Buffer& buffer = list.OpenFile(path);
+
+    REQUIRE(hookCalls == 0);
+    REQUIRE_FALSE(buffer.IsLoading());
+    REQUIRE(buffer.Text() == "just a small file\n");
+
+    std::filesystem::remove(path);
+}

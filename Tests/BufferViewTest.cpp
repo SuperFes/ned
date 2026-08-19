@@ -2423,6 +2423,80 @@ TEST_CASE("RequestCloseBuffer is a no-op while another interactive session is al
     REQUIRE(fixture.bufferList.Count() == 2); // untouched
 }
 
+TEST_CASE("RequestOpenBinaryFile prompts, 'y' opens the file as text anyway", "[BufferView]") {
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_bufferview_binary_confirm.bin";
+    {
+        std::ofstream file(path, std::ios::binary);
+        file.put('a');
+        file.put('\0');
+    }
+
+    Fixture               fixture;
+    ned::text::Buffer&    scratch = fixture.bufferList.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
+                               fixture.statusMessage, fixture.mode, fixture.theme);
+
+    view.RequestOpenBinaryFile(path);
+    REQUIRE(fixture.statusMessage.find("binary") != std::string::npos);
+    REQUIRE(&activeBuffer.Get() == &scratch); // not opened yet -- awaiting confirmation
+
+    view.OnEvent(ned::ui::test::Character("y"));
+
+    REQUIRE(&activeBuffer.Get() != &scratch); // switched to the newly opened buffer
+    REQUIRE(activeBuffer.Get().Size() == 2);
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("RequestOpenBinaryFile prompts, 'n' cancels without opening", "[BufferView]") {
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_bufferview_binary_cancel.bin";
+    {
+        std::ofstream file(path, std::ios::binary);
+        file.put('a');
+        file.put('\0');
+    }
+
+    Fixture               fixture;
+    ned::text::Buffer&    scratch = fixture.bufferList.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
+                               fixture.statusMessage, fixture.mode, fixture.theme);
+
+    view.RequestOpenBinaryFile(path);
+    view.OnEvent(ned::ui::test::Character("n"));
+
+    REQUIRE(&activeBuffer.Get() == &scratch);
+    REQUIRE(fixture.statusMessage.find("cancelled") != std::string::npos);
+    REQUIRE(fixture.bufferList.Count() == 1);
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("RequestOpenBinaryFile is a no-op while another interactive session is already active", "[BufferView]") {
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_bufferview_binary_busy.bin";
+    {
+        std::ofstream file(path, std::ios::binary);
+        file.put('a');
+        file.put('\0');
+    }
+
+    Fixture               fixture;
+    ned::text::Buffer&    scratch = fixture.bufferList.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
+                               fixture.statusMessage, fixture.mode, fixture.theme);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Ctrl('s')); // isearch-forward -- an interactive session is now active
+
+    view.RequestOpenBinaryFile(path);
+
+    REQUIRE(fixture.bufferList.Count() == 1); // untouched
+
+    std::filesystem::remove(path);
+}
+
 TEST_CASE("Window-splitting keybindings each invoke the registered onWindowRequest handler",
           "[BufferView]") {
     Fixture             fixture;

@@ -1629,6 +1629,59 @@ each is, not by priority.
         files/locations (e.g. all references, all diagnostics, as one scrollable view)
         — a genuinely interesting fit for our Rope/Buffer design, worth a design pass
         of its own when it comes up.
+- **Large file handling** (large-file-async-load / open-binary-anyway follow-ups laid the
+  groundwork here: binary-content refusal with an explicit override — CLI `--force-binary`,
+  an interactive y/n confirmation reachable from find-file, a sidebar click, or a CLI-opened
+  path alike, all routed through the same `BufferView::RequestOpenBinaryFile`/
+  `WindowManager::RequestOpenBinaryFile` pathway — and a background-thread chunked loader
+  with a live-growing preview for files over `kAsyncLoadThreshold` (16 MiB), so opening a
+  large *legitimate* text file no longer blocks the UI. Everything below is what's still
+  unaddressed, raised together during that same work.)
+  - [ ] **Windowed/paged editing for genuinely huge files** (multi-GB — the user's own
+        framing: "anything over a few hundred megabytes sounds crazy" to hold fully
+        resident, even as fast as you can scroll). Explicitly discussed and scoped as a
+        real architectural direction, not a tweak to the current async loader: `Rope` is
+        fundamentally in-memory (a structurally-shared B-tree over the *entire* content),
+        and everything built on it — `UndoTree` snapshots, whole-buffer search, tree-sitter,
+        line/byte-offset counting — assumes the whole file is addressable. A true windowed
+        buffer needs a second, disk-backed text-storage engine, not a change to this one.
+        Recommended shape, not yet designed in detail: treat it as a **read-only,
+        mmap-backed viewer** past a size threshold — lazily build a line-offset index only
+        near wherever the user has scrolled (not the whole file up front), page content in
+        as the viewport moves, and require an explicit "load this fully to edit it" step
+        (reusing the existing async loader) before allowing real edits. Deliberately *not*
+        attempting in-place windowed editing of an untouched-elsewhere file: an edit before
+        the visible window shifts every later byte offset, so genuine windowed editing needs
+        a real piece-table with disk-backed runs — most of a new engine, not a follow-up.
+  - [ ] `kAsyncLoadThreshold` (`BufferList.cpp`) and `kMaxHighlightBytes`
+        (`BufferView.cpp`) are both hardcoded C++ constants today, the same "hardcoded for
+        now" scope cut `TabWidth`/`Theme` selection originally were before they grew a
+        Janet-facing setter (`ned/set-tab-width`, etc.) — expose both the same way once
+        there's a real need to tune them per project/machine rather than guessing at one
+        number that fits everyone.
+  - [ ] `ModeLine`'s "Loading…" indicator (open-binary-anyway/large-file-async-load
+        follow-ups) is a plain binary state today, not a live percentage — `AsyncFileLoader`
+        tracks bytes-read/total-bytes as local, per-chunk values inside its own background
+        thread but never surfaces them anywhere UI-reachable, specifically to avoid the
+        cross-thread-safe-accessor plumbing that would need (Buffer itself can't hold the
+        progress atomics directly — it's moved into a `unique_ptr` on open, and
+        `std::atomic` isn't movable). Worth adding once wanted: likely a small
+        `shared_ptr<LoadProgress>` handed from `AsyncFileLoader` to `WindowManager`, queried
+        by `ModeLine::Paint` for whichever buffer is active.
+  - [ ] The async loader only ever fires for files opened *after* `EventLoop` exists
+        (`main.cpp`) — a file passed directly on the command line (`ned hugefile.txt`,
+        not binary, just large) still loads synchronously before the UI ever appears,
+        since `BufferList`/the initial `OpenOrCreateFile` call both run before `EventLoop`
+        is constructed. Only the *binary-refusal* half of that same gap was actually
+        closed (the deferred `RequestOpenBinaryFile` call right after
+        `windowManager->TakeFocus()`) — a large-but-legitimate CLI-opened file has no
+        equivalent deferral yet. Would need the same "try, catch, defer" shape, just
+        triggering a deferred *load* instead of a deferred *confirmation prompt*, and
+        general enough that it might be worth restructuring startup to construct
+        `EventLoop` earlier instead — flagged in the async-load follow-up as out of scope
+        specifically because of the risk of disturbing `TerminalColorProbe`'s own strict
+        "before anything else reads stdin" ordering requirement; a real evaluation of that
+        risk hasn't happened yet.
 - **External tool integration (version control and beyond)**
   - [ ] VCS-agnostic version control, via a plugin system rather than a hardcoded git
         integration. The user's own framing: stay deliberately agnostic about which VCS

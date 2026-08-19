@@ -22,7 +22,7 @@ namespace {
     // this exists (without it, the sidebar eagerly walks build/,
     // node_modules/, and similar generated/dependency directories too).
     void WalkTree(const std::filesystem::path& directory, const std::filesystem::path& absoluteRoot, const GitIgnoreMatcher& gitIgnore,
-                  int depth, std::vector<ProjectTreeEntry>& out) {
+                  int depth, const std::function<bool(const std::filesystem::path&)>& shouldExpand, std::vector<ProjectTreeEntry>& out) {
         std::vector<std::filesystem::path> directories;
         std::vector<std::filesystem::path> files;
 
@@ -48,7 +48,9 @@ namespace {
 
         for (const std::filesystem::path& dir : directories) {
             out.push_back(ProjectTreeEntry{dir, depth, true});
-            WalkTree(dir, absoluteRoot, gitIgnore, depth + 1, out);
+            if (!shouldExpand || shouldExpand(dir)) {
+                WalkTree(dir, absoluteRoot, gitIgnore, depth + 1, shouldExpand, out);
+            }
         }
         for (const std::filesystem::path& file : files) {
             out.push_back(ProjectTreeEntry{file, depth, false});
@@ -57,7 +59,8 @@ namespace {
 
 } // namespace
 
-std::vector<ProjectTreeEntry> BuildProjectTree(const std::filesystem::path& root) {
+std::vector<ProjectTreeEntry> BuildProjectTree(const std::filesystem::path& root,
+                                                const std::function<bool(const std::filesystem::path&)>& shouldExpand) {
     std::vector<ProjectTreeEntry> entries;
 
     std::error_code             ec;
@@ -67,7 +70,7 @@ std::vector<ProjectTreeEntry> BuildProjectTree(const std::filesystem::path& root
     }
 
     const GitIgnoreMatcher gitIgnore(absoluteRoot);
-    WalkTree(absoluteRoot, absoluteRoot, gitIgnore, 0, entries);
+    WalkTree(absoluteRoot, absoluteRoot, gitIgnore, 0, shouldExpand, entries);
     return entries;
 }
 

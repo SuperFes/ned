@@ -9,6 +9,7 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -22,14 +23,32 @@ class BufferList {
   public:
     Buffer& CreateBuffer(std::string name);
 
-    // Throws std::runtime_error if the file can't be opened for reading.
-    Buffer& OpenFile(const std::filesystem::path& path);
+    // Throws std::runtime_error if the file can't be opened for reading, or
+    // text::BinaryFileError if it looks binary and allowBinary is false
+    // (large-file-async-load / open-binary-anyway follow-ups -- see
+    // Buffer::FromFile's own comment; checked here too, before any size
+    // check, since a binary file should never even be considered for the
+    // async path below). allowBinary is the explicit override a caller
+    // opts into (a confirmed "open anyway?" prompt, a --force-binary CLI
+    // flag) -- never set based on the file's own content.
+    //
+    // A file over kAsyncLoadThreshold (BufferList.cpp) is handled specially
+    // if an async opener hook is set (SetAsyncFileOpener): rather than
+    // blocking here for however long the read+Rope-build takes, this
+    // returns immediately with an empty, IsLoading() placeholder buffer
+    // that the hook is responsible for filling in over time -- the same
+    // synchronous Buffer&-returning contract every caller already relies
+    // on, just pointing at a buffer that isn't fully populated yet. With no
+    // hook set (the default -- e.g. every test that constructs a bare
+    // BufferList), this always behaves exactly as before: fully
+    // synchronous, fully loaded on return.
+    Buffer& OpenFile(const std::filesystem::path& path, bool allowBinary = false);
 
     // OpenFile if path exists; otherwise a new, empty buffer already
     // associated with path (Buffer::NewFile) -- e.g. `ned newfile.txt` for a
     // file that doesn't exist yet. Still throws for a real I/O failure on an
     // existing path (permissions, etc.), same as OpenFile.
-    Buffer& OpenOrCreateFile(const std::filesystem::path& path);
+    Buffer& OpenOrCreateFile(const std::filesystem::path& path, bool allowBinary = false);
 
     [[nodiscard]] Buffer*       Find(const std::string& name);
     [[nodiscard]] const Buffer* Find(const std::string& name) const;
@@ -67,11 +86,25 @@ class BufferList {
     [[nodiscard]] std::size_t                                 Count() const;
     [[nodiscard]] const std::vector<std::unique_ptr<Buffer>>& Buffers() const;
 
+    // large-file-async-load follow-up: called by OpenFile with a freshly
+    // created, IsLoading() placeholder Buffer& (already inserted into this
+    // list -- stable-addressed, same as every other Buffer here) and the
+    // path to load, whenever a file exceeds kAsyncLoadThreshold. Unset by
+    // default -- a plain no-op-by-absence the same way TabBar::
+    // SetOnCloseRequest/ProjectSidebar::SetOnBufferClosed default to
+    // nothing, which is also what keeps BufferList itself UI-agnostic: it
+    // knows nothing about EventLoop/threads, just that something else has
+    // opted in to filling this buffer in over time. Source/UI/
+    // AsyncFileLoader.h is what main.cpp actually wires in here.
+    void SetAsyncFileOpener(std::function<void(Buffer&, const std::filesystem::path&)> hook);
+
   private:
     [[nodiscard]] std::string UniqueName(const std::string& base) const;
 
     std::vector<std::unique_ptr<Buffer>> buffers_;
     mutable Buffer*                      previewBuffer_ = nullptr; // see PreviewBuffer()
+
+    std::function<void(Buffer&, const std::filesystem::path&)> asyncFileOpener_; // see SetAsyncFileOpener()
 };
 
 // Tab-completion candidates for find-file's prompt: directory entries under

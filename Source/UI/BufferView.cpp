@@ -28,11 +28,22 @@
 #include "Editor/TabWidth.h"
 #include "Editor/WrapOverrides.h"
 #include "KeyTranslation.h"
+#include "Text/BinaryDetect.h"
 #include "Text/Utf8.h"
 
 namespace ned::ui {
 
 namespace {
+
+    // large-file-async-load follow-up: past this size, never run mode_.highlight
+    // at all, regardless of whether the file's extension happens to match a
+    // real tree-sitter grammar. buffer.ReadOnly() already suppresses
+    // highlighting for a synthesized results buffer and (now) for a buffer
+    // that's still IsLoading() -- but a huge file that finishes loading and
+    // reverts to writable would otherwise still pay for a full buffer.Text()
+    // copy plus a whole-buffer tree-sitter parse on every edit. 8 MiB is
+    // generous for any real source file and well short of "expensive."
+    constexpr std::size_t kMaxHighlightBytes = 8 * 1024 * 1024;
 
     // Plain, non-modifier printable input: the only kind of chord that should
     // feed into a query string during isearch/query-replace/prompt text entry.
@@ -1085,7 +1096,7 @@ void BufferView::Paint(Canvas c) {
     // running that Mode's highlight query against "path:line: text" content
     // would produce meaningless spans, not an empty result, so ReadOnly()
     // suppresses this the same way FoldGutterActive() suppresses folding.
-    if (!mode_.highlight || buffer.ReadOnly()) {
+    if (!mode_.highlight || buffer.ReadOnly() || buffer.Size() > kMaxHighlightBytes) {
         highlightCacheBuffer_ = nullptr;
         highlightCacheSpans_.clear();
     }
@@ -1825,6 +1836,11 @@ bool BufferView::OnKeyEvent(const Event& event) {
     }
     if (inputMode_ == InputMode::ConfirmCloseBuffer) {
         HandleConfirmCloseBufferKey(*chord);
+        ClampPointToNarrowing();
+        return true;
+    }
+    if (inputMode_ == InputMode::ConfirmOpenBinary) {
+        HandleConfirmOpenBinaryKey(*chord);
         ClampPointToNarrowing();
         return true;
     }
@@ -3076,7 +3092,8 @@ void BufferView::EndInteractiveSession() {
     prompt_.reset();
     projectReplace_.reset();
     pendingClose_ = nullptr;
-    deleteStage_  = DeleteFileStage::EnteringPath;
+    pendingBinaryOpenPath_.clear();
+    deleteStage_ = DeleteFileStage::EnteringPath;
     deleteTarget_.clear();
     renameStage_ = RenameFileStage::EnteringSource;
     renameSource_.clear();
@@ -3185,6 +3202,15 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
                 text::Buffer& opened = bufferList_.OpenOrCreateFile(input);
                 activeBuffer_.Set(opened);
                 statusMessage_ = isNewFile ? "(New file)" : ("Opened " + opened.Name());
+            }
+            catch (const text::BinaryFileError&) {
+                // open-binary-anyway follow-up: ask instead of just
+                // reporting the refusal -- returns without EndInteractiveSession()
+                // below, since this transitions to a second y/n prompt
+                // rather than finishing the session outright.
+                prompt_.reset();
+                BeginConfirmOpenBinary(input);
+                return;
             }
             catch (const std::exception& e) {
                 statusMessage_ = e.what();
@@ -3839,6 +3865,42 @@ void BufferView::HandleConfirmCloseBufferKey(const editor::KeyChord& chord) {
     }
     if (chord.Codepoint == U'n' || chord.Codepoint == U'N' || IsQuit(chord)) {
         statusMessage_ = "Close cancelled.";
+        EndInteractiveSession();
+        return;
+    }
+    // Anything else is ignored -- stay in the prompt.
+}
+
+void BufferView::RequestOpenBinaryFile(const std::filesystem::path& path) {
+    if (inputMode_ != InputMode::Normal) {
+        statusMessage_ = "Finish the current prompt first.";
+        return;
+    }
+    BeginConfirmOpenBinary(path);
+}
+
+void BufferView::BeginConfirmOpenBinary(const std::filesystem::path& path) {
+    pendingBinaryOpenPath_ = path;
+    inputMode_             = InputMode::ConfirmOpenBinary;
+    statusMessage_         = "\"" + path.string() + "\" looks like a binary file; open anyway? (y/n)";
+}
+
+void BufferView::HandleConfirmOpenBinaryKey(const editor::KeyChord& chord) {
+    if (chord.Codepoint == U'y' || chord.Codepoint == U'Y') {
+        const std::filesystem::path path = pendingBinaryOpenPath_;
+        EndInteractiveSession(); // clears pendingBinaryOpenPath_ before the open below touches activeBuffer_
+        try {
+            text::Buffer& opened = bufferList_.OpenOrCreateFile(path, /*allowBinary=*/true);
+            activeBuffer_.Set(opened);
+            statusMessage_ = "Opened " + opened.Name();
+        }
+        catch (const std::exception& e) {
+            statusMessage_ = e.what();
+        }
+        return;
+    }
+    if (chord.Codepoint == U'n' || chord.Codepoint == U'N' || IsQuit(chord)) {
+        statusMessage_ = "Open cancelled.";
         EndInteractiveSession();
         return;
     }

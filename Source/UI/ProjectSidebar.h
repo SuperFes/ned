@@ -153,12 +153,23 @@ class ProjectSidebar : public Widget {
     // WindowManager::NotifyBufferClosing.
     void SetOnBufferClosed(std::function<void(text::Buffer&)> handler);
 
+    // open-binary-anyway follow-up: called instead of just reporting
+    // text::BinaryFileError via statusMessage_ (this widget's own generic
+    // catch-all fallback, still used for every other kind of open failure)
+    // -- this widget is mouse-only and can't itself drive a keyboard y/n
+    // confirmation (see this file's own header comment), so it hands off
+    // to whichever pane's BufferView can. Unset (the default) falls back
+    // to the plain refusal message, same as before this follow-up.
+    // main.cpp wires this to WindowManager::RequestOpenBinaryFile.
+    void SetOnBinaryFileOpenRequest(std::function<void(const std::filesystem::path&)> handler);
+
   private:
     std::function<ActiveBuffer&()>     activeBufferProvider_;
     text::BufferList&                  bufferList_;
     std::string&                       statusMessage_;
     const Theme&                       theme_;
     std::function<void(text::Buffer&)> onBufferClosed_;
+    std::function<void(const std::filesystem::path&)> onBinaryFileOpenRequest_; // see SetOnBinaryFileOpenRequest()
 
     int scrollOffset_ = 0; // first visible row (post-sticky-headers), in *visible* (post-collapse) tree-entry units
 
@@ -209,6 +220,19 @@ class ProjectSidebar : public Widget {
     // system watcher) -- external changes (e.g. `git checkout` in another
     // terminal) can lag up to kTreeCacheThrottle behind, an accepted
     // trade-off for a project-tree sidebar, not a correctness requirement.
+    //
+    // project-sidebar-eager-walk follow-up: the throttle alone still meant
+    // a full, unconditional recursive walk of the *entire* tree every
+    // kTreeCacheThrottle window, even through directories the user has
+    // never expanded -- fine for a small git-rooted project, but a real,
+    // reported, continuous lag for a file opened with no VCS marker above
+    // it, where ProjectRoot() falls back to the file's whole containing
+    // directory (see ProjectRoot.h's DetectProjectRoot) -- e.g. a file
+    // opened directly under $HOME made this walk the user's entire home
+    // directory twice a second. CachedTree() now passes BuildProjectTree an
+    // expandedDirs_-checking predicate so a directory is still always
+    // listed, but its children are only walked if the user has actually
+    // expanded it.
     [[nodiscard]] const std::vector<editor::ProjectTreeEntry>& CachedTree();
 
     std::vector<editor::ProjectTreeEntry> treeCache_;

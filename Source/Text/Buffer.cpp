@@ -7,6 +7,7 @@
 #include <string_view>
 #include <system_error>
 
+#include "BinaryDetect.h"
 #include "Grapheme.h"
 
 namespace ned::text {
@@ -106,7 +107,20 @@ Buffer::Buffer(std::string name, Rope initialContent) : Name_(std::move(name)),
                                                         SavedSnapshot_(Rope_) {
 }
 
-Buffer Buffer::FromFile(const std::filesystem::path& path) {
+Buffer Buffer::FromFile(const std::filesystem::path& path, bool allowBinary) {
+    // large-file-async-load follow-up: checked before any sizing/reading --
+    // decoding arbitrary binary content as UTF-8 text is meaningless, and
+    // this is meant to be cheap-fail-fast rather than paying for a
+    // potentially huge read first. Every existing caller of
+    // BufferList::OpenFile/OpenOrCreateFile already wraps the call in a
+    // try/catch for exactly this kind of failure, so this needed no call
+    // site changes. open-binary-anyway follow-up: allowBinary is the
+    // explicit, caller-opted-in escape hatch -- see BinaryFileError's own
+    // doc comment.
+    if (!allowBinary && LooksBinary(path)) {
+        throw BinaryFileError("ned: refusing to open binary file as text: " + path.string());
+    }
+
     std::ifstream file(path, std::ios::binary);
     if (!file) {
         throw std::runtime_error("ned: cannot open file for reading: " + path.string());
@@ -225,11 +239,32 @@ std::size_t Buffer::Size() const {
 }
 
 bool Buffer::ReadOnly() const {
-    return ReadOnly_;
+    return ReadOnly_ || Loading_;
 }
 
 void Buffer::SetReadOnly(bool readOnly) {
     ReadOnly_ = readOnly;
+}
+
+bool Buffer::IsLoading() const {
+    return Loading_;
+}
+
+void Buffer::MarkLoading() {
+    Loading_ = true;
+}
+
+void Buffer::ReplaceContentForLoad(Rope content) {
+    Rope_ = std::move(content);
+    ++ContentGeneration_;
+}
+
+void Buffer::FinishLoad(Rope content) {
+    Rope_          = std::move(content);
+    UndoTree_      = UndoTree(Rope_);
+    SavedSnapshot_ = Rope_;
+    Loading_       = false;
+    ++ContentGeneration_;
 }
 
 bool Buffer::Modified() const {
@@ -447,7 +482,7 @@ void Buffer::MarkUnsavedRangeDeleted(std::size_t rangeStart, std::size_t rangeEn
 }
 
 void Buffer::InsertAtPoint(std::string_view text) {
-    if (ReadOnly_) {
+    if (ReadOnly_ || Loading_) {
         throw std::runtime_error("Buffer is read-only.");
     }
     if (text.empty()) {
@@ -481,7 +516,7 @@ void Buffer::InsertAtPoint(std::string_view text) {
 }
 
 void Buffer::DeleteBackwardAtPoint() {
-    if (ReadOnly_) {
+    if (ReadOnly_ || Loading_) {
         throw std::runtime_error("Buffer is read-only.");
     }
     if (Point_ == 0) {
@@ -514,7 +549,7 @@ void Buffer::DeleteBackwardAtPoint() {
 }
 
 void Buffer::DeleteForwardAtPoint() {
-    if (ReadOnly_) {
+    if (ReadOnly_ || Loading_) {
         throw std::runtime_error("Buffer is read-only.");
     }
     if (Point_ >= Rope_.ByteLength()) {
@@ -547,7 +582,7 @@ void Buffer::DeleteForwardAtPoint() {
 }
 
 std::string Buffer::DeleteRange(std::size_t byteOffset, std::size_t byteLength) {
-    if (ReadOnly_) {
+    if (ReadOnly_ || Loading_) {
         throw std::runtime_error("Buffer is read-only.");
     }
     byteOffset = std::min(byteOffset, Rope_.ByteLength());
@@ -589,7 +624,7 @@ std::string Buffer::DeleteRange(std::size_t byteOffset, std::size_t byteLength) 
 }
 
 void Buffer::InsertAt(std::size_t byteOffset, std::string_view text) {
-    if (ReadOnly_) {
+    if (ReadOnly_ || Loading_) {
         throw std::runtime_error("Buffer is read-only.");
     }
     InsertAtImpl(byteOffset, text);

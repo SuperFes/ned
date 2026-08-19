@@ -17,6 +17,7 @@
 #include <nlohmann/json.hpp>
 
 #include "GitIgnore.h"
+#include "Text/BinaryDetect.h"
 
 // posix_spawn's envp argument needs the process's own environment -- POSIX
 // guarantees this global exists, just not in a standard header. Same
@@ -32,18 +33,6 @@ namespace {
     bool IsDotDirectory(const std::filesystem::directory_entry& entry) {
         const std::string name = entry.path().filename().string();
         return !name.empty() && name.front() == '.';
-    }
-
-    bool LooksBinary(const std::filesystem::path& path) {
-        std::ifstream file(path, std::ios::binary);
-        if (!file) {
-            return true; // unreadable -- not worth searching
-        }
-
-        std::array<char, 8192> buffer{};
-        file.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
-        const auto bytesRead = static_cast<std::size_t>(file.gcount());
-        return std::find(buffer.data(), buffer.data() + bytesRead, '\0') != buffer.data() + bytesRead;
     }
 
     // The single-threaded C++ scanner -- SearchDirectory's own original
@@ -87,7 +76,8 @@ namespace {
                 }
                 continue;
             }
-            if (!entry.is_regular_file() || gitIgnore.IsIgnored(relative, /*isDirectory=*/false) || LooksBinary(entry.path())) {
+            if (!entry.is_regular_file() || gitIgnore.IsIgnored(relative, /*isDirectory=*/false) ||
+                text::LooksBinary(entry.path())) {
                 continue;
             }
 

@@ -1,8 +1,20 @@
 #include "BufferList.h"
 
 #include <algorithm>
+#include <system_error>
+
+#include "BinaryDetect.h"
 
 namespace ned::text {
+
+namespace {
+    // Comfortably above any real source file, comfortably below "blocking
+    // the UI to load this is actually felt" -- see the large-file-async-
+    // load follow-up plan for the reasoning; not exposed as a Janet/config
+    // setting yet, the same "hardcoded C++ for now" scope call TabWidth's
+    // own default originally was before it grew a setter.
+    constexpr std::uintmax_t kAsyncLoadThreshold = 16 * 1024 * 1024;
+} // namespace
 
 std::string BufferList::UniqueName(const std::string& base) const {
     if (!Find(base)) {
@@ -22,8 +34,31 @@ Buffer& BufferList::CreateBuffer(std::string name) {
     return *buffers_.back();
 }
 
-Buffer& BufferList::OpenFile(const std::filesystem::path& path) {
-    Buffer loaded = Buffer::FromFile(path); // throws on failure
+Buffer& BufferList::OpenFile(const std::filesystem::path& path, bool allowBinary) {
+    // Checked here, ahead of the size check below, so a large binary file
+    // never even gets considered for the async path -- Buffer::FromFile
+    // makes this same check for anyone calling it directly, but the async
+    // branch below bypasses FromFile entirely, so it needs its own check.
+    if (!allowBinary && LooksBinary(path)) {
+        throw BinaryFileError("ned: refusing to open binary file as text: " + path.string());
+    }
+
+    if (asyncFileOpener_) {
+        std::error_code       ec;
+        const std::uintmax_t size = std::filesystem::file_size(path, ec);
+        if (!ec && size > kAsyncLoadThreshold) {
+            Buffer placeholder = Buffer::NewFile(path);
+            placeholder.Rename(UniqueName(placeholder.Name()));
+            placeholder.MarkLoading();
+
+            buffers_.push_back(std::make_unique<Buffer>(std::move(placeholder)));
+            Buffer& ref = *buffers_.back();
+            asyncFileOpener_(ref, path);
+            return ref;
+        }
+    }
+
+    Buffer loaded = Buffer::FromFile(path, allowBinary); // throws on failure
 
     loaded.Rename(UniqueName(loaded.Name()));
 
@@ -31,9 +66,13 @@ Buffer& BufferList::OpenFile(const std::filesystem::path& path) {
     return *buffers_.back();
 }
 
-Buffer& BufferList::OpenOrCreateFile(const std::filesystem::path& path) {
+void BufferList::SetAsyncFileOpener(std::function<void(Buffer&, const std::filesystem::path&)> hook) {
+    asyncFileOpener_ = std::move(hook);
+}
+
+Buffer& BufferList::OpenOrCreateFile(const std::filesystem::path& path, bool allowBinary) {
     if (std::filesystem::exists(path)) {
-        return OpenFile(path);
+        return OpenFile(path, allowBinary);
     }
 
     Buffer created = Buffer::NewFile(path);

@@ -9,6 +9,7 @@
 
 #include "Editor/ProjectRoot.h"
 #include "Editor/ProjectTree.h"
+#include "Text/BinaryDetect.h"
 #include "Text/Utf8.h"
 
 namespace ned::ui {
@@ -227,7 +228,8 @@ const std::vector<editor::ProjectTreeEntry>& ProjectSidebar::CachedTree() {
     const std::filesystem::path root = editor::ProjectRoot();
     const auto                  now  = std::chrono::steady_clock::now();
     if (!treeCacheValid_ || root != treeCacheRoot_ || (now - treeCacheTime_) >= kTreeCacheThrottle) {
-        treeCache_      = editor::BuildProjectTree(root);
+        treeCache_ = editor::BuildProjectTree(
+            root, [this](const std::filesystem::path& dir) { return expandedDirs_.contains(dir); });
         treeCacheRoot_  = root;
         treeCacheTime_  = now;
         treeCacheValid_ = true;
@@ -241,6 +243,10 @@ void ProjectSidebar::InvalidateTree() {
 
 void ProjectSidebar::SetOnBufferClosed(std::function<void(text::Buffer&)> handler) {
     onBufferClosed_ = std::move(handler);
+}
+
+void ProjectSidebar::SetOnBinaryFileOpenRequest(std::function<void(const std::filesystem::path&)> handler) {
+    onBinaryFileOpenRequest_ = std::move(handler);
 }
 
 void ProjectSidebar::Paint(Canvas c) {
@@ -391,10 +397,15 @@ bool ProjectSidebar::OnEvent(const Event& event) {
             expandedDirs_.insert(entry.path);
         }
 
-        // Collapsing can shrink the visible list out from under scrollOffset_
-        // -- re-filters the same (unchanged-on-disk) CachedTree() result
-        // through VisibleEntries() again, now reflecting the just-toggled
-        // expandedDirs_; no fresh disk walk needed, nothing on disk changed.
+        // project-sidebar-eager-walk follow-up: CachedTree() itself now
+        // prunes unexpanded subtrees at walk time (not just VisibleEntries'
+        // display-time filtering), so expanding a directory for the first
+        // time means its children were never actually walked onto disk yet
+        // -- InvalidateTree() forces CachedTree() to rebuild right away
+        // rather than waiting out kTreeCacheThrottle, cheap here since a
+        // click is a rare, one-off event and the rebuilt walk only
+        // descends into whatever's newly expanded, not the whole tree.
+        InvalidateTree();
         const std::vector<editor::ProjectTreeEntry> after = VisibleEntries(CachedTree());
         if (!after.empty() && scrollOffset_ >= static_cast<int>(after.size())) {
             scrollOffset_ = static_cast<int>(after.size()) - 1;
@@ -464,6 +475,14 @@ void ProjectSidebar::OpenFileEntry(const std::filesystem::path& path, bool isDou
                 onBufferClosed_(*oldPreview);
             }
             bufferList_.Close(oldPreview->Name());
+        }
+    }
+    catch (const text::BinaryFileError&) {
+        if (onBinaryFileOpenRequest_) {
+            onBinaryFileOpenRequest_(path);
+        }
+        else {
+            statusMessage_ = "\"" + path.string() + "\" looks like a binary file.";
         }
     }
     catch (const std::exception& e) {
@@ -537,6 +556,14 @@ void ProjectSidebar::RevealPath(const std::filesystem::path& targetPath) {
     for (const std::filesystem::path& ancestor : toExpand) {
         expandedDirs_.insert(ancestor);
     }
+
+    // project-sidebar-eager-walk follow-up: same reasoning as the click
+    // handler above -- newly-expanded ancestors' children were never
+    // walked onto disk, since CachedTree() now prunes unexpanded subtrees
+    // at walk time. A no-op cost-wise on the actual startup call site
+    // (treeCacheValid_ is still false at that point anyway), but keeps
+    // this correct if RevealPath is ever called after the first paint.
+    InvalidateTree();
 }
 
 } // namespace ned::ui
