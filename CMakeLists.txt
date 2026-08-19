@@ -10,8 +10,6 @@ option(NED_BUILD_TESTS "Build the ned_tests target" ON)
 option(NED_ENABLE_SANITIZERS "Build with AddressSanitizer/UndefinedBehaviorSanitizer" OFF)
 
 # Use ccache automatically when it's on PATH -- this project's FetchContent
-# deps (FTXUI, tree-sitter + grammars, Catch2, utf8proc) make clean rebuilds
-# expensive; ccache mainly pays off on incremental/branch-switch rebuilds.
 find_program(CCACHE_PROGRAM ccache)
 if(CCACHE_PROGRAM)
     set(CMAKE_C_COMPILER_LAUNCHER ${CCACHE_PROGRAM})
@@ -24,11 +22,6 @@ set(FETCHCONTENT_UPDATES_DISCONNECTED ON)
 set(FETCHCONTENT_QUIET OFF)
 
 #--- Fetch FTXUI ---------------------------------------------------------------
-# TermOx -> FTXUI migration (Phase 7): TermOx's input-processing model (pop one
-# event, repaint once, no batching -- see ROADMAP.md's "TUI library: migrate
-# from TermOx to FTXUI" entry) caused real, felt lag during daily use. Pinned
-# to a real tagged release (unlike TermOx's own "main" pin, which had no
-# tagged releases to pin to) since FTXUI has a normal release cadence.
 FetchContent_Declare(ftxui
         GIT_REPOSITORY https://github.com/ArthurSonzogni/FTXUI.git
         GIT_TAG v7.0.3
@@ -46,18 +39,14 @@ FetchContent_Declare(utf8proc
         EXCLUDE_FROM_ALL)
 set(UTF8PROC_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
 set(UTF8PROC_INSTALL OFF CACHE BOOL "" FORCE)
-# utf8proc's own CMakeLists.txt predates CMake's removal of pre-3.5 compatibility.
+
+# utf8proc's own CMakeLists.txt predates CMake's removal of pre-3.5 compatibility (boo).
 set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
 FetchContent_MakeAvailable(utf8proc)
 unset(CMAKE_POLICY_VERSION_MINIMUM)
 #------------------------------------------------------------------------------
 
 #--- Fetch nlohmann/json (LSP client follow-up) --------------------------------
-# JSON-RPC message construction/parsing for the LSP client (Source/Editor/Lsp/) --
-# chosen over rapidjson/simdjson for its ergonomic operator[]/implicit-conversion
-# API, which matters far more here than either alternative's raw parse throughput:
-# an LSP client hand-writes/reads dozens of small, heterogeneous, mostly-optional-
-# field JSON-RPC message shapes, not a few large documents. Header-only.
 FetchContent_Declare(nlohmann_json
         GIT_REPOSITORY https://github.com/nlohmann/json.git
         GIT_TAG v3.12.0
@@ -68,73 +57,23 @@ FetchContent_MakeAvailable(nlohmann_json)
 #------------------------------------------------------------------------------
 
 #--- Fetch tree-sitter (core) --------------------------------------------------
-# tree-sitter's own CMakeLists.txt lives at lib/CMakeLists.txt, not the repo
-# root (its root has no CMake support at all, only Cargo/Zig/Swift) -- without
-# SOURCE_SUBDIR, FetchContent_MakeAvailable silently finds no CMakeLists.txt to
-# add, and "tree-sitter" below would silently become a raw, wrong linker flag
-# instead of a real CMake target (no configure-time error either way).
 FetchContent_Declare(tree-sitter
         GIT_REPOSITORY https://github.com/tree-sitter/tree-sitter.git
         GIT_TAG v0.25.10
         GIT_SHALLOW TRUE
         SOURCE_SUBDIR lib
         EXCLUDE_FROM_ALL)
-# Static, matching every other fetched dependency here -- tree-sitter's own
-# default is a shared lib. Scoped to just this fetch, restored after, the same
-# "don't leak a one-off override past the dependency it's for" pattern
-# utf8proc's own CMAKE_POLICY_VERSION_MINIMUM override already established.
+
 set(BUILD_SHARED_LIBS_PREV ${BUILD_SHARED_LIBS})
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(tree-sitter)
 set(BUILD_SHARED_LIBS ${BUILD_SHARED_LIBS_PREV} CACHE BOOL "" FORCE)
 unset(BUILD_SHARED_LIBS_PREV)
-# tree-sitter's own target_include_directories call is PRIVATE (src src/wasm
-# include), so lib/include (tree_sitter/api.h, the public consumer header)
-# doesn't propagate to anything linking against this target -- that's fine
-# for its own real install/pkg-config story, but FetchContent consumers never
-# run `make install`, so it has to be patched in here instead.
+
 target_include_directories(tree-sitter PUBLIC ${tree-sitter_SOURCE_DIR}/lib/include)
 #------------------------------------------------------------------------------
 
-#--- Fetch a tree-sitter grammar -----------------------------------------------
-# Every bundled grammar (tree-sitter foundation follow-up, extended by the
-# bundle-remaining-grammars follow-up) goes through this one function rather
-# than a plain FetchContent_Declare/MakeAvailable pair, because a grammar
-# repo's own CMakeLists.txt unconditionally declares an add_custom_command
-# that regenerates src/parser.c from src/grammar.json via the tree-sitter CLI
-# (a whole separate, Node.js-based toolchain, not installed here and not
-# something this project's build should ever require -- the entire point of
-# consuming a grammar repo instead of running the CLI ourselves is that
-# parser.c already ships pre-generated and committed). Letting
-# FetchContent_MakeAvailable add_subdirectory that CMakeLists.txt runs that
-# custom command's out-of-date check regardless -- observed to differ by
-# generator (Ninja's stricter dependency check triggers a real, hard-failing
-# regeneration attempt even though parser.c already exists and is correct;
-# Unix Makefiles happened not to, which is exactly the kind of generator-
-# dependent luck this project's own CLAUDE.md warns against relying on for
-# either of its two build trees).
-#
-# SOURCE_SUBDIR pointing at a path that doesn't exist in the grammar repo is
-# what suppresses FetchContent_MakeAvailable's automatic add_subdirectory --
-# confirmed behavior, not a guess: this is the exact same mechanism that
-# silently (no configure error) produced a missing "tree-sitter" target
-# above before SOURCE_SUBDIR was pointed at the real lib/ subdirectory, now
-# deliberately pointed at a bogus one instead. The grammar's source is still
-# fully populated (${name}_SOURCE_DIR is set as usual); only add_subdirectory
-# is skipped. We then declare our own minimal static-library target
-# compiling exactly src/parser.c (+ src/scanner.c, if the grammar needs an
-# external scanner), which is all any consumer of a tree-sitter grammar
-# actually needs -- matches how every real tree-sitter consumer (Neovim,
-# Emacs, ...) treats a grammar: a single tree_sitter_<name>() C symbol,
-# nothing else.
-
-# Populates (but does not build) a tree-sitter grammar repo's source via the
-# SOURCE_SUBDIR trick described above, without ever processing its own
-# CMakeLists.txt. Split out from ned_add_treesitter_grammar below (bundle-
-# remaining-grammars follow-up) so a repo housing *multiple* grammars in
-# subdirectories of one clone -- tree-sitter-typescript's typescript/+tsx/,
-# tree-sitter-php's php/+php_only/ -- fetches once and builds N targets from
-# it, instead of cloning the same repository twice.
+#--- Fetch a tree-sitter grammars ---------------------------------------------
 function(ned_fetch_treesitter_source content_name repository tag)
     FetchContent_Declare(${content_name}
             GIT_REPOSITORY ${repository}
@@ -146,12 +85,6 @@ function(ned_fetch_treesitter_source content_name repository tag)
     set(${content_name}_SOURCE_DIR "${${content_name}_SOURCE_DIR}" PARENT_SCOPE)
 endfunction()
 
-# Declares target_name as a static library compiling grammar_dir/src/parser.c
-# (+ src/scanner.c, if the grammar needs an external scanner) -- the actual
-# "turn an already-populated grammar source tree into a linkable CMake
-# target" step, matching how every real tree-sitter consumer (Neovim,
-# Emacs, ...) treats a grammar: a single tree_sitter_<name>() C symbol,
-# nothing else.
 function(ned_add_treesitter_grammar_target target_name grammar_dir)
     add_library(${target_name} STATIC "${grammar_dir}/src/parser.c")
     if (EXISTS "${grammar_dir}/src/scanner.c")
@@ -161,11 +94,6 @@ function(ned_add_treesitter_grammar_target target_name grammar_dir)
     set_target_properties(${target_name} PROPERTIES C_STANDARD 11 POSITION_INDEPENDENT_CODE ON)
 endfunction()
 
-# Convenience wrapper for the common one-repo-one-grammar case: fetches and
-# builds in one call. grammar_subdir (optional 4th arg) is for a grammar
-# whose parser.c isn't at the repo root (e.g. tree-sitter-php's real,
-# HTML-embedding-capable grammar lives under php/, not the repo root, which
-# houses a separate php_only/ variant this project doesn't use).
 function(ned_add_treesitter_grammar name repository tag)
     set(grammar_subdir "${ARGN}") # optional trailing positional arg
     ned_fetch_treesitter_source(${name} ${repository} ${tag})
@@ -174,69 +102,17 @@ function(ned_add_treesitter_grammar name repository tag)
     else()
         ned_add_treesitter_grammar_target(${name} "${${name}_SOURCE_DIR}")
     endif()
-    # PARENT_SCOPE only propagates up exactly one function-call level --
-    # ned_fetch_treesitter_source's own PARENT_SCOPE set only reaches *this*
-    # function's scope, not all the way back to whichever scope called
-    # *this* one (usually the top-level CMakeLists.txt, which needs
-    # ${name}_SOURCE_DIR to build an ned_embed_treesitter_query() call right
-    # after). Re-propagating here is what makes that work -- a real, first-
-    # attempt CMake scoping bug, not a hypothetical one (surfaced instantly
-    # as a "queries/highlights.scm not found" configure error with an empty
-    # path prefix, since the variable silently read as empty one level up).
-    set(${name}_SOURCE_DIR "${${name}_SOURCE_DIR}" PARENT_SCOPE)
 endfunction()
 
-# Embeds a query file's content as the definition of
-# `ned::editor::treesitter::queries::k<symbol>` (declared by hand in
-# Source/Editor/TreeSitter/Queries.h; this only generates the .cpp defining
-# it) -- consuming each bundled grammar's own real queries/highlights.scm
-# directly, rather than hand-writing highlight rules per language, is the
-# whole point of this follow-up (the one exception, JsonMode's original
-# small hand-written query from the tree-sitter foundation phase, predates
-# this mechanism and is superseded by it). Generated sources accumulate into
-# NED_GENERATED_QUERY_SOURCES, added to ned_lib's own source list below,
-# rather than target_sources()-ing ned_lib directly here -- ned_lib isn't
-# declared as a target yet at this point in the file.
-#
-# NOTE: this deliberately does NOT use configure_file(... @ONLY) to splice
-# the query text into a .cpp.in template -- a real highlights.scm is dense
-# with standalone '@' characters (every capture name is "@something"), and
-# configure_file's @ONLY mode scans the *entire* templated file for @VAR@
-# substitution markers. With real query content in the mix, it would (and
-# during development, did) treat two unrelated '@' tokens far apart in the
-# file as the start/end of one bogus substitution variable, silently
-# deleting everything between them -- surfaced as mangled/truncated raw
-# string literals and "stray '@' in program" compile errors, not a
-# configure-time failure, so it wasn't obvious what was wrong. Composing the
-# output via string(CONCAT)/file(WRITE) instead never re-scans the query
-# text for substitution patterns -- a variable reference is expanded exactly
-# once, at the call site, not recursively re-interpreted -- so literal '@'
-# and ';' characters in the query content pass through untouched.
 function(ned_embed_treesitter_query query_file symbol)
     if (NOT EXISTS "${query_file}")
         message(FATAL_ERROR "ned_embed_treesitter_query: ${query_file} not found")
     endif()
     file(READ "${query_file}" query_content)
-    # The raw-string delimiter below (13 chars) must stay at or under the
-    # standard's 16-character cap on a raw-string d-char-sequence -- an
-    # earlier, longer delimiter (NED_TS_QUERY_EOF_MARKER, 23 chars) silently
-    # produced an invalid raw string on every one of these files; GCC's
-    # actual failure mode wasn't a clean "delimiter too long" error for most
-    # of them (only Bash's happened to surface that one directly) but a
-    # cascade of stray '@'/unterminated-string errors once the compiler
-    # stopped treating the literal as a raw string at all partway through.
     string(CONCAT generated_content
         "// Auto-generated by CMake's ned_embed_treesitter_query (see CMakeLists.txt)\n"
         "// from ${query_file} -- do not edit by hand, changes will be\n"
         "// overwritten on the next configure.\n"
-        # `const` at namespace scope has internal linkage by default in
-        # C++ (unlike C) -- without an explicit `extern` on this
-        # definition, each generated .cpp would get its own private copy
-        # invisible to other translation units, leaving Queries.h's
-        # `extern const char* const kX;` declarations unsatisfied at link
-        # time (surfaced as "undefined reference to ...::kX" even though
-        # the symbol is right there in the object file, just as a local
-        # `d`-type symbol per nm, not a global one).
         "namespace ned::editor::treesitter::queries {\n"
         "extern const char* const k${symbol} = R\"NED_QUERY_EOF(${query_content})NED_QUERY_EOF\";\n"
         "}\n")
@@ -246,110 +122,64 @@ function(ned_embed_treesitter_query query_file symbol)
 endfunction()
 
 ned_add_treesitter_grammar(tree-sitter-json https://github.com/tree-sitter/tree-sitter-json.git v0.24.8)
+
 ned_embed_treesitter_query("${tree-sitter-json_SOURCE_DIR}/queries/highlights.scm" Json)
-# generic-code-folding follow-up: hand-written, not fetched from any repo --
-# see Source/Editor/TreeSitter/queries/json-folds.scm's own header comment.
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/json-folds.scm" JsonFolds)
 
 ned_add_treesitter_grammar(tree-sitter-c https://github.com/tree-sitter/tree-sitter-c.git v0.24.2)
-# generic-tree-sitter-highlighting follow-up: this grammar's own bundled
-# queries/highlights.scm is genuinely sparse (~20 capture names, no
-# access-specifier/return-type distinction) -- Source/Editor/TreeSitter/
-# queries/c.scm is a real, richer query vendored from nvim-treesitter's own
-# (see that file's own header comment for source/license/commit), not this
-# grammar's own file.
+
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/c.scm" C)
-# generic-code-folding follow-up: hand-written, not fetched from any repo --
-# see Source/Editor/TreeSitter/queries/c-folds.scm's own header comment.
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/c-folds.scm" CFolds)
 
 ned_add_treesitter_grammar(tree-sitter-cpp https://github.com/tree-sitter/tree-sitter-cpp.git v0.23.4)
-# Same as C immediately above -- see Source/Editor/TreeSitter/queries/cpp.scm's
-# own header comment.
+
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/cpp.scm" Cpp)
-# generic-code-folding follow-up: hand-written, not fetched from any repo --
-# see Source/Editor/TreeSitter/queries/cpp-folds.scm's own header comment.
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/cpp-folds.scm" CppFolds)
 
-# php/, not the repo root -- the real grammar, which also handles HTML
-# embedded around <?php ?> tags; the repo root houses a separate php_only/
-# variant (pure PHP code, no HTML) this project doesn't use, since a real
-# .php file is virtually never pure PHP with no surrounding markup.
 ned_add_treesitter_grammar(tree-sitter-php https://github.com/tree-sitter/tree-sitter-php.git v0.24.2 php)
+
 ned_embed_treesitter_query("${tree-sitter-php_SOURCE_DIR}/queries/highlights.scm" Php)
 
 ned_add_treesitter_grammar(tree-sitter-javascript https://github.com/tree-sitter/tree-sitter-javascript.git v0.25.0)
+
 ned_embed_treesitter_query("${tree-sitter-javascript_SOURCE_DIR}/queries/highlights.scm" JavaScript)
-# generic-code-folding follow-up: hand-written, not fetched from any repo --
-# see Source/Editor/TreeSitter/queries/javascript-folds.scm's own header comment.
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/javascript-folds.scm" JavaScriptFolds)
 
-# One repo, two grammars (typescript/ and tsx/), sharing one top-level
-# queries/highlights.scm -- confirmed by checking the actual repo, not
-# guessed (tsx/ has no queries/ directory of its own).
 ned_fetch_treesitter_source(tree-sitter-typescript-src https://github.com/tree-sitter/tree-sitter-typescript.git v0.23.2)
+
 ned_add_treesitter_grammar_target(tree-sitter-typescript "${tree-sitter-typescript-src_SOURCE_DIR}/typescript")
 ned_add_treesitter_grammar_target(tree-sitter-tsx "${tree-sitter-typescript-src_SOURCE_DIR}/tsx")
+
 ned_embed_treesitter_query("${tree-sitter-typescript-src_SOURCE_DIR}/queries/highlights.scm" TypeScript)
-# generic-code-folding follow-up: hand-written, not fetched from any repo --
-# see Source/Editor/TreeSitter/queries/typescript-folds.scm's own header
-# comment. Shared by both the typescript/ and tsx/ grammars, mirroring the
-# highlights query immediately above.
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/typescript-folds.scm" TypeScriptFolds)
 
 ned_add_treesitter_grammar(tree-sitter-html https://github.com/tree-sitter/tree-sitter-html.git v0.23.2)
+
 ned_embed_treesitter_query("${tree-sitter-html_SOURCE_DIR}/queries/highlights.scm" Html)
 
 ned_add_treesitter_grammar(tree-sitter-css https://github.com/tree-sitter/tree-sitter-css.git v0.25.0)
+
 ned_embed_treesitter_query("${tree-sitter-css_SOURCE_DIR}/queries/highlights.scm" Css)
 
 ned_add_treesitter_grammar(tree-sitter-python https://github.com/tree-sitter/tree-sitter-python.git v0.25.0)
+
 ned_embed_treesitter_query("${tree-sitter-python_SOURCE_DIR}/queries/highlights.scm" Python)
-# generic-code-folding follow-up: hand-written, not fetched from any repo --
-# see Source/Editor/TreeSitter/queries/python-folds.scm's own header comment.
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/python-folds.scm" PythonFolds)
 
 ned_add_treesitter_grammar(tree-sitter-bash https://github.com/tree-sitter/tree-sitter-bash.git v0.25.1)
+
 ned_embed_treesitter_query("${tree-sitter-bash_SOURCE_DIR}/queries/highlights.scm" Bash)
 
-# Community grammar, not under the official tree-sitter org -- see
-# Languages.cpp's own comment on why this one (over GrayJack/tree-sitter-janet)
-# was chosen. No official tree-sitter/tree-sitter-perl exists with a
-# pre-generated parser.c (confirmed by checking: upstream only ships
-# grammar.js, requiring the Node-based tree-sitter CLI this project's build
-# deliberately never depends on) -- Perl is skipped from the bundled set for
-# this reason, not an oversight; see ROADMAP.md.
 ned_add_treesitter_grammar(tree-sitter-janet-simple https://github.com/sogaiu/tree-sitter-janet-simple.git v0.0.7)
+
 ned_embed_treesitter_query("${tree-sitter-janet-simple_SOURCE_DIR}/queries/highlights.scm" Janet)
 
-# tree-sitter-markdown/, not the repo root -- this repo (the actively
-# maintained tree-sitter-grammars org fork of the original, now-stale
-# ikatyang one) splits block-level and inline markdown into two separate
-# grammars (tree-sitter-markdown/ + tree-sitter-markdown-inline/, mirroring
-# typescript/tsx's own split); only the block-level one is bundled here.
-# Real markdown inline formatting (emphasis, links, inline code spans)
-# showing up unhighlighted inside an otherwise-highlighted block is a known,
-# explicit v1 gap, not an oversight -- properly supporting it needs a
-# tree-sitter *injection* query (one grammar's tree marking a sub-region to
-# be parsed by a second grammar), which this phase doesn't build yet; see
-# ROADMAP.md.
 ned_add_treesitter_grammar(tree-sitter-markdown https://github.com/tree-sitter-grammars/tree-sitter-markdown.git v0.5.3 tree-sitter-markdown)
+
 ned_embed_treesitter_query("${tree-sitter-markdown_SOURCE_DIR}/tree-sitter-markdown/queries/highlights.scm" Markdown)
 
-# Org-mode syntax-highlighting follow-up: a real fork of
-# nvim-orgmode/tree-sitter-org (v1.3.2), not the upstream repository -- see
-# /Development/NED/tree-sitter-ned-org's own README.md and Mode.cpp's
-# OrgMode() doc comment for the full story. Local filesystem path is a
-# perfectly normal git remote as far as FetchContent's own GIT_REPOSITORY
-# is concerned; ned_add_treesitter_grammar's signature needed no change.
-# The upstream grammar has no dedicated node for inline emphasis markup at
-# all (every `*`/`/`/`_`/`=`/`~`/`+` character is just an ordinary symbol),
-# which is what made a real fork -- not a query-only workaround -- the
-# actual fix. This project's own hand-written highlights.scm
-# (Source/Editor/TreeSitter/OrgHighlights.scm, embedded below) is what
-# consumes the six new emphasis node types this fork adds, alongside the
-# grammar's own original headline/table/checkbox/etc. structure.
 ned_add_treesitter_grammar(tree-sitter-org /Development/NED/tree-sitter-ned-org 05b4c7505c452f42330c681a067842d4cb49b174)
+
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/OrgHighlights.scm" Org)
 #------------------------------------------------------------------------------
 
@@ -369,8 +199,7 @@ include(FindPkgConfig)
 
 pkg_check_modules(Janet REQUIRED janet)
 
-# ned_lib holds everything except main() so ned_tests can link against the real
-# editor code without pulling in the application entry point.
+# ned_lib holds everything except main()
 add_library(ned_lib STATIC
         ${NED_GENERATED_QUERY_SOURCES}
         Source/Application.cpp
@@ -405,6 +234,7 @@ add_library(ned_lib STATIC
         Source/Editor/FinalNewline.cpp
         Source/Editor/FormatOnSave.cpp
         Source/Editor/TabWidth.cpp
+        Source/Editor/GitIgnore.cpp
         Source/Editor/ProjectSearch.cpp
         Source/Editor/ProjectAgenda.cpp
         Source/Editor/ProjectReplace.cpp
@@ -415,6 +245,8 @@ add_library(ned_lib STATIC
         Source/Editor/Lsp/Transport.cpp
         Source/Editor/Lsp/LspClient.cpp
         Source/Editor/Lsp/LspServerConfig.cpp
+        Source/Editor/Lsp/LspPosition.cpp
+        Source/Editor/Lsp/LspContent.cpp
         Source/Editor/Lsp/LspManager.cpp
         Source/Editor/TreeSitter/Node.cpp
         Source/Editor/TreeSitter/Tree.cpp
@@ -531,6 +363,7 @@ if (NED_BUILD_TESTS)
             Tests/FinalNewlineTest.cpp
             Tests/FormatOnSaveTest.cpp
             Tests/TabWidthTest.cpp
+            Tests/GitIgnoreTest.cpp
             Tests/ProjectSearchTest.cpp
             Tests/ProjectAgendaTest.cpp
             Tests/ProjectReplaceTest.cpp
@@ -541,6 +374,9 @@ if (NED_BUILD_TESTS)
             Tests/LspTransportTest.cpp
             Tests/LspClientTest.cpp
             Tests/LspServerConfigTest.cpp
+            Tests/LspPositionTest.cpp
+            Tests/LspContentTest.cpp
+            Tests/LspManagerTest.cpp
             Tests/TreeSitterTest.cpp
             Tests/DynamicGrammarTest.cpp
             Tests/ModeOverridesTest.cpp
