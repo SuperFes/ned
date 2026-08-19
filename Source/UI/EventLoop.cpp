@@ -4,6 +4,7 @@
 
 #include <fcntl.h>
 #include <poll.h>
+#include <termios.h>
 #include <unistd.h>
 
 #include <notcurses/notcurses.h>
@@ -45,6 +46,24 @@ EventLoop::EventLoop() {
 
     notcurses_linesigs_disable(nc_);
     notcurses_mice_enable(nc_, NCMICE_ALL_EVENTS);
+
+    // C-x-C-s-passes-scroll-lock-to-the-terminal follow-up: Notcurses' own
+    // raw-mode setup (termdesc.c) only clears ICRNL, not IXON/IXOFF -- the
+    // termios flags controlling XON/XOFF software flow control -- so C-s/
+    // C-q still reach the terminal's line discipline as start/stop-output
+    // signals instead of arriving as plain input bytes, freezing the
+    // terminal (Scroll Lock-style) the instant a C-s-prefixed binding (e.g.
+    // C-x C-s, save-buffer) is pressed, the same class of bug
+    // notcurses_linesigs_disable above already fixed for C-c/C-z/C-\.
+    // Cleared here by hand on STDIN_FILENO, the same fd notcurses_get reads
+    // from -- best-effort, matching linesigs_disable's own return-value
+    // handling (both are silently no-ops on a non-terminal stdin, which
+    // never happens in real usage but shouldn't crash a test harness either).
+    termios rawTermios{};
+    if (tcgetattr(STDIN_FILENO, &rawTermios) == 0) {
+        rawTermios.c_iflag &= ~static_cast<tcflag_t>(IXON | IXOFF);
+        tcsetattr(STDIN_FILENO, TCSANOW, &rawTermios);
+    }
 
     // A pipe purely for Post() to wake a blocked poll() from another thread
     // -- notcurses_inputready_fd (below, in Run) gives us a real pollable
