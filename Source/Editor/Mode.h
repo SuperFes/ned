@@ -214,7 +214,10 @@ struct Mode {
 // querySource, but for a "@fold"-capture query (generic-code-folding
 // follow-up) -- nullptr (the default) means this language has no fold query
 // yet, leaving the returned Mode's .fold empty. Not every bundled language
-// has one; see Mode.cpp's own *Mode() functions for which do.
+// has one; see Mode.cpp's own *Mode() functions for which do. querySource
+// itself is also optional -- nullptr/empty leaves .highlight empty too, for
+// a grammar with no highlights.scm at all (e.g. one that only ships a fold
+// or locals query).
 [[nodiscard]] Mode TreeSitterMode(std::string name, std::string_view languageName, const char* querySource,
                                   const char* foldQuerySource = nullptr);
 
@@ -228,9 +231,11 @@ struct Mode {
 // above whose const char* comes from a compile-time-embedded string with
 // static storage duration -- safe for the same reason: Query's constructor
 // compiles the pattern immediately and doesn't retain the source text past
-// that call.
+// that call. querySource is also optional (empty leaves .highlight empty,
+// same as an empty foldQuerySource leaves .fold empty) -- some real grammars
+// have no highlights.scm at all.
 [[nodiscard]] Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& language,
-                                              std::string_view querySource, std::string_view foldQuerySource = {});
+                                              std::string_view querySource = {}, std::string_view foldQuerySource = {});
 
 // A real tree-sitter-backed Janet mode (bundle-remaining-grammars
 // follow-up), replacing the original hand-rolled per-line #-comment/
