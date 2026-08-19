@@ -213,6 +213,14 @@ ned_embed_treesitter_query("${tree-sitter-markdown-inline_SOURCE_DIR}/tree-sitte
 ned_add_treesitter_grammar(tree-sitter-org /Development/NED/tree-sitter-ned-org 05b4c7505c452f42330c681a067842d4cb49b174)
 
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/OrgHighlights.scm" Org)
+
+ned_add_treesitter_grammar(tree-sitter-yaml https://github.com/tree-sitter-grammars/tree-sitter-yaml.git v0.7.2)
+
+ned_embed_treesitter_query("${tree-sitter-yaml_SOURCE_DIR}/queries/highlights.scm" Yaml)
+
+ned_add_treesitter_grammar(tree-sitter-toml https://github.com/tree-sitter-grammars/tree-sitter-toml.git v0.7.0)
+
+ned_embed_treesitter_query("${tree-sitter-toml_SOURCE_DIR}/queries/highlights.scm" Toml)
 #------------------------------------------------------------------------------
 
 #--- Fetch Catch2 --------------------------------------------------------------
@@ -340,6 +348,8 @@ target_link_libraries(ned_lib
         PUBLIC tree-sitter-markdown
         PUBLIC tree-sitter-markdown-inline
         PUBLIC tree-sitter-org
+        PUBLIC tree-sitter-yaml
+        PUBLIC tree-sitter-toml
         PRIVATE ${CMAKE_DL_LIBS})
 
 if (NED_ENABLE_SANITIZERS)

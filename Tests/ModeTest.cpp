@@ -381,6 +381,8 @@ TEST_CASE("Out-of-scope and non-tree-sitter modes have no fold hook", "[Mode]") 
     REQUIRE_FALSE(static_cast<bool>(ned::editor::CssMode().fold));
     REQUIRE_FALSE(static_cast<bool>(ned::editor::BashMode().fold));
     REQUIRE_FALSE(static_cast<bool>(ned::editor::MarkdownMode().fold));
+    REQUIRE_FALSE(static_cast<bool>(ned::editor::YamlMode().fold));
+    REQUIRE_FALSE(static_cast<bool>(ned::editor::TomlMode().fold));
 }
 
 TEST_CASE("CMode's fold query finds a function body", "[Mode]") {
@@ -417,6 +419,24 @@ TEST_CASE("CppMode classifies a comment as Comment, not clobbered to Default by 
     REQUIRE(HasSpan(spans, 0, 12, SyntaxClass::Comment));
 }
 
+TEST_CASE("YamlMode has a highlighting hook installed and classifies a comment as Comment", "[Mode]") {
+    const auto mode  = ned::editor::YamlMode();
+    REQUIRE(mode.name == "yaml-mode");
+    REQUIRE(static_cast<bool>(mode.highlight));
+
+    const auto spans = mode.highlight("# a comment\nkey: value\n");
+    REQUIRE(HasSpan(spans, 0, 11, SyntaxClass::Comment));
+}
+
+TEST_CASE("TomlMode has a highlighting hook installed and classifies a string as String", "[Mode]") {
+    const auto mode  = ned::editor::TomlMode();
+    REQUIRE(mode.name == "toml-mode");
+    REQUIRE(static_cast<bool>(mode.highlight));
+
+    const auto spans = mode.highlight("key = \"value\"\n");
+    REQUIRE(HasSpan(spans, 6, 13, SyntaxClass::String));
+}
+
 TEST_CASE("Each *Mode() sets lineCommentPrefix to its language's real line-comment token, or leaves it empty", "[Mode]") {
     REQUIRE(CMode().lineCommentPrefix == "//");
     REQUIRE(CppMode().lineCommentPrefix == "//");
@@ -426,6 +446,8 @@ TEST_CASE("Each *Mode() sets lineCommentPrefix to its language's real line-comme
     REQUIRE(TsxMode().lineCommentPrefix == "//");
     REQUIRE(PythonMode().lineCommentPrefix == "#");
     REQUIRE(BashMode().lineCommentPrefix == "#");
+    REQUIRE(ned::editor::YamlMode().lineCommentPrefix == "#");
+    REQUIRE(ned::editor::TomlMode().lineCommentPrefix == "#");
     REQUIRE(JanetMode().lineCommentPrefix == ";");
     REQUIRE(OrgMode().lineCommentPrefix == "#");
     // No native single-line-comment token to toggle.
@@ -454,6 +476,8 @@ TEST_CASE("MarkdownMode and OrgMode default to wrapLines true; every other bundl
     REQUIRE_FALSE(CssMode().wrapLines);
     REQUIRE_FALSE(PythonMode().wrapLines);
     REQUIRE_FALSE(BashMode().wrapLines);
+    REQUIRE_FALSE(ned::editor::YamlMode().wrapLines);
+    REQUIRE_FALSE(ned::editor::TomlMode().wrapLines);
 }
 
 // structural-selection-expansion follow-up: every TreeSitterModeFromLanguage-

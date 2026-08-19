@@ -272,6 +272,12 @@ struct Mode {
 [[nodiscard]] Mode CssMode();
 [[nodiscard]] Mode PythonMode();
 [[nodiscard]] Mode BashMode();
+// yaml/toml follow-up: tree-sitter-grammars/tree-sitter-yaml and
+// tree-sitter-grammars/tree-sitter-toml, both community-maintained, both
+// ship a pre-generated src/parser.c and a real queries/highlights.scm --
+// see Languages.h/.cpp.
+[[nodiscard]] Mode YamlMode();
+[[nodiscard]] Mode TomlMode();
 // Tables follow-up: unlike every other TreeSitterMode() call above, this
 // one's returned Mode gets a real keymap binding (TAB -> markdown-table-
 // align, see Editor/Markdown.h) layered on afterward -- the second Mode in
