@@ -7,14 +7,13 @@
 
 #include <unistd.h>
 
-#include <ftxui/component/screen_interactive.hpp>
-
 #include "Editor/Lsp/LspClient.h"
 #include "Editor/Lsp/LspManager.h"
 #include "Editor/Lsp/LspServerConfig.h"
 #include "Editor/Lsp/Transport.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
+#include "UI/EventLoop.h"
 
 using ned::editor::lsp::CodeAction;
 using ned::editor::lsp::CompletionItem;
@@ -26,12 +25,6 @@ using ned::text::Buffer;
 using ned::text::BufferList;
 
 namespace {
-
-// See LspClientTest.cpp's own TestScreen() for why constructing one without
-// a real TTY is safe here: nothing in these tests calls Loop().
-ftxui::ScreenInteractive TestScreen() {
-    return ftxui::ScreenInteractive::Fullscreen();
-}
 
 // Mirrors LspClientTest.cpp's own ClientFixture exactly (see that file's
 // header comment for the full rationale, including why serverStdoutWrite
@@ -54,12 +47,12 @@ struct FakeServer {
     FakeServer& operator=(const FakeServer&) = delete;
     FakeServer(FakeServer&&)                 = default;
 
-    static FakeServer Create(LspManager& manager, const std::string& language, ftxui::ScreenInteractive& screen, LspClient*& outClient) {
+    static FakeServer Create(LspManager& manager, const std::string& language, ned::ui::EventLoop& eventLoop, LspClient*& outClient) {
         int clientWritesHere[2]; // client's write end -> test's read end
         int clientReadsHere[2];  // test's write end -> client's read end
         REQUIRE(::pipe(clientWritesHere) == 0);
         REQUIRE(::pipe(clientReadsHere) == 0);
-        auto client = std::make_unique<LspClient>(Transport(clientReadsHere[0], clientWritesHere[1]), screen);
+        auto client = std::make_unique<LspClient>(Transport(clientReadsHere[0], clientWritesHere[1]), eventLoop);
         outClient   = &manager.SetClientForTesting(language, std::move(client));
         return FakeServer(clientWritesHere[0], clientReadsHere[1]);
     }
@@ -100,12 +93,12 @@ int RequestIdFromFrame(const std::string& raw) {
 } // namespace
 
 TEST_CASE("LspManager::RequestHover resolves synchronously to nullopt when the buffer was never synced", "[Lsp]") {
-    BufferList               bufferList;
-    auto                     screen = TestScreen();
-    LspManager                manager(bufferList, screen);
-    Buffer&                  buffer = bufferList.CreateBuffer("scratch");
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    Buffer&            buffer = bufferList.CreateBuffer("scratch");
 
-    bool                      invoked = false;
+    bool                       invoked = false;
     std::optional<std::string> gotText;
     manager.RequestHover(buffer, 0, [&](std::optional<std::string> text) {
         invoked = true;
@@ -118,12 +111,12 @@ TEST_CASE("LspManager::RequestHover resolves synchronously to nullopt when the b
 
 TEST_CASE("LspManager::RequestCompletion resolves synchronously to an empty list when the buffer was never synced",
           "[Lsp]") {
-    BufferList bufferList;
-    auto       screen = TestScreen();
-    LspManager manager(bufferList, screen);
-    Buffer&    buffer = bufferList.CreateBuffer("scratch");
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    Buffer&            buffer = bufferList.CreateBuffer("scratch");
 
-    bool                          invoked = false;
+    bool                        invoked = false;
     std::vector<CompletionItem> gotItems;
     manager.RequestCompletion(buffer, 0, [&](std::vector<CompletionItem> items) {
         invoked  = true;
@@ -135,10 +128,10 @@ TEST_CASE("LspManager::RequestCompletion resolves synchronously to an empty list
 }
 
 TEST_CASE("LspManager::SyncBuffer is a no-op for a buffer with no associated path", "[Lsp]") {
-    BufferList bufferList;
-    auto       screen = TestScreen();
-    LspManager manager(bufferList, screen);
-    Buffer&    buffer = bufferList.CreateBuffer("scratch"); // no path -- Buffer::Path() == nullopt
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    Buffer&            buffer = bufferList.CreateBuffer("scratch"); // no path -- Buffer::Path() == nullopt
 
     ned::editor::lsp::SetLspServerCommand("test-lang", {"/bin/cat"});
     manager.SyncBuffer(buffer, "test-lang"); // must not spawn anything or crash
@@ -151,10 +144,10 @@ TEST_CASE("LspManager::SyncBuffer is a no-op for a buffer with no associated pat
 }
 
 TEST_CASE("LspManager::SyncBuffer is a no-op when nothing is configured for the buffer's language", "[Lsp]") {
-    BufferList bufferList;
-    auto       screen = TestScreen();
-    LspManager manager(bufferList, screen);
-    Buffer&    buffer = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-lsp-manager-test.txt");
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    Buffer&            buffer = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-lsp-manager-test.txt");
 
     manager.SyncBuffer(buffer, "a-language-nothing-is-configured-for"); // must not crash
 
@@ -164,36 +157,36 @@ TEST_CASE("LspManager::SyncBuffer is a no-op when nothing is configured for the 
 }
 
 TEST_CASE("LspManager::NotifyBufferClosed is a no-op for a buffer that was never synced", "[Lsp]") {
-    BufferList bufferList;
-    auto       screen = TestScreen();
-    LspManager manager(bufferList, screen);
-    Buffer&    buffer = bufferList.CreateBuffer("scratch");
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    Buffer&            buffer = bufferList.CreateBuffer("scratch");
 
     manager.NotifyBufferClosed(buffer); // must not crash
     SUCCEED();
 }
 
 TEST_CASE("LspManager::RequestHover round-trips a real request/response through an injected client", "[Lsp]") {
-    BufferList bufferList;
-    auto       screen = TestScreen();
-    LspManager manager(bufferList, screen);
-    Buffer&    buffer = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-lsp-manager-hover-test.txt");
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    Buffer&            buffer = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-lsp-manager-hover-test.txt");
 
     LspClient* client = nullptr;
-    FakeServer server  = FakeServer::Create(manager, "test-lang", screen, client);
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
 
-    manager.SyncBuffer(buffer, "test-lang"); // sends didOpen -- gets bufferState_ to "opened"
+    manager.SyncBuffer(buffer, "test-lang");    // sends didOpen -- gets bufferState_ to "opened"
     (void)ReadRawFrame(server.serverStdinRead); // drain the didOpen notification
 
-    bool                        invoked = false;
+    bool                       invoked = false;
     std::optional<std::string> gotText;
     manager.RequestHover(buffer, 0, [&](std::optional<std::string> text) {
         invoked = true;
         gotText = text;
     });
 
-    const std::string raw       = ReadRawFrame(server.serverStdinRead);
-    const Json         request  = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    const std::string raw     = ReadRawFrame(server.serverStdinRead);
+    const Json        request = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
     REQUIRE(request["method"] == "textDocument/hover");
     REQUIRE(request["params"]["position"]["line"] == 0);
     REQUIRE(request["params"]["position"]["character"] == 0);
@@ -207,21 +200,21 @@ TEST_CASE("LspManager::RequestHover round-trips a real request/response through 
 }
 
 TEST_CASE("LspManager::RequestHover resolves to nullopt on a JSON-RPC error response", "[Lsp]") {
-    BufferList bufferList;
-    auto       screen = TestScreen();
-    LspManager manager(bufferList, screen);
-    Buffer&    buffer = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-lsp-manager-hover-error-test.txt");
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    Buffer&            buffer = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-lsp-manager-hover-error-test.txt");
 
     LspClient* client = nullptr;
-    FakeServer server  = FakeServer::Create(manager, "test-lang", screen, client);
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead);
 
     std::optional<std::string> gotText;
     manager.RequestHover(buffer, 0, [&](std::optional<std::string> text) { gotText = text; });
 
-    const std::string raw = ReadRawFrame(server.serverStdinRead);
-    const Json         response = {{"jsonrpc", "2.0"}, {"id", RequestIdFromFrame(raw)}, {"error", {{"code", -32601}, {"message", "nope"}}}};
+    const std::string raw      = ReadRawFrame(server.serverStdinRead);
+    const Json        response = {{"jsonrpc", "2.0"}, {"id", RequestIdFromFrame(raw)}, {"error", {{"code", -32601}, {"message", "nope"}}}};
     client->DispatchFrame(response.dump());
 
     REQUIRE_FALSE(gotText.has_value());
@@ -237,10 +230,10 @@ TEST_CASE("LspManager::RequestHover resolves to nullopt on a JSON-RPC error resp
 TEST_CASE("LspManager::SyncBuffer reports a spawn failure via *lsp log* instead of throwing, "
           "and doesn't retry every frame",
           "[Lsp]") {
-    BufferList bufferList;
-    auto       screen = TestScreen();
-    LspManager manager(bufferList, screen);
-    Buffer&    buffer = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-lsp-manager-spawn-fail-test.txt");
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    Buffer&            buffer = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-lsp-manager-spawn-fail-test.txt");
 
     ned::editor::lsp::SetLspServerCommand("spawn-fail-lang", {"/definitely/does/not/exist/ned-fake-lsp"});
 
@@ -266,26 +259,26 @@ TEST_CASE("LspManager::SyncBuffer reports a spawn failure via *lsp log* instead 
 }
 
 TEST_CASE("LspManager::RequestCompletion round-trips a real request/response through an injected client", "[Lsp]") {
-    BufferList bufferList;
-    auto       screen = TestScreen();
-    LspManager manager(bufferList, screen);
-    Buffer&    buffer = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-lsp-manager-completion-test.txt");
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    Buffer&            buffer = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-lsp-manager-completion-test.txt");
     buffer.InsertAtPoint("foo");
 
     LspClient* client = nullptr;
-    FakeServer server  = FakeServer::Create(manager, "test-lang", screen, client);
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead);
 
-    bool                          invoked = false;
+    bool                        invoked = false;
     std::vector<CompletionItem> gotItems;
     manager.RequestCompletion(buffer, buffer.Point(), [&](std::vector<CompletionItem> items) {
         invoked  = true;
         gotItems = std::move(items);
     });
 
-    const std::string raw      = ReadRawFrame(server.serverStdinRead);
-    const Json         request = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    const std::string raw     = ReadRawFrame(server.serverStdinRead);
+    const Json        request = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
     REQUIRE(request["method"] == "textDocument/completion");
     REQUIRE(request["params"]["position"]["character"] == 3);
 
@@ -302,15 +295,15 @@ TEST_CASE("LspManager::RequestCompletion round-trips a real request/response thr
 }
 
 TEST_CASE("LspManager routes a real publishDiagnostics notification into Buffer::Diagnostics()", "[Lsp]") {
-    BufferList bufferList;
-    auto       screen = TestScreen();
-    LspManager manager(bufferList, screen);
-    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned-lsp-manager-diagnostics-test.txt";
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-diagnostics-test.txt";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("bad code");
 
     LspClient* client = nullptr;
-    FakeServer server  = FakeServer::Create(manager, "test-lang", screen, client);
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
 
@@ -332,9 +325,9 @@ TEST_CASE("LspManager routes a real publishDiagnostics notification into Buffer:
 
 TEST_CASE("LspManager::RequestCodeActions sends the range and overlapping diagnostics, and round-trips a real response",
           "[Lsp]") {
-    BufferList bufferList;
-    auto       screen = TestScreen();
-    LspManager manager(bufferList, screen);
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-code-action-test.txt";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("bad_code");
@@ -343,11 +336,11 @@ TEST_CASE("LspManager::RequestCodeActions sends the range and overlapping diagno
     });
 
     LspClient* client = nullptr;
-    FakeServer server  = FakeServer::Create(manager, "test-lang", screen, client);
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
 
-    bool                     invoked = false;
+    bool                    invoked = false;
     std::vector<CodeAction> gotActions;
     manager.RequestCodeActions(buffer, 0, 3, [&](std::vector<CodeAction> actions) {
         invoked    = true;
@@ -355,7 +348,7 @@ TEST_CASE("LspManager::RequestCodeActions sends the range and overlapping diagno
     });
 
     const std::string raw     = ReadRawFrame(server.serverStdinRead);
-    const Json         request = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    const Json        request = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
     REQUIRE(request["method"] == "textDocument/codeAction");
     REQUIRE(request["params"]["range"]["start"]["character"] == 0);
     REQUIRE(request["params"]["range"]["end"]["character"] == 3);
@@ -363,8 +356,8 @@ TEST_CASE("LspManager::RequestCodeActions sends the range and overlapping diagno
     REQUIRE(request["params"]["context"]["diagnostics"][0]["message"] == "boom");
     REQUIRE(request["params"]["context"]["diagnostics"][0]["severity"] == 1);
 
-    const std::string ownUri  = request["params"]["textDocument"]["uri"].get<std::string>();
-    const Json         response = {
+    const std::string ownUri   = request["params"]["textDocument"]["uri"].get<std::string>();
+    const Json        response = {
         {"jsonrpc", "2.0"},
         {"id", RequestIdFromFrame(raw)},
         {"result", Json::array({{{"title", "Fix the boom"},
@@ -385,12 +378,12 @@ TEST_CASE("LspManager::RequestCodeActions sends the range and overlapping diagno
 }
 
 TEST_CASE("LspManager::RequestCodeActions resolves to an empty list when the buffer was never synced", "[Lsp]") {
-    BufferList bufferList;
-    auto       screen = TestScreen();
-    LspManager manager(bufferList, screen);
-    Buffer&    buffer = bufferList.CreateBuffer("scratch");
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    Buffer&            buffer = bufferList.CreateBuffer("scratch");
 
-    bool                     invoked = false;
+    bool                    invoked = false;
     std::vector<CodeAction> gotActions;
     manager.RequestCodeActions(buffer, 0, 0, [&](std::vector<CodeAction> actions) {
         invoked    = true;
@@ -402,23 +395,23 @@ TEST_CASE("LspManager::RequestCodeActions resolves to an empty list when the buf
 }
 
 TEST_CASE("LspManager::ResolveCodeAction sends action.raw verbatim and returns the resolved edit", "[Lsp]") {
-    BufferList bufferList;
-    auto       screen = TestScreen();
-    LspManager manager(bufferList, screen);
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-resolve-test.txt";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("bad_code");
 
     LspClient* client = nullptr;
-    FakeServer server  = FakeServer::Create(manager, "test-lang", screen, client);
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     const std::string didOpen = ReadRawFrame(server.serverStdinRead);
     const std::string ownUri  = Json::parse(didOpen.substr(didOpen.find("\r\n\r\n") + 4))["params"]["textDocument"]["uri"].get<std::string>();
 
     // A resolvable action (as ExtractCodeActions would have produced it):
     // "kind" present, no "edit" yet.
-    const Json unresolved = {{"title", "Remove unused #include"}, {"kind", "quickfix"}, {"data", {{"opaque", 7}}}};
-    const ned::editor::lsp::CodeAction action = ned::editor::lsp::ExtractSingleCodeAction(unresolved, ownUri);
+    const Json                         unresolved = {{"title", "Remove unused #include"}, {"kind", "quickfix"}, {"data", {{"opaque", 7}}}};
+    const ned::editor::lsp::CodeAction action     = ned::editor::lsp::ExtractSingleCodeAction(unresolved, ownUri);
     REQUIRE(action.resolvable);
 
     bool                                        invoked = false;
@@ -428,20 +421,14 @@ TEST_CASE("LspManager::ResolveCodeAction sends action.raw verbatim and returns t
         gotResolved = std::move(resolved);
     });
 
-    const std::string raw       = ReadRawFrame(server.serverStdinRead);
-    const Json         sentBack = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4))["params"];
+    const std::string raw      = ReadRawFrame(server.serverStdinRead);
+    const Json        sentBack = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4))["params"];
     REQUIRE(sentBack == unresolved); // the exact original item, round-tripped verbatim
 
     const Json response = {
         {"jsonrpc", "2.0"},
         {"id", RequestIdFromFrame(raw)},
-        {"result", {{"title", "Remove unused #include"},
-                    {"kind", "quickfix"},
-                    {"edit",
-                     {{"changes",
-                       {{ownUri,
-                         Json::array({{{"range", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 8}}}}},
-                                       {"newText", ""}}})}}}}}}},
+        {"result", {{"title", "Remove unused #include"}, {"kind", "quickfix"}, {"edit", {{"changes", {{ownUri, Json::array({{{"range", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 8}}}}}, {"newText", ""}}})}}}}}}},
     };
     client->DispatchFrame(response.dump());
 
@@ -452,10 +439,10 @@ TEST_CASE("LspManager::ResolveCodeAction sends action.raw verbatim and returns t
 }
 
 TEST_CASE("LspManager::ResolveCodeAction resolves to nullopt when the buffer was never synced", "[Lsp]") {
-    BufferList bufferList;
-    auto       screen = TestScreen();
-    LspManager manager(bufferList, screen);
-    Buffer&    buffer = bufferList.CreateBuffer("scratch");
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    Buffer&            buffer = bufferList.CreateBuffer("scratch");
 
     ned::editor::lsp::CodeAction action;
     action.title      = "Fix";
@@ -474,19 +461,19 @@ TEST_CASE("LspManager::ResolveCodeAction resolves to nullopt when the buffer was
 }
 
 TEST_CASE("LspManager::RequestDefinition resolves a Location[] response's uris to real paths", "[Lsp]") {
-    BufferList bufferList;
-    auto       screen = TestScreen();
-    LspManager manager(bufferList, screen);
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-definition-test.txt";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("call_site();");
 
     LspClient* client = nullptr;
-    FakeServer server  = FakeServer::Create(manager, "test-lang", screen, client);
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
 
-    bool                                                   invoked = false;
+    bool                                      invoked = false;
     std::vector<LspManager::ResolvedLocation> got;
     manager.RequestDefinition(buffer, 0, [&](std::vector<LspManager::ResolvedLocation> locations) {
         invoked = true;
@@ -494,7 +481,7 @@ TEST_CASE("LspManager::RequestDefinition resolves a Location[] response's uris t
     });
 
     const std::string raw     = ReadRawFrame(server.serverStdinRead);
-    const Json         request = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    const Json        request = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
     REQUIRE(request["method"] == "textDocument/definition");
 
     const std::filesystem::path definitionPath = std::filesystem::temp_directory_path() / "ned-lsp-manager-definition-target.txt";
@@ -514,12 +501,12 @@ TEST_CASE("LspManager::RequestDefinition resolves a Location[] response's uris t
 }
 
 TEST_CASE("LspManager::RequestDefinition resolves to an empty list when the buffer was never synced", "[Lsp]") {
-    BufferList bufferList;
-    auto       screen = TestScreen();
-    LspManager manager(bufferList, screen);
-    Buffer&    buffer = bufferList.CreateBuffer("scratch");
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    Buffer&            buffer = bufferList.CreateBuffer("scratch");
 
-    bool                                       invoked = false;
+    bool                                      invoked = false;
     std::vector<LspManager::ResolvedLocation> got;
     manager.RequestDefinition(buffer, 0, [&](std::vector<LspManager::ResolvedLocation> locations) {
         invoked = true;
@@ -531,20 +518,20 @@ TEST_CASE("LspManager::RequestDefinition resolves to an empty list when the buff
 }
 
 TEST_CASE("LspManager::RequestRename sends newName and resolves a multi-file WorkspaceEdit's uris to real paths", "[Lsp]") {
-    BufferList bufferList;
-    auto       screen = TestScreen();
-    LspManager manager(bufferList, screen);
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-rename-test.txt";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("old_name");
 
     LspClient* client = nullptr;
-    FakeServer server  = FakeServer::Create(manager, "test-lang", screen, client);
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SyncBuffer(buffer, "test-lang");
     const std::string didOpen = ReadRawFrame(server.serverStdinRead);
     const std::string ownUri  = Json::parse(didOpen.substr(didOpen.find("\r\n\r\n") + 4))["params"]["textDocument"]["uri"].get<std::string>();
 
-    bool                                          invoked = false;
+    bool                                      invoked = false;
     std::optional<LspManager::ResolvedRename> got;
     manager.RequestRename(buffer, 0, "new_name", [&](std::optional<LspManager::ResolvedRename> result) {
         invoked = true;
@@ -552,7 +539,7 @@ TEST_CASE("LspManager::RequestRename sends newName and resolves a multi-file Wor
     });
 
     const std::string raw     = ReadRawFrame(server.serverStdinRead);
-    const Json         request = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    const Json        request = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
     REQUIRE(request["method"] == "textDocument/rename");
     REQUIRE(request["params"]["newName"] == "new_name");
 
@@ -564,7 +551,7 @@ TEST_CASE("LspManager::RequestRename sends newName and resolves a multi-file Wor
          {{"changes",
            {
                {ownUri, Json::array({{{"range", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 8}}}}},
-                                       {"newText", "new_name"}}})},
+                                      {"newText", "new_name"}}})},
                {"file://" + otherPath.string(),
                 Json::array({{{"range", {{"start", {{"line", 1}, {"character", 2}}}, {"end", {{"line", 1}, {"character", 10}}}}},
                               {"newText", "new_name"}}})},
@@ -580,12 +567,12 @@ TEST_CASE("LspManager::RequestRename sends newName and resolves a multi-file Wor
 }
 
 TEST_CASE("LspManager::RequestRename resolves to nullopt when the buffer was never synced", "[Lsp]") {
-    BufferList bufferList;
-    auto       screen = TestScreen();
-    LspManager manager(bufferList, screen);
-    Buffer&    buffer = bufferList.CreateBuffer("scratch");
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    Buffer&            buffer = bufferList.CreateBuffer("scratch");
 
-    bool                                          invoked = false;
+    bool                                      invoked = false;
     std::optional<LspManager::ResolvedRename> got;
     manager.RequestRename(buffer, 0, "new_name", [&](std::optional<LspManager::ResolvedRename> result) {
         invoked = true;

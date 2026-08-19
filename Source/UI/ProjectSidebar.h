@@ -86,7 +86,7 @@ class ProjectSidebar : public Widget {
                    std::string& statusMessage, const Theme& theme);
 
     void Paint(Canvas c) override;
-    bool OnEvent(ftxui::Event event) override;
+    bool OnEvent(const Event& event) override;
 
     // Current desired width in columns -- see this file's own header
     // comment for why main.cpp's composition root reads this every frame

@@ -39,9 +39,9 @@ void ScrollBar::Paint(Canvas c) {
             : 0;
 
     for (int y = 0; y < height; ++y) {
-        const bool   onThumb = y >= thumbStart && y < thumbStart + thumbRows;
-        ftxui::Cell& cell    = c[{.x = 0, .y = y}];
-        cell.character       = std::string(1, onThumb ? kThumbChar : kTrackChar);
+        const bool onThumb = y >= thumbStart && y < thumbStart + thumbRows;
+        Cell&      cell    = c[{.x = 0, .y = y}];
+        cell.character     = std::string(1, onThumb ? kThumbChar : kTrackChar);
         brush_.ApplyTo(cell);
         cell.inverted = onThumb; // solid block look for the thumb, distinct from the plain track
     }
@@ -61,23 +61,23 @@ int ScrollBar::PositionForRow(int row) const {
     return std::clamp(static_cast<int>((static_cast<long long>(clampedRow) * total) / height), 0, maxPosition);
 }
 
-bool ScrollBar::OnEvent(ftxui::Event event) {
+bool ScrollBar::OnEvent(const Event& event) {
     if (const auto mouse = LocalMouseEvent(event)) {
-        if (mouse->button == ftxui::Mouse::Left && mouse->motion == ftxui::Mouse::Pressed) {
+        if (mouse->button == MouseEvent::Button::Left && mouse->motion == MouseEvent::Motion::Pressed) {
             dragging_ = true;
             if (onScroll_) {
                 onScroll_(PositionForRow(mouse->at.y));
             }
             return true;
         }
-        if (mouse->motion == ftxui::Mouse::Moved && dragging_) {
+        if (mouse->motion == MouseEvent::Motion::Moved && dragging_) {
             if (onScroll_) {
                 onScroll_(PositionForRow(mouse->at.y));
             }
             return true;
         }
     }
-    if (event.is_mouse() && event.mouse().motion == ftxui::Mouse::Released && dragging_) {
+    if (event.is_mouse() && event.mouse().motion == MouseEvent::Motion::Released && dragging_) {
         dragging_ = false;
         return true;
     }

@@ -22,93 +22,24 @@
 #include <string>
 #include <string_view>
 
-#include <ftxui/screen/cell.hpp>
-#include <ftxui/screen/color.hpp>
-
 #include "Editor/Mode.h"
+#include "UI/Widget.h"
 
 namespace ned::ui {
 
-// A small, introspectable color representation (TermOx -> FTXUI migration)
-// -- ftxui::Color itself is intentionally opaque (no public accessor for
-// which of Default/Palette16/TrueColor it holds, nor its stored RGB bytes
-// back out), which is fine for painting but genuinely insufficient for
-// ThemeFile.cpp's own round-trip text serialization, which needs to know
-// exactly that. Mirrors escape::Color's own three-way shape (the TermOx-era
-// XColor/TrueColor/TermColor variant this replaces), just re-targeted at
-// FTXUI's three color kinds. ToFtxui() is the only place this ever needs to
-// become a real ftxui::Color, at actual paint time.
-struct Color {
-    enum class Kind : std::uint8_t { Default,
-                                     Palette16,
-                                     TrueColor };
-
-    Kind         kind         = Kind::Default;
-    std::uint8_t paletteIndex = 0;             // valid when kind == Palette16
-    std::uint8_t red = 0, green = 0, blue = 0; // valid when kind == TrueColor
-
-    [[nodiscard]] constexpr bool operator==(const Color&) const = default;
-
-    [[nodiscard]] ftxui::Color ToFtxui() const;
-
-    // Matches ox::RGB's own hex-literal convenience (e.g. RGB(0x2b2b40)) --
-    // every true-color use in this codebase already writes colors this way.
-    [[nodiscard]] static constexpr Color RGB(std::uint32_t hex) {
-        return Color{.kind  = Kind::TrueColor,
-                     .red   = static_cast<std::uint8_t>((hex >> 16) & 0xFF),
-                     .green = static_cast<std::uint8_t>((hex >> 8) & 0xFF),
-                     .blue  = static_cast<std::uint8_t>(hex & 0xFF)};
-    }
-    [[nodiscard]] static constexpr Color RGB(std::uint8_t r, std::uint8_t g, std::uint8_t b) {
-        return Color{.kind = Kind::TrueColor, .red = r, .green = g, .blue = b};
-    }
-    [[nodiscard]] static constexpr Color Palette(std::uint8_t index) {
-        return Color{.kind = Kind::Palette16, .paletteIndex = index};
-    }
-
-    // Named 16-color constants -- kept under the same Black/Red/.../Bright*
-    // names the old ox::XColor constants used (rather than FTXUI's own
-    // GrayLight/RedLight/... naming) so every existing color choice in
-    // Theme.cpp reads unchanged. Index values match ftxui::Color::Palette16's
-    // own numbering exactly (0=Black ... 15=White), which is itself the same
-    // numbering the old ox::XColor constants used -- confirmed, not assumed,
-    // by reading FTXUI's real color.hpp.
-    //
-    // Declared here, defined just below (outside the class body) as C++17
-    // inline variables -- a class can't in-class-initialize a static member
-    // of its own type before the class itself is complete (a real compile
-    // error hit while porting, not a style choice), so definition has to
-    // wait until Color is a complete type.
-    static const Color Default;
-    static const Color Black, Red, Green, Yellow, Blue, Magenta, Cyan, White;
-    static const Color BrightBlack, BrightRed, BrightGreen, BrightYellow, BrightBlue, BrightMagenta, BrightCyan,
-        BrightWhite;
-};
-
-inline constexpr Color Color::Default{};
-inline constexpr Color Color::Black         = Color::Palette(0);
-inline constexpr Color Color::Red           = Color::Palette(1);
-inline constexpr Color Color::Green         = Color::Palette(2);
-inline constexpr Color Color::Yellow        = Color::Palette(3);
-inline constexpr Color Color::Blue          = Color::Palette(4);
-inline constexpr Color Color::Magenta       = Color::Palette(5);
-inline constexpr Color Color::Cyan          = Color::Palette(6);
-inline constexpr Color Color::White         = Color::Palette(7);
-inline constexpr Color Color::BrightBlack   = Color::Palette(8);
-inline constexpr Color Color::BrightRed     = Color::Palette(9);
-inline constexpr Color Color::BrightGreen   = Color::Palette(10);
-inline constexpr Color Color::BrightYellow  = Color::Palette(11);
-inline constexpr Color Color::BrightBlue    = Color::Palette(12);
-inline constexpr Color Color::BrightMagenta = Color::Palette(13);
-inline constexpr Color Color::BrightCyan    = Color::Palette(14);
-inline constexpr Color Color::BrightWhite   = Color::Palette(15);
+// Color has moved to Widget.h (FTXUI -> Notcurses migration): Cell (also
+// Widget.h) needs to store one directly, so Widget.h can no longer depend
+// on Theme.h the way it would if Color stayed here. Still the same
+// Default/Palette16/TrueColor shape, same rationale (ThemeFile.cpp's own
+// round-trip text serialization needs the kind/RGB bytes back out, unlike
+// an opaque library color type) -- see Widget.h's own comment on Color.
 
 // A pared-down replacement for esc::Brush -- background/foreground plus
 // individual bool trait fields rather than a combinable Trait bitmask, since
 // this codebase only ever used Bold and Italic (checked directly, not
-// assumed) and ftxui::Cell already stores traits as individual bools, making
-// "apply a Brush to a Cell" a direct field-by-field copy with no bitmask
-// testing needed.
+// assumed) and Cell (Widget.h) already stores traits as individual bools,
+// making "apply a Brush to a Cell" a direct field-by-field copy with no
+// bitmask testing needed.
 struct Brush {
     Color background = Color::Default;
     Color foreground = Color::Default;
@@ -123,12 +54,17 @@ struct Brush {
     [[nodiscard]] constexpr bool operator==(const Brush&) const = default;
 
     // Paints this Brush onto a real Cell -- the one place background/
-    // foreground/bold/italic/underlined/strikethrough actually become an
-    // ftxui::Cell's own fields, used by every widget's Paint() the same way
-    // old widgets wrote ox::Glyph{.symbol = ..., .brush = someBrush} directly.
-    void ApplyTo(ftxui::Cell& cell) const {
-        cell.background_color = background.ToFtxui();
-        cell.foreground_color = foreground.ToFtxui();
+    // foreground/bold/italic/underlined/strikethrough actually become a
+    // Cell's own fields, used by every widget's Paint() the same way old
+    // widgets wrote ox::Glyph{.symbol = ..., .brush = someBrush} directly.
+    // A plain field-by-field copy now (FTXUI -> Notcurses migration) --
+    // Cell's foreground_color/background_color are this file's own Color
+    // type directly, so there's no per-cell ToFtxui()-style conversion left
+    // to do here at all; Screen::Flush (Widget.cpp) is the only place a
+    // Color still becomes a real terminal color.
+    void ApplyTo(Cell& cell) const {
+        cell.background_color = background;
+        cell.foreground_color = foreground;
         cell.bold             = bold;
         cell.italic           = italic;
         cell.underlined       = underlined;

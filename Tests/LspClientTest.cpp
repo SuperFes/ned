@@ -6,29 +6,15 @@
 
 #include <unistd.h>
 
-#include <ftxui/component/screen_interactive.hpp>
-
 #include "Editor/Lsp/LspClient.h"
 #include "Editor/Lsp/Transport.h"
+#include "UI/EventLoop.h"
 
 using ned::editor::lsp::Json;
 using ned::editor::lsp::LspClient;
 using ned::editor::lsp::Transport;
 
 namespace {
-
-// A real, unstarted ScreenInteractive -- LspClient's constructor requires
-// one (screen_.Post is how the real background read loop marshals frames to
-// the main thread), but these tests never call Loop() and never actually
-// need Post's task queue drained: DispatchFrame is called directly instead,
-// exercising the exact same correlation/dispatch logic without needing a
-// running event loop (see LspClient.h's own header comment on DispatchFrame
-// for why -- FTXUI's App::Post only ever enqueues, confirmed by reading
-// app.cpp, not assumed). Constructing one without a real TTY is safe: it
-// doesn't touch the terminal until Loop() actually runs.
-ftxui::ScreenInteractive TestScreen() {
-    return ftxui::ScreenInteractive::Fullscreen();
-}
 
 // One end of a pipe pair wrapped as a Transport for an LspClient under
 // test; the other end is left as raw fds the test itself reads/writes
@@ -50,12 +36,30 @@ ftxui::ScreenInteractive TestScreen() {
 // background thread's blocked read() (and therefore LspClient's own
 // destructor, which joins that thread) would hang forever -- confirmed via
 // a real hung test run, not a defensive guess.
+// FTXUI -> Notcurses migration: was a real, unstarted ScreenInteractive,
+// threaded through as a separate constructor parameter -- safe under FTXUI
+// since it never touched the terminal until Loop() actually ran. Notcurses'
+// own EventLoop is not that forgiving: its constructor calls
+// notcurses_core_init immediately, entering the alternate screen buffer for
+// real the instant one exists. Owned here, by value, as this fixture's own
+// member instead -- constructed and torn down within one TEST_CASE's own
+// scope, the shortest window that still satisfies LspClient's constructor,
+// rather than shared process-wide (which would hijack the terminal for
+// every other, unrelated test's own Catch2 console output for the rest of
+// the whole binary's run -- unlike Janet's Environment, which
+// JanetTestSupport.h shares process-wide precisely because it touches no
+// terminal state at all). Never actually used for its own Post()-draining
+// Run() loop here -- these tests all call DispatchFrame directly instead,
+// exercising the exact same correlation/dispatch logic without needing a
+// live loop at all (see LspClient.h's own header comment on DispatchFrame
+// for why).
 struct ClientFixture {
-    int       serverStdinRead;   // test reads what the client wrote (client's "stdout" from the server's perspective... see below)
-    int       serverStdoutWrite; // test writes to feed the client's read thread, if a test ever wants to
-    LspClient client;
+    ned::ui::EventLoop eventLoop;
+    int                serverStdinRead;   // test reads what the client wrote (client's "stdout" from the server's perspective... see below)
+    int                serverStdoutWrite; // test writes to feed the client's read thread, if a test ever wants to
+    LspClient          client;
 
-    ClientFixture(int readFd, int writeFd, Transport transport, ftxui::ScreenInteractive& screen) : serverStdinRead(readFd), serverStdoutWrite(writeFd), client(std::move(transport), screen) {
+    ClientFixture(int readFd, int writeFd, Transport transport) : serverStdinRead(readFd), serverStdoutWrite(writeFd), client(std::move(transport), eventLoop) {
     }
 
     ~ClientFixture() {
@@ -66,12 +70,12 @@ struct ClientFixture {
     ClientFixture(const ClientFixture&)            = delete;
     ClientFixture& operator=(const ClientFixture&) = delete;
 
-    static ClientFixture Create(ftxui::ScreenInteractive& screen) {
+    static ClientFixture Create() {
         int clientWritesHere[2]; // client's write end -> test's read end
         int clientReadsHere[2];  // test's write end -> client's read end
         REQUIRE(::pipe(clientWritesHere) == 0);
         REQUIRE(::pipe(clientReadsHere) == 0);
-        return ClientFixture(clientWritesHere[0], clientReadsHere[1], Transport(clientReadsHere[0], clientWritesHere[1]), screen);
+        return ClientFixture(clientWritesHere[0], clientReadsHere[1], Transport(clientReadsHere[0], clientWritesHere[1]));
     }
 };
 
@@ -111,8 +115,7 @@ std::string ReadRawFrame(int fd) {
 } // namespace
 
 TEST_CASE("LspClient::SendRequest writes a well-formed JSON-RPC request frame", "[Lsp]") {
-    auto          screen  = TestScreen();
-    ClientFixture fixture = ClientFixture::Create(screen);
+    ClientFixture fixture = ClientFixture::Create();
 
     fixture.client.SendRequest("initialize", Json{{"processId", nullptr}}, [](std::optional<Json>, std::optional<Json>) {});
 
@@ -128,8 +131,7 @@ TEST_CASE("LspClient::SendRequest writes a well-formed JSON-RPC request frame", 
 }
 
 TEST_CASE("LspClient::SendNotification writes a frame with no id", "[Lsp]") {
-    auto          screen  = TestScreen();
-    ClientFixture fixture = ClientFixture::Create(screen);
+    ClientFixture fixture = ClientFixture::Create();
 
     fixture.client.SendNotification("initialized", Json::object());
 
@@ -143,8 +145,7 @@ TEST_CASE("LspClient::SendNotification writes a frame with no id", "[Lsp]") {
 }
 
 TEST_CASE("LspClient::DispatchFrame invokes the matching pending request's callback with the result", "[Lsp]") {
-    auto          screen  = TestScreen();
-    ClientFixture fixture = ClientFixture::Create(screen);
+    ClientFixture fixture = ClientFixture::Create();
 
     bool                invoked = false;
     std::optional<Json> gotResult;
@@ -173,8 +174,7 @@ TEST_CASE("LspClient::DispatchFrame invokes the matching pending request's callb
 
 TEST_CASE("LspClient::DispatchFrame invokes the callback with the error, not the result, on a JSON-RPC error response",
           "[Lsp]") {
-    auto          screen  = TestScreen();
-    ClientFixture fixture = ClientFixture::Create(screen);
+    ClientFixture fixture = ClientFixture::Create();
 
     std::optional<Json> gotResult;
     std::optional<Json> gotError;
@@ -196,8 +196,7 @@ TEST_CASE("LspClient::DispatchFrame invokes the callback with the error, not the
 }
 
 TEST_CASE("LspClient::DispatchFrame with an unknown id is silently ignored, not a crash", "[Lsp]") {
-    auto          screen  = TestScreen();
-    ClientFixture fixture = ClientFixture::Create(screen);
+    ClientFixture fixture = ClientFixture::Create();
 
     const Json response = {{"jsonrpc", "2.0"}, {"id", 999}, {"result", Json::object()}};
     fixture.client.DispatchFrame(response.dump()); // no matching pending request -- must not throw/crash
@@ -205,8 +204,7 @@ TEST_CASE("LspClient::DispatchFrame with an unknown id is silently ignored, not 
 }
 
 TEST_CASE("LspClient::DispatchFrame routes a notification to its registered handler by method name", "[Lsp]") {
-    auto          screen  = TestScreen();
-    ClientFixture fixture = ClientFixture::Create(screen);
+    ClientFixture fixture = ClientFixture::Create();
 
     Json received;
     bool handlerCalled = false;
@@ -227,8 +225,7 @@ TEST_CASE("LspClient::DispatchFrame routes a notification to its registered hand
 }
 
 TEST_CASE("LspClient::DispatchFrame ignores a notification with no registered handler, not a crash", "[Lsp]") {
-    auto          screen  = TestScreen();
-    ClientFixture fixture = ClientFixture::Create(screen);
+    ClientFixture fixture = ClientFixture::Create();
 
     const Json notification = {{"jsonrpc", "2.0"}, {"method", "window/logMessage"}, {"params", Json::object()}};
     fixture.client.DispatchFrame(notification.dump());
@@ -236,16 +233,14 @@ TEST_CASE("LspClient::DispatchFrame ignores a notification with no registered ha
 }
 
 TEST_CASE("LspClient::DispatchFrame ignores malformed JSON without throwing", "[Lsp]") {
-    auto          screen  = TestScreen();
-    ClientFixture fixture = ClientFixture::Create(screen);
+    ClientFixture fixture = ClientFixture::Create();
 
     fixture.client.DispatchFrame("{ this is not valid json");
     SUCCEED();
 }
 
 TEST_CASE("SetNotificationHandler replaces a previous handler for the same method", "[Lsp]") {
-    auto          screen  = TestScreen();
-    ClientFixture fixture = ClientFixture::Create(screen);
+    ClientFixture fixture = ClientFixture::Create();
 
     int callCount = 0;
     fixture.client.SetNotificationHandler("window/logMessage", [&](const Json&) { callCount += 100; });
@@ -258,22 +253,19 @@ TEST_CASE("SetNotificationHandler replaces a previous handler for the same metho
 }
 
 // error-visibility follow-up. The real background-read-loop -> EOF ->
-// screen_.Post(...)-marshaled onDisconnected_ call path can't be exercised
-// headlessly here, for the same reason DispatchFrame's own doc comment
-// documents for the frame-dispatch path: FTXUI's App::Post only ever
-// enqueues (confirmed by reading app.cpp), with no synchronous fallback,
-// so a real ScreenInteractive::Loop() would be needed to ever see a
-// Post-driven call actually fire -- and no test in this codebase runs one
-// (App::RunOnce/RunOnceBlocking also call FetchTerminalEvents(), unsafe
-// without a real TTY). This just confirms SetOnDisconnected is a safe,
-// replaceable hook, the same "connect after construction" shape
-// SetNotificationHandler's own test just above confirms; the actual
-// spawn-failure and JSON-RPC-error paths (which DO run entirely on the main
-// thread, no Post needed) are covered end-to-end in LspManagerTest.cpp
-// instead.
+// eventLoop.Post(...)-marshaled onDisconnected_ call path can't be
+// exercised headlessly here, for the same reason DispatchFrame's own doc
+// comment documents for the frame-dispatch path: ned::ui::EventLoop::Post
+// only ever enqueues, with no synchronous fallback, so a real
+// EventLoop::Run() would be needed to ever see a Post-driven call actually
+// fire -- and no test in this codebase runs one. This just confirms
+// SetOnDisconnected is a safe, replaceable hook, the same "connect after
+// construction" shape SetNotificationHandler's own test just above
+// confirms; the actual spawn-failure and JSON-RPC-error paths (which DO run
+// entirely on the main thread, no Post needed) are covered end-to-end in
+// LspManagerTest.cpp instead.
 TEST_CASE("SetOnDisconnected replaces a previous handler, and unset is a safe no-op", "[Lsp]") {
-    auto          screen  = TestScreen();
-    ClientFixture fixture = ClientFixture::Create(screen);
+    ClientFixture fixture = ClientFixture::Create();
 
     fixture.client.SetOnDisconnected([](std::string) { FAIL("should have been replaced"); });
     fixture.client.SetOnDisconnected([](std::string) {});

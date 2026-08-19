@@ -36,8 +36,7 @@ void EchoArea::Paint(Canvas c) {
     // markup rather than indexed by column the way plain characters are --
     // this is why the loop below walks message_ sequentially instead of
     // directly indexing it by x the way the pre-sentinel version did.
-    const ftxui::Color dimmedForeground =
-        ftxui::Color::Interpolate(0.5F, theme_.echoArea.foreground.ToFtxui(), theme_.echoArea.background.ToFtxui());
+    const Color dimmedForeground = Color::Interpolate(0.5F, theme_.echoArea.foreground, theme_.echoArea.background);
 
     int  x         = 0;
     bool emphasize = false;
@@ -63,8 +62,8 @@ void EchoArea::Paint(Canvas c) {
             break; // rest of the message doesn't fit -- truncated, same as the pre-sentinel version
         }
 
-        ftxui::Cell& cell = c[{.x = x, .y = 0}];
-        cell.character    = std::string(1, ch);
+        Cell& cell     = c[{.x = x, .y = 0}];
+        cell.character = std::string(1, ch);
         theme_.echoArea.ApplyTo(cell);
         if (emphasize) {
             cell.bold = true;
@@ -76,8 +75,8 @@ void EchoArea::Paint(Canvas c) {
     }
 
     for (; x < c.size().width; ++x) {
-        ftxui::Cell& cell = c[{.x = x, .y = 0}];
-        cell.character    = " ";
+        Cell& cell     = c[{.x = x, .y = 0}];
+        cell.character = " ";
         theme_.echoArea.ApplyTo(cell);
     }
 }

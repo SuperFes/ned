@@ -23,8 +23,6 @@
 #include <utility>
 #include <vector>
 
-#include <ftxui/component/animation.hpp>
-
 #include "ActiveBuffer.h"
 #include "Editor/CodeFold.h"
 #include "Editor/Command.h"
@@ -38,6 +36,7 @@
 #include "Editor/ProjectReplace.h"
 #include "Editor/QueryReplace.h"
 #include "Editor/Register.h"
+#include "EventLoop.h"
 #include "ProjectSidebar.h"
 #include "ScrollArrowButton.h"
 #include "ScrollBar.h"
@@ -65,15 +64,16 @@ class BufferView : public Widget {
     BufferView& operator=(const BufferView&) = delete;
 
     void Paint(Canvas c) override;
-    bool OnEvent(ftxui::Event event) override;
+    bool OnEvent(const Event& event) override;
     bool Focusable() const override; // was FocusPolicy::Strong
 
-    // hover/completion follow-up: drives the automatic-completion debounce
-    // timer -- see completionDebounceDeadline_'s own doc comment. Same
-    // animation-frame-driven shape ScrollArrowButton::OnAnimation already
-    // established for a sub-second, self-perpetuating repeat/delay with no
-    // dedicated background thread.
-    void OnAnimation(ftxui::animation::Params& params) override;
+    // FTXUI -> Notcurses migration: there is no more per-frame OnAnimation
+    // hook to override here (Notcurses' own EventLoop has no free-running
+    // render-loop tick at all) -- the automatic-completion debounce and
+    // status-message idle-timeout deadlines this used to drive both fire
+    // via DeadlineTimer (EventLoop.h) instead now; see
+    // completionDebounceDeadline_/statusMessageChangedAt_'s own doc
+    // comments.
 
     // Local cursor position for the real terminal caret -- was ox::Widget's
     // own `cursor` field. A pure, independent computation, deliberately NOT
@@ -126,6 +126,16 @@ class BufferView : public Widget {
     // specifically wants to exercise LSP sync, so ordinary tests never touch
     // Lsp/ at all.
     void SetLspManager(editor::lsp::LspManager* lspManager);
+
+    // FTXUI -> Notcurses migration: replaces
+    // ftxui::ScreenInteractive::Active() (used to end the whole app on
+    // `quit`/confirmed ConfirmQuit) and backs completionDebounceDeadline_/
+    // statusMessageChangedAt_'s own DeadlineTimer-based deadlines (see their
+    // doc comments below). Unset (the default, nullptr) makes `quit` a
+    // no-op instead of a null-deref -- every unit test, and any other
+    // headless use of BufferView, matching the exact null-check contract
+    // ftxui::ScreenInteractive::Active() itself used to require here.
+    void SetEventLoop(EventLoop* eventLoop);
 
     // Entry point for TabBar's close-icon click (tab-close follow-up) --
     // TabBar only ever signals *intent*, the same "mouse-driven widget hands
@@ -235,8 +245,8 @@ class BufferView : public Widget {
 
     // Keyboard/mouse handling split out of OnEvent for readability -- was
     // key_press/mouse_press/mouse_move/mouse_release/mouse_wheel.
-    bool OnKeyEvent(ftxui::Event event);
-    bool OnMouseEvent(ftxui::Event event);
+    bool OnKeyEvent(const Event& event);
+    bool OnMouseEvent(const Event& event);
 
     void StartInteractiveSession(editor::InteractiveRequest request);
     void EndInteractiveSession();
@@ -607,7 +617,7 @@ class BufferView : public Widget {
     // that call. Added to chase down an intermittent, real-terminal-only
     // (not reproducible headlessly) selection-highlight rendering glitch --
     // see ROADMAP.md. A no-op, effectively free, when the env var is unset.
-    void LogMouseEvent(std::string_view event, const ftxui::Mouse& mouse) const;
+    void LogMouseEvent(std::string_view event, const MouseEvent& mouse) const;
 
     // Org-mode fold/unfold follow-up: everywhere in this class that used to
     // reason in raw "buffer line" units now has to skip lines an active
@@ -737,6 +747,7 @@ class BufferView : public Widget {
     ScrollArrowButton*         scrollDownArrow_ = nullptr;
     ProjectSidebar*            projectSidebar_  = nullptr; // see SetProjectSidebar
     editor::lsp::LspManager*   lspManager_      = nullptr; // see SetLspManager
+    EventLoop*                 eventLoop_       = nullptr; // see SetEventLoop
 
     InputMode                                inputMode_ = InputMode::Normal;
     std::optional<editor::IncrementalSearch> search_;
@@ -936,7 +947,7 @@ class BufferView : public Widget {
     // CursorPosition()/ByteOffsetForPoint(), each of which needs the real
     // segment byte ranges anyway, not just a count) -- never eagerly for
     // the whole buffer, per this cache's own perf history.
-    static constexpr std::size_t     kRowCountUnknown = static_cast<std::size_t>(-1);
+    static constexpr std::size_t     kRowCountUnknown                = static_cast<std::size_t>(-1);
     mutable text::Buffer*            rowCountCacheBuffer_            = nullptr;
     mutable std::size_t              rowCountCacheContentGeneration_ = 0;
     mutable int                      rowCountCacheContentWidth_      = 0;
@@ -974,8 +985,8 @@ class BufferView : public Widget {
     // buffer identity + ContentGeneration() + content width + wrapLines
     // itself change -- unlike hiddenLineRanges_, row counts genuinely
     // depend on the latter two, which fold does not.
-    void                       EnsureRowCountCache() const;
-    [[nodiscard]] std::size_t  RowsForLine(std::size_t line) const;
+    void                      EnsureRowCountCache() const;
+    [[nodiscard]] std::size_t RowsForLine(std::size_t line) const;
     // Row-aware sibling of VisibleLineCountBetween -- sums RowsForLine
     // instead of counting 1 per visible line. Still touches every line in
     // the range (each RowsForLine call is now a cheap, memoized lookup
@@ -1004,9 +1015,9 @@ class BufferView : public Widget {
     // rather than replacing it (no dedicated InputMode value), the same way
     // e.g. a diagnostic gutter marker does.
     struct GhostCompletion {
-        std::size_t                                           requestPoint = 0; // buffer.Point() when this was requested/received -- stale if point has since moved
+        std::size_t                              requestPoint = 0; // buffer.Point() when this was requested/received -- stale if point has since moved
         std::vector<editor::lsp::CompletionItem> items;
-        std::size_t                                           selectedIndex = 0;
+        std::size_t                              selectedIndex = 0;
     };
     std::optional<GhostCompletion> ghostCompletion_;
 
@@ -1018,6 +1029,15 @@ class BufferView : public Widget {
     // deadlines) is what makes this act as a debounce, not a fixed-interval
     // repeat -- more typing keeps pushing the deadline out.
     std::optional<std::chrono::steady_clock::time_point> completionDebounceDeadline_;
+    // FTXUI -> Notcurses migration: the actual wakeup mechanism now --
+    // MaybeScheduleAutoCompletion arms this (via EventLoop::Post's Arm) for
+    // exactly completionDebounceDeadline_'s own remaining delay each time it
+    // moves the deadline out, replacing OnAnimation's own per-frame polling
+    // loop. completionDebounceDeadline_ itself is kept anyway (rather than
+    // dropped) since RequestCompletionAtPoint's own fired callback still
+    // wants a captured, precise "what deadline was I even armed for"
+    // record for its own logic.
+    DeadlineTimer completionDebounceTimer_;
 
     // Bumped by RequestCompletionAtPoint before every request; a response
     // whose captured generation no longer matches this is stale (a newer
@@ -1026,11 +1046,11 @@ class BufferView : public Widget {
     // re-check RequestCompletionAtPoint's own callback also does.
     std::size_t completionRequestGeneration_ = 0;
 
-    void        RequestCompletionAtPoint();
-    [[nodiscard]] bool ShouldSuppressAutoCompletion() const;
-    void        MaybeScheduleAutoCompletion(const editor::KeyChord& chord, std::size_t generationBefore);
-    void        AcceptGhostCompletion();
-    void        CycleGhostCompletion(int direction);
+    void                      RequestCompletionAtPoint();
+    [[nodiscard]] bool        ShouldSuppressAutoCompletion() const;
+    void                      MaybeScheduleAutoCompletion(const editor::KeyChord& chord, std::size_t generationBefore);
+    void                      AcceptGhostCompletion();
+    void                      CycleGhostCompletion(int direction);
     [[nodiscard]] std::string GhostSuffixFor(const editor::lsp::CompletionItem& item) const;
 
     // code-actions follow-up: pendingCodeActions_/codeActionSelection_ are
@@ -1040,15 +1060,15 @@ class BufferView : public Widget {
     // codeActionRequestGeneration_ mirrors completionRequestGeneration_'s
     // exact staleness-guard shape.
     std::vector<editor::lsp::CodeAction> pendingCodeActions_;
-    std::size_t                          codeActionSelection_        = 0;
+    std::size_t                          codeActionSelection_         = 0;
     std::size_t                          codeActionRequestGeneration_ = 0;
 
     // go-to-definition follow-up: same staleness-guard/selection-list shape
     // as pendingCodeActions_/codeActionSelection_/codeActionRequestGeneration_
     // just above, valid only while inputMode_ == LspGotoDefinitionSelect.
     std::vector<editor::lsp::LspManager::ResolvedLocation> pendingDefinitions_;
-    std::size_t                                             definitionSelection_        = 0;
-    std::size_t                                             definitionRequestGeneration_ = 0;
+    std::size_t                                            definitionSelection_         = 0;
+    std::size_t                                            definitionRequestGeneration_ = 0;
 
     // rename follow-up: same staleness-guard shape once more.
     // pendingRename_/renameTitle_ are valid only while inputMode_ ==
@@ -1058,8 +1078,8 @@ class BufferView : public Widget {
     // (there's nothing to recompute it *for*, unlike RefreshCodeActionSelectStatus's
     // own per-keystroke Up/Down refresh).
     std::optional<editor::lsp::LspManager::ResolvedRename> pendingRename_;
-    std::string                                             renameTitle_;
-    std::size_t                                             renameRequestGeneration_ = 0;
+    std::string                                            renameTitle_;
+    std::size_t                                            renameRequestGeneration_ = 0;
 
     // status-message-lifecycle follow-up. A uniform rule for statusMessage_,
     // regardless of who wrote it (any command via CommandContext::message,
@@ -1072,13 +1092,17 @@ class BufferView : public Widget {
     // call sites that write statusMessage_ directly -- see
     // EnsureStatusMessageFreshness's own doc comment for the exact
     // mechanism and its one known trade-off.
-    std::string                                           statusMessageSnapshot_;
+    std::string                                          statusMessageSnapshot_;
     std::optional<std::chrono::steady_clock::time_point> statusMessageChangedAt_;
-    static constexpr std::chrono::seconds                 kStatusMessageTimeout{4};
+    static constexpr std::chrono::seconds                kStatusMessageTimeout{4};
+    // See completionDebounceTimer_'s own comment -- same replacement for
+    // OnAnimation's per-frame polling, this time backing
+    // statusMessageChangedAt_'s idle-clear deadline.
+    DeadlineTimer statusMessageTimer_;
 
     // Detects a statusMessage_ change since the last call (from Paint(),
     // which runs after every real render including every keystroke) and
-    // (re)arms the idle-clear deadline; OnAnimation is what actually clears
+    // (re)arms the idle-clear deadline via statusMessageTimer_, which fires
     // it once the deadline passes with nothing further changing it.
     void EnsureStatusMessageFreshness();
 };

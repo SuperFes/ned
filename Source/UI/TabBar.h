@@ -43,7 +43,7 @@ class TabBar : public Widget {
            const Theme& theme);
 
     void Paint(Canvas c) override;
-    bool OnEvent(ftxui::Event event) override;
+    bool OnEvent(const Event& event) override;
 
     // Called with the buffer whose close icon was clicked. Unset (the
     // default) means clicking a close icon is a no-op -- TabBar has no way

@@ -11,8 +11,6 @@
 #include <utility>
 #include <vector>
 
-#include <ftxui/component/screen_interactive.hpp>
-
 #include "EchoArea.h"
 #include "Editor/CodeFoldSettings.h"
 #include "Editor/FuzzyMatch.h"
@@ -462,12 +460,12 @@ namespace {
                                                  int wrapWidth, const std::vector<RenderedLink>& lineLinks) {
         wrapWidth = std::max(wrapWidth, 1);
 
-        std::vector<WrapSegment> segments;
-        std::size_t              segmentStart = lineStart;
-        std::size_t              offset       = lineStart;
-        int                      col          = 0;
-        std::optional<std::size_t> breakByte; // byte offset just past the latest whitespace run since segmentStart
-        int                         breakCol = 0; // col value at that same point
+        std::vector<WrapSegment>   segments;
+        std::size_t                segmentStart = lineStart;
+        std::size_t                offset       = lineStart;
+        int                        col          = 0;
+        std::optional<std::size_t> breakByte;    // byte offset just past the latest whitespace run since segmentStart
+        int                        breakCol = 0; // col value at that same point
 
         while (offset < lineEnd) {
             std::size_t unitEnd;
@@ -556,7 +554,7 @@ namespace {
             const std::size_t prior      = content.PreviousCodepointBoundary(start);
             const auto        decoded    = content.CodepointAt(prior);
             const bool        isWordChar = (decoded.codepoint < 0x80) &&
-                                     (std::isalnum(static_cast<unsigned char>(decoded.codepoint)) != 0 || decoded.codepoint == U'_');
+                                           (std::isalnum(static_cast<unsigned char>(decoded.codepoint)) != 0 || decoded.codepoint == U'_');
             if (!isWordChar) {
                 break;
             }
@@ -569,16 +567,16 @@ namespace {
     // passed in separately at each call site (was four distinct
     // mouse_press/mouse_move/mouse_release/mouse_wheel overrides, now one
     // unified OnMouseEvent).
-    std::string_view MouseEventTag(const ftxui::Mouse& mouse) {
-        if (mouse.button == ftxui::Mouse::WheelUp || mouse.button == ftxui::Mouse::WheelDown) {
+    std::string_view MouseEventTag(const MouseEvent& mouse) {
+        if (mouse.button == MouseEvent::Button::WheelUp || mouse.button == MouseEvent::Button::WheelDown) {
             return "wheel";
         }
         switch (mouse.motion) {
-            case ftxui::Mouse::Pressed:
+            case MouseEvent::Motion::Pressed:
                 return "press";
-            case ftxui::Mouse::Released:
+            case MouseEvent::Motion::Released:
                 return "release";
-            case ftxui::Mouse::Moved:
+            case MouseEvent::Motion::Moved:
             default:
                 return "move";
         }
@@ -945,10 +943,10 @@ std::size_t BufferView::RowsForLine(std::size_t line) const {
         // computed and memoized only for a line actually asked about, never
         // eagerly for the whole buffer (see EnsureRowCountCache's own doc
         // comment for why that distinction is load-bearing, not cosmetic).
-        text::Buffer&      buffer      = activeBuffer_.Get();
-        const text::Rope&  content     = buffer.Content();
-        const std::size_t  lineStart   = content.LineToByteOffset(line);
-        const std::size_t  lineEnd =
+        text::Buffer&     buffer    = activeBuffer_.Get();
+        const text::Rope& content   = buffer.Content();
+        const std::size_t lineStart = content.LineToByteOffset(line);
+        const std::size_t lineEnd =
             (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
         EnsureLinkCache();
         const std::vector<RenderedLink> lineLinks = LinksForLine(linkCache_, lineStart, lineEnd, buffer.Point());
@@ -1126,15 +1124,15 @@ void BufferView::Paint(Canvas c) {
     // read on every row -- including continuation rows -- of that same
     // line, the same "compute once per line, not once per row" shape this
     // function already used for lineSpans/lineLinks before wrap existed.
-    const bool                               wrapActive = EffectiveWrapLines();
-    std::size_t                              segmentIndex = 0;
-    std::vector<WrapSegment>                 lineSegments;
-    std::vector<editor::HighlightSpan>       currentLineSpans;
-    std::vector<RenderedLink>                currentLineLinks;
+    const bool                         wrapActive   = EffectiveWrapLines();
+    std::size_t                        segmentIndex = 0;
+    std::vector<WrapSegment>           lineSegments;
+    std::vector<editor::HighlightSpan> currentLineSpans;
+    std::vector<RenderedLink>          currentLineLinks;
     for (int row = 0; row < c.size().height; ++row) {
         for (int col = 0; col < c.size().width; ++col) {
-            ftxui::Cell& cell = c[{.x = col, .y = row}];
-            cell.character    = " ";
+            Cell& cell     = c[{.x = col, .y = row}];
+            cell.character = " ";
             emptyBrush.ApplyTo(cell);
         }
 
@@ -1171,194 +1169,194 @@ void BufferView::Paint(Canvas c) {
             // row of a wrapped line; the top-of-row blanking pass already
             // washed this row's gutter columns blank.
             if (segmentIndex == 0) {
-            // Includes the line's own newline (unlike lineEnd above), so a
-            // region selected through to the start of the next line still
-            // counts this one as fully selected -- see ClassifyGutterSelection.
-            const std::size_t     lineEndWithNewline = (line + 1 < totalLines) ? content.LineToByteOffset(line + 1) : content.ByteLength();
-            const GutterSelection gutterSelection    = ClassifyGutterSelection(buffer, lineStart, lineEndWithNewline);
+                // Includes the line's own newline (unlike lineEnd above), so a
+                // region selected through to the start of the next line still
+                // counts this one as fully selected -- see ClassifyGutterSelection.
+                const std::size_t     lineEndWithNewline = (line + 1 < totalLines) ? content.LineToByteOffset(line + 1) : content.ByteLength();
+                const GutterSelection gutterSelection    = ClassifyGutterSelection(buffer, lineStart, lineEndWithNewline);
 
-            const Color gutterForeground =
-                (line == pointLine) ? theme_.currentLineNumberForeground : theme_.lineNumberForeground;
-            // Digits+padding get the full selection background only when the
-            // whole line is covered; the one-column gap after them gets it for
-            // Partial too, so a partially-selected line still shows a thin
-            // highlighted edge instead of no indication at all.
-            const Brush gutterBrush{
-                .background = (gutterSelection == GutterSelection::Full) ? theme_.selectionBackground : theme_.background,
-                .foreground = gutterForeground,
-            };
-            const Brush gutterGapBrush{
-                .background = (gutterSelection != GutterSelection::None) ? theme_.selectionBackground : theme_.background,
-                .foreground = gutterForeground,
-            };
-            // status-gutter unsaved-change-indicator follow-up: a solid
-            // colored cell (character " ", not a glyph -- a 1-char-wide
-            // color swatch, matching the user's own "just 1 char width"
-            // ask and ScrollBar's own thumb-via-cell.inverted precedent)
-            // when this line has edits since the buffer was last
-            // loaded/saved. A plain binary search against
-            // unsavedChangeLineRanges_ -- these ranges are flat and
-            // disjoint by construction, unlike the fold depth columns, so
-            // no streaming stack state is needed here.
-            {
-                const auto it = std::lower_bound(
-                    unsavedChangeLineRanges_.begin(), unsavedChangeLineRanges_.end(), line,
-                    [](const auto& range, std::size_t targetLine) { return range.second <= targetLine; });
-                const bool   changed        = it != unsavedChangeLineRanges_.end() && it->first <= line;
-                const Color  indicatorColor = changed ? theme_.unsavedChangeIndicator : theme_.background;
-                const Brush  statusBrush{.background = indicatorColor, .foreground = indicatorColor};
-                ftxui::Cell& cell = c[{.x = 0, .y = row}];
-                cell.character    = " ";
-                statusBrush.ApplyTo(cell);
-            }
-
-            // LSP client follow-up: same solid-color-swatch shape as the
-            // status column just above, in its own dedicated column --
-            // see diagnosticLineSeverities_'s own doc comment for why a
-            // plain binary search suffices here too (at most one entry per
-            // line, already sorted).
-            if (static_cast<int>(kStatusWidth) < c.size().width) {
-                const auto it             = std::lower_bound(diagnosticLineSeverities_.begin(), diagnosticLineSeverities_.end(), line,
-                                                             [](const auto& entry, std::size_t targetLine) { return entry.first < targetLine; });
-                const bool hasDiagnostic  = it != diagnosticLineSeverities_.end() && it->first == line;
-                Color      indicatorColor = theme_.background;
-                if (hasDiagnostic) {
-                    switch (it->second) {
-                        case text::Buffer::Diagnostic::Severity::Error:
-                            indicatorColor = theme_.diagnosticError;
-                            break;
-                        case text::Buffer::Diagnostic::Severity::Warning:
-                            indicatorColor = theme_.diagnosticWarning;
-                            break;
-                        case text::Buffer::Diagnostic::Severity::Information:
-                            indicatorColor = theme_.diagnosticInformation;
-                            break;
-                        case text::Buffer::Diagnostic::Severity::Hint:
-                            indicatorColor = theme_.diagnosticHint;
-                            break;
-                    }
-                }
-                const Brush  diagnosticBrush{.background = indicatorColor, .foreground = indicatorColor};
-                ftxui::Cell& cell = c[{.x = static_cast<int>(kStatusWidth), .y = row}];
-                cell.character    = " ";
-                diagnosticBrush.ApplyTo(cell);
-            }
-
-            const std::string number  = std::to_string(line + 1); // 1-indexed, matches ModeLine's L/C convention
-            const std::size_t padding = gutterDigits > number.size() ? gutterDigits - number.size() : 0;
-            // Leading gap (status/line-number-spacing follow-up -- the
-            // line-number gutter now gets breathing room on BOTH sides,
-            // not just the trailing gap it already had). Sits right after
-            // the diagnostic column now (LSP client follow-up), not
-            // directly after the status column -- digitsStart itself
-            // already accounts for kDiagnosticWidth, so this is just
-            // "one column before digitsStart."
-            if (static_cast<int>(digitsStart - kLineNumberGap) < c.size().width) {
-                ftxui::Cell& cell = c[{.x = static_cast<int>(digitsStart - kLineNumberGap), .y = row}];
-                cell.character    = " ";
-                gutterGapBrush.ApplyTo(cell);
-            }
-            for (std::size_t i = 0; i < padding && static_cast<int>(digitsStart + i) < c.size().width; ++i) {
-                ftxui::Cell& cell = c[{.x = static_cast<int>(digitsStart + i), .y = row}];
-                cell.character    = " ";
-                gutterBrush.ApplyTo(cell);
-            }
-            for (std::size_t i = 0; i < number.size() && static_cast<int>(digitsStart + padding + i) < c.size().width; ++i) {
-                ftxui::Cell& cell = c[{.x = static_cast<int>(digitsStart + padding + i), .y = row}];
-                cell.character    = std::string(1, number[i]);
-                gutterBrush.ApplyTo(cell);
-            }
-            if (static_cast<int>(digitsStart + gutterDigits) < c.size().width) {
-                ftxui::Cell& cell = c[{.x = static_cast<int>(digitsStart + gutterDigits), .y = row}];
-                cell.character    = " ";
-                gutterGapBrush.ApplyTo(cell);
-            }
-
-            // depth-aware-fold-gutter follow-up: one column per nesting
-            // level (capped at kMaxFoldDepthColumns) -- a block's OWN
-            // header row shows its ⊞/⊟ toggle at its own column (⊟, real
-            // Org's own "there's more, click to open" shape inverted --
-            // classic outline-widget convention: minus means "already
-            // open, click to close" -- when expanded; ⊞, "click to expand,"
-            // when collapsed, buffer.FoldMarkerAt has an entry for it, cell
-            // rendered inverted matching ScrollBar's own solid-thumb
-            // convention so it visually pops). Every other row a block's
-            // own EXPANDED span covers gets a guide line ('│', or '└' --
-            // reusing ProjectSidebar's own box-drawing connector glyph
-            // rather than inventing new Unicode -- on the span's own last
-            // row) at that block's column, tracing where it closes; a
-            // COLLAPSED block gets no line at all, only its header ⊞ --
-            // there's nothing to trace while its body is hidden (an
-            // explicit user choice, not an oversight).
-            //
-            // foldGutterHeaderAtColumn_/foldColumnOpenEnds_/foldColumnCursor_
-            // (declared just above the row loop) turn this into a single
-            // linear streaming pass over foldGutterEntries_/
-            // foldGutterLineRangesByColumn_ across the WHOLE row loop --
-            // amortized O(blocks in viewport), not a fresh per-row scan or
-            // binary search -- correct because same-column ranges from a
-            // real syntax tree are always either disjoint or properly
-            // nested (a laminar family), so a plain per-column stack,
-            // advanced as `line` monotonically increases row by row, is
-            // exactly the right structure: an ancestor's own range can
-            // never close before a still-open descendant mapped to the
-            // same (capped) column does.
-            if (foldColumnWidth > 0) {
-                foldGutterHeaderAtColumn.fill(nullptr);
-                // <= line, not == line: when topLine_ > 0 (scrolled past
-                // any blocks whose header sits earlier in the file), those
-                // earlier entries must still be consumed here to advance
-                // the cursor past them -- an exact-match-only condition
-                // left the cursor permanently stuck on the first entry
-                // whose headerLine falls before topLine_, silently
-                // suppressing every ⊞/⊟ glyph for the rest of the buffer
-                // (a real, reported bug: scrolling past ~line 50 in a file
-                // with earlier foldable blocks stopped drawing them at
-                // all). Only an exact match actually gets recorded for
-                // rendering; anything strictly earlier is skipped, not
-                // rendered, matching mid-scroll-start behavior
-                // foldColumnCursor's own analogous `<=` loop below already
-                // got right the first time.
-                while (foldGutterEntryCursor < foldGutterEntries_.size() &&
-                       foldGutterEntries_[foldGutterEntryCursor].headerLine <= line) {
-                    const auto& entry = foldGutterEntries_[foldGutterEntryCursor];
-                    if (entry.headerLine == line) {
-                        foldGutterHeaderAtColumn[entry.column] = &entry;
-                    }
-                    ++foldGutterEntryCursor;
+                const Color gutterForeground =
+                    (line == pointLine) ? theme_.currentLineNumberForeground : theme_.lineNumberForeground;
+                // Digits+padding get the full selection background only when the
+                // whole line is covered; the one-column gap after them gets it for
+                // Partial too, so a partially-selected line still shows a thin
+                // highlighted edge instead of no indication at all.
+                const Brush gutterBrush{
+                    .background = (gutterSelection == GutterSelection::Full) ? theme_.selectionBackground : theme_.background,
+                    .foreground = gutterForeground,
+                };
+                const Brush gutterGapBrush{
+                    .background = (gutterSelection != GutterSelection::None) ? theme_.selectionBackground : theme_.background,
+                    .foreground = gutterForeground,
+                };
+                // status-gutter unsaved-change-indicator follow-up: a solid
+                // colored cell (character " ", not a glyph -- a 1-char-wide
+                // color swatch, matching the user's own "just 1 char width"
+                // ask and ScrollBar's own thumb-via-cell.inverted precedent)
+                // when this line has edits since the buffer was last
+                // loaded/saved. A plain binary search against
+                // unsavedChangeLineRanges_ -- these ranges are flat and
+                // disjoint by construction, unlike the fold depth columns, so
+                // no streaming stack state is needed here.
+                {
+                    const auto it = std::lower_bound(
+                        unsavedChangeLineRanges_.begin(), unsavedChangeLineRanges_.end(), line,
+                        [](const auto& range, std::size_t targetLine) { return range.second <= targetLine; });
+                    const bool  changed        = it != unsavedChangeLineRanges_.end() && it->first <= line;
+                    const Color indicatorColor = changed ? theme_.unsavedChangeIndicator : theme_.background;
+                    const Brush statusBrush{.background = indicatorColor, .foreground = indicatorColor};
+                    Cell&       cell = c[{.x = 0, .y = row}];
+                    cell.character   = " ";
+                    statusBrush.ApplyTo(cell);
                 }
 
-                for (int col = 0; col < kMaxFoldDepthColumns; ++col) {
-                    auto&       cursor   = foldColumnCursor[col];
-                    auto&       openEnds = foldColumnOpenEnds[col];
-                    const auto& ranges   = foldGutterLineRangesByColumn_[col];
-                    while (cursor < ranges.size() && ranges[cursor].first <= line) {
-                        openEnds.push_back(ranges[cursor].second);
-                        ++cursor;
+                // LSP client follow-up: same solid-color-swatch shape as the
+                // status column just above, in its own dedicated column --
+                // see diagnosticLineSeverities_'s own doc comment for why a
+                // plain binary search suffices here too (at most one entry per
+                // line, already sorted).
+                if (static_cast<int>(kStatusWidth) < c.size().width) {
+                    const auto it             = std::lower_bound(diagnosticLineSeverities_.begin(), diagnosticLineSeverities_.end(), line,
+                                                                 [](const auto& entry, std::size_t targetLine) { return entry.first < targetLine; });
+                    const bool hasDiagnostic  = it != diagnosticLineSeverities_.end() && it->first == line;
+                    Color      indicatorColor = theme_.background;
+                    if (hasDiagnostic) {
+                        switch (it->second) {
+                            case text::Buffer::Diagnostic::Severity::Error:
+                                indicatorColor = theme_.diagnosticError;
+                                break;
+                            case text::Buffer::Diagnostic::Severity::Warning:
+                                indicatorColor = theme_.diagnosticWarning;
+                                break;
+                            case text::Buffer::Diagnostic::Severity::Information:
+                                indicatorColor = theme_.diagnosticInformation;
+                                break;
+                            case text::Buffer::Diagnostic::Severity::Hint:
+                                indicatorColor = theme_.diagnosticHint;
+                                break;
+                        }
                     }
-                    while (!openEnds.empty() && openEnds.back() <= line) {
-                        openEnds.pop_back();
-                    }
+                    const Brush diagnosticBrush{.background = indicatorColor, .foreground = indicatorColor};
+                    Cell&       cell = c[{.x = static_cast<int>(kStatusWidth), .y = row}];
+                    cell.character   = " ";
+                    diagnosticBrush.ApplyTo(cell);
+                }
 
-                    const int screenCol = static_cast<int>(foldStart) + col;
-                    if (screenCol >= c.size().width) {
-                        continue;
-                    }
-                    char32_t glyph    = U' ';
-                    bool     inverted = false;
-                    if (const FoldGutterEntry* header = foldGutterHeaderAtColumn[col]; header != nullptr) {
-                        inverted = buffer.FoldMarkerAt(header->blockStart).has_value();
-                        glyph    = inverted ? U'⊞' : U'⊟'; // ⊞ collapsed / ⊟ expanded
-                    }
-                    else if (!openEnds.empty()) {
-                        glyph = (openEnds.back() - 1 == line) ? U'└' : U'│'; // closing row / mid-span
-                    }
-                    ftxui::Cell& cell = c[{.x = screenCol, .y = row}];
-                    cell.character    = text::EncodeCodepointUtf8(glyph);
+                const std::string number  = std::to_string(line + 1); // 1-indexed, matches ModeLine's L/C convention
+                const std::size_t padding = gutterDigits > number.size() ? gutterDigits - number.size() : 0;
+                // Leading gap (status/line-number-spacing follow-up -- the
+                // line-number gutter now gets breathing room on BOTH sides,
+                // not just the trailing gap it already had). Sits right after
+                // the diagnostic column now (LSP client follow-up), not
+                // directly after the status column -- digitsStart itself
+                // already accounts for kDiagnosticWidth, so this is just
+                // "one column before digitsStart."
+                if (static_cast<int>(digitsStart - kLineNumberGap) < c.size().width) {
+                    Cell& cell     = c[{.x = static_cast<int>(digitsStart - kLineNumberGap), .y = row}];
+                    cell.character = " ";
+                    gutterGapBrush.ApplyTo(cell);
+                }
+                for (std::size_t i = 0; i < padding && static_cast<int>(digitsStart + i) < c.size().width; ++i) {
+                    Cell& cell     = c[{.x = static_cast<int>(digitsStart + i), .y = row}];
+                    cell.character = " ";
                     gutterBrush.ApplyTo(cell);
-                    cell.inverted = inverted;
                 }
-            }
+                for (std::size_t i = 0; i < number.size() && static_cast<int>(digitsStart + padding + i) < c.size().width; ++i) {
+                    Cell& cell     = c[{.x = static_cast<int>(digitsStart + padding + i), .y = row}];
+                    cell.character = std::string(1, number[i]);
+                    gutterBrush.ApplyTo(cell);
+                }
+                if (static_cast<int>(digitsStart + gutterDigits) < c.size().width) {
+                    Cell& cell     = c[{.x = static_cast<int>(digitsStart + gutterDigits), .y = row}];
+                    cell.character = " ";
+                    gutterGapBrush.ApplyTo(cell);
+                }
+
+                // depth-aware-fold-gutter follow-up: one column per nesting
+                // level (capped at kMaxFoldDepthColumns) -- a block's OWN
+                // header row shows its ⊞/⊟ toggle at its own column (⊟, real
+                // Org's own "there's more, click to open" shape inverted --
+                // classic outline-widget convention: minus means "already
+                // open, click to close" -- when expanded; ⊞, "click to expand,"
+                // when collapsed, buffer.FoldMarkerAt has an entry for it, cell
+                // rendered inverted matching ScrollBar's own solid-thumb
+                // convention so it visually pops). Every other row a block's
+                // own EXPANDED span covers gets a guide line ('│', or '└' --
+                // reusing ProjectSidebar's own box-drawing connector glyph
+                // rather than inventing new Unicode -- on the span's own last
+                // row) at that block's column, tracing where it closes; a
+                // COLLAPSED block gets no line at all, only its header ⊞ --
+                // there's nothing to trace while its body is hidden (an
+                // explicit user choice, not an oversight).
+                //
+                // foldGutterHeaderAtColumn_/foldColumnOpenEnds_/foldColumnCursor_
+                // (declared just above the row loop) turn this into a single
+                // linear streaming pass over foldGutterEntries_/
+                // foldGutterLineRangesByColumn_ across the WHOLE row loop --
+                // amortized O(blocks in viewport), not a fresh per-row scan or
+                // binary search -- correct because same-column ranges from a
+                // real syntax tree are always either disjoint or properly
+                // nested (a laminar family), so a plain per-column stack,
+                // advanced as `line` monotonically increases row by row, is
+                // exactly the right structure: an ancestor's own range can
+                // never close before a still-open descendant mapped to the
+                // same (capped) column does.
+                if (foldColumnWidth > 0) {
+                    foldGutterHeaderAtColumn.fill(nullptr);
+                    // <= line, not == line: when topLine_ > 0 (scrolled past
+                    // any blocks whose header sits earlier in the file), those
+                    // earlier entries must still be consumed here to advance
+                    // the cursor past them -- an exact-match-only condition
+                    // left the cursor permanently stuck on the first entry
+                    // whose headerLine falls before topLine_, silently
+                    // suppressing every ⊞/⊟ glyph for the rest of the buffer
+                    // (a real, reported bug: scrolling past ~line 50 in a file
+                    // with earlier foldable blocks stopped drawing them at
+                    // all). Only an exact match actually gets recorded for
+                    // rendering; anything strictly earlier is skipped, not
+                    // rendered, matching mid-scroll-start behavior
+                    // foldColumnCursor's own analogous `<=` loop below already
+                    // got right the first time.
+                    while (foldGutterEntryCursor < foldGutterEntries_.size() &&
+                           foldGutterEntries_[foldGutterEntryCursor].headerLine <= line) {
+                        const auto& entry = foldGutterEntries_[foldGutterEntryCursor];
+                        if (entry.headerLine == line) {
+                            foldGutterHeaderAtColumn[entry.column] = &entry;
+                        }
+                        ++foldGutterEntryCursor;
+                    }
+
+                    for (int col = 0; col < kMaxFoldDepthColumns; ++col) {
+                        auto&       cursor   = foldColumnCursor[col];
+                        auto&       openEnds = foldColumnOpenEnds[col];
+                        const auto& ranges   = foldGutterLineRangesByColumn_[col];
+                        while (cursor < ranges.size() && ranges[cursor].first <= line) {
+                            openEnds.push_back(ranges[cursor].second);
+                            ++cursor;
+                        }
+                        while (!openEnds.empty() && openEnds.back() <= line) {
+                            openEnds.pop_back();
+                        }
+
+                        const int screenCol = static_cast<int>(foldStart) + col;
+                        if (screenCol >= c.size().width) {
+                            continue;
+                        }
+                        char32_t glyph    = U' ';
+                        bool     inverted = false;
+                        if (const FoldGutterEntry* header = foldGutterHeaderAtColumn[col]; header != nullptr) {
+                            inverted = buffer.FoldMarkerAt(header->blockStart).has_value();
+                            glyph    = inverted ? U'⊞' : U'⊟'; // ⊞ collapsed / ⊟ expanded
+                        }
+                        else if (!openEnds.empty()) {
+                            glyph = (openEnds.back() - 1 == line) ? U'└' : U'│'; // closing row / mid-span
+                        }
+                        Cell& cell     = c[{.x = screenCol, .y = row}];
+                        cell.character = text::EncodeCodepointUtf8(glyph);
+                        gutterBrush.ApplyTo(cell);
+                        cell.inverted = inverted;
+                    }
+                }
             } // if (segmentIndex == 0) -- line-level gutter rendering
 
             const std::vector<editor::HighlightSpan>& lineSpans = currentLineSpans;
@@ -1412,8 +1410,8 @@ void BufferView::Paint(Canvas c) {
                         if (glyph.codepoint == U'\t') {
                             const int tabWidth = editor::TabWidth();
                             for (int i = 0; i < tabWidth && col < c.size().width; ++i) {
-                                ftxui::Cell& cell = c[{.x = col, .y = row}];
-                                cell.character    = " ";
+                                Cell& cell     = c[{.x = col, .y = row}];
+                                cell.character = " ";
                                 linkBrush.ApplyTo(cell);
                                 ++col;
                             }
@@ -1424,15 +1422,15 @@ void BufferView::Paint(Canvas c) {
                             for (const char32_t hexGlyph : glyphs) {
                                 if (col >= c.size().width)
                                     break;
-                                ftxui::Cell& cell = c[{.x = col, .y = row}];
-                                cell.character    = text::EncodeCodepointUtf8(hexGlyph);
+                                Cell& cell     = c[{.x = col, .y = row}];
+                                cell.character = text::EncodeCodepointUtf8(hexGlyph);
                                 linkBrush.ApplyTo(cell);
                                 ++col;
                             }
                         }
                         else {
-                            ftxui::Cell& cell = c[{.x = col, .y = row}];
-                            cell.character    = text::EncodeCodepointUtf8(glyph.codepoint);
+                            Cell& cell     = c[{.x = col, .y = row}];
+                            cell.character = text::EncodeCodepointUtf8(glyph.codepoint);
                             linkBrush.ApplyTo(cell);
                             ++col;
                         }
@@ -1467,8 +1465,8 @@ void BufferView::Paint(Canvas c) {
                     // buffer's real tab byte is untouched.
                     const int tabWidth = editor::TabWidth();
                     for (int i = 0; i < tabWidth && col < c.size().width; ++i) {
-                        ftxui::Cell& cell = c[{.x = col, .y = row}];
-                        cell.character    = " ";
+                        Cell& cell     = c[{.x = col, .y = row}];
+                        cell.character = " ";
                         brush.ApplyTo(cell);
                         ++col;
                     }
@@ -1491,15 +1489,15 @@ void BufferView::Paint(Canvas c) {
                         if (col >= c.size().width) {
                             break;
                         }
-                        ftxui::Cell& cell = c[{.x = col, .y = row}];
-                        cell.character    = text::EncodeCodepointUtf8(glyph);
+                        Cell& cell     = c[{.x = col, .y = row}];
+                        cell.character = text::EncodeCodepointUtf8(glyph);
                         binaryBrush.ApplyTo(cell);
                         ++col;
                     }
                 }
                 else {
-                    ftxui::Cell& cell = c[{.x = col, .y = row}];
-                    cell.character    = text::EncodeCodepointUtf8(decoded.codepoint);
+                    Cell& cell     = c[{.x = col, .y = row}];
+                    cell.character = text::EncodeCodepointUtf8(decoded.codepoint);
                     brush.ApplyTo(cell);
                     ++col;
                 }
@@ -1519,8 +1517,8 @@ void BufferView::Paint(Canvas c) {
             // takes for a conceptually similar "there's more here" cue.
             if (offset < currentSegment.endByte && col > 0) {
                 const Brush truncationBrush{.background = theme_.background, .foreground = theme_.truncationIndicatorForeground};
-                ftxui::Cell& cell = c[{.x = col - 1, .y = row}];
-                cell.character    = text::EncodeCodepointUtf8(kTruncationIndicator);
+                Cell&       cell = c[{.x = col - 1, .y = row}];
+                cell.character   = text::EncodeCodepointUtf8(kTruncationIndicator);
                 truncationBrush.ApplyTo(cell);
             }
 
@@ -1528,81 +1526,81 @@ void BufferView::Paint(Canvas c) {
             // this line is hidden" -- belongs on the line's own last visual
             // row, not every wrap continuation row.
             if (segmentIndex + 1 == lineSegments.size()) {
-            // Org-mode fold/unfold follow-up: any marked headline (Collapsed or
-            // ChildrenVisible -- either way, something below this line is
-            // currently hidden) gets a short ellipsis painted right after its
-            // own content, real Org's own visual cue that there's more here
-            // than what's shown. Reuses theme_.lineNumberForeground rather than
-            // a new dedicated Theme field -- deliberately minimal, a distinct
-            // color is an easy follow-up if it turns out to matter in practice.
-            // generic-code-folding follow-up: was `buffer.FoldMarkerAt(lineStart).has_value()`
-            // -- correct for Org, whose marker key always IS the headline
-            // line's own start byte, but not for a code fold, whose marker
-            // key is a foldable block's own startByte (e.g. a function's
-            // "{"), which sits partway through its header line, not at
-            // column 0. Checking hiddenLineRanges_ for an entry starting
-            // right after this line is the one condition both fold sources
-            // agree on (see FoldedLineRanges' own [startLine+1, endLine+1)
-            // convention, shared by org:: and codefold:: alike), so this is
-            // the generic trigger both the ellipsis and the preview below
-            // key off, rather than a marker lookup at all.
-            EnsureHiddenLineRangesCache();
-            for (const auto& [hiddenStart, hiddenEnd] : hiddenLineRanges_) {
-                if (hiddenStart != line + 1 || hiddenEnd == hiddenStart) {
-                    continue;
-                }
-                const Brush foldBrush{.background = theme_.background, .foreground = theme_.lineNumberForeground};
-                for (const char32_t glyph : {U' ', kFoldEllipsis}) {
-                    if (col >= c.size().width)
-                        break;
-                    ftxui::Cell& cell = c[{.x = col, .y = row}];
-                    cell.character    = text::EncodeCodepointUtf8(glyph);
-                    foldBrush.ApplyTo(cell);
-                    ++col;
-                }
+                // Org-mode fold/unfold follow-up: any marked headline (Collapsed or
+                // ChildrenVisible -- either way, something below this line is
+                // currently hidden) gets a short ellipsis painted right after its
+                // own content, real Org's own visual cue that there's more here
+                // than what's shown. Reuses theme_.lineNumberForeground rather than
+                // a new dedicated Theme field -- deliberately minimal, a distinct
+                // color is an easy follow-up if it turns out to matter in practice.
+                // generic-code-folding follow-up: was `buffer.FoldMarkerAt(lineStart).has_value()`
+                // -- correct for Org, whose marker key always IS the headline
+                // line's own start byte, but not for a code fold, whose marker
+                // key is a foldable block's own startByte (e.g. a function's
+                // "{"), which sits partway through its header line, not at
+                // column 0. Checking hiddenLineRanges_ for an entry starting
+                // right after this line is the one condition both fold sources
+                // agree on (see FoldedLineRanges' own [startLine+1, endLine+1)
+                // convention, shared by org:: and codefold:: alike), so this is
+                // the generic trigger both the ellipsis and the preview below
+                // key off, rather than a marker lookup at all.
+                EnsureHiddenLineRangesCache();
+                for (const auto& [hiddenStart, hiddenEnd] : hiddenLineRanges_) {
+                    if (hiddenStart != line + 1 || hiddenEnd == hiddenStart) {
+                        continue;
+                    }
+                    const Brush foldBrush{.background = theme_.background, .foreground = theme_.lineNumberForeground};
+                    for (const char32_t glyph : {U' ', kFoldEllipsis}) {
+                        if (col >= c.size().width)
+                            break;
+                        Cell& cell     = c[{.x = col, .y = row}];
+                        cell.character = text::EncodeCodepointUtf8(glyph);
+                        foldBrush.ApplyTo(cell);
+                        ++col;
+                    }
 
-                // A short, dim preview of the folded region's own last line
-                // (e.g. a closing "}" or "};") right after the ellipsis, so
-                // collapsing a block doesn't fully erase what its closing
-                // line looked like -- every folded line is hidden from
-                // rendering by definition, so this preview is the only way
-                // that line's content ever reaches the screen while the
-                // fold is closed. Leading whitespace is skipped (this is a
-                // preview snippet, not a faithful column-accurate render,
-                // so the closing line's own indentation would just waste
-                // columns).
-                const std::size_t lastHiddenLine = hiddenEnd - 1;
-                std::size_t       previewOffset  = content.LineToByteOffset(lastHiddenLine);
-                const std::size_t previewEnd     = (lastHiddenLine + 1 < totalLines)
-                                                       ? content.LineToByteOffset(lastHiddenLine + 1) - 1
-                                                       : content.ByteLength();
-                while (previewOffset < previewEnd) {
-                    const auto decoded = content.CodepointAt(previewOffset);
-                    if (decoded.codepoint != U' ' && decoded.codepoint != U'\t') {
+                    // A short, dim preview of the folded region's own last line
+                    // (e.g. a closing "}" or "};") right after the ellipsis, so
+                    // collapsing a block doesn't fully erase what its closing
+                    // line looked like -- every folded line is hidden from
+                    // rendering by definition, so this preview is the only way
+                    // that line's content ever reaches the screen while the
+                    // fold is closed. Leading whitespace is skipped (this is a
+                    // preview snippet, not a faithful column-accurate render,
+                    // so the closing line's own indentation would just waste
+                    // columns).
+                    const std::size_t lastHiddenLine = hiddenEnd - 1;
+                    std::size_t       previewOffset  = content.LineToByteOffset(lastHiddenLine);
+                    const std::size_t previewEnd     = (lastHiddenLine + 1 < totalLines)
+                                                           ? content.LineToByteOffset(lastHiddenLine + 1) - 1
+                                                           : content.ByteLength();
+                    while (previewOffset < previewEnd) {
+                        const auto decoded = content.CodepointAt(previewOffset);
+                        if (decoded.codepoint != U' ' && decoded.codepoint != U'\t') {
+                            break;
+                        }
+                        previewOffset += decoded.byteLength;
+                    }
+                    if (previewOffset >= previewEnd || col >= c.size().width) {
                         break;
                     }
-                    previewOffset += decoded.byteLength;
-                }
-                if (previewOffset >= previewEnd || col >= c.size().width) {
+                    const Brush previewBrush{.background = theme_.background, .foreground = theme_.lineNumberForeground};
+                    {
+                        Cell& spaceCell     = c[{.x = col, .y = row}];
+                        spaceCell.character = " ";
+                        previewBrush.ApplyTo(spaceCell);
+                        ++col;
+                    }
+                    while (previewOffset < previewEnd && col < c.size().width) {
+                        const auto decoded = content.CodepointAt(previewOffset);
+                        Cell&      cell    = c[{.x = col, .y = row}];
+                        cell.character     = text::EncodeCodepointUtf8(decoded.codepoint);
+                        previewBrush.ApplyTo(cell);
+                        ++col;
+                        previewOffset += decoded.byteLength;
+                    }
                     break;
                 }
-                const Brush previewBrush{.background = theme_.background, .foreground = theme_.lineNumberForeground};
-                {
-                    ftxui::Cell& spaceCell = c[{.x = col, .y = row}];
-                    spaceCell.character    = " ";
-                    previewBrush.ApplyTo(spaceCell);
-                    ++col;
-                }
-                while (previewOffset < previewEnd && col < c.size().width) {
-                    const auto   decoded = content.CodepointAt(previewOffset);
-                    ftxui::Cell& cell    = c[{.x = col, .y = row}];
-                    cell.character       = text::EncodeCodepointUtf8(decoded.codepoint);
-                    previewBrush.ApplyTo(cell);
-                    ++col;
-                    previewOffset += decoded.byteLength;
-                }
-                break;
-            }
             } // if (segmentIndex + 1 == lineSegments.size()) -- fold ellipsis/preview
 
             // hover/completion follow-up: ghost-text completion suggestion,
@@ -1631,10 +1629,10 @@ void BufferView::Paint(Canvas c) {
                 if (const std::optional<int> pointColumn = VisualColumn(content, currentSegment.startByte, point, maxColumns, lineLinks);
                     pointColumn && *pointColumn >= static_cast<int>(leftColumn_)) {
                     const std::string suffix = GhostSuffixFor(ghostCompletion_->items[ghostCompletion_->selectedIndex]);
-                    const Brush ghostBrush{.background = theme_.background, .foreground = theme_.ghostTextForeground, .italic = true};
+                    const Brush       ghostBrush{.background = theme_.background, .foreground = theme_.ghostTextForeground, .italic = true};
                     const text::Rope  suffixRope(suffix);
                     std::size_t       suffixOffset = 0;
-                    int               ghostCol      = static_cast<int>(gutterWidth) + *pointColumn - static_cast<int>(leftColumn_);
+                    int               ghostCol     = static_cast<int>(gutterWidth) + *pointColumn - static_cast<int>(leftColumn_);
                     while (suffixOffset < suffixRope.ByteLength() && ghostCol < c.size().width) {
                         const auto decoded = suffixRope.CodepointAt(suffixOffset);
                         // Never send a raw control byte to the terminal --
@@ -1647,8 +1645,8 @@ void BufferView::Paint(Canvas c) {
                         if (decoded.codepoint < 0x20 || decoded.codepoint == 0x7F) {
                             break;
                         }
-                        ftxui::Cell& cell = c[{.x = ghostCol, .y = row}];
-                        cell.character    = text::EncodeCodepointUtf8(decoded.codepoint);
+                        Cell& cell     = c[{.x = ghostCol, .y = row}];
+                        cell.character = text::EncodeCodepointUtf8(decoded.codepoint);
                         ghostBrush.ApplyTo(cell);
                         ++ghostCol;
                         suffixOffset += decoded.byteLength;
@@ -1749,8 +1747,8 @@ std::optional<Point> BufferView::CursorPosition() const {
     std::size_t rowWithinLine = 0;
     std::size_t segmentStart  = lineStart;
     if (EffectiveWrapLines() && sizeIsKnown) {
-        const int wrapWidth = std::max(1, sizeNow.width - static_cast<int>(gutterWidth));
-        const std::vector<WrapSegment> segments = ComputeWrapSegments(content, lineStart, lineEnd, wrapWidth, lineLinks);
+        const int                      wrapWidth = std::max(1, sizeNow.width - static_cast<int>(gutterWidth));
+        const std::vector<WrapSegment> segments  = ComputeWrapSegments(content, lineStart, lineEnd, wrapWidth, lineLinks);
         for (std::size_t i = 0; i < segments.size(); ++i) {
             const bool isLast = (i + 1 == segments.size());
             if (point >= segments[i].startByte && (point < segments[i].endByte || (isLast && point == segments[i].endByte))) {
@@ -1774,7 +1772,7 @@ std::optional<Point> BufferView::CursorPosition() const {
     // leftColumn_ is always 0 once EffectiveWrapLines() is true (see
     // ScrollToShowPointHorizontally), so this is a no-op adjustment then.
     const int maxColumns = sizeIsKnown ? sizeNow.width - static_cast<int>(gutterWidth) + static_cast<int>(leftColumn_)
-                                        : std::numeric_limits<int>::max();
+                                       : std::numeric_limits<int>::max();
 
     const std::optional<int> visualCol = VisualColumn(content, segmentStart, point, maxColumns, lineLinks);
     if (!visualCol || *visualCol < static_cast<int>(leftColumn_)) {
@@ -1792,14 +1790,14 @@ bool BufferView::Focusable() const {
     return true; // was FocusPolicy::Strong
 }
 
-bool BufferView::OnEvent(ftxui::Event event) {
+bool BufferView::OnEvent(const Event& event) {
     if (event.is_mouse()) {
         return OnMouseEvent(event);
     }
     return OnKeyEvent(event);
 }
 
-bool BufferView::OnKeyEvent(ftxui::Event event) {
+bool BufferView::OnKeyEvent(const Event& event) {
     const auto chord = TranslateKey(event);
     if (!chord) {
         return false;
@@ -1987,9 +1985,9 @@ bool BufferView::OnKeyEvent(ftxui::Event event) {
 
 bool BufferView::RunCommandAndHandleOutcome(editor::CommandContext& context, const std::function<bool()>& invoke,
                                             const editor::KeyChord* triggeringChord) {
-    const std::size_t generationBefore     = activeBuffer_.Get().ContentGeneration();
-    const std::string statusMessageBefore  = statusMessage_; // status-message-lifecycle: see the "clear if unchanged" check below
-    bool               ran                 = false;
+    const std::size_t generationBefore    = activeBuffer_.Get().ContentGeneration();
+    const std::string statusMessageBefore = statusMessage_; // status-message-lifecycle: see the "clear if unchanged" check below
+    bool              ran                 = false;
     try {
         ran = invoke();
     }
@@ -2016,16 +2014,17 @@ bool BufferView::RunCommandAndHandleOutcome(editor::CommandContext& context, con
     }
 
     if (context.quit) {
-        // Active() is nullptr outside a live ScreenInteractive::Loop() --
-        // every unit test, and any other headless use of BufferView. It is
-        // never null during real, running-editor usage (main.cpp's own
-        // screen.Loop(head) is what drives every key_press that could ever
-        // set context.quit in the first place), but skipping the null check
-        // entirely crashed the whole process the instant a test exercised
-        // `quit` -- confirmed via a real SIGSEGV while porting this file's
-        // own test suite off TermOx, not assumed.
-        if (ftxui::ScreenInteractive* screen = ftxui::ScreenInteractive::Active()) {
-            screen->Exit();
+        // eventLoop_ is nullptr outside a real, running-editor SetEventLoop
+        // call -- every unit test, and any other headless use of
+        // BufferView. It is never null during real, running-editor usage
+        // (main.cpp is what constructs the EventLoop and wires it in), but
+        // skipping the null check entirely crashed the whole process the
+        // instant a test exercised `quit` under the FTXUI-era equivalent of
+        // this same check (ftxui::ScreenInteractive::Active(), confirmed
+        // via a real SIGSEGV then) -- kept just as strict here, not
+        // reintroduced as a hypothetical risk.
+        if (eventLoop_) {
+            eventLoop_->Exit();
         }
         return ran;
     }
@@ -2077,47 +2076,6 @@ bool BufferView::RunCommandAndHandleOutcome(editor::CommandContext& context, con
     return ran;
 }
 
-void BufferView::OnAnimation(ftxui::animation::Params& params) {
-    (void)params; // only used to know a frame elapsed -- both deadlines below are wall-clock, not duration-accumulated
-    bool needsAnotherFrame = false;
-
-    if (completionDebounceDeadline_) {
-        if (std::chrono::steady_clock::now() >= *completionDebounceDeadline_) {
-            completionDebounceDeadline_.reset();
-            RequestCompletionAtPoint();
-        }
-        else {
-            needsAnotherFrame = true;
-        }
-    }
-
-    // status-message-lifecycle follow-up: idle-timeout half of
-    // EnsureStatusMessageFreshness's own two-part rule (the other half --
-    // clear immediately on the next real action -- lives in
-    // RunCommandAndHandleOutcome). Guarded by statusMessageSnapshot_ still
-    // matching statusMessage_: if something else wrote a new message since
-    // this deadline was armed, EnsureStatusMessageFreshness's own Paint()-
-    // time diff will have already re-armed a fresh deadline for it, so
-    // this stale one (if it somehow still fired first) must not clear a
-    // message it didn't set.
-    if (statusMessageChangedAt_) {
-        if (std::chrono::steady_clock::now() - *statusMessageChangedAt_ >= kStatusMessageTimeout) {
-            if (statusMessage_ == statusMessageSnapshot_) {
-                statusMessage_.clear();
-                statusMessageSnapshot_.clear();
-            }
-            statusMessageChangedAt_.reset();
-        }
-        else {
-            needsAnotherFrame = true;
-        }
-    }
-
-    if (needsAnotherFrame) {
-        ftxui::animation::RequestAnimationFrame();
-    }
-}
-
 void BufferView::EnsureStatusMessageFreshness() {
     // While any interactive session is active (isearch, a prompt like
     // "Project search: ", query-replace, ...), statusMessage_ is that
@@ -2148,7 +2106,31 @@ void BufferView::EnsureStatusMessageFreshness() {
         return;
     }
     statusMessageChangedAt_ = std::chrono::steady_clock::now();
-    ftxui::animation::RequestAnimationFrame(); // guarantees OnAnimation gets called again even with no further input, so idle time actually elapses
+
+    // FTXUI -> Notcurses migration: was ftxui::animation::RequestAnimationFrame(),
+    // which guaranteed OnAnimation got called again purely so idle time
+    // could actually elapse even with no further input; DeadlineTimer::Arm
+    // is the direct replacement -- a real background thread wakes exactly
+    // once, kStatusMessageTimeout from now, and Posts the clear back onto
+    // the loop thread, no polling needed. Guarded by statusMessageSnapshot_
+    // still matching statusMessage_ at fire time: if something else wrote a
+    // new message before this deadline elapsed, this fire must not clear
+    // text it didn't set (a fresh deadline for that newer text was armed
+    // by this same method's own next call, which re-armed
+    // statusMessageTimer_, superseding this one outright -- Arm() cancels
+    // any not-yet-fired previous callback the same way OnAnimation's own
+    // "only the latest deadline matters" comment used to describe, just via
+    // real cancellation now instead of a stale-check that never actually
+    // needed to run).
+    if (eventLoop_) {
+        statusMessageTimer_.Arm(*eventLoop_, kStatusMessageTimeout, [this] {
+            if (statusMessage_ == statusMessageSnapshot_) {
+                statusMessage_.clear();
+                statusMessageSnapshot_.clear();
+            }
+            statusMessageChangedAt_.reset();
+        });
+    }
 }
 
 void BufferView::RequestCompletionAtPoint() {
@@ -2192,7 +2174,7 @@ bool BufferView::ShouldSuppressAutoCompletion() const {
     if (highlightCacheBuffer_ == &buffer) {
         const std::size_t                        line        = content.ByteOffsetToLine(point);
         const std::size_t                        lineStart   = content.LineToByteOffset(line);
-        const std::size_t lineEnd = (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
+        const std::size_t                        lineEnd     = (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
         const std::vector<editor::HighlightSpan> lineSpans   = SpansForLine(highlightCacheSpans_, lineStart, lineEnd);
         const std::size_t                        priorOffset = content.PreviousCodepointBoundary(point);
         switch (ClassAtOffset(lineSpans, priorOffset)) {
@@ -2237,8 +2219,21 @@ void BufferView::MaybeScheduleAutoCompletion(const editor::KeyChord& chord, std:
     if (ShouldSuppressAutoCompletion()) {
         return;
     }
-    completionDebounceDeadline_ = std::chrono::steady_clock::now() + std::chrono::milliseconds(editor::lsp::LspCompletionDebounceMs());
-    ftxui::animation::RequestAnimationFrame();
+    const std::chrono::milliseconds delay(editor::lsp::LspCompletionDebounceMs());
+    completionDebounceDeadline_ = std::chrono::steady_clock::now() + delay;
+    // FTXUI -> Notcurses migration: was ftxui::animation::RequestAnimationFrame()
+    // (OnAnimation polled completionDebounceDeadline_ every frame until it
+    // elapsed); DeadlineTimer::Arm fires exactly once, for real, delay from
+    // now -- re-typing before it fires re-arms it via this same call site on
+    // the very next qualifying keystroke, cancelling the stale one outright,
+    // which is what makes this a debounce rather than a fixed-interval
+    // repeat (same behavior the old overwritten-deadline approach had).
+    if (eventLoop_) {
+        completionDebounceTimer_.Arm(*eventLoop_, delay, [this] {
+            completionDebounceDeadline_.reset();
+            RequestCompletionAtPoint();
+        });
+    }
 }
 
 void BufferView::AcceptGhostCompletion() {
@@ -2257,8 +2252,8 @@ void BufferView::CycleGhostCompletion(int direction) {
     if (!ghostCompletion_ || ghostCompletion_->items.empty()) {
         return;
     }
-    const std::size_t count   = ghostCompletion_->items.size();
-    const std::size_t current = ghostCompletion_->selectedIndex;
+    const std::size_t count         = ghostCompletion_->items.size();
+    const std::size_t current       = ghostCompletion_->selectedIndex;
     ghostCompletion_->selectedIndex = (direction > 0) ? (current + 1) % count : (current + count - 1) % count;
 }
 
@@ -2492,7 +2487,7 @@ void BufferView::RequestDefinitionAtPoint() {
                 return;
             }
             definitionSelection_ = 0;
-            inputMode_            = InputMode::LspGotoDefinitionSelect;
+            inputMode_           = InputMode::LspGotoDefinitionSelect;
             RefreshDefinitionSelectStatus();
         });
 }
@@ -2505,7 +2500,7 @@ void BufferView::RefreshDefinitionSelectStatus() {
         }
         const bool selected = (i == definitionSelection_);
         status += (selected ? "[" : "") + std::to_string(i + 1) + ") " + pendingDefinitions_[i].path.filename().string() +
-                   ":" + std::to_string(pendingDefinitions_[i].position.line + 1) + (selected ? "]" : "");
+                  ":" + std::to_string(pendingDefinitions_[i].position.line + 1) + (selected ? "]" : "");
     }
     statusMessage_ = status;
 }
@@ -2783,7 +2778,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             return;
         case editor::InteractiveRequest::LspShowLog: {
             const std::string logName = std::string(editor::lsp::kLspLogBufferName);
-            text::Buffer*      log     = bufferList_.Find(logName);
+            text::Buffer*     log     = bufferList_.Find(logName);
             if (!log) {
                 log = &bufferList_.CreateBuffer(logName);
                 log->SetReadOnly(true);
@@ -3579,12 +3574,12 @@ std::size_t BufferView::ByteOffsetForPoint(Point at) const {
     // now a row-aware walk that consumes RowsForLine(line) rows per line
     // instead, additionally reporting which segment of the landed-on line
     // the target row corresponds to.
-    const text::Buffer& buffer      = activeBuffer_.Get();
-    const text::Rope&   content     = buffer.Content();
-    const std::size_t   totalLines  = content.LineCount();
+    const text::Buffer& buffer     = activeBuffer_.Get();
+    const text::Rope&   content    = buffer.Content();
+    const std::size_t   totalLines = content.LineCount();
 
-    std::size_t targetRow    = static_cast<std::size_t>(std::max(at.y, 0));
-    std::size_t line         = topLine_;
+    std::size_t targetRow     = static_cast<std::size_t>(std::max(at.y, 0));
+    std::size_t line          = topLine_;
     std::size_t segmentInLine = 0;
     while (line < totalLines) {
         const std::size_t rows = RowsForLine(line);
@@ -3634,11 +3629,11 @@ std::size_t BufferView::ByteOffsetForPoint(Point at) const {
     std::size_t segStart = lineStart;
     std::size_t segEnd   = lineEnd;
     if (EffectiveWrapLines()) {
-        const int wrapWidth = std::max(1, size().width - static_cast<int>(gutterWidth));
-        const std::vector<WrapSegment> segments = ComputeWrapSegments(content, lineStart, lineEnd, wrapWidth, lineLinks);
-        const std::size_t clampedSegment         = std::min(segmentInLine, segments.size() - 1);
-        segStart                                 = segments[clampedSegment].startByte;
-        segEnd                                   = segments[clampedSegment].endByte;
+        const int                      wrapWidth      = std::max(1, size().width - static_cast<int>(gutterWidth));
+        const std::vector<WrapSegment> segments       = ComputeWrapSegments(content, lineStart, lineEnd, wrapWidth, lineLinks);
+        const std::size_t              clampedSegment = std::min(segmentInLine, segments.size() - 1);
+        segStart                                      = segments[clampedSegment].startByte;
+        segEnd                                        = segments[clampedSegment].endByte;
     }
 
     return ByteOffsetForColumnInLine(content, segStart, segEnd, column, editor::TabWidth(), lineLinks);
@@ -3664,8 +3659,8 @@ std::size_t BufferView::GutterWidth() const {
     return kStatusWidth + kDiagnosticWidth + kLineNumberGap + std::to_string(totalLines).size() + kLineNumberGap + foldColumn;
 }
 
-bool BufferView::OnMouseEvent(ftxui::Event event) {
-    const ftxui::Mouse& rawMouse = event.mouse();
+bool BufferView::OnMouseEvent(const Event& event) {
+    const MouseEvent rawMouse = event.mouse();
     LogMouseEvent(MouseEventTag(rawMouse), rawMouse);
 
     // A growing sidebar-resize drag (round-2 sidebar follow-up) can deliver
@@ -3674,11 +3669,11 @@ bool BufferView::OnMouseEvent(ftxui::Event event) {
     // leaf widget receives every mouse event in FTXUI; see Widget.h's own
     // header comment), taking priority over BufferView's own handling.
     if (projectSidebar_ != nullptr && projectSidebar_->IsResizing()) {
-        if (rawMouse.motion == ftxui::Mouse::Moved) {
-            projectSidebar_->UpdateResize(rawMouse.x);
+        if (rawMouse.motion == MouseEvent::Motion::Moved) {
+            projectSidebar_->UpdateResize(rawMouse.at.x);
             return true;
         }
-        if (rawMouse.motion == ftxui::Mouse::Released) {
+        if (rawMouse.motion == MouseEvent::Motion::Released) {
             projectSidebar_->EndResize();
             return true;
         }
@@ -3692,9 +3687,9 @@ bool BufferView::OnMouseEvent(ftxui::Event event) {
     // Wheel scrolls the viewport without moving point, regardless of
     // InputMode -- unlike click/drag below, which only make sense in
     // Normal mode.
-    if (mouse->button == ftxui::Mouse::WheelUp || mouse->button == ftxui::Mouse::WheelDown) {
+    if (mouse->button == MouseEvent::Button::WheelUp || mouse->button == MouseEvent::Button::WheelDown) {
         constexpr std::size_t kWheelScrollLines = 3;
-        if (mouse->button == ftxui::Mouse::WheelUp) {
+        if (mouse->button == MouseEvent::Button::WheelUp) {
             SetTopLine((topLine_ > kWheelScrollLines) ? topLine_ - kWheelScrollLines : 0);
         }
         else {
@@ -3703,11 +3698,11 @@ bool BufferView::OnMouseEvent(ftxui::Event event) {
         return true;
     }
 
-    if (inputMode_ != InputMode::Normal || mouse->button != ftxui::Mouse::Left) {
+    if (inputMode_ != InputMode::Normal || mouse->button != MouseEvent::Button::Left) {
         return false;
     }
 
-    if (mouse->motion == ftxui::Mouse::Pressed) {
+    if (mouse->motion == MouseEvent::Motion::Pressed) {
         // Window-splitting follow-up: harmless/no-op today (the sole
         // focusable widget already), necessary once multiple BufferViews
         // exist side by side -- a click into a pane is how focus moves
@@ -3766,7 +3761,7 @@ bool BufferView::OnMouseEvent(ftxui::Event event) {
         }
         return true;
     }
-    if (mouse->motion == ftxui::Mouse::Moved) {
+    if (mouse->motion == MouseEvent::Motion::Moved) {
         text::Buffer& buffer = activeBuffer_.Get();
         if (!buffer.HasMark()) {
             buffer.SetMark(dragAnchor_);
@@ -3778,7 +3773,7 @@ bool BufferView::OnMouseEvent(ftxui::Event event) {
     return false; // Released -- no behavior beyond the resize handoff above
 }
 
-void BufferView::LogMouseEvent(std::string_view event, const ftxui::Mouse& mouse) const {
+void BufferView::LogMouseEvent(std::string_view event, const MouseEvent& mouse) const {
     if (!debugMouseLogPath_) {
         return;
     }
@@ -3794,7 +3789,7 @@ void BufferView::LogMouseEvent(std::string_view event, const ftxui::Mouse& mouse
     // doesn't translate mouse coordinates before delivery (see Widget.h's
     // own header comment), and this logs the raw event as received, before
     // LocalMouseEvent's own translation.
-    log << event << " at=(" << mouse.x << ',' << mouse.y << ')' << " button=" << static_cast<int>(mouse.button)
+    log << event << " at=(" << mouse.at.x << ',' << mouse.at.y << ')' << " button=" << static_cast<int>(mouse.button)
         << " inputMode=" << static_cast<int>(inputMode_) << " point=" << buffer.Point()
         << " mark=" << (buffer.HasMark() ? static_cast<long long>(buffer.Mark()) : -1LL) << " topLine=" << topLine_
         << " size=" << size().width << 'x' << size().height << '\n';
@@ -3804,8 +3799,8 @@ void BufferView::HandleConfirmQuitKey(const editor::KeyChord& chord) {
     if (chord.Codepoint == U'y' || chord.Codepoint == U'Y') {
         // See the identical null check in OnKeyEvent's own context.quit
         // branch for why this is required, not defensive.
-        if (ftxui::ScreenInteractive* screen = ftxui::ScreenInteractive::Active()) {
-            screen->Exit();
+        if (eventLoop_) {
+            eventLoop_->Exit();
         }
         return;
     }
@@ -4475,6 +4470,10 @@ void BufferView::SetProjectSidebar(ProjectSidebar* sidebar) {
 
 void BufferView::SetLspManager(editor::lsp::LspManager* lspManager) {
     lspManager_ = lspManager;
+}
+
+void BufferView::SetEventLoop(EventLoop* eventLoop) {
+    eventLoop_ = eventLoop;
 }
 
 bool BufferView::InSelection(std::size_t byteOffset) const {

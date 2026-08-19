@@ -5,8 +5,6 @@
 #include <mutex>
 #include <utility>
 
-#include <ftxui/dom/elements.hpp>
-
 #include "Editor/ModeOverrides.h"
 #include "Editor/ScratchPad.h"
 
@@ -18,11 +16,22 @@ namespace {
     // this moved here, verbatim, from BufferView.
     constexpr std::chrono::milliseconds kScratchAutoSaveInterval{5000};
 
-    // A per-frame flex decorator, matching the exact lambda shape main.cpp's
-    // own composition root already uses for the same purpose.
-    ftxui::Element ApplyFlex(ftxui::Element element) {
-        return ftxui::flex(std::move(element));
-    }
+    // The one-column vertical divider between a SplitRight's two children --
+    // FTXUI -> Notcurses migration: was Renderer([] { return separator(); }),
+    // FTXUI's own default single-line box-drawing separator. No Theme
+    // reference needed -- the old separator() had no theme-driven color
+    // either, just the terminal's default foreground/background, preserved
+    // here the same way (Cell's own default-constructed Color::Default
+    // fields, never touched).
+    class VerticalDivider : public Widget {
+      public:
+        void Paint(Canvas c) override {
+            for (int y = 0; y < c.size().height; ++y) {
+                Cell& cell     = c[{.x = 0, .y = y}];
+                cell.character = "│"; // BOX DRAWINGS LIGHT VERTICAL
+            }
+        }
+    };
 
 } // namespace
 
@@ -38,7 +47,23 @@ Pane::Pane(text::Buffer& buffer, text::KillRing& killRing, editor::RegisterTable
                                                                 modeLine_(std::make_shared<ModeLine>(activeBuffer_, mode_, theme)),
                                                                 scrollBar_(std::make_shared<ScrollBar>(theme.scrollBar)),
                                                                 scrollUp_(std::make_shared<ScrollArrowButton>(U'▲', theme.scrollBar, theme.scrollBarDisabled)),
-                                                                scrollDown_(std::make_shared<ScrollArrowButton>(U'▼', theme.scrollBar, theme.scrollBarDisabled)) {
+                                                                scrollDown_(std::make_shared<ScrollArrowButton>(U'▼', theme.scrollBar, theme.scrollBarDisabled)),
+                                                                scrollColumn_(Axis::Vertical,
+                                                                              {
+                                                                                  {scrollUp_.get(), SizeSpec::Fixed(1)},
+                                                                                  {scrollBar_.get(), SizeSpec::Flex()},
+                                                                                  {scrollDown_.get(), SizeSpec::Fixed(1)},
+                                                                              }),
+                                                                row_(Axis::Horizontal,
+                                                                     {
+                                                                         {bufferView_.get(), SizeSpec::Flex()},
+                                                                         {&scrollColumn_, SizeSpec::Fixed(1)},
+                                                                     }),
+                                                                component_(Axis::Vertical,
+                                                                           {
+                                                                               {&row_, SizeSpec::Flex()},
+                                                                               {modeLine_.get(), SizeSpec::Fixed(1)},
+                                                                           }) {
     bufferView_->SetScrollBar(scrollBar_.get());
     bufferView_->SetScrollArrows(scrollUp_.get(), scrollDown_.get());
     bufferView_->SetProjectSidebar(projectSidebar);
@@ -59,26 +84,6 @@ Pane::Pane(text::Buffer& buffer, text::KillRing& killRing, editor::RegisterTable
         bufferView_->SetTopLine(top > 0 ? top - 1 : 0);
     });
     scrollDown_->SetOnClick([this] { bufferView_->SetTopLine(bufferView_->TopLine() + 1); });
-
-    using namespace ftxui; // NOLINT -- Component (the type) is shadowed by Pane::Component() below; every
-                           // local variable of that type is spelled out as ftxui::Component explicitly instead.
-
-    ftxui::Component scrollColumn = Container::Vertical({
-                                        scrollUp_ | size(HEIGHT, EQUAL, 1),
-                                        scrollBar_ | ApplyFlex,
-                                        scrollDown_ | size(HEIGHT, EQUAL, 1),
-                                    }) |
-                                    size(WIDTH, EQUAL, 1);
-
-    ftxui::Component row = Container::Horizontal({
-        bufferView_ | ApplyFlex,
-        scrollColumn,
-    });
-
-    component_ = Container::Vertical({
-        row | ApplyFlex,
-        modeLine_ | size(HEIGHT, EQUAL, 1),
-    });
 }
 
 ActiveBuffer& Pane::ActiveBufferRef() {
@@ -93,8 +98,14 @@ const editor::Mode& Pane::ModeRef() const {
     return mode_;
 }
 
-ftxui::Component Pane::Component() const {
+Widget& Pane::Component() {
     return component_;
+}
+
+void Pane::SetEventLoop(EventLoop* eventLoop) {
+    bufferView_->SetEventLoop(eventLoop);
+    scrollUp_->SetEventLoop(eventLoop);
+    scrollDown_->SetEventLoop(eventLoop);
 }
 
 namespace {
@@ -239,7 +250,6 @@ WindowManager::WindowManager(text::Buffer& initialBuffer, text::KillRing& killRi
     root_->kind = WindowNode::Kind::Leaf;
     root_->pane = MakePane(initialBuffer, std::move(initialMode));
 
-    rootComponent_ = ftxui::Container::Vertical({});
     RebuildComponentTree();
 
     // Deliberately NOT calling root_->pane->Buffer().TakeFocus() here --
@@ -251,11 +261,13 @@ WindowManager::WindowManager(text::Buffer& initialBuffer, text::KillRing& killRi
 }
 
 std::unique_ptr<Pane> WindowManager::MakePane(text::Buffer& buffer, editor::Mode mode) {
-    return std::make_unique<Pane>(
+    auto pane = std::make_unique<Pane>(
         buffer, killRing_, registers_, bufferList_, registry_, janetKeymap_, globalKeymap_, std::move(mode),
         statusMessage_, theme_, projectSidebar_, lspManager_,
         [this](editor::InteractiveRequest request) { HandleWindowRequest(request); },
         [this](text::Buffer& closedBuffer) { HandleBufferClosed(closedBuffer); });
+    pane->SetEventLoop(eventLoop_);
+    return pane;
 }
 
 void WindowManager::SetProjectSidebar(ProjectSidebar* sidebar) {
@@ -272,7 +284,14 @@ void WindowManager::SetLspManager(editor::lsp::LspManager* lspManager) {
     }
 }
 
-ftxui::Component WindowManager::RootComponent() const {
+void WindowManager::SetEventLoop(EventLoop* eventLoop) {
+    eventLoop_ = eventLoop;
+    for (Pane* pane : Leaves()) {
+        pane->SetEventLoop(eventLoop);
+    }
+}
+
+Widget& WindowManager::RootComponent() {
     return rootComponent_;
 }
 
@@ -311,8 +330,8 @@ void WindowManager::RequestCloseBuffer(text::Buffer& buffer) {
     }
 }
 
-void WindowManager::StartAutoSaveTimer(ftxui::ScreenInteractive& screen) {
-    autoSaveThread_ = std::jthread([this, &screen](std::stop_token stopToken) {
+void WindowManager::StartAutoSaveTimer(EventLoop& eventLoop) {
+    autoSaveThread_ = std::jthread([this, &eventLoop](std::stop_token stopToken) {
         std::mutex                  mutex;
         std::condition_variable_any cv;
         while (!stopToken.stop_requested()) {
@@ -320,7 +339,7 @@ void WindowManager::StartAutoSaveTimer(ftxui::ScreenInteractive& screen) {
             if (cv.wait_for(lock, stopToken, kScratchAutoSaveInterval, [&stopToken] { return stopToken.stop_requested(); })) {
                 return;
             }
-            screen.Post([this] { editor::AutoSaveScratchBuffers(bufferList_); });
+            eventLoop.Post([this] { editor::AutoSaveScratchBuffers(bufferList_); });
         }
     });
 }
@@ -501,50 +520,51 @@ void WindowManager::OtherWindow() {
 }
 
 void WindowManager::RebuildComponentTree() {
-    rootComponent_->DetachAllChildren();
-    // ApplyFlex here, not inside BuildComponent's own Leaf case, is what
-    // makes a single, unsplit pane actually stretch to fill the available
-    // height rather than taking its own natural minimum size -- a real bug
-    // caught by manual pty testing (the buffer area rendered squished to
-    // just its content's own line count, with the mode line immediately
-    // below it instead of at the bottom of the screen): rootComponent_ is a
-    // Vertical container, and an unflexed child of a Vertical container
-    // gets exactly its own requested minimum height, not a share of
-    // whatever's available, the same reasoning main.cpp's own composition
-    // root already documents for why bufferRow's own children each need an
-    // explicit size()/flex() decorator at their embedding point. The
-    // SplitBelow/SplitRight cases in BuildComponent already apply this to
-    // their own first/second children directly; this is the equivalent for
-    // the one remaining case -- the whole tree embedded, once, into
-    // rootComponent_ itself.
-    rootComponent_->Add(BuildComponent(root_.get()) | ApplyFlex);
+    // FTXUI -> Notcurses migration: was DetachAllChildren()+Add(... |
+    // ApplyFlex) against a Vertical Container -- Layout.h's own Container
+    // has no separate "flex the one child to fill the container" concept
+    // to apply after the fact; SizeSpec::Flex() on the child itself (below)
+    // is what does that directly, the same way BuildComponent's own
+    // Split cases already give each of their two children a Flex weight.
+    rootComponent_.SetChildren({
+        {&BuildComponent(root_.get()), SizeSpec::Flex()},
+    });
 }
 
-ftxui::Component WindowManager::BuildComponent(const WindowNode* node) const {
-    using namespace ftxui;
-
+Widget& WindowManager::BuildComponent(WindowNode* node) const {
     if (node->kind == WindowNode::Kind::Leaf) {
         return node->pane->Component();
     }
 
-    Component first  = BuildComponent(node->first.get());
-    Component second = BuildComponent(node->second.get());
+    Widget& first  = BuildComponent(node->first.get());
+    Widget& second = BuildComponent(node->second.get());
 
     if (node->kind == WindowNode::Kind::SplitRight) {
-        return Container::Horizontal({
-            first | ApplyFlex,
-            Renderer([] { return separator(); }),
-            second | ApplyFlex,
+        if (!node->divider) {
+            node->divider = std::make_unique<VerticalDivider>();
+        }
+        if (!node->container) {
+            node->container = std::make_unique<Container>(Axis::Horizontal, std::vector<Container::Child>{});
+        }
+        node->container->SetChildren({
+            {&first, SizeSpec::Flex()},
+            {node->divider.get(), SizeSpec::Fixed(1)},
+            {&second, SizeSpec::Flex()},
         });
+        return *node->container;
     }
 
     // SplitBelow -- the top pane's own ModeLine row already provides the
     // visual boundary, no separate divider needed (see this file's own
     // header comment).
-    return Container::Vertical({
-        first | ApplyFlex,
-        second | ApplyFlex,
+    if (!node->container) {
+        node->container = std::make_unique<Container>(Axis::Vertical, std::vector<Container::Child>{});
+    }
+    node->container->SetChildren({
+        {&first, SizeSpec::Flex()},
+        {&second, SizeSpec::Flex()},
     });
+    return *node->container;
 }
 
 Pane* WindowManager::FocusedPane() {

@@ -7,11 +7,11 @@
 #ifndef NED_UI_SCROLLARROWBUTTON_H
 #define NED_UI_SCROLLARROWBUTTON_H
 
-#include <chrono>
+#include <atomic>
 #include <functional>
+#include <thread>
 
-#include <ftxui/component/animation.hpp>
-
+#include "EventLoop.h"
 #include "Theme.h"
 #include "Widget.h"
 
@@ -28,24 +28,33 @@ class ScrollArrowButton : public Widget {
     // on screen) switches to disabledBrush and ignores clicks.
     //
     // Auto-repeats while held, like a key held down: a press fires onClick_
-    // once immediately, then keeps firing it on a fixed interval via
-    // FTXUI's own animation::RequestAnimationFrame/OnAnimation mechanism
-    // (TermOx -> FTXUI migration -- was a dedicated ox::Timer; FTXUI has no
-    // free-running background-thread timer exposed at this level, but does
-    // have this render-loop-tied animation-step hook, which serves the same
-    // "fire a callback repeatedly while active" role). Stops on any mouse
-    // Released event, not specifically one landing on this widget's own
-    // bounds -- unlike the old mouse_leave-specific workaround this
-    // replaces (needed because TermOx's per-widget dispatch was itself
-    // position-filtered, so a press-then-drag-off-the-button gesture would
-    // never otherwise deliver a release here), FTXUI delivers every mouse
-    // event to every leaf widget regardless of position (see Widget.h's own
-    // header comment), so a plain "was anything released" check already
-    // covers the drag-off case with no separate leave concept needed.
+    // once immediately, then keeps firing it on a fixed interval. FTXUI ->
+    // Notcurses migration: was FTXUI's own animation::RequestAnimationFrame/
+    // OnAnimation render-loop hook; Notcurses' own EventLoop (Widget.h/
+    // EventLoop.h) has no equivalent per-frame tick at all (it only wakes
+    // for real input or Post()ed work, never on a free-running clock), so
+    // this goes back to the pre-FTXUI approach instead: a real background
+    // std::jthread that sleeps the repeat interval and Post()s onClick_
+    // back onto the loop thread each time, the same "own background thread,
+    // marshal back via Post" shape BufferView's scratch-auto-save timer
+    // already uses (see BufferView.h's own StartAutoSaveTimer comment).
+    // Requires SetEventLoop to have been called first (main.cpp does this
+    // right after construction, same "connect after the widget tree
+    // exists" pattern SetOnClick already follows) -- a press is simply
+    // inert (fires once, never repeats) if it hasn't been, rather than a
+    // hard requirement, so a test-constructed ScrollArrowButton with no
+    // real EventLoop still behaves sanely. Stops on any mouse Released
+    // event, not specifically one landing on this widget's own bounds --
+    // Notcurses delivers every mouse event to every leaf widget regardless
+    // of position (see Widget.h's own header comment), so a plain "was
+    // anything released" check covers a press-then-drag-off-the-button
+    // gesture with no separate leave concept needed.
     ScrollArrowButton(char32_t symbol, const Brush& brush, const Brush& disabledBrush);
+    ~ScrollArrowButton() override;
 
     void SetOnClick(std::function<void()> onClick);
     void SetEnabled(bool enabled);
+    void SetEventLoop(EventLoop* loop);
 
     // Whether the repeat is currently active (held down). Mainly for tests
     // -- avoids asserting on real elapsed time/tick counts, which would be
@@ -53,20 +62,20 @@ class ScrollArrowButton : public Widget {
     [[nodiscard]] bool IsRepeating() const;
 
     void Paint(Canvas c) override;
-    bool OnEvent(ftxui::Event event) override;
-    void OnAnimation(ftxui::animation::Params& params) override;
+    bool OnEvent(const Event& event) override;
 
   private:
     void StartRepeating();
     void StopRepeating();
 
-    char32_t                        symbol_;
-    const Brush&                    brush_;
-    const Brush&                    disabledBrush_;
-    bool                             enabled_    = true;
-    bool                             repeating_  = false;
-    ftxui::animation::Duration       accumulated_{0};
-    std::function<void()>           onClick_;
+    char32_t              symbol_;
+    const Brush&          brush_;
+    const Brush&          disabledBrush_;
+    bool                  enabled_ = true;
+    std::atomic<bool>     repeating_{false};
+    std::function<void()> onClick_;
+    EventLoop*            loop_ = nullptr;
+    std::jthread          repeatThread_;
 };
 
 } // namespace ned::ui

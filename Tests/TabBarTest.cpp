@@ -1,10 +1,8 @@
 #include <catch2/catch_test_macros.hpp>
 
-#include <ftxui/component/event.hpp>
-#include <ftxui/component/mouse.hpp>
-#include <ftxui/screen/screen.hpp>
 #include <string>
 
+#include "TestEvents.h"
 #include "Text/BufferList.h"
 #include "UI/ActiveBuffer.h"
 #include "UI/TabBar.h"
@@ -12,7 +10,7 @@
 
 namespace {
 
-std::string RowText(ftxui::Screen& screen, int row, int width) {
+std::string RowText(ned::ui::Screen& screen, int row, int width) {
     std::string out;
     for (int col = 0; col < width; ++col) {
         out += screen.PixelAt(col, row).character;
@@ -20,26 +18,16 @@ std::string RowText(ftxui::Screen& screen, int row, int width) {
     return out;
 }
 
-ftxui::Event MousePress(int x, int y) {
-    ftxui::Mouse mouse;
-    mouse.button = ftxui::Mouse::Left;
-    mouse.motion = ftxui::Mouse::Pressed;
-    mouse.x      = x;
-    mouse.y      = y;
-    return ftxui::Event::Mouse("", mouse);
+ned::ui::Event MousePress(int x, int y) {
+    return ned::ui::test::Mouse(x, y, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Pressed);
 }
 
-ftxui::Event MouseWheel(int x, int y, ftxui::Mouse::Button button) {
-    ftxui::Mouse mouse;
-    mouse.button = button;
-    mouse.motion = ftxui::Mouse::Pressed;
-    mouse.x      = x;
-    mouse.y      = y;
-    return ftxui::Event::Mouse("", mouse);
+ned::ui::Event MouseWheel(int x, int y, ned::ui::MouseEvent::Button button) {
+    return ned::ui::test::Mouse(x, y, button, ned::ui::MouseEvent::Motion::Pressed);
 }
 
 void PlaceRow(ned::ui::TabBar& tabBar, int width) {
-    tabBar.SetBox_(ftxui::Box{.x_min = 0, .x_max = width - 1, .y_min = 0, .y_max = 0});
+    tabBar.SetBox_(ned::ui::Box{.x_min = 0, .x_max = width - 1, .y_min = 0, .y_max = 0});
 }
 
 } // namespace
@@ -54,8 +42,8 @@ TEST_CASE("TabBar renders each open buffer as a tab, highlighting the active one
     ned::ui::TabBar       tabBar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, theme);
     PlaceRow(tabBar, 40);
 
-    ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(40), ftxui::Dimension::Fixed(1));
-    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
+    ned::ui::Screen screen = ned::ui::Screen(40, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
     tabBar.Paint(canvas);
 
     const std::string row = RowText(screen, 0, 40);
@@ -63,10 +51,10 @@ TEST_CASE("TabBar renders each open buffer as a tab, highlighting the active one
     REQUIRE(row.find("beta") != std::string::npos);
 
     // "alpha" (the active tab) starts at column 1 (after the leading space).
-    REQUIRE(screen.PixelAt(1, 0).foreground_color == theme.activeTab.foreground.ToFtxui());
+    REQUIRE(screen.PixelAt(1, 0).foreground_color == theme.activeTab.foreground);
     // "beta"'s tab uses the inactive brush.
     const std::size_t betaCol = row.find("beta");
-    REQUIRE(screen.PixelAt(static_cast<int>(betaCol), 0).foreground_color == theme.tabBar.foreground.ToFtxui());
+    REQUIRE(screen.PixelAt(static_cast<int>(betaCol), 0).foreground_color == theme.tabBar.foreground);
 }
 
 TEST_CASE("TabBar shows a modified marker on a tab whose buffer has unsaved changes", "[TabBar]") {
@@ -79,8 +67,8 @@ TEST_CASE("TabBar shows a modified marker on a tab whose buffer has unsaved chan
     ned::ui::TabBar       tabBar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, theme);
     PlaceRow(tabBar, 40);
 
-    ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(40), ftxui::Dimension::Fixed(1));
-    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
+    ned::ui::Screen screen = ned::ui::Screen(40, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
     tabBar.Paint(canvas);
 
     REQUIRE(RowText(screen, 0, 40).find("alpha*") != std::string::npos);
@@ -130,8 +118,8 @@ TEST_CASE("The preview buffer's tab renders in italic, others don't", "[TabBar]"
     ned::ui::TabBar       tabBar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, theme);
     PlaceRow(tabBar, 40);
 
-    ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(40), ftxui::Dimension::Fixed(1));
-    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
+    ned::ui::Screen screen = ned::ui::Screen(40, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
     tabBar.Paint(canvas);
 
     const std::string row      = RowText(screen, 0, 40);
@@ -150,8 +138,8 @@ TEST_CASE("A close icon is rendered at the end of each tab", "[TabBar]") {
     ned::ui::TabBar       tabBar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, theme);
     PlaceRow(tabBar, 40);
 
-    ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(40), ftxui::Dimension::Fixed(1));
-    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
+    ned::ui::Screen screen = ned::ui::Screen(40, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
     tabBar.Paint(canvas);
 
     // " alpha ×" -- the × sits at column 7.
@@ -204,15 +192,15 @@ TEST_CASE("An overflow indicator appears only on the edge(s) with scrolled-past 
     ned::ui::TabBar       tabBar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, theme);
     PlaceRow(tabBar, 20);
 
-    ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(20), ftxui::Dimension::Fixed(1));
-    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 0});
+    ned::ui::Screen screen = ned::ui::Screen(20, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 0});
 
     tabBar.Paint(canvas);
     REQUIRE_FALSE(screen.PixelAt(0, 0).character == "‹"); // nothing scrolled past yet
     REQUIRE(screen.PixelAt(19, 0).character == "›");      // but more content overflows to the right
 
     for (int i = 0; i < 3; ++i) {
-        tabBar.OnEvent(MouseWheel(0, 0, ftxui::Mouse::WheelDown));
+        tabBar.OnEvent(MouseWheel(0, 0, ned::ui::MouseEvent::Button::WheelDown));
     }
     tabBar.Paint(canvas);
     REQUIRE(screen.PixelAt(0, 0).character == "‹"); // now scrolled past some content on the left too
@@ -230,22 +218,22 @@ TEST_CASE("Wheel scrolls the tab bar horizontally when tabs overflow the width, 
     ned::ui::TabBar       tabBar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, theme);
     PlaceRow(tabBar, 20); // narrower than the total tab content
 
-    ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(20), ftxui::Dimension::Fixed(1));
-    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 0});
+    ned::ui::Screen screen = ned::ui::Screen(20, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 0});
 
     tabBar.Paint(canvas);
     REQUIRE(RowText(screen, 0, 20).find("first-buffer-name") != std::string::npos);
 
     // Scroll right past the point where "first-buffer-name" is still visible.
     for (int i = 0; i < 10; ++i) {
-        tabBar.OnEvent(MouseWheel(0, 0, ftxui::Mouse::WheelDown));
+        tabBar.OnEvent(MouseWheel(0, 0, ned::ui::MouseEvent::Button::WheelDown));
     }
     tabBar.Paint(canvas);
     REQUIRE(RowText(screen, 0, 20).find("first-buffer-name") == std::string::npos);
 
     // Scroll back left all the way; clamps at 0, "first-buffer-name" is visible again.
     for (int i = 0; i < 20; ++i) {
-        tabBar.OnEvent(MouseWheel(0, 0, ftxui::Mouse::WheelUp));
+        tabBar.OnEvent(MouseWheel(0, 0, ned::ui::MouseEvent::Button::WheelUp));
     }
     tabBar.Paint(canvas);
     REQUIRE(RowText(screen, 0, 20).find("first-buffer-name") != std::string::npos);
@@ -260,13 +248,13 @@ TEST_CASE("Wheel is a no-op when the tabs already fit the viewport", "[TabBar]")
     ned::ui::TabBar       tabBar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, theme);
     PlaceRow(tabBar, 40);
 
-    ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(40), ftxui::Dimension::Fixed(1));
-    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
+    ned::ui::Screen screen = ned::ui::Screen(40, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
 
     tabBar.Paint(canvas);
     const std::string before = RowText(screen, 0, 40);
 
-    tabBar.OnEvent(MouseWheel(0, 0, ftxui::Mouse::WheelDown));
+    tabBar.OnEvent(MouseWheel(0, 0, ned::ui::MouseEvent::Button::WheelDown));
     tabBar.Paint(canvas);
     REQUIRE(RowText(screen, 0, 40) == before);
 }
@@ -288,16 +276,16 @@ TEST_CASE("Stress: hundreds of tabs in a narrow viewport stay memory-safe under 
     ned::ui::TabBar       tabBar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, theme);
     PlaceRow(tabBar, 60);
 
-    ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(60), ftxui::Dimension::Fixed(1));
-    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 0});
+    ned::ui::Screen screen = ned::ui::Screen(60, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 0});
 
     for (int i = 0; i < 200; ++i) {
         tabBar.Paint(canvas);
-        tabBar.OnEvent(MouseWheel(30, 0, ftxui::Mouse::WheelDown));
+        tabBar.OnEvent(MouseWheel(30, 0, ned::ui::MouseEvent::Button::WheelDown));
     }
     for (int i = 0; i < 200; ++i) {
         tabBar.Paint(canvas);
-        tabBar.OnEvent(MouseWheel(30, 0, ftxui::Mouse::WheelUp));
+        tabBar.OnEvent(MouseWheel(30, 0, ned::ui::MouseEvent::Button::WheelUp));
     }
     for (int x = -10; x < 70; ++x) {
         tabBar.OnEvent(MousePress(x, 0));

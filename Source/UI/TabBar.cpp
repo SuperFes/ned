@@ -59,9 +59,9 @@ std::vector<TabBar::TabLayout> TabBar::ComputeTabLayout() const {
 
 void TabBar::Paint(Canvas c) {
     for (int x = 0; x < c.size().width; ++x) {
-        ftxui::Cell& cell     = c[{.x = x, .y = 0}];
+        Cell& cell            = c[{.x = x, .y = 0}];
         cell.character        = " ";
-        cell.background_color = theme_.tabBar.background.ToFtxui();
+        cell.background_color = theme_.tabBar.background;
     }
 
     const text::Buffer*          active  = &activeBufferProvider_().Get();
@@ -84,8 +84,8 @@ void TabBar::Paint(Canvas c) {
             if (col < 0 || col >= c.size().width) {
                 continue;
             }
-            ftxui::Cell& cell = c[{.x = col, .y = 0}];
-            cell.character    = text::EncodeCodepointUtf8(label[i]);
+            Cell& cell     = c[{.x = col, .y = 0}];
+            cell.character = text::EncodeCodepointUtf8(label[i]);
             brush.ApplyTo(cell);
         }
     }
@@ -97,32 +97,32 @@ void TabBar::Paint(Canvas c) {
     const int totalWidth = layout.empty() ? 0 : layout.back().endColumn;
     if (c.size().width > 0) {
         if (scrollOffset_ > 0) {
-            ftxui::Cell& cell = c[{.x = 0, .y = 0}];
-            cell.character    = text::EncodeCodepointUtf8(kMoreLeft);
+            Cell& cell     = c[{.x = 0, .y = 0}];
+            cell.character = text::EncodeCodepointUtf8(kMoreLeft);
             theme_.tabBar.ApplyTo(cell);
         }
         if (totalWidth - scrollOffset_ > c.size().width) {
-            ftxui::Cell& cell = c[{.x = c.size().width - 1, .y = 0}];
-            cell.character    = text::EncodeCodepointUtf8(kMoreRight);
+            Cell& cell     = c[{.x = c.size().width - 1, .y = 0}];
+            cell.character = text::EncodeCodepointUtf8(kMoreRight);
             theme_.tabBar.ApplyTo(cell);
         }
     }
 }
 
-bool TabBar::OnEvent(ftxui::Event event) {
+bool TabBar::OnEvent(const Event& event) {
     const auto mouse = LocalMouseEvent(event);
     if (!mouse) {
         return false;
     }
 
-    if (mouse->button == ftxui::Mouse::WheelDown || mouse->button == ftxui::Mouse::WheelUp) {
+    if (mouse->button == MouseEvent::Button::WheelDown || mouse->button == MouseEvent::Button::WheelUp) {
         constexpr int kScrollStep = 4;
 
         // No tilt-wheel distinction is available (see BufferView's own
         // WheelUp/WheelDown use for vertical scrolling) -- WheelDown reveals
         // later tabs, WheelUp reveals earlier ones, an arbitrary but
         // consistent mapping for a horizontal-only widget.
-        if (mouse->button == ftxui::Mouse::WheelDown) {
+        if (mouse->button == MouseEvent::Button::WheelDown) {
             scrollOffset_ += kScrollStep;
         }
         else {
@@ -136,7 +136,7 @@ bool TabBar::OnEvent(ftxui::Event event) {
         return true;
     }
 
-    if (mouse->button != ftxui::Mouse::Left || mouse->motion != ftxui::Mouse::Pressed) {
+    if (mouse->button != MouseEvent::Button::Left || mouse->motion != MouseEvent::Motion::Pressed) {
         return false;
     }
 

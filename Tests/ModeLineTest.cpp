@@ -1,6 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
 
-#include <ftxui/screen/screen.hpp>
 #include <string>
 
 #include "Editor/Mode.h"
@@ -11,7 +10,7 @@
 
 namespace {
 
-std::string RowText(ftxui::Screen& screen, int row, int width) {
+std::string RowText(ned::ui::Screen& screen, int row, int width) {
     std::string out;
     for (int col = 0; col < width; ++col) {
         out += screen.PixelAt(col, row).character;
@@ -19,8 +18,8 @@ std::string RowText(ftxui::Screen& screen, int row, int width) {
     return out;
 }
 
-ftxui::Screen MakeScreen(int width, int height) {
-    return ftxui::Screen::Create(ftxui::Dimension::Fixed(width), ftxui::Dimension::Fixed(height));
+ned::ui::Screen MakeScreen(int width, int height) {
+    return ned::ui::Screen(width, height);
 }
 
 } // namespace
@@ -34,8 +33,8 @@ TEST_CASE("ModeLine shows the buffer name and 1-indexed line:column", "[ModeLine
     ned::ui::Theme        theme = ned::ui::DarkTheme();
     ned::ui::ModeLine     modeLine(activeBuffer, mode, theme);
 
-    ftxui::Screen   screen = MakeScreen(40, 1);
-    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
+    ned::ui::Screen   screen = MakeScreen(40, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
 
     modeLine.Paint(canvas);
 
@@ -43,17 +42,17 @@ TEST_CASE("ModeLine shows the buffer name and 1-indexed line:column", "[ModeLine
     REQUIRE(row.find("myfile.txt") != std::string::npos);
     REQUIRE(row.find("L2:C3") != std::string::npos);
 
-    // Endpoints of the gradient should match what ftxui::Color::Interpolate
+    // Endpoints of the gradient should match what ned::ui::Color::Interpolate
     // itself produces at t=0/t=1 -- NOT necessarily the theme's raw declared
     // colors bit-for-bit: Interpolate gamma-corrects (pow(x, 2.2) then
     // pow(_, 1/2.2), truncated back to uint8_t), which doesn't always
     // round-trip losslessly at the endpoints for an arbitrary starting RGB
     // value (confirmed against FTXUI's own real color.cpp, not assumed).
     REQUIRE(screen.PixelAt(0, 0).background_color ==
-            ftxui::Color::Interpolate(0.0F, theme.modeLineGradientStart.ToFtxui(), theme.modeLineGradientEnd.ToFtxui()));
+            ned::ui::Color::Interpolate(0.0F, theme.modeLineGradientStart, theme.modeLineGradientEnd));
     REQUIRE(screen.PixelAt(39, 0).background_color ==
-            ftxui::Color::Interpolate(1.0F, theme.modeLineGradientStart.ToFtxui(), theme.modeLineGradientEnd.ToFtxui()));
-    REQUIRE(screen.PixelAt(0, 0).foreground_color == theme.modeLineForeground.ToFtxui());
+            ned::ui::Color::Interpolate(1.0F, theme.modeLineGradientStart, theme.modeLineGradientEnd));
+    REQUIRE(screen.PixelAt(0, 0).foreground_color == theme.modeLineForeground);
 }
 
 TEST_CASE("ModeLine shows the active mode's name", "[ModeLine]") {
@@ -63,8 +62,8 @@ TEST_CASE("ModeLine shows the active mode's name", "[ModeLine]") {
     ned::ui::Theme        theme = ned::ui::DarkTheme();
     ned::ui::ModeLine     modeLine(activeBuffer, mode, theme);
 
-    ftxui::Screen   screen = MakeScreen(40, 1);
-    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
+    ned::ui::Screen   screen = MakeScreen(40, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
 
     modeLine.Paint(canvas);
 
@@ -78,8 +77,8 @@ TEST_CASE("ModeLine recomputes its text fresh on every paint call", "[ModeLine]"
     ned::ui::Theme        theme = ned::ui::DarkTheme();
     ned::ui::ModeLine     modeLine(activeBuffer, mode, theme);
 
-    ftxui::Screen   screen = MakeScreen(40, 1);
-    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
+    ned::ui::Screen   screen = MakeScreen(40, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
 
     modeLine.Paint(canvas);
     REQUIRE(RowText(screen, 0, 40).find("L1:C1") != std::string::npos);
@@ -96,8 +95,8 @@ TEST_CASE("ModeLine shows a modified marker only when the buffer has unsaved cha
     ned::ui::Theme        theme = ned::ui::DarkTheme();
     ned::ui::ModeLine     modeLine(activeBuffer, mode, theme);
 
-    ftxui::Screen   screen = MakeScreen(40, 1);
-    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
+    ned::ui::Screen   screen = MakeScreen(40, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
 
     REQUIRE_FALSE(buffer.Modified());
     modeLine.Paint(canvas);

@@ -40,7 +40,7 @@ class ScrollBar : public Widget {
     void SetOnScroll(std::function<void(int)> onScroll);
 
     void Paint(Canvas c) override;
-    bool OnEvent(ftxui::Event event) override;
+    bool OnEvent(const Event& event) override;
 
   private:
     // Row -> position, inverse of the mapping Paint() uses to place the

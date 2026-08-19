@@ -32,9 +32,6 @@
 #include <thread>
 #include <vector>
 
-#include <ftxui/component/component.hpp>
-#include <ftxui/component/screen_interactive.hpp>
-
 #include "ActiveBuffer.h"
 #include "BufferView.h"
 #include "Editor/Command.h"
@@ -43,6 +40,8 @@
 #include "Editor/Lsp/LspManager.h"
 #include "Editor/Mode.h"
 #include "Editor/Register.h"
+#include "EventLoop.h"
+#include "Layout.h"
 #include "ModeLine.h"
 #include "ProjectSidebar.h"
 #include "ScrollArrowButton.h"
@@ -98,7 +97,21 @@ class Pane {
     [[nodiscard]] ActiveBuffer&       ActiveBufferRef();
     [[nodiscard]] BufferView&         Buffer();
     [[nodiscard]] const editor::Mode& ModeRef() const;
-    [[nodiscard]] ftxui::Component    Component() const;
+
+    // FTXUI -> Notcurses migration: was Component() returning a shared,
+    // reference-counted ftxui::Component -- Layout.h's own Container is a
+    // plain Widget owned directly by this Pane instead (see component_
+    // below), so this just hands back a reference to it. Callers
+    // (WindowManager::BuildComponent) hold this only as long as the owning
+    // Pane does, the same lifetime contract every other Widget& in this
+    // codebase already has.
+    [[nodiscard]] Widget& Component();
+
+    // Sets this pane's EventLoop -- forwarded straight to bufferView_ (see
+    // BufferView::SetEventLoop) and to scrollUp_/scrollDown_ (their
+    // press-and-hold repeat needs it too). Unset is a safe no-op, matching
+    // every other Set* hook in this codebase.
+    void SetEventLoop(EventLoop* eventLoop);
 
   private:
     ActiveBuffer                       activeBuffer_;
@@ -109,7 +122,18 @@ class Pane {
     std::shared_ptr<ScrollBar>         scrollBar_;
     std::shared_ptr<ScrollArrowButton> scrollUp_;
     std::shared_ptr<ScrollArrowButton> scrollDown_;
-    ftxui::Component                   component_; // this pane's own precomposed subtree, built once
+
+    // This pane's own precomposed subtree, built once at construction --
+    // scrollColumn_ holds {scrollUp_, scrollBar_, scrollDown_}, row_ holds
+    // {bufferView_, scrollColumn_}, component_ holds {row_, modeLine_}.
+    // Declared in this order (children before the Containers that reference
+    // them, which C++ requires nothing of structurally since these are all
+    // separate objects linked by raw Widget* -- but member destruction
+    // order still matters not at all here, since none of these ever
+    // outlives any other within the same Pane).
+    Container scrollColumn_;
+    Container row_;
+    Container component_;
 };
 
 // A recursive binary tree: a Leaf is one live Pane; a SplitBelow/SplitRight
@@ -123,6 +147,26 @@ struct WindowNode {
     Kind                        kind = Kind::Leaf;
     std::unique_ptr<Pane>       pane;          // Kind::Leaf
     std::unique_ptr<WindowNode> first, second; // Kind::SplitBelow / SplitRight
+
+    // FTXUI -> Notcurses migration: FTXUI's own Container::Horizontal/
+    // Vertical calls used to be built fresh, ephemerally, inside
+    // BuildComponent every single RebuildComponentTree() call (cheap
+    // shared_ptr churn under FTXUI's own reference-counted Component
+    // model). Layout.h's Container is a plain owned Widget instead, so a
+    // SplitBelow/SplitRight node needs somewhere stable to actually keep
+    // one across rebuilds -- this is that slot, (re)built by
+    // WindowManager::BuildComponent every RebuildComponentTree() call
+    // (SetChildren, not a fresh Container, so its own identity -- and thus
+    // its Box_() -- survives a rebuild that doesn't touch this particular
+    // node). Unused for Kind::Leaf.
+    std::unique_ptr<Container> container;
+    // The one-column vertical divider between a SplitRight's two children
+    // (a SplitBelow needs none -- the top pane's own ModeLine row already
+    // provides the visual boundary, see WindowManager.cpp's own comment).
+    // Lives here, not as a free-standing local in BuildComponent, for the
+    // same "needs a stable address across rebuilds" reason container does.
+    // Unused for Kind::Leaf or Kind::SplitBelow.
+    std::unique_ptr<Widget> divider;
 };
 
 class WindowManager {
@@ -155,14 +199,19 @@ class WindowManager {
     // preview-swap, which isn't pane-driven at all) triggered it.
     void SetLspManager(editor::lsp::LspManager* lspManager);
 
-    // One stable Component handle main.cpp embeds exactly once into its own
+    // FTXUI -> Notcurses migration: forwarded to every pane, present and
+    // future, same shape as SetProjectSidebar/SetLspManager above -- see
+    // Pane::SetEventLoop's own doc comment.
+    void SetEventLoop(EventLoop* eventLoop);
+
+    // One stable Widget& main.cpp embeds exactly once into its own
     // composition root and never needs to re-fetch -- its own children get
-    // swapped out on every split/close (DetachAllChildren + Add), but its
-    // own identity never changes, the same "long-lived mutable slot" role
-    // main.cpp's own Maybe(...)-wrapped ProjectSidebar component already
-    // plays for a different reason (conditional visibility rather than
-    // structural rebuilds).
-    [[nodiscard]] ftxui::Component RootComponent() const;
+    // swapped out on every split/close (Container::SetChildren, was FTXUI's
+    // DetachAllChildren + Add), but its own identity never changes, the
+    // same "long-lived mutable slot" role main.cpp's own active-flagged
+    // ProjectSidebar already plays for a different reason (conditional
+    // visibility rather than structural rebuilds).
+    [[nodiscard]] Widget& RootComponent();
 
     // Re-establishes keyboard focus on whichever pane currently has it
     // (the initial one, unless something else has already changed focus
@@ -239,7 +288,7 @@ class WindowManager {
     // at construction, for the same "don't spin up a real thread in every
     // test" reason BufferView's own version never was; main.cpp calls this
     // once, for the real running editor only.
-    void StartAutoSaveTimer(ftxui::ScreenInteractive& screen);
+    void StartAutoSaveTimer(EventLoop& eventLoop);
 
   private:
     [[nodiscard]] std::unique_ptr<Pane> MakePane(text::Buffer& buffer, editor::Mode mode);
@@ -262,14 +311,29 @@ class WindowManager {
 
     // Rebuilds rootComponent_'s children from the current root_ tree shape
     // -- called after every structural mutation (split/close). Does NOT by
-    // itself restore focus: every freshly-built intermediate Container's own
-    // focus-selector defaults to its first child and cannot be trusted to
-    // preserve who was focused (confirmed by reading FTXUI's own
-    // ContainerBase source, not assumed) -- callers must explicitly
-    // TakeFocus() afterward.
+    // itself restore focus -- callers must explicitly TakeFocus()
+    // afterward. FTXUI -> Notcurses migration: the "every freshly-built
+    // intermediate Container's own focus-selector defaults to its first
+    // child" reasoning this comment used to cite doesn't even apply
+    // anymore -- Layout.h's Container has no focus-selector concept at all
+    // (see Widget.h's own focus-registry comment), but a fresh TakeFocus()
+    // is still required regardless, since RebuildComponentTree can
+    // reparent/replace Containers without touching which Widget the global
+    // focus registry (Widget.cpp) currently points at, which could easily
+    // no longer be part of the tree at all after a DeleteWindow.
     void RebuildComponentTree();
 
-    [[nodiscard]] ftxui::Component BuildComponent(const WindowNode* node) const;
+    // (Re)builds/updates node's own Widget subtree in place, recursing into
+    // first/second first -- returns the Widget& to embed into node's own
+    // parent. A Leaf just returns its Pane's own Component(); a Split
+    // (re)builds node->container (and, for SplitRight, node->divider) via
+    // SetChildren rather than constructing a fresh Container every call,
+    // so a node whose own subtree structure hasn't changed keeps the exact
+    // same Container identity (and thus the exact same already-assigned
+    // Box_(), a real concern the very next Paint() would otherwise recompute
+    // fresh anyway, but keeping identity stable costs nothing extra and
+    // avoids reasoning about it).
+    [[nodiscard]] Widget& BuildComponent(WindowNode* node) const;
 
     [[nodiscard]] Pane*              FocusedPane();
     [[nodiscard]] std::vector<Pane*> Leaves() const;
@@ -284,9 +348,10 @@ class WindowManager {
     const Theme&                   theme_;
     ProjectSidebar*                projectSidebar_ = nullptr;
     editor::lsp::LspManager*       lspManager_     = nullptr;
+    EventLoop*                     eventLoop_      = nullptr; // see SetEventLoop
 
     std::unique_ptr<WindowNode> root_;
-    ftxui::Component            rootComponent_;
+    Container                   rootComponent_{Axis::Vertical, {}};
 
     // See StartAutoSaveTimer's own comment above.
     std::jthread autoSaveThread_;

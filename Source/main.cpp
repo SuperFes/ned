@@ -3,13 +3,10 @@
 #include <filesystem>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
-
-#include <ftxui/component/component.hpp>
-#include <ftxui/component/screen_interactive.hpp>
-#include <ftxui/dom/elements.hpp>
 
 #include "Application.h"
 #include "Editor/Commands.h"
@@ -28,6 +25,8 @@
 #include "Text/KillRing.h"
 #include "UI/ActiveBuffer.h"
 #include "UI/EchoArea.h"
+#include "UI/EventLoop.h"
+#include "UI/Layout.h"
 #include "UI/ProjectSidebar.h"
 #include "UI/SidebarToggle.h"
 #include "UI/TabBar.h"
@@ -36,7 +35,7 @@
 #include "UI/ThemeFile.h"
 #include "UI/WindowManager.h"
 
-using namespace ftxui;
+using namespace ned::ui;
 
 namespace {
 
@@ -44,9 +43,10 @@ namespace {
 // actual configured colors (see UI/TerminalColorProbe.h for why this can't
 // just happen on every launch) and writes a Theme file, then exits without
 // starting the editor UI at all -- this must run and finish strictly before
-// any ftxui::ScreenInteractive is constructed (TermOx -> FTXUI migration:
-// was "before any ox::Terminal is constructed" -- same constraint, ScreenInteractive
-// is what starts reading stdin now).
+// any ned::ui::EventLoop is constructed (FTXUI -> Notcurses migration: was
+// "before any ftxui::ScreenInteractive is constructed" -- same constraint,
+// EventLoop's constructor is what calls notcurses_core_init, which is what
+// starts reading stdin now).
 int RunDetectTheme(int argc, char** argv) {
     bool                       transparent = false;
     std::optional<std::string> outputPath;
@@ -188,14 +188,13 @@ int main(int argc, char** argv) {
         return ned::ui::DarkTheme();
     }();
 
-    // TermOx -> FTXUI migration: every widget is now a heap-allocated,
-    // shared_ptr-owned ftxui::Component (Widget derives from ComponentBase,
-    // which requires shared_ptr ownership throughout FTXUI) rather than a
-    // stack-allocated aggregate member decomposed via structured bindings.
-    // Typed shared_ptrs are kept around so widget-specific methods
-    // (SetScrollBar, RevealPath, etc.) can still be called directly, the
-    // same cross-widget wiring the pre-migration version did through its
-    // own structured-binding references.
+    // FTXUI -> Notcurses migration: every widget is still heap-allocated
+    // via shared_ptr, but no longer because anything requires it the way
+    // ftxui::ComponentBase did -- ned::ui::Widget has no such ownership
+    // contract at all (see Widget.h's own header comment). Kept anyway,
+    // unchanged, purely so widget-specific methods (SetScrollBar,
+    // RevealPath, etc.) can still be called directly by typed pointer, the
+    // same cross-widget wiring this composition root already established.
     //
     // Window-splitting follow-up: WindowManager now owns everything that
     // used to be a single BufferView/ModeLine/ScrollBar/pair-of-
@@ -253,132 +252,160 @@ int main(int argc, char** argv) {
         [wm = windowManager.get()](ned::text::Buffer& buffer) { wm->RequestCloseBuffer(buffer); });
 
     // ProjectSidebar's own width is drag-resizable at runtime (divider drag
-    // -- see ProjectSidebar::UpdateResize), so its size() decorator can't be
-    // a fixed value computed once at composition time the way every other
-    // widget's is -- the lambda below is re-invoked fresh every frame (this
-    // project's own FTXUI migration confirmed operator|(Component,
-    // ElementDecorator) rebuilds the wrapping Renderer's Element fresh per
-    // Render() call, by reading FTXUI's actual renderer.cpp source, not
-    // assumed), so it always reflects whatever ProjectSidebar::Width()
-    // currently is. Maybe(..., &projectSidebar->active) is the direct FTXUI
-    // answer to the old TermOx ox::Widget::active flag: when false, it
-    // swaps in an empty zero-size placeholder instead of ever calling
-    // ProjectSidebar::Render() at all, matching the old "excluded from
-    // layout entirely" behavior exactly, and (per FTXUI's own Maybe
-    // implementation) suppresses OnEvent delivery to it too while hidden.
-    Component projectSidebarSized = projectSidebar | [raw = projectSidebar.get()](Element e) {
-        return e | size(WIDTH, EQUAL, raw->Width());
-    };
-    Component projectSidebarFinal = Maybe(projectSidebarSized, &projectSidebar->active);
+    // -- see ProjectSidebar::UpdateResize), so it can't be a fixed value
+    // computed once at composition time the way every other widget's is --
+    // SizeSpec::DynamicFixed (Layout.h) is read fresh every single
+    // Container::Paint() call (the direct replacement for FTXUI's own
+    // per-frame ElementDecorator lambda, confirmed during the original
+    // TermOx -> FTXUI migration to be re-invoked every Render() call), so
+    // it always reflects whatever ProjectSidebar::Width() currently is.
+    // There's no Maybe(...)-equivalent wrapper needed for
+    // projectSidebar->active the way there was under FTXUI -- Container
+    // itself already skips an inactive child's layout/paint/event-dispatch
+    // entirely (see Layout.h's own header comment), so ProjectSidebar is
+    // just handed to bufferRow directly below.
 
     // sidebar-header follow-up: tabBar now sits only above the pane area,
     // not above ProjectSidebar too -- ProjectSidebar spans the row that
     // used to belong to tabBar instead, using it for its own header (see
     // ProjectSidebar::Paint's own comment on that row).
-    Component mainColumn = Container::Vertical({
-        tabBar | size(HEIGHT, EQUAL, 1),
-        windowManager->RootComponent() | [](Element e) { return flex(std::move(e)); },
-    });
+    Container mainColumn(Axis::Vertical, {
+                                             {tabBar.get(), SizeSpec::Fixed(1)},
+                                             {&windowManager->RootComponent(), SizeSpec::Flex()},
+                                         });
 
-    Component bufferRow = Container::Horizontal({
-        sidebarToggle | size(WIDTH, EQUAL, 1),
-        projectSidebarFinal,
-        mainColumn | [](Element e) { return flex(std::move(e)); },
-    });
+    Container bufferRow(Axis::Horizontal, {
+                                              {sidebarToggle.get(), SizeSpec::Fixed(1)},
+                                              {projectSidebar.get(), SizeSpec::DynamicFixed([raw = projectSidebar.get()] { return raw->Width(); })},
+                                              {&mainColumn, SizeSpec::Flex()},
+                                          });
 
-    Component head = Container::Vertical({
-        bufferRow | [](Element e) { return flex(std::move(e)); },
-        echoArea | size(HEIGHT, EQUAL, 1),
-    });
+    Container head(Axis::Vertical, {
+                                       {&bufferRow, SizeSpec::Flex()},
+                                       {echoArea.get(), SizeSpec::Fixed(1)},
+                                   });
 
-    // Must run here, after head is fully assembled -- not any earlier, and
-    // WindowManager's own constructor deliberately doesn't call this either
-    // (see WindowManager::TakeFocus's own doc comment for the real,
-    // confirmed-via-manual-pty-testing reason: ComponentBase::TakeFocus()
-    // walks up through real parent pointers, and none of bufferRow/head's
-    // exist as real ancestors until this exact point).
+    // FTXUI -> Notcurses migration: WindowManager::TakeFocus's own doc
+    // comment used to explain why this had to run here, after head was
+    // fully assembled, rather than from WindowManager's own constructor --
+    // ftxui::ComponentBase::TakeFocus() walked up through real *parent*
+    // pointers that didn't exist yet at construction time. Widget::TakeFocus
+    // (Widget.h) has no such dependency at all anymore -- it's a flat,
+    // direct write to a process-wide registry, indifferent to whatever tree
+    // shape does or doesn't exist around the target widget -- so this call
+    // would now work identically from inside WindowManager's own
+    // constructor too. Left at this exact call site anyway: moving it would
+    // be a pure refactor with no behavior change, and keeping it here needs
+    // no new reasoning to justify.
     windowManager->TakeFocus();
 
-    // Konsole-specific workaround, user-confirmed: TabBar (and everything
-    // else) failed to show up at all on first launch, until the terminal
-    // window was resized -- other terminals showed TabBar fine but still
-    // had the (separately fixed, see BufferView::CursorPosition's own
-    // comment) missing-cursor bug, so this is specifically about Konsole.
-    // Root cause, traced through FTXUI's own source rather than guessed:
-    // Screen::ToString() (screen.cpp) -- what paints every single frame --
-    // emits row content via plain \r\n line breaks with no absolute
-    // cursor-positioning escape of its own, entirely trusting the cursor is
-    // already at (0,0) before the first byte is written. Every frame after
-    // the first explicitly re-homes the cursor first (App::Internal::
-    // Draw's own ResetPosition() call), but that call is unconditionally
-    // skipped for frame 0, which instead relies entirely on entering the
-    // terminal's alternate screen buffer (\033[?1049h, sent moments later
-    // by ScreenInteractive::Fullscreen()'s own startup) having already
-    // homed the cursor as a side effect -- true per the xterm spec and most
-    // terminals' own behavior (confirmed: a real resize, which forces
-    // FTXUI's full ResetPosition(resized=true) path on the very next frame,
-    // fixes it every time), but apparently not reliably true in Konsole.
-    // Entering the alternate screen buffer and homing the cursor ourselves,
-    // first, sidesteps the bug entirely: FTXUI's own \033[?1049h moments
-    // later becomes a harmless, idempotent re-entry into the buffer we
-    // already switched to, leaving our own explicit home in place
-    // regardless of whether Konsole's own entry would have preserved it.
-    std::cout << "\033[?1049h\033[H" << std::flush;
+    // FTXUI -> Notcurses migration: the Konsole-specific workaround that
+    // used to live here (entering the alternate screen buffer and homing
+    // the cursor manually, before FTXUI's own ScreenInteractive::Fullscreen()
+    // did, to sidestep a real FTXUI Screen::ToString()-specific first-frame
+    // cursor-position bug -- see this file's own git history for the full
+    // root-cause account) doesn't carry over: it was a workaround for a bug
+    // in FTXUI's own frame-0 rendering logic specifically, and Notcurses
+    // has an entirely different rendering pipeline (EventLoop's constructor
+    // -- notcurses_core_init -- already owns entering the alternate screen
+    // buffer and placing the cursor itself). Flagged here as a known Phase
+    // 4 item: if a similar first-launch rendering glitch resurfaces on
+    // Konsole under Notcurses, it needs fresh root-causing against
+    // Notcurses' own renderer, not a blind reapplication of this exact fix.
 
-    auto screen = ScreenInteractive::Fullscreen();
+    // FTXUI -> Notcurses migration: EventLoop's constructor is what starts
+    // reading stdin now (see the --detect-theme branch's own comment above
+    // for why RunDetectTheme must finish strictly before this point).
+    EventLoop eventLoop;
 
     // LSP client follow-up: constructed here, not alongside bufferList/
-    // killRing/registers above, since it needs a real ScreenInteractive& to
-    // marshal its background read-loop threads' work back onto the main
-    // thread (LspClient.h's own header comment has the full lifetime
-    // requirement -- must outlive screen.Loop() below, which this satisfies
-    // for free as a plain local: ordinary reverse-declaration-order
-    // destruction at the end of main() runs this after screen.Loop() has
-    // already returned). Wired into windowManager via SetLspManager the same
+    // killRing/registers above, since it needs a real EventLoop& to marshal
+    // its background read-loop threads' work back onto the main thread
+    // (LspClient.h's own header comment has the full lifetime requirement
+    // -- must outlive eventLoop.Run() below, which this satisfies for free
+    // as a plain local: ordinary reverse-declaration-order destruction at
+    // the end of main() runs this after eventLoop.Run() has already
+    // returned). Wired into windowManager via SetLspManager the same
     // "connect after construction, unset is a safe no-op" way
     // SetProjectSidebar already is -- every pane, present and future
     // (including ones created by a later split), gets it.
-    ned::editor::lsp::LspManager lspManager(bufferList, screen);
+    ned::editor::lsp::LspManager lspManager(bufferList, eventLoop);
     windowManager->SetLspManager(&lspManager);
+
+    // FTXUI -> Notcurses migration: BufferView's completion-debounce/
+    // status-message-idle-timeout DeadlineTimers and ScrollArrowButton's
+    // press-and-hold repeat both need a real EventLoop& too (see their own
+    // SetEventLoop doc comments) -- forwarded to every pane, present and
+    // future, the same "connect after construction" shape SetProjectSidebar/
+    // SetLspManager already establish.
+    windowManager->SetEventLoop(&eventLoop);
 
     // Auto-saved-scratch-pads follow-up: not started by BufferView's own
     // constructor (every test-constructed BufferView would otherwise spin up
     // a real background thread) -- only the real, running editor opts in.
-    // Needs the owning ScreenInteractive so its background thread can
-    // safely marshal the actual auto-save call back onto the main loop
-    // thread via Post (documented thread-safe by FTXUI). Window-splitting
-    // follow-up: moved from BufferView to WindowManager, the genuinely
-    // whole-session-lifetime owner this timer semantically needs (see
-    // WindowManager.h's own header comment).
-    windowManager->StartAutoSaveTimer(screen);
+    // Needs the owning EventLoop so its background thread can safely
+    // marshal the actual auto-save call back onto the main loop thread via
+    // Post (documented thread-safe -- see EventLoop.h's own header
+    // comment). Window-splitting follow-up: moved from BufferView to
+    // WindowManager, the genuinely whole-session-lifetime owner this timer
+    // semantically needs (see WindowManager.h's own header comment).
+    windowManager->StartAutoSaveTimer(eventLoop);
 
-    // ForceHandleCtrlC/Z(false) is required, not cosmetic -- TermOx ->
-    // FTXUI migration: was Terminal::Options{.signals = Signals::Off}.
-    // Confirmed by reading App::Internal's real event loop (app.cpp), not
-    // assumed from the (easy-to-misread-backwards) header doc comment
-    // alone: `force_handle_ctrl_c_` defaults to true, and true means
-    // "always run FTXUI's own exit-on-Ctrl+C handling, even if the
-    // component's OnEvent claims the event" -- i.e. the default is the
-    // TermOx Signals::On-style trap this project needs off, not already
-    // off. Leaving this at its default caused a real, reproducible crash-
-    // shaped bug during this migration's own manual pty smoke test: any
-    // C-c-prefixed binding (e.g. C-c C-p, toggle-project-sidebar) exited
-    // the whole process the instant the first chord's Ctrl+C byte arrived,
-    // before Dispatcher ever saw the full two-chord sequence. false makes
-    // FTXUI only fall back to its own SIGINT/SIGTSTP handling when our own
-    // component genuinely didn't handle the event, matching Signals::Off's
-    // original intent (bindings we own always win).
-    //
-    // TrackMouse(true) is FTXUI's equivalent of TermOx's non-default
-    // MouseMode::Drag -- motion events reported while a button is held,
-    // which BufferView needs for click-and-drag selection (already FTXUI's
-    // own default, set explicitly here so the intent isn't silently
-    // dependent on that default never changing).
-    screen.ForceHandleCtrlC(false);
-    screen.ForceHandleCtrlZ(false);
-    screen.TrackMouse(true);
+    // FTXUI -> Notcurses migration: replaces ScreenInteractive::
+    // ForceHandleCtrlC(false)/ForceHandleCtrlZ(false) -- see EventLoop's own
+    // constructor comment for why Notcurses' own notcurses_linesigs_disable
+    // (called there) is actually a strictly better fix for the exact same
+    // "our own key bindings always win" C-c-prefixed-binding bug FTXUI's
+    // ForceHandleCtrlC(false) used to guard against: no signal is ever
+    // raised by the terminal's line discipline in the first place now,
+    // rather than raised and then suppressed. TrackMouse(true)'s own
+    // FTXUI-era equivalent (motion events reported while a button is held,
+    // which BufferView needs for click-and-drag selection) is handled by
+    // EventLoop's constructor too, via notcurses_mice_enable(NCMICE_ALL_EVENTS)
+    // -- there's nothing left to set explicitly here for either concern.
 
-    screen.Loop(head);
+    // A single Screen (Widget.h) reused across every frame, resized to
+    // match the terminal on every onResize callback -- this composition
+    // root's own direct replacement for what used to be an implicit
+    // ftxui::Screen FTXUI itself owned and rebuilt every Render() call.
+    Screen screenBuffer(0, 0);
+
+    EventLoopCallbacks callbacks;
+    callbacks.onResize = [&](Size size) {
+        screenBuffer = Screen(size.width, size.height);
+        head.SetBox_(Box{.x_min = 0, .x_max = size.width - 1, .y_min = 0, .y_max = size.height - 1});
+    };
+    // FTXUI -> Notcurses migration: replaces FTXUI's own ContainerBase
+    // event-routing split -- a keyboard Event only ever reached whichever
+    // child a container's internal focus-selector currently pointed at
+    // (the real mechanism WindowManager::TakeFocus's whole walk-up-through-
+    // parents machinery used to drive), while a mouse Event was broadcast
+    // to every leaf regardless (see Widget.h's own header comment). Same
+    // two-way split here, just far more directly: a keyboard Event goes
+    // straight to FocusedWidget() (Widget.h's own flat registry, no tree
+    // walk needed at all), and only a mouse Event is broadcast, via head's
+    // own Container::OnEvent, to the whole tree.
+    callbacks.onEvent = [&](const Event& event) {
+        if (event.is_mouse()) {
+            head.OnEvent(event);
+        }
+        else if (Widget* focused = FocusedWidget()) {
+            focused->OnEvent(event);
+        }
+    };
+    callbacks.render = [&]() -> std::optional<Point> {
+        head.Paint(Canvas(screenBuffer, head.Box_()));
+        screenBuffer.Flush(eventLoop.StdPlane());
+        if (const Widget* focused = FocusedWidget()) {
+            if (const std::optional<Point> local = focused->CursorPosition()) {
+                const Box& box = focused->Box_();
+                return Point{box.x_min + local->x, box.y_min + local->y};
+            }
+        }
+        return std::nullopt;
+    };
+
+    eventLoop.Run(callbacks);
 
     return 0;
 }

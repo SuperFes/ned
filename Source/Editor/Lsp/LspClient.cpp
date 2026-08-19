@@ -2,16 +2,13 @@
 
 #include <utility>
 
-#include <ftxui/component/animation.hpp>
-#include <ftxui/component/screen_interactive.hpp>
-
 namespace ned::editor::lsp {
 
-LspClient::LspClient(std::vector<std::string> argv, ftxui::ScreenInteractive& screen) : transport_(std::move(argv)), screen_(screen) {
+LspClient::LspClient(std::vector<std::string> argv, ned::ui::EventLoop& eventLoop) : transport_(std::move(argv)), eventLoop_(eventLoop) {
     StartReadLoop();
 }
 
-LspClient::LspClient(Transport transport, ftxui::ScreenInteractive& screen) : transport_(std::move(transport)), screen_(screen) {
+LspClient::LspClient(Transport transport, ned::ui::EventLoop& eventLoop) : transport_(std::move(transport)), eventLoop_(eventLoop) {
     StartReadLoop();
 }
 
@@ -33,11 +30,10 @@ void LspClient::StartReadLoop() {
                 // follow-up: previously a silent return; now reported via
                 // onDisconnected_, same Post-marshaling reasoning as the
                 // real-frame case below.
-                screen_.Post([this] {
+                eventLoop_.Post([this] {
                     if (onDisconnected_) {
                         onDisconnected_("malformed frame from server");
                     }
-                    ftxui::animation::RequestAnimationFrame();
                 });
                 return;
             }
@@ -52,36 +48,30 @@ void LspClient::StartReadLoop() {
                 // return -- see header comment); that's safe here for the
                 // same reason DispatchFrame's own Post callback already is:
                 // this LspClient (and thus onDisconnected_) is never
-                // destroyed while ScreenInteractive::Loop() might still
-                // process a pending Post, so this callback either runs
-                // before destruction starts or never runs at all.
-                screen_.Post([this] {
+                // destroyed while EventLoop::Run() might still process a
+                // pending Post, so this callback either runs before
+                // destruction starts or never runs at all.
+                eventLoop_.Post([this] {
                     if (onDisconnected_) {
                         onDisconnected_("server exited (EOF)");
                     }
-                    ftxui::animation::RequestAnimationFrame();
                 });
                 return;
             }
-            // repaint-on-background-update follow-up: ScreenInteractive::
-            // Post's own Closure task type never marks the frame dirty by
-            // itself (confirmed by reading FTXUI's real app.cpp, not
-            // assumed -- its HandleTask's Closure branch just runs the
-            // closure and returns, unlike its Event/AnimationTask branches,
-            // both of which explicitly set frame_valid_ = false afterward)
-            // -- without this, a diagnostic/hover/completion/code-action
-            // response arriving here updates real state (e.g.
-            // Buffer::SetDiagnostics) but the terminal visibly doesn't
-            // change until the next real keystroke or mouse event happens
-            // to repaint it anyway, which reads exactly like "nothing
-            // happened" even though it did. RequestAnimationFrame() is the
-            // same "force a real frame soon, with no dedicated event"
-            // mechanism ScrollArrowButton's own repeat/ghost-completion's
-            // debounce already rely on for an identical reason.
-            screen_.Post([this, frameText = std::move(*frame)]() mutable {
-                DispatchFrame(frameText);
-                ftxui::animation::RequestAnimationFrame();
-            });
+            // repaint-on-background-update follow-up: under FTXUI,
+            // ScreenInteractive::Post's own Closure task type never marked
+            // the frame dirty by itself, so a diagnostic/hover/completion/
+            // code-action response arriving here updated real state (e.g.
+            // Buffer::SetDiagnostics) with no repaint to actually show it
+            // until the next real keystroke or mouse event happened to
+            // repaint anyway -- fixed there with an explicit
+            // RequestAnimationFrame() after every such Post. FTXUI ->
+            // Notcurses migration: ned::ui::EventLoop::Run's own loop
+            // doesn't have this gap at all -- draining any Post()ed work
+            // unconditionally earns the next iteration a repaint (see
+            // EventLoop.cpp's own comment on needsRepaint), so no
+            // equivalent "force a frame" call is needed here anymore.
+            eventLoop_.Post([this, frameText = std::move(*frame)]() mutable { DispatchFrame(frameText); });
         }
     });
 }

@@ -21,14 +21,26 @@ include(FetchContent)
 set(FETCHCONTENT_UPDATES_DISCONNECTED ON)
 set(FETCHCONTENT_QUIET OFF)
 
-#--- Fetch FTXUI ---------------------------------------------------------------
-FetchContent_Declare(ftxui
-        GIT_REPOSITORY https://github.com/ArthurSonzogni/FTXUI.git
-        GIT_TAG v7.0.3
-        GIT_PROGRESS TRUE
+#--- Fetch Notcurses (FTXUI -> Notcurses migration, Phase 0) ------------------
+# Core TUI library only -- everything below trims Notcurses down to just what
+# this project needs (the terminal I/O + plane/rendering library itself), not
+# its bundled test/doc/executable/multimedia tooling, mirroring the same
+# "disable everything we don't need" approach already used for utf8proc/json.
+set(USE_MULTIMEDIA "none" CACHE STRING "" FORCE)
+set(USE_DOCTEST OFF CACHE BOOL "" FORCE)
+set(USE_PANDOC OFF CACHE BOOL "" FORCE)
+set(USE_DOXYGEN OFF CACHE BOOL "" FORCE)
+set(BUILD_EXECUTABLES OFF CACHE BOOL "" FORCE)
+set(BUILD_FFI_LIBRARY OFF CACHE BOOL "" FORCE)
+set(USE_POC OFF CACHE BOOL "" FORCE)
+set(USE_QRCODEGEN OFF CACHE BOOL "" FORCE)
+set(USE_STATIC OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(notcurses
+        GIT_REPOSITORY https://github.com/dankamongmen/notcurses.git
+        GIT_TAG v3.0.14
         GIT_SHALLOW TRUE
         EXCLUDE_FROM_ALL)
-FetchContent_MakeAvailable(ftxui)
+FetchContent_MakeAvailable(notcurses)
 #------------------------------------------------------------------------------
 
 #--- Fetch utf8proc -----------------------------------------------------------
@@ -267,6 +279,8 @@ add_library(ned_lib STATIC
         Source/Janet/InitFile.cpp
         Source/UI/KeyTranslation.cpp
         Source/UI/Widget.cpp
+        Source/UI/EventLoop.cpp
+        Source/UI/Layout.cpp
         Source/UI/ScrollBar.cpp
         Source/UI/BufferView.cpp
         Source/UI/WindowManager.cpp
@@ -286,9 +300,12 @@ target_include_directories(ned_lib
 
 target_link_libraries(ned_lib
         PUBLIC ${Janet_LIBRARIES}
-        PUBLIC ftxui::component
-        PUBLIC ftxui::dom
-        PUBLIC ftxui::screen
+        # FTXUI -> Notcurses migration: FTXUI itself is gone -- every widget
+        # (Widget/KeyTranslation/Theme/EventLoop/Layout and every concrete
+        # widget through main.cpp's own composition root) is ported onto
+        # Notcurses; see ROADMAP.md's migration entry for the full phase
+        # history.
+        PUBLIC notcurses-core
         PUBLIC utf8proc
         PUBLIC nlohmann_json::nlohmann_json
         PUBLIC tree-sitter
@@ -345,6 +362,7 @@ if (NED_BUILD_TESTS)
             Tests/ScriptingSessionTest.cpp
             Tests/EditorBindingsTest.cpp
             Tests/InitFileTest.cpp
+            Tests/TestEvents.cpp
             Tests/KeyTranslationTest.cpp
             Tests/BufferViewTest.cpp
             Tests/WindowManagerTest.cpp

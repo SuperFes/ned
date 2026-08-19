@@ -4,8 +4,8 @@
 // on top of).
 //
 // Threading: a background std::jthread runs a blocking read loop
-// (Transport::ReadFrame), marshaling each parsed frame onto the main FTXUI
-// loop thread via ftxui::ScreenInteractive::Post -- the same
+// (Transport::ReadFrame), marshaling each parsed frame onto the main Notcurses event-
+// loop thread via ned::ui::EventLoop::Post -- the same
 // documented-thread-safe mechanism WindowManager::StartAutoSaveTimer already
 // established, just driven by a blocking read loop instead of a timer. Every
 // public method here, and DispatchFrame (invoked only via that Post
@@ -17,7 +17,7 @@
 // maps) and hands the *result* across via Post, never touching them itself.
 //
 // Lifetime: LspClient (and whatever owns it, e.g. LspManager) must only be
-// destroyed after ftxui::ScreenInteractive::Loop() has returned -- same
+// destroyed after ned::ui::EventLoop::Run() has returned -- same
 // requirement WindowManager's own Post-based timer already has. A frame
 // posted but not yet processed when destruction begins is simply abandoned,
 // same as any other leftover Post callback at shutdown; this is only safe
@@ -48,8 +48,9 @@
 #include <unordered_map>
 #include <vector>
 
-#include <ftxui/component/screen_interactive.hpp>
 #include <nlohmann/json.hpp>
+
+#include "UI/EventLoop.h"
 
 #include "Transport.h"
 
@@ -66,11 +67,11 @@ class LspClient {
   public:
     // Spawns argv as a new language server process. screen must outlive this
     // LspClient (see this file's own header comment on lifetime).
-    LspClient(std::vector<std::string> argv, ftxui::ScreenInteractive& screen);
+    LspClient(std::vector<std::string> argv, ned::ui::EventLoop& eventLoop);
 
     // Takes ownership of an already-open Transport directly -- for tests
     // driving a raw pipe pair with no real subprocess involved.
-    LspClient(Transport transport, ftxui::ScreenInteractive& screen);
+    LspClient(Transport transport, ned::ui::EventLoop& eventLoop);
 
     ~LspClient() = default; // member destruction order does the real work -- see header comment
 
@@ -98,7 +99,7 @@ class LspClient {
     void SetNotificationHandler(std::string method, NotificationHandler handler);
 
     // error-visibility follow-up. Invoked exactly once, on the main thread
-    // (via the same screen_.Post the read loop already uses to marshal
+    // (via the same eventLoop_.Post the read loop already uses to marshal
     // every frame), the moment the background read loop stops running for
     // any reason -- clean EOF (the server process exited) or a malformed
     // frame (previously a silent `return` in StartReadLoop, either way).
@@ -108,11 +109,11 @@ class LspClient {
     void SetOnDisconnected(std::function<void(std::string reason)> handler);
 
     // Public primarily for tests: the real background read loop always
-    // reaches this via screen_.Post (see the header comment above), but
-    // FTXUI's own App::Post only ever enqueues onto its task runner --
+    // reaches this via eventLoop_.Post (see the header comment above), but
+    // ned::ui::EventLoop::Post only ever enqueues onto its own posted_ queue --
     // confirmed by reading app.cpp, not assumed -- there's no synchronous
     // fallback the way the *static* PostEventOrExecute helper has, so a
-    // test would need a real, running ScreenInteractive::Loop() to ever see
+    // test would need a real, running EventLoop::Run() loop to ever see
     // a Post-driven call actually happen. Calling this directly instead
     // exercises the exact same correlation/dispatch logic without needing
     // that.
@@ -124,7 +125,7 @@ class LspClient {
     std::jthread readThread_; // declared before transport_ -- see header comment
     Transport    transport_;
 
-    ftxui::ScreenInteractive& screen_;
+    ned::ui::EventLoop& eventLoop_;
 
     int                                                  nextRequestId_ = 1;
     std::unordered_map<int, ResponseCallback>            pending_;

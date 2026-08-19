@@ -1,10 +1,8 @@
 #include <catch2/catch_test_macros.hpp>
 
-#include <ftxui/component/event.hpp>
-#include <ftxui/component/mouse.hpp>
-#include <ftxui/screen/screen.hpp>
 #include <string>
 
+#include "TestEvents.h"
 #include "Text/BufferList.h"
 #include "UI/ActiveBuffer.h"
 #include "UI/ProjectSidebar.h"
@@ -13,22 +11,12 @@
 
 namespace {
 
-ftxui::Event MousePress(int x, int y, ftxui::Mouse::Button button = ftxui::Mouse::Left) {
-    ftxui::Mouse mouse;
-    mouse.button = button;
-    mouse.motion = ftxui::Mouse::Pressed;
-    mouse.x      = x;
-    mouse.y      = y;
-    return ftxui::Event::Mouse("", mouse);
+ned::ui::Event MousePress(int x, int y, ned::ui::MouseEvent::Button button = ned::ui::MouseEvent::Button::Left) {
+    return ned::ui::test::Mouse(x, y, button, ned::ui::MouseEvent::Motion::Pressed);
 }
 
-ftxui::Event MouseRelease(int x, int y) {
-    ftxui::Mouse mouse;
-    mouse.button = ftxui::Mouse::Left;
-    mouse.motion = ftxui::Mouse::Released;
-    mouse.x      = x;
-    mouse.y      = y;
-    return ftxui::Event::Mouse("", mouse);
+ned::ui::Event MouseRelease(int x, int y) {
+    return ned::ui::test::Mouse(x, y, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Released);
 }
 
 } // namespace
@@ -36,20 +24,20 @@ ftxui::Event MouseRelease(int x, int y) {
 TEST_CASE("SidebarToggle paints the closed symbol before any sidebar is registered", "[SidebarToggle]") {
     const ned::ui::Brush   brush{.foreground = ned::ui::Color::BrightBlack};
     ned::ui::SidebarToggle toggle(brush);
-    toggle.SetBox_(ftxui::Box{.x_min = 0, .x_max = 0, .y_min = 0, .y_max = 0});
+    toggle.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 0, .y_min = 0, .y_max = 0});
 
-    ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(1), ftxui::Dimension::Fixed(1));
-    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 0, .y_min = 0, .y_max = 0});
+    ned::ui::Screen screen = ned::ui::Screen(1, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 0, .y_min = 0, .y_max = 0});
     toggle.Paint(canvas);
 
     REQUIRE(screen.PixelAt(0, 0).character == "»");
-    REQUIRE(screen.PixelAt(0, 0).foreground_color == brush.foreground.ToFtxui());
+    REQUIRE(screen.PixelAt(0, 0).foreground_color == brush.foreground);
 }
 
 TEST_CASE("mouse press with no sidebar registered is a safe no-op", "[SidebarToggle]") {
     const ned::ui::Brush   brush{};
     ned::ui::SidebarToggle toggle(brush);
-    toggle.SetBox_(ftxui::Box{.x_min = 0, .x_max = 0, .y_min = 0, .y_max = 0});
+    toggle.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 0, .y_min = 0, .y_max = 0});
 
     toggle.OnEvent(MousePress(0, 0)); // must not crash
 }
@@ -64,11 +52,11 @@ TEST_CASE("SidebarToggle's symbol tracks the registered sidebar's active flag", 
 
     const ned::ui::Brush   brush{};
     ned::ui::SidebarToggle toggle(brush);
-    toggle.SetBox_(ftxui::Box{.x_min = 0, .x_max = 0, .y_min = 0, .y_max = 0});
+    toggle.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 0, .y_min = 0, .y_max = 0});
     toggle.SetSidebar(&sidebar);
 
-    ftxui::Screen   screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(1), ftxui::Dimension::Fixed(1));
-    ned::ui::Canvas canvas(screen, ftxui::Box{.x_min = 0, .x_max = 0, .y_min = 0, .y_max = 0});
+    ned::ui::Screen screen = ned::ui::Screen(1, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 0, .y_min = 0, .y_max = 0});
 
     REQUIRE(sidebar.active); // Widget::active defaults to true
     toggle.Paint(canvas);
@@ -89,7 +77,7 @@ TEST_CASE("Left press flips the registered sidebar's active flag", "[SidebarTogg
 
     const ned::ui::Brush   brush{};
     ned::ui::SidebarToggle toggle(brush);
-    toggle.SetBox_(ftxui::Box{.x_min = 0, .x_max = 0, .y_min = 0, .y_max = 0});
+    toggle.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 0, .y_min = 0, .y_max = 0});
     toggle.SetSidebar(&sidebar);
 
     REQUIRE(sidebar.active);
@@ -119,7 +107,7 @@ TEST_CASE("A release ends an in-progress sidebar resize even when the cursor end
     ned::ui::Theme          theme = ned::ui::DarkTheme();
     std::string             statusMessage;
     ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
-    sidebar.SetBox_(ftxui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 2});
+    sidebar.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 2});
 
     const ned::ui::Brush   brush{};
     ned::ui::SidebarToggle toggle(brush);
@@ -149,6 +137,6 @@ TEST_CASE("mouse press with a non-Left button does not flip the sidebar", "[Side
     ned::ui::SidebarToggle toggle(brush);
     toggle.SetSidebar(&sidebar);
 
-    toggle.OnEvent(MousePress(0, 0, ftxui::Mouse::Right));
+    toggle.OnEvent(MousePress(0, 0, ned::ui::MouseEvent::Button::Right));
     REQUIRE(sidebar.active);
 }
