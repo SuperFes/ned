@@ -38,6 +38,8 @@ namespace {
             {"css-mode", CssMode},
             {"python-mode", PythonMode},
             {"bash-mode", BashMode},
+            {"yaml-mode", YamlMode},
+            {"toml-mode", TomlMode},
             {"markdown-mode", MarkdownMode},
             {"org-mode", OrgMode},
         };
@@ -70,7 +72,9 @@ namespace {
             {".html", "html-mode"},           {".htm", "html-mode"},
             {".css", "css-mode"},             {".py", "python-mode"},
             {".pyw", "python-mode"},          {".sh", "bash-mode"},
-            {".bash", "bash-mode"},           {".md", "markdown-mode"},
+            {".bash", "bash-mode"},           {".yaml", "yaml-mode"},
+            {".yml", "yaml-mode"},            {".toml", "toml-mode"},
+            {".md", "markdown-mode"},
             {".markdown", "markdown-mode"},   {".org", "org-mode"},
         };
         return table;

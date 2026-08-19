@@ -25,6 +25,8 @@ const TSLanguage* tree_sitter_janet_simple(void);
 const TSLanguage* tree_sitter_markdown(void);
 const TSLanguage* tree_sitter_markdown_inline(void);
 const TSLanguage* tree_sitter_org(void);
+const TSLanguage* tree_sitter_yaml(void);
+const TSLanguage* tree_sitter_toml(void);
 }
 
 namespace ned::editor::treesitter {
@@ -86,6 +88,15 @@ std::optional<Language> LanguageByName(std::string_view name) {
     // ned_add_treesitter_grammar(tree-sitter-org ...) call for why.
     if (name == "org") {
         return Language(tree_sitter_org());
+    }
+    // tree-sitter-grammars/tree-sitter-yaml and tree-sitter-grammars/tree-sitter-toml
+    // -- both community-maintained, both ship a pre-generated src/parser.c and a real
+    // queries/highlights.scm, the same bar every other bundled grammar here meets.
+    if (name == "yaml") {
+        return Language(tree_sitter_yaml());
+    }
+    if (name == "toml") {
+        return Language(tree_sitter_toml());
     }
     return std::nullopt;
 }

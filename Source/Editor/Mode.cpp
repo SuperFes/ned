@@ -544,6 +544,18 @@ Mode BashMode() {
     return mode;
 }
 
+Mode YamlMode() {
+    Mode mode              = TreeSitterMode("yaml-mode", "yaml", treesitter::queries::kYaml);
+    mode.lineCommentPrefix = "#";
+    return mode;
+}
+
+Mode TomlMode() {
+    Mode mode              = TreeSitterMode("toml-mode", "toml", treesitter::queries::kToml);
+    mode.lineCommentPrefix = "#";
+    return mode;
+}
+
 Mode MarkdownMode() {
     Mode mode = TreeSitterMode("markdown-mode", "markdown", treesitter::queries::kMarkdown);
     // Tables follow-up: the second Mode in this codebase to ever construct

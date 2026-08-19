@@ -30,6 +30,8 @@ extern const char* const kMarkdownInline; // MarkdownMode()'s own hand-rolled in
 // forked grammar (Source/Editor/TreeSitter/OrgHighlights.scm), not fetched
 // from any repository -- see that file's own header comment for why.
 extern const char* const kOrg;
+extern const char* const kYaml;
+extern const char* const kToml;
 
 // generic-code-folding follow-up: hand-written "@fold" queries, one per
 // in-scope language (Source/Editor/TreeSitter/queries/*-folds.scm) -- no

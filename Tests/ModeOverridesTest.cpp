@@ -136,6 +136,9 @@ TEST_CASE("ModeForPath resolves a representative sample of bundled extensions", 
     REQUIRE(ModeForPath("/some/path/notes.md").name == "markdown-mode");
     REQUIRE(ModeForPath("/some/path/data.json").name == "json-mode");
     REQUIRE(ModeForPath("/some/path/outline.org").name == "org-mode");
+    REQUIRE(ModeForPath("/some/path/config.yaml").name == "yaml-mode");
+    REQUIRE(ModeForPath("/some/path/config.yml").name == "yaml-mode");
+    REQUIRE(ModeForPath("/some/path/Cargo.toml").name == "toml-mode");
 }
 
 TEST_CASE("ModeForPath falls back to FundamentalMode for an unrecognized extension", "[ModeOverrides]") {
