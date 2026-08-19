@@ -1616,13 +1616,47 @@ each is, not by priority.
         subprocess stderr capture — see "LSP client" and "LSP client — error visibility
         follow-up" above for why each of those is a deliberate cut, not an oversight.
   - [ ] DAP (Debug Adapter Protocol) client for in-editor debugging.
-  - [ ] Spell-checking, prose-oriented — a separate concern from the LSP client above,
-        not dependent on it: some LSP servers (e.g. `marksman` for Markdown, some prose
-        linters) do speak diagnostics over LSP, but a dedicated checker backed by
-        `hunspell`/`aspell` and whatever dictionaries are already installed locally is a
-        simpler, more direct integration (spawn `hunspell -a` in pipe mode, or link
-        libhunspell directly) than routing prose checking through a language server.
-        Raised by the user alongside the LSP design discussion; not scoped in detail yet.
+  - [ ] Spell/grammar-checking, prose-oriented, as a **diagnostics channel over the
+        existing LSP client**, not a bespoke hunspell/libhunspell integration (revised
+        from an earlier draft of this entry that proposed spawning `hunspell -a`
+        directly — superseded once it was clear multiple real checkers already speak
+        LSP natively, making this a config/plumbing question rather than a new
+        subsystem). Concretely:
+        - **`harper-ls`** (native Rust, no JVM, does both spelling and basic grammar,
+          English-dialects-only) is the preferred default — detect it on `PATH`
+          (likely via the same system-probing approach the "Environment setup tool"
+          companion-tooling entry below already plans for tree-sitter grammars) and
+          wire it in automatically when present, no user config required.
+        - **Fallback chain** when `harper-ls` isn't installed or for non-English
+          content: other installed spell checkers exposed via an LSP wrapper (thin
+          hunspell/nuspell-backed LSP servers exist) should be tried in order, ending
+          in "no prose checking" rather than a hard failure. Also covers real grammar
+          checking (e.g. `ltex-ls`, which wraps LanguageTool) as an opt-in, heavier
+          alternative someone can point Janet at themselves — `ned` itself should
+          never bundle or require a JVM.
+        - **Not language-gated the way `clangd`/`pyright` are.** Spelling should
+          attach to any prose-shaped buffer (Markdown, org, plain text, commit
+          messages, maybe comments/strings later) independent of whichever primary
+          language server is already bound to that buffer for code intelligence —
+          this is *not* the existing per-language `LspServerConfig` lookup, which
+          picks exactly one server per buffer today.
+        - **Open architectural question, unresolved:** does the current LSP client
+          support more than one concurrent server per buffer? If it's 1:1 today (needs
+          checking in `Source/Editor/Lsp*` before this is scoped further), then the
+          real work here is multi-server-per-buffer diagnostics merging, not adding a
+          checker — that's the actual size of this item, not "just another server
+          config entry."
+        - **Must never run against binary buffers** — key off the existing
+          binary/text classification (`RequestOpenBinaryFile`/large-file-async-load
+          machinery) rather than inventing a new check.
+        - A Janet plugin author should already be able to register any LSP-speaking
+          checker (spelling, grammar, or both) themselves via existing
+          `LspServerConfig`-style hooks once the multi-server question above is
+          resolved — this entry is about making a good one work out of the box, not
+          about needing new plugin infrastructure beyond that.
+        Raised by the user alongside the LSP design discussion; not scoped in detail
+        yet — grammar-checking in particular is explicitly not something `ned` needs
+        to build itself, only support as a pluggable LSP-backed checker.
 - **Navigation & search**
   - [x] Fast fuzzy file finder / command palette — done, see Phase 10 above.
   - [ ] Multibuffers: a virtual buffer stitching together excerpts from multiple
