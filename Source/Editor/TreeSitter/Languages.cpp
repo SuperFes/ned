@@ -23,6 +23,7 @@ const TSLanguage* tree_sitter_python(void);
 const TSLanguage* tree_sitter_bash(void);
 const TSLanguage* tree_sitter_janet_simple(void);
 const TSLanguage* tree_sitter_markdown(void);
+const TSLanguage* tree_sitter_markdown_inline(void);
 const TSLanguage* tree_sitter_org(void);
 }
 
@@ -72,6 +73,13 @@ std::optional<Language> LanguageByName(std::string_view name) {
     }
     if (name == "markdown") {
         return Language(tree_sitter_markdown());
+    }
+    // Only ever reached from MarkdownMode()'s own hand-rolled injection pass
+    // (Mode.cpp), never via ModeForPath -- see CMakeLists.txt's own
+    // ned_add_treesitter_grammar(tree-sitter-markdown-inline ...) call for
+    // why this is a separate grammar from "markdown" above.
+    if (name == "markdown-inline") {
+        return Language(tree_sitter_markdown_inline());
     }
     // Org-mode syntax-highlighting follow-up: nvim-orgmode/tree-sitter-org,
     // forked (not the real upstream repository) -- see CMakeLists.txt's own

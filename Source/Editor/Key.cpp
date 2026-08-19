@@ -5,6 +5,8 @@
 #include <string>
 #include <unordered_map>
 
+#include "Text/Utf8.h"
+
 namespace ned::editor {
 
 namespace {
@@ -129,6 +131,90 @@ std::vector<KeyChord> ParseKeySequence(std::string_view text) {
     }
 
     return sequence;
+}
+
+std::string FormatKeyChord(const KeyChord& chord) {
+    std::string text;
+    if (chord.Control) {
+        text += "C-";
+    }
+    if (chord.Meta) {
+        text += "M-";
+    }
+    if (chord.Shift) {
+        text += "S-";
+    }
+
+    switch (chord.Special) {
+        case SpecialKey::None:
+            break;
+        case SpecialKey::Enter:
+            return text + "RET";
+        case SpecialKey::Tab:
+            return text + "TAB";
+        case SpecialKey::Backspace:
+            return text + "DEL";
+        case SpecialKey::Delete:
+            return text + "DELETE";
+        case SpecialKey::Escape:
+            return text + "ESC";
+        case SpecialKey::Up:
+            return text + "UP";
+        case SpecialKey::Down:
+            return text + "DOWN";
+        case SpecialKey::Left:
+            return text + "LEFT";
+        case SpecialKey::Right:
+            return text + "RIGHT";
+        case SpecialKey::Home:
+            return text + "HOME";
+        case SpecialKey::End:
+            return text + "END";
+        case SpecialKey::PageUp:
+            return text + "PAGEUP";
+        case SpecialKey::PageDown:
+            return text + "PAGEDOWN";
+        case SpecialKey::F1:
+            return text + "F1";
+        case SpecialKey::F2:
+            return text + "F2";
+        case SpecialKey::F3:
+            return text + "F3";
+        case SpecialKey::F4:
+            return text + "F4";
+        case SpecialKey::F5:
+            return text + "F5";
+        case SpecialKey::F6:
+            return text + "F6";
+        case SpecialKey::F7:
+            return text + "F7";
+        case SpecialKey::F8:
+            return text + "F8";
+        case SpecialKey::F9:
+            return text + "F9";
+        case SpecialKey::F10:
+            return text + "F10";
+        case SpecialKey::F11:
+            return text + "F11";
+        case SpecialKey::F12:
+            return text + "F12";
+    }
+
+    if (chord.Codepoint == U' ') {
+        return text + "SPC";
+    }
+    return text + text::EncodeCodepointUtf8(chord.Codepoint);
+}
+
+std::string FormatKeySequence(const std::vector<KeyChord>& chords) {
+    std::string text;
+    for (const KeyChord& chord : chords) {
+        if (!text.empty()) {
+            text += ' ';
+        }
+        text += FormatKeyChord(chord);
+    }
+    return text;
 }
 
 } // namespace ned::editor

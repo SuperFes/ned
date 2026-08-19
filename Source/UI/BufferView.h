@@ -14,6 +14,7 @@
 
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <filesystem>
 #include <functional>
@@ -22,12 +23,15 @@
 #include <utility>
 #include <vector>
 
+#include <ftxui/component/animation.hpp>
+
 #include "ActiveBuffer.h"
 #include "Editor/CodeFold.h"
 #include "Editor/Command.h"
 #include "Editor/Dispatcher.h"
 #include "Editor/IncrementalSearch.h"
 #include "Editor/Link.h"
+#include "Editor/Lsp/LspManager.h"
 #include "Editor/MinibufferPrompt.h"
 #include "Editor/Mode.h"
 #include "Editor/Org.h"
@@ -41,10 +45,6 @@
 #include "Text/BufferList.h"
 #include "Text/KillRing.h"
 #include "Theme.h"
-
-namespace ned::editor::lsp {
-class LspManager;
-} // namespace ned::editor::lsp
 
 namespace ned::ui {
 
@@ -68,6 +68,13 @@ class BufferView : public Widget {
     bool OnEvent(ftxui::Event event) override;
     bool Focusable() const override; // was FocusPolicy::Strong
 
+    // hover/completion follow-up: drives the automatic-completion debounce
+    // timer -- see completionDebounceDeadline_'s own doc comment. Same
+    // animation-frame-driven shape ScrollArrowButton::OnAnimation already
+    // established for a sub-second, self-perpetuating repeat/delay with no
+    // dedicated background thread.
+    void OnAnimation(ftxui::animation::Params& params) override;
+
     // Local cursor position for the real terminal caret -- was ox::Widget's
     // own `cursor` field. A pure, independent computation, deliberately NOT
     // cached from Paint() -- see the .cpp definition's own comment for why
@@ -85,6 +92,15 @@ class BufferView : public Widget {
     [[nodiscard]] std::size_t TopLine() const;
     void                      SetTopLine(std::size_t line);
     void                      SetScrollBar(ScrollBar* scrollBar);
+
+    // line-wrap follow-up: horizontal counterpart to TopLine()/SetTopLine(),
+    // only ever meaningful for a buffer whose EffectiveWrapLines() is false
+    // -- a wrapped line, by construction, never exceeds the viewport width,
+    // so there is nothing left to horizontally scroll (see
+    // ScrollToShowPointHorizontally's own doc comment). Public for the same
+    // "externally observable scroll position" reason TopLine() is.
+    [[nodiscard]] std::size_t LeftColumn() const;
+    void                      SetLeftColumn(std::size_t column);
 
     // Registers the up/down arrow caps flanking the scroll bar so Paint()
     // can keep their enabled state in sync each frame: up is enabled only
@@ -146,6 +162,20 @@ class BufferView : public Widget {
     // is a safe no-op, matching every other Set* hook here.
     void SetOnBufferClosed(std::function<void(text::Buffer&)> handler);
 
+    // per-buffer-mode follow-up: called at the top of Paint() whenever the
+    // active buffer's identity has changed since the last Paint() call --
+    // the same "recompute, don't cache, detect via pointer identity" idiom
+    // topLineValidatedBuffer_/highlightCacheBuffer_/etc. already use, kept
+    // as its own independent check since it serves an unrelated concern.
+    // Does NOT fire on the very first Paint() after construction (see
+    // modeSyncBuffer_'s own doc comment). Intended registrant is this
+    // BufferView's owning Pane (WindowManager.cpp), which reassigns its own
+    // Mode in place -- see Pane::mode_'s doc comment for why that alone is
+    // sufficient to swap highlighting/folding/keymap/expand-selection with
+    // no Dispatcher/KeymapStack rebuild needed. Unset is a safe no-op,
+    // matching every other Set* hook here.
+    void SetOnActiveBufferChanged(std::function<void(text::Buffer&)> handler);
+
   private:
     enum class InputMode { Normal,
                            IsearchForward,
@@ -168,7 +198,28 @@ class BufferView : public Widget {
                            CopyToRegister,
                            InsertRegister,
                            StringRectangle,
-                           SetHeadlineTags };
+                           SetHeadlineTags,
+                           // code-actions follow-up: entered only once RequestCodeActionsAtPoint's
+                           // async response actually arrives (never eagerly, while the request is
+                           // still in flight -- see that method's own doc comment) -- Select when
+                           // more than one action came back, Confirm for the (possibly only, or
+                           // just-picked-from-Select) one awaiting a y/n.
+                           LspCodeActionSelect,
+                           LspCodeActionConfirm,
+                           // go-to-definition follow-up: same "entered only from inside the
+                           // async response callback" shape as LspCodeActionSelect above --
+                           // Select when RequestDefinitionAtPoint's response names more than one
+                           // location (a real, if less common, case -- e.g. a virtual/overridden
+                           // method with several implementations).
+                           LspGotoDefinitionSelect,
+                           // rename follow-up: LspRenameNewName is the one synchronous
+                           // prompt-shaped stage here (routed through HandlePromptKey, like
+                           // FindFile/CreateDirectory/etc.) -- Enter sends the actual
+                           // textDocument/rename request via RequestRenameAtPoint, which only
+                           // then (from inside its own async callback, once the response
+                           // arrives) enters LspRenameConfirm for the final y/n.
+                           LspRenameNewName,
+                           LspRenameConfirm };
 
     enum class DeleteFileStage { EnteringPath,
                                  Confirming };
@@ -217,6 +268,92 @@ class BufferView : public Widget {
     // leaving that buffer pointing at a now-nonexistent path.
     void HandleDeleteFileKey(const editor::KeyChord& chord);
     void HandleRenameFileKey(const editor::KeyChord& chord);
+
+    // code-actions follow-up. RequestCodeActionsAtPoint mirrors
+    // RequestCompletionAtPoint's shape: finds the diagnostic covering point
+    // (same lookup lsp-show-diagnostic already does against
+    // Buffer::Diagnostics()) or falls back to a zero-length range at point,
+    // bumps codeActionRequestGeneration_, and calls
+    // LspManager::RequestCodeActions. The callback (capturing a raw
+    // Buffer* for pointer-value-only comparison, point, and generation --
+    // same idiom RequestCompletionAtPoint already uses) discards a stale
+    // response (generation moved, or buffer/point changed since the request
+    // was sent) rather than surprising the user with a selection prompt for
+    // something they've since moved on from; otherwise sets
+    // pendingCodeActions_ and enters LspCodeActionConfirm directly (exactly
+    // one action) or LspCodeActionSelect (more than one) -- inputMode_ is
+    // therefore only ever touched from inside this async callback, never
+    // eagerly when the request is first sent.
+    void RequestCodeActionsAtPoint();
+    // Renders pendingCodeActions_ as a numbered list into statusMessage_,
+    // codeActionSelection_ visually marked -- called after RequestCodeActionsAtPoint
+    // first enters LspCodeActionSelect, and again by HandleCodeActionSelectKey
+    // whenever Up/Down changes the selection.
+    void RefreshCodeActionSelectStatus();
+    // Up/Down move codeActionSelection_ (clamped) and refresh; a digit '1'-'9'
+    // jumps directly to that index (clamped to the available count) and falls
+    // through to the same LspCodeActionConfirm transition Enter performs;
+    // Escape/C-g cancels back to Normal.
+    void HandleCodeActionSelectKey(const editor::KeyChord& chord);
+    // y/Y applies pendingCodeActions_[codeActionSelection_] via
+    // ApplyCodeAction and ends the session; n/N/Escape/C-g cancels --
+    // mirrors HandleDeleteFileKey's own Confirming-stage shape exactly.
+    void HandleCodeActionConfirmKey(const editor::KeyChord& chord);
+    // Refuses (reports via statusMessage_, no buffer mutation) if
+    // action.touchesOtherFiles or it has no edit to apply. Otherwise
+    // resolves each WorkspaceTextEdit's LspPositions to byte offsets against
+    // the buffer's CURRENT content (safe without a fresh generation check --
+    // the modal Select/Confirm input modes already block ordinary
+    // typing/editing for the whole exchange), sorts the resolved edits
+    // descending by start byte (so an edit not yet applied keeps a valid
+    // offset as an earlier-in-the-buffer one shifts positions), then applies
+    // each via Buffer::DeleteRange + Buffer::InsertAt.
+    void ApplyCodeAction(const editor::lsp::CodeAction& action);
+
+    // go-to-definition follow-up. Mirrors RequestCodeActionsAtPoint's own
+    // shape exactly: bumps definitionRequestGeneration_, calls
+    // LspManager::RequestDefinition, and discards a stale response (buffer/
+    // point changed, or a newer request already superseded it) the same
+    // way. Zero locations reports "No definition found." via
+    // statusMessage_; exactly one jumps directly (JumpToDefinition, no
+    // confirmation needed -- unlike a code action, opening a file and
+    // moving point is trivially undoable/re-navigable, nothing destructive
+    // to confirm); more than one enters LspGotoDefinitionSelect the same
+    // way multiple code actions enter LspCodeActionSelect.
+    void RequestDefinitionAtPoint();
+    void RefreshDefinitionSelectStatus();
+    void HandleDefinitionSelectKey(const editor::KeyChord& chord);
+    // Opens location.path (BufferList::OpenOrCreateFile, matching
+    // VisitSearchResult's own precedent for jumping into a project file)
+    // and moves point to location.position, resolved against the newly-
+    // opened buffer's own content.
+    void JumpToDefinition(const editor::lsp::LspManager::ResolvedLocation& location);
+
+    // rename follow-up. StartInteractiveSession's LspRename case opens the
+    // synchronous "New name: " prompt (inputMode_ = LspRenameNewName);
+    // HandlePromptKey's own Enter branch for that mode calls this once the
+    // name is typed. Mirrors RequestCodeActionsAtPoint's async/staleness-
+    // guard shape once again, but resolves to a full ResolvedRename
+    // (potentially many files) rather than a single buffer's edits.
+    void RequestRenameAtPoint(const std::string& newName);
+    void RefreshRenameConfirmStatus();
+    void HandleRenameConfirmKey(const editor::KeyChord& chord);
+    // Refuses (statusMessage_, no mutation anywhere) if
+    // result.touchesUnsupportedForm or it has no edit at all. Otherwise
+    // opens/finds every touched file first (BufferList::FindByPath, else
+    // BufferList::OpenFile) and bails out -- applying nothing -- the moment
+    // any one of them fails to open, so a rename either fully applies
+    // across every file or leaves every buffer untouched, never a partial
+    // rename across only some of the affected files. Once every buffer is
+    // confirmed open, applies each buffer's own edits via the same
+    // resolve-LspPositions-against-current-content + descending-sort-by-
+    // start-byte + DeleteRange/InsertAt sequence ApplyCodeAction already
+    // established -- factored into a shared ApplyWorkspaceTextEdits helper
+    // (BufferView.cpp, file-local) both now call. Every affected buffer is
+    // left modified-but-unsaved, exactly like any other in-editor edit --
+    // no auto-save-across-files behavior, matching this codebase's existing
+    // "saves are always user-initiated" convention.
+    void ApplyRename(const editor::lsp::LspManager::ResolvedRename& result);
 
     // point-to-register/jump-to-register/copy-to-register/insert-register
     // follow-up: one shared method for all four (mirrors HandlePromptKey's
@@ -301,7 +438,27 @@ class BufferView : public Widget {
     // call leaves context.interactiveRequest at None exactly the same as a
     // real command that simply doesn't set it, and only the latter should
     // count as "something else happened."
-    void RunCommandAndHandleOutcome(editor::CommandContext& context, const std::function<bool()>& invoke);
+    // hover/completion follow-up: triggeringChord is non-null only from
+    // OnKeyEvent's own normal-dispatch call site -- ReplayMacro/
+    // HandleExecuteCommandKey's calls leave it at the default nullptr, so
+    // macro replay and M-x-invoked commands never schedule an automatic
+    // completion request (only organic, direct keystrokes do). Used, when
+    // present, only in the ordinary (interactiveRequest == None) tail below,
+    // the one branch already guaranteed *this* is still alive.
+    // status-message-lifecycle follow-up: now returns the same `ran` this
+    // already computed internally (true iff a command actually ran, even
+    // if it threw) -- OnKeyEvent's own normal-dispatch call site needs it
+    // to know whether Dispatcher::Feed's returned Outcome is trustworthy
+    // for deciding whether to show a pending-sequence/undefined-key
+    // message: when a Match'd command throws, Feed itself never reaches
+    // its own `return Outcome::Invoked`, so the Outcome captured at that
+    // call site is stale (still whatever it was default-initialized to) --
+    // checking `ran` first, not the possibly-stale Outcome, is what avoids
+    // clobbering the exception's own message with a bogus "X is undefined"
+    // (a real bug, caught by this session's own pre-existing exception-
+    // handling test, not hypothetical).
+    bool RunCommandAndHandleOutcome(editor::CommandContext& context, const std::function<bool()>& invoke,
+                                    const editor::KeyChord* triggeringChord = nullptr);
 
     // kmacro-end-or-call-macro follow-up: replays dispatcher_.LastMacro(),
     // one chord at a time, each through a fresh MakeContext() +
@@ -380,6 +537,15 @@ class BufferView : public Widget {
     // Adjusts the viewport (if needed) so point's line is visible.
     void ScrollToShowPoint();
 
+    // line-wrap follow-up: horizontal counterpart to ScrollToShowPoint(),
+    // called alongside it -- a no-op whenever the active buffer's
+    // EffectiveWrapLines() is true, since a wrapped line never extends past
+    // the viewport width in the first place (confirmed by construction: see
+    // ComputeWrapSegments's own doc comment). Adjusts leftColumn_ the same
+    // "clamp to keep point visible, minimal movement" way
+    // ScrollToShowPoint() adjusts topLine_.
+    void ScrollToShowPointHorizontally();
+
     // Re-validates topLine_ via ScrollToShowPoint() whenever the active
     // buffer's identity has changed since the last call -- see
     // topLineValidatedBuffer_'s own doc comment for why this exists.
@@ -419,6 +585,21 @@ class BufferView : public Widget {
     // buffer's last line number, plus one separating column). Always
     // present -- there's no toggle to hide it yet.
     [[nodiscard]] std::size_t GutterWidth() const;
+
+    // read-only-buffers follow-up: the one shared condition for "does the
+    // active buffer get a fold-depth gutter at all" -- mode_.fold and
+    // editor::CodeFoldingEnabled() were already checked (independently, in
+    // four separate places: EnsureFoldableBlocksCache, Paint()'s own
+    // gutter-width math, GutterWidth(), and OnMouseEvent's fold-click hit
+    // test) before a synthesized, read-only buffer (project-search
+    // results, project-replace's preview, project-agenda) could ever
+    // exist; a real Mode's own fold query run against that buffer's own
+    // "path:line: text" content produces meaningless fold regions, not an
+    // empty result, so ReadOnly() has to be part of this condition too,
+    // not just mode_.fold/CodeFoldingEnabled() -- centralized here so all
+    // four call sites can't drift out of agreement with each other the way
+    // duplicating a fourth inline copy of this check risked.
+    [[nodiscard]] bool FoldGutterActive() const;
 
     // Diagnostic aid, opt-in via $NED_DEBUG_MOUSE (a file path to append
     // to): logs the raw event plus current point/mark/topLine_/size at the
@@ -495,6 +676,14 @@ class BufferView : public Widget {
     [[nodiscard]] bool InSelection(std::size_t byteOffset) const;
     [[nodiscard]] bool InIsearchMatch(std::size_t byteOffset) const;
 
+    // line-wrap follow-up: editor::EffectiveWrapLines(activeBuffer_.Get().Path(), mode_) --
+    // the active buffer's own resolved wrap setting (a per-file override if
+    // one is configured, else mode_'s own default). Recomputed fresh each
+    // call rather than cached -- it's a cheap map lookup plus a bool copy,
+    // the same "not worth caching" judgment CodeFoldingEnabled() callers
+    // already make.
+    [[nodiscard]] bool EffectiveWrapLines() const;
+
     ActiveBuffer&          activeBuffer_;
     text::KillRing&        killRing_;
     editor::RegisterTable& registers_;
@@ -526,6 +715,20 @@ class BufferView : public Widget {
     // very first Paint() call is never itself mistaken for a switch -- see
     // the constructor's own comment for the real regression that caught.
     text::Buffer* topLineValidatedBuffer_ = nullptr;
+
+    // line-wrap follow-up: horizontal counterpart to topLine_, only ever
+    // meaningful while the active buffer's EffectiveWrapLines() is false --
+    // left untouched (not reset) while wrap is active, the same "leave
+    // stale scroll state alone rather than force-reset it" precedent
+    // topLine_ itself already establishes across a buffer switch.
+    std::size_t leftColumn_ = 0;
+
+    // per-buffer-mode follow-up: mirrors topLineValidatedBuffer_'s own
+    // "seed at construction so the first Paint() is never mistaken for a
+    // switch" precedent exactly -- avoids firing onActiveBufferChanged_
+    // (and thus one redundant Mode rebuild) at startup, when the owning
+    // Pane already constructed its Mode correctly for this same buffer.
+    text::Buffer* modeSyncBuffer_ = nullptr;
 
     std::size_t                dragAnchor_ = 0;            // point position at the last mouse press, for drag-selection
     std::optional<std::string> debugMouseLogPath_;         // see LogMouseEvent
@@ -579,6 +782,7 @@ class BufferView : public Widget {
     // Window-splitting follow-up: see SetOnWindowRequest/SetOnBufferClosed.
     std::function<void(editor::InteractiveRequest)> onWindowRequest_;
     std::function<void(text::Buffer&)>              onBufferClosed_;
+    std::function<void(text::Buffer&)>              onActiveBufferChanged_; // see SetOnActiveBufferChanged
 
     // Caches mode_.highlight's result across Paint() calls (tree-sitter
     // foundation follow-up) -- Paint() runs far more often than the buffer's
@@ -722,6 +926,23 @@ class BufferView : public Widget {
     mutable std::size_t                                      hiddenLineRangesCacheFoldGeneration_    = 0;
     mutable std::vector<std::pair<std::size_t, std::size_t>> hiddenLineRanges_;
 
+    // line-wrap follow-up: see EnsureRowCountCache/RowsForLine's own doc
+    // comments above. rowCountPerLine_[line] holds only the segment
+    // *count* (not the segments themselves) for a line ONCE it's actually
+    // been asked about -- kRowCountUnknown (a sentinel, never a real
+    // segment count) marks a not-yet-computed entry; ComputeWrapSegments
+    // itself is only ever called fresh, per line, on that first access
+    // (and again for rendering/cursor placement in Paint()/
+    // CursorPosition()/ByteOffsetForPoint(), each of which needs the real
+    // segment byte ranges anyway, not just a count) -- never eagerly for
+    // the whole buffer, per this cache's own perf history.
+    static constexpr std::size_t     kRowCountUnknown = static_cast<std::size_t>(-1);
+    mutable text::Buffer*            rowCountCacheBuffer_            = nullptr;
+    mutable std::size_t              rowCountCacheContentGeneration_ = 0;
+    mutable int                      rowCountCacheContentWidth_      = 0;
+    mutable bool                     rowCountCacheWrapEnabled_       = false;
+    mutable std::vector<std::size_t> rowCountPerLine_;
+
     // Links follow-up: caches org::ParseLinks's result across Paint()/
     // CursorPosition()/ByteOffsetForPoint() calls, same shape/reasoning as
     // highlightCacheBuffer_ above. EnsureLinkCache clears linkCache_ and
@@ -735,6 +956,131 @@ class BufferView : public Widget {
     mutable std::vector<editor::org::Link> linkCache_;
 
     void EnsureLinkCache() const;
+
+    // line-wrap follow-up. RowsForLine generalizes the "every visible line
+    // is exactly one canvas row" assumption the fold quartet above bakes
+    // in -- true for fold (collapse: 0 or 1 rows) but not for wrap
+    // (expansion: 1 or more). 0 if line IsLineHidden; else 1 when
+    // EffectiveWrapLines() is false; else ComputeWrapSegments(line).size()
+    // when true. Backed by rowCountPerLine_, populated LAZILY (one line's
+    // word-break scan computed and memoized the first time that specific
+    // line is actually asked about, not eagerly for the whole buffer) --
+    // a [Performance] test (Tests/PerformanceTest.cpp) caught a real
+    // regression from an earlier eager-whole-range version: MaxTopLine()/
+    // ScrollToShowPoint() run every Paint() call, and an eager version paid
+    // a real per-line word-break scan across the entire buffer up front,
+    // multi-second on a large wrapped document. EnsureRowCountCache only
+    // resets rowCountPerLine_'s sizing/keys (a cheap sentinel fill) when
+    // buffer identity + ContentGeneration() + content width + wrapLines
+    // itself change -- unlike hiddenLineRanges_, row counts genuinely
+    // depend on the latter two, which fold does not.
+    void                       EnsureRowCountCache() const;
+    [[nodiscard]] std::size_t  RowsForLine(std::size_t line) const;
+    // Row-aware sibling of VisibleLineCountBetween -- sums RowsForLine
+    // instead of counting 1 per visible line. Still touches every line in
+    // the range (each RowsForLine call is now a cheap, memoized lookup
+    // after its first access, per the cache's own doc comment above), so
+    // this stays fine to call for a genuinely small range; MaxTopLine/
+    // ScrollToShowPoint's own "does everything already fit" checks use
+    // VisibleRowCountAtLeast below instead, specifically to avoid ever
+    // walking (and so ever computing) more of a huge document than the
+    // viewport itself could need.
+    [[nodiscard]] std::size_t VisibleRowCountBetween(std::size_t startLine, std::size_t endLineExclusive) const;
+    // True as soon as the running row total over [startLine, endLineExclusive)
+    // reaches limit -- stops walking (and therefore stops triggering any
+    // further RowsForLine word-break computation) the instant the answer is
+    // known, rather than always summing the whole range the way
+    // VisibleRowCountBetween does. This is what keeps a "does the whole
+    // document already fit in one viewport" check cheap regardless of
+    // document size: a huge wrapped document's answer is always "no,"
+    // discovered within the first `limit`-or-so lines, never by touching
+    // the rest of the buffer.
+    [[nodiscard]] bool VisibleRowCountAtLeast(std::size_t startLine, std::size_t endLineExclusive, std::size_t limit) const;
+
+    // hover/completion follow-up. See Command.h's InteractiveRequest::
+    // LspComplete doc comment and this class's own OnAnimation for the
+    // request/debounce flow; GhostCompletion itself is transient UI state,
+    // not modal -- it coexists with ordinary InputMode::Normal editing
+    // rather than replacing it (no dedicated InputMode value), the same way
+    // e.g. a diagnostic gutter marker does.
+    struct GhostCompletion {
+        std::size_t                                           requestPoint = 0; // buffer.Point() when this was requested/received -- stale if point has since moved
+        std::vector<editor::lsp::CompletionItem> items;
+        std::size_t                                           selectedIndex = 0;
+    };
+    std::optional<GhostCompletion> ghostCompletion_;
+
+    // Debounce deadline for an automatic completion request -- set by
+    // MaybeScheduleAutoCompletion, consumed by OnAnimation, which fires
+    // RequestCompletionAtPoint() once steady_clock::now() reaches it and
+    // clears it. std::nullopt means no request pending. Overwriting it on
+    // every qualifying keystroke (rather than tracking multiple pending
+    // deadlines) is what makes this act as a debounce, not a fixed-interval
+    // repeat -- more typing keeps pushing the deadline out.
+    std::optional<std::chrono::steady_clock::time_point> completionDebounceDeadline_;
+
+    // Bumped by RequestCompletionAtPoint before every request; a response
+    // whose captured generation no longer matches this is stale (a newer
+    // request superseded it, or the user kept typing) and is discarded
+    // rather than applied -- the async equivalent of the buffer/point
+    // re-check RequestCompletionAtPoint's own callback also does.
+    std::size_t completionRequestGeneration_ = 0;
+
+    void        RequestCompletionAtPoint();
+    [[nodiscard]] bool ShouldSuppressAutoCompletion() const;
+    void        MaybeScheduleAutoCompletion(const editor::KeyChord& chord, std::size_t generationBefore);
+    void        AcceptGhostCompletion();
+    void        CycleGhostCompletion(int direction);
+    [[nodiscard]] std::string GhostSuffixFor(const editor::lsp::CompletionItem& item) const;
+
+    // code-actions follow-up: pendingCodeActions_/codeActionSelection_ are
+    // valid only while inputMode_ is LspCodeActionSelect/LspCodeActionConfirm
+    // (see RequestCodeActionsAtPoint's own doc comment above for why
+    // inputMode_ only ever changes from inside that async callback).
+    // codeActionRequestGeneration_ mirrors completionRequestGeneration_'s
+    // exact staleness-guard shape.
+    std::vector<editor::lsp::CodeAction> pendingCodeActions_;
+    std::size_t                          codeActionSelection_        = 0;
+    std::size_t                          codeActionRequestGeneration_ = 0;
+
+    // go-to-definition follow-up: same staleness-guard/selection-list shape
+    // as pendingCodeActions_/codeActionSelection_/codeActionRequestGeneration_
+    // just above, valid only while inputMode_ == LspGotoDefinitionSelect.
+    std::vector<editor::lsp::LspManager::ResolvedLocation> pendingDefinitions_;
+    std::size_t                                             definitionSelection_        = 0;
+    std::size_t                                             definitionRequestGeneration_ = 0;
+
+    // rename follow-up: same staleness-guard shape once more.
+    // pendingRename_/renameTitle_ are valid only while inputMode_ ==
+    // LspRenameConfirm -- renameTitle_ is the human-readable "N edits across
+    // M files" summary RefreshRenameConfirmStatus computes once, up front,
+    // rather than recomputing it on every keypress at the confirmation
+    // (there's nothing to recompute it *for*, unlike RefreshCodeActionSelectStatus's
+    // own per-keystroke Up/Down refresh).
+    std::optional<editor::lsp::LspManager::ResolvedRename> pendingRename_;
+    std::string                                             renameTitle_;
+    std::size_t                                             renameRequestGeneration_ = 0;
+
+    // status-message-lifecycle follow-up. A uniform rule for statusMessage_,
+    // regardless of who wrote it (any command via CommandContext::message,
+    // any Handle*Key prompt/session, or this class's own pending-key-
+    // sequence/undefined-key reporting below): it clears itself after a
+    // short idle timeout, OR immediately on the next real dispatched
+    // command that doesn't itself set a new message -- whichever comes
+    // first. Deliberately observational (a per-Paint()-call diff against
+    // the last-seen value) rather than hooking every one of the dozens of
+    // call sites that write statusMessage_ directly -- see
+    // EnsureStatusMessageFreshness's own doc comment for the exact
+    // mechanism and its one known trade-off.
+    std::string                                           statusMessageSnapshot_;
+    std::optional<std::chrono::steady_clock::time_point> statusMessageChangedAt_;
+    static constexpr std::chrono::seconds                 kStatusMessageTimeout{4};
+
+    // Detects a statusMessage_ change since the last call (from Paint(),
+    // which runs after every real render including every keystroke) and
+    // (re)arms the idle-clear deadline; OnAnimation is what actually clears
+    // it once the deadline passes with nothing further changing it.
+    void EnsureStatusMessageFreshness();
 };
 
 } // namespace ned::ui

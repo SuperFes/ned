@@ -4,9 +4,12 @@
 #include <stdexcept>
 
 #include "Editor/ModeOverrides.h"
+#include "Text/Buffer.h"
 
 using ned::editor::ModeByName;
+using ned::editor::ModeForBuffer;
 using ned::editor::ModeForFileOverride;
+using ned::editor::ModeForPath;
 using ned::editor::RegisterDynamicMode;
 using ned::editor::SetModeForExtension;
 using ned::editor::SetModeForFilename;
@@ -125,4 +128,33 @@ TEST_CASE("ModeForFileOverride returns nullopt for a file with no override at al
 TEST_CASE("ModeForFileOverride returns nullopt if the mapped mode name resolves to nothing", "[ModeOverrides]") {
     SetModeForExtension("orphan-ext", "mode-name-nobody-registered");
     REQUIRE_FALSE(ModeForFileOverride("/some/path/file.orphan-ext").has_value());
+}
+
+TEST_CASE("ModeForPath resolves a representative sample of bundled extensions", "[ModeOverrides]") {
+    REQUIRE(ModeForPath("/some/path/main.cpp").name == "cpp-mode");
+    REQUIRE(ModeForPath("/some/path/script.py").name == "python-mode");
+    REQUIRE(ModeForPath("/some/path/notes.md").name == "markdown-mode");
+    REQUIRE(ModeForPath("/some/path/data.json").name == "json-mode");
+    REQUIRE(ModeForPath("/some/path/outline.org").name == "org-mode");
+}
+
+TEST_CASE("ModeForPath falls back to FundamentalMode for an unrecognized extension", "[ModeOverrides]") {
+    REQUIRE(ModeForPath("/some/path/file.totally-unrecognized-xyz").name == "fundamental-mode");
+}
+
+TEST_CASE("ModeForPath prefers a configured override over the bundled extension table", "[ModeOverrides]") {
+    SetModeForExtension("cpp", "python-mode"); // deliberately perverse, just to prove precedence
+    REQUIRE(ModeForPath("/some/path/main.cpp").name == "python-mode");
+    SetModeForExtension("cpp", "cpp-mode"); // restore, since g_extensionOverrides is process-wide state
+}
+
+TEST_CASE("ModeForBuffer falls back to FundamentalMode for a path-less buffer", "[ModeOverrides]") {
+    ned::text::Buffer scratch("scratch");
+    REQUIRE_FALSE(scratch.Path().has_value());
+    REQUIRE(ModeForBuffer(scratch).name == "fundamental-mode");
+}
+
+TEST_CASE("ModeForBuffer resolves via the buffer's own path", "[ModeOverrides]") {
+    ned::text::Buffer buffer = ned::text::Buffer::NewFile("/some/path/main.cpp");
+    REQUIRE(ModeForBuffer(buffer).name == "cpp-mode");
 }

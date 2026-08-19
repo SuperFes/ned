@@ -25,6 +25,7 @@ extern const char* const kPython;
 extern const char* const kBash;
 extern const char* const kJanet;
 extern const char* const kMarkdown;
+extern const char* const kMarkdownInline; // MarkdownMode()'s own hand-rolled injection pass -- see Mode.cpp
 // Org-mode syntax-highlighting follow-up: hand-written against Ned's own
 // forked grammar (Source/Editor/TreeSitter/OrgHighlights.scm), not fetched
 // from any repository -- see that file's own header comment for why.

@@ -110,3 +110,32 @@ TEST_CASE("BuildProjectTree returns an empty list for an empty directory", "[Pro
 
     std::filesystem::remove_all(dir);
 }
+
+TEST_CASE("BuildProjectTree skips a directory excluded by .gitignore, without descending into it", "[ProjectTree]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_tree_test_gitignore";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir / "build" / "nested");
+    {
+        std::ofstream(dir / ".gitignore") << "build/\n";
+    }
+    {
+        std::ofstream(dir / "build" / "nested" / "hidden.txt") << "x";
+    }
+    {
+        std::ofstream(dir / "visible.txt") << "x";
+    }
+
+    const std::vector<ProjectTreeEntry> entries = BuildProjectTree(dir);
+
+    // .gitignore itself is a real, listed file (not a dot-directory -- only
+    // directories are excluded by IsDotDirectory), so "visible.txt" and
+    // ".gitignore" are the only two entries -- "build/" and everything
+    // under it must not appear at all.
+    REQUIRE(entries.size() == 2);
+    for (const ProjectTreeEntry& entry : entries) {
+        REQUIRE(entry.path.filename() != "build");
+        REQUIRE(entry.path.filename() != "hidden.txt");
+    }
+
+    std::filesystem::remove_all(dir);
+}

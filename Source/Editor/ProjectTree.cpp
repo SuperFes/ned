@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include "GitIgnore.h"
+
 namespace ned::editor {
 
 namespace {
@@ -14,19 +16,26 @@ namespace {
         return !name.empty() && name.front() == '.';
     }
 
-    void WalkTree(const std::filesystem::path& directory, int depth, std::vector<ProjectTreeEntry>& out) {
+    // project-search-hang follow-up: absoluteRoot is threaded through
+    // purely to compute each entry's root-relative path for
+    // gitIgnore.IsIgnored -- see GitIgnore.h's own header comment for why
+    // this exists (without it, the sidebar eagerly walks build/,
+    // node_modules/, and similar generated/dependency directories too).
+    void WalkTree(const std::filesystem::path& directory, const std::filesystem::path& absoluteRoot, const GitIgnoreMatcher& gitIgnore,
+                  int depth, std::vector<ProjectTreeEntry>& out) {
         std::vector<std::filesystem::path> directories;
         std::vector<std::filesystem::path> files;
 
         std::error_code ec;
         for (const auto& entry :
              std::filesystem::directory_iterator(directory, std::filesystem::directory_options::skip_permission_denied, ec)) {
+            const std::filesystem::path relative = std::filesystem::relative(entry.path(), absoluteRoot);
             if (entry.is_directory()) {
-                if (!IsDotDirectory(entry)) {
+                if (!IsDotDirectory(entry) && !gitIgnore.IsIgnored(relative, /*isDirectory=*/true)) {
                     directories.push_back(entry.path());
                 }
             }
-            else if (entry.is_regular_file()) {
+            else if (entry.is_regular_file() && !gitIgnore.IsIgnored(relative, /*isDirectory=*/false)) {
                 files.push_back(entry.path());
             }
         }
@@ -39,7 +48,7 @@ namespace {
 
         for (const std::filesystem::path& dir : directories) {
             out.push_back(ProjectTreeEntry{dir, depth, true});
-            WalkTree(dir, depth + 1, out);
+            WalkTree(dir, absoluteRoot, gitIgnore, depth + 1, out);
         }
         for (const std::filesystem::path& file : files) {
             out.push_back(ProjectTreeEntry{file, depth, false});
@@ -57,7 +66,8 @@ std::vector<ProjectTreeEntry> BuildProjectTree(const std::filesystem::path& root
         return entries;
     }
 
-    WalkTree(absoluteRoot, 0, entries);
+    const GitIgnoreMatcher gitIgnore(absoluteRoot);
+    WalkTree(absoluteRoot, absoluteRoot, gitIgnore, 0, entries);
     return entries;
 }
 

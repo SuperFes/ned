@@ -1,13 +1,17 @@
 #include "LspManager.h"
 
+#include <chrono>
 #include <cstdint>
+#include <ctime>
 #include <filesystem>
 
 #include <unistd.h>
 
+#include <ftxui/component/animation.hpp>
 #include <ftxui/component/screen_interactive.hpp>
 
 #include "Editor/ProjectRoot.h"
+#include "LspPosition.h"
 #include "LspServerConfig.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
@@ -34,31 +38,6 @@ namespace {
         return std::filesystem::path(uri.substr(kPrefix.size()));
     }
 
-    // LSP ranges are UTF-16-code-unit offsets within a line, not byte
-    // offsets -- a real, easy-to-get-wrong correctness detail, not a
-    // simplification this skips. Walks codepoints from lineStart via
-    // Rope::CodepointAt (already-tested, shared with Buffer's own
-    // tab-aware-positioning code), counting 2 UTF-16 code units for a
-    // codepoint outside the Basic Multilingual Plane (a surrogate pair) and
-    // 1 for everything else, until utf16Offset code units have been
-    // consumed. Bounded by lineEndExclusive so a malformed/out-of-range
-    // server-reported offset can't walk off the end of the line.
-    std::size_t Utf16OffsetToByteOffset(const text::Rope& content, std::size_t lineStart, std::size_t lineEndExclusive,
-                                        std::size_t utf16Offset) {
-        std::size_t byteOffset = lineStart;
-        std::size_t utf16Count = 0;
-        while (byteOffset < lineEndExclusive && utf16Count < utf16Offset) {
-            const text::Rope::DecodedCodepoint decoded = content.CodepointAt(byteOffset);
-            utf16Count += (decoded.codepoint > 0xFFFF) ? 2 : 1;
-            byteOffset += decoded.byteLength;
-        }
-        return byteOffset;
-    }
-
-    std::size_t LineByteRangeEnd(const text::Rope& content, std::size_t line) {
-        return (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) : content.ByteLength();
-    }
-
     text::Buffer::Diagnostic::Severity SeverityFromLsp(int severity) {
         switch (severity) {
             case 1:
@@ -74,6 +53,55 @@ namespace {
         }
     }
 
+    // code-actions follow-up: the reverse of SeverityFromLsp, for building a
+    // textDocument/codeAction request's own "context.diagnostics" -- the
+    // server expects real LSP Diagnostic shapes back, not this codebase's
+    // internal Buffer::Diagnostic::Severity enum.
+    int SeverityToLsp(text::Buffer::Diagnostic::Severity severity) {
+        switch (severity) {
+            case text::Buffer::Diagnostic::Severity::Error:
+                return 1;
+            case text::Buffer::Diagnostic::Severity::Warning:
+                return 2;
+            case text::Buffer::Diagnostic::Severity::Information:
+                return 3;
+            case text::Buffer::Diagnostic::Severity::Hint:
+                return 4;
+        }
+        return 3; // unreachable for a real enum value -- Information is the same safe default SeverityFromLsp uses
+    }
+
+    // error-visibility follow-up. No existing timestamp-formatting
+    // convention exists anywhere else in this codebase (confirmed via
+    // search) -- this is a small, self-contained, file-local helper, not
+    // something sharing a home with anything else.
+    std::string FormatLogLine(std::string_view language, std::string_view message) {
+        const std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+        std::tm            localNow{};
+        localtime_r(&now, &localNow);
+        char timestamp[16];
+        std::strftime(timestamp, sizeof(timestamp), "%H:%M:%S", &localNow);
+        return "[" + std::string(timestamp) + "] " + std::string(language) + ": " + std::string(message) + "\n";
+    }
+
+    // error-visibility follow-up. Extracts a human-readable string from a
+    // JSON-RPC error object -- "message" per the spec if present, else the
+    // raw JSON so nothing is ever silently dropped even for a
+    // spec-noncompliant server.
+    std::string ExtractErrorMessage(const Json& error) {
+        return error.value("message", error.dump());
+    }
+
+    Json DiagnosticToLsp(const text::Buffer::Diagnostic& diagnostic, const text::Rope& content) {
+        const LspPosition start = BytePositionToLsp(content, diagnostic.startByte);
+        const LspPosition end   = BytePositionToLsp(content, diagnostic.endByte);
+        return Json{
+            {"range", {{"start", {{"line", start.line}, {"character", start.character}}}, {"end", {{"line", end.line}, {"character", end.character}}}}},
+            {"severity", SeverityToLsp(diagnostic.severity)},
+            {"message", diagnostic.message},
+        };
+    }
+
 } // namespace
 
 LspManager::LspManager(text::BufferList& bufferList, ftxui::ScreenInteractive& screen) : bufferList_(bufferList), screen_(screen) {
@@ -82,6 +110,15 @@ LspManager::LspManager(text::BufferList& bufferList, ftxui::ScreenInteractive& s
 LspClient* LspManager::ExistingClientForLanguage(const std::string& language) const {
     const auto it = clients_.find(language);
     return it != clients_.end() ? it->second.get() : nullptr;
+}
+
+void LspManager::WireNotificationHandlers(LspClient& client, const std::string& language) {
+    client.SetNotificationHandler("textDocument/publishDiagnostics",
+                                  [this](const Json& params) { HandlePublishDiagnostics(params); });
+    client.SetOnDisconnected([this, language](std::string reason) {
+        LogError(language, "server disconnected: " + reason);
+        ClientDisconnected(language);
+    });
 }
 
 LspClient* LspManager::ClientForLanguage(const std::string& language) {
@@ -94,15 +131,48 @@ LspClient* LspManager::ClientForLanguage(const std::string& language) {
         return nullptr;
     }
 
-    auto client = std::make_unique<LspClient>(*command, screen_);
+    // error-visibility follow-up: don't retry (or re-log) a command that
+    // already failed to spawn on a previous frame -- SyncBuffer calls this
+    // every Paint() for the active buffer, and a real subprocess-spawn
+    // failure is not transient. Erasing on a *different* command lets a
+    // user's own SetLspServerCommand reconfiguration get one fresh attempt.
+    if (const auto failed = failedCommands_.find(language); failed != failedCommands_.end()) {
+        if (failed->second == *command) {
+            return nullptr;
+        }
+        failedCommands_.erase(failed);
+    }
 
-    client->SetNotificationHandler("textDocument/publishDiagnostics",
-                                   [this](const Json& params) { HandlePublishDiagnostics(params); });
+    std::unique_ptr<LspClient> client;
+    try {
+        client = std::make_unique<LspClient>(*command, screen_);
+    }
+    catch (const std::exception& e) {
+        // Previously uncaught -- Transport's constructor throws
+        // std::runtime_error for a missing executable, a pipe() failure, or
+        // a posix_spawn failure, and this call chain (SyncBuffer <-
+        // BufferView::Paint()) had no catch anywhere above it, crashing the
+        // whole running editor the instant a buffer of a misconfigured-LSP
+        // language was displayed. Report instead of crashing.
+        failedCommands_[language] = *command;
+        LogError(language, e.what());
+        return nullptr;
+    }
+    WireNotificationHandlers(*client, language);
 
+    // code-actions-resolve follow-up: advertises that this client will call
+    // codeAction/resolve for a CodeAction the server sent back without an
+    // "edit" -- without this, a resolveProvider server (clangd included)
+    // has no signal the client can actually follow up, though in practice
+    // most servers offer resolve unconditionally once they declare
+    // resolveProvider regardless of what the client advertises here; sent
+    // anyway since it's what the spec actually asks a resolve-capable
+    // client to declare.
     const Json initializeParams = {
         {"processId", static_cast<std::int64_t>(::getpid())},
         {"rootUri", PathToUri(editor::ProjectRoot())},
-        {"capabilities", Json::object()},
+        {"capabilities",
+         {{"textDocument", {{"codeAction", {{"dataSupport", true}, {"resolveSupport", {{"properties", Json::array({"edit"})}}}}}}}}},
     };
     LspClient* rawClient = client.get();
     rawClient->SendRequest("initialize", initializeParams,
@@ -154,6 +224,44 @@ void LspManager::SyncBuffer(text::Buffer& buffer, const std::string& language) {
     state.lastSyncedGeneration = buffer.ContentGeneration();
 }
 
+LspClient& LspManager::SetClientForTesting(std::string language, std::unique_ptr<LspClient> client) {
+    WireNotificationHandlers(*client, language); // same wiring ClientForLanguage's real spawn path applies
+    LspClient& ref                = *client;
+    clients_[std::move(language)] = std::move(client);
+    return ref;
+}
+
+void LspManager::ClientDisconnected(const std::string& language) {
+    clients_.erase(language);
+    for (auto it = bufferState_.begin(); it != bufferState_.end();) {
+        if (it->second.language == language) {
+            it = bufferState_.erase(it);
+        }
+        else {
+            ++it;
+        }
+    }
+}
+
+void LspManager::LogError(std::string_view language, std::string_view message) {
+    text::Buffer* log = bufferList_.Find(std::string(kLspLogBufferName));
+    if (!log) {
+        log = &bufferList_.CreateBuffer(std::string(kLspLogBufferName));
+        log->SetReadOnly(true); // must be set before the first append -- AppendWhileReadOnly's own precondition
+    }
+    log->AppendWhileReadOnly(FormatLogLine(language, message));
+    hasUnseenLogEntry_ = true;
+    ftxui::animation::RequestAnimationFrame();
+}
+
+bool LspManager::HasUnseenLogEntry() const {
+    return hasUnseenLogEntry_;
+}
+
+void LspManager::AcknowledgeLogEntry() {
+    hasUnseenLogEntry_ = false;
+}
+
 void LspManager::NotifyBufferClosed(text::Buffer& buffer) {
     const auto it = bufferState_.find(&buffer);
     if (it == bufferState_.end()) {
@@ -189,13 +297,12 @@ void LspManager::HandlePublishDiagnostics(const Json& params) {
             const Json& start = range.value("start", Json::object());
             const Json& end   = range.value("end", Json::object());
 
-            const std::size_t startLine = start.value("line", static_cast<std::size_t>(0));
-            const std::size_t endLine   = end.value("line", static_cast<std::size_t>(0));
-
-            const std::size_t startByte = Utf16OffsetToByteOffset(content, content.LineToByteOffset(startLine), LineByteRangeEnd(content, startLine),
-                                                                  start.value("character", static_cast<std::size_t>(0)));
-            const std::size_t endByte   = Utf16OffsetToByteOffset(content, content.LineToByteOffset(endLine), LineByteRangeEnd(content, endLine),
-                                                                  end.value("character", static_cast<std::size_t>(0)));
+            const std::size_t startByte =
+                LspPositionToByte(content, LspPosition{.line = start.value("line", static_cast<std::size_t>(0)),
+                                                        .character = start.value("character", static_cast<std::size_t>(0))});
+            const std::size_t endByte =
+                LspPositionToByte(content, LspPosition{.line = end.value("line", static_cast<std::size_t>(0)),
+                                                        .character = end.value("character", static_cast<std::size_t>(0))});
 
             diagnostics.push_back(text::Buffer::Diagnostic{
                 .startByte = startByte,
@@ -206,6 +313,236 @@ void LspManager::HandlePublishDiagnostics(const Json& params) {
         }
     }
     buffer->SetDiagnostics(std::move(diagnostics));
+}
+
+void LspManager::RequestHover(text::Buffer& buffer, std::size_t byteOffset, HoverCallback callback) {
+    const auto it = bufferState_.find(&buffer);
+    if (it == bufferState_.end() || !it->second.opened) {
+        callback(std::nullopt); // never synced to a server -- nothing to ask
+        return;
+    }
+    LspClient* client = ExistingClientForLanguage(it->second.language);
+    if (!client) {
+        callback(std::nullopt);
+        return;
+    }
+
+    const std::string language = it->second.language;
+    const LspPosition position = BytePositionToLsp(buffer.Content(), byteOffset);
+    const Json        params   = {
+        {"textDocument", {{"uri", it->second.uri}}},
+        {"position", {{"line", position.line}, {"character", position.character}}},
+    };
+    client->SendRequest("textDocument/hover", params,
+                        [this, language, callback = std::move(callback)](std::optional<Json> result, std::optional<Json> error) {
+                            if (error) {
+                                LogError(language, ExtractErrorMessage(*error));
+                                callback(std::nullopt);
+                                return;
+                            }
+                            if (!result) {
+                                callback(std::nullopt);
+                                return;
+                            }
+                            callback(ExtractHoverText(*result));
+                        });
+}
+
+void LspManager::RequestCompletion(text::Buffer& buffer, std::size_t byteOffset, CompletionCallback callback) {
+    const auto it = bufferState_.find(&buffer);
+    if (it == bufferState_.end() || !it->second.opened) {
+        callback({});
+        return;
+    }
+    LspClient* client = ExistingClientForLanguage(it->second.language);
+    if (!client) {
+        callback({});
+        return;
+    }
+
+    const std::string language = it->second.language;
+    const LspPosition position = BytePositionToLsp(buffer.Content(), byteOffset);
+    const Json        params   = {
+        {"textDocument", {{"uri", it->second.uri}}},
+        {"position", {{"line", position.line}, {"character", position.character}}},
+    };
+    client->SendRequest("textDocument/completion", params,
+                        [this, language, callback = std::move(callback)](std::optional<Json> result, std::optional<Json> error) {
+                            if (error) {
+                                LogError(language, ExtractErrorMessage(*error));
+                                callback({});
+                                return;
+                            }
+                            if (!result) {
+                                callback({});
+                                return;
+                            }
+                            callback(ExtractCompletionItems(*result));
+                        });
+}
+
+void LspManager::RequestCodeActions(text::Buffer& buffer, std::size_t rangeStartByte, std::size_t rangeEndByte, CodeActionCallback callback) {
+    const auto it = bufferState_.find(&buffer);
+    if (it == bufferState_.end() || !it->second.opened) {
+        callback({});
+        return;
+    }
+    LspClient* client = ExistingClientForLanguage(it->second.language);
+    if (!client) {
+        callback({});
+        return;
+    }
+
+    const text::Rope& content = buffer.Content();
+    const LspPosition  start   = BytePositionToLsp(content, rangeStartByte);
+    const LspPosition  end     = BytePositionToLsp(content, rangeEndByte);
+
+    Json diagnostics = Json::array();
+    for (const text::Buffer::Diagnostic& diagnostic : buffer.Diagnostics()) {
+        if (diagnostic.endByte <= rangeStartByte || diagnostic.startByte >= rangeEndByte) {
+            continue; // doesn't overlap the requested range
+        }
+        diagnostics.push_back(DiagnosticToLsp(diagnostic, content));
+    }
+
+    const std::string language = it->second.language;
+    const std::string uri    = it->second.uri;
+    const Json         params = {
+        {"textDocument", {{"uri", uri}}},
+        {"range", {{"start", {{"line", start.line}, {"character", start.character}}}, {"end", {{"line", end.line}, {"character", end.character}}}}},
+        {"context", {{"diagnostics", diagnostics}}},
+    };
+    client->SendRequest("textDocument/codeAction", params,
+                        [this, language, callback = std::move(callback), uri](std::optional<Json> result, std::optional<Json> error) {
+                            if (error) {
+                                LogError(language, ExtractErrorMessage(*error));
+                                callback({});
+                                return;
+                            }
+                            if (!result) {
+                                callback({});
+                                return;
+                            }
+                            callback(ExtractCodeActions(*result, uri));
+                        });
+}
+
+void LspManager::ResolveCodeAction(text::Buffer& buffer, const CodeAction& action, ResolveCallback callback) {
+    const auto it = bufferState_.find(&buffer);
+    if (it == bufferState_.end() || !it->second.opened) {
+        callback(std::nullopt);
+        return;
+    }
+    LspClient* client = ExistingClientForLanguage(it->second.language);
+    if (!client) {
+        callback(std::nullopt);
+        return;
+    }
+
+    const std::string language = it->second.language;
+    const std::string uri = it->second.uri;
+    client->SendRequest("codeAction/resolve", action.raw,
+                        [this, language, callback = std::move(callback), uri](std::optional<Json> result, std::optional<Json> error) {
+                            if (error) {
+                                LogError(language, ExtractErrorMessage(*error));
+                                callback(std::nullopt);
+                                return;
+                            }
+                            if (!result) {
+                                callback(std::nullopt);
+                                return;
+                            }
+                            callback(ExtractSingleCodeAction(*result, uri));
+                        });
+}
+
+void LspManager::RequestDefinition(text::Buffer& buffer, std::size_t byteOffset, DefinitionCallback callback) {
+    const auto it = bufferState_.find(&buffer);
+    if (it == bufferState_.end() || !it->second.opened) {
+        callback({});
+        return;
+    }
+    LspClient* client = ExistingClientForLanguage(it->second.language);
+    if (!client) {
+        callback({});
+        return;
+    }
+
+    const std::string language = it->second.language;
+    const LspPosition position = BytePositionToLsp(buffer.Content(), byteOffset);
+    const Json        params   = {
+        {"textDocument", {{"uri", it->second.uri}}},
+        {"position", {{"line", position.line}, {"character", position.character}}},
+    };
+    client->SendRequest("textDocument/definition", params,
+                        [this, language, callback = std::move(callback)](std::optional<Json> result, std::optional<Json> error) {
+                            if (error) {
+                                LogError(language, ExtractErrorMessage(*error));
+                                callback({});
+                                return;
+                            }
+                            if (!result) {
+                                callback({});
+                                return;
+                            }
+                            std::vector<ResolvedLocation> resolved;
+                            for (const DefinitionLocation& location : ExtractDefinitionLocations(*result)) {
+                                if (const std::optional<std::filesystem::path> path = UriToPath(location.uri)) {
+                                    resolved.push_back(ResolvedLocation{.path = *path, .position = location.position});
+                                }
+                                // an unresolvable uri is dropped -- see ResolvedLocation's own doc comment
+                            }
+                            callback(std::move(resolved));
+                        });
+}
+
+void LspManager::RequestRename(text::Buffer& buffer, std::size_t byteOffset, const std::string& newName, RenameCallback callback) {
+    const auto it = bufferState_.find(&buffer);
+    if (it == bufferState_.end() || !it->second.opened) {
+        callback(std::nullopt);
+        return;
+    }
+    LspClient* client = ExistingClientForLanguage(it->second.language);
+    if (!client) {
+        callback(std::nullopt);
+        return;
+    }
+
+    const std::string language = it->second.language;
+    const LspPosition position = BytePositionToLsp(buffer.Content(), byteOffset);
+    const Json        params   = {
+        {"textDocument", {{"uri", it->second.uri}}},
+        {"position", {{"line", position.line}, {"character", position.character}}},
+        {"newName", newName},
+    };
+    client->SendRequest("textDocument/rename", params,
+                        [this, language, callback = std::move(callback)](std::optional<Json> result, std::optional<Json> error) {
+                            if (error) {
+                                LogError(language, ExtractErrorMessage(*error));
+                                callback(std::nullopt);
+                                return;
+                            }
+                            if (!result) {
+                                callback(std::nullopt);
+                                return;
+                            }
+                            const RenameResult parsed = ExtractRenameEdits(*result);
+                            ResolvedRename      resolved;
+                            resolved.touchesUnsupportedForm = parsed.touchesUnsupportedForm;
+                            for (const RenameEdit& edit : parsed.edits) {
+                                const std::optional<std::filesystem::path> path = UriToPath(edit.uri);
+                                if (!path) {
+                                    // See ResolvedRenameEdit's own doc comment: an unresolvable
+                                    // uri means the whole result can't be safely applied, not
+                                    // just this one file's edits.
+                                    callback(std::nullopt);
+                                    return;
+                                }
+                                resolved.edits.push_back(ResolvedRenameEdit{.path = *path, .edits = edit.edits});
+                            }
+                            resolved.hasEdit = !resolved.edits.empty();
+                            callback(std::move(resolved));
+                        });
 }
 
 } // namespace ned::editor::lsp

@@ -104,6 +104,7 @@ TEST_CASE("SerializeTheme/ParseTheme round-trips DarkTheme exactly", "[ThemeFile
     REQUIRE(restored.scrollBarDisabled.foreground == original.scrollBarDisabled.foreground);
     REQUIRE(restored.binaryForeground == original.binaryForeground);
     REQUIRE(restored.linkForeground == original.linkForeground);
+    REQUIRE(restored.truncationIndicatorForeground == original.truncationIndicatorForeground);
     REQUIRE(restored.unsavedChangeIndicator == original.unsavedChangeIndicator);
     REQUIRE(restored.headlineLevel1Foreground == original.headlineLevel1Foreground);
     REQUIRE(restored.headlineLevel2Foreground == original.headlineLevel2Foreground);

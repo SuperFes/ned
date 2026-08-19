@@ -10,6 +10,7 @@
 
 #include <compare>
 #include <cstdint>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -68,6 +69,18 @@ struct KeyChord {
 
 // Parses a whitespace-separated chord sequence, e.g. "C-x C-s".
 [[nodiscard]] std::vector<KeyChord> ParseKeySequence(std::string_view text);
+
+// status-message-lifecycle follow-up. The reverse of ParseKeyChord/
+// ParseKeySequence -- Emacs kbd-style notation ("C-x", "M-RET", "C-c C-a"),
+// for showing a pending or just-rejected key sequence back to the user
+// (BufferView's own status line). Uses the same named-key tokens
+// ParseKeyChord accepts (RET/TAB/DEL/ESC/UP/DOWN/... ), so
+// ParseKeySequence(FormatKeySequence(chords)) round-trips for any chord
+// FormatKeyChord can produce -- not exercised for every SpecialKey (F1-F12
+// use their own name directly, already a valid round-trip), but true for
+// everything a real keyboard can generate through Dispatcher::Feed.
+[[nodiscard]] std::string FormatKeyChord(const KeyChord& chord);
+[[nodiscard]] std::string FormatKeySequence(const std::vector<KeyChord>& chords);
 
 } // namespace ned::editor
 

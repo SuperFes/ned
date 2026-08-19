@@ -50,7 +50,9 @@ std::string SerializeTheme(const Theme& theme) {
     out << "scroll_bar_disabled_background=" << ColorToToken(theme.scrollBarDisabled.background) << '\n';
     out << "scroll_bar_disabled_foreground=" << ColorToToken(theme.scrollBarDisabled.foreground) << '\n';
     out << "binary_foreground=" << ColorToToken(theme.binaryForeground) << '\n';
+    out << "ghost_text_foreground=" << ColorToToken(theme.ghostTextForeground) << '\n';
     out << "link_foreground=" << ColorToToken(theme.linkForeground) << '\n';
+    out << "truncation_indicator_foreground=" << ColorToToken(theme.truncationIndicatorForeground) << '\n';
     out << "unsaved_change_indicator=" << ColorToToken(theme.unsavedChangeIndicator) << '\n';
     out << "diagnostic_error=" << ColorToToken(theme.diagnosticError) << '\n';
     out << "diagnostic_warning=" << ColorToToken(theme.diagnosticWarning) << '\n';
@@ -182,9 +184,17 @@ Theme ParseTheme(std::string_view text, const Theme& base) {
             if (const auto c = ParseColorToken(value))
                 result.binaryForeground = *c;
         }
+        else if (key == "ghost_text_foreground") {
+            if (const auto c = ParseColorToken(value))
+                result.ghostTextForeground = *c;
+        }
         else if (key == "link_foreground") {
             if (const auto c = ParseColorToken(value))
                 result.linkForeground = *c;
+        }
+        else if (key == "truncation_indicator_foreground") {
+            if (const auto c = ParseColorToken(value))
+                result.truncationIndicatorForeground = *c;
         }
         else if (key == "unsaved_change_indicator") {
             if (const auto c = ParseColorToken(value))

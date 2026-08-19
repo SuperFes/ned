@@ -13,6 +13,7 @@
 #include "Editor/Link.h"
 #include "Editor/Lsp/LspServerConfig.h"
 #include "Editor/ModeOverrides.h"
+#include "Editor/WrapOverrides.h"
 #include "Editor/ProjectRoot.h"
 #include "Editor/ScratchPad.h"
 #include "Editor/ScriptingSession.h"
@@ -159,6 +160,14 @@ namespace {
         editor::SetModeForFilename(filename, modeName);
     }
 
+    void NedSetWrapForExtension(std::string extension, bool wrap) {
+        editor::SetWrapForExtension(extension, wrap);
+    }
+
+    void NedSetWrapForFilename(std::string filename, bool wrap) {
+        editor::SetWrapForFilename(filename, wrap);
+    }
+
     // LSP client follow-up: argv[0] is the server executable, remaining
     // elements its arguments, e.g. (ned/set-lsp-command "python"
     // ["pyright-langserver" "--stdio"]). An empty argv clears any existing
@@ -166,6 +175,18 @@ namespace {
     // empty-clears convention.
     void NedSetLspCommand(std::string language, std::vector<std::string> argv) {
         editor::lsp::SetLspServerCommand(language, std::move(argv));
+    }
+
+    // hover/completion follow-up: the only way LspServerConfig.h's own
+    // process-wide auto-complete toggle/debounce ever get configured away
+    // from their defaults (enabled, 350ms), same "just forward to the
+    // process-wide setter" shape NedSetTabWidth already established.
+    void NedSetLspAutoComplete(bool enabled) {
+        editor::lsp::SetLspAutoCompleteEnabled(enabled);
+    }
+
+    void NedSetLspCompletionDebounce(std::int64_t milliseconds) {
+        editor::lsp::SetLspCompletionDebounceMs(static_cast<int>(milliseconds));
     }
 
     // syntax-theme-overrides follow-up: "each themeable entry" (Comment,
@@ -296,12 +317,30 @@ void InstallEditorBindings(Environment& env) {
         "Map an exact, full filename (e.g. \"CMakeLists.txt\", not a pattern/glob) to a mode name, the same way "
         "ned/set-mode-for-extension does for an extension -- checked first, before any extension mapping, for files "
         "identified by name rather than by a distinguishing extension.");
+    env.Register<&NedSetWrapForExtension>(
+        "ned", "set-wrap-for-extension",
+        "Map a file extension (with or without a leading '.') to whether BufferView should soft-wrap long lines at "
+        "word boundaries instead of scrolling horizontally, overriding whichever Mode::wrapLines default would "
+        "otherwise apply (e.g. (ned/set-wrap-for-extension \"md\" false) to opt markdown-mode's own wrap-on default "
+        "back out).");
+    env.Register<&NedSetWrapForFilename>(
+        "ned", "set-wrap-for-filename",
+        "Map an exact, full filename to a wrap-lines override, the same way ned/set-wrap-for-extension does for an "
+        "extension -- checked first, before any extension mapping.");
     env.Register<&NedSetLspCommand>(
         "ned", "set-lsp-command",
         "Set the command used to launch a language's LSP server: (language argv), e.g. (ned/set-lsp-command \"c\" "
         "[\"clangd\"]). argv is an array or tuple of strings -- argv[0] the executable (resolved against $PATH), the "
         "rest its arguments. ned never installs or updates a language server itself; this only configures which "
         "already-installed one to run. An empty argv clears the configured command for language.");
+    env.Register<&NedSetLspAutoComplete>(
+        "ned", "set-lsp-auto-complete",
+        "Enable or disable automatic LSP completion ghost text while typing (default true). Manual completion "
+        "(lsp-complete, bound to C-M-i) works regardless of this setting.");
+    env.Register<&NedSetLspCompletionDebounce>(
+        "ned", "set-lsp-completion-debounce",
+        "Set the delay, in milliseconds, after the last relevant keystroke before an automatic completion request "
+        "is sent (default 350). Non-positive values are clamped to 1.");
 
     env.Register<&NedSetSyntaxForeground>(
         "ned", "set-syntax-foreground",

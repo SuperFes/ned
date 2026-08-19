@@ -1,6 +1,7 @@
 #include "BufferView.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
@@ -17,6 +18,7 @@
 #include "Editor/FuzzyMatch.h"
 #include "Editor/Link.h"
 #include "Editor/Lsp/LspManager.h"
+#include "Editor/Lsp/LspServerConfig.h"
 #include "Editor/Org.h"
 #include "Editor/ProjectAgenda.h"
 #include "Editor/ProjectFileOps.h"
@@ -26,6 +28,7 @@
 #include "Editor/Rectangle.h"
 #include "Editor/ScratchPad.h"
 #include "Editor/TabWidth.h"
+#include "Editor/WrapOverrides.h"
 #include "KeyTranslation.h"
 #include "Text/Utf8.h"
 
@@ -239,6 +242,11 @@ namespace {
     // "..." a user might have actually typed).
     constexpr char32_t kFoldEllipsis = U'…';
 
+    // line-truncation-indicator follow-up: overwrites a clipped line's own
+    // last column when wrap is off and the line is too long for the
+    // viewport -- see the render loop's own use below.
+    constexpr char32_t kTruncationIndicator = U'»';
+
     char32_t HexDigit(char32_t nibble) {
         return (nibble < 10) ? (U'0' + nibble) : (U'A' + (nibble - 10));
     }
@@ -412,6 +420,97 @@ namespace {
         return offset;
     }
 
+    // line-wrap follow-up. A word-break boundary this codebase treats as
+    // breakable -- ASCII space/tab only, matching MoveForwardWord/
+    // MoveBackwardWord's own already-established "not Unicode-aware,
+    // deliberate v1 scope cut" precedent (Buffer.h), and the same informal
+    // whitespace definition the fold-ellipsis trailing-space trim just below
+    // in this file already uses.
+    bool IsWrapBreakWhitespace(char32_t cp) {
+        return cp == U' ' || cp == U'\t';
+    }
+
+    // [startByte, endByte) content range one wrapped canvas row draws --
+    // always at least one per line, even an empty one.
+    struct WrapSegment {
+        std::size_t startByte;
+        std::size_t endByte;
+    };
+
+    // line-wrap follow-up. Splits [lineStart, lineEnd) into one or more
+    // word-break-aware segments, none exceeding wrapWidth columns. Breaks
+    // at the most recent whitespace run's own end when one exists within
+    // the current segment; otherwise hard-breaks immediately before the
+    // oversized unit (a single token wider than the whole viewport, e.g. a
+    // long URL, still must make progress -- forced onto its own segment
+    // rather than looping forever). A RenderedLink span is treated as one
+    // atomic, unbreakable unit, the same way Paint()'s render loop and
+    // VisualColumn already do via LinkStartingAt -- never split mid-link.
+    // Trailing whitespace at a break point is included in the ending
+    // segment rather than trimmed out of it -- functionally invisible
+    // either way, since Paint() washes every row's background blank before
+    // drawing, so a trailing space cell looks identical whether "drawn" or
+    // simply never reached.
+    //
+    // Not cached beyond a single call -- same "recompute fresh, it's cheap
+    // for one line" precedent VisualColumn/ByteOffsetForColumnInLine already
+    // establish; called only for the handful of lines actually on screen or
+    // containing point, never for the whole buffer (RowsForLine's own cache
+    // in BufferView.h is what avoids re-running this for the entire buffer
+    // on every Paint()).
+    std::vector<WrapSegment> ComputeWrapSegments(const text::Rope& content, std::size_t lineStart, std::size_t lineEnd,
+                                                 int wrapWidth, const std::vector<RenderedLink>& lineLinks) {
+        wrapWidth = std::max(wrapWidth, 1);
+
+        std::vector<WrapSegment> segments;
+        std::size_t              segmentStart = lineStart;
+        std::size_t              offset       = lineStart;
+        int                      col          = 0;
+        std::optional<std::size_t> breakByte; // byte offset just past the latest whitespace run since segmentStart
+        int                         breakCol = 0; // col value at that same point
+
+        while (offset < lineEnd) {
+            std::size_t unitEnd;
+            int         unitWidth;
+            bool        isWhitespace = false;
+            if (const RenderedLink* link = LinkStartingAt(lineLinks, offset)) {
+                unitEnd   = link->endByte;
+                unitWidth = DisplayColumns(link->displayText);
+            }
+            else {
+                const auto decoded = content.CodepointAt(offset);
+                unitEnd            = offset + decoded.byteLength;
+                unitWidth          = CodepointColumns(decoded.codepoint);
+                isWhitespace       = IsWrapBreakWhitespace(decoded.codepoint);
+            }
+
+            if (col > 0 && col + unitWidth > wrapWidth) {
+                if (breakByte && *breakByte > segmentStart) {
+                    segments.push_back(WrapSegment{.startByte = segmentStart, .endByte = *breakByte});
+                    segmentStart = *breakByte;
+                    col -= breakCol; // carry over the width already consumed between breakByte and offset
+                }
+                else {
+                    segments.push_back(WrapSegment{.startByte = segmentStart, .endByte = offset});
+                    segmentStart = offset;
+                    col          = 0;
+                }
+                breakByte.reset();
+                breakCol = 0;
+                continue; // retry the same unit against the new segment
+            }
+
+            col += unitWidth;
+            offset = unitEnd;
+            if (isWhitespace) {
+                breakByte = offset;
+                breakCol  = col;
+            }
+        }
+        segments.push_back(WrapSegment{.startByte = segmentStart, .endByte = lineEnd});
+        return segments;
+    }
+
     // Filters mode_.highlight's whole-buffer HighlightSpan list down to just
     // the spans overlapping [lineStart, lineEnd) -- called once per visible
     // row from Paint(), *not* once per rendered codepoint, so ClassAtOffset
@@ -441,6 +540,29 @@ namespace {
             }
         }
         return cls;
+    }
+
+    // hover/completion follow-up: byte offset where the ASCII word/
+    // identifier token immediately before point begins (an alnum/underscore
+    // run) -- shared by the auto-completion suppression heuristic (rejecting
+    // a purely numeric token) and ghost-text suffix computation (the
+    // already-typed prefix to subtract from a completion item's own
+    // insertText). Deliberately ASCII-only (matches Buffer's own word-motion
+    // classification), so the returned [start, point) range is guaranteed
+    // single-byte-per-codepoint -- safe to treat as raw bytes.
+    std::size_t WordPrefixStart(const text::Rope& content, std::size_t point) {
+        std::size_t start = point;
+        while (start > 0) {
+            const std::size_t prior      = content.PreviousCodepointBoundary(start);
+            const auto        decoded    = content.CodepointAt(prior);
+            const bool        isWordChar = (decoded.codepoint < 0x80) &&
+                                     (std::isalnum(static_cast<unsigned char>(decoded.codepoint)) != 0 || decoded.codepoint == U'_');
+            if (!isWordChar) {
+                break;
+            }
+            start = prior;
+        }
+        return start;
     }
 
     // Tag string for LogMouseEvent, derived from the raw event rather than
@@ -481,11 +603,17 @@ BufferView::BufferView(ActiveBuffer& activeBuffer, text::KillRing& killRing, edi
     // Paint() -- a real regression this exact fix introduced and a test
     // caught before it shipped, not assumed safe.
     topLineValidatedBuffer_ = &activeBuffer_.Get();
+    // Same reasoning as topLineValidatedBuffer_ just above, for
+    // onActiveBufferChanged_: the buffer active at construction is already
+    // reflected in whatever Mode the owning Pane constructed this
+    // BufferView with, so the first Paint() must not re-fire the callback.
+    modeSyncBuffer_ = &activeBuffer_.Get();
 }
 
 editor::CommandContext BufferView::MakeContext() {
     editor::CommandContext context{activeBuffer_.Get(), killRing_, bufferList_, editor::KeyChord{}, &statusMessage_};
-    context.mode = &mode_;
+    context.mode       = &mode_;
+    context.lspManager = lspManager_;
     return context;
 }
 
@@ -497,10 +625,14 @@ void BufferView::SetOnBufferClosed(std::function<void(text::Buffer&)> handler) {
     onBufferClosed_ = std::move(handler);
 }
 
+void BufferView::SetOnActiveBufferChanged(std::function<void(text::Buffer&)> handler) {
+    onActiveBufferChanged_ = std::move(handler);
+}
+
 void BufferView::EnsureFoldableBlocksCache() const {
     text::Buffer& buffer = activeBuffer_.Get();
 
-    if (!mode_.fold || !editor::CodeFoldingEnabled()) {
+    if (!FoldGutterActive()) {
         foldableBlocksCache_.clear();
         foldableBlocksCacheBuffer_     = &buffer;
         foldableBlocksCacheGeneration_ = buffer.ContentGeneration();
@@ -756,10 +888,107 @@ std::size_t BufferView::VisibleLineCountBetween(std::size_t startLine, std::size
     return count;
 }
 
+void BufferView::EnsureRowCountCache() const {
+    text::Buffer&     buffer       = activeBuffer_.Get();
+    const bool        wrapEnabled  = EffectiveWrapLines();
+    const std::size_t gutterWidth  = GutterWidth();
+    const int         contentWidth = std::max(1, size().width - static_cast<int>(gutterWidth));
+
+    if (!wrapEnabled) {
+        // Fast path: every buffer with wrap off (the common case) never
+        // needs a real per-line row count at all -- RowsForLine's own "1
+        // when !wrapEnabled" branch below never even looks at
+        // rowCountPerLine_ in that case, so this just keeps the cache keys
+        // themselves current without ever calling ComputeWrapSegments.
+        rowCountPerLine_.clear();
+        rowCountCacheBuffer_            = &buffer;
+        rowCountCacheContentGeneration_ = buffer.ContentGeneration();
+        rowCountCacheContentWidth_      = contentWidth;
+        rowCountCacheWrapEnabled_       = false;
+        return;
+    }
+
+    if (rowCountCacheBuffer_ == &buffer && rowCountCacheContentGeneration_ == buffer.ContentGeneration() &&
+        rowCountCacheContentWidth_ == contentWidth && rowCountCacheWrapEnabled_ == wrapEnabled) {
+        return; // still valid -- whatever's already memoized in rowCountPerLine_ (per RowsForLine) stays
+    }
+
+    // line-wrap follow-up: only resets the cache's sizing/keys here (a
+    // cheap sentinel fill, not real work) -- RowsForLine below is what
+    // actually computes and memoizes one line's row count, lazily, the
+    // first time that specific line is asked about. An earlier version
+    // eagerly computed every line's real word-break scan right here, which
+    // a [Performance] test caught as a genuine regression: MaxTopLine()/
+    // ScrollToShowPoint() run every Paint() call, so an eager whole-buffer
+    // scan here made every single Paint() call on a huge wrap-enabled
+    // document pay for the full document's word-break cost up front.
+    rowCountPerLine_.assign(buffer.Content().LineCount(), kRowCountUnknown);
+    rowCountCacheBuffer_            = &buffer;
+    rowCountCacheContentGeneration_ = buffer.ContentGeneration();
+    rowCountCacheContentWidth_      = contentWidth;
+    rowCountCacheWrapEnabled_       = wrapEnabled;
+}
+
+std::size_t BufferView::RowsForLine(std::size_t line) const {
+    if (IsLineHidden(line)) {
+        return 0;
+    }
+    if (!EffectiveWrapLines()) {
+        return 1;
+    }
+    EnsureRowCountCache();
+    if (line >= rowCountPerLine_.size()) {
+        return 1;
+    }
+    if (rowCountPerLine_[line] == kRowCountUnknown) {
+        // line-wrap follow-up: the real, lazy, per-line word-break scan --
+        // computed and memoized only for a line actually asked about, never
+        // eagerly for the whole buffer (see EnsureRowCountCache's own doc
+        // comment for why that distinction is load-bearing, not cosmetic).
+        text::Buffer&      buffer      = activeBuffer_.Get();
+        const text::Rope&  content     = buffer.Content();
+        const std::size_t  lineStart   = content.LineToByteOffset(line);
+        const std::size_t  lineEnd =
+            (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
+        EnsureLinkCache();
+        const std::vector<RenderedLink> lineLinks = LinksForLine(linkCache_, lineStart, lineEnd, buffer.Point());
+        rowCountPerLine_[line] =
+            ComputeWrapSegments(content, lineStart, lineEnd, rowCountCacheContentWidth_, lineLinks).size();
+    }
+    return rowCountPerLine_[line];
+}
+
+std::size_t BufferView::VisibleRowCountBetween(std::size_t startLine, std::size_t endLineExclusive) const {
+    std::size_t count = 0;
+    for (std::size_t line = startLine; line < endLineExclusive; ++line) {
+        count += RowsForLine(line);
+    }
+    return count;
+}
+
+bool BufferView::VisibleRowCountAtLeast(std::size_t startLine, std::size_t endLineExclusive, std::size_t limit) const {
+    std::size_t count = 0;
+    for (std::size_t line = startLine; line < endLineExclusive; ++line) {
+        count += RowsForLine(line);
+        if (count >= limit) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void BufferView::Paint(Canvas c) {
     EnsureTopLineValidForActiveBuffer();
+    EnsureStatusMessageFreshness();
 
-    text::Buffer&     buffer     = activeBuffer_.Get();
+    text::Buffer& buffer = activeBuffer_.Get();
+    if (modeSyncBuffer_ != &buffer) {
+        modeSyncBuffer_ = &buffer;
+        if (onActiveBufferChanged_) {
+            onActiveBufferChanged_(buffer);
+        }
+    }
+
     const text::Rope& content    = buffer.Content();
     const std::size_t totalLines = content.LineCount();
     const Brush       emptyBrush = theme_.BrushFor(editor::SyntaxClass::Default);
@@ -800,7 +1029,7 @@ void BufferView::Paint(Canvas c) {
     // recomputing the same condition here keeps the layout math below in
     // agreement with it without a second source of truth. Column offsets,
     // left to right: [status][gap][digits][gap][fold].
-    const std::size_t foldColumnWidth = (mode_.fold && editor::CodeFoldingEnabled()) ? kMaxFoldDepthColumns : 0;
+    const std::size_t foldColumnWidth = FoldGutterActive() ? kMaxFoldDepthColumns : 0;
     const std::size_t digitsStart     = kStatusWidth + kDiagnosticWidth + kLineNumberGap;
     const std::size_t gutterDigits    = gutterWidth - digitsStart - kLineNumberGap - foldColumnWidth;
     const std::size_t foldStart       = digitsStart + gutterDigits + kLineNumberGap;
@@ -824,6 +1053,18 @@ void BufferView::Paint(Canvas c) {
         lspManager_->SyncBuffer(buffer, LanguageForMode(mode_));
     }
 
+    // error-visibility follow-up: a cheap once-per-frame poll, the same
+    // "recompute, don't cache" idiom every other Paint()-time check here
+    // already uses. Gated on statusMessage_ being empty so this never
+    // clobbers an in-progress prompt or another just-set message -- surface
+    // via statusMessage_, never forcibly switch the user's buffer out from
+    // under them (see BufferView::StartInteractiveSession's LspShowLog case
+    // for the actual, user-initiated way to view the log).
+    if (lspManager_ && lspManager_->HasUnseenLogEntry() && statusMessage_.empty()) {
+        statusMessage_ = "LSP error -- see *lsp log* (M-x lsp-show-log)";
+        lspManager_->AcknowledgeLogEntry();
+    }
+
     // depth-aware-fold-gutter follow-up: recomputed once per Paint() call
     // (not per row, and not rebuilt from scratch even across separate
     // Paint() calls when neither content nor fold state has changed) -- see
@@ -840,7 +1081,13 @@ void BufferView::Paint(Canvas c) {
     // changed since the last Paint() call -- see highlightCacheBuffer_'s own
     // doc comment in BufferView.h for why this caching exists at all (a real,
     // measured perf fix, not a preemptive one).
-    if (!mode_.highlight) {
+    // read-only-buffers follow-up: a synthesized, read-only buffer (project-
+    // search results, project-replace's preview, project-agenda) is never
+    // real code in whatever language the pane's own Mode happens to be --
+    // running that Mode's highlight query against "path:line: text" content
+    // would produce meaningless spans, not an empty result, so ReadOnly()
+    // suppresses this the same way FoldGutterActive() suppresses folding.
+    if (!mode_.highlight || buffer.ReadOnly()) {
         highlightCacheBuffer_ = nullptr;
         highlightCacheSpans_.clear();
     }
@@ -872,6 +1119,18 @@ void BufferView::Paint(Canvas c) {
     // row-th buffer line below topLine_" disagree, so this has to walk
     // forward skipping whatever's currently hidden instead.
     std::size_t line = topLine_;
+    // line-wrap follow-up: segmentIndex is which wrap segment (row) of
+    // `line` is currently being drawn -- 0 for a non-wrapped line, always.
+    // lineSegments/currentLineSpans/currentLineLinks are recomputed only
+    // when segmentIndex == 0 (i.e. this row starts a new buffer line), then
+    // read on every row -- including continuation rows -- of that same
+    // line, the same "compute once per line, not once per row" shape this
+    // function already used for lineSpans/lineLinks before wrap existed.
+    const bool                               wrapActive = EffectiveWrapLines();
+    std::size_t                              segmentIndex = 0;
+    std::vector<WrapSegment>                 lineSegments;
+    std::vector<editor::HighlightSpan>       currentLineSpans;
+    std::vector<RenderedLink>                currentLineLinks;
     for (int row = 0; row < c.size().height; ++row) {
         for (int col = 0; col < c.size().width; ++col) {
             ftxui::Cell& cell = c[{.x = col, .y = row}];
@@ -883,6 +1142,35 @@ void BufferView::Paint(Canvas c) {
             const std::size_t lineStart = content.LineToByteOffset(line);
             const std::size_t lineEnd =
                 (line + 1 < totalLines) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
+
+            // line-wrap follow-up: recomputed only when this row starts a
+            // new buffer line (segmentIndex == 0), then read on every row
+            // of that same line, including continuation rows -- the same
+            // "compute once per line" shape lineSpans/lineLinks already
+            // used before wrap existed, now also covering lineSegments
+            // itself. A non-wrapped line always gets exactly one segment
+            // spanning its whole content, so every call site below that
+            // reads lineSegments[segmentIndex] behaves identically to the
+            // pre-wrap code when wrapActive is false.
+            if (segmentIndex == 0) {
+                currentLineSpans = SpansForLine(highlightSpans, lineStart, lineEnd);
+                currentLineLinks = LinksForLine(linkCache_, lineStart, lineEnd, point);
+                if (wrapActive) {
+                    const int wrapWidth = std::max(1, c.size().width - static_cast<int>(gutterWidth));
+                    lineSegments        = ComputeWrapSegments(content, lineStart, lineEnd, wrapWidth, currentLineLinks);
+                }
+                else {
+                    lineSegments = {WrapSegment{.startByte = lineStart, .endByte = lineEnd}};
+                }
+            }
+            const WrapSegment& currentSegment = lineSegments[segmentIndex];
+
+            // line-wrap follow-up: everything in this block is per-REAL-LINE,
+            // not per-row (a line number/fold glyph only ever belongs on a
+            // line's own first row) -- skipped entirely for a continuation
+            // row of a wrapped line; the top-of-row blanking pass already
+            // washed this row's gutter columns blank.
+            if (segmentIndex == 0) {
             // Includes the line's own newline (unlike lineEnd above), so a
             // region selected through to the start of the next line still
             // counts this one as fully selected -- see ClassifyGutterSelection.
@@ -1071,13 +1359,36 @@ void BufferView::Paint(Canvas c) {
                     cell.inverted = inverted;
                 }
             }
+            } // if (segmentIndex == 0) -- line-level gutter rendering
 
-            const std::vector<editor::HighlightSpan> lineSpans = SpansForLine(highlightSpans, lineStart, lineEnd);
-            const std::vector<RenderedLink>          lineLinks = LinksForLine(linkCache_, lineStart, lineEnd, point);
+            const std::vector<editor::HighlightSpan>& lineSpans = currentLineSpans;
+            const std::vector<RenderedLink>&          lineLinks = currentLineLinks;
 
-            std::size_t offset = lineStart;
-            int         col    = static_cast<int>(gutterWidth);
-            while (offset < lineEnd && col < c.size().width) {
+            std::size_t offset = currentSegment.startByte;
+            // line-wrap follow-up: horizontal-scroll-follow's own
+            // fast-forward phase -- consumes (but never draws) whatever
+            // falls before leftColumn_, the same width accounting the real
+            // drawing loop below uses, so the two can never disagree about
+            // where a given column actually lands. leftColumn_ stays 0 for
+            // any buffer whose EffectiveWrapLines() is true (see
+            // ScrollToShowPointHorizontally's own doc comment), so this is
+            // a no-op loop in that case without needing a separate check
+            // here.
+            if (leftColumn_ > 0) {
+                int skipped = 0;
+                while (offset < currentSegment.endByte && skipped < static_cast<int>(leftColumn_)) {
+                    if (const RenderedLink* link = LinkStartingAt(lineLinks, offset)) {
+                        skipped += DisplayColumns(link->displayText);
+                        offset = link->endByte;
+                        continue;
+                    }
+                    const auto decoded = content.CodepointAt(offset);
+                    skipped += CodepointColumns(decoded.codepoint);
+                    offset += decoded.byteLength;
+                }
+            }
+            int col = static_cast<int>(gutterWidth);
+            while (offset < currentSegment.endByte && col < c.size().width) {
                 if (const RenderedLink* link = LinkStartingAt(lineLinks, offset)) {
                     // Links follow-up: real Org's own "descriptive links" --
                     // the raw "[[target][description]]" markup collapses down
@@ -1196,6 +1507,27 @@ void BufferView::Paint(Canvas c) {
                 offset += decoded.byteLength;
             }
 
+            // line-truncation-indicator follow-up: offset < endByte here
+            // means the content loop above stopped because it ran out of
+            // viewport width, not because it reached the end of what this
+            // row actually has to show -- only reachable with wrap off (a
+            // wrapped segment never exceeds the viewport width by
+            // construction, see ComputeWrapSegments's own doc comment).
+            // Overwrites the row's own last-drawn column rather than
+            // reserving a dedicated one, the same "small, unobtrusive
+            // marker" approach the fold-ellipsis glyph just below already
+            // takes for a conceptually similar "there's more here" cue.
+            if (offset < currentSegment.endByte && col > 0) {
+                const Brush truncationBrush{.background = theme_.background, .foreground = theme_.truncationIndicatorForeground};
+                ftxui::Cell& cell = c[{.x = col - 1, .y = row}];
+                cell.character    = text::EncodeCodepointUtf8(kTruncationIndicator);
+                truncationBrush.ApplyTo(cell);
+            }
+
+            // line-wrap follow-up: this ellipsis represents "content AFTER
+            // this line is hidden" -- belongs on the line's own last visual
+            // row, not every wrap continuation row.
+            if (segmentIndex + 1 == lineSegments.size()) {
             // Org-mode fold/unfold follow-up: any marked headline (Collapsed or
             // ChildrenVisible -- either way, something below this line is
             // currently hidden) gets a short ellipsis painted right after its
@@ -1271,9 +1603,76 @@ void BufferView::Paint(Canvas c) {
                 }
                 break;
             }
-        }
+            } // if (segmentIndex + 1 == lineSegments.size()) -- fold ellipsis/preview
 
-        line = NextVisibleLine(line + 1, renderEndLine);
+            // hover/completion follow-up: ghost-text completion suggestion,
+            // dimmed, right after point on point's own line. Deliberately
+            // anchored via VisualColumn(..., point, ...) rather than reusing
+            // this row's own `col` (which reflects where the LINE's real
+            // content ends, not where POINT is -- the two only coincide
+            // when point sits at end-of-line, the common case right after a
+            // self-insert keystroke that triggered this, but not guaranteed
+            // in general). requestPoint == point is the staleness check --
+            // point moving since the request was issued/answered means this
+            // suggestion no longer applies to whatever's now under point.
+            // line-wrap follow-up: also requires point to fall within THIS
+            // row's own segment -- point's line can span several wrapped
+            // rows, and the suggestion belongs only on the one actually
+            // showing point, not every one of them.
+            if (ghostCompletion_ && line == pointLine && ghostCompletion_->requestPoint == point &&
+                point >= currentSegment.startByte && point <= currentSegment.endByte &&
+                static_cast<int>(gutterWidth) < c.size().width) {
+                // line-wrap follow-up: horizontal-scroll-follow -- same
+                // leftColumn_-aware bound/offset CursorPosition() uses;
+                // always a no-op adjustment while wrapActive (leftColumn_
+                // stays 0 then).
+                const int ghostContentWidth = c.size().width - static_cast<int>(gutterWidth);
+                const int maxColumns        = ghostContentWidth + static_cast<int>(leftColumn_);
+                if (const std::optional<int> pointColumn = VisualColumn(content, currentSegment.startByte, point, maxColumns, lineLinks);
+                    pointColumn && *pointColumn >= static_cast<int>(leftColumn_)) {
+                    const std::string suffix = GhostSuffixFor(ghostCompletion_->items[ghostCompletion_->selectedIndex]);
+                    const Brush ghostBrush{.background = theme_.background, .foreground = theme_.ghostTextForeground, .italic = true};
+                    const text::Rope  suffixRope(suffix);
+                    std::size_t       suffixOffset = 0;
+                    int               ghostCol      = static_cast<int>(gutterWidth) + *pointColumn - static_cast<int>(leftColumn_);
+                    while (suffixOffset < suffixRope.ByteLength() && ghostCol < c.size().width) {
+                        const auto decoded = suffixRope.CodepointAt(suffixOffset);
+                        // Never send a raw control byte to the terminal --
+                        // same discipline tab-rendering-fix/binary-rendering
+                        // established (see this file's own header comment);
+                        // a completion suggestion realistically never
+                        // contains one, so truncating here rather than
+                        // growing a parallel hex-placeholder path for this
+                        // narrow case is the right trade.
+                        if (decoded.codepoint < 0x20 || decoded.codepoint == 0x7F) {
+                            break;
+                        }
+                        ftxui::Cell& cell = c[{.x = ghostCol, .y = row}];
+                        cell.character    = text::EncodeCodepointUtf8(decoded.codepoint);
+                        ghostBrush.ApplyTo(cell);
+                        ++ghostCol;
+                        suffixOffset += decoded.byteLength;
+                    }
+                }
+            }
+
+            // line-wrap follow-up: advance to the next wrap segment (row)
+            // of the same buffer line if there is one, otherwise advance to
+            // the next visible buffer line -- was an unconditional
+            // `line = NextVisibleLine(line + 1, renderEndLine)` before wrap
+            // existed, which segmentIndex staying 0 (lineSegments always
+            // exactly one entry) reduces to exactly.
+            if (segmentIndex + 1 < lineSegments.size()) {
+                ++segmentIndex;
+            }
+            else {
+                segmentIndex = 0;
+                line         = NextVisibleLine(line + 1, renderEndLine);
+            }
+        }
+        else {
+            line = NextVisibleLine(line + 1, renderEndLine);
+        }
     }
 }
 
@@ -1304,7 +1703,6 @@ std::optional<Point> BufferView::CursorPosition() const {
     if (pointLine < topLine_ || IsLineHidden(pointLine)) {
         return std::nullopt;
     }
-    const std::size_t visibleRow = VisibleLineCountBetween(topLine_, pointLine);
 
     // size() -- inherited from Widget, persisted on this long-lived object
     // rather than the transient per-frame PaintNode -- is still its
@@ -1326,14 +1724,10 @@ std::optional<Point> BufferView::CursorPosition() const {
     // appear to not exist until the user did something.
     const Size sizeNow     = size();
     const bool sizeIsKnown = sizeNow.height > 0 && sizeNow.width > 0;
-    if (sizeIsKnown && visibleRow >= static_cast<std::size_t>(sizeNow.height)) {
-        return std::nullopt;
-    }
 
     const std::size_t lineStart = content.LineToByteOffset(pointLine);
     const std::size_t lineEnd =
         (pointLine + 1 < content.LineCount()) ? content.LineToByteOffset(pointLine + 1) - 1 : content.ByteLength();
-    const int maxColumns = sizeIsKnown ? sizeNow.width - static_cast<int>(gutterWidth) : std::numeric_limits<int>::max();
 
     // Links follow-up: point's own line never has a link collapsed AT
     // point's own position (LinksForLine excludes any link containing
@@ -1342,14 +1736,54 @@ std::optional<Point> BufferView::CursorPosition() const {
     EnsureLinkCache();
     const std::vector<RenderedLink> lineLinks = LinksForLine(linkCache_, lineStart, lineEnd, point);
 
-    const std::optional<int> visualCol = VisualColumn(content, lineStart, point, maxColumns, lineLinks);
-    if (!visualCol) {
+    // line-wrap follow-up: which wrap segment (row) of pointLine actually
+    // contains point -- 0, and the whole line as one segment, when wrap is
+    // off or the viewport size isn't known yet (mirrors the rest of this
+    // method's own "unknown size means don't try to bound" tolerance).
+    // Prefers the earliest segment point is strictly inside; only the
+    // line's own LAST segment also accepts point sitting exactly at its
+    // end (point at end-of-line) -- a point sitting exactly at an earlier
+    // segment's own boundary belongs to the NEXT segment instead (the
+    // start of a new visual row), matching how a real editor's cursor
+    // behaves at a wrapped line break.
+    std::size_t rowWithinLine = 0;
+    std::size_t segmentStart  = lineStart;
+    if (EffectiveWrapLines() && sizeIsKnown) {
+        const int wrapWidth = std::max(1, sizeNow.width - static_cast<int>(gutterWidth));
+        const std::vector<WrapSegment> segments = ComputeWrapSegments(content, lineStart, lineEnd, wrapWidth, lineLinks);
+        for (std::size_t i = 0; i < segments.size(); ++i) {
+            const bool isLast = (i + 1 == segments.size());
+            if (point >= segments[i].startByte && (point < segments[i].endByte || (isLast && point == segments[i].endByte))) {
+                rowWithinLine = i;
+                segmentStart  = segments[i].startByte;
+                break;
+            }
+        }
+    }
+
+    const std::size_t visibleRow = VisibleRowCountBetween(topLine_, pointLine) + rowWithinLine;
+    if (sizeIsKnown && visibleRow >= static_cast<std::size_t>(sizeNow.height)) {
         return std::nullopt;
     }
 
-    const std::size_t col = gutterWidth + static_cast<std::size_t>(*visualCol);
+    // line-wrap follow-up: horizontal-scroll-follow -- the scan has to walk
+    // far enough right to still find point even when scrolled, so the bound
+    // grows by leftColumn_ (only meaningful once sizeIsKnown -- an unknown
+    // size already means "don't bound at all"); the true on-screen column
+    // is the raw column minus leftColumn_, subtracted back out below.
+    // leftColumn_ is always 0 once EffectiveWrapLines() is true (see
+    // ScrollToShowPointHorizontally), so this is a no-op adjustment then.
+    const int maxColumns = sizeIsKnown ? sizeNow.width - static_cast<int>(gutterWidth) + static_cast<int>(leftColumn_)
+                                        : std::numeric_limits<int>::max();
+
+    const std::optional<int> visualCol = VisualColumn(content, segmentStart, point, maxColumns, lineLinks);
+    if (!visualCol || *visualCol < static_cast<int>(leftColumn_)) {
+        return std::nullopt; // scrolled off the left edge -- shouldn't happen once leftColumn_ is correct, but a safe guard
+    }
+
+    const std::size_t col = gutterWidth + static_cast<std::size_t>(*visualCol) - leftColumn_;
     if (sizeIsKnown && col >= static_cast<std::size_t>(sizeNow.width)) {
-        return std::nullopt; // scrolled off horizontally; no horizontal scroll in v1
+        return std::nullopt; // scrolled off horizontally to the right
     }
     return Point{.x = static_cast<int>(col), .y = static_cast<int>(visibleRow)};
 }
@@ -1439,6 +1873,68 @@ bool BufferView::OnKeyEvent(ftxui::Event event) {
         ClampPointToNarrowing();
         return true;
     }
+    if (inputMode_ == InputMode::LspCodeActionSelect) {
+        HandleCodeActionSelectKey(*chord);
+        ClampPointToNarrowing();
+        return true;
+    }
+    if (inputMode_ == InputMode::LspCodeActionConfirm) {
+        HandleCodeActionConfirmKey(*chord);
+        ClampPointToNarrowing();
+        return true;
+    }
+    if (inputMode_ == InputMode::LspGotoDefinitionSelect) {
+        HandleDefinitionSelectKey(*chord);
+        ClampPointToNarrowing();
+        return true;
+    }
+    if (inputMode_ == InputMode::LspRenameNewName) {
+        HandlePromptKey(*chord);
+        ClampPointToNarrowing();
+        return true;
+    }
+    if (inputMode_ == InputMode::LspRenameConfirm) {
+        HandleRenameConfirmKey(*chord);
+        ClampPointToNarrowing();
+        return true;
+    }
+
+    // hover/completion follow-up: ghost-text state only ever exists while
+    // inputMode_ == Normal (every branch above returns before reaching
+    // here), so this is the one place it needs handling -- Tab accepts,
+    // M-n/M-p cycle, and (falling through the first three) any other key
+    // dismisses it, then continues to whatever that key would ordinarily
+    // do. Checked ahead of the normal dispatch below so Tab/M-n/M-p never
+    // reach Dispatcher::Feed while a suggestion is showing.
+    if (ghostCompletion_) {
+        if (chord->Special == editor::SpecialKey::Tab && !chord->Control && !chord->Meta) {
+            AcceptGhostCompletion();
+            ClampPointToNarrowing();
+            return true;
+        }
+        if (chord->Meta && !chord->Control && chord->Codepoint == U'n') {
+            CycleGhostCompletion(1);
+            return true;
+        }
+        if (chord->Meta && !chord->Control && chord->Codepoint == U'p') {
+            CycleGhostCompletion(-1);
+            return true;
+        }
+        ghostCompletion_.reset();
+    }
+
+    // project-search-visit-result follow-up: Enter on a read-only
+    // ("tossable") buffer -- search results, project-replace's preview,
+    // project-agenda -- visits whatever result is under point instead of
+    // doing nothing (the buffer can't accept a literal newline anyway,
+    // being read-only). VisitSearchResult's own silent no-op on a
+    // non-matching line (see its doc comment) is what makes this safe to
+    // key off ReadOnly() alone, without needing to know which specific
+    // kind of results buffer this is.
+    if (chord->Special == editor::SpecialKey::Enter && !chord->Control && !chord->Meta && activeBuffer_.Get().ReadOnly()) {
+        VisitSearchResult();
+        return true;
+    }
 
     // No ClampPointToNarrowing() here either: RunCommandAndHandleOutcome
     // handles it internally now (see its own doc comment) -- required,
@@ -1449,20 +1945,74 @@ bool BufferView::OnKeyEvent(ftxui::Event event) {
     // touching an already-destroyed object in exactly that case (a real,
     // SIGSEGV-confirmed bug caught by this session's own WindowManagerTest.cpp
     // suite, not a hypothetical one).
-    editor::CommandContext context = MakeContext();
-    context.viewportHeight         = size().height > 0 ? static_cast<std::size_t>(size().height) : 0;
-    RunCommandAndHandleOutcome(context, [&] { return dispatcher_.Feed(*chord, context) == editor::Dispatcher::Outcome::Invoked; });
+    // status-message-lifecycle follow-up: attemptedSequence reconstructs
+    // exactly what Feed's own pending_ will see (its first line is
+    // pending_.push_back(chord)) -- captured *before* calling Feed since
+    // Feed clears pending_ itself on a NoMatch/Unbound result, so there'd be
+    // nothing left to read afterward otherwise.
+    std::vector<editor::KeyChord> attemptedSequence = dispatcher_.Pending();
+    attemptedSequence.push_back(*chord);
+
+    editor::Dispatcher::Outcome outcome = editor::Dispatcher::Outcome::Unbound;
+    editor::CommandContext      context = MakeContext();
+    context.viewportHeight              = size().height > 0 ? static_cast<std::size_t>(size().height) : 0;
+    const bool ran                      = RunCommandAndHandleOutcome(
+        context,
+        [&] {
+            outcome = dispatcher_.Feed(*chord, context);
+            return outcome == editor::Dispatcher::Outcome::Invoked;
+        },
+        &*chord);
+
+    // ran (not outcome) gates this: outcome can be stale -- if Feed's own
+    // Match case invokes a command that throws, Feed never reaches its
+    // `return Outcome::Invoked` line, leaving outcome at its default
+    // Unbound even though a real command genuinely ran (and already
+    // reported its own exception message via RunCommandAndHandleOutcome's
+    // catch). ran correctly reflects that either way. Only reached when
+    // !ran (Pending/Unbound never invoke a command, so *this* is never at
+    // risk of having been destroyed by a window-management
+    // interactiveRequest here -- see RunCommandAndHandleOutcome's own doc
+    // comment).
+    if (!ran) {
+        if (outcome == editor::Dispatcher::Outcome::Pending) {
+            statusMessage_ = editor::FormatKeySequence(dispatcher_.Pending()) + "-"; // matches real Emacs' own "C-x-" while-waiting convention
+        }
+        else if (outcome == editor::Dispatcher::Outcome::Unbound) {
+            statusMessage_ = editor::FormatKeySequence(attemptedSequence) + " is undefined";
+        }
+    }
     return true;
 }
 
-void BufferView::RunCommandAndHandleOutcome(editor::CommandContext& context, const std::function<bool()>& invoke) {
-    bool ran = false;
+bool BufferView::RunCommandAndHandleOutcome(editor::CommandContext& context, const std::function<bool()>& invoke,
+                                            const editor::KeyChord* triggeringChord) {
+    const std::size_t generationBefore     = activeBuffer_.Get().ContentGeneration();
+    const std::string statusMessageBefore  = statusMessage_; // status-message-lifecycle: see the "clear if unchanged" check below
+    bool               ran                 = false;
     try {
         ran = invoke();
     }
     catch (const std::exception& e) {
         statusMessage_ = e.what();
         ran            = true; // a command did run, it just threw -- still "something happened"
+    }
+
+    // status-message-lifecycle follow-up: a real, invoked command (ran ==
+    // true -- Pending/Unbound never reach here with ran true, so a
+    // still-accumulating prefix sequence's own about-to-be-shown "C-x-"
+    // indicator is never touched by this) that didn't itself report
+    // anything new clears whatever stale message was already showing --
+    // "just sitting there" after some other real action (moving point,
+    // editing, anything) doesn't make sense. Guarded on statusMessage_
+    // still matching what it was before this dispatch even started: a
+    // command that explicitly re-sets the exact same text (rare) is
+    // indistinguishable from one that never touched it at all with this
+    // diff-only approach -- a narrow, documented trade-off rather than
+    // threading a "did I actually write something" flag through every one
+    // of dozens of existing command implementations.
+    if (ran && !statusMessage_.empty() && statusMessage_ == statusMessageBefore) {
+        statusMessage_.clear();
     }
 
     if (context.quit) {
@@ -1477,7 +2027,7 @@ void BufferView::RunCommandAndHandleOutcome(editor::CommandContext& context, con
         if (ftxui::ScreenInteractive* screen = ftxui::ScreenInteractive::Active()) {
             screen->Exit();
         }
-        return;
+        return ran;
     }
 
     // structural-selection-expansion follow-up: any dispatched command other
@@ -1509,11 +2059,599 @@ void BufferView::RunCommandAndHandleOutcome(editor::CommandContext& context, con
         if (!destroysThisPane) {
             ClampPointToNarrowing();
         }
-        return;
+        return ran;
+    }
+
+    // hover/completion follow-up: only reached for an ordinary, non-
+    // interactive, still-alive-*this* dispatch -- exactly the "organic
+    // keystroke" case worth considering for automatic completion.
+    // triggeringChord is only non-null from OnKeyEvent's own call site (see
+    // this method's own doc comment in BufferView.h), so macro replay/M-x
+    // never reach this.
+    if (triggeringChord) {
+        MaybeScheduleAutoCompletion(*triggeringChord, generationBefore);
     }
 
     ClampPointToNarrowing();
     ScrollToShowPoint();
+    return ran;
+}
+
+void BufferView::OnAnimation(ftxui::animation::Params& params) {
+    (void)params; // only used to know a frame elapsed -- both deadlines below are wall-clock, not duration-accumulated
+    bool needsAnotherFrame = false;
+
+    if (completionDebounceDeadline_) {
+        if (std::chrono::steady_clock::now() >= *completionDebounceDeadline_) {
+            completionDebounceDeadline_.reset();
+            RequestCompletionAtPoint();
+        }
+        else {
+            needsAnotherFrame = true;
+        }
+    }
+
+    // status-message-lifecycle follow-up: idle-timeout half of
+    // EnsureStatusMessageFreshness's own two-part rule (the other half --
+    // clear immediately on the next real action -- lives in
+    // RunCommandAndHandleOutcome). Guarded by statusMessageSnapshot_ still
+    // matching statusMessage_: if something else wrote a new message since
+    // this deadline was armed, EnsureStatusMessageFreshness's own Paint()-
+    // time diff will have already re-armed a fresh deadline for it, so
+    // this stale one (if it somehow still fired first) must not clear a
+    // message it didn't set.
+    if (statusMessageChangedAt_) {
+        if (std::chrono::steady_clock::now() - *statusMessageChangedAt_ >= kStatusMessageTimeout) {
+            if (statusMessage_ == statusMessageSnapshot_) {
+                statusMessage_.clear();
+                statusMessageSnapshot_.clear();
+            }
+            statusMessageChangedAt_.reset();
+        }
+        else {
+            needsAnotherFrame = true;
+        }
+    }
+
+    if (needsAnotherFrame) {
+        ftxui::animation::RequestAnimationFrame();
+    }
+}
+
+void BufferView::EnsureStatusMessageFreshness() {
+    // While any interactive session is active (isearch, a prompt like
+    // "Project search: ", query-replace, ...), statusMessage_ is that
+    // session's own live, actively-managed text -- e.g. what the user has
+    // typed into a prompt so far. It must never be auto-cleared out from
+    // under them just because they paused for a few seconds mid-typing,
+    // and it's already re-shown on every keystroke by the session's own
+    // Handle*Key method regardless, so there's nothing for the idle timer
+    // to usefully guard here. Deliberately not just "skip arming a new
+    // deadline" -- also drops any deadline armed before this session
+    // started (Normal-mode message that was already showing when the
+    // session opened, and would otherwise silently expire mid-session and
+    // then, confusingly, expire the session's *own* text on the very next
+    // check right after the session ends) and keeps the snapshot synced so
+    // there's no stale diff to misfire against once back in Normal mode.
+    if (inputMode_ != InputMode::Normal) {
+        statusMessageSnapshot_ = statusMessage_;
+        statusMessageChangedAt_.reset();
+        return;
+    }
+
+    if (statusMessage_ == statusMessageSnapshot_) {
+        return; // nothing wrote a new message since the last Paint() call
+    }
+    statusMessageSnapshot_ = statusMessage_;
+    if (statusMessage_.empty()) {
+        statusMessageChangedAt_.reset(); // nothing to time out
+        return;
+    }
+    statusMessageChangedAt_ = std::chrono::steady_clock::now();
+    ftxui::animation::RequestAnimationFrame(); // guarantees OnAnimation gets called again even with no further input, so idle time actually elapses
+}
+
+void BufferView::RequestCompletionAtPoint() {
+    if (!lspManager_) {
+        return;
+    }
+    text::Buffer&       buffer     = activeBuffer_.Get();
+    text::Buffer* const bufferPtr  = &buffer;
+    const std::size_t   point      = buffer.Point();
+    const std::size_t   generation = ++completionRequestGeneration_;
+
+    lspManager_->RequestCompletion(
+        buffer, point, [this, bufferPtr, point, generation](std::vector<editor::lsp::CompletionItem> items) {
+            if (generation != completionRequestGeneration_) {
+                return; // superseded by a newer request
+            }
+            // bufferPtr is only ever compared, never dereferenced, unless
+            // this comparison already confirms it's the (guaranteed alive)
+            // current active buffer -- safe even if the buffer it pointed to
+            // was since closed, the same idiom BufferList::PreviewBuffer's
+            // own mutable Buffer* already relies on.
+            if (bufferPtr != &activeBuffer_.Get() || activeBuffer_.Get().Point() != point) {
+                return; // buffer/point changed since the request was sent
+            }
+            if (items.empty()) {
+                ghostCompletion_.reset();
+                return;
+            }
+            ghostCompletion_ = GhostCompletion{.requestPoint = point, .items = std::move(items), .selectedIndex = 0};
+        });
+}
+
+bool BufferView::ShouldSuppressAutoCompletion() const {
+    const text::Buffer& buffer = activeBuffer_.Get();
+    const std::size_t   point  = buffer.Point();
+    if (point == 0) {
+        return false;
+    }
+    const text::Rope& content = buffer.Content();
+
+    if (highlightCacheBuffer_ == &buffer) {
+        const std::size_t                        line        = content.ByteOffsetToLine(point);
+        const std::size_t                        lineStart   = content.LineToByteOffset(line);
+        const std::size_t lineEnd = (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
+        const std::vector<editor::HighlightSpan> lineSpans   = SpansForLine(highlightCacheSpans_, lineStart, lineEnd);
+        const std::size_t                        priorOffset = content.PreviousCodepointBoundary(point);
+        switch (ClassAtOffset(lineSpans, priorOffset)) {
+            case editor::SyntaxClass::String:
+            case editor::SyntaxClass::StringEscape:
+            case editor::SyntaxClass::Comment:
+            case editor::SyntaxClass::DocComment:
+            case editor::SyntaxClass::Number:
+                return true;
+            default:
+                break;
+        }
+    }
+
+    // Fallback, independent of highlighting availability (covers
+    // FundamentalMode and any other mode with no highlighter): a purely
+    // numeric token immediately before point shouldn't trigger completion
+    // either -- the exact "typing a number" complaint that motivated this
+    // heuristic. WordPrefixStart's own ASCII-only guarantee makes token a
+    // safe raw-byte string to scan.
+    const std::size_t prefixStart = WordPrefixStart(content, point);
+    if (prefixStart < point) {
+        const std::string token = content.Substring(prefixStart, point - prefixStart);
+        if (std::all_of(token.begin(), token.end(), [](char c) { return std::isdigit(static_cast<unsigned char>(c)) != 0; })) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void BufferView::MaybeScheduleAutoCompletion(const editor::KeyChord& chord, std::size_t generationBefore) {
+    ghostCompletion_.reset(); // typing invalidates any currently-shown suggestion
+    if (!lspManager_ || !editor::lsp::LspAutoCompleteEnabled()) {
+        return;
+    }
+    if (chord.Control || chord.Meta || chord.Special != editor::SpecialKey::None) {
+        return; // only plain self-insert keystrokes schedule automatic completion
+    }
+    if (activeBuffer_.Get().ContentGeneration() == generationBefore) {
+        return; // nothing actually changed
+    }
+    if (ShouldSuppressAutoCompletion()) {
+        return;
+    }
+    completionDebounceDeadline_ = std::chrono::steady_clock::now() + std::chrono::milliseconds(editor::lsp::LspCompletionDebounceMs());
+    ftxui::animation::RequestAnimationFrame();
+}
+
+void BufferView::AcceptGhostCompletion() {
+    if (!ghostCompletion_) {
+        return;
+    }
+    text::Buffer&     buffer = activeBuffer_.Get();
+    const std::string suffix = GhostSuffixFor(ghostCompletion_->items[ghostCompletion_->selectedIndex]);
+    ghostCompletion_.reset();
+    if (!suffix.empty()) {
+        buffer.InsertAtPoint(suffix);
+    }
+}
+
+void BufferView::CycleGhostCompletion(int direction) {
+    if (!ghostCompletion_ || ghostCompletion_->items.empty()) {
+        return;
+    }
+    const std::size_t count   = ghostCompletion_->items.size();
+    const std::size_t current = ghostCompletion_->selectedIndex;
+    ghostCompletion_->selectedIndex = (direction > 0) ? (current + 1) % count : (current + count - 1) % count;
+}
+
+std::string BufferView::GhostSuffixFor(const editor::lsp::CompletionItem& item) const {
+    const text::Buffer& buffer      = activeBuffer_.Get();
+    const text::Rope&   content     = buffer.Content();
+    const std::size_t   point       = buffer.Point();
+    const std::size_t   prefixStart = WordPrefixStart(content, point);
+    const std::string   prefix      = content.Substring(prefixStart, point - prefixStart);
+
+    if (item.insertText.size() > prefix.size() && item.insertText.compare(0, prefix.size(), prefix) == 0) {
+        return item.insertText.substr(prefix.size());
+    }
+    // The server's insertText doesn't share our naively-computed word
+    // prefix (e.g. it used a textEdit range instead) -- shown in full
+    // rather than guessed at; a documented v1 limitation, not a crash risk.
+    return item.insertText;
+}
+
+void BufferView::RequestCodeActionsAtPoint() {
+    if (!lspManager_) {
+        statusMessage_ = "No LSP manager available.";
+        return;
+    }
+    text::Buffer&       buffer     = activeBuffer_.Get();
+    text::Buffer* const bufferPtr  = &buffer;
+    const std::size_t   point      = buffer.Point();
+    const std::size_t   generation = ++codeActionRequestGeneration_;
+
+    // Prefer the diagnostic covering point (same lookup lsp-show-diagnostic
+    // already does), else a zero-length range at point.
+    std::size_t rangeStart = point;
+    std::size_t rangeEnd   = point;
+    for (const text::Buffer::Diagnostic& diagnostic : buffer.Diagnostics()) {
+        const bool atPoint = (diagnostic.startByte == diagnostic.endByte) ? (point == diagnostic.startByte)
+                                                                          : (diagnostic.startByte <= point && point < diagnostic.endByte);
+        if (atPoint) {
+            rangeStart = diagnostic.startByte;
+            rangeEnd   = diagnostic.endByte;
+            break;
+        }
+    }
+
+    statusMessage_ = "Requesting code actions...";
+    lspManager_->RequestCodeActions(
+        buffer, rangeStart, rangeEnd, [this, bufferPtr, point, generation](std::vector<editor::lsp::CodeAction> actions) {
+            if (generation != codeActionRequestGeneration_) {
+                return; // superseded by a newer request
+            }
+            if (bufferPtr != &activeBuffer_.Get() || activeBuffer_.Get().Point() != point) {
+                return; // buffer/point changed since the request was sent -- see RequestCompletionAtPoint's own identical guard
+            }
+            pendingCodeActions_ = std::move(actions);
+            if (pendingCodeActions_.empty()) {
+                statusMessage_ = "No code actions available.";
+                return;
+            }
+            codeActionSelection_ = 0;
+            if (pendingCodeActions_.size() == 1) {
+                inputMode_     = InputMode::LspCodeActionConfirm;
+                statusMessage_ = "Apply \"" + pendingCodeActions_[0].title + "\"? (y/n)";
+                return;
+            }
+            inputMode_ = InputMode::LspCodeActionSelect;
+            RefreshCodeActionSelectStatus();
+        });
+}
+
+void BufferView::RefreshCodeActionSelectStatus() {
+    std::string status = "Code action: ";
+    for (std::size_t i = 0; i < pendingCodeActions_.size(); ++i) {
+        if (i > 0) {
+            status += "  ";
+        }
+        const bool selected = (i == codeActionSelection_);
+        status += (selected ? "[" : "") + std::to_string(i + 1) + ") " + pendingCodeActions_[i].title + (selected ? "]" : "");
+    }
+    statusMessage_ = status;
+}
+
+void BufferView::HandleCodeActionSelectKey(const editor::KeyChord& chord) {
+    if (IsQuit(chord)) {
+        statusMessage_ = "Code action cancelled.";
+        EndInteractiveSession();
+        return;
+    }
+    if (chord.Special == editor::SpecialKey::Down) {
+        codeActionSelection_ = (codeActionSelection_ + 1) % pendingCodeActions_.size();
+        RefreshCodeActionSelectStatus();
+        return;
+    }
+    if (chord.Special == editor::SpecialKey::Up) {
+        codeActionSelection_ = (codeActionSelection_ + pendingCodeActions_.size() - 1) % pendingCodeActions_.size();
+        RefreshCodeActionSelectStatus();
+        return;
+    }
+    if (IsPlainCharacter(chord) && chord.Codepoint >= U'1' && chord.Codepoint <= U'9') {
+        const std::size_t index = static_cast<std::size_t>(chord.Codepoint - U'1');
+        if (index < pendingCodeActions_.size()) {
+            codeActionSelection_ = index;
+        }
+        // falls through to the same Confirm transition Enter performs below
+    }
+    else if (chord.Special != editor::SpecialKey::Enter) {
+        return; // anything else is ignored -- stay in the selection list
+    }
+
+    inputMode_     = InputMode::LspCodeActionConfirm;
+    statusMessage_ = "Apply \"" + pendingCodeActions_[codeActionSelection_].title + "\"? (y/n)";
+}
+
+void BufferView::HandleCodeActionConfirmKey(const editor::KeyChord& chord) {
+    if (chord.Codepoint == U'y' || chord.Codepoint == U'Y') {
+        const editor::lsp::CodeAction action = pendingCodeActions_[codeActionSelection_];
+        // code-actions-resolve follow-up: a server (clangd included)
+        // advertising resolveProvider deliberately sends this action back
+        // without an edit yet -- codeAction/resolve fills it in, only now
+        // that the user has actually chosen to apply it (see CodeAction::
+        // resolvable's own doc comment in LspContent.h for why this isn't
+        // done eagerly for every listed action). Fire-and-forget, same
+        // async shape as every other LSP request here: EndInteractiveSession()
+        // runs immediately, ApplyCodeAction runs later from inside the
+        // callback once the resolved edit actually arrives.
+        if (action.resolvable && lspManager_) {
+            text::Buffer* const bufferPtr = &activeBuffer_.Get();
+            statusMessage_                = "Resolving \"" + action.title + "\"...";
+            lspManager_->ResolveCodeAction(activeBuffer_.Get(), action,
+                                           [this, bufferPtr, action](std::optional<editor::lsp::CodeAction> resolved) {
+                                               if (bufferPtr != &activeBuffer_.Get()) {
+                                                   return; // active buffer changed since the resolve request was sent
+                                               }
+                                               if (!resolved || !resolved->hasEdit) {
+                                                   statusMessage_ = "\"" + action.title + "\" could not be resolved.";
+                                                   return;
+                                               }
+                                               ApplyCodeAction(*resolved);
+                                           });
+            EndInteractiveSession();
+            return;
+        }
+        ApplyCodeAction(action);
+        EndInteractiveSession();
+        return;
+    }
+    if (chord.Codepoint == U'n' || chord.Codepoint == U'N' || IsQuit(chord)) {
+        statusMessage_ = "Code action cancelled.";
+        EndInteractiveSession();
+        return;
+    }
+    // Anything else is ignored -- stay at the confirmation.
+}
+
+namespace {
+
+    // Shared by ApplyCodeAction and ApplyRename: resolves each edit's
+    // LspPositions to byte offsets against buffer's CURRENT content, sorts
+    // descending by start byte (keeps an edit not yet applied valid as an
+    // earlier-in-the-buffer one shifts positions -- LSP guarantees edits
+    // within one WorkspaceEdit don't overlap, so a plain sort suffices), and
+    // applies each via Buffer::DeleteRange + Buffer::InsertAt.
+    void ApplyWorkspaceTextEdits(text::Buffer& buffer, const std::vector<editor::lsp::WorkspaceTextEdit>& edits) {
+        const text::Rope& content = buffer.Content();
+
+        struct ResolvedEdit {
+            std::size_t startByte;
+            std::size_t endByte;
+            std::string newText;
+        };
+        std::vector<ResolvedEdit> resolved;
+        resolved.reserve(edits.size());
+        for (const editor::lsp::WorkspaceTextEdit& edit : edits) {
+            resolved.push_back(ResolvedEdit{
+                .startByte = editor::lsp::LspPositionToByte(content, edit.start),
+                .endByte   = editor::lsp::LspPositionToByte(content, edit.end),
+                .newText   = edit.newText,
+            });
+        }
+        std::sort(resolved.begin(), resolved.end(), [](const ResolvedEdit& a, const ResolvedEdit& b) { return a.startByte > b.startByte; });
+
+        for (const ResolvedEdit& edit : resolved) {
+            buffer.DeleteRange(edit.startByte, edit.endByte - edit.startByte);
+            buffer.InsertAt(edit.startByte, edit.newText);
+        }
+    }
+
+} // namespace
+
+void BufferView::ApplyCodeAction(const editor::lsp::CodeAction& action) {
+    if (action.touchesOtherFiles) {
+        statusMessage_ = "\"" + action.title + "\" edits other files -- not supported yet.";
+        return;
+    }
+    if (!action.hasEdit || action.edits.empty()) {
+        statusMessage_ = "\"" + action.title + "\" has no edit to apply.";
+        return;
+    }
+
+    ApplyWorkspaceTextEdits(activeBuffer_.Get(), action.edits);
+    statusMessage_ = "Applied \"" + action.title + "\".";
+}
+
+void BufferView::RequestDefinitionAtPoint() {
+    if (!lspManager_) {
+        statusMessage_ = "No LSP manager available.";
+        return;
+    }
+    text::Buffer&       buffer     = activeBuffer_.Get();
+    text::Buffer* const bufferPtr  = &buffer;
+    const std::size_t   point      = buffer.Point();
+    const std::size_t   generation = ++definitionRequestGeneration_;
+
+    statusMessage_ = "Requesting definition...";
+    lspManager_->RequestDefinition(
+        buffer, point, [this, bufferPtr, point, generation](std::vector<editor::lsp::LspManager::ResolvedLocation> locations) {
+            if (generation != definitionRequestGeneration_) {
+                return; // superseded by a newer request
+            }
+            if (bufferPtr != &activeBuffer_.Get() || activeBuffer_.Get().Point() != point) {
+                return; // buffer/point changed since the request was sent -- see RequestCodeActionsAtPoint's own identical guard
+            }
+            pendingDefinitions_ = std::move(locations);
+            if (pendingDefinitions_.empty()) {
+                statusMessage_ = "No definition found.";
+                return;
+            }
+            if (pendingDefinitions_.size() == 1) {
+                // No confirmation needed, unlike a code action -- opening a
+                // file and moving point is trivially undoable/re-navigable,
+                // nothing destructive to confirm.
+                JumpToDefinition(pendingDefinitions_[0]);
+                return;
+            }
+            definitionSelection_ = 0;
+            inputMode_            = InputMode::LspGotoDefinitionSelect;
+            RefreshDefinitionSelectStatus();
+        });
+}
+
+void BufferView::RefreshDefinitionSelectStatus() {
+    std::string status = "Definition: ";
+    for (std::size_t i = 0; i < pendingDefinitions_.size(); ++i) {
+        if (i > 0) {
+            status += "  ";
+        }
+        const bool selected = (i == definitionSelection_);
+        status += (selected ? "[" : "") + std::to_string(i + 1) + ") " + pendingDefinitions_[i].path.filename().string() +
+                   ":" + std::to_string(pendingDefinitions_[i].position.line + 1) + (selected ? "]" : "");
+    }
+    statusMessage_ = status;
+}
+
+void BufferView::HandleDefinitionSelectKey(const editor::KeyChord& chord) {
+    if (IsQuit(chord)) {
+        statusMessage_ = "Go to definition cancelled.";
+        EndInteractiveSession();
+        return;
+    }
+    if (chord.Special == editor::SpecialKey::Down) {
+        definitionSelection_ = (definitionSelection_ + 1) % pendingDefinitions_.size();
+        RefreshDefinitionSelectStatus();
+        return;
+    }
+    if (chord.Special == editor::SpecialKey::Up) {
+        definitionSelection_ = (definitionSelection_ + pendingDefinitions_.size() - 1) % pendingDefinitions_.size();
+        RefreshDefinitionSelectStatus();
+        return;
+    }
+    if (IsPlainCharacter(chord) && chord.Codepoint >= U'1' && chord.Codepoint <= U'9') {
+        const std::size_t index = static_cast<std::size_t>(chord.Codepoint - U'1');
+        if (index < pendingDefinitions_.size()) {
+            definitionSelection_ = index;
+        }
+        // falls through to the same jump Enter performs below
+    }
+    else if (chord.Special != editor::SpecialKey::Enter) {
+        return; // anything else is ignored -- stay in the selection list
+    }
+
+    const editor::lsp::LspManager::ResolvedLocation location = pendingDefinitions_[definitionSelection_];
+    EndInteractiveSession();
+    JumpToDefinition(location);
+}
+
+void BufferView::JumpToDefinition(const editor::lsp::LspManager::ResolvedLocation& location) {
+    try {
+        text::Buffer& opened = bufferList_.OpenOrCreateFile(location.path);
+        activeBuffer_.Set(opened);
+        opened.SetPoint(editor::lsp::LspPositionToByte(opened.Content(), location.position));
+        statusMessage_.clear();
+        ScrollToShowPoint();
+    }
+    catch (const std::exception& e) {
+        statusMessage_ = e.what();
+    }
+}
+
+void BufferView::RequestRenameAtPoint(const std::string& newName) {
+    if (!lspManager_) {
+        statusMessage_ = "No LSP manager available.";
+        return;
+    }
+    text::Buffer&       buffer     = activeBuffer_.Get();
+    text::Buffer* const bufferPtr  = &buffer;
+    const std::size_t   point      = buffer.Point();
+    const std::size_t   generation = ++renameRequestGeneration_;
+
+    statusMessage_ = "Requesting rename...";
+    lspManager_->RequestRename(
+        buffer, point, newName,
+        [this, bufferPtr, point, generation](std::optional<editor::lsp::LspManager::ResolvedRename> result) {
+            if (generation != renameRequestGeneration_) {
+                return; // superseded by a newer request
+            }
+            if (bufferPtr != &activeBuffer_.Get() || activeBuffer_.Get().Point() != point) {
+                return; // buffer/point changed since the request was sent
+            }
+            if (!result) {
+                statusMessage_ = "Rename failed.";
+                return;
+            }
+            if (result->touchesUnsupportedForm) {
+                statusMessage_ = "Rename uses an unsupported edit form -- not applied.";
+                return;
+            }
+            if (!result->hasEdit || result->edits.empty()) {
+                statusMessage_ = "No rename edits available.";
+                return;
+            }
+            pendingRename_ = std::move(*result);
+
+            std::size_t fileCount = pendingRename_->edits.size();
+            std::size_t editCount = 0;
+            for (const auto& edit : pendingRename_->edits) {
+                editCount += edit.edits.size();
+            }
+            renameTitle_ = std::to_string(editCount) + " edit" + (editCount == 1 ? "" : "s") + " across " +
+                           std::to_string(fileCount) + " file" + (fileCount == 1 ? "" : "s");
+
+            inputMode_ = InputMode::LspRenameConfirm;
+            RefreshRenameConfirmStatus();
+        });
+}
+
+void BufferView::RefreshRenameConfirmStatus() {
+    statusMessage_ = "Rename: " + renameTitle_ + "? (y/n)";
+}
+
+void BufferView::HandleRenameConfirmKey(const editor::KeyChord& chord) {
+    if (chord.Codepoint == U'y' || chord.Codepoint == U'Y') {
+        if (pendingRename_) {
+            ApplyRename(*pendingRename_);
+        }
+        EndInteractiveSession();
+        return;
+    }
+    if (chord.Codepoint == U'n' || chord.Codepoint == U'N' || IsQuit(chord)) {
+        statusMessage_ = "Rename cancelled.";
+        EndInteractiveSession();
+        return;
+    }
+    // Anything else is ignored -- stay at the confirmation.
+}
+
+void BufferView::ApplyRename(const editor::lsp::LspManager::ResolvedRename& result) {
+    if (result.touchesUnsupportedForm || !result.hasEdit || result.edits.empty()) {
+        statusMessage_ = "Rename has no edit to apply.";
+        return;
+    }
+
+    // Resolve (find-or-open) every touched buffer FIRST, applying nothing
+    // until every single one succeeds -- a rename either fully applies
+    // across every affected file or leaves every buffer untouched, never a
+    // partial rename across only some of them.
+    std::vector<text::Buffer*> buffers;
+    buffers.reserve(result.edits.size());
+    try {
+        for (const editor::lsp::LspManager::ResolvedRenameEdit& edit : result.edits) {
+            text::Buffer* buffer = bufferList_.FindByPath(edit.path);
+            if (!buffer) {
+                buffer = &bufferList_.OpenFile(edit.path);
+            }
+            buffers.push_back(buffer);
+        }
+    }
+    catch (const std::exception& e) {
+        statusMessage_ = std::string("Rename failed: ") + e.what();
+        return;
+    }
+
+    for (std::size_t i = 0; i < result.edits.size(); ++i) {
+        ApplyWorkspaceTextEdits(*buffers[i], result.edits[i].edits);
+    }
+    statusMessage_ = "Renamed (" + renameTitle_ + ").";
 }
 
 void BufferView::ReplayMacro() {
@@ -1591,7 +2729,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             inputMode_ = InputMode::ConfirmQuit;
             std::string names;
             for (const auto& buffer : bufferList_.Buffers()) {
-                if (buffer->Modified()) {
+                if (buffer->Modified() && !buffer->ReadOnly()) {
                     if (!names.empty()) {
                         names += ", ";
                     }
@@ -1635,6 +2773,24 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         case editor::InteractiveRequest::ProjectAgenda:
             BuildResultsBuffer(editor::CollectProjectTodos(editor::ProjectRoot()), "*agenda*");
             return;
+        case editor::InteractiveRequest::LspGotoDefinition:
+            RequestDefinitionAtPoint();
+            return;
+        case editor::InteractiveRequest::LspRename:
+            inputMode_ = InputMode::LspRenameNewName;
+            prompt_.emplace("New name: ");
+            statusMessage_ = prompt_->StatusText();
+            return;
+        case editor::InteractiveRequest::LspShowLog: {
+            const std::string logName = std::string(editor::lsp::kLspLogBufferName);
+            text::Buffer*      log     = bufferList_.Find(logName);
+            if (!log) {
+                log = &bufferList_.CreateBuffer(logName);
+                log->SetReadOnly(true);
+            }
+            activeBuffer_.Set(*log);
+            return;
+        }
         case editor::InteractiveRequest::KillBuffer:
             RequestCloseBuffer(activeBuffer_.Get());
             return;
@@ -1899,6 +3055,20 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         case editor::InteractiveRequest::OpenLinkAtPoint:
             OpenLinkAtPoint();
             return;
+        // hover/completion follow-up: another one-shot direct action --
+        // doesn't touch inputMode_, ghost-text state coexists with ordinary
+        // Normal-mode editing rather than replacing it (see
+        // GhostCompletion's own doc comment in BufferView.h).
+        case editor::InteractiveRequest::LspComplete:
+            RequestCompletionAtPoint();
+            return;
+        // code-actions follow-up: also a one-shot direct action -- inputMode_
+        // is deliberately left untouched here, only changed later, from
+        // inside RequestCodeActionsAtPoint's own async callback once the
+        // response actually arrives (see that method's own doc comment).
+        case editor::InteractiveRequest::LspCodeAction:
+            RequestCodeActionsAtPoint();
+            return;
     }
 
     statusMessage_ = (inputMode_ == InputMode::QueryReplace) ? queryReplace_->StatusText() : search_->StatusText();
@@ -1918,6 +3088,12 @@ void BufferView::EndInteractiveSession() {
     executeCommandSelection_  = 0;
     projectFindFileSelection_ = 0;
     projectFindFileCandidates_.clear(); // cached only for the duration of one session -- see its own doc comment in BufferView.h
+    pendingCodeActions_.clear();
+    codeActionSelection_ = 0;
+    pendingDefinitions_.clear();
+    definitionSelection_ = 0;
+    pendingRename_.reset();
+    renameTitle_.clear();
     ScrollToShowPoint();
 }
 
@@ -2087,6 +3263,14 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
             }
             statusMessage_.clear();
         }
+        else if (inputMode_ == InputMode::LspRenameNewName) {
+            // Fire-and-forget, same async shape as RequestCodeActionsAtPoint:
+            // EndInteractiveSession() below runs immediately, the actual
+            // LspRenameConfirm transition happens later, from inside
+            // RequestRenameAtPoint's own callback, once the response
+            // arrives.
+            RequestRenameAtPoint(input);
+        }
         else { // FindScratch
             if (!editor::IsValidScratchName(input)) {
                 statusMessage_ = "Invalid scratch name: \"" + input + "\"";
@@ -2108,13 +3292,47 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
         return;
     }
     if (IsQuit(chord)) {
-        statusMessage_.clear();
+        // status-message-lifecycle follow-up: a real, visible "cancelled"
+        // message rather than an immediate blank -- the new auto-clear
+        // mechanism (EnsureStatusMessageFreshness/OnAnimation) takes it
+        // from here, the same way it does for any other status message.
+        std::string label;
+        switch (inputMode_) {
+            case InputMode::FindFile:
+                label = "Find file";
+                break;
+            case InputMode::SwitchToBuffer:
+                label = "Switch to buffer";
+                break;
+            case InputMode::ProjectSearch:
+                label = "Project search";
+                break;
+            case InputMode::CreateDirectory:
+                label = "Create directory";
+                break;
+            case InputMode::FindScratch:
+                label = "Find scratch";
+                break;
+            case InputMode::StringRectangle:
+                label = "String rectangle";
+                break;
+            case InputMode::SetHeadlineTags:
+                label = "Set headline tags";
+                break;
+            case InputMode::LspRenameNewName:
+                label = "Rename";
+                break;
+            default:
+                label = "Prompt";
+                break;
+        }
+        statusMessage_ = label + " cancelled.";
         EndInteractiveSession();
         return;
     }
     if (chord.Special == editor::SpecialKey::Tab && inputMode_ != InputMode::ProjectSearch &&
         inputMode_ != InputMode::CreateDirectory && inputMode_ != InputMode::StringRectangle &&
-        inputMode_ != InputMode::SetHeadlineTags) {
+        inputMode_ != InputMode::SetHeadlineTags && inputMode_ != InputMode::LspRenameNewName) {
         CompletePrompt();
         return;
     }
@@ -2278,6 +3496,13 @@ void BufferView::BuildResultsBuffer(const std::vector<editor::SearchMatch>& matc
     text::Buffer& results = bufferList_.CreateBuffer(name);
     results.InsertAtPoint(resultsText);
     results.SetPoint(0);
+    // read-only-buffers follow-up: a synthesized, no-file-to-save-to
+    // buffer -- read-only both to prevent editing it (nothing meaningful
+    // would happen to the edit anyway) and, doubling as "tossable," so its
+    // Modified() state (unavoidable -- InsertAtPoint above already set it)
+    // never triggers the close/quit unsaved-changes prompt. See
+    // RequestCloseBuffer/StartInteractiveSession's ConfirmQuit case.
+    results.SetReadOnly(true);
     activeBuffer_.Set(results);
 }
 
@@ -2349,17 +3574,43 @@ std::size_t BufferView::ByteOffsetForPoint(Point at) const {
     // Org-mode fold/unfold follow-up: was topLine_ + at.y, a flat 1:1
     // mapping -- a click on screen row N means the N-th *visible* buffer
     // line below topLine_, not literally topLine_ + N, whenever a fold is
-    // hiding lines above the click.
+    // hiding lines above the click. line-wrap follow-up: was
+    // AdvanceVisibleLines (pure line-stepping, 1 row per visible line);
+    // now a row-aware walk that consumes RowsForLine(line) rows per line
+    // instead, additionally reporting which segment of the landed-on line
+    // the target row corresponds to.
     const text::Buffer& buffer      = activeBuffer_.Get();
     const text::Rope&   content     = buffer.Content();
     const std::size_t   totalLines  = content.LineCount();
-    const std::size_t   line        = std::min(AdvanceVisibleLines(topLine_, static_cast<std::size_t>(std::max(at.y, 0)), totalLines),
-                                               totalLines - 1); // mirrors Buffer::ByteOffsetForLineAndColumn's own clamp
-    const std::size_t   x           = static_cast<std::size_t>(std::max(at.x, 0));
-    const std::size_t   gutterWidth = GutterWidth();
+
+    std::size_t targetRow    = static_cast<std::size_t>(std::max(at.y, 0));
+    std::size_t line         = topLine_;
+    std::size_t segmentInLine = 0;
+    while (line < totalLines) {
+        const std::size_t rows = RowsForLine(line);
+        if (rows == 0) {
+            line = NextVisibleLine(line + 1, totalLines);
+            continue;
+        }
+        if (targetRow < rows) {
+            segmentInLine = targetRow;
+            break;
+        }
+        targetRow -= rows;
+        line = NextVisibleLine(line + 1, totalLines);
+    }
+    line = std::min(line, totalLines - 1); // mirrors Buffer::ByteOffsetForLineAndColumn's own clamp
+
+    const std::size_t x           = static_cast<std::size_t>(std::max(at.x, 0));
+    const std::size_t gutterWidth = GutterWidth();
     // A click inside the gutter itself lands on that line's first column,
-    // same as clicking right at the start of the line's text.
-    const std::size_t column = (x > gutterWidth) ? x - gutterWidth : 0;
+    // same as clicking right at the start of the line's text. line-wrap
+    // follow-up: leftColumn_ added back on -- the click's on-screen column
+    // has to be translated back to the line's own column space, the same
+    // "screen column = real column - leftColumn_" relationship Paint()'s own
+    // fast-forward phase established for drawing. Always 0 once
+    // EffectiveWrapLines() is true, a no-op then.
+    const std::size_t column = (x > gutterWidth) ? x - gutterWidth + leftColumn_ : leftColumn_;
 
     // Links follow-up: was a direct Buffer::ByteOffsetForLineAndColumn call
     // -- that method must stay entirely link-oblivious (Buffer has zero
@@ -2374,7 +3625,27 @@ std::size_t BufferView::ByteOffsetForPoint(Point at) const {
     const std::size_t lineEnd   = (line + 1 < totalLines) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
     EnsureLinkCache();
     const std::vector<RenderedLink> lineLinks = LinksForLine(linkCache_, lineStart, lineEnd, buffer.Point());
-    return ByteOffsetForColumnInLine(content, lineStart, lineEnd, column, editor::TabWidth(), lineLinks);
+
+    // line-wrap follow-up: resolve the click against the landed-on
+    // segment's own [startByte, endByte) instead of the whole line's range
+    // -- lineLinks is still the whole line's own set (matches Paint()'s own
+    // "compute once per line, reuse per segment" shape), just the byte
+    // range being searched narrows to this one row.
+    std::size_t segStart = lineStart;
+    std::size_t segEnd   = lineEnd;
+    if (EffectiveWrapLines()) {
+        const int wrapWidth = std::max(1, size().width - static_cast<int>(gutterWidth));
+        const std::vector<WrapSegment> segments = ComputeWrapSegments(content, lineStart, lineEnd, wrapWidth, lineLinks);
+        const std::size_t clampedSegment         = std::min(segmentInLine, segments.size() - 1);
+        segStart                                 = segments[clampedSegment].startByte;
+        segEnd                                   = segments[clampedSegment].endByte;
+    }
+
+    return ByteOffsetForColumnInLine(content, segStart, segEnd, column, editor::TabWidth(), lineLinks);
+}
+
+bool BufferView::FoldGutterActive() const {
+    return mode_.fold && editor::CodeFoldingEnabled() && !activeBuffer_.Get().ReadOnly();
 }
 
 std::size_t BufferView::GutterWidth() const {
@@ -2389,7 +3660,7 @@ std::size_t BufferView::GutterWidth() const {
     // deep the currently-visible content happens to nest -- an explicit
     // user choice, so the gutter's own width never jumps around while
     // scrolling past a deeply nested region).
-    const std::size_t foldColumn = (mode_.fold && editor::CodeFoldingEnabled()) ? kMaxFoldDepthColumns : 0;
+    const std::size_t foldColumn = FoldGutterActive() ? kMaxFoldDepthColumns : 0;
     return kStatusWidth + kDiagnosticWidth + kLineNumberGap + std::to_string(totalLines).size() + kLineNumberGap + foldColumn;
 }
 
@@ -2454,7 +3725,7 @@ bool BufferView::OnMouseEvent(ftxui::Event event) {
         // block, not whatever's innermost at that line) -- clicking a plain
         // guide line ('│'/'└', not a header cell) is a no-op, matching how
         // indent guides are inert-to-click in every mainstream editor.
-        const std::size_t foldColumnWidth = (mode_.fold && editor::CodeFoldingEnabled()) ? kMaxFoldDepthColumns : 0;
+        const std::size_t foldColumnWidth = FoldGutterActive() ? kMaxFoldDepthColumns : 0;
         // Mirrors GutterWidth()/Paint()'s own [status][gap][digits][gap][fold]
         // layout -- foldStart is where the fold region actually starts on
         // screen now that it's no longer the leftmost gutter region.
@@ -2486,6 +3757,13 @@ bool BufferView::OnMouseEvent(ftxui::Event event) {
         buffer.ClearMark();
         buffer.SetPoint(offset);
         dragAnchor_ = offset;
+        // project-search-visit-result follow-up: a click on a read-only
+        // ("tossable") results buffer visits the result under the click,
+        // the same "just press it" convention Enter now also follows
+        // there -- see this method's own OnKeyEvent counterpart.
+        if (buffer.ReadOnly()) {
+            VisitSearchResult();
+        }
         return true;
     }
     if (mouse->motion == ftxui::Mouse::Moved) {
@@ -2545,7 +3823,7 @@ void BufferView::RequestCloseBuffer(text::Buffer& buffer) {
         return;
     }
 
-    if (!buffer.Modified()) {
+    if (!buffer.Modified() || buffer.ReadOnly()) {
         CloseBufferNow(buffer);
         return;
     }
@@ -2588,7 +3866,7 @@ void BufferView::HandleDeleteFileKey(const editor::KeyChord& chord) {
             return;
         }
         if (IsQuit(chord)) {
-            statusMessage_.clear();
+            statusMessage_ = "Delete cancelled.";
             EndInteractiveSession();
             return;
         }
@@ -2692,7 +3970,7 @@ void BufferView::HandleRenameFileKey(const editor::KeyChord& chord) {
         return;
     }
     if (IsQuit(chord)) {
-        statusMessage_.clear();
+        statusMessage_ = "Rename cancelled.";
         EndInteractiveSession();
         return;
     }
@@ -2707,7 +3985,7 @@ void BufferView::HandleRenameFileKey(const editor::KeyChord& chord) {
 
 void BufferView::HandleRegisterKey(const editor::KeyChord& chord) {
     if (IsQuit(chord)) {
-        statusMessage_.clear();
+        statusMessage_ = "Register command cancelled.";
         EndInteractiveSession();
         return;
     }
@@ -2805,7 +4083,7 @@ void BufferView::HandleExecuteCommandKey(const editor::KeyChord& chord) {
         return;
     }
     if (IsQuit(chord)) {
-        statusMessage_.clear();
+        statusMessage_ = "Command cancelled.";
         EndInteractiveSession();
         return;
     }
@@ -2888,7 +4166,7 @@ void BufferView::HandleProjectFindFileKey(const editor::KeyChord& chord) {
         return;
     }
     if (IsQuit(chord)) {
-        statusMessage_.clear();
+        statusMessage_ = "Project find file cancelled.";
         EndInteractiveSession();
         return;
     }
@@ -2992,25 +4270,98 @@ void BufferView::ScrollToShowPoint() {
         topLine_ = pointLine;
     }
     else if (size().height > 0) {
-        const auto visibleLines = static_cast<std::size_t>(size().height);
+        const auto        visibleLines  = static_cast<std::size_t>(size().height);
+        const std::size_t pointLineRows = RowsForLine(pointLine);
         // Org-mode fold/unfold follow-up: was `pointLine >= topLine_ +
         // visibleLines` / `topLine_ = pointLine - visibleLines + 1`, raw
         // buffer-line arithmetic that assumed every line between topLine_
-        // and pointLine renders as its own row. VisibleLineCountBetween is
-        // the fold-aware "how many rows would that actually take" query;
-        // the backward walk below is its inverse ("where would topLine_
-        // have to be so pointLine lands exactly visibleLines - 1 visible
-        // rows below it").
-        if (VisibleLineCountBetween(topLine_, pointLine) >= visibleLines) {
-            std::size_t newTop    = pointLine;
-            std::size_t remaining = visibleLines - 1;
-            while (remaining > 0 && newTop > 0) {
-                --newTop;
-                if (!IsLineHidden(newTop))
-                    --remaining;
+        // and pointLine renders as its own row. line-wrap follow-up:
+        // VisibleRowCountAtLeast is the fold-AND-wrap-aware "would
+        // pointLine's own last row still fit" check (was
+        // VisibleLineCountBetween, then VisibleRowCountBetween -- an
+        // early-exit bounded check now, not an exact sum, so this never
+        // walks more of a huge document than the viewport itself needs;
+        // see VisibleRowCountAtLeast's own doc comment).
+        // pointLineRows > visibleLines is checked first, short-circuiting
+        // before the subtraction below could ever underflow (pointLine
+        // itself taller than the whole viewport -- always needs a rescroll
+        // regardless of what's above it).
+        if (pointLineRows > visibleLines || VisibleRowCountAtLeast(topLine_, pointLine, visibleLines + 1 - pointLineRows)) {
+            // line-wrap follow-up: was a partial-credit backward walk
+            // (`remaining -= min(remaining, RowsForLine(newTop))`) that
+            // could stop mid-line, silently discarding whatever didn't
+            // fit -- topLine_ can only ever start at a line's own first
+            // row (a documented scope cut, not mid-segment), so
+            // "partially fitting" a line here doesn't correspond to
+            // anything Paint() can actually render: it draws that line's
+            // FULL row count regardless. Now walks backward including only
+            // WHOLE lines that still fit alongside pointLine's own (always
+            // fully included) rows, stopping before, not mid-way through,
+            // one that wouldn't.
+            std::size_t newTop      = pointLine;
+            std::size_t accumulated = pointLineRows;
+            while (newTop > 0) {
+                const std::size_t candidate = newTop - 1;
+                if (IsLineHidden(candidate)) {
+                    newTop = candidate;
+                    continue;
+                }
+                const std::size_t rows = RowsForLine(candidate);
+                if (accumulated + rows > visibleLines) {
+                    break;
+                }
+                accumulated += rows;
+                newTop = candidate;
             }
-            topLine_ = newTop; // guaranteed visible: either line 0 (never hidden -- hiddenStart is always >= 1), or the line that just made remaining hit 0
+            topLine_ = newTop;
         }
+    }
+    // line-wrap follow-up: every call site here wants "make sure point is
+    // visible," full stop -- folding the horizontal half in here means
+    // every one of ScrollToShowPoint()'s existing call sites gets it for
+    // free, rather than needing a second call added at each of them.
+    ScrollToShowPointHorizontally();
+}
+
+void BufferView::ScrollToShowPointHorizontally() {
+    if (EffectiveWrapLines()) {
+        return; // a wrapped line never extends past the viewport width -- nothing to scroll
+    }
+
+    const text::Buffer& buffer      = activeBuffer_.Get();
+    const text::Rope&   content     = buffer.Content();
+    const std::size_t   point       = buffer.Point();
+    const std::size_t   pointLine   = content.ByteOffsetToLine(point);
+    const std::size_t   lineStart   = content.LineToByteOffset(pointLine);
+    const std::size_t   gutterWidth = GutterWidth();
+    const Size          sizeNow     = size();
+    if (sizeNow.width <= 0) {
+        return; // nothing meaningful to clamp against yet (e.g. before the first real layout)
+    }
+    const int contentWidth = std::max(1, sizeNow.width - static_cast<int>(gutterWidth));
+
+    EnsureLinkCache();
+    const std::size_t lineEnd =
+        (pointLine + 1 < content.LineCount()) ? content.LineToByteOffset(pointLine + 1) - 1 : content.ByteLength();
+    const std::vector<RenderedLink> lineLinks = LinksForLine(linkCache_, lineStart, lineEnd, point);
+
+    // Point's true column from the start of the line, unbounded (well,
+    // bounded only by the line's own length, not the viewport) -- needed to
+    // decide whether leftColumn_ has to move at all, so this can't reuse
+    // VisualColumn's own maxColumns-bounded form directly; a pathologically
+    // long line still only walks as far as point itself, same cost class as
+    // every other per-line scan in this file.
+    const std::optional<int> visualCol =
+        VisualColumn(content, lineStart, point, std::numeric_limits<int>::max(), lineLinks);
+    if (!visualCol) {
+        return; // shouldn't happen with an unbounded maxColumns, but a safe no-op
+    }
+
+    if (*visualCol < static_cast<int>(leftColumn_)) {
+        leftColumn_ = static_cast<std::size_t>(*visualCol);
+    }
+    else if (*visualCol >= static_cast<int>(leftColumn_) + contentWidth) {
+        leftColumn_ = static_cast<std::size_t>(*visualCol - contentWidth + 1);
     }
 }
 
@@ -3026,6 +4377,18 @@ void BufferView::SetTopLine(std::size_t line) {
     // visible one before the usual clamp.
     line     = NextVisibleLine(std::max(line, rangeStart), rangeEnd);
     topLine_ = std::clamp(line, rangeStart, MaxTopLine());
+}
+
+std::size_t BufferView::LeftColumn() const {
+    return leftColumn_;
+}
+
+void BufferView::SetLeftColumn(std::size_t column) {
+    leftColumn_ = column;
+}
+
+bool BufferView::EffectiveWrapLines() const {
+    return editor::EffectiveWrapLines(activeBuffer_.Get().Path(), mode_);
 }
 
 std::pair<std::size_t, std::size_t> BufferView::NarrowedLineRange() const {
@@ -3050,18 +4413,49 @@ std::size_t BufferView::MaxTopLine() const {
     const auto visibleLines           = size().height > 0 ? static_cast<std::size_t>(size().height) : 0;
     // Org-mode fold/unfold follow-up: was `rangeStart + (totalLines >
     // visibleLines ? totalLines - visibleLines : 0)`, plain buffer-line
-    // subtraction. VisibleLineCountBetween/the backward walk below are the
-    // fold-aware equivalents of "how much content is there" and "where do
-    // I have to start to leave exactly one viewport of it visible."
-    if (VisibleLineCountBetween(rangeStart, rangeEnd) <= visibleLines) {
+    // subtraction. line-wrap follow-up: VisibleRowCountAtLeast is the
+    // fold-AND-wrap-aware "does everything already fit in one viewport"
+    // check (was VisibleLineCountBetween, then an exact-sum
+    // VisibleRowCountBetween -- an early-exit bounded check now, so this
+    // never walks more of a huge document than the viewport itself could
+    // need; see that method's own doc comment). Checking "at least
+    // visibleLines + 1" is the negation of "the total is <= visibleLines."
+    if (!VisibleRowCountAtLeast(rangeStart, rangeEnd, visibleLines + 1)) {
         return rangeStart;
     }
-    std::size_t newTop    = rangeEnd;
-    std::size_t remaining = visibleLines;
-    while (remaining > 0 && newTop > rangeStart) {
-        --newTop;
-        if (!IsLineHidden(newTop))
-            --remaining;
+    // line-wrap follow-up: was a partial-credit backward walk
+    // (`remaining -= min(remaining, RowsForLine(newTop))`) that could stop
+    // mid-line, silently discarding whatever didn't fit -- topLine_ can
+    // only ever start at a line's own first row (a documented scope cut,
+    // not mid-segment), so "partially fitting" a line here doesn't
+    // correspond to anything Paint() can actually render: it draws that
+    // line's FULL row count regardless of how much of it "fit" in this
+    // walk's own bookkeeping, which could silently push whatever comes
+    // after it off the bottom of the viewport entirely. A real, reported
+    // bug this fixes: scrolling to the end of a wrapped document could
+    // leave its own last lines permanently unreachable, since a wrapped
+    // line earlier in the walk could swallow the whole remaining budget
+    // without actually being fully shown. Now walks backward including
+    // only WHOLE lines that still fit within the budget, stopping before
+    // (not mid-way through) one that wouldn't -- except the very first
+    // real line considered, which is always included in full even if it
+    // alone exceeds visibleLines (matching "always show at least the last
+    // line" -- the same guarantee this walk already gave for free back
+    // when every line was implicitly exactly 1 row).
+    std::size_t newTop      = rangeEnd;
+    std::size_t accumulated = 0;
+    while (newTop > rangeStart) {
+        const std::size_t candidate = newTop - 1;
+        if (IsLineHidden(candidate)) {
+            newTop = candidate;
+            continue;
+        }
+        const std::size_t rows = RowsForLine(candidate);
+        if (accumulated > 0 && accumulated + rows > visibleLines) {
+            break;
+        }
+        accumulated += rows;
+        newTop = candidate;
     }
     return newTop;
 }

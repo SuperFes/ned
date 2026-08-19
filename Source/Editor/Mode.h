@@ -107,6 +107,20 @@ enum class SyntaxClass {
     Emphasis,
     Underline,
     Strikethrough,
+
+    // Markdown-highlighting follow-up. MarkupMarker is deliberately its own
+    // class rather than reusing Punctuation -- Punctuation is tuned for real
+    // code punctuation, but markdown's own structural syntax (#, list
+    // bullets, >, ---, fenced-code-block delimiters) reads better dimmed/
+    // muted so the actual content pops, the same visual idea real markdown
+    // renderers (Obsidian, Typora, GitHub) use; a "this is a kind of
+    // punctuation" hue tweak wouldn't get that. Link backs both a
+    // destination URL and a link/image's own label/description text --
+    // reuses Theme's existing linkForeground field, the same one
+    // BufferView's Org-descriptive-link rendering already paints with, so
+    // both read as the same visual concept.
+    MarkupMarker,
+    Link,
 };
 
 // A single highlighted byte range [startByte, endByte) within a buffer's
@@ -174,6 +188,14 @@ struct Mode {
     // structural selection support configured for this mode, same
     // "empty means not configured" convention as highlight/fold above.
     ExpandSelectionFunction expandSelection;
+    // line-wrap follow-up: this mode's own default for whether BufferView
+    // should soft-wrap long lines at word boundaries instead of scrolling
+    // horizontally -- false (matching every bundled mode except the two
+    // prose ones below) unless a *Mode() factory sets it, same "plain
+    // scalar, most factories leave it alone" convention lineCommentPrefix
+    // already established. A per-file override (Editor/WrapOverrides.h)
+    // takes precedence over this default when one is configured.
+    bool wrapLines = false;
 };
 
 // The default mode: no special keybindings, no highlighting.

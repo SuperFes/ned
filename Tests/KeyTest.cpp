@@ -4,6 +4,8 @@
 
 #include "Editor/Key.h"
 
+using ned::editor::FormatKeyChord;
+using ned::editor::FormatKeySequence;
 using ned::editor::KeyChord;
 using ned::editor::ParseKeyChord;
 using ned::editor::ParseKeySequence;
@@ -77,4 +79,32 @@ TEST_CASE("KeyChord equality and ordering work for use as a map key", "[Key]") {
     REQUIRE(a == b);
     REQUIRE_FALSE(a == c);
     REQUIRE((a < c || c < a)); // totally ordered, whichever direction
+}
+
+TEST_CASE("FormatKeyChord formats modifiers and a literal character", "[Key]") {
+    REQUIRE(FormatKeyChord(ParseKeyChord("C-x")) == "C-x");
+    REQUIRE(FormatKeyChord(ParseKeyChord("M-x")) == "M-x");
+    REQUIRE(FormatKeyChord(ParseKeyChord("C-M-x")) == "C-M-x");
+    REQUIRE(FormatKeyChord(ParseKeyChord("a")) == "a");
+}
+
+TEST_CASE("FormatKeyChord formats named special keys", "[Key]") {
+    REQUIRE(FormatKeyChord(ParseKeyChord("RET")) == "RET");
+    REQUIRE(FormatKeyChord(ParseKeyChord("TAB")) == "TAB");
+    REQUIRE(FormatKeyChord(ParseKeyChord("DEL")) == "DEL");
+    REQUIRE(FormatKeyChord(ParseKeyChord("ESC")) == "ESC");
+    REQUIRE(FormatKeyChord(ParseKeyChord("C-RET")) == "C-RET");
+}
+
+TEST_CASE("FormatKeySequence joins multiple chords with a space, matching kbd notation", "[Key]") {
+    REQUIRE(FormatKeySequence(ParseKeySequence("C-x C-s")) == "C-x C-s");
+    REQUIRE(FormatKeySequence(ParseKeySequence("C-c C-a")) == "C-c C-a");
+}
+
+TEST_CASE("ParseKeySequence(FormatKeySequence(...)) round-trips", "[Key]") {
+    for (const char* text : {"C-x C-s", "M-x", "C-c C-a", "a", "C-M-i"}) {
+        const auto original  = ParseKeySequence(text);
+        const auto roundTrip = ParseKeySequence(FormatKeySequence(original));
+        REQUIRE(original == roundTrip);
+    }
 }

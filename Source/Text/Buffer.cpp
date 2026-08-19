@@ -224,6 +224,14 @@ std::size_t Buffer::Size() const {
     return Rope_.ByteLength();
 }
 
+bool Buffer::ReadOnly() const {
+    return ReadOnly_;
+}
+
+void Buffer::SetReadOnly(bool readOnly) {
+    ReadOnly_ = readOnly;
+}
+
 bool Buffer::Modified() const {
     if (!UnsavedChangeRanges_.empty()) {
         return true;
@@ -439,6 +447,9 @@ void Buffer::MarkUnsavedRangeDeleted(std::size_t rangeStart, std::size_t rangeEn
 }
 
 void Buffer::InsertAtPoint(std::string_view text) {
+    if (ReadOnly_) {
+        throw std::runtime_error("Buffer is read-only.");
+    }
     if (text.empty()) {
         return;
     }
@@ -470,6 +481,9 @@ void Buffer::InsertAtPoint(std::string_view text) {
 }
 
 void Buffer::DeleteBackwardAtPoint() {
+    if (ReadOnly_) {
+        throw std::runtime_error("Buffer is read-only.");
+    }
     if (Point_ == 0) {
         return;
     }
@@ -500,6 +514,9 @@ void Buffer::DeleteBackwardAtPoint() {
 }
 
 void Buffer::DeleteForwardAtPoint() {
+    if (ReadOnly_) {
+        throw std::runtime_error("Buffer is read-only.");
+    }
     if (Point_ >= Rope_.ByteLength()) {
         return;
     }
@@ -530,6 +547,9 @@ void Buffer::DeleteForwardAtPoint() {
 }
 
 std::string Buffer::DeleteRange(std::size_t byteOffset, std::size_t byteLength) {
+    if (ReadOnly_) {
+        throw std::runtime_error("Buffer is read-only.");
+    }
     byteOffset = std::min(byteOffset, Rope_.ByteLength());
     byteLength = std::min(byteLength, Rope_.ByteLength() - byteOffset);
 
@@ -569,6 +589,20 @@ std::string Buffer::DeleteRange(std::size_t byteOffset, std::size_t byteLength) 
 }
 
 void Buffer::InsertAt(std::size_t byteOffset, std::string_view text) {
+    if (ReadOnly_) {
+        throw std::runtime_error("Buffer is read-only.");
+    }
+    InsertAtImpl(byteOffset, text);
+}
+
+void Buffer::AppendWhileReadOnly(std::string_view text) {
+    if (!ReadOnly_) {
+        throw std::logic_error("AppendWhileReadOnly called on a writable buffer.");
+    }
+    InsertAtImpl(Rope_.ByteLength(), text);
+}
+
+void Buffer::InsertAtImpl(std::size_t byteOffset, std::string_view text) {
     byteOffset = std::min(byteOffset, Rope_.ByteLength());
 
     if (text.empty()) {

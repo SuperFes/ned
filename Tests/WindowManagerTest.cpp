@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <filesystem>
 #include <string>
 
 #include <ftxui/component/event.hpp>
@@ -47,6 +48,17 @@ void FeedSequence(ftxui::Component& root, std::initializer_list<ftxui::Event> ev
     for (const ftxui::Event& event : events) {
         root->OnEvent(event);
     }
+}
+
+// Mirrors BufferViewTest.cpp's own RowText -- not shared, same "not worth a
+// new cross-test-binary dependency for something this small" call this
+// codebase's own tests already make elsewhere.
+std::string RowText(ftxui::Screen& screen, int row, int width) {
+    std::string out;
+    for (int col = 0; col < width; ++col) {
+        out += screen.PixelAt(col, row).character;
+    }
+    return out;
 }
 
 } // namespace
@@ -287,4 +299,48 @@ TEST_CASE("split-window-below is a safe no-op reachable through the real Dispatc
 
     FeedSequence(root, {ftxui::Event::CtrlX, ftxui::Event::Character("2")});
     REQUIRE(manager.WindowCount() == 2);
+}
+
+TEST_CASE("Switching a pane's active buffer resolves a fresh Mode for the new buffer, per-buffer-mode follow-up",
+          "[WindowManager]") {
+    Fixture                fixture;
+    ned::ui::WindowManager manager = fixture.Manager();
+
+    // fixture.buffer has no path, so ModeForBuffer resolves it to
+    // fundamental-mode -- ModeLine renders "(fundamental-mode)" somewhere on
+    // its row, giving a real, end-to-end (not just Pane::ModeRef()-by-name)
+    // proof that the whole chain -- BufferView::Paint -> onActiveBufferChanged_
+    // -> Pane::mode_ reassignment -> the same Mode& ModeLine already
+    // references -- actually rendered differently, not merely that the Mode
+    // object's own .name field changed.
+    ftxui::Component root   = manager.RootComponent();
+    ftxui::Screen     screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(80), ftxui::Dimension::Fixed(24));
+    ftxui::Render(screen, root->Render());
+
+    bool foundFundamental = false;
+    for (int row = 0; row < 24; ++row) {
+        if (RowText(screen, row, 80).find("(fundamental-mode)") != std::string::npos) {
+            foundFundamental = true;
+        }
+    }
+    REQUIRE(foundFundamental);
+
+    // A not-yet-existing .json path is enough -- OpenOrCreateFile creates it
+    // via Buffer::NewFile with no disk I/O, and ModeForBuffer only ever
+    // looks at the buffer's own associated path, never its content.
+    const std::filesystem::path jsonPath =
+        std::filesystem::temp_directory_path() / "ned_window_manager_test_mode_switch.json";
+    ned::text::Buffer& jsonBuffer = fixture.bufferList.OpenOrCreateFile(jsonPath);
+    manager.FocusedActiveBuffer().Set(jsonBuffer);
+
+    screen = ftxui::Screen::Create(ftxui::Dimension::Fixed(80), ftxui::Dimension::Fixed(24));
+    ftxui::Render(screen, root->Render());
+
+    bool foundJson = false;
+    for (int row = 0; row < 24; ++row) {
+        if (RowText(screen, row, 80).find("(json-mode)") != std::string::npos) {
+            foundJson = true;
+        }
+    }
+    REQUIRE(foundJson);
 }

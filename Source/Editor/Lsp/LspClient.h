@@ -97,6 +97,16 @@ class LspClient {
     // one.
     void SetNotificationHandler(std::string method, NotificationHandler handler);
 
+    // error-visibility follow-up. Invoked exactly once, on the main thread
+    // (via the same screen_.Post the read loop already uses to marshal
+    // every frame), the moment the background read loop stops running for
+    // any reason -- clean EOF (the server process exited) or a malformed
+    // frame (previously a silent `return` in StartReadLoop, either way).
+    // reason is a short, human-readable cause. Unset by default, a safe
+    // no-op -- same "connect after construction" convention
+    // SetNotificationHandler already establishes.
+    void SetOnDisconnected(std::function<void(std::string reason)> handler);
+
     // Public primarily for tests: the real background read loop always
     // reaches this via screen_.Post (see the header comment above), but
     // FTXUI's own App::Post only ever enqueues onto its task runner --
@@ -119,6 +129,7 @@ class LspClient {
     int                                                  nextRequestId_ = 1;
     std::unordered_map<int, ResponseCallback>            pending_;
     std::unordered_map<std::string, NotificationHandler> notificationHandlers_;
+    std::function<void(std::string reason)>              onDisconnected_; // see SetOnDisconnected
 };
 
 } // namespace ned::editor::lsp
