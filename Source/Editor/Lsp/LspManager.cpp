@@ -232,9 +232,13 @@ LspClient& LspManager::SetClientForTesting(std::string language, std::unique_ptr
 }
 
 void LspManager::ClientDisconnected(const std::string& language) {
-    clients_.erase(language);
+    // language may be a reference into the very LspClient (and its
+    // OnDisconnected closure) that erase() below destroys -- copy it first
+    // so the rest of this function isn't reading freed memory.
+    const std::string languageCopy = language;
+    clients_.erase(languageCopy);
     for (auto it = bufferState_.begin(); it != bufferState_.end();) {
-        if (it->second.language == language) {
+        if (it->second.language == languageCopy) {
             it = bufferState_.erase(it);
         }
         else {

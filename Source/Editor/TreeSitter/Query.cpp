@@ -131,7 +131,8 @@ namespace {
     // all, so "include it" is the pre-existing behavior for anything not
     // explicitly handled here, not a new risk).
     bool EvaluateOnePredicate(const TSQuery* query, const TSQueryMatch& match, std::string_view predicateName,
-                              const std::vector<TSQueryPredicateStep>& operands, std::string_view sourceText) {
+                              const std::vector<TSQueryPredicateStep>& operands, std::string_view sourceText,
+                              std::unordered_map<std::string, std::regex>& regexCache) {
         if (!predicateName.empty() && predicateName.front() == '#') {
             predicateName.remove_prefix(1); // tolerate either spelling -- not assumed which one ts_query_string_value_for_id returns
         }
@@ -160,14 +161,30 @@ namespace {
                 return true;
             }
             try {
-                // ECMAScript, not a Lua-pattern engine -- matches this
-                // project's own existing QueryReplace.h precedent; the
-                // patterns real query files actually use for this
-                // (anchored character classes like "^[A-Z][A-Z0-9_]*$", or
-                // Lua's own %u-style classes via TranslateLuaPatternClasses)
-                // translate directly.
-                const std::regex compiled(TranslateLuaPatternClasses(std::string(*pattern)), std::regex::ECMAScript);
-                const bool       matched = std::regex_search(text->begin(), text->end(), compiled);
+                // Cached by translated pattern text (cmake-highlighting-perf
+                // follow-up) -- std::regex construction is slow enough that
+                // recompiling the same handful of patterns once per matching
+                // node (hundreds of times over, for a pattern-heavy query
+                // like tree-sitter-cmake's) was a real, measured multi-second
+                // first-paint stall, not a theoretical one. Keyed on the
+                // already-Lua-translated string so a pattern appearing in
+                // more than one predicate (common -- many #match? calls
+                // share the same "^[fF][uU]..." case-insensitive spelling
+                // idiom) only ever gets compiled once, regardless of how
+                // many distinct predicate call sites use it.
+                std::string translated = TranslateLuaPatternClasses(std::string(*pattern));
+                auto        cacheIt    = regexCache.find(translated);
+                if (cacheIt == regexCache.end()) {
+                    // ECMAScript, not a Lua-pattern engine -- matches this
+                    // project's own existing QueryReplace.h precedent; the
+                    // patterns real query files actually use for this
+                    // (anchored character classes like "^[A-Z][A-Z0-9_]*$",
+                    // or Lua's own %u-style classes via
+                    // TranslateLuaPatternClasses) translate directly.
+                    std::regex compiled(translated, std::regex::ECMAScript);
+                    cacheIt = regexCache.emplace(std::move(translated), std::move(compiled)).first;
+                }
+                const bool matched = std::regex_search(text->begin(), text->end(), cacheIt->second);
                 return negated ? !matched : matched;
             }
             catch (const std::regex_error&) {
@@ -217,7 +234,8 @@ namespace {
     // evaluates each one against match, short-circuiting on the first
     // failure (AND semantics -- tree-sitter's own documented predicate
     // contract).
-    bool EvaluatePredicates(const TSQuery* query, const TSQueryMatch& match, std::string_view sourceText) {
+    bool EvaluatePredicates(const TSQuery* query, const TSQueryMatch& match, std::string_view sourceText,
+                            std::unordered_map<std::string, std::regex>& regexCache) {
         uint32_t                    stepCount = 0;
         const TSQueryPredicateStep* steps     = ts_query_predicates_for_pattern(query, match.pattern_index, &stepCount);
 
@@ -232,7 +250,7 @@ namespace {
                 uint32_t                                nameLength = 0;
                 const char*                             name       = ts_query_string_value_for_id(query, steps[start].value_id, &nameLength);
                 const std::vector<TSQueryPredicateStep> operands(steps + start + 1, steps + i);
-                if (!EvaluateOnePredicate(query, match, std::string_view(name, nameLength), operands, sourceText)) {
+                if (!EvaluateOnePredicate(query, match, std::string_view(name, nameLength), operands, sourceText, regexCache)) {
                     return false;
                 }
             }
@@ -291,7 +309,7 @@ std::vector<QueryCapture> Query::Captures(const Node& root, std::string_view sou
     while (ts_query_cursor_next_capture(cursor, &match, &captureIndex)) {
         if (!havePassResult || match.id != lastMatchId) {
             lastMatchId     = match.id;
-            lastMatchPassed = EvaluatePredicates(query_, match, sourceText);
+            lastMatchPassed = EvaluatePredicates(query_, match, sourceText, regexCache_);
             havePassResult  = true;
         }
         if (!lastMatchPassed) {

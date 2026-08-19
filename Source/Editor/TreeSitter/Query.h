@@ -28,8 +28,10 @@
 #define NED_EDITOR_TREESITTER_QUERY_H
 
 #include <cstddef>
+#include <regex>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include <tree_sitter/api.h>
@@ -79,6 +81,22 @@ class Query {
 
   private:
     TSQuery* query_ = nullptr;
+
+    // #match?/#lua-match? predicate cache, keyed by the (translated)
+    // ECMAScript pattern text: std::regex construction is genuinely slow --
+    // real, measured, not assumed, see the cmake-highlighting-perf
+    // follow-up -- and a query file can carry dozens of #match? predicates,
+    // each evaluated once per matching node in the buffer. Without this, a
+    // real-world file with a few hundred matches against a pattern-heavy
+    // query (tree-sitter-cmake's own highlights.scm, ~15 distinct #match?
+    // patterns) recompiled the same handful of regexes hundreds of times
+    // over, the actual cause of a multi-second first-paint stall. Mutable
+    // since Captures() is logically const (querying doesn't change what the
+    // query IS) but still wants to memoize across calls; safe without a
+    // mutex because a Mode's HighlightFunction (and the Query it closes
+    // over) is only ever invoked from BufferView::Paint on the main/UI
+    // thread, never concurrently.
+    mutable std::unordered_map<std::string, std::regex> regexCache_;
 };
 
 } // namespace ned::editor::treesitter

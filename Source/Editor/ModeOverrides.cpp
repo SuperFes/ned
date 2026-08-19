@@ -91,7 +91,7 @@ namespace {
 void RegisterDynamicMode(const std::string& name, const std::filesystem::path& libraryPath,
                          const std::filesystem::path& queryPath, const std::filesystem::path& foldQueryPath) {
     const treesitter::Language language        = treesitter::LoadDynamicLanguage(libraryPath, name);
-    const std::string          querySource     = ReadFileOrThrow(queryPath);
+    const std::string          querySource     = queryPath.empty() ? std::string() : ReadFileOrThrow(queryPath);
     const std::string          foldQuerySource = foldQueryPath.empty() ? std::string() : ReadFileOrThrow(foldQueryPath);
     Mode                       mode            = TreeSitterModeFromLanguage(name, language, querySource, foldQuerySource);
 

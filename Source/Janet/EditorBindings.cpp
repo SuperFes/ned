@@ -148,8 +148,9 @@ namespace {
         editor::SetCodeFoldingEnabled(enabled);
     }
 
-    void NedRegisterLanguageGrammar(std::string name, std::string libraryPath, std::string queryPath) {
-        editor::RegisterDynamicMode(name, libraryPath, queryPath);
+    void NedRegisterLanguageGrammar(std::string name, std::string libraryPath, std::string queryPath,
+                                    std::string foldQueryPath) {
+        editor::RegisterDynamicMode(name, libraryPath, queryPath, foldQueryPath);
     }
 
     void NedSetModeForExtension(std::string extension, std::string modeName) {
@@ -302,9 +303,11 @@ void InstallEditorBindings(Environment& env) {
         "Enable/disable the gutter code-folding affordance for modes with a fold query (default true).");
     env.Register<&NedRegisterLanguageGrammar>(
         "ned", "register-language-grammar",
-        "Load a tree-sitter grammar at runtime: (name library-path query-path). library-path is a shared library "
-        "exporting tree_sitter_<name>; query-path is a highlights.scm-style query file. Re-registering the same "
-        "name replaces it. The registered name can then be used as the mode-name argument to "
+        "Load a tree-sitter grammar at runtime: (name library-path query-path fold-query-path). library-path is a "
+        "shared library exporting tree_sitter_<name>; query-path is a highlights.scm-style query file and "
+        "fold-query-path is a \"@fold\"-capture query file -- pass \"\" for either one to skip it (a grammar with no "
+        "highlights.scm, or no fold query, is fine; \"\" for both just registers the grammar for its parser alone). "
+        "Re-registering the same name replaces it. The registered name can then be used as the mode-name argument to "
         "ned/set-mode-for-extension or ned/set-mode-for-filename.");
     env.Register<&NedSetModeForExtension>(
         "ned", "set-mode-for-extension",

@@ -330,7 +330,6 @@ Mode FundamentalMode() {
 Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& language, std::string_view querySource,
                                 std::string_view foldQuerySource) {
     const auto parser = std::make_shared<treesitter::Parser>(language);
-    const auto query  = std::make_shared<treesitter::Query>(language, querySource);
 
     // Shared between highlight and fold below (generic-code-folding
     // follow-up) so that a single Paint() cycle calling both against the
@@ -357,29 +356,39 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
     // std::function's captured state only needs to be copyable, not the
     // captured objects themselves, so this preserves that contract without
     // Mode having to change shape.
-    HighlightFunction highlight = [parser, query, sharedParse](std::string_view bufferText) -> std::vector<HighlightSpan> {
-        if (!sharedParse->lastTree.has_value() || sharedParse->lastText != bufferText) {
-            sharedParse->lastTree = parser->Parse(bufferText);
-            sharedParse->lastText.assign(bufferText);
-        }
-        const treesitter::Tree& tree = *sharedParse->lastTree;
-        if (tree.IsNull()) {
-            return {};
-        }
-
-        std::vector<HighlightSpan> spans;
-        for (const treesitter::QueryCapture& capture : query->Captures(tree.RootNode(), bufferText)) {
-            if (!IsHighlightableCapture(capture.name)) {
-                continue;
+    // Only built when a highlight query source was actually given -- some
+    // real, bundled-elsewhere grammars have no highlights.scm at all (only a
+    // folds/locals/tags query), the same "not every language has one" fact
+    // already true of foldQuerySource below. An empty querySource leaves
+    // mode.highlight a default-constructed, empty std::function, the exact
+    // "no highlighting" signal BufferView already checks for.
+    HighlightFunction highlight;
+    if (!querySource.empty()) {
+        const auto query = std::make_shared<treesitter::Query>(language, querySource);
+        highlight = [parser, query, sharedParse](std::string_view bufferText) -> std::vector<HighlightSpan> {
+            if (!sharedParse->lastTree.has_value() || sharedParse->lastText != bufferText) {
+                sharedParse->lastTree = parser->Parse(bufferText);
+                sharedParse->lastText.assign(bufferText);
             }
-            spans.push_back(HighlightSpan{
-                .startByte   = capture.startByte,
-                .endByte     = capture.endByte,
-                .syntaxClass = SyntaxClassForCapture(capture.name),
-            });
-        }
-        return spans;
-    };
+            const treesitter::Tree& tree = *sharedParse->lastTree;
+            if (tree.IsNull()) {
+                return {};
+            }
+
+            std::vector<HighlightSpan> spans;
+            for (const treesitter::QueryCapture& capture : query->Captures(tree.RootNode(), bufferText)) {
+                if (!IsHighlightableCapture(capture.name)) {
+                    continue;
+                }
+                spans.push_back(HighlightSpan{
+                    .startByte   = capture.startByte,
+                    .endByte     = capture.endByte,
+                    .syntaxClass = SyntaxClassForCapture(capture.name),
+                });
+            }
+            return spans;
+        };
+    }
 
     // generic-code-folding follow-up: a second Query against the same
     // parser -- shares sharedParse's cached Tree with highlight above (see
