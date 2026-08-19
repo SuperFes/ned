@@ -13,12 +13,13 @@
 #include "Editor/Link.h"
 #include "Editor/Lsp/LspServerConfig.h"
 #include "Editor/ModeOverrides.h"
-#include "Editor/WrapOverrides.h"
 #include "Editor/ProjectRoot.h"
 #include "Editor/ScratchPad.h"
 #include "Editor/ScriptingSession.h"
 #include "Editor/SyntaxTheme.h"
 #include "Editor/TabWidth.h"
+#include "Editor/Tasks/TaskConfig.h"
+#include "Editor/WrapOverrides.h"
 #include "Value.h"
 
 namespace ned::janet {
@@ -176,6 +177,14 @@ namespace {
     // empty-clears convention.
     void NedSetLspCommand(std::string language, std::vector<std::string> argv) {
         editor::lsp::SetLspServerCommand(language, std::move(argv));
+    }
+
+    // task-runner follow-up: argv[0] is the task's executable, remaining
+    // elements its arguments, e.g. (ned/set-task-command "build" ["cmake"
+    // "--build" "."]). An empty argv clears any existing registration for
+    // name, mirroring NedSetLspCommand's own empty-clears convention.
+    void NedSetTaskCommand(std::string name, std::vector<std::string> argv) {
+        editor::tasks::SetTaskCommand(name, std::move(argv));
     }
 
     // hover/completion follow-up: the only way LspServerConfig.h's own
@@ -336,6 +345,11 @@ void InstallEditorBindings(Environment& env) {
         "[\"clangd\"]). argv is an array or tuple of strings -- argv[0] the executable (resolved against $PATH), the "
         "rest its arguments. ned never installs or updates a language server itself; this only configures which "
         "already-installed one to run. An empty argv clears the configured command for language.");
+    env.Register<&NedSetTaskCommand>(
+        "ned", "set-task-command",
+        "Set the command run by run-task for a task name: (name argv), e.g. (ned/set-task-command \"build\" "
+        "[\"cmake\" \"--build\" \".\"]). argv is an array or tuple of strings -- argv[0] the executable (resolved "
+        "against $PATH), the rest its arguments. An empty argv clears the configured command for name.");
     env.Register<&NedSetLspAutoComplete>(
         "ned", "set-lsp-auto-complete",
         "Enable or disable automatic LSP completion ghost text while typing (default true). Manual completion "

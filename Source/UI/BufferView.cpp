@@ -623,6 +623,7 @@ editor::CommandContext BufferView::MakeContext() {
     editor::CommandContext context{activeBuffer_.Get(), killRing_, bufferList_, editor::KeyChord{}, &statusMessage_};
     context.mode       = &mode_;
     context.lspManager = lspManager_;
+    context.taskRunner = taskRunner_;
     return context;
 }
 
@@ -1847,7 +1848,7 @@ bool BufferView::OnKeyEvent(const Event& event) {
     if (inputMode_ == InputMode::FindFile || inputMode_ == InputMode::SwitchToBuffer ||
         inputMode_ == InputMode::ProjectSearch || inputMode_ == InputMode::CreateDirectory ||
         inputMode_ == InputMode::FindScratch || inputMode_ == InputMode::StringRectangle ||
-        inputMode_ == InputMode::SetHeadlineTags) {
+        inputMode_ == InputMode::SetHeadlineTags || inputMode_ == InputMode::TaskName) {
         HandlePromptKey(*chord);
         ClampPointToNarrowing();
         return true;
@@ -2827,6 +2828,18 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             prompt_.emplace("Find scratch: ");
             statusMessage_ = prompt_->StatusText();
             return;
+        case editor::InteractiveRequest::RunTask:
+            taskPromptAction_ = TaskPromptAction::Run;
+            inputMode_        = InputMode::TaskName;
+            prompt_.emplace("Run task: ");
+            statusMessage_ = prompt_->StatusText();
+            return;
+        case editor::InteractiveRequest::CancelTask:
+            taskPromptAction_ = TaskPromptAction::Cancel;
+            inputMode_        = InputMode::TaskName;
+            prompt_.emplace("Cancel task: ");
+            statusMessage_ = prompt_->StatusText();
+            return;
         // org-set-tags follow-up: org-set-tags already checked
         // HeadlineAtPoint before setting this request, but point can't
         // have moved since then (no other command runs between a
@@ -3292,6 +3305,29 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
             // arrives.
             RequestRenameAtPoint(input);
         }
+        else if (inputMode_ == InputMode::TaskName) {
+            if (input.empty()) {
+                statusMessage_ = "No task name given.";
+            }
+            else if (!taskRunner_) {
+                statusMessage_ = "No task runner available.";
+            }
+            else if (taskPromptAction_ == TaskPromptAction::Run) {
+                if (text::Buffer* buffer = taskRunner_->RunTask(input)) {
+                    activeBuffer_.Set(*buffer);
+                    statusMessage_.clear();
+                }
+            }
+            else { // Cancel
+                if (taskRunner_->IsRunning(input)) {
+                    taskRunner_->CancelTask(input);
+                    statusMessage_ = "Cancelling task \"" + input + "\"...";
+                }
+                else {
+                    statusMessage_ = "No running task named \"" + input + "\"";
+                }
+            }
+        }
         else { // FindScratch
             if (!editor::IsValidScratchName(input)) {
                 statusMessage_ = "Invalid scratch name: \"" + input + "\"";
@@ -3343,6 +3379,9 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
             case InputMode::LspRenameNewName:
                 label = "Rename";
                 break;
+            case InputMode::TaskName:
+                label = (taskPromptAction_ == TaskPromptAction::Run) ? "Run task" : "Cancel task";
+                break;
             default:
                 label = "Prompt";
                 break;
@@ -3353,7 +3392,8 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
     }
     if (chord.Special == editor::SpecialKey::Tab && inputMode_ != InputMode::ProjectSearch &&
         inputMode_ != InputMode::CreateDirectory && inputMode_ != InputMode::StringRectangle &&
-        inputMode_ != InputMode::SetHeadlineTags && inputMode_ != InputMode::LspRenameNewName) {
+        inputMode_ != InputMode::SetHeadlineTags && inputMode_ != InputMode::LspRenameNewName &&
+        inputMode_ != InputMode::TaskName) {
         CompletePrompt();
         return;
     }
@@ -4532,6 +4572,10 @@ void BufferView::SetProjectSidebar(ProjectSidebar* sidebar) {
 
 void BufferView::SetLspManager(editor::lsp::LspManager* lspManager) {
     lspManager_ = lspManager;
+}
+
+void BufferView::SetTaskRunner(editor::tasks::TaskRunner* taskRunner) {
+    taskRunner_ = taskRunner;
 }
 
 void BufferView::SetEventLoop(EventLoop* eventLoop) {

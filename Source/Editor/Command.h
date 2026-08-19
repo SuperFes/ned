@@ -28,6 +28,10 @@ namespace ned::editor::lsp {
 class LspManager;
 } // namespace ned::editor::lsp
 
+namespace ned::editor::tasks {
+class TaskRunner;
+} // namespace ned::editor::tasks
+
 namespace ned::editor {
 
 struct Mode;
@@ -179,7 +183,17 @@ enum class InteractiveRequest { None,
                                 // LspRenameNewName case) -- the request itself isn't sent until
                                 // that's confirmed with Enter.
                                 LspGotoDefinition,
-                                LspRename };
+                                LspRename,
+                                // task-runner follow-up: prompt-shaped requests, same "New
+                                // name" -> HandlePromptKey shape LspRename established above --
+                                // RunTask prompts for a task name and, on Enter, calls
+                                // TaskRunner::RunTask and switches to the resulting
+                                // "*task: <name>*" buffer; CancelTask prompts for a (presumably
+                                // running) task name and calls TaskRunner::CancelTask. See
+                                // Editor/Tasks/TaskRunner.h for the actual spawn/stream/cancel
+                                // logic.
+                                RunTask,
+                                CancelTask };
 
 // Everything a command implementation might need. Built fresh per invocation
 // from live references -- never stored, so there's no lifetime concern beyond
@@ -215,6 +229,11 @@ struct CommandContext {
     // subsystem's diagnostics-publish handler and the scratch-autosave
     // thread already rely on, not a new risk class this field introduces.
     lsp::LspManager* lspManager = nullptr;
+    // task-runner follow-up: the editor-wide TaskRunner, set by the host UI
+    // before each dispatch (nullptr if unset, e.g. headless tests) -- same
+    // "a UI fact/resource a command needs" shape as lspManager above. Only
+    // run-task/cancel-task read this.
+    tasks::TaskRunner* taskRunner = nullptr;
 };
 
 using CommandFunction = std::function<void(CommandContext&)>;

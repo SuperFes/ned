@@ -36,6 +36,7 @@
 #include "Editor/ProjectReplace.h"
 #include "Editor/QueryReplace.h"
 #include "Editor/Register.h"
+#include "Editor/Tasks/TaskRunner.h"
 #include "EventLoop.h"
 #include "ProjectSidebar.h"
 #include "ScrollArrowButton.h"
@@ -126,6 +127,12 @@ class BufferView : public Widget {
     // specifically wants to exercise LSP sync, so ordinary tests never touch
     // Lsp/ at all.
     void SetLspManager(editor::lsp::LspManager* lspManager);
+
+    // task-runner follow-up: registers the shared TaskRunner, forwarded to
+    // CommandContext::taskRunner before each dispatch so run-task/
+    // cancel-task can reach it -- same "unset is a safe no-op" convention
+    // SetLspManager already establishes.
+    void SetTaskRunner(editor::tasks::TaskRunner* taskRunner);
 
     // FTXUI -> Notcurses migration: replaces
     // ftxui::ScreenInteractive::Active() (used to end the whole app on
@@ -246,12 +253,24 @@ class BufferView : public Widget {
                            // BufferList::OpenOrCreateFile throws
                            // text::BinaryFileError -- see
                            // pendingBinaryOpenPath_'s own doc comment.
-                           ConfirmOpenBinary };
+                           ConfirmOpenBinary,
+                           // task-runner follow-up: one synchronous "task name"
+                           // prompt, routed through HandlePromptKey like
+                           // FindFile/CreateDirectory/LspRenameNewName above --
+                           // shared by both run-task and cancel-task, distinguished
+                           // by taskPromptAction_ (set alongside inputMode_ in
+                           // StartInteractiveSession).
+                           TaskName };
 
     enum class DeleteFileStage { EnteringPath,
                                  Confirming };
     enum class RenameFileStage { EnteringSource,
                                  EnteringDestination };
+    // task-runner follow-up: which action TaskName's prompt performs on
+    // Enter -- Run calls TaskRunner::RunTask (and switches to the resulting
+    // buffer), Cancel calls TaskRunner::CancelTask.
+    enum class TaskPromptAction { Run,
+                                  Cancel };
 
     // Builds a fresh CommandContext from current member state -- matches
     // CommandContext's own documented contract ("built fresh per invocation
@@ -769,6 +788,7 @@ class BufferView : public Widget {
     ScrollArrowButton*         scrollDownArrow_ = nullptr;
     ProjectSidebar*            projectSidebar_  = nullptr; // see SetProjectSidebar
     editor::lsp::LspManager*   lspManager_      = nullptr; // see SetLspManager
+    editor::tasks::TaskRunner* taskRunner_      = nullptr; // see SetTaskRunner
     EventLoop*                 eventLoop_       = nullptr; // see SetEventLoop
 
     InputMode                                inputMode_ = InputMode::Normal;
@@ -776,7 +796,8 @@ class BufferView : public Widget {
     std::optional<editor::QueryReplace>      queryReplace_;
     std::optional<editor::MinibufferPrompt>  prompt_; // FindFile/SwitchToBuffer/ProjectSearch, distinguished by inputMode_
     std::optional<editor::ProjectReplace>    projectReplace_;
-    text::Buffer*                            pendingClose_ = nullptr; // buffer awaiting y/n in ConfirmCloseBuffer
+    text::Buffer*                            pendingClose_     = nullptr;               // buffer awaiting y/n in ConfirmCloseBuffer
+    TaskPromptAction                         taskPromptAction_ = TaskPromptAction::Run; // see InputMode::TaskName
 
     // open-binary-anyway follow-up: the path awaiting y/n in
     // ConfirmOpenBinary -- a path, not a Buffer* (unlike pendingClose_),

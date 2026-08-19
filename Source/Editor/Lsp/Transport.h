@@ -1,25 +1,14 @@
 //
-// LSP client follow-up. Raw process + pipe mechanics for talking to a
-// language server over stdio -- no JSON-RPC/LSP semantics here at all (see
-// LspClient.h for that layer). Nothing in this codebase previously spawned a
-// long-lived subprocess and communicated with it over pipes: Editor/
-// FormatOnSave.cpp shells out via a one-shot, blocking std::system() through
-// temp files, and Editor/Link.cpp's OpenUrl does a detached fork+exec with no
-// pipes at all. This is genuinely new infrastructure, not an extension of
-// either.
-//
-// Spawns via posix_spawn, not fork+exec -- fork duplicates this process's
-// entire address space (copy-on-write, but still real page-table work for a
-// process this size, with FTXUI/tree-sitter/Janet all loaded), which
-// posix_spawn avoids; it's the standard lower-overhead choice for spawning a
-// child process from a large parent. Also deliberately not posix_spawnp:
-// posix_spawn(p)'s error reporting for "the executable doesn't exist" is not
-// reliably synchronous (implementations commonly vfork-and-exec internally,
-// so a failed exec in the child only surfaces later via its exit status, not
-// the posix_spawn call's own return value) -- ResolveExecutable below does a
-// manual $PATH search first specifically so a missing language server binary
-// throws immediately, with a clear message, from this constructor, rather
-// than failing silently/asynchronously.
+// LSP client follow-up. LSP's own JSON-RPC framing ("Content-Length: N\r\n\r\n"
+// + payload) layered on top of Process/ChildProcess.h's raw spawn/pipe
+// mechanics -- no JSON-RPC/LSP *semantics* here at all (see LspClient.h for
+// that layer), just the framing. ChildProcess itself was extracted out of
+// this file (task-runner follow-up) once a second, framing-free consumer
+// (TaskProcess, streaming raw build/test output) needed the same spawn/pipe
+// mechanics without any framing at all -- see ChildProcess.h's own header
+// comment for the fuller reasoning, including why this split also sets up a
+// future ACP client to layer its own framing on ChildProcess the same way
+// this class does.
 //
 
 #ifndef NED_EDITOR_LSP_TRANSPORT_H
@@ -31,6 +20,8 @@
 #include <vector>
 
 #include <sys/types.h>
+
+#include "Editor/Process/ChildProcess.h"
 
 namespace ned::editor::lsp {
 
@@ -52,10 +43,10 @@ class Transport {
     // default) means "no process to manage," skipping that logic entirely.
     Transport(int readFd, int writeFd, pid_t pid = -1) noexcept;
 
-    ~Transport();
+    ~Transport() = default; // ChildProcess's own destructor does the real work
 
-    Transport(Transport&& other) noexcept;
-    Transport& operator=(Transport&& other) noexcept;
+    Transport(Transport&&)                 = default;
+    Transport& operator=(Transport&&)      = default;
     Transport(const Transport&)            = delete;
     Transport& operator=(const Transport&) = delete;
 
@@ -74,9 +65,7 @@ class Transport {
     [[nodiscard]] pid_t Pid() const noexcept;
 
   private:
-    int   writeFd_ = -1;
-    int   readFd_  = -1;
-    pid_t pid_     = -1;
+    process::ChildProcess child_;
 };
 
 } // namespace ned::editor::lsp
