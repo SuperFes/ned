@@ -171,24 +171,33 @@ int main() {
     notcurses_render(nc); // render #5 -- final
     Progress("render #5 done (final)");
 
-    // Drain any input that arrived before we got here -- the empirical
-    // finding this fixes: every terminal actually rendered successfully
-    // and ran to clean completion (confirmed via this probe's own stderr
-    // log), but three of four exited instantly without the user ever
-    // getting to look, only Konsole genuinely waited. The likely cause: a
-    // race between the terminal switching to raw mode and the Enter
-    // keystroke used to *launch* this program in the first place --
-    // already-typed input arriving just late enough to be delivered to
-    // this program instead of being consumed by the shell that ran it,
-    // and notcurses_get_blocking happily accepting it as "the" keypress.
-    // notcurses_get_nblock returns 0 immediately once nothing is pending;
-    // looping it (with a short sleep first, giving any in-flight bytes
-    // time to actually land) empties that queue before the real wait
-    // starts, so only an *intentional* keypress from here on counts.
+    // Drain any input that arrived before we got here. Two distinct
+    // sources of stray input turned out to matter, found empirically
+    // across a round of real-terminal testing (see this function's git
+    // history for the full account): (1) a race between the terminal
+    // switching to raw mode and the Enter keystroke used to *launch* this
+    // program in the first place, and (2) a terminal's own Kitty-graphics-
+    // protocol acknowledgment for the image ncvisual_blit just sent it --
+    // confirmed specifically in Kitty itself (detected as "KITTY
+    // (animated)", chattier than the "static" variant Ghostty/Konsole
+    // reported), which still exited instantly with a single 80ms-then-
+    // drain-once pass finding *zero* stray events, meaning whatever
+    // consumed the later notcurses_get_blocking() call arrived *after*
+    // that window closed. A single fixed sleep can't reliably outlast an
+    // unknown, terminal-dependent response delay -- looping several
+    // shorter drain passes instead (each: sleep briefly, drain whatever's
+    // pending) keeps trying until two consecutive passes both find
+    // nothing, which tolerates a slow trickle of late bytes without
+    // committing to one arbitrary total wait.
     int drained = 0;
-    std::this_thread::sleep_for(std::chrono::milliseconds(80));
-    for (ncinput stray; notcurses_get_nblock(nc, &stray) != 0;) {
-        ++drained;
+    for (int consecutiveEmptyPasses = 0; consecutiveEmptyPasses < 2;) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        int thisPass = 0;
+        for (ncinput stray; notcurses_get_nblock(nc, &stray) != 0;) {
+            ++thisPass;
+        }
+        drained += thisPass;
+        consecutiveEmptyPasses = (thisPass == 0) ? consecutiveEmptyPasses + 1 : 0;
     }
     char drainLine[64];
     std::snprintf(drainLine, sizeof(drainLine), "drained %d stray input event(s), now waiting for real keypress", drained);
