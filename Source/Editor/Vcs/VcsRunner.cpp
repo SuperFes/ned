@@ -186,4 +186,47 @@ void VcsRunner::RequestLog(const text::Buffer& buffer, std::function<void(std::v
     });
 }
 
+void VcsRunner::RequestDiff(const text::Buffer& buffer, std::function<void(std::vector<VcsDiffHunk>)> onComplete,
+                            std::function<void(std::string)> onError) {
+    if (!buffer.Path()) {
+        onError("no file associated with this buffer");
+        return;
+    }
+    const std::filesystem::path path = std::filesystem::weakly_canonical(*buffer.Path());
+
+    VcsProvider* provider = ActiveProviderFor(ProjectRoot());
+    if (!provider) {
+        onError("no vcs provider registered for this project");
+        return;
+    }
+
+    const std::string key = "diff:" + path.string();
+    if (IsRunning(key)) {
+        onError("diff is already running for this file");
+        return;
+    }
+
+    VcsCommandSpec spec;
+    try {
+        spec = provider->DiffArgv(path);
+    }
+    catch (const std::exception& e) {
+        onError(e.what());
+        return;
+    }
+
+    RunAndCollect(key, spec.argv, [provider, onComplete, onError](std::string output, std::optional<int> exitCode) {
+        if (!exitCode || *exitCode != 0) {
+            onError(BlameOrLogFailureDetail("diff", exitCode, output));
+            return;
+        }
+        try {
+            onComplete(provider->ParseDiff(output));
+        }
+        catch (const std::exception& e) {
+            onError(e.what());
+        }
+    });
+}
+
 } // namespace ned::editor::vcs

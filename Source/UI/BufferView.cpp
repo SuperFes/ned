@@ -800,6 +800,12 @@ namespace {
         return Color::Interpolate(t, Color::BrightCyan, Color::BrightBlack);
     }
 
+    // Diff gutter markers follow-up: how much of an Added/Modified line's
+    // background gets tinted toward its accent color -- low enough to stay
+    // a genuine "wash," not a hard block that would fight the underlying
+    // syntax highlighting for attention.
+    constexpr float kDiffLineTintAlpha = 0.14f;
+
 } // namespace
 
 void BufferView::EnsureDiagnosticGutterCache() const {
@@ -903,6 +909,55 @@ void BufferView::ShowBlameDetailAtPoint() {
 
     const editor::vcs::VcsBlameLine& blame = it->second;
     statusMessage_ = blame.commitHash + " " + blame.author + " (" + blame.date + "): " + blame.summary;
+}
+
+void BufferView::ScheduleDiffRefresh() {
+    if (!eventLoop_ || !vcsRunner_) {
+        return; // headless test, or no VcsRunner wired in -- see this method's own header comment
+    }
+    // Same "Arm re-cancels any still-pending previous fire" debounce shape
+    // completionDebounceTimer_ already established for LSP ghost-text
+    // completion -- rapid typing keeps pushing kDiffRefreshDebounce out
+    // rather than firing once per keystroke.
+    diffRefreshTimer_.Arm(*eventLoop_, kDiffRefreshDebounce, [this] { RequestDiffForCurrentBuffer(); });
+}
+
+void BufferView::DispatchDiffForTesting(std::vector<editor::vcs::VcsDiffHunk> hunks) {
+    std::vector<std::pair<std::size_t, DiffLineKind>> kinds;
+    for (const editor::vcs::VcsDiffHunk& hunk : hunks) {
+        if (hunk.newCount == 0) {
+            // Pure deletion -- a boundary, not a covered range. git's
+            // newStart is already the 0-indexed line the deletion sits
+            // immediately before (1-indexed "the line after the gap" ==
+            // 0-indexed "that same line"), confirmed against real `git
+            // diff -U0` output while building this (see
+            // GitVcsPluginTest.cpp).
+            kinds.emplace_back(hunk.newStart, DiffLineKind::Removed);
+            continue;
+        }
+        const DiffLineKind kind = (hunk.oldCount == 0) ? DiffLineKind::Added : DiffLineKind::Modified;
+        for (std::size_t i = 0; i < hunk.newCount; ++i) {
+            kinds.emplace_back(hunk.newStart - 1 + i, kind); // newStart is 1-indexed
+        }
+    }
+    std::sort(kinds.begin(), kinds.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    diffLineKinds_ = std::move(kinds);
+}
+
+void BufferView::RequestDiffForCurrentBuffer() {
+    if (!vcsRunner_) {
+        return; // silent -- see this method's own header comment
+    }
+    text::Buffer* buffer = &activeBuffer_.Get();
+    vcsRunner_->RequestDiff(
+        *buffer,
+        [this, buffer](std::vector<editor::vcs::VcsDiffHunk> hunks) {
+            if (&activeBuffer_.Get() != buffer) {
+                return; // active buffer changed while the request was in flight -- discard, it's stale
+            }
+            DispatchDiffForTesting(std::move(hunks)); // reused here too -- see its own doc comment
+        },
+        [](const std::string&) {}); // silent -- see this method's own header comment
 }
 
 void BufferView::EnsureHiddenLineRangesCache() const {
@@ -1099,6 +1154,16 @@ void BufferView::Paint(Canvas c) {
         if (onActiveBufferChanged_) {
             onActiveBufferChanged_(buffer);
         }
+        // Diff gutter markers follow-up: a newly-active buffer's diff
+        // markers belong to a completely different file -- clearing
+        // immediately (rather than leaving the old buffer's markers
+        // visible until the fresh request completes) avoids a real, if
+        // brief, "wrong file's markers" flash; RequestDiffForCurrentBuffer
+        // below then kicks off a fresh, unthrottled (not debounced --
+        // switching buffers is a natural "want it now" moment, same as a
+        // save) request for this buffer.
+        diffLineKinds_.clear();
+        RequestDiffForCurrentBuffer();
     }
 
     const text::Rope& content    = buffer.Content();
@@ -1140,11 +1205,16 @@ void BufferView::Paint(Canvas c) {
     // these columns only when actually wanted (see its own doc comment) --
     // recomputing the same condition here keeps the layout math below in
     // agreement with it without a second source of truth. Column offsets,
-    // left to right: [status][gap][digits][gap][fold][blame] (VCS blame
-    // gutter follow-up: blame is the new rightmost region, past fold).
+    // left to right: [diff][status][diagnostic][gap][digits][gap][fold][blame]
+    // (diff-gutter-markers follow-up put diff leftmost, matching real
+    // editors' own git-gutter placement -- see kDiffWidth's own doc
+    // comment; blame stayed the rightmost region, past fold).
     const std::size_t foldColumnWidth  = FoldGutterActive() ? kMaxFoldDepthColumns : 0;
     const std::size_t blameColumnWidth = BlameGutterActive() ? kBlameWidth : 0;
-    const std::size_t digitsStart      = kStatusWidth + kDiagnosticWidth + kLineNumberGap;
+    const std::size_t diffColumnWidth  = DiffGutterActive() ? kDiffWidth : 0;
+    const std::size_t statusStart      = diffColumnWidth;
+    const std::size_t diagnosticStart  = statusStart + kStatusWidth;
+    const std::size_t digitsStart      = diagnosticStart + kDiagnosticWidth + kLineNumberGap;
     const std::size_t gutterDigits     = gutterWidth - digitsStart - kLineNumberGap - foldColumnWidth - blameColumnWidth;
     const std::size_t foldStart        = digitsStart + gutterDigits + kLineNumberGap;
     const std::size_t blameStart       = foldStart + foldColumnWidth;
@@ -1250,6 +1320,11 @@ void BufferView::Paint(Canvas c) {
     std::vector<WrapSegment>           lineSegments;
     std::vector<editor::HighlightSpan> currentLineSpans;
     std::vector<RenderedLink>          currentLineLinks;
+    // Diff gutter markers follow-up: same "compute once per line, not once
+    // per row/character" shape as currentLineSpans/currentLineLinks above --
+    // feeds the subtle background tint applied per character below
+    // (Removed has no line to tint, only Added/Modified ever populate this).
+    std::optional<DiffLineKind> currentLineDiffTint;
     for (int row = 0; row < c.size().height; ++row) {
         for (int col = 0; col < c.size().width; ++col) {
             Cell& cell     = c[{.x = col, .y = row}];
@@ -1274,6 +1349,14 @@ void BufferView::Paint(Canvas c) {
             if (segmentIndex == 0) {
                 currentLineSpans = SpansForLine(highlightSpans, lineStart, lineEnd);
                 currentLineLinks = LinksForLine(linkCache_, lineStart, lineEnd, point);
+                currentLineDiffTint.reset();
+                if (diffColumnWidth > 0) {
+                    const auto diffIt = std::lower_bound(diffLineKinds_.begin(), diffLineKinds_.end(), line,
+                                                          [](const auto& entry, std::size_t targetLine) { return entry.first < targetLine; });
+                    if (diffIt != diffLineKinds_.end() && diffIt->first == line && diffIt->second != DiffLineKind::Removed) {
+                        currentLineDiffTint = diffIt->second;
+                    }
+                }
                 if (wrapActive) {
                     const int wrapWidth = std::max(1, c.size().width - static_cast<int>(gutterWidth));
                     lineSegments        = ComputeWrapSegments(content, lineStart, lineEnd, wrapWidth, currentLineLinks);
@@ -1310,6 +1393,41 @@ void BufferView::Paint(Canvas c) {
                     .background = (gutterSelection != GutterSelection::None) ? theme_.selectionBackground : theme_.background,
                     .foreground = gutterForeground,
                 };
+                // Diff gutter markers follow-up: leftmost of all, matching
+                // real editors' own git-gutter placement -- a solid swatch
+                // for Added/Modified (same cell.character=" "+matching-fg/bg
+                // technique the status column below already uses), a thin
+                // "torn edge" notch glyph for a Removed boundary (no line
+                // "belongs" to a deletion, so a full block would misleadingly
+                // suggest one does). Direct Color constants, not routed
+                // through Theme::BrushFor(SyntaxClass) -- same bypass the
+                // blame gutter's own hash coloring already uses, for the
+                // same reason (this isn't a tree-sitter capture category).
+                if (diffColumnWidth > 0) {
+                    const auto it = std::lower_bound(diffLineKinds_.begin(), diffLineKinds_.end(), line,
+                                                      [](const auto& entry, std::size_t targetLine) { return entry.first < targetLine; });
+                    if (it != diffLineKinds_.end() && it->first == line) {
+                        Cell& cell = c[{.x = static_cast<int>(statusStart), .y = row}];
+                        switch (it->second) {
+                            case DiffLineKind::Added:
+                                cell.character        = " ";
+                                cell.foreground_color = Color::BrightGreen;
+                                cell.background_color = Color::BrightGreen;
+                                break;
+                            case DiffLineKind::Modified:
+                                cell.character        = " ";
+                                cell.foreground_color = Color::BrightBlue;
+                                cell.background_color = Color::BrightBlue;
+                                break;
+                            case DiffLineKind::Removed:
+                                cell.character        = "▔"; // UPPER ONE EIGHTH BLOCK -- a thin notch, not a full swatch
+                                cell.foreground_color = Color::BrightRed;
+                                cell.background_color = theme_.background;
+                                break;
+                        }
+                    }
+                }
+
                 // status-gutter unsaved-change-indicator follow-up: a solid
                 // colored cell (character " ", not a glyph -- a 1-char-wide
                 // color swatch, matching the user's own "just 1 char width"
@@ -1326,7 +1444,7 @@ void BufferView::Paint(Canvas c) {
                     const bool  changed        = it != unsavedChangeLineRanges_.end() && it->first <= line;
                     const Color indicatorColor = changed ? theme_.unsavedChangeIndicator : theme_.background;
                     const Brush statusBrush{.background = indicatorColor, .foreground = indicatorColor};
-                    Cell&       cell = c[{.x = 0, .y = row}];
+                    Cell&       cell = c[{.x = static_cast<int>(statusStart), .y = row}];
                     cell.character   = " ";
                     statusBrush.ApplyTo(cell);
                 }
@@ -1336,7 +1454,7 @@ void BufferView::Paint(Canvas c) {
                 // see diagnosticLineSeverities_'s own doc comment for why a
                 // plain binary search suffices here too (at most one entry per
                 // line, already sorted).
-                if (static_cast<int>(kStatusWidth) < c.size().width) {
+                if (static_cast<int>(diagnosticStart) < c.size().width) {
                     const auto it             = std::lower_bound(diagnosticLineSeverities_.begin(), diagnosticLineSeverities_.end(), line,
                                                                  [](const auto& entry, std::size_t targetLine) { return entry.first < targetLine; });
                     const bool hasDiagnostic  = it != diagnosticLineSeverities_.end() && it->first == line;
@@ -1358,7 +1476,7 @@ void BufferView::Paint(Canvas c) {
                         }
                     }
                     const Brush diagnosticBrush{.background = indicatorColor, .foreground = indicatorColor};
-                    Cell&       cell = c[{.x = static_cast<int>(kStatusWidth), .y = row}];
+                    Cell&       cell = c[{.x = static_cast<int>(diagnosticStart), .y = row}];
                     cell.character   = " ";
                     diagnosticBrush.ApplyTo(cell);
                 }
@@ -1592,6 +1710,22 @@ void BufferView::Paint(Canvas c) {
                 }
                 else if (InSelection(offset)) {
                     brush.background = theme_.selectionBackground;
+                }
+                else if (currentLineDiffTint) {
+                    // Diff gutter markers follow-up: a subtle, low-alpha
+                    // wash across the whole changed line -- the "semi-
+                    // transparent background" the user explicitly asked
+                    // for. There's no real alpha channel in this Cell
+                    // model, so this simulates one the same way blame's
+                    // age-coloring already does: Color::Interpolate blends
+                    // a small percentage of an accent color into the
+                    // theme's own background, producing a genuine RGB
+                    // result rather than a hard-edged solid fill. Skipped
+                    // entirely when selection/isearch also apply (checked
+                    // above) -- a three-way blend there would read as
+                    // muddy, not fancy.
+                    const Color accent  = (currentLineDiffTint == DiffLineKind::Added) ? Color::BrightGreen : Color::BrightBlue;
+                    brush.background    = Color::Interpolate(kDiffLineTintAlpha, theme_.background, accent);
                 }
 
                 if (decoded.codepoint == U'\t') {
@@ -2135,7 +2269,12 @@ bool BufferView::RunCommandAndHandleOutcome(editor::CommandContext& context, con
                                             const editor::KeyChord* triggeringChord) {
     const std::size_t generationBefore    = activeBuffer_.Get().ContentGeneration();
     const std::string statusMessageBefore = statusMessage_; // status-message-lifecycle: see the "clear if unchanged" check below
-    bool              ran                 = false;
+    // Diff gutter markers follow-up: read alongside generationBefore, for
+    // the same "safe as long as this dispatch doesn't itself switch active
+    // buffers" reasoning MaybeScheduleAutoCompletion's own generationBefore
+    // comparison already relies on -- see this method's tail below.
+    const bool wasModifiedBefore = activeBuffer_.Get().Modified();
+    bool       ran               = false;
     try {
         ran = invoke();
     }
@@ -2217,6 +2356,20 @@ bool BufferView::RunCommandAndHandleOutcome(editor::CommandContext& context, con
     // never reach this.
     if (triggeringChord) {
         MaybeScheduleAutoCompletion(*triggeringChord, generationBefore);
+    }
+
+    // Diff gutter markers follow-up: unlike MaybeScheduleAutoCompletion
+    // above, not gated on triggeringChord/plain-self-insert -- deletions,
+    // undo, paste, and format-on-save should all refresh the gutter too,
+    // not just organic typing. A save (Modified() transitioning true ->
+    // false) bypasses the debounce entirely and refreshes right away, the
+    // same "this is a natural point to want it fresh" reasoning a real
+    // save deserves; anything else just re-arms the debounce timer.
+    if (wasModifiedBefore && !activeBuffer_.Get().Modified()) {
+        RequestDiffForCurrentBuffer();
+    }
+    else if (activeBuffer_.Get().ContentGeneration() != generationBefore) {
+        ScheduleDiffRefresh();
     }
 
     ClampPointToNarrowing();
@@ -3972,8 +4125,13 @@ std::size_t BufferView::GutterWidth() const {
     // scrolling past a deeply nested region).
     const std::size_t foldColumn  = FoldGutterActive() ? kMaxFoldDepthColumns : 0;
     const std::size_t blameColumn = BlameGutterActive() ? kBlameWidth : 0;
-    return kStatusWidth + kDiagnosticWidth + kLineNumberGap + std::to_string(totalLines).size() + kLineNumberGap + foldColumn +
-           blameColumn;
+    const std::size_t diffColumn  = DiffGutterActive() ? kDiffWidth : 0;
+    return diffColumn + kStatusWidth + kDiagnosticWidth + kLineNumberGap + std::to_string(totalLines).size() + kLineNumberGap +
+           foldColumn + blameColumn;
+}
+
+bool BufferView::DiffGutterActive() const {
+    return !diffLineKinds_.empty();
 }
 
 bool BufferView::OnMouseEvent(const Event& event) {

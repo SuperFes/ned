@@ -173,6 +173,16 @@ class BufferView : public Widget {
     // update without needing one.
     void DispatchBlameForTesting(std::vector<editor::vcs::VcsBlameLine> lines);
 
+    // Public primarily for tests -- same "public primarily for tests"
+    // precedent DispatchBlameForTesting just above establishes, for the
+    // same reason: the real async path always reaches this via
+    // VcsRunner::RequestDiff's onComplete callback (see
+    // RequestDiffForCurrentBuffer), which needs a live EventLoop to ever
+    // fire. Converts raw hunks into diffLineKinds_ directly, exercising
+    // the exact same classification RequestDiffForCurrentBuffer's own
+    // completion handler uses.
+    void DispatchDiffForTesting(std::vector<editor::vcs::VcsDiffHunk> hunks);
+
     // FTXUI -> Notcurses migration: replaces
     // ftxui::ScreenInteractive::Active() (used to end the whole app on
     // `quit`/confirmed ConfirmQuit) and backs completionDebounceDeadline_/
@@ -644,6 +654,23 @@ class BufferView : public Widget {
     // unsaved/uncommitted line with no attribution yet).
     void ShowBlameDetailAtPoint();
 
+    // Diff gutter markers follow-up: (re)arms diffRefreshTimer_ for
+    // kDiffRefreshDebounce -- called from RunCommandAndHandleOutcome after
+    // any dispatch that actually changed buffer content, so rapid typing
+    // keeps pushing the deadline out rather than spawning a `git diff` per
+    // keystroke (the exact debounce shape completionDebounceTimer_ already
+    // established for LSP ghost-text completion). A no-op if no
+    // EventLoop/VcsRunner is wired in (headless tests, most notably).
+    void ScheduleDiffRefresh();
+    // The actual request, called either from ScheduleDiffRefresh's fired
+    // timer or immediately after a save (RunCommandAndHandleOutcome
+    // bypasses the debounce there -- a save is a natural "make this fresh
+    // now" moment, no reason to wait). Silent on any failure (no path, no
+    // provider, process failure) -- this is a best-effort background
+    // feature, not a user-invoked action, so it must never interrupt with
+    // a status message the way vcs-show-blame's own errors do.
+    void RequestDiffForCurrentBuffer();
+
     // Parallel to BuildResultsBuffer, just a different per-line text shape:
     // "<path>:<1-indexed line>: <hash> <author> <date> | <source line
     // text>" -- deliberately kept byte-compatible with VisitSearchResult's
@@ -742,6 +769,12 @@ class BufferView : public Widget {
     // four call sites can't drift out of agreement with each other the way
     // duplicating a fourth inline copy of this check risked.
     [[nodiscard]] bool FoldGutterActive() const;
+
+    // Diff gutter markers follow-up: same "only reserve the column when
+    // there's something to show" gate BlameGutterActive() established --
+    // true once diffLineKinds_ has any entries at all (a clean file
+    // against HEAD reserves no column).
+    [[nodiscard]] bool DiffGutterActive() const;
 
     // Diagnostic aid, opt-in via $NED_DEBUG_MOUSE (a file path to append
     // to): logs the raw event plus current point/mark/topLine_/size at the
@@ -1024,13 +1057,32 @@ class BufferView : public Widget {
     // [status][diagnostic][gap][digits][gap][fold].
     static constexpr std::size_t kDiagnosticWidth = 1;
     // VCS blame gutter: the rightmost gutter region, past fold (layout is
-    // now [status][diagnostic][gap][digits][gap][fold][blame]) -- an
+    // now [diff][status][diagnostic][gap][digits][gap][fold][blame] --
+    // diff-gutter-markers follow-up moved diff to the front, see
+    // kDiffWidth below, without otherwise reordering anything) -- an
     // 8-hex-char short commit hash plus one trailing gap column. Full
     // author/date/summary deliberately isn't crammed in here (there's no
     // tooltip concept in a terminal UI, and a wider fixed column would
     // fight narrow-terminal layouts); that's what the vcs-show-blame
     // multibuffer is for.
     static constexpr std::size_t kBlameWidth = 9;
+    // Diff gutter markers follow-up: the leftmost gutter region -- a single
+    // solid-color swatch per changed line (added/modified), or a thin
+    // notch glyph marking a deletion boundary, matching where real editors
+    // (VS Code, GitLens, vim-gitgutter) conventionally put their own git
+    // change bars: the very first thing you see, closest to the line
+    // numbers. Placed first (not appended at the end the way blame/fold
+    // were) specifically to match that convention -- worth the extra
+    // column-math churn here for something users expect to recognize at a
+    // glance.
+    static constexpr std::size_t kDiffWidth = 1;
+    // A reasonable middle ground for a live, subprocess-backed refresh --
+    // long enough that a fast typist doesn't spawn `git diff` on every
+    // other keystroke, short enough that the gutter still feels live
+    // rather than stale. Not yet Janet-exposed, the same "hardcoded C++
+    // for now" scope cut kPageScrollFraction/TabWidth's own pre-setter
+    // history already established.
+    static constexpr std::chrono::milliseconds kDiffRefreshDebounce{1200};
 
     struct FoldGutterEntry {
         std::size_t headerLine;
@@ -1099,6 +1151,29 @@ class BufferView : public Widget {
     mutable text::Buffer*                                                      blameGutterCacheBuffer_            = nullptr;
     mutable std::size_t                                                        blameGutterCacheContentGeneration_ = 0;
     mutable std::vector<std::pair<std::size_t, editor::vcs::VcsBlameLine>>     blameLineInfo_;
+
+    // Diff gutter markers follow-up: live-refreshing added/modified/removed
+    // line indicators against HEAD. Unlike blameLineInfo_, this is NOT
+    // cleared when the buffer's content goes stale -- a live gutter is
+    // expected to briefly show slightly-stale markers during its own
+    // debounce window (see ScheduleDiffRefresh), the same tolerance any
+    // other live-updating editor's git gutter already has; it's simply
+    // overwritten wholesale once a fresh VcsRunner::RequestDiff completes.
+    // Sorted by (0-indexed) line -- one entry per changed line for
+    // Added/Modified; a Removed entry marks the single line immediately
+    // after a pure deletion (a boundary, not a covered range) and is
+    // rendered as a thin notch rather than a full swatch.
+    enum class DiffLineKind { Added,
+                              Modified,
+                              Removed };
+    mutable std::vector<std::pair<std::size_t, DiffLineKind>> diffLineKinds_;
+    // Mirrors completionDebounceTimer_'s own "single pending fire,
+    // re-arming cancels the previous one" shape (see that member's doc
+    // comment) -- re-armed on every content-changing edit
+    // (RunCommandAndHandleOutcome), fired after kDiffRefreshDebounce of
+    // idle time. A save bypasses this and refreshes immediately instead
+    // (see RunCommandAndHandleOutcome's own save-detection check).
+    DeadlineTimer diffRefreshTimer_;
 
     // Org-mode fold/unfold follow-up: see EnsureHiddenLineRangesCache's own
     // doc comment above. mutable because CursorPosition()/ByteOffsetForPoint()

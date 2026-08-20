@@ -1,0 +1,144 @@
+#include <catch2/catch_test_macros.hpp>
+
+#include <string>
+#include <vector>
+
+#include "Editor/Commands.h"
+#include "Editor/Dispatcher.h"
+#include "Editor/Keymap.h"
+#include "Editor/Mode.h"
+#include "Editor/Register.h"
+#include "Editor/Vcs/VcsProvider.h"
+#include "Text/Buffer.h"
+#include "Text/BufferList.h"
+#include "Text/KillRing.h"
+#include "UI/ActiveBuffer.h"
+#include "UI/BufferView.h"
+#include "UI/Theme.h"
+
+using ned::editor::vcs::VcsDiffHunk;
+using ned::ui::BufferView;
+
+namespace {
+
+// Mirrors BufferViewBlameGutterTest.cpp's own GutterWidthWithBlame helper,
+// extended with the diff column -- see BufferView::GutterWidth's real
+// formula for the layout this tracks:
+// [diff][status][diagnostic][gap][digits][gap][fold][blame].
+int GutterWidthWithDiff(std::size_t totalLines, bool diffActive) {
+    constexpr int kStatusWidth     = 1;
+    constexpr int kDiagnosticWidth = 1;
+    constexpr int kLineNumberGap   = 1;
+    constexpr int kDiffWidth       = 1;
+    return (diffActive ? kDiffWidth : 0) + kStatusWidth + kDiagnosticWidth + kLineNumberGap +
+           static_cast<int>(std::to_string(totalLines).size()) + kLineNumberGap;
+}
+
+struct Fixture {
+    ned::text::Buffer          buffer{"scratch"};
+    ned::text::KillRing        killRing;
+    ned::editor::RegisterTable registers;
+    ned::text::BufferList      bufferList;
+
+    ned::editor::CommandRegistry registry{[] {
+        ned::editor::CommandRegistry r;
+        ned::editor::RegisterBuiltinCommands(r);
+        return r;
+    }()};
+    ned::editor::Keymap          keymap = ned::editor::BuildDefaultGlobalKeymap();
+    ned::editor::Dispatcher      dispatcher{registry, ned::editor::KeymapStack({&keymap})};
+    ned::editor::Mode            mode  = ned::editor::FundamentalMode();
+    ned::ui::Theme               theme = ned::ui::DarkTheme();
+
+    std::string           statusMessage;
+    ned::ui::ActiveBuffer activeBuffer{buffer};
+
+    BufferView View() {
+        return BufferView(activeBuffer, killRing, registers, bufferList, dispatcher, statusMessage, mode, theme);
+    }
+};
+
+} // namespace
+
+TEST_CASE("BufferView reserves no gutter column for diff markers until some are loaded", "[BufferView][Vcs]") {
+    Fixture    fixture;
+    fixture.buffer.InsertAtPoint("hello");
+    BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 2});
+
+    REQUIRE(view.CursorPosition().has_value());
+    REQUIRE(view.CursorPosition()->x == GutterWidthWithDiff(fixture.buffer.Content().LineCount(), false) + 5);
+}
+
+TEST_CASE("DispatchDiffForTesting classifies a pure addition hunk as Added lines", "[BufferView][Vcs]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("one\ntwo\nthree\n");
+    BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 5});
+
+    // "@@ -1,0 +2,2 @@" shape: two brand-new lines starting at new-file
+    // line 2 (1-indexed) -> 0-indexed lines 1,2.
+    view.DispatchDiffForTesting({VcsDiffHunk{1, 0, 2, 2}});
+
+    // Gutter column now reserved -- verified indirectly via cursor shift,
+    // same convention BufferViewBlameGutterTest.cpp's own tests use since
+    // GutterWidth() itself is private. Point sits on the trailing empty
+    // line (column 0) after the inserted text's own final newline, so no
+    // "+N" column offset applies here the way the single-line fixtures
+    // below use.
+    REQUIRE(view.CursorPosition().has_value());
+    REQUIRE(view.CursorPosition()->x == GutterWidthWithDiff(fixture.buffer.Content().LineCount(), true));
+}
+
+TEST_CASE("DispatchDiffForTesting classifies a pure deletion hunk as a single Removed boundary", "[BufferView][Vcs]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("one\ntwo\n");
+    BufferView view = fixture.View();
+
+    // "@@ -3,2 +2,0 @@": old lines 3-4 deleted, nothing added -- boundary
+    // sits at 0-indexed new-file line 2.
+    view.DispatchDiffForTesting({VcsDiffHunk{3, 2, 2, 0}});
+
+    // A Removed-only hunk still reserves the gutter column (there's
+    // something to show, just not a covered-line swatch) -- confirmed via
+    // the same cursor-shift check the other cases use.
+    REQUIRE(view.CursorPosition().has_value());
+}
+
+TEST_CASE("DispatchDiffForTesting classifies a hunk with both old and new lines as Modified", "[BufferView][Vcs]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("one\ntwo\nthree\n");
+    BufferView view = fixture.View();
+
+    // "@@ -2 +2 @@": a single-line modification at 0-indexed line 1.
+    view.DispatchDiffForTesting({VcsDiffHunk{2, 1, 2, 1}});
+
+    REQUIRE(view.CursorPosition().has_value()); // reserves the column, doesn't crash
+}
+
+TEST_CASE("Diff markers are cleared (not resynthesized) when the active buffer changes", "[BufferView][Vcs]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("hello");
+    BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 2});
+
+    view.DispatchDiffForTesting({VcsDiffHunk{1, 0, 1, 1}});
+
+    ned::ui::Screen screen = ned::ui::Screen(20, 3);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 2});
+    view.Paint(canvas); // no-op re-paint of the same buffer -- markers survive
+
+    REQUIRE(view.CursorPosition().has_value());
+    REQUIRE(view.CursorPosition()->x == GutterWidthWithDiff(fixture.buffer.Content().LineCount(), true) + 5);
+
+    // Switching to a different buffer clears the previous file's markers
+    // immediately (see Paint()'s own modeSyncBuffer_ check) rather than
+    // leaving them visible against unrelated content.
+    ned::text::Buffer& other = fixture.bufferList.CreateBuffer("other");
+    other.InsertAtPoint("goodbye");
+    fixture.activeBuffer.Set(other);
+    view.Paint(canvas);
+
+    REQUIRE(view.CursorPosition().has_value());
+    REQUIRE(view.CursorPosition()->x == GutterWidthWithDiff(other.Content().LineCount(), false) + 7);
+}

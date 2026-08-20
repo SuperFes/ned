@@ -56,6 +56,14 @@ class VcsRunner {
                        std::function<void(std::string)> onError = [](const std::string&) {});
     void RequestLog(const text::Buffer& buffer, std::function<void(std::vector<VcsLogEntry>)> onComplete,
                      std::function<void(std::string)> onError = [](const std::string&) {});
+    // Diff gutter follow-up: same shape/guarantees as RequestBlame/RequestLog
+    // above, calling DiffArgv/ParseDiff instead. Meant to be called
+    // repeatedly (live refresh, debounced by the caller) rather than once
+    // per user action the way blame/log are -- the "already running" guard
+    // above is what keeps a slow git process from piling up duplicate
+    // concurrent diffs if refreshes are requested faster than one completes.
+    void RequestDiff(const text::Buffer& buffer, std::function<void(std::vector<VcsDiffHunk>)> onComplete,
+                      std::function<void(std::string)> onError = [](const std::string&) {});
 
   private:
     // Spawns argv (keyed by key, to guard against a duplicate concurrent

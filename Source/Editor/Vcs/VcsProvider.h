@@ -7,11 +7,12 @@
 // anything that only needs the *shape* of a provider, like
 // VcsProviderRegistry/VcsRunner) free of any Janet dependency.
 //
-// v1 only implements the blame/log slice of the vocabulary (Detect,
-// Blame*, Log*). Status/diff/stage-unstage/commit/branch are named below
-// in a comment as reserved vocabulary a future plugin could implement --
-// deliberately not given real methods yet, so this interface doesn't need
-// a breaking rework once they land; see ROADMAP.md.
+// v1 implements the blame/log/diff slice of the vocabulary (Detect,
+// Blame*, Log*, Diff*). status/stage-unstage/commit/branch are named
+// below in a comment as reserved vocabulary a future plugin could
+// implement -- deliberately not given real methods yet, so this
+// interface doesn't need a breaking rework once they land; see
+// ROADMAP.md.
 //
 
 #ifndef NED_EDITOR_VCS_VCSPROVIDER_H
@@ -51,6 +52,21 @@ struct VcsCommandSpec {
     std::vector<std::string> argv;
 };
 
+// One changed region, as returned by VcsProvider::ParseDiff -- the same
+// shape a unified diff's own "@@ -oldStart,oldCount +newStart,newCount @@"
+// hunk header carries (1-indexed, matching git's own convention; a count
+// of 0 means "no lines on this side," e.g. oldCount == 0 for a hunk that's
+// pure insertion). Deliberately just the header fields, not the hunk's
+// actual +/- line bodies -- a gutter marker only needs to know *which*
+// buffer lines changed and how, not the old content, so there's nothing
+// else worth asking a plugin to parse out.
+struct VcsDiffHunk {
+    std::size_t oldStart;
+    std::size_t oldCount;
+    std::size_t newStart;
+    std::size_t newCount;
+};
+
 // A VCS-agnostic provider: translates the common vocabulary below into
 // whatever a specific VCS actually needs. Each operation is deliberately
 // split into a "build the command" half and a "parse the output" half
@@ -75,10 +91,16 @@ class VcsProvider {
     [[nodiscard]] virtual VcsCommandSpec          LogArgv(const std::filesystem::path& path) const = 0;
     [[nodiscard]] virtual std::vector<VcsLogEntry> ParseLog(const std::string& stdout_) const       = 0;
 
-    // Reserved vocabulary, not implemented in v1 -- status, diff,
-    // stage/unstage a hunk, commit, branch. A future provider
-    // implementation adds real virtual methods for these; nothing above
-    // needs to change to accommodate them.
+    // Diff gutter follow-up: path's changes against whatever this provider
+    // considers "the comparison point" (HEAD for git) -- feeds BufferView's
+    // live-refreshing added/modified/removed gutter markers.
+    [[nodiscard]] virtual VcsCommandSpec          DiffArgv(const std::filesystem::path& path) const = 0;
+    [[nodiscard]] virtual std::vector<VcsDiffHunk> ParseDiff(const std::string& stdout_) const       = 0;
+
+    // Reserved vocabulary, not implemented in v1 -- status, stage/unstage
+    // a hunk, commit, branch. A future provider implementation adds real
+    // virtual methods for these; nothing above needs to change to
+    // accommodate them.
 };
 
 } // namespace ned::editor::vcs
