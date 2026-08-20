@@ -2,7 +2,6 @@
 #include <exception>
 #include <filesystem>
 #include <iostream>
-#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -12,6 +11,7 @@
 #include <CLI/CLI.hpp>
 
 #include "Application.h"
+
 #include "Editor/Commands.h"
 #include "Editor/Dispatcher.h"
 #include "Editor/Keymap.h"
@@ -23,13 +23,16 @@
 #include "Editor/ScriptingSession.h"
 #include "Editor/Tasks/TaskRunner.h"
 #include "Editor/Vcs/VcsRunner.h"
+
 #include "Janet/EditorBindings.h"
 #include "Janet/Environment.h"
 #include "Janet/InitFile.h"
 #include "Janet/PluginLoader.h"
+
 #include "Text/BinaryDetect.h"
 #include "Text/BufferList.h"
 #include "Text/KillRing.h"
+
 #include "UI/ActiveBuffer.h"
 #include "UI/EchoArea.h"
 #include "UI/EventLoop.h"
@@ -79,6 +82,8 @@ int RunDetectTheme(int argc, char** argv) {
 
     const ned::ui::DetectedColors detected = ned::ui::ProbeTerminalColors();
     ned::ui::Theme                theme    = ned::ui::BuildDetectedTheme(detected, ned::ui::DarkTheme());
+
+	// A new line
 
     if (transparent) {
         theme.background          = ned::ui::Color::Default;
@@ -216,7 +221,10 @@ int main(int argc, char** argv) {
     // outright" rule is specifically for an *explicitly* opened directory,
     // and there's no file path to derive a smarter default from otherwise.
     ned::editor::SetProjectRoot(
-        ned::editor::DetectProjectRoot(pathArg != nullptr ? std::filesystem::path(pathArg) : std::filesystem::current_path()));
+        ned::editor::DetectProjectRoot(
+			pathArg != nullptr ? std::filesystem::path(pathArg) : std::filesystem::current_path()
+		)
+	);
 
     ned::text::KillRing        killRing;
     ned::editor::RegisterTable registers;
@@ -329,11 +337,15 @@ int main(int argc, char** argv) {
     auto echoArea = std::make_shared<ned::ui::EchoArea>(statusMessage, theme);
 
     windowManager->SetProjectSidebar(projectSidebar.get());
+
     projectSidebar->SetOnBufferClosed(
         [wm = windowManager.get()](ned::text::Buffer& buffer) { wm->NotifyBufferClosing(buffer); });
+
     projectSidebar->SetOnBinaryFileOpenRequest(
         [wm = windowManager.get()](const std::filesystem::path& path) { wm->RequestOpenBinaryFile(path); });
+
     sidebarToggle->SetSidebar(projectSidebar.get());
+
     // project-root-detection follow-up: makes it clear, right at startup,
     // which file in the (possibly VCS-root-detected, not just the opened
     // file's own directory) project tree corresponds to what's actually
@@ -342,6 +354,7 @@ int main(int argc, char** argv) {
     if (buffer->Path()) {
         projectSidebar->RevealPath(*buffer->Path());
     }
+
     tabBar->SetOnCloseRequest(
         [wm = windowManager.get()](ned::text::Buffer& buffer) { wm->RequestCloseBuffer(buffer); });
 
@@ -478,19 +491,8 @@ int main(int argc, char** argv) {
     // and gets the async path.
     windowManager->EnableAsyncFileLoading(eventLoop);
 
-    // FTXUI -> Notcurses migration: replaces ScreenInteractive::
-    // ForceHandleCtrlC(false)/ForceHandleCtrlZ(false) -- see EventLoop's own
-    // constructor comment for why Notcurses' own notcurses_linesigs_disable
-    // (called there) is actually a strictly better fix for the exact same
-    // "our own key bindings always win" C-c-prefixed-binding bug FTXUI's
-    // ForceHandleCtrlC(false) used to guard against: no signal is ever
-    // raised by the terminal's line discipline in the first place now,
-    // rather than raised and then suppressed. TrackMouse(true)'s own
-    // FTXUI-era equivalent (motion events reported while a button is held,
-    // which BufferView needs for click-and-drag selection) is handled by
     // EventLoop's constructor too, via notcurses_mice_enable(NCMICE_ALL_EVENTS)
     // -- there's nothing left to set explicitly here for either concern.
-
     // A single Screen (Widget.h) reused across every frame, resized to
     // match the terminal on every onResize callback -- this composition
     // root's own direct replacement for what used to be an implicit
@@ -498,11 +500,13 @@ int main(int argc, char** argv) {
     Screen screenBuffer(0, 0);
 
     EventLoopCallbacks callbacks;
+
     callbacks.onResize = [&](Size size) {
         screenBuffer = Screen(size.width, size.height);
+
         head.SetBox_(Box{.x_min = 0, .x_max = size.width - 1, .y_min = 0, .y_max = size.height - 1});
     };
-    // FTXUI -> Notcurses migration: replaces FTXUI's own ContainerBase
+
     // event-routing split -- a keyboard Event only ever reached whichever
     // child a container's internal focus-selector currently pointed at
     // (the real mechanism WindowManager::TakeFocus's whole walk-up-through-
@@ -520,15 +524,19 @@ int main(int argc, char** argv) {
             focused->OnEvent(event);
         }
     };
+
     callbacks.render = [&]() -> std::optional<Point> {
         head.Paint(Canvas(screenBuffer, head.Box_()));
         screenBuffer.Flush(eventLoop.StdPlane());
+
         if (const Widget* focused = FocusedWidget()) {
             if (const std::optional<Point> local = focused->CursorPosition()) {
                 const Box& box = focused->Box_();
+
                 return Point{box.x_min + local->x, box.y_min + local->y};
             }
         }
+
         return std::nullopt;
     };
 
