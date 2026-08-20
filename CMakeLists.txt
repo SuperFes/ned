@@ -298,6 +298,7 @@ add_library(ned_lib STATIC
         Source/Editor/FinalNewline.cpp
         Source/Editor/FormatOnSave.cpp
         Source/Editor/TabWidth.cpp
+        Source/Editor/MinimapSettings.cpp
         Source/Editor/GitIgnore.cpp
         Source/Editor/ProjectSearch.cpp
         Source/Editor/ProjectAgenda.cpp
@@ -335,6 +336,7 @@ add_library(ned_lib STATIC
         Source/UI/EventLoop.cpp
         Source/UI/Layout.cpp
         Source/UI/ScrollBar.cpp
+        Source/UI/Minimap.cpp
         Source/UI/BufferView.cpp
         Source/UI/WindowManager.cpp
         Source/UI/AsyncFileLoader.cpp
@@ -464,6 +466,8 @@ if (NED_BUILD_TESTS)
             Tests/FinalNewlineTest.cpp
             Tests/FormatOnSaveTest.cpp
             Tests/TabWidthTest.cpp
+            Tests/MinimapSettingsTest.cpp
+            Tests/MinimapTest.cpp
             Tests/GitIgnoreTest.cpp
             Tests/ProjectSearchTest.cpp
             Tests/ProjectAgendaTest.cpp

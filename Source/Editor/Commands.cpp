@@ -477,6 +477,13 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           context.interactiveRequest = InteractiveRequest::ToggleProjectSidebar;
                       });
 
+    // Minimap widget follow-up: same "just set interactiveRequest" shape as
+    // toggle-project-sidebar just above.
+    registry.Register("toggle-minimap", "Show or hide the minimap (replacing/restoring the plain scrollbar).",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::ToggleMinimap;
+                      });
+
     // kill-buffer follow-up: the actual close-with-confirmation logic
     // already lives in BufferView (RequestCloseBuffer/CloseBufferNow),
     // previously reachable only via TabBar's own close-icon click -- this
@@ -1097,6 +1104,7 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("C-c v v"), "vcs-visit-result");
     keymap.Bind(ParseKeySequence("C-c C-r"), "project-replace");
     keymap.Bind(ParseKeySequence("C-c C-p"), "toggle-project-sidebar");
+    keymap.Bind(ParseKeySequence("C-c m"), "toggle-minimap");
     keymap.Bind(ParseKeySequence("C-x k"), "kill-buffer");
     keymap.Bind(ParseKeySequence("C-c a"), "org-agenda"); // real Org's own actual binding
     keymap.Bind(ParseKeySequence("C-c C-d"), "create-directory");

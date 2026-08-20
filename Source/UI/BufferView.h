@@ -40,6 +40,7 @@
 #include "Editor/Vcs/VcsProvider.h"
 #include "Editor/Vcs/VcsRunner.h"
 #include "EventLoop.h"
+#include "Minimap.h"
 #include "ProjectSidebar.h"
 #include "ScrollArrowButton.h"
 #include "ScrollBar.h"
@@ -95,6 +96,22 @@ class BufferView : public Widget {
     [[nodiscard]] std::size_t TopLine() const;
     void                      SetTopLine(std::size_t line);
     void                      SetScrollBar(ScrollBar* scrollBar);
+
+    // Minimap widget follow-up: registers the Minimap this pane's
+    // ScrollBar column has been replaced by (WindowManager keeps
+    // exactly one of the two active at a time) -- synced the same 3
+    // fields SetScrollBar's own target gets, every Paint() call. nullptr
+    // (the default) is a safe no-op, same "unset is a safe no-op"
+    // convention SetScrollBar/SetProjectSidebar already establish.
+    // scrollColumn is the sibling Widget (WindowManager::Pane's own
+    // scrollColumn_ container) whose Widget::active flag toggle-minimap
+    // must flip in lockstep opposition to minimap's -- BufferView has no
+    // other way to reach a Pane-level sibling it doesn't own, so it's
+    // handed the raw base-class pointer the same way projectSidebar_ is
+    // handed a raw ProjectSidebar*. Initial opposite-ness is the caller's
+    // responsibility (Pane seeds both from editor::MinimapEnabled() at
+    // construction); this only ever flips both, never forces a state.
+    void SetMinimap(Minimap* minimap, Widget* scrollColumn);
 
     // line-wrap follow-up: horizontal counterpart to TopLine()/SetTopLine(),
     // only ever meaningful for a buffer whose EffectiveWrapLines() is false
@@ -923,6 +940,8 @@ class BufferView : public Widget {
     ScrollArrowButton*         scrollUpArrow_   = nullptr; // see SetScrollArrows
     ScrollArrowButton*         scrollDownArrow_ = nullptr;
     ProjectSidebar*            projectSidebar_  = nullptr; // see SetProjectSidebar
+    Minimap*                   minimap_         = nullptr; // see SetMinimap
+    Widget*                    minimapScrollColumn_ = nullptr; // see SetMinimap
     editor::lsp::LspManager*   lspManager_      = nullptr; // see SetLspManager
     editor::tasks::TaskRunner* taskRunner_      = nullptr; // see SetTaskRunner
     editor::vcs::VcsRunner*    vcsRunner_       = nullptr; // see SetVcsRunner
