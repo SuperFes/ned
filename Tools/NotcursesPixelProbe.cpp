@@ -21,8 +21,10 @@
 // Reads one keypress, then exits and restores the terminal.
 //
 
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <thread>
 #include <vector>
 
 #include <notcurses/notcurses.h>
@@ -167,7 +169,30 @@ int main() {
     ncplane_putstr_yx(std_plane, y, 2, "Press any key to exit...");
 
     notcurses_render(nc); // render #5 -- final
-    Progress("render #5 done (final) -- waiting for a keypress");
+    Progress("render #5 done (final)");
+
+    // Drain any input that arrived before we got here -- the empirical
+    // finding this fixes: every terminal actually rendered successfully
+    // and ran to clean completion (confirmed via this probe's own stderr
+    // log), but three of four exited instantly without the user ever
+    // getting to look, only Konsole genuinely waited. The likely cause: a
+    // race between the terminal switching to raw mode and the Enter
+    // keystroke used to *launch* this program in the first place --
+    // already-typed input arriving just late enough to be delivered to
+    // this program instead of being consumed by the shell that ran it,
+    // and notcurses_get_blocking happily accepting it as "the" keypress.
+    // notcurses_get_nblock returns 0 immediately once nothing is pending;
+    // looping it (with a short sleep first, giving any in-flight bytes
+    // time to actually land) empties that queue before the real wait
+    // starts, so only an *intentional* keypress from here on counts.
+    int drained = 0;
+    std::this_thread::sleep_for(std::chrono::milliseconds(80));
+    for (ncinput stray; notcurses_get_nblock(nc, &stray) != 0;) {
+        ++drained;
+    }
+    char drainLine[64];
+    std::snprintf(drainLine, sizeof(drainLine), "drained %d stray input event(s), now waiting for real keypress", drained);
+    Progress(drainLine);
 
     ncinput ni;
     notcurses_get_blocking(nc, &ni);
