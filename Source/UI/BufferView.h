@@ -852,7 +852,7 @@ class BufferView : public Widget {
     // EnsureUnsavedChangeCache: every buffer gets the diagnostic gutter
     // column regardless of language, it's just empty when nothing's been
     // reported.
-    void               EnsureDiagnosticGutterCache() const;
+    void EnsureDiagnosticGutterCache() const;
     // VCS blame gutter: unlike EnsureDiagnosticGutterCache/EnsureFoldGutterCache,
     // this does NOT recompute blameLineInfo_ from anything -- there's no
     // cheap synchronous source to recompute it from (populating it means
@@ -864,7 +864,7 @@ class BufferView : public Widget {
     // edited or the active buffer changes) rather than trying to
     // resynthesize it -- showing a blank column is the honest answer, not
     // silently-wrong attribution against since-edited line numbers.
-    void EnsureBlameGutterCache() const;
+    void               EnsureBlameGutterCache() const;
     [[nodiscard]] bool IsLineHidden(std::size_t line) const;
     // `line` if already visible, else the first visible line >= line
     // (capped at limit).
@@ -896,6 +896,12 @@ class BufferView : public Widget {
     std::string&           statusMessage_;
     const editor::Mode&    mode_;
     const Theme&           theme_;
+
+    // diagnostics-UX follow-up: exactly what Paint()'s per-frame diagnostic
+    // echo last wrote into statusMessage_, so that poll only ever
+    // overwrites/clears its own message and never a real command result or
+    // prompt -- see the poll's own comment in Paint().
+    std::string autoDiagnosticMessage_;
 
     std::size_t topLine_ = 0; // first visible buffer line (0-indexed)
     // The buffer topLine_ was last validated against -- topLine_ itself is
@@ -934,18 +940,18 @@ class BufferView : public Widget {
     // Pane already constructed its Mode correctly for this same buffer.
     text::Buffer* modeSyncBuffer_ = nullptr;
 
-    std::size_t                dragAnchor_ = 0;            // point position at the last mouse press, for drag-selection
-    std::optional<std::string> debugMouseLogPath_;         // see LogMouseEvent
-    ScrollBar*                 scrollBar_       = nullptr; // see SetScrollBar
-    ScrollArrowButton*         scrollUpArrow_   = nullptr; // see SetScrollArrows
-    ScrollArrowButton*         scrollDownArrow_ = nullptr;
-    ProjectSidebar*            projectSidebar_  = nullptr; // see SetProjectSidebar
-    Minimap*                   minimap_         = nullptr; // see SetMinimap
+    std::size_t                dragAnchor_ = 0;                // point position at the last mouse press, for drag-selection
+    std::optional<std::string> debugMouseLogPath_;             // see LogMouseEvent
+    ScrollBar*                 scrollBar_           = nullptr; // see SetScrollBar
+    ScrollArrowButton*         scrollUpArrow_       = nullptr; // see SetScrollArrows
+    ScrollArrowButton*         scrollDownArrow_     = nullptr;
+    ProjectSidebar*            projectSidebar_      = nullptr; // see SetProjectSidebar
+    Minimap*                   minimap_             = nullptr; // see SetMinimap
     Widget*                    minimapScrollColumn_ = nullptr; // see SetMinimap
-    editor::lsp::LspManager*   lspManager_      = nullptr; // see SetLspManager
-    editor::tasks::TaskRunner* taskRunner_      = nullptr; // see SetTaskRunner
-    editor::vcs::VcsRunner*    vcsRunner_       = nullptr; // see SetVcsRunner
-    EventLoop*                 eventLoop_       = nullptr; // see SetEventLoop
+    editor::lsp::LspManager*   lspManager_          = nullptr; // see SetLspManager
+    editor::tasks::TaskRunner* taskRunner_          = nullptr; // see SetTaskRunner
+    editor::vcs::VcsRunner*    vcsRunner_           = nullptr; // see SetVcsRunner
+    EventLoop*                 eventLoop_           = nullptr; // see SetEventLoop
 
     InputMode                                inputMode_ = InputMode::Normal;
     std::optional<editor::IncrementalSearch> search_;
@@ -1167,9 +1173,9 @@ class BufferView : public Widget {
     // (0-indexed) line. blameGutterCacheBuffer_/blameGutterCacheContentGeneration_
     // record which buffer+generation blameLineInfo_ is valid for, so
     // EnsureBlameGutterCache can tell it's gone stale and clear it.
-    mutable text::Buffer*                                                      blameGutterCacheBuffer_            = nullptr;
-    mutable std::size_t                                                        blameGutterCacheContentGeneration_ = 0;
-    mutable std::vector<std::pair<std::size_t, editor::vcs::VcsBlameLine>>     blameLineInfo_;
+    mutable text::Buffer*                                                  blameGutterCacheBuffer_            = nullptr;
+    mutable std::size_t                                                    blameGutterCacheContentGeneration_ = 0;
+    mutable std::vector<std::pair<std::size_t, editor::vcs::VcsBlameLine>> blameLineInfo_;
 
     // Diff gutter markers follow-up: live-refreshing added/modified/removed
     // line indicators against HEAD. Unlike blameLineInfo_, this is NOT

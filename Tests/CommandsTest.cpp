@@ -1271,7 +1271,7 @@ TEST_CASE("lsp-show-diagnostic reports the message of a diagnostic covering poin
     std::string    message;
     context.message = &message;
 
-    fixture.buffer.InsertAtPoint("int x = 1;\n");
+    fixture.buffer.InsertAtPoint("int x = 1;\nint y = 2;\n");
     fixture.buffer.SetDiagnostics({
         ned::text::Buffer::Diagnostic{
             .startByte = 4, .endByte = 5, .severity = ned::text::Buffer::Diagnostic::Severity::Warning, .message = "unused variable x"},
@@ -1281,13 +1281,21 @@ TEST_CASE("lsp-show-diagnostic reports the message of a diagnostic covering poin
     registry.Invoke("lsp-show-diagnostic", context);
     REQUIRE(message == "unused variable x");
 
+    // diagnostics-UX follow-up: outside the span but on its line still
+    // reports it -- the gutter icon is a per-line signal, so this must be
+    // too.
     message.clear();
-    fixture.buffer.SetPoint(0); // well outside the diagnostic's range
+    fixture.buffer.SetPoint(0);
+    registry.Invoke("lsp-show-diagnostic", context);
+    REQUIRE(message == "unused variable x");
+
+    message.clear();
+    fixture.buffer.SetPoint(fixture.buffer.Content().LineToByteOffset(1)); // a different line entirely
     registry.Invoke("lsp-show-diagnostic", context);
     REQUIRE(message == "No diagnostic at point.");
 }
 
-TEST_CASE("lsp-show-diagnostic matches a zero-width diagnostic only exactly at its own offset", "[Commands]") {
+TEST_CASE("lsp-show-diagnostic counts additional diagnostics sharing the line", "[Commands]") {
     CommandRegistry registry;
     RegisterBuiltinCommands(registry);
 
@@ -1296,7 +1304,29 @@ TEST_CASE("lsp-show-diagnostic matches a zero-width diagnostic only exactly at i
     std::string    message;
     context.message = &message;
 
-    fixture.buffer.InsertAtPoint("abc\n");
+    fixture.buffer.InsertAtPoint("int x = 1;\n");
+    fixture.buffer.SetDiagnostics({
+        ned::text::Buffer::Diagnostic{
+            .startByte = 4, .endByte = 5, .severity = ned::text::Buffer::Diagnostic::Severity::Warning, .message = "unused variable x"},
+        ned::text::Buffer::Diagnostic{
+            .startByte = 8, .endByte = 9, .severity = ned::text::Buffer::Diagnostic::Severity::Hint, .message = "magic number"},
+    });
+
+    fixture.buffer.SetPoint(0); // on the line, inside neither span
+    registry.Invoke("lsp-show-diagnostic", context);
+    REQUIRE(message == "unused variable x (+1 more on this line)");
+}
+
+TEST_CASE("lsp-show-diagnostic matches a zero-width diagnostic at its offset, and via its line elsewhere", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    std::string    message;
+    context.message = &message;
+
+    fixture.buffer.InsertAtPoint("abc\ndef\n");
     fixture.buffer.SetDiagnostics({
         ned::text::Buffer::Diagnostic{
             .startByte = 2, .endByte = 2, .severity = ned::text::Buffer::Diagnostic::Severity::Hint, .message = "zero-width hint"},
@@ -1306,8 +1336,15 @@ TEST_CASE("lsp-show-diagnostic matches a zero-width diagnostic only exactly at i
     registry.Invoke("lsp-show-diagnostic", context);
     REQUIRE(message == "zero-width hint");
 
+    // diagnostics-UX follow-up: elsewhere on the same line now falls back to
+    // the line's diagnostic rather than reporting nothing.
     message.clear();
     fixture.buffer.SetPoint(3);
+    registry.Invoke("lsp-show-diagnostic", context);
+    REQUIRE(message == "zero-width hint");
+
+    message.clear();
+    fixture.buffer.SetPoint(fixture.buffer.Content().LineToByteOffset(1)); // a different line entirely
     registry.Invoke("lsp-show-diagnostic", context);
     REQUIRE(message == "No diagnostic at point.");
 }

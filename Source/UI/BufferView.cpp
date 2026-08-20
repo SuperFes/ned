@@ -1295,6 +1295,66 @@ void BufferView::Paint(Canvas c) {
         lspManager_->AcknowledgeLogEntry();
     }
 
+    // diagnostics-UX follow-up: live echo of the diagnostic on point's own
+    // line, updating as point moves, so reading an error never requires a
+    // command at all (lsp-show-diagnostic stays for the full/multi-message
+    // case). Same once-per-frame poll idiom as the LSP-log check above.
+    // autoDiagnosticMessage_ remembers exactly what this poll last wrote so
+    // it only ever overwrites/clears its OWN message -- a real command
+    // result, prompt text, or any other writer always wins, and leaving the
+    // line takes the echo away instead of it lingering like a normal status
+    // message would.
+    if (inputMode_ == InputMode::Normal) {
+        const std::size_t pointLineStart = content.LineToByteOffset(pointLine);
+        const std::size_t pointLineEnd =
+            (pointLine + 1 < content.LineCount()) ? content.LineToByteOffset(pointLine + 1) : content.ByteLength();
+        const text::Buffer::Diagnostic* firstOnLine = nullptr;
+        std::size_t                     extraOnLine = 0;
+        for (const text::Buffer::Diagnostic& diagnostic : buffer.Diagnostics()) {
+            if (diagnostic.startByte >= pointLineStart && diagnostic.startByte < pointLineEnd) {
+                if (firstOnLine == nullptr) {
+                    firstOnLine = &diagnostic;
+                }
+                else {
+                    ++extraOnLine;
+                }
+            }
+        }
+        std::string autoMessage;
+        if (firstOnLine != nullptr) {
+            switch (firstOnLine->severity) {
+                case text::Buffer::Diagnostic::Severity::Error:
+                    autoMessage = "Error: ";
+                    break;
+                case text::Buffer::Diagnostic::Severity::Warning:
+                    autoMessage = "Warning: ";
+                    break;
+                case text::Buffer::Diagnostic::Severity::Information:
+                    autoMessage = "Info: ";
+                    break;
+                case text::Buffer::Diagnostic::Severity::Hint:
+                    autoMessage = "Hint: ";
+                    break;
+            }
+            autoMessage += firstOnLine->message;
+            if (extraOnLine > 0) {
+                autoMessage += " (+" + std::to_string(extraOnLine) + " more on this line)";
+            }
+        }
+        if (!autoMessage.empty()) {
+            if (statusMessage_.empty() || statusMessage_ == autoDiagnosticMessage_) {
+                statusMessage_         = autoMessage;
+                autoDiagnosticMessage_ = autoMessage;
+            }
+        }
+        else if (!autoDiagnosticMessage_.empty()) {
+            if (statusMessage_ == autoDiagnosticMessage_) {
+                statusMessage_.clear();
+            }
+            autoDiagnosticMessage_.clear();
+        }
+    }
+
     // depth-aware-fold-gutter follow-up: recomputed once per Paint() call
     // (not per row, and not rebuilt from scratch even across separate
     // Paint() calls when neither content nor fold state has changed) -- see
@@ -1366,6 +1426,12 @@ void BufferView::Paint(Canvas c) {
     // feeds the subtle background tint applied per character below
     // (Removed has no line to tint, only Added/Modified ever populate this).
     std::optional<DiffLineKind> currentLineDiffTint;
+    // diagnostics-UX follow-up: the diagnostic byte spans overlapping the
+    // current line, feeding the per-character underline below -- same
+    // "compute once per line" shape as everything above. A zero-length
+    // diagnostic span (some servers report those) is widened to one byte so
+    // it still underlines the cell it points at instead of vanishing.
+    std::vector<std::pair<std::size_t, std::size_t>> currentLineDiagnosticSpans;
     for (int row = 0; row < c.size().height; ++row) {
         for (int col = 0; col < c.size().width; ++col) {
             Cell& cell     = c[{.x = col, .y = row}];
@@ -1390,6 +1456,13 @@ void BufferView::Paint(Canvas c) {
             if (segmentIndex == 0) {
                 currentLineSpans = SpansForLine(highlightSpans, lineStart, lineEnd);
                 currentLineLinks = LinksForLine(linkCache_, lineStart, lineEnd, point);
+                currentLineDiagnosticSpans.clear();
+                for (const text::Buffer::Diagnostic& diagnostic : buffer.Diagnostics()) {
+                    const std::size_t spanEnd = std::max(diagnostic.endByte, diagnostic.startByte + 1);
+                    if (diagnostic.startByte < lineEnd && spanEnd > lineStart) {
+                        currentLineDiagnosticSpans.emplace_back(diagnostic.startByte, spanEnd);
+                    }
+                }
                 currentLineDiffTint.reset();
                 if (diffColumnWidth > 0) {
                     const auto diffIt = std::lower_bound(diffLineKinds_.begin(), diffLineKinds_.end(), line,
@@ -1780,6 +1853,17 @@ void BufferView::Paint(Canvas c) {
 
                 const editor::SyntaxClass cls   = ClassAtOffset(lineSpans, offset);
                 Brush                     brush = theme_.BrushFor(cls);
+                // diagnostics-UX follow-up: underline exactly the span the
+                // server flagged -- a non-disruptive "the problem is HERE"
+                // cue on top of whatever syntax color the cell already has
+                // (foreground deliberately untouched: recoloring would fight
+                // the highlighting the way the first diff-tint attempt did).
+                for (const auto& [spanStart, spanEnd] : currentLineDiagnosticSpans) {
+                    if (offset >= spanStart && offset < spanEnd) {
+                        brush.underlined = true;
+                        break;
+                    }
+                }
                 if (InIsearchMatch(offset)) {
                     brush.background = theme_.isearchMatchBackground;
                 }

@@ -1070,6 +1070,81 @@ TEST_CASE("The diagnostics gutter shows the most severe of two diagnostics shari
     REQUIRE(screen.PixelAt(1, 0).foreground_color == fixture.theme.diagnosticError);
 }
 
+TEST_CASE("A diagnostic's own span is underlined in the content area", "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("int x = 1;");
+    fixture.buffer.SetDiagnostics({
+        ned::text::Buffer::Diagnostic{
+            .startByte = 4, .endByte = 5, .severity = ned::text::Buffer::Diagnostic::Severity::Warning, .message = "unused variable x"},
+    });
+    fixture.buffer.SetPoint(0);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 0});
+
+    ned::ui::Screen screen = ned::ui::Screen(20, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 0});
+    view.Paint(canvas);
+
+    const int gutter = GutterWidth(1);
+    REQUIRE(screen.PixelAt(gutter + 4, 0).character == "x");
+    REQUIRE(screen.PixelAt(gutter + 4, 0).underlined);       // the flagged byte
+    REQUIRE_FALSE(screen.PixelAt(gutter + 3, 0).underlined); // its neighbors are untouched
+    REQUIRE_FALSE(screen.PixelAt(gutter + 5, 0).underlined);
+}
+
+TEST_CASE("A zero-width diagnostic still underlines the cell it points at", "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("abc");
+    fixture.buffer.SetDiagnostics({
+        ned::text::Buffer::Diagnostic{
+            .startByte = 1, .endByte = 1, .severity = ned::text::Buffer::Diagnostic::Severity::Error, .message = "boom"},
+    });
+    fixture.buffer.SetPoint(0);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 0});
+
+    ned::ui::Screen screen = ned::ui::Screen(20, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 0});
+    view.Paint(canvas);
+
+    const int gutter = GutterWidth(1);
+    REQUIRE(screen.PixelAt(gutter + 1, 0).underlined);
+    REQUIRE_FALSE(screen.PixelAt(gutter + 0, 0).underlined);
+}
+
+TEST_CASE("Paint echoes the diagnostic on point's line and clears it after leaving the line", "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("one\ntwo\n");
+    fixture.buffer.SetDiagnostics({
+        ned::text::Buffer::Diagnostic{.startByte = fixture.buffer.Content().LineToByteOffset(1),
+                                      .endByte   = fixture.buffer.Content().LineToByteOffset(1) + 3,
+                                      .severity  = ned::text::Buffer::Diagnostic::Severity::Error,
+                                      .message   = "boom"},
+    });
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 2});
+    ned::ui::Screen screen = ned::ui::Screen(20, 3);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 2});
+
+    fixture.buffer.SetPoint(fixture.buffer.Content().LineToByteOffset(1));
+    view.Paint(canvas);
+    REQUIRE(fixture.statusMessage == "Error: boom");
+
+    // Moving off the line clears the auto-echo (but only its own message).
+    fixture.buffer.SetPoint(0);
+    view.Paint(canvas);
+    REQUIRE(fixture.statusMessage.empty());
+
+    // A real message already on display is never clobbered by the echo.
+    fixture.statusMessage = "important result";
+    fixture.buffer.SetPoint(fixture.buffer.Content().LineToByteOffset(1));
+    view.Paint(canvas);
+    REQUIRE(fixture.statusMessage == "important result");
+}
+
 TEST_CASE("The diagnostics gutter uses a distinct glyph per severity", "[BufferView]") {
     Fixture fixture;
     fixture.buffer.InsertAtPoint("one\ntwo\nthree\nfour");
