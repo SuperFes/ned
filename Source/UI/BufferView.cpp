@@ -801,10 +801,14 @@ namespace {
     }
 
     // Diff gutter markers follow-up: how much of an Added/Modified line's
-    // background gets tinted toward its accent color -- low enough to stay
-    // a genuine "wash," not a hard block that would fight the underlying
-    // syntax highlighting for attention.
-    constexpr float kDiffLineTintAlpha = 0.14f;
+    // background gets tinted toward its accent color. Only ever actually
+    // applied against a real, concrete theme background now (see this
+    // constant's own use site for why Color::Default -- DarkTheme()'s own
+    // default -- skips the wash entirely instead of blending against a
+    // meaningless gray approximation); 0.30, per explicit user request
+    // after the original 0.14 (against that wrong gray base) read as
+    // "wipes out the text."
+    constexpr float kDiffLineTintAlpha = 0.30f;
 
 } // namespace
 
@@ -1728,21 +1732,36 @@ void BufferView::Paint(Canvas c) {
                 else if (InSelection(offset)) {
                     brush.background = theme_.selectionBackground;
                 }
-                else if (currentLineDiffTint) {
+                else if (currentLineDiffTint && theme_.background.kind != Color::Kind::Default) {
                     // Diff gutter markers follow-up: a subtle, low-alpha
                     // wash across the whole changed line -- the "semi-
                     // transparent background" the user explicitly asked
                     // for. There's no real alpha channel in this Cell
                     // model, so this simulates one the same way blame's
                     // age-coloring already does: Color::Interpolate blends
-                    // a small percentage of an accent color into the
-                    // theme's own background, producing a genuine RGB
-                    // result rather than a hard-edged solid fill. Skipped
-                    // entirely when selection/isearch also apply (checked
-                    // above) -- a three-way blend there would read as
-                    // muddy, not fancy.
-                    const Color accent  = (currentLineDiffTint == DiffLineKind::Added) ? Color::BrightGreen : Color::BrightBlue;
-                    brush.background    = Color::Interpolate(kDiffLineTintAlpha, theme_.background, accent);
+                    // a percentage of an accent color into the theme's own
+                    // background, producing a genuine RGB result rather
+                    // than a hard-edged solid fill. Skipped entirely when
+                    // selection/isearch also apply (checked above) -- a
+                    // three-way blend there would read as muddy, not
+                    // fancy. Also skipped outright when theme_.background
+                    // is Color::Default (a transparent/pass-through
+                    // terminal background, e.g. `ned --detect-theme
+                    // --transparent`) -- Color::Interpolate always
+                    // produces an opaque TrueColor result, and Default has
+                    // no real RGB to blend from (ToRgb falls back to a
+                    // fixed mid-gray approximation), so blending against
+                    // it doesn't produce a *tinted* version of the user's
+                    // actual (unknown) terminal background -- it silently
+                    // replaces real transparency with an unrelated, often
+                    // much lighter, opaque gray block, which is a real,
+                    // reported bug ("wipes out the text"), not a case
+                    // where a lower alpha alone would have helped. The
+                    // gutter swatch (BufferView.cpp's own earlier block)
+                    // still shows for a Default-background theme; only
+                    // this whole-line wash is skipped.
+                    const Color accent = (currentLineDiffTint == DiffLineKind::Added) ? Color::BrightGreen : Color::BrightBlue;
+                    brush.background   = Color::Interpolate(kDiffLineTintAlpha, theme_.background, accent);
                 }
 
                 if (decoded.codepoint == U'\t') {
