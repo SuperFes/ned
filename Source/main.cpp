@@ -83,8 +83,6 @@ int RunDetectTheme(int argc, char** argv) {
     const ned::ui::DetectedColors detected = ned::ui::ProbeTerminalColors();
     ned::ui::Theme                theme    = ned::ui::BuildDetectedTheme(detected, ned::ui::DarkTheme());
 
-	// A new line
-
     if (transparent) {
         theme.background          = ned::ui::Color::Default;
         theme.echoArea.background = ned::ui::Color::Default;
