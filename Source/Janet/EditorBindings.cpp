@@ -19,7 +19,9 @@
 #include "Editor/SyntaxTheme.h"
 #include "Editor/TabWidth.h"
 #include "Editor/Tasks/TaskConfig.h"
+#include "Editor/Vcs/VcsProviderRegistry.h"
 #include "Editor/WrapOverrides.h"
+#include "JanetVcsProvider.h"
 #include "Value.h"
 
 namespace ned::janet {
@@ -271,6 +273,26 @@ namespace {
         return editor::SyntaxClassNames();
     }
 
+    // Registers a VCS-agnostic plugin: detectFn(root) -> bool, blameArgvFn(path)
+    // -> [argv...], parseBlameFn(stdout) -> [{:hash :author :date :summary} ...],
+    // logArgvFn/parseLogFn the same shape for `git log`-style history. Each
+    // callback is bound into the environment by JanetVcsProvider's own
+    // constructor (janet_def, not RootedValue -- see that class's header
+    // comment). Re-registering name overwrites the previous provider, matching
+    // NedRegisterCommand's own convention. Clears the provider-resolution cache
+    // afterward so a root checked before this registration (and resolved to no
+    // provider, or a different one) gets a fresh answer.
+    void NedVcsRegisterProvider(std::string name, Janet detectFn, Janet blameArgvFn, Janet parseBlameFn,
+                                Janet logArgvFn, Janet parseLogFn) {
+        if (!g_env) {
+            throw std::runtime_error("ned: janet environment not installed");
+        }
+        auto provider = std::make_unique<JanetVcsProvider>(g_env, name, detectFn, blameArgvFn, parseBlameFn, logArgvFn,
+                                                            parseLogFn);
+        editor::vcs::RegisterProvider(name, std::move(provider));
+        editor::vcs::ClearProviderCache();
+    }
+
 } // namespace
 
 void InstallEditorBindings(Environment& env) {
@@ -387,6 +409,16 @@ void InstallEditorBindings(Environment& env) {
     env.Register<&NedSyntaxStrikethrough>(
         "ned", "syntax-strikethrough", "The syntax class's overridden strikethrough trait, or nil if unset.");
     env.Register<&NedSyntaxClasses>("ned", "syntax-classes", "Every valid syntax class name, sorted.");
+
+    env.Register<&NedVcsRegisterProvider>(
+        "ned", "vcs-register-provider",
+        "Register a VCS-agnostic plugin: (name detect-fn blame-argv-fn parse-blame-fn log-argv-fn parse-log-fn). "
+        "detect-fn(root) returns true if root is a repository this plugin handles; blame-argv-fn(path)/"
+        "log-argv-fn(path) each return an argv array/tuple of strings for the external command to run; "
+        "parse-blame-fn(stdout)/parse-log-fn(stdout) each return an array of tables with :hash :author :date "
+        ":summary keys, one per source line (blame) or commit (log). The actual subprocess is run by ned itself, "
+        "never by the plugin -- these callbacks only build argv and parse already-captured output. Re-registering "
+        "name replaces the previous provider.");
 }
 
 } // namespace ned::janet

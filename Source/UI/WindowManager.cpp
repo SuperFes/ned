@@ -39,6 +39,7 @@ Pane::Pane(text::Buffer& buffer, text::KillRing& killRing, editor::RegisterTable
            text::BufferList& bufferList, const editor::CommandRegistry& registry, const editor::Keymap& janetKeymap,
            const editor::Keymap& globalKeymap, editor::Mode mode, std::string& statusMessage, const Theme& theme,
            ProjectSidebar* projectSidebar, editor::lsp::LspManager* lspManager, editor::tasks::TaskRunner* taskRunner,
+           editor::vcs::VcsRunner* vcsRunner,
            std::function<void(editor::InteractiveRequest)> onWindowRequest,
            std::function<void(text::Buffer&)>              onBufferClosed) : activeBuffer_(buffer), mode_(std::move(mode)),
                                                                 dispatcher_(registry, editor::KeymapStack({&janetKeymap, &mode_.keymap, &globalKeymap})),
@@ -69,6 +70,7 @@ Pane::Pane(text::Buffer& buffer, text::KillRing& killRing, editor::RegisterTable
     bufferView_->SetProjectSidebar(projectSidebar);
     bufferView_->SetLspManager(lspManager);
     bufferView_->SetTaskRunner(taskRunner);
+    bufferView_->SetVcsRunner(vcsRunner);
     bufferView_->SetOnWindowRequest(std::move(onWindowRequest));
     bufferView_->SetOnBufferClosed(std::move(onBufferClosed));
     // per-buffer-mode follow-up: Mode is a property of the buffer being
@@ -264,7 +266,7 @@ WindowManager::WindowManager(text::Buffer& initialBuffer, text::KillRing& killRi
 std::unique_ptr<Pane> WindowManager::MakePane(text::Buffer& buffer, editor::Mode mode) {
     auto pane = std::make_unique<Pane>(
         buffer, killRing_, registers_, bufferList_, registry_, janetKeymap_, globalKeymap_, std::move(mode),
-        statusMessage_, theme_, projectSidebar_, lspManager_, taskRunner_,
+        statusMessage_, theme_, projectSidebar_, lspManager_, taskRunner_, vcsRunner_,
         [this](editor::InteractiveRequest request) { HandleWindowRequest(request); },
         [this](text::Buffer& closedBuffer) { HandleBufferClosed(closedBuffer); });
     pane->SetEventLoop(eventLoop_);
@@ -289,6 +291,13 @@ void WindowManager::SetTaskRunner(editor::tasks::TaskRunner* taskRunner) {
     taskRunner_ = taskRunner;
     for (Pane* pane : Leaves()) {
         pane->Buffer().SetTaskRunner(taskRunner);
+    }
+}
+
+void WindowManager::SetVcsRunner(editor::vcs::VcsRunner* vcsRunner) {
+    vcsRunner_ = vcsRunner;
+    for (Pane* pane : Leaves()) {
+        pane->Buffer().SetVcsRunner(vcsRunner);
     }
 }
 

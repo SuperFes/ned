@@ -193,7 +193,35 @@ enum class InteractiveRequest { None,
                                 // Editor/Tasks/TaskRunner.h for the actual spawn/stream/cancel
                                 // logic.
                                 RunTask,
-                                CancelTask };
+                                CancelTask,
+                                // VCS blame gutter follow-up: one-shot direct actions, same
+                                // shape as ProjectAgenda/LspShowLog. VcsShowBlame is the
+                                // primary, inline-in-place one: populates the gutter for the
+                                // *current* buffer (BufferView::RequestBlameForCurrentBuffer)
+                                // without switching away from it -- revised after the original
+                                // v1 default (jumping straight to a separate *vcs blame*
+                                // buffer) was tried and reported back as disconnected from the
+                                // code actually being read, not useful as the default action.
+                                // VcsBlameDetailAtPoint reads already-loaded gutter data (no
+                                // new request) and reports the full author/date/summary for
+                                // point's line via statusMessage_ -- the "on request" detail
+                                // view the gutter's own fixed-width short-hash column can't fit.
+                                // VcsBlameBuffer/VcsShowLog are the full-history views, each
+                                // switching to a synthesized "*vcs blame <file>*"/"*vcs log
+                                // <file>*" buffer once the (async) result arrives -- still
+                                // available, just no longer what a bare "show blame" reaches
+                                // for by default. See Editor/Vcs/VcsRunner.h for the actual
+                                // spawn/parse logic behind all of these.
+                                VcsShowBlame,
+                                VcsBlameDetailAtPoint,
+                                VcsBlameBuffer,
+                                VcsShowLog,
+                                // Same shape as VisitSearchResult -- parses a "path:line:"
+                                // prefix off the current line (shared via BufferView's private
+                                // JumpToPathLine helper) and jumps there; a silent no-op on a
+                                // non-matching line (e.g. a *vcs log* buffer, which has no
+                                // per-line source location) or one that doesn't match.
+                                VisitVcsResult };
 
 // Everything a command implementation might need. Built fresh per invocation
 // from live references -- never stored, so there's no lifetime concern beyond

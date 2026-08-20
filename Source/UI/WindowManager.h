@@ -42,6 +42,7 @@
 #include "Editor/Mode.h"
 #include "Editor/Register.h"
 #include "Editor/Tasks/TaskRunner.h"
+#include "Editor/Vcs/VcsRunner.h"
 #include "EventLoop.h"
 #include "Layout.h"
 #include "ModeLine.h"
@@ -88,6 +89,7 @@ class Pane {
          text::BufferList& bufferList, const editor::CommandRegistry& registry, const editor::Keymap& janetKeymap,
          const editor::Keymap& globalKeymap, editor::Mode mode, std::string& statusMessage, const Theme& theme,
          ProjectSidebar* projectSidebar, editor::lsp::LspManager* lspManager, editor::tasks::TaskRunner* taskRunner,
+         editor::vcs::VcsRunner* vcsRunner,
          std::function<void(editor::InteractiveRequest)> onWindowRequest,
          std::function<void(text::Buffer&)>              onBufferClosed);
 
@@ -204,6 +206,8 @@ class WindowManager {
     // task-runner follow-up: same "forwarded to every pane, present and
     // future" shape as SetProjectSidebar/SetLspManager above.
     void SetTaskRunner(editor::tasks::TaskRunner* taskRunner);
+
+    void SetVcsRunner(editor::vcs::VcsRunner* vcsRunner);
 
     // FTXUI -> Notcurses migration: forwarded to every pane, present and
     // future, same shape as SetProjectSidebar/SetLspManager above -- see
@@ -378,6 +382,7 @@ class WindowManager {
     ProjectSidebar*                projectSidebar_ = nullptr;
     editor::lsp::LspManager*       lspManager_     = nullptr;
     editor::tasks::TaskRunner*     taskRunner_     = nullptr;
+    editor::vcs::VcsRunner*        vcsRunner_      = nullptr;
     EventLoop*                     eventLoop_      = nullptr; // see SetEventLoop
 
     std::unique_ptr<WindowNode> root_;

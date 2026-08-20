@@ -717,6 +717,42 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
         context.interactiveRequest = InteractiveRequest::CancelTask;
     });
 
+    // VCS blame gutter follow-up: same "just set interactiveRequest" shape
+    // as lsp-show-log/run-task above -- BufferView owns the actual
+    // VcsRunner request. vcs-show-blame stays on the current buffer,
+    // populating only the gutter -- the primary, "inline where you're
+    // already reading" action.
+    registry.Register("vcs-show-blame", "Show per-line commit attribution for the current file, inline in the gutter.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::VcsShowBlame;
+                      });
+    // Reads already-loaded gutter data for point's current line -- no new
+    // request -- and reports the full author/date/summary via the status
+    // line, since the gutter's own fixed-width column only ever fits a
+    // short hash.
+    registry.Register("vcs-blame-detail-at-point", "Show full commit info (author/date/summary) for the blamed line at point.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::VcsBlameDetailAtPoint;
+                      });
+    // The full-history views -- M-x reachable only, same "no dedicated
+    // binding needed" precedent lsp-show-log established, now that
+    // vcs-show-blame's own default no longer switches buffers.
+    registry.Register("vcs-blame-buffer", "Show per-line commit attribution for the current file in a *vcs blame* buffer.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::VcsBlameBuffer;
+                      });
+    registry.Register("vcs-show-log", "Show commit history for the current file in a *vcs log* buffer.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::VcsShowLog;
+                      });
+    // A no-op everywhere except a *vcs blame* results buffer -- safe to bind
+    // globally, same convention project-search-visit-result already
+    // established.
+    registry.Register("vcs-visit-result", "Jump to the file:line under point in a *vcs blame* buffer.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::VisitVcsResult;
+                      });
+
     // Org's three editing commands act directly on context.buffer, unlike
     // the interactiveRequest-routed commands above (rectangle/register/
     // narrowing) -- those need state (RectangleClipboard, RegisterTable, or
@@ -1052,6 +1088,13 @@ Keymap BuildDefaultGlobalKeymap() {
     // action worth a direct key).
     keymap.Bind(ParseKeySequence("C-c C-M-b"), "cancel-task");
     keymap.Bind(ParseKeySequence("C-c C-v"), "project-search-visit-result");
+    // VCS blame gutter follow-up: "C-c v" prefix, mirroring "C-c C-b"/
+    // "C-c C-M-b" run-task/cancel-task's own choice of an otherwise-unused
+    // letter+prefix combination.
+    keymap.Bind(ParseKeySequence("C-c v b"), "vcs-show-blame");
+    keymap.Bind(ParseKeySequence("C-c v i"), "vcs-blame-detail-at-point"); // "i" for info, next to "b"
+    keymap.Bind(ParseKeySequence("C-c v l"), "vcs-show-log");
+    keymap.Bind(ParseKeySequence("C-c v v"), "vcs-visit-result");
     keymap.Bind(ParseKeySequence("C-c C-r"), "project-replace");
     keymap.Bind(ParseKeySequence("C-c C-p"), "toggle-project-sidebar");
     keymap.Bind(ParseKeySequence("C-x k"), "kill-buffer");
