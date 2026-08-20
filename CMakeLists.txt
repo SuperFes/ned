@@ -427,6 +427,7 @@ if (NED_BUILD_TESTS)
             Tests/KeyTranslationTest.cpp
             Tests/BufferViewTest.cpp
             Tests/BufferViewBlameGutterTest.cpp
+            Tests/BufferViewDiffGutterTest.cpp
             Tests/WindowManagerTest.cpp
             Tests/ModeLineTest.cpp
             Tests/EchoAreaTest.cpp

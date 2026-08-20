@@ -275,20 +275,23 @@ namespace {
 
     // Registers a VCS-agnostic plugin: detectFn(root) -> bool, blameArgvFn(path)
     // -> [argv...], parseBlameFn(stdout) -> [{:hash :author :date :summary} ...],
-    // logArgvFn/parseLogFn the same shape for `git log`-style history. Each
-    // callback is bound into the environment by JanetVcsProvider's own
-    // constructor (janet_def, not RootedValue -- see that class's header
-    // comment). Re-registering name overwrites the previous provider, matching
-    // NedRegisterCommand's own convention. Clears the provider-resolution cache
-    // afterward so a root checked before this registration (and resolved to no
-    // provider, or a different one) gets a fresh answer.
+    // logArgvFn/parseLogFn the same shape for `git log`-style history,
+    // diffArgvFn/parseDiffFn the same shape again for `git diff`-style hunks
+    // (parseDiffFn returns [{:old-start :old-count :new-start :new-count} ...],
+    // diff-gutter follow-up). Each callback is bound into the environment by
+    // JanetVcsProvider's own constructor (janet_def, not RootedValue -- see
+    // that class's header comment). Re-registering name overwrites the
+    // previous provider, matching NedRegisterCommand's own convention.
+    // Clears the provider-resolution cache afterward so a root checked
+    // before this registration (and resolved to no provider, or a
+    // different one) gets a fresh answer.
     void NedVcsRegisterProvider(std::string name, Janet detectFn, Janet blameArgvFn, Janet parseBlameFn,
-                                Janet logArgvFn, Janet parseLogFn) {
+                                Janet logArgvFn, Janet parseLogFn, Janet diffArgvFn, Janet parseDiffFn) {
         if (!g_env) {
             throw std::runtime_error("ned: janet environment not installed");
         }
         auto provider = std::make_unique<JanetVcsProvider>(g_env, name, detectFn, blameArgvFn, parseBlameFn, logArgvFn,
-                                                            parseLogFn);
+                                                            parseLogFn, diffArgvFn, parseDiffFn);
         editor::vcs::RegisterProvider(name, std::move(provider));
         editor::vcs::ClearProviderCache();
     }
@@ -412,13 +415,14 @@ void InstallEditorBindings(Environment& env) {
 
     env.Register<&NedVcsRegisterProvider>(
         "ned", "vcs-register-provider",
-        "Register a VCS-agnostic plugin: (name detect-fn blame-argv-fn parse-blame-fn log-argv-fn parse-log-fn). "
-        "detect-fn(root) returns true if root is a repository this plugin handles; blame-argv-fn(path)/"
-        "log-argv-fn(path) each return an argv array/tuple of strings for the external command to run; "
-        "parse-blame-fn(stdout)/parse-log-fn(stdout) each return an array of tables with :hash :author :date "
-        ":summary keys, one per source line (blame) or commit (log). The actual subprocess is run by ned itself, "
-        "never by the plugin -- these callbacks only build argv and parse already-captured output. Re-registering "
-        "name replaces the previous provider.");
+        "Register a VCS-agnostic plugin: (name detect-fn blame-argv-fn parse-blame-fn log-argv-fn parse-log-fn "
+        "diff-argv-fn parse-diff-fn). detect-fn(root) returns true if root is a repository this plugin handles; "
+        "blame-argv-fn(path)/log-argv-fn(path)/diff-argv-fn(path) each return an argv array/tuple of strings for "
+        "the external command to run; parse-blame-fn(stdout)/parse-log-fn(stdout) each return an array of tables "
+        "with :hash :author :date :summary keys, one per source line (blame) or commit (log); parse-diff-fn(stdout) "
+        "returns an array of tables with :old-start :old-count :new-start :new-count keys, one per changed hunk. "
+        "The actual subprocess is run by ned itself, never by the plugin -- these callbacks only build argv and "
+        "parse already-captured output. Re-registering name replaces the previous provider.");
 }
 
 } // namespace ned::janet

@@ -15,12 +15,12 @@
 
 namespace ned::janet {
 
-// A plugin supplies five callbacks (detect, blame-argv, parse-blame,
-// log-argv, parse-log), each bound into env under a generated name via
-// janet_def and invoked later through janet_dostring -- the same
-// "janet_def + janet_dostring, never RootedValue + janet_pcall" pattern
-// NedRegisterCommand (EditorBindings.cpp) already established, for the
-// same reason: this Janet build (1.32.1) corrupts state when a rooted
+// A plugin supplies seven callbacks (detect, blame-argv, parse-blame,
+// log-argv, parse-log, diff-argv, parse-diff), each bound into env under a
+// generated name via janet_def and invoked later through janet_dostring --
+// the same "janet_def + janet_dostring, never RootedValue + janet_pcall"
+// pattern NedRegisterCommand (EditorBindings.cpp) already established, for
+// the same reason: this Janet build (1.32.1) corrupts state when a rooted
 // value is later invoked via janet_pcall (see Value.h's RootedValue
 // CAUTION comment).
 //
@@ -32,7 +32,7 @@ namespace ned::janet {
 class JanetVcsProvider : public editor::vcs::VcsProvider {
   public:
     JanetVcsProvider(JanetTable* env, std::string name, Janet detectFn, Janet blameArgvFn, Janet parseBlameFn,
-                      Janet logArgvFn, Janet parseLogFn);
+                      Janet logArgvFn, Janet parseLogFn, Janet diffArgvFn, Janet parseDiffFn);
 
     [[nodiscard]] bool Detect(const std::filesystem::path& root) const override;
 
@@ -41,6 +41,9 @@ class JanetVcsProvider : public editor::vcs::VcsProvider {
 
     [[nodiscard]] editor::vcs::VcsCommandSpec LogArgv(const std::filesystem::path& path) const override;
     [[nodiscard]] std::vector<editor::vcs::VcsLogEntry> ParseLog(const std::string& stdout_) const override;
+
+    [[nodiscard]] editor::vcs::VcsCommandSpec DiffArgv(const std::filesystem::path& path) const override;
+    [[nodiscard]] std::vector<editor::vcs::VcsDiffHunk> ParseDiff(const std::string& stdout_) const override;
 
   private:
     // Binds arg as a global Janet string under a generated temp name and
@@ -58,6 +61,8 @@ class JanetVcsProvider : public editor::vcs::VcsProvider {
     std::string parseBlameName_;
     std::string logArgvName_;
     std::string parseLogName_;
+    std::string diffArgvName_;
+    std::string parseDiffName_;
 };
 
 } // namespace ned::janet

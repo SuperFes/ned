@@ -10,6 +10,7 @@ using ned::editor::vcs::ClearRegistry;
 using ned::editor::vcs::RegisterProvider;
 using ned::editor::vcs::VcsBlameLine;
 using ned::editor::vcs::VcsCommandSpec;
+using ned::editor::vcs::VcsDiffHunk;
 using ned::editor::vcs::VcsLogEntry;
 using ned::editor::vcs::VcsProvider;
 
@@ -28,6 +29,8 @@ class FakeProvider : public VcsProvider {
     [[nodiscard]] std::vector<VcsBlameLine> ParseBlame(const std::string&) const override { return {}; }
     [[nodiscard]] VcsCommandSpec LogArgv(const std::filesystem::path&) const override { return {}; }
     [[nodiscard]] std::vector<VcsLogEntry> ParseLog(const std::string&) const override { return {}; }
+    [[nodiscard]] VcsCommandSpec DiffArgv(const std::filesystem::path&) const override { return {}; }
+    [[nodiscard]] std::vector<VcsDiffHunk> ParseDiff(const std::string&) const override { return {}; }
 
   private:
     bool matches_;

@@ -116,4 +116,22 @@ TEST_CASE("bundled git plugin blames a real, minimal temp git repo end to end", 
     REQUIRE(logEntries.size() == 1);
     REQUIRE(logEntries[0].author == "Ned Test");
     REQUIRE(logEntries[0].summary == "initial commit");
+
+    // Diff gutter follow-up: modify the tracked file (uncommitted) and
+    // confirm the real `git diff -U0` hunk header parses correctly end to
+    // end -- a single-line modification, "@@ -1 +1 @@" (no comma on either
+    // side, the trickiest of the three hunk-header shapes to parse).
+    { std::ofstream(filePath) << "hello world, changed\n"; }
+
+    const auto diffSpec = provider->DiffArgv(filePath);
+    REQUIRE_FALSE(diffSpec.argv.empty());
+
+    const std::string diffOutput = RunToCompletion(diffSpec.argv);
+    const auto        hunks      = provider->ParseDiff(diffOutput);
+
+    REQUIRE(hunks.size() == 1);
+    REQUIRE(hunks[0].oldStart == 1);
+    REQUIRE(hunks[0].oldCount == 1);
+    REQUIRE(hunks[0].newStart == 1);
+    REQUIRE(hunks[0].newCount == 1);
 }

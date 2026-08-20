@@ -295,14 +295,58 @@ each is, not by priority.
         `vcs-show-log` (`C-c v l`) and `vcs-visit-result` (`C-c v v`, reusing
         `VisitSearchResult`'s exact `path:line:` parsing via a new shared
         `JumpToPathLine` helper) round out the multibuffer half.
-        Still explicitly out of scope, reserved for later: `status`/`diff`/`stage`/
-        `unstage`/`commit`/`branch` (named in `VcsProvider.h` as comments, no real
-        methods yet), any diff-gutter change markers, and a full historical multibuffer
-        beyond one synthesized buffer per query result (the fuller "Multibuffers" wishlist
-        entry below is still its own, larger, unscoped thing). The "generalizable past
-        version control" framing (cloud-provider CLIs, Terraform, Docker via the same
-        two-callback-per-operation plugin shape) is unchanged and still just a framing,
-        not attempted.
+        Still explicitly out of scope, reserved for later: `status`/`stage`/`unstage`/
+        `commit`/`branch` (named in `VcsProvider.h` as comments, no real methods yet)
+        and a full historical multibuffer beyond one synthesized buffer per query
+        result (the fuller "Multibuffers" wishlist entry below is still its own,
+        larger, unscoped thing). The "generalizable past version control" framing
+        (cloud-provider CLIs, Terraform, Docker via the same two-callback-per-operation
+        plugin shape) is unchanged and still just a framing, not attempted.
+  - [x] Diff gutter markers (added/modified/removed line indicators, live-refreshing
+        against HEAD) — the follow-up the blame gutter's own `[ ]` originally deferred,
+        now done. `VcsProvider::DiffArgv`/`ParseDiff` round out the vocabulary
+        (`VcsDiffHunk{oldStart, oldCount, newStart, newCount}`, the same fields a
+        unified diff's own `@@ ... @@` hunk header carries); `vcs-git.janet`'s
+        `diff-argv` runs `git diff --no-color -U0 --` (no context lines -- exactly
+        what a gutter marker needs) and `parse-diff` parses the header (own small
+        `parse-range`/`parse-hunk-header` helpers, handling the "count omitted when
+        it's 1" shape all three of add/modify/delete hunks can take, verified against
+        real `git diff -U0` output for all three during development, including the
+        trickiest single-line no-comma case). `VcsRunner::RequestDiff` mirrors
+        `RequestBlame`/`RequestLog` exactly. Unlike blame, **this is live, not
+        on-request** — a deliberate revision after the user tried blame's own
+        on-request-only default and found a *disconnected* separate results buffer
+        "completely useless," then explicitly asked for live gutter markers instead,
+        "fancy and modern," with an explicit "not stupid about it" debounce ask.
+        Concretely: `BufferView::RunCommandAndHandleOutcome` (the one choke point
+        every dispatch passes through) arms a `kDiffRefreshDebounce` (1200ms,
+        hardcoded C++ for now, same scope cut `TabWidth`/`Theme` selection originally
+        were) `DeadlineTimer` on any content-changing edit — mirrors
+        `completionDebounceTimer_`'s own re-arm-cancels-the-pending-fire shape exactly
+        — and bypasses the debounce entirely (refreshes immediately) the instant
+        `Buffer::Modified()` transitions true -> false, i.e. a real save; switching to
+        a newly-active buffer (`Paint()`'s own `modeSyncBuffer_` check) also refreshes
+        immediately, clearing the previous file's markers first so nothing shows the
+        wrong file's state even briefly. Every failure path (no path, no provider,
+        process failure) degrades silently — a live background feature must never
+        interrupt with a status message the way `vcs-show-blame`'s own on-request
+        errors do. Rendering, per the "be as fancy as you like" brief: a new,
+        deliberately **leftmost** gutter column (`kDiffWidth`, layout now
+        `[diff][status][diagnostic][gap][digits][gap][fold][blame]` — the one place
+        this feature set broke its own "append new gutters at the rightmost edge"
+        precedent, specifically to match where VS Code/GitLens/vim-gitgutter
+        conventionally put their own change bars) shows a solid color swatch for
+        Added (bright green) / Modified (bright blue) lines and a thin
+        "▔" (upper-one-eighth-block) notch in bright red marking a deletion boundary
+        (no swatch — a deletion doesn't cover a real line, it sits between two).
+        Added/Modified lines also get a subtle whole-line background wash — genuinely
+        alpha-blended-*looking* despite this codebase's `Color`/`Cell` model having no
+        real alpha channel, via `Color::Interpolate` blending a low percentage
+        (`kDiffLineTintAlpha`, 0.14) of the accent color into the theme's own
+        background, the same technique the blame gutter's own commit-age coloring
+        already established — skipped entirely when selection/isearch highlighting
+        also applies to a character, since a three-way blend there would read as
+        muddy rather than fancy.
 - **Collaboration & AI**
   - [ ] Real-time collaborative editing (CRDT-based shared sessions) — the biggest
         lift in this list; revisit only once the single-user core is solid.

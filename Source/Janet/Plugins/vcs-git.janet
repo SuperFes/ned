@@ -5,9 +5,8 @@
 ##
 ## Intended as the annotated example for anyone writing a plugin for another
 ## VCS (Mercurial, jj, ...): the shape to copy is "detect a repo, build an
-## argv, parse the captured output into an array of {:hash :author :date
-## :summary} entries" -- ned itself runs the subprocess, this file never
-## shells out directly.
+## argv, parse the captured output into an array of tables" -- ned itself
+## runs the subprocess, this file never shells out directly.
 
 (defn detect [root]
   (not (nil? (os/stat (string root "/.git")))))
@@ -29,6 +28,12 @@
   ["git" "-C" (dirname path) "log" "--follow" "--date=short"
    (string "--pretty=format:%H" "\x1f" "%an" "\x1f" "%ad" "\x1f" "%s")
    path])
+
+# -U0: no context lines, only the changed ones themselves -- exactly what a
+# gutter marker needs (which lines changed, not their surrounding context),
+# and what every git-gutter-style plugin in other editors asks for too.
+(defn diff-argv [path]
+  ["git" "-C" (dirname path) "diff" "--no-color" "-U0" "--" path])
 
 ## --- blame porcelain parsing -------------------------------------------
 ##
@@ -108,4 +113,35 @@
          :summary (get parts 3 "")})))
   result)
 
-(ned/vcs-register-provider "git" detect blame-argv parse-blame log-argv parse-log)
+## --- diff hunk-header parsing ---------------------------------------------
+##
+## `git diff -U0` emits one "@@ -oldStart[,oldCount] +newStart[,newCount] @@"
+## header per changed hunk (count omitted when it's 1), often followed by
+## trailing context text (the enclosing function name, if git found one) on
+## the same line after the closing "@@" -- parse-range/parse-hunk-header
+## only ever look at the two range fields between the "@@ -"/" @@" markers,
+## so that trailing text is naturally ignored.
+
+(defn- parse-range [text]
+  (def comma (string/find "," text))
+  (if comma
+    [(scan-number (string/slice text 0 comma)) (scan-number (string/slice text (+ comma 1)))]
+    [(scan-number text) 1]))
+
+(defn- parse-hunk-header [line]
+  (def end (string/find " @@" line 3))
+  (def middle (string/slice line 3 end))
+  (def parts (string/split " " middle))
+  (def old-range (parse-range (string/slice (get parts 0) 1))) # drop leading "-"
+  (def new-range (parse-range (string/slice (get parts 1) 1))) # drop leading "+"
+  {:old-start (get old-range 0) :old-count (get old-range 1)
+   :new-start (get new-range 0) :new-count (get new-range 1)})
+
+(defn parse-diff [stdout]
+  (def result @[])
+  (each line (string/split "\n" stdout)
+    (when (string/has-prefix? "@@ " line)
+      (array/push result (parse-hunk-header line))))
+  result)
+
+(ned/vcs-register-provider "git" detect blame-argv parse-blame log-argv parse-log diff-argv parse-diff)

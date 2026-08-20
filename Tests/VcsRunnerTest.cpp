@@ -14,6 +14,7 @@ using ned::editor::vcs::ClearRegistry;
 using ned::editor::vcs::RegisterProvider;
 using ned::editor::vcs::VcsBlameLine;
 using ned::editor::vcs::VcsCommandSpec;
+using ned::editor::vcs::VcsDiffHunk;
 using ned::editor::vcs::VcsLogEntry;
 using ned::editor::vcs::VcsProvider;
 using ned::editor::vcs::VcsRunner;
@@ -49,6 +50,10 @@ class FakeProvider : public VcsProvider {
         return VcsCommandSpec{{"sleep", "5"}};
     }
     [[nodiscard]] std::vector<VcsLogEntry> ParseLog(const std::string&) const override { return {}; }
+    [[nodiscard]] VcsCommandSpec           DiffArgv(const std::filesystem::path&) const override {
+        return VcsCommandSpec{{"sleep", "5"}};
+    }
+    [[nodiscard]] std::vector<VcsDiffHunk> ParseDiff(const std::string&) const override { return {}; }
 
   private:
     bool blameArgvThrows_;
