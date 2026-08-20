@@ -679,7 +679,22 @@ void BufferView::EnsureFoldGutterCache() const {
 
         foldGutterEntries_.reserve(regions.size());
         for (const auto& region : regions) {
-            const int         column     = std::min(region.depth, kMaxFoldDepthColumns - 1);
+            if (region.depth >= kMaxFoldDepthColumns) {
+                // Deeper than the gutter has columns for: draw nothing at
+                // all, rather than the previous clamp-into-the-last-column
+                // behavior, which piled every deeper block's ⊞/⊟ and guide
+                // line on top of the real depth-3 block's own -- visual
+                // noise, and an ambiguous click target (a column-3 click
+                // could land on whichever block happened to stack there).
+                // The block itself stays fully foldable via
+                // code-fold-toggle (M-x/keyboard path reads
+                // FoldableBlocks, not these entries), and a deep block
+                // collapsed that way still hides its lines and shows the
+                // content-side ellipsis -- only the gutter affordance is
+                // depth-capped.
+                continue;
+            }
+            const int         column     = region.depth;
             const std::size_t headerLine = content.ByteOffsetToLine(region.startByte);
             const std::size_t closerLine = content.ByteOffsetToLine(region.endByte);
             if (headerLine == closerLine) {
@@ -956,6 +971,13 @@ void BufferView::ScheduleDiffRefresh() {
 }
 
 void BufferView::DispatchDiffForTesting(std::vector<editor::vcs::VcsDiffHunk> hunks) {
+    // initial-buffer-diff fix: mark the active buffer's diff as synced. In
+    // production this is a no-op (the only real caller is the request
+    // completion, which only runs after Paint's diffSyncBuffer_ branch
+    // already set this); for a test injecting hunks directly it's what
+    // keeps the next Paint() from immediately clearing them via that same
+    // branch.
+    diffSyncBuffer_ = &activeBuffer_.Get();
     std::vector<std::pair<std::size_t, DiffLineKind>> kinds;
     for (const editor::vcs::VcsDiffHunk& hunk : hunks) {
         if (hunk.newCount == 0) {
@@ -1187,14 +1209,28 @@ void BufferView::Paint(Canvas c) {
         if (onActiveBufferChanged_) {
             onActiveBufferChanged_(buffer);
         }
-        // Diff gutter markers follow-up: a newly-active buffer's diff
-        // markers belong to a completely different file -- clearing
-        // immediately (rather than leaving the old buffer's markers
-        // visible until the fresh request completes) avoids a real, if
-        // brief, "wrong file's markers" flash; RequestDiffForCurrentBuffer
-        // below then kicks off a fresh, unthrottled (not debounced --
-        // switching buffers is a natural "want it now" moment, same as a
-        // save) request for this buffer.
+    }
+    // Diff gutter markers follow-up: a newly-active buffer's diff markers
+    // belong to a completely different file -- clearing immediately
+    // (rather than leaving the old buffer's markers visible until the
+    // fresh request completes) avoids a real, if brief, "wrong file's
+    // markers" flash; RequestDiffForCurrentBuffer then kicks off a fresh,
+    // unthrottled (not debounced -- switching buffers is a natural "want
+    // it now" moment, same as a save) request for this buffer.
+    //
+    // initial-buffer-diff fix: tracked by its own diffSyncBuffer_, NOT
+    // folded into the modeSyncBuffer_ branch above -- the constructor
+    // deliberately pre-seeds modeSyncBuffer_ to suppress a spurious
+    // first-frame onActiveBufferChanged_, and while the diff request lived
+    // in that branch the seeding silently suppressed the initial buffer's
+    // diff request too: the file ned was launched on (and every new split
+    // pane's starting view) never showed markers until an edit/save
+    // happened to fire a request. Confirmed against a live session with
+    // gdb (RequestDiffForCurrentBuffer never called at all), not assumed.
+    // diffSyncBuffer_ starts null instead, so a pane's very first Paint()
+    // fetches its buffer's diff.
+    if (diffSyncBuffer_ != &buffer) {
+        diffSyncBuffer_ = &buffer;
         diffLineKinds_.clear();
         RequestDiffForCurrentBuffer();
     }
@@ -1564,16 +1600,12 @@ void BufferView::Paint(Canvas c) {
                     }
                 }
 
-                // Diff gutter markers follow-up: leftmost of all, matching
-                // real editors' own git-gutter placement -- a solid swatch
-                // for Added/Modified (same cell.character=" "+matching-fg/bg
-                // technique the status column below already uses), a thin
-                // "torn edge" notch glyph for a Removed boundary (no line
-                // "belongs" to a deletion, so a full block would misleadingly
-                // suggest one does). Direct Color constants, not routed
-                // through Theme::BrushFor(SyntaxClass) -- same bypass the
-                // blame gutter's own hash coloring already uses, for the
-                // same reason (this isn't a tree-sitter capture category).
+                // Diff gutter markers follow-up: leftmost of the non-debug
+                // regions, matching real editors' own git-gutter placement.
+                // Direct Color constants, not routed through
+                // Theme::BrushFor(SyntaxClass) -- same bypass the blame
+                // gutter's own hash coloring already uses, for the same
+                // reason (this isn't a tree-sitter capture category).
                 // Drawn at diffStart -- the diff column's own x. This used
                 // to (wrongly) target statusStart, where the unsaved-change
                 // swatch below then unconditionally overwrote it every
@@ -1586,22 +1618,29 @@ void BufferView::Paint(Canvas c) {
                     const auto it = std::lower_bound(diffLineKinds_.begin(), diffLineKinds_.end(), line,
                                                      [](const auto& entry, std::size_t targetLine) { return entry.first < targetLine; });
                     if (it != diffLineKinds_.end() && it->first == line) {
-                        Cell& cell = c[{.x = static_cast<int>(diffStart), .y = row}];
+                        // diff-gutter-icons follow-up (was a solid color
+                        // swatch for Added/Modified): vim-gitgutter's own
+                        // classic glyph vocabulary -- the shape says WHAT
+                        // changed, not just that something did, same
+                        // reasoning as the diagnostic column's severity
+                        // icons. ▔ stays for a deletion: it's already
+                        // iconographic (the notch marks where the deleted
+                        // lines sat, at this line's own top edge).
+                        Cell& cell            = c[{.x = static_cast<int>(diffStart), .y = row}];
+                        cell.background_color = theme_.background;
+                        cell.bold             = true;
                         switch (it->second) {
                             case DiffLineKind::Added:
-                                cell.character        = " ";
+                                cell.character        = "+";
                                 cell.foreground_color = Color::BrightGreen;
-                                cell.background_color = Color::BrightGreen;
                                 break;
                             case DiffLineKind::Modified:
-                                cell.character        = " ";
+                                cell.character        = "~";
                                 cell.foreground_color = Color::BrightBlue;
-                                cell.background_color = Color::BrightBlue;
                                 break;
                             case DiffLineKind::Removed:
-                                cell.character        = "▔"; // UPPER ONE EIGHTH BLOCK -- a thin notch, not a full swatch
+                                cell.character        = "▔"; // UPPER ONE EIGHTH BLOCK
                                 cell.foreground_color = Color::BrightRed;
-                                cell.background_color = theme_.background;
                                 break;
                         }
                     }

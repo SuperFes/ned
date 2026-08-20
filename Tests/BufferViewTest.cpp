@@ -4107,6 +4107,47 @@ TEST_CASE("Collapsing an outer block leaves no guide line for its now-hidden nes
     REQUIRE(screen.PixelAt(foldStart + 1, 0).character == " "); // no column-1 guide line while the ancestor is folded
 }
 
+TEST_CASE("Blocks nested deeper than the gutter's columns draw no fold affordance at all", "[BufferView]") {
+    // fold-gutter-depth-cap follow-up: depth >= kMaxFoldDepthColumns (4)
+    // used to be clamped into the last column, piling deeper blocks' ⊞/⊟
+    // and guide lines on top of the real depth-3 block's own -- now they
+    // simply get no gutter entry (still foldable via code-fold-toggle).
+    Fixture fixture;
+    fixture.mode = ned::editor::CMode();
+    // Depths 0-4: function body, then four nested if-blocks; the depth-4
+    // block ("if (e)") opens on row 4 and closes on row 6.
+    fixture.buffer.InsertAtPoint("int main(void) {\n"
+                                 "    if (b) {\n"
+                                 "        if (c) {\n"
+                                 "            if (d) {\n"
+                                 "                if (e) {\n"
+                                 "                    x;\n"
+                                 "                }\n"
+                                 "            }\n"
+                                 "        }\n"
+                                 "    }\n"
+                                 "}\n");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 10});
+    ned::ui::Screen screen = ned::ui::Screen(40, 11);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 10});
+    view.Paint(canvas);
+
+    const int foldStart = GutterWidth(11, /*foldColumn=*/4) - 4;
+
+    // Depths 0-3 each get their own header in their own column...
+    REQUIRE(screen.PixelAt(foldStart + 0, 0).character == "⊟");
+    REQUIRE(screen.PixelAt(foldStart + 1, 1).character == "⊟");
+    REQUIRE(screen.PixelAt(foldStart + 2, 2).character == "⊟");
+    REQUIRE(screen.PixelAt(foldStart + 3, 3).character == "⊟");
+    // ...and the depth-4 block draws nothing: its header row shows only the
+    // depth-3 block's own guide line in the last column (not a second,
+    // stacked ⊟), and its body row likewise only inherited guide lines.
+    REQUIRE(screen.PixelAt(foldStart + 3, 4).character == "│");
+    REQUIRE(screen.PixelAt(foldStart + 3, 5).character == "│");
+}
+
 TEST_CASE("A block written entirely on one line gets no fold icon", "[BufferView]") {
     Fixture fixture;
     fixture.mode = ned::editor::CMode();
