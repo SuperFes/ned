@@ -391,6 +391,12 @@ add_executable(ned Source/main.cpp)
 
 target_link_libraries(ned PRIVATE ned_lib CLI11::CLI11)
 
+# Standalone diagnostic, not part of ned/ned_lib -- see its own header
+# comment (Tools/NotcursesAlphaProbe.cpp) for what it's answering. Links
+# directly against notcurses-core, nothing else from this project.
+add_executable(notcurses_alpha_probe Tools/NotcursesAlphaProbe.cpp)
+target_link_libraries(notcurses_alpha_probe PRIVATE notcurses-core)
+
 if (NED_BUILD_TESTS)
     enable_testing()
     include(CTest)
