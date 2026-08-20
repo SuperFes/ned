@@ -141,21 +141,34 @@ each is, not by priority.
         one, incremental sync, idle-timeout server teardown, multi-root workspaces, and raw
         subprocess stderr capture — see "LSP client" and "LSP client — error visibility
         follow-up" above for why each of those is a deliberate cut, not an oversight.
-  - [ ] DAP (Debug Adapter Protocol) client for in-editor debugging. Scoped
+  - [x] DAP (Debug Adapter Protocol) client for in-editor debugging. Scoped
         2026-08-19 per the user's own framing: "the useful things — step through,
         inspect, and all that good stuff," with F-keys as the primary bindings.
-        **Slice 1 shipped 2026-08-20**: `Source/Editor/Dap/` (`DapConfig` — per-language
-        adapter argv + opaque launch-config JSON, configured via `ned/set-dap-adapter`/
-        `ned/set-dap-launch`; `DapClient` — the DAP envelope over `Lsp/Transport.h`'s
-        reused framing; `DapManager` — single-session lifecycle, breakpoint store,
-        initialize/launch/configurationDone handshake, stopped/terminated/exited
-        events), commands `dap-continue` (`F5`)/`dap-stop` (`S-F5`)/
-        `dap-toggle-breakpoint` (`F9`)/`dap-pause` (M-x), stopped-event
-        jump-to-source via `WindowManager`'s focused pane, all tested against a
-        scripted fake adapter over the real framing (`Tests/Dap*Test.cpp`).
-        Slices 2 (stepping, execution-line highlight, breakpoint gutter markers)
-        and 3 (`*debug*` stack/variables buffer, `evaluate` prompt) remain — the
-        design record below still describes the whole feature.
+        **All three slices shipped 2026-08-20.** Slice 1: `Source/Editor/Dap/`
+        (`DapConfig` — per-language adapter argv + opaque launch-config JSON,
+        configured via `ned/set-dap-adapter`/`ned/set-dap-launch`; `DapClient` — the
+        DAP envelope over `Lsp/Transport.h`'s reused framing; `DapManager` —
+        single-session lifecycle, breakpoint store, initialize/launch/
+        configurationDone handshake, stopped/terminated/exited events), commands
+        `dap-continue` (`F5`)/`dap-stop` (`S-F5`)/`dap-toggle-breakpoint`
+        (`F9`)/`dap-pause` (M-x), stopped-event jump-to-source via `WindowManager`'s
+        focused pane. Slice 2: stepping (`dap-step-over` `F10`, `dap-step-into`
+        `F11`, `dap-step-out` `S-F11`), the leftmost debug gutter column (breakpoint
+        `●`, execution `▸` — reserved only while the active buffer has breakpoints
+        or the stop; layout `[dap][diff][status][diagnostic]...`), and an
+        execution-line background wash (three new `Theme` fields, round-tripped
+        through `ThemeFile`). Slice 3: `dap-show-debug` builds a read-only `*debug*`
+        buffer — frames in the `path:line:` convention so `C-c C-v` visits them for
+        free, scope variables with `[ref:N]` markers `dap-expand-variable` drills
+        into in place — and `dap-evaluate` prompts for an expression evaluated in
+        the stopped top frame ("repl" context). All tested against scripted fake
+        adapters over the real framing (`Tests/Dap*Test.cpp`, plus the
+        `BufferViewTest` gutter/highlight renders). Deliberate v1 cuts, recorded as
+        decisions: attach mode; thread picker (acts on the `stopped` event's own
+        thread); watch expressions; conditional/logpoint breakpoints; showing
+        adapter-*verified* breakpoint positions (the gutter shows where the user
+        toggled); setting variables; a REPL console; persisting breakpoints across
+        restarts (pairs with the per-file session persistence entry below).
         - **Protocol shape / transport reuse.** A DAP adapter is a persistent
           subprocess speaking `Content-Length`-framed JSON over stdio — the *identical*
           base framing LSP uses (DAP inherited it), so `Source/Editor/Lsp/Transport.h`'s

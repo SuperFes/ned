@@ -58,6 +58,9 @@ std::string SerializeTheme(const Theme& theme) {
     out << "diagnostic_warning=" << ColorToToken(theme.diagnosticWarning) << '\n';
     out << "diagnostic_information=" << ColorToToken(theme.diagnosticInformation) << '\n';
     out << "diagnostic_hint=" << ColorToToken(theme.diagnosticHint) << '\n';
+    out << "breakpoint_marker=" << ColorToToken(theme.breakpointMarker) << '\n';
+    out << "execution_marker=" << ColorToToken(theme.executionMarker) << '\n';
+    out << "execution_line_background=" << ColorToToken(theme.executionLineBackground) << '\n';
     out << "headline_level1_foreground=" << ColorToToken(theme.headlineLevel1Foreground) << '\n';
     out << "headline_level2_foreground=" << ColorToToken(theme.headlineLevel2Foreground) << '\n';
     out << "headline_level3_foreground=" << ColorToToken(theme.headlineLevel3Foreground) << '\n';
@@ -215,6 +218,18 @@ Theme ParseTheme(std::string_view text, const Theme& base) {
         else if (key == "diagnostic_hint") {
             if (const auto c = ParseColorToken(value))
                 result.diagnosticHint = *c;
+        }
+        else if (key == "breakpoint_marker") {
+            if (const auto c = ParseColorToken(value))
+                result.breakpointMarker = *c;
+        }
+        else if (key == "execution_marker") {
+            if (const auto c = ParseColorToken(value))
+                result.executionMarker = *c;
+        }
+        else if (key == "execution_line_background") {
+            if (const auto c = ParseColorToken(value))
+                result.executionLineBackground = *c;
         }
         else if (key == "headline_level1_foreground") {
             if (const auto c = ParseColorToken(value))

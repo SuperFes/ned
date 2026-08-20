@@ -208,6 +208,21 @@ enum class InteractiveRequest { None,
                                 DapStop,
                                 DapPause,
                                 DapToggleBreakpoint,
+                                // DAP client slices 2/3: stepping (three more one-shot direct
+                                // actions, F10/F11/S-F11), the *debug* stack/variables buffer
+                                // and its per-line drill-in (both one-shot -- DapShowDebug
+                                // chains the async stackTrace/scopes/variables requests and
+                                // switches to the synthesized buffer when they land;
+                                // DapExpandVariable expands the composite variable on point's
+                                // own *debug* line in place), and DapEvaluate -- the one
+                                // prompt-shaped request of the family (HandlePromptKey collects
+                                // the expression, Enter sends the DAP evaluate request).
+                                DapStepOver,
+                                DapStepInto,
+                                DapStepOut,
+                                DapShowDebug,
+                                DapExpandVariable,
+                                DapEvaluate,
                                 // VCS blame gutter follow-up: one-shot direct actions, same
                                 // shape as ProjectAgenda/LspShowLog. VcsShowBlame is the
                                 // primary, inline-in-place one: populates the gutter for the

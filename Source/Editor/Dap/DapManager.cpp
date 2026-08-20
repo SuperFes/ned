@@ -69,7 +69,7 @@ std::string DapManager::StartOrContinue(const std::string& language) {
         client_->SendRequest("continue", Json{{"threadId", stoppedThreadId_}},
                              [this](bool success, const Json&, const std::string& message) {
                                  if (success) {
-                                     state_ = SessionState::Running;
+                                     MarkResumed();
                                  }
                                  else {
                                      EndSession("continue failed: " + message);
@@ -210,11 +210,17 @@ void DapManager::HandleStoppedEvent(const Json& body) {
                              if (success && responseBody.contains("stackFrames") && responseBody["stackFrames"].is_array() &&
                                  !responseBody["stackFrames"].empty()) {
                                  const Json& frame = responseBody["stackFrames"][0];
+                                 if (frame.contains("id") && frame["id"].is_number_integer()) {
+                                     stoppedFrameId_ = frame["id"].get<int>(); // what Evaluate scopes to
+                                 }
                                  if (frame.contains("source") && frame["source"].contains("path") &&
                                      frame["source"]["path"].is_string() && frame.contains("line") &&
                                      frame["line"].is_number_integer()) {
                                      info.path = std::filesystem::path(frame["source"]["path"].get<std::string>());
                                      info.line = static_cast<std::size_t>(std::max(frame["line"].get<int>(), 1));
+                                     // Normalized once here, not per frame in Paint() -- see
+                                     // CurrentStopKeyAndLine's own doc comment.
+                                     currentStop_ = std::make_pair(NormalizePathKey(*info.path), info.line);
                                  }
                              }
                              if (onStopped_) {
@@ -253,12 +259,145 @@ std::string DapManager::StopSession() {
     return "Debug session stopped.";
 }
 
+void DapManager::MarkResumed() {
+    state_ = SessionState::Running;
+    currentStop_.reset();
+    stoppedFrameId_.reset();
+}
+
+std::string DapManager::SendStep(const std::string& command, const std::string& label) {
+    if (state_ != SessionState::Stopped) {
+        return "Not stopped (nothing to step).";
+    }
+    client_->SendRequest(command, Json{{"threadId", stoppedThreadId_}},
+                         [this, command](bool success, const Json&, const std::string& message) {
+                             if (success) {
+                                 MarkResumed(); // the landing spot arrives as the next `stopped` event
+                             }
+                             else {
+                                 EndSession(command + " failed: " + message);
+                             }
+                         });
+    return label + "...";
+}
+
+std::string DapManager::StepOver() {
+    return SendStep("next", "Stepping over");
+}
+
+std::string DapManager::StepInto() {
+    return SendStep("stepIn", "Stepping into");
+}
+
+std::string DapManager::StepOut() {
+    return SendStep("stepOut", "Stepping out");
+}
+
+std::optional<std::pair<std::string, std::size_t>> DapManager::CurrentStopKeyAndLine() const {
+    return currentStop_;
+}
+
+std::vector<std::size_t> DapManager::BreakpointLinesForKey(const std::string& key) const {
+    const auto it = breakpoints_.find(key);
+    return it != breakpoints_.end() ? it->second : std::vector<std::size_t>{};
+}
+
+void DapManager::RequestStackTrace(std::function<void(std::vector<StackFrame>)> callback) {
+    if (!client_ || state_ != SessionState::Stopped) {
+        callback({});
+        return;
+    }
+    client_->SendRequest("stackTrace", Json{{"threadId", stoppedThreadId_}, {"startFrame", 0}, {"levels", 20}},
+                         [callback = std::move(callback)](bool success, const Json& body, const std::string&) {
+                             std::vector<StackFrame> frames;
+                             if (success && body.contains("stackFrames") && body["stackFrames"].is_array()) {
+                                 for (const Json& frameJson : body["stackFrames"]) {
+                                     StackFrame frame;
+                                     frame.id   = frameJson.value("id", 0);
+                                     frame.name = frameJson.value("name", "");
+                                     if (frameJson.contains("source") && frameJson["source"].contains("path") &&
+                                         frameJson["source"]["path"].is_string() && frameJson.contains("line") &&
+                                         frameJson["line"].is_number_integer()) {
+                                         frame.path = std::filesystem::path(frameJson["source"]["path"].get<std::string>());
+                                         frame.line = static_cast<std::size_t>(std::max(frameJson["line"].get<int>(), 1));
+                                     }
+                                     frames.push_back(std::move(frame));
+                                 }
+                             }
+                             callback(std::move(frames));
+                         });
+}
+
+void DapManager::RequestScopes(int frameId, std::function<void(std::vector<Scope>)> callback) {
+    if (!client_ || state_ != SessionState::Stopped) {
+        callback({});
+        return;
+    }
+    client_->SendRequest("scopes", Json{{"frameId", frameId}},
+                         [callback = std::move(callback)](bool success, const Json& body, const std::string&) {
+                             std::vector<Scope> scopes;
+                             if (success && body.contains("scopes") && body["scopes"].is_array()) {
+                                 for (const Json& scopeJson : body["scopes"]) {
+                                     scopes.push_back(Scope{
+                                         .name               = scopeJson.value("name", ""),
+                                         .variablesReference = scopeJson.value("variablesReference", 0),
+                                     });
+                                 }
+                             }
+                             callback(std::move(scopes));
+                         });
+}
+
+void DapManager::RequestVariables(int variablesReference, std::function<void(std::vector<Variable>)> callback) {
+    if (!client_ || state_ != SessionState::Stopped) {
+        callback({});
+        return;
+    }
+    client_->SendRequest("variables", Json{{"variablesReference", variablesReference}},
+                         [callback = std::move(callback)](bool success, const Json& body, const std::string&) {
+                             std::vector<Variable> variables;
+                             if (success && body.contains("variables") && body["variables"].is_array()) {
+                                 for (const Json& variableJson : body["variables"]) {
+                                     variables.push_back(Variable{
+                                         .name               = variableJson.value("name", ""),
+                                         .value              = variableJson.value("value", ""),
+                                         .type               = variableJson.value("type", ""),
+                                         .variablesReference = variableJson.value("variablesReference", 0),
+                                     });
+                                 }
+                             }
+                             callback(std::move(variables));
+                         });
+}
+
+void DapManager::Evaluate(const std::string& expression, std::function<void(bool, std::string)> callback) {
+    if (!client_ || state_ == SessionState::Inactive || state_ == SessionState::Starting) {
+        callback(false, "No debug session.");
+        return;
+    }
+    Json arguments = {{"expression", expression}, {"context", "repl"}};
+    if (stoppedFrameId_) {
+        arguments["frameId"] = *stoppedFrameId_;
+    }
+    client_->SendRequest("evaluate", std::move(arguments),
+                         [callback = std::move(callback)](bool success, const Json& body, const std::string& message) {
+                             if (success) {
+                                 callback(true, body.value("result", ""));
+                             }
+                             else {
+                                 callback(false, message);
+                             }
+                         });
+}
+
 void DapManager::EndSession(std::string reason) {
     if (state_ == SessionState::Inactive) {
         return; // e.g. disconnect EOF arriving after an explicit StopSession already tore down
     }
     state_           = SessionState::Inactive;
     stoppedThreadId_ = 0;
+    currentStop_.reset();
+    stoppedFrameId_.reset();
     if (client_) {
         retired_.push_back(std::move(client_)); // see header comment — never destroyed mid-callback
     }
