@@ -397,6 +397,13 @@ target_link_libraries(ned PRIVATE ned_lib CLI11::CLI11)
 add_executable(notcurses_alpha_probe Tools/NotcursesAlphaProbe.cpp)
 target_link_libraries(notcurses_alpha_probe PRIVATE notcurses-core)
 
+# Same "standalone diagnostic, not part of ned/ned_lib" shape as
+# notcurses_alpha_probe above -- see Tools/NotcursesPixelProbe.cpp's own
+# header comment for what it's answering (real pixel-graphics support, for
+# a possible minimap feature).
+add_executable(notcurses_pixel_probe Tools/NotcursesPixelProbe.cpp)
+target_link_libraries(notcurses_pixel_probe PRIVATE notcurses-core)
+
 if (NED_BUILD_TESTS)
     enable_testing()
     include(CTest)
