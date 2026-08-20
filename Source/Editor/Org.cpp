@@ -1,5 +1,6 @@
 #include "Editor/Org.h"
 
+#include <algorithm>
 #include <cctype>
 #include <mutex>
 #include <regex>
@@ -629,143 +630,434 @@ std::optional<OrgTable> FindOrgTableAtPoint(const text::Buffer& buffer) {
     return result;
 }
 
+namespace {
+
+    // The shared machinery behind every table-editing op (tables slice 2)
+    // -- factored out of what used to be slice 1's monolithic
+    // AlignOrgTableAtPoint body once every new op turned out to need the
+    // exact same locate-cell / mutate-grid / rebuild-and-realign steps
+    // with only the grid mutation differing.
+
+    struct OrgTableCell {
+        std::size_t row = 0;
+        std::size_t col = 0;
+    };
+
+    // Which cell point currently sits in -- falls back to the table's
+    // first real cell if point isn't cleanly inside any span (e.g. sitting
+    // on a separator row's own line). Byte spans per row are re-derived
+    // here (not carried on OrgTable itself) since only this point-tracking
+    // path needs them, mirroring the existing split between this file's
+    // pure parsers and their *AtPoint wrappers' own extra buffer-aware
+    // work.
+    OrgTableCell LocateOrgTableCell(const text::Buffer& buffer, const OrgTable& tableInfo) {
+        const std::string                                             bufferText = buffer.Text();
+        std::vector<std::vector<std::pair<std::size_t, std::size_t>>> cellSpans(tableInfo.rows.size());
+        {
+            std::size_t lineStart  = 0;
+            std::size_t lineNumber = 0;
+            std::size_t rowIndex   = 0;
+            while (lineStart <= bufferText.size() && lineNumber < tableInfo.endLine) {
+                const std::size_t newlinePos = bufferText.find('\n', lineStart);
+                const std::size_t lineEnd    = (newlinePos == std::string::npos) ? bufferText.size() : newlinePos;
+                if (lineNumber >= tableInfo.startLine) {
+                    if (!tableInfo.isSeparatorRow[rowIndex]) {
+                        cellSpans[rowIndex] =
+                            table::CellByteSpans(std::string_view(bufferText).substr(lineStart, lineEnd - lineStart), lineStart);
+                    }
+                    ++rowIndex;
+                }
+                if (newlinePos == std::string::npos)
+                    break;
+                lineStart = newlinePos + 1;
+                ++lineNumber;
+            }
+        }
+
+        const std::size_t point = buffer.Point();
+        for (std::size_t row = 0; row < tableInfo.rows.size(); ++row) {
+            if (tableInfo.isSeparatorRow[row])
+                continue;
+            for (std::size_t col = 0; col < cellSpans[row].size(); ++col) {
+                if (point >= cellSpans[row][col].first && point <= cellSpans[row][col].second) {
+                    return {row, col};
+                }
+            }
+        }
+        for (std::size_t row = 0; row < tableInfo.rows.size(); ++row) {
+            if (!tableInfo.isSeparatorRow[row]) {
+                return {row, 0};
+            }
+        }
+        return {0, 0}; // a separator-only table: no real cell to land in
+    }
+
+    // Block-row index (into tableInfo.rows) of point's own line --
+    // separator rows included, unlike LocateOrgTableCell: the row ops act
+    // on whatever line point is on, hrules and all.
+    std::size_t BlockRowAtPoint(const text::Buffer& buffer, const OrgTable& tableInfo) {
+        const std::size_t pointLine = buffer.Content().ByteOffsetToLine(buffer.Point());
+        return std::min(pointLine - tableInfo.startLine, tableInfo.rows.size() - 1);
+    }
+
+    // Max cell count across data rows -- the table's real column count.
+    // Zero for a separator-only table (callers clamp to >= 1 where needed).
+    std::size_t OrgTableColumnCount(const std::vector<std::vector<std::string>>& rows,
+                                    const std::vector<bool>&                     isSeparatorRow) {
+        std::size_t count = 0;
+        for (std::size_t row = 0; row < rows.size(); ++row) {
+            if (!isSeparatorRow[row])
+                count = std::max(count, rows[row].size());
+        }
+        return count;
+    }
+
+    // Pads every data row to columnCount with empty cells, so a column
+    // index means the same thing in every row before a column op touches
+    // them (SplitRow yields ragged rows when the source table was ragged).
+    void PadDataRows(std::vector<std::vector<std::string>>& rows, const std::vector<bool>& isSeparatorRow,
+                     std::size_t columnCount) {
+        for (std::size_t row = 0; row < rows.size(); ++row) {
+            if (!isSeparatorRow[row] && rows[row].size() < columnCount)
+                rows[row].resize(columnCount);
+        }
+    }
+
+    // Rebuilds the whole block from the (possibly mutated) rows/
+    // isSeparatorRow grid, realigned to content width, replaces the
+    // original block's bytes with it, and lands point on the cell nearest
+    // (targetRow, targetCol): targetRow itself if it's a data row, else
+    // the nearest data row after it, else the nearest before it; col
+    // clamped to the rebuilt column count. A grid with no data cell left
+    // at all (or an empty grid -- the whole block was killed) parks point
+    // at the block's own start instead.
+    void RewriteOrgTable(text::Buffer& buffer, const OrgTable& original,
+                         const std::vector<std::vector<std::string>>& rows, const std::vector<bool>& isSeparatorRow,
+                         std::size_t targetRow, std::size_t targetCol) {
+        std::vector<std::vector<std::string>> dataRows;
+        for (std::size_t row = 0; row < rows.size(); ++row) {
+            if (!isSeparatorRow[row])
+                dataRows.push_back(rows[row]);
+        }
+        const std::vector<std::size_t> widths = table::ComputeColumnWidths(dataRows);
+
+        // Rebuild the whole block, tracking each rendered cell's own start
+        // offset within the new text as it's built -- the target cell's new
+        // position is then known exactly, no separate re-parse needed.
+        std::string                           newText;
+        std::vector<std::vector<std::size_t>> newCellOffsets(rows.size());
+        for (std::size_t row = 0; row < rows.size(); ++row) {
+            if (isSeparatorRow[row]) {
+                // Leading/trailing '|', '+' only at internal column
+                // intersections -- matches real Org's own hline convention
+                // ("|-------+-----|", not "+-------+-----+"). Load-bearing,
+                // not just cosmetic: a leading '+' would make this line fail
+                // table::FindTableBlockLines' own "starts with '|'" detection
+                // rule the next time this table is touched.
+                newText += '|';
+                for (std::size_t col = 0; col < widths.size(); ++col) {
+                    newText += std::string(widths[col] + 2, '-');
+                    newText += (col + 1 < widths.size()) ? '+' : '|';
+                }
+            }
+            else {
+                newText += '|';
+                for (std::size_t col = 0; col < widths.size(); ++col) {
+                    newText += ' ';
+                    newCellOffsets[row].push_back(newText.size());
+                    const std::string cellText = col < rows[row].size() ? rows[row][col] : std::string();
+                    newText += table::PadCell(cellText, widths[col], table::Alignment::Left);
+                    newText += " |";
+                }
+            }
+            newText += '\n';
+        }
+        // The block's own last line may not have had a trailing newline (it's
+        // the buffer's real last line and the buffer itself doesn't end in
+        // '\n') -- drop the one just added above to match, rather than
+        // unconditionally introducing one that wasn't there before.
+        const bool blockHadTrailingNewline = original.endLine < buffer.Content().LineCount();
+        if (!blockHadTrailingNewline && !newText.empty()) {
+            newText.pop_back();
+        }
+
+        const std::size_t blockStartByte = buffer.Content().LineToByteOffset(original.startLine);
+        const std::size_t blockEndByte   = (original.endLine < buffer.Content().LineCount())
+                                               ? buffer.Content().LineToByteOffset(original.endLine)
+                                               : buffer.Content().ByteLength();
+
+        buffer.DeleteRange(blockStartByte, blockEndByte - blockStartByte);
+        buffer.InsertAt(blockStartByte, newText);
+
+        std::optional<std::size_t> pointRow;
+        for (std::size_t row = targetRow; row < rows.size(); ++row) {
+            if (!isSeparatorRow[row]) {
+                pointRow = row;
+                break;
+            }
+        }
+        if (!pointRow) {
+            for (std::size_t row = std::min(targetRow, rows.size()); row-- > 0;) {
+                if (!isSeparatorRow[row]) {
+                    pointRow = row;
+                    break;
+                }
+            }
+        }
+        if (!pointRow || widths.empty()) {
+            buffer.SetPoint(blockStartByte);
+            return;
+        }
+        const std::size_t col = std::min(targetCol, widths.size() - 1);
+        buffer.SetPoint(blockStartByte + newCellOffsets[*pointRow][col]);
+    }
+
+    // Realign + step point one cell forward/backward in row-major order --
+    // AlignOrgTableAtPoint and MoveToPreviousOrgTableCellAtPoint are this
+    // with only the direction (and forward's row auto-insert) differing.
+    bool StepOrgTableCell(text::Buffer& buffer, bool forward) {
+        const auto tableInfo = FindOrgTableAtPoint(buffer);
+        if (!tableInfo) {
+            return false;
+        }
+        const OrgTableCell current     = LocateOrgTableCell(buffer, *tableInfo);
+        const std::size_t  columnCount = std::max<std::size_t>(
+            OrgTableColumnCount(tableInfo->rows, tableInfo->isSeparatorRow), 1);
+
+        std::vector<OrgTableCell> realCells;
+        for (std::size_t row = 0; row < tableInfo->rows.size(); ++row) {
+            if (tableInfo->isSeparatorRow[row])
+                continue;
+            for (std::size_t col = 0; col < columnCount; ++col)
+                realCells.push_back({row, col});
+        }
+        std::size_t currentIndex = 0;
+        for (std::size_t i = 0; i < realCells.size(); ++i) {
+            if (realCells[i].row == current.row && realCells[i].col == current.col) {
+                currentIndex = i;
+                break;
+            }
+        }
+
+        if (forward) {
+            if (currentIndex + 1 >= realCells.size()) {
+                // Tabbing past the table's last cell (or a separator-only
+                // table with no cells at all): append a fresh empty data
+                // row at the very end and land on its first cell -- real
+                // Org's own TAB behavior, slice 1's explicitly deferred
+                // piece.
+                auto rows       = tableInfo->rows;
+                auto separators = tableInfo->isSeparatorRow;
+                rows.emplace_back();
+                separators.push_back(false);
+                RewriteOrgTable(buffer, *tableInfo, rows, separators, rows.size() - 1, 0);
+                return true;
+            }
+            const OrgTableCell target = realCells[currentIndex + 1];
+            RewriteOrgTable(buffer, *tableInfo, tableInfo->rows, tableInfo->isSeparatorRow, target.row, target.col);
+            return true;
+        }
+
+        if (realCells.empty()) {
+            return false; // separator-only table: nothing to step back to
+        }
+        const OrgTableCell target = realCells[(currentIndex + realCells.size() - 1) % realCells.size()];
+        RewriteOrgTable(buffer, *tableInfo, tableInfo->rows, tableInfo->isSeparatorRow, target.row, target.col);
+        return true;
+    }
+
+} // namespace
+
 bool AlignOrgTableAtPoint(text::Buffer& buffer) {
+    return StepOrgTableCell(buffer, /*forward=*/true);
+}
+
+bool MoveToPreviousOrgTableCellAtPoint(text::Buffer& buffer) {
+    return StepOrgTableCell(buffer, /*forward=*/false);
+}
+
+bool InsertOrgTableRowAtPoint(text::Buffer& buffer) {
     const auto tableInfo = FindOrgTableAtPoint(buffer);
     if (!tableInfo) {
         return false;
     }
+    const std::size_t  blockRow = BlockRowAtPoint(buffer, *tableInfo);
+    const OrgTableCell cell     = LocateOrgTableCell(buffer, *tableInfo);
 
-    // Byte spans per non-separator row's own cells -- re-derived here
-    // (not carried on OrgTable itself) since only this point-tracking path
-    // needs them, mirroring the existing split between this file's pure
-    // parsers and their *AtPoint wrappers' own extra buffer-aware work.
-    const std::string                                             bufferText = buffer.Text();
-    std::vector<std::vector<std::pair<std::size_t, std::size_t>>> cellSpans(tableInfo->rows.size());
-    {
-        std::size_t lineStart  = 0;
-        std::size_t lineNumber = 0;
-        std::size_t rowIndex   = 0;
-        while (lineStart <= bufferText.size() && lineNumber < tableInfo->endLine) {
-            const std::size_t newlinePos = bufferText.find('\n', lineStart);
-            const std::size_t lineEnd    = (newlinePos == std::string::npos) ? bufferText.size() : newlinePos;
-            if (lineNumber >= tableInfo->startLine) {
-                if (!tableInfo->isSeparatorRow[rowIndex]) {
-                    cellSpans[rowIndex] =
-                        table::CellByteSpans(std::string_view(bufferText).substr(lineStart, lineEnd - lineStart), lineStart);
-                }
-                ++rowIndex;
-            }
-            if (newlinePos == std::string::npos)
-                break;
-            lineStart = newlinePos + 1;
-            ++lineNumber;
-        }
+    auto rows       = tableInfo->rows;
+    auto separators = tableInfo->isSeparatorRow;
+    rows.emplace(rows.begin() + static_cast<std::ptrdiff_t>(blockRow));
+    separators.insert(separators.begin() + static_cast<std::ptrdiff_t>(blockRow), false);
+    RewriteOrgTable(buffer, *tableInfo, rows, separators, blockRow, cell.col);
+    return true;
+}
+
+bool KillOrgTableRowAtPoint(text::Buffer& buffer) {
+    const auto tableInfo = FindOrgTableAtPoint(buffer);
+    if (!tableInfo) {
+        return false;
+    }
+    const std::size_t  blockRow = BlockRowAtPoint(buffer, *tableInfo);
+    const OrgTableCell cell     = LocateOrgTableCell(buffer, *tableInfo);
+
+    auto rows       = tableInfo->rows;
+    auto separators = tableInfo->isSeparatorRow;
+    rows.erase(rows.begin() + static_cast<std::ptrdiff_t>(blockRow));
+    separators.erase(separators.begin() + static_cast<std::ptrdiff_t>(blockRow));
+    // An emptied-out grid is legitimate here (killing the table's only
+    // line kills the block) -- RewriteOrgTable handles it by replacing the
+    // block with nothing and parking point at its start.
+    RewriteOrgTable(buffer, *tableInfo, rows, separators, blockRow, cell.col);
+    return true;
+}
+
+bool MoveOrgTableRowUpAtPoint(text::Buffer& buffer) {
+    const auto tableInfo = FindOrgTableAtPoint(buffer);
+    if (!tableInfo) {
+        return false;
+    }
+    const std::size_t blockRow = BlockRowAtPoint(buffer, *tableInfo);
+    if (blockRow == 0) {
+        return false;
+    }
+    const OrgTableCell cell = LocateOrgTableCell(buffer, *tableInfo);
+
+    auto rows       = tableInfo->rows;
+    auto separators = tableInfo->isSeparatorRow;
+    std::swap(rows[blockRow], rows[blockRow - 1]);
+    const bool wasSeparator  = separators[blockRow];
+    separators[blockRow]     = separators[blockRow - 1];
+    separators[blockRow - 1] = wasSeparator;
+    RewriteOrgTable(buffer, *tableInfo, rows, separators, blockRow - 1, cell.col);
+    return true;
+}
+
+bool MoveOrgTableRowDownAtPoint(text::Buffer& buffer) {
+    const auto tableInfo = FindOrgTableAtPoint(buffer);
+    if (!tableInfo) {
+        return false;
+    }
+    const std::size_t blockRow = BlockRowAtPoint(buffer, *tableInfo);
+    if (blockRow + 1 >= tableInfo->rows.size()) {
+        return false;
+    }
+    const OrgTableCell cell = LocateOrgTableCell(buffer, *tableInfo);
+
+    auto rows       = tableInfo->rows;
+    auto separators = tableInfo->isSeparatorRow;
+    std::swap(rows[blockRow], rows[blockRow + 1]);
+    const bool wasSeparator  = separators[blockRow];
+    separators[blockRow]     = separators[blockRow + 1];
+    separators[blockRow + 1] = wasSeparator;
+    RewriteOrgTable(buffer, *tableInfo, rows, separators, blockRow + 1, cell.col);
+    return true;
+}
+
+bool InsertOrgTableColumnAtPoint(text::Buffer& buffer) {
+    const auto tableInfo = FindOrgTableAtPoint(buffer);
+    if (!tableInfo) {
+        return false;
+    }
+    const OrgTableCell cell = LocateOrgTableCell(buffer, *tableInfo);
+
+    auto              rows        = tableInfo->rows;
+    auto              separators  = tableInfo->isSeparatorRow;
+    const std::size_t columnCount = std::max<std::size_t>(OrgTableColumnCount(rows, separators), 1);
+    PadDataRows(rows, separators, columnCount);
+    const std::size_t insertAt = std::min(cell.col + 1, columnCount);
+    for (std::size_t row = 0; row < rows.size(); ++row) {
+        if (!separators[row])
+            rows[row].emplace(rows[row].begin() + static_cast<std::ptrdiff_t>(insertAt));
+    }
+    RewriteOrgTable(buffer, *tableInfo, rows, separators, cell.row, insertAt);
+    return true;
+}
+
+bool DeleteOrgTableColumnAtPoint(text::Buffer& buffer) {
+    const auto tableInfo = FindOrgTableAtPoint(buffer);
+    if (!tableInfo) {
+        return false;
+    }
+    const std::size_t columnCount = OrgTableColumnCount(tableInfo->rows, tableInfo->isSeparatorRow);
+    if (columnCount <= 1) {
+        return false; // a zero-column table has no representation in the `|`-line syntax
+    }
+    const OrgTableCell cell = LocateOrgTableCell(buffer, *tableInfo);
+    const std::size_t  col  = std::min(cell.col, columnCount - 1);
+
+    auto rows       = tableInfo->rows;
+    auto separators = tableInfo->isSeparatorRow;
+    PadDataRows(rows, separators, columnCount);
+    for (std::size_t row = 0; row < rows.size(); ++row) {
+        if (!separators[row])
+            rows[row].erase(rows[row].begin() + static_cast<std::ptrdiff_t>(col));
+    }
+    RewriteOrgTable(buffer, *tableInfo, rows, separators, cell.row, col);
+    return true;
+}
+
+bool MoveOrgTableColumnLeftAtPoint(text::Buffer& buffer) {
+    const auto tableInfo = FindOrgTableAtPoint(buffer);
+    if (!tableInfo) {
+        return false;
+    }
+    const std::size_t  columnCount = OrgTableColumnCount(tableInfo->rows, tableInfo->isSeparatorRow);
+    const OrgTableCell cell        = LocateOrgTableCell(buffer, *tableInfo);
+    const std::size_t  col         = columnCount == 0 ? 0 : std::min(cell.col, columnCount - 1);
+    if (col == 0) {
+        return false;
     }
 
-    // Which cell point currently sits in -- falls back to the table's
-    // first real cell if point isn't cleanly inside any span (e.g. sitting
-    // on a separator row's own line); AlignOrgTableAtPoint's own
-    // precondition is already satisfied (FindOrgTableAtPoint succeeded),
-    // so there's always a sensible cell to land on/advance from.
-    const std::size_t point      = buffer.Point();
-    std::size_t       currentRow = 0, currentCol = 0;
-    bool              found = false;
-    for (std::size_t row = 0; row < tableInfo->rows.size() && !found; ++row) {
-        if (tableInfo->isSeparatorRow[row])
-            continue;
-        for (std::size_t col = 0; col < cellSpans[row].size(); ++col) {
-            if (point >= cellSpans[row][col].first && point <= cellSpans[row][col].second) {
-                currentRow = row;
-                currentCol = col;
-                found      = true;
-                break;
-            }
-        }
+    auto rows       = tableInfo->rows;
+    auto separators = tableInfo->isSeparatorRow;
+    PadDataRows(rows, separators, columnCount);
+    for (std::size_t row = 0; row < rows.size(); ++row) {
+        if (!separators[row])
+            std::swap(rows[row][col], rows[row][col - 1]);
     }
-    if (!found) {
-        for (std::size_t row = 0; row < tableInfo->rows.size(); ++row) {
-            if (!tableInfo->isSeparatorRow[row]) {
-                currentRow = row;
-                currentCol = 0;
-                break;
-            }
-        }
+    RewriteOrgTable(buffer, *tableInfo, rows, separators, cell.row, col - 1);
+    return true;
+}
+
+bool MoveOrgTableColumnRightAtPoint(text::Buffer& buffer) {
+    const auto tableInfo = FindOrgTableAtPoint(buffer);
+    if (!tableInfo) {
+        return false;
+    }
+    const std::size_t  columnCount = OrgTableColumnCount(tableInfo->rows, tableInfo->isSeparatorRow);
+    const OrgTableCell cell        = LocateOrgTableCell(buffer, *tableInfo);
+    if (cell.col + 1 >= columnCount) {
+        return false;
     }
 
-    std::vector<std::vector<std::string>> dataRows;
-    for (std::size_t row = 0; row < tableInfo->rows.size(); ++row) {
-        if (!tableInfo->isSeparatorRow[row])
-            dataRows.push_back(tableInfo->rows[row]);
+    auto rows       = tableInfo->rows;
+    auto separators = tableInfo->isSeparatorRow;
+    PadDataRows(rows, separators, columnCount);
+    for (std::size_t row = 0; row < rows.size(); ++row) {
+        if (!separators[row])
+            std::swap(rows[row][cell.col], rows[row][cell.col + 1]);
     }
-    const std::vector<std::size_t> widths = table::ComputeColumnWidths(dataRows);
+    RewriteOrgTable(buffer, *tableInfo, rows, separators, cell.row, cell.col + 1);
+    return true;
+}
 
-    // Rebuild the whole block, tracking each rendered cell's own start
-    // offset within the new text as it's built -- the target cell's new
-    // position is then known exactly, no separate re-parse needed.
-    std::string                           newText;
-    std::vector<std::vector<std::size_t>> newCellOffsets(tableInfo->rows.size());
-    for (std::size_t row = 0; row < tableInfo->rows.size(); ++row) {
-        if (tableInfo->isSeparatorRow[row]) {
-            // Leading/trailing '|', '+' only at internal column
-            // intersections -- matches real Org's own hline convention
-            // ("|-------+-----|", not "+-------+-----+"). Load-bearing,
-            // not just cosmetic: a leading '+' would make this line fail
-            // table::FindTableBlockLines' own "starts with '|'" detection
-            // rule the next time this table is touched.
-            newText += '|';
-            for (std::size_t col = 0; col < widths.size(); ++col) {
-                newText += std::string(widths[col] + 2, '-');
-                newText += (col + 1 < widths.size()) ? '+' : '|';
-            }
-        }
-        else {
-            newText += '|';
-            for (std::size_t col = 0; col < widths.size(); ++col) {
-                newText += ' ';
-                newCellOffsets[row].push_back(newText.size());
-                const std::string cellText = col < tableInfo->rows[row].size() ? tableInfo->rows[row][col] : std::string();
-                newText += table::PadCell(cellText, widths[col], table::Alignment::Left);
-                newText += " |";
-            }
-        }
-        newText += '\n';
+bool InsertOrgTableHruleAtPoint(text::Buffer& buffer) {
+    const auto tableInfo = FindOrgTableAtPoint(buffer);
+    if (!tableInfo) {
+        return false;
     }
-    // The block's own last line may not have had a trailing newline (it's
-    // the buffer's real last line and the buffer itself doesn't end in
-    // '\n') -- drop the one just added above to match, rather than
-    // unconditionally introducing one that wasn't there before.
-    const bool blockHadTrailingNewline = tableInfo->endLine < buffer.Content().LineCount();
-    if (!blockHadTrailingNewline && !newText.empty()) {
-        newText.pop_back();
-    }
+    const std::size_t  blockRow = BlockRowAtPoint(buffer, *tableInfo);
+    const OrgTableCell cell     = LocateOrgTableCell(buffer, *tableInfo);
 
-    const std::size_t blockStartByte = buffer.Content().LineToByteOffset(tableInfo->startLine);
-    const std::size_t blockEndByte   = (tableInfo->endLine < buffer.Content().LineCount())
-                                           ? buffer.Content().LineToByteOffset(tableInfo->endLine)
-                                           : buffer.Content().ByteLength();
-
-    // Advance to the next cell in row-major order, skipping separator
-    // rows, wrapping from the table's last real cell back to its first.
-    std::vector<std::pair<std::size_t, std::size_t>> realCells;
-    for (std::size_t row = 0; row < tableInfo->rows.size(); ++row) {
-        if (tableInfo->isSeparatorRow[row])
-            continue;
-        for (std::size_t col = 0; col < widths.size(); ++col)
-            realCells.emplace_back(row, col);
-    }
-    std::size_t currentIndex = 0;
-    for (std::size_t i = 0; i < realCells.size(); ++i) {
-        if (realCells[i].first == currentRow && realCells[i].second == currentCol) {
-            currentIndex = i;
-            break;
-        }
-    }
-    const auto [targetRow, targetCol]       = realCells[(currentIndex + 1) % realCells.size()];
-    const std::size_t targetOffsetInNewText = newCellOffsets[targetRow][targetCol];
-
-    buffer.DeleteRange(blockStartByte, blockEndByte - blockStartByte);
-    buffer.InsertAt(blockStartByte, newText);
-    buffer.SetPoint(blockStartByte + targetOffsetInNewText);
+    auto rows       = tableInfo->rows;
+    auto separators = tableInfo->isSeparatorRow;
+    rows.emplace(rows.begin() + static_cast<std::ptrdiff_t>(blockRow) + 1);
+    separators.insert(separators.begin() + static_cast<std::ptrdiff_t>(blockRow) + 1, true);
+    // Point stays in its current cell; its row index shifts by one only if
+    // the located cell sat below the insertion line (possible when point
+    // was on a separator row and the first-cell fallback landed elsewhere).
+    const std::size_t targetRow = cell.row > blockRow ? cell.row + 1 : cell.row;
+    RewriteOrgTable(buffer, *tableInfo, rows, separators, targetRow, cell.col);
     return true;
 }
 

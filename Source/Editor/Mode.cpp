@@ -236,8 +236,12 @@ namespace {
     // shows up as which specific marker child is present.
     std::optional<int> AtxHeadingMarkerLevel(std::string_view childType) {
         static constexpr std::pair<std::string_view, int> kMarkers[] = {
-            {"atx_h1_marker", 1}, {"atx_h2_marker", 2}, {"atx_h3_marker", 3},
-            {"atx_h4_marker", 4}, {"atx_h5_marker", 5}, {"atx_h6_marker", 6},
+            {"atx_h1_marker", 1},
+            {"atx_h2_marker", 2},
+            {"atx_h3_marker", 3},
+            {"atx_h4_marker", 4},
+            {"atx_h5_marker", 5},
+            {"atx_h6_marker", 6},
         };
         for (const auto& [name, level] : kMarkers) {
             if (childType == name) {
@@ -261,12 +265,13 @@ namespace {
             for (std::size_t i = 0; i < node.ChildCount(); ++i) {
                 if (const std::optional<int> level = AtxHeadingMarkerLevel(node.Child(i).Type())) {
                     spans.push_back(HighlightSpan{.startByte   = node.StartByte(),
-                                                   .endByte     = node.EndByte(),
-                                                   .syntaxClass = HeadlineLevelForStarCount(static_cast<std::size_t>(*level))});
+                                                  .endByte     = node.EndByte(),
+                                                  .syntaxClass = HeadlineLevelForStarCount(static_cast<std::size_t>(*level))});
                     break;
                 }
             }
-        } else if (type == "setext_heading") {
+        }
+        else if (type == "setext_heading") {
             for (std::size_t i = 0; i < node.ChildCount(); ++i) {
                 const std::string_view childType = node.Child(i).Type();
                 if (childType == "setext_h1_underline" || childType == "setext_h2_underline") {
@@ -276,7 +281,8 @@ namespace {
                     break;
                 }
             }
-        } else if (type == "task_list_marker_checked" || type == "task_list_marker_unchecked") {
+        }
+        else if (type == "task_list_marker_checked" || type == "task_list_marker_unchecked") {
             spans.push_back(HighlightSpan{.startByte = node.StartByte(), .endByte = node.EndByte(), .syntaxClass = SyntaxClass::Checkbox});
         }
 
@@ -365,7 +371,7 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
     HighlightFunction highlight;
     if (!querySource.empty()) {
         const auto query = std::make_shared<treesitter::Query>(language, querySource);
-        highlight = [parser, query, sharedParse](std::string_view bufferText) -> std::vector<HighlightSpan> {
+        highlight        = [parser, query, sharedParse](std::string_view bufferText) -> std::vector<HighlightSpan> {
             if (!sharedParse->lastTree.has_value() || sharedParse->lastText != bufferText) {
                 sharedParse->lastTree = parser->Parse(bufferText);
                 sharedParse->lastText.assign(bufferText);
@@ -666,6 +672,32 @@ Mode OrgMode() {
     // org-mode buffer is active, see this function's own doc comment in
     // Mode.h.
     keymap.Bind(ParseKeySequence("C-c C-o"), "open-link-at-point");
+    // Tables slice 2: real Org's own table-editing bindings. S-TAB is
+    // unbound globally, so no shadowing; M-UP/M-DOWN deliberately shadow
+    // the global move-line-up/move-line-down with org-metaup/org-metadown,
+    // which fall back to the exact same line move outside a table (see
+    // their registration comment in Commands.cpp). Every Meta chord gets
+    // the same dual M-/ESC-prefix binding the global keymap uses ("cover
+    // both real input shapes" -- see BuildDefaultGlobalKeymap's own
+    // comment).
+    keymap.Bind(ParseKeySequence("S-TAB"), "org-table-previous-cell");
+    keymap.Bind(ParseKeySequence("M-UP"), "org-metaup");
+    keymap.Bind(ParseKeySequence("ESC UP"), "org-metaup");
+    keymap.Bind(ParseKeySequence("M-DOWN"), "org-metadown");
+    keymap.Bind(ParseKeySequence("ESC DOWN"), "org-metadown");
+    keymap.Bind(ParseKeySequence("M-S-DOWN"), "org-table-insert-row");
+    keymap.Bind(ParseKeySequence("ESC S-DOWN"), "org-table-insert-row");
+    keymap.Bind(ParseKeySequence("M-S-UP"), "org-table-kill-row");
+    keymap.Bind(ParseKeySequence("ESC S-UP"), "org-table-kill-row");
+    keymap.Bind(ParseKeySequence("M-S-RIGHT"), "org-table-insert-column");
+    keymap.Bind(ParseKeySequence("ESC S-RIGHT"), "org-table-insert-column");
+    keymap.Bind(ParseKeySequence("M-S-LEFT"), "org-table-delete-column");
+    keymap.Bind(ParseKeySequence("ESC S-LEFT"), "org-table-delete-column");
+    keymap.Bind(ParseKeySequence("M-LEFT"), "org-table-move-column-left");
+    keymap.Bind(ParseKeySequence("ESC LEFT"), "org-table-move-column-left");
+    keymap.Bind(ParseKeySequence("M-RIGHT"), "org-table-move-column-right");
+    keymap.Bind(ParseKeySequence("ESC RIGHT"), "org-table-move-column-right");
+    keymap.Bind(ParseKeySequence("C-c -"), "org-table-insert-hline");
 
     // Org-mode syntax-highlighting follow-up: NOT built via
     // TreeSitterMode()/TreeSitterModeFromLanguage() -- see this function's

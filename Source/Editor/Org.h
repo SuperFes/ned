@@ -38,8 +38,10 @@
 //    column-width/alignment engine is identical even though their exact
 //    separator-row syntax isn't (Org: a plain `-+-` hrule, no per-column
 //    alignment marker; GFM: a mandatory `:---`/`:---:`/`---:` delimiter
-//    row). Only column alignment is in scope -- formula support is
-//    explicitly deferred, see ROADMAP.md.
+//    row). Column alignment plus the table-editing surface (cell motion
+//    with row auto-insert, row/column insert/delete/move, hrule insert --
+//    tables slice 2) are in scope; formula support is explicitly
+//    deferred, see ROADMAP.md.
 //
 // 5. Links: real Org's own [[target][description]] bracket syntax --
 //    ParseLinks/LinkAtPoint are the pure-parse/AtPoint pair every other
@@ -54,8 +56,10 @@
 //    actual visual "hide the brackets, show only the description" rendering
 //    lives entirely in Source/UI/BufferView.cpp -- this file only parses.
 //
-// What's still not here: real tree-sitter-org highlighting -- a separate
-// follow-up slice, not started.
+// Real tree-sitter-org highlighting shipped as its own follow-up (see
+// Mode.cpp's OrgMode(), built on Ned's own forked "org" grammar in
+// TreeSitter/Languages.cpp) -- it lives there, not here; this file stays
+// parse/edit only.
 //
 
 #ifndef NED_EDITOR_ORG_H
@@ -299,15 +303,69 @@ struct OrgTable {
 [[nodiscard]] std::optional<OrgTable> FindOrgTableAtPoint(const text::Buffer& buffer);
 
 // Realigns every column in the table at point to its content's own width,
-// then moves point to the next cell in row-major order (wrapping from the
-// table's last cell back to its first) -- matches real Org's own TAB
-// behavior inside a table. Auto-inserting a new row when tabbing past the
-// last cell of the last row (real Org's own behavior too) is explicitly
-// deferred, not attempted here -- a real, separate piece of buffer
-// mutation (inserting a whole new line, not just realigning existing
-// ones); see ROADMAP.md. Returns false (buffer untouched) if point isn't
-// inside a table.
+// then moves point to the next cell in row-major order. Tabbing past the
+// table's last cell appends a fresh empty data row at the very end of the
+// table and lands on its first cell -- real Org's own TAB behavior, and
+// tables slice 2's answer to slice 1's explicitly deferred "auto-insert a
+// new row" (slice 1 wrapped back to the first cell instead). Returns
+// false (buffer untouched) if point isn't inside a table.
 bool AlignOrgTableAtPoint(text::Buffer& buffer);
+
+// The S-TAB mirror of AlignOrgTableAtPoint: realigns, then moves point to
+// the previous cell in row-major order, wrapping from the table's first
+// cell back to its last (no row auto-insert in this direction -- there's
+// no "before the table" row to create). Returns false if point isn't
+// inside a table.
+bool MoveToPreviousOrgTableCellAtPoint(text::Buffer& buffer);
+
+// The row-editing ops (tables slice 2), each realigning the whole table as
+// a side effect the same way AlignOrgTableAtPoint does (they share its
+// rebuild machinery). "Row" means the block line point's own line is --
+// including a separator hrule (moving/killing an hrule is coherent;
+// inserting above one is too). All return false (buffer untouched) if
+// point isn't inside a table; the move ops also return false at the
+// table's own edge (nothing to swap with).
+//
+// InsertOrgTableRowAtPoint inserts an empty data row ABOVE the current row
+// (real Org's own org-table-insert-row/M-S-down behavior), leaving point
+// in the new row at its own current column. KillOrgTableRowAtPoint removes
+// the current row outright -- killing the table's only remaining line
+// removes the whole block (real Org's org-table-kill-row doesn't guard
+// this either); there's deliberately no kill-ring interaction, matching
+// this codebase's own "deletes always start a fresh undo step, nothing
+// else" simplification. The move ops swap the current row with its
+// neighbor, point following the moved row.
+bool InsertOrgTableRowAtPoint(text::Buffer& buffer);
+bool KillOrgTableRowAtPoint(text::Buffer& buffer);
+bool MoveOrgTableRowUpAtPoint(text::Buffer& buffer);
+bool MoveOrgTableRowDownAtPoint(text::Buffer& buffer);
+
+// The column-editing ops (tables slice 2), same realign-as-a-side-effect/
+// false-off-a-table/false-at-the-edge contract as the row ops above.
+// "Column" is the cell point currently sits in (first cell fallback when
+// point is on a separator row's own line, same fallback the cell-motion
+// ops use). Ragged rows are padded with empty cells to the table's full
+// column count before any column op, so a column index means the same
+// thing in every row.
+//
+// InsertOrgTableColumnAtPoint inserts an empty column to the RIGHT of the
+// current one (real Org's own org-table-insert-column behavior since Org
+// 9.4 -- earlier Org inserted left; the modern behavior is the one picked
+// here), leaving point in the new column. DeleteOrgTableColumnAtPoint
+// refuses (returns false) to delete the table's only column -- unlike
+// KillOrgTableRowAtPoint's whole-block removal, a zero-column table has no
+// representation in the `|`-prefixed line syntax at all. The move ops swap
+// the current column with its neighbor, point following the moved column.
+bool InsertOrgTableColumnAtPoint(text::Buffer& buffer);
+bool DeleteOrgTableColumnAtPoint(text::Buffer& buffer);
+bool MoveOrgTableColumnLeftAtPoint(text::Buffer& buffer);
+bool MoveOrgTableColumnRightAtPoint(text::Buffer& buffer);
+
+// Inserts a separator hrule BELOW the current row (real Org's own
+// org-table-insert-hline/C-c - behavior), realigning like everything
+// above; point stays in its current cell. Returns false if point isn't
+// inside a table.
+bool InsertOrgTableHruleAtPoint(text::Buffer& buffer);
 
 // A real Org link: "[[target]]" (no description -- display the target
 // itself) or "[[target][description]]". Org links never span lines (same
