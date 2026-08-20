@@ -804,16 +804,17 @@ namespace {
     // background gradient shows at columnFromGutterEdge (0 = the first
     // content column right after the gutter). Peaks at kDiffGradientPeakAlpha
     // right there and fades linearly to 0 over kDiffGradientSpanColumns --
-    // 0 well before most real lines end, so the bulk of a changed line's
-    // text keeps its normal, untouched contrast; only the handful of
-    // columns nearest the gutter (where the eye is already looking, having
-    // just seen the gutter swatch/colored line number) get any tint at
-    // all. A negative input (shouldn't happen -- columnFromGutterEdge is
-    // always column - gutterWidth for a column that's already >= gutterWidth
-    // -- but cheap to guard) clamps to the peak rather than going out of range.
+    // just the first couple columns, revised down from an original 16 per
+    // explicit user feedback ("we only need it on the first character or
+    // 2") once the fuller-span version was actually seen -- so the tint is
+    // a small accent right next to the gutter/line-number marker, not a
+    // reach across the line. A negative input (shouldn't happen --
+    // columnFromGutterEdge is always column - gutterWidth for a column
+    // that's already >= gutterWidth -- but cheap to guard) clamps to the
+    // peak rather than going out of range.
     float DiffGradientAlpha(int columnFromGutterEdge) {
-        constexpr float kDiffGradientPeakAlpha    = 0.35f;
-        constexpr int   kDiffGradientSpanColumns  = 16;
+        constexpr float kDiffGradientPeakAlpha   = 0.35f;
+        constexpr int   kDiffGradientSpanColumns = 2;
         if (columnFromGutterEdge >= kDiffGradientSpanColumns) {
             return 0.0f;
         }
@@ -1775,7 +1776,14 @@ void BufferView::Paint(Canvas c) {
                     // rest of the line, not a hard-edged solid patch.
                     const float alpha = DiffGradientAlpha(col - static_cast<int>(gutterWidth));
                     if (alpha > 0.0f) {
-                        const Color accent = (currentLineDiffTint == DiffLineKind::Added) ? Color::BrightGreen : Color::BrightBlue;
+                        // Regular (not Bright) Green/Blue here -- half the
+                        // RGB intensity of the gutter swatch/line-number's
+                        // own Bright variants, per explicit user feedback
+                        // that the gradient read as too light against a
+                        // dark theme. The swatch/line-number stay Bright
+                        // (a small, already-legible, unrelated area, not
+                        // what was flagged).
+                        const Color accent = (currentLineDiffTint == DiffLineKind::Added) ? Color::Green : Color::Blue;
                         brush.background   = Color::Interpolate(alpha, theme_.background, accent);
                     }
                 }
