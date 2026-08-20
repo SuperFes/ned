@@ -40,7 +40,7 @@ Pane::Pane(text::Buffer& buffer, text::KillRing& killRing, editor::RegisterTable
            text::BufferList& bufferList, const editor::CommandRegistry& registry, const editor::Keymap& janetKeymap,
            const editor::Keymap& globalKeymap, editor::Mode mode, std::string& statusMessage, const Theme& theme,
            ProjectSidebar* projectSidebar, editor::lsp::LspManager* lspManager, editor::tasks::TaskRunner* taskRunner,
-           editor::vcs::VcsRunner* vcsRunner,
+           editor::vcs::VcsRunner* vcsRunner, editor::dap::DapManager* dapManager,
            std::function<void(editor::InteractiveRequest)> onWindowRequest,
            std::function<void(text::Buffer&)>              onBufferClosed) : activeBuffer_(buffer), mode_(std::move(mode)),
                                                                 dispatcher_(registry, editor::KeymapStack({&janetKeymap, &mode_.keymap, &globalKeymap})),
@@ -75,12 +75,13 @@ Pane::Pane(text::Buffer& buffer, text::KillRing& killRing, editor::RegisterTable
     // trailing column -- seeded here from the process-wide setting, kept in
     // lockstep opposition afterward by toggle-minimap (see
     // BufferView::SetMinimap's own doc comment).
-    minimap_->active      = editor::MinimapEnabled();
-    scrollColumn_.active  = !minimap_->active;
+    minimap_->active     = editor::MinimapEnabled();
+    scrollColumn_.active = !minimap_->active;
     bufferView_->SetProjectSidebar(projectSidebar);
     bufferView_->SetLspManager(lspManager);
     bufferView_->SetTaskRunner(taskRunner);
     bufferView_->SetVcsRunner(vcsRunner);
+    bufferView_->SetDapManager(dapManager);
     bufferView_->SetOnWindowRequest(std::move(onWindowRequest));
     bufferView_->SetOnBufferClosed(std::move(onBufferClosed));
     // per-buffer-mode follow-up: Mode is a property of the buffer being
@@ -286,7 +287,7 @@ WindowManager::WindowManager(text::Buffer& initialBuffer, text::KillRing& killRi
 std::unique_ptr<Pane> WindowManager::MakePane(text::Buffer& buffer, editor::Mode mode) {
     auto pane = std::make_unique<Pane>(
         buffer, killRing_, registers_, bufferList_, registry_, janetKeymap_, globalKeymap_, std::move(mode),
-        statusMessage_, theme_, projectSidebar_, lspManager_, taskRunner_, vcsRunner_,
+        statusMessage_, theme_, projectSidebar_, lspManager_, taskRunner_, vcsRunner_, dapManager_,
         [this](editor::InteractiveRequest request) { HandleWindowRequest(request); },
         [this](text::Buffer& closedBuffer) { HandleBufferClosed(closedBuffer); });
     pane->SetEventLoop(eventLoop_);
@@ -319,6 +320,43 @@ void WindowManager::SetVcsRunner(editor::vcs::VcsRunner* vcsRunner) {
     for (Pane* pane : Leaves()) {
         pane->Buffer().SetVcsRunner(vcsRunner);
     }
+}
+
+void WindowManager::SetDapManager(editor::dap::DapManager* dapManager) {
+    dapManager_ = dapManager;
+    for (Pane* pane : Leaves()) {
+        pane->Buffer().SetDapManager(dapManager);
+    }
+    if (dapManager == nullptr) {
+        return;
+    }
+    // The session's async outcomes land here (single-slot callbacks, and
+    // WindowManager is the one owner that can resolve "the focused pane"
+    // fresh at fire time -- a specific BufferView captured at wiring time
+    // could be a pane that's since been split away or closed). Both run on
+    // the main thread via DapClient's own Post-marshaling, after which
+    // EventLoop::Run repaints unconditionally -- same as every other async
+    // completion in this codebase.
+    dapManager->SetOnStopped([this](const editor::dap::DapManager::StoppedInfo& info) {
+        if (info.path) {
+            // Status first, jump second: JumpToPathLine reports its own
+            // failure via statusMessage_, and that error must survive, not
+            // be overwritten by the happy-path text.
+            statusMessage_ = "Stopped (" + info.reason + ") at " + info.path->filename().string() + ":" +
+                             std::to_string(info.line);
+            Pane* pane     = FocusedPane();
+            if (pane == nullptr && !Leaves().empty()) {
+                pane = Leaves().front();
+            }
+            if (pane != nullptr) {
+                pane->Buffer().JumpToPathLine(*info.path, info.line);
+            }
+        }
+        else {
+            statusMessage_ = "Stopped (" + info.reason + ") -- no source location.";
+        }
+    });
+    dapManager->SetOnSessionEnded([this](std::string reason) { statusMessage_ = std::move(reason); });
 }
 
 void WindowManager::SetEventLoop(EventLoop* eventLoop) {

@@ -13,6 +13,7 @@
 #include "Application.h"
 
 #include "Editor/Commands.h"
+#include "Editor/Dap/DapManager.h"
 #include "Editor/Dispatcher.h"
 #include "Editor/Keymap.h"
 #include "Editor/Lsp/LspManager.h"
@@ -220,9 +221,7 @@ int main(int argc, char** argv) {
     // and there's no file path to derive a smarter default from otherwise.
     ned::editor::SetProjectRoot(
         ned::editor::DetectProjectRoot(
-			pathArg != nullptr ? std::filesystem::path(pathArg) : std::filesystem::current_path()
-		)
-	);
+            pathArg != nullptr ? std::filesystem::path(pathArg) : std::filesystem::current_path()));
 
     ned::text::KillRing        killRing;
     ned::editor::RegisterTable registers;
@@ -458,6 +457,13 @@ int main(int argc, char** argv) {
     // windowManager, connect after construction" convention.
     ned::editor::vcs::VcsRunner vcsRunner(eventLoop);
     windowManager->SetVcsRunner(&vcsRunner);
+
+    // DAP client slice 1: same shape as vcsRunner just above.
+    // SetDapManager also wires the session's async callbacks (breakpoint
+    // hits jumping the focused pane, session-end status text) -- see its
+    // own doc comment in WindowManager.h.
+    ned::editor::dap::DapManager dapManager(eventLoop);
+    windowManager->SetDapManager(&dapManager);
 
     // FTXUI -> Notcurses migration: BufferView's completion-debounce/
     // status-message-idle-timeout DeadlineTimers and ScrollArrowButton's

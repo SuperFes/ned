@@ -8,16 +8,17 @@
 #include <vector>
 
 #include "Editor/CodeFoldSettings.h"
+#include "Editor/Dap/DapConfig.h"
 #include "Editor/FinalNewline.h"
 #include "Editor/FormatOnSave.h"
 #include "Editor/Link.h"
 #include "Editor/Lsp/LspServerConfig.h"
+#include "Editor/MinimapSettings.h"
 #include "Editor/ModeOverrides.h"
 #include "Editor/ProjectRoot.h"
 #include "Editor/ScratchPad.h"
 #include "Editor/ScriptingSession.h"
 #include "Editor/SyntaxTheme.h"
-#include "Editor/MinimapSettings.h"
 #include "Editor/TabWidth.h"
 #include "Editor/Tasks/TaskConfig.h"
 #include "Editor/Vcs/VcsProviderRegistry.h"
@@ -194,6 +195,19 @@ namespace {
         editor::lsp::SetLspServerCommand(language, std::move(argv));
     }
 
+    // DAP client slice 1: same argv shape as NedSetLspCommand for the
+    // adapter subprocess; the launch config stays an opaque JSON string on
+    // purpose -- it's the DAP `launch` request's own adapter-specific
+    // arguments object, whose keys differ per adapter (see
+    // Editor/Dap/DapConfig.h).
+    void NedSetDapAdapter(std::string language, std::vector<std::string> argv) {
+        editor::dap::SetDapAdapterCommand(language, std::move(argv));
+    }
+
+    void NedSetDapLaunch(std::string language, std::string launchConfigJson) {
+        editor::dap::SetDapLaunchConfig(language, std::move(launchConfigJson));
+    }
+
     // task-runner follow-up: argv[0] is the task's executable, remaining
     // elements its arguments, e.g. (ned/set-task-command "build" ["cmake"
     // "--build" "."]). An empty argv clears any existing registration for
@@ -304,7 +318,7 @@ namespace {
             throw std::runtime_error("ned: janet environment not installed");
         }
         auto provider = std::make_unique<JanetVcsProvider>(g_env, name, detectFn, blameArgvFn, parseBlameFn, logArgvFn,
-                                                            parseLogFn, diffArgvFn, parseDiffFn);
+                                                           parseLogFn, diffArgvFn, parseDiffFn);
         editor::vcs::RegisterProvider(name, std::move(provider));
         editor::vcs::ClearProviderCache();
     }
@@ -394,6 +408,17 @@ void InstallEditorBindings(Environment& env) {
         "[\"clangd\"]). argv is an array or tuple of strings -- argv[0] the executable (resolved against $PATH), the "
         "rest its arguments. ned never installs or updates a language server itself; this only configures which "
         "already-installed one to run. An empty argv clears the configured command for language.");
+    env.Register<&NedSetDapAdapter>(
+        "ned", "set-dap-adapter",
+        "Set the command used to launch a language's DAP debug adapter: (language argv), e.g. (ned/set-dap-adapter "
+        "\"cpp\" [\"lldb-dap\"]) or (ned/set-dap-adapter \"python\" [\"python\" \"-m\" \"debugpy.adapter\"]). Same "
+        "argv shape and $PATH resolution as ned/set-lsp-command; an empty argv clears it.");
+    env.Register<&NedSetDapLaunch>(
+        "ned", "set-dap-launch",
+        "Set the DAP launch configuration for a language: (language json), e.g. (ned/set-dap-launch \"cpp\" "
+        "`{\"program\": \"./build/ned\"}`). The string is passed verbatim as the launch request's own "
+        "adapter-specific arguments object -- see your adapter's documentation for its keys. An empty string clears "
+        "it. Both this and ned/set-dap-adapter must be configured before dap-continue (F5) can start a session.");
     env.Register<&NedSetTaskCommand>(
         "ned", "set-task-command",
         "Set the command run by run-task for a task name: (name argv), e.g. (ned/set-task-command \"build\" "

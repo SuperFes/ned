@@ -762,6 +762,26 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
         context.interactiveRequest = InteractiveRequest::CancelTask;
     });
 
+    // DAP client slice 1: four one-shot direct actions, same "just set
+    // interactiveRequest" shape as run-task/cancel-task above --
+    // BufferView holds the shared DapManager and does the actual work (see
+    // its StartInteractiveSession Dap* cases). Adapter and launch
+    // configuration both come from init.janet (ned/set-dap-adapter,
+    // ned/set-dap-launch) -- see Editor/Dap/DapConfig.h.
+    registry.Register("dap-continue", "Start a debug session for the active language, or continue a stopped one.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::DapContinue;
+                      });
+    registry.Register("dap-stop", "Stop the running debug session.", [](CommandContext& context) {
+        context.interactiveRequest = InteractiveRequest::DapStop;
+    });
+    registry.Register("dap-pause", "Pause the running debuggee.", [](CommandContext& context) {
+        context.interactiveRequest = InteractiveRequest::DapPause;
+    });
+    registry.Register("dap-toggle-breakpoint", "Toggle a breakpoint on the current line.", [](CommandContext& context) {
+        context.interactiveRequest = InteractiveRequest::DapToggleBreakpoint;
+    });
+
     // VCS blame gutter follow-up: same "just set interactiveRequest" shape
     // as lsp-show-log/run-task above -- BufferView owns the actual
     // VcsRunner request. vcs-show-blame stays on the current buffer,
@@ -1218,6 +1238,13 @@ Keymap BuildDefaultGlobalKeymap() {
     // "no binding yet" precedent, this one's a "stop something running now"
     // action worth a direct key).
     keymap.Bind(ParseKeySequence("C-c C-M-b"), "cancel-task");
+    // DAP client slice 1: the VS/JetBrains-standard debug F-keys (the
+    // user's explicit ask -- see ROADMAP.md's DAP entry). F10/F11/S-F11
+    // (step over/into/out) are reserved for slice 2's stepping commands,
+    // deliberately left unbound until those exist.
+    keymap.Bind(ParseKeySequence("F5"), "dap-continue");
+    keymap.Bind(ParseKeySequence("S-F5"), "dap-stop");
+    keymap.Bind(ParseKeySequence("F9"), "dap-toggle-breakpoint");
     keymap.Bind(ParseKeySequence("C-c C-v"), "project-search-visit-result");
     // VCS blame gutter follow-up: "C-c v" prefix, mirroring "C-c C-b"/
     // "C-c C-M-b" run-task/cancel-task's own choice of an otherwise-unused

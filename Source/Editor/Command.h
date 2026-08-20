@@ -194,6 +194,20 @@ enum class InteractiveRequest { None,
                                 // logic.
                                 RunTask,
                                 CancelTask,
+                                // DAP client slice 1: four one-shot direct actions, same shape
+                                // as ToggleProjectSidebar -- BufferView holds the shared
+                                // DapManager (SetDapManager, mirroring SetTaskRunner) and acts
+                                // immediately: DapContinue starts a session for the active
+                                // mode's language or resumes a stopped one (F5), DapStop tears
+                                // it down (S-F5), DapPause requests a stop, and
+                                // DapToggleBreakpoint toggles a breakpoint on point's own line
+                                // (F9). No InputMode sessions -- every prompt-shaped decision
+                                // (which adapter, what launch config) is init.janet
+                                // configuration, not an interactive question.
+                                DapContinue,
+                                DapStop,
+                                DapPause,
+                                DapToggleBreakpoint,
                                 // VCS blame gutter follow-up: one-shot direct actions, same
                                 // shape as ProjectAgenda/LspShowLog. VcsShowBlame is the
                                 // primary, inline-in-place one: populates the gutter for the

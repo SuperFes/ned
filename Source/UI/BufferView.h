@@ -26,6 +26,7 @@
 #include "ActiveBuffer.h"
 #include "Editor/CodeFold.h"
 #include "Editor/Command.h"
+#include "Editor/Dap/DapManager.h"
 #include "Editor/Dispatcher.h"
 #include "Editor/IncrementalSearch.h"
 #include "Editor/Link.h"
@@ -159,6 +160,21 @@ class BufferView : public Widget {
     // statusMessage_ if this was never called, the same way run-task
     // degrades with no TaskRunner).
     void SetVcsRunner(editor::vcs::VcsRunner* vcsRunner);
+
+    // DAP client slice 1: registers the shared DapManager -- same "unset is
+    // a safe no-op" convention as SetLspManager/SetTaskRunner/SetVcsRunner
+    // (the dap-* commands report "No debugger available." via
+    // statusMessage_ if this was never called).
+    void SetDapManager(editor::dap::DapManager* dapManager);
+
+    // Opens path (via BufferList::OpenOrCreateFile) and moves point to the
+    // start of line (1-indexed, matching the "path:line" convention every
+    // results-buffer format here writes). Reports any failure via
+    // statusMessage_ rather than throwing -- callers never need their own
+    // try/catch. Shared by VisitSearchResult/VisitVcsResult internally;
+    // public (DAP client slice 1) so WindowManager's stopped-event callback
+    // can jump the focused pane to wherever the debuggee stopped.
+    void JumpToPathLine(const std::filesystem::path& path, std::size_t line);
 
     // vcs-show-blame's entry point (see StartInteractiveSession's
     // VcsShowBlame case) -- kicks off an async VcsRunner::RequestBlame for
@@ -633,12 +649,10 @@ class BufferView : public Widget {
     // which buffer happens to be active.
     void VisitSearchResult();
 
-    // Shared by VisitSearchResult and VisitVcsResult below: opens path (via
-    // BufferList::OpenOrCreateFile) and moves point to the start of line
-    // (1-indexed, matching how both the search-results and *vcs blame*
-    // buffer formats write it). Reports any failure via statusMessage_
-    // rather than throwing -- callers never need their own try/catch.
-    void JumpToPathLine(const std::filesystem::path& path, std::size_t line);
+    // Shared by VisitSearchResult and VisitVcsResult below -- declared in
+    // the public section instead (see its own comment there); kept
+    // referenced here so the two Visit* methods' doc comments still point
+    // somewhere true.
 
     // VCS blame gutter follow-up: same "path:line:" prefix VisitSearchResult
     // parses (see BuildVcsBlameBuffer's own doc comment for why the format
@@ -951,6 +965,7 @@ class BufferView : public Widget {
     editor::lsp::LspManager*   lspManager_          = nullptr; // see SetLspManager
     editor::tasks::TaskRunner* taskRunner_          = nullptr; // see SetTaskRunner
     editor::vcs::VcsRunner*    vcsRunner_           = nullptr; // see SetVcsRunner
+    editor::dap::DapManager*   dapManager_          = nullptr; // see SetDapManager
     EventLoop*                 eventLoop_           = nullptr; // see SetEventLoop
 
     InputMode                                inputMode_ = InputMode::Normal;

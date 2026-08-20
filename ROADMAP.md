@@ -144,7 +144,18 @@ each is, not by priority.
   - [ ] DAP (Debug Adapter Protocol) client for in-editor debugging. Scoped
         2026-08-19 per the user's own framing: "the useful things — step through,
         inspect, and all that good stuff," with F-keys as the primary bindings.
-        Not started; this is the design record for whenever it's picked up.
+        **Slice 1 shipped 2026-08-20**: `Source/Editor/Dap/` (`DapConfig` — per-language
+        adapter argv + opaque launch-config JSON, configured via `ned/set-dap-adapter`/
+        `ned/set-dap-launch`; `DapClient` — the DAP envelope over `Lsp/Transport.h`'s
+        reused framing; `DapManager` — single-session lifecycle, breakpoint store,
+        initialize/launch/configurationDone handshake, stopped/terminated/exited
+        events), commands `dap-continue` (`F5`)/`dap-stop` (`S-F5`)/
+        `dap-toggle-breakpoint` (`F9`)/`dap-pause` (M-x), stopped-event
+        jump-to-source via `WindowManager`'s focused pane, all tested against a
+        scripted fake adapter over the real framing (`Tests/Dap*Test.cpp`).
+        Slices 2 (stepping, execution-line highlight, breakpoint gutter markers)
+        and 3 (`*debug*` stack/variables buffer, `evaluate` prompt) remain — the
+        design record below still describes the whole feature.
         - **Protocol shape / transport reuse.** A DAP adapter is a persistent
           subprocess speaking `Content-Length`-framed JSON over stdio — the *identical*
           base framing LSP uses (DAP inherited it), so `Source/Editor/Lsp/Transport.h`'s
