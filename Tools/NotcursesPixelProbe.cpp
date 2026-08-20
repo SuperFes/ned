@@ -9,6 +9,14 @@
 // approximation (block/braille density) instead -- a materially different
 // design, worth knowing before committing to either.
 //
+// Renders incrementally (a notcurses_render() call after each step, not
+// just once at the end) specifically so that if a later step crashes
+// outright, whatever already succeeded is still visible on screen instead
+// of the whole probe appearing to "do nothing" -- notcurses_render() is
+// the only point any of this actually reaches the terminal; anything
+// drawn before a crash without an intervening render() is invisible, lost
+// along with the process.
+//
 // Run it directly in a real terminal: ./build/notcurses_pixel_probe
 // Reads one keypress, then exits and restores the terminal.
 //
@@ -42,9 +50,23 @@ const char* PixelImplName(ncpixelimpl_e impl) {
     }
 }
 
+// Mirrors this probe's own stdout progress markers on stderr too, flushed
+// immediately -- if the terminal itself gets left in a bad state by a
+// crash inside Notcurses (raw mode never restored, garbled escape
+// sequences mid-flight), these may be the only trace of how far execution
+// actually got, especially if stdout is what's on the now-corrupted
+// terminal. `! command 2>/tmp/probe.log` (or similar) captures this
+// separately from whatever the terminal itself shows.
+void Progress(const char* what) {
+    std::fprintf(stderr, "[probe] %s\n", what);
+    std::fflush(stderr);
+}
+
 } // namespace
 
 int main() {
+    Progress("starting notcurses_core_init");
+
     notcurses_options opts{};
     opts.flags = NCOPTION_NO_QUIT_SIGHANDLERS | NCOPTION_SUPPRESS_BANNERS;
 
@@ -53,6 +75,7 @@ int main() {
         std::fprintf(stderr, "notcurses_core_init failed -- are you running this in a real terminal?\n");
         return 1;
     }
+    Progress("notcurses_core_init succeeded");
 
     ncplane* std_plane = notcurses_stdplane(nc);
     ncplane_erase(std_plane);
@@ -62,18 +85,24 @@ int main() {
     int y = 1;
     ncplane_putstr_yx(std_plane, y++, 2, "Notcurses pixel-graphics probe");
     y++;
+    notcurses_render(nc); // render #1 -- guarantees this much is visible no matter what happens next
+    Progress("render #1 done (banner)");
 
     const ncpixelimpl_e impl = notcurses_check_pixel_support(nc);
     char line[256];
     std::snprintf(line, sizeof(line), "Detected pixel implementation: %s", PixelImplName(impl));
     ncplane_putstr_yx(std_plane, y++, 2, line);
     y += 2;
+    notcurses_render(nc); // render #2 -- guarantees the detected implementation is visible even if the blit below crashes
+    Progress(line);
 
     if (impl != NCPIXEL_NONE) {
         ncplane_putstr_yx(std_plane, y++, 2,
                           "Below: a 160x80 real RGBA image (horizontal red/vertical green gradient + an 8px");
         ncplane_putstr_yx(std_plane, y++, 2, "checkerboard) blitted via NCBLIT_PIXEL -- genuine per-pixel data, not text cells.");
         y += 1;
+        notcurses_render(nc); // render #3 -- these two lines visible before the risky part even starts
+        Progress("render #3 done (about to build+blit the test image)");
 
         // ncvisual_from_rgba expects 'rows' lines of 'cols' 32-bit 8bpc RGBA
         // pixels each (R,G,B,A byte order in memory, not a packed native-
@@ -99,8 +128,10 @@ int main() {
                 pixels[idx + 3]        = 255; // fully opaque
             }
         }
+        Progress("test image buffer built, calling ncvisual_from_rgba");
 
         ncvisual* visual = ncvisual_from_rgba(pixels.data(), height, width * 4, width);
+        Progress(visual == nullptr ? "ncvisual_from_rgba returned nullptr" : "ncvisual_from_rgba succeeded, calling ncvisual_blit");
         if (visual == nullptr) {
             ncplane_putstr_yx(std_plane, y++, 2, "ncvisual_from_rgba failed");
         }
@@ -113,6 +144,7 @@ int main() {
             vopts.blitter = NCBLIT_PIXEL;
 
             ncplane* drawn = ncvisual_blit(nc, visual, &vopts);
+            Progress(drawn == nullptr ? "ncvisual_blit returned nullptr" : "ncvisual_blit succeeded");
             if (drawn == nullptr) {
                 ncplane_putstr_yx(std_plane, y++, 2, "ncvisual_blit(NCBLIT_PIXEL) failed -- support was detected but blitting didn't work");
             }
@@ -122,7 +154,10 @@ int main() {
                 ncplane_dim_yx(drawn, &drawnRows, &drawnCols);
                 y += static_cast<int>(drawnRows) + 1;
             }
+            notcurses_render(nc); // render #4 -- the actual pixel image (or the failure message), before doing anything else
+            Progress("render #4 done (blit result)");
             ncvisual_destroy(visual);
+            Progress("ncvisual_destroy done");
         }
     }
 
@@ -131,11 +166,13 @@ int main() {
     ncplane_set_bg_default(std_plane);
     ncplane_putstr_yx(std_plane, y, 2, "Press any key to exit...");
 
-    notcurses_render(nc);
+    notcurses_render(nc); // render #5 -- final
+    Progress("render #5 done (final) -- waiting for a keypress");
 
     ncinput ni;
     notcurses_get_blocking(nc, &ni);
 
     notcurses_stop(nc);
+    Progress("notcurses_stop done, exiting cleanly");
     return 0;
 }
