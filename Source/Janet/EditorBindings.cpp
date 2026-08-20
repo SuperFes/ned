@@ -325,25 +325,24 @@ namespace {
         return editor::SyntaxClassNames();
     }
 
-    // Registers a VCS-agnostic plugin: detectFn(root) -> bool, blameArgvFn(path)
-    // -> [argv...], parseBlameFn(stdout) -> [{:hash :author :date :summary} ...],
-    // logArgvFn/parseLogFn the same shape for `git log`-style history,
-    // diffArgvFn/parseDiffFn the same shape again for `git diff`-style hunks
-    // (parseDiffFn returns [{:old-start :old-count :new-start :new-count} ...],
-    // diff-gutter follow-up). Each callback is bound into the environment by
-    // JanetVcsProvider's own constructor (janet_def, not RootedValue -- see
-    // that class's header comment). Re-registering name overwrites the
-    // previous provider, matching NedRegisterCommand's own convention.
-    // Clears the provider-resolution cache afterward so a root checked
-    // before this registration (and resolved to no provider, or a
+    // Registers a VCS-agnostic plugin from one struct/table of callbacks
+    // keyed by keyword -- see JanetVcsProvider's header comment for the
+    // full key list and which are optional (vocabulary-completion
+    // follow-up: replaced the original 7-positional-callback signature
+    // outright once the vocabulary grew to sixteen operations; a clean
+    // break, not a compatibility shim, since the positional form was days
+    // old with one caller). Each present callback is bound into the
+    // environment by JanetVcsProvider's own constructor (janet_def, not
+    // RootedValue -- see that class's header comment). Re-registering name
+    // overwrites the previous provider, matching NedRegisterCommand's own
+    // convention. Clears the provider-resolution cache afterward so a root
+    // checked before this registration (and resolved to no provider, or a
     // different one) gets a fresh answer.
-    void NedVcsRegisterProvider(std::string name, Janet detectFn, Janet blameArgvFn, Janet parseBlameFn,
-                                Janet logArgvFn, Janet parseLogFn, Janet diffArgvFn, Janet parseDiffFn) {
+    void NedVcsRegisterProvider(std::string name, Janet callbacks) {
         if (!g_env) {
             throw std::runtime_error("ned: janet environment not installed");
         }
-        auto provider = std::make_unique<JanetVcsProvider>(g_env, name, detectFn, blameArgvFn, parseBlameFn, logArgvFn,
-                                                           parseLogFn, diffArgvFn, parseDiffFn);
+        auto provider = std::make_unique<JanetVcsProvider>(g_env, name, callbacks);
         editor::vcs::RegisterProvider(name, std::move(provider));
         editor::vcs::ClearProviderCache();
     }
@@ -511,14 +510,21 @@ void InstallEditorBindings(Environment& env) {
 
     env.Register<&NedVcsRegisterProvider>(
         "ned", "vcs-register-provider",
-        "Register a VCS-agnostic plugin: (name detect-fn blame-argv-fn parse-blame-fn log-argv-fn parse-log-fn "
-        "diff-argv-fn parse-diff-fn). detect-fn(root) returns true if root is a repository this plugin handles; "
-        "blame-argv-fn(path)/log-argv-fn(path)/diff-argv-fn(path) each return an argv array/tuple of strings for "
-        "the external command to run; parse-blame-fn(stdout)/parse-log-fn(stdout) each return an array of tables "
-        "with :hash :author :date :summary keys, one per source line (blame) or commit (log); parse-diff-fn(stdout) "
-        "returns an array of tables with :old-start :old-count :new-start :new-count keys, one per changed hunk. "
-        "The actual subprocess is run by ned itself, never by the plugin -- these callbacks only build argv and "
-        "parse already-captured output. Re-registering name replaces the previous provider.");
+        "Register a VCS-agnostic plugin: (name callbacks), where callbacks is a struct/table keyed by keyword. "
+        ":detect (required) takes a root path and returns true if it's a repository this plugin handles. The "
+        "*-argv callbacks each return an argv array/tuple of strings for the external command to run; the parse-* "
+        "callbacks each take that command's captured stdout and return an array of tables. Optional keys, by "
+        "operation: :blame-argv/:parse-blame and :log-argv/:parse-log (entries have :hash :author :date :summary), "
+        ":diff-argv/:parse-diff (:old-start :old-count :new-start :new-count per hunk), :status-argv/:parse-status "
+        "(:state :path per changed file, path relative to the root), :stage-argv/:unstage-argv (take the file's "
+        "path; success is exit code 0, no parse half), :staged-diff-argv (the index-vs-comparison-point diff, for "
+        "selecting a hunk to unstage), :stage-patch-argv/:unstage-patch-argv (take root and a patch file's path, "
+        "applying it to the staging area forward/reverse), :commit-argv (takes root and the commit message), "
+        ":branch-list-argv/:parse-branch-list (:name :current per branch), and :branch-switch-argv/"
+        ":branch-create-argv (take root and the branch name). An operation whose callbacks are absent reports "
+        "'not supported by this provider' when invoked. The actual subprocess is run by ned itself, never by the "
+        "plugin -- these callbacks only build argv and parse already-captured output. Re-registering name replaces "
+        "the previous provider.");
 }
 
 } // namespace ned::janet

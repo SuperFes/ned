@@ -251,6 +251,33 @@ enum class InteractiveRequest { None,
                                 // non-matching line (e.g. a *vcs log* buffer, which has no
                                 // per-line source location) or one that doesn't match.
                                 VisitVcsResult,
+                                // VCS vocabulary-completion follow-up. VcsStatus/VcsBranches
+                                // are one-shot direct actions switching to a synthesized
+                                // "*vcs status*"/"*vcs branches*" buffer once the async result
+                                // arrives (VcsShowLog's exact shape). VcsStageFile/
+                                // VcsUnstageFile are one-shot too, acting on the *vcs status*
+                                // buffer's line at point when that's the active buffer, else
+                                // on the active buffer's own file (BufferView::
+                                // ResolveVcsFileTarget). VcsCommit/VcsSwitchBranch/
+                                // VcsCreateBranch are prompt-shaped (HandlePromptKey):
+                                // commit collects a single-line message; switch-branch
+                                // fetches the branch list first so Tab completes against
+                                // real branch names; create-branch is a plain name prompt.
+                                VcsStatus,
+                                VcsStageFile,
+                                VcsUnstageFile,
+                                VcsCommit,
+                                VcsBranches,
+                                VcsSwitchBranch,
+                                VcsCreateBranch,
+                                // Hunk-staging follow-up: one-shot direct actions on the hunk
+                                // covering point's line in a *source* buffer (not the status
+                                // buffer -- a hunk needs a real source line). BufferView gates
+                                // both on the buffer being unmodified: the diff reflects the
+                                // file on disk while point reflects the buffer, so staging
+                                // from mismatched line numbers would pick the wrong hunk.
+                                VcsStageHunk,
+                                VcsUnstageHunk,
                                 // Minimap widget follow-up: another one-shot direct action, same
                                 // shape as ToggleProjectSidebar -- BufferView flips the registered
                                 // Minimap's own `active` flag directly (and the paired ScrollBar

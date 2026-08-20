@@ -1093,6 +1093,50 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           context.interactiveRequest = InteractiveRequest::VisitVcsResult;
                       });
 
+    // VCS vocabulary-completion follow-up: status/stage/unstage/commit/
+    // branch, all the same "just set interactiveRequest" shape -- see
+    // Command.h's own enum comment for which are one-shot and which drive
+    // a prompt.
+    registry.Register("vcs-status", "Show the working tree's changed/untracked files in a *vcs status* buffer.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::VcsStatus;
+                      });
+    registry.Register("vcs-stage-file", "Stage the file on the *vcs status* line at point, or the current file.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::VcsStageFile;
+                      });
+    registry.Register("vcs-unstage-file", "Unstage the file on the *vcs status* line at point, or the current file.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::VcsUnstageFile;
+                      });
+    registry.Register("vcs-commit", "Commit the staged changes, prompting for a single-line message.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::VcsCommit;
+                      });
+    registry.Register("vcs-stage-hunk", "Stage just the change hunk covering the line at point.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::VcsStageHunk;
+                      });
+    registry.Register("vcs-unstage-hunk", "Unstage the staged hunk covering the line at point.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::VcsUnstageHunk;
+                      });
+    // M-x only, like vcs-blame-buffer -- vcs-switch-branch's own prompt
+    // already Tab-completes against the real branch list, so the buffer
+    // view is the "look around" companion, not the primary path.
+    registry.Register("vcs-branches", "List branches in a *vcs branches* buffer.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::VcsBranches;
+                      });
+    registry.Register("vcs-switch-branch", "Switch to another branch, with Tab completion over the branch list.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::VcsSwitchBranch;
+                      });
+    registry.Register("vcs-create-branch", "Create and switch to a new branch, prompting for its name.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::VcsCreateBranch;
+                      });
+
     // Org's three editing commands act directly on context.buffer, unlike
     // the interactiveRequest-routed commands above (rectangle/register/
     // narrowing) -- those need state (RectangleClipboard, RegisterTable, or
@@ -1532,6 +1576,21 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("C-c v i"), "vcs-blame-detail-at-point"); // "i" for info, next to "b"
     keymap.Bind(ParseKeySequence("C-c v l"), "vcs-show-log");
     keymap.Bind(ParseKeySequence("C-c v v"), "vcs-visit-result");
+    // Vocabulary-completion follow-up: "a" for add (git's own verb for
+    // staging, and "s" is taken by status), "w" for sWitch ("s" again),
+    // "n" for new branch. vcs-branches stays M-x only -- see its
+    // registration comment.
+    keymap.Bind(ParseKeySequence("C-c v s"), "vcs-status");
+    keymap.Bind(ParseKeySequence("C-c v a"), "vcs-stage-file");
+    keymap.Bind(ParseKeySequence("C-c v u"), "vcs-unstage-file");
+    keymap.Bind(ParseKeySequence("C-c v c"), "vcs-commit");
+    keymap.Bind(ParseKeySequence("C-c v w"), "vcs-switch-branch");
+    keymap.Bind(ParseKeySequence("C-c v n"), "vcs-create-branch");
+    // Hunk-staging follow-up: "h" for hunk, its shifted twin for the
+    // reverse -- an uppercase letter is just a distinct codepoint chord at
+    // the terminal level, nothing special-cased.
+    keymap.Bind(ParseKeySequence("C-c v h"), "vcs-stage-hunk");
+    keymap.Bind(ParseKeySequence("C-c v H"), "vcs-unstage-hunk");
     keymap.Bind(ParseKeySequence("C-c C-r"), "project-replace");
     keymap.Bind(ParseKeySequence("C-c C-p"), "toggle-project-sidebar");
     keymap.Bind(ParseKeySequence("C-c m"), "toggle-minimap");

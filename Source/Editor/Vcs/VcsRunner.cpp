@@ -1,5 +1,11 @@
 #include "VcsRunner.h"
 
+#include <cstdlib>
+#include <vector>
+
+#include <unistd.h>
+
+#include "DiffPatch.h"
 #include "Editor/ProjectRoot.h"
 #include "Editor/Tasks/TaskProcess.h"
 #include "Text/Buffer.h"
@@ -9,19 +15,23 @@ namespace ned::editor::vcs {
 
 namespace {
 
-    // Diagnostic detail for a failed blame/log run -- distinguishes "the
-    // process never started" (exitCode is nullopt with no output, e.g. the
+    // Diagnostic detail for a failed run -- distinguishes "the process
+    // never started" (exitCode is nullopt with no output, e.g. the
     // executable wasn't found or ChildProcess itself threw), "killed by a
     // signal" (nullopt with some output already captured), and "exited
-    // non-zero" (the process ran but git itself reported failure, most
+    // non-zero" (the process ran but the VCS itself reported failure, most
     // often a real, informative message on its own stdout/stderr) --
-    // included directly in the status message rather than a bare "git
-    // blame failed" so a real failure (wrong argv, no such repo, git
-    // missing) is diagnosable from the editor alone, not just a debugger.
-    std::string BlameOrLogFailureDetail(const char* operation, std::optional<int> exitCode, const std::string& output) {
-        std::string detail = std::string("git ") + operation + " failed";
+    // included directly in the status message rather than a bare "vcs
+    // blame failed" so a real failure (wrong argv, no such repo, the VCS
+    // executable missing) is diagnosable from the editor alone, not just a
+    // debugger. (Was "git <operation> failed" until the vocabulary-
+    // completion follow-up -- the runner never knows which VCS the active
+    // provider actually shells out to, so naming git here was only ever
+    // borrowed from the bundled plugin being the sole provider.)
+    std::string OperationFailureDetail(const char* operation, std::optional<int> exitCode, const std::string& output) {
+        std::string detail = std::string("vcs ") + operation + " failed";
         if (!exitCode) {
-            detail += output.empty() ? " (couldn't start the process -- is git on $PATH?)" : " (terminated)";
+            detail += output.empty() ? " (couldn't start the process -- is the vcs executable on $PATH?)" : " (terminated)";
         }
         else {
             detail += " (exit " + std::to_string(*exitCode) + ")";
@@ -35,6 +45,36 @@ namespace {
             detail += ": " + trimmed;
         }
         return detail;
+    }
+
+    // Writes content to a uniquely-named temp file via mkstemp, mirroring
+    // FormatOnSave.cpp's MakeTempFile (same TOCTOU-avoidance reasoning --
+    // see its own comment) plus the actual write. nullopt on any failure,
+    // with the partial file removed rather than left behind.
+    std::optional<std::filesystem::path> WritePatchFile(const std::string& content) {
+        const std::string templatePath = (std::filesystem::temp_directory_path() / "ned-vcs-patch-XXXXXX").string();
+        std::vector<char> nameBuffer(templatePath.begin(), templatePath.end());
+        nameBuffer.push_back('\0');
+
+        const int fd = ::mkstemp(nameBuffer.data());
+        if (fd == -1) {
+            return std::nullopt;
+        }
+        const std::filesystem::path path(nameBuffer.data());
+
+        std::size_t written = 0;
+        while (written < content.size()) {
+            const ssize_t chunk = ::write(fd, content.data() + written, content.size() - written);
+            if (chunk <= 0) {
+                ::close(fd);
+                std::error_code ec;
+                std::filesystem::remove(path, ec);
+                return std::nullopt;
+            }
+            written += static_cast<std::size_t>(chunk);
+        }
+        ::close(fd);
+        return path;
     }
 
 } // namespace
@@ -117,7 +157,7 @@ void VcsRunner::RequestBlame(const text::Buffer& buffer, std::function<void(std:
 
     RunAndCollect(key, spec.argv, [provider, onComplete, onError](std::string output, std::optional<int> exitCode) {
         if (!exitCode || *exitCode != 0) {
-            onError(BlameOrLogFailureDetail("blame", exitCode, output));
+            onError(OperationFailureDetail("blame", exitCode, output));
             return;
         }
         try {
@@ -174,7 +214,7 @@ void VcsRunner::RequestLog(const text::Buffer& buffer, std::function<void(std::v
 
     RunAndCollect(key, spec.argv, [provider, onComplete, onError](std::string output, std::optional<int> exitCode) {
         if (!exitCode || *exitCode != 0) {
-            onError(BlameOrLogFailureDetail("log", exitCode, output));
+            onError(OperationFailureDetail("log", exitCode, output));
             return;
         }
         try {
@@ -217,7 +257,7 @@ void VcsRunner::RequestDiff(const text::Buffer& buffer, std::function<void(std::
 
     RunAndCollect(key, spec.argv, [provider, onComplete, onError](std::string output, std::optional<int> exitCode) {
         if (!exitCode || *exitCode != 0) {
-            onError(BlameOrLogFailureDetail("diff", exitCode, output));
+            onError(OperationFailureDetail("diff", exitCode, output));
             return;
         }
         try {
@@ -227,6 +267,171 @@ void VcsRunner::RequestDiff(const text::Buffer& buffer, std::function<void(std::
             onError(e.what());
         }
     });
+}
+
+void VcsRunner::RunProviderOperation(const char* operation, const std::string& key,
+                                     const std::function<VcsCommandSpec(VcsProvider&)>& buildSpec,
+                                     std::function<void(VcsProvider&, std::string)>     onOutput,
+                                     std::function<void(std::string)>                   onError) {
+    VcsProvider* provider = ActiveProviderFor(ProjectRoot());
+    if (!provider) {
+        onError("no vcs provider registered for this project");
+        return;
+    }
+
+    if (IsRunning(key)) {
+        onError(std::string(operation) + " is already running");
+        return;
+    }
+
+    VcsCommandSpec spec;
+    try {
+        spec = buildSpec(*provider);
+    }
+    catch (const std::exception& e) {
+        onError(e.what());
+        return;
+    }
+
+    RunAndCollect(key, spec.argv,
+                  [operation, provider, onOutput = std::move(onOutput), onError](std::string output, std::optional<int> exitCode) {
+                      if (!exitCode || *exitCode != 0) {
+                          onError(OperationFailureDetail(operation, exitCode, output));
+                          return;
+                      }
+                      try {
+                          onOutput(*provider, std::move(output));
+                      }
+                      catch (const std::exception& e) {
+                          onError(e.what());
+                      }
+                  });
+}
+
+void VcsRunner::RequestStatus(std::function<void(std::vector<VcsStatusEntry>)> onComplete,
+                              std::function<void(std::string)>                 onError) {
+    const std::filesystem::path root = ProjectRoot();
+    RunProviderOperation(
+        "status", "status:" + root.string(),
+        [&root](VcsProvider& provider) { return provider.StatusArgv(root); },
+        [onComplete = std::move(onComplete)](VcsProvider& provider, std::string output) {
+            onComplete(provider.ParseStatus(output));
+        },
+        std::move(onError));
+}
+
+void VcsRunner::RequestStage(const std::filesystem::path& path, std::function<void()> onSuccess,
+                             std::function<void(std::string)> onError) {
+    // weakly_canonical for the same relative-path-vs-"-C" reason
+    // RequestBlame spells out above.
+    const std::filesystem::path canonical = std::filesystem::weakly_canonical(path);
+    RunProviderOperation(
+        "stage", "stage:" + canonical.string(),
+        [&canonical](VcsProvider& provider) { return provider.StageArgv(canonical); },
+        [onSuccess = std::move(onSuccess)](VcsProvider&, std::string) { onSuccess(); }, std::move(onError));
+}
+
+void VcsRunner::RequestUnstage(const std::filesystem::path& path, std::function<void()> onSuccess,
+                               std::function<void(std::string)> onError) {
+    const std::filesystem::path canonical = std::filesystem::weakly_canonical(path);
+    RunProviderOperation(
+        "unstage", "unstage:" + canonical.string(),
+        [&canonical](VcsProvider& provider) { return provider.UnstageArgv(canonical); },
+        [onSuccess = std::move(onSuccess)](VcsProvider&, std::string) { onSuccess(); }, std::move(onError));
+}
+
+void VcsRunner::RequestHunkApply(const text::Buffer& buffer, std::size_t targetLine, bool stage,
+                                 std::function<void()> onSuccess, std::function<void(std::string)> onError) {
+    if (!buffer.Path()) {
+        onError("no file associated with this buffer");
+        return;
+    }
+    // weakly_canonical for the same relative-path-vs-"-C" reason
+    // RequestBlame spells out above.
+    const std::filesystem::path path      = std::filesystem::weakly_canonical(*buffer.Path());
+    const char*                 operation = stage ? "stage hunk" : "unstage hunk";
+    const std::string           keyPrefix = stage ? "stage-hunk" : "unstage-hunk";
+
+    RunProviderOperation(
+        operation, keyPrefix + "-diff:" + path.string(),
+        [&path, stage](VcsProvider& provider) { return stage ? provider.DiffArgv(path) : provider.StagedDiffArgv(path); },
+        [this, path, targetLine, stage, operation, keyPrefix, onSuccess = std::move(onSuccess),
+         onError](VcsProvider&, std::string diffOutput) {
+            const std::optional<std::string> patch = ExtractHunkPatch(diffOutput, targetLine);
+            if (!patch) {
+                onError(stage ? "no unstaged change at this line" : "no staged change at this line");
+                return;
+            }
+            const std::optional<std::filesystem::path> patchFile = WritePatchFile(*patch);
+            if (!patchFile) {
+                onError("couldn't write the patch to a temp file");
+                return;
+            }
+            auto removePatchFile = [patchFile] {
+                std::error_code ec;
+                std::filesystem::remove(*patchFile, ec); // best-effort -- a leftover temp file isn't worth an error
+            };
+            const std::filesystem::path root = ProjectRoot();
+            RunProviderOperation(
+                operation, keyPrefix + "-apply:" + path.string(),
+                [&root, &patchFile, stage](VcsProvider& provider) {
+                    return stage ? provider.StagePatchArgv(root, *patchFile) : provider.UnstagePatchArgv(root, *patchFile);
+                },
+                [removePatchFile, onSuccess](VcsProvider&, std::string) {
+                    removePatchFile();
+                    onSuccess();
+                },
+                [removePatchFile, onError](std::string error) {
+                    removePatchFile();
+                    onError(error);
+                });
+        },
+        onError);
+}
+
+void VcsRunner::RequestCommit(const std::string& message, std::function<void(std::string)> onSuccess,
+                              std::function<void(std::string)> onError) {
+    const std::filesystem::path root = ProjectRoot();
+    RunProviderOperation(
+        "commit", "commit:" + root.string(),
+        [&root, &message](VcsProvider& provider) { return provider.CommitArgv(root, message); },
+        [onSuccess = std::move(onSuccess)](VcsProvider&, std::string output) {
+            // The first output line is the VCS's own one-line summary of
+            // what got committed (e.g. git's "[main abc1234] message") --
+            // exactly status-line-sized, so pass it through verbatim.
+            onSuccess(output.substr(0, output.find('\n')));
+        },
+        std::move(onError));
+}
+
+void VcsRunner::RequestBranchList(std::function<void(std::vector<VcsBranchEntry>)> onComplete,
+                                  std::function<void(std::string)>                 onError) {
+    const std::filesystem::path root = ProjectRoot();
+    RunProviderOperation(
+        "branch listing", "branch-list:" + root.string(),
+        [&root](VcsProvider& provider) { return provider.BranchListArgv(root); },
+        [onComplete = std::move(onComplete)](VcsProvider& provider, std::string output) {
+            onComplete(provider.ParseBranchList(output));
+        },
+        std::move(onError));
+}
+
+void VcsRunner::RequestBranchSwitch(const std::string& name, std::function<void()> onSuccess,
+                                    std::function<void(std::string)> onError) {
+    const std::filesystem::path root = ProjectRoot();
+    RunProviderOperation(
+        "branch switch", "branch-switch:" + root.string(),
+        [&root, &name](VcsProvider& provider) { return provider.BranchSwitchArgv(root, name); },
+        [onSuccess = std::move(onSuccess)](VcsProvider&, std::string) { onSuccess(); }, std::move(onError));
+}
+
+void VcsRunner::RequestBranchCreate(const std::string& name, std::function<void()> onSuccess,
+                                    std::function<void(std::string)> onError) {
+    const std::filesystem::path root = ProjectRoot();
+    RunProviderOperation(
+        "branch creation", "branch-create:" + root.string(),
+        [&root, &name](VcsProvider& provider) { return provider.BranchCreateArgv(root, name); },
+        [onSuccess = std::move(onSuccess)](VcsProvider&, std::string) { onSuccess(); }, std::move(onError));
 }
 
 } // namespace ned::editor::vcs
