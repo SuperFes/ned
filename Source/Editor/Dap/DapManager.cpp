@@ -64,6 +64,41 @@ std::vector<std::size_t> DapManager::BreakpointsForFile(const std::filesystem::p
     return it != breakpoints_.end() ? it->second : std::vector<std::size_t>{};
 }
 
+const std::map<std::string, std::vector<std::size_t>>& DapManager::AllBreakpoints() const {
+    return breakpoints_;
+}
+
+void DapManager::RestoreBreakpoints(std::map<std::string, std::vector<std::size_t>> breakpoints) {
+    // Union of old and new keys first, so a live adapter (the robustness
+    // guard case -- see the header) also hears about files whose set just
+    // became empty, same reasoning as ToggleBreakpoint's erase path.
+    std::vector<std::string> affectedKeys;
+    for (const auto& [key, lines] : breakpoints_) {
+        affectedKeys.push_back(key);
+    }
+    for (const auto& [key, lines] : breakpoints) {
+        affectedKeys.push_back(key);
+    }
+
+    // Sorted, deduplicated, and empty-entry-free -- the exact invariants
+    // ToggleBreakpoint maintains, enforced here because these lines came
+    // from a session file rather than through it.
+    breakpoints_ = std::move(breakpoints);
+    for (auto it = breakpoints_.begin(); it != breakpoints_.end();) {
+        std::sort(it->second.begin(), it->second.end());
+        it->second.erase(std::unique(it->second.begin(), it->second.end()), it->second.end());
+        it = it->second.empty() ? breakpoints_.erase(it) : std::next(it);
+    }
+
+    if (client_ && state_ != SessionState::Inactive) {
+        std::sort(affectedKeys.begin(), affectedKeys.end());
+        affectedKeys.erase(std::unique(affectedKeys.begin(), affectedKeys.end()), affectedKeys.end());
+        for (const std::string& key : affectedKeys) {
+            SendBreakpointsForFile(key);
+        }
+    }
+}
+
 std::string DapManager::StartOrContinue(const std::string& language) {
     if (state_ == SessionState::Stopped) {
         client_->SendRequest("continue", Json{{"threadId", stoppedThreadId_}},

@@ -35,6 +35,7 @@
 #include "Editor/Mode.h"
 #include "Editor/Org.h"
 #include "Editor/ProjectReplace.h"
+#include "Editor/ProjectTrust.h"
 #include "Editor/QueryReplace.h"
 #include "Editor/Register.h"
 #include "Editor/Tasks/TaskRunner.h"
@@ -253,6 +254,20 @@ class BufferView : public Widget {
     // progress -- same guard RequestCloseBuffer uses.
     void RequestOpenBinaryFile(const std::filesystem::path& path);
 
+    // session-persistence slice 3: asks the user whether to load a
+    // project's own .ned/init.janet -- a y/n/a prompt in the
+    // RequestOpenBinaryFile mold (deferred from startup to here because
+    // there's no way to ask anything before the UI exists). onDecision is
+    // invoked exactly once with the user's choice, after the prompt session
+    // has ended -- actually loading Janet is the caller's business
+    // (main.cpp owns the janet::Environment), not this widget's. A no-op
+    // (reports via statusMessage_, decision never delivered) if another
+    // interactive session is already in progress, same guard as the other
+    // Request* entry points -- acceptable for its one real call site,
+    // startup, where no other session can exist yet.
+    void RequestTrustProjectInit(const std::filesystem::path&                                                   initPath,
+                                 std::function<void(const std::filesystem::path&, editor::ProjectInitDecision)> onDecision);
+
     // Window-splitting follow-up: called with the same InteractiveRequest
     // whenever StartInteractiveSession sees one of the five structural
     // window-management values (SplitBelow/SplitRight/DeleteWindow/
@@ -336,6 +351,10 @@ class BufferView : public Widget {
                            // text::BinaryFileError -- see
                            // pendingBinaryOpenPath_'s own doc comment.
                            ConfirmOpenBinary,
+                           // session-persistence slice 3: the y/n/a trust
+                           // prompt for a project's .ned/init.janet -- see
+                           // RequestTrustProjectInit.
+                           ConfirmTrustProjectInit,
                            // task-runner follow-up: one synchronous "task name"
                            // prompt, routed through HandlePromptKey like
                            // FindFile/CreateDirectory/LspRenameNewName above --
@@ -381,8 +400,9 @@ class BufferView : public Widget {
             chord);        // shared by FindFile/SwitchToBuffer/ProjectSearch/CreateDirectory/FindScratch/StringRectangle -- see prompt_
     void CompletePrompt(); // Tab in HandlePromptKey -- find-file paths, buffer names, or scratch names, by inputMode_
     void HandleProjectReplaceKey(const editor::KeyChord& chord);
-    void HandleConfirmCloseBufferKey(const editor::KeyChord& chord); // see RequestCloseBuffer/pendingClose_
-    void HandleConfirmOpenBinaryKey(const editor::KeyChord& chord);  // see pendingBinaryOpenPath_
+    void HandleConfirmCloseBufferKey(const editor::KeyChord& chord);      // see RequestCloseBuffer/pendingClose_
+    void HandleConfirmOpenBinaryKey(const editor::KeyChord& chord);       // see pendingBinaryOpenPath_
+    void HandleConfirmTrustProjectInitKey(const editor::KeyChord& chord); // see pendingTrustInitPath_
     // Shared by HandlePromptKey's FindFile branch and the public
     // RequestOpenBinaryFile -- enters ConfirmOpenBinary and sets
     // pendingBinaryOpenPath_/statusMessage_.
@@ -1040,6 +1060,13 @@ class BufferView : public Widget {
     // in flight," the same "unset means not applicable" convention
     // deleteTarget_/renameSource_ already use.
     std::filesystem::path pendingBinaryOpenPath_;
+
+    // session-persistence slice 3: the init file awaiting y/n/a in
+    // ConfirmTrustProjectInit, plus the one-shot decision callback handed
+    // to RequestTrustProjectInit. Same "empty/unset means not in flight"
+    // convention as pendingBinaryOpenPath_ just above.
+    std::filesystem::path                                                          pendingTrustInitPath_;
+    std::function<void(const std::filesystem::path&, editor::ProjectInitDecision)> onTrustDecision_;
 
     DeleteFileStage       deleteStage_ = DeleteFileStage::EnteringPath;
     std::filesystem::path deleteTarget_; // path awaiting y/n in DeleteFileStage::Confirming

@@ -5,9 +5,13 @@
 #include <mutex>
 #include <utility>
 
+#include "Editor/Dap/DapManager.h"
 #include "Editor/MinimapSettings.h"
 #include "Editor/ModeOverrides.h"
+#include "Editor/ProjectSession.h"
 #include "Editor/ScratchPad.h"
+#include "Editor/Session.h"
+#include "Editor/TabWidth.h"
 
 namespace ned::ui {
 
@@ -411,6 +415,14 @@ void WindowManager::RequestOpenBinaryFile(const std::filesystem::path& path) {
     }
 }
 
+void WindowManager::RequestTrustProjectInit(
+    const std::filesystem::path&                                                   initPath,
+    std::function<void(const std::filesystem::path&, editor::ProjectInitDecision)> onDecision) {
+    if (Pane* pane = FocusedPane()) {
+        pane->Buffer().RequestTrustProjectInit(initPath, std::move(onDecision));
+    }
+}
+
 void WindowManager::StartAutoSaveTimer(EventLoop& eventLoop) {
     autoSaveThread_ = std::jthread([this, &eventLoop](std::stop_token stopToken) {
         std::mutex                  mutex;
@@ -420,9 +432,80 @@ void WindowManager::StartAutoSaveTimer(EventLoop& eventLoop) {
             if (cv.wait_for(lock, stopToken, kScratchAutoSaveInterval, [&stopToken] { return stopToken.stop_requested(); })) {
                 return;
             }
-            eventLoop.Post([this] { editor::AutoSaveScratchBuffers(bufferList_); });
+            eventLoop.Post([this] {
+                editor::AutoSaveScratchBuffers(bufferList_);
+                // session-persistence slices 1+2: piggybacked on this
+                // existing tick rather than a second timer thread -- both
+                // saves skip the disk write entirely when nothing changed.
+                RecordSessionPlaces();
+                editor::SaveFilePlaces();
+                SaveProjectSessionNow();
+            });
         }
     });
+}
+
+void WindowManager::RecordSessionPlaces() {
+    if (!editor::SavePlaceEnabled()) {
+        return;
+    }
+
+    const auto tabWidth = static_cast<std::size_t>(editor::TabWidth());
+    for (const auto& buffer : bufferList_.Buffers()) {
+        editor::RecordFilePlace(*buffer, std::nullopt, tabWidth);
+    }
+    // Second pass wins for visible buffers: same place, plus the viewport.
+    for (Pane* pane : Leaves()) {
+        editor::RecordFilePlace(pane->ActiveBufferRef().Get(), pane->Buffer().TopLine(), tabWidth);
+    }
+}
+
+void WindowManager::SaveProjectSessionNow() {
+    // Cheap early-outs; SaveActiveProjectSession itself re-checks both under
+    // its own lock, so these are an optimization, not the guard.
+    if (!editor::SessionRestoreEnabled() || !editor::ActiveProjectSessionRoot()) {
+        return;
+    }
+
+    // Scratch pads are global, session-independent state (ScratchPad.h) --
+    // a project session re-opening them would be surprising. Same
+    // directly-inside comparison AutoSaveScratchBuffers makes; the whole
+    // exclusion is best-effort (ScratchDirectory can throw with no HOME).
+    std::optional<std::filesystem::path> scratchDirectory;
+    try {
+        scratchDirectory = std::filesystem::weakly_canonical(editor::ScratchDirectory());
+    }
+    catch (const std::exception&) {
+    }
+
+    editor::ProjectSessionData data;
+    const text::Buffer*        preview = bufferList_.PreviewBuffer();
+    for (const auto& buffer : bufferList_.Buffers()) {
+        if (!buffer->Path() || buffer.get() == preview) {
+            continue;
+        }
+        std::error_code ec;
+        if (scratchDirectory &&
+            std::filesystem::weakly_canonical(buffer->Path()->parent_path(), ec) == *scratchDirectory) {
+            continue;
+        }
+        data.openFiles.push_back(std::filesystem::absolute(*buffer->Path()));
+    }
+
+    if (const auto& activePath = FocusedActiveBuffer().Get().Path()) {
+        data.activeFile = std::filesystem::absolute(*activePath);
+    }
+
+    if (projectSidebar_ != nullptr) {
+        data.sidebarVisible = projectSidebar_->active;
+        data.sidebarWidth   = projectSidebar_->Width();
+    }
+
+    if (dapManager_ != nullptr) {
+        data.breakpoints = dapManager_->AllBreakpoints();
+    }
+
+    editor::SaveActiveProjectSession(data);
 }
 
 void WindowManager::EnableAsyncFileLoading(EventLoop& eventLoop) {

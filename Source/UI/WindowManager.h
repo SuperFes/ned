@@ -312,6 +312,15 @@ class WindowManager {
     // HandlePromptKey already offers, instead of just reporting a refusal.
     void RequestOpenBinaryFile(const std::filesystem::path& path);
 
+    // session-persistence slice 3: routes the .ned/init.janet trust prompt
+    // to whichever pane has focus -- RequestOpenBinaryFile's exact shape;
+    // see BufferView::RequestTrustProjectInit for the prompt's own
+    // contract. main.cpp calls this once at startup, after TakeFocus, for
+    // an existing-but-untrusted project init file.
+    void RequestTrustProjectInit(
+        const std::filesystem::path&                                                   initPath,
+        std::function<void(const std::filesystem::path&, editor::ProjectInitDecision)> onDecision);
+
     // Called whenever a buffer is about to be closed by a path that doesn't
     // go through BufferView::CloseBufferNow at all -- currently just
     // ProjectSidebar::OpenFileEntry, which closes the outgoing single-
@@ -340,6 +349,29 @@ class WindowManager {
     // test" reason BufferView's own version never was; main.cpp calls this
     // once, for the real running editor only.
     void StartAutoSaveTimer(EventLoop& eventLoop);
+
+    // session-persistence slice 1: records every open file buffer's current
+    // place (Editor/Session.h) -- all of bufferList_ first with no viewport
+    // information, then each live pane's own active buffer again with its
+    // real TopLine(), so visible buffers' entries carry the viewport and
+    // background buffers' entries keep whatever topLine they last had.
+    // Called from the auto-save timer tick (alongside
+    // AutoSaveScratchBuffers, same unattended-swallow posture) and once by
+    // main.cpp after the event loop exits; deliberately not from any
+    // buffer-switch seam -- the old-buffer pointer available there can
+    // already be dangling mid-close (see NotifyBufferClosing above), and a
+    // <=5s-stale record is an accepted trade, not a bug.
+    void RecordSessionPlaces();
+
+    // session-persistence slice 2: captures the current project session
+    // (open file buffers -- skipping the transient PreviewBuffer() and
+    // scratch-pad buffers, which are global, not project state -- the
+    // focused pane's active file, sidebar visibility/width, DAP
+    // breakpoints) and hands it to editor::SaveActiveProjectSession, which
+    // itself no-ops unless main.cpp established a real project root for
+    // this run. Called from the same auto-save tick as RecordSessionPlaces
+    // and once by main.cpp after the event loop exits.
+    void SaveProjectSessionNow();
 
     // large-file-async-load follow-up: wires bufferList_.SetAsyncFileOpener
     // to spin up an AsyncFileLoader (Source/UI/AsyncFileLoader.h) per large

@@ -122,6 +122,20 @@ class DapManager {
     // CurrentStopKeyAndLine/BreakpointLinesForKey.
     [[nodiscard]] static std::string NormalizePathKey(const std::filesystem::path& path);
 
+    // session-persistence slice 2: the whole store, in its own shape
+    // (normalized path key -> sorted 1-based lines), for ProjectSessionData
+    // to carry across restarts -- closes the "persisting breakpoints across
+    // restarts" v1 cut recorded in ROADMAP.md's DAP entry.
+    [[nodiscard]] const std::map<std::string, std::vector<std::size_t>>& AllBreakpoints() const;
+
+    // Replaces the store wholesale (keys are trusted to be already
+    // normalized -- they round-trip verbatim from AllBreakpoints via the
+    // session file). If a session is somehow live, every file whose set
+    // changed is pushed to the adapter; in the real startup wiring this
+    // runs long before any session can exist, so that path is a
+    // robustness guard, not a designed-for flow.
+    void RestoreBreakpoints(std::map<std::string, std::vector<std::size_t>> breakpoints);
+
     // Slice 3: the inspection requests backing the *debug* buffer. Each
     // callback runs on the main thread with parsed results ([] on any
     // failure -- no session, adapter error, malformed response), the same

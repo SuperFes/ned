@@ -44,7 +44,7 @@ Buffer& BufferList::OpenFile(const std::filesystem::path& path, bool allowBinary
     }
 
     if (asyncFileOpener_) {
-        std::error_code       ec;
+        std::error_code      ec;
         const std::uintmax_t size = std::filesystem::file_size(path, ec);
         if (!ec && size > kAsyncLoadThreshold) {
             Buffer placeholder = Buffer::NewFile(path);
@@ -54,6 +54,9 @@ Buffer& BufferList::OpenFile(const std::filesystem::path& path, bool allowBinary
             buffers_.push_back(std::make_unique<Buffer>(std::move(placeholder)));
             Buffer& ref = *buffers_.back();
             asyncFileOpener_(ref, path);
+            if (onFileOpened_) {
+                onFileOpened_(ref);
+            }
             return ref;
         }
     }
@@ -63,11 +66,18 @@ Buffer& BufferList::OpenFile(const std::filesystem::path& path, bool allowBinary
     loaded.Rename(UniqueName(loaded.Name()));
 
     buffers_.push_back(std::make_unique<Buffer>(std::move(loaded)));
+    if (onFileOpened_) {
+        onFileOpened_(*buffers_.back());
+    }
     return *buffers_.back();
 }
 
 void BufferList::SetAsyncFileOpener(std::function<void(Buffer&, const std::filesystem::path&)> hook) {
     asyncFileOpener_ = std::move(hook);
+}
+
+void BufferList::SetOnFileOpened(std::function<void(Buffer&)> hook) {
+    onFileOpened_ = std::move(hook);
 }
 
 Buffer& BufferList::OpenOrCreateFile(const std::filesystem::path& path, bool allowBinary) {
@@ -79,6 +89,9 @@ Buffer& BufferList::OpenOrCreateFile(const std::filesystem::path& path, bool all
     created.Rename(UniqueName(created.Name()));
 
     buffers_.push_back(std::make_unique<Buffer>(std::move(created)));
+    if (onFileOpened_) {
+        onFileOpened_(*buffers_.back());
+    }
     return *buffers_.back();
 }
 
