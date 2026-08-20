@@ -11,6 +11,7 @@
 #include "Editor/Dap/DapConfig.h"
 #include "Editor/FinalNewline.h"
 #include "Editor/FormatOnSave.h"
+#include "Editor/HighlightSettings.h"
 #include "Editor/Link.h"
 #include "Editor/Lsp/LspServerConfig.h"
 #include "Editor/MinimapSettings.h"
@@ -27,6 +28,7 @@
 #include "Editor/Vcs/VcsProviderRegistry.h"
 #include "Editor/WrapOverrides.h"
 #include "JanetVcsProvider.h"
+#include "Text/BufferList.h"
 #include "Value.h"
 
 namespace ned::janet {
@@ -170,6 +172,14 @@ namespace {
 
     void NedSetProjectTrustExpiryDays(std::int64_t days) {
         editor::SetProjectTrustExpiryDays(static_cast<int>(days));
+    }
+
+    void NedSetAsyncLoadThreshold(std::int64_t bytes) {
+        text::SetAsyncLoadThreshold(bytes > 0 ? static_cast<std::uintmax_t>(bytes) : 0);
+    }
+
+    void NedSetMaxHighlightBytes(std::int64_t bytes) {
+        editor::SetMaxHighlightBytes(bytes > 0 ? static_cast<std::size_t>(bytes) : 0);
     }
 
     void NedSetEnsureFinalNewline(bool enabled) {
@@ -395,6 +405,14 @@ void InstallEditorBindings(Environment& env) {
         "Days of disuse before an \"always\"-trusted project init.janet must be re-approved (default 30; 0 or "
         "negative = never expire). Trust decays from last use, not from when it was granted; a changed init file "
         "always re-prompts regardless.");
+    env.Register<&NedSetAsyncLoadThreshold>(
+        "ned", "set-async-load-threshold",
+        "File size in bytes above which files load asynchronously in the background instead of blocking "
+        "(default 16 MiB, i.e. (* 16 1024 1024)). 0 loads every file asynchronously.");
+    env.Register<&NedSetMaxHighlightBytes>(
+        "ned", "set-max-highlight-bytes",
+        "Buffer size in bytes above which syntax highlighting is skipped entirely (default 8 MiB). 0 disables "
+        "highlighting for every buffer.");
     env.Register<&NedSetEnsureFinalNewline>(
         "ned", "set-ensure-final-newline",
         "Enable/disable appending a trailing newline to a file's written content on save if it's missing one "

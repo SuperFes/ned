@@ -22,6 +22,7 @@
 #define NED_UI_ASYNCFILELOADER_H
 
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <thread>
 
@@ -59,6 +60,13 @@ class AsyncFileLoader {
     text::BufferList& bufferList_;
     std::string       bufferName_; // captured once, before the thread starts -- see this file's own header comment
     bool              done_ = false;
+
+    // Shared with the placeholder Buffer (Buffer::SetLoadProgress) so
+    // ModeLine can render a live percentage -- created and its totalBytes
+    // written in the constructor, before thread_ ever starts; the thread
+    // only ever touches the atomic bytesRead. See text::LoadProgress's own
+    // doc comment for the full threading contract.
+    std::shared_ptr<text::LoadProgress> progress_ = std::make_shared<text::LoadProgress>();
 
     // Declared last so it's destroyed (and therefore stop_requested()+
     // joined) first, per the usual reverse-declaration-order rule -- unlike

@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <fstream>
+#include <system_error>
 
 #include "EventLoop.h"
 #include "Text/Rope.h"
@@ -15,8 +16,16 @@ namespace {
 } // namespace
 
 AsyncFileLoader::AsyncFileLoader(text::Buffer& placeholder, text::BufferList& bufferList, std::filesystem::path path,
-                                  EventLoop& eventLoop)
-    : bufferList_(bufferList), bufferName_(placeholder.Name()) {
+                                 EventLoop& eventLoop) : bufferList_(bufferList), bufferName_(placeholder.Name()) {
+    // totalBytes written before thread_ starts, per LoadProgress's contract
+    // -- a failed size query just leaves 0, which ModeLine treats as
+    // "unknown, show no percentage" rather than an error.
+    std::error_code sizeEc;
+    if (const std::uintmax_t size = std::filesystem::file_size(path, sizeEc); !sizeEc) {
+        progress_->totalBytes = size;
+    }
+    placeholder.SetLoadProgress(progress_);
+
     thread_ = std::jthread(
         [this, path = std::move(path), &eventLoop](std::stop_token stopToken) { Run(stopToken, path, eventLoop); });
 }
@@ -53,6 +62,7 @@ void AsyncFileLoader::Run(std::stop_token stopToken, std::filesystem::path path,
             break;
         }
         content.append(chunk.data(), bytesRead);
+        progress_->bytesRead.fetch_add(bytesRead, std::memory_order_relaxed);
 
         if (!strippedBom) {
             strippedBom = true;
@@ -71,7 +81,7 @@ void AsyncFileLoader::Run(std::stop_token stopToken, std::filesystem::path path,
 
         const auto now = std::chrono::steady_clock::now();
         if (now - lastPreview >= kPreviewInterval) {
-            lastPreview   = now;
+            lastPreview = now;
             text::Rope preview(content);
             eventLoop.Post([this, preview] {
                 if (text::Buffer* buffer = bufferList_.Find(bufferName_)) {

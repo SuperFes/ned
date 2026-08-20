@@ -12,9 +12,12 @@
 #ifndef NED_TEXT_BUFFER_H
 #define NED_TEXT_BUFFER_H
 
+#include <atomic>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -25,6 +28,19 @@
 #include "UndoTree.h"
 
 namespace ned::text {
+
+// large-file-async-load polish: live progress for a background loader
+// filling a placeholder buffer in. bytesRead is written by the loader's own
+// thread and read by UI paint code, hence atomic; totalBytes is written
+// once, before the loader thread ever starts, and read-only after. Held by
+// Buffer via shared_ptr specifically because Buffer is moved into
+// BufferList's unique_ptr on open and std::atomic isn't movable -- the
+// exact plumbing constraint that kept progress loader-local until now (see
+// ROADMAP.md's large-file-handling notes).
+struct LoadProgress {
+    std::atomic<std::uintmax_t> bytesRead{0};
+    std::uintmax_t              totalBytes = 0;
+};
 
 class Buffer {
   public:
@@ -145,6 +161,14 @@ class Buffer {
     // again" use case), which is why this is a bare setter rather than
     // something exposed as part of a larger state machine.
     void MarkLoading();
+
+    // Set by AsyncFileLoader at construction, cleared by FinishLoad
+    // alongside IsLoading() itself. CurrentLoadProgress returns nullptr
+    // when no load is in flight; the pointed-to LoadProgress stays owned
+    // here (callers read it in place -- e.g. ModeLine's per-frame
+    // percentage -- never retain it).
+    void                              SetLoadProgress(std::shared_ptr<LoadProgress> progress);
+    [[nodiscard]] const LoadProgress* CurrentLoadProgress() const;
 
     // Bumped by the exact same set of content-changing operations that can
     // make Modified() true (tree-sitter foundation follow-up) -- unlike
@@ -449,6 +473,7 @@ class Buffer {
     bool                                               CanAmend_ = false;
     bool                                               ReadOnly_ = false; // see ReadOnly()/SetReadOnly()'s own doc comment above
     bool                                               Loading_  = false; // see IsLoading()'s own doc comment above
+    std::shared_ptr<LoadProgress>                      LoadProgress_;     // see SetLoadProgress
     // Set by MoveToNextLine/MoveToPreviousLine, cleared by every other
     // point-moving or editing call -- see their doc comment above.
     std::optional<std::size_t>        GoalColumn_;

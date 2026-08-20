@@ -8,6 +8,7 @@
 #define NED_TEXT_BUFFERLIST_H
 
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -119,6 +120,15 @@ class BufferList {
     std::function<void(Buffer&, const std::filesystem::path&)> asyncFileOpener_; // see SetAsyncFileOpener()
     std::function<void(Buffer&)>                               onFileOpened_;    // see SetOnFileOpened()
 };
+
+// loose-ends follow-up: the file-size threshold (bytes) above which
+// OpenFile hands a file to the async loader instead of reading it
+// synchronously -- process-wide, mutex-guarded, default 16 MiB; configured
+// from Janet via ned/set-async-load-threshold. Lives beside BufferList
+// (its one consumer) rather than in Source/Editor/'s settings files, since
+// the text layer must not depend on editor.
+void                         SetAsyncLoadThreshold(std::uintmax_t bytes);
+[[nodiscard]] std::uintmax_t AsyncLoadThreshold();
 
 // Tab-completion candidates for find-file's prompt: directory entries under
 // the last '/'-separated path component of prefix, sorted, with a trailing

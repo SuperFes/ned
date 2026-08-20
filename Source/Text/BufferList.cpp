@@ -1,6 +1,8 @@
 #include "BufferList.h"
 
 #include <algorithm>
+#include <cstdint>
+#include <mutex>
 #include <system_error>
 
 #include "BinaryDetect.h"
@@ -10,11 +12,36 @@ namespace ned::text {
 namespace {
     // Comfortably above any real source file, comfortably below "blocking
     // the UI to load this is actually felt" -- see the large-file-async-
-    // load follow-up plan for the reasoning; not exposed as a Janet/config
-    // setting yet, the same "hardcoded C++ for now" scope call TabWidth's
-    // own default originally was before it grew a setter.
-    constexpr std::uintmax_t kAsyncLoadThreshold = 16 * 1024 * 1024;
+    // load follow-up plan for the reasoning. The default for the
+    // configurable process-wide value below (loose-ends follow-up: grew a
+    // Janet setter, ned/set-async-load-threshold, exactly the way
+    // TabWidth's own hardcoded default once did).
+    constexpr std::uintmax_t kDefaultAsyncLoadThreshold = 16 * 1024 * 1024;
+
+    // Mutex-guarded static state, mirroring editor::TabWidth's exact
+    // pattern -- lives here rather than in Source/Editor/ because
+    // BufferList (this layer) is the consumer and text must not depend on
+    // editor.
+    std::mutex& ThresholdMutex() {
+        static std::mutex mutex;
+        return mutex;
+    }
+
+    std::uintmax_t& ThresholdStorage() {
+        static std::uintmax_t threshold = kDefaultAsyncLoadThreshold;
+        return threshold;
+    }
 } // namespace
+
+void SetAsyncLoadThreshold(std::uintmax_t bytes) {
+    const std::lock_guard<std::mutex> lock(ThresholdMutex());
+    ThresholdStorage() = bytes;
+}
+
+std::uintmax_t AsyncLoadThreshold() {
+    const std::lock_guard<std::mutex> lock(ThresholdMutex());
+    return ThresholdStorage();
+}
 
 std::string BufferList::UniqueName(const std::string& base) const {
     if (!Find(base)) {
@@ -46,7 +73,7 @@ Buffer& BufferList::OpenFile(const std::filesystem::path& path, bool allowBinary
     if (asyncFileOpener_) {
         std::error_code      ec;
         const std::uintmax_t size = std::filesystem::file_size(path, ec);
-        if (!ec && size > kAsyncLoadThreshold) {
+        if (!ec && size > AsyncLoadThreshold()) {
             Buffer placeholder = Buffer::NewFile(path);
             placeholder.Rename(UniqueName(placeholder.Name()));
             placeholder.MarkLoading();
