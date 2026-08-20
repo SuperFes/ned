@@ -637,7 +637,12 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     // Buffer::Diagnostics() needs nothing beyond the buffer itself, so
     // there's no reason to round-trip through an interactive session for
     // this either.
-    registry.Register("lsp-show-diagnostic", "Show the LSP diagnostic message at point, if any.",
+    // diagnostics-UX follow-up: falls back from "covering point exactly" to
+    // "anywhere on point's line" -- the gutter icon is a per-LINE signal, so
+    // a user pressing this while on a marked line expects the message, not
+    // "No diagnostic at point." because point happens to sit one column off
+    // the diagnostic's own span.
+    registry.Register("lsp-show-diagnostic", "Show the LSP diagnostic message at point (or on point's line), if any.",
                       [](CommandContext& context) {
                           const std::size_t point = context.buffer.Point();
                           for (const text::Buffer::Diagnostic& diagnostic : context.buffer.Diagnostics()) {
@@ -650,6 +655,30 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                                   }
                                   return;
                               }
+                          }
+                          const auto&       content   = context.buffer.Content();
+                          const std::size_t line      = content.ByteOffsetToLine(point);
+                          const std::size_t lineStart = content.LineToByteOffset(line);
+                          const std::size_t lineEnd =
+                              (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) : content.ByteLength();
+                          const text::Buffer::Diagnostic* onLine    = nullptr;
+                          std::size_t                     extraHere = 0;
+                          for (const text::Buffer::Diagnostic& diagnostic : context.buffer.Diagnostics()) {
+                              if (diagnostic.startByte >= lineStart && diagnostic.startByte < lineEnd) {
+                                  if (onLine == nullptr) {
+                                      onLine = &diagnostic;
+                                  }
+                                  else {
+                                      ++extraHere;
+                                  }
+                              }
+                          }
+                          if (onLine != nullptr && context.message) {
+                              *context.message = onLine->message;
+                              if (extraHere > 0) {
+                                  *context.message += " (+" + std::to_string(extraHere) + " more on this line)";
+                              }
+                              return;
                           }
                           if (context.message) {
                               *context.message = "No diagnostic at point.";
