@@ -37,6 +37,8 @@
 #include "Editor/QueryReplace.h"
 #include "Editor/Register.h"
 #include "Editor/Tasks/TaskRunner.h"
+#include "Editor/Vcs/VcsProvider.h"
+#include "Editor/Vcs/VcsRunner.h"
 #include "EventLoop.h"
 #include "ProjectSidebar.h"
 #include "ScrollArrowButton.h"
@@ -133,6 +135,43 @@ class BufferView : public Widget {
     // cancel-task can reach it -- same "unset is a safe no-op" convention
     // SetLspManager already establishes.
     void SetTaskRunner(editor::tasks::TaskRunner* taskRunner);
+
+    // VCS blame gutter: registers the shared VcsRunner -- same "unset is a
+    // safe no-op" convention SetLspManager/SetTaskRunner already establish
+    // (vcs-show-blame simply reports "no vcs runner configured" via
+    // statusMessage_ if this was never called, the same way run-task
+    // degrades with no TaskRunner).
+    void SetVcsRunner(editor::vcs::VcsRunner* vcsRunner);
+
+    // vcs-show-blame's entry point (see StartInteractiveSession's
+    // VcsShowBlame case) -- kicks off an async VcsRunner::RequestBlame for
+    // the active buffer; on completion (which lands back here via
+    // EventLoop::Post, same as every other async completion in this class)
+    // populates blameLineInfo_ and the two generation-tracking fields below,
+    // so the gutter starts rendering on the next Paint(). A no-op (reports
+    // via statusMessage_) if no VcsRunner is registered.
+    void RequestBlameForCurrentBuffer();
+
+    // depth-aware-fold-gutter-style "only reserve the column when there's
+    // something to show" gate -- true only once blameLineInfo_ has actually
+    // been populated for the active buffer (never auto-triggered by
+    // Paint() itself; see RequestBlameForCurrentBuffer's own doc comment
+    // for why this can't be a per-Paint()-recomputed cache the way the
+    // diagnostic/fold gutters are: populating it means running a real
+    // subprocess, not a cheap synchronous scan).
+    [[nodiscard]] bool BlameGutterActive() const;
+
+    // Public primarily for tests -- mirrors TaskProcess::DispatchOutput/
+    // DispatchExit's own "public primarily for tests" precedent (see that
+    // class's doc comment): the real async path always reaches this via
+    // VcsRunner::RequestBlame's onComplete callback (see
+    // RequestBlameForCurrentBuffer), which requires a live, running
+    // EventLoop to ever actually fire -- this codebase's established
+    // convention is to never run one in a unit test (see TaskProcessTest.cpp/
+    // TaskRunnerTest.cpp's own header comments). Calling this directly
+    // exercises the exact same blameLineInfo_ population/cache-generation
+    // update without needing one.
+    void DispatchBlameForTesting(std::vector<editor::vcs::VcsBlameLine> lines);
 
     // FTXUI -> Notcurses migration: replaces
     // ftxui::ScreenInteractive::Active() (used to end the whole app on
@@ -567,6 +606,58 @@ class BufferView : public Widget {
     // which buffer happens to be active.
     void VisitSearchResult();
 
+    // Shared by VisitSearchResult and VisitVcsResult below: opens path (via
+    // BufferList::OpenOrCreateFile) and moves point to the start of line
+    // (1-indexed, matching how both the search-results and *vcs blame*
+    // buffer formats write it). Reports any failure via statusMessage_
+    // rather than throwing -- callers never need their own try/catch.
+    void JumpToPathLine(const std::filesystem::path& path, std::size_t line);
+
+    // VCS blame gutter follow-up: same "path:line:" prefix VisitSearchResult
+    // parses (see BuildVcsBlameBuffer's own doc comment for why the format
+    // is deliberately kept byte-compatible), via the shared JumpToPathLine
+    // above. A silent no-op on a non-matching line -- e.g. every line of a
+    // *vcs log* buffer, which has no per-line source location -- same
+    // convention VisitSearchResult already established.
+    void VisitVcsResult();
+
+    // vcs-blame-buffer/vcs-show-log's actual entry points (see
+    // StartInteractiveSession's VcsBlameBuffer/VcsShowLog cases) -- resolve
+    // the active buffer's path, kick off an async VcsRunner request, and on
+    // completion (which may arrive after further user input -- checked via
+    // the same buffer-identity staleness guard RequestBlameForCurrentBuffer
+    // already uses) build and switch to a synthesized results buffer. The
+    // full-history views, not vcs-show-blame's own default action anymore
+    // (see InteractiveRequest::VcsShowBlame's own doc comment in Command.h
+    // for why) -- RequestVcsBlameBuffer still also populates the gutter for
+    // the source buffer along the way, same as RequestBlameForCurrentBuffer
+    // alone would, before switching away from it.
+    void RequestVcsBlameBuffer();
+    void RequestVcsLogBuffer();
+
+    // vcs-blame-detail-at-point's entry point: a synchronous read of
+    // already-loaded blameLineInfo_ for the buffer line at point -- no new
+    // VcsRunner request. Reports the full commit hash/author/date/summary
+    // via statusMessage_ (the gutter's own fixed-width column only ever
+    // shows a short hash), or a clear "no blame data" message if
+    // BlameGutterActive() is false or point's line isn't covered (e.g. an
+    // unsaved/uncommitted line with no attribution yet).
+    void ShowBlameDetailAtPoint();
+
+    // Parallel to BuildResultsBuffer, just a different per-line text shape:
+    // "<path>:<1-indexed line>: <hash> <author> <date> | <source line
+    // text>" -- deliberately kept byte-compatible with VisitSearchResult's
+    // own "^(.*):(\d+):" prefix parsing (see JumpToPathLine) so a blame
+    // line can be visited the same way a search result can. Buffer name is
+    // "*vcs blame <basename>*" -- generic, not "*git ...*", since the
+    // active provider might not be git.
+    void BuildVcsBlameBuffer(const std::filesystem::path& path, const std::vector<editor::vcs::VcsBlameLine>& lines);
+    // One line per commit ("<hash> <date> <author>: <summary>"), oldest-to-
+    // newest order preserved as returned by the provider. Log entries don't
+    // map to a specific source line -- VisitVcsResult on one of these lines
+    // is a silent no-op, same as any other non-matching line.
+    void BuildVcsLogBuffer(const std::filesystem::path& path, const std::vector<editor::vcs::VcsLogEntry>& entries);
+
     // Links follow-up: another one-shot direct action, same shape as
     // VisitSearchResult -- doesn't touch inputMode_. In an org-mode buffer,
     // tries org::LinkAtPoint first (an internal "*Heading" target jumps
@@ -712,6 +803,18 @@ class BufferView : public Widget {
     // column regardless of language, it's just empty when nothing's been
     // reported.
     void               EnsureDiagnosticGutterCache() const;
+    // VCS blame gutter: unlike EnsureDiagnosticGutterCache/EnsureFoldGutterCache,
+    // this does NOT recompute blameLineInfo_ from anything -- there's no
+    // cheap synchronous source to recompute it from (populating it means
+    // running `git blame`, which is what RequestBlameForCurrentBuffer's
+    // async VcsRunner call is for). All this does, called unconditionally
+    // every Paint() like the other two: if the active buffer's identity or
+    // ContentGeneration() has changed since blameLineInfo_ was last
+    // populated, CLEARS it (blame goes stale the instant the buffer is
+    // edited or the active buffer changes) rather than trying to
+    // resynthesize it -- showing a blank column is the honest answer, not
+    // silently-wrong attribution against since-edited line numbers.
+    void EnsureBlameGutterCache() const;
     [[nodiscard]] bool IsLineHidden(std::size_t line) const;
     // `line` if already visible, else the first visible line >= line
     // (capped at limit).
@@ -789,6 +892,7 @@ class BufferView : public Widget {
     ProjectSidebar*            projectSidebar_  = nullptr; // see SetProjectSidebar
     editor::lsp::LspManager*   lspManager_      = nullptr; // see SetLspManager
     editor::tasks::TaskRunner* taskRunner_      = nullptr; // see SetTaskRunner
+    editor::vcs::VcsRunner*    vcsRunner_       = nullptr; // see SetVcsRunner
     EventLoop*                 eventLoop_       = nullptr; // see SetEventLoop
 
     InputMode                                inputMode_ = InputMode::Normal;
@@ -919,6 +1023,14 @@ class BufferView : public Widget {
     // shared one). Layout, left to right, is now
     // [status][diagnostic][gap][digits][gap][fold].
     static constexpr std::size_t kDiagnosticWidth = 1;
+    // VCS blame gutter: the rightmost gutter region, past fold (layout is
+    // now [status][diagnostic][gap][digits][gap][fold][blame]) -- an
+    // 8-hex-char short commit hash plus one trailing gap column. Full
+    // author/date/summary deliberately isn't crammed in here (there's no
+    // tooltip concept in a terminal UI, and a wider fixed column would
+    // fight narrow-terminal layouts); that's what the vcs-show-blame
+    // multibuffer is for.
+    static constexpr std::size_t kBlameWidth = 9;
 
     struct FoldGutterEntry {
         std::size_t headerLine;
@@ -977,6 +1089,16 @@ class BufferView : public Widget {
     mutable text::Buffer*                                                           diagnosticGutterCacheBuffer_     = nullptr;
     mutable std::size_t                                                             diagnosticGutterCacheGeneration_ = 0;
     mutable std::vector<std::pair<std::size_t, text::Buffer::Diagnostic::Severity>> diagnosticLineSeverities_; // sorted by line
+
+    // VCS blame gutter: populated only by RequestBlameForCurrentBuffer's
+    // async completion (never recomputed from Paint() -- see
+    // EnsureBlameGutterCache's own doc comment for why), sorted by
+    // (0-indexed) line. blameGutterCacheBuffer_/blameGutterCacheContentGeneration_
+    // record which buffer+generation blameLineInfo_ is valid for, so
+    // EnsureBlameGutterCache can tell it's gone stale and clear it.
+    mutable text::Buffer*                                                      blameGutterCacheBuffer_            = nullptr;
+    mutable std::size_t                                                        blameGutterCacheContentGeneration_ = 0;
+    mutable std::vector<std::pair<std::size_t, editor::vcs::VcsBlameLine>>     blameLineInfo_;
 
     // Org-mode fold/unfold follow-up: see EnsureHiddenLineRangesCache's own
     // doc comment above. mutable because CursorPosition()/ByteOffsetForPoint()

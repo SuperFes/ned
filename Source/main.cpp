@@ -22,9 +22,11 @@
 #include "Editor/Register.h"
 #include "Editor/ScriptingSession.h"
 #include "Editor/Tasks/TaskRunner.h"
+#include "Editor/Vcs/VcsRunner.h"
 #include "Janet/EditorBindings.h"
 #include "Janet/Environment.h"
 #include "Janet/InitFile.h"
+#include "Janet/PluginLoader.h"
 #include "Text/BinaryDetect.h"
 #include "Text/BufferList.h"
 #include "Text/KillRing.h"
@@ -232,6 +234,17 @@ int main(int argc, char** argv) {
     const ned::editor::ScriptingSessionScope scriptingSession(ned::editor::ScriptingSession{registry, janetKeymap});
 
     try {
+        // Registers the bundled reference VCS plugins (e.g. git) -- before
+        // LoadInitFile so a user's own init.janet can override/unregister one
+        // of them afterward (ned/vcs-register-provider re-registering under
+        // the same name replaces it).
+        ned::janet::LoadBundledPlugins(janetEnv);
+    }
+    catch (const std::exception& e) {
+        statusMessage = std::string("bundled vcs plugin error: ") + e.what();
+    }
+
+    try {
         ned::janet::LoadInitFile(janetEnv);
     }
     catch (const std::exception& e) {
@@ -428,6 +441,12 @@ int main(int argc, char** argv) {
     // connect after construction" convention.
     ned::editor::tasks::TaskRunner taskRunner(bufferList, eventLoop);
     windowManager->SetTaskRunner(&taskRunner);
+
+    // VCS blame gutter follow-up: same "constructed here, needs a real
+    // EventLoop&" shape as taskRunner just above, and the same "wired into
+    // windowManager, connect after construction" convention.
+    ned::editor::vcs::VcsRunner vcsRunner(eventLoop);
+    windowManager->SetVcsRunner(&vcsRunner);
 
     // FTXUI -> Notcurses migration: BufferView's completion-debounce/
     // status-message-idle-timeout DeadlineTimers and ScrollArrowButton's

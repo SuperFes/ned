@@ -240,26 +240,69 @@ each is, not by priority.
         "before anything else reads stdin" ordering requirement; a real evaluation of that
         risk hasn't happened yet.
 - **External tool integration (version control and beyond)**
-  - [ ] VCS-agnostic version control, via a plugin system rather than a hardcoded git
-        integration. The user's own framing: stay deliberately agnostic about which VCS
-        a project uses — a small, internally-understood vocabulary of operations
-        (status, diff, blame, stage/unstage a hunk, commit, log, branch, ...) that a
-        plugin translates into whatever a specific VCS actually needs, so the editor-facing
-        commands/keybindings/UI stay the same regardless of git vs. Mercurial vs.
-        Subversion vs. jj vs. whatever else a project happens to use. Plugins are Janet
-        scripts — the natural fit given this project's own "everything is
-        programmable, Janet fills Elisp's role" foundation (`Source/Janet/`) rather than
-        a new, separate plugin-language/runtime built just for this. Explicitly framed by
-        the user as generalizable past version control once the mechanism exists: the same
-        "translate a common internal vocabulary into a specific external tool's actual
-        calls, via a Janet-scriptable plugin" shape could later cover cloud-provider CLIs,
-        Terraform, Docker, or other external tooling entirely — version control is the
-        first, most concrete case to design against, not the only one this is meant for.
-        Needs a real design pass of its own (the vocabulary itself, how a plugin
-        registers/is discovered, how UI surfaces like a status panel or diff gutters stay
-        VCS-agnostic when the underlying data shapes genuinely differ across tools) before
-        any of it is scheduled — flagged here as a real, sequenceable direction, not
-        design-complete.
+  - [x] VCS-agnostic version control, via a plugin system rather than a hardcoded git
+        integration — the `blame`/`log` slice of the vocabulary is done (blame gutter +
+        `*vcs blame <file>*`/`*vcs log <file>*` multibuffer follow-up); `status`/`diff`/
+        `stage`/`unstage`/`commit`/`branch` are reserved in the vocabulary but not yet
+        implemented, see below. The user's own framing, realized as designed: stay
+        deliberately agnostic about which VCS a project uses — a plugin (a Janet script,
+        the natural fit given this project's own "everything is programmable, Janet fills
+        Elisp's role" foundation, `Source/Janet/`, rather than a new plugin-language/
+        runtime) translates a small internal vocabulary into whatever a specific VCS
+        actually needs, so editor-facing commands/keybindings/UI stay the same regardless
+        of git vs. Mercurial vs. Subversion vs. jj. Concretely: `Source/Editor/Vcs/
+        VcsProvider.h` is the Janet-free interface (`Detect`/`BlameArgv`/`ParseBlame`/
+        `LogArgv`/`ParseLog`, plus the reserved-but-unimplemented vocabulary named in a
+        comment); `Source/Editor/Vcs/VcsProviderRegistry.h/.cpp` is the process-wide
+        registry (`RegisterProvider`/`ActiveProviderFor`, first-`Detect`-match-wins,
+        mirroring `ModeOverrides.h`'s own mutex-guarded-static-state pattern);
+        `Source/Janet/JanetVcsProvider.h/.cpp` is the adapter a Janet plugin's five
+        callbacks (`detect`/`blame-argv`/`parse-blame`/`log-argv`/`parse-log`) get wrapped
+        in, reached via `ned/vcs-register-provider` (`Source/Janet/EditorBindings.cpp`);
+        `Source/Janet/Plugins/vcs-git.janet` is the bundled reference implementation for
+        git, embedded into the binary at CMake configure time via a new
+        `ned_embed_janet_plugin` function mirroring `ned_embed_treesitter_query`'s own
+        "generate a `.cpp` constant from a checked-in source file" approach (this
+        codebase has no `Resources/`-style loose-runtime-file convention), loaded by
+        `Source/Janet/PluginLoader.h/.cpp`'s `LoadBundledPlugins` right after
+        `InstallEditorBindings` and before the user's own `init.janet` (so it can
+        override/unregister a bundled provider). `Source/Editor/Vcs/VcsRunner.h/.cpp` is
+        the async execution glue: every VCS operation is split into a `build-argv`
+        callback and a `parse-output` callback, both cheap/synchronous and only ever
+        called on the main thread (required, not a style choice — see `VcsProvider.h`'s
+        own header comment for the Janet-threading constraint this satisfies, the same
+        `janet_pcall`-corruption landmine `Value.h`'s `RootedValue` CAUTION comment
+        documents), with the actual subprocess spawn/wait done via the existing
+        `TaskProcess`/`ChildProcess` on a background thread in between. `BufferView`'s
+        blame gutter (`kBlameWidth`, `blameLineInfo_`, `EnsureBlameGutterCache`,
+        `RequestBlameForCurrentBuffer`) is the rightmost gutter column (layout is now
+        `[status][diagnostic][gap][digits][gap][fold][blame]`), populated only by an
+        explicit `vcs-show-blame` (`C-c v b`) request — never auto-recomputed per
+        `Paint()` the way the diagnostic/fold gutters are, since there's no cheap
+        synchronous source to recompute from; it goes stale and clears (not
+        resynthesizes) the instant the buffer's content generation changes, an honest
+        "blank" rather than silently-wrong attribution. `vcs-show-blame` deliberately
+        stays on the current buffer rather than switching away to a results buffer —
+        revised after the original default (jump straight to a separate `*vcs blame*`
+        buffer) was tried and reported back as disconnected from the code actually being
+        read, not useful as the default action; `vcs-blame-detail-at-point`
+        (`C-c v i`) is the "on request" companion, a synchronous read of already-loaded
+        gutter data reporting the full author/date/summary for point's line via the
+        status line, since the gutter's own fixed-width column only ever fits a short
+        hash. The separate full-history view is still available (`vcs-blame-buffer`,
+        M-x only, matching `lsp-show-log`'s own no-dedicated-binding precedent) for
+        anyone who wants it, just no longer what a bare "show blame" reaches for.
+        `vcs-show-log` (`C-c v l`) and `vcs-visit-result` (`C-c v v`, reusing
+        `VisitSearchResult`'s exact `path:line:` parsing via a new shared
+        `JumpToPathLine` helper) round out the multibuffer half.
+        Still explicitly out of scope, reserved for later: `status`/`diff`/`stage`/
+        `unstage`/`commit`/`branch` (named in `VcsProvider.h` as comments, no real
+        methods yet), any diff-gutter change markers, and a full historical multibuffer
+        beyond one synthesized buffer per query result (the fuller "Multibuffers" wishlist
+        entry below is still its own, larger, unscoped thing). The "generalizable past
+        version control" framing (cloud-provider CLIs, Terraform, Docker via the same
+        two-callback-per-operation plugin shape) is unchanged and still just a framing,
+        not attempted.
 - **Collaboration & AI**
   - [ ] Real-time collaborative editing (CRDT-based shared sessions) — the biggest
         lift in this list; revisit only once the single-user core is solid.
@@ -357,6 +400,25 @@ each is, not by priority.
         is currently BufferView-level, not per-buffer) — a real prerequisite would be
         moving last-viewed position to live per-`Buffer` first, which this would then
         also persist to disk; scoped as its own slice rather than folded into that fix.
+- **Project documentation output** (documentation *of* `ned` itself — user/config/Janet-API
+  reference — not an in-editor document viewer; this project has none today beyond
+  `README.md`/`ROADMAP.md`/`CLAUDE.md` prose)
+  - [ ] Some real framework for producing `ned`'s own documentation in multiple output
+        forms — man page(s), PDF, and a rendered web page/site at minimum, ideally all
+        generated from one shared source rather than maintained independently by hand in
+        three formats that inevitably drift. Concretely likely means: author the actual
+        content once (Markdown, or a doc-comment-adjacent convention pulled from
+        `ned/*`-binding doc strings already passed to `Register<Fn>` in
+        `Janet/EditorBindings.cpp` — a real, already-structured source of per-function
+        documentation that goes nowhere today beyond Janet's own introspection), then run
+        it through an existing toolchain rather than writing a bespoke multi-format
+        generator: `pandoc` (Markdown -> man/PDF/HTML in one tool, the most direct fit) or
+        a static-site generator plus `pandoc`/`groff` for the man/PDF legs specifically.
+        Not scoped in detail yet — raised as a real, wanted capability (having something
+        beyond three plain top-level `.md` files as this project matures), not a specific
+        design; likely belongs near the "Companion tooling" entry below once picked up,
+        as a build-time/release-time step rather than anything `ned` itself needs to do at
+        runtime.
 - **Visual**
   - [ ] Minimap. Rich built-in theme set. (Overlaps with Phase 6.)
 - **Companion tooling** (standalone utility programs shipped alongside `ned`, not part of

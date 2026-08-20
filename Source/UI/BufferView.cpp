@@ -1,6 +1,7 @@
 #include "BufferView.h"
 
 #include <algorithm>
+#include <sstream>
 #include <cctype>
 #include <cstdlib>
 #include <exception>
@@ -771,6 +772,34 @@ namespace {
         return 0; // unreachable -- silences a "not all enumerators handled" warning on some compilers
     }
 
+    // VCS blame gutter: parses a plugin-supplied date string (expected
+    // "YYYY-MM-DD" -- what git's own --date=short produces, and what
+    // vcs-git.janet's log-argv/blame parsing actually emits) into an
+    // approximate age in days against "now," clamped into
+    // [0, kBlameMaxAgeDays] and interpolated between a bright (recent) and
+    // dim (old) color -- a directly computed Color rather than routed
+    // through Theme::BrushFor(SyntaxClass), matching the diagnostic
+    // gutter's own bypass of SyntaxClass for the same reason (age-based
+    // blame coloring isn't a tree-sitter capture category). Any
+    // unparseable date (a plugin using a different format, or a genuinely
+    // empty field) degrades to the oldest/dimmest color rather than
+    // throwing -- this is purely cosmetic, never load-bearing.
+    Color BlameHashColor(const std::string& date) {
+        constexpr int kBlameMaxAgeDays = 365;
+
+        std::istringstream     stream(date);
+        std::chrono::sys_days  parsed;
+        stream >> std::chrono::parse("%Y-%m-%d", parsed);
+        if (stream.fail()) {
+            return Color::BrightBlack;
+        }
+
+        const auto  now     = std::chrono::floor<std::chrono::days>(std::chrono::system_clock::now());
+        const auto  ageDays = std::chrono::duration_cast<std::chrono::days>(now - parsed).count();
+        const float t       = std::clamp(static_cast<float>(ageDays) / static_cast<float>(kBlameMaxAgeDays), 0.0f, 1.0f);
+        return Color::Interpolate(t, Color::BrightCyan, Color::BrightBlack);
+    }
+
 } // namespace
 
 void BufferView::EnsureDiagnosticGutterCache() const {
@@ -801,6 +830,79 @@ void BufferView::EnsureDiagnosticGutterCache() const {
 
     diagnosticGutterCacheBuffer_     = &buffer;
     diagnosticGutterCacheGeneration_ = buffer.DiagnosticsGeneration();
+}
+
+void BufferView::EnsureBlameGutterCache() const {
+    text::Buffer& buffer = activeBuffer_.Get();
+    if (blameGutterCacheBuffer_ == &buffer && blameGutterCacheContentGeneration_ == buffer.ContentGeneration()) {
+        return; // still valid for this buffer/content -- nothing to do (see this method's own header comment)
+    }
+    // Either the active buffer changed, or its content did since blame was
+    // last populated -- either way, blameLineInfo_ no longer corresponds to
+    // real line attribution. Clear it rather than trying to resynthesize
+    // it; a fresh vcs-show-blame call is what repopulates it.
+    blameLineInfo_.clear();
+    blameGutterCacheBuffer_            = &buffer;
+    blameGutterCacheContentGeneration_ = buffer.ContentGeneration();
+}
+
+bool BufferView::BlameGutterActive() const {
+    return !blameLineInfo_.empty();
+}
+
+void BufferView::SetVcsRunner(editor::vcs::VcsRunner* vcsRunner) {
+    vcsRunner_ = vcsRunner;
+}
+
+void BufferView::DispatchBlameForTesting(std::vector<editor::vcs::VcsBlameLine> lines) {
+    text::Buffer& buffer = activeBuffer_.Get();
+    blameLineInfo_.clear();
+    blameLineInfo_.reserve(lines.size());
+    for (std::size_t i = 0; i < lines.size(); ++i) {
+        blameLineInfo_.emplace_back(i, std::move(lines[i]));
+    }
+    blameGutterCacheBuffer_            = &buffer;
+    blameGutterCacheContentGeneration_ = buffer.ContentGeneration();
+}
+
+void BufferView::RequestBlameForCurrentBuffer() {
+    if (!vcsRunner_) {
+        statusMessage_ = "no vcs runner configured";
+        return;
+    }
+    text::Buffer* buffer = &activeBuffer_.Get();
+    vcsRunner_->RequestBlame(
+        *buffer,
+        [this, buffer](std::vector<editor::vcs::VcsBlameLine> lines) {
+            if (&activeBuffer_.Get() != buffer) {
+                return; // active buffer changed while the request was in flight -- discard, it's stale
+            }
+            DispatchBlameForTesting(std::move(lines)); // reused here too -- see its own doc comment
+            statusMessage_ = "blame loaded";
+        },
+        [this](std::string error) { statusMessage_ = "vcs blame: " + error; });
+}
+
+void BufferView::ShowBlameDetailAtPoint() {
+    if (!BlameGutterActive()) {
+        statusMessage_ = "no blame data loaded -- run vcs-show-blame (C-c v b) first";
+        return;
+    }
+
+    const text::Buffer& buffer = activeBuffer_.Get();
+    const std::size_t    line   = buffer.Content().ByteOffsetToLine(buffer.Point());
+
+    // Same lower_bound lookup Paint()'s own blame-gutter rendering uses --
+    // blameLineInfo_ is sorted by line, one entry per blamed line.
+    const auto it = std::lower_bound(blameLineInfo_.begin(), blameLineInfo_.end(), line,
+                                      [](const auto& entry, std::size_t l) { return entry.first < l; });
+    if (it == blameLineInfo_.end() || it->first != line) {
+        statusMessage_ = "no blame data for this line";
+        return;
+    }
+
+    const editor::vcs::VcsBlameLine& blame = it->second;
+    statusMessage_ = blame.commitHash + " " + blame.author + " (" + blame.date + "): " + blame.summary;
 }
 
 void BufferView::EnsureHiddenLineRangesCache() const {
@@ -1038,11 +1140,14 @@ void BufferView::Paint(Canvas c) {
     // these columns only when actually wanted (see its own doc comment) --
     // recomputing the same condition here keeps the layout math below in
     // agreement with it without a second source of truth. Column offsets,
-    // left to right: [status][gap][digits][gap][fold].
-    const std::size_t foldColumnWidth = FoldGutterActive() ? kMaxFoldDepthColumns : 0;
-    const std::size_t digitsStart     = kStatusWidth + kDiagnosticWidth + kLineNumberGap;
-    const std::size_t gutterDigits    = gutterWidth - digitsStart - kLineNumberGap - foldColumnWidth;
-    const std::size_t foldStart       = digitsStart + gutterDigits + kLineNumberGap;
+    // left to right: [status][gap][digits][gap][fold][blame] (VCS blame
+    // gutter follow-up: blame is the new rightmost region, past fold).
+    const std::size_t foldColumnWidth  = FoldGutterActive() ? kMaxFoldDepthColumns : 0;
+    const std::size_t blameColumnWidth = BlameGutterActive() ? kBlameWidth : 0;
+    const std::size_t digitsStart      = kStatusWidth + kDiagnosticWidth + kLineNumberGap;
+    const std::size_t gutterDigits     = gutterWidth - digitsStart - kLineNumberGap - foldColumnWidth - blameColumnWidth;
+    const std::size_t foldStart        = digitsStart + gutterDigits + kLineNumberGap;
+    const std::size_t blameStart       = foldStart + foldColumnWidth;
 
     // status-gutter unsaved-change-indicator follow-up: recomputed once
     // per Paint() call (not per row) -- see EnsureUnsavedChangeCache's own
@@ -1052,6 +1157,10 @@ void BufferView::Paint(Canvas c) {
     // LSP client follow-up: same "unconditional, every buffer gets one"
     // reasoning as EnsureUnsavedChangeCache above.
     EnsureDiagnosticGutterCache();
+    // VCS blame gutter: unconditional every Paint() like the two above, but
+    // this only ever clears (never repopulates) blameLineInfo_ -- see its
+    // own doc comment.
+    EnsureBlameGutterCache();
 
     // LSP client follow-up: syncs the *active* buffer only, once per frame
     // -- see LspManager::SyncBuffer's own doc comment for why only the
@@ -1367,6 +1476,28 @@ void BufferView::Paint(Canvas c) {
                         cell.character = text::EncodeCodepointUtf8(glyph);
                         gutterBrush.ApplyTo(cell);
                         cell.inverted = inverted;
+                    }
+                }
+
+                // VCS blame gutter: an 8-hex-char short commit hash per
+                // blamed line, color-interpolated by commit age (newer =
+                // brighter) -- a directly computed Color, not routed
+                // through Theme::BrushFor(SyntaxClass), same bypass the
+                // diagnostic gutter's glyph coloring already uses (see
+                // ClassAtOffset's own precedent) since SyntaxClass is
+                // tree-sitter-capture-oriented, not a fit for this.
+                if (blameColumnWidth > 0) {
+                    const auto it = std::lower_bound(blameLineInfo_.begin(), blameLineInfo_.end(), line,
+                                                      [](const auto& entry, std::size_t l) { return entry.first < l; });
+                    if (it != blameLineInfo_.end() && it->first == line) {
+                        const std::string shortHash = it->second.commitHash.substr(0, std::min<std::size_t>(8, it->second.commitHash.size()));
+                        const Color       hashColor = BlameHashColor(it->second.date);
+                        for (std::size_t i = 0; i < shortHash.size() && static_cast<int>(blameStart + i) < c.size().width; ++i) {
+                            Cell& cell            = c[{.x = static_cast<int>(blameStart + i), .y = row}];
+                            cell.character        = std::string(1, shortHash[i]);
+                            cell.foreground_color = hashColor;
+                            cell.background_color = theme_.background;
+                        }
                     }
                 }
             } // if (segmentIndex == 0) -- line-level gutter rendering
@@ -2840,6 +2971,27 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             prompt_.emplace("Cancel task: ");
             statusMessage_ = prompt_->StatusText();
             return;
+        // VCS blame gutter follow-up: one-shot direct actions, same shape
+        // as ProjectAgenda/LspGotoDefinition above -- doesn't touch
+        // inputMode_, the async result (or a status-message error) arrives
+        // later via VcsRunner's own callback. VcsShowBlame stays on the
+        // current buffer (see Command.h's own doc comment for why);
+        // VcsBlameDetailAtPoint is synchronous, no async request at all.
+        case editor::InteractiveRequest::VcsShowBlame:
+            RequestBlameForCurrentBuffer();
+            return;
+        case editor::InteractiveRequest::VcsBlameDetailAtPoint:
+            ShowBlameDetailAtPoint();
+            return;
+        case editor::InteractiveRequest::VcsBlameBuffer:
+            RequestVcsBlameBuffer();
+            return;
+        case editor::InteractiveRequest::VcsShowLog:
+            RequestVcsLogBuffer();
+            return;
+        case editor::InteractiveRequest::VisitVcsResult:
+            VisitVcsResult();
+            return;
         // org-set-tags follow-up: org-set-tags already checked
         // HeadlineAtPoint before setting this request, but point can't
         // have moved since then (no other command runs between a
@@ -3456,19 +3608,116 @@ void BufferView::VisitSearchResult() {
         return; // not a search-result line -- silent no-op, see the header comment
     }
 
-    const std::filesystem::path path       = match[1].str();
-    const std::size_t           targetLine = std::stoul(match[2].str());
+    JumpToPathLine(match[1].str(), std::stoul(match[2].str()));
+}
 
+void BufferView::JumpToPathLine(const std::filesystem::path& path, std::size_t line) {
     try {
         text::Buffer& opened = bufferList_.OpenOrCreateFile(path);
         activeBuffer_.Set(opened);
-        opened.SetPoint(opened.ByteOffsetForLineAndColumn(targetLine - 1, 0)); // 1-indexed -> 0-indexed
+        opened.SetPoint(opened.ByteOffsetForLineAndColumn(line - 1, 0)); // 1-indexed -> 0-indexed
         statusMessage_.clear();
         ScrollToShowPoint();
     }
     catch (const std::exception& e) {
         statusMessage_ = e.what();
     }
+}
+
+void BufferView::VisitVcsResult() {
+    const text::Buffer& buffer    = activeBuffer_.Get();
+    const text::Rope&   content   = buffer.Content();
+    const std::size_t   point     = buffer.Point();
+    const std::size_t   line      = content.ByteOffsetToLine(point);
+    const std::size_t   lineStart = content.LineToByteOffset(line);
+    const std::size_t   lineEnd =
+        (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
+    const std::string lineText = content.Substring(lineStart, lineEnd - lineStart);
+
+    // Matches BuildVcsBlameBuffer's own "<path>:<line>: ..." format --
+    // deliberately the same shape VisitSearchResult's own pattern parses,
+    // so this is a straight copy of that regex, not a coincidence. A *vcs
+    // log* buffer's lines never match this (no per-line source location),
+    // so this is correctly a silent no-op there.
+    static const std::regex resultLinePattern(R"(^(.*):(\d+):)");
+
+    std::smatch match;
+    if (!std::regex_search(lineText, match, resultLinePattern)) {
+        return; // not a blame-result line -- silent no-op, see this method's own header comment
+    }
+
+    JumpToPathLine(match[1].str(), std::stoul(match[2].str()));
+}
+
+void BufferView::RequestVcsBlameBuffer() {
+    if (!vcsRunner_) {
+        statusMessage_ = "no vcs runner configured";
+        return;
+    }
+    text::Buffer* buffer = &activeBuffer_.Get();
+    if (!buffer->Path()) {
+        statusMessage_ = "no file associated with this buffer";
+        return;
+    }
+    const std::filesystem::path path = *buffer->Path();
+    vcsRunner_->RequestBlame(
+        *buffer,
+        [this, buffer, path](std::vector<editor::vcs::VcsBlameLine> lines) {
+            if (&activeBuffer_.Get() == buffer) {
+                // Populates the gutter for the still-active source buffer
+                // before BuildVcsBlameBuffer switches activeBuffer_ away
+                // from it -- see DispatchBlameForTesting's own doc comment.
+                DispatchBlameForTesting(lines);
+            }
+            BuildVcsBlameBuffer(path, lines);
+        },
+        [this](std::string error) { statusMessage_ = "vcs blame: " + error; });
+}
+
+void BufferView::RequestVcsLogBuffer() {
+    if (!vcsRunner_) {
+        statusMessage_ = "no vcs runner configured";
+        return;
+    }
+    text::Buffer& buffer = activeBuffer_.Get();
+    if (!buffer.Path()) {
+        statusMessage_ = "no file associated with this buffer";
+        return;
+    }
+    const std::filesystem::path path = *buffer.Path();
+    vcsRunner_->RequestLog(
+        buffer, [this, path](std::vector<editor::vcs::VcsLogEntry> entries) { BuildVcsLogBuffer(path, entries); },
+        [this](std::string error) { statusMessage_ = "vcs log: " + error; });
+}
+
+void BufferView::BuildVcsBlameBuffer(const std::filesystem::path& path, const std::vector<editor::vcs::VcsBlameLine>& lines) {
+    std::string resultsText;
+    for (std::size_t i = 0; i < lines.size(); ++i) {
+        const editor::vcs::VcsBlameLine& line      = lines[i];
+        const std::string                shortHash = line.commitHash.substr(0, std::min<std::size_t>(8, line.commitHash.size()));
+        resultsText += path.string() + ":" + std::to_string(i + 1) + ": " + shortHash + " " + line.author + " " + line.date +
+                       " | " + line.summary + "\n";
+    }
+
+    text::Buffer& results = bufferList_.CreateBuffer("*vcs blame " + path.filename().string() + "*");
+    results.InsertAtPoint(resultsText);
+    results.SetPoint(0);
+    results.SetReadOnly(true); // see BuildResultsBuffer's own doc comment for why
+    activeBuffer_.Set(results);
+}
+
+void BufferView::BuildVcsLogBuffer(const std::filesystem::path& path, const std::vector<editor::vcs::VcsLogEntry>& entries) {
+    std::string resultsText;
+    for (const editor::vcs::VcsLogEntry& entry : entries) {
+        const std::string shortHash = entry.commitHash.substr(0, std::min<std::size_t>(8, entry.commitHash.size()));
+        resultsText += shortHash + " " + entry.date + " " + entry.author + ": " + entry.summary + "\n";
+    }
+
+    text::Buffer& results = bufferList_.CreateBuffer("*vcs log " + path.filename().string() + "*");
+    results.InsertAtPoint(resultsText);
+    results.SetPoint(0);
+    results.SetReadOnly(true);
+    activeBuffer_.Set(results);
 }
 
 void BufferView::OpenLinkAtPoint() {
@@ -3721,8 +3970,10 @@ std::size_t BufferView::GutterWidth() const {
     // deep the currently-visible content happens to nest -- an explicit
     // user choice, so the gutter's own width never jumps around while
     // scrolling past a deeply nested region).
-    const std::size_t foldColumn = FoldGutterActive() ? kMaxFoldDepthColumns : 0;
-    return kStatusWidth + kDiagnosticWidth + kLineNumberGap + std::to_string(totalLines).size() + kLineNumberGap + foldColumn;
+    const std::size_t foldColumn  = FoldGutterActive() ? kMaxFoldDepthColumns : 0;
+    const std::size_t blameColumn = BlameGutterActive() ? kBlameWidth : 0;
+    return kStatusWidth + kDiagnosticWidth + kLineNumberGap + std::to_string(totalLines).size() + kLineNumberGap + foldColumn +
+           blameColumn;
 }
 
 bool BufferView::OnMouseEvent(const Event& event) {
@@ -3786,11 +4037,15 @@ bool BufferView::OnMouseEvent(const Event& event) {
         // block, not whatever's innermost at that line) -- clicking a plain
         // guide line ('│'/'└', not a header cell) is a no-op, matching how
         // indent guides are inert-to-click in every mainstream editor.
-        const std::size_t foldColumnWidth = FoldGutterActive() ? kMaxFoldDepthColumns : 0;
-        // Mirrors GutterWidth()/Paint()'s own [status][gap][digits][gap][fold]
-        // layout -- foldStart is where the fold region actually starts on
-        // screen now that it's no longer the leftmost gutter region.
-        const std::size_t foldStart = GutterWidth() - foldColumnWidth;
+        const std::size_t foldColumnWidth  = FoldGutterActive() ? kMaxFoldDepthColumns : 0;
+        const std::size_t blameColumnWidth = BlameGutterActive() ? kBlameWidth : 0;
+        // Mirrors GutterWidth()/Paint()'s own
+        // [status][gap][digits][gap][fold][blame] layout -- foldStart is
+        // where the fold region actually starts on screen, which (VCS
+        // blame gutter follow-up) now has to account for blame's own
+        // width too, since blame sits to the right of fold, not fold being
+        // the rightmost region anymore.
+        const std::size_t foldStart = GutterWidth() - foldColumnWidth - blameColumnWidth;
         if (foldColumnWidth > 0 && mouse->at.x >= static_cast<int>(foldStart) &&
             static_cast<std::size_t>(mouse->at.x) < foldStart + foldColumnWidth) {
             text::Buffer&     buffer        = activeBuffer_.Get();
