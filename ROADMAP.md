@@ -53,7 +53,25 @@ TODO keywords + custom task states + state cycling, agenda views (daily/weekly/c
 priorities, deadlines/scheduling, tags, clocking/time tracking, capture templates,
 custom link types, and Org's own extensibility framework.
 
-**What's still not here:** tables, links, and real tree-sitter-org highlighting.
+**The v1 scope is now fully shipped** — tree-sitter-org highlighting landed as its
+own follow-up (`OrgMode()` in `Mode.cpp`, on Ned's own forked "org" grammar in
+`TreeSitter/Languages.cpp`); what remains Org-wise is the "v2+ maybe" and wishlist
+material below. Tables slice 1
+(parsing, column alignment, TAB cell motion via `org-cycle`/`org-table-align` on
+`Source/Editor/Table.h`'s shared toolkit) and links both shipped earlier; tables
+slice 2 (2026-08-19) closed slice 1's explicitly deferred editing surface: TAB past
+the last cell now appends a new empty row (real Org's own behavior, replacing slice
+1's wrap-to-first-cell), `S-TAB` steps backward (`org-table-previous-cell`),
+`M-S-up/down` kill/insert rows (`org-table-kill-row`/`org-table-insert-row`),
+`M-S-left/right` delete/insert columns, `M-left/right` move columns, `C-c -` inserts
+an hrule, and `M-up/down` are real Org's own `org-metaup`/`org-metadown` context
+dispatch (table row move inside a table, refusing at the table's edge rather than
+dragging a row out; the global `move-line-up`/`move-line-down` behavior everywhere
+else) — all built on one shared locate-cell/rewrite-block core factored out of slice
+1's align machinery (`Org.cpp`'s `RewriteOrgTable`), every op realigning as a side
+effect. Markdown (GFM) tables deliberately did not get the editing surface this
+slice — its delimiter row carries per-column alignment state a column op would have
+to rewrite; a follow-up if wanted. Formulas stay a "won't, at least not soon," below.
 
 **User wishlist, recorded for later, not started this slice:**
 - **Universal clickable in-buffer affordances, not just Org.** The user's own framing:
@@ -123,7 +141,64 @@ each is, not by priority.
         one, incremental sync, idle-timeout server teardown, multi-root workspaces, and raw
         subprocess stderr capture — see "LSP client" and "LSP client — error visibility
         follow-up" above for why each of those is a deliberate cut, not an oversight.
-  - [ ] DAP (Debug Adapter Protocol) client for in-editor debugging.
+  - [ ] DAP (Debug Adapter Protocol) client for in-editor debugging. Scoped
+        2026-08-19 per the user's own framing: "the useful things — step through,
+        inspect, and all that good stuff," with F-keys as the primary bindings.
+        Not started; this is the design record for whenever it's picked up.
+        - **Protocol shape / transport reuse.** A DAP adapter is a persistent
+          subprocess speaking `Content-Length`-framed JSON over stdio — the *identical*
+          base framing LSP uses (DAP inherited it), so `Source/Editor/Lsp/Transport.h`'s
+          `WriteFrame`/`ReadFrame` are reusable as-is, exactly the reuse the task
+          runner already proved out. What differs is the message layer above the
+          framing: DAP is *not* JSON-RPC — it has its own `seq`/`type`
+          (`request`/`response`/`event`) envelope, and unsolicited `event` messages
+          (`stopped`, `terminated`, `output`, ...) are the heart of the protocol, not
+          an edge case. So: new `Source/Editor/Dap/` mirroring `Lsp/`'s own split —
+          `DapClient` (protocol state machine per session, background read thread
+          marshaling onto the main thread via `ned::ui::EventLoop::Post`, same
+          threading contract `LspClient` documents), `DapManager` (session lifecycle,
+          buffer/UI liaison), `DapAdapterConfig` (per-language adapter command lookup,
+          mirroring `LspServerConfig`, configured from Janet — e.g. `debugpy` for
+          Python, `lldb-dap` for C/C++, whatever the user points it at; no adapter
+          bundled or auto-detected, same posture as LSP servers).
+        - **v1 feature set** (the "useful things"): launch (not attach) with a
+          Janet-configured program/args per project; source-line breakpoints
+          (toggle at point, shown as a gutter marker — the gutter already has a
+          multi-column layout to slot into); run control — continue, pause,
+          step over, step into, step out; on a `stopped` event, jump to the
+          stopped file:line (open via `BufferList::OpenOrCreateFile`, same as
+          `VisitSearchResult`) with a distinct current-execution-line highlight in
+          `BufferView` (a theme-colored line overlay, same mechanism as the
+          selection/isearch overlays); stack trace + scopes/variables inspection
+          rendered as a read-only, tossable `*debug*` buffer (the established
+          `*search results*`/`*compilation*` convention — no new floating-panel
+          infrastructure, which still doesn't exist; frames/variables are lines,
+          `RET`/`C-c C-v`-style visit-the-line navigation drills in: visiting a
+          frame line jumps to its file:line, visiting a composite variable line
+          expands it via a `variables` request); `evaluate` on a prompted
+          expression (`MinibufferPrompt` in, echo area/status line out).
+        - **F-key bindings** (the user's explicit ask; `KeyTranslation.cpp` already
+          delivers `F1`–`F12`, currently unbound globally): the VS/JetBrains-standard
+          set — `F5` start/continue, `S-F5` stop, `F9` toggle breakpoint, `F10` step
+          over, `F11` step into, `S-F11` step out. All registered as normal
+          `CommandRegistry` commands (`dap-continue`, `dap-toggle-breakpoint`, ...)
+          so they stay reachable from `M-x`/Janet/rebinding uniformly.
+        - **Deliberate v1 cuts** (recorded so they read as decisions, not gaps):
+          attach mode; multi-threaded debugging beyond "act on the thread the
+          `stopped` event names" (no thread picker); watch expressions (one-shot
+          `evaluate` covers the need); conditional/logpoint breakpoints; setting
+          variables; REPL-style debug console (the `*debug*` buffer + `evaluate`
+          prompt cover v1); persisting breakpoints across restarts (pairs naturally
+          with the per-file session persistence entry below whenever that lands).
+        - **Suggested slices**, LSP-style: slice 1 — `Dap/` plumbing: adapter spawn,
+          initialize/launch/configurationDone handshake, `setBreakpoints`, `stopped`/
+          `terminated` events, continue, stop; jump-to-stopped-line. Slice 2 —
+          stepping (over/into/out), current-execution-line highlight, breakpoint
+          gutter markers. Slice 3 — `*debug*` buffer: stackTrace/scopes/variables
+          rendering + drill-in navigation, `evaluate` prompt. Each slice lands with
+          its own unit tests against a scripted fake adapter over the real framing,
+          the same way `Tests/TaskRunnerTest.cpp`/the LSP tests already fake their
+          subprocess peer.
   - [ ] Spell/grammar-checking, prose-oriented, as a **diagnostics channel over the
         existing LSP client**, not a bespoke hunspell/libhunspell integration (revised
         from an earlier draft of this entry that proposed spawning `hunspell -a`
@@ -396,7 +471,10 @@ each is, not by priority.
         - Revisit as its own phase once picked up, not folded into an unrelated
           feature's scope — closer in size to Phase 7 (TermOx → FTXUI migration) or
           Phase 8 (window splitting) than to a single keybinding follow-up.
-  - [ ] **Task runner** (build/test tasks from within the editor) — sequenced ahead of
+  - [x] **Task runner** (build/test tasks from within the editor) — done: see
+        `Source/Editor/Tasks/` (`TaskRunner`/`TaskProcess`/`TaskConfig`), wired into
+        `main.cpp`/`Commands.cpp` and covered by `Tests/TaskRunnerTest.cpp`. The entry
+        below is kept as the original scoping record. Was sequenced ahead of
         the terminal panel below, not bundled with it, after a real discussion of how the
         two relate. Shape: spawn a subprocess (build/test command, Janet-configured, not
         hardcoded), stream its stdout/stderr into a read-only, live-appended buffer —
@@ -464,7 +542,9 @@ each is, not by priority.
         as a build-time/release-time step rather than anything `ned` itself needs to do at
         runtime.
 - **Visual**
-  - [ ] Minimap. Rich built-in theme set. (Overlaps with Phase 6.)
+  - [x] Minimap — done: braille-glyph minimap widget replacing the scroll bar
+        (`Source/UI/Minimap.h/.cpp`, commit `0e42708`).
+  - [ ] Rich built-in theme set. (Overlaps with Phase 6.)
 - **Companion tooling** (standalone utility programs shipped alongside `ned`, not part of
   the editor binary itself — the user's own framing: "towards the end of our dev, maybe
   they even belong in their own phase, when we're starting to setup the outside tooling")
