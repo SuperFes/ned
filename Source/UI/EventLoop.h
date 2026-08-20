@@ -15,6 +15,7 @@
 
 #include <chrono>
 #include <condition_variable>
+#include <cstdint>
 #include <functional>
 #include <mutex>
 #include <optional>
@@ -104,6 +105,30 @@ class EventLoop {
     // ran at all (the caller's cue that a repaint is worth doing).
     bool DrainPosted_();
     void Wake_();
+
+    // sidebar/drag-resize-not-working follow-up: a real, confirmed-via-
+    // reading-Notcurses'-own-SGR-decoder bug (src/lib/in.c's mouse_click) --
+    // an SGR (1006) mouse report for "button N still held, cursor moved"
+    // carries no distinct evtype of its own; Notcurses collapses it into
+    // exactly the same ncinput{.id = NCKEY_BUTTON<N>, .evtype = NCTYPE_PRESS}
+    // shape a genuinely fresh click produces (confirmed by a real
+    // NED_DEBUG_MOUSE capture: an entire drag decoded as a long run of
+    // `press` events, button held constant, never a single `move`, so
+    // Widget::Event::mouse() -- which only maps NCTYPE_UNKNOWN to
+    // Motion::Moved -- never produced one either). Every consumer that
+    // specifically waits for Motion::Moved during a drag (ProjectSidebar's
+    // resize, BufferView's click-and-drag text selection, ScrollBar/
+    // Minimap's own drag handling) was silently inert as a result. Fixed
+    // once, centrally, here rather than patched into every consumer:
+    // heldMouseButtonId_ tracks whichever NCKEY_BUTTON* id most recently
+    // pressed without a matching release yet; Run()'s read loop reclassifies
+    // a same-button PRESS/REPEAT arriving while that id is still held into
+    // NCTYPE_UNKNOWN before constructing the Event, which Event::mouse()
+    // then decodes as an ordinary Motion::Moved -- the semantics every
+    // consumer already expected, restored at the one place that actually
+    // has the sequential state needed to tell "held-and-moved" apart from
+    // "freshly pressed."
+    std::optional<std::uint32_t> heldMouseButtonId_;
 
     notcurses* nc_      = nullptr;
     bool       running_ = false;
