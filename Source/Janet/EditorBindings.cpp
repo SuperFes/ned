@@ -7,6 +7,7 @@
 #include <utility>
 #include <vector>
 
+#include "Editor/AutoRevert.h"
 #include "Editor/CodeFoldSettings.h"
 #include "Editor/Dap/DapConfig.h"
 #include "Editor/FinalNewline.h"
@@ -160,6 +161,10 @@ namespace {
 
     void NedSetScratchAutoSave(bool enabled) {
         editor::SetScratchAutoSaveEnabled(enabled);
+    }
+
+    void NedSetAutoRevert(bool enabled) {
+        editor::SetAutoRevertEnabled(enabled);
     }
 
     void NedSetSavePlace(bool enabled) {
@@ -390,6 +395,10 @@ void InstallEditorBindings(Environment& env) {
         "ned", "set-scratch-auto-save",
         "Enable/disable automatically saving modified scratch notes (find-scratch) on a periodic timer (default "
         "true).");
+    env.Register<&NedSetAutoRevert>(
+        "ned", "set-auto-revert",
+        "Enable/disable automatically reloading an open, unmodified buffer when its file changes on disk (default "
+        "true). A buffer with local edits is never auto-reverted; saving it instead asks before overwriting.");
     env.Register<&NedSetSavePlace>(
         "ned", "set-save-place",
         "Enable/disable remembering each file's last point and scroll position across editor runs (default true). "

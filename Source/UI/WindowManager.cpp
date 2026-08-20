@@ -5,6 +5,7 @@
 #include <mutex>
 #include <utility>
 
+#include "Editor/AutoRevert.h"
 #include "Editor/Dap/DapManager.h"
 #include "Editor/MinimapSettings.h"
 #include "Editor/ModeOverrides.h"
@@ -434,6 +435,18 @@ void WindowManager::StartAutoSaveTimer(EventLoop& eventLoop) {
             }
             eventLoop.Post([this] {
                 editor::AutoSaveScratchBuffers(bufferList_);
+                // external-modification-safety follow-up: piggybacked on
+                // this same tick -- reload any open, *unmodified* buffer
+                // whose file changed on disk (default on; see
+                // AutoRevert.h). Surfaced via the shared status line so a
+                // buffer changing underneath the user is never silent.
+                if (const std::vector<std::string> reverted = editor::AutoRevertBuffers(bufferList_); !reverted.empty()) {
+                    std::string names;
+                    for (const std::string& name : reverted) {
+                        names += names.empty() ? name : ", " + name;
+                    }
+                    statusMessage_ = "Reverted (changed on disk): " + names;
+                }
                 // session-persistence slices 1+2: piggybacked on this
                 // existing tick rather than a second timer thread -- both
                 // saves skip the disk write entirely when nothing changed.

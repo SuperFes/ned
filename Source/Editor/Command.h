@@ -114,6 +114,19 @@ enum class InteractiveRequest { None,
                                 // Widen for where the actual restriction lives.
                                 NarrowToRegion,
                                 Widen,
+                                // Emacs-coverage follow-up: Recenter is a one-shot direct action
+                                // (same shape as ToggleProjectSidebar) -- scrolling is
+                                // BufferView's own topLine_, so the command can only request it.
+                                // GotoLine is prompt-shaped (HandlePromptKey), the same
+                                // single-line-of-text session CreateDirectory runs.
+                                Recenter,
+                                GotoLine,
+                                // external-modification-safety follow-up: save-buffer found the
+                                // file changed on disk underneath the buffer (supersession) and
+                                // wants a y/n overwrite confirmation before writing anything --
+                                // BufferView runs the session (mirroring ConfirmCloseBuffer's
+                                // shape) and invokes "save-buffer-force" on y.
+                                ConfirmOverwriteSave,
                                 // Window-splitting follow-up: structural window-management
                                 // actions, not single-buffer interactive sessions -- BufferView
                                 // just forwards these to whatever registered
@@ -293,6 +306,13 @@ struct CommandContext {
     text::BufferList&  bufferList;
     KeyChord           triggeringKey{};              // the chord that completed this dispatch, if any
     std::string*       message            = nullptr; // where a command reports a status/echo-area message, if anywhere
+    // Emacs' `last-command`: the name of the command the Dispatcher invoked
+    // immediately before this one (empty on the first dispatch, or when
+    // invoked outside Dispatcher::Feed -- see LastInvokedCommand's own doc
+    // comment in Dispatcher.h). Only yank-pop reads this today. Placed after
+    // `message` so the existing positional aggregate-init call sites
+    // (BufferView::MakeContext, tests) stay valid.
+    std::string lastCommand;
     bool               quit               = false;   // set by a command requesting the application exit
     InteractiveRequest interactiveRequest = InteractiveRequest::None;
     // Rows currently visible in the buffer view, set by the host UI before

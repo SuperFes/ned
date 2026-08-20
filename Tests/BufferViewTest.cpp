@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -5959,4 +5960,133 @@ TEST_CASE("MaxTopLine() can scroll far enough to show a wrapped document's own l
         }
     }
     REQUIRE(sawThird);
+}
+
+// --- Emacs-coverage follow-up: goto-line + recenter ----------------------
+
+TEST_CASE("M-g g prompts for a line number and jumps point there", "[BufferView]") {
+    Fixture               fixture;
+    ned::text::Buffer&    scratch = fixture.bufferList.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
+                               fixture.statusMessage, fixture.mode, fixture.theme);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    scratch.InsertAtPoint("one\ntwo\nthree\nfour\nfive");
+    scratch.SetPoint(0);
+
+    view.OnEvent(ned::ui::test::Alt('g'));
+    view.OnEvent(ned::ui::test::Character("g"));
+    REQUIRE(fixture.statusMessage == "Goto line: ");
+
+    TypeText(view, "4");
+    view.OnEvent(ned::ui::test::Return());
+    REQUIRE(scratch.Point() == scratch.Content().LineToByteOffset(3));
+
+    // Out-of-range clamps to the last line rather than erroring.
+    view.OnEvent(ned::ui::test::Alt('g'));
+    view.OnEvent(ned::ui::test::Alt('g')); // M-g M-g, the other Emacs binding
+    TypeText(view, "999");
+    view.OnEvent(ned::ui::test::Return());
+    REQUIRE(scratch.Point() == scratch.Content().LineToByteOffset(4));
+}
+
+TEST_CASE("goto-line rejects non-numeric input and stays usable", "[BufferView]") {
+    Fixture               fixture;
+    ned::text::Buffer&    scratch = fixture.bufferList.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
+                               fixture.statusMessage, fixture.mode, fixture.theme);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    scratch.InsertAtPoint("one\ntwo");
+    scratch.SetPoint(0);
+
+    view.OnEvent(ned::ui::test::Alt('g'));
+    view.OnEvent(ned::ui::test::Character("g"));
+    TypeText(view, "abc");
+    view.OnEvent(ned::ui::test::Return());
+    REQUIRE(fixture.statusMessage == "Not a line number: \"abc\"");
+    REQUIRE(scratch.Point() == 0);
+
+    // Back to normal editing afterward.
+    view.OnEvent(ned::ui::test::Character("z"));
+    REQUIRE(scratch.Text().find('z') == 0);
+}
+
+TEST_CASE("C-l recenters the viewport on point's line", "[BufferView]") {
+    Fixture               fixture;
+    ned::text::Buffer&    scratch = fixture.bufferList.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
+                               fixture.statusMessage, fixture.mode, fixture.theme);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 9}); // 10 rows
+
+    std::string text;
+    for (int i = 0; i < 100; ++i) {
+        text += "line\n";
+    }
+    scratch.InsertAtPoint(text);
+    scratch.SetPoint(scratch.Content().LineToByteOffset(50));
+
+    view.OnEvent(ned::ui::test::Ctrl('l'));
+    REQUIRE(view.TopLine() == 45); // 50 - 10/2
+
+    // Near the top, recentering clamps to line 0 instead of underflowing.
+    scratch.SetPoint(scratch.Content().LineToByteOffset(2));
+    view.OnEvent(ned::ui::test::Ctrl('l'));
+    REQUIRE(view.TopLine() == 0);
+}
+
+// --- external-modification-safety follow-up ------------------------------
+
+TEST_CASE("C-x C-s on an externally-changed file asks first; n cancels, y overwrites", "[BufferView]") {
+    const std::filesystem::path path =
+        std::filesystem::temp_directory_path() / "ned_bufferview_test_supersession.txt";
+    {
+        std::ofstream(path) << "original\n";
+    }
+
+    Fixture               fixture;
+    ned::text::Buffer&    buffer = fixture.bufferList.OpenOrCreateFile(path);
+    ned::ui::ActiveBuffer activeBuffer(buffer);
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
+                               fixture.statusMessage, fixture.mode, fixture.theme);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Character("z")); // a local edit
+
+    // Someone else writes the file underneath the buffer (timestamp bumped
+    // explicitly so the test never depends on mtime granularity).
+    {
+        std::ofstream(path, std::ios::trunc) << "theirs\n";
+    }
+    std::filesystem::last_write_time(path, std::filesystem::last_write_time(path) + std::chrono::seconds(2));
+
+    view.OnEvent(ned::ui::test::Ctrl('x'));
+    view.OnEvent(ned::ui::test::Ctrl('s'));
+    REQUIRE(fixture.statusMessage.find("changed on disk") != std::string::npos);
+
+    // n: nothing written, back to normal editing.
+    view.OnEvent(ned::ui::test::Character("n"));
+    {
+        std::ifstream in(path);
+        std::string   onDisk((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        REQUIRE(onDisk == "theirs\n");
+    }
+    REQUIRE(fixture.statusMessage.find("Save cancelled") == 0);
+
+    // y: the buffer wins.
+    view.OnEvent(ned::ui::test::Ctrl('x'));
+    view.OnEvent(ned::ui::test::Ctrl('s'));
+    view.OnEvent(ned::ui::test::Character("y"));
+    REQUIRE_FALSE(buffer.Modified());
+    {
+        std::ifstream in(path);
+        std::string   onDisk((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        REQUIRE(onDisk == buffer.Text());
+    }
+    REQUIRE(fixture.statusMessage.find("Wrote") == 0);
+
+    std::filesystem::remove(path);
 }

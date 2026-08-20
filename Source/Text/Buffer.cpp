@@ -121,6 +121,13 @@ Buffer Buffer::FromFile(const std::filesystem::path& path, bool allowBinary) {
         throw BinaryFileError("ned: refusing to open binary file as text: " + path.string());
     }
 
+    // external-modification-safety follow-up: stat the timestamp *before*
+    // reading -- if the file changes between this stat and the read below,
+    // a later ExternallyModified() check sees a differing timestamp and
+    // flags it, whereas stat-after-read would silently absorb that write.
+    std::error_code                                timestampError;
+    const std::filesystem::file_time_type          diskTime = std::filesystem::last_write_time(path, timestampError);
+
     std::ifstream file(path, std::ios::binary);
     if (!file) {
         throw std::runtime_error("ned: cannot open file for reading: " + path.string());
@@ -151,6 +158,9 @@ Buffer Buffer::FromFile(const std::filesystem::path& path, bool allowBinary) {
 
     Buffer buffer(path.filename().string(), Rope(content));
     buffer.Path_ = path;
+    if (!timestampError) {
+        buffer.DiskTimestamp_ = diskTime;
+    }
     return buffer;
 }
 
@@ -201,6 +211,7 @@ void Buffer::SaveToFile(const std::filesystem::path& path, bool ensureFinalNewli
     SavedSnapshot_ = Rope_;
     UnsavedChangeRanges_.clear();
     ++UnsavedChangeGeneration_;
+    CaptureDiskTimestamp();
 }
 
 void Buffer::Save(bool ensureFinalNewline) {
@@ -274,6 +285,64 @@ void Buffer::FinishLoad(Rope content) {
     Loading_       = false;
     LoadProgress_.reset();
     ++ContentGeneration_;
+    // Stat-after-read here, unlike FromFile's stat-before -- the async
+    // loader read the content on its own thread well before this call, so
+    // there's no pre-read stat available to use; a write landing in that
+    // window is absorbed rather than flagged, an accepted small race for
+    // the async path only.
+    CaptureDiskTimestamp();
+}
+
+void Buffer::CaptureDiskTimestamp() {
+    DiskTimestamp_.reset();
+    if (!Path_) {
+        return;
+    }
+    std::error_code ec;
+    const std::filesystem::file_time_type diskTime = std::filesystem::last_write_time(*Path_, ec);
+    if (!ec) {
+        DiskTimestamp_ = diskTime;
+    }
+}
+
+bool Buffer::ExternallyModified() const {
+    if (!Path_) {
+        return false;
+    }
+    std::error_code ec;
+    const std::filesystem::file_time_type diskTime = std::filesystem::last_write_time(*Path_, ec);
+    if (ec) {
+        return false; // missing/unstatable: deletion isn't supersession (a save simply recreates it)
+    }
+    if (!DiskTimestamp_) {
+        return true; // a file appeared underneath a NewFile() buffer that never loaded one
+    }
+    return diskTime != *DiskTimestamp_;
+}
+
+void Buffer::Revert() {
+    if (!Path_) {
+        throw std::runtime_error("ned: buffer \"" + Name_ + "\" has no associated file path");
+    }
+    Buffer fresh = FromFile(*Path_); // throws on any read failure, leaving this buffer untouched
+
+    Rope_  = std::move(fresh.Rope_);
+    Point_ = SnapToGraphemeBoundary(Rope_, std::min(Point_, Rope_.ByteLength()));
+    Mark_.reset();
+    SecondaryCursors_.clear();
+    NarrowedRange_.reset();
+    FoldMarkers_.clear();
+    ++FoldGeneration_;
+
+    RecordOrAmendUndo(/*canAmend=*/false); // one normal, undoable step
+    GoalColumn_.reset();
+    ++ContentGeneration_;
+
+    // The buffer now matches disk by definition.
+    SavedSnapshot_ = Rope_;
+    UnsavedChangeRanges_.clear();
+    ++UnsavedChangeGeneration_;
+    DiskTimestamp_ = fresh.DiskTimestamp_;
 }
 
 bool Buffer::Modified() const {

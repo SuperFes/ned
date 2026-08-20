@@ -145,6 +145,23 @@ TEST_CASE("TranslateKey maps byte 0x1F to Control+underscore", "[KeyTranslation]
     REQUIRE(chord->Codepoint == U'_');
 }
 
+// Ctrl+Space is the set-mark-command (C-SPC) chord. A kitty-protocol or
+// modifyOtherKeys terminal reports it as id ' ' + NCKEY_MOD_CTRL directly;
+// a legacy terminal sends the raw NUL byte, which the vendored Notcurses is
+// patched (CMake/PatchNotcursesNulKey.cmake) to normalize to this exact
+// same shape before queueing -- id 0 would collide with notcurses_get's
+// "no input" return value and be unrecoverable by EventLoop's drain loop,
+// so nothing downstream of Notcurses can ever see the unnormalized form.
+TEST_CASE("TranslateKey maps Ctrl+Space to the C-SPC chord", "[KeyTranslation]") {
+    const auto chord = TranslateKey(ned::ui::test::Ctrl(' '));
+    REQUIRE(chord.has_value());
+    REQUIRE(chord->Control);
+    REQUIRE_FALSE(chord->Meta);
+    REQUIRE(chord->Special == SpecialKey::None);
+    REQUIRE(chord->Codepoint == U' ');
+    REQUIRE(*chord == ned::editor::ParseKeyChord("C-SPC"));
+}
+
 TEST_CASE("TranslateKey returns nullopt for mouse events", "[KeyTranslation]") {
     REQUIRE_FALSE(
         TranslateKey(ned::ui::test::Mouse(0, 0, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Pressed))

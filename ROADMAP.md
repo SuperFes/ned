@@ -451,8 +451,11 @@ each is, not by priority.
         - **Recorded cuts/limitations, not oversights**: ~~hunk-level staging is the
           named next slice~~ (shipped same day, see below); commit messages are
           single-line (`MinibufferPrompt` is one line by construction); a branch
-          switch does **not** reload open buffers (ned has no auto-revert/
-          file-watching concept — the success message says so honestly);
+          switch does ~~not reload open buffers (ned has no auto-revert/
+          file-watching concept — the success message says so honestly)~~ — obsoleted
+          the same day by the external-modification-safety entry under "Editor
+          ergonomics": unmodified buffers now auto-revert on the next tick, and only
+          *modified* ones stay unreloaded (their save hits the supersession y/n);
           `VcsRunner`'s failure detail now says "vcs <op> failed" instead of "git ..."
           since the runner never knows which VCS the provider shells out to.
         - **Hunk-level staging shipped 2026-08-20**, the slice the whole-file pair
@@ -552,6 +555,61 @@ each is, not by priority.
         LLM-integration panel is exactly the kind of overlay-shaped need that note flagged
         as worth reconsidering that gap for, not settled by anything shipped so far.
 - **Editor ergonomics**
+  - [x] Emacs keymap coverage + the C-SPC input fix — **shipped 2026-08-20**. The
+        reported symptom ("C-SPC doesn't start/end/cancel a block") was never a keymap
+        gap — `C-SPC` → `set-mark-command` had been bound all along — but an input-layer
+        drop: a legacy terminal (no kitty keyboard protocol, no modifyOtherKeys — e.g. a
+        default tmux) sends Ctrl+Space as the single NUL byte, Notcurses' own
+        `load_ncinput` normalizes C0 bytes 1–26 to Ctrl+letter but leaves 0 untouched,
+        and an id-0 `ncinput` is *unrecoverable* by any caller: `notcurses_get`'s return
+        value is the id, with 0 already meaning "no input", so `EventLoop`'s drain loop
+        cannot distinguish the keypress from an empty queue even in principle. Fixed
+        inside Notcurses itself via a FetchContent `PATCH_COMMAND`
+        (`CMake/PatchNotcursesNulKey.cmake`, idempotent, fails the configure loudly if an
+        upstream bump drifts the anchor): NUL → id `' '` + `NCKEY_MOD_CTRL`, exactly the
+        shape kitty/modifyOtherKeys terminals already report, which `KeyTranslation.cpp`'s
+        existing Ctrl branch already translates — so no ned-layer special case exists at
+        all. Rode along: `set-mark-command` gained Emacs' C-SPC C-SPC deactivate-in-place
+        idiom plus "Mark set"/"Mark deactivated" echo messages; undo is now bound to
+        *both* `C-_` and `C-/` (one per keyboard protocol — a kitty terminal reports
+        Ctrl+/ as a genuine `C-/` chord, a legacy one sends 0x1F → `C-_`; binding either
+        alone leaves undo dead on the other protocol's terminals, a live-tested
+        regression each way) and `C-x u`. New commands, all on their real Emacs defaults
+        with the usual `ESC` twins: `yank-pop` (`M-y`, backed by new `last-command`
+        tracking in `Dispatcher::Feed`/`CommandContext::lastCommand` — the M-x path
+        deliberately doesn't update it, a recorded cut), `kill-word` (`M-d`),
+        `backward-kill-word` (`M-DEL`), `mark-whole-buffer` (`C-x h`), `transpose-chars`
+        (`C-t`), `transpose-words` (`M-t`), `upcase-`/`downcase-`/`capitalize-word`
+        (`M-u`/`M-l`/`M-c`, ASCII-only per the word-classification's documented cut),
+        `open-line` (`C-o`), `delete-blank-lines` (`C-x C-o`), `just-one-space`
+        (`M-SPC`), `delete-indentation` (`M-^`), `back-to-indentation` (`M-m`),
+        `save-some-buffers` (`C-x s` — saves all without per-buffer y/n, a recorded
+        deviation), `recenter` (`C-l`, one-shot `InteractiveRequest`), and `goto-line`
+        (`M-g g`/`M-g M-g`, prompt-shaped, 1-based, clamping out-of-range). Multi-edit
+        commands batch through `BeginUndoGroup` so each undoes as one step. Not done,
+        deliberately: prefix arguments (`C-u`), `zap-to-char`, sentence/sexp motion,
+        kill-append on consecutive kills.
+  - [x] External-modification safety — **shipped 2026-08-20**, after live use surfaced
+        the gap the hard way (a concurrent editor writing `Commands.cpp` underneath an
+        open ned buffer, saved over silently). `Buffer` now records the file's
+        `last_write_time` at load/save/revert (`DiskTimestamp_`; stat-*before*-read in
+        `FromFile` so a write racing the read is flagged rather than absorbed;
+        stat-after-read on the async `FinishLoad` path, an accepted small race);
+        `ExternallyModified()` is the derived query (false for pathless/missing —
+        deletion isn't supersession — true for a file appearing under a `NewFile`
+        buffer). `save-buffer` refuses to silently overwrite a superseded file: it
+        raises `InteractiveRequest::ConfirmOverwriteSave`, BufferView runs the y/n
+        (mirroring ConfirmCloseBuffer's shape), and y invokes `save-buffer-force` — the
+        same save body minus the gate, M-x-reachable as the deliberate escape hatch.
+        The other half is default-on auto-revert (`Editor/AutoRevert.h/.cpp`, toggled
+        via `ned/set-auto-revert`): on the existing scratch-auto-save tick,
+        `AutoRevertBuffers` reloads every open, *unmodified*, file-backed buffer whose
+        file changed on disk (`Buffer::Revert()` — one undoable step, point clamped,
+        mark/secondaries/narrowing/folds cleared), reporting the reverted names on the
+        status line so it's never silent; a buffer with local edits is never touched —
+        the save-time confirmation owns that conflict. **Deferred, not designed in**:
+        three-way merging when both sides changed (the `SavedSnapshot_` base rope makes
+        a diff3 feasible later), and Emacs' ask-on-first-edit supersession prompt.
   - [x] Multiple cursors / multi-cursor editing — **shipped 2026-08-20** as its own
         phase, exactly per the design pass below (kept as the original scoping record;
         every "genuinely missing" item it names landed as predicted, the relocation
