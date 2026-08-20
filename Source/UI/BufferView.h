@@ -217,6 +217,23 @@ class BufferView : public Widget {
     // completion handler uses.
     void DispatchDiffForTesting(std::vector<editor::vcs::VcsDiffHunk> hunks);
 
+    // Public primarily for tests, same precedent again (vocabulary-
+    // completion follow-up): the real async paths reach
+    // BuildVcsStatusBuffer/BuildVcsBranchesBuffer/ResolveVcsFileTarget
+    // via VcsRunner callbacks that need a live EventLoop to ever fire.
+    // DispatchStatusForTesting is exactly RequestVcsStatusBuffer's
+    // onComplete body; DispatchBranchesForTesting is
+    // RequestVcsBranchesBuffer's; ResolveVcsFileTargetForTesting exposes
+    // the status-line-at-point/active-buffer-path target resolution
+    // stage/unstage share.
+    void                                               DispatchStatusForTesting(std::vector<editor::vcs::VcsStatusEntry> entries);
+    void                                               DispatchBranchesForTesting(std::vector<editor::vcs::VcsBranchEntry> entries);
+    [[nodiscard]] std::optional<std::filesystem::path> ResolveVcsFileTargetForTesting();
+    // Hunk-staging follow-up: same seam again, for StageOrUnstageHunkAtPoint's
+    // synchronous guards (no runner / modified buffer / no path) -- the
+    // async tail past them needs a live EventLoop.
+    void StageHunkAtPointForTesting(bool stage);
+
     // FTXUI -> Notcurses migration: replaces
     // ftxui::ScreenInteractive::Active() (used to end the whole app on
     // `quit`/confirmed ConfirmQuit) and backs completionDebounceDeadline_/
@@ -366,7 +383,19 @@ class BufferView : public Widget {
                            // routed through HandlePromptKey like FindFile/TaskName; Enter
                            // fires the async DAP evaluate request, the result landing in
                            // statusMessage_ from its callback.
-                           DapEvaluate };
+                           DapEvaluate,
+                           // VCS vocabulary-completion follow-up: three more
+                           // HandlePromptKey-routed prompts. VcsCommit collects the
+                           // single-line commit message; VcsSwitchBranch is entered from
+                           // BeginVcsSwitchBranchPrompt's async branch-list callback (the
+                           // RequestRenameAtPoint enter-a-mode-from-a-callback pattern) so
+                           // Tab completes against vcsBranchCandidates_; VcsCreateBranch
+                           // is a plain name prompt. Enter fires the matching async
+                           // VcsRunner request fire-and-forget, results landing in
+                           // statusMessage_ from the callback (DapEvaluate's shape).
+                           VcsCommit,
+                           VcsSwitchBranch,
+                           VcsCreateBranch };
 
     enum class DeleteFileStage { EnteringPath,
                                  Confirming };
@@ -740,6 +769,64 @@ class BufferView : public Widget {
     // map to a specific source line -- VisitVcsResult on one of these lines
     // is a silent no-op, same as any other non-matching line.
     void BuildVcsLogBuffer(const std::filesystem::path& path, const std::vector<editor::vcs::VcsLogEntry>& entries);
+
+    // VCS vocabulary-completion follow-up. vcs-status's entry point --
+    // async VcsRunner::RequestStatus, building/switching to the *vcs
+    // status* buffer on completion.
+    void RequestVcsStatusBuffer();
+    // "<absolute path>:1: <state> <root-relative path>" per entry -- the
+    // ":1:" is deliberate VisitSearchResult/JumpToPathLine byte-
+    // compatibility (a status entry has no line number; 1 visits the top
+    // of the file), the same convention BuildVcsBlameBuffer documents.
+    // Unlike the per-file blame/log buffers, the status buffer is a
+    // root-scoped singleton refreshed *in place* (Find-first, refill,
+    // point clamped -- the LspShowLog find-or-create precedent) rather
+    // than accumulating uniquified copies per invocation, because
+    // stage/unstage/commit re-trigger it programmatically. announce=false
+    // is the background-refresh variant: no buffer switch, no
+    // statusMessage_ (so it can't clobber "Staged foo"'s own report).
+    void BuildVcsStatusBuffer(const std::vector<editor::vcs::VcsStatusEntry>& entries, bool announce);
+    // Background re-request after a stage/unstage/commit/branch-switch
+    // changed what status would report -- a no-op unless the *vcs status*
+    // buffer already exists (never conjures one unasked), with errors
+    // swallowed, the diff gutter's own silent-degrade convention.
+    void RefreshVcsStatusBuffer();
+    // vcs-stage-file/vcs-unstage-file's shared entry point: resolves the
+    // target via ResolveVcsFileTarget, fires the async request, and on
+    // success refreshes the status buffer + diff gutter (staging moves a
+    // file's changes into the index, which is exactly what the bundled
+    // git plugin's worktree-vs-index diff stops reporting).
+    void StageOrUnstageFileAtPoint(bool stage);
+    // Hunk-staging follow-up (vcs-stage-hunk/vcs-unstage-hunk): hands
+    // point's 1-indexed line to VcsRunner::RequestHunkApply after three
+    // synchronous gates -- a runner is wired, the buffer has a path, and
+    // the buffer is NOT Modified(): the diff describes the file on disk
+    // while point counts buffer lines, so staging from mismatched numbers
+    // would silently pick the wrong hunk; "save first" is the honest
+    // answer, not a limitation to paper over. Success refreshes the status
+    // buffer + diff gutter, same as the whole-file pair above. (An unstage
+    // additionally assumes index and worktree line numbers agree for the
+    // hunk's region -- true in the common stage-then-oops flow; drift from
+    // *earlier* unstaged edits in the same file is a recorded caveat, see
+    // ROADMAP.md.)
+    void StageOrUnstageHunkAtPoint(bool stage);
+    // The file a stage/unstage acts on: in the *vcs status* buffer, the
+    // "<path>:1:" prefix of the line at point (VisitVcsResult's own
+    // parse); anywhere else, the active buffer's associated path.
+    // nullopt if neither yields one.
+    [[nodiscard]] std::optional<std::filesystem::path> ResolveVcsFileTarget();
+    // vcs-branches' entry point + its "* current / plain other" one-line-
+    // per-branch buffer -- also a Find-first in-place singleton, same
+    // reasoning as the status buffer.
+    void RequestVcsBranchesBuffer();
+    void BuildVcsBranchesBuffer(const std::vector<editor::vcs::VcsBranchEntry>& entries);
+    // vcs-switch-branch's entry point: fetches the branch list first and
+    // only then -- from the async callback, the RequestRenameAtPoint
+    // enter-a-mode-from-a-callback pattern -- opens the
+    // InputMode::VcsSwitchBranch prompt, with the fetched names parked in
+    // vcsBranchCandidates_ for Tab completion. Dropped (with a status
+    // message) if another prompt began while the fetch was in flight.
+    void BeginVcsSwitchBranchPrompt();
 
     // Links follow-up: another one-shot direct action, same shape as
     // VisitSearchResult -- doesn't touch inputMode_. In an org-mode buffer,
@@ -1310,6 +1397,13 @@ class BufferView : public Widget {
     // idle time. A save bypasses this and refreshes immediately instead
     // (see RunCommandAndHandleOutcome's own save-detection check).
     DeadlineTimer diffRefreshTimer_;
+
+    // VCS vocabulary-completion follow-up: the branch names Tab completes
+    // against during InputMode::VcsSwitchBranch -- parked here by
+    // BeginVcsSwitchBranchPrompt's branch-list callback (the current
+    // branch excluded; switching to it would be a no-op), valid only for
+    // that prompt session's lifetime.
+    std::vector<std::string> vcsBranchCandidates_;
 
     // Org-mode fold/unfold follow-up: see EnsureHiddenLineRangesCache's own
     // doc comment above. mutable because CursorPosition()/ByteOffsetForPoint()

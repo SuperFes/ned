@@ -3550,6 +3550,51 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         case editor::InteractiveRequest::VisitVcsResult:
             VisitVcsResult();
             return;
+        // VCS vocabulary-completion follow-up: status/stage/unstage/
+        // branches are one-shot direct actions (async results via
+        // VcsRunner callbacks, same as VcsShowLog above); commit and
+        // create-branch open a prompt directly; switch-branch defers its
+        // prompt until the branch list arrives (see
+        // BeginVcsSwitchBranchPrompt's own doc comment).
+        case editor::InteractiveRequest::VcsStatus:
+            RequestVcsStatusBuffer();
+            return;
+        case editor::InteractiveRequest::VcsStageFile:
+            StageOrUnstageFileAtPoint(true);
+            return;
+        case editor::InteractiveRequest::VcsUnstageFile:
+            StageOrUnstageFileAtPoint(false);
+            return;
+        case editor::InteractiveRequest::VcsStageHunk:
+            StageOrUnstageHunkAtPoint(true);
+            return;
+        case editor::InteractiveRequest::VcsUnstageHunk:
+            StageOrUnstageHunkAtPoint(false);
+            return;
+        case editor::InteractiveRequest::VcsCommit:
+            if (!vcsRunner_) {
+                statusMessage_ = "no vcs runner configured";
+                return;
+            }
+            inputMode_ = InputMode::VcsCommit;
+            prompt_.emplace("Commit message: ");
+            statusMessage_ = prompt_->StatusText();
+            return;
+        case editor::InteractiveRequest::VcsBranches:
+            RequestVcsBranchesBuffer();
+            return;
+        case editor::InteractiveRequest::VcsSwitchBranch:
+            BeginVcsSwitchBranchPrompt();
+            return;
+        case editor::InteractiveRequest::VcsCreateBranch:
+            if (!vcsRunner_) {
+                statusMessage_ = "no vcs runner configured";
+                return;
+            }
+            inputMode_ = InputMode::VcsCreateBranch;
+            prompt_.emplace("New branch: ");
+            statusMessage_ = prompt_->StatusText();
+            return;
         // org-set-tags follow-up: org-set-tags already checked
         // HeadlineAtPoint before setting this request, but point can't
         // have moved since then (no other command runs between a
@@ -4057,6 +4102,61 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
                 });
             }
         }
+        else if (inputMode_ == InputMode::VcsCommit) {
+            if (input.empty()) {
+                statusMessage_ = "Empty commit message -- not committing.";
+            }
+            else if (!vcsRunner_) {
+                statusMessage_ = "no vcs runner configured";
+            }
+            else {
+                // Fire-and-forget, DapEvaluate's shape: EndInteractiveSession()
+                // below runs immediately, the summary lands in statusMessage_
+                // from the callback.
+                statusMessage_ = "Committing...";
+                vcsRunner_->RequestCommit(
+                    input,
+                    [this](std::string summary) {
+                        statusMessage_ = summary.empty() ? "Committed." : summary;
+                        RefreshVcsStatusBuffer();
+                        // The comparison point (HEAD for git) just moved, so
+                        // the current buffer's markers are stale now.
+                        RequestDiffForCurrentBuffer();
+                    },
+                    [this](std::string error) { statusMessage_ = "vcs commit: " + error; });
+            }
+        }
+        else if (inputMode_ == InputMode::VcsSwitchBranch || inputMode_ == InputMode::VcsCreateBranch) {
+            if (input.empty()) {
+                statusMessage_ = "No branch name given.";
+            }
+            else if (!vcsRunner_) {
+                statusMessage_ = "no vcs runner configured";
+            }
+            else {
+                const bool create = inputMode_ == InputMode::VcsCreateBranch;
+                statusMessage_    = (create ? "Creating branch " : "Switching to ") + input + "...";
+                // "(open buffers not reloaded)": a branch switch rewrites
+                // the working tree underneath any open buffer, and ned has
+                // no auto-revert/file-watching concept -- a recorded
+                // limitation (see ROADMAP.md), surfaced honestly here
+                // rather than left for a confusing stale-content save
+                // conflict later.
+                auto onSuccess = [this, input, create] {
+                    statusMessage_ = (create ? "Created and switched to " : "Switched to ") + input +
+                                     " (open buffers not reloaded)";
+                    RefreshVcsStatusBuffer();
+                    RequestDiffForCurrentBuffer();
+                };
+                auto onError = [this](std::string error) { statusMessage_ = "vcs branch: " + error; };
+                if (create) {
+                    vcsRunner_->RequestBranchCreate(input, std::move(onSuccess), std::move(onError));
+                }
+                else {
+                    vcsRunner_->RequestBranchSwitch(input, std::move(onSuccess), std::move(onError));
+                }
+            }
+        }
         else { // FindScratch
             if (!editor::IsValidScratchName(input)) {
                 statusMessage_ = "Invalid scratch name: \"" + input + "\"";
@@ -4114,6 +4214,15 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
             case InputMode::DapEvaluate:
                 label = "Evaluate";
                 break;
+            case InputMode::VcsCommit:
+                label = "Commit";
+                break;
+            case InputMode::VcsSwitchBranch:
+                label = "Switch branch";
+                break;
+            case InputMode::VcsCreateBranch:
+                label = "Create branch";
+                break;
             default:
                 label = "Prompt";
                 break;
@@ -4125,10 +4234,14 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
     if (chord.Special == editor::SpecialKey::Tab && inputMode_ != InputMode::ProjectSearch &&
         inputMode_ != InputMode::CreateDirectory && inputMode_ != InputMode::StringRectangle &&
         inputMode_ != InputMode::SetHeadlineTags && inputMode_ != InputMode::LspRenameNewName &&
-        inputMode_ != InputMode::TaskName && inputMode_ != InputMode::DapEvaluate) {
+        inputMode_ != InputMode::TaskName && inputMode_ != InputMode::DapEvaluate &&
+        inputMode_ != InputMode::VcsCommit && inputMode_ != InputMode::VcsCreateBranch) {
         // DapEvaluate excluded too: completing a debuggee expression
         // against buffer names would be meaningless, same reasoning as
-        // ProjectSearch's regex pattern.
+        // ProjectSearch's regex pattern. VcsCommit/VcsCreateBranch
+        // likewise (free text / a deliberately *new* name);
+        // VcsSwitchBranch is NOT excluded -- CompletePrompt completes it
+        // against the fetched branch list.
         CompletePrompt();
         return;
     }
@@ -4151,6 +4264,13 @@ void BufferView::CompletePrompt() {
     }
     else if (inputMode_ == InputMode::FindScratch) {
         candidates = editor::CompleteScratchNames(prompt_->Text());
+    }
+    else if (inputMode_ == InputMode::VcsSwitchBranch) {
+        for (const std::string& name : vcsBranchCandidates_) {
+            if (name.starts_with(prompt_->Text())) {
+                candidates.push_back(name);
+            }
+        }
     }
     else {
         candidates = text::CompleteBufferNames(bufferList_, prompt_->Text());
@@ -4301,6 +4421,222 @@ void BufferView::BuildVcsLogBuffer(const std::filesystem::path& path, const std:
     results.SetPoint(0);
     results.SetReadOnly(true);
     activeBuffer_.Set(results);
+}
+
+namespace {
+    // Root-scoped singletons, unlike the per-file "*vcs blame <name>*"/
+    // "*vcs log <name>*" buffers -- see BuildVcsStatusBuffer's own header
+    // doc comment for why these are found-and-refilled rather than
+    // re-created.
+    constexpr const char* kVcsStatusBufferName   = "*vcs status*";
+    constexpr const char* kVcsBranchesBufferName = "*vcs branches*";
+
+    // The same find-or-create + refill-in-place shape ExpandVariableAtPoint's
+    // read-only-lift splice established, for a whole buffer: point survives
+    // (clamped/snapped by SetPoint itself) so a stage-at-point refresh
+    // doesn't yank the cursor back to the top of the list.
+    text::Buffer& RefillSingletonBuffer(text::BufferList& bufferList, const char* name, const std::string& text) {
+        text::Buffer* buffer = bufferList.Find(name);
+        if (!buffer) {
+            buffer = &bufferList.CreateBuffer(name);
+        }
+        const std::size_t oldPoint = buffer->Point();
+        buffer->SetReadOnly(false);
+        if (buffer->Content().ByteLength() > 0) {
+            buffer->DeleteRange(0, buffer->Content().ByteLength());
+        }
+        if (!text.empty()) {
+            buffer->InsertAt(0, text);
+        }
+        buffer->SetPoint(oldPoint);
+        buffer->SetReadOnly(true);
+        return *buffer;
+    }
+} // namespace
+
+void BufferView::RequestVcsStatusBuffer() {
+    if (!vcsRunner_) {
+        statusMessage_ = "no vcs runner configured";
+        return;
+    }
+    vcsRunner_->RequestStatus(
+        [this](std::vector<editor::vcs::VcsStatusEntry> entries) { BuildVcsStatusBuffer(entries, /*announce=*/true); },
+        [this](std::string error) { statusMessage_ = "vcs status: " + error; });
+}
+
+void BufferView::BuildVcsStatusBuffer(const std::vector<editor::vcs::VcsStatusEntry>& entries, bool announce) {
+    const std::filesystem::path root = editor::ProjectRoot();
+
+    std::string text;
+    for (const editor::vcs::VcsStatusEntry& entry : entries) {
+        text += (root / entry.path).string() + ":1: " + entry.state + " " + entry.path + "\n";
+    }
+
+    text::Buffer& status = RefillSingletonBuffer(bufferList_, kVcsStatusBufferName, text);
+    if (announce) {
+        activeBuffer_.Set(status);
+        statusMessage_ = entries.empty()
+                             ? "Working tree clean."
+                             : std::to_string(entries.size()) + " changed file" + (entries.size() == 1 ? "" : "s") +
+                                   " -- C-c v a stages, C-c v u unstages, C-c v v visits";
+    }
+}
+
+void BufferView::RefreshVcsStatusBuffer() {
+    if (!vcsRunner_ || !bufferList_.Find(kVcsStatusBufferName)) {
+        return;
+    }
+    vcsRunner_->RequestStatus(
+        [this](std::vector<editor::vcs::VcsStatusEntry> entries) { BuildVcsStatusBuffer(entries, /*announce=*/false); });
+}
+
+std::optional<std::filesystem::path> BufferView::ResolveVcsFileTarget() {
+    text::Buffer& buffer = activeBuffer_.Get();
+    if (buffer.Name() == kVcsStatusBufferName) {
+        const text::Rope& content   = buffer.Content();
+        const std::size_t line      = content.ByteOffsetToLine(buffer.Point());
+        const std::size_t lineStart = content.LineToByteOffset(line);
+        const std::size_t lineEnd =
+            (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
+        const std::string lineText = content.Substring(lineStart, lineEnd - lineStart);
+
+        // BuildVcsStatusBuffer's own "<absolute path>:1: ..." shape -- the
+        // same pattern VisitVcsResult parses, reused for the same reason.
+        static const std::regex resultLinePattern(R"(^(.*):(\d+):)");
+        std::smatch             match;
+        if (std::regex_search(lineText, match, resultLinePattern)) {
+            return std::filesystem::path(match[1].str());
+        }
+        return std::nullopt; // an empty/foreign line in the status buffer
+    }
+    if (buffer.Path()) {
+        return *buffer.Path();
+    }
+    return std::nullopt;
+}
+
+void BufferView::StageOrUnstageFileAtPoint(bool stage) {
+    if (!vcsRunner_) {
+        statusMessage_ = "no vcs runner configured";
+        return;
+    }
+    const std::optional<std::filesystem::path> target = ResolveVcsFileTarget();
+    if (!target) {
+        statusMessage_ = "no file to " + std::string(stage ? "stage" : "unstage") + " here";
+        return;
+    }
+
+    auto onSuccess = [this, stage, target = *target] {
+        statusMessage_ = (stage ? "Staged " : "Unstaged ") + target.filename().string();
+        RefreshVcsStatusBuffer();
+        // Staging moves a file's changes into the index, which the bundled
+        // git plugin's worktree-vs-index diff then stops reporting --
+        // refresh so the gutter agrees (and the reverse for unstaging).
+        RequestDiffForCurrentBuffer();
+    };
+    auto onError = [this, stage](std::string error) {
+        statusMessage_ = std::string("vcs ") + (stage ? "stage" : "unstage") + ": " + error;
+    };
+    if (stage) {
+        vcsRunner_->RequestStage(*target, std::move(onSuccess), std::move(onError));
+    }
+    else {
+        vcsRunner_->RequestUnstage(*target, std::move(onSuccess), std::move(onError));
+    }
+}
+
+void BufferView::StageOrUnstageHunkAtPoint(bool stage) {
+    if (!vcsRunner_) {
+        statusMessage_ = "no vcs runner configured";
+        return;
+    }
+    text::Buffer& buffer = activeBuffer_.Get();
+    if (!buffer.Path()) {
+        statusMessage_ = "no file associated with this buffer";
+        return;
+    }
+    if (buffer.Modified()) {
+        // See this method's header doc comment -- unsaved edits make the
+        // buffer's line numbers disagree with the on-disk diff's.
+        statusMessage_ = "Buffer has unsaved changes -- save first, hunk staging works from the file on disk.";
+        return;
+    }
+
+    const std::size_t targetLine = buffer.Content().ByteOffsetToLine(buffer.Point()) + 1; // 1-indexed, diff's own convention
+    vcsRunner_->RequestHunkApply(
+        buffer, targetLine, stage,
+        [this, stage] {
+            statusMessage_ = stage ? "Hunk staged." : "Hunk unstaged.";
+            RefreshVcsStatusBuffer();
+            RequestDiffForCurrentBuffer();
+        },
+        [this, stage](std::string error) {
+            statusMessage_ = std::string("vcs ") + (stage ? "stage" : "unstage") + " hunk: " + error;
+        });
+}
+
+void BufferView::StageHunkAtPointForTesting(bool stage) {
+    StageOrUnstageHunkAtPoint(stage);
+}
+
+void BufferView::RequestVcsBranchesBuffer() {
+    if (!vcsRunner_) {
+        statusMessage_ = "no vcs runner configured";
+        return;
+    }
+    vcsRunner_->RequestBranchList(
+        [this](std::vector<editor::vcs::VcsBranchEntry> entries) { BuildVcsBranchesBuffer(entries); },
+        [this](std::string error) { statusMessage_ = "vcs branches: " + error; });
+}
+
+void BufferView::BuildVcsBranchesBuffer(const std::vector<editor::vcs::VcsBranchEntry>& entries) {
+    std::string text;
+    for (const editor::vcs::VcsBranchEntry& entry : entries) {
+        text += (entry.current ? "* " : "  ") + entry.name + "\n";
+    }
+
+    text::Buffer& branches = RefillSingletonBuffer(bufferList_, kVcsBranchesBufferName, text);
+    activeBuffer_.Set(branches);
+    statusMessage_ = entries.empty() ? "No branches." : "M-x vcs-switch-branch switches; C-c v n creates.";
+}
+
+void BufferView::DispatchStatusForTesting(std::vector<editor::vcs::VcsStatusEntry> entries) {
+    BuildVcsStatusBuffer(entries, /*announce=*/true);
+}
+
+void BufferView::DispatchBranchesForTesting(std::vector<editor::vcs::VcsBranchEntry> entries) {
+    BuildVcsBranchesBuffer(entries);
+}
+
+std::optional<std::filesystem::path> BufferView::ResolveVcsFileTargetForTesting() {
+    return ResolveVcsFileTarget();
+}
+
+void BufferView::BeginVcsSwitchBranchPrompt() {
+    if (!vcsRunner_) {
+        statusMessage_ = "no vcs runner configured";
+        return;
+    }
+    statusMessage_ = "Fetching branches...";
+    vcsRunner_->RequestBranchList(
+        [this](std::vector<editor::vcs::VcsBranchEntry> entries) {
+            if (inputMode_ != InputMode::Normal) {
+                // Another prompt began while the fetch was in flight --
+                // don't hijack it (same in-progress guard RequestCloseBuffer
+                // applies to its own confirmation).
+                return;
+            }
+            vcsBranchCandidates_.clear();
+            for (const editor::vcs::VcsBranchEntry& entry : entries) {
+                if (!entry.current) {
+                    vcsBranchCandidates_.push_back(entry.name);
+                }
+            }
+            inputMode_ = InputMode::VcsSwitchBranch;
+            prompt_.emplace("Switch to branch: ");
+            statusMessage_ = prompt_->StatusText();
+        },
+        [this](std::string error) { statusMessage_ = "vcs branch: " + error; });
 }
 
 void BufferView::OpenLinkAtPoint() {

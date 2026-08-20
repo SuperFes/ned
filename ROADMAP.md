@@ -399,11 +399,101 @@ each is, not by priority.
         `vcs-show-log` (`C-c v l`) and `vcs-visit-result` (`C-c v v`, reusing
         `VisitSearchResult`'s exact `path:line:` parsing via a new shared
         `JumpToPathLine` helper) round out the multibuffer half.
-        Still explicitly out of scope, reserved for later: `status`/`stage`/`unstage`/
-        `commit`/`branch` (named in `VcsProvider.h` as comments, no real methods yet)
-        and a full historical multibuffer beyond one synthesized buffer per query
-        result (the fuller "Multibuffers" wishlist entry below is still its own,
-        larger, unscoped thing). The "generalizable past version control" framing
+        ~~Still explicitly out of scope, reserved for later: `status`/`stage`/`unstage`/
+        `commit`/`branch` (named in `VcsProvider.h` as comments, no real methods yet)~~ —
+        **vocabulary completion shipped 2026-08-20** ("a rich set of support will always
+        win," the user's own call picking this over the other wishlist candidates):
+        - **Vocabulary**: `VcsProvider` grew `StatusArgv`/`ParseStatus`
+          (`VcsStatusEntry{state, path}` — state kept verbatim as the VCS's own short
+          code, e.g. git porcelain's "XY" column, the same "don't reinterpret
+          VCS-specific text" call `VcsBlameLine::date` made), `StageArgv`/`UnstageArgv`
+          (whole-file), `CommitArgv(root, message)`, `BranchListArgv`/`ParseBranchList`
+          (`VcsBranchEntry{name, current}`), `BranchSwitchArgv`/`BranchCreateArgv`.
+          Operations without a parse half succeed on exit code 0 alone; commit's first
+          output line (git's own "[main abc1234] message") is passed through as the
+          status-line summary. Every operation but `Detect` is now default-throwing
+          ("<op> not supported by this provider") rather than pure virtual — the
+          original blame/log/diff trio was converted to match, so a partial provider is
+          one consistent concept; the throw travels `VcsRunner`'s existing onError path
+          into a status-line message (unit-tested end to end).
+        - **Registration is now a table of callbacks** — `(ned/vcs-register-provider
+          "git" {:detect fn :blame-argv fn ...})`, sixteen keys, only `:detect`
+          required. A deliberate clean break from the days-old 7-positional-argument
+          form (one caller, the bundled plugin) once the vocabulary outgrew positional
+          legibility; `JanetVcsProvider` gained a two-string-arg call variant for
+          commit/branch-switch/branch-create.
+        - **Commands** (`Commands.cpp`, `C-c v` prefix): `vcs-status` (`C-c v s`, a
+          root-scoped `*vcs status*` buffer in the `path:1:` visitable shape — a status
+          entry has no line number, `:1:` makes `C-c v v` jump to the file's top for
+          free), `vcs-stage-file` (`C-c v a`, "a" for add)/`vcs-unstage-file`
+          (`C-c v u`) acting on the status buffer's line at point or the current file
+          (`BufferView::ResolveVcsFileTarget`), `vcs-commit` (`C-c v c`, single-line
+          message prompt), `vcs-switch-branch` (`C-c v w`, prompt opened from the async
+          branch-list callback so Tab completes against real branch names, current
+          branch excluded), `vcs-create-branch` (`C-c v n`), `vcs-branches` (M-x only,
+          `lsp-show-log`'s no-dedicated-binding precedent). `*vcs status*`/`*vcs
+          branches*` are find-and-refill-in-place singletons (point preserved/clamped),
+          unlike the accumulate-per-invocation `*vcs blame <file>*` buffers, because
+          stage/unstage/commit re-trigger the status refresh programmatically; a
+          successful stage/unstage/commit/branch-switch also refreshes the diff gutter
+          (staging moves changes into the index, which the worktree-vs-index diff then
+          stops reporting; a commit moves HEAD).
+        - **Bundled git plugin**: `status --porcelain` (rename `->` takes the new name;
+          git's double-quoted special-character paths get the surrounding quotes
+          stripped, inner escapes left as-is — a recorded degrade-don't-crash
+          simplification), `add --`/`reset -q HEAD --` (reset, not the git-2.23+
+          `restore --staged`, for portability; fails with git's own message in a
+          zero-commit repo, surfaced verbatim), `commit -m`, `branch --list --no-color`
+          (detached-HEAD parenthetical skipped so it can't be offered as a switch
+          target), `checkout`/`checkout -b`. Covered by parse-only tests (fake `.git`
+          dir, no git binary needed) plus a real-temp-repo end-to-end walk of the whole
+          stage/unstage/commit/branch flow.
+        - **Recorded cuts/limitations, not oversights**: ~~hunk-level staging is the
+          named next slice~~ (shipped same day, see below); commit messages are
+          single-line (`MinibufferPrompt` is one line by construction); a branch
+          switch does **not** reload open buffers (ned has no auto-revert/
+          file-watching concept — the success message says so honestly);
+          `VcsRunner`'s failure detail now says "vcs <op> failed" instead of "git ..."
+          since the runner never knows which VCS the provider shells out to.
+        - **Hunk-level staging shipped 2026-08-20**, the slice the whole-file pair
+          above deferred — and cheaper than this entry originally predicted: the
+          "hunk-bodies-carrying diff parse" it guessed at turned out unnecessary,
+          because the patch handed to the VCS is a **verbatim slice of the raw diff
+          output** (file header block + one hunk), never parsed or reconstructed —
+          `Editor/Vcs/DiffPatch.h/.cpp`'s pure `ExtractHunkPatch(diffOutput,
+          targetLine)` (new-side 1-indexed line; a pure-deletion hunk matches both
+          boundary lines, agreeing with the diff gutter's own notch placement), which
+          also passes `\ No newline` markers and quoted header paths through
+          untouched by construction. Around it: three provider callbacks
+          (`:staged-diff-argv` — the index-vs-HEAD diff an *unstage* selects its hunk
+          from, since a staged hunk isn't in the worktree diff — and
+          `:stage-patch-argv`/`:unstage-patch-argv`, taking root + a patch file's
+          path; git: `diff --cached -U0` and `apply --cached [--reverse]
+          --unidiff-zero`, the latter flag required for zero-context patches);
+          `VcsRunner::RequestHunkApply` chains raw-diff → extract → mkstemp temp
+          patch file (`FormatOnSave`'s exact pattern — `TaskProcess` deliberately
+          still has no stdin) → apply, under two distinct running-keys (one key
+          across the chain would trip `RunAndCollect`'s erase-after-completion over
+          the second process), temp file removed on success and failure alike;
+          commands `vcs-stage-hunk` (`C-c v h`)/`vcs-unstage-hunk` (`C-c v H`),
+          gated on the buffer being un-`Modified()` — the diff describes the file on
+          disk while point counts buffer lines, so "save first" is the honest
+          answer, not a papered-over limitation. Covered by `DiffPatchTest` (pure
+          extraction), a real-temp-repo partial-stage/unstage end-to-end walk
+          (`GitVcsPluginTest`: two hunks → stage one → "MM" → reverse-unstage →
+          " M"), runner guard tests, and the BufferView gate tests. **Recorded
+          caveat**: an unstage matches point's line against the *cached* diff's line
+          numbers, which can drift from buffer lines when un-staged edits exist
+          *earlier* in the same file — exact in the common stage-then-undo flow,
+          approximate past it; revisit only if it bites in practice.
+        - Chasing a test failure here also fixed a real latent build trap: CMake's
+          `ned_embed_janet_plugin`/`ned_embed_treesitter_query` read their source files
+          at configure time with no dependency recorded, so editing `vcs-git.janet`
+          silently kept the stale embedded copy until an unrelated reconfigure — both
+          functions now append their source file to `CMAKE_CONFIGURE_DEPENDS`.
+        Still out of scope: a full historical multibuffer beyond one synthesized buffer
+        per query result (the fuller "Multibuffers" wishlist entry below is still its
+        own, larger, unscoped thing). The "generalizable past version control" framing
         (cloud-provider CLIs, Terraform, Docker via the same two-callback-per-operation
         plugin shape) is unchanged and still just a framing, not attempted.
   - [x] Diff gutter markers (added/modified/removed line indicators, live-refreshing

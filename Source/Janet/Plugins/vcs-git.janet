@@ -35,6 +35,58 @@
 (defn diff-argv [path]
   ["git" "-C" (dirname path) "diff" "--no-color" "-U0" "--" path])
 
+## --- status/stage/unstage/commit/branch (vocabulary-completion) ----------
+##
+## The root-scoped operations get the project root as their argument (see
+## VcsRunner's own root-scoped requests); stage/unstage get the target
+## file's path, same as blame/log/diff.
+
+(defn status-argv [root]
+  ["git" "-C" root "status" "--porcelain"])
+
+(defn stage-argv [path]
+  ["git" "-C" (dirname path) "add" "--" path])
+
+# reset -q HEAD --, not `git restore --staged`: identical effect, but reset
+# predates git 2.23 by a decade -- the more portable spelling of the same
+# thing. Fails with git's own clear message in a repository with no commits
+# yet (no HEAD to reset to); surfaced verbatim, not special-cased here.
+(defn unstage-argv [path]
+  ["git" "-C" (dirname path) "reset" "-q" "HEAD" "--" path])
+
+## --- hunk-level staging (hunk-staging follow-up) --------------------------
+##
+## staged-diff is diff's index-vs-HEAD counterpart -- the diff an unstage
+## selects its hunk from. The patch itself is built by ned (a verbatim
+## slice of the raw diff output, see Editor/Vcs/DiffPatch.h) and handed
+## over as a file path; --unidiff-zero is required because these are -U0
+## (zero-context) patches, which `git apply` otherwise rejects outright as
+## a guard against context-free misapplication.
+
+(defn staged-diff-argv [path]
+  ["git" "-C" (dirname path) "diff" "--cached" "--no-color" "-U0" "--" path])
+
+(defn stage-patch-argv [root patch-path]
+  ["git" "-C" root "apply" "--cached" "--unidiff-zero" patch-path])
+
+(defn unstage-patch-argv [root patch-path]
+  ["git" "-C" root "apply" "--cached" "--reverse" "--unidiff-zero" patch-path])
+
+(defn commit-argv [root message]
+  ["git" "-C" root "commit" "-m" message])
+
+(defn branch-list-argv [root]
+  ["git" "-C" root "branch" "--list" "--no-color"])
+
+# checkout, not `git switch`, for the same pre-2.23 portability reason as
+# unstage-argv above (switch is also still marked experimental in its own
+# man page).
+(defn branch-switch-argv [root name]
+  ["git" "-C" root "checkout" name])
+
+(defn branch-create-argv [root name]
+  ["git" "-C" root "checkout" "-b" name])
+
 ## --- blame porcelain parsing -------------------------------------------
 ##
 ## `git blame --porcelain` emits, per source line, either a full commit-info
@@ -144,4 +196,69 @@
       (array/push result (parse-hunk-header line))))
   result)
 
-(ned/vcs-register-provider "git" detect blame-argv parse-blame log-argv parse-log diff-argv parse-diff)
+## --- status parsing -------------------------------------------------------
+##
+## `git status --porcelain` emits one "XY <path>" line per changed/untracked
+## file: two state letters (index then worktree -- "??" for untracked), one
+## space, then the path relative to the repository root. A staged rename is
+## "R  old -> new"; the new name is the one every downstream consumer
+## (staging, visiting) wants. git double-quotes paths containing special
+## characters (C-style escapes inside) -- the surrounding quotes are
+## stripped so the common "path with a space" case works, but the inner
+## escapes are left as-is, a recorded degrade-don't-crash simplification
+## for genuinely exotic filenames (embedded newlines/quotes).
+
+(defn- unquote-path [path]
+  (if (and (string/has-prefix? "\"" path) (string/has-suffix? "\"" path) (> (length path) 1))
+    (string/slice path 1 (- (length path) 1))
+    path))
+
+(defn parse-status [stdout]
+  (def result @[])
+  (each line (string/split "\n" stdout)
+    (when (>= (length line) 4)
+      (def state (string/slice line 0 2))
+      (var path (string/slice line 3))
+      (def arrow (string/find " -> " path))
+      (when arrow
+        (set path (string/slice path (+ arrow 4))))
+      (array/push result {:state state :path (unquote-path path)})))
+  result)
+
+## --- branch-list parsing --------------------------------------------------
+##
+## `git branch --list` emits one branch per line: two marker columns ("* "
+## current, "+ " checked out in another worktree, "  " otherwise) then the
+## name. A detached HEAD shows as "* (HEAD detached at ...)" -- a
+## parenthetical placeholder, not a real branch, skipped so it can't be
+## offered as a switch target.
+
+(defn parse-branch-list [stdout]
+  (def result @[])
+  (each line (string/split "\n" stdout)
+    (when (>= (length line) 3)
+      (def name (string/slice line 2))
+      (unless (string/has-prefix? "(" name)
+        (array/push result {:name name :current (string/has-prefix? "* " line)}))))
+  result)
+
+(ned/vcs-register-provider "git"
+  {:detect detect
+   :blame-argv blame-argv
+   :parse-blame parse-blame
+   :log-argv log-argv
+   :parse-log parse-log
+   :diff-argv diff-argv
+   :parse-diff parse-diff
+   :status-argv status-argv
+   :parse-status parse-status
+   :stage-argv stage-argv
+   :unstage-argv unstage-argv
+   :staged-diff-argv staged-diff-argv
+   :stage-patch-argv stage-patch-argv
+   :unstage-patch-argv unstage-patch-argv
+   :commit-argv commit-argv
+   :branch-list-argv branch-list-argv
+   :parse-branch-list parse-branch-list
+   :branch-switch-argv branch-switch-argv
+   :branch-create-argv branch-create-argv})
