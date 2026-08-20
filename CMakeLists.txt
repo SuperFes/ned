@@ -59,8 +59,6 @@ unset(CMAKE_POLICY_VERSION_MINIMUM)
 #------------------------------------------------------------------------------
 
 #--- Fetch CLI11 (command-line parameter handling follow-up) ------------------
-# Header-only; only main.cpp (the executable target, not ned_lib) needs it --
-# see main.cpp's own argument-parsing section.
 FetchContent_Declare(CLI11
         GIT_REPOSITORY https://github.com/CLIUtils/CLI11.git
         GIT_TAG v2.5.0
