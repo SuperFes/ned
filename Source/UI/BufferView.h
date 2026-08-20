@@ -342,7 +342,12 @@ class BufferView : public Widget {
                            // shared by both run-task and cancel-task, distinguished
                            // by taskPromptAction_ (set alongside inputMode_ in
                            // StartInteractiveSession).
-                           TaskName };
+                           TaskName,
+                           // DAP client slice 3: the evaluate prompt (dap-evaluate) --
+                           // routed through HandlePromptKey like FindFile/TaskName; Enter
+                           // fires the async DAP evaluate request, the result landing in
+                           // statusMessage_ from its callback.
+                           DapEvaluate };
 
     enum class DeleteFileStage { EnteringPath,
                                  Confirming };
@@ -807,6 +812,40 @@ class BufferView : public Widget {
     // against HEAD reserves no column).
     [[nodiscard]] bool DiffGutterActive() const;
 
+    // DAP client slice 2: whether the leftmost debug-marker column
+    // (breakpoint dot / execution arrow) is reserved this frame -- true
+    // only when the active buffer has a real path AND (it has breakpoints,
+    // or the debuggee is currently stopped in it). Same "reserved only when
+    // there's something to show" gate BlameGutterActive/DiffGutterActive
+    // use. Cheap per call: the buffer's normalized path key is cached by
+    // EnsureDapPathKey below, so no filesystem canonicalization happens per
+    // frame.
+    [[nodiscard]] bool DapGutterActive() const;
+
+    // Recomputes dapPathKey_ (DapManager::NormalizePathKey of the active
+    // buffer's path, empty when pathless) only when the active buffer's
+    // identity or its associated path actually changed -- weakly_canonical
+    // does real filesystem work, so this must not run per frame. const +
+    // mutable members, same shape as EnsureDiagnosticGutterCache.
+    void EnsureDapPathKey() const;
+
+    // DAP client slice 3: dap-show-debug's body -- chains stackTrace ->
+    // scopes -> variables requests and, once they all land, builds and
+    // switches to a read-only "*debug*" buffer: frame lines in the
+    // "path:line: text" convention (so C-c C-v visits them for free, same
+    // as every results buffer), variable lines carrying a "[ref:N]" marker
+    // when composite. dap-expand-variable (ExpandVariableAtPoint) parses
+    // that marker back out of point's own line, fetches the children, and
+    // splices them in below at deeper indent, consuming the marker so a
+    // second expand can't duplicate them.
+    void ShowDebugInfo();
+    void ExpandVariableAtPoint();
+    // ShowDebugInfo's finishing step: joins the accumulated lines into a
+    // fresh, read-only "*debug*" buffer (CreateBuffer, uniquified on
+    // collision -- same convention BuildResultsBuffer set) and switches to
+    // it.
+    void BuildDebugBuffer(const std::vector<std::string>& lines);
+
     // Diagnostic aid, opt-in via $NED_DEBUG_MOUSE (a file path to append
     // to): logs the raw event plus current point/mark/topLine_/size at the
     // top of every mouse handler call, before any of it can be mutated by
@@ -966,7 +1005,15 @@ class BufferView : public Widget {
     editor::tasks::TaskRunner* taskRunner_          = nullptr; // see SetTaskRunner
     editor::vcs::VcsRunner*    vcsRunner_           = nullptr; // see SetVcsRunner
     editor::dap::DapManager*   dapManager_          = nullptr; // see SetDapManager
-    EventLoop*                 eventLoop_           = nullptr; // see SetEventLoop
+
+    // EnsureDapPathKey's cache (slice 2): the active buffer's normalized
+    // breakpoint-path key, recomputed only when the buffer or its path
+    // changes. Mutable for the same const-query reasons every other
+    // Ensure*Cache here is.
+    mutable const text::Buffer*                  dapPathKeyBuffer_ = nullptr;
+    mutable std::optional<std::filesystem::path> dapPathKeyRawPath_;
+    mutable std::string                          dapPathKey_;
+    EventLoop*                                   eventLoop_ = nullptr; // see SetEventLoop
 
     InputMode                                inputMode_ = InputMode::Normal;
     std::optional<editor::IncrementalSearch> search_;
@@ -1116,6 +1163,12 @@ class BufferView : public Widget {
     // column-math churn here for something users expect to recognize at a
     // glance.
     static constexpr std::size_t kDiffWidth = 1;
+    // DAP client slice 2: the debug-marker column (breakpoint dot ● /
+    // execution arrow ▸) -- leftmost of all when active (see
+    // DapGutterActive), before even diff, matching where mainstream
+    // debugger UIs put breakpoint dots. Layout when every region is active:
+    // [dap][diff][status][diagnostic][gap][digits][gap][fold][blame].
+    static constexpr std::size_t kDapWidth = 1;
     // A reasonable middle ground for a live, subprocess-backed refresh --
     // long enough that a fast typist doesn't spawn `git diff` on every
     // other keystroke, short enough that the gutter still feels live

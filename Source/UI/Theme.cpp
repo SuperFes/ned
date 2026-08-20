@@ -277,6 +277,9 @@ Theme DarkTheme() {
         .diagnosticWarning             = Color::RGB(0xe5c07b),
         .diagnosticInformation         = Color::RGB(0x61afef),
         .diagnosticHint                = Color::RGB(0x5c6370),
+        .breakpointMarker              = Color::RGB(0xe06c75), // same red family as diagnosticError -- both mean "attention here"
+        .executionMarker               = Color::RGB(0xe5c07b), // the conventional debugger yellow
+        .executionLineBackground       = Color::RGB(0x3a3a28), // a dim warm wash the yellow arrow reads against
         .headlineLevel1Foreground      = Color::BrightBlue,
         .headlineLevel2Foreground      = Color::BrightCyan,
         .headlineLevel3Foreground      = Color::BrightGreen,
@@ -345,6 +348,9 @@ Theme LightTheme() {
         .diagnosticWarning             = Color::RGB(0xb58900),
         .diagnosticInformation         = Color::RGB(0x2980b9),
         .diagnosticHint                = Color::RGB(0x95a5a6),
+        .breakpointMarker              = Color::RGB(0xc0392b),
+        .executionMarker               = Color::RGB(0xb58900),
+        .executionLineBackground       = Color::RGB(0xf4ecd0),
         .headlineLevel1Foreground      = Color::RGB(0x1f4fa0),
         .headlineLevel2Foreground      = Color::RGB(0x1f7a7a),
         .headlineLevel3Foreground      = Color::RGB(0x2f6f2f),

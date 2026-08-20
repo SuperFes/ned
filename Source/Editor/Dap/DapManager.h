@@ -95,6 +95,64 @@ class DapManager {
     // depend on a well-behaved adapter answering.
     std::string StopSession();
 
+    // Slice 2: F10/F11/S-F11 (DAP's own `next`/`stepIn`/`stepOut`
+    // requests). All require a Stopped session (the thread the last
+    // `stopped` event named is the one stepped); the adapter answers with
+    // another `stopped` event (reason "step"), which flows through
+    // SetOnStopped like any other.
+    std::string StepOver();
+    std::string StepInto();
+    std::string StepOut();
+
+    // Slice 2, for BufferView's gutter marker + execution-line highlight:
+    // where the debuggee is currently stopped, as an already-normalized
+    // path key (same normalization ToggleBreakpoint applies, so callers
+    // compare keys, never re-derive paths) plus the 1-based line. Set when
+    // a stop's top frame had a real source location; cleared on any
+    // resume (continue/step) and at session end.
+    [[nodiscard]] std::optional<std::pair<std::string, std::size_t>> CurrentStopKeyAndLine() const;
+
+    // Slice 2: BreakpointsForFile's cheap sibling for per-frame rendering
+    // -- takes an already-normalized key (NormalizePathKey below) so
+    // Paint() never pays path canonicalization per frame.
+    [[nodiscard]] std::vector<std::size_t> BreakpointLinesForKey(const std::string& key) const;
+
+    // Public (slice 2) so BufferView can normalize the active buffer's own
+    // path once (cached per buffer) and compare keys against
+    // CurrentStopKeyAndLine/BreakpointLinesForKey.
+    [[nodiscard]] static std::string NormalizePathKey(const std::filesystem::path& path);
+
+    // Slice 3: the inspection requests backing the *debug* buffer. Each
+    // callback runs on the main thread with parsed results ([] on any
+    // failure -- no session, adapter error, malformed response), the same
+    // graceful-empty convention LspManager's own Request* callbacks use.
+    struct StackFrame {
+        int                                  id = 0; // the adapter's own frame id, fed back to RequestScopes
+        std::string                          name;
+        std::optional<std::filesystem::path> path;
+        std::size_t                          line = 0; // 1-based, valid only when path is set
+    };
+    void RequestStackTrace(std::function<void(std::vector<StackFrame>)> callback);
+
+    struct Scope {
+        std::string name;
+        int         variablesReference = 0; // fed back to RequestVariables
+    };
+    void RequestScopes(int frameId, std::function<void(std::vector<Scope>)> callback);
+
+    struct Variable {
+        std::string name;
+        std::string value;
+        std::string type;                   // empty if the adapter sent none
+        int         variablesReference = 0; // > 0 means expandable (a composite) via RequestVariables
+    };
+    void RequestVariables(int variablesReference, std::function<void(std::vector<Variable>)> callback);
+
+    // Slice 3: one-shot expression evaluation ("repl" context), against the
+    // stopped top frame when there is one. callback(success, text) -- text
+    // is the result or a short error, either way ready for the echo area.
+    void Evaluate(const std::string& expression, std::function<void(bool, std::string)> callback);
+
     // Where the debuggee stopped. path/line are set when the adapter's own
     // top stack frame had a real source location (fetched via a stackTrace
     // request on every stop), and unset otherwise (e.g. stopped inside
@@ -125,6 +183,12 @@ class DapManager {
     void SendBreakpointsForFile(const std::string& pathKey);
     void HandleInitializedEvent();
     void HandleStoppedEvent(const Json& body);
+    // The shared body of StepOver/StepInto/StepOut -- command is the DAP
+    // request name, label the human-readable status verb.
+    std::string SendStep(const std::string& command, const std::string& label);
+    // Marks the session running again: state, stop location, and frame id
+    // all cleared together (continue and every step share this).
+    void MarkResumed();
     // Tears down the session and reports reason via onSessionEnded_. The
     // client is moved into retired_, not destroyed in place — EndSession is
     // reached from inside the client's own Post-marshaled callbacks, and
@@ -133,8 +197,6 @@ class DapManager {
     void EndSession(std::string reason);
     void WireClient(DapClient& client);
 
-    [[nodiscard]] static std::string NormalizePathKey(const std::filesystem::path& path);
-
     ned::ui::EventLoop& eventLoop_;
 
     std::unique_ptr<DapClient>              client_;
@@ -142,6 +204,11 @@ class DapManager {
     std::string                             language_;
     SessionState                            state_           = SessionState::Inactive;
     int                                     stoppedThreadId_ = 0;
+    // Where the debuggee is stopped (slice 2) -- see CurrentStopKeyAndLine.
+    std::optional<std::pair<std::string, std::size_t>> currentStop_;
+    // The stopped top frame's own adapter-assigned id (slice 3) -- what
+    // Evaluate scopes an expression to. Cleared alongside currentStop_.
+    std::optional<int> stoppedFrameId_;
 
     std::map<std::string, std::vector<std::size_t>> breakpoints_; // normalized path -> sorted 1-based lines
 

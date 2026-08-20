@@ -12,6 +12,9 @@
 #include <unistd.h>
 
 #include "Editor/Commands.h"
+#include "Editor/Dap/DapClient.h"
+#include "Editor/Dap/DapConfig.h"
+#include "Editor/Dap/DapManager.h"
 #include "Editor/Dispatcher.h"
 #include "Editor/Link.h"
 #include "Editor/Lsp/LspClient.h"
@@ -311,6 +314,53 @@ std::string ReadRawLspFrame(int fd) {
 
 int LspRequestIdFromFrame(const std::string& raw) {
     return ned::editor::lsp::Json::parse(raw.substr(raw.find("\r\n\r\n") + 4))["id"].get<int>();
+}
+
+// DAP client slice 2: the pipe-backed fake-adapter counterpart of
+// FakeLspServer above, injected via DapManager::SetClientForTesting. The
+// tests below only ever have one adapter-bound frame in flight at a time,
+// so ReadRawLspFrame (DAP shares LSP's exact framing) suffices -- no
+// buffered multi-frame reader needed here, unlike DapManagerTest's own.
+struct FakeDapAdapter {
+    int adapterStdinRead;
+    int adapterStdoutWrite;
+
+    FakeDapAdapter(int readFd, int writeFd) : adapterStdinRead(readFd), adapterStdoutWrite(writeFd) {
+    }
+    ~FakeDapAdapter() {
+        ::close(adapterStdoutWrite);
+        ::close(adapterStdinRead);
+    }
+    FakeDapAdapter(const FakeDapAdapter&)            = delete;
+    FakeDapAdapter& operator=(const FakeDapAdapter&) = delete;
+    FakeDapAdapter(FakeDapAdapter&&)                 = default;
+
+    static FakeDapAdapter Create(ned::editor::dap::DapManager& manager, ned::ui::EventLoop& eventLoop,
+                                 ned::editor::dap::DapClient*& outClient) {
+        int clientWritesHere[2];
+        int clientReadsHere[2];
+        REQUIRE(::pipe(clientWritesHere) == 0);
+        REQUIRE(::pipe(clientReadsHere) == 0);
+        auto client = std::make_unique<ned::editor::dap::DapClient>(
+            ned::editor::lsp::Transport(clientReadsHere[0], clientWritesHere[1]), eventLoop);
+        outClient = &manager.SetClientForTesting(std::move(client));
+        return FakeDapAdapter(clientWritesHere[0], clientReadsHere[1]);
+    }
+
+    // Reads the next request frame and returns its parsed body.
+    ned::editor::dap::Json NextRequest() const {
+        const std::string raw = ReadRawLspFrame(adapterStdinRead);
+        return ned::editor::dap::Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    }
+};
+
+std::string DapResponseFrame(int requestSeq, const std::string& command, ned::editor::dap::Json body) {
+    return ned::editor::dap::Json{{"seq", 1000 + requestSeq}, {"type", "response"}, {"request_seq", requestSeq}, {"command", command}, {"success", true}, {"body", std::move(body)}}
+        .dump();
+}
+
+std::string DapEventFrame(const std::string& event, ned::editor::dap::Json body) {
+    return ned::editor::dap::Json{{"seq", 999}, {"type", "event"}, {"event", event}, {"body", std::move(body)}}.dump();
 }
 
 } // namespace
@@ -1143,6 +1193,74 @@ TEST_CASE("Paint echoes the diagnostic on point's line and clears it after leavi
     fixture.buffer.SetPoint(fixture.buffer.Content().LineToByteOffset(1));
     view.Paint(canvas);
     REQUIRE(fixture.statusMessage == "important result");
+}
+
+TEST_CASE("The debug gutter column shows a breakpoint dot and widens the gutter", "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("one\ntwo\nthree");
+    fixture.buffer.SetPath("/tmp/ned-dap-view-test.c");
+    fixture.buffer.SetPoint(0);
+
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::dap::DapManager manager(eventLoop);
+    manager.ToggleBreakpoint("/tmp/ned-dap-view-test.c", 2);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetDapManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 2});
+
+    ned::ui::Screen screen = ned::ui::Screen(20, 3);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+
+    // The debug column claims x=0, shifting everything else right by 1.
+    REQUIRE(screen.PixelAt(0, 1).character == "●");
+    REQUIRE(screen.PixelAt(0, 1).foreground_color == fixture.theme.breakpointMarker);
+    REQUIRE(screen.PixelAt(0, 0).character == " ");
+    REQUIRE(screen.PixelAt(GutterWidth(3) + 1, 0).character == "o"); // content shifted by the new column
+}
+
+TEST_CASE("The stopped line gets an execution arrow and a background wash", "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("one\ntwo\nthree");
+    fixture.buffer.SetPath("/tmp/ned-dap-exec-test.c");
+    fixture.buffer.SetPoint(0);
+
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::dap::DapManager manager(eventLoop);
+    ned::editor::dap::DapClient* client  = nullptr;
+    FakeDapAdapter               adapter = FakeDapAdapter::Create(manager, eventLoop, client);
+
+    // Minimal real handshake against the fake adapter, then a stop on
+    // line 2 of this buffer's own file.
+    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-exec", "{}");
+    manager.StartOrContinue("bufferview-dap-exec");
+    const auto initialize = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(initialize["seq"].get<int>(), "initialize", ned::editor::dap::Json::object()));
+    const auto launch = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(launch["seq"].get<int>(), "launch", ned::editor::dap::Json::object()));
+    client->DispatchFrame(DapEventFrame("stopped", {{"reason", "breakpoint"}, {"threadId", 1}}));
+    const auto stackTrace = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(
+        stackTrace["seq"].get<int>(), "stackTrace",
+        {{"stackFrames", ned::editor::dap::Json::array(
+                             {{{"id", 1}, {"name", "main"}, {"line", 2}, {"source", {{"path", "/tmp/ned-dap-exec-test.c"}}}}})}}));
+    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-exec", "");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetDapManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 2});
+
+    ned::ui::Screen screen = ned::ui::Screen(20, 3);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+
+    REQUIRE(screen.PixelAt(0, 1).character == "▸");
+    REQUIRE(screen.PixelAt(0, 1).foreground_color == fixture.theme.executionMarker);
+    const int contentStart = GutterWidth(3) + 1;               // +1 for the debug column
+    REQUIRE(screen.PixelAt(contentStart, 1).character == "t"); // "two"
+    REQUIRE(screen.PixelAt(contentStart, 1).background_color == fixture.theme.executionLineBackground);
+    REQUIRE(screen.PixelAt(contentStart, 0).background_color == fixture.theme.background); // other lines untouched
 }
 
 TEST_CASE("The diagnostics gutter uses a distinct glyph per severity", "[BufferView]") {

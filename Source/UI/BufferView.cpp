@@ -1253,12 +1253,29 @@ void BufferView::Paint(Canvas c) {
     const std::size_t foldColumnWidth  = FoldGutterActive() ? kMaxFoldDepthColumns : 0;
     const std::size_t blameColumnWidth = BlameGutterActive() ? kBlameWidth : 0;
     const std::size_t diffColumnWidth  = DiffGutterActive() ? kDiffWidth : 0;
-    const std::size_t statusStart      = diffColumnWidth;
-    const std::size_t diagnosticStart  = statusStart + kStatusWidth;
-    const std::size_t digitsStart      = diagnosticStart + kDiagnosticWidth + kLineNumberGap;
-    const std::size_t gutterDigits     = gutterWidth - digitsStart - kLineNumberGap - foldColumnWidth - blameColumnWidth;
-    const std::size_t foldStart        = digitsStart + gutterDigits + kLineNumberGap;
-    const std::size_t blameStart       = foldStart + foldColumnWidth;
+    // DAP client slice 2: the debug-marker column, leftmost of all when
+    // active -- see kDapWidth's own doc comment for the full layout.
+    const std::size_t dapColumnWidth  = DapGutterActive() ? kDapWidth : 0;
+    const std::size_t statusStart     = dapColumnWidth + diffColumnWidth;
+    const std::size_t diagnosticStart = statusStart + kStatusWidth;
+
+    // Fetched once per Paint(), not once per row -- BreakpointLinesForKey
+    // returns a copy, and the stop location never changes mid-frame.
+    // dapPathKey_ is current here: DapGutterActive() just above ran
+    // EnsureDapPathKey().
+    std::vector<std::size_t>                           dapBreakpointLines;
+    std::optional<std::pair<std::string, std::size_t>> dapStop;
+    if (dapColumnWidth > 0) {
+        dapBreakpointLines = dapManager_->BreakpointLinesForKey(dapPathKey_);
+        dapStop            = dapManager_->CurrentStopKeyAndLine();
+        if (dapStop && dapStop->first != dapPathKey_) {
+            dapStop.reset(); // stopped in some other file -- nothing to mark here
+        }
+    }
+    const std::size_t digitsStart  = diagnosticStart + kDiagnosticWidth + kLineNumberGap;
+    const std::size_t gutterDigits = gutterWidth - digitsStart - kLineNumberGap - foldColumnWidth - blameColumnWidth;
+    const std::size_t foldStart    = digitsStart + gutterDigits + kLineNumberGap;
+    const std::size_t blameStart   = foldStart + foldColumnWidth;
 
     // status-gutter unsaved-change-indicator follow-up: recomputed once
     // per Paint() call (not per row) -- see EnsureUnsavedChangeCache's own
@@ -1432,6 +1449,10 @@ void BufferView::Paint(Canvas c) {
     // diagnostic span (some servers report those) is widened to one byte so
     // it still underlines the cell it points at instead of vanishing.
     std::vector<std::pair<std::size_t, std::size_t>> currentLineDiagnosticSpans;
+    // DAP client slice 2: whether the debuggee is stopped exactly on this
+    // line -- feeds both the whole-line background wash below and the
+    // gutter arrow, so the two can never disagree.
+    bool currentLineIsExecutionLine = false;
     for (int row = 0; row < c.size().height; ++row) {
         for (int col = 0; col < c.size().width; ++col) {
             Cell& cell     = c[{.x = col, .y = row}];
@@ -1463,6 +1484,7 @@ void BufferView::Paint(Canvas c) {
                         currentLineDiagnosticSpans.emplace_back(diagnostic.startByte, spanEnd);
                     }
                 }
+                currentLineIsExecutionLine = dapStop && dapStop->second == line + 1; // dapStop already file-filtered above
                 currentLineDiffTint.reset();
                 if (diffColumnWidth > 0) {
                     const auto diffIt = std::lower_bound(diffLineKinds_.begin(), diffLineKinds_.end(), line,
@@ -1521,6 +1543,26 @@ void BufferView::Paint(Canvas c) {
                     .background = (gutterSelection != GutterSelection::None) ? theme_.selectionBackground : theme_.background,
                     .foreground = gutterForeground,
                 };
+                // DAP client slice 2: the debug-marker column -- an
+                // execution arrow where the debuggee is stopped (winning
+                // over a breakpoint dot on the same line: "you are here"
+                // beats "you asked to stop here"), a dot on any breakpoint
+                // line. Same plain-single-width-Unicode discipline as the
+                // diagnostic glyphs (▸ is the sidebar's own proven
+                // disclosure triangle; ● is from the same geometric-shapes
+                // range as the scroll arrows).
+                if (dapColumnWidth > 0) {
+                    Cell& cell = c[{.x = 0, .y = row}];
+                    if (currentLineIsExecutionLine) {
+                        cell.character = "▸";
+                        Brush{.background = theme_.background, .foreground = theme_.executionMarker, .bold = true}.ApplyTo(cell);
+                    }
+                    else if (std::binary_search(dapBreakpointLines.begin(), dapBreakpointLines.end(), line + 1)) {
+                        cell.character = "●";
+                        Brush{.background = theme_.background, .foreground = theme_.breakpointMarker}.ApplyTo(cell);
+                    }
+                }
+
                 // Diff gutter markers follow-up: leftmost of all, matching
                 // real editors' own git-gutter placement -- a solid swatch
                 // for Added/Modified (same cell.character=" "+matching-fg/bg
@@ -1869,6 +1911,13 @@ void BufferView::Paint(Canvas c) {
                 }
                 else if (InSelection(offset)) {
                     brush.background = theme_.selectionBackground;
+                }
+                else if (currentLineIsExecutionLine) {
+                    // DAP client slice 2: the stopped line's own wash --
+                    // beats the diff tint below (being stopped here is the
+                    // more urgent fact), loses to isearch/selection above
+                    // (both are explicit user actions).
+                    brush.background = theme_.executionLineBackground;
                 }
                 else if (currentLineDiffTint) {
                     // Diff gutter markers follow-up, take two: not a
@@ -3340,6 +3389,44 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
                                        ":" + std::to_string(line);
             return;
         }
+        // DAP slices 2/3: stepping is the same immediate-status shape as
+        // DapContinue above; DapShowDebug/DapExpandVariable chain async
+        // requests (see each method's own doc comment); DapEvaluate is the
+        // family's one prompt session.
+        case editor::InteractiveRequest::DapStepOver:
+            statusMessage_ = dapManager_ ? dapManager_->StepOver() : "No debugger available.";
+            return;
+        case editor::InteractiveRequest::DapStepInto:
+            statusMessage_ = dapManager_ ? dapManager_->StepInto() : "No debugger available.";
+            return;
+        case editor::InteractiveRequest::DapStepOut:
+            statusMessage_ = dapManager_ ? dapManager_->StepOut() : "No debugger available.";
+            return;
+        case editor::InteractiveRequest::DapShowDebug:
+            if (!dapManager_) {
+                statusMessage_ = "No debugger available.";
+            }
+            else {
+                ShowDebugInfo();
+            }
+            return;
+        case editor::InteractiveRequest::DapExpandVariable:
+            if (!dapManager_) {
+                statusMessage_ = "No debugger available.";
+            }
+            else {
+                ExpandVariableAtPoint();
+            }
+            return;
+        case editor::InteractiveRequest::DapEvaluate:
+            if (!dapManager_) {
+                statusMessage_ = "No debugger available.";
+                return;
+            }
+            inputMode_ = InputMode::DapEvaluate;
+            prompt_.emplace("Evaluate: ");
+            statusMessage_ = prompt_->StatusText();
+            return;
         // VCS blame gutter follow-up: one-shot direct actions, same shape
         // as ProjectAgenda/LspGotoDefinition above -- doesn't touch
         // inputMode_, the async result (or a status-message error) arrives
@@ -3849,6 +3936,23 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
                 }
             }
         }
+        else if (inputMode_ == InputMode::DapEvaluate) {
+            if (input.empty()) {
+                statusMessage_.clear();
+            }
+            else if (!dapManager_) {
+                statusMessage_ = "No debugger available.";
+            }
+            else {
+                // Fire-and-forget, same async shape as LspRenameNewName
+                // above: EndInteractiveSession() below runs immediately,
+                // the result lands in statusMessage_ from the callback.
+                statusMessage_ = "Evaluating...";
+                dapManager_->Evaluate(input, [this, input](bool success, std::string text) {
+                    statusMessage_ = success ? (input + " = " + text) : ("Evaluate failed: " + text);
+                });
+            }
+        }
         else { // FindScratch
             if (!editor::IsValidScratchName(input)) {
                 statusMessage_ = "Invalid scratch name: \"" + input + "\"";
@@ -3903,6 +4007,9 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
             case InputMode::TaskName:
                 label = (taskPromptAction_ == TaskPromptAction::Run) ? "Run task" : "Cancel task";
                 break;
+            case InputMode::DapEvaluate:
+                label = "Evaluate";
+                break;
             default:
                 label = "Prompt";
                 break;
@@ -3914,7 +4021,10 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
     if (chord.Special == editor::SpecialKey::Tab && inputMode_ != InputMode::ProjectSearch &&
         inputMode_ != InputMode::CreateDirectory && inputMode_ != InputMode::StringRectangle &&
         inputMode_ != InputMode::SetHeadlineTags && inputMode_ != InputMode::LspRenameNewName &&
-        inputMode_ != InputMode::TaskName) {
+        inputMode_ != InputMode::TaskName && inputMode_ != InputMode::DapEvaluate) {
+        // DapEvaluate excluded too: completing a debuggee expression
+        // against buffer names would be meaningless, same reasoning as
+        // ProjectSearch's regex pattern.
         CompletePrompt();
         return;
     }
@@ -4185,6 +4295,176 @@ void BufferView::BuildResultsBuffer(const std::vector<editor::SearchMatch>& matc
     activeBuffer_.Set(results);
 }
 
+namespace {
+
+    // One *debug* buffer variable line: "  name: type = value  [ref:N]" --
+    // the "[ref:N]" marker only when the variable is composite (children
+    // fetchable via a variables request); ExpandVariableAtPoint parses
+    // exactly this trailing shape back out.
+    std::string FormatDebugVariableLine(const ned::editor::dap::DapManager::Variable& variable, std::size_t indent) {
+        std::string line(indent, ' ');
+        line += variable.name;
+        if (!variable.type.empty()) {
+            line += ": " + variable.type;
+        }
+        line += " = " + variable.value;
+        if (variable.variablesReference > 0) {
+            line += "  [ref:" + std::to_string(variable.variablesReference) + "]";
+        }
+        return line;
+    }
+
+} // namespace
+
+void BufferView::ShowDebugInfo() {
+    statusMessage_ = "Fetching debug info...";
+    dapManager_->RequestStackTrace([this](std::vector<editor::dap::DapManager::StackFrame> frames) {
+        if (frames.empty()) {
+            statusMessage_ = "No stack to show (is the session stopped?).";
+            return;
+        }
+        auto lines = std::make_shared<std::vector<std::string>>();
+        lines->push_back("== Stack ==");
+        for (std::size_t i = 0; i < frames.size(); ++i) {
+            const editor::dap::DapManager::StackFrame& frame = frames[i];
+            if (frame.path) {
+                // The established "path:line: text" results convention, so
+                // C-c C-v (project-search-visit-result) jumps to a frame
+                // with zero new navigation plumbing.
+                lines->push_back(frame.path->string() + ":" + std::to_string(frame.line) + ": #" + std::to_string(i) +
+                                 " " + frame.name);
+            }
+            else {
+                lines->push_back("#" + std::to_string(i) + " " + frame.name + " (no source)");
+            }
+        }
+        dapManager_->RequestScopes(frames[0].id, [this, lines](std::vector<editor::dap::DapManager::Scope> scopes) {
+            if (scopes.empty()) {
+                BuildDebugBuffer(*lines);
+                return;
+            }
+            // One variables request per scope, all in flight at once --
+            // chunks keep each scope's own output in scope order however
+            // the responses interleave, and every callback runs on the
+            // main thread (see DapClient.h), so a plain shared counter is
+            // race-free.
+            auto remaining   = std::make_shared<std::size_t>(scopes.size());
+            auto scopeChunks = std::make_shared<std::vector<std::vector<std::string>>>(scopes.size());
+            for (std::size_t s = 0; s < scopes.size(); ++s) {
+                dapManager_->RequestVariables(
+                    scopes[s].variablesReference,
+                    [this, lines, remaining, scopeChunks, s,
+                     scopeName = scopes[s].name](std::vector<editor::dap::DapManager::Variable> variables) {
+                        std::vector<std::string>& chunk = (*scopeChunks)[s];
+                        chunk.push_back("");
+                        chunk.push_back("== " + scopeName + " ==");
+                        for (const editor::dap::DapManager::Variable& variable : variables) {
+                            chunk.push_back(FormatDebugVariableLine(variable, 2));
+                        }
+                        if (--*remaining == 0) {
+                            for (const std::vector<std::string>& finishedChunk : *scopeChunks) {
+                                lines->insert(lines->end(), finishedChunk.begin(), finishedChunk.end());
+                            }
+                            BuildDebugBuffer(*lines);
+                        }
+                    });
+            }
+        });
+    });
+}
+
+void BufferView::BuildDebugBuffer(const std::vector<std::string>& lines) {
+    std::string text;
+    for (const std::string& line : lines) {
+        text += line + "\n";
+    }
+    text::Buffer& debug = bufferList_.CreateBuffer("*debug*");
+    debug.InsertAtPoint(text);
+    debug.SetPoint(0);
+    debug.SetReadOnly(true); // same tossable-read-only reasoning as BuildResultsBuffer
+    activeBuffer_.Set(debug);
+    statusMessage_ = "C-c C-v visits a frame; M-x dap-expand-variable expands a [ref:N] line.";
+}
+
+void BufferView::ExpandVariableAtPoint() {
+    text::Buffer&     buffer    = activeBuffer_.Get();
+    const text::Rope& content   = buffer.Content();
+    const std::size_t line      = content.ByteOffsetToLine(buffer.Point());
+    const std::size_t lineStart = content.LineToByteOffset(line);
+    const std::size_t lineEnd =
+        (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
+    const std::string lineText = content.Substring(lineStart, lineEnd - lineStart);
+
+    const std::size_t markerPos = lineText.rfind("[ref:");
+    int               reference = 0;
+    if (markerPos != std::string::npos) {
+        try {
+            reference = std::stoi(lineText.substr(markerPos + 5)); // stoi stops at the closing ']'
+        }
+        catch (const std::exception&) {
+            reference = 0;
+        }
+    }
+    if (reference <= 0) {
+        statusMessage_ = "No expandable variable on this line.";
+        return;
+    }
+
+    std::size_t indent = 0;
+    while (indent < lineText.size() && lineText[indent] == ' ') {
+        ++indent;
+    }
+
+    text::Buffer* const bufferPtr = &buffer;
+    statusMessage_                = "Expanding...";
+    dapManager_->RequestVariables(
+        reference, [this, bufferPtr, line, lineText, markerPos, indent](std::vector<editor::dap::DapManager::Variable> variables) {
+            if (bufferPtr != &activeBuffer_.Get()) {
+                return; // switched away while the request was in flight
+            }
+            text::Buffer&     target        = *bufferPtr;
+            const text::Rope& targetContent = target.Content();
+            if (line >= targetContent.LineCount()) {
+                return;
+            }
+            // Staleness guard, same spirit as RequestRenameAtPoint's own:
+            // only splice into the exact line the request was made from.
+            const std::size_t targetLineStart = targetContent.LineToByteOffset(line);
+            const std::size_t targetLineEnd   = (line + 1 < targetContent.LineCount())
+                                                    ? targetContent.LineToByteOffset(line + 1) - 1
+                                                    : targetContent.ByteLength();
+            if (targetContent.Substring(targetLineStart, targetLineEnd - targetLineStart) != lineText) {
+                statusMessage_ = "Debug line changed -- not expanding.";
+                return;
+            }
+            if (variables.empty()) {
+                statusMessage_ = "No children (or the session already resumed).";
+                return;
+            }
+
+            // Consume the "[ref:N]" marker (and its separating spaces) so a
+            // second expand on the same line can't splice duplicates in.
+            std::string replacement = lineText.substr(0, markerPos);
+            while (!replacement.empty() && replacement.back() == ' ') {
+                replacement.pop_back();
+            }
+            for (const editor::dap::DapManager::Variable& variable : variables) {
+                replacement += "\n" + FormatDebugVariableLine(variable, indent + 2);
+            }
+
+            // The *debug* buffer is read-only against user edits; this is a
+            // programmatic splice, so the flag is lifted just around it --
+            // same pragmatism as Buffer::AppendWhileReadOnly, which only
+            // covers appends and can't do a mid-buffer splice.
+            const bool wasReadOnly = target.ReadOnly();
+            target.SetReadOnly(false);
+            target.DeleteRange(targetLineStart, targetLineEnd - targetLineStart);
+            target.InsertAt(targetLineStart, replacement);
+            target.SetReadOnly(wasReadOnly);
+            statusMessage_.clear();
+        });
+}
+
 void BufferView::HandleProjectReplaceKey(const editor::KeyChord& chord) {
     if (IsQuit(chord)) {
         projectReplace_->Cancel();
@@ -4342,12 +4622,38 @@ std::size_t BufferView::GutterWidth() const {
     const std::size_t foldColumn  = FoldGutterActive() ? kMaxFoldDepthColumns : 0;
     const std::size_t blameColumn = BlameGutterActive() ? kBlameWidth : 0;
     const std::size_t diffColumn  = DiffGutterActive() ? kDiffWidth : 0;
-    return diffColumn + kStatusWidth + kDiagnosticWidth + kLineNumberGap + std::to_string(totalLines).size() + kLineNumberGap +
-           foldColumn + blameColumn;
+    const std::size_t dapColumn   = DapGutterActive() ? kDapWidth : 0;
+    return dapColumn + diffColumn + kStatusWidth + kDiagnosticWidth + kLineNumberGap + std::to_string(totalLines).size() +
+           kLineNumberGap + foldColumn + blameColumn;
 }
 
 bool BufferView::DiffGutterActive() const {
     return !diffLineKinds_.empty();
+}
+
+bool BufferView::DapGutterActive() const {
+    if (dapManager_ == nullptr) {
+        return false;
+    }
+    EnsureDapPathKey();
+    if (dapPathKey_.empty()) {
+        return false; // a pathless buffer can't hold breakpoints or be stopped in
+    }
+    if (!dapManager_->BreakpointLinesForKey(dapPathKey_).empty()) {
+        return true;
+    }
+    const auto stop = dapManager_->CurrentStopKeyAndLine();
+    return stop && stop->first == dapPathKey_;
+}
+
+void BufferView::EnsureDapPathKey() const {
+    const text::Buffer& buffer = activeBuffer_.Get();
+    if (dapPathKeyBuffer_ == &buffer && dapPathKeyRawPath_ == buffer.Path()) {
+        return;
+    }
+    dapPathKeyBuffer_  = &buffer;
+    dapPathKeyRawPath_ = buffer.Path();
+    dapPathKey_        = buffer.Path() ? editor::dap::DapManager::NormalizePathKey(*buffer.Path()) : std::string();
 }
 
 bool BufferView::OnMouseEvent(const Event& event) {

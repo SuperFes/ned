@@ -200,6 +200,14 @@ struct Theme {
     Color diagnosticInformation;
     Color diagnosticHint;
 
+    // DAP client slice 2: the debug gutter column's two marker foregrounds
+    // (breakpoint dot, current-execution arrow) and the background wash for
+    // the whole line the debuggee is stopped on -- the red-dot/yellow-arrow/
+    // highlighted-line convention every mainstream debugger UI shares.
+    Color breakpointMarker;
+    Color executionMarker;
+    Color executionLineBackground;
+
     // Org-mode syntax-highlighting follow-up: one Color per new
     // Org-specific SyntaxClass member (Mode.h) -- headline levels cycle
     // through 3 distinct, bold hues; TodoKeyword/DoneKeyword use the
