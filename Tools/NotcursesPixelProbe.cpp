@@ -139,7 +139,21 @@ int main() {
         }
         else {
             ncvisual_options vopts{};
-            vopts.n       = nullptr; // let Notcurses create its own plane sized to fit
+            // The actual bug the whole "blit succeeds, nothing ever shows
+            // up" mystery turned out to be: leaving n == nullptr with no
+            // NCVISUAL_OPTION_CHILDPLANE creates the image plane as the
+            // root of a brand-new PILE (confirmed by reading Notcurses'
+            // own header docs, not assumed) -- and notcurses_render() is
+            // hardcoded to render/rasterize only the *standard* pile
+            // (notcurses_stdplane's own inline definition literally calls
+            // ncpile_render/ncpile_rasterize on stdn and nothing else).
+            // The image was really being blitted, successfully, into a
+            // pile that was simply never sent to the terminal at all.
+            // Making it a CHILDPLANE of std_plane puts it in the standard
+            // pile instead, so the one notcurses_render() call below
+            // actually includes it.
+            vopts.n       = std_plane;
+            vopts.flags   = NCVISUAL_OPTION_CHILDPLANE;
             vopts.scaling = NCSCALE_NONE;
             vopts.y       = y;
             vopts.x       = 2;
