@@ -800,6 +800,27 @@ namespace {
         return Color::Interpolate(t, Color::BrightCyan, Color::BrightBlack);
     }
 
+    // Diff gutter markers follow-up: how strongly a changed line's
+    // background gradient shows at columnFromGutterEdge (0 = the first
+    // content column right after the gutter). Peaks at kDiffGradientPeakAlpha
+    // right there and fades linearly to 0 over kDiffGradientSpanColumns --
+    // 0 well before most real lines end, so the bulk of a changed line's
+    // text keeps its normal, untouched contrast; only the handful of
+    // columns nearest the gutter (where the eye is already looking, having
+    // just seen the gutter swatch/colored line number) get any tint at
+    // all. A negative input (shouldn't happen -- columnFromGutterEdge is
+    // always column - gutterWidth for a column that's already >= gutterWidth
+    // -- but cheap to guard) clamps to the peak rather than going out of range.
+    float DiffGradientAlpha(int columnFromGutterEdge) {
+        constexpr float kDiffGradientPeakAlpha    = 0.35f;
+        constexpr int   kDiffGradientSpanColumns  = 16;
+        if (columnFromGutterEdge >= kDiffGradientSpanColumns) {
+            return 0.0f;
+        }
+        const float t = std::clamp(static_cast<float>(columnFromGutterEdge) / static_cast<float>(kDiffGradientSpanColumns), 0.0f, 1.0f);
+        return kDiffGradientPeakAlpha * (1.0f - t);
+    }
+
 } // namespace
 
 void BufferView::EnsureDiagnosticGutterCache() const {
@@ -1736,17 +1757,28 @@ void BufferView::Paint(Canvas c) {
                 else if (InSelection(offset)) {
                     brush.background = theme_.selectionBackground;
                 }
-                // Diff gutter markers follow-up: no whole-line background
-                // wash here anymore -- see gutterForeground's own doc
-                // comment just above (the accent now colors the line
-                // number instead) for why: a background blend, at any
-                // alpha, necessarily fights contrast against similarly-hued
-                // foreground text, and a real terminal's own Color::Default
-                // background has no true RGB to blend against in the first
-                // place (Color::Interpolate always produces an opaque
-                // TrueColor result). The gutter swatch plus the colored
-                // line number give a clear, always-high-contrast signal
-                // without ever touching the code text's own colors.
+                else if (currentLineDiffTint) {
+                    // Diff gutter markers follow-up, take two: not a
+                    // uniform wash across the whole line (that fights
+                    // contrast against similarly-hued text everywhere, the
+                    // real complaint the flat-blend version drew) -- a
+                    // gradient instead, same Color::Interpolate-per-column
+                    // technique ModeLine's own gradient background already
+                    // established, peaking right where the eye naturally
+                    // lands (next to the gutter/line number that already
+                    // flagged this line) and fading out to nothing within
+                    // DiffGradientAlpha's own span. "Nothing" here means
+                    // brush.background is left completely untouched --
+                    // not Interpolate(0, ...), which would still force an
+                    // opaque result -- so a Color::Default (transparent)
+                    // theme genuinely reverts to real pass-through for the
+                    // rest of the line, not a hard-edged solid patch.
+                    const float alpha = DiffGradientAlpha(col - static_cast<int>(gutterWidth));
+                    if (alpha > 0.0f) {
+                        const Color accent = (currentLineDiffTint == DiffLineKind::Added) ? Color::BrightGreen : Color::BrightBlue;
+                        brush.background   = Color::Interpolate(alpha, theme_.background, accent);
+                    }
+                }
 
                 if (decoded.codepoint == U'\t') {
                     // A real terminal treats a raw tab byte as "jump to the next
