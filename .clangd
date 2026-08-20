@@ -1,0 +1,11 @@
+# clangd only searches a source file's own directory and its ancestors for
+# compile_commands.json -- it never looks inside a build subdirectory on its
+# own, so without this it falls back to a bare no-flags mode where every
+# FetchContent include (<CLI/CLI.hpp>, FTXUI, tree-sitter, ...) is "not
+# found". CMake already exports the database (CMAKE_EXPORT_COMPILE_COMMANDS
+# in CMakeLists.txt); this just points clangd at the build tree that has it.
+# If you work primarily out of cmake-build-debug/ instead, change it here or
+# pass --compile-commands-dir on clangd's own argv (ned: the clangd command
+# configured in init.janet).
+CompileFlags:
+  CompilationDatabase: build
