@@ -1,5 +1,8 @@
 #include "ModeLine.h"
 
+#include <algorithm>
+#include <atomic>
+#include <cstdint>
 #include <string>
 
 namespace ned::ui {
@@ -27,9 +30,24 @@ void ModeLine::Paint(Canvas c) {
     // already-per-frame-refreshed place a "this is still loading" signal
     // can surface without any new plumbing (buffer.IsLoading() is a plain
     // Buffer query, same as Modified()/Point() just above).
-    const std::string text = buffer.IsLoading() ? "  " + buffer.Name() + "   Loading..."
-                                                 : "  " + modifiedMarker + buffer.Name() + "   L" + std::to_string(line + 1) +
-                                                       ":C" + std::to_string(col + 1) + "  (" + mode_.name + ")";
+    // large-file-async-load polish: a live percentage when the loader
+    // published one (Buffer::CurrentLoadProgress; totalBytes 0 means the
+    // size query failed -- fall back to the old plain indicator rather than
+    // dividing by it). bytesRead can momentarily exceed totalBytes if the
+    // file grew after the size query, hence the clamp.
+    std::string loadingText = "   Loading...";
+    if (buffer.IsLoading()) {
+        if (const text::LoadProgress* progress = buffer.CurrentLoadProgress();
+            progress != nullptr && progress->totalBytes > 0) {
+            const std::uintmax_t read    = progress->bytesRead.load(std::memory_order_relaxed);
+            const std::uintmax_t percent = std::min<std::uintmax_t>(100, read * 100 / progress->totalBytes);
+            loadingText += " " + std::to_string(percent) + "%";
+        }
+    }
+
+    const std::string text = buffer.IsLoading() ? "  " + buffer.Name() + loadingText
+                                                : "  " + modifiedMarker + buffer.Name() + "   L" + std::to_string(line + 1) +
+                                                      ":C" + std::to_string(col + 1) + "  (" + mode_.name + ")";
 
     for (int x = 0; x < c.size().width; ++x) {
         Cell& cell     = c[{.x = x, .y = 0}];

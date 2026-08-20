@@ -309,35 +309,40 @@ each is, not by priority.
         attempting in-place windowed editing of an untouched-elsewhere file: an edit before
         the visible window shifts every later byte offset, so genuine windowed editing needs
         a real piece-table with disk-backed runs — most of a new engine, not a follow-up.
-  - [ ] `kAsyncLoadThreshold` (`BufferList.cpp`) and `kMaxHighlightBytes`
-        (`BufferView.cpp`) are both hardcoded C++ constants today, the same "hardcoded for
-        now" scope cut `TabWidth`/`Theme` selection originally were before they grew a
-        Janet-facing setter (`ned/set-tab-width`, etc.) — expose both the same way once
-        there's a real need to tune them per project/machine rather than guessing at one
-        number that fits everyone.
-  - [ ] `ModeLine`'s "Loading…" indicator (open-binary-anyway/large-file-async-load
-        follow-ups) is a plain binary state today, not a live percentage — `AsyncFileLoader`
-        tracks bytes-read/total-bytes as local, per-chunk values inside its own background
-        thread but never surfaces them anywhere UI-reachable, specifically to avoid the
-        cross-thread-safe-accessor plumbing that would need (Buffer itself can't hold the
-        progress atomics directly — it's moved into a `unique_ptr` on open, and
-        `std::atomic` isn't movable). Worth adding once wanted: likely a small
-        `shared_ptr<LoadProgress>` handed from `AsyncFileLoader` to `WindowManager`, queried
-        by `ModeLine::Paint` for whichever buffer is active.
-  - [ ] The async loader only ever fires for files opened *after* `EventLoop` exists
-        (`main.cpp`) — a file passed directly on the command line (`ned hugefile.txt`,
-        not binary, just large) still loads synchronously before the UI ever appears,
-        since `BufferList`/the initial `OpenOrCreateFile` call both run before `EventLoop`
-        is constructed. Only the *binary-refusal* half of that same gap was actually
-        closed (the deferred `RequestOpenBinaryFile` call right after
-        `windowManager->TakeFocus()`) — a large-but-legitimate CLI-opened file has no
-        equivalent deferral yet. Would need the same "try, catch, defer" shape, just
-        triggering a deferred *load* instead of a deferred *confirmation prompt*, and
-        general enough that it might be worth restructuring startup to construct
-        `EventLoop` earlier instead — flagged in the async-load follow-up as out of scope
-        specifically because of the risk of disturbing `TerminalColorProbe`'s own strict
-        "before anything else reads stdin" ordering requirement; a real evaluation of that
-        risk hasn't happened yet.
+  - [x] `kAsyncLoadThreshold` and `kMaxHighlightBytes` — done (loose-ends cleanup,
+        2026-08-20): both grew Janet setters taking byte values
+        (`ned/set-async-load-threshold`, `ned/set-max-highlight-bytes` — bytes, not a
+        MiB unit, since Janet callers can just write `(* 32 1024 1024)`; 0 means
+        "async-load everything" / "highlight nothing" respectively, falling out of the
+        comparisons rather than being special cases). The threshold's setting lives as
+        `text::SetAsyncLoadThreshold` beside `BufferList` (its consumer — the text
+        layer can't depend on `Editor/`'s settings files); the highlight cap became
+        `Editor/HighlightSettings.h/.cpp`, the `TabWidth.h` pattern verbatim.
+  - [x] `ModeLine`'s "Loading…" live percentage — done (loose-ends cleanup,
+        2026-08-20), via a simpler wiring than the sketch here guessed: the
+        `shared_ptr<LoadProgress>` (atomic bytesRead + write-once totalBytes,
+        `Text/Buffer.h`) is held by the placeholder *Buffer itself*
+        (`SetLoadProgress`/`CurrentLoadProgress`, cleared by `FinishLoad`) — a
+        shared_ptr moves fine even though the atomic inside it can't, which dissolves
+        the movability constraint that motivated routing through `WindowManager`.
+        `AsyncFileLoader` bumps bytesRead per chunk; `ModeLine::Paint` renders
+        `Loading... NN%`, clamped at 100 (a file can grow mid-load) and omitted
+        entirely when the size query failed (totalBytes 0).
+  - [x] Async loading for a large CLI-opened file — done (loose-ends cleanup,
+        2026-08-20), via the "same shape as deferredBinaryOpenPath" option rather than
+        restructuring startup (the EventLoop-earlier idea stays unevaluated, now
+        without a motivating need): `main.cpp` checks the first path argument's size
+        up front and, when it's over `AsyncLoadThreshold()` and not binary (binary
+        stays on the sync path so `BinaryFileError` still reaches its interactive
+        confirmation), skips the synchronous open entirely, remembering the path as
+        `deferredLargeOpenPath`; right after `EnableAsyncFileLoading` wires the async
+        opener hook, the deferred `OpenOrCreateFile` returns an `IsLoading()`
+        placeholder the background loader fills in, focused via
+        `FocusedActiveBuffer().Set` exactly like any interactive open. A scratch
+        buffer created purely as the pane's stand-in for that launch is retired once
+        the real buffer is showing. Known remaining sliver, recorded not fixed:
+        buffers restored by a *project session* open before the hook exists too, so a
+        huge file inside a restored session still loads synchronously at startup.
 - **External tool integration (version control and beyond)**
   - [x] VCS-agnostic version control, via a plugin system rather than a hardcoded git
         integration — the `blame`/`log` slice of the vocabulary is done (blame gutter +

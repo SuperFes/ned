@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <memory>
 #include <string>
 
 #include "Editor/Mode.h"
@@ -24,6 +25,42 @@ ned::ui::Screen MakeScreen(int width, int height) {
 
 } // namespace
 
+TEST_CASE("ModeLine shows a live load percentage when the loader published progress", "[ModeLine]") {
+    ned::text::Buffer buffer("huge.txt");
+    buffer.MarkLoading();
+
+    ned::ui::ActiveBuffer activeBuffer(buffer);
+    ned::editor::Mode     mode  = ned::editor::FundamentalMode();
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    ned::ui::ModeLine     modeLine(activeBuffer, mode, theme);
+
+    ned::ui::Screen screen = MakeScreen(60, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 0});
+
+    // No progress published (or an unknown total): the plain indicator.
+    modeLine.Paint(canvas);
+    REQUIRE(RowText(screen, 0, 60).find("Loading...") != std::string::npos);
+    REQUIRE(RowText(screen, 0, 60).find('%') == std::string::npos);
+
+    auto progress        = std::make_shared<ned::text::LoadProgress>();
+    progress->totalBytes = 200;
+    progress->bytesRead.store(50);
+    buffer.SetLoadProgress(progress);
+    modeLine.Paint(canvas);
+    REQUIRE(RowText(screen, 0, 60).find("Loading... 25%") != std::string::npos);
+
+    // bytesRead past totalBytes (the file grew mid-load) clamps to 100.
+    progress->bytesRead.store(999);
+    modeLine.Paint(canvas);
+    REQUIRE(RowText(screen, 0, 60).find("Loading... 100%") != std::string::npos);
+
+    // FinishLoad clears both the loading state and the progress pointer.
+    buffer.FinishLoad(ned::text::Rope("done"));
+    REQUIRE(buffer.CurrentLoadProgress() == nullptr);
+    modeLine.Paint(canvas);
+    REQUIRE(RowText(screen, 0, 60).find("Loading") == std::string::npos);
+}
+
 TEST_CASE("ModeLine shows the buffer name and 1-indexed line:column", "[ModeLine]") {
     ned::text::Buffer buffer("myfile.txt", ned::text::Rope("hello\nworld"));
     buffer.SetPoint(8); // line 1 (0-indexed), col 2 (0-indexed) -> displayed L2:C3
@@ -33,7 +70,7 @@ TEST_CASE("ModeLine shows the buffer name and 1-indexed line:column", "[ModeLine
     ned::ui::Theme        theme = ned::ui::DarkTheme();
     ned::ui::ModeLine     modeLine(activeBuffer, mode, theme);
 
-    ned::ui::Screen   screen = MakeScreen(40, 1);
+    ned::ui::Screen screen = MakeScreen(40, 1);
     ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
 
     modeLine.Paint(canvas);
@@ -62,7 +99,7 @@ TEST_CASE("ModeLine shows the active mode's name", "[ModeLine]") {
     ned::ui::Theme        theme = ned::ui::DarkTheme();
     ned::ui::ModeLine     modeLine(activeBuffer, mode, theme);
 
-    ned::ui::Screen   screen = MakeScreen(40, 1);
+    ned::ui::Screen screen = MakeScreen(40, 1);
     ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
 
     modeLine.Paint(canvas);
@@ -77,7 +114,7 @@ TEST_CASE("ModeLine recomputes its text fresh on every paint call", "[ModeLine]"
     ned::ui::Theme        theme = ned::ui::DarkTheme();
     ned::ui::ModeLine     modeLine(activeBuffer, mode, theme);
 
-    ned::ui::Screen   screen = MakeScreen(40, 1);
+    ned::ui::Screen screen = MakeScreen(40, 1);
     ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
 
     modeLine.Paint(canvas);
@@ -95,7 +132,7 @@ TEST_CASE("ModeLine shows a modified marker only when the buffer has unsaved cha
     ned::ui::Theme        theme = ned::ui::DarkTheme();
     ned::ui::ModeLine     modeLine(activeBuffer, mode, theme);
 
-    ned::ui::Screen   screen = MakeScreen(40, 1);
+    ned::ui::Screen screen = MakeScreen(40, 1);
     ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
 
     REQUIRE_FALSE(buffer.Modified());

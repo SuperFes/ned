@@ -15,6 +15,7 @@
 #include "EchoArea.h"
 #include "Editor/CodeFoldSettings.h"
 #include "Editor/FuzzyMatch.h"
+#include "Editor/HighlightSettings.h"
 #include "Editor/Link.h"
 #include "Editor/Lsp/LspManager.h"
 #include "Editor/Lsp/LspServerConfig.h"
@@ -36,16 +37,6 @@
 namespace ned::ui {
 
 namespace {
-
-    // large-file-async-load follow-up: past this size, never run mode_.highlight
-    // at all, regardless of whether the file's extension happens to match a
-    // real tree-sitter grammar. buffer.ReadOnly() already suppresses
-    // highlighting for a synthesized results buffer and (now) for a buffer
-    // that's still IsLoading() -- but a huge file that finishes loading and
-    // reverts to writable would otherwise still pay for a full buffer.Text()
-    // copy plus a whole-buffer tree-sitter parse on every edit. 8 MiB is
-    // generous for any real source file and well short of "expensive."
-    constexpr std::size_t kMaxHighlightBytes = 8 * 1024 * 1024;
 
     // Plain, non-modifier printable input: the only kind of chord that should
     // feed into a query string during isearch/query-replace/prompt text entry.
@@ -1451,7 +1442,16 @@ void BufferView::Paint(Canvas c) {
     // running that Mode's highlight query against "path:line: text" content
     // would produce meaningless spans, not an empty result, so ReadOnly()
     // suppresses this the same way FoldGutterActive() suppresses folding.
-    if (!mode_.highlight || buffer.ReadOnly() || buffer.Size() > kMaxHighlightBytes) {
+    // Past editor::MaxHighlightBytes() (loose-ends follow-up: was a
+    // hardcoded 8 MiB kMaxHighlightBytes here, now Editor/
+    // HighlightSettings.h's configurable process-wide setting), never run
+    // mode_.highlight at all, regardless of whether the file's extension
+    // matches a real grammar -- buffer.ReadOnly() already suppresses
+    // highlighting for results buffers and IsLoading() placeholders, but a
+    // huge file that finishes loading and reverts to writable would
+    // otherwise still pay a full buffer.Text() copy plus a whole-buffer
+    // tree-sitter parse on every edit.
+    if (!mode_.highlight || buffer.ReadOnly() || buffer.Size() > editor::MaxHighlightBytes()) {
         highlightCacheBuffer_ = nullptr;
         highlightCacheSpans_.clear();
     }

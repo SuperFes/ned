@@ -5,10 +5,12 @@
 
 #include "Text/BufferList.h"
 
+using ned::text::AsyncLoadThreshold;
 using ned::text::Buffer;
 using ned::text::BufferList;
 using ned::text::CompleteBufferNames;
 using ned::text::CompleteFilePath;
+using ned::text::SetAsyncLoadThreshold;
 
 TEST_CASE("Fresh BufferList is empty", "[BufferList]") {
     BufferList list;
@@ -361,4 +363,43 @@ TEST_CASE("OpenFile does not invoke the async opener for a small file even with 
     REQUIRE(buffer.Text() == "just a small file\n");
 
     std::filesystem::remove(path);
+}
+
+TEST_CASE("SetAsyncLoadThreshold governs which files go to the async opener", "[BufferList]") {
+    // Process-wide state (loose-ends follow-up: was a hardcoded 16 MiB
+    // constant) -- restored via RAII, TabWidthGuard's exact precedent.
+    struct ThresholdGuard {
+        ~ThresholdGuard() {
+            SetAsyncLoadThreshold(16 * 1024 * 1024);
+        }
+    } guard;
+
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_bufferlist_threshold.txt";
+    {
+        std::ofstream file(path, std::ios::binary);
+        file << "tiny but over a tiny threshold\n";
+    }
+
+    BufferList  list;
+    std::size_t hookCalls = 0;
+    list.SetAsyncFileOpener([&](Buffer&, const std::filesystem::path&) { ++hookCalls; });
+
+    REQUIRE(AsyncLoadThreshold() == 16 * 1024 * 1024);
+    SetAsyncLoadThreshold(4);
+    Buffer& buffer = list.OpenFile(path);
+    REQUIRE(hookCalls == 1); // 31 bytes > 4-byte threshold -> async path
+    REQUIRE(buffer.IsLoading());
+
+    SetAsyncLoadThreshold(1024);
+    std::filesystem::remove(path);
+    const std::filesystem::path smallPath = std::filesystem::temp_directory_path() / "ned_bufferlist_threshold2.txt";
+    {
+        std::ofstream file(smallPath, std::ios::binary);
+        file << "under\n";
+    }
+    Buffer& small = list.OpenFile(smallPath);
+    REQUIRE(hookCalls == 1); // unchanged -- back under the (raised) threshold
+    REQUIRE_FALSE(small.IsLoading());
+
+    std::filesystem::remove(smallPath);
 }

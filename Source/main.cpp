@@ -175,19 +175,40 @@ int main(int argc, char** argv) {
     // opening the same file instead of just refusing outright.
     ned::text::Buffer*    buffer = nullptr;
     std::filesystem::path deferredBinaryOpenPath;
+    std::filesystem::path deferredLargeOpenPath;
     if (pathArg != nullptr && !argIsDirectory) {
-        const bool isNewFile = !std::filesystem::exists(pathArg);
-        try {
-            buffer = &bufferList.OpenOrCreateFile(pathArg, forceBinary);
-            if (isNewFile) {
-                statusMessage = "(New file)";
+        // loose-ends follow-up: a large, legitimate text file passed on the
+        // command line used to be the one open path that still loaded
+        // synchronously (BufferList's async path needs the opener hook,
+        // which needs EventLoop, which doesn't exist yet) -- blocking the
+        // splash for however long the read took. Now deferred, exactly the
+        // deferredBinaryOpenPath shape below, to right after
+        // EnableAsyncFileLoading: the same "try later, once the machinery
+        // exists" trick, triggering a deferred *load* instead of a deferred
+        // confirmation prompt. The binary check keeps a large binary file
+        // on the sync path so it still gets its BinaryFileError ->
+        // interactive-confirmation flow (cheap: LooksBinary reads only the
+        // first 8 KiB).
+        std::error_code      sizeEc;
+        const std::uintmax_t size = std::filesystem::file_size(pathArg, sizeEc);
+        if (!sizeEc && size > ned::text::AsyncLoadThreshold() &&
+            (forceBinary || !ned::text::LooksBinary(pathArg))) {
+            deferredLargeOpenPath = pathArg;
+        }
+        else {
+            const bool isNewFile = !std::filesystem::exists(pathArg);
+            try {
+                buffer = &bufferList.OpenOrCreateFile(pathArg, forceBinary);
+                if (isNewFile) {
+                    statusMessage = "(New file)";
+                }
             }
-        }
-        catch (const ned::text::BinaryFileError&) {
-            deferredBinaryOpenPath = pathArg;
-        }
-        catch (const std::exception& e) {
-            statusMessage = e.what();
+            catch (const ned::text::BinaryFileError&) {
+                deferredBinaryOpenPath = pathArg;
+            }
+            catch (const std::exception& e) {
+                statusMessage = e.what();
+            }
         }
     }
     // session-persistence slice 2: the scratch-buffer fallback that used to
@@ -378,9 +399,16 @@ int main(int argc, char** argv) {
     }
     // The scratch fallback moved here from right after the CLI open (see
     // the comment there) -- only a launch with no CLI file AND no restored
-    // session buffer still needs one.
+    // session buffer still needs one. When it exists only as a stand-in for
+    // a deferred large-file open (loose-ends follow-up), it's remembered so
+    // the deferred block below can retire it once the real buffer arrives,
+    // instead of leaving a stray empty scratch tab.
+    ned::text::Buffer* startupScratch = nullptr;
     if (buffer == nullptr) {
         buffer = &bufferList.CreateBuffer("scratch");
+        if (!deferredLargeOpenPath.empty()) {
+            startupScratch = buffer;
+        }
     }
 
     ned::editor::Mode mode = ned::editor::ModeForBuffer(*buffer);
@@ -674,6 +702,29 @@ int main(int argc, char** argv) {
     // sidebar click, LSP jump-to-definition, etc.) happens well after this
     // and gets the async path.
     windowManager->EnableAsyncFileLoading(eventLoop);
+
+    // loose-ends follow-up: the large CLI file deferred at the top of
+    // main() (see deferredLargeOpenPath's own comment there) -- now that
+    // the async opener hook is wired, this open returns immediately with an
+    // IsLoading() placeholder the background loader fills in, exactly like
+    // any interactive open of the same file. Deliberately after the
+    // session-restore/breakpoint blocks: the CLI-named file wins focus,
+    // same as the sync path. A stand-in scratch buffer created above just
+    // for this launch is retired once the real buffer is showing.
+    if (!deferredLargeOpenPath.empty()) {
+        try {
+            ned::text::Buffer& opened = bufferList.OpenOrCreateFile(deferredLargeOpenPath, forceBinary);
+            windowManager->FocusedActiveBuffer().Set(opened);
+            projectSidebar->RevealPath(deferredLargeOpenPath);
+            if (startupScratch != nullptr && !startupScratch->Modified()) {
+                windowManager->NotifyBufferClosing(*startupScratch);
+                bufferList.Close(startupScratch->Name());
+            }
+        }
+        catch (const std::exception& e) {
+            statusMessage = e.what();
+        }
+    }
 
     // EventLoop's constructor too, via notcurses_mice_enable(NCMICE_ALL_EVENTS)
     // -- there's nothing left to set explicitly here for either concern.

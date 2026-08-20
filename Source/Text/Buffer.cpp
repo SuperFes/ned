@@ -254,6 +254,14 @@ void Buffer::MarkLoading() {
     Loading_ = true;
 }
 
+void Buffer::SetLoadProgress(std::shared_ptr<LoadProgress> progress) {
+    LoadProgress_ = std::move(progress);
+}
+
+const LoadProgress* Buffer::CurrentLoadProgress() const {
+    return LoadProgress_.get();
+}
+
 void Buffer::ReplaceContentForLoad(Rope content) {
     Rope_ = std::move(content);
     ++ContentGeneration_;
@@ -264,6 +272,7 @@ void Buffer::FinishLoad(Rope content) {
     UndoTree_      = UndoTree(Rope_);
     SavedSnapshot_ = Rope_;
     Loading_       = false;
+    LoadProgress_.reset();
     ++ContentGeneration_;
 }
 
