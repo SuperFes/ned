@@ -1,7 +1,6 @@
 #include "BufferView.h"
 
 #include <algorithm>
-#include <sstream>
 #include <cctype>
 #include <cstdlib>
 #include <exception>
@@ -9,6 +8,7 @@
 #include <fstream>
 #include <limits>
 #include <regex>
+#include <sstream>
 #include <utility>
 #include <vector>
 
@@ -787,8 +787,8 @@ namespace {
     Color BlameHashColor(const std::string& date) {
         constexpr int kBlameMaxAgeDays = 365;
 
-        std::istringstream     stream(date);
-        std::chrono::sys_days  parsed;
+        std::istringstream    stream(date);
+        std::chrono::sys_days parsed;
         stream >> std::chrono::parse("%Y-%m-%d", parsed);
         if (stream.fail()) {
             return Color::BrightBlack;
@@ -929,19 +929,19 @@ void BufferView::ShowBlameDetailAtPoint() {
     }
 
     const text::Buffer& buffer = activeBuffer_.Get();
-    const std::size_t    line   = buffer.Content().ByteOffsetToLine(buffer.Point());
+    const std::size_t   line   = buffer.Content().ByteOffsetToLine(buffer.Point());
 
     // Same lower_bound lookup Paint()'s own blame-gutter rendering uses --
     // blameLineInfo_ is sorted by line, one entry per blamed line.
     const auto it = std::lower_bound(blameLineInfo_.begin(), blameLineInfo_.end(), line,
-                                      [](const auto& entry, std::size_t l) { return entry.first < l; });
+                                     [](const auto& entry, std::size_t l) { return entry.first < l; });
     if (it == blameLineInfo_.end() || it->first != line) {
         statusMessage_ = "no blame data for this line";
         return;
     }
 
     const editor::vcs::VcsBlameLine& blame = it->second;
-    statusMessage_ = blame.commitHash + " " + blame.author + " (" + blame.date + "): " + blame.summary;
+    statusMessage_                         = blame.commitHash + " " + blame.author + " (" + blame.date + "): " + blame.summary;
 }
 
 void BufferView::ScheduleDiffRefresh() {
@@ -1393,7 +1393,7 @@ void BufferView::Paint(Canvas c) {
                 currentLineDiffTint.reset();
                 if (diffColumnWidth > 0) {
                     const auto diffIt = std::lower_bound(diffLineKinds_.begin(), diffLineKinds_.end(), line,
-                                                          [](const auto& entry, std::size_t targetLine) { return entry.first < targetLine; });
+                                                         [](const auto& entry, std::size_t targetLine) { return entry.first < targetLine; });
                     if (diffIt != diffLineKinds_.end() && diffIt->first == line && diffIt->second != DiffLineKind::Removed) {
                         currentLineDiffTint = diffIt->second;
                     }
@@ -1433,9 +1433,9 @@ void BufferView::Paint(Canvas c) {
                 // computed just above), matching the diff gutter column's
                 // own choice to give Removed a distinct glyph instead.
                 const Color gutterForeground = currentLineDiffTint
-                                                    ? (currentLineDiffTint == DiffLineKind::Added ? Color::BrightGreen : Color::BrightBlue)
-                                                : (line == pointLine) ? theme_.currentLineNumberForeground
-                                                                      : theme_.lineNumberForeground;
+                                                   ? (currentLineDiffTint == DiffLineKind::Added ? Color::BrightGreen : Color::BrightBlue)
+                                               : (line == pointLine) ? theme_.currentLineNumberForeground
+                                                                     : theme_.lineNumberForeground;
                 // Digits+padding get the full selection background only when the
                 // whole line is covered; the one-column gap after them gets it for
                 // Partial too, so a partially-selected line still shows a thin
@@ -1460,7 +1460,7 @@ void BufferView::Paint(Canvas c) {
                 // same reason (this isn't a tree-sitter capture category).
                 if (diffColumnWidth > 0) {
                     const auto it = std::lower_bound(diffLineKinds_.begin(), diffLineKinds_.end(), line,
-                                                      [](const auto& entry, std::size_t targetLine) { return entry.first < targetLine; });
+                                                     [](const auto& entry, std::size_t targetLine) { return entry.first < targetLine; });
                     if (it != diffLineKinds_.end() && it->first == line) {
                         Cell& cell = c[{.x = static_cast<int>(statusStart), .y = row}];
                         switch (it->second) {
@@ -1504,36 +1504,56 @@ void BufferView::Paint(Canvas c) {
                     statusBrush.ApplyTo(cell);
                 }
 
-                // LSP client follow-up: same solid-color-swatch shape as the
-                // status column just above, in its own dedicated column --
-                // see diagnosticLineSeverities_'s own doc comment for why a
-                // plain binary search suffices here too (at most one entry per
-                // line, already sorted).
+                // LSP client follow-up (was a solid color swatch like the
+                // status column just above; diagnostic-gutter-icons follow-up
+                // made it a real glyph): a severity-specific icon in the
+                // severity's theme color, so the column says what KIND of
+                // diagnostic a line has, not just that one exists. Glyphs are
+                // deliberately plain single-width Unicode, not Nerd Font
+                // icons or emoji -- same portability/column-math reasoning
+                // ProjectSidebar's own glyph-choice comment documents; every
+                // pick is from a range this codebase already renders
+                // single-width somewhere (geometric shapes: ScrollArrowButton's
+                // own arrows; dingbat/ASCII/Latin-1: TabBar's close icon, the
+                // gutter digits themselves). See diagnosticLineSeverities_'s
+                // own doc comment for why a plain binary search suffices here
+                // (at most one entry per line -- the most severe -- already
+                // sorted).
                 if (static_cast<int>(diagnosticStart) < c.size().width) {
-                    const auto it             = std::lower_bound(diagnosticLineSeverities_.begin(), diagnosticLineSeverities_.end(), line,
-                                                                 [](const auto& entry, std::size_t targetLine) { return entry.first < targetLine; });
-                    const bool hasDiagnostic  = it != diagnosticLineSeverities_.end() && it->first == line;
-                    Color      indicatorColor = theme_.background;
-                    if (hasDiagnostic) {
+                    const auto it            = std::lower_bound(diagnosticLineSeverities_.begin(), diagnosticLineSeverities_.end(), line,
+                                                                [](const auto& entry, std::size_t targetLine) { return entry.first < targetLine; });
+                    const bool hasDiagnostic = it != diagnosticLineSeverities_.end() && it->first == line;
+                    Cell&      cell          = c[{.x = static_cast<int>(diagnosticStart), .y = row}];
+                    if (!hasDiagnostic) {
+                        cell.character = " ";
+                        Brush{.background = theme_.background, .foreground = theme_.background}.ApplyTo(cell);
+                    }
+                    else {
+                        const char* glyph = " ";
+                        Color       color = theme_.background;
+                        bool        bold  = true;
                         switch (it->second) {
                             case text::Buffer::Diagnostic::Severity::Error:
-                                indicatorColor = theme_.diagnosticError;
+                                glyph = "✗"; // ✗ BALLOT X -- the universal "failure" cross
+                                color = theme_.diagnosticError;
                                 break;
                             case text::Buffer::Diagnostic::Severity::Warning:
-                                indicatorColor = theme_.diagnosticWarning;
+                                glyph = "▲"; // ▲ -- the warning-triangle convention
+                                color = theme_.diagnosticWarning;
                                 break;
                             case text::Buffer::Diagnostic::Severity::Information:
-                                indicatorColor = theme_.diagnosticInformation;
+                                glyph = "i"; // bold i -- reads "info" directly, no circled-i needed
+                                color = theme_.diagnosticInformation;
                                 break;
                             case text::Buffer::Diagnostic::Severity::Hint:
-                                indicatorColor = theme_.diagnosticHint;
+                                glyph = "·"; // · MIDDLE DOT -- deliberately subtle, matching a hint's low urgency
+                                color = theme_.diagnosticHint;
+                                bold  = false;
                                 break;
                         }
+                        cell.character = glyph;
+                        Brush{.background = theme_.background, .foreground = color, .bold = bold}.ApplyTo(cell);
                     }
-                    const Brush diagnosticBrush{.background = indicatorColor, .foreground = indicatorColor};
-                    Cell&       cell = c[{.x = static_cast<int>(diagnosticStart), .y = row}];
-                    cell.character   = " ";
-                    diagnosticBrush.ApplyTo(cell);
                 }
 
                 const std::string number  = std::to_string(line + 1); // 1-indexed, matches ModeLine's L/C convention
@@ -1661,7 +1681,7 @@ void BufferView::Paint(Canvas c) {
                 // tree-sitter-capture-oriented, not a fit for this.
                 if (blameColumnWidth > 0) {
                     const auto it = std::lower_bound(blameLineInfo_.begin(), blameLineInfo_.end(), line,
-                                                      [](const auto& entry, std::size_t l) { return entry.first < l; });
+                                                     [](const auto& entry, std::size_t l) { return entry.first < l; });
                     if (it != blameLineInfo_.end() && it->first == line) {
                         const std::string shortHash = it->second.commitHash.substr(0, std::min<std::size_t>(8, it->second.commitHash.size()));
                         const Color       hashColor = BlameHashColor(it->second.date);

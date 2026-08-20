@@ -1041,10 +1041,14 @@ TEST_CASE("The diagnostics gutter column shows a severity-colored marker on the 
 
     // Diagnostic column sits at x=1, immediately after the status column
     // (x=0) -- see BufferView::GutterWidth's own [status][diagnostic][gap]...
-    // layout comment.
-    REQUIRE(screen.PixelAt(1, 0).background_color == fixture.theme.background);      // "one" -- no diagnostic
-    REQUIRE(screen.PixelAt(1, 1).background_color == fixture.theme.diagnosticError); // "two" -- the diagnostic's own line
-    REQUIRE(screen.PixelAt(1, 2).background_color == fixture.theme.background);      // "three" -- no diagnostic
+    // layout comment. diagnostic-gutter-icons follow-up: a severity glyph in
+    // the severity's foreground color on the plain theme background, no
+    // longer a solid background swatch.
+    REQUIRE(screen.PixelAt(1, 0).character == " "); // "one" -- no diagnostic
+    REQUIRE(screen.PixelAt(1, 1).character == "✗"); // "two" -- the diagnostic's own line
+    REQUIRE(screen.PixelAt(1, 1).foreground_color == fixture.theme.diagnosticError);
+    REQUIRE(screen.PixelAt(1, 1).background_color == fixture.theme.background);
+    REQUIRE(screen.PixelAt(1, 2).character == " "); // "three" -- no diagnostic
 }
 
 TEST_CASE("The diagnostics gutter shows the most severe of two diagnostics sharing a line", "[BufferView]") {
@@ -1062,7 +1066,36 @@ TEST_CASE("The diagnostics gutter shows the most severe of two diagnostics shari
     ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 1});
     view.Paint(canvas);
 
-    REQUIRE(screen.PixelAt(1, 0).background_color == fixture.theme.diagnosticError);
+    REQUIRE(screen.PixelAt(1, 0).character == "✗");
+    REQUIRE(screen.PixelAt(1, 0).foreground_color == fixture.theme.diagnosticError);
+}
+
+TEST_CASE("The diagnostics gutter uses a distinct glyph per severity", "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("one\ntwo\nthree\nfour");
+    const auto lineStart = [&](std::size_t line) { return fixture.buffer.Content().LineToByteOffset(line); };
+    fixture.buffer.SetDiagnostics({
+        ned::text::Buffer::Diagnostic{.startByte = lineStart(0), .endByte = lineStart(0) + 1, .severity = ned::text::Buffer::Diagnostic::Severity::Error, .message = "e"},
+        ned::text::Buffer::Diagnostic{.startByte = lineStart(1), .endByte = lineStart(1) + 1, .severity = ned::text::Buffer::Diagnostic::Severity::Warning, .message = "w"},
+        ned::text::Buffer::Diagnostic{.startByte = lineStart(2), .endByte = lineStart(2) + 1, .severity = ned::text::Buffer::Diagnostic::Severity::Information, .message = "i"},
+        ned::text::Buffer::Diagnostic{.startByte = lineStart(3), .endByte = lineStart(3) + 1, .severity = ned::text::Buffer::Diagnostic::Severity::Hint, .message = "h"},
+    });
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 3});
+
+    ned::ui::Screen screen = ned::ui::Screen(20, 4);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 3});
+    view.Paint(canvas);
+
+    REQUIRE(screen.PixelAt(1, 0).character == "✗");
+    REQUIRE(screen.PixelAt(1, 0).foreground_color == fixture.theme.diagnosticError);
+    REQUIRE(screen.PixelAt(1, 1).character == "▲");
+    REQUIRE(screen.PixelAt(1, 1).foreground_color == fixture.theme.diagnosticWarning);
+    REQUIRE(screen.PixelAt(1, 2).character == "i");
+    REQUIRE(screen.PixelAt(1, 2).foreground_color == fixture.theme.diagnosticInformation);
+    REQUIRE(screen.PixelAt(1, 3).character == "·");
+    REQUIRE(screen.PixelAt(1, 3).foreground_color == fixture.theme.diagnosticHint);
 }
 
 TEST_CASE("The current line's gutter number is styled distinctly from the rest", "[BufferView]") {
