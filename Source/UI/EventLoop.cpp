@@ -200,6 +200,24 @@ void EventLoop::Run(const EventLoopCallbacks& callbacks) {
             if (id == NCKEY_SIGNAL || id == NCKEY_EOF) {
                 continue;
             }
+            // See heldMouseButtonId_'s own doc comment (EventLoop.h) for the
+            // real, confirmed root cause this reclassification fixes: a
+            // held-button drag-motion sample and a genuinely fresh press
+            // are otherwise indistinguishable once Notcurses hands them
+            // over, both id == NCKEY_BUTTON<N> / evtype == NCTYPE_PRESS.
+            if (nckey_mouse_p(input.id)) {
+                if (input.evtype == NCTYPE_RELEASE) {
+                    heldMouseButtonId_.reset();
+                }
+                else if (input.evtype == NCTYPE_PRESS || input.evtype == NCTYPE_REPEAT) {
+                    if (heldMouseButtonId_ == input.id) {
+                        input.evtype = NCTYPE_UNKNOWN; // Event::mouse() decodes this as Motion::Moved
+                    }
+                    else {
+                        heldMouseButtonId_ = input.id;
+                    }
+                }
+            }
             if (callbacks.onEvent) {
                 callbacks.onEvent(Event(input));
             }
