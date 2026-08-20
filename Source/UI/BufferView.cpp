@@ -872,6 +872,23 @@ void BufferView::DispatchBlameForTesting(std::vector<editor::vcs::VcsBlameLine> 
 }
 
 void BufferView::RequestBlameForCurrentBuffer() {
+    // A real toggle: vcs-show-blame called again while blame is already
+    // showing for this buffer turns it off instead of re-fetching -- the
+    // reported, real gap this fixes is that there was previously no way to
+    // turn it back off at all short of switching buffers and back (which
+    // clears it as a side effect of Paint()'s own buffer-switch handling,
+    // not a deliberate toggle). Guarded on blameGutterCacheBuffer_
+    // specifically (not just BlameGutterActive()) so pressing the key
+    // again for a *different* buffer than the one blame is currently
+    // loaded for still fetches fresh, rather than clearing the wrong
+    // buffer's (already-stale-by-definition, since it's a different
+    // buffer) data.
+    if (BlameGutterActive() && blameGutterCacheBuffer_ == &activeBuffer_.Get()) {
+        blameLineInfo_.clear();
+        statusMessage_ = "blame hidden";
+        return;
+    }
+
     if (!vcsRunner_) {
         statusMessage_ = "no vcs runner configured";
         return;

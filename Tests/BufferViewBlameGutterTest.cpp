@@ -177,6 +177,27 @@ TEST_CASE("vcs-show-blame (C-c v b) stays on the current buffer rather than swit
     REQUIRE(&fixture.activeBuffer.Get() == &fixture.buffer);
 }
 
+TEST_CASE("vcs-show-blame (C-c v b) toggles off when blame is already showing for the current buffer",
+          "[BufferView][Vcs]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("some code");
+    BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
+
+    view.DispatchBlameForTesting(OneLineOfBlame());
+    REQUIRE(view.BlameGutterActive());
+
+    view.OnEvent(ned::ui::test::Ctrl('c'));
+    view.OnEvent(ned::ui::test::Character("v"));
+    view.OnEvent(ned::ui::test::Character("b"));
+
+    REQUIRE_FALSE(view.BlameGutterActive());
+    REQUIRE(fixture.statusMessage == "blame hidden");
+    // No VcsRunner configured -- if this had fallen through to a fresh
+    // fetch instead of toggling off, it would have overwritten the status
+    // message with "no vcs runner configured" instead.
+}
+
 TEST_CASE("vcs-visit-result (C-c v v) jumps from a synthesized *vcs blame*-shaped line to the real file/line",
           "[BufferView][Vcs]") {
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_bufferview_test_vcs_visit_result";
