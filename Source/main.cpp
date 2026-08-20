@@ -20,8 +20,12 @@
 #include "Editor/Mode.h"
 #include "Editor/ModeOverrides.h"
 #include "Editor/ProjectRoot.h"
+#include "Editor/ProjectSession.h"
+#include "Editor/ProjectTrust.h"
 #include "Editor/Register.h"
 #include "Editor/ScriptingSession.h"
+#include "Editor/Session.h"
+#include "Editor/TabWidth.h"
 #include "Editor/Tasks/TaskRunner.h"
 #include "Editor/Vcs/VcsRunner.h"
 
@@ -133,9 +137,12 @@ int main(int argc, char** argv) {
     CLI::App app{"Ned -- a terminal-based, Janet-scriptable text editor.", "ned"};
 
     bool                     forceBinary = false;
+    bool                     noRestore   = false;
     std::vector<std::string> paths;
     app.add_flag("--force-binary", forceBinary,
                  "Open files that look binary anyway, without an interactive confirmation");
+    app.add_flag("--no-restore", noRestore,
+                 "Don't restore the project's saved session (open buffers, breakpoints, sidebar state)");
     app.add_option("paths", paths, "Files or directories to open");
 
     try {
@@ -183,9 +190,11 @@ int main(int argc, char** argv) {
             statusMessage = e.what();
         }
     }
-    if (buffer == nullptr) {
-        buffer = &bufferList.CreateBuffer("scratch");
-    }
+    // session-persistence slice 2: the scratch-buffer fallback that used to
+    // live right here moved below the project-session restore -- a restored
+    // session's own buffers should become the startup view instead of an
+    // empty scratch, and creating scratch first would leave it lingering as
+    // a stray extra tab. Nothing between here and there dereferences buffer.
 
     // command-line-parameter-handling follow-up: any path arguments beyond
     // the first are opened as ordinary background buffers -- not shown in
@@ -214,14 +223,39 @@ int main(int argc, char** argv) {
 
     // project-root-detection follow-up: computed once here from whatever
     // was opened, not re-derived later (see ProjectRoot.h's own doc
-    // comment). No CLI argument at all falls back to the existing "just use
-    // cwd" behavior, unchanged -- an explicit, narrow scope cut, not an
-    // oversight: DetectProjectRoot's "a directory is always the root
-    // outright" rule is specifically for an *explicitly* opened directory,
-    // and there's no file path to derive a smarter default from otherwise.
-    ned::editor::SetProjectRoot(
-        ned::editor::DetectProjectRoot(
-            pathArg != nullptr ? std::filesystem::path(pathArg) : std::filesystem::current_path()));
+    // comment). session-persistence slice 2 changed the no-CLI-argument
+    // case: it used to fall back to "cwd is the root outright," which
+    // can't tell a project from just-some-directory -- now it walks upward
+    // from cwd for a VCS/.ned marker (FindProjectMarkerRoot), so `ned` run
+    // from anywhere inside a project roots at, and restores the session
+    // of, that project; a walk that finds nothing keeps the old plain-cwd
+    // behavior. An *explicitly* opened directory keeps its "is the root
+    // outright, no walk" rule unchanged.
+    const std::filesystem::path projectRoot = [&]() -> std::filesystem::path {
+        if (pathArg != nullptr) {
+            return ned::editor::DetectProjectRoot(pathArg);
+        }
+        const std::filesystem::path cwd = std::filesystem::current_path();
+        if (const auto markerRoot = ned::editor::FindProjectMarkerRoot(cwd)) {
+            return *markerRoot;
+        }
+        return cwd;
+    }();
+    ned::editor::SetProjectRoot(projectRoot);
+
+    // Only a real project -- a root actually carrying a VCS/.ned marker --
+    // ever reads or writes a session file: without this, running `ned` from
+    // $HOME would accumulate a junk "session" for the home directory.
+    // --no-restore leaves the root unset entirely, making the whole run
+    // session-inert in BOTH directions -- restoring nothing is easy, but it
+    // must also not SAVE at quit, or `ned --no-restore quickfix.cpp` would
+    // silently overwrite the project's real saved session with just that
+    // one file. Establishing the root here (before init.janet loads,
+    // below) is what lets ned/set-session-restore still veto everything:
+    // every load/save path re-checks SessionRestoreEnabled() at use time.
+    if (!noRestore && ned::editor::HasProjectMarker(projectRoot)) {
+        ned::editor::SetActiveProjectSessionRoot(projectRoot);
+    }
 
     ned::text::KillRing        killRing;
     ned::editor::RegisterTable registers;
@@ -254,6 +288,99 @@ int main(int argc, char** argv) {
     }
     catch (const std::exception& e) {
         statusMessage = std::string("init.janet error: ") + e.what();
+    }
+
+    // session-persistence slice 3: project-local .ned/init.janet, loaded
+    // after the global init.janet so project config overrides user config
+    // -- but NEVER silently: this is arbitrary code execution triggered by
+    // opening a directory (the same concern class ROADMAP.md records
+    // against Org Babel). A file whose exact content was previously
+    // "always"-approved (and whose trust hasn't aged out unused -- see
+    // ProjectTrust.h) loads right here, early enough for its mode
+    // overrides/grammars to affect the initial buffer; anything else
+    // defers to a y/n/a prompt once the UI exists, below. The trust store
+    // loads after init.janet so a configured expiry window governs its
+    // prune.
+    const std::filesystem::path projectInitPath = projectRoot / ".ned" / "init.janet";
+    std::filesystem::path       deferredTrustPromptPath;
+    {
+        std::error_code projectInitEc;
+        if (std::filesystem::is_regular_file(projectInitPath, projectInitEc)) {
+            ned::editor::LoadProjectTrust();
+            const std::optional<std::string> hash = ned::editor::HashFileContent(projectInitPath);
+            if (hash && ned::editor::IsProjectInitTrusted(projectInitPath, *hash)) {
+                try {
+                    janetEnv.DoFile(projectInitPath);
+                }
+                catch (const std::exception& e) {
+                    statusMessage = std::string("project init.janet error: ") + e.what();
+                }
+                ned::editor::TouchProjectTrust(projectInitPath);
+                ned::editor::SaveProjectTrust();
+            }
+            else {
+                deferredTrustPromptPath = projectInitPath;
+            }
+        }
+    }
+
+    // session-persistence slice 1: deliberately after LoadInitFile, not
+    // beside the CLI opens above -- init.janet is where ned/set-save-place
+    // can turn this off, so the startup buffers' restore has to wait for it
+    // (they were opened before the hook below existed, hence the explicit
+    // loop). Every later open (find-file, sidebar click, LSP jump, ...)
+    // funnels through BufferList's own on-file-opened seam instead.
+    ned::editor::LoadFilePlaces();
+    if (ned::editor::SavePlaceEnabled()) {
+        for (const auto& openBuffer : bufferList.Buffers()) {
+            ned::editor::RestoreFilePlace(*openBuffer, static_cast<std::size_t>(ned::editor::TabWidth()));
+        }
+    }
+    bufferList.SetOnFileOpened([](ned::text::Buffer& opened) {
+        ned::editor::RestoreFilePlace(opened, static_cast<std::size_t>(ned::editor::TabWidth()));
+    });
+
+    // session-persistence slice 2, Kate-style per the user's explicit call:
+    // the project session's buffers restore even when a specific file was
+    // named on the command line -- the named file just wins focus, the
+    // session's own buffers fill in behind it (FindByPath dedupes any
+    // overlap). Runs after init.janet (ned/set-session-restore honored --
+    // LoadActiveProjectSession no-ops when it's off, or when no project
+    // root was established above) and after SetOnFileOpened, so every
+    // restored buffer gets its save-place restore through the same hook as
+    // any other open. restoredSession outlives this block: breakpoints are
+    // applied later, once dapManager exists, and the sidebar state once
+    // projectSidebar does.
+    const std::optional<ned::editor::ProjectSessionData> restoredSession = ned::editor::LoadActiveProjectSession();
+    if (restoredSession) {
+        for (const auto& file : restoredSession->openFiles) {
+            std::error_code existsEc;
+            if (!std::filesystem::exists(file, existsEc) || bufferList.FindByPath(file) != nullptr) {
+                continue; // gone since last session, or already opened via the CLI
+            }
+            try {
+                bufferList.OpenOrCreateFile(file, forceBinary);
+            }
+            catch (const std::exception&) {
+                // Best-effort, same as the extra-CLI-paths loop above.
+            }
+        }
+        if (buffer == nullptr && restoredSession->activeFile) {
+            buffer = bufferList.FindByPath(*restoredSession->activeFile);
+        }
+        if (buffer == nullptr) {
+            for (const auto& file : restoredSession->openFiles) {
+                if ((buffer = bufferList.FindByPath(file)) != nullptr) {
+                    break;
+                }
+            }
+        }
+    }
+    // The scratch fallback moved here from right after the CLI open (see
+    // the comment there) -- only a launch with no CLI file AND no restored
+    // session buffer still needs one.
+    if (buffer == nullptr) {
+        buffer = &bufferList.CreateBuffer("scratch");
     }
 
     ned::editor::Mode mode = ned::editor::ModeForBuffer(*buffer);
@@ -343,6 +470,18 @@ int main(int argc, char** argv) {
 
     sidebarToggle->SetSidebar(projectSidebar.get());
 
+    // session-persistence slice 2: the restored session's sidebar state.
+    // Applied before the first frame ever paints, so there's no visible
+    // flash of the default state.
+    if (restoredSession) {
+        if (restoredSession->sidebarVisible) {
+            projectSidebar->active = *restoredSession->sidebarVisible;
+        }
+        if (restoredSession->sidebarWidth) {
+            projectSidebar->SetWidth(*restoredSession->sidebarWidth);
+        }
+    }
+
     // project-root-detection follow-up: makes it clear, right at startup,
     // which file in the (possibly VCS-root-detected, not just the opened
     // file's own directory) project tree corresponds to what's actually
@@ -413,6 +552,40 @@ int main(int argc, char** argv) {
         windowManager->RequestOpenBinaryFile(deferredBinaryOpenPath);
     }
 
+    // session-persistence slice 3: the untrusted-.ned/init.janet prompt
+    // deferred from the load site above, now that a focused pane exists to
+    // drive it (same deferral RequestOpenBinaryFile gets, and the same
+    // "must run after TakeFocus()" reason). Loading this late instead of
+    // beside the global init.janet is the accepted cost of prompting at
+    // all: mode overrides a first-time project init registers won't affect
+    // the already-selected initial Mode until the next buffer switch. The
+    // hash is recomputed at decision time so what gets recorded as trusted
+    // is exactly what got loaded, not what was on disk at startup.
+    if (!deferredTrustPromptPath.empty()) {
+        windowManager->RequestTrustProjectInit(
+            deferredTrustPromptPath,
+            [&janetEnv, &statusMessage](const std::filesystem::path&     initPath,
+                                        ned::editor::ProjectInitDecision decision) {
+                if (decision == ned::editor::ProjectInitDecision::Decline) {
+                    statusMessage = "Project init.janet not loaded.";
+                    return;
+                }
+                if (decision == ned::editor::ProjectInitDecision::LoadAlways) {
+                    if (const auto hash = ned::editor::HashFileContent(initPath)) {
+                        ned::editor::RecordProjectInitTrust(initPath, *hash);
+                    }
+                }
+                try {
+                    janetEnv.DoFile(initPath);
+                    ned::editor::TouchProjectTrust(initPath);
+                    statusMessage = "Loaded " + initPath.string();
+                }
+                catch (const std::exception& e) {
+                    statusMessage = std::string("project init.janet error: ") + e.what();
+                }
+            });
+    }
+
     // FTXUI -> Notcurses migration: the Konsole-specific workaround that
     // used to live here (entering the alternate screen buffer and homing
     // the cursor manually, before FTXUI's own ScreenInteractive::Fullscreen()
@@ -464,6 +637,13 @@ int main(int argc, char** argv) {
     // own doc comment in WindowManager.h.
     ned::editor::dap::DapManager dapManager(eventLoop);
     windowManager->SetDapManager(&dapManager);
+
+    // session-persistence slice 2: the restored session's breakpoints,
+    // applied as soon as the store they live in exists -- long before any
+    // debug session could, so this never races an adapter.
+    if (restoredSession && !restoredSession->breakpoints.empty()) {
+        dapManager.RestoreBreakpoints(restoredSession->breakpoints);
+    }
 
     // FTXUI -> Notcurses migration: BufferView's completion-debounce/
     // status-message-idle-timeout DeadlineTimers and ScrollArrowButton's
@@ -545,6 +725,15 @@ int main(int argc, char** argv) {
     };
 
     eventLoop.Run(callbacks);
+
+    // session-persistence slice 1: one final record+save on clean exit --
+    // forced, so lastUsed refreshes (which deliberately don't mark the
+    // store dirty, see FilePlaceStore::Record) still reach disk. Everything
+    // recorded from is still alive here: bufferList/windowManager are
+    // locals destroyed after this returns.
+    windowManager->RecordSessionPlaces();
+    ned::editor::SaveFilePlaces(/*force=*/true);
+    windowManager->SaveProjectSessionNow();
 
     return 0;
 }

@@ -26,6 +26,7 @@
 #include "Editor/ProjectTree.h"
 #include "Editor/Rectangle.h"
 #include "Editor/ScratchPad.h"
+#include "Editor/Session.h"
 #include "Editor/TabWidth.h"
 #include "Editor/WrapOverrides.h"
 #include "KeyTranslation.h"
@@ -613,6 +614,25 @@ BufferView::BufferView(ActiveBuffer& activeBuffer, text::KillRing& killRing, edi
     // Paint() -- a real regression this exact fix introduced and a test
     // caught before it shipped, not assumed safe.
     topLineValidatedBuffer_ = &activeBuffer_.Get();
+    // session-persistence slice 1: this seeding is also exactly why the
+    // EnsureTopLineValidForActiveBuffer seam can never restore a stored
+    // viewport for the buffer a pane STARTS on (the seam only fires on a
+    // later switch) -- a real, user-reported gap: relaunching ned on a file
+    // restored point but left the view at the top. So the initial buffer's
+    // stored topLine is applied right here instead. Clamped by pointLine,
+    // not MaxTopLine() (size() is still 0x0 at construction, so MaxTopLine
+    // is meaningless): a consistently recorded place always has
+    // pointLine >= topLine, so the min only ever bites when the file shrank
+    // outside ned and point itself got clamped -- pinning point's own line
+    // to the top row is the sane view for that case. A pre-first-Paint
+    // wheel/scroll-bar event now adjusts from the restored position rather
+    // than from 0, which is the same "don't discard real scroll state"
+    // intent the seeding comment above describes.
+    if (const auto place = editor::StoredFilePlaceFor(activeBuffer_.Get()); place && place->topLine) {
+        const text::Buffer& buffer    = activeBuffer_.Get();
+        const std::size_t   pointLine = buffer.Content().ByteOffsetToLine(buffer.Point());
+        topLine_                      = std::min(*place->topLine, pointLine);
+    }
     // Same reasoning as topLineValidatedBuffer_ just above, for
     // onActiveBufferChanged_: the buffer active at construction is already
     // reflected in whatever Mode the owning Pane constructed this
@@ -2379,6 +2399,11 @@ bool BufferView::OnKeyEvent(const Event& event) {
         ClampPointToNarrowing();
         return true;
     }
+    if (inputMode_ == InputMode::ConfirmTrustProjectInit) {
+        HandleConfirmTrustProjectInitKey(*chord);
+        ClampPointToNarrowing();
+        return true;
+    }
     if (inputMode_ == InputMode::FindFile || inputMode_ == InputMode::SwitchToBuffer ||
         inputMode_ == InputMode::ProjectSearch || inputMode_ == InputMode::CreateDirectory ||
         inputMode_ == InputMode::FindScratch || inputMode_ == InputMode::StringRectangle ||
@@ -3762,7 +3787,9 @@ void BufferView::EndInteractiveSession() {
     projectReplace_.reset();
     pendingClose_ = nullptr;
     pendingBinaryOpenPath_.clear();
-    deleteStage_ = DeleteFileStage::EnteringPath;
+    pendingTrustInitPath_.clear();
+    onTrustDecision_ = nullptr;
+    deleteStage_     = DeleteFileStage::EnteringPath;
     deleteTarget_.clear();
     renameStage_ = RenameFileStage::EnteringSource;
     renameSource_.clear();
@@ -4930,6 +4957,46 @@ void BufferView::HandleConfirmOpenBinaryKey(const editor::KeyChord& chord) {
     // Anything else is ignored -- stay in the prompt.
 }
 
+void BufferView::RequestTrustProjectInit(
+    const std::filesystem::path&                                                   initPath,
+    std::function<void(const std::filesystem::path&, editor::ProjectInitDecision)> onDecision) {
+    if (inputMode_ != InputMode::Normal) {
+        statusMessage_ = "Finish the current prompt first.";
+        return;
+    }
+    pendingTrustInitPath_ = initPath;
+    onTrustDecision_      = std::move(onDecision);
+    inputMode_            = InputMode::ConfirmTrustProjectInit;
+    statusMessage_        = "Load project init \"" + initPath.string() + "\"? (y=once, a=always, n=no)";
+}
+
+void BufferView::HandleConfirmTrustProjectInitKey(const editor::KeyChord& chord) {
+    std::optional<editor::ProjectInitDecision> decision;
+    if (chord.Codepoint == U'y' || chord.Codepoint == U'Y') {
+        decision = editor::ProjectInitDecision::LoadOnce;
+    }
+    else if (chord.Codepoint == U'a' || chord.Codepoint == U'A') {
+        decision = editor::ProjectInitDecision::LoadAlways;
+    }
+    else if (chord.Codepoint == U'n' || chord.Codepoint == U'N' || IsQuit(chord)) {
+        decision = editor::ProjectInitDecision::Decline;
+    }
+    if (!decision) {
+        return; // anything else is ignored -- stay in the prompt
+    }
+
+    // Moved out before EndInteractiveSession clears both members; the
+    // callback runs after the session has fully ended so it's free to set
+    // statusMessage_ (and could even start a new prompt) without this
+    // session's teardown clobbering it.
+    const std::filesystem::path path       = pendingTrustInitPath_;
+    const auto                  onDecision = std::move(onTrustDecision_);
+    EndInteractiveSession();
+    if (onDecision) {
+        onDecision(path, *decision);
+    }
+}
+
 void BufferView::HandleDeleteFileKey(const editor::KeyChord& chord) {
     if (deleteStage_ == DeleteFileStage::EnteringPath) {
         if (chord.Special == editor::SpecialKey::Enter) {
@@ -5327,6 +5394,18 @@ void BufferView::EnsureTopLineValidForActiveBuffer() {
         return;
     }
     topLineValidatedBuffer_ = &buffer;
+    // session-persistence slice 1: a stored viewport for this buffer wins
+    // over whatever topLine_ the previous buffer left behind -- this seam
+    // fires exactly once per buffer switch (and on a pane's very first
+    // Paint, covering the startup buffer), which is what makes restored
+    // scroll positions land here and nowhere else. Clamped by MaxTopLine()
+    // against content that shrank since the place was recorded (an outside
+    // edit between runs); ScrollToShowPoint() below then still guarantees
+    // point is visible, so a topLine/point pair that somehow disagrees
+    // resolves in point's favor, never a blank or point-less view.
+    if (const auto place = editor::StoredFilePlaceFor(buffer); place && place->topLine) {
+        topLine_ = std::min(*place->topLine, MaxTopLine());
+    }
     // ScrollToShowPoint() alone (no need to reset topLine_ to 0 first) is
     // already safe against topLine_ being an arbitrary leftover value from
     // whichever buffer was active before: its own "point is above topLine_"

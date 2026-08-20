@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <cstddef>
 #include <exception>
+#include <filesystem>
 #include <string>
+#include <system_error>
 
 #include "CodeFold.h"
 #include "FinalNewline.h"
@@ -11,6 +13,8 @@
 #include "Lsp/LspManager.h"
 #include "Markdown.h"
 #include "Org.h"
+#include "ProjectRoot.h"
+#include "ProjectSession.h"
 #include "TabWidth.h"
 #include "Text/Utf8.h"
 
@@ -484,6 +488,36 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     registry.Register("toggle-project-sidebar", "Show or hide the left-side project tree.",
                       [](CommandContext& context) {
                           context.interactiveRequest = InteractiveRequest::ToggleProjectSidebar;
+                      });
+
+    // session-persistence slice 3: creates the project's .ned/ directory --
+    // the strictly-opt-in marker nothing else ever creates -- so the
+    // session moves to <root>/.ned/session.json and a .ned/init.janet can
+    // be added. A one-shot direct action (no prompt needed), so it acts
+    // here rather than via interactiveRequest, same as quit's own direct
+    // logic. Also activates session persistence for the *current* run when
+    // the root wasn't a marker-carrying project at startup -- without
+    // this, the newly initialized project wouldn't start saving until the
+    // next launch.
+    registry.Register("ned-init-project",
+                      "Create the project's .ned/ directory (opt-in home for session data and a project init.janet).",
+                      [](CommandContext& context) {
+                          const std::filesystem::path root   = ProjectRoot();
+                          const std::filesystem::path nedDir = root / ".ned";
+                          std::error_code             ec;
+                          if (std::filesystem::is_directory(nedDir, ec)) {
+                              if (context.message) {
+                                  *context.message = nedDir.string() + " already exists.";
+                              }
+                              return;
+                          }
+                          std::filesystem::create_directories(nedDir);
+                          if (SessionRestoreEnabled() && !ActiveProjectSessionRoot()) {
+                              SetActiveProjectSessionRoot(root);
+                          }
+                          if (context.message) {
+                              *context.message = "Created " + nedDir.string();
+                          }
                       });
 
     // Minimap widget follow-up: same "just set interactiveRequest" shape as

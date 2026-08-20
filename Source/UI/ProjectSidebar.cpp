@@ -220,6 +220,10 @@ int ProjectSidebar::Width() const {
     return width_;
 }
 
+void ProjectSidebar::SetWidth(int width) {
+    width_ = std::max(kMinSidebarWidth, width);
+}
+
 int ProjectSidebar::ContentHeight() const {
     return std::max(0, size().height - kHeaderHeight);
 }

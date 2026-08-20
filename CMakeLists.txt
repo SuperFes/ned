@@ -307,6 +307,9 @@ add_library(ned_lib STATIC
         Source/Editor/ProjectRoot.cpp
         Source/Editor/ProjectFileOps.cpp
         Source/Editor/ScratchPad.cpp
+        Source/Editor/Session.cpp
+        Source/Editor/ProjectSession.cpp
+        Source/Editor/ProjectTrust.cpp
         Source/Editor/Vcs/VcsProviderRegistry.cpp
         Source/Editor/Vcs/VcsRunner.cpp
         Source/Editor/Process/ChildProcess.cpp
@@ -479,6 +482,9 @@ if (NED_BUILD_TESTS)
             Tests/ProjectRootTest.cpp
             Tests/ProjectFileOpsTest.cpp
             Tests/ScratchPadTest.cpp
+            Tests/SessionTest.cpp
+            Tests/ProjectSessionTest.cpp
+            Tests/ProjectTrustTest.cpp
             Tests/VcsProviderRegistryTest.cpp
             Tests/VcsRunnerTest.cpp
             Tests/LspTransportTest.cpp

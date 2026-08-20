@@ -92,9 +92,12 @@ class ProjectSidebar : public Widget {
     // comment for why main.cpp's composition root reads this every frame
     // rather than this widget mutating a stored layout policy directly.
     // Starts at initialWidth (main.cpp passes the same 30 the pre-migration
-    // version's initial fixed(30) used); UpdateResize below is the only
-    // thing that ever changes it afterward.
+    // version's initial fixed(30) used); UpdateResize below and SetWidth
+    // (session-persistence slice 2: main.cpp applying a restored session's
+    // sidebar width at startup) are the only things that ever change it
+    // afterward.
     [[nodiscard]] int Width() const;
+    void              SetWidth(int width); // clamped to kMinSidebarWidth, same as a resize drag
 
     [[nodiscard]] bool IsResizing() const;
 
@@ -164,11 +167,11 @@ class ProjectSidebar : public Widget {
     void SetOnBinaryFileOpenRequest(std::function<void(const std::filesystem::path&)> handler);
 
   private:
-    std::function<ActiveBuffer&()>     activeBufferProvider_;
-    text::BufferList&                  bufferList_;
-    std::string&                       statusMessage_;
-    const Theme&                       theme_;
-    std::function<void(text::Buffer&)> onBufferClosed_;
+    std::function<ActiveBuffer&()>                    activeBufferProvider_;
+    text::BufferList&                                 bufferList_;
+    std::string&                                      statusMessage_;
+    const Theme&                                      theme_;
+    std::function<void(text::Buffer&)>                onBufferClosed_;
     std::function<void(const std::filesystem::path&)> onBinaryFileOpenRequest_; // see SetOnBinaryFileOpenRequest()
 
     int scrollOffset_ = 0; // first visible row (post-sticky-headers), in *visible* (post-collapse) tree-entry units

@@ -539,13 +539,110 @@ each is, not by priority.
         runner's own subprocess-transport layer exists, since a real terminal panel would
         still want its own separate pty-backed path rather than reusing that transport.
   - [ ] Remote development (SSH remote editing).
-  - [ ] Per-file session persistence: remember each file's last point/scroll position
-        (keyed by absolute path) across restarts, restored on `find-file`/`ned <path>`,
-        persisted under `$XDG_STATE_HOME/ned/` per this project's own XDG convention.
-        Raised alongside the buffer-switch scroll-clamping fix (`BufferView::topLine_`
-        is currently BufferView-level, not per-buffer) — a real prerequisite would be
-        moving last-viewed position to live per-`Buffer` first, which this would then
-        also persist to disk; scoped as its own slice rather than folded into that fix.
+  - [ ] Session persistence, planned 2026-08-20 as three slices after the user asked
+        for per-file persistence *plus* contextual project-session restore ("if I just
+        run ned from a project folder, it could open my last session in said folder"),
+        with the trust model below shaped by their own explicit security asks.
+        **Slice 1 (per-file save-place) shipped 2026-08-20**: `Editor/Session.h/.cpp` —
+        `FilePlaceStore` (pure, unit-tested core: JSON round-trip via nlohmann, LRU cap
+        of 1000, `weakly_canonical` path keys mirroring `DapManager::NormalizePathKey`)
+        plus process-wide accessors in the established mutex-guarded-static pattern,
+        persisting each file's last point (as line + visual column, never a byte offset
+        — robust to outside edits, clamped on restore) and viewport top line to
+        `$XDG_STATE_HOME/ned/file-places.json` (the first `$XDG_STATE_HOME` use in the
+        codebase). Restore-on-open rides `BufferList::SetOnFileOpened` (a new central
+        hook every open path already funnels through); top-line restore lands at
+        `BufferView::EnsureTopLineValidForActiveBuffer`'s once-per-buffer-switch seam
+        (which also covers a pane's very first Paint, i.e. the startup buffer), clamped
+        by `MaxTopLine()` with `ScrollToShowPoint()` still guaranteeing point visible —
+        as a bonus this gives *in-session* per-buffer scroll memory, which
+        `BufferView::topLine_` alone never had (the "move it per-`Buffer` first"
+        prerequisite this entry originally guessed at turned out unnecessary).
+        Recording runs on the existing scratch-auto-save tick (`WindowManager::
+        RecordSessionPlaces`: all open buffers, then visible panes again with their
+        real top lines) plus one forced save after `EventLoop::Run` returns; the
+        periodic save skips the disk write when nothing changed (`Dirty()` tracks
+        place changes, deliberately not lastUsed bumps). `ned/set-save-place` (default
+        on) disables both directions; startup buffers' restore deliberately waits
+        until after `init.janet` loads so that toggle is honored. Known, documented
+        slice-1 gaps: an `IsLoading()` async placeholder (>16MiB file) never restores
+        (point would clamp to 0 in empty placeholder content); a buffer closed between
+        5s ticks loses at most that tick's place update; recording is deliberately
+        *not* wired to any buffer-switch seam (the old-buffer pointer there can
+        already dangle mid-close — see `WindowManager::RecordSessionPlaces`'s comment).
+        Post-ship fix (same day, user-reported): the seam-based top-line restore never
+        fired for the buffer a pane *starts* on — `BufferView`'s constructor pre-seeds
+        `topLineValidatedBuffer_` (so pre-first-Paint scroll events aren't discarded),
+        which silently excludes the startup/relaunch case, the single most common way
+        a place gets restored. Fixed by also applying the stored topLine in the
+        constructor itself, clamped by `min(storedTopLine, pointLine)` (`MaxTopLine()`
+        is meaningless at construction — no size yet; the min only bites when the file
+        shrank outside ned). Covered by a `[BufferView][Session]` test exercising both
+        the constructor path and the switch path.
+        **Slice 2 (per-project sessions) shipped 2026-08-20**: `Editor/
+        ProjectSession.h/.cpp` — `ProjectSessionData` (open-file set, active file,
+        sidebar visibility/width, DAP breakpoints in `DapManager`'s own store shape)
+        with the same pure-core-plus-mutex-guarded-static layering `Session.h`
+        established, stored in `<root>/.ned/session.json` when a `.ned/` directory
+        exists (strictly opt-in, never auto-created; a future `ned-init-project`
+        command creates it) else `$XDG_STATE_HOME/ned/sessions/<fnv1a64-of-root>.json`.
+        The no-arg launch's root rule changed as planned: walk up from cwd for a
+        VCS/`.ned` marker (`FindProjectMarkerRoot`) instead of "cwd is the root
+        outright"; an explicitly opened directory keeps its old rule. Only a root
+        actually carrying a marker (`HasProjectMarker`) ever gets
+        `SetActiveProjectSessionRoot` — a bare non-project cwd like `$HOME` reads and
+        writes *no* session, by design. Restore is **Kate-style, per the user's
+        explicit mid-implementation call** (reversing the plan's original "CLI paths
+        suppress the buffer-list restore"): session buffers restore on *every* launch
+        in a project, a named CLI file just wins focus with the session's buffers
+        filling in behind (deduped via `FindByPath`, missing files silently skipped,
+        each restored buffer getting its save-place restore through the same
+        `SetOnFileOpened` hook); the planned `--restore` flag was dropped as
+        unnecessary. `--no-restore` makes the run session-inert in BOTH directions —
+        it must also suppress saving, or `ned --no-restore quickfix.cpp` would clobber
+        the real saved session at quit. `ned/set-session-restore` (default on) is the
+        persistent toggle, honored because the restore runs after `init.janet` loads
+        while the root is established before it (every load/save re-checks the toggle
+        at use time). Breakpoints ride new `DapManager::AllBreakpoints`/
+        `RestoreBreakpoints` (normalizing sorted/deduped/non-empty invariants on the
+        way in, pushing to a live adapter as a robustness guard) — closes the
+        "persisting breakpoints across restarts" DAP v1 cut. Capture is
+        `WindowManager::SaveProjectSessionNow` (skips the transient `PreviewBuffer()`
+        and scratch-pad buffers — global, not project state) on the same 5s tick as
+        `RecordSessionPlaces` plus once after `EventLoop::Run` returns, with an
+        unchanged-JSON memo skipping redundant disk writes. Scratch fallback in
+        `main.cpp` moved below the restore, so a restored session doesn't leave a
+        stray empty scratch tab. Window-split layout remains an explicit slice-2 cut.
+        **Slice 3 (trusted project-local `.ned/init.janet`) shipped 2026-08-20**:
+        `Editor/ProjectTrust.h/.cpp` — `ProjectTrustStore` (entries keyed by the init
+        file's normalized path, carrying its FNV-1a-64 content hash + trustedAt/
+        lastUsed) with the same pure-core + mutex-guarded-static layering as its two
+        sibling stores, persisted in `$XDG_STATE_HOME/ned/trusted.json`. Loading is
+        never silent — this is arbitrary code execution triggered by opening a
+        directory, the same concern class recorded against Org Babel: an
+        exact-content-match, unexpired trust entry loads the file right after the
+        global `init.janet` (project overrides user, early enough for its mode
+        overrides/grammars to affect the initial buffer); anything else defers to a
+        y(once)/a(always)/n prompt through the focused pane once the UI exists —
+        `WindowManager::RequestTrustProjectInit` → `BufferView`'s
+        `ConfirmTrustProjectInit` InputMode, the deferred-binary-open pattern exactly,
+        with a one-shot decision callback (main.cpp owns the `janet::Environment`, so
+        the widget only reports the choice; the trusted hash is recomputed at decision
+        time so what's recorded is exactly what got loaded). The accepted cost of
+        prompting at all, noted at the call site: a first-time project init's mode
+        overrides can't affect the already-selected initial Mode until the next buffer
+        switch. Trust expires by *disuse*, the user's own security ask: `lastUsed`
+        refreshed on every successful load, entries unaccessed past the window
+        (default 30 days, `ned/set-project-trust-expiry-days`, <= 0 = never) pruned at
+        store load along with entries whose file no longer exists; a changed file
+        always re-prompts regardless of age (the stale entry stays, so an "always"
+        re-approval just overwrites it). `ned-init-project` (M-x, no default binding)
+        creates the `.ned/` directory and activates session persistence for the
+        current run when the root wasn't yet a project. Verified end-to-end against a
+        real pty (prompt → "a" → trusted.json entry → silent reload → edit → re-prompt),
+        driven by a query-answering harness after plain `script` proved unable to get
+        notcurses through its init handshake. Recorded cuts: a `.ned/plugins/*.janet`
+        autoload dir, and `ned-init-project` offering a `.gitignore` append.
 - **Project documentation output** (documentation *of* `ned` itself — user/config/Janet-API
   reference — not an in-editor document viewer; this project has none today beyond
   `README.md`/`ROADMAP.md`/`CLAUDE.md` prose)

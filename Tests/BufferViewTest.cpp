@@ -25,6 +25,7 @@
 #include "Editor/ProjectRoot.h"
 #include "Editor/Register.h"
 #include "Editor/ScratchPad.h"
+#include "Editor/Session.h"
 #include "Editor/TabWidth.h"
 #include "Editor/WrapOverrides.h"
 #include "TestEvents.h"
@@ -1690,6 +1691,88 @@ TEST_CASE("Switching to a shorter buffer clamps the viewport instead of renderin
     view.Paint(canvas);
     REQUIRE(view.TopLine() <= shortBuffer.Content().LineCount());
     REQUIRE(ContentRowText(screen, 0, 12, shortBuffer.Content().LineCount()) == "short line 0");
+}
+
+TEST_CASE("A stored file place's topLine is restored when its buffer becomes active", "[BufferView][Session]") {
+    // session-persistence slice 1: the EnsureTopLineValidForActiveBuffer
+    // seam must apply a stored viewport, both for the startup buffer (a
+    // pane's very first Paint) and for a later switch-to.
+    ned::editor::ResetFilePlacesForTesting();
+
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_bufferview_session_topline";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    const std::filesystem::path file = dir / "a.txt";
+    {
+        std::ofstream out(file);
+        for (int i = 0; i < 100; ++i) {
+            out << "line " << i << "\n";
+        }
+    }
+
+    Fixture            fixture;
+    ned::text::Buffer& fileBuffer = fixture.bufferList.OpenFile(file);
+    fileBuffer.SetPoint(fileBuffer.ByteOffsetForLineAndColumn(50, 0));
+    ned::editor::RecordFilePlace(fileBuffer, 48, 4);
+
+    fixture.activeBuffer.Set(fileBuffer);
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 4});
+
+    ned::ui::Screen screen = ned::ui::Screen(40, 5);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 4});
+    view.Paint(canvas);
+
+    REQUIRE(view.TopLine() == 48);
+
+    // The switch path (EnsureTopLineValidForActiveBuffer's seam) must
+    // restore it too: away to another buffer and back.
+    fixture.activeBuffer.Set(fixture.buffer);
+    view.Paint(canvas);
+    REQUIRE(view.TopLine() == 0);
+    fixture.activeBuffer.Set(fileBuffer);
+    view.Paint(canvas);
+    REQUIRE(view.TopLine() == 48);
+
+    ned::editor::ResetFilePlacesForTesting();
+}
+
+TEST_CASE("The project-init trust prompt delivers each decision exactly once", "[BufferView][ProjectTrust]") {
+    const std::filesystem::path initPath = "/some/project/.ned/init.janet";
+
+    struct Decision {
+        std::filesystem::path            path;
+        ned::editor::ProjectInitDecision choice;
+    };
+
+    const auto runPrompt = [&](const ned::ui::Event& key) -> std::vector<Decision> {
+        Fixture               fixture;
+        ned::ui::BufferView   view = fixture.View();
+        std::vector<Decision> decisions;
+        view.RequestTrustProjectInit(initPath, [&](const std::filesystem::path&     path,
+                                                   ned::editor::ProjectInitDecision choice) {
+            decisions.push_back({path, choice});
+        });
+        REQUIRE(fixture.statusMessage.find("init.janet") != std::string::npos);
+        view.OnEvent(ned::ui::test::Character("x")); // ignored -- prompt stays active
+        REQUIRE(decisions.empty());
+        view.OnEvent(key);
+        view.OnEvent(key); // a second press must not re-deliver -- the session ended
+        return decisions;
+    };
+
+    const auto once = runPrompt(ned::ui::test::Character("y"));
+    REQUIRE(once.size() == 1);
+    REQUIRE(once[0].path == initPath);
+    REQUIRE(once[0].choice == ned::editor::ProjectInitDecision::LoadOnce);
+
+    const auto always = runPrompt(ned::ui::test::Character("a"));
+    REQUIRE(always.size() == 1);
+    REQUIRE(always[0].choice == ned::editor::ProjectInitDecision::LoadAlways);
+
+    const auto declined = runPrompt(ned::ui::test::Character("n"));
+    REQUIRE(declined.size() == 1);
+    REQUIRE(declined[0].choice == ned::editor::ProjectInitDecision::Decline);
 }
 
 TEST_CASE("Replacing a scrolled-deep preview with a new, not-yet-open, much shorter file renders its real "

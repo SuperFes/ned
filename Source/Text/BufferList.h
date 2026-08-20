@@ -86,6 +86,18 @@ class BufferList {
     [[nodiscard]] std::size_t                                 Count() const;
     [[nodiscard]] const std::vector<std::unique_ptr<Buffer>>& Buffers() const;
 
+    // session-persistence follow-up: called with every freshly opened
+    // path-associated buffer, right before OpenFile/OpenOrCreateFile
+    // returns it -- the one central seam every open path (CLI, find-file,
+    // sidebar click, LSP jump, ...) already funnels through, so a caller
+    // wanting to react to "a file buffer now exists" (main.cpp wires
+    // save-place restore here) doesn't have to chase call sites. Unset by
+    // default, same no-op-by-absence convention as SetAsyncFileOpener
+    // below; also fires for an IsLoading() async placeholder and for a
+    // not-yet-on-disk Buffer::NewFile buffer -- the hook decides what those
+    // mean, not BufferList.
+    void SetOnFileOpened(std::function<void(Buffer&)> hook);
+
     // large-file-async-load follow-up: called by OpenFile with a freshly
     // created, IsLoading() placeholder Buffer& (already inserted into this
     // list -- stable-addressed, same as every other Buffer here) and the
@@ -105,6 +117,7 @@ class BufferList {
     mutable Buffer*                      previewBuffer_ = nullptr; // see PreviewBuffer()
 
     std::function<void(Buffer&, const std::filesystem::path&)> asyncFileOpener_; // see SetAsyncFileOpener()
+    std::function<void(Buffer&)>                               onFileOpened_;    // see SetOnFileOpened()
 };
 
 // Tab-completion candidates for find-file's prompt: directory entries under

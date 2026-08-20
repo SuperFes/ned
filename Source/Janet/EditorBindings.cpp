@@ -16,8 +16,11 @@
 #include "Editor/MinimapSettings.h"
 #include "Editor/ModeOverrides.h"
 #include "Editor/ProjectRoot.h"
+#include "Editor/ProjectSession.h"
+#include "Editor/ProjectTrust.h"
 #include "Editor/ScratchPad.h"
 #include "Editor/ScriptingSession.h"
+#include "Editor/Session.h"
 #include "Editor/SyntaxTheme.h"
 #include "Editor/TabWidth.h"
 #include "Editor/Tasks/TaskConfig.h"
@@ -155,6 +158,18 @@ namespace {
 
     void NedSetScratchAutoSave(bool enabled) {
         editor::SetScratchAutoSaveEnabled(enabled);
+    }
+
+    void NedSetSavePlace(bool enabled) {
+        editor::SetSavePlaceEnabled(enabled);
+    }
+
+    void NedSetSessionRestore(bool enabled) {
+        editor::SetSessionRestoreEnabled(enabled);
+    }
+
+    void NedSetProjectTrustExpiryDays(std::int64_t days) {
+        editor::SetProjectTrustExpiryDays(static_cast<int>(days));
     }
 
     void NedSetEnsureFinalNewline(bool enabled) {
@@ -366,6 +381,20 @@ void InstallEditorBindings(Environment& env) {
         "ned", "set-scratch-auto-save",
         "Enable/disable automatically saving modified scratch notes (find-scratch) on a periodic timer (default "
         "true).");
+    env.Register<&NedSetSavePlace>(
+        "ned", "set-save-place",
+        "Enable/disable remembering each file's last point and scroll position across editor runs (default true). "
+        "Off disables both restoring and recording.");
+    env.Register<&NedSetSessionRestore>(
+        "ned", "set-session-restore",
+        "Enable/disable per-project session persistence -- open buffers, active file, sidebar state, and DAP "
+        "breakpoints, restored when ned starts inside a project (default true). Off disables both restoring and "
+        "saving; --no-restore does the same for a single launch.");
+    env.Register<&NedSetProjectTrustExpiryDays>(
+        "ned", "set-project-trust-expiry-days",
+        "Days of disuse before an \"always\"-trusted project init.janet must be re-approved (default 30; 0 or "
+        "negative = never expire). Trust decays from last use, not from when it was granted; a changed init file "
+        "always re-prompts regardless.");
     env.Register<&NedSetEnsureFinalNewline>(
         "ned", "set-ensure-final-newline",
         "Enable/disable appending a trailing newline to a file's written content on save if it's missing one "
