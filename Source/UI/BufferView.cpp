@@ -2592,6 +2592,11 @@ bool BufferView::RunCommandAndHandleOutcome(editor::CommandContext& context, con
         // this same check (ftxui::ScreenInteractive::Active(), confirmed
         // via a real SIGSEGV then) -- kept just as strict here, not
         // reintroduced as a hypothetical risk.
+        // Shown by the final frame EventLoop::Run renders after Exit():
+        // teardown (LSP child grace waits, session saves) runs after Run
+        // returns but before the terminal is restored, and without this the
+        // pause reads as a hang rather than deliberate cleanup.
+        statusMessage_ = "Shutting down...";
         if (eventLoop_) {
             eventLoop_->Exit();
         }
@@ -5244,7 +5249,9 @@ void BufferView::LogMouseEvent(std::string_view event, const MouseEvent& mouse) 
 void BufferView::HandleConfirmQuitKey(const editor::KeyChord& chord) {
     if (chord.Codepoint == U'y' || chord.Codepoint == U'Y') {
         // See the identical null check in OnKeyEvent's own context.quit
-        // branch for why this is required, not defensive.
+        // branch for why this is required, not defensive -- and that
+        // branch's comment for why the message is set before exiting.
+        statusMessage_ = "Shutting down...";
         if (eventLoop_) {
             eventLoop_->Exit();
         }
