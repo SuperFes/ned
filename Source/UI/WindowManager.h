@@ -45,6 +45,7 @@
 #include "Editor/Vcs/VcsRunner.h"
 #include "EventLoop.h"
 #include "Layout.h"
+#include "Minimap.h"
 #include "ModeLine.h"
 #include "ProjectSidebar.h"
 #include "ScrollArrowButton.h"
@@ -117,6 +118,15 @@ class Pane {
     // every other Set* hook in this codebase.
     void SetEventLoop(EventLoop* eventLoop);
 
+    // Minimap widget follow-up: test-only introspection points (mirrors
+    // ScrollArrowButton::IsRepeating()'s own "expose a small, honest
+    // introspection point rather than let tests reach into internals"
+    // precedent) -- lets a test assert the lockstep-opposite invariant
+    // (never both active, never both inactive) without reaching into
+    // Container's own private children_.
+    [[nodiscard]] bool MinimapActive() const;
+    [[nodiscard]] bool ScrollColumnActive() const;
+
   private:
     ActiveBuffer                       activeBuffer_;
     editor::Mode                       mode_; // owned copy -- see the class comment above
@@ -126,10 +136,17 @@ class Pane {
     std::shared_ptr<ScrollBar>         scrollBar_;
     std::shared_ptr<ScrollArrowButton> scrollUp_;
     std::shared_ptr<ScrollArrowButton> scrollDown_;
+    std::shared_ptr<Minimap>           minimap_;
 
     // This pane's own precomposed subtree, built once at construction --
     // scrollColumn_ holds {scrollUp_, scrollBar_, scrollDown_}, row_ holds
-    // {bufferView_, scrollColumn_}, component_ holds {row_, modeLine_}.
+    // {bufferView_, scrollColumn_, minimap_} (minimap widget follow-up:
+    // scrollColumn_/minimap_ are kept as exact opposites via their own
+    // Widget::active flags, seeded from editor::MinimapEnabled() at
+    // construction and flipped in lockstep by toggle-minimap -- see
+    // BufferView::SetMinimap's own doc comment -- so exactly one of the two
+    // ever actually occupies space in row_'s layout, regardless of which),
+    // component_ holds {row_, modeLine_}.
     // Declared in this order (children before the Containers that reference
     // them, which C++ requires nothing of structurally since these are all
     // separate objects linked by raw Widget* -- but member destruction
@@ -206,6 +223,15 @@ class WindowManager {
     // task-runner follow-up: same "forwarded to every pane, present and
     // future" shape as SetProjectSidebar/SetLspManager above.
     void SetTaskRunner(editor::tasks::TaskRunner* taskRunner);
+
+    // Minimap widget follow-up: test-only introspection point, same
+    // "expose a small, honest introspection point" precedent as
+    // ScrollArrowButton::IsRepeating() -- reports the focused pane's own
+    // Pane::MinimapActive()/ScrollColumnActive(), or false if no pane is
+    // currently focused (mirrors FocusedActiveBuffer()'s own "derived
+    // fresh every call, never cached" convention).
+    [[nodiscard]] bool FocusedPaneMinimapActive();
+    [[nodiscard]] bool FocusedPaneScrollColumnActive();
 
     void SetVcsRunner(editor::vcs::VcsRunner* vcsRunner);
 

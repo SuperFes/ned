@@ -221,7 +221,12 @@ enum class InteractiveRequest { None,
                                 // JumpToPathLine helper) and jumps there; a silent no-op on a
                                 // non-matching line (e.g. a *vcs log* buffer, which has no
                                 // per-line source location) or one that doesn't match.
-                                VisitVcsResult };
+                                VisitVcsResult,
+                                // Minimap widget follow-up: another one-shot direct action, same
+                                // shape as ToggleProjectSidebar -- BufferView flips the registered
+                                // Minimap's own `active` flag directly (and the paired ScrollBar
+                                // column's opposite), no InputMode session needed.
+                                ToggleMinimap };
 
 // Everything a command implementation might need. Built fresh per invocation
 // from live references -- never stored, so there's no lifetime concern beyond

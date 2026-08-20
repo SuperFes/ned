@@ -5,6 +5,7 @@
 
 #include "Editor/Commands.h"
 #include "Editor/Mode.h"
+#include "Editor/MinimapSettings.h"
 #include "Editor/Register.h"
 #include "TestEvents.h"
 #include "Text/Buffer.h"
@@ -383,4 +384,61 @@ TEST_CASE("Switching a pane's active buffer resolves a fresh Mode for the new bu
         }
     }
     REQUIRE(foundJson);
+}
+
+namespace {
+// Process-wide state -- mirrors MinimapTest.cpp's own MinimapSettingsGuard.
+struct MinimapSettingsGuard {
+    ~MinimapSettingsGuard() {
+        ned::editor::SetMinimapEnabled(true);
+    }
+};
+} // namespace
+
+TEST_CASE("A freshly constructed Pane seeds Minimap/ScrollColumn as exact opposites of editor::MinimapEnabled()",
+          "[WindowManager]") {
+    const MinimapSettingsGuard guard;
+
+    ned::editor::SetMinimapEnabled(true);
+    {
+        Fixture                fixture;
+        ned::ui::WindowManager manager = fixture.Manager();
+        manager.TakeFocus();
+        REQUIRE(manager.FocusedPaneMinimapActive());
+        REQUIRE_FALSE(manager.FocusedPaneScrollColumnActive());
+    }
+
+    ned::editor::SetMinimapEnabled(false);
+    {
+        Fixture                fixture;
+        ned::ui::WindowManager manager = fixture.Manager();
+        manager.TakeFocus();
+        REQUIRE_FALSE(manager.FocusedPaneMinimapActive());
+        REQUIRE(manager.FocusedPaneScrollColumnActive());
+    }
+}
+
+TEST_CASE("toggle-minimap flips Minimap/ScrollColumn active flags in lockstep opposition", "[WindowManager]") {
+    const MinimapSettingsGuard guard;
+    ned::editor::SetMinimapEnabled(true);
+
+    Fixture                fixture;
+    ned::ui::WindowManager manager = fixture.Manager();
+    manager.TakeFocus(); // FTXUI -> Notcurses migration: see Fixture::Manager()'s own doc comment
+
+    ned::ui::Widget& root = manager.RootComponent();
+
+    // Never both active, never both inactive -- checked at every step, not
+    // just the final state, since a bug that briefly desyncs the two would
+    // otherwise only show up as a layout glitch, not a test failure.
+    REQUIRE(manager.FocusedPaneMinimapActive());
+    REQUIRE_FALSE(manager.FocusedPaneScrollColumnActive());
+
+    FeedSequence(root, {ned::ui::test::Ctrl('c'), ned::ui::test::Character("m")});
+    REQUIRE_FALSE(manager.FocusedPaneMinimapActive());
+    REQUIRE(manager.FocusedPaneScrollColumnActive());
+
+    FeedSequence(root, {ned::ui::test::Ctrl('c'), ned::ui::test::Character("m")});
+    REQUIRE(manager.FocusedPaneMinimapActive());
+    REQUIRE_FALSE(manager.FocusedPaneScrollColumnActive());
 }

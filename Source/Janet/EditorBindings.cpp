@@ -17,6 +17,7 @@
 #include "Editor/ScratchPad.h"
 #include "Editor/ScriptingSession.h"
 #include "Editor/SyntaxTheme.h"
+#include "Editor/MinimapSettings.h"
 #include "Editor/TabWidth.h"
 #include "Editor/Tasks/TaskConfig.h"
 #include "Editor/Vcs/VcsProviderRegistry.h"
@@ -133,6 +134,18 @@ namespace {
 
     void NedSetTabWidth(std::int64_t columns) {
         editor::SetTabWidth(static_cast<int>(columns));
+    }
+
+    void NedSetMinimapEnabled(bool enabled) {
+        editor::SetMinimapEnabled(enabled);
+    }
+
+    void NedSetMinimapWidth(std::int64_t columns) {
+        editor::SetMinimapWidth(static_cast<int>(columns));
+    }
+
+    void NedSetMinimapCharsPerDot(std::int64_t columns) {
+        editor::SetMinimapCharsPerDot(static_cast<int>(columns));
     }
 
     void NedSetAutoDetectProjectRoot(bool enabled) {
@@ -320,6 +333,17 @@ void InstallEditorBindings(Environment& env) {
         "defaults to \"xdg-open\"; empty string clears it entirely, disabling URL-following.");
     env.Register<&NedSetTabWidth>("ned", "set-tab-width",
                                   "Set the display width (in columns) a tab character expands to (default 4).");
+    env.Register<&NedSetMinimapEnabled>(
+        "ned", "set-minimap-enabled",
+        "Enable/disable the minimap (replaces the plain scrollbar) as the default starting state for newly-opened "
+        "panes (default true). See also toggle-minimap for flipping it at runtime.");
+    env.Register<&NedSetMinimapWidth>(
+        "ned", "set-minimap-width",
+        "Set the minimap's width in columns (default 5). Each column packs 2 braille sub-columns of resolution.");
+    env.Register<&NedSetMinimapCharsPerDot>(
+        "ned", "set-minimap-chars-per-dot",
+        "Set how many real buffer columns one minimap braille sub-dot represents (default 8). A line longer than "
+        "minimap-width * chars-per-dot * 2 columns simply isn't rendered past that point -- not compressed.");
     env.Register<&NedSetAutoDetectProjectRoot>(
         "ned", "set-auto-detect-project-root",
         "Enable/disable walking upward from an opened file for a VCS marker directory to find the project root "

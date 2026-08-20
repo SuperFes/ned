@@ -1232,6 +1232,14 @@ void BufferView::Paint(Canvas c) {
     if (scrollDownArrow_ != nullptr) {
         scrollDownArrow_->SetEnabled(topLine_ < MaxTopLine());
     }
+    if (minimap_ != nullptr) {
+        // Same fields, same semantics, same values ScrollBar's own sync
+        // above uses -- Minimap mirrors ScrollBar's public surface exactly
+        // so its viewport-band/click math stays consistent with it.
+        minimap_->scrollable_length  = static_cast<int>(MaxTopLine()) + 1;
+        minimap_->position           = static_cast<int>(topLine_);
+        minimap_->item_visual_length = 1;
+    }
 
     const std::size_t gutterWidth = GutterWidth();
     // status/line-number-spacing follow-up: GutterWidth() already reserves
@@ -3124,6 +3132,19 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             // (see BufferView.h's own comment on SetProjectSidebar).
             if (projectSidebar_ != nullptr) {
                 projectSidebar_->active = !projectSidebar_->active;
+            }
+            return;
+        case editor::InteractiveRequest::ToggleMinimap:
+            // Same one-shot direct action shape as ToggleProjectSidebar
+            // above, but flips both halves of the lockstep pair (see
+            // BufferView.h's own comment on SetMinimap) -- exactly one of
+            // the minimap/scroll-bar column ever occupies that screen
+            // real estate.
+            if (minimap_ != nullptr) {
+                minimap_->active = !minimap_->active;
+            }
+            if (minimapScrollColumn_ != nullptr) {
+                minimapScrollColumn_->active = !minimapScrollColumn_->active;
             }
             return;
         case editor::InteractiveRequest::ProjectAgenda:
@@ -5041,6 +5062,11 @@ void BufferView::SetScrollArrows(ScrollArrowButton* up, ScrollArrowButton* down)
 
 void BufferView::SetProjectSidebar(ProjectSidebar* sidebar) {
     projectSidebar_ = sidebar;
+}
+
+void BufferView::SetMinimap(Minimap* minimap, Widget* scrollColumn) {
+    minimap_             = minimap;
+    minimapScrollColumn_ = scrollColumn;
 }
 
 void BufferView::SetLspManager(editor::lsp::LspManager* lspManager) {

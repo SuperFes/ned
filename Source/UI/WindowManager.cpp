@@ -5,6 +5,7 @@
 #include <mutex>
 #include <utility>
 
+#include "Editor/MinimapSettings.h"
 #include "Editor/ModeOverrides.h"
 #include "Editor/ScratchPad.h"
 
@@ -49,6 +50,7 @@ Pane::Pane(text::Buffer& buffer, text::KillRing& killRing, editor::RegisterTable
                                                                 scrollBar_(std::make_shared<ScrollBar>(theme.scrollBar)),
                                                                 scrollUp_(std::make_shared<ScrollArrowButton>(U'▲', theme.scrollBar, theme.scrollBarDisabled)),
                                                                 scrollDown_(std::make_shared<ScrollArrowButton>(U'▼', theme.scrollBar, theme.scrollBarDisabled)),
+                                                                minimap_(std::make_shared<Minimap>(activeBuffer_, mode_, theme)),
                                                                 scrollColumn_(Axis::Vertical,
                                                                               {
                                                                                   {scrollUp_.get(), SizeSpec::Fixed(1)},
@@ -59,6 +61,7 @@ Pane::Pane(text::Buffer& buffer, text::KillRing& killRing, editor::RegisterTable
                                                                      {
                                                                          {bufferView_.get(), SizeSpec::Flex()},
                                                                          {&scrollColumn_, SizeSpec::Fixed(1)},
+                                                                         {minimap_.get(), SizeSpec::DynamicFixed([] { return editor::MinimapWidth(); })},
                                                                      }),
                                                                 component_(Axis::Vertical,
                                                                            {
@@ -67,6 +70,13 @@ Pane::Pane(text::Buffer& buffer, text::KillRing& killRing, editor::RegisterTable
                                                                            }) {
     bufferView_->SetScrollBar(scrollBar_.get());
     bufferView_->SetScrollArrows(scrollUp_.get(), scrollDown_.get());
+    bufferView_->SetMinimap(minimap_.get(), &scrollColumn_);
+    // Minimap widget follow-up: exactly one of the two ever occupies row_'s
+    // trailing column -- seeded here from the process-wide setting, kept in
+    // lockstep opposition afterward by toggle-minimap (see
+    // BufferView::SetMinimap's own doc comment).
+    minimap_->active      = editor::MinimapEnabled();
+    scrollColumn_.active  = !minimap_->active;
     bufferView_->SetProjectSidebar(projectSidebar);
     bufferView_->SetLspManager(lspManager);
     bufferView_->SetTaskRunner(taskRunner);
@@ -87,10 +97,20 @@ Pane::Pane(text::Buffer& buffer, text::KillRing& killRing, editor::RegisterTable
         bufferView_->SetTopLine(top > 0 ? top - 1 : 0);
     });
     scrollDown_->SetOnClick([this] { bufferView_->SetTopLine(bufferView_->TopLine() + 1); });
+    minimap_->SetOnScroll(
+        [this](int position) { bufferView_->SetTopLine(static_cast<std::size_t>(position)); });
 }
 
 ActiveBuffer& Pane::ActiveBufferRef() {
     return activeBuffer_;
+}
+
+bool Pane::MinimapActive() const {
+    return minimap_->active;
+}
+
+bool Pane::ScrollColumnActive() const {
+    return scrollColumn_.active;
 }
 
 BufferView& Pane::Buffer() {
@@ -599,6 +619,16 @@ Widget& WindowManager::BuildComponent(WindowNode* node) const {
         {&second, SizeSpec::Flex()},
     });
     return *node->container;
+}
+
+bool WindowManager::FocusedPaneMinimapActive() {
+    Pane* pane = FocusedPane();
+    return pane != nullptr && pane->MinimapActive();
+}
+
+bool WindowManager::FocusedPaneScrollColumnActive() {
+    Pane* pane = FocusedPane();
+    return pane != nullptr && pane->ScrollColumnActive();
 }
 
 Pane* WindowManager::FocusedPane() {
