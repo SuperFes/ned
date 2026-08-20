@@ -189,7 +189,16 @@ void EventLoop::Run(const EventLoopCallbacks& callbacks) {
                 break; // real error -- stop draining this round, try again next wakeup
             }
             if (id == NCKEY_RESIZE) {
-                const Size newSize = TerminalSize();
+                // NCKEY_RESIZE alone doesn't update Notcurses' own geometry
+                // -- only notcurses_refresh/ncpile_render reach
+                // notcurses_resize_internal (render.c), so querying
+                // notcurses_stddim_yx here without refreshing first returns
+                // the *old* dims, skipping onResize and leaving layout one
+                // resize event behind (a one-shot resize, e.g. a font-size
+                // change, then never catches up at all).
+                unsigned rows = 0, cols = 0;
+                notcurses_refresh(nc_, &rows, &cols);
+                const Size newSize{static_cast<int>(cols), static_cast<int>(rows)};
                 if ((newSize.width != lastSize.width || newSize.height != lastSize.height) && callbacks.onResize) {
                     lastSize = newSize;
                     callbacks.onResize(newSize);
@@ -224,7 +233,13 @@ void EventLoop::Run(const EventLoopCallbacks& callbacks) {
             needsRepaint = true;
         }
 
-        if (needsRepaint && running_) {
+        // Deliberately not gated on running_: the iteration whose event set
+        // running_ = false (quit) must still render, so BufferView's
+        // "Shutting down..." echo message is on screen during post-Run
+        // teardown (LSP child grace waits, session saves) -- the terminal
+        // isn't restored until ~EventLoop's notcurses_stop, well after Run
+        // returns, so this final frame is what the user sees in between.
+        if (needsRepaint) {
             repaint();
         }
     }

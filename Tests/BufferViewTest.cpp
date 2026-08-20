@@ -627,6 +627,19 @@ TEST_CASE("C-x C-c (quit) does not crash key_press", "[BufferView]") {
     view.OnEvent(ned::ui::test::Ctrl('c')); // must not crash
 }
 
+TEST_CASE("Quit leaves a shutting-down status message for the final frame", "[BufferView]") {
+    // The message is what EventLoop::Run's final (post-Exit) repaint shows
+    // while post-Run teardown (LSP child grace waits, session saves) runs --
+    // without it, that pause reads as a hang.
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 9, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Ctrl('x'));
+    view.OnEvent(ned::ui::test::Ctrl('c'));
+    REQUIRE(fixture.statusMessage == "Shutting down...");
+}
+
 TEST_CASE("Isearch: C-s enters search mode, typing narrows the match, RET accepts", "[BufferView]") {
     Fixture fixture;
     fixture.buffer.InsertAtPoint("the quick brown fox");
@@ -1480,6 +1493,7 @@ TEST_CASE("'y' at the quit-confirmation prompt does not crash key_press", "[Buff
     REQUIRE(fixture.statusMessage.find("Unsaved changes in: scratch") == 0); // reached ConfirmQuit safely
 
     view.OnEvent(ned::ui::test::Character("y")); // must not crash
+    REQUIRE(fixture.statusMessage == "Shutting down...");
 }
 
 TEST_CASE("Rendered content stays aligned through many mixed scroll-up/scroll-down steps", "[BufferView]") {
