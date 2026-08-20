@@ -951,6 +951,9 @@ class BufferView : public Widget {
     // Highlight-overlay predicates used by Paint(); byteOffset is a byte
     // offset into the buffer's current content.
     [[nodiscard]] bool InSelection(std::size_t byteOffset) const;
+    // Multi-cursor phase: whether a secondary cursor's point sits exactly
+    // at byteOffset -- Paint() inverts that cell as the secondary caret.
+    [[nodiscard]] bool IsSecondaryCursorAt(std::size_t byteOffset) const;
     [[nodiscard]] bool InIsearchMatch(std::size_t byteOffset) const;
 
     // line-wrap follow-up: editor::EffectiveWrapLines(activeBuffer_.Get().Path(), mode_) --

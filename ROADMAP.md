@@ -462,7 +462,49 @@ each is, not by priority.
         LLM-integration panel is exactly the kind of overlay-shaped need that note flagged
         as worth reconsidering that gap for, not settled by anything shipped so far.
 - **Editor ergonomics**
-  - [ ] Multiple cursors / multi-cursor editing — explicitly deferred, not started, after
+  - [x] Multiple cursors / multi-cursor editing — **shipped 2026-08-20** as its own
+        phase, exactly per the design pass below (kept as the original scoping record;
+        every "genuinely missing" item it names landed as predicted, the relocation
+        reuse included). What shipped, layer by layer:
+        - **`Buffer` core**: `Cursor{point, mark, goalColumn}` secondaries beside the
+          untouched primary `Point_`/`Mark_`, relocated at all five content-mutation
+          sites through the existing `RelocateForInsert`/`RelocateForDelete` primitive
+          (the reuse this entry predicted); `AddCursorAt` (grapheme-snapped, deduped),
+          `ForEachCursor` (swap-in-place per secondary — including per-cursor
+          goal-column swapping, so multi-cursor vertical motion doesn't leak the first
+          cursor's column into the rest — exception-safe via scope guards since
+          BufferView deliberately survives throwing commands), and undo grouping
+          (`BeginUndoGroup`/`EndUndoGroup`, nestable; mutators route their old inline
+          record/amend logic through a shared `RecordOrAmendUndo`). Cursors collapsed
+          onto one position by a delete merge immediately — deferred to the end of a
+          `ForEachCursor` batch, where mid-loop normalization would invalidate the
+          swap slots (a real bug caught by the first test run, not hypothesized).
+          `Undo()`/`Redo()` clear secondaries — the explicit v1 answer to "what does
+          undo restore": collapsing is predictable, N-cursor restoration isn't.
+        - **Commands**: an explicit `PerCursor(fn)` adapter wraps the basic
+          motion/editing set (self-insert, newline, delete both directions, char/word/
+          line motion, next/previous-line) — applied per command, deliberately not
+          globally: kill-ring commands, rectangles, registers, narrowing, and
+          toggle-line-comment stay primary-only in v1, which is this entry's
+          "explicit decision" question answered as "unsupported while multiple cursors
+          are active" for now. New commands: `add-cursor-below`/`add-cursor-above`
+          (`C-DOWN`/`C-UP` — free, terminal-reliable, unlike Ctrl+Alt+Arrow or the
+          `C-d`-conflicting VS Code chord), `select-next-occurrence` (`M-n`/`ESC n` —
+          first press selects the word at point VS-Code-style, later presses add a
+          selecting cursor at the next occurrence, wrapping once, skipping owned
+          matches), `select-all-occurrences` (M-x only), and `keyboard-quit` (`C-g`)
+          doubling as collapse-to-one, Emacs multiple-cursors' own convention.
+        - **Rendering**: secondary carets as inverted cells (ScrollBar's thumb
+          technique — theme-independent, distinct from the primary's real terminal
+          cursor), including the caret-at-line-end case that has no codepoint cell of
+          its own; secondary selections ride the existing `InSelection` overlay.
+        - Verified end to end against a live pty (C-DOWN → type → save produced the
+          two-line simultaneous edit) plus `[MultiCursor]` unit tests across all three
+          layers. **Recorded v1 cuts**: mouse-driven cursor creation (Alt+Click stays
+          "don't want," below); the view doesn't scroll to a newly added occurrence
+          cursor; kill/register/rectangle commands act on the primary only; per-cursor
+          kill-ring semantics unexplored.
+        Original scoping record follows. ~~Explicitly deferred, not started~~, after
         a real design pass during the keybinding-audit follow-up (see
         `Docs/KeybindingAudit.md`'s "Maybe want" bucket) surfaced enough real scope to be
         its own phase rather than a session's work. What's already in place, and what

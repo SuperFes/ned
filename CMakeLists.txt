@@ -427,6 +427,7 @@ if (NED_BUILD_TESTS)
             Tests/RegisterTest.cpp
             Tests/RectangleTest.cpp
             Tests/BufferTest.cpp
+            Tests/MultiCursorTest.cpp
             Tests/BufferListTest.cpp
             Tests/BinaryDetectTest.cpp
             Tests/KeyTest.cpp

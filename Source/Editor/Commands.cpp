@@ -126,6 +126,68 @@ namespace {
     // as long as any other mark would (until an editing command, mouse
     // click, kill-region, or kill-ring-save clears it) rather than
     // additionally being cleared by a plain, unshifted motion key.
+    // Multi-cursor phase: wraps a command body so that, when secondary
+    // cursors exist, it runs once per cursor via Buffer::ForEachCursor
+    // (one undo group, per-cursor point/mark/goal-column swapped in) --
+    // the command body itself stays completely multi-cursor-unaware.
+    // Applied explicitly, per command, to the basic motion/editing set
+    // below rather than globally: which commands are per-cursor is a real
+    // decision (kill-ring commands, rectangles, registers, narrowing all
+    // deliberately stay primary-only in v1 -- see ROADMAP.md), not a
+    // default to inherit silently.
+    template <typename Fn>
+    auto PerCursor(Fn fn) {
+        return [fn](CommandContext& context) {
+            if (!context.buffer.HasSecondaryCursors()) {
+                fn(context);
+                return;
+            }
+            context.buffer.ForEachCursor([&fn, &context] { fn(context); });
+        };
+    }
+
+    // Multi-cursor phase: [start, end) of the word point sits inside or
+    // immediately after, or nullopt when point touches no word at all.
+    // Same ASCII-word classification Buffer's own word motion uses
+    // (deliberately not Unicode-aware, matching that documented cut) --
+    // duplicated here rather than exposed from Buffer.cpp, the usual
+    // "not worth a new seam for something this small" call.
+    std::optional<std::pair<std::size_t, std::size_t>> WordRegionAt(const text::Rope& rope, std::size_t point) {
+        const auto isWord = [](char32_t codepoint) {
+            return (codepoint >= U'a' && codepoint <= U'z') || (codepoint >= U'A' && codepoint <= U'Z') ||
+                   (codepoint >= U'0' && codepoint <= U'9') || codepoint == U'_';
+        };
+
+        std::size_t start = std::min(point, rope.ByteLength());
+        while (start > 0) {
+            const std::size_t previous = rope.PreviousCodepointBoundary(start);
+            if (!isWord(rope.CodepointAt(previous).codepoint)) {
+                break;
+            }
+            start = previous;
+        }
+        std::size_t end = std::min(point, rope.ByteLength());
+        while (end < rope.ByteLength()) {
+            const auto decoded = rope.CodepointAt(end);
+            if (!isWord(decoded.codepoint)) {
+                break;
+            }
+            end += decoded.byteLength;
+        }
+        if (start == end) {
+            return std::nullopt;
+        }
+        return std::pair{start, end};
+    }
+
+    // The byte offset where a cursor's selection starts (its region's low
+    // end), or its point when it has no mark -- what select-next-occurrence
+    // compares candidate matches against so it never re-adds a cursor at an
+    // occurrence one already owns.
+    std::size_t CursorSelectionStart(std::size_t point, std::optional<std::size_t> mark) {
+        return mark ? std::min(point, *mark) : point;
+    }
+
     void EnsureMarkForShiftSelect(text::Buffer& buffer) {
         if (!buffer.HasMark()) {
             buffer.SetMark(buffer.Point());
@@ -143,16 +205,16 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     // themselves clear it now; mouse-drag never went through these commands
     // at all (BufferView::OnMouseEvent calls Buffer::SetPoint directly).
     registry.Register("forward-char", "Move point forward one grapheme cluster.",
-                      [](CommandContext& context) { context.buffer.MoveForward(); });
+                      PerCursor([](CommandContext& context) { context.buffer.MoveForward(); }));
 
     registry.Register("backward-char", "Move point backward one grapheme cluster.",
-                      [](CommandContext& context) { context.buffer.MoveBackward(); });
+                      PerCursor([](CommandContext& context) { context.buffer.MoveBackward(); }));
 
     registry.Register("next-line", "Move point down one line, preserving column across a run.",
-                      [](CommandContext& context) { context.buffer.MoveToNextLine(TabWidth()); });
+                      PerCursor([](CommandContext& context) { context.buffer.MoveToNextLine(TabWidth()); }));
 
     registry.Register("previous-line", "Move point up one line, preserving column across a run.",
-                      [](CommandContext& context) { context.buffer.MoveToPreviousLine(TabWidth()); });
+                      PerCursor([](CommandContext& context) { context.buffer.MoveToPreviousLine(TabWidth()); }));
 
     // Shift+Arrow follow-up -- see EnsureMarkForShiftSelect's own comment
     // above for the selection model and its documented scope cut.
@@ -176,10 +238,10 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     });
 
     registry.Register("forward-word", "Move point forward one word.",
-                      [](CommandContext& context) { context.buffer.MoveForwardWord(); });
+                      PerCursor([](CommandContext& context) { context.buffer.MoveForwardWord(); }));
 
     registry.Register("backward-word", "Move point backward one word.",
-                      [](CommandContext& context) { context.buffer.MoveBackwardWord(); });
+                      PerCursor([](CommandContext& context) { context.buffer.MoveBackwardWord(); }));
 
     registry.Register("scroll-page-down", "Move point down by roughly a page.", [](CommandContext& context) {
         context.buffer.MoveDownLines(PageLineCount(context.viewportHeight), TabWidth());
@@ -200,26 +262,26 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     // buffer is actually edited out from under it, the same "mark
     // survives motion, not editing" split real Emacs makes. Motion-only
     // commands are the exception, not editing ones.
-    registry.Register("delete-char", "Delete the grapheme cluster at point.", [](CommandContext& context) {
-        context.buffer.ClearMark();
-        context.buffer.DeleteForwardAtPoint();
-    });
+    registry.Register("delete-char", "Delete the grapheme cluster at point.", PerCursor([](CommandContext& context) {
+                          context.buffer.ClearMark();
+                          context.buffer.DeleteForwardAtPoint();
+                      }));
 
-    registry.Register("backward-delete-char", "Delete the grapheme cluster before point.", [](CommandContext& context) {
-        context.buffer.ClearMark();
-        context.buffer.DeleteBackwardAtPoint();
-    });
+    registry.Register("backward-delete-char", "Delete the grapheme cluster before point.", PerCursor([](CommandContext& context) {
+                          context.buffer.ClearMark();
+                          context.buffer.DeleteBackwardAtPoint();
+                      }));
 
-    registry.Register("beginning-of-line", "Move point to the beginning of the current line.", [](CommandContext& context) {
-        const auto&       content = context.buffer.Content();
-        const std::size_t line    = content.ByteOffsetToLine(context.buffer.Point());
-        context.buffer.SetPoint(content.LineToByteOffset(line));
-    });
+    registry.Register("beginning-of-line", "Move point to the beginning of the current line.", PerCursor([](CommandContext& context) {
+                          const auto&       content = context.buffer.Content();
+                          const std::size_t line    = content.ByteOffsetToLine(context.buffer.Point());
+                          context.buffer.SetPoint(content.LineToByteOffset(line));
+                      }));
 
-    registry.Register("end-of-line", "Move point to the end of the current line.", [](CommandContext& context) {
-        const std::size_t target = LineContentEnd(context.buffer.Content(), context.buffer.Point());
-        context.buffer.SetPoint(target);
-    });
+    registry.Register("end-of-line", "Move point to the end of the current line.", PerCursor([](CommandContext& context) {
+                          const std::size_t target = LineContentEnd(context.buffer.Content(), context.buffer.Point());
+                          context.buffer.SetPoint(target);
+                      }));
 
     registry.Register("kill-line", "Kill from point to the end of the line, or the newline if already there.", [](CommandContext& context) {
         context.buffer.ClearMark();
@@ -279,8 +341,160 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     // to stop an in-progress selection short of an editing command, mouse
     // click, or actually killing/copying the region. Silent no-op without
     // a mark, matching kill-region's own "nothing to do" convention.
-    registry.Register("keyboard-quit", "Deactivate the current selection, if any.",
-                      [](CommandContext& context) { context.buffer.ClearMark(); });
+    registry.Register("keyboard-quit", "Deactivate the current selection and collapse to one cursor.",
+                      [](CommandContext& context) {
+                          context.buffer.ClearMark();
+                          // Multi-cursor phase: C-g is also the collapse
+                          // gesture, real Emacs multiple-cursors' own
+                          // convention.
+                          context.buffer.ClearSecondaryCursors();
+                      });
+
+    // Multi-cursor phase. add-cursor-below/above extend from the
+    // bottom-most/top-most cursor (VS Code's own semantics -- repeated
+    // presses keep growing the column of cursors), landing at the same
+    // visual column via the same tab-aware ByteOffsetForLineAndColumn
+    // translation mouse clicks use; a silent no-op at the buffer's own
+    // first/last line, or when the target position already has a cursor
+    // (AddCursorAt's dedupe).
+    registry.Register("add-cursor-below", "Add a cursor one line below the bottom-most cursor.",
+                      [](CommandContext& context) {
+                          text::Buffer&     buffer  = context.buffer;
+                          const text::Rope& content = buffer.Content();
+                          std::size_t       lowest  = buffer.Point();
+                          for (const auto& cursor : buffer.SecondaryCursors()) {
+                              lowest = std::max(lowest, cursor.point);
+                          }
+                          const std::size_t line = content.ByteOffsetToLine(lowest);
+                          if (line + 1 >= content.LineCount()) {
+                              return;
+                          }
+                          const std::size_t column =
+                              buffer.VisualColumnForByteOffset(content.LineToByteOffset(line), lowest, TabWidth());
+                          buffer.AddCursorAt(buffer.ByteOffsetForLineAndColumn(line + 1, column, TabWidth()));
+                      });
+
+    registry.Register("add-cursor-above", "Add a cursor one line above the top-most cursor.",
+                      [](CommandContext& context) {
+                          text::Buffer&     buffer  = context.buffer;
+                          const text::Rope& content = buffer.Content();
+                          std::size_t       highest = buffer.Point();
+                          for (const auto& cursor : buffer.SecondaryCursors()) {
+                              highest = std::min(highest, cursor.point);
+                          }
+                          const std::size_t line = content.ByteOffsetToLine(highest);
+                          if (line == 0) {
+                              return;
+                          }
+                          const std::size_t column =
+                              buffer.VisualColumnForByteOffset(content.LineToByteOffset(line), highest, TabWidth());
+                          buffer.AddCursorAt(buffer.ByteOffsetForLineAndColumn(line - 1, column, TabWidth()));
+                      });
+
+    // First press with no selection: select the word at point (mark at its
+    // start, point at its end), VS Code Ctrl+D-style. Every later press:
+    // add a cursor selecting the next occurrence of the primary selection's
+    // text, searching forward from the furthest cursor and wrapping around
+    // once -- occurrences an existing cursor already owns are skipped.
+    registry.Register("select-next-occurrence",
+                      "Select the word at point, or add a cursor at the next occurrence of the selection.",
+                      [](CommandContext& context) {
+                          text::Buffer& buffer = context.buffer;
+                          if (!buffer.HasMark() || buffer.Region().first == buffer.Region().second) {
+                              if (const auto word = WordRegionAt(buffer.Content(), buffer.Point())) {
+                                  buffer.SetMark(word->first);
+                                  buffer.SetPoint(word->second);
+                              }
+                              else if (context.message) {
+                                  *context.message = "No word at point to select.";
+                              }
+                              return;
+                          }
+
+                          const auto [regionStart, regionEnd] = buffer.Region();
+                          const std::string needle            = buffer.Content().Substring(regionStart, regionEnd - regionStart);
+                          const std::string haystack          = buffer.Text();
+
+                          const auto ownedByExistingCursor = [&buffer](std::size_t candidate) {
+                              if (CursorSelectionStart(buffer.Point(),
+                                                       buffer.HasMark() ? std::optional(buffer.Mark()) : std::nullopt) ==
+                                  candidate) {
+                                  return true;
+                              }
+                              for (const auto& cursor : buffer.SecondaryCursors()) {
+                                  if (CursorSelectionStart(cursor.point, cursor.mark) == candidate) {
+                                      return true;
+                                  }
+                              }
+                              return false;
+                          };
+
+                          std::size_t furthest = std::max(buffer.Point(), buffer.Mark());
+                          for (const auto& cursor : buffer.SecondaryCursors()) {
+                              furthest = std::max(furthest, std::max(cursor.point, cursor.mark.value_or(cursor.point)));
+                          }
+
+                          // One forward pass from the furthest cursor, then one
+                          // wrapped pass from the top -- skipping owned matches.
+                          std::size_t candidate = haystack.find(needle, furthest);
+                          while (candidate != std::string::npos && ownedByExistingCursor(candidate)) {
+                              candidate = haystack.find(needle, candidate + 1);
+                          }
+                          if (candidate == std::string::npos) {
+                              candidate = haystack.find(needle);
+                              while (candidate != std::string::npos && candidate < furthest &&
+                                     ownedByExistingCursor(candidate)) {
+                                  candidate = haystack.find(needle, candidate + 1);
+                              }
+                              if (candidate != std::string::npos && ownedByExistingCursor(candidate)) {
+                                  candidate = std::string::npos;
+                              }
+                          }
+
+                          if (candidate == std::string::npos) {
+                              if (context.message) {
+                                  *context.message = "No more occurrences of \"" + needle + "\".";
+                              }
+                              return;
+                          }
+                          buffer.AddCursorAt(candidate + needle.size(), candidate);
+                          if (context.message) {
+                              *context.message = std::to_string(buffer.SecondaryCursors().size() + 1) + " cursors";
+                          }
+                      });
+
+    registry.Register("select-all-occurrences",
+                      "Add a cursor selecting every occurrence of the current selection (or the word at point).",
+                      [](CommandContext& context) {
+                          text::Buffer& buffer = context.buffer;
+                          if (!buffer.HasMark() || buffer.Region().first == buffer.Region().second) {
+                              if (const auto word = WordRegionAt(buffer.Content(), buffer.Point())) {
+                                  buffer.SetMark(word->first);
+                                  buffer.SetPoint(word->second);
+                              }
+                              else {
+                                  if (context.message) {
+                                      *context.message = "No word at point to select.";
+                                  }
+                                  return;
+                              }
+                          }
+
+                          const auto [regionStart, regionEnd] = buffer.Region();
+                          const std::string needle            = buffer.Content().Substring(regionStart, regionEnd - regionStart);
+                          const std::string haystack          = buffer.Text();
+
+                          for (std::size_t candidate = haystack.find(needle); candidate != std::string::npos;
+                               candidate             = haystack.find(needle, candidate + 1)) {
+                              if (candidate == regionStart) {
+                                  continue; // the primary's own selection
+                              }
+                              buffer.AddCursorAt(candidate + needle.size(), candidate);
+                          }
+                          if (context.message) {
+                              *context.message = std::to_string(buffer.SecondaryCursors().size() + 1) + " cursors";
+                          }
+                      });
 
     registry.Register("kill-ring-save", "Copy the region between point and mark into the kill ring, without deleting it.", [](CommandContext& context) {
         if (!context.buffer.HasMark()) {
@@ -301,17 +515,17 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
         context.buffer.Redo();
     });
 
-    registry.Register("newline", "Insert a newline at point.", [](CommandContext& context) {
-        context.buffer.ClearMark();
-        context.buffer.InsertAtPoint("\n");
-    });
+    registry.Register("newline", "Insert a newline at point.", PerCursor([](CommandContext& context) {
+                          context.buffer.ClearMark();
+                          context.buffer.InsertAtPoint("\n");
+                      }));
 
-    registry.Register("self-insert-command", "Insert the character that was pressed.", [](CommandContext& context) {
-        context.buffer.ClearMark();
-        if (context.triggeringKey.Special == SpecialKey::None && context.triggeringKey.Codepoint != 0) {
-            context.buffer.InsertAtPoint(text::EncodeCodepointUtf8(context.triggeringKey.Codepoint));
-        }
-    });
+    registry.Register("self-insert-command", "Insert the character that was pressed.", PerCursor([](CommandContext& context) {
+                          context.buffer.ClearMark();
+                          if (context.triggeringKey.Special == SpecialKey::None && context.triggeringKey.Codepoint != 0) {
+                              context.buffer.InsertAtPoint(text::EncodeCodepointUtf8(context.triggeringKey.Codepoint));
+                          }
+                      }));
 
     // A literal-tab insert, not real indent logic (Emacs' own
     // indent-for-tab-command computes indentation; this codebase has no
@@ -1349,6 +1563,17 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("ESC UP"), "move-line-up");
     keymap.Bind(ParseKeySequence("M-DOWN"), "move-line-down");
     keymap.Bind(ParseKeySequence("ESC DOWN"), "move-line-down");
+    // Multi-cursor phase. C-UP/C-DOWN were free (KeyTranslation has
+    // delivered Ctrl+Arrow since the FTXUI migration; nothing ever bound
+    // them) and terminal-reliable, unlike the cross-editor Ctrl+Alt+Arrow
+    // or Ctrl+D conventions (C-d is delete-char here, per the keybinding
+    // audit's own note that no standard chord was free). M-n mirrors
+    // Emacs' multiple-cursors ecosystem living on M-prefixed keys; its
+    // C-> convention itself isn't reliably decodable from a terminal.
+    keymap.Bind(ParseKeySequence("C-DOWN"), "add-cursor-below");
+    keymap.Bind(ParseKeySequence("C-UP"), "add-cursor-above");
+    keymap.Bind(ParseKeySequence("M-n"), "select-next-occurrence");
+    keymap.Bind(ParseKeySequence("ESC n"), "select-next-occurrence");
     keymap.Bind(ParseKeySequence("C-c d"), "duplicate-line");
     // toggle-line-comment follow-up: real Emacs' own actual binding for
     // comment-dwim/comment-line is M-;, not C-/ (which is a non-Emacs

@@ -16,6 +16,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -187,6 +188,52 @@ class Buffer {
     [[nodiscard]] bool                                HasMark() const;
     [[nodiscard]] std::size_t                         Mark() const;   // precondition: HasMark()
     [[nodiscard]] std::pair<std::size_t, std::size_t> Region() const; // precondition: HasMark()
+
+    // Multiple cursors (multi-cursor phase). The primary cursor stays
+    // Point_/Mark_ -- every existing single-cursor code path is untouched
+    // by this feature existing -- and secondaries are extra (point, mark)
+    // pairs relocated across every edit through the exact same
+    // RelocateForInsert/RelocateForDelete primitive Point_/Mark_/
+    // NarrowedRange_/FoldMarkers_ already route through (the reuse the
+    // generic-code-folding entry explicitly anticipated for this feature).
+    // Kept sorted by point, deduplicated against each other and the
+    // primary; AddCursorAt snaps to a grapheme boundary the same way
+    // SetPoint does and refuses (as a silent no-op) a position an existing
+    // cursor already occupies. Undo()/Redo() clear all secondaries -- a
+    // deliberate v1 simplification: restoring N cursor positions across a
+    // snapshot restore has no obviously-right answer, and collapsing is
+    // predictable.
+    struct Cursor {
+        std::size_t                point = 0;
+        std::optional<std::size_t> mark;
+        // Swapped in/out alongside point/mark by ForEachCursor so vertical
+        // motion tracks a goal column per cursor -- without this, the first
+        // cursor's captured column would leak into every later cursor's
+        // own next-line/previous-line move within the same batch.
+        std::optional<std::size_t> goalColumn;
+
+        bool operator==(const Cursor&) const = default;
+    };
+    void                                     AddCursorAt(std::size_t point, std::optional<std::size_t> mark = std::nullopt);
+    [[nodiscard]] const std::vector<Cursor>& SecondaryCursors() const;
+    [[nodiscard]] bool                       HasSecondaryCursors() const;
+    void                                     ClearSecondaryCursors();
+
+    // Runs operation once per cursor -- first as-is for the primary, then
+    // once per secondary with that secondary swapped into Point_/Mark_ (so
+    // operation just uses the normal Point()/Mark() API and never knows
+    // which cursor it's acting for). The whole run is one undo group (see
+    // BeginUndoGroup below), and cursors merge/re-sort afterward.
+    // operation must not itself add/remove cursors or call ForEachCursor.
+    void ForEachCursor(const std::function<void()>& operation);
+
+    // Undo grouping (multi-cursor phase, but deliberately general): while a
+    // group is open (nestable), content-mutating methods skip their own
+    // per-call UndoTree_ record/amend; EndUndoGroup records one snapshot
+    // for the whole batch if anything actually changed. This is what makes
+    // one keystroke applied at N cursors undo as one step, not N.
+    void BeginUndoGroup();
+    void EndUndoGroup();
 
     // Narrowing (narrow-to-region/widen follow-up): temporarily restricts
     // where point can go and what BufferView displays to a sub-range of the
@@ -457,6 +504,22 @@ class Buffer {
     void MarkUnsavedRangeInserted(std::size_t insertOffset, std::size_t length);
     void MarkUnsavedRangeDeleted(std::size_t rangeStart, std::size_t rangeEnd);
 
+    // Multi-cursor phase: SecondaryCursors_'s own leg of the relocation
+    // every mutator already gives Point_/Mark_/NarrowedRange_/FoldMarkers_
+    // -- called right beside RelocateFoldMarkersForInsert/Delete at each of
+    // the five content-mutation sites.
+    void RelocateSecondaryCursorsForInsert(std::size_t insertOffset, std::size_t length);
+    void RelocateSecondaryCursorsForDelete(std::size_t rangeStart, std::size_t rangeEnd);
+    // Re-sorts by point and drops duplicates (of each other or of the
+    // primary) -- edits can collapse two cursors onto one position, the
+    // same "collapses toward one surviving position" behavior Mark_ has.
+    void NormalizeSecondaryCursors();
+    // The undo-record epilogue shared by every content mutator: inside an
+    // open group, just marks the group dirty; outside one, records (or,
+    // for a plain insert with canAmend, amends) exactly as each mutator
+    // did inline before undo grouping existed.
+    void RecordOrAmendUndo(bool canAmend);
+
     // Shared by Undo()/Redo(): oldText is Rope_'s content just before the
     // restore that already happened by the time this runs. See
     // SavedSnapshot_'s own doc comment for why this checks against it
@@ -469,11 +532,15 @@ class Buffer {
     UndoTree                                           UndoTree_;
     std::size_t                                        Point_ = 0;
     std::optional<std::size_t>                         Mark_;
-    std::optional<std::pair<std::size_t, std::size_t>> NarrowedRange_; // see NarrowToRegion's own doc comment
-    bool                                               CanAmend_ = false;
-    bool                                               ReadOnly_ = false; // see ReadOnly()/SetReadOnly()'s own doc comment above
-    bool                                               Loading_  = false; // see IsLoading()'s own doc comment above
-    std::shared_ptr<LoadProgress>                      LoadProgress_;     // see SetLoadProgress
+    std::optional<std::pair<std::size_t, std::size_t>> NarrowedRange_;                 // see NarrowToRegion's own doc comment
+    std::vector<Cursor>                                SecondaryCursors_;              // see AddCursorAt; sorted, deduplicated
+    int                                                UndoGroupDepth_        = 0;     // see BeginUndoGroup
+    bool                                               UndoGroupDirty_        = false; // any mutation inside the open group?
+    bool                                               CursorIterationActive_ = false; // see ForEachCursor + RelocateSecondaryCursorsForDelete
+    bool                                               CanAmend_              = false;
+    bool                                               ReadOnly_              = false; // see ReadOnly()/SetReadOnly()'s own doc comment above
+    bool                                               Loading_               = false; // see IsLoading()'s own doc comment above
+    std::shared_ptr<LoadProgress>                      LoadProgress_;                  // see SetLoadProgress
     // Set by MoveToNextLine/MoveToPreviousLine, cleared by every other
     // point-moving or editing call -- see their doc comment above.
     std::optional<std::size_t>        GoalColumn_;

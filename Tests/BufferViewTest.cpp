@@ -1737,6 +1737,61 @@ TEST_CASE("A stored file place's topLine is restored when its buffer becomes act
     ned::editor::ResetFilePlacesForTesting();
 }
 
+TEST_CASE("Secondary cursors render as inverted cells with their selections highlighted", "[BufferView][MultiCursor]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("foo bar\nfoo baz\n");
+    fixture.buffer.SetPoint(0);
+    // Line 2's "foo" selected by a secondary cursor (mark 8, point 11), and
+    // a third cursor parked at line 1's content end (offset 7) -- the
+    // no-codepoint-cell case end-of-line motion produces constantly.
+    fixture.buffer.AddCursorAt(11, 8);
+    fixture.buffer.AddCursorAt(7);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 29, .y_min = 0, .y_max = 3});
+    ned::ui::Screen screen = ned::ui::Screen(30, 4);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 29, .y_min = 0, .y_max = 3});
+    view.Paint(canvas);
+
+    const int gutter = GutterWidth(3);
+    // The caret after line 2's "foo" (buffer offset 11 = row 1, column 3).
+    REQUIRE(screen.PixelAt(gutter + 3, 1).inverted);
+    // The end-of-line caret on row 0's first padding cell (column 7).
+    REQUIRE(screen.PixelAt(gutter + 7, 0).inverted);
+    // The secondary selection's background across line 2's "foo".
+    const ned::ui::Theme theme = ned::ui::DarkTheme();
+    for (int col = 0; col < 3; ++col) {
+        REQUIRE(screen.PixelAt(gutter + col, 1).background_color == theme.selectionBackground);
+    }
+    // An unselected cell keeps the plain background, and the primary's own
+    // cell is NOT inverted (it gets the real terminal cursor instead).
+    REQUIRE(screen.PixelAt(gutter + 5, 1).background_color == theme.background);
+    REQUIRE_FALSE(screen.PixelAt(gutter + 0, 0).inverted);
+}
+
+TEST_CASE("M-n and C-DOWN drive select-next-occurrence and add-cursor-below end to end", "[BufferView][MultiCursor]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("foo bar\nfoo baz\n");
+    fixture.buffer.SetPoint(1); // inside line 1's "foo"
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 29, .y_min = 0, .y_max = 3});
+
+    view.OnEvent(ned::ui::test::Alt('n')); // select the word at point
+    REQUIRE(fixture.buffer.HasMark());
+    REQUIRE(fixture.buffer.Region() == std::pair<std::size_t, std::size_t>{0, 3});
+
+    view.OnEvent(ned::ui::test::Alt('n')); // add a cursor at line 2's "foo"
+    REQUIRE(fixture.buffer.SecondaryCursors().size() == 1);
+    REQUIRE(fixture.buffer.SecondaryCursors()[0].mark == 8);
+
+    view.OnEvent(ned::ui::test::ArrowDownCtrl());
+    REQUIRE(fixture.buffer.SecondaryCursors().size() == 2);
+
+    view.OnEvent(ned::ui::test::Ctrl('g')); // keyboard-quit collapses
+    REQUIRE_FALSE(fixture.buffer.HasSecondaryCursors());
+}
+
 TEST_CASE("The project-init trust prompt delivers each decision exactly once", "[BufferView][ProjectTrust]") {
     const std::filesystem::path initPath = "/some/project/.ned/init.janet";
 
@@ -3477,11 +3532,13 @@ TEST_CASE("M-x prompts for a command name, listing every command alphabetically 
 
     REQUIRE(fixture.statusMessage.rfind("M-x ", 0) == 0);
     // Display is capped to kMaxVisibleCandidates (see FormatFuzzyCandidates)
-    // -- "backward-char" is alphabetically first among registered commands,
-    // so it's always within that window regardless of how many other
-    // commands exist. The selected entry is bracketed, not asterisk-prefixed
-    // (fuzzy-candidate-list-styling follow-up).
-    REQUIRE(fixture.statusMessage.find("[backward-char]") != std::string::npos);
+    // -- "add-cursor-above" is alphabetically first among registered
+    // commands (was "backward-char" until the multi-cursor phase added
+    // commands sorting ahead of it), so it's always within that window
+    // regardless of how many other commands exist. The selected entry is
+    // bracketed, not asterisk-prefixed (fuzzy-candidate-list-styling
+    // follow-up).
+    REQUIRE(fixture.statusMessage.find("[add-cursor-above]") != std::string::npos);
     REQUIRE(fixture.statusMessage.find("more") != std::string::npos); // more than 6 commands are registered
 }
 
