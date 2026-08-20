@@ -90,7 +90,7 @@ class Pane {
          text::BufferList& bufferList, const editor::CommandRegistry& registry, const editor::Keymap& janetKeymap,
          const editor::Keymap& globalKeymap, editor::Mode mode, std::string& statusMessage, const Theme& theme,
          ProjectSidebar* projectSidebar, editor::lsp::LspManager* lspManager, editor::tasks::TaskRunner* taskRunner,
-         editor::vcs::VcsRunner* vcsRunner,
+         editor::vcs::VcsRunner* vcsRunner, editor::dap::DapManager* dapManager,
          std::function<void(editor::InteractiveRequest)> onWindowRequest,
          std::function<void(text::Buffer&)>              onBufferClosed);
 
@@ -234,6 +234,14 @@ class WindowManager {
     [[nodiscard]] bool FocusedPaneScrollColumnActive();
 
     void SetVcsRunner(editor::vcs::VcsRunner* vcsRunner);
+
+    // DAP client slice 1: same "forwarded to every pane, present and
+    // future" shape as SetLspManager/SetTaskRunner above -- plus this is
+    // where the session's async callbacks (SetOnStopped/SetOnSessionEnded)
+    // get wired, since WindowManager is the one owner that can resolve
+    // "the focused pane" fresh when a breakpoint actually fires, rather
+    // than capturing some pane that may have been closed by then.
+    void SetDapManager(editor::dap::DapManager* dapManager);
 
     // FTXUI -> Notcurses migration: forwarded to every pane, present and
     // future, same shape as SetProjectSidebar/SetLspManager above -- see
@@ -409,6 +417,7 @@ class WindowManager {
     editor::lsp::LspManager*       lspManager_     = nullptr;
     editor::tasks::TaskRunner*     taskRunner_     = nullptr;
     editor::vcs::VcsRunner*        vcsRunner_      = nullptr;
+    editor::dap::DapManager*       dapManager_     = nullptr; // see SetDapManager
     EventLoop*                     eventLoop_      = nullptr; // see SetEventLoop
 
     std::unique_ptr<WindowNode> root_;

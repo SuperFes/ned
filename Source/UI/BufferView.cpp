@@ -3309,6 +3309,37 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             prompt_.emplace("Cancel task: ");
             statusMessage_ = prompt_->StatusText();
             return;
+        // DAP client slice 1: one-shot direct actions, same shape as
+        // VcsShowBlame just below -- the synchronous half of each answer
+        // (DapManager's returned status string) lands in statusMessage_
+        // immediately; async outcomes (a breakpoint hit, the session
+        // ending) arrive later through the WindowManager-wired
+        // SetOnStopped/SetOnSessionEnded callbacks, not here.
+        case editor::InteractiveRequest::DapContinue:
+            statusMessage_ = dapManager_ ? dapManager_->StartOrContinue(LanguageForMode(mode_)) : "No debugger available.";
+            return;
+        case editor::InteractiveRequest::DapStop:
+            statusMessage_ = dapManager_ ? dapManager_->StopSession() : "No debugger available.";
+            return;
+        case editor::InteractiveRequest::DapPause:
+            statusMessage_ = dapManager_ ? dapManager_->Pause() : "No debugger available.";
+            return;
+        case editor::InteractiveRequest::DapToggleBreakpoint: {
+            if (!dapManager_) {
+                statusMessage_ = "No debugger available.";
+                return;
+            }
+            text::Buffer& buffer = activeBuffer_.Get();
+            if (!buffer.Path()) {
+                statusMessage_ = "Buffer has no file to set a breakpoint in.";
+                return;
+            }
+            const std::size_t line   = buffer.Content().ByteOffsetToLine(buffer.Point()) + 1; // 1-based, DAP's own convention
+            const bool        nowSet = dapManager_->ToggleBreakpoint(*buffer.Path(), line);
+            statusMessage_           = (nowSet ? "Breakpoint set at " : "Breakpoint removed at ") + buffer.Path()->filename().string() +
+                                       ":" + std::to_string(line);
+            return;
+        }
         // VCS blame gutter follow-up: one-shot direct actions, same shape
         // as ProjectAgenda/LspGotoDefinition above -- doesn't touch
         // inputMode_, the async result (or a status-message error) arrives
@@ -5179,6 +5210,10 @@ void BufferView::SetLspManager(editor::lsp::LspManager* lspManager) {
 
 void BufferView::SetTaskRunner(editor::tasks::TaskRunner* taskRunner) {
     taskRunner_ = taskRunner;
+}
+
+void BufferView::SetDapManager(editor::dap::DapManager* dapManager) {
+    dapManager_ = dapManager;
 }
 
 void BufferView::SetEventLoop(EventLoop* eventLoop) {

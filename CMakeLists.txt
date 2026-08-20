@@ -319,6 +319,9 @@ add_library(ned_lib STATIC
         Source/Editor/Tasks/TaskConfig.cpp
         Source/Editor/Tasks/TaskProcess.cpp
         Source/Editor/Tasks/TaskRunner.cpp
+        Source/Editor/Dap/DapConfig.cpp
+        Source/Editor/Dap/DapClient.cpp
+        Source/Editor/Dap/DapManager.cpp
         Source/Editor/TreeSitter/Node.cpp
         Source/Editor/TreeSitter/Tree.cpp
         Source/Editor/TreeSitter/Parser.cpp
@@ -484,6 +487,9 @@ if (NED_BUILD_TESTS)
             Tests/LspPositionTest.cpp
             Tests/LspContentTest.cpp
             Tests/LspManagerTest.cpp
+            Tests/DapConfigTest.cpp
+            Tests/DapClientTest.cpp
+            Tests/DapManagerTest.cpp
             Tests/ChildProcessTest.cpp
             Tests/TaskConfigTest.cpp
             Tests/TaskProcessTest.cpp
