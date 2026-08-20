@@ -16,6 +16,7 @@
 #include "ProjectRoot.h"
 #include "ProjectSession.h"
 #include "TabWidth.h"
+#include "Text/Grapheme.h"
 #include "Text/Utf8.h"
 
 namespace ned::editor {
@@ -304,7 +305,25 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
         }
     });
 
-    registry.Register("set-mark-command", "Set the mark at point.", [](CommandContext& context) { context.buffer.SetMark(context.buffer.Point()); });
+    // Emacs' C-SPC C-SPC idiom: a second press with the (still-empty) mark
+    // at point deactivates it, so an accidental mark is cancelable from the
+    // same key that set it -- keyboard-quit (C-g) stays the general cancel.
+    // A press after point has moved re-anchors the region at point instead,
+    // matching real set-mark-command's own behavior.
+    registry.Register("set-mark-command", "Set the mark at point, or deactivate it when pressed again in place.",
+                      [](CommandContext& context) {
+                          if (context.buffer.HasMark() && context.buffer.Mark() == context.buffer.Point()) {
+                              context.buffer.ClearMark();
+                              if (context.message) {
+                                  *context.message = "Mark deactivated";
+                              }
+                              return;
+                          }
+                          context.buffer.SetMark(context.buffer.Point());
+                          if (context.message) {
+                              *context.message = "Mark set";
+                          }
+                      });
 
     // A no-op without a mark, matching kill-line's own "nothing to do" silence
     // rather than surfacing a status message for what's a routine, frequent
@@ -326,6 +345,372 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
         const std::size_t oldMark  = context.buffer.Mark();
         context.buffer.SetPoint(oldMark);
         context.buffer.SetMark(oldPoint);
+    });
+
+    // Emacs-coverage follow-up: the classic kill/word/whitespace/case
+    // vocabulary. All of these compose existing Buffer/KillRing primitives;
+    // multi-edit ones batch through Begin/EndUndoGroup so each undoes as a
+    // single step. Editing ones ClearMark() per the editing-vs-motion split
+    // documented above; word-classification stays the same ASCII-only cut
+    // Buffer's own word motion makes.
+
+    registry.Register("yank-pop", "Replace a just-yanked entry with the next-older kill-ring entry.", [](CommandContext& context) {
+        // Emacs' own precondition: only meaningful immediately after yank
+        // (or a previous yank-pop) -- context.lastCommand is the Dispatcher's
+        // last-command tracking, added for exactly this.
+        if (context.lastCommand != "yank" && context.lastCommand != "yank-pop") {
+            if (context.message) {
+                *context.message = "Previous command was not a yank";
+            }
+            return;
+        }
+        if (context.killRing.Empty()) {
+            return;
+        }
+        const std::string previous = context.killRing.Current();
+        const std::string next    = context.killRing.YankPop();
+        if (context.buffer.Point() < previous.size()) {
+            return; // the yanked text can't be where we expect; leave the buffer alone
+        }
+        context.buffer.ClearMark();
+        context.buffer.BeginUndoGroup();
+        context.buffer.DeleteRange(context.buffer.Point() - previous.size(), previous.size());
+        context.buffer.InsertAtPoint(next);
+        context.buffer.EndUndoGroup();
+    });
+
+    registry.Register("kill-word", "Kill from point to the end of the next word.", [](CommandContext& context) {
+        context.buffer.ClearMark();
+        const std::size_t start = context.buffer.Point();
+        context.buffer.MoveForwardWord();
+        const std::size_t end = context.buffer.Point();
+        if (end > start) {
+            context.killRing.Kill(context.buffer.DeleteRange(start, end - start));
+        }
+    });
+
+    registry.Register("backward-kill-word", "Kill from the start of the previous word to point.", [](CommandContext& context) {
+        context.buffer.ClearMark();
+        const std::size_t end = context.buffer.Point();
+        context.buffer.MoveBackwardWord();
+        const std::size_t start = context.buffer.Point();
+        if (end > start) {
+            context.killRing.Kill(context.buffer.DeleteRange(start, end - start));
+        }
+    });
+
+    registry.Register("mark-whole-buffer", "Put point at the beginning and mark at the end of the buffer.",
+                      [](CommandContext& context) {
+                          context.buffer.SetPoint(0);
+                          context.buffer.SetMark(context.buffer.Content().ByteLength());
+                      });
+
+    registry.Register("transpose-chars", "Interchange the graphemes around point, moving forward.", [](CommandContext& context) {
+        auto&             buffer  = context.buffer;
+        const auto&       content = buffer.Content();
+        const std::size_t point   = buffer.Point();
+        // Emacs' end-of-line special case: transpose the two graphemes
+        // *before* point instead of the pair around it.
+        const bool atLineEnd = point == LineContentEnd(content, point);
+        std::size_t first;   // start of the earlier grapheme
+        std::size_t middle;  // boundary between the two
+        std::size_t last;    // end of the later grapheme
+        if (atLineEnd) {
+            if (point == 0) {
+                return;
+            }
+            last   = point;
+            middle = text::PreviousGraphemeBoundary(content, last);
+            if (middle == 0) {
+                return;
+            }
+            first = text::PreviousGraphemeBoundary(content, middle);
+        }
+        else {
+            if (point == 0) {
+                return;
+            }
+            first  = text::PreviousGraphemeBoundary(content, point);
+            middle = point;
+            last   = text::NextGraphemeBoundary(content, point);
+        }
+        if (content.ByteOffsetToLine(first) != content.ByteOffsetToLine(last)) {
+            return; // never drag a grapheme across a newline
+        }
+        const std::string earlier = content.Substring(first, middle - first);
+        const std::string later   = content.Substring(middle, last - middle);
+        buffer.ClearMark();
+        buffer.BeginUndoGroup();
+        buffer.DeleteRange(first, last - first);
+        buffer.InsertAt(first, later + earlier);
+        buffer.EndUndoGroup();
+        buffer.SetPoint(last);
+    });
+
+    registry.Register("transpose-words", "Interchange the words around point, moving forward.", [](CommandContext& context) {
+        auto&             buffer   = context.buffer;
+        const auto&       content  = buffer.Content();
+        const std::size_t original = buffer.Point();
+        // Same region derivation real transpose-words gets from its
+        // forward-word/backward-word probes: the word ending at-or-after
+        // point and the word before it.
+        buffer.MoveForwardWord();
+        const std::size_t end2 = buffer.Point();
+        buffer.MoveBackwardWord();
+        const std::size_t start2 = buffer.Point();
+        buffer.MoveBackwardWord();
+        const std::size_t start1 = buffer.Point();
+        buffer.MoveForwardWord();
+        const std::size_t end1 = buffer.Point();
+        if (!(start1 < end1 && end1 <= start2 && start2 < end2)) {
+            buffer.SetPoint(original); // fewer than two distinct words here
+            return;
+        }
+        const std::string firstWord  = content.Substring(start1, end1 - start1);
+        const std::string separator  = content.Substring(end1, start2 - end1);
+        const std::string secondWord = content.Substring(start2, end2 - start2);
+        buffer.ClearMark();
+        buffer.BeginUndoGroup();
+        buffer.DeleteRange(start1, end2 - start1);
+        buffer.InsertAt(start1, secondWord + separator + firstWord);
+        buffer.EndUndoGroup();
+        buffer.SetPoint(end2);
+    });
+
+    // upcase/downcase/capitalize-word share one shape: transform from point
+    // to the end of the next word and leave point there, Emacs-style. ASCII
+    // case only, matching the word classification's own documented cut.
+    const auto registerCaseCommand = [&registry](const char* name, const char* doc, auto transform) {
+        registry.Register(name, doc, [transform](CommandContext& context) {
+            auto&             buffer = context.buffer;
+            const std::size_t start  = buffer.Point();
+            buffer.MoveForwardWord();
+            const std::size_t end = buffer.Point();
+            if (end <= start) {
+                return;
+            }
+            buffer.ClearMark();
+            buffer.BeginUndoGroup();
+            std::string text = buffer.DeleteRange(start, end - start);
+            transform(text);
+            buffer.InsertAt(start, text);
+            buffer.EndUndoGroup();
+            buffer.SetPoint(end);
+        });
+    };
+    const auto isAsciiAlpha = [](char ch) { return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z'); };
+    const auto toUpper      = [](char ch) { return (ch >= 'a' && ch <= 'z') ? static_cast<char>(ch - 'a' + 'A') : ch; };
+    const auto toLower      = [](char ch) { return (ch >= 'A' && ch <= 'Z') ? static_cast<char>(ch - 'A' + 'a') : ch; };
+    registerCaseCommand("upcase-word", "Uppercase from point to the end of the next word, moving over it.",
+                        [toUpper](std::string& text) {
+                            for (char& ch : text) {
+                                ch = toUpper(ch);
+                            }
+                        });
+    registerCaseCommand("downcase-word", "Lowercase from point to the end of the next word, moving over it.",
+                        [toLower](std::string& text) {
+                            for (char& ch : text) {
+                                ch = toLower(ch);
+                            }
+                        });
+    registerCaseCommand("capitalize-word", "Capitalize from point to the end of the next word, moving over it.",
+                        [isAsciiAlpha, toUpper, toLower](std::string& text) {
+                            bool atWordStart = true;
+                            for (char& ch : text) {
+                                if (isAsciiAlpha(ch)) {
+                                    ch          = atWordStart ? toUpper(ch) : toLower(ch);
+                                    atWordStart = false;
+                                }
+                                else {
+                                    atWordStart = true;
+                                }
+                            }
+                        });
+
+    registry.Register("open-line", "Insert a newline after point, leaving point in place.", PerCursor([](CommandContext& context) {
+                          context.buffer.ClearMark();
+                          const std::size_t point = context.buffer.Point();
+                          context.buffer.InsertAtPoint("\n");
+                          context.buffer.SetPoint(point);
+                      }));
+
+    registry.Register("just-one-space", "Replace the whitespace around point with a single space.", [](CommandContext& context) {
+        auto&       buffer  = context.buffer;
+        const auto& content = buffer.Content();
+        std::size_t start   = buffer.Point();
+        while (start > 0) {
+            const std::size_t previous = content.PreviousCodepointBoundary(start);
+            const char32_t    cp       = content.CodepointAt(previous).codepoint;
+            if (cp != U' ' && cp != U'\t') {
+                break;
+            }
+            start = previous;
+        }
+        std::size_t end = buffer.Point();
+        while (end < content.ByteLength()) {
+            const auto decoded = content.CodepointAt(end);
+            if (decoded.codepoint != U' ' && decoded.codepoint != U'\t') {
+                break;
+            }
+            end += decoded.byteLength;
+        }
+        buffer.ClearMark();
+        buffer.BeginUndoGroup();
+        buffer.DeleteRange(start, end - start);
+        buffer.InsertAt(start, " ");
+        buffer.EndUndoGroup();
+        buffer.SetPoint(start + 1);
+    });
+
+    registry.Register("delete-indentation", "Join this line to the previous one, with one space at the join.",
+                      [](CommandContext& context) {
+                          auto&             buffer  = context.buffer;
+                          const auto&       content = buffer.Content();
+                          const std::size_t line    = content.ByteOffsetToLine(buffer.Point());
+                          if (line == 0) {
+                              return;
+                          }
+                          const std::size_t lineStart = content.LineToByteOffset(line);
+                          // The join range: previous line's trailing spaces/tabs,
+                          // the newline itself, and this line's leading indentation.
+                          std::size_t start = lineStart - 1; // the newline byte
+                          while (start > 0) {
+                              const std::size_t previous = content.PreviousCodepointBoundary(start);
+                              const char32_t    cp       = content.CodepointAt(previous).codepoint;
+                              if (cp != U' ' && cp != U'\t') {
+                                  break;
+                              }
+                              start = previous;
+                          }
+                          std::size_t end = lineStart;
+                          while (end < content.ByteLength()) {
+                              const auto decoded = content.CodepointAt(end);
+                              if (decoded.codepoint != U' ' && decoded.codepoint != U'\t') {
+                                  break;
+                              }
+                              end += decoded.byteLength;
+                          }
+                          buffer.ClearMark();
+                          buffer.BeginUndoGroup();
+                          buffer.DeleteRange(start, end - start);
+                          buffer.InsertAt(start, " ");
+                          buffer.EndUndoGroup();
+                          buffer.SetPoint(start);
+                      });
+
+    registry.Register("back-to-indentation", "Move point to this line's first non-whitespace character.",
+                      PerCursor([](CommandContext& context) {
+                          auto&             buffer  = context.buffer;
+                          const auto&       content = buffer.Content();
+                          std::size_t       target  = content.LineToByteOffset(content.ByteOffsetToLine(buffer.Point()));
+                          while (target < content.ByteLength()) {
+                              const auto decoded = content.CodepointAt(target);
+                              if (decoded.codepoint != U' ' && decoded.codepoint != U'\t') {
+                                  break;
+                              }
+                              target += decoded.byteLength;
+                          }
+                          buffer.SetPoint(target);
+                      }));
+
+    registry.Register("delete-blank-lines", "On a blank line, delete surrounding blank lines (leaving one); otherwise delete any blank lines following this one.",
+                      [](CommandContext& context) {
+                          auto&       buffer  = context.buffer;
+                          const auto& content = buffer.Content();
+                          const auto  isBlank = [&content](std::size_t line) {
+                              const LineSpan span = GetLineSpan(content, line);
+                              std::size_t    at   = span.start;
+                              while (at < span.contentEnd) {
+                                  const auto decoded = content.CodepointAt(at);
+                                  if (decoded.codepoint != U' ' && decoded.codepoint != U'\t') {
+                                      return false;
+                                  }
+                                  at += decoded.byteLength;
+                              }
+                              return true;
+                          };
+                          // Bytes spanning full lines first..last inclusive,
+                          // including last's trailing newline when it has one.
+                          const auto lineRunRange = [&content](std::size_t first, std::size_t last) {
+                              const std::size_t start = content.LineToByteOffset(first);
+                              const std::size_t end =
+                                  last + 1 < content.LineCount() ? content.LineToByteOffset(last + 1) : content.ByteLength();
+                              return std::pair{start, end};
+                          };
+                          const std::size_t line = content.ByteOffsetToLine(buffer.Point());
+                          if (!isBlank(line)) {
+                              // Delete the run of blank lines after this one, if any.
+                              std::size_t last = line;
+                              while (last + 1 < content.LineCount() && isBlank(last + 1)) {
+                                  ++last;
+                              }
+                              if (last == line) {
+                                  return;
+                              }
+                              const auto [start, end] = lineRunRange(line + 1, last);
+                              buffer.ClearMark();
+                              if (end > start) {
+                                  buffer.DeleteRange(start, end - start);
+                              }
+                              return;
+                          }
+                          std::size_t first = line;
+                          while (first > 0 && isBlank(first - 1)) {
+                              --first;
+                          }
+                          std::size_t last = line;
+                          while (last + 1 < content.LineCount() && isBlank(last + 1)) {
+                              ++last;
+                          }
+                          buffer.ClearMark();
+                          if (first == last) {
+                              // An isolated blank line is deleted outright.
+                              const auto [start, end] = lineRunRange(first, last);
+                              if (end > start) {
+                                  buffer.DeleteRange(start, end - start);
+                              }
+                              buffer.SetPoint(std::min(start, buffer.Content().ByteLength()));
+                              return;
+                          }
+                          // A run collapses to one blank line, point on it.
+                          const auto [start, end] = lineRunRange(first + 1, last);
+                          if (end > start) {
+                              buffer.DeleteRange(start, end - start);
+                          }
+                          buffer.SetPoint(content.LineToByteOffset(first));
+                      });
+
+    registry.Register("recenter", "Scroll so the line at point is centered in the window.",
+                      [](CommandContext& context) { context.interactiveRequest = InteractiveRequest::Recenter; });
+
+    registry.Register("goto-line", "Jump to a line by number (prompts for it).",
+                      [](CommandContext& context) { context.interactiveRequest = InteractiveRequest::GotoLine; });
+
+    registry.Register("save-some-buffers", "Save every modified file-backed buffer.", [](CommandContext& context) {
+        // Real Emacs asks y/n per buffer; saving without asking is the v1
+        // cut (these are the user's own buffers, and quit still confirms).
+        // No format-on-save here either -- that stays save-buffer's own
+        // single-buffer concern.
+        std::size_t saved  = 0;
+        std::string failed;
+        for (const auto& buffer : context.bufferList.Buffers()) {
+            if (!buffer->Path().has_value() || !buffer->Modified()) {
+                continue;
+            }
+            try {
+                buffer->Save();
+                ++saved;
+            }
+            catch (const std::exception&) {
+                failed += failed.empty() ? buffer->Name() : ", " + buffer->Name();
+            }
+        }
+        if (context.message) {
+            *context.message = "Saved " + std::to_string(saved) + " buffer" + (saved == 1 ? "" : "s");
+            if (!failed.empty()) {
+                *context.message += " (failed: " + failed + ")";
+            }
+        }
     });
 
     // keyboard-quit follow-up: real Emacs' C-g aborts several things at
@@ -589,7 +974,12 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           }
                       });
 
-    registry.Register("save-buffer", "Save the current buffer to its associated file.", [](CommandContext& context) {
+    // external-modification-safety follow-up: the actual save body, shared
+    // by save-buffer (which gates it behind a supersession check) and
+    // save-buffer-force (what BufferView's overwrite confirmation invokes
+    // on y -- also M-x-reachable as the deliberate "I know, write it
+    // anyway" escape hatch).
+    const auto saveBufferBody = [](CommandContext& context) {
         try {
             // Only attempted when a command is actually configured (format-
             // on-save follow-up; see FormatOnSave.h) -- FormatCommand() is
@@ -621,7 +1011,20 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                 *context.message = e.what();
             }
         }
+    };
+
+    registry.Register("save-buffer", "Save the current buffer to its associated file.", [saveBufferBody](CommandContext& context) {
+        // Never silently overwrite a file someone else wrote underneath
+        // this buffer (Emacs' supersession check): hand the decision to a
+        // y/n confirmation instead of writing anything.
+        if (context.buffer.ExternallyModified()) {
+            context.interactiveRequest = InteractiveRequest::ConfirmOverwriteSave;
+            return;
+        }
+        saveBufferBody(context);
     });
+
+    registry.Register("save-buffer-force", "Save the current buffer even if its file changed on disk.", saveBufferBody);
 
     // format-buffer follow-up: save-buffer's own formatting step, exposed
     // standalone so it can run without also saving -- reuses the exact
@@ -1451,15 +1854,17 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("END"), "end-of-line");
     keymap.Bind(ParseKeySequence("C-k"), "kill-line");
     keymap.Bind(ParseKeySequence("C-y"), "yank");
-    // C-_, not C-/: real Emacs' own actual undo binding, and the only one
-    // that works from a real terminal -- confirmed against a live terminal
-    // that C-/ (a literal Control+'/' KeyChord) never fires, since no
-    // terminal sends a byte distinguishing Ctrl+/ from Ctrl+_ (both are the
-    // same physical unshifted/shifted key on a US layout, and terminals
-    // don't track Shift on top of a control byte); the byte they do send,
-    // 0x1F, is now decoded as Control+'_' in KeyTranslation.cpp's
-    // DecodeBaseKey specifically to make this binding reachable.
+    // Both C-_ and C-/, real Emacs' own pair of undo bindings -- and under
+    // Notcurses both are genuinely needed, one per keyboard protocol: a
+    // legacy terminal sends byte 0x1F for a physical Ctrl+/ (or Ctrl+_)
+    // press, decoded as Control+'_' by KeyTranslation.cpp's DecodeBaseKey,
+    // while a kitty-protocol terminal reports the same press as a real
+    // Control+'/' chord (id '/', NCKEY_MOD_CTRL -- no C0-byte ambiguity in
+    // that protocol at all). Binding only one of the two leaves undo
+    // unreachable on the other protocol's terminals -- a real, live-tested
+    // regression each direction.
     keymap.Bind(ParseKeySequence("C-_"), "undo");
+    keymap.Bind(ParseKeySequence("C-/"), "undo");
     // redo has no standard Emacs binding (stock Emacs has no built-in redo
     // at all -- undo-tree/undo-fu-style packages each pick their own key).
     // M-/ works cleanly regardless of the C-_/C-/ byte ambiguity above:
@@ -1482,6 +1887,38 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("C-SPC"), "set-mark-command");
     keymap.Bind(ParseKeySequence("C-g"), "keyboard-quit");
     keymap.Bind(ParseKeySequence("C-w"), "kill-region");
+    // Emacs-coverage follow-up: kill/word/whitespace/case vocabulary, each
+    // on its real Emacs default; every M- binding gets the usual ESC twin.
+    keymap.Bind(ParseKeySequence("M-y"), "yank-pop");
+    keymap.Bind(ParseKeySequence("ESC y"), "yank-pop");
+    keymap.Bind(ParseKeySequence("M-d"), "kill-word");
+    keymap.Bind(ParseKeySequence("ESC d"), "kill-word");
+    keymap.Bind(ParseKeySequence("M-DEL"), "backward-kill-word");
+    keymap.Bind(ParseKeySequence("ESC DEL"), "backward-kill-word");
+    keymap.Bind(ParseKeySequence("C-x h"), "mark-whole-buffer");
+    keymap.Bind(ParseKeySequence("C-t"), "transpose-chars");
+    keymap.Bind(ParseKeySequence("M-t"), "transpose-words");
+    keymap.Bind(ParseKeySequence("ESC t"), "transpose-words");
+    keymap.Bind(ParseKeySequence("M-u"), "upcase-word");
+    keymap.Bind(ParseKeySequence("ESC u"), "upcase-word");
+    keymap.Bind(ParseKeySequence("M-l"), "downcase-word");
+    keymap.Bind(ParseKeySequence("ESC l"), "downcase-word");
+    keymap.Bind(ParseKeySequence("M-c"), "capitalize-word");
+    keymap.Bind(ParseKeySequence("ESC c"), "capitalize-word");
+    keymap.Bind(ParseKeySequence("C-o"), "open-line");
+    keymap.Bind(ParseKeySequence("C-x C-o"), "delete-blank-lines");
+    keymap.Bind(ParseKeySequence("M-SPC"), "just-one-space");
+    keymap.Bind(ParseKeySequence("ESC SPC"), "just-one-space");
+    keymap.Bind(ParseKeySequence("M-^"), "delete-indentation");
+    keymap.Bind(ParseKeySequence("ESC ^"), "delete-indentation");
+    keymap.Bind(ParseKeySequence("M-m"), "back-to-indentation");
+    keymap.Bind(ParseKeySequence("ESC m"), "back-to-indentation");
+    keymap.Bind(ParseKeySequence("C-x u"), "undo"); // real Emacs' other undo binding, alongside C-_
+    keymap.Bind(ParseKeySequence("C-x s"), "save-some-buffers");
+    keymap.Bind(ParseKeySequence("C-l"), "recenter");
+    keymap.Bind(ParseKeySequence("M-g g"), "goto-line");
+    keymap.Bind(ParseKeySequence("M-g M-g"), "goto-line");
+    keymap.Bind(ParseKeySequence("ESC g g"), "goto-line");
     // Same "bind both real input shapes" reasoning as M-x below -- a fast
     // Alt+w press arrives as one Meta-chord, a genuinely separate Escape-
     // then-w press arrives as two.

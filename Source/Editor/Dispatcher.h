@@ -76,10 +76,22 @@ class Dispatcher {
     // nothing's been recorded yet.
     void DiscardMostRecentlyRecordedChords();
 
+    // The name of the most recent command Feed invoked -- Emacs'
+    // `last-command`, tracked so a command can behave differently when it
+    // directly follows a specific other one (yank-pop after yank is the
+    // canonical case). Feed copies the *previous* value into
+    // context.lastCommand before invoking, so the running command sees what
+    // ran before it, not itself. Commands invoked outside Feed (M-x's own
+    // Registry().Invoke path) deliberately don't update this -- a documented
+    // v1 simplification, same class of cut as KeymapStack's non-Emacs
+    // layering policy.
+    [[nodiscard]] const std::string& LastInvokedCommand() const;
+
   private:
     const CommandRegistry& registry_;
     KeymapStack            keymaps_;
     std::vector<KeyChord>  pending_;
+    std::string            lastInvokedCommand_;
 
     bool                  recording_ = false;
     std::vector<KeyChord> currentMacro_;

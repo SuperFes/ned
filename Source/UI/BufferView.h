@@ -333,6 +333,15 @@ class BufferView : public Widget {
                            DeleteFile,
                            RenameFile,
                            FindScratch,
+                           // Emacs-coverage follow-up: goto-line's own prompt
+                           // (M-g g) -- same single-line session shape as
+                           // CreateDirectory, no completion.
+                           GotoLine,
+                           // external-modification-safety follow-up: save-buffer
+                           // found the file changed on disk underneath the
+                           // buffer -- y/n before overwriting, mirroring
+                           // ConfirmCloseBuffer's shape.
+                           ConfirmOverwriteSave,
                            ExecuteCommand,
                            ProjectFindFile,
                            PointToRegister,
@@ -430,6 +439,7 @@ class BufferView : public Widget {
     void CompletePrompt(); // Tab in HandlePromptKey -- find-file paths, buffer names, or scratch names, by inputMode_
     void HandleProjectReplaceKey(const editor::KeyChord& chord);
     void HandleConfirmCloseBufferKey(const editor::KeyChord& chord);      // see RequestCloseBuffer/pendingClose_
+    void HandleConfirmOverwriteSaveKey(const editor::KeyChord& chord);    // external-modification-safety: y -> save-buffer-force
     void HandleConfirmOpenBinaryKey(const editor::KeyChord& chord);       // see pendingBinaryOpenPath_
     void HandleConfirmTrustProjectInitKey(const editor::KeyChord& chord); // see pendingTrustInitPath_
     // Shared by HandlePromptKey's FindFile branch and the public

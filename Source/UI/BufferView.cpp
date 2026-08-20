@@ -826,28 +826,6 @@ namespace {
         return Color::Interpolate(t, Color::BrightCyan, Color::BrightBlack);
     }
 
-    // Diff gutter markers follow-up: how strongly a changed line's
-    // background gradient shows at columnFromGutterEdge (0 = the first
-    // content column right after the gutter). Peaks at kDiffGradientPeakAlpha
-    // right there and fades linearly to 0 over kDiffGradientSpanColumns --
-    // just the first couple columns, revised down from an original 16 per
-    // explicit user feedback ("we only need it on the first character or
-    // 2") once the fuller-span version was actually seen -- so the tint is
-    // a small accent right next to the gutter/line-number marker, not a
-    // reach across the line. A negative input (shouldn't happen --
-    // columnFromGutterEdge is always column - gutterWidth for a column
-    // that's already >= gutterWidth -- but cheap to guard) clamps to the
-    // peak rather than going out of range.
-    float DiffGradientAlpha(int columnFromGutterEdge) {
-        constexpr float kDiffGradientPeakAlpha   = 0.35f;
-        constexpr int   kDiffGradientSpanColumns = 2;
-        if (columnFromGutterEdge >= kDiffGradientSpanColumns) {
-            return 0.0f;
-        }
-        const float t = std::clamp(static_cast<float>(columnFromGutterEdge) / static_cast<float>(kDiffGradientSpanColumns), 0.0f, 1.0f);
-        return kDiffGradientPeakAlpha * (1.0f - t);
-    }
-
 } // namespace
 
 void BufferView::EnsureDiagnosticGutterCache() const {
@@ -1989,39 +1967,14 @@ void BufferView::Paint(Canvas c) {
                 }
                 else if (currentLineIsExecutionLine) {
                     // DAP client slice 2: the stopped line's own wash --
-                    // beats the diff tint below (being stopped here is the
-                    // more urgent fact), loses to isearch/selection above
-                    // (both are explicit user actions).
+                    // loses to isearch/selection above (both are explicit
+                    // user actions). A changed line's content area gets no
+                    // tint of its own anymore (the two-column gradient that
+                    // used to live here was removed per user feedback) --
+                    // the diff gutter glyph plus the accent-colored line
+                    // number carry the whole signal; currentLineDiffTint
+                    // survives only for the latter.
                     brush.background = theme_.executionLineBackground;
-                }
-                else if (currentLineDiffTint) {
-                    // Diff gutter markers follow-up, take two: not a
-                    // uniform wash across the whole line (that fights
-                    // contrast against similarly-hued text everywhere, the
-                    // real complaint the flat-blend version drew) -- a
-                    // gradient instead, same Color::Interpolate-per-column
-                    // technique ModeLine's own gradient background already
-                    // established, peaking right where the eye naturally
-                    // lands (next to the gutter/line number that already
-                    // flagged this line) and fading out to nothing within
-                    // DiffGradientAlpha's own span. "Nothing" here means
-                    // brush.background is left completely untouched --
-                    // not Interpolate(0, ...), which would still force an
-                    // opaque result -- so a Color::Default (transparent)
-                    // theme genuinely reverts to real pass-through for the
-                    // rest of the line, not a hard-edged solid patch.
-                    const float alpha = DiffGradientAlpha(col - static_cast<int>(gutterWidth));
-                    if (alpha > 0.0f) {
-                        // Regular (not Bright) Green/Blue here -- half the
-                        // RGB intensity of the gutter swatch/line-number's
-                        // own Bright variants, per explicit user feedback
-                        // that the gradient read as too light against a
-                        // dark theme. The swatch/line-number stay Bright
-                        // (a small, already-legible, unrelated area, not
-                        // what was flagged).
-                        const Color accent = (currentLineDiffTint == DiffLineKind::Added) ? Color::Green : Color::Blue;
-                        brush.background   = Color::Interpolate(alpha, theme_.background, accent);
-                    }
                 }
 
                 if (decoded.codepoint == U'\t') {
@@ -2423,6 +2376,11 @@ bool BufferView::OnKeyEvent(const Event& event) {
         ClampPointToNarrowing();
         return true;
     }
+    if (inputMode_ == InputMode::ConfirmOverwriteSave) {
+        HandleConfirmOverwriteSaveKey(*chord);
+        ClampPointToNarrowing();
+        return true;
+    }
     if (inputMode_ == InputMode::ConfirmOpenBinary) {
         HandleConfirmOpenBinaryKey(*chord);
         ClampPointToNarrowing();
@@ -2436,7 +2394,8 @@ bool BufferView::OnKeyEvent(const Event& event) {
     if (inputMode_ == InputMode::FindFile || inputMode_ == InputMode::SwitchToBuffer ||
         inputMode_ == InputMode::ProjectSearch || inputMode_ == InputMode::CreateDirectory ||
         inputMode_ == InputMode::FindScratch || inputMode_ == InputMode::StringRectangle ||
-        inputMode_ == InputMode::SetHeadlineTags || inputMode_ == InputMode::TaskName) {
+        inputMode_ == InputMode::SetHeadlineTags || inputMode_ == InputMode::TaskName ||
+        inputMode_ == InputMode::GotoLine) {
         HandlePromptKey(*chord);
         ClampPointToNarrowing();
         return true;
@@ -3426,6 +3385,25 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         case editor::InteractiveRequest::KillBuffer:
             RequestCloseBuffer(activeBuffer_.Get());
             return;
+        case editor::InteractiveRequest::Recenter: {
+            // One-shot direct action, same shape as ToggleProjectSidebar --
+            // topLine_ is this widget's own state, so the command can only
+            // request the scroll. SetTopLine clamps via MaxTopLine.
+            text::Buffer&     buffer    = activeBuffer_.Get();
+            const std::size_t pointLine = buffer.Content().ByteOffsetToLine(buffer.Point());
+            const std::size_t half      = static_cast<std::size_t>(std::max(0, size().height)) / 2;
+            SetTopLine(pointLine > half ? pointLine - half : 0);
+            return;
+        }
+        case editor::InteractiveRequest::GotoLine:
+            inputMode_ = InputMode::GotoLine;
+            prompt_.emplace("Goto line: ");
+            statusMessage_ = prompt_->StatusText();
+            return;
+        case editor::InteractiveRequest::ConfirmOverwriteSave:
+            inputMode_     = InputMode::ConfirmOverwriteSave;
+            statusMessage_ = activeBuffer_.Get().Name() + " changed on disk since it was read; save anyway? (y/n)";
+            return;
         case editor::InteractiveRequest::CreateDirectory:
             inputMode_ = InputMode::CreateDirectory;
             prompt_.emplace("Create directory: ");
@@ -4136,15 +4114,16 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
             else {
                 const bool create = inputMode_ == InputMode::VcsCreateBranch;
                 statusMessage_    = (create ? "Creating branch " : "Switching to ") + input + "...";
-                // "(open buffers not reloaded)": a branch switch rewrites
-                // the working tree underneath any open buffer, and ned has
-                // no auto-revert/file-watching concept -- a recorded
-                // limitation (see ROADMAP.md), surfaced honestly here
-                // rather than left for a confusing stale-content save
-                // conflict later.
+                // A branch switch rewrites the working tree underneath any
+                // open buffer. Unmodified buffers catch up on the next
+                // auto-revert tick (external-modification-safety follow-up,
+                // Editor/AutoRevert.h -- this message predates it and used
+                // to say "not reloaded"); a *modified* buffer is still left
+                // alone, and its save will hit the supersession y/n rather
+                // than a confusing stale-content overwrite.
                 auto onSuccess = [this, input, create] {
                     statusMessage_ = (create ? "Created and switched to " : "Switched to ") + input +
-                                     " (open buffers not reloaded)";
+                                     " (modified buffers not reloaded)";
                     RefreshVcsStatusBuffer();
                     RequestDiffForCurrentBuffer();
                 };
@@ -4155,6 +4134,28 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
                 else {
                     vcsRunner_->RequestBranchSwitch(input, std::move(onSuccess), std::move(onError));
                 }
+            }
+        }
+        else if (inputMode_ == InputMode::GotoLine) {
+            std::size_t parsed   = 0;
+            bool        allDigit = !input.empty();
+            for (const char ch : input) {
+                if (ch < '0' || ch > '9') {
+                    allDigit = false;
+                    break;
+                }
+                parsed = parsed * 10 + static_cast<std::size_t>(ch - '0');
+            }
+            if (!allDigit) {
+                statusMessage_ = "Not a line number: \"" + input + "\"";
+            }
+            else {
+                // 1-based like Emacs' own goto-line; out-of-range clamps to
+                // the last line rather than erroring.
+                text::Buffer&     buffer = activeBuffer_.Get();
+                const std::size_t target = std::min(std::max<std::size_t>(parsed, 1), buffer.Content().LineCount()) - 1;
+                buffer.SetPoint(buffer.Content().LineToByteOffset(target));
+                statusMessage_.clear();
             }
         }
         else { // FindScratch
@@ -4199,6 +4200,9 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
             case InputMode::FindScratch:
                 label = "Find scratch";
                 break;
+            case InputMode::GotoLine:
+                label = "Goto line";
+                break;
             case InputMode::StringRectangle:
                 label = "String rectangle";
                 break;
@@ -4235,7 +4239,8 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
         inputMode_ != InputMode::CreateDirectory && inputMode_ != InputMode::StringRectangle &&
         inputMode_ != InputMode::SetHeadlineTags && inputMode_ != InputMode::LspRenameNewName &&
         inputMode_ != InputMode::TaskName && inputMode_ != InputMode::DapEvaluate &&
-        inputMode_ != InputMode::VcsCommit && inputMode_ != InputMode::VcsCreateBranch) {
+        inputMode_ != InputMode::VcsCommit && inputMode_ != InputMode::VcsCreateBranch &&
+        inputMode_ != InputMode::GotoLine) { // completing a line number is meaningless
         // DapEvaluate excluded too: completing a debuggee expression
         // against buffer names would be meaningless, same reasoning as
         // ProjectSearch's regex pattern. VcsCommit/VcsCreateBranch
@@ -5280,6 +5285,28 @@ void BufferView::HandleConfirmCloseBufferKey(const editor::KeyChord& chord) {
     }
     if (chord.Codepoint == U'n' || chord.Codepoint == U'N' || IsQuit(chord)) {
         statusMessage_ = "Close cancelled.";
+        EndInteractiveSession();
+        return;
+    }
+    // Anything else is ignored -- stay in the prompt.
+}
+
+void BufferView::HandleConfirmOverwriteSaveKey(const editor::KeyChord& chord) {
+    if (chord.Codepoint == U'y' || chord.Codepoint == U'Y') {
+        EndInteractiveSession();
+        // save-buffer-force is the same save body save-buffer runs, minus
+        // the supersession gate that routed us here -- see Commands.cpp.
+        editor::CommandContext context = MakeContext();
+        try {
+            dispatcher_.Registry().Invoke("save-buffer-force", context);
+        }
+        catch (const std::exception& e) {
+            statusMessage_ = e.what();
+        }
+        return;
+    }
+    if (chord.Codepoint == U'n' || chord.Codepoint == U'N' || IsQuit(chord)) {
+        statusMessage_ = "Save cancelled; the file on disk was left as-is.";
         EndInteractiveSession();
         return;
     }

@@ -35,10 +35,15 @@ set(BUILD_FFI_LIBRARY OFF CACHE BOOL "" FORCE)
 set(USE_POC OFF CACHE BOOL "" FORCE)
 set(USE_QRCODEGEN OFF CACHE BOOL "" FORCE)
 set(USE_STATIC OFF CACHE BOOL "" FORCE)
+# PATCH_COMMAND: legacy-terminal Ctrl+Space (a raw NUL byte) is otherwise
+# swallowed inside Notcurses itself -- see CMake/PatchNotcursesNulKey.cmake's
+# own header comment for the full story (id 0 collides with notcurses_get's
+# "no input" return value, so no caller-side fix exists).
 FetchContent_Declare(notcurses
         GIT_REPOSITORY https://github.com/dankamongmen/notcurses.git
         GIT_TAG v3.0.14
         GIT_SHALLOW TRUE
+        PATCH_COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/CMake/PatchNotcursesNulKey.cmake
         EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(notcurses)
 #------------------------------------------------------------------------------
@@ -315,6 +320,7 @@ add_library(ned_lib STATIC
         Source/Editor/ProjectTree.cpp
         Source/Editor/ProjectRoot.cpp
         Source/Editor/ProjectFileOps.cpp
+        Source/Editor/AutoRevert.cpp
         Source/Editor/ScratchPad.cpp
         Source/Editor/Session.cpp
         Source/Editor/ProjectSession.cpp
@@ -435,6 +441,7 @@ if (NED_BUILD_TESTS)
             Tests/KillRingTest.cpp
             Tests/RegisterTest.cpp
             Tests/RectangleTest.cpp
+            Tests/AutoRevertTest.cpp
             Tests/BufferTest.cpp
             Tests/MultiCursorTest.cpp
             Tests/BufferListTest.cpp

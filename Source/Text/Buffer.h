@@ -107,6 +107,27 @@ class Buffer {
     // UnsavedChangeRanges()'s own doc comment just below.
     [[nodiscard]] bool Modified() const;
 
+    // external-modification-safety follow-up: true when the associated
+    // file's on-disk timestamp no longer matches the one recorded at the
+    // last load/save (someone else wrote it underneath this buffer), or
+    // when a file has appeared underneath a NewFile() buffer that never
+    // loaded one. False for a pathless buffer, and false when the file is
+    // missing/unstatable -- a deleted file isn't supersession (saving
+    // simply recreates it), and auto-revert has nothing to reload from.
+    // Stats the file on every call; callers on hot paths shouldn't call
+    // this per frame (the save command and the periodic auto-revert sweep
+    // are the intended consumers).
+    [[nodiscard]] bool ExternallyModified() const;
+
+    // Reloads the associated file from disk, replacing this buffer's
+    // content wholesale: recorded as one normal, undoable step; point is
+    // clamped into the new content; mark, secondary cursors, narrowing,
+    // and fold markers are cleared (all positioned against content that no
+    // longer exists). Clears Modified() -- the buffer now matches disk by
+    // definition. Throws like FromFile on any read failure (including the
+    // file having turned binary), leaving the buffer untouched.
+    void Revert();
+
     // read-only-buffers follow-up: a plain, directly-settable flag (unlike
     // Modified(), not derived from anything) -- for a synthesized,
     // no-file-to-save-to buffer (project-search results, project-replace's
@@ -526,8 +547,17 @@ class Buffer {
     // first rather than only ever diffing oldText/Rope_.
     void UpdateUnsavedRangesForRestore(const std::string& oldText);
 
+    // Re-stats Path_ and records its current timestamp (or clears the
+    // record if the file is missing/unstatable) -- called wherever content
+    // and disk are brought into agreement: load, save, revert.
+    void CaptureDiskTimestamp();
+
     std::string                                        Name_;
     std::optional<std::filesystem::path>               Path_;
+    // The file's last_write_time as of the last load/save/revert -- what
+    // ExternallyModified() compares against. nullopt for a pathless or
+    // NewFile() buffer (no on-disk content has ever been seen).
+    std::optional<std::filesystem::file_time_type>     DiskTimestamp_;
     Rope                                               Rope_;
     UndoTree                                           UndoTree_;
     std::size_t                                        Point_ = 0;

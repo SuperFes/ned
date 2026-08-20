@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <string_view>
@@ -1792,4 +1793,453 @@ TEST_CASE("MarkdownMode binds TAB to markdown-table-align", "[Commands]") {
     const auto tab = mode.keymap.Resolve(ParseKeySequence("TAB"));
     REQUIRE(tab.result == Keymap::LookupResult::Match);
     REQUIRE(tab.commandName == "markdown-table-align");
+}
+
+// --- Emacs-coverage follow-up -------------------------------------------
+
+TEST_CASE("set-mark-command toggles: a second press in place deactivates the mark", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+    Keymap     keymap = BuildDefaultGlobalKeymap();
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    std::string    message;
+    context.message = &message;
+
+    Type(dispatcher, context, "hello");
+    REQUIRE(dispatcher.Feed(ParseKeyChord("C-SPC"), context) == Dispatcher::Outcome::Invoked);
+    REQUIRE(fixture.buffer.HasMark());
+    REQUIRE(fixture.buffer.Mark() == 5);
+    REQUIRE(message == "Mark set");
+
+    // Second press with point unmoved: Emacs' C-SPC C-SPC deactivation.
+    dispatcher.Feed(ParseKeyChord("C-SPC"), context);
+    REQUIRE_FALSE(fixture.buffer.HasMark());
+    REQUIRE(message == "Mark deactivated");
+
+    // Set, move, press again: re-anchors at point rather than clearing.
+    dispatcher.Feed(ParseKeyChord("C-SPC"), context);
+    dispatcher.Feed(ParseKeyChord("C-b"), context);
+    dispatcher.Feed(ParseKeyChord("C-SPC"), context);
+    REQUIRE(fixture.buffer.HasMark());
+    REQUIRE(fixture.buffer.Mark() == 4);
+}
+
+TEST_CASE("keyboard-quit (C-g) deactivates the mark", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+    Keymap     keymap = BuildDefaultGlobalKeymap();
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    Type(dispatcher, context, "abc");
+    dispatcher.Feed(ParseKeyChord("C-SPC"), context);
+    dispatcher.Feed(ParseKeyChord("C-b"), context);
+    REQUIRE(fixture.buffer.HasMark());
+
+    dispatcher.Feed(ParseKeyChord("C-g"), context);
+    REQUIRE_FALSE(fixture.buffer.HasMark());
+}
+
+TEST_CASE("kill-word and backward-kill-word kill into the kill ring", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+    Keymap     keymap = BuildDefaultGlobalKeymap();
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    Type(dispatcher, context, "hello world");
+    fixture.buffer.SetPoint(0);
+
+    dispatcher.Feed(ParseKeyChord("M-d"), context); // kill-word
+    REQUIRE(fixture.buffer.Text() == " world");
+    REQUIRE(fixture.killRing.Current() == "hello");
+
+    fixture.buffer.SetPoint(fixture.buffer.Size());
+    dispatcher.Feed(ParseKeyChord("M-DEL"), context); // backward-kill-word
+    REQUIRE(fixture.buffer.Text() == " ");
+    REQUIRE(fixture.killRing.Current() == "world");
+}
+
+TEST_CASE("yank-pop replaces a just-yanked entry with the next-older one", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+    Keymap     keymap = BuildDefaultGlobalKeymap();
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    fixture.killRing.Kill("older");
+    fixture.killRing.Kill("newer");
+
+    dispatcher.Feed(ParseKeyChord("C-y"), context); // yank "newer"
+    REQUIRE(fixture.buffer.Text() == "newer");
+
+    dispatcher.Feed(ParseKeyChord("M-y"), context); // yank-pop -> "older"
+    REQUIRE(fixture.buffer.Text() == "older");
+    REQUIRE(fixture.buffer.Point() == 5);
+}
+
+TEST_CASE("yank-pop refuses when the previous command was not a yank", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+    Keymap     keymap = BuildDefaultGlobalKeymap();
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    std::string    message;
+    context.message = &message;
+
+    fixture.killRing.Kill("entry");
+    Type(dispatcher, context, "text");
+
+    dispatcher.Feed(ParseKeyChord("M-y"), context);
+    REQUIRE(fixture.buffer.Text() == "text");
+    REQUIRE(message == "Previous command was not a yank");
+}
+
+TEST_CASE("mark-whole-buffer puts point at the start and mark at the end", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+    Keymap     keymap = BuildDefaultGlobalKeymap();
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    Type(dispatcher, context, "abc");
+    dispatcher.Feed(ParseKeyChord("C-x"), context);
+    dispatcher.Feed(ParseKeyChord("h"), context);
+    REQUIRE(fixture.buffer.Point() == 0);
+    REQUIRE(fixture.buffer.HasMark());
+    REQUIRE(fixture.buffer.Mark() == 3);
+}
+
+TEST_CASE("transpose-chars swaps around point and at line end", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+    Keymap     keymap = BuildDefaultGlobalKeymap();
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    Type(dispatcher, context, "ab");
+    fixture.buffer.SetPoint(1);
+    dispatcher.Feed(ParseKeyChord("C-t"), context);
+    REQUIRE(fixture.buffer.Text() == "ba");
+    REQUIRE(fixture.buffer.Point() == 2);
+
+    // At line end: the two preceding graphemes swap, Emacs-style.
+    dispatcher.Feed(ParseKeyChord("C-t"), context);
+    REQUIRE(fixture.buffer.Text() == "ab");
+    REQUIRE(fixture.buffer.Point() == 2);
+}
+
+TEST_CASE("transpose-chars undoes as a single step", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+    Keymap     keymap = BuildDefaultGlobalKeymap();
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    Type(dispatcher, context, "ab");
+    fixture.buffer.SetPoint(1);
+    dispatcher.Feed(ParseKeyChord("C-t"), context);
+    REQUIRE(fixture.buffer.Text() == "ba");
+
+    dispatcher.Feed(ParseKeyChord("C-_"), context); // undo
+    REQUIRE(fixture.buffer.Text() == "ab");
+}
+
+TEST_CASE("transpose-words swaps the words around point", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+    Keymap     keymap = BuildDefaultGlobalKeymap();
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    Type(dispatcher, context, "foo bar");
+    fixture.buffer.SetPoint(3);
+    dispatcher.Feed(ParseKeyChord("M-t"), context);
+    REQUIRE(fixture.buffer.Text() == "bar foo");
+    REQUIRE(fixture.buffer.Point() == 7);
+}
+
+TEST_CASE("transpose-words is a no-op without two words before/after point", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+    Keymap     keymap = BuildDefaultGlobalKeymap();
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    Type(dispatcher, context, "foo bar");
+    fixture.buffer.SetPoint(0); // no word *before* point
+    dispatcher.Feed(ParseKeyChord("M-t"), context);
+    REQUIRE(fixture.buffer.Text() == "foo bar");
+    REQUIRE(fixture.buffer.Point() == 0);
+}
+
+TEST_CASE("upcase/downcase/capitalize-word transform to the end of the word", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+    Keymap     keymap = BuildDefaultGlobalKeymap();
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    Type(dispatcher, context, "hello world");
+    fixture.buffer.SetPoint(0);
+
+    dispatcher.Feed(ParseKeyChord("M-u"), context); // upcase-word
+    REQUIRE(fixture.buffer.Text() == "HELLO world");
+    REQUIRE(fixture.buffer.Point() == 5);
+
+    dispatcher.Feed(ParseKeyChord("M-c"), context); // capitalize-word ("world" -> "World")
+    REQUIRE(fixture.buffer.Text() == "HELLO World");
+    REQUIRE(fixture.buffer.Point() == 11);
+
+    fixture.buffer.SetPoint(0);
+    dispatcher.Feed(ParseKeyChord("M-l"), context); // downcase-word
+    REQUIRE(fixture.buffer.Text() == "hello World");
+}
+
+TEST_CASE("open-line inserts a newline after point, leaving point in place", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+    Keymap     keymap = BuildDefaultGlobalKeymap();
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    Type(dispatcher, context, "ab");
+    fixture.buffer.SetPoint(1);
+    dispatcher.Feed(ParseKeyChord("C-o"), context);
+    REQUIRE(fixture.buffer.Text() == "a\nb");
+    REQUIRE(fixture.buffer.Point() == 1);
+}
+
+TEST_CASE("just-one-space collapses surrounding whitespace to one space", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+    Keymap     keymap = BuildDefaultGlobalKeymap();
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    fixture.buffer.InsertAtPoint("a \t  b");
+    fixture.buffer.SetPoint(3);
+    dispatcher.Feed(ParseKeyChord("M-SPC"), context);
+    REQUIRE(fixture.buffer.Text() == "a b");
+    REQUIRE(fixture.buffer.Point() == 2);
+}
+
+TEST_CASE("delete-indentation joins this line to the previous with one space", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+    Keymap     keymap = BuildDefaultGlobalKeymap();
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    fixture.buffer.InsertAtPoint("foo  \n   bar");
+    fixture.buffer.SetPoint(8); // inside line 1's indentation
+    dispatcher.Feed(ParseKeyChord("M-^"), context);
+    REQUIRE(fixture.buffer.Text() == "foo bar");
+    REQUIRE(fixture.buffer.Point() == 3);
+}
+
+TEST_CASE("back-to-indentation moves point to the first non-whitespace character", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+    Keymap     keymap = BuildDefaultGlobalKeymap();
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    fixture.buffer.InsertAtPoint("  \tab");
+    dispatcher.Feed(ParseKeyChord("M-m"), context);
+    REQUIRE(fixture.buffer.Point() == 3);
+}
+
+TEST_CASE("delete-blank-lines collapses a blank run to one line", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+    Keymap     keymap = BuildDefaultGlobalKeymap();
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    fixture.buffer.InsertAtPoint("a\n\n\n\nb");
+    fixture.buffer.SetPoint(3); // on a blank line inside the run
+    dispatcher.Feed(ParseKeyChord("C-x"), context);
+    dispatcher.Feed(ParseKeyChord("C-o"), context);
+    REQUIRE(fixture.buffer.Text() == "a\n\nb");
+    REQUIRE(fixture.buffer.Point() == 2);
+}
+
+TEST_CASE("delete-blank-lines on a non-blank line deletes the following blank run", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+    Keymap     keymap = BuildDefaultGlobalKeymap();
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    fixture.buffer.InsertAtPoint("a\n\n\nb");
+    fixture.buffer.SetPoint(0);
+    dispatcher.Feed(ParseKeyChord("C-x"), context);
+    dispatcher.Feed(ParseKeyChord("C-o"), context);
+    REQUIRE(fixture.buffer.Text() == "a\nb");
+}
+
+TEST_CASE("delete-blank-lines deletes an isolated blank line outright", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+    Keymap     keymap = BuildDefaultGlobalKeymap();
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    fixture.buffer.InsertAtPoint("a\n\nb");
+    fixture.buffer.SetPoint(2); // the lone blank line
+    dispatcher.Feed(ParseKeyChord("C-x"), context);
+    dispatcher.Feed(ParseKeyChord("C-o"), context);
+    REQUIRE(fixture.buffer.Text() == "a\nb");
+}
+
+TEST_CASE("C-x u is bound to undo", "[Commands]") {
+    const Keymap keymap = BuildDefaultGlobalKeymap();
+
+    const auto lookup = keymap.Resolve(ParseKeySequence("C-x u"));
+    REQUIRE(lookup.result == Keymap::LookupResult::Match);
+    REQUIRE(lookup.commandName == "undo");
+}
+
+TEST_CASE("recenter and goto-line set their interactive requests", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+    Keymap     keymap = BuildDefaultGlobalKeymap();
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    dispatcher.Feed(ParseKeyChord("C-l"), context);
+    REQUIRE(context.interactiveRequest == InteractiveRequest::Recenter);
+
+    context.interactiveRequest = InteractiveRequest::None;
+    REQUIRE(dispatcher.Feed(ParseKeyChord("M-g"), context) == Dispatcher::Outcome::Pending);
+    dispatcher.Feed(ParseKeyChord("g"), context);
+    REQUIRE(context.interactiveRequest == InteractiveRequest::GotoLine);
+
+    context.interactiveRequest = InteractiveRequest::None;
+    dispatcher.Feed(ParseKeyChord("M-g"), context);
+    dispatcher.Feed(ParseKeyChord("M-g"), context);
+    REQUIRE(context.interactiveRequest == InteractiveRequest::GotoLine);
+}
+
+TEST_CASE("save-some-buffers saves every modified file-backed buffer", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    const std::filesystem::path path =
+        std::filesystem::temp_directory_path() / "ned_commands_test_save_some.txt";
+    {
+        std::ofstream out(path);
+        out << "before";
+    }
+
+    Fixture fixture;
+    ned::text::Buffer& fileBuffer = fixture.bufferList.OpenOrCreateFile(path);
+    fileBuffer.SetPoint(fileBuffer.Size());
+    fileBuffer.InsertAtPoint(" after");
+    REQUIRE(fileBuffer.Modified());
+
+    CommandContext context = fixture.Context();
+    std::string    message;
+    context.message = &message;
+    registry.Invoke("save-some-buffers", context);
+
+    REQUIRE_FALSE(fileBuffer.Modified());
+    REQUIRE(message == "Saved 1 buffer");
+
+    std::filesystem::remove(path);
+}
+
+// --- external-modification-safety follow-up ------------------------------
+
+TEST_CASE("save-buffer asks before overwriting an externally-changed file; save-buffer-force writes", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    const std::filesystem::path path =
+        std::filesystem::temp_directory_path() / "ned_commands_test_supersession.txt";
+    {
+        std::ofstream out(path);
+        out << "original\n";
+    }
+
+    ned::text::Buffer     buffer = ned::text::Buffer::FromFile(path);
+    ned::text::KillRing   killRing;
+    ned::text::BufferList bufferList;
+    CommandContext        context{buffer, killRing, bufferList};
+
+    buffer.SetPoint(0);
+    buffer.InsertAtPoint("mine ");
+
+    // Someone else writes the file underneath the buffer (timestamp bumped
+    // explicitly so the test never depends on mtime granularity).
+    {
+        std::ofstream out(path, std::ios::trunc);
+        out << "theirs\n";
+    }
+    std::filesystem::last_write_time(path, std::filesystem::last_write_time(path) + std::chrono::seconds(2));
+
+    registry.Invoke("save-buffer", context);
+    REQUIRE(context.interactiveRequest == InteractiveRequest::ConfirmOverwriteSave);
+    {
+        std::ifstream in(path);
+        std::string   onDisk((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        REQUIRE(onDisk == "theirs\n"); // nothing was written
+    }
+
+    registry.Invoke("save-buffer-force", context);
+    REQUIRE_FALSE(buffer.Modified());
+    {
+        std::ifstream in(path);
+        std::string   onDisk((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        REQUIRE(onDisk == buffer.Text());
+    }
+
+    // Back in agreement: a plain save-buffer no longer asks.
+    buffer.InsertAtPoint("more");
+    context.interactiveRequest = InteractiveRequest::None;
+    registry.Invoke("save-buffer", context);
+    REQUIRE(context.interactiveRequest == InteractiveRequest::None);
+    REQUIRE_FALSE(buffer.Modified());
+
+    std::filesystem::remove(path);
 }

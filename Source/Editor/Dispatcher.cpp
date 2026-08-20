@@ -36,7 +36,9 @@ Dispatcher::Outcome Dispatcher::Feed(const KeyChord& chord, CommandContext& cont
                 lastRecordedChordCount_ = pending_.size();
             }
             pending_.clear();
+            context.lastCommand = lastInvokedCommand_;
             registry_.Invoke(lookup.commandName, context);
+            lastInvokedCommand_ = lookup.commandName;
             return Outcome::Invoked;
         }
         case Keymap::LookupResult::Prefix:
@@ -82,6 +84,10 @@ bool Dispatcher::IsRecording() const {
 
 const std::vector<KeyChord>& Dispatcher::LastMacro() const {
     return lastMacro_;
+}
+
+const std::string& Dispatcher::LastInvokedCommand() const {
+    return lastInvokedCommand_;
 }
 
 void Dispatcher::DiscardMostRecentlyRecordedChords() {
