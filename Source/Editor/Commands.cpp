@@ -44,6 +44,57 @@ namespace {
         return LineSpan{start, contentEnd, hasTrailingNewline};
     }
 
+    // The bodies of move-line-up/move-line-down, extracted (tables slice 2)
+    // so org-metaup/org-metadown can fall back to them when point isn't in
+    // a table -- real Org's own M-up/M-down are exactly this kind of
+    // context dispatch, same idiom as org-cycle's fold-else-align branch.
+    // A no-op at the buffer's first/last line respectively, not an error.
+    void MoveLineUp(text::Buffer& buffer) {
+        const auto&       content = buffer.Content();
+        const std::size_t line    = content.ByteOffsetToLine(buffer.Point());
+        if (line == 0) {
+            return;
+        }
+        const LineSpan    prev   = GetLineSpan(content, line - 1);
+        const LineSpan    curr   = GetLineSpan(content, line);
+        const std::size_t column = std::min(buffer.Point() - curr.start, curr.contentEnd - curr.start);
+
+        const std::string prevText    = content.Substring(prev.start, curr.start - 1 - prev.start); // excludes prev's own newline
+        const std::string currText    = content.Substring(curr.start, curr.contentEnd - curr.start);
+        std::string       replacement = currText + "\n" + prevText;
+        if (curr.hasTrailingNewline) {
+            replacement += "\n";
+        }
+
+        buffer.ClearMark();
+        buffer.DeleteRange(prev.start, curr.contentEnd + (curr.hasTrailingNewline ? 1 : 0) - prev.start);
+        buffer.InsertAt(prev.start, replacement);
+        buffer.SetPoint(prev.start + column);
+    }
+
+    void MoveLineDown(text::Buffer& buffer) {
+        const auto&       content = buffer.Content();
+        const std::size_t line    = content.ByteOffsetToLine(buffer.Point());
+        if (line + 1 >= content.LineCount()) {
+            return;
+        }
+        const LineSpan    curr   = GetLineSpan(content, line);
+        const LineSpan    next   = GetLineSpan(content, line + 1);
+        const std::size_t column = std::min(buffer.Point() - curr.start, curr.contentEnd - curr.start);
+
+        const std::string currText    = content.Substring(curr.start, curr.contentEnd - curr.start);
+        const std::string nextText    = content.Substring(next.start, next.contentEnd - next.start);
+        std::string       replacement = nextText + "\n" + currText;
+        if (next.hasTrailingNewline) {
+            replacement += "\n";
+        }
+
+        buffer.ClearMark();
+        buffer.DeleteRange(curr.start, next.contentEnd + (next.hasTrailingNewline ? 1 : 0) - curr.start);
+        buffer.InsertAt(curr.start, replacement);
+        buffer.SetPoint(curr.start + (nextText.size() + 1) + column);
+    }
+
     // Fraction of the viewport height a page up/down moves -- a fixed constant
     // for now rather than user-configurable (same "hardcoded C++ for now"
     // scope call as Theme selection in Phase 6; see ROADMAP.md). Emacs' own
@@ -279,53 +330,11 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     // whichever side it ends up on after the swap. Point's column *within*
     // the moved line is preserved; a no-op at the buffer's first/last line
     // respectively, not an error.
-    registry.Register("move-line-up", "Move the current line up, swapping it with the line above.", [](CommandContext& context) {
-        auto&             buffer  = context.buffer;
-        const auto&       content = buffer.Content();
-        const std::size_t line    = content.ByteOffsetToLine(buffer.Point());
-        if (line == 0) {
-            return;
-        }
-        const LineSpan    prev   = GetLineSpan(content, line - 1);
-        const LineSpan    curr   = GetLineSpan(content, line);
-        const std::size_t column = std::min(buffer.Point() - curr.start, curr.contentEnd - curr.start);
+    registry.Register("move-line-up", "Move the current line up, swapping it with the line above.",
+                      [](CommandContext& context) { MoveLineUp(context.buffer); });
 
-        const std::string prevText    = content.Substring(prev.start, curr.start - 1 - prev.start); // excludes prev's own newline
-        const std::string currText    = content.Substring(curr.start, curr.contentEnd - curr.start);
-        std::string       replacement = currText + "\n" + prevText;
-        if (curr.hasTrailingNewline) {
-            replacement += "\n";
-        }
-
-        buffer.ClearMark();
-        buffer.DeleteRange(prev.start, curr.contentEnd + (curr.hasTrailingNewline ? 1 : 0) - prev.start);
-        buffer.InsertAt(prev.start, replacement);
-        buffer.SetPoint(prev.start + column);
-    });
-
-    registry.Register("move-line-down", "Move the current line down, swapping it with the line below.", [](CommandContext& context) {
-        auto&             buffer  = context.buffer;
-        const auto&       content = buffer.Content();
-        const std::size_t line    = content.ByteOffsetToLine(buffer.Point());
-        if (line + 1 >= content.LineCount()) {
-            return;
-        }
-        const LineSpan    curr   = GetLineSpan(content, line);
-        const LineSpan    next   = GetLineSpan(content, line + 1);
-        const std::size_t column = std::min(buffer.Point() - curr.start, curr.contentEnd - curr.start);
-
-        const std::string currText    = content.Substring(curr.start, curr.contentEnd - curr.start);
-        const std::string nextText    = content.Substring(next.start, next.contentEnd - next.start);
-        std::string       replacement = nextText + "\n" + currText;
-        if (next.hasTrailingNewline) {
-            replacement += "\n";
-        }
-
-        buffer.ClearMark();
-        buffer.DeleteRange(curr.start, next.contentEnd + (next.hasTrailingNewline ? 1 : 0) - curr.start);
-        buffer.InsertAt(curr.start, replacement);
-        buffer.SetPoint(curr.start + (nextText.size() + 1) + column);
-    });
+    registry.Register("move-line-down", "Move the current line down, swapping it with the line below.",
+                      [](CommandContext& context) { MoveLineDown(context.buffer); });
 
     // duplicate-line follow-up: inserts a copy of the current line
     // immediately below it, moving point into the duplicate at the same
@@ -943,6 +952,92 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                       [](CommandContext& context) {
                           if (!org::AlignOrgTableAtPoint(context.buffer) && context.message) {
                               *context.message = "Not in a table.";
+                          }
+                      });
+    // Tables slice 2: the editing surface around slice 1's align-and-step.
+    // All the same direct "act on context.buffer, report through
+    // context.message" shape as org-table-align above; each op realigns
+    // the whole table as a side effect (they share its rebuild machinery,
+    // see Org.cpp's RewriteOrgTable).
+    registry.Register("org-table-previous-cell", "Realign the table at point and move to the previous cell.",
+                      [](CommandContext& context) {
+                          if (!org::MoveToPreviousOrgTableCellAtPoint(context.buffer) && context.message) {
+                              *context.message = "Not in a table.";
+                          }
+                      });
+    registry.Register("org-table-insert-row", "Insert an empty table row above the current one.",
+                      [](CommandContext& context) {
+                          if (!org::InsertOrgTableRowAtPoint(context.buffer) && context.message) {
+                              *context.message = "Not in a table.";
+                          }
+                      });
+    registry.Register("org-table-kill-row", "Remove the current table row.", [](CommandContext& context) {
+        if (!org::KillOrgTableRowAtPoint(context.buffer) && context.message) {
+            *context.message = "Not in a table.";
+        }
+    });
+    registry.Register("org-table-insert-column", "Insert an empty table column to the right of the current one.",
+                      [](CommandContext& context) {
+                          if (!org::InsertOrgTableColumnAtPoint(context.buffer) && context.message) {
+                              *context.message = "Not in a table.";
+                          }
+                      });
+    registry.Register("org-table-delete-column", "Delete the current table column.", [](CommandContext& context) {
+        if (!org::DeleteOrgTableColumnAtPoint(context.buffer) && context.message) {
+            // Covers both failure modes -- off a table entirely, and a
+            // one-column table (deleting the only column is refused, see
+            // Org.h); one generic message rather than plumbing a second
+            // failure channel through a bool return.
+            *context.message = "Not in a table (or table has only one column).";
+        }
+    });
+    registry.Register("org-table-move-column-left", "Swap the current table column with the one to its left.",
+                      [](CommandContext& context) {
+                          if (!org::MoveOrgTableColumnLeftAtPoint(context.buffer) && context.message) {
+                              *context.message = "Not in a table (or already the leftmost column).";
+                          }
+                      });
+    registry.Register("org-table-move-column-right", "Swap the current table column with the one to its right.",
+                      [](CommandContext& context) {
+                          if (!org::MoveOrgTableColumnRightAtPoint(context.buffer) && context.message) {
+                              *context.message = "Not in a table (or already the rightmost column).";
+                          }
+                      });
+    registry.Register("org-table-insert-hline", "Insert a separator hrule below the current table row.",
+                      [](CommandContext& context) {
+                          if (!org::InsertOrgTableHruleAtPoint(context.buffer) && context.message) {
+                              *context.message = "Not in a table.";
+                          }
+                      });
+    // Real Org's own org-metaup/org-metadown context dispatch: move the
+    // table row at point, else fall back to the global M-UP/M-DOWN
+    // line-move behavior (MoveLineUp/MoveLineDown, the extracted bodies of
+    // move-line-up/move-line-down) -- bound over the global chords by
+    // OrgMode()'s own keymap, so an org-mode buffer keeps line-moving
+    // everywhere outside a table instead of losing it to a "Not in a
+    // table." error. Subtree moving (real org-metaup's third context) is
+    // not attempted -- same scope line the rest of this Org slice draws.
+    // Gated on FindOrgTableAtPoint rather than just falling back whenever
+    // the row move reports false: a false *inside* a table means "already
+    // at the table's edge," and falling through to a line move there would
+    // silently drag the row out of the table -- real Org refuses at the
+    // edge too.
+    registry.Register("org-metaup", "Move the table row at point up, or the current line otherwise.",
+                      [](CommandContext& context) {
+                          if (!org::FindOrgTableAtPoint(context.buffer)) {
+                              MoveLineUp(context.buffer);
+                          }
+                          else if (!org::MoveOrgTableRowUpAtPoint(context.buffer) && context.message) {
+                              *context.message = "Already the table's first row.";
+                          }
+                      });
+    registry.Register("org-metadown", "Move the table row at point down, or the current line otherwise.",
+                      [](CommandContext& context) {
+                          if (!org::FindOrgTableAtPoint(context.buffer)) {
+                              MoveLineDown(context.buffer);
+                          }
+                          else if (!org::MoveOrgTableRowDownAtPoint(context.buffer) && context.message) {
+                              *context.message = "Already the table's last row.";
                           }
                       });
     // Tables follow-up: Markdown's own equivalent -- see Editor/Markdown.h.

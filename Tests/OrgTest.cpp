@@ -14,14 +14,24 @@ using ned::editor::org::CycleFoldAtPoint;
 using ned::editor::org::CyclePriorityAtPoint;
 using ned::editor::org::CycleTodoKeywordAtPoint;
 using ned::editor::org::DefaultTodoKeywords;
+using ned::editor::org::DeleteOrgTableColumnAtPoint;
 using ned::editor::org::FindHeadlineByTitle;
 using ned::editor::org::FindOrgTableAtPoint;
 using ned::editor::org::FoldedLineRanges;
 using ned::editor::org::Headline;
 using ned::editor::org::HeadlineAtPoint;
+using ned::editor::org::InsertOrgTableColumnAtPoint;
+using ned::editor::org::InsertOrgTableHruleAtPoint;
+using ned::editor::org::InsertOrgTableRowAtPoint;
+using ned::editor::org::KillOrgTableRowAtPoint;
 using ned::editor::org::Link;
 using ned::editor::org::LinkAtPoint;
 using ned::editor::org::LinkDisplayText;
+using ned::editor::org::MoveOrgTableColumnLeftAtPoint;
+using ned::editor::org::MoveOrgTableColumnRightAtPoint;
+using ned::editor::org::MoveOrgTableRowDownAtPoint;
+using ned::editor::org::MoveOrgTableRowUpAtPoint;
+using ned::editor::org::MoveToPreviousOrgTableCellAtPoint;
 using ned::editor::org::NextPriority;
 using ned::editor::org::NextTodoKeyword;
 using ned::editor::org::ParseCheckboxes;
@@ -635,18 +645,155 @@ TEST_CASE("AlignOrgTableAtPoint handles multiple separator hlines (before and af
             "|-------+-----|\n| Name  | Age |\n|-------+-----|\n| Alice | 30  |\n|-------+-----|\n");
 }
 
-TEST_CASE("AlignOrgTableAtPoint advances point to the next cell, wrapping past the last", "[Org]") {
+TEST_CASE("AlignOrgTableAtPoint advances point to the next cell", "[Org]") {
     Buffer buffer("test", Rope("| Name | Age |\n|---|---|\n| Alice | 30 |\n"));
     buffer.SetPoint(buffer.Text().find("Alice"));
 
     REQUIRE(AlignOrgTableAtPoint(buffer));
-    std::string result = buffer.Text();
+    const std::string result = buffer.Text();
     REQUIRE(buffer.Point() == result.find("30"));
+}
 
-    buffer.SetPoint(result.find("30"));
+TEST_CASE("AlignOrgTableAtPoint appends a new empty row when tabbing past the last cell", "[Org]") {
+    Buffer buffer("test", Rope("| Name | Age |\n| Alice | 30 |\n"));
+    buffer.SetPoint(buffer.Text().find("30"));
+
     REQUIRE(AlignOrgTableAtPoint(buffer));
+    const std::string result = buffer.Text();
+    REQUIRE(result == "| Name  | Age |\n| Alice | 30  |\n|       |     |\n");
+    // Point lands on the new row's first cell -- the cell content is empty,
+    // so it sits right where that cell's text would begin.
+    REQUIRE(buffer.Point() == result.rfind("|       |") + 2);
+}
+
+TEST_CASE("MoveToPreviousOrgTableCellAtPoint steps backward, wrapping from the first cell to the last", "[Org]") {
+    Buffer buffer("test", Rope("| Name | Age |\n| Alice | 30 |\n"));
+
+    buffer.SetPoint(buffer.Text().find("Alice"));
+    REQUIRE(MoveToPreviousOrgTableCellAtPoint(buffer));
+    std::string result = buffer.Text();
+    REQUIRE(buffer.Point() == result.find("Age"));
+
+    buffer.SetPoint(result.find("Name"));
+    REQUIRE(MoveToPreviousOrgTableCellAtPoint(buffer));
     result = buffer.Text();
-    REQUIRE(buffer.Point() == result.find("Name")); // wraps back to the first cell
+    REQUIRE(buffer.Point() == result.find("30")); // wraps to the table's last cell
+}
+
+TEST_CASE("MoveToPreviousOrgTableCellAtPoint reports failure off a table", "[Org]") {
+    Buffer buffer("test", Rope("plain text\n"));
+    buffer.SetPoint(0);
+    REQUIRE_FALSE(MoveToPreviousOrgTableCellAtPoint(buffer));
+}
+
+TEST_CASE("InsertOrgTableRowAtPoint inserts an empty row above the current one", "[Org]") {
+    Buffer buffer("test", Rope("| Name | Age |\n| Alice | 30 |\n"));
+    buffer.SetPoint(buffer.Text().find("Alice"));
+
+    REQUIRE(InsertOrgTableRowAtPoint(buffer));
+    const std::string result = buffer.Text();
+    REQUIRE(result == "| Name  | Age |\n|       |     |\n| Alice | 30  |\n");
+    // Point stays in the new row at its own column (column 0 here).
+    REQUIRE(buffer.Point() == result.find("|       |") + 2);
+}
+
+TEST_CASE("KillOrgTableRowAtPoint removes the current row", "[Org]") {
+    Buffer buffer("test", Rope("| Name | Age |\n| Alice | 30 |\n| Bob | 25 |\n"));
+    buffer.SetPoint(buffer.Text().find("Alice"));
+
+    REQUIRE(KillOrgTableRowAtPoint(buffer));
+    REQUIRE(buffer.Text() == "| Name | Age |\n| Bob  | 25  |\n");
+    REQUIRE(buffer.Point() == buffer.Text().find("Bob"));
+}
+
+TEST_CASE("KillOrgTableRowAtPoint on the table's only row removes the whole block", "[Org]") {
+    Buffer buffer("test", Rope("before\n| only | row |\nafter\n"));
+    buffer.SetPoint(buffer.Text().find("only"));
+
+    REQUIRE(KillOrgTableRowAtPoint(buffer));
+    REQUIRE(buffer.Text() == "before\nafter\n");
+}
+
+TEST_CASE("MoveOrgTableRowUpAtPoint swaps the current row with the one above, refusing at the top", "[Org]") {
+    Buffer buffer("test", Rope("| Name | Age |\n| Alice | 30 |\n"));
+
+    buffer.SetPoint(buffer.Text().find("Alice"));
+    REQUIRE(MoveOrgTableRowUpAtPoint(buffer));
+    const std::string result = buffer.Text();
+    REQUIRE(result == "| Alice | 30  |\n| Name  | Age |\n");
+    REQUIRE(buffer.Point() == result.find("Alice")); // point follows the moved row
+
+    buffer.SetPoint(result.find("Alice"));
+    REQUIRE_FALSE(MoveOrgTableRowUpAtPoint(buffer));
+}
+
+TEST_CASE("MoveOrgTableRowDownAtPoint swaps the current row with the one below, hrules included", "[Org]") {
+    Buffer buffer("test", Rope("| Name | Age |\n|---+---|\n| Alice | 30 |\n"));
+
+    buffer.SetPoint(buffer.Text().find("Name"));
+    REQUIRE(MoveOrgTableRowDownAtPoint(buffer));
+    const std::string result = buffer.Text();
+    REQUIRE(result == "|-------+-----|\n| Name  | Age |\n| Alice | 30  |\n");
+    REQUIRE(buffer.Point() == result.find("Name"));
+
+    buffer.SetPoint(result.find("Alice"));
+    REQUIRE_FALSE(MoveOrgTableRowDownAtPoint(buffer));
+}
+
+TEST_CASE("InsertOrgTableColumnAtPoint inserts an empty column to the right of the current one", "[Org]") {
+    Buffer buffer("test", Rope("| Name | Age |\n|---+---|\n| Alice | 30 |\n"));
+    buffer.SetPoint(buffer.Text().find("Name"));
+
+    REQUIRE(InsertOrgTableColumnAtPoint(buffer));
+    REQUIRE(buffer.Text() == "| Name  |  | Age |\n|-------+--+-----|\n| Alice |  | 30  |\n");
+}
+
+TEST_CASE("DeleteOrgTableColumnAtPoint deletes the current column, refusing on a one-column table", "[Org]") {
+    Buffer buffer("test", Rope("| Name | Age |\n| Alice | 30 |\n"));
+    buffer.SetPoint(buffer.Text().find("Age"));
+
+    REQUIRE(DeleteOrgTableColumnAtPoint(buffer));
+    REQUIRE(buffer.Text() == "| Name  |\n| Alice |\n");
+
+    buffer.SetPoint(buffer.Text().find("Alice"));
+    REQUIRE_FALSE(DeleteOrgTableColumnAtPoint(buffer));
+    REQUIRE(buffer.Text() == "| Name  |\n| Alice |\n"); // untouched
+}
+
+TEST_CASE("MoveOrgTableColumnRightAtPoint swaps columns, point following; refuses at the right edge", "[Org]") {
+    Buffer buffer("test", Rope("| Name | Age |\n| Alice | 30 |\n"));
+
+    buffer.SetPoint(buffer.Text().find("Name"));
+    REQUIRE(MoveOrgTableColumnRightAtPoint(buffer));
+    const std::string result = buffer.Text();
+    REQUIRE(result == "| Age | Name  |\n| 30  | Alice |\n");
+    REQUIRE(buffer.Point() == result.find("Name"));
+
+    buffer.SetPoint(result.find("Name"));
+    REQUIRE_FALSE(MoveOrgTableColumnRightAtPoint(buffer));
+}
+
+TEST_CASE("MoveOrgTableColumnLeftAtPoint swaps columns leftward, refusing at the left edge", "[Org]") {
+    Buffer buffer("test", Rope("| Name | Age |\n| Alice | 30 |\n"));
+
+    buffer.SetPoint(buffer.Text().find("Age"));
+    REQUIRE(MoveOrgTableColumnLeftAtPoint(buffer));
+    const std::string result = buffer.Text();
+    REQUIRE(result == "| Age | Name  |\n| 30  | Alice |\n");
+    REQUIRE(buffer.Point() == result.find("Age"));
+
+    buffer.SetPoint(result.find("Age"));
+    REQUIRE_FALSE(MoveOrgTableColumnLeftAtPoint(buffer));
+}
+
+TEST_CASE("InsertOrgTableHruleAtPoint inserts a separator below the current row, point staying put", "[Org]") {
+    Buffer buffer("test", Rope("| Name | Age |\n| Alice | 30 |\n"));
+    buffer.SetPoint(buffer.Text().find("Name"));
+
+    REQUIRE(InsertOrgTableHruleAtPoint(buffer));
+    const std::string result = buffer.Text();
+    REQUIRE(result == "| Name  | Age |\n|-------+-----|\n| Alice | 30  |\n");
+    REQUIRE(buffer.Point() == result.find("Name"));
 }
 
 TEST_CASE("ParseLinks finds a link with a description", "[Org]") {
