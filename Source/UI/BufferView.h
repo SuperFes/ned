@@ -993,6 +993,16 @@ class BufferView : public Widget {
     // Pane already constructed its Mode correctly for this same buffer.
     text::Buffer* modeSyncBuffer_ = nullptr;
 
+    // initial-buffer-diff fix: which buffer the diff gutter was last
+    // requested for -- deliberately NOT seeded at construction, unlike
+    // modeSyncBuffer_ just above, and tracked separately from it for
+    // exactly that reason: while the diff request shared modeSyncBuffer_'s
+    // branch, its constructor seeding silently suppressed the initial
+    // buffer's diff request too (the file ned was launched on never got
+    // markers until an edit/save fired one). See Paint()'s own comment at
+    // the use site.
+    text::Buffer* diffSyncBuffer_ = nullptr;
+
     std::size_t                dragAnchor_ = 0;                // point position at the last mouse press, for drag-selection
     std::optional<std::string> debugMouseLogPath_;             // see LogMouseEvent
     ScrollBar*                 scrollBar_           = nullptr; // see SetScrollBar
@@ -1181,7 +1191,10 @@ class BufferView : public Widget {
         std::size_t headerLine;
         std::size_t closerLine; // inclusive
         std::size_t blockStart; // FoldMarker key
-        int         column;     // min(depth, kMaxFoldDepthColumns - 1)
+        int         column;     // == depth; blocks at depth >= kMaxFoldDepthColumns get no entry
+                                // at all (fold-gutter-depth-cap follow-up -- see
+                                // EnsureFoldGutterCache's own comment; they stay foldable via
+                                // code-fold-toggle, just undrawn/unclickable in the gutter)
     };
 
     // Derived from foldableBlocksCache_ whenever it's recomputed, but gated

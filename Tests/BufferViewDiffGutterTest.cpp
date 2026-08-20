@@ -1,5 +1,8 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <filesystem>
+#include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -7,13 +10,17 @@
 #include "Editor/Dispatcher.h"
 #include "Editor/Keymap.h"
 #include "Editor/Mode.h"
+#include "Editor/ProjectRoot.h"
 #include "Editor/Register.h"
 #include "Editor/Vcs/VcsProvider.h"
+#include "Editor/Vcs/VcsProviderRegistry.h"
+#include "Editor/Vcs/VcsRunner.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
 #include "Text/KillRing.h"
 #include "UI/ActiveBuffer.h"
 #include "UI/BufferView.h"
+#include "UI/EventLoop.h"
 #include "UI/Theme.h"
 
 using ned::editor::vcs::VcsDiffHunk;
@@ -70,6 +77,81 @@ TEST_CASE("BufferView reserves no gutter column for diff markers until some are 
     REQUIRE(view.CursorPosition()->x == GutterWidthWithDiff(fixture.buffer.Content().LineCount(), false) + 5);
 }
 
+namespace {
+
+// initial-buffer-diff fix: a provider that only records whether DiffArgv
+// was ever consulted, then throws so no real subprocess spawns -- enough to
+// prove a BufferView's very first Paint() actually requests the diff for
+// the buffer it was constructed with (it didn't, while the request shared
+// modeSyncBuffer_'s constructor-seeded branch).
+class RecordingProvider : public ned::editor::vcs::VcsProvider {
+  public:
+    explicit RecordingProvider(bool& diffRequested) : diffRequested_(diffRequested) {
+    }
+
+    [[nodiscard]] bool Detect(const std::filesystem::path&) const override {
+        return true;
+    }
+    [[nodiscard]] ned::editor::vcs::VcsCommandSpec BlameArgv(const std::filesystem::path&) const override {
+        throw std::runtime_error("not under test");
+    }
+    [[nodiscard]] std::vector<ned::editor::vcs::VcsBlameLine> ParseBlame(const std::string&) const override {
+        return {};
+    }
+    [[nodiscard]] ned::editor::vcs::VcsCommandSpec LogArgv(const std::filesystem::path&) const override {
+        throw std::runtime_error("not under test");
+    }
+    [[nodiscard]] std::vector<ned::editor::vcs::VcsLogEntry> ParseLog(const std::string&) const override {
+        return {};
+    }
+    [[nodiscard]] ned::editor::vcs::VcsCommandSpec DiffArgv(const std::filesystem::path&) const override {
+        diffRequested_ = true;
+        throw std::runtime_error("recorded -- no real spawn wanted");
+    }
+    [[nodiscard]] std::vector<ned::editor::vcs::VcsDiffHunk> ParseDiff(const std::string&) const override {
+        return {};
+    }
+
+  private:
+    bool& diffRequested_;
+};
+
+} // namespace
+
+TEST_CASE("A pane's very first Paint requests the diff for its initial buffer", "[BufferView][Vcs]") {
+    // Regression test (initial-buffer-diff fix): the constructor's
+    // modeSyncBuffer_ seeding used to suppress this request entirely, so
+    // the file ned was launched on never showed diff markers until an
+    // edit/save fired a request some other way.
+    ned::editor::vcs::ClearRegistry();
+    bool diffRequested = false;
+    ned::editor::vcs::RegisterProvider("recording", std::make_unique<RecordingProvider>(diffRequested));
+    const auto previousRoot = ned::editor::ProjectRoot();
+    ned::editor::SetProjectRoot("/tmp");
+
+    {
+        Fixture fixture;
+        fixture.buffer.SetPath("/tmp/ned-initial-diff-test.c");
+        fixture.buffer.InsertAtPoint("hello");
+
+        ned::ui::EventLoop          eventLoop;
+        ned::editor::vcs::VcsRunner runner(eventLoop);
+
+        BufferView view = fixture.View();
+        view.SetVcsRunner(&runner);
+        view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 2});
+
+        ned::ui::Screen screen = ned::ui::Screen(20, 3);
+        ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 2});
+        view.Paint(canvas); // the pane's first frame -- no buffer switch ever happened
+
+        REQUIRE(diffRequested);
+    }
+
+    ned::editor::SetProjectRoot(previousRoot);
+    ned::editor::vcs::ClearRegistry();
+}
+
 TEST_CASE("Diff markers render in the diff column itself, not under the status swatch", "[BufferView][Vcs]") {
     // Regression test: the swatch/notch used to be drawn at statusStart --
     // one column right of the diff column that GutterWidth reserves --
@@ -87,10 +169,15 @@ TEST_CASE("Diff markers render in the diff column itself, not under the status s
     ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 4});
     view.Paint(canvas);
 
-    REQUIRE(screen.PixelAt(0, 0).background_color == fixture.theme.background);    // untouched line
-    REQUIRE(screen.PixelAt(0, 1).background_color == ned::ui::Color::BrightGreen); // Added swatch
-    REQUIRE(screen.PixelAt(0, 2).background_color == ned::ui::Color::BrightBlue);  // Modified swatch
-    REQUIRE(screen.PixelAt(0, 3).character == "▔");                                // Removed notch
+    // diff-gutter-icons follow-up: vim-gitgutter's classic glyphs, in the
+    // familiar colors, as foreground icons rather than solid swatches.
+    REQUIRE(screen.PixelAt(0, 0).character == " "); // untouched line
+    REQUIRE(screen.PixelAt(0, 1).character == "+"); // Added
+    REQUIRE(screen.PixelAt(0, 1).foreground_color == ned::ui::Color::BrightGreen);
+    REQUIRE(screen.PixelAt(0, 1).background_color == fixture.theme.background);
+    REQUIRE(screen.PixelAt(0, 2).character == "~"); // Modified
+    REQUIRE(screen.PixelAt(0, 2).foreground_color == ned::ui::Color::BrightBlue);
+    REQUIRE(screen.PixelAt(0, 3).character == "▔"); // Removed notch
     REQUIRE(screen.PixelAt(0, 3).foreground_color == ned::ui::Color::BrightRed);
     // The status column right of it belongs to the unsaved-change swatch
     // (the whole buffer is unsaved here) -- proves the two no longer fight
