@@ -325,6 +325,152 @@ std::pair<std::size_t, std::size_t> Buffer::Region() const {
     return Point_ <= mark ? std::pair{Point_, mark} : std::pair{mark, Point_};
 }
 
+void Buffer::AddCursorAt(std::size_t point, std::optional<std::size_t> mark) {
+    Cursor cursor;
+    cursor.point = SnapToGraphemeBoundary(Rope_, std::min(point, Rope_.ByteLength()));
+    if (mark) {
+        cursor.mark = SnapToGraphemeBoundary(Rope_, std::min(*mark, Rope_.ByteLength()));
+    }
+
+    if (cursor.point == Point_) {
+        return; // the primary already sits here
+    }
+    for (const Cursor& existing : SecondaryCursors_) {
+        if (existing.point == cursor.point) {
+            return;
+        }
+    }
+
+    SecondaryCursors_.push_back(cursor);
+    NormalizeSecondaryCursors();
+}
+
+const std::vector<Buffer::Cursor>& Buffer::SecondaryCursors() const {
+    return SecondaryCursors_;
+}
+
+bool Buffer::HasSecondaryCursors() const {
+    return !SecondaryCursors_.empty();
+}
+
+void Buffer::ClearSecondaryCursors() {
+    SecondaryCursors_.clear();
+}
+
+void Buffer::ForEachCursor(const std::function<void()>& operation) {
+    // Scope guard rather than straight-line cleanup: operation is arbitrary
+    // command code, and BufferView deliberately catches command exceptions
+    // (a bad Janet command must not crash the editor) -- the group/
+    // iteration flags must unwind correctly through that path too.
+    struct IterationScope {
+        Buffer& buffer;
+        explicit IterationScope(Buffer& b) : buffer(b) {
+            buffer.BeginUndoGroup();
+            buffer.CursorIterationActive_ = true;
+        }
+        ~IterationScope() {
+            buffer.CursorIterationActive_ = false;
+            buffer.NormalizeSecondaryCursors();
+            buffer.EndUndoGroup();
+        }
+    } scope(*this);
+
+    // Every mutating operation relocates ALL cursors -- including the
+    // currently-swapped-out ones sitting in SecondaryCursors_ -- so
+    // iteration order doesn't matter for correctness and no offset here
+    // ever goes stale. The swap trick is what lets operation be any
+    // ordinary Point()/Mark()-based code with zero multi-cursor awareness:
+    // while entry i is swapped in, the former primary is the one riding
+    // along in SecondaryCursors_[i], getting the same relocation treatment.
+    operation();
+    for (std::size_t i = 0; i < SecondaryCursors_.size(); ++i) {
+        std::swap(Point_, SecondaryCursors_[i].point);
+        std::swap(Mark_, SecondaryCursors_[i].mark);
+        std::swap(GoalColumn_, SecondaryCursors_[i].goalColumn);
+        try {
+            operation();
+        }
+        catch (...) {
+            // Swap back before unwinding, or the primary would be left
+            // holding this secondary's position through IterationScope's
+            // own cleanup and beyond.
+            std::swap(Point_, SecondaryCursors_[i].point);
+            std::swap(Mark_, SecondaryCursors_[i].mark);
+            std::swap(GoalColumn_, SecondaryCursors_[i].goalColumn);
+            throw;
+        }
+        std::swap(Point_, SecondaryCursors_[i].point);
+        std::swap(Mark_, SecondaryCursors_[i].mark);
+        std::swap(GoalColumn_, SecondaryCursors_[i].goalColumn);
+    }
+}
+
+void Buffer::NormalizeSecondaryCursors() {
+    std::sort(SecondaryCursors_.begin(), SecondaryCursors_.end(),
+              [](const Cursor& a, const Cursor& b) { return a.point < b.point; });
+    SecondaryCursors_.erase(std::unique(SecondaryCursors_.begin(), SecondaryCursors_.end(),
+                                        [](const Cursor& a, const Cursor& b) { return a.point == b.point; }),
+                            SecondaryCursors_.end());
+    std::erase_if(SecondaryCursors_, [this](const Cursor& cursor) { return cursor.point == Point_; });
+}
+
+void Buffer::BeginUndoGroup() {
+    ++UndoGroupDepth_;
+}
+
+void Buffer::EndUndoGroup() {
+    if (UndoGroupDepth_ == 0) {
+        return; // unbalanced call -- tolerated rather than asserted
+    }
+    if (--UndoGroupDepth_ == 0 && UndoGroupDirty_) {
+        UndoTree_.Record(Rope_);
+        CanAmend_       = false;
+        UndoGroupDirty_ = false;
+    }
+}
+
+void Buffer::RecordOrAmendUndo(bool canAmend) {
+    if (UndoGroupDepth_ > 0) {
+        UndoGroupDirty_ = true;
+        return;
+    }
+    if (canAmend && CanAmend_) {
+        UndoTree_.Amend(Rope_);
+        return;
+    }
+    UndoTree_.Record(Rope_);
+    CanAmend_ = canAmend;
+}
+
+void Buffer::RelocateSecondaryCursorsForInsert(std::size_t insertOffset, std::size_t length) {
+    for (Cursor& cursor : SecondaryCursors_) {
+        cursor.point = RelocateForInsert(cursor.point, insertOffset, length);
+        if (cursor.mark) {
+            *cursor.mark = RelocateForInsert(*cursor.mark, insertOffset, length);
+        }
+    }
+}
+
+void Buffer::RelocateSecondaryCursorsForDelete(std::size_t rangeStart, std::size_t rangeEnd) {
+    for (Cursor& cursor : SecondaryCursors_) {
+        cursor.point = RelocateForDelete(cursor.point, rangeStart, rangeEnd);
+        if (cursor.mark) {
+            *cursor.mark = RelocateForDelete(*cursor.mark, rangeStart, rangeEnd);
+        }
+    }
+    // A delete can collapse two cursors onto one surviving position --
+    // merge immediately, EXCEPT while ForEachCursor is mid-iteration:
+    // normalizing there would erase/reorder the very slots its swap
+    // bookkeeping indexes into (including the swapped-out primary riding in
+    // one of them), so it defers to the single normalize at its own end.
+    // The cost of deferring is only that a mid-iteration collapse can run
+    // the operation twice at one position before the merge -- accepted, the
+    // same eventual-merge behavior Emacs' own multiple-cursors has.
+    if (!CursorIterationActive_) {
+        NormalizeSecondaryCursors();
+    }
+}
+
 void Buffer::NarrowToRegion(std::size_t start, std::size_t end) {
     if (start > end) {
         std::swap(start, end);
@@ -511,15 +657,10 @@ void Buffer::InsertAtPoint(std::string_view text) {
         narrowEnd                      = RelocateForInsert(narrowEnd, insertOffset, text.size());
     }
     RelocateFoldMarkersForInsert(insertOffset, text.size());
+    RelocateSecondaryCursorsForInsert(insertOffset, text.size());
     MarkUnsavedRangeInserted(insertOffset, text.size());
 
-    if (CanAmend_) {
-        UndoTree_.Amend(Rope_);
-    }
-    else {
-        UndoTree_.Record(Rope_);
-        CanAmend_ = true;
-    }
+    RecordOrAmendUndo(/*canAmend=*/true);
     GoalColumn_.reset();
     ++ContentGeneration_;
 }
@@ -549,12 +690,12 @@ void Buffer::DeleteBackwardAtPoint() {
         }
     }
     RelocateFoldMarkersForDelete(start, end);
+    RelocateSecondaryCursorsForDelete(start, end);
     MarkUnsavedRangeDeleted(start, end);
 
-    CanAmend_ = false;
+    RecordOrAmendUndo(/*canAmend=*/false);
     GoalColumn_.reset();
     ++ContentGeneration_;
-    UndoTree_.Record(Rope_);
 }
 
 void Buffer::DeleteForwardAtPoint() {
@@ -582,12 +723,12 @@ void Buffer::DeleteForwardAtPoint() {
         }
     }
     RelocateFoldMarkersForDelete(start, end);
+    RelocateSecondaryCursorsForDelete(start, end);
     MarkUnsavedRangeDeleted(start, end);
 
-    CanAmend_ = false;
+    RecordOrAmendUndo(/*canAmend=*/false);
     GoalColumn_.reset();
     ++ContentGeneration_;
-    UndoTree_.Record(Rope_);
 }
 
 std::string Buffer::DeleteRange(std::size_t byteOffset, std::size_t byteLength) {
@@ -623,12 +764,12 @@ std::string Buffer::DeleteRange(std::size_t byteOffset, std::size_t byteLength) 
         }
     }
     RelocateFoldMarkersForDelete(byteOffset, rangeEnd);
+    RelocateSecondaryCursorsForDelete(byteOffset, rangeEnd);
     MarkUnsavedRangeDeleted(byteOffset, rangeEnd);
 
-    CanAmend_ = false;
+    RecordOrAmendUndo(/*canAmend=*/false);
     GoalColumn_.reset();
     ++ContentGeneration_;
-    UndoTree_.Record(Rope_);
     return deleted;
 }
 
@@ -665,12 +806,12 @@ void Buffer::InsertAtImpl(std::size_t byteOffset, std::string_view text) {
         narrowEnd                      = RelocateForInsert(narrowEnd, byteOffset, text.size());
     }
     RelocateFoldMarkersForInsert(byteOffset, text.size());
+    RelocateSecondaryCursorsForInsert(byteOffset, text.size());
     MarkUnsavedRangeInserted(byteOffset, text.size());
 
-    CanAmend_ = false;
+    RecordOrAmendUndo(/*canAmend=*/false);
     GoalColumn_.reset();
     ++ContentGeneration_;
-    UndoTree_.Record(Rope_);
 }
 
 void Buffer::MoveForward() {
@@ -872,6 +1013,7 @@ void Buffer::Undo() {
     const std::string oldText = Rope_.ToString();
     UndoTree_.Undo();
     Rope_ = UndoTree_.Current();
+    ClearSecondaryCursors(); // v1 decision -- see AddCursorAt's doc comment
     ClampCursorsToContent();
     CanAmend_ = false;
     GoalColumn_.reset();
@@ -886,6 +1028,7 @@ void Buffer::Redo() {
     const std::string oldText = Rope_.ToString();
     UndoTree_.Redo();
     Rope_ = UndoTree_.Current();
+    ClearSecondaryCursors(); // v1 decision -- see AddCursorAt's doc comment
     ClampCursorsToContent();
     CanAmend_ = false;
     GoalColumn_.reset();

@@ -1961,6 +1961,13 @@ void BufferView::Paint(Canvas c) {
 
                 const auto decoded = content.CodepointAt(offset);
 
+                // Multi-cursor phase: a secondary caret renders as an
+                // inverted cell (ScrollBar's own thumb technique) -- theme-
+                // independent, and visually distinct from the primary's real
+                // terminal cursor. Only the first cell of a multi-column
+                // glyph (tab expansion, control placeholder) inverts.
+                const bool secondaryCaretHere = IsSecondaryCursorAt(offset);
+
                 const editor::SyntaxClass cls   = ClassAtOffset(lineSpans, offset);
                 Brush                     brush = theme_.BrushFor(cls);
                 // diagnostics-UX follow-up: underline exactly the span the
@@ -2034,6 +2041,9 @@ void BufferView::Paint(Canvas c) {
                         Cell& cell     = c[{.x = col, .y = row}];
                         cell.character = " ";
                         brush.ApplyTo(cell);
+                        if (i == 0 && secondaryCaretHere) {
+                            cell.inverted = true;
+                        }
                         ++col;
                     }
                 }
@@ -2047,10 +2057,11 @@ void BufferView::Paint(Canvas c) {
                     // not literal text; whatever background isearch/selection
                     // already chose above is kept so an active highlight still
                     // shows through it.
-                    Brush binaryBrush        = brush;
-                    binaryBrush.foreground   = theme_.binaryForeground;
-                    const char32_t glyphs[4] = {kBinaryOpen, HexDigit((decoded.codepoint >> 4) & 0xF),
-                                                HexDigit(decoded.codepoint & 0xF), kBinaryClose};
+                    Brush binaryBrush             = brush;
+                    binaryBrush.foreground        = theme_.binaryForeground;
+                    const char32_t glyphs[4]      = {kBinaryOpen, HexDigit((decoded.codepoint >> 4) & 0xF),
+                                                     HexDigit(decoded.codepoint & 0xF), kBinaryClose};
+                    bool           firstGlyphCell = true;
                     for (const char32_t glyph : glyphs) {
                         if (col >= c.size().width) {
                             break;
@@ -2058,6 +2069,10 @@ void BufferView::Paint(Canvas c) {
                         Cell& cell     = c[{.x = col, .y = row}];
                         cell.character = text::EncodeCodepointUtf8(glyph);
                         binaryBrush.ApplyTo(cell);
+                        if (firstGlyphCell && secondaryCaretHere) {
+                            cell.inverted  = true;
+                            firstGlyphCell = false;
+                        }
                         ++col;
                     }
                 }
@@ -2065,6 +2080,9 @@ void BufferView::Paint(Canvas c) {
                     Cell& cell     = c[{.x = col, .y = row}];
                     cell.character = text::EncodeCodepointUtf8(decoded.codepoint);
                     brush.ApplyTo(cell);
+                    if (secondaryCaretHere) {
+                        cell.inverted = true;
+                    }
                     ++col;
                 }
 
@@ -2081,6 +2099,17 @@ void BufferView::Paint(Canvas c) {
             // reserving a dedicated one, the same "small, unobtrusive
             // marker" approach the fold-ellipsis glyph just below already
             // takes for a conceptually similar "there's more here" cue.
+            // Multi-cursor phase: a secondary caret sitting exactly at this
+            // line's content end (the newline position -- end-of-line motion
+            // parks cursors there constantly) has no codepoint cell of its
+            // own above; invert the first padding cell instead. Last
+            // segment only: a mid-wrap segment's endByte is the next
+            // segment's startByte, which the content loop already covers.
+            if (segmentIndex + 1 == lineSegments.size() && col < c.size().width &&
+                IsSecondaryCursorAt(currentSegment.endByte)) {
+                c[{.x = col, .y = row}].inverted = true;
+            }
+
             if (offset < currentSegment.endByte && col > 0) {
                 const Brush truncationBrush{.background = theme_.background, .foreground = theme_.truncationIndicatorForeground};
                 Cell&       cell = c[{.x = col - 1, .y = row}];
@@ -5655,11 +5684,36 @@ void BufferView::SetEventLoop(EventLoop* eventLoop) {
 
 bool BufferView::InSelection(std::size_t byteOffset) const {
     const text::Buffer& buffer = activeBuffer_.Get();
-    if (!buffer.HasMark()) {
-        return false;
+    if (buffer.HasMark()) {
+        const auto [start, end] = buffer.Region();
+        if (byteOffset >= start && byteOffset < end) {
+            return true;
+        }
     }
-    const auto [start, end] = buffer.Region();
-    return byteOffset >= start && byteOffset < end;
+    // Multi-cursor phase: each secondary cursor's own selection highlights
+    // through the exact same overlay -- per-codepoint x per-secondary is
+    // fine at real cursor counts (a handful), the same reasoning
+    // currentLineDiagnosticSpans' own per-cell loop already relies on.
+    for (const auto& cursor : buffer.SecondaryCursors()) {
+        if (!cursor.mark) {
+            continue;
+        }
+        const std::size_t start = std::min(cursor.point, *cursor.mark);
+        const std::size_t end   = std::max(cursor.point, *cursor.mark);
+        if (byteOffset >= start && byteOffset < end) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool BufferView::IsSecondaryCursorAt(std::size_t byteOffset) const {
+    for (const auto& cursor : activeBuffer_.Get().SecondaryCursors()) {
+        if (cursor.point == byteOffset) {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool BufferView::InIsearchMatch(std::size_t byteOffset) const {
