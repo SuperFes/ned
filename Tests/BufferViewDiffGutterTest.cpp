@@ -61,13 +61,41 @@ struct Fixture {
 } // namespace
 
 TEST_CASE("BufferView reserves no gutter column for diff markers until some are loaded", "[BufferView][Vcs]") {
-    Fixture    fixture;
+    Fixture fixture;
     fixture.buffer.InsertAtPoint("hello");
     BufferView view = fixture.View();
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 2});
 
     REQUIRE(view.CursorPosition().has_value());
     REQUIRE(view.CursorPosition()->x == GutterWidthWithDiff(fixture.buffer.Content().LineCount(), false) + 5);
+}
+
+TEST_CASE("Diff markers render in the diff column itself, not under the status swatch", "[BufferView][Vcs]") {
+    // Regression test: the swatch/notch used to be drawn at statusStart --
+    // one column right of the diff column that GutterWidth reserves --
+    // where the unsaved-change swatch then unconditionally overwrote it,
+    // leaving the reserved column permanently blank.
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("one\ntwo\nthree\nfour\n");
+    BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 4});
+
+    // Added at 0-indexed line 1, Modified at line 2, Removed boundary at 3.
+    view.DispatchDiffForTesting({VcsDiffHunk{1, 0, 2, 1}, VcsDiffHunk{3, 1, 3, 1}, VcsDiffHunk{5, 1, 3, 0}});
+
+    ned::ui::Screen screen = ned::ui::Screen(20, 5);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 4});
+    view.Paint(canvas);
+
+    REQUIRE(screen.PixelAt(0, 0).background_color == fixture.theme.background);    // untouched line
+    REQUIRE(screen.PixelAt(0, 1).background_color == ned::ui::Color::BrightGreen); // Added swatch
+    REQUIRE(screen.PixelAt(0, 2).background_color == ned::ui::Color::BrightBlue);  // Modified swatch
+    REQUIRE(screen.PixelAt(0, 3).character == "▔");                                // Removed notch
+    REQUIRE(screen.PixelAt(0, 3).foreground_color == ned::ui::Color::BrightRed);
+    // The status column right of it belongs to the unsaved-change swatch
+    // (the whole buffer is unsaved here) -- proves the two no longer fight
+    // over one cell.
+    REQUIRE(screen.PixelAt(1, 1).background_color == fixture.theme.unsavedChangeIndicator);
 }
 
 TEST_CASE("DispatchDiffForTesting classifies a pure addition hunk as Added lines", "[BufferView][Vcs]") {

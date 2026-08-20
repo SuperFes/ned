@@ -1256,7 +1256,8 @@ void BufferView::Paint(Canvas c) {
     // DAP client slice 2: the debug-marker column, leftmost of all when
     // active -- see kDapWidth's own doc comment for the full layout.
     const std::size_t dapColumnWidth  = DapGutterActive() ? kDapWidth : 0;
-    const std::size_t statusStart     = dapColumnWidth + diffColumnWidth;
+    const std::size_t diffStart       = dapColumnWidth;
+    const std::size_t statusStart     = diffStart + diffColumnWidth;
     const std::size_t diagnosticStart = statusStart + kStatusWidth;
 
     // Fetched once per Paint(), not once per row -- BreakpointLinesForKey
@@ -1573,11 +1574,19 @@ void BufferView::Paint(Canvas c) {
                 // through Theme::BrushFor(SyntaxClass) -- same bypass the
                 // blame gutter's own hash coloring already uses, for the
                 // same reason (this isn't a tree-sitter capture category).
+                // Drawn at diffStart -- the diff column's own x. This used
+                // to (wrongly) target statusStart, where the unsaved-change
+                // swatch below then unconditionally overwrote it every
+                // frame, leaving the reserved diff column permanently
+                // blank; found while adding the debug column and fixed on
+                // request rather than silently, since the visible diff
+                // styling (colored line numbers + content gradient) had
+                // been tuned with the swatch invisibly absent.
                 if (diffColumnWidth > 0) {
                     const auto it = std::lower_bound(diffLineKinds_.begin(), diffLineKinds_.end(), line,
                                                      [](const auto& entry, std::size_t targetLine) { return entry.first < targetLine; });
                     if (it != diffLineKinds_.end() && it->first == line) {
-                        Cell& cell = c[{.x = static_cast<int>(statusStart), .y = row}];
+                        Cell& cell = c[{.x = static_cast<int>(diffStart), .y = row}];
                         switch (it->second) {
                             case DiffLineKind::Added:
                                 cell.character        = " ";
