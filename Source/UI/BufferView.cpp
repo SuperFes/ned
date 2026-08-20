@@ -800,16 +800,6 @@ namespace {
         return Color::Interpolate(t, Color::BrightCyan, Color::BrightBlack);
     }
 
-    // Diff gutter markers follow-up: how much of an Added/Modified line's
-    // background gets tinted toward its accent color. Only ever actually
-    // applied against a real, concrete theme background now (see this
-    // constant's own use site for why Color::Default -- DarkTheme()'s own
-    // default -- skips the wash entirely instead of blending against a
-    // meaningless gray approximation); 0.30, per explicit user request
-    // after the original 0.14 (against that wrong gray base) read as
-    // "wipes out the text."
-    constexpr float kDiffLineTintAlpha = 0.30f;
-
 } // namespace
 
 void BufferView::EnsureDiagnosticGutterCache() const {
@@ -1400,8 +1390,22 @@ void BufferView::Paint(Canvas c) {
                 const std::size_t     lineEndWithNewline = (line + 1 < totalLines) ? content.LineToByteOffset(line + 1) : content.ByteLength();
                 const GutterSelection gutterSelection    = ClassifyGutterSelection(buffer, lineStart, lineEndWithNewline);
 
-                const Color gutterForeground =
-                    (line == pointLine) ? theme_.currentLineNumberForeground : theme_.lineNumberForeground;
+                // Diff gutter markers follow-up: a changed line's own
+                // number gets colored toward the accent instead of the
+                // usual line-number foreground -- real visual signal
+                // without ever touching the code text's own contrast
+                // (revised away from a whole-line background wash, which
+                // by definition fights contrast against similarly-hued
+                // foreground text; a user-reported "wipes out the text"
+                // complaint against exactly that approach is what drove
+                // this). currentLineDiffTint is only ever set for
+                // Added/Modified (never Removed -- see where it's
+                // computed just above), matching the diff gutter column's
+                // own choice to give Removed a distinct glyph instead.
+                const Color gutterForeground = currentLineDiffTint
+                                                    ? (currentLineDiffTint == DiffLineKind::Added ? Color::BrightGreen : Color::BrightBlue)
+                                                : (line == pointLine) ? theme_.currentLineNumberForeground
+                                                                      : theme_.lineNumberForeground;
                 // Digits+padding get the full selection background only when the
                 // whole line is covered; the one-column gap after them gets it for
                 // Partial too, so a partially-selected line still shows a thin
@@ -1732,37 +1736,17 @@ void BufferView::Paint(Canvas c) {
                 else if (InSelection(offset)) {
                     brush.background = theme_.selectionBackground;
                 }
-                else if (currentLineDiffTint && theme_.background.kind != Color::Kind::Default) {
-                    // Diff gutter markers follow-up: a subtle, low-alpha
-                    // wash across the whole changed line -- the "semi-
-                    // transparent background" the user explicitly asked
-                    // for. There's no real alpha channel in this Cell
-                    // model, so this simulates one the same way blame's
-                    // age-coloring already does: Color::Interpolate blends
-                    // a percentage of an accent color into the theme's own
-                    // background, producing a genuine RGB result rather
-                    // than a hard-edged solid fill. Skipped entirely when
-                    // selection/isearch also apply (checked above) -- a
-                    // three-way blend there would read as muddy, not
-                    // fancy. Also skipped outright when theme_.background
-                    // is Color::Default (a transparent/pass-through
-                    // terminal background, e.g. `ned --detect-theme
-                    // --transparent`) -- Color::Interpolate always
-                    // produces an opaque TrueColor result, and Default has
-                    // no real RGB to blend from (ToRgb falls back to a
-                    // fixed mid-gray approximation), so blending against
-                    // it doesn't produce a *tinted* version of the user's
-                    // actual (unknown) terminal background -- it silently
-                    // replaces real transparency with an unrelated, often
-                    // much lighter, opaque gray block, which is a real,
-                    // reported bug ("wipes out the text"), not a case
-                    // where a lower alpha alone would have helped. The
-                    // gutter swatch (BufferView.cpp's own earlier block)
-                    // still shows for a Default-background theme; only
-                    // this whole-line wash is skipped.
-                    const Color accent = (currentLineDiffTint == DiffLineKind::Added) ? Color::BrightGreen : Color::BrightBlue;
-                    brush.background   = Color::Interpolate(kDiffLineTintAlpha, theme_.background, accent);
-                }
+                // Diff gutter markers follow-up: no whole-line background
+                // wash here anymore -- see gutterForeground's own doc
+                // comment just above (the accent now colors the line
+                // number instead) for why: a background blend, at any
+                // alpha, necessarily fights contrast against similarly-hued
+                // foreground text, and a real terminal's own Color::Default
+                // background has no true RGB to blend against in the first
+                // place (Color::Interpolate always produces an opaque
+                // TrueColor result). The gutter swatch plus the colored
+                // line number give a clear, always-high-contrast signal
+                // without ever touching the code text's own colors.
 
                 if (decoded.codepoint == U'\t') {
                     // A real terminal treats a raw tab byte as "jump to the next
