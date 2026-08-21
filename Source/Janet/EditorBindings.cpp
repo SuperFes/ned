@@ -1,5 +1,6 @@
 #include "EditorBindings.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <optional>
 #include <stdexcept>
@@ -396,6 +397,91 @@ namespace {
         return editor::SyntaxClassNames();
     }
 
+    // exhaustive-highlighting follow-up: the per-capture-name tier below
+    // SyntaxClass -- same setter/getter shapes as the ned/syntax-* family
+    // above (empty string clears a color, nil clears a trait), keyed by a
+    // raw dotted tree-sitter capture name ("function.builtin", no leading
+    // '@') instead of a class name. Resolution inherits along the dotted
+    // chain and then falls through to the class tier -- see
+    // Editor/SyntaxTheme.h.
+    void NedSetCaptureForeground(std::string captureName, std::string hex) {
+        editor::SetCaptureForeground(captureName, hex.empty() ? std::nullopt : std::optional<std::string>(std::move(hex)));
+    }
+
+    void NedSetCaptureBackground(std::string captureName, std::string hex) {
+        editor::SetCaptureBackground(captureName, hex.empty() ? std::nullopt : std::optional<std::string>(std::move(hex)));
+    }
+
+    void NedSetCaptureBold(std::string captureName, Janet value) {
+        editor::SetCaptureBold(captureName, JanetToOptionalBool(value));
+    }
+
+    void NedSetCaptureItalic(std::string captureName, Janet value) {
+        editor::SetCaptureItalic(captureName, JanetToOptionalBool(value));
+    }
+
+    void NedSetCaptureUnderlined(std::string captureName, Janet value) {
+        editor::SetCaptureUnderlined(captureName, JanetToOptionalBool(value));
+    }
+
+    void NedSetCaptureStrikethrough(std::string captureName, Janet value) {
+        editor::SetCaptureStrikethrough(captureName, JanetToOptionalBool(value));
+    }
+
+    std::optional<std::string> NedCaptureForeground(std::string captureName) {
+        return editor::CaptureOverrideFor(captureName).foreground;
+    }
+
+    std::optional<std::string> NedCaptureBackground(std::string captureName) {
+        return editor::CaptureOverrideFor(captureName).background;
+    }
+
+    std::optional<bool> NedCaptureBold(std::string captureName) {
+        return editor::CaptureOverrideFor(captureName).bold;
+    }
+
+    std::optional<bool> NedCaptureItalic(std::string captureName) {
+        return editor::CaptureOverrideFor(captureName).italic;
+    }
+
+    std::optional<bool> NedCaptureUnderlined(std::string captureName) {
+        return editor::CaptureOverrideFor(captureName).underlined;
+    }
+
+    std::optional<bool> NedCaptureStrikethrough(std::string captureName) {
+        return editor::CaptureOverrideFor(captureName).strikethrough;
+    }
+
+    // Re-bases what a capture name *is* (its SyntaxClass, hence every
+    // built-in theme color/trait that class carries) -- JetBrains' "inherit
+    // values from" control; empty string clears, back to the built-in
+    // mapping. Also the general successor to the extension-era ask "make
+    // capture X render like class Y without a rebuild."
+    void NedSetCaptureClass(std::string captureName, std::string className) {
+        editor::SetSyntaxClassForCapture(captureName, className.empty()
+                                                          ? std::nullopt
+                                                          : std::optional(editor::SyntaxClassByName(className)));
+    }
+
+    std::optional<std::string> NedCaptureClass(std::string captureName) {
+        const auto cls = editor::SyntaxClassOverrideForCapture(captureName);
+        return cls ? std::optional(editor::SyntaxClassName(*cls)) : std::nullopt;
+    }
+
+    // The known capture-name universe: every name the built-in defaults
+    // table maps (Mode.h's BuiltinCaptureNames) merged with every name this
+    // session has interned from a real query or configured an override/
+    // remap for (SyntaxTheme.h's KnownCaptureNames) -- sorted, deduplicated.
+    std::vector<std::string> NedCaptureNames() {
+        std::vector<std::string> names = editor::BuiltinCaptureNames();
+        for (std::string& name : editor::KnownCaptureNames()) {
+            names.push_back(std::move(name));
+        }
+        std::sort(names.begin(), names.end());
+        names.erase(std::unique(names.begin(), names.end()), names.end());
+        return names;
+    }
+
     // Registers a VCS-agnostic plugin from one struct/table of callbacks
     // keyed by keyword -- see JanetVcsProvider's header comment for the
     // full key list and which are optional (vocabulary-completion
@@ -618,6 +704,48 @@ void InstallEditorBindings(Environment& env) {
     env.Register<&NedSyntaxStrikethrough>(
         "ned", "syntax-strikethrough", "The syntax class's overridden strikethrough trait, or nil if unset.");
     env.Register<&NedSyntaxClasses>("ned", "syntax-classes", "Every valid syntax class name, sorted.");
+
+    env.Register<&NedSetCaptureForeground>(
+        "ned", "set-capture-foreground",
+        "Override one tree-sitter capture name's foreground color as \"#rrggbb\" (e.g. \"function.builtin\", no "
+        "leading @) -- empty string clears. More specific dotted names inherit from less specific ones "
+        "(\"function.builtin.static\" falls back through \"function.builtin\" to \"function\"), then from the "
+        "capture's syntax class (ned/set-syntax-*). See ned/capture-names for every known name.");
+    env.Register<&NedSetCaptureBackground>(
+        "ned", "set-capture-background",
+        "Override one capture name's background color as \"#rrggbb\" -- empty string clears; inherits like "
+        "ned/set-capture-foreground.");
+    env.Register<&NedSetCaptureBold>(
+        "ned", "set-capture-bold", "Override one capture name's bold trait (true/false) -- nil clears.");
+    env.Register<&NedSetCaptureItalic>(
+        "ned", "set-capture-italic", "Override one capture name's italic trait (true/false) -- nil clears.");
+    env.Register<&NedSetCaptureUnderlined>(
+        "ned", "set-capture-underlined", "Override one capture name's underlined trait (true/false) -- nil clears.");
+    env.Register<&NedSetCaptureStrikethrough>(
+        "ned", "set-capture-strikethrough",
+        "Override one capture name's strikethrough trait (true/false) -- nil clears.");
+    env.Register<&NedCaptureForeground>(
+        "ned", "capture-foreground", "The capture name's own overridden foreground color, or nil if unset (no inheritance walk).");
+    env.Register<&NedCaptureBackground>(
+        "ned", "capture-background", "The capture name's own overridden background color, or nil if unset.");
+    env.Register<&NedCaptureBold>("ned", "capture-bold", "The capture name's own overridden bold trait, or nil if unset.");
+    env.Register<&NedCaptureItalic>("ned", "capture-italic", "The capture name's own overridden italic trait, or nil if unset.");
+    env.Register<&NedCaptureUnderlined>(
+        "ned", "capture-underlined", "The capture name's own overridden underlined trait, or nil if unset.");
+    env.Register<&NedCaptureStrikethrough>(
+        "ned", "capture-strikethrough", "The capture name's own overridden strikethrough trait, or nil if unset.");
+    env.Register<&NedSetCaptureClass>(
+        "ned", "set-capture-class",
+        "Remap a capture name to a syntax class (e.g. (ned/set-capture-class \"tag.error\" \"control-keyword\")) -- "
+        "the capture then inherits that class's whole built-in style. Applies at every dotted level, so remapping "
+        "\"keyword\" also re-bases unlisted specific names that fall back to it. Empty class name restores the "
+        "built-in mapping.");
+    env.Register<&NedCaptureClass>(
+        "ned", "capture-class", "The capture name's remapped syntax class name, or nil if using the built-in mapping.");
+    env.Register<&NedCaptureNames>(
+        "ned", "capture-names",
+        "Every known tree-sitter capture name, sorted: the built-in defaults table merged with every name seen from "
+        "a loaded grammar's query or configured via ned/set-capture-*.");
 
     env.Register<&NedVcsRegisterProvider>(
         "ned", "vcs-register-provider",

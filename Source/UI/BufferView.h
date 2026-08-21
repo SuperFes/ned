@@ -16,6 +16,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <optional>
@@ -1130,6 +1131,13 @@ class BufferView : public Widget {
     [[nodiscard]] bool IsSecondaryCursorAt(std::size_t byteOffset) const;
     [[nodiscard]] bool InIsearchMatch(std::size_t byteOffset) const;
 
+    // exhaustive-highlighting follow-up: theme_.BrushFor(cls, captureId)
+    // through brushCache_ (below) -- the render loop's only path to a
+    // syntax brush, so per-capture styling can't accidentally regress the
+    // per-codepoint hot path. Flushes the cache itself when
+    // editor::SyntaxThemeGeneration() has moved since the last call.
+    [[nodiscard]] Brush ResolvedBrush(editor::SyntaxClass cls, editor::CaptureId captureId) const;
+
     // line-wrap follow-up: editor::EffectiveWrapLines(activeBuffer_.Get().Path(), mode_) --
     // the active buffer's own resolved wrap setting (a per-file override if
     // one is configured, else mode_'s own default). Recomputed fresh each
@@ -1317,6 +1325,28 @@ class BufferView : public Widget {
     text::Buffer*                      highlightCacheBuffer_     = nullptr;
     std::size_t                        highlightCacheGeneration_ = 0;
     std::vector<editor::HighlightSpan> highlightCacheSpans_;
+    // exhaustive-highlighting follow-up: a ned/set-capture-class remap
+    // changes the SyntaxClass values *baked into* the cached spans above at
+    // parse time, not just how a class renders -- so the cache staleness
+    // check compares this against editor::CaptureClassGeneration() too, the
+    // same "cheap did-it-change counter" shape ContentGeneration() already
+    // has.
+    std::size_t highlightCacheClassGeneration_ = 0;
+
+    // exhaustive-highlighting follow-up: Theme::BrushFor(cls, captureId)
+    // resolved once per distinct (class, capture) pair per style
+    // generation, not once per rendered codepoint -- the capture-aware
+    // overload does a name lookup plus several locked map lookups (the
+    // dotted-inheritance walk, Editor/SyntaxTheme.h), which is exactly the
+    // per-codepoint-cost class VisualColumn/SpansForLine's own [Performance]
+    // histories exist to keep out of the render loop. Keyed by
+    // cls-in-the-high-bits | captureId; flushed by ResolvedBrush whenever
+    // editor::SyntaxThemeGeneration() has moved (any ned/set-syntax-* or
+    // ned/set-capture-* call). Bounded by #distinct-pairs-on-screen, tiny in
+    // practice.
+    mutable std::unordered_map<std::uint32_t, Brush> brushCache_;
+    mutable std::size_t                              brushCacheGeneration_ = 0;
+    mutable std::string                              brushCacheThemeName_; // select-theme swaps Theme in place -- see ResolvedBrush
 
     // structural-selection-expansion follow-up: the stack of prior selection
     // ranges expand-selection has grown through, so shrink-selection can walk

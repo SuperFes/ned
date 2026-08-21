@@ -3,6 +3,7 @@
 #include "Editor/Key.h"
 #include "Editor/Mode.h"
 #include "Editor/Org.h"
+#include "Editor/SyntaxTheme.h"
 
 using ned::editor::BashMode;
 using ned::editor::CMode;
@@ -146,6 +147,60 @@ TEST_CASE("JsonMode highlights strings, numbers, and literal keywords via a real
     REQUIRE(HasSpan(spans, 14, 18, SyntaxClass::ConstantBuiltin)); // true
     REQUIRE(HasSpan(spans, 20, 23, SyntaxClass::String));          // "c"
     REQUIRE(HasSpan(spans, 25, 29, SyntaxClass::ConstantBuiltin)); // null
+}
+
+TEST_CASE("Highlight spans carry the interned capture id of the producing capture", "[Mode]") {
+    const auto             mode  = JsonMode();
+    const std::string_view text  = R"({"a": 1})";
+    const auto             spans = mode.highlight(text);
+
+    // The number 1 is tree-sitter-json's own "@number" capture -- its span
+    // must carry a real capture id resolving back to that name, the
+    // exhaustive-highlighting follow-up's whole point (per-capture styling
+    // needs to know *which capture*, not just the resolved class).
+    bool found = false;
+    for (const ned::editor::HighlightSpan& span : spans) {
+        if (span.startByte == 6 && span.endByte == 7) {
+            REQUIRE(span.captureId != ned::editor::kNoCapture);
+            REQUIRE(ned::editor::CaptureNameForId(span.captureId) == "number");
+            found = true;
+        }
+    }
+    REQUIRE(found);
+}
+
+TEST_CASE("An equal-range double capture keeps the more specific capture name, regardless of pattern order", "[Mode]") {
+    // tree-sitter-json's own query captures a key node twice -- '(pair key:
+    // (_) @string.special.key)' then '(string) @string' -- with the exact
+    // same byte range. Found live (a smoke test's ned/set-capture-foreground
+    // on "string.special.key" silently did nothing): the later generic
+    // capture used to clobber the specific one's captureId under the
+    // later-span-wins render rule. SpanCollector (Mode.cpp) resolves the
+    // tie by specificity now.
+    const auto             mode  = JsonMode();
+    const std::string_view text  = R"({"a": 1})";
+    const auto             spans = mode.highlight(text);
+
+    bool found = false;
+    for (const ned::editor::HighlightSpan& span : spans) {
+        if (span.startByte == 1 && span.endByte == 4) {
+            REQUIRE(ned::editor::CaptureNameForId(span.captureId) == "string.special.key");
+            found = true;
+        }
+    }
+    REQUIRE(found);
+}
+
+TEST_CASE("A ned/set-capture-class remap re-bases what a capture resolves to at parse time", "[Mode]") {
+    struct RemapGuard {
+        ~RemapGuard() {
+            ned::editor::SetSyntaxClassForCapture("number", std::nullopt);
+        }
+    } guard;
+    ned::editor::SetSyntaxClassForCapture("number", SyntaxClass::Comment);
+
+    const auto spans = JsonMode().highlight("[1]");
+    REQUIRE(HasSpan(spans, 1, 2, SyntaxClass::Comment)); // "1" -- remapped away from Number
 }
 
 // generic-tree-sitter-highlighting follow-up: CMode/CppMode now use a real,
@@ -422,7 +477,7 @@ TEST_CASE("CppMode classifies a comment as Comment, not clobbered to Default by 
 }
 
 TEST_CASE("YamlMode has a highlighting hook installed and classifies a comment as Comment", "[Mode]") {
-    const auto mode  = ned::editor::YamlMode();
+    const auto mode = ned::editor::YamlMode();
     REQUIRE(mode.name == "yaml-mode");
     REQUIRE(static_cast<bool>(mode.highlight));
 
@@ -431,7 +486,7 @@ TEST_CASE("YamlMode has a highlighting hook installed and classifies a comment a
 }
 
 TEST_CASE("TomlMode has a highlighting hook installed and classifies a string as String", "[Mode]") {
-    const auto mode  = ned::editor::TomlMode();
+    const auto mode = ned::editor::TomlMode();
     REQUIRE(mode.name == "toml-mode");
     REQUIRE(static_cast<bool>(mode.highlight));
 
@@ -535,7 +590,7 @@ TEST_CASE("JsonMode's expandSelection grows step by step from a point and termin
     const std::string text = R"({"a": 1})";
 
     std::optional<std::pair<std::size_t, std::size_t>> range = std::make_pair(std::size_t{6}, std::size_t{6}); // inside the "1"
-    std::vector<std::string>                            steps;
+    std::vector<std::string>                           steps;
     for (int i = 0; i < 10 && range.has_value(); ++i) {
         range = mode.expandSelection(text, range->first, range->second);
         if (range.has_value()) {

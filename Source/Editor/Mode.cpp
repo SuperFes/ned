@@ -1,6 +1,7 @@
 #include "Mode.h"
 
 #include <algorithm>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -10,6 +11,7 @@
 
 #include "Key.h"
 #include "Org.h"
+#include "SyntaxTheme.h"
 #include "TreeSitter/Languages.h"
 #include "TreeSitter/Parser.h"
 #include "TreeSitter/Queries.h"
@@ -67,6 +69,43 @@ namespace {
             {"include", SyntaxClass::Keyword},
             {"preproc", SyntaxClass::Keyword},
             {"label", SyntaxClass::Label},
+
+            // exhaustive-highlighting follow-up: entries closing the gaps a
+            // full enumeration of every bundled grammar's real query found
+            // (17 queries, 87 distinct names -- see ROADMAP.md's entry).
+            // First, names the ancestor-stripping fallback already resolved
+            // acceptably, promoted to explicit entries so they're
+            // documented, individually remappable defaults rather than
+            // accidents of the walk:
+            {"keyword.exception", SyntaxClass::ControlKeyword}, // throw/try/catch ARE control flow, not plain keywords (stripping gave Keyword)
+            {"keyword.directive", SyntaxClass::Keyword},        // preprocessor directives -- same class "preproc" above already picked
+            {"keyword.directive.define", SyntaxClass::Keyword},
+            {"keyword.coroutine", SyntaxClass::Keyword},            // async/await/co_await -- most themes render these as plain keywords
+            {"keyword.conditional.ternary", SyntaxClass::Operator}, // "?"/":" read as operators, not as an if-keyword's color
+            {"module.builtin", SyntaxClass::Namespace},
+            {"tag.error", SyntaxClass::Tag}, // no Error class exists; per-capture styling can redden it now
+            // string.special.symbol is a Lisp symbol/keyword (:foo in
+            // Clojure) -- Constant matches how symbol-like atoms
+            // conventionally render (Ruby symbols, Elixir atoms), where
+            // stripping to string.special -> String would paint half a
+            // Clojure buffer string-colored.
+            {"string.special.symbol", SyntaxClass::Constant},
+            // CSS at-rule captures from tree-sitter-css's own query
+            // (@media/@import/@keyframes/@supports/@charset each capture
+            // under a bare name matching the at-rule) -- previously fell
+            // all the way to Default, the enumeration's only genuine
+            // every-day-visible misses.
+            {"media", SyntaxClass::Keyword},
+            {"import", SyntaxClass::Keyword},
+            {"keyframes", SyntaxClass::Keyword},
+            {"supports", SyntaxClass::Keyword},
+            {"charset", SyntaxClass::Keyword},
+            // Interpolation/substitution context (bash $(...) content, JS
+            // template-literal ${...}, Python f-string braces' content).
+            // Default is the *correct* class -- the code inside shouldn't
+            // inherit the enclosing string's color -- but as an explicit
+            // choice here, not a fallthrough that reads like a gap.
+            {"embedded", SyntaxClass::Default},
 
             {"function", SyntaxClass::Function},
             {"function.call", SyntaxClass::Function},
@@ -175,6 +214,15 @@ namespace {
         const auto& table = CaptureTable();
 
         while (true) {
+            // A user remap (ned/set-capture-class, SyntaxTheme.h) wins over
+            // the built-in table at every dotted level, so remapping a broad
+            // name ("keyword") also re-bases every unlisted specific name
+            // that would have fallen back to it. Parse-time path (per
+            // capture per reparse), not the per-codepoint render path, so
+            // the store's mutex lookup per level is fine here.
+            if (const auto remapped = SyntaxClassOverrideForCapture(captureName)) {
+                return *remapped;
+            }
             if (const auto it = table.find(captureName); it != table.end()) {
                 return it->second;
             }
@@ -217,6 +265,59 @@ namespace {
         return !captureName.empty() && captureName.front() != '_' && captureName != "spell" && captureName != "nospell" &&
                captureName != "none";
     }
+
+    // exhaustive-highlighting follow-up: collects query captures into
+    // HighlightSpans, resolving one specific hazard the raw append never
+    // could: two patterns capturing the *exact same node* under different
+    // names (tree-sitter-json's own '(pair key: (_) @string.special.key)'
+    // plus '(string) @string' is the canonical case -- one key node, two
+    // equal-range captures). The documented "later span wins" render rule
+    // assumes later means more-nested, which equal ranges from separate
+    // patterns break: whichever pattern the query file happens to list
+    // second wins, and json lists the *generic* one second. Invisible while
+    // spans only carried a SyntaxClass (both resolve to String); a real,
+    // live-smoke-test-caught bug once captureId made the difference
+    // stylable (ned/set-capture-foreground "string.special.key" silently
+    // did nothing). For an equal-range collision, the more specific capture
+    // name (more dotted segments) wins regardless of pattern order --
+    // tree-sitter/Neovim's own most-to-least-specific naming convention,
+    // the same reasoning SyntaxClassForCapture's ancestor walk already
+    // leans on; equal specificity keeps the later one (the pre-existing
+    // rule). Distinct-range overlaps are untouched -- the render-time
+    // later-wins rule still handles genuine nesting.
+    class SpanCollector {
+      public:
+        void Add(std::string_view captureName, std::size_t startByte, std::size_t endByte, SyntaxClass syntaxClass) {
+            const auto range = std::make_pair(startByte, endByte);
+            const int  dots  = static_cast<int>(std::count(captureName.begin(), captureName.end(), '.'));
+            if (const auto it = byRange_.find(range); it != byRange_.end()) {
+                if (dots < specificity_[it->second]) {
+                    return; // a more specific capture already holds this exact range
+                }
+                spans_[it->second]       = HighlightSpan{.startByte   = startByte,
+                                                         .endByte     = endByte,
+                                                         .syntaxClass = syntaxClass,
+                                                         .captureId   = InternCaptureName(captureName)};
+                specificity_[it->second] = dots;
+                return;
+            }
+            byRange_.emplace(range, spans_.size());
+            spans_.push_back(HighlightSpan{.startByte   = startByte,
+                                           .endByte     = endByte,
+                                           .syntaxClass = syntaxClass,
+                                           .captureId   = InternCaptureName(captureName)});
+            specificity_.push_back(dots);
+        }
+
+        [[nodiscard]] std::vector<HighlightSpan> Take() {
+            return std::move(spans_);
+        }
+
+      private:
+        std::vector<HighlightSpan>                                 spans_;
+        std::vector<int>                                           specificity_;
+        std::map<std::pair<std::size_t, std::size_t>, std::size_t> byRange_;
+    };
 
     // Org-mode syntax-highlighting follow-up: cyclic heading-level color
     // from a headline's own star count, shared by OrgMode()'s custom
@@ -309,15 +410,19 @@ namespace {
             const std::string_view inlineText = bufferText.substr(start, end - start);
             const treesitter::Tree inlineTree = inlineParser.Parse(inlineText);
             if (!inlineTree.IsNull()) {
+                // Per-node collector: equal-range double captures can only
+                // come from one query run over one inline node (different
+                // inline nodes never share a byte range).
+                SpanCollector collector;
                 for (const treesitter::QueryCapture& capture : inlineQuery.Captures(inlineTree.RootNode(), inlineText)) {
                     if (!IsHighlightableCapture(capture.name)) {
                         continue;
                     }
-                    spans.push_back(HighlightSpan{
-                        .startByte   = start + capture.startByte,
-                        .endByte     = start + capture.endByte,
-                        .syntaxClass = SyntaxClassForCapture(capture.name),
-                    });
+                    collector.Add(capture.name, start + capture.startByte, start + capture.endByte,
+                                  SyntaxClassForCapture(capture.name));
+                }
+                for (const HighlightSpan& span : collector.Take()) {
+                    spans.push_back(span);
                 }
             }
             return;
@@ -328,6 +433,16 @@ namespace {
     }
 
 } // namespace
+
+std::vector<std::string> BuiltinCaptureNames() {
+    std::vector<std::string> names;
+    names.reserve(CaptureTable().size());
+    for (const auto& [name, cls] : CaptureTable()) {
+        names.emplace_back(name);
+    }
+    std::sort(names.begin(), names.end());
+    return names;
+}
 
 Mode FundamentalMode() {
     return Mode{.name = "fundamental-mode", .keymap = Keymap(), .highlight = HighlightFunction()};
@@ -381,18 +496,14 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
                 return {};
             }
 
-            std::vector<HighlightSpan> spans;
+            SpanCollector collector;
             for (const treesitter::QueryCapture& capture : query->Captures(tree.RootNode(), bufferText)) {
                 if (!IsHighlightableCapture(capture.name)) {
                     continue;
                 }
-                spans.push_back(HighlightSpan{
-                    .startByte   = capture.startByte,
-                    .endByte     = capture.endByte,
-                    .syntaxClass = SyntaxClassForCapture(capture.name),
-                });
+                collector.Add(capture.name, capture.startByte, capture.endByte, SyntaxClassForCapture(capture.name));
             }
-            return spans;
+            return collector.Take();
         };
     }
 
@@ -563,14 +674,14 @@ Mode TomlMode() {
 }
 
 Mode ClojureMode() {
-    Mode mode = TreeSitterMode("clojure-mode", "clojure", treesitter::queries::kClojure, treesitter::queries::kClojureFolds);
+    Mode mode              = TreeSitterMode("clojure-mode", "clojure", treesitter::queries::kClojure, treesitter::queries::kClojureFolds);
     mode.lineCommentPrefix = ";"; // Lisp-family convention, same as JanetMode
     return mode;
 }
 
 Mode JankMode() {
     // Same grammar and query as ClojureMode, distinct name -- see Mode.h.
-    Mode mode = TreeSitterMode("jank-mode", "clojure", treesitter::queries::kClojure, treesitter::queries::kClojureFolds);
+    Mode mode              = TreeSitterMode("jank-mode", "clojure", treesitter::queries::kClojure, treesitter::queries::kClojureFolds);
     mode.lineCommentPrefix = ";";
     return mode;
 }
@@ -646,14 +757,16 @@ Mode MarkdownMode() {
         // directly to MarkupMarker here instead of through the shared table
         // (it's shared with other bundled grammars, where it means
         // something else).
+        SpanCollector blockCollector;
         for (const treesitter::QueryCapture& capture : blockQuery->Captures(root, bufferText)) {
             if (!IsHighlightableCapture(capture.name)) {
                 continue;
             }
             const SyntaxClass syntaxClass =
                 (capture.name == "punctuation.special") ? SyntaxClass::MarkupMarker : SyntaxClassForCapture(capture.name);
-            spans.push_back(HighlightSpan{.startByte = capture.startByte, .endByte = capture.endByte, .syntaxClass = syntaxClass});
+            blockCollector.Add(capture.name, capture.startByte, capture.endByte, syntaxClass);
         }
+        spans = blockCollector.Take();
 
         // Pass 2: heading levels + task-list checkboxes, from walking the
         // real tree rather than query captures.
@@ -784,15 +897,15 @@ Mode OrgMode() {
         // Pass 3: everything else, through the same shared, generic
         // CaptureTable()/SyntaxClassForCapture() mapping every other
         // bundled grammar's Mode already uses.
+        SpanCollector genericCollector;
         for (const treesitter::QueryCapture& capture : captures) {
             if (capture.name == "org.headline.stars" || capture.name == "org.keyword.candidate") {
                 continue;
             }
-            spans.push_back(HighlightSpan{
-                .startByte   = capture.startByte,
-                .endByte     = capture.endByte,
-                .syntaxClass = SyntaxClassForCapture(capture.name),
-            });
+            genericCollector.Add(capture.name, capture.startByte, capture.endByte, SyntaxClassForCapture(capture.name));
+        }
+        for (const HighlightSpan& span : genericCollector.Take()) {
+            spans.push_back(span);
         }
 
         return spans;
