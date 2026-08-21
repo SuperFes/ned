@@ -79,6 +79,15 @@ namespace {
 } // namespace
 
 Color Color::Interpolate(float t, const Color& a, const Color& b) {
+    // Equal endpoints come back unchanged, preserving a Default/Palette16
+    // kind instead of degrading it to its RGB approximation -- the ANSI
+    // fallback themes (Theme.h, ansi-fallback-theme follow-up) express "no
+    // gradient" as gradientStart == gradientEnd, and on the terminals those
+    // themes exist for (no truecolor at all) an approximated TrueColor
+    // result would be exactly the wash-out the fallback is avoiding.
+    if (a == b) {
+        return a;
+    }
     std::uint8_t ar, ag, ab, br, bg, bb;
     ToRgb(a, ar, ag, ab);
     ToRgb(b, br, bg, bb);

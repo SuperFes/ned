@@ -78,6 +78,16 @@ class EventLoop {
     [[nodiscard]] ncplane* StdPlane() const;
     [[nodiscard]] Size     TerminalSize() const;
 
+    // ansi-fallback-theme follow-up: Notcurses' own view of what the
+    // terminal can actually display (notcurses_cantruecolor /
+    // notcurses_palette_size) -- main.cpp checks these once, right after
+    // construction, to decide whether the TrueColor-heavy built-in/detected
+    // Theme must be swapped for an AnsiFallbackFor() one (Theme.h). Lives
+    // here because the queries need the live notcurses context this class
+    // owns; the swap decision itself stays in the composition root.
+    [[nodiscard]] bool     CanTrueColor() const;
+    [[nodiscard]] unsigned PaletteSize() const;
+
     // Blocks until Exit() is called (from anywhere -- typically a Post()ed
     // callback reacting to CommandContext::quit, mirroring how the
     // FTXUI-era BufferView::OnKeyEvent used to call

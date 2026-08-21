@@ -1,16 +1,21 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <optional>
+#include <sstream>
 #include <string>
 
 #include "Editor/SyntaxTheme.h"
 #include "UI/Theme.h"
+#include "UI/ThemeFile.h"
 
 using ned::editor::SetSyntaxBackground;
 using ned::editor::SetSyntaxBold;
 using ned::editor::SetSyntaxForeground;
 using ned::editor::SetSyntaxItalic;
 using ned::editor::SyntaxClass;
+using ned::ui::AnsiDarkTheme;
+using ned::ui::AnsiFallbackFor;
+using ned::ui::AnsiLightTheme;
 using ned::ui::Color;
 using ned::ui::DarkTheme;
 using ned::ui::LightTheme;
@@ -90,4 +95,65 @@ TEST_CASE("Clearing an override restores the exact original built-in Brush", "[T
 
     SetSyntaxForeground(SyntaxClass::Comment, std::nullopt);
     REQUIRE(theme.BrushFor(SyntaxClass::Comment) == original);
+}
+
+namespace {
+
+// Walks every SerializeTheme'd color token and fails on anything outside
+// the ANSI themes' documented restriction (Theme.h): palette 0-7 or
+// "default", never a "#rrggbb" TrueColor and never the Bright 8-15 range.
+void RequireAnsiRestricted(const Theme& theme) {
+    std::istringstream in{ned::ui::SerializeTheme(theme)};
+    std::string        line;
+    while (std::getline(in, line)) {
+        const auto eq = line.find('=');
+        REQUIRE(eq != std::string::npos);
+        const std::string token = line.substr(eq + 1);
+        INFO(line);
+        if (token == "default") {
+            continue;
+        }
+        REQUIRE(token.starts_with("x:"));
+        REQUIRE(std::stoi(token.substr(2)) <= 7);
+    }
+}
+
+} // namespace
+
+TEST_CASE("ANSI fallback themes use only palette 0-7 and default colors", "[Theme]") {
+    RequireAnsiRestricted(AnsiDarkTheme());
+    RequireAnsiRestricted(AnsiLightTheme());
+
+    // markupMarkerForeground is the one Color field SerializeTheme doesn't
+    // cover -- checked directly so the restriction genuinely holds
+    // theme-wide.
+    for (const Theme& theme : {AnsiDarkTheme(), AnsiLightTheme()}) {
+        REQUIRE(theme.markupMarkerForeground.kind != Color::Kind::TrueColor);
+        REQUIRE(theme.markupMarkerForeground.paletteIndex <= 7);
+    }
+}
+
+TEST_CASE("ANSI fallback themes flatten both mode-line gradients", "[Theme]") {
+    for (const Theme& theme : {AnsiDarkTheme(), AnsiLightTheme()}) {
+        REQUIRE(theme.modeLineGradientStart == theme.modeLineGradientEnd);
+        REQUIRE(theme.modeLineFocusedGradientStart == theme.modeLineFocusedGradientEnd);
+    }
+}
+
+TEST_CASE("Interpolate returns equal endpoints unchanged, preserving their kind", "[Theme]") {
+    // The property the flattened gradients above rely on: a Palette16
+    // endpoint must not degrade to its TrueColor approximation.
+    REQUIRE(Color::Interpolate(0.5F, Color::Blue, Color::Blue) == Color::Blue);
+    REQUIRE(Color::Interpolate(0.0F, Color::Default, Color::Default) == Color::Default);
+    // Distinct endpoints still blend to a real TrueColor.
+    REQUIRE(Color::Interpolate(0.5F, Color::Blue, Color::Red).kind == Color::Kind::TrueColor);
+}
+
+TEST_CASE("AnsiFallbackFor picks the variant matching the theme's polarity", "[Theme]") {
+    REQUIRE(AnsiFallbackFor(DarkTheme()).name == "ansi-dark");   // Default background
+    REQUIRE(AnsiFallbackFor(LightTheme()).name == "ansi-light"); // light TrueColor background
+
+    Theme detectedDark      = DarkTheme();
+    detectedDark.background = Color::RGB(0x1e1e2e); // a --detect-theme file from a dark terminal
+    REQUIRE(AnsiFallbackFor(detectedDark).name == "ansi-dark");
 }

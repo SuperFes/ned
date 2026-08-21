@@ -427,7 +427,9 @@ int main(int argc, char** argv) {
     // UI/TerminalColorProbe.h), else the fixed DarkTheme() default. Theme
     // selection is still not Janet-scriptable -- see ROADMAP.md's Phase 6
     // notes for that scope call.
-    const ned::ui::Theme theme = [] {
+    // Not const: the ansi-fallback-theme check below (which can't run until
+    // EventLoop exists) may swap the whole value in place.
+    ned::ui::Theme theme = [] {
         try {
             if (const auto loaded = ned::ui::LoadThemeFile(ned::ui::ThemeFilePath())) {
                 return *loaded;
@@ -651,6 +653,22 @@ int main(int argc, char** argv) {
     // reading stdin now (see the --detect-theme branch's own comment above
     // for why RunDetectTheme must finish strictly before this point).
     EventLoop eventLoop;
+
+    // ansi-fallback-theme follow-up: with neither truecolor nor a 256-color
+    // palette (e.g. the Linux framebuffer console, TERM=linux: 8 colors),
+    // every TrueColor field in the theme above gets quantized down to those
+    // 8 and washes out -- or lands black-on-black outright -- so swap in
+    // the curated Palette16-only fallback instead (Theme.h). Assigning the
+    // local in place, after every widget is already constructed, is
+    // deliberate and sufficient: they all hold `const Theme&` (or a
+    // `const Brush&` into it) bound to this same object and repaint fresh
+    // every frame. It couldn't happen any earlier -- the capability queries
+    // need the live notcurses context EventLoop's constructor just created.
+    // This also intentionally overrides a --detect-theme file, which is
+    // just as TrueColor as the built-ins and washes out the same way.
+    if (!eventLoop.CanTrueColor() && eventLoop.PaletteSize() < 256) {
+        theme = ned::ui::AnsiFallbackFor(theme);
+    }
 
     // LSP client follow-up: constructed here, not alongside bufferList/
     // killRing/registers above, since it needs a real EventLoop& to marshal

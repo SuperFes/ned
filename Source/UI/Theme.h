@@ -265,6 +265,31 @@ struct Theme {
 [[nodiscard]] Theme DarkTheme();
 [[nodiscard]] Theme LightTheme();
 
+// ansi-fallback-theme follow-up: Palette16/Default-only counterparts of
+// DarkTheme/LightTheme for terminals with neither truecolor nor a 256-color
+// palette (e.g. the Linux framebuffer console, TERM=linux: 8 colors), where
+// every TrueColor field above would otherwise get quantized down to those 8
+// and wash out -- or land black-on-black outright. Deliberately restricted
+// to palette indices 0-7 plus Color::Default (never the Bright 8-15 range):
+// an 8-color terminal's terminfo may or may not map 8-15 to bold+base, so
+// brightness is expressed through Brush bold where a Brush exists and
+// forfeited where one doesn't, rather than gambling on indices the terminal
+// never advertised. Gradient endpoints are equal on purpose --
+// Color::Interpolate returns equal endpoints unchanged (see its own
+// comment), so the mode line stays a real palette color instead of an
+// interpolated TrueColor approximation.
+[[nodiscard]] Theme AnsiDarkTheme();
+[[nodiscard]] Theme AnsiLightTheme();
+
+// Picks the ANSI variant matching `theme`'s own polarity: a TrueColor
+// background with light-side luminance selects AnsiLightTheme (LightTheme
+// itself, or a --detect-theme file probed from a light terminal);
+// everything else -- Default (DarkTheme's pass-through background), a dark
+// TrueColor, or a palette index, which carries no reliable luminance --
+// selects AnsiDarkTheme. Pure; main.cpp calls it once when EventLoop
+// reports a limited terminal (see EventLoop::CanTrueColor/PaletteSize).
+[[nodiscard]] Theme AnsiFallbackFor(const Theme& theme);
+
 // "#rrggbb" / "x:<0-255>" / "default" hex-token round-trip for a Color --
 // moved here from ThemeFile.cpp (Janet-configurable-syntax-theme follow-up)
 // since BrushFor()'s override merge needs the parse side too, not just
