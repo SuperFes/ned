@@ -120,6 +120,12 @@ TEST_CASE("SerializeTheme/ParseTheme round-trips DarkTheme exactly", "[ThemeFile
     REQUIRE(restored.labelForeground == original.labelForeground);
     REQUIRE(restored.returnTypeForeground == original.returnTypeForeground);
     REQUIRE(restored.includePathForeground == original.includePathForeground);
+    REQUIRE(restored.border.background == original.border.background);
+    REQUIRE(restored.border.foreground == original.border.foreground);
+    REQUIRE(restored.borderAccent.background == original.borderAccent.background);
+    REQUIRE(restored.borderAccent.foreground == original.borderAccent.foreground);
+    REQUIRE(restored.modeLineFocusedGradientStart == original.modeLineFocusedGradientStart);
+    REQUIRE(restored.modeLineFocusedGradientEnd == original.modeLineFocusedGradientEnd);
 }
 
 TEST_CASE("SerializeTheme/ParseTheme round-trips LightTheme's TrueColor palette exactly", "[ThemeFile]") {

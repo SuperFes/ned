@@ -49,6 +49,13 @@ void ModeLine::Paint(Canvas c) {
                                                 : "  " + modifiedMarker + buffer.Name() + "   L" + std::to_string(line + 1) +
                                                       ":C" + std::to_string(col + 1) + "  (" + mode_.name + ")";
 
+    // Chrome-redesign follow-up: the focused pane's gradient pulls toward
+    // the theme accent so which split has the keyboard is visible at a
+    // glance -- see SetFocusProvider.
+    const bool  focused       = focusProvider_ && focusProvider_();
+    const Color gradientStart = focused ? theme_.modeLineFocusedGradientStart : theme_.modeLineGradientStart;
+    const Color gradientEnd   = focused ? theme_.modeLineFocusedGradientEnd : theme_.modeLineGradientEnd;
+
     for (int x = 0; x < c.size().width; ++x) {
         Cell& cell     = c[{.x = x, .y = 0}];
         cell.character = (static_cast<std::size_t>(x) < text.size()) ? std::string(1, text[static_cast<std::size_t>(x)]) : " ";
@@ -57,9 +64,13 @@ void ModeLine::Paint(Canvas c) {
         // fill -- the one "gradient" deliverable of Phase 6, chosen because
         // it's always visible without needing any animation/timer machinery.
         const float percent   = (c.size().width > 1) ? static_cast<float>(x) / static_cast<float>(c.size().width - 1) : 0.0F;
-        cell.background_color = Color::Interpolate(percent, theme_.modeLineGradientStart, theme_.modeLineGradientEnd);
+        cell.background_color = Color::Interpolate(percent, gradientStart, gradientEnd);
         cell.foreground_color = theme_.modeLineForeground;
     }
+}
+
+void ModeLine::SetFocusProvider(std::function<bool()> provider) {
+    focusProvider_ = std::move(provider);
 }
 
 } // namespace ned::ui

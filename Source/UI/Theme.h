@@ -226,6 +226,23 @@ struct Theme {
     Color underlineForeground;
     Color strikethroughForeground;
 
+    // Chrome-redesign follow-up: the app-wide border language. `border` is
+    // the quiet structural line brush (sidebar frame, tab underline, split
+    // dividers); `borderAccent` is the attention pole of the same family
+    // (sidebar title, divider during a resize drag, active-tab underline
+    // corners, collapsed-sidebar hint glyph). Two poles of one palette, not
+    // two unrelated colors -- see DarkTheme()'s own values.
+    Brush border;
+    Brush borderAccent;
+
+    // Chrome-redesign follow-up: the focused pane's mode-line gradient
+    // endpoints (unfocused panes keep modeLineGradientStart/End above) --
+    // stored as explicit fields rather than derived at paint time so theme
+    // files and --detect-theme control the tint, same reasoning as the
+    // base gradient's own fields. Same "hex only" ThemeFile restriction.
+    Color modeLineFocusedGradientStart;
+    Color modeLineFocusedGradientEnd;
+
     // Markdown-highlighting follow-up: MarkupMarker's own dim/muted Color --
     // deliberately not reusing any existing chrome field, since this needs
     // to read as visually receded relative to everything else, unlike any

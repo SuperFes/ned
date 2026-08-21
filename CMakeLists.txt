@@ -354,6 +354,7 @@ add_library(ned_lib STATIC
         Source/Janet/PluginLoader.cpp
         Source/Janet/InitFile.cpp
         Source/UI/KeyTranslation.cpp
+        Source/UI/Border.cpp
         Source/UI/Widget.cpp
         Source/UI/EventLoop.cpp
         Source/UI/Layout.cpp
@@ -365,7 +366,6 @@ add_library(ned_lib STATIC
         Source/UI/TabBar.cpp
         Source/UI/ScrollArrowButton.cpp
         Source/UI/ProjectSidebar.cpp
-        Source/UI/SidebarToggle.cpp
         Source/UI/ModeLine.cpp
         Source/UI/EchoArea.cpp
         Source/UI/Theme.cpp
@@ -525,8 +525,8 @@ if (NED_BUILD_TESTS)
             Tests/DynamicGrammarTest.cpp
             Tests/ModeOverridesTest.cpp
             Tests/WrapOverridesTest.cpp
+            Tests/BorderTest.cpp
             Tests/ProjectSidebarTest.cpp
-            Tests/SidebarToggleTest.cpp
     )
 
     target_link_libraries(ned_tests PRIVATE ned_lib Catch2::Catch2WithMain)

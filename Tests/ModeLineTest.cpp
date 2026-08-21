@@ -125,6 +125,33 @@ TEST_CASE("ModeLine recomputes its text fresh on every paint call", "[ModeLine]"
     REQUIRE(RowText(screen, 0, 40).find("L1:C4") != std::string::npos);
 }
 
+TEST_CASE("ModeLine uses the accent-tinted gradient only while its focus provider reports focused", "[ModeLine]") {
+    ned::text::Buffer     buffer("scratch", ned::text::Rope("abc"));
+    ned::ui::ActiveBuffer activeBuffer(buffer);
+    ned::editor::Mode     mode  = ned::editor::FundamentalMode();
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    ned::ui::ModeLine     modeLine(activeBuffer, mode, theme);
+
+    ned::ui::Screen screen = MakeScreen(40, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
+
+    // No provider set (every pre-existing construction site): plain gradient.
+    modeLine.Paint(canvas);
+    REQUIRE(screen.PixelAt(0, 0).background_color ==
+            ned::ui::Color::Interpolate(0.0F, theme.modeLineGradientStart, theme.modeLineGradientEnd));
+
+    bool focused = true;
+    modeLine.SetFocusProvider([&focused] { return focused; });
+    modeLine.Paint(canvas);
+    REQUIRE(screen.PixelAt(0, 0).background_color ==
+            ned::ui::Color::Interpolate(0.0F, theme.modeLineFocusedGradientStart, theme.modeLineFocusedGradientEnd));
+
+    focused = false;
+    modeLine.Paint(canvas);
+    REQUIRE(screen.PixelAt(0, 0).background_color ==
+            ned::ui::Color::Interpolate(0.0F, theme.modeLineGradientStart, theme.modeLineGradientEnd));
+}
+
 TEST_CASE("ModeLine shows a modified marker only when the buffer has unsaved changes", "[ModeLine]") {
     ned::text::Buffer     buffer("scratch", ned::text::Rope("abc"));
     ned::ui::ActiveBuffer activeBuffer(buffer);

@@ -232,8 +232,8 @@ namespace {
     // U+25C1/U+25B7 WHITE LEFT/RIGHT-POINTING TRIANGLE -- same proven-safe
     // BMP "Geometric Shapes" family as every other chrome glyph in this
     // codebase (ScrollArrowButton's ▲▼, ProjectSidebar's ▸▾), chosen
-    // specifically distinct from SidebarToggle's «»/TabBar's ‹› so a binary
-    // placeholder never reads as one of those instead.
+    // specifically distinct from TabBar's ‹› so a binary placeholder never
+    // reads as one of those instead.
     constexpr char32_t kBinaryOpen  = U'◁';
     constexpr char32_t kBinaryClose = U'▷';
 
@@ -3346,11 +3346,22 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             statusMessage_ = projectReplace_->StatusText();
             return;
         case editor::InteractiveRequest::ToggleProjectSidebar:
-            // Flipping .active alone is sufficient -- unlike the
-            // pre-migration version, no forced-reflow equivalent is needed
-            // (see BufferView.h's own comment on SetProjectSidebar).
+            // Chrome-redesign follow-up: hiding is a *collapse* now (the
+            // sidebar stays active and paints a 1-column strip so the
+            // double-click-to-expand affordance never vanishes -- see
+            // ProjectSidebar.h), not a Widget::active flip.
             if (projectSidebar_ != nullptr) {
-                projectSidebar_->active = !projectSidebar_->active;
+                projectSidebar_->ToggleCollapsed();
+            }
+            return;
+        case editor::InteractiveRequest::FocusProjectSidebar:
+            // sidebar-keyboard-focus follow-up: expand if collapsed (focus
+            // into an invisible tree would be meaningless), then hand over
+            // the keyboard -- ProjectSidebar's own OnEvent drives the
+            // selection until it returns focus (see its header comment).
+            if (projectSidebar_ != nullptr) {
+                projectSidebar_->SetCollapsed(false);
+                projectSidebar_->TakeFocus();
             }
             return;
         case editor::InteractiveRequest::ToggleMinimap:

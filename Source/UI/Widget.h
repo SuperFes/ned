@@ -404,8 +404,8 @@ class Widget {
     // Whether this widget can hold keyboard focus -- was
     // ComponentBase::Focusable(). Default false, matching every widget
     // that never overrode it under FTXUI (TabBar, ProjectSidebar,
-    // ScrollArrowButton, SidebarToggle, ModeLine, EchoArea); only
-    // BufferView overrides this to true.
+    // ScrollArrowButton, ModeLine, EchoArea); only BufferView overrides
+    // this to true.
     [[nodiscard]] virtual bool Focusable() const {
         return false;
     }

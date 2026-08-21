@@ -84,9 +84,9 @@ TEST_CASE("A press on a tab switches the active buffer", "[TabBar]") {
     ned::ui::TabBar       tabBar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, theme);
     PlaceRow(tabBar, 40);
 
-    // Layout: " alpha ×" (cols 0-7), gap (8), " beta ×" starts at col 9;
-    // clicking col 9 (the leading space) switches to it, not its own close
-    // icon at col 15.
+    // Layout: " alpha ×" (cols 0-7), its end cap (8), " beta ×" starts at
+    // col 9; clicking col 9 (the leading space) switches to it, not its
+    // own close icon at col 15.
     tabBar.OnEvent(MousePress(9, 0));
 
     REQUIRE(&activeBuffer.Get() == &beta);
@@ -257,6 +257,66 @@ TEST_CASE("Wheel is a no-op when the tabs already fit the viewport", "[TabBar]")
     tabBar.OnEvent(MouseWheel(0, 0, ned::ui::MouseEvent::Button::WheelDown));
     tabBar.Paint(canvas);
     REQUIRE(RowText(screen, 0, 40) == before);
+}
+
+TEST_CASE("Tabs render as distinct blocks separated by buffer-background gaps", "[TabBar]") {
+    ned::text::BufferList list;
+    ned::text::Buffer&    alpha = list.CreateBuffer("alpha");
+    list.CreateBuffer("beta");
+
+    ned::ui::ActiveBuffer activeBuffer(alpha);
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    ned::ui::TabBar       tabBar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, theme);
+    PlaceRow(tabBar, 40);
+
+    ned::ui::Screen screen = ned::ui::Screen(40, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
+    tabBar.Paint(canvas);
+
+    // " alpha ×" block spans 0-7 with its ▌ end cap at 8, " beta ×" block
+    // spans 9-15 with its own cap at 16, then buffer background for the
+    // rest of the row -- each cap's half-empty cell (buffer background
+    // behind the ▌) is what keeps adjacent tabs from merging into one
+    // continuous chrome bar, no separate gap column needed.
+    REQUIRE(screen.PixelAt(3, 0).background_color == theme.activeTab.background);
+    REQUIRE(screen.PixelAt(8, 0).character == "▌");
+    REQUIRE(screen.PixelAt(8, 0).foreground_color == theme.activeTab.background); // cap wears its tab's block color
+    REQUIRE(screen.PixelAt(8, 0).background_color == theme.background);
+    REQUIRE(screen.PixelAt(9, 0).background_color == theme.tabBar.background); // beta's block starts right after the cap
+    REQUIRE(screen.PixelAt(16, 0).character == "▌");
+    REQUIRE(screen.PixelAt(16, 0).foreground_color == theme.tabBar.background);
+    REQUIRE(screen.PixelAt(20, 0).background_color == theme.background);
+}
+
+TEST_CASE("The active tab's block takes the accent chrome background while the editor holds focus", "[TabBar]") {
+    ned::text::BufferList list;
+    ned::text::Buffer&    alpha = list.CreateBuffer("alpha");
+    list.CreateBuffer("beta");
+
+    ned::ui::ActiveBuffer activeBuffer(alpha);
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    ned::ui::TabBar       tabBar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, theme);
+    PlaceRow(tabBar, 40);
+
+    ned::ui::Screen screen = ned::ui::Screen(40, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
+
+    // No provider set (every pre-existing construction site): the plain active brush.
+    tabBar.Paint(canvas);
+    REQUIRE(screen.PixelAt(3, 0).background_color == theme.activeTab.background);
+
+    bool focused = true;
+    tabBar.SetFocusProvider([&focused] { return focused; });
+    tabBar.Paint(canvas);
+    REQUIRE(screen.PixelAt(3, 0).background_color == theme.modeLineFocusedGradientStart);
+    // The end cap follows its tab's block color, accent included.
+    REQUIRE(screen.PixelAt(8, 0).foreground_color == theme.modeLineFocusedGradientStart);
+    // Inactive tabs stay on the plain chrome block either way.
+    REQUIRE(screen.PixelAt(11, 0).background_color == theme.tabBar.background);
+
+    focused = false;
+    tabBar.Paint(canvas);
+    REQUIRE(screen.PixelAt(3, 0).background_color == theme.activeTab.background);
 }
 
 TEST_CASE("Stress: hundreds of tabs in a narrow viewport stay memory-safe under repeated paint/scroll/click",

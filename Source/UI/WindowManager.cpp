@@ -23,20 +23,25 @@ namespace {
     constexpr std::chrono::milliseconds kScratchAutoSaveInterval{5000};
 
     // The one-column vertical divider between a SplitRight's two children --
-    // FTXUI -> Notcurses migration: was Renderer([] { return separator(); }),
-    // FTXUI's own default single-line box-drawing separator. No Theme
-    // reference needed -- the old separator() had no theme-driven color
-    // either, just the terminal's default foreground/background, preserved
-    // here the same way (Cell's own default-constructed Color::Default
-    // fields, never touched).
+    // chrome-redesign follow-up: now drawn with the theme's border brush so
+    // split dividers, the sidebar frame, and the tab underline all read as
+    // one line family (was untouched Color::Default, matching FTXUI's own
+    // colorless separator()).
     class VerticalDivider : public Widget {
       public:
+        explicit VerticalDivider(const Theme& theme) : theme_(theme) {
+        }
+
         void Paint(Canvas c) override {
             for (int y = 0; y < c.size().height; ++y) {
                 Cell& cell     = c[{.x = 0, .y = y}];
                 cell.character = "│"; // BOX DRAWINGS LIGHT VERTICAL
+                theme_.border.ApplyTo(cell);
             }
         }
+
+      private:
+        const Theme& theme_;
     };
 
 } // namespace
@@ -75,6 +80,10 @@ Pane::Pane(text::Buffer& buffer, text::KillRing& killRing, editor::RegisterTable
                                                                            }) {
     bufferView_->SetScrollBar(scrollBar_.get());
     bufferView_->SetScrollArrows(scrollUp_.get(), scrollDown_.get());
+    // Chrome-redesign follow-up: this pane's mode line accent-tints its
+    // gradient while this pane's own BufferView holds the keyboard focus --
+    // the raw pointer outlives modeLine_ (both are members of this Pane).
+    modeLine_->SetFocusProvider([view = bufferView_.get()] { return view->Focused(); });
     bufferView_->SetMinimap(minimap_.get(), &scrollColumn_);
     // Minimap widget follow-up: exactly one of the two ever occupies row_'s
     // trailing column -- seeded here from the process-wide setting, kept in
@@ -510,8 +519,12 @@ void WindowManager::SaveProjectSessionNow() {
     }
 
     if (projectSidebar_ != nullptr) {
-        data.sidebarVisible = projectSidebar_->active;
-        data.sidebarWidth   = projectSidebar_->Width();
+        // Chrome-redesign follow-up: the stored visibility bool now maps
+        // onto the collapse state (active stays permanently true), and the
+        // stored width is the real expanded width, not the 1-column strip
+        // Width() reports while collapsed.
+        data.sidebarVisible = !projectSidebar_->Collapsed();
+        data.sidebarWidth   = projectSidebar_->ExpandedWidth();
     }
 
     if (dapManager_ != nullptr) {
@@ -729,7 +742,7 @@ Widget& WindowManager::BuildComponent(WindowNode* node) const {
 
     if (node->kind == WindowNode::Kind::SplitRight) {
         if (!node->divider) {
-            node->divider = std::make_unique<VerticalDivider>();
+            node->divider = std::make_unique<VerticalDivider>(theme_);
         }
         if (!node->container) {
             node->container = std::make_unique<Container>(Axis::Horizontal, std::vector<Container::Child>{});
@@ -763,6 +776,10 @@ bool WindowManager::FocusedPaneMinimapActive() {
 bool WindowManager::FocusedPaneScrollColumnActive() {
     Pane* pane = FocusedPane();
     return pane != nullptr && pane->ScrollColumnActive();
+}
+
+bool WindowManager::HasFocusedPane() {
+    return FocusedPane() != nullptr;
 }
 
 Pane* WindowManager::FocusedPane() {
