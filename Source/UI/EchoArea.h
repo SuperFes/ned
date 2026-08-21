@@ -35,6 +35,13 @@ namespace ned::ui {
 [[nodiscard]] std::string EmphasizeForEchoArea(std::string_view text);
 [[nodiscard]] std::string DimForEchoArea(std::string_view text);
 
+// A separate, more faded + italic style (isearch's "ghosted" last-search-
+// term hint, shown in place of an empty query) -- deliberately its own
+// sentinel pair rather than reusing DimForEchoArea, since that one also
+// styles the *unselected but still real candidates* of a fuzzy list and
+// tuning it for the ghost-text look would over-fade those too.
+[[nodiscard]] std::string GhostForEchoArea(std::string_view text);
+
 class EchoArea : public Widget {
   public:
     // theme must outlive this EchoArea (same requirement as message).

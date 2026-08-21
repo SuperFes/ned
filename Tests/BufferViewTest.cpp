@@ -38,6 +38,7 @@
 #include "Text/KillRing.h"
 #include "UI/ActiveBuffer.h"
 #include "UI/BufferView.h"
+#include "UI/EchoArea.h"
 #include "UI/ProjectSidebar.h"
 #include "UI/ScrollArrowButton.h"
 #include "UI/ScrollBar.h"
@@ -706,6 +707,50 @@ TEST_CASE("Isearch: C-r starts a backward search", "[BufferView]") {
     view.OnEvent(ned::ui::test::Character("o"));
     view.OnEvent(ned::ui::test::Character("x"));
     REQUIRE(fixture.buffer.Point() == 16); // start of "fox"
+}
+
+TEST_CASE("Isearch: an accepted query is ghosted on the next session and C-s on an empty query reuses it",
+          "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("the quick brown fox jumps over the lazy fox");
+    fixture.buffer.SetPoint(0);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Ctrl('s'));
+    view.OnEvent(ned::ui::test::Character("f"));
+    view.OnEvent(ned::ui::test::Character("o"));
+    view.OnEvent(ned::ui::test::Character("x"));
+    view.OnEvent(ned::ui::test::Return()); // accept -- remembers "fox"
+    REQUIRE(fixture.buffer.Point() == 19); // right after the first "fox"
+
+    view.OnEvent(ned::ui::test::Ctrl('s')); // fresh session, nothing typed yet
+    REQUIRE(fixture.statusMessage == "I-search: " + ned::ui::GhostForEchoArea("fox")); // ghosted last query
+
+    view.OnEvent(ned::ui::test::Ctrl('s')); // C-s on an empty query reuses the last search string outright
+    REQUIRE(fixture.buffer.Point() == 43);  // right after the second "fox"
+    REQUIRE(fixture.statusMessage == "I-search: fox");
+
+    view.OnEvent(ned::ui::test::Return());
+}
+
+TEST_CASE("Isearch: cancelling with Escape still remembers the query for the next session", "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("the quick brown fox");
+    fixture.buffer.SetPoint(0);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Ctrl('s'));
+    view.OnEvent(ned::ui::test::Character("f"));
+    view.OnEvent(ned::ui::test::Character("o"));
+    view.OnEvent(ned::ui::test::Character("x"));
+    view.OnEvent(ned::ui::test::Escape()); // cancel, point restored to 0
+
+    view.OnEvent(ned::ui::test::Ctrl('s')); // fresh session
+    REQUIRE(fixture.statusMessage == "I-search: " + ned::ui::GhostForEchoArea("fox"));
 }
 
 TEST_CASE("Query-replace: ESC % walks pattern, replacement, and confirmation to completion", "[BufferView]") {

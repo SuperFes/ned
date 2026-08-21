@@ -46,6 +46,10 @@ TEST_CASE("EmphasizeForEchoArea/DimForEchoArea wrap text in invisible sentinel b
     const std::string dimmed = ned::ui::DimForEchoArea("bar");
     REQUIRE(dimmed.find("bar") != std::string::npos);
     REQUIRE(dimmed.size() == 5);
+
+    const std::string ghosted = ned::ui::GhostForEchoArea("baz");
+    REQUIRE(ghosted.find("baz") != std::string::npos);
+    REQUIRE(ghosted.size() == 5);
 }
 
 TEST_CASE("EchoArea::Paint renders an emphasized span bold and strips its sentinel bytes", "[EchoArea]") {
@@ -81,4 +85,23 @@ TEST_CASE("EchoArea::Paint renders a dimmed span with a blended foreground and s
     REQUIRE(screen.PixelAt(0, 0).foreground_color == theme.echoArea.foreground);  // 'b' -- untouched
     REQUIRE(screen.PixelAt(7, 0).foreground_color != theme.echoArea.foreground);  // 'D' of "DIM" -- blended
     REQUIRE(screen.PixelAt(11, 0).foreground_color == theme.echoArea.foreground); // 'a' of "after" -- back to normal
+}
+
+TEST_CASE("EchoArea::Paint renders a ghosted span italic, more faded than a dimmed span, and strips its sentinel bytes",
+          "[EchoArea]") {
+    const std::string message = "before " + ned::ui::DimForEchoArea("DIM") + " " + ned::ui::GhostForEchoArea("GHOST") +
+                                 " after";
+    ned::ui::Theme    theme = ned::ui::DarkTheme();
+    ned::ui::EchoArea echoArea(message, theme);
+
+    ned::ui::Screen screen(40, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
+    echoArea.Paint(canvas);
+
+    REQUIRE(RowText(screen, 0, 22) == "before DIM GHOST after");
+    REQUIRE_FALSE(screen.PixelAt(7, 0).italic);                                    // 'D' of "DIM" -- not italic
+    REQUIRE(screen.PixelAt(11, 0).italic);                                         // 'G' of "GHOST" -- italic
+    REQUIRE(screen.PixelAt(11, 0).foreground_color != theme.echoArea.foreground);  // blended
+    REQUIRE(screen.PixelAt(11, 0).foreground_color != screen.PixelAt(7, 0).foreground_color); // more faded than DIM
+    REQUIRE_FALSE(screen.PixelAt(17, 0).italic); // 'a' of "after" -- back to normal
 }
