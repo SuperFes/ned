@@ -29,6 +29,7 @@
 #include "Editor/ScratchPad.h"
 #include "Editor/Session.h"
 #include "Editor/TabWidth.h"
+#include "Editor/Variables.h"
 #include "Editor/WrapOverrides.h"
 #include "KeyTranslation.h"
 #include "Text/BinaryDetect.h"
@@ -5894,6 +5895,12 @@ void BufferView::HandleSelectThemeKey(const editor::KeyChord& chord) {
         if (const auto named = ThemeByName(selected)) {
             themeApplier_(*named);
         }
+        // variables-store follow-up: a committed pick is remembered across
+        // runs ($XDG_STATE_HOME/ned/variables.json) as the *base* theme --
+        // preview and cancel deliberately never persist anything, and
+        // init.janet's (ned/theme-set ...) overrides still apply over this
+        // at startup (see main.cpp's precedence comment).
+        editor::SetVariable("theme", selected);
         statusMessage_ = "Theme: " + selected;
         EndInteractiveSession();
         return;

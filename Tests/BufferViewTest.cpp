@@ -28,6 +28,7 @@
 #include "Editor/ScratchPad.h"
 #include "Editor/Session.h"
 #include "Editor/TabWidth.h"
+#include "Editor/Variables.h"
 #include "Editor/WrapOverrides.h"
 #include "TestEvents.h"
 #include "Text/Buffer.h"
@@ -5019,9 +5020,38 @@ TEST_CASE("project-find-file with no files under the project root reports so and
 
 namespace {
 
+// The picker's Enter commit persists the "theme" variable
+// (Editor/Variables.h, write-through to $XDG_STATE_HOME) -- redirected to a
+// throwaway directory here so no test can ever touch the developer's real
+// variables.json.
+struct StateDirGuard {
+    std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_bufferview_test_state";
+    std::string           previous;
+    bool                  hadPrevious = false;
+
+    StateDirGuard() {
+        if (const char* existing = std::getenv("XDG_STATE_HOME")) {
+            hadPrevious = true;
+            previous    = existing;
+        }
+        std::filesystem::remove_all(dir);
+        setenv("XDG_STATE_HOME", dir.c_str(), 1);
+    }
+    ~StateDirGuard() {
+        if (hadPrevious) {
+            setenv("XDG_STATE_HOME", previous.c_str(), 1);
+        }
+        else {
+            unsetenv("XDG_STATE_HOME");
+        }
+        std::filesystem::remove_all(dir);
+    }
+};
+
 // Opens the select-theme session via M-x and records every theme the
 // applier is handed, by name.
 struct ThemePickerHarness {
+    StateDirGuard            stateGuard; // first: active before any commit could write
     Fixture                  fixture;
     ned::ui::BufferView      view = fixture.View();
     std::vector<std::string> applied;
@@ -6351,4 +6381,22 @@ TEST_CASE("save-theme writes the active theme as runnable Janet to the XDG confi
         unsetenv("XDG_CONFIG_HOME");
     }
     std::filesystem::remove_all(dir);
+}
+
+// variables-store follow-up: a committed pick is remembered; preview and
+// cancel are not.
+TEST_CASE("Enter in select-theme remembers the committed theme; Escape remembers nothing", "[BufferView]") {
+    {
+        ThemePickerHarness h;
+        h.view.OnEvent(ned::ui::test::ArrowDown()); // preview only
+        h.view.OnEvent(ned::ui::test::Escape());
+        REQUIRE_FALSE(std::filesystem::exists(h.stateGuard.dir / "ned" / "variables.json"));
+    }
+    {
+        ThemePickerHarness h;
+        TypeText(h.view, "nord");
+        h.view.OnEvent(ned::ui::test::Return());
+        REQUIRE(ned::editor::Variable("theme") == "nord");
+        REQUIRE(std::filesystem::exists(h.stateGuard.dir / "ned" / "variables.json"));
+    }
 }

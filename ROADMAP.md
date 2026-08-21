@@ -1048,6 +1048,28 @@ each is, not by priority.
           keyword color in the file → relaunch with the dofile line → edited
           color painting. Bold/italic still don't round-trip (the pre-existing
           Brush limitation, unchanged).
+        - [x] *Variables store* (user request, **shipped 2026-08-20**).
+          `Editor/Variables.h/.cpp`: editor-remembered key/value facts in
+          `$XDG_STATE_HOME/ned/variables.json` — `VariableStore` pure core +
+          mutex-guarded process accessors, `FilePlaceStore`'s exact layering,
+          with write-through saves (variables change at interactive-command
+          frequency; nothing for a periodic save to batch) that swallow I/O
+          failures like `SaveFilePlaces`. Deliberately JSON state, not a
+          machine-written variables.janet: `$XDG_CONFIG_HOME` is what the user
+          writes, `$XDG_STATE_HOME` what the editor writes — same line
+          file-places/trusted.json draw, avoiding the Emacs
+          custom-set-variables file-fighting problem. First consumer: the
+          select-theme picker's Enter commit persists `theme=<name>` (preview/
+          cancel never persist). Startup base precedence became: remembered
+          variable > init.janet `ned/set-theme` > `--detect-theme` file >
+          `DarkTheme` — and `(ned/theme-set ...)` overrides still apply last
+          over any base, per the user's explicit call ("the theme overrides
+          should win out in the end"), so a dofile'd theme.janet always
+          determines the final look. Verified live: commit nord → relaunch
+          remembers it with no init.janet at all → adding a theme-set override
+          line re-colors over the remembered base. Picker tests now redirect
+          `XDG_STATE_HOME` to a throwaway dir so no test can touch a real
+          variables.json.
         - [ ] *Phase 4 — polish.* The sweep script kept in-repo, docs, and the
           `--detect-theme` precedence note.
 - **Companion tooling** (standalone utility programs shipped alongside `ned`, not part of
