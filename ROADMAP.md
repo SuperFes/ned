@@ -81,8 +81,12 @@ Notcurses (TermOx → FTXUI → Notcurses over the project's life).
 
 ### Org & structured editing (v1 shipped; this is v2+)
 
-- [ ] Agenda view — aggregate TODOs/deadlines across a tree of files into one buffer.
-      A genuinely new UI kind (synthesized, cross-file), the most-loved Org feature.
+- [ ] Agenda view: date/deadline-driven scheduling. `ProjectAgenda.h` already ships a
+      cross-file active-TODO *list* (every non-DONE headline under the project root, reusing
+      `ProjectSearch`'s results-buffer/visit machinery); what's still missing is real
+      SCHEDULED:/DEADLINE: timestamp parsing and a genuine date-driven agenda view (today's
+      items, overdue deadlines) — no structured timestamp parsing exists yet at all, so this
+      folds into the date/recurrence item below rather than being separate work.
 - [ ] Scheduling/deadlines with real date/recurrence logic.
 - [ ] Property drawers.
 - [ ] Capture templates (quick-add an entry from anywhere).
@@ -95,18 +99,19 @@ Notcurses (TermOx → FTXUI → Notcurses over the project's life).
 
 ### Editor ergonomics
 
-- [ ] Terminal panel round 2 (v1 shipped: libvterm-backed drawer over the new
-      `OverlayHost` floating-widget layer, `toggle-terminal` on `` C-` ``/`C-c t`
-      plus a title-row `×` close button, 2000-line scrollback via
-      Shift+PageUp/Down, respawn-on-Enter after exit; `C-c t` on a visible panel
-      hides rather than focuses — the keyboard-complete cycle on legacy-encoding
-      terminals where `` C-` `` never arrives, a real live-use report).
-      Deliberate v1 cuts: no drag-resize of the drawer height (needs overlay
-      mouse-capture semantics; height is Janet-configurable via
-      `ned/set-terminal-height-percent` instead), no scrollback search/selection/
-      copy, no multiple terminals/tabs, no terminal-side mouse forwarding to the
-      shell (clicks focus the panel, wheel scrolls the ring — TUI apps inside the
-      terminal don't receive mouse events), and no OSC 52/title integration.
+- [ ] Terminal panel round 2 (v1 shipped: libvterm-backed drawer over the
+      `OverlayHost` floating-widget layer, `toggle-terminal` on `` C-` ``/`C-c t`,
+      title-row `[▼]` minimize/`[▲]` maximize/`[×]` close mouse buttons alongside
+      the keyboard toggle, 2000-line scrollback via Shift+PageUp/Down,
+      respawn-on-Enter after exit; `C-c t` on a visible panel hides rather than
+      focuses — the keyboard-complete cycle on legacy-encoding terminals where
+      `` C-` `` never arrives, a real live-use report). Deliberate v1 cuts: no
+      drag-resize of the drawer height (needs overlay mouse-capture semantics;
+      height is Janet-configurable via `ned/set-terminal-height-percent`
+      instead), no scrollback search/selection/copy, no multiple terminals/tabs,
+      no terminal-side mouse forwarding to the shell (clicks focus the panel,
+      wheel scrolls the ring — TUI apps inside the terminal don't receive mouse
+      events), and no OSC 52/title integration.
 - [ ] **Remote development** (SSH remote editing).
 - [ ] Emacs keymap round 2 (round-1's deliberate cuts): prefix arguments (`C-u`),
       `zap-to-char`, sentence/sexp motion, kill-append on consecutive kills.
@@ -120,9 +125,10 @@ Notcurses (TermOx → FTXUI → Notcurses over the project's life).
 ### Collaboration & AI
 
 - [ ] **AI-assisted editing** (inline completion, chat with codebase context) — the
-      natural shape is a Janet-scriptable ACP-client integration; the task runner's
-      subprocess transport was built to be reusable for exactly this
-      (`AcpManager`/`AcpClient` mirroring `LspManager`/`LspClient`). The
+      natural shape is a Janet-scriptable ACP-client integration; `Process/ChildProcess`
+      (the shared subprocess primitive `Lsp`/`Dap`/`Tasks`/`Vcs` all already build on) is
+      reusable for this too, following the same client/manager split as `LspManager`/
+      `LspClient` — not yet started, no `AcpManager`/`AcpClient` exists. The
       floating/overlay widget layer this needs now exists (`UI/Overlay.h`'s
       `OverlayHost`, terminal-panel follow-up): an LLM panel is one `Add()` with a
       right-dock placement function. The same layer is the intended home for a
@@ -136,9 +142,9 @@ Notcurses (TermOx → FTXUI → Notcurses over the project's life).
 - [ ] Theme polish (the planned "phase 4"): keep the tmux sweep script in-repo, theme
       documentation, and the `--detect-theme` precedence note.
 - [ ] Stretch clone themes, each one `ThemePalette` literal away: Rosé Pine,
-      Everforest, Zenburn, Catppuccin Frappé/Macchiato, Tokyo Night Storm.
-- [ ] Make the ANSI theme pair user-selectable on capable terminals / expressible in
-      theme files (serialization already round-trips `x:<n>` palette tokens).
+      Everforest, Zenburn, Catppuccin Frappé/Macchiato, Tokyo Night Storm. (Solarized,
+      Gruvbox, Nord, Dracula, Monokai, One Dark/Light, Catppuccin Mocha/Latte, and
+      Tokyo Night/Day already shipped — see `UI/ThemeRegistry.cpp`.)
 - [ ] **Pixel-blitter minimap** — render the minimap via `NCBLITTER_PIXEL`
       (ncvisual-backed) on terminals that support it, keeping the braille-glyph
       renderer as the fallback everywhere else. Capability-gate at runtime
@@ -182,6 +188,16 @@ Notcurses (TermOx → FTXUI → Notcurses over the project's life).
 - [ ] VCS: multi-line commit messages (`MinibufferPrompt` is single-line by
       construction). "Generalize the two-callback plugin shape past version control"
       (cloud CLIs, Terraform, Docker) remains a framing, not a plan.
+- [ ] Self-hosting: no special-casing yet for editing ned's own config in ned
+      itself — `ned/*` function/macro names and Janet-mode completion don't know
+      about each other, so editing `init.janet`/`.ned/init.janet` gets no
+      tab-completion against the real `ned/*` API surface. From `Stuff.md`
+      (folded in and removed as a standalone file).
+- [ ] A friendlier, possibly visual surface for browsing/editing ned's own
+      settings beyond hand-writing `init.janet` — real live-editing already
+      exists for themes specifically (`save-theme`/`ned/theme-set`, see
+      `UI/ThemeFile.h`); a general settings surface would generalize that.
+      Vague, unscoped — from `Stuff.md`.
 
 ## Won't do (at least not soon)
 
