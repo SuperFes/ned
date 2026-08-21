@@ -33,6 +33,24 @@ const std::vector<std::string> kOriginalEight = {
     "high-contrast-light",
 };
 
+// rich-theme-set Phase 3: the cloned set (see ThemeRegistry.cpp's own
+// attribution comments for each palette's upstream source).
+const std::vector<std::string> kClones = {
+    "solarized-dark",
+    "solarized-light",
+    "gruvbox-dark",
+    "gruvbox-light",
+    "nord",
+    "dracula",
+    "monokai",
+    "one-dark",
+    "one-light",
+    "catppuccin-mocha",
+    "catppuccin-latte",
+    "tokyo-night",
+    "tokyo-night-day",
+};
+
 Theme Resolve(const std::string& name) {
     const auto theme = ThemeByName(name);
     REQUIRE(theme.has_value());
@@ -54,6 +72,31 @@ TEST_CASE("Every bundled palette theme clears the standard contrast floor", "[Bu
     for (const std::string& name : kOriginalEight) {
         RequireForegroundContrast(Resolve(name), 40);
     }
+    for (const std::string& name : kClones) {
+        RequireForegroundContrast(Resolve(name), 40);
+    }
+}
+
+TEST_CASE("The cloned themes are all registered under their own names", "[BundledThemes]") {
+    const std::vector<std::string> names = ThemeNames();
+    for (const std::string& name : kClones) {
+        INFO(name);
+        REQUIRE(std::find(names.begin(), names.end(), name) != names.end());
+        REQUIRE(Resolve(name).name == name);
+    }
+}
+
+TEST_CASE("Cloned dark/light pairs sit on opposite background polarities", "[BundledThemes]") {
+    for (const std::string& family : {std::string("solarized"), std::string("gruvbox"), std::string("one")}) {
+        INFO(family);
+        REQUIRE(Luma(Resolve(family + "-dark").background) < 128);
+        REQUIRE(Luma(Resolve(family + "-light").background) >= 128);
+    }
+    // The pairs whose flavor names don't follow the -dark/-light convention.
+    REQUIRE(Luma(Resolve("catppuccin-mocha").background) < 128);
+    REQUIRE(Luma(Resolve("catppuccin-latte").background) >= 128);
+    REQUIRE(Luma(Resolve("tokyo-night").background) < 128);
+    REQUIRE(Luma(Resolve("tokyo-night-day").background) >= 128);
 }
 
 TEST_CASE("The high-contrast pair clears a raised contrast floor", "[BundledThemes]") {

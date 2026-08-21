@@ -39,6 +39,7 @@
 #include "UI/ScrollArrowButton.h"
 #include "UI/ScrollBar.h"
 #include "UI/Theme.h"
+#include "UI/ThemeRegistry.h"
 
 namespace ned::ui {
 // ned::ui::Point (Widget.h) is a plain aggregate with no operator== of its
@@ -5034,6 +5035,18 @@ struct ThemePickerHarness {
     }
 };
 
+// The registry name sorting immediately after "dark" -- what one Down from
+// the session's opening highlight lands on. Computed rather than hardcoded
+// so these tests don't break every time a phase adds themes (which is
+// exactly what happened to their first two hardcoded versions).
+std::string NameAfterDark() {
+    const std::vector<std::string> names = ned::ui::ThemeNames();
+    const auto                     it    = std::find(names.begin(), names.end(), "dark");
+    REQUIRE(it != names.end());
+    REQUIRE(it + 1 != names.end());
+    return *(it + 1);
+}
+
 } // namespace
 
 TEST_CASE("select-theme opens on the active theme's own name, previewing nothing", "[BufferView]") {
@@ -5041,9 +5054,11 @@ TEST_CASE("select-theme opens on the active theme's own name, previewing nothing
 
     REQUIRE(h.fixture.statusMessage.rfind("Theme (fuzzy): ", 0) == 0);
     // The Fixture's active theme is DarkTheme() -- its name is highlighted,
-    // not merely listed, so an immediate Enter is a no-change commit.
+    // not merely listed, so an immediate Enter is a no-change commit. Its
+    // sorted neighbor is visible beside it (the window centers on the
+    // selection; distant names may be scrolled out of the row).
     REQUIRE(h.fixture.statusMessage.find("[dark]") != std::string::npos);
-    REQUIRE(h.fixture.statusMessage.find("ansi-dark") != std::string::npos);
+    REQUIRE(h.fixture.statusMessage.find(NameAfterDark()) != std::string::npos);
     REQUIRE(h.applied.empty());
 }
 
@@ -5051,16 +5066,16 @@ TEST_CASE("Arrowing through select-theme previews each highlighted theme live", 
     ThemePickerHarness h;
 
     // Candidates are the sorted registry names -- the session opens
-    // highlighting "dark", so Down highlights whichever name sorts next
-    // ("high-contrast-dark" as of Phase 2's additions) and Up comes back to
-    // "dark", each previewing as it goes.
+    // highlighting "dark", so Down highlights whichever name sorts next and
+    // Up comes back to "dark", each previewing as it goes.
+    const std::string next = NameAfterDark();
     h.view.OnEvent(ned::ui::test::ArrowDown());
-    REQUIRE(h.fixture.statusMessage.find("[high-contrast-dark]") != std::string::npos);
-    REQUIRE(h.applied == std::vector<std::string>{"high-contrast-dark"});
+    REQUIRE(h.fixture.statusMessage.find("[" + next + "]") != std::string::npos);
+    REQUIRE(h.applied == std::vector<std::string>{next});
 
     h.view.OnEvent(ned::ui::test::ArrowUp());
     REQUIRE(h.fixture.statusMessage.find("[dark]") != std::string::npos);
-    REQUIRE(h.applied == std::vector<std::string>{"high-contrast-dark", "dark"});
+    REQUIRE(h.applied == std::vector<std::string>{next, "dark"});
 }
 
 TEST_CASE("Enter commits the highlighted theme and typing narrows with live preview", "[BufferView]") {
@@ -5082,14 +5097,15 @@ TEST_CASE("Enter commits the highlighted theme and typing narrows with live prev
 TEST_CASE("Escape cancels select-theme and restores the pre-session theme exactly", "[BufferView]") {
     ThemePickerHarness h;
 
+    const std::string next = NameAfterDark();
     h.view.OnEvent(ned::ui::test::ArrowDown()); // preview the name sorting after "dark"
-    REQUIRE(h.applied == std::vector<std::string>{"high-contrast-dark"});
+    REQUIRE(h.applied == std::vector<std::string>{next});
 
     h.view.OnEvent(ned::ui::test::Escape());
     REQUIRE(h.fixture.statusMessage == "Theme selection cancelled.");
     // The revert re-applies the snapshot taken at session start -- the
     // Fixture's own DarkTheme(), by value, not by registry lookup.
-    REQUIRE(h.applied == std::vector<std::string>{"high-contrast-dark", "dark"});
+    REQUIRE(h.applied == std::vector<std::string>{next, "dark"});
 }
 
 TEST_CASE("select-theme without a wired applier reports instead of opening a session", "[BufferView]") {
