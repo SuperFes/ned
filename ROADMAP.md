@@ -962,10 +962,19 @@ each is, not by priority.
           name, so opening the picker previews no change until the user moves.
           Interactive choice deliberately not persisted — init.janet is the config
           surface, Emacs' own `load-theme` convention. Verified live in tmux:
-          preview/revert/commit/startup-name/unknown-name all exercised (note: tmux
-          `send-keys M-x` gets swallowed as literal input under Notcurses — send
-          `Escape`, pause, `x` instead; unit tests' constructed Alt events are
-          unaffected).
+          preview/revert/commit/startup-name/unknown-name all exercised. (The
+          "tmux `send-keys M-x` gets swallowed" quirk observed during this
+          verification turned out to be a real bug, not a tmux artifact — a
+          user-reported "M-x doesn't trigger," root-caused and fixed the next
+          session: Notcurses v3.0.14 records a legacy-terminal fast ESC-prefixed
+          Alt+letter only in ncinput's *deprecated* `alt` bool, never syncing it
+          into `modifiers`, so `ncinput_alt_p()` — all KeyTranslation checked —
+          was false for the exact shape M-x actually arrives as outside the kitty
+          keyboard protocol. Confirmed with a standalone notcurses keyprobe;
+          fixed caller-side in `TranslateKey` by honoring both fields, matching
+          the NUL-patch decision logic in reverse: patch Notcurses only when no
+          caller-side fix exists, and here one did. `TestEvents::LegacyAlt` now
+          constructs that exact shape so the regression is covered headlessly.)
         - [x] *Phase 2 — the original eight* (**shipped 2026-08-20**). major-dark/
           -light (vivid saturated), minor-dark/-light (muted/pastel),
           high-contrast-dark/-light (pure black/white backgrounds, held to a raised

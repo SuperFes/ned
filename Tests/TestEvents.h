@@ -34,6 +34,11 @@ namespace ned::ui::test {
 
 // Alt/Meta+<letter> -- mirrors ftxui::Event::AltX and friends.
 [[nodiscard]] Event Alt(char letter);
+// The legacy-terminal shape of the same press (fast ESC-prefixed letter):
+// deprecated `alt` bool set, `modifiers` empty -- the shape Notcurses
+// actually delivers outside the kitty keyboard protocol; see
+// TestEvents.cpp's own comment.
+[[nodiscard]] Event LegacyAlt(char letter);
 // Ctrl+Alt+<letter> -- both modifier bits set at once, the decoded-input
 // equivalent of the old raw-byte translator's ESC-then-C0-byte sequence.
 [[nodiscard]] Event CtrlAlt(char letter);
