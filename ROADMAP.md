@@ -993,14 +993,25 @@ each is, not by priority.
           `Tests/ThemeTestSupport.h` for Phase 3's clones to reuse. Verified live
           in tmux: all eight committed via the select-theme picker, each frame
           painting exactly its palette's values.
-        - [ ] *Phase 3 — clones (~14).* Solarized dark/light, Gruvbox dark/light,
-          Nord, Dracula, Monokai, One Dark/One Light, Catppuccin Mocha/Latte, Tokyo
-          Night night/day (stretch: Rosé Pine, Everforest, Zenburn, remaining
-          Catppuccin flavors). All MIT-licensed palettes; keep the real names
-          (universal editor practice) with an attribution comment + upstream URL per
-          palette. Per clone: transcribe official hex → `ThemePalette`, then a
-          scripted tmux `capture-pane -e` sweep for eyeball review against reference
-          screenshots.
+        - [x] *Phase 3 — clones (13)* (**shipped 2026-08-20**). Solarized
+          dark/light, Gruvbox dark/light, Nord, Dracula, Monokai (the classic
+          Hazenberg palette, not monokai.pro's commercial successors), One Dark/One
+          Light, Catppuccin Mocha/Latte, Tokyo Night night/day — each a
+          `ThemePalette` transcription in `ThemeRegistry.cpp` with an attribution
+          comment + upstream URL (all MIT, or universally-redistributed classic;
+          palettes are uncopyrightable facts; real names kept per universal editor
+          practice). Slot assignment is by *hue*, not upstream role — the palette
+          is authentic, the role mapping stays ned's own uniform one — so e.g.
+          Dracula/Monokai (no true blue in either) put purple/cyan in the blue
+          slot and their keywords read purple-/cyan-bold rather than upstream's
+          pink. All 13 clear the standard contrast floor and the dark/light pairs'
+          polarity checks (`BundledThemesTest`); verified live via a scripted tmux
+          picker sweep, each frame painting the exact transcribed hex. The
+          picker's own tests now derive their expected neighbor-of-"dark" from
+          `ThemeNames()` instead of hardcoding it, after breaking twice on
+          registry growth. Stretch flavors (Rosé Pine, Everforest, Zenburn,
+          Catppuccin Frappé/Macchiato, Tokyo Night Storm) stay deferred — each is
+          one palette literal away when wanted.
         - [ ] *Phase 4 — polish.* The sweep script kept in-repo, docs, and the
           `--detect-theme` precedence note.
 - **Companion tooling** (standalone utility programs shipped alongside `ned`, not part of
