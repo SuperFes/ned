@@ -7,6 +7,7 @@
 
 #include <unistd.h>
 
+#include "Editor/BackgroundActivity.h"
 #include "Editor/ProjectRoot.h"
 #include "LspPosition.h"
 #include "LspServerConfig.h"
@@ -24,7 +25,13 @@ namespace {
     // round-trips correctly; a path containing characters that need real
     // percent-encoding is a known, documented gap, not silently assumed away.
     std::string PathToUri(const std::filesystem::path& path) {
-        return "file://" + path.string();
+        // Absolutized here rather than assumed: a buffer opened via a
+        // relative CLI argument (`ned demo.cpp`) keeps that relative Path(),
+        // and "file://demo.cpp" is unresolvable to a server -- clangd
+        // rejected every request for such a buffer ("failed to decode ...
+        // unresolvable URI"), found live while verifying the
+        // codeActionLiteralSupport fix, not in review.
+        return "file://" + std::filesystem::absolute(path).lexically_normal().string();
     }
 
     std::optional<std::filesystem::path> UriToPath(const std::string& uri) {
@@ -89,6 +96,10 @@ namespace {
         return error.value("message", error.dump());
     }
 
+    // background-activity-spinner follow-up: same std::string materialization
+    // of the shared constant LspClient.cpp's own copy makes.
+    const std::string kLspActivity{kLspActivityName};
+
     Json DiagnosticToLsp(const text::Buffer::Diagnostic& diagnostic, const text::Rope& content) {
         const LspPosition start = BytePositionToLsp(content, diagnostic.startByte);
         const LspPosition end   = BytePositionToLsp(content, diagnostic.endByte);
@@ -101,6 +112,40 @@ namespace {
 
 } // namespace
 
+Json BuildInitializeParams(const std::filesystem::path& projectRoot) {
+    // codeActionLiteralSupport is load-bearing, not boilerplate: per the LSP
+    // spec a server may only return edit-carrying CodeAction literals to a
+    // client that advertises it, and must fall back to bare Command objects
+    // (runnable only via workspace/executeCommand, which this client doesn't
+    // implement) otherwise. clangd honors that exactly -- without this, its
+    // "fix available" quickfixes (e.g. "remove #include directive") arrived
+    // as Commands with no "edit", and applying one reported "has no edit to
+    // apply". Confirmed against a real clangd 22 session both ways, not
+    // inferred from the spec alone.
+    //
+    // dataSupport/resolveSupport (code-actions-resolve follow-up) advertise
+    // that this client will call codeAction/resolve for a CodeAction sent
+    // back without an "edit" -- see ResolveCodeAction.
+    //
+    // window.workDoneProgress (workDoneProgress-support follow-up) invites
+    // "$/progress" reporting -- server-side busy state (clangd's background
+    // indexing) for the mode-line spinner; see HandleProgress.
+    return Json{
+        {"processId", static_cast<std::int64_t>(::getpid())},
+        {"rootUri", PathToUri(projectRoot)},
+        {"capabilities",
+         {{"textDocument",
+           {{"codeAction",
+             {{"codeActionLiteralSupport",
+               {{"codeActionKind",
+                 {{"valueSet", Json::array({"", "quickfix", "refactor", "refactor.extract", "refactor.inline", "refactor.rewrite",
+                                            "source", "source.organizeImports", "source.fixAll"})}}}}},
+              {"dataSupport", true},
+              {"resolveSupport", {{"properties", Json::array({"edit"})}}}}}}},
+          {"window", {{"workDoneProgress", true}}}}},
+    };
+}
+
 LspManager::LspManager(text::BufferList& bufferList, ned::ui::EventLoop& eventLoop) : bufferList_(bufferList), eventLoop_(eventLoop) {
 }
 
@@ -112,6 +157,14 @@ LspClient* LspManager::ExistingClientForLanguage(const std::string& language) co
 void LspManager::WireNotificationHandlers(LspClient& client, const std::string& language) {
     client.SetNotificationHandler("textDocument/publishDiagnostics",
                                   [this](const Json& params) { HandlePublishDiagnostics(params); });
+    // workDoneProgress-support follow-up: the create request just
+    // establishes a token the following "$/progress" notifications carry --
+    // there's nothing to decide, its result is null by spec; HandleProgress
+    // tracks the token itself from the begin/end notifications rather than
+    // from here, so an unsolicited-progress server (the spec explicitly
+    // allows initiating progress without create) works identically.
+    client.SetRequestHandler("window/workDoneProgress/create", [](const Json&) { return Json(nullptr); });
+    client.SetNotificationHandler("$/progress", [this, language](const Json& params) { HandleProgress(language, params); });
     client.SetOnDisconnected([this, language](std::string reason) {
         LogError(language, "server disconnected: " + reason);
         ClientDisconnected(language);
@@ -157,22 +210,8 @@ LspClient* LspManager::ClientForLanguage(const std::string& language) {
     }
     WireNotificationHandlers(*client, language);
 
-    // code-actions-resolve follow-up: advertises that this client will call
-    // codeAction/resolve for a CodeAction the server sent back without an
-    // "edit" -- without this, a resolveProvider server (clangd included)
-    // has no signal the client can actually follow up, though in practice
-    // most servers offer resolve unconditionally once they declare
-    // resolveProvider regardless of what the client advertises here; sent
-    // anyway since it's what the spec actually asks a resolve-capable
-    // client to declare.
-    const Json initializeParams = {
-        {"processId", static_cast<std::int64_t>(::getpid())},
-        {"rootUri", PathToUri(editor::ProjectRoot())},
-        {"capabilities",
-         {{"textDocument", {{"codeAction", {{"dataSupport", true}, {"resolveSupport", {{"properties", Json::array({"edit"})}}}}}}}}},
-    };
     LspClient* rawClient = client.get();
-    rawClient->SendRequest("initialize", initializeParams,
+    rawClient->SendRequest("initialize", BuildInitializeParams(editor::ProjectRoot()),
                            [rawClient](std::optional<Json>, std::optional<Json>) { rawClient->SendNotification("initialized", Json::object()); });
 
     clients_.emplace(language, std::move(client));
@@ -241,6 +280,23 @@ void LspManager::ClientDisconnected(const std::string& language) {
         else {
             ++it;
         }
+    }
+    // workDoneProgress-support follow-up: a dying server never sends "end"
+    // for its live progress sessions -- End them here or the spinner runs
+    // forever (the request-count half of the same problem is ~LspClient's
+    // own responsibility; see its destructor comment).
+    const std::string keyPrefix = languageCopy + '\x1f';
+    for (auto it = activeProgress_.begin(); it != activeProgress_.end();) {
+        if (it->first.rfind(keyPrefix, 0) == 0) {
+            it = activeProgress_.erase(it);
+            EndBackgroundActivity(kLspActivity);
+        }
+        else {
+            ++it;
+        }
+    }
+    if (activeProgress_.empty()) {
+        SetBackgroundActivityDetail(kLspActivity, std::string()); // same stale-detail rule HandleProgress' own end branch applies
     }
 }
 
@@ -313,6 +369,52 @@ void LspManager::HandlePublishDiagnostics(const Json& params) {
         }
     }
     buffer->SetDiagnostics(std::move(diagnostics));
+}
+
+void LspManager::HandleProgress(const std::string& language, const Json& params) {
+    if (!params.contains("token") || !params.contains("value") || !params["value"].is_object()) {
+        return;
+    }
+    const std::string key   = language + '\x1f' + params["token"].dump();
+    const Json&       value = params["value"];
+    const std::string kind  = value.value("kind", std::string());
+
+    if (kind == "begin") {
+        if (activeProgress_.contains(key)) {
+            return; // duplicate begin for a live token -- ignore rather than double-count
+        }
+        activeProgress_[key] = value.value("title", std::string());
+        BeginBackgroundActivity(kLspActivity);
+    }
+
+    const auto it = activeProgress_.find(key);
+    if (it == activeProgress_.end()) {
+        return; // report/end for a token that never began (or already ended)
+    }
+
+    if (kind == "end") {
+        activeProgress_.erase(it);
+        EndBackgroundActivity(kLspActivity);
+        if (activeProgress_.empty()) {
+            // No live progress session left to describe -- drop the stale
+            // detail rather than letting it caption a plain request spinner.
+            // A no-op if nothing is active at all (the entry is already gone).
+            SetBackgroundActivityDetail(kLspActivity, std::string());
+        }
+        return;
+    }
+
+    // "begin" or "report": refresh the detail text. Percentage beats
+    // message when both are present -- it's the more glanceable of the two.
+    std::string detail = it->second;
+    if (value.contains("percentage") && value["percentage"].is_number()) {
+        const std::string percent = std::to_string(value["percentage"].get<int>()) + "%";
+        detail += detail.empty() ? percent : " (" + percent + ")";
+    }
+    else if (const std::string message = value.value("message", std::string()); !message.empty()) {
+        detail += detail.empty() ? message : ": " + message;
+    }
+    SetBackgroundActivityDetail(kLspActivity, std::move(detail));
 }
 
 void LspManager::RequestHover(text::Buffer& buffer, std::size_t byteOffset, HoverCallback callback) {

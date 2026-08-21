@@ -6,6 +6,7 @@
 
 #include <unistd.h>
 
+#include "Editor/BackgroundActivity.h"
 #include "Editor/Lsp/LspClient.h"
 #include "Editor/Lsp/Transport.h"
 #include "UI/EventLoop.h"
@@ -270,4 +271,54 @@ TEST_CASE("SetOnDisconnected replaces a previous handler, and unset is a safe no
     fixture.client.SetOnDisconnected([](std::string) { FAIL("should have been replaced"); });
     fixture.client.SetOnDisconnected([](std::string) {});
     SUCCEED(); // no crash from setting/replacing -- the callback itself is never invoked directly here
+}
+
+TEST_CASE("LspClient counts an in-flight request as LSP background activity until its response dispatches", "[Lsp]") {
+    auto fixture = ClientFixture::Create();
+    REQUIRE(ned::editor::ActiveBackgroundActivities().empty());
+
+    fixture.client.SendRequest("textDocument/hover", Json::object(), [](std::optional<Json>, std::optional<Json>) {});
+    const auto active = ned::editor::ActiveBackgroundActivities();
+    REQUIRE(active.size() == 1);
+    REQUIRE(active[0].name == "LSP");
+
+    const Json response = {{"jsonrpc", "2.0"}, {"id", 1}, {"result", nullptr}}; // ids start at 1 on a fresh client
+    fixture.client.DispatchFrame(response.dump());
+    REQUIRE(ned::editor::ActiveBackgroundActivities().empty());
+}
+
+TEST_CASE("LspClient's destructor ends the LSP background activity of requests never answered", "[Lsp]") {
+    {
+        auto fixture = ClientFixture::Create();
+        fixture.client.SendRequest("textDocument/hover", Json::object(), [](std::optional<Json>, std::optional<Json>) {});
+        fixture.client.SendRequest("textDocument/completion", Json::object(), [](std::optional<Json>, std::optional<Json>) {});
+        REQUIRE(ned::editor::ActiveBackgroundActivities().size() == 1);
+    }
+    REQUIRE(ned::editor::ActiveBackgroundActivities().empty());
+}
+
+TEST_CASE("LspClient answers a server-initiated request via its registered handler", "[Lsp]") {
+    auto fixture = ClientFixture::Create();
+    fixture.client.SetRequestHandler("window/workDoneProgress/create", [](const Json&) { return Json(nullptr); });
+
+    const Json request = {{"jsonrpc", "2.0"}, {"id", 42}, {"method", "window/workDoneProgress/create"}, {"params", {{"token", "t"}}}};
+    fixture.client.DispatchFrame(request.dump());
+
+    const std::string raw      = ReadRawFrame(fixture.serverStdinRead);
+    const Json        response = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(response["id"] == 42);
+    REQUIRE(response.contains("result"));
+    REQUIRE(response["result"].is_null());
+}
+
+TEST_CASE("LspClient answers an unhandled server-initiated request with MethodNotFound", "[Lsp]") {
+    auto fixture = ClientFixture::Create();
+
+    const Json request = {{"jsonrpc", "2.0"}, {"id", 7}, {"method", "workspace/configuration"}, {"params", Json::object()}};
+    fixture.client.DispatchFrame(request.dump());
+
+    const std::string raw      = ReadRawFrame(fixture.serverStdinRead);
+    const Json        response = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(response["id"] == 7);
+    REQUIRE(response["error"]["code"] == -32601);
 }

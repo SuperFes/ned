@@ -58,10 +58,23 @@ namespace ned::editor::lsp {
 
 using Json = nlohmann::json;
 
+// background-activity-spinner follow-up. The BackgroundActivity registry
+// name every LSP subsystem reports under -- one aggregate spinner, not
+// per-language entries. Shared between LspClient's own request tracking and
+// LspManager's $/progress handling, which is why it lives here (LspManager.h
+// already includes this header, not the other way around).
+inline constexpr std::string_view kLspActivityName = "LSP";
+
 // Exactly one of result/error is engaged, matching JSON-RPC 2.0's own
 // response shape.
 using ResponseCallback    = std::function<void(std::optional<Json> result, std::optional<Json> error)>;
 using NotificationHandler = std::function<void(const Json& params)>;
+
+// A server-initiated *request*'s handler -- returns the result to send back
+// (workDoneProgress-support follow-up; "window/workDoneProgress/create" is
+// the first server->client request any capability this client declares can
+// prompt, and its result is simply null).
+using RequestHandler = std::function<Json(const Json& params)>;
 
 class LspClient {
   public:
@@ -73,7 +86,13 @@ class LspClient {
     // driving a raw pipe pair with no real subprocess involved.
     LspClient(Transport transport, ned::ui::EventLoop& eventLoop);
 
-    ~LspClient() = default; // member destruction order does the real work -- see header comment
+    // Member destruction order does the real teardown work -- see header
+    // comment. The body only balances the BackgroundActivity registry for
+    // requests still pending_ (sent, never answered): their callbacks are
+    // documented as dropped uninvoked, so nothing else would ever End the
+    // Begin each SendRequest recorded -- a server that died mid-request
+    // would otherwise leave the mode-line spinner running forever.
+    ~LspClient();
 
     LspClient(const LspClient&)            = delete;
     LspClient& operator=(const LspClient&) = delete;
@@ -92,11 +111,17 @@ class LspClient {
 
     // Replaces any existing handler for method. Invoked on the main thread
     // for every server-initiated notification with this method name (e.g.
-    // "textDocument/publishDiagnostics"). A server-initiated *request*
-    // (carries its own "id", expects a response) is not supported in this
-    // slice -- no server capability this client currently declares needs
-    // one.
+    // "textDocument/publishDiagnostics").
     void SetNotificationHandler(std::string method, NotificationHandler handler);
+
+    // workDoneProgress-support follow-up: replaces any existing handler for
+    // a server-initiated *request* (carries its own "id", expects a
+    // response) with this method name; the handler's returned Json is sent
+    // back as the response's "result". A server request with no registered
+    // handler gets a MethodNotFound (-32601) error response, per JSON-RPC --
+    // previously it was silently ignored, defensible only while no declared
+    // capability could ever prompt one.
+    void SetRequestHandler(std::string method, RequestHandler handler);
 
     // error-visibility follow-up. Invoked exactly once, on the main thread
     // (via the same eventLoop_.Post the read loop already uses to marshal
@@ -130,6 +155,7 @@ class LspClient {
     int                                                  nextRequestId_ = 1;
     std::unordered_map<int, ResponseCallback>            pending_;
     std::unordered_map<std::string, NotificationHandler> notificationHandlers_;
+    std::unordered_map<std::string, RequestHandler>      requestHandlers_;
     std::function<void(std::string reason)>              onDisconnected_; // see SetOnDisconnected
 };
 

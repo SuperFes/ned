@@ -3,6 +3,7 @@
 #include <memory>
 #include <string>
 
+#include "Editor/BackgroundActivity.h"
 #include "Editor/Mode.h"
 #include "Text/Buffer.h"
 #include "UI/ActiveBuffer.h"
@@ -170,4 +171,34 @@ TEST_CASE("ModeLine shows a modified marker only when the buffer has unsaved cha
     REQUIRE(buffer.Modified());
     modeLine.Paint(canvas);
     REQUIRE(RowText(screen, 0, 40).find("*scratch") != std::string::npos);
+}
+
+TEST_CASE("ModeLine shows an active background activity with its spinner and detail", "[ModeLine]") {
+    ned::text::Buffer     buffer("main.c", ned::text::Rope("int main() {}"));
+    ned::ui::ActiveBuffer activeBuffer(buffer);
+    ned::editor::Mode     mode  = ned::editor::CMode();
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    ned::ui::ModeLine     modeLine(activeBuffer, mode, theme);
+
+    ned::ui::Screen screen = MakeScreen(60, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 0});
+
+    modeLine.Paint(canvas);
+    REQUIRE(RowText(screen, 0, 60).find("LSP") == std::string::npos); // idle -- no activity text
+
+    ned::editor::BeginBackgroundActivity("LSP");
+    ned::editor::SetBackgroundActivityDetail("LSP", "indexing (45%)");
+    modeLine.Paint(canvas);
+    const std::string row = RowText(screen, 0, 60);
+    // The spinner frame itself rotates with the wall clock -- assert the
+    // stable parts (name, detail) and that a braille frame glyph occupies
+    // exactly one cell between them (cells are strings; a multi-byte glyph
+    // in one cell makes the row's byte length exceed its column count).
+    REQUIRE(row.find("LSP") != std::string::npos);
+    REQUIRE(row.find("indexing (45%)") != std::string::npos);
+    REQUIRE(row.size() > 60);
+
+    ned::editor::EndBackgroundActivity("LSP");
+    modeLine.Paint(canvas);
+    REQUIRE(RowText(screen, 0, 60).find("LSP") == std::string::npos); // gone the frame after the last End
 }

@@ -323,6 +323,8 @@ add_library(ned_lib STATIC
         Source/Editor/ProjectRoot.cpp
         Source/Editor/ProjectFileOps.cpp
         Source/Editor/AutoRevert.cpp
+        Source/Editor/BackgroundActivity.cpp
+        Source/Editor/InlineDiagnostics.cpp
         Source/Editor/ScratchPad.cpp
         Source/Editor/Backup.cpp
         Source/Editor/Session.cpp
@@ -517,6 +519,7 @@ if (NED_BUILD_TESTS)
             Tests/VcsProviderRegistryTest.cpp
             Tests/DiffPatchTest.cpp
             Tests/VcsRunnerTest.cpp
+            Tests/BackgroundActivityTest.cpp
             Tests/LspTransportTest.cpp
             Tests/LspClientTest.cpp
             Tests/LspServerConfigTest.cpp

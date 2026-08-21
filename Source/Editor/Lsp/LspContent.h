@@ -59,7 +59,7 @@ struct WorkspaceTextEdit {
 
 struct CodeAction {
     std::string                    title;
-    std::vector<WorkspaceTextEdit> edits;         // edits touching ownUri only; empty if hasEdit is false or touchesOtherFiles is true
+    std::vector<WorkspaceTextEdit> edits;                     // edits touching ownUri only; empty if hasEdit is false or touchesOtherFiles is true
     bool                           hasEdit           = false; // false for a bare Command with no "edit" at all -- executing one is out of scope
     bool                           touchesOtherFiles = false; // a "changes" map naming more than one URI, or a "documentChanges" form (unparsed)
 
@@ -77,6 +77,15 @@ struct CodeAction {
     // for resolve.
     bool resolvable = false;
     Json raw;
+
+    // quick-fix follow-up. kind is the raw CodeActionKind string
+    // ("quickfix", "refactor.rewrite", ...; empty for a bare Command, which
+    // never has one); isPreferred is the server's own "apply this one on an
+    // auto-fix command" marker (clangd sets it on the fix tied to the
+    // diagnostic at the requested range). Both drive
+    // BufferView::RequestQuickFixAtPoint's pick-without-asking decision.
+    std::string kind;
+    bool        isPreferred = false;
 
     bool operator==(const CodeAction&) const = default;
 };

@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -7,6 +8,7 @@
 
 #include <unistd.h>
 
+#include "Editor/BackgroundActivity.h"
 #include "Editor/Lsp/LspClient.h"
 #include "Editor/Lsp/LspManager.h"
 #include "Editor/Lsp/LspServerConfig.h"
@@ -581,4 +583,97 @@ TEST_CASE("LspManager::RequestRename resolves to nullopt when the buffer was nev
 
     REQUIRE(invoked);
     REQUIRE_FALSE(got.has_value());
+}
+
+TEST_CASE("BuildInitializeParams advertises codeActionLiteralSupport alongside the resolve capabilities", "[Lsp]") {
+    // Regression test: without codeActionLiteralSupport a spec-following
+    // server (clangd included) may only return bare Command objects -- no
+    // "edit", no "kind" -- so every "fix available" quickfix listed fine but
+    // applied as "has no edit to apply". See BuildInitializeParams' own
+    // comment in LspManager.cpp.
+    const Json params = ned::editor::lsp::BuildInitializeParams(std::filesystem::path("/some/project"));
+
+    REQUIRE(params["rootUri"] == "file:///some/project");
+    REQUIRE(params["processId"].is_number_integer());
+
+    const Json& codeAction = params.at("capabilities").at("textDocument").at("codeAction");
+    const Json& valueSet   = codeAction.at("codeActionLiteralSupport").at("codeActionKind").at("valueSet");
+    REQUIRE(valueSet.is_array());
+    REQUIRE(std::find(valueSet.begin(), valueSet.end(), Json("quickfix")) != valueSet.end());
+
+    // The pre-existing resolve capabilities must survive the restructuring.
+    REQUIRE(codeAction.at("dataSupport") == true);
+    REQUIRE(codeAction.at("resolveSupport").at("properties") == Json::array({"edit"}));
+
+    // workDoneProgress-support follow-up: invites $/progress reporting.
+    REQUIRE(params.at("capabilities").at("window").at("workDoneProgress") == true);
+}
+
+TEST_CASE("BuildInitializeParams absolutizes a relative rootUri", "[Lsp]") {
+    // PathToUri (file-local in LspManager.cpp, reached through
+    // BuildInitializeParams here) must never emit a relative file:// URI --
+    // "file://demo.cpp" is unresolvable, and clangd rejects every request
+    // naming one. A buffer opened via a relative CLI argument is the real
+    // case; rootUri exercises the same helper.
+    const Json params = ned::editor::lsp::BuildInitializeParams(std::filesystem::path("relative/dir"));
+
+    const std::string rootUri = params["rootUri"].get<std::string>();
+    REQUIRE(rootUri.rfind("file:///", 0) == 0);
+    REQUIRE(rootUri.find("relative/dir") != std::string::npos);
+}
+
+TEST_CASE("LspManager tracks $/progress begin/report/end as LSP background activity with detail", "[Lsp]") {
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+
+    REQUIRE(ned::editor::ActiveBackgroundActivities().empty());
+
+    const Json begin = {{"jsonrpc", "2.0"},
+                        {"method", "$/progress"},
+                        {"params", {{"token", "backgroundIndexProgress"}, {"value", {{"kind", "begin"}, {"title", "indexing"}}}}}};
+    client->DispatchFrame(begin.dump());
+    auto active = ned::editor::ActiveBackgroundActivities();
+    REQUIRE(active.size() == 1);
+    REQUIRE(active[0].name == "LSP");
+    REQUIRE(active[0].detail == "indexing");
+
+    const Json report = {{"jsonrpc", "2.0"},
+                         {"method", "$/progress"},
+                         {"params", {{"token", "backgroundIndexProgress"}, {"value", {{"kind", "report"}, {"percentage", 45}}}}}};
+    client->DispatchFrame(report.dump());
+    active = ned::editor::ActiveBackgroundActivities();
+    REQUIRE(active.size() == 1);
+    REQUIRE(active[0].detail == "indexing (45%)");
+
+    // A report for a token that never began must not resurrect anything later.
+    const Json end = {{"jsonrpc", "2.0"},
+                      {"method", "$/progress"},
+                      {"params", {{"token", "backgroundIndexProgress"}, {"value", {{"kind", "end"}}}}}};
+    client->DispatchFrame(end.dump());
+    REQUIRE(ned::editor::ActiveBackgroundActivities().empty());
+
+    client->DispatchFrame(end.dump()); // duplicate end -- must clamp, not go negative
+    REQUIRE(ned::editor::ActiveBackgroundActivities().empty());
+}
+
+TEST_CASE("LspManager answers window/workDoneProgress/create with a null result", "[Lsp]") {
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+
+    const Json request = {{"jsonrpc", "2.0"}, {"id", 3}, {"method", "window/workDoneProgress/create"}, {"params", {{"token", "t"}}}};
+    client->DispatchFrame(request.dump());
+
+    const std::string raw      = ReadRawFrame(server.serverStdinRead);
+    const Json        response = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(response["id"] == 3);
+    REQUIRE(response.contains("result"));
+    REQUIRE(response["result"].is_null());
 }

@@ -17,21 +17,21 @@ using ned::editor::lsp::RenameResult;
 
 TEST_CASE("ExtractHoverText handles a bare string contents field", "[Lsp]") {
     const Json result = {{"contents", "hello world"}};
-    const auto text    = ExtractHoverText(result);
+    const auto text   = ExtractHoverText(result);
     REQUIRE(text.has_value());
     REQUIRE(*text == "hello world");
 }
 
 TEST_CASE("ExtractHoverText handles a MarkupContent object contents field", "[Lsp]") {
     const Json result = {{"contents", {{"kind", "markdown"}, {"value", "**bold**"}}}};
-    const auto text    = ExtractHoverText(result);
+    const auto text   = ExtractHoverText(result);
     REQUIRE(text.has_value());
     REQUIRE(*text == "**bold**");
 }
 
 TEST_CASE("ExtractHoverText joins an array of contents entries with a blank line", "[Lsp]") {
     const Json result = {{"contents", Json::array({"first", {{"value", "second"}}})}};
-    const auto text    = ExtractHoverText(result);
+    const auto text   = ExtractHoverText(result);
     REQUIRE(text.has_value());
     REQUIRE(*text == "first\n\nsecond");
 }
@@ -50,11 +50,11 @@ TEST_CASE("ExtractHoverText returns nullopt for an empty contents string", "[Lsp
 }
 
 TEST_CASE("ExtractCompletionItems handles a bare CompletionItem array", "[Lsp]") {
-    const Json result = Json::array({
+    const Json                        result = Json::array({
         {{"label", "foo"}, {"insertText", "foo()"}},
         {{"label", "bar"}},
     });
-    const std::vector<CompletionItem> items = ExtractCompletionItems(result);
+    const std::vector<CompletionItem> items  = ExtractCompletionItems(result);
     REQUIRE(items.size() == 2);
     REQUIRE(items[0].label == "foo");
     REQUIRE(items[0].insertText == "foo()");
@@ -73,8 +73,8 @@ TEST_CASE("ExtractCompletionItems handles a CompletionList {isIncomplete, items}
 }
 
 TEST_CASE("ExtractCompletionItems skips an item with no label", "[Lsp]") {
-    const Json result = Json::array({{{"insertText", "no label here"}}, {{"label", "has-label"}}});
-    const std::vector<CompletionItem> items = ExtractCompletionItems(result);
+    const Json                        result = Json::array({{{"insertText", "no label here"}}, {{"label", "has-label"}}});
+    const std::vector<CompletionItem> items  = ExtractCompletionItems(result);
     REQUIRE(items.size() == 1);
     REQUIRE(items[0].label == "has-label");
 }
@@ -89,8 +89,8 @@ TEST_CASE("ExtractCompletionItems returns empty when a CompletionList has no ite
 }
 
 TEST_CASE("ExtractCompletionItems preserves server order, no re-sorting", "[Lsp]") {
-    const Json result = Json::array({{{"label", "zzz"}}, {{"label", "aaa"}}, {{"label", "mmm"}}});
-    const std::vector<CompletionItem> items = ExtractCompletionItems(result);
+    const Json                        result = Json::array({{{"label", "zzz"}}, {{"label", "aaa"}}, {{"label", "mmm"}}});
+    const std::vector<CompletionItem> items  = ExtractCompletionItems(result);
     REQUIRE(items.size() == 3);
     REQUIRE(items[0].label == "zzz");
     REQUIRE(items[1].label == "aaa");
@@ -185,7 +185,7 @@ TEST_CASE("ExtractCodeActions preserves server order across multiple actions", "
 }
 
 TEST_CASE("ExtractCodeActions skips an item with no title", "[Lsp]") {
-    const Json result = Json::array({{{"command", "no.title"}}, {{"title", "Has a title"}}});
+    const Json                    result  = Json::array({{{"command", "no.title"}}, {{"title", "Has a title"}}});
     const std::vector<CodeAction> actions = ExtractCodeActions(result, "file:///a.c");
     REQUIRE(actions.size() == 1);
     REQUIRE(actions[0].title == "Has a title");
@@ -197,17 +197,29 @@ TEST_CASE("ExtractCodeActions returns empty for a non-array result", "[Lsp]") {
 }
 
 TEST_CASE("ExtractSingleCodeAction marks a real CodeAction missing \"edit\" as resolvable", "[Lsp]") {
-    const Json item = {{"title", "Remove #include directive"}, {"kind", "quickfix"}, {"data", {{"opaque", 42}}}};
+    const Json       item   = {{"title", "Remove #include directive"}, {"kind", "quickfix"}, {"data", {{"opaque", 42}}}};
     const CodeAction action = ExtractSingleCodeAction(item, "file:///a.c");
 
     REQUIRE(action.title == "Remove #include directive");
     REQUIRE_FALSE(action.hasEdit);
-    REQUIRE(action.resolvable); // has "kind" -- a real CodeAction, not a bare Command
+    REQUIRE(action.resolvable);  // has "kind" -- a real CodeAction, not a bare Command
     REQUIRE(action.raw == item); // preserved verbatim for codeAction/resolve to send back
 }
 
+TEST_CASE("ExtractSingleCodeAction parses kind and isPreferred (quick-fix follow-up)", "[Lsp]") {
+    const Json       item   = {{"title", "The fix"}, {"kind", "quickfix"}, {"isPreferred", true}};
+    const CodeAction action = ExtractSingleCodeAction(item, "file:///a.c");
+    REQUIRE(action.kind == "quickfix");
+    REQUIRE(action.isPreferred);
+
+    // Both default off for a bare Command, which carries neither field.
+    const CodeAction command = ExtractSingleCodeAction(Json{{"title", "Run"}, {"command", "x"}}, "file:///a.c");
+    REQUIRE(command.kind.empty());
+    REQUIRE_FALSE(command.isPreferred);
+}
+
 TEST_CASE("ExtractSingleCodeAction does NOT mark a bare Command (no \"kind\") as resolvable", "[Lsp]") {
-    const Json item = {{"title", "Run a server-side fixit"}, {"command", "myserver.fixit"}};
+    const Json       item   = {{"title", "Run a server-side fixit"}, {"command", "myserver.fixit"}};
     const CodeAction action = ExtractSingleCodeAction(item, "file:///a.c");
 
     REQUIRE_FALSE(action.hasEdit);
@@ -216,9 +228,9 @@ TEST_CASE("ExtractSingleCodeAction does NOT mark a bare Command (no \"kind\") as
 
 TEST_CASE("ExtractSingleCodeAction is not resolvable once it already has an edit", "[Lsp]") {
     const Json textEdit = {{"range", MakeRange(0, 0, 0, 1)}, {"newText", "x"}};
-    const Json changes   = {{"file:///a.c", Json::array({textEdit})}};
-    const Json edit      = {{"changes", changes}};
-    const Json item      = {{"title", "Fix"}, {"kind", "quickfix"}, {"edit", edit}};
+    const Json changes  = {{"file:///a.c", Json::array({textEdit})}};
+    const Json edit     = {{"changes", changes}};
+    const Json item     = {{"title", "Fix"}, {"kind", "quickfix"}, {"edit", edit}};
 
     const CodeAction action = ExtractSingleCodeAction(item, "file:///a.c");
 
@@ -227,7 +239,7 @@ TEST_CASE("ExtractSingleCodeAction is not resolvable once it already has an edit
 }
 
 TEST_CASE("ExtractDefinitionLocations parses a bare Location object", "[Lsp]") {
-    const Json result = {{"uri", "file:///a.c"}, {"range", MakeRange(4, 2, 4, 10)}};
+    const Json                            result    = {{"uri", "file:///a.c"}, {"range", MakeRange(4, 2, 4, 10)}};
     const std::vector<DefinitionLocation> locations = ExtractDefinitionLocations(result);
     REQUIRE(locations.size() == 1);
     REQUIRE(locations[0].uri == "file:///a.c");
@@ -235,7 +247,7 @@ TEST_CASE("ExtractDefinitionLocations parses a bare Location object", "[Lsp]") {
 }
 
 TEST_CASE("ExtractDefinitionLocations parses a Location[] array", "[Lsp]") {
-    const Json result = Json::array({
+    const Json                            result    = Json::array({
         {{"uri", "file:///a.c"}, {"range", MakeRange(1, 0, 1, 1)}},
         {{"uri", "file:///b.c"}, {"range", MakeRange(2, 0, 2, 1)}},
     });
@@ -247,7 +259,7 @@ TEST_CASE("ExtractDefinitionLocations parses a Location[] array", "[Lsp]") {
 }
 
 TEST_CASE("ExtractDefinitionLocations parses a LocationLink[] array via targetUri/targetSelectionRange", "[Lsp]") {
-    const Json result = Json::array({
+    const Json                            result    = Json::array({
         {{"targetUri", "file:///impl.c"},
          {"targetRange", MakeRange(0, 0, 10, 0)},
          {"targetSelectionRange", MakeRange(3, 5, 3, 12)}},
@@ -264,7 +276,7 @@ TEST_CASE("ExtractDefinitionLocations returns empty for a null result", "[Lsp]")
 }
 
 TEST_CASE("ExtractDefinitionLocations skips a malformed entry (no uri/targetUri)", "[Lsp]") {
-    const Json result = Json::array({{{"range", MakeRange(0, 0, 0, 1)}}, {{"uri", "file:///a.c"}, {"range", MakeRange(0, 0, 0, 1)}}});
+    const Json                            result    = Json::array({{{"range", MakeRange(0, 0, 0, 1)}}, {{"uri", "file:///a.c"}, {"range", MakeRange(0, 0, 0, 1)}}});
     const std::vector<DefinitionLocation> locations = ExtractDefinitionLocations(result);
     REQUIRE(locations.size() == 1);
     REQUIRE(locations[0].uri == "file:///a.c");
@@ -285,7 +297,7 @@ TEST_CASE("ExtractRenameEdits parses a \"changes\" WorkspaceEdit spanning multip
 }
 
 TEST_CASE("ExtractRenameEdits marks a documentChanges-only edit as unsupported, with no edits parsed", "[Lsp]") {
-    const Json result = {{"documentChanges", Json::array()}};
+    const Json         result  = {{"documentChanges", Json::array()}};
     const RenameResult renamed = ExtractRenameEdits(result);
     REQUIRE(renamed.touchesUnsupportedForm);
     REQUIRE_FALSE(renamed.hasEdit);

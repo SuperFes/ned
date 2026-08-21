@@ -198,6 +198,12 @@ enum class InteractiveRequest { None,
                                 // the (async) response actually arrives -- see that method's own
                                 // doc comment in BufferView.h.
                                 LspCodeAction,
+                                // quick-fix follow-up: LspCodeAction's no-ceremony sibling --
+                                // BufferView::RequestQuickFixAtPoint sends the same request but
+                                // applies the response's single unambiguous fix immediately
+                                // (undo is the safety net), falling back to LspCodeAction's own
+                                // select session only when the choice is genuinely ambiguous.
+                                LspQuickFix,
                                 // error-visibility follow-up: another one-shot direct action,
                                 // same shape as ProjectAgenda -- BufferView finds-or-creates
                                 // the shared *lsp log* buffer (lsp::kLspLogBufferName) and

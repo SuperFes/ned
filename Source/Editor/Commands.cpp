@@ -11,6 +11,7 @@
 #include "CodeFold.h"
 #include "FinalNewline.h"
 #include "FormatOnSave.h"
+#include "InlineDiagnostics.h"
 #include "Lsp/LspManager.h"
 #include "Markdown.h"
 #include "Org.h"
@@ -1485,6 +1486,29 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           context.interactiveRequest = InteractiveRequest::LspCodeAction;
                       });
 
+    // quick-fix follow-up: lsp-code-action without the ceremony -- applies
+    // the single unambiguous fix at point immediately (undo is the safety
+    // net), falling back to the selection list only when it's genuinely
+    // ambiguous. See BufferView::RequestQuickFixAtPoint.
+    registry.Register("lsp-quick-fix", "Apply the LSP quick fix at point immediately, no confirmation.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::LspQuickFix;
+                      });
+
+    // inline-diagnostics follow-up: a plain process-wide toggle, actable
+    // right here (no BufferView state involved -- the very next Paint()
+    // reads the flag fresh), so no InteractiveRequest is needed at all.
+    // M-x reachable only, matching lsp-show-log just below.
+    registry.Register("toggle-inline-diagnostics",
+                      "Show or hide inline diagnostic annotation rows (carets + message under a line with a diagnostic).",
+                      [](CommandContext& context) {
+                          const bool enabled = !InlineDiagnosticsEnabled();
+                          SetInlineDiagnosticsEnabled(enabled);
+                          if (context.message) {
+                              *context.message = enabled ? "Inline diagnostics on." : "Inline diagnostics off.";
+                          }
+                      });
+
     // error-visibility follow-up: no dedicated keybinding, M-x reachable --
     // matches org-agenda's own precedent (Commands.cpp/Command.h).
     registry.Register("lsp-show-log", "Switch to the *lsp log* buffer of LSP errors/disconnects.",
@@ -2082,6 +2106,7 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("C-c C-e"), "lsp-show-diagnostic");
     keymap.Bind(ParseKeySequence("C-c C-j"), "lsp-hover");
     keymap.Bind(ParseKeySequence("C-c C-a"), "lsp-code-action");
+    keymap.Bind(ParseKeySequence("C-c C-q"), "lsp-quick-fix");
     // hover/completion follow-up: "M-/" (company-mode's usual manual-
     // completion binding) is already bound to redo elsewhere in this
     // function -- C-M-i is Emacs' own traditional complete-symbol binding
