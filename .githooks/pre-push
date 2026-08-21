@@ -1,0 +1,35 @@
+#!/bin/sh
+# Refuses to push a version tag (v*) whose number doesn't match
+# CMakeLists.txt's own `project(Ned VERSION ...)` at the commit being
+# tagged -- catches tagging a release without actually bumping the version
+# first, the one mistake this is meant to make impossible to ship.
+#
+# Not wired up automatically: git never tracks or shares .git/hooks/ across
+# clones, so this lives in an ordinary, committed directory instead and has
+# to be opted into once per clone:
+#   git config core.hooksPath .githooks
+
+set -e
+
+while read -r local_ref local_sha _remote_ref _remote_sha; do
+	case "${local_ref}" in
+		refs/tags/v*)
+			tag_version="${local_ref#refs/tags/v}"
+			cmake_version=$(git show "${local_sha}:CMakeLists.txt" |
+				sed -n 's/^project(Ned VERSION \([0-9][0-9.]*\).*/\1/p')
+
+			if [ -z "${cmake_version}" ]; then
+				echo "pre-push: couldn't find 'project(Ned VERSION ...)' in CMakeLists.txt at ${local_sha}" >&2
+				exit 1
+			fi
+
+			if [ "${tag_version}" != "${cmake_version}" ]; then
+				echo "pre-push: refusing to push tag '${local_ref#refs/tags/}' -- CMakeLists.txt's project() VERSION is ${cmake_version}, tag says ${tag_version}." >&2
+				echo "pre-push: bump project(Ned VERSION ...) in CMakeLists.txt to match, commit it, then re-tag." >&2
+				exit 1
+			fi
+			;;
+	esac
+done
+
+exit 0
