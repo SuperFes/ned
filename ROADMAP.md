@@ -30,10 +30,14 @@ Notcurses (TermOx → FTXUI → Notcurses over the project's life).
 
 ## Open items
 
+### Embedded language
+- [ ] **Jank replaces Janet** - Once I'm able to do so, I'd love to replace our
+      internal scripting representation to move to [jank](https://github.com/jank-lang/jank)
+
 ### Language intelligence
 
-- [ ] **Spell/grammar checking as an LSP diagnostics channel** — not a bespoke
-      hunspell integration. `harper-ls` as the auto-wired default when on `PATH`;
+- [ ] **Spell/grammar checking as an LSP diagnostics channel** — not a hunspell
+      integration. `harper-ls` as the auto-wired default when on `PATH`;
       fall back through other LSP-speaking checkers, ending in "no prose checking,"
       never a hard failure; `ltex-ls`/LanguageTool stays opt-in user config (ned never
       bundles or requires a JVM). The real work is **multi-server-per-buffer
