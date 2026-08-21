@@ -15,8 +15,13 @@
 // when the tabs overflow the available width -- a `‹`/`›` indicator
 // (tab-close follow-up) appears at the corresponding edge whenever there's
 // more scrolled-past content in that direction, so the overflow is visible
-// rather than silently hidden. A visual complement to switch-to-buffer,
-// not a replacement for it.
+// rather than silently hidden. Whenever the active buffer *changes*
+// (tab-reveal follow-up), Paint scrolls just far enough to make its tab
+// fully visible -- a freshly opened file's tab past the right edge was
+// otherwise invisible -- without fighting manual wheel-scrolling in
+// between. Dragging a tab left/right reorders it (tab-reorder follow-up,
+// via SetOnReorder -- same handler indirection as SetOnCloseRequest). A
+// visual complement to switch-to-buffer, not a replacement for it.
 //
 // Each tab also has a close icon (`×`, tab-close follow-up) -- clicking it
 // requests closing that buffer via SetOnCloseRequest's handler rather than
@@ -60,6 +65,14 @@ class TabBar : public Widget {
     // to safely discard a modified buffer's changes on its own.
     void SetOnCloseRequest(std::function<void(text::Buffer&)> handler);
 
+    // Tab-reorder follow-up: called with a drag-reordered buffer and the
+    // tab index it should move to. Unset (the default) means dragging a tab
+    // is a no-op -- TabBar holds the BufferList by const reference and
+    // cannot reorder it itself; main.cpp wires this to
+    // text::BufferList::MoveBufferToIndex, the same "mutation happens
+    // outside, through a registered handler" shape SetOnCloseRequest uses.
+    void SetOnReorder(std::function<void(text::Buffer&, std::size_t)> handler);
+
     // Chrome-focus follow-up (retargeted by the tab-restyle follow-up from
     // the removed underline row): when set and returning true, the active
     // tab's block takes the accent-tinted chrome background
@@ -90,8 +103,22 @@ class TabBar : public Widget {
 
     int scrollOffset_ = 0; // columns of tab content scrolled past on the left
 
-    std::function<void(text::Buffer&)> onCloseRequest_;
-    std::function<bool()>              focusProvider_; // see SetFocusProvider
+    // Active-tab auto-reveal (tab-reveal follow-up): the buffer whose tab
+    // Paint() last revealed. Compared by identity only, never dereferenced
+    // (it may have been closed since -- same convention BufferView's
+    // topLineValidatedBuffer_ uses), so Paint() adjusts scrollOffset_ to
+    // bring the active tab into view exactly once per activation, and a
+    // manual wheel-scroll away from it afterwards isn't fought.
+    const text::Buffer* lastRevealedActive_ = nullptr;
+
+    // Tab-reorder follow-up: the buffer whose tab a left-press landed on,
+    // tracked until the matching release so Moved events reorder it (see
+    // SetOnReorder). Never dereferenced without onReorder_ set.
+    text::Buffer* dragBuffer_ = nullptr;
+
+    std::function<void(text::Buffer&)>              onCloseRequest_;
+    std::function<void(text::Buffer&, std::size_t)> onReorder_;     // see SetOnReorder
+    std::function<bool()>                           focusProvider_; // see SetFocusProvider
 };
 
 } // namespace ned::ui

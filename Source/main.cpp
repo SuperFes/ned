@@ -527,6 +527,13 @@ int main(int argc, char** argv) {
     tabBar->SetOnCloseRequest(
         [wm = windowManager.get()](ned::text::Buffer& buffer) { wm->RequestCloseBuffer(buffer); });
 
+    // Tab-reorder follow-up: dragging a tab reorders the BufferList itself
+    // -- Buffers() order is also what SaveProjectSessionNow persists, so a
+    // dragged-into-place order survives a restart with no extra state.
+    tabBar->SetOnReorder([&bufferList](ned::text::Buffer& buffer, std::size_t targetIndex) {
+        bufferList.MoveBufferToIndex(buffer, targetIndex);
+    });
+
     // Chrome-focus follow-up: the tab underline is the editor region's
     // frame -- lit in the accent while an editor pane holds the keyboard,
     // the counterpart of ProjectSidebar's own focused accent frame.
