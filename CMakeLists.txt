@@ -369,6 +369,7 @@ add_library(ned_lib STATIC
         Source/UI/ModeLine.cpp
         Source/UI/EchoArea.cpp
         Source/UI/Theme.cpp
+        Source/UI/ThemePalette.cpp
         Source/UI/ThemeFile.cpp
         Source/UI/TerminalColorProbe.cpp)
 
@@ -481,6 +482,7 @@ if (NED_BUILD_TESTS)
             Tests/LinkTest.cpp
             Tests/PerformanceTest.cpp
             Tests/ThemeTest.cpp
+            Tests/ThemePaletteTest.cpp
             Tests/SyntaxThemeTest.cpp
             Tests/ThemeFileTest.cpp
             Tests/TerminalColorProbeTest.cpp
