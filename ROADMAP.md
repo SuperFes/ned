@@ -922,7 +922,53 @@ each is, not by priority.
         they're per-cell accents, not the theme-wide wash-out. Follow-up hook: the
         ANSI pair could later be user-selectable/theme-file-expressible on capable
         terminals too (the serialization already round-trips `x:<n>` palette tokens).
-  - [ ] Rich built-in theme set. (Overlaps with Phase 6.)
+  - [ ] Rich built-in theme set — **planned 2026-08-20** (user ask), five phases, each
+        landing independently with tests:
+        - [x] *Phase 0 — `ThemePalette` + derivation* (**shipped 2026-08-20**).
+          `UI/ThemePalette.h/.cpp`: an ~18-slot semantic palette (background/foreground/
+          subtle, the eight accent hues every published theme spec already provides in
+          some form, and UI-chrome slots) plus `ThemeFromPalette(name, palette)` — the
+          one place palette slots map to all ~70 `Theme` fields, so every derived theme
+          assigns roles identically and only the hues differ. Rationale: hand-authoring
+          70 fields × ~20 themes would drift and never finish; cloned themes become
+          transcriptions of their official palettes. Derived shades (dim tab-bar text,
+          disabled scroll bar, execution-line wash, the focused-gradient 60% accent
+          pull DarkTheme documents) go through `Color::Interpolate`, not per-theme
+          literals. Tests include an automated contrast floor (relative-luminance
+          delta between `background` and every serialized `*_foreground` field) — the
+          check that makes the high-contrast set mean something and catches the
+          black-on-black class of bug for every future theme. The hand-built
+          Dark/Light/ANSI themes stay untouched.
+        - [ ] *Phase 1 — registry + selection plumbing.* `ThemeByName`/`ThemeNames`
+          (the `BundledModeFactories` pattern); `ned/set-theme` Janet binding
+          (mutex-guarded static, `TabWidth.h` pattern) read at main.cpp's selection
+          point — precedence: init.janet `set-theme` > `--detect-theme` file >
+          `DarkTheme`. Plus the theme picker (user ask): a `select-theme` fuzzy
+          selector riding the `HandleProjectFindFileKey` shape (cached candidate
+          list, Up/Down + re-rank per keystroke), with **live preview** — the
+          highlighted theme is applied in place on every selection change (the exact
+          swap mechanism the ANSI fallback proved safe: every widget holds
+          `const Theme&` into main.cpp's local and repaints fresh), Enter commits,
+          Escape/C-g restores a `Theme` snapshot taken at session start. Applying
+          routes through a main.cpp-wired callback (which also keeps the
+          limited-terminal `AnsiFallbackFor` gate in the loop); interactive choice
+          deliberately not persisted in v1 — init.janet is the config surface,
+          Emacs' own `load-theme` convention.
+        - [ ] *Phase 2 — the original eight.* major-dark/-light (vivid saturated),
+          minor-dark/-light (muted/pastel), high-contrast-dark/-light (pure
+          black/white backgrounds, tested against a raised contrast floor),
+          mono-dark/-light (single-hue ramps; needs a small derivation variant since
+          accent hues collapse — bold/italic/underline carry the semantics instead).
+        - [ ] *Phase 3 — clones (~14).* Solarized dark/light, Gruvbox dark/light,
+          Nord, Dracula, Monokai, One Dark/One Light, Catppuccin Mocha/Latte, Tokyo
+          Night night/day (stretch: Rosé Pine, Everforest, Zenburn, remaining
+          Catppuccin flavors). All MIT-licensed palettes; keep the real names
+          (universal editor practice) with an attribution comment + upstream URL per
+          palette. Per clone: transcribe official hex → `ThemePalette`, then a
+          scripted tmux `capture-pane -e` sweep for eyeball review against reference
+          screenshots.
+        - [ ] *Phase 4 — polish.* The sweep script kept in-repo, docs, and the
+          `--detect-theme` precedence note.
 - **Companion tooling** (standalone utility programs shipped alongside `ned`, not part of
   the editor binary itself — the user's own framing: "towards the end of our dev, maybe
   they even belong in their own phase, when we're starting to setup the outside tooling")
