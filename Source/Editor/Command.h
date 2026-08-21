@@ -91,6 +91,10 @@ enum class InteractiveRequest { None,
                                 // live-previewed before Enter commits -- see
                                 // BufferView::HandleSelectThemeKey.
                                 SelectTheme,
+                                // theme-editing follow-up: one-shot direct action (no prompt) --
+                                // writes the currently-active theme out as an editable
+                                // theme.janet; see BufferView::StartInteractiveSession's case.
+                                SaveTheme,
                                 // kmacro-start-macro/kmacro-end-or-call-macro follow-up: also
                                 // one-shot direct actions (BufferView::StartInteractiveSession
                                 // acts on them immediately, inputMode_ stays Normal), not

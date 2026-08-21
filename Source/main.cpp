@@ -455,6 +455,27 @@ int main(int argc, char** argv) {
         return ned::ui::DarkTheme();
     }();
 
+    // theme-editing follow-up: init.janet's accumulated (ned/theme-set ...)
+    // overrides, applied on top of whichever base won above -- typically a
+    // whole (dofile ".../theme.janet") worth from save-theme's output, which
+    // sets every field and makes the base moot; a handful of targeted
+    // tweaks over a named theme works the same way. Insertion order, so a
+    // later call for the same key wins. Unknown keys/tokens are counted and
+    // reported once rather than silently dropped -- unlike a theme *file*'s
+    // forward-compatibility case, these were typed by the user against this
+    // exact build, so a typo'd key is worth a message.
+    {
+        int rejected = 0;
+        for (const auto& [key, token] : ned::editor::ThemeColorOverrides()) {
+            if (!ned::ui::SetThemeColorByKey(theme, key, token)) {
+                ++rejected;
+            }
+        }
+        if (rejected > 0) {
+            statusMessage = std::to_string(rejected) + " unrecognized ned/theme-set key(s)/color(s) ignored";
+        }
+    }
+
     // FTXUI -> Notcurses migration: every widget is still heap-allocated
     // via shared_ptr, but no longer because anything requires it the way
     // ftxui::ComponentBase did -- ned::ui::Widget has no such ownership

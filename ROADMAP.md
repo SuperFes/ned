@@ -1012,6 +1012,42 @@ each is, not by priority.
           registry growth. Stretch flavors (Rosé Pine, Everforest, Zenburn,
           Catppuccin Frappé/Macchiato, Tokyo Night Storm) stay deferred — each is
           one palette literal away when wanted.
+        - [x] *Fuchsia* (user request, **shipped 2026-08-20**) — the first
+          signature-hue original beyond the taxonomy: fuchsia (#f042d6) holds the
+          keyword slot *and* the whole chrome accent family, on a dark plum
+          background, with the supporting cast picked on the color wheel relative
+          to it (mint complement for strings, split-complementary teal for
+          functions, triadic-side gold/coral warmth, analogous
+          raspberry/pink/violet for the rest). Registered in `kOriginals`'
+          contrast/registration tests like the eight.
+        - [x] *Theme editing via theme.janet* (user request, **shipped 2026-08-20**).
+          `save-theme` (M-x) writes the currently-showing theme to
+          `$XDG_CONFIG_HOME/ned/theme.janet` as runnable Janet — one
+          `(ned/theme-set "<key>" "<color>")` per color — for hand-editing;
+          loading is a plain `(dofile ".../theme.janet")` from init.janet, zero
+          new machinery (the user's own redirect away from the first-cut
+          key=value target: "save to a theme.janet instead of some rando text
+          file"). `ned/theme-set` accumulates string overrides in
+          `Editor/ThemeSetting`'s store (never interpreting them); main.cpp
+          applies them over the selected base via the new
+          `ui::SetThemeColorByKey` after init.janet loads, reporting a count of
+          typo'd keys/colors rather than silently dropping them. Enabling
+          refactor with a real bug found: SerializeTheme/ParseTheme were a
+          hand-mirrored serializer + 54-branch parser that had silently
+          drifted — the 19 per-SyntaxClass colors added since
+          bundle-remaining-grammars were never serialized at all (fine for
+          --detect-theme's chrome-focused output, fatal for an edit-and-reload
+          round-trip). Both now walk one shared key table
+          (`ThemeFile.cpp`'s `kColorKeys`/`kBrushKeys`), making that drift
+          structurally impossible; the gradient keys' hex-only restriction was
+          dropped too (a Palette16 endpoint is genuinely meaningful since the
+          ANSI themes). theme.txt stays as --detect-theme's cache format,
+          same keys. Round-trip losslessness is tested (generated Janet
+          re-applied over a mismatched base serializes identically) and the
+          whole loop was verified live: pick fuchsia → save-theme → hand-edit
+          keyword color in the file → relaunch with the dofile line → edited
+          color painting. Bold/italic still don't round-trip (the pre-existing
+          Brush limitation, unchanged).
         - [ ] *Phase 4 — polish.* The sweep script kept in-repo, docs, and the
           `--detect-theme` precedence note.
 - **Companion tooling** (standalone utility programs shipped alongside `ned`, not part of

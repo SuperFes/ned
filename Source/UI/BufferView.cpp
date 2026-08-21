@@ -33,6 +33,7 @@
 #include "KeyTranslation.h"
 #include "Text/BinaryDetect.h"
 #include "Text/Utf8.h"
+#include "UI/ThemeFile.h"
 #include "UI/ThemeRegistry.h"
 
 namespace ned::ui {
@@ -3710,6 +3711,21 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             RefreshSelectThemeStatus();
             return;
         }
+        // theme-editing follow-up: one-shot direct action, ToggleProjectSidebar's
+        // shape. Writes whatever theme is *currently showing* -- picker-
+        // committed, ned/set-theme'd, override-adjusted, or the ANSI
+        // fallback -- as runnable Janet, so "pick something close, save it,
+        // edit the file" is the whole theme-authoring workflow.
+        case editor::InteractiveRequest::SaveTheme:
+            try {
+                const std::filesystem::path path = ThemeJanetFilePath();
+                SaveThemeJanetFile(theme_, path);
+                statusMessage_ = "Saved theme to " + path.string();
+            }
+            catch (const std::exception& e) {
+                statusMessage_ = e.what();
+            }
+            return;
         // kmacro-start-macro/kmacro-end-or-call-macro follow-up: one-shot
         // direct actions, same shape as ToggleProjectSidebar -- inputMode_
         // stays Normal, no prompt session. The actual recording state lives

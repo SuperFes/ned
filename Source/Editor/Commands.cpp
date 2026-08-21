@@ -1285,6 +1285,13 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                       [](CommandContext& context) {
                           context.interactiveRequest = InteractiveRequest::SelectTheme;
                       });
+    // theme-editing follow-up: M-x only, like select-theme above.
+    registry.Register("save-theme",
+                      "Write the active theme to theme.janet (one ned/theme-set call per color) for hand-editing; "
+                      "load it from init.janet with (dofile ...) to make it the startup theme.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::SaveTheme;
+                      });
 
     registry.Register("kmacro-start-macro", "Begin recording a keyboard macro.", [](CommandContext& context) {
         context.interactiveRequest = InteractiveRequest::StartKbdMacro;

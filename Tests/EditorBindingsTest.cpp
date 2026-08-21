@@ -17,6 +17,7 @@
 #include "Editor/ScratchPad.h"
 #include "Editor/ScriptingSession.h"
 #include "Editor/SyntaxTheme.h"
+#include "Editor/ThemeSetting.h"
 #include "Janet/EditorBindings.h"
 #include "Janet/Environment.h"
 #include "Janet/Value.h"
@@ -380,4 +381,26 @@ TEST_CASE("ned/set-lsp-command with an empty argv clears the configured command"
 
     env.DoString(R"((ned/set-lsp-command "ned-editor-bindings-test-clear" []))");
     REQUIRE_FALSE(ned::editor::lsp::LspServerCommand("ned-editor-bindings-test-clear").has_value());
+}
+
+// theme-editing follow-up: ned/theme-set is pure accumulation into the
+// ThemeSetting override store -- interpretation (key validation, color
+// parsing) happens in main.cpp via ui::SetThemeColorByKey, deliberately not
+// here (see the binding's own comment).
+TEST_CASE("ned/theme-set accumulates keyed overrides in insertion order", "[EditorBindings]") {
+    ned::janet::Environment& env = ned_tests::TestEnvironment();
+    InstallEditorBindings(env);
+    ned::editor::ClearThemeColorOverrides();
+
+    env.DoString(R"((ned/theme-set "background" "#123456"))");
+    env.DoString(R"((ned/theme-set "keyword_foreground" "x:4"))");
+    env.DoString(R"((ned/theme-set "background" "#654321"))"); // later same-key call appends; application order makes it win
+
+    const auto overrides = ned::editor::ThemeColorOverrides();
+    REQUIRE(overrides.size() == 3);
+    REQUIRE(overrides[0] == std::pair<std::string, std::string>{"background", "#123456"});
+    REQUIRE(overrides[1] == std::pair<std::string, std::string>{"keyword_foreground", "x:4"});
+    REQUIRE(overrides[2] == std::pair<std::string, std::string>{"background", "#654321"});
+
+    ned::editor::ClearThemeColorOverrides();
 }

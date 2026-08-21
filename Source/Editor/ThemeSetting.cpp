@@ -28,4 +28,28 @@ std::string PreferredThemeName() {
     return NameStorage();
 }
 
+namespace {
+
+    std::vector<std::pair<std::string, std::string>>& OverrideStorage() {
+        static std::vector<std::pair<std::string, std::string>> overrides;
+        return overrides;
+    }
+
+} // namespace
+
+void AddThemeColorOverride(const std::string& key, const std::string& token) {
+    const std::lock_guard<std::mutex> lock(NameMutex());
+    OverrideStorage().emplace_back(key, token);
+}
+
+std::vector<std::pair<std::string, std::string>> ThemeColorOverrides() {
+    const std::lock_guard<std::mutex> lock(NameMutex());
+    return OverrideStorage();
+}
+
+void ClearThemeColorOverrides() {
+    const std::lock_guard<std::mutex> lock(NameMutex());
+    OverrideStorage().clear();
+}
+
 } // namespace ned::editor

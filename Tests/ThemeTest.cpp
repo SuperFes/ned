@@ -126,16 +126,12 @@ void RequireAnsiRestricted(const Theme& theme) {
 } // namespace
 
 TEST_CASE("ANSI fallback themes use only palette 0-7 and default colors", "[Theme]") {
+    // SerializeTheme covers every Color field since the theme-editing
+    // follow-up's shared key table, so the serialized walk alone is the
+    // whole theme now (was: markupMarkerForeground needed a separate direct
+    // check).
     RequireAnsiRestricted(AnsiDarkTheme());
     RequireAnsiRestricted(AnsiLightTheme());
-
-    // markupMarkerForeground is the one Color field SerializeTheme doesn't
-    // cover -- checked directly so the restriction genuinely holds
-    // theme-wide.
-    for (const Theme& theme : {AnsiDarkTheme(), AnsiLightTheme()}) {
-        REQUIRE(theme.markupMarkerForeground.kind != Color::Kind::TrueColor);
-        REQUIRE(theme.markupMarkerForeground.paletteIndex <= 7);
-    }
 }
 
 TEST_CASE("ANSI fallback themes flatten both mode-line gradients", "[Theme]") {

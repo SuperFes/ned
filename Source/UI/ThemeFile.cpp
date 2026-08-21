@@ -9,79 +9,155 @@ namespace ned::ui {
 
 namespace {
 
-    // mode_line_gradient_start/end only ever accept the hex form -- a
-    // gradient endpoint can't meaningfully be "default" or a palette index,
-    // even though Theme.h's own field type (Color) doesn't restrict that at
-    // the type level (see that field's own comment for why). ColorToToken/
-    // ParseColorToken (used everywhere else in this file) now live in
-    // Theme.h/.cpp -- Janet-configurable-syntax-theme follow-up, needed by
-    // Theme::BrushFor()'s override merge too, not just this file's own
-    // save/load.
-    std::optional<Color> ParseTrueColorToken(std::string_view token) {
-        const auto color = ParseColorToken(token);
-        return (color && color->kind == Color::Kind::TrueColor) ? color : std::nullopt;
-    }
+    // The one key<->field table both SerializeTheme and ParseTheme walk
+    // (theme-editing follow-up) -- replaces the old hand-mirrored pair of a
+    // 50-line serializer and a 50-branch parser, which had silently drifted:
+    // every per-SyntaxClass color added since the bundle-remaining-grammars
+    // follow-up (function/type/constant/variable/..., 19 fields) was never
+    // serialized at all, fine for --detect-theme's chrome-only output but
+    // fatal for save-theme's "write it out, hand-edit it, load it back"
+    // round-trip. A shared table makes that drift structurally impossible:
+    // a field is either here (serialized AND parsed) or not.
+    //
+    // Key names are the file format -- existing keys must never be renamed
+    // (older theme.txt files keep working; unrecognized keys are ignored on
+    // parse for forward compatibility, see ParseTheme).
+    struct ThemeColorKey {
+        std::string_view key;
+        ui::Color ui::Theme::* field;
+    };
+
+    constexpr ThemeColorKey kColorKeys[] = {
+        {"background", &Theme::background},
+        {"default_foreground", &Theme::defaultForeground},
+        {"comment_foreground", &Theme::commentForeground},
+        {"doc_comment_foreground", &Theme::docCommentForeground},
+        {"string_foreground", &Theme::stringForeground},
+        {"string_escape_foreground", &Theme::stringEscapeForeground},
+        {"keyword_foreground", &Theme::keywordForeground},
+        {"control_keyword_foreground", &Theme::controlKeywordForeground},
+        {"keyword_modifier_foreground", &Theme::keywordModifierForeground},
+        {"number_foreground", &Theme::numberForeground},
+        {"function_foreground", &Theme::functionForeground},
+        {"function_builtin_foreground", &Theme::functionBuiltinForeground},
+        {"method_foreground", &Theme::methodForeground},
+        {"constructor_foreground", &Theme::constructorForeground},
+        {"type_foreground", &Theme::typeForeground},
+        {"type_builtin_foreground", &Theme::typeBuiltinForeground},
+        {"return_type_foreground", &Theme::returnTypeForeground},
+        {"constant_foreground", &Theme::constantForeground},
+        {"constant_builtin_foreground", &Theme::constantBuiltinForeground},
+        {"variable_foreground", &Theme::variableForeground},
+        {"variable_builtin_foreground", &Theme::variableBuiltinForeground},
+        {"parameter_foreground", &Theme::parameterForeground},
+        {"property_foreground", &Theme::propertyForeground},
+        {"operator_foreground", &Theme::operatorForeground},
+        {"punctuation_foreground", &Theme::punctuationForeground},
+        {"tag_foreground", &Theme::tagForeground},
+        {"attribute_foreground", &Theme::attributeForeground},
+        {"namespace_foreground", &Theme::namespaceForeground},
+        {"label_foreground", &Theme::labelForeground},
+        {"include_path_foreground", &Theme::includePathForeground},
+        {"markup_marker_foreground", &Theme::markupMarkerForeground},
+        {"mode_line_foreground", &Theme::modeLineForeground},
+        // Gradient endpoints accept any color token now, not hex-only as
+        // originally documented: the ANSI fallback themes made a Palette16
+        // endpoint genuinely meaningful (equal endpoints, which
+        // Color::Interpolate returns unchanged -- see its own comment), so
+        // the old restriction would break their round-trip for no benefit.
+        {"mode_line_gradient_start", &Theme::modeLineGradientStart},
+        {"mode_line_gradient_end", &Theme::modeLineGradientEnd},
+        {"mode_line_focused_gradient_start", &Theme::modeLineFocusedGradientStart},
+        {"mode_line_focused_gradient_end", &Theme::modeLineFocusedGradientEnd},
+        {"line_number_foreground", &Theme::lineNumberForeground},
+        {"current_line_number_foreground", &Theme::currentLineNumberForeground},
+        {"selection_background", &Theme::selectionBackground},
+        {"isearch_match_background", &Theme::isearchMatchBackground},
+        {"binary_foreground", &Theme::binaryForeground},
+        {"ghost_text_foreground", &Theme::ghostTextForeground},
+        {"link_foreground", &Theme::linkForeground},
+        {"truncation_indicator_foreground", &Theme::truncationIndicatorForeground},
+        {"unsaved_change_indicator", &Theme::unsavedChangeIndicator},
+        {"diagnostic_error", &Theme::diagnosticError},
+        {"diagnostic_warning", &Theme::diagnosticWarning},
+        {"diagnostic_information", &Theme::diagnosticInformation},
+        {"diagnostic_hint", &Theme::diagnosticHint},
+        {"breakpoint_marker", &Theme::breakpointMarker},
+        {"execution_marker", &Theme::executionMarker},
+        {"execution_line_background", &Theme::executionLineBackground},
+        {"headline_level1_foreground", &Theme::headlineLevel1Foreground},
+        {"headline_level2_foreground", &Theme::headlineLevel2Foreground},
+        {"headline_level3_foreground", &Theme::headlineLevel3Foreground},
+        {"todo_keyword_foreground", &Theme::todoKeywordForeground},
+        {"done_keyword_foreground", &Theme::doneKeywordForeground},
+        {"checkbox_foreground", &Theme::checkboxForeground},
+        {"underline_foreground", &Theme::underlineForeground},
+        {"strikethrough_foreground", &Theme::strikethroughForeground},
+    };
+
+    // Brush-valued fields serialize as <prefix>_background/<prefix>_foreground
+    // pairs (bold/italic still deliberately don't round-trip -- the same
+    // pre-existing limitation as always, see ThemeFile.h).
+    struct ThemeBrushKey {
+        std::string_view prefix;
+        ui::Brush ui::Theme::* field;
+    };
+
+    constexpr ThemeBrushKey kBrushKeys[] = {
+        {"echo_area", &Theme::echoArea},
+        {"tab_bar", &Theme::tabBar},
+        {"active_tab", &Theme::activeTab},
+        {"scroll_bar", &Theme::scrollBar},
+        {"scroll_bar_disabled", &Theme::scrollBarDisabled},
+        {"border", &Theme::border},
+        {"border_accent", &Theme::borderAccent},
+    };
 
 } // namespace
 
 std::string SerializeTheme(const Theme& theme) {
     std::ostringstream out;
-    out << "background=" << ColorToToken(theme.background) << '\n';
-    out << "default_foreground=" << ColorToToken(theme.defaultForeground) << '\n';
-    out << "comment_foreground=" << ColorToToken(theme.commentForeground) << '\n';
-    out << "string_foreground=" << ColorToToken(theme.stringForeground) << '\n';
-    out << "keyword_foreground=" << ColorToToken(theme.keywordForeground) << '\n';
-    out << "number_foreground=" << ColorToToken(theme.numberForeground) << '\n';
-    out << "mode_line_foreground=" << ColorToToken(theme.modeLineForeground) << '\n';
-    out << "mode_line_gradient_start=" << ColorToToken(theme.modeLineGradientStart) << '\n';
-    out << "mode_line_gradient_end=" << ColorToToken(theme.modeLineGradientEnd) << '\n';
-    out << "echo_area_background=" << ColorToToken(theme.echoArea.background) << '\n';
-    out << "echo_area_foreground=" << ColorToToken(theme.echoArea.foreground) << '\n';
-    out << "line_number_foreground=" << ColorToToken(theme.lineNumberForeground) << '\n';
-    out << "current_line_number_foreground=" << ColorToToken(theme.currentLineNumberForeground) << '\n';
-    out << "selection_background=" << ColorToToken(theme.selectionBackground) << '\n';
-    out << "isearch_match_background=" << ColorToToken(theme.isearchMatchBackground) << '\n';
-    out << "tab_bar_background=" << ColorToToken(theme.tabBar.background) << '\n';
-    out << "tab_bar_foreground=" << ColorToToken(theme.tabBar.foreground) << '\n';
-    out << "active_tab_background=" << ColorToToken(theme.activeTab.background) << '\n';
-    out << "active_tab_foreground=" << ColorToToken(theme.activeTab.foreground) << '\n';
-    out << "scroll_bar_background=" << ColorToToken(theme.scrollBar.background) << '\n';
-    out << "scroll_bar_foreground=" << ColorToToken(theme.scrollBar.foreground) << '\n';
-    out << "scroll_bar_disabled_background=" << ColorToToken(theme.scrollBarDisabled.background) << '\n';
-    out << "scroll_bar_disabled_foreground=" << ColorToToken(theme.scrollBarDisabled.foreground) << '\n';
-    out << "binary_foreground=" << ColorToToken(theme.binaryForeground) << '\n';
-    out << "ghost_text_foreground=" << ColorToToken(theme.ghostTextForeground) << '\n';
-    out << "link_foreground=" << ColorToToken(theme.linkForeground) << '\n';
-    out << "truncation_indicator_foreground=" << ColorToToken(theme.truncationIndicatorForeground) << '\n';
-    out << "unsaved_change_indicator=" << ColorToToken(theme.unsavedChangeIndicator) << '\n';
-    out << "diagnostic_error=" << ColorToToken(theme.diagnosticError) << '\n';
-    out << "diagnostic_warning=" << ColorToToken(theme.diagnosticWarning) << '\n';
-    out << "diagnostic_information=" << ColorToToken(theme.diagnosticInformation) << '\n';
-    out << "diagnostic_hint=" << ColorToToken(theme.diagnosticHint) << '\n';
-    out << "breakpoint_marker=" << ColorToToken(theme.breakpointMarker) << '\n';
-    out << "execution_marker=" << ColorToToken(theme.executionMarker) << '\n';
-    out << "execution_line_background=" << ColorToToken(theme.executionLineBackground) << '\n';
-    out << "headline_level1_foreground=" << ColorToToken(theme.headlineLevel1Foreground) << '\n';
-    out << "headline_level2_foreground=" << ColorToToken(theme.headlineLevel2Foreground) << '\n';
-    out << "headline_level3_foreground=" << ColorToToken(theme.headlineLevel3Foreground) << '\n';
-    out << "todo_keyword_foreground=" << ColorToToken(theme.todoKeywordForeground) << '\n';
-    out << "done_keyword_foreground=" << ColorToToken(theme.doneKeywordForeground) << '\n';
-    out << "checkbox_foreground=" << ColorToToken(theme.checkboxForeground) << '\n';
-    out << "underline_foreground=" << ColorToToken(theme.underlineForeground) << '\n';
-    out << "strikethrough_foreground=" << ColorToToken(theme.strikethroughForeground) << '\n';
-    out << "keyword_modifier_foreground=" << ColorToToken(theme.keywordModifierForeground) << '\n';
-    out << "method_foreground=" << ColorToToken(theme.methodForeground) << '\n';
-    out << "constructor_foreground=" << ColorToToken(theme.constructorForeground) << '\n';
-    out << "label_foreground=" << ColorToToken(theme.labelForeground) << '\n';
-    out << "return_type_foreground=" << ColorToToken(theme.returnTypeForeground) << '\n';
-    out << "include_path_foreground=" << ColorToToken(theme.includePathForeground) << '\n';
-    out << "border_background=" << ColorToToken(theme.border.background) << '\n';
-    out << "border_foreground=" << ColorToToken(theme.border.foreground) << '\n';
-    out << "border_accent_background=" << ColorToToken(theme.borderAccent.background) << '\n';
-    out << "border_accent_foreground=" << ColorToToken(theme.borderAccent.foreground) << '\n';
-    out << "mode_line_focused_gradient_start=" << ColorToToken(theme.modeLineFocusedGradientStart) << '\n';
-    out << "mode_line_focused_gradient_end=" << ColorToToken(theme.modeLineFocusedGradientEnd) << '\n';
+    for (const ThemeColorKey& entry : kColorKeys) {
+        out << entry.key << '=' << ColorToToken(theme.*entry.field) << '\n';
+    }
+    for (const ThemeBrushKey& entry : kBrushKeys) {
+        out << entry.prefix << "_background=" << ColorToToken((theme.*entry.field).background) << '\n';
+        out << entry.prefix << "_foreground=" << ColorToToken((theme.*entry.field).foreground) << '\n';
+    }
     return out.str();
+}
+
+bool SetThemeColorByKey(Theme& theme, std::string_view key, std::string_view token) {
+    // A malformed token assigns nothing, same as ParseTheme always did.
+    const std::optional<Color> color = ParseColorToken(token);
+    if (!color) {
+        return false;
+    }
+
+    for (const ThemeColorKey& entry : kColorKeys) {
+        if (entry.key == key) {
+            theme.*entry.field = *color;
+            return true;
+        }
+    }
+    for (const ThemeBrushKey& entry : kBrushKeys) {
+        // Suffix-checked, so the "scroll_bar" prefix can never claim
+        // "scroll_bar_disabled_foreground" -- the non-matching suffix
+        // just lets the scan continue to the right entry.
+        if (!key.starts_with(entry.prefix)) {
+            continue;
+        }
+        const std::string_view suffix = key.substr(entry.prefix.size());
+        if (suffix == "_background") {
+            (theme.*entry.field).background = *color;
+            return true;
+        }
+        if (suffix == "_foreground") {
+            (theme.*entry.field).foreground = *color;
+            return true;
+        }
+    }
+    return false; // unrecognized key
 }
 
 Theme ParseTheme(std::string_view text, const Theme& base) {
@@ -94,233 +170,32 @@ Theme ParseTheme(std::string_view text, const Theme& base) {
         if (eq == std::string::npos) {
             continue;
         }
-        const std::string_view key   = std::string_view(line).substr(0, eq);
-        const std::string_view value = std::string_view(line).substr(eq + 1);
-
-        if (key == "background") {
-            if (const auto c = ParseColorToken(value))
-                result.background = *c;
-        }
-        else if (key == "default_foreground") {
-            if (const auto c = ParseColorToken(value))
-                result.defaultForeground = *c;
-        }
-        else if (key == "comment_foreground") {
-            if (const auto c = ParseColorToken(value))
-                result.commentForeground = *c;
-        }
-        else if (key == "string_foreground") {
-            if (const auto c = ParseColorToken(value))
-                result.stringForeground = *c;
-        }
-        else if (key == "keyword_foreground") {
-            if (const auto c = ParseColorToken(value))
-                result.keywordForeground = *c;
-        }
-        else if (key == "number_foreground") {
-            if (const auto c = ParseColorToken(value))
-                result.numberForeground = *c;
-        }
-        else if (key == "mode_line_foreground") {
-            if (const auto c = ParseColorToken(value))
-                result.modeLineForeground = *c;
-        }
-        else if (key == "mode_line_gradient_start") {
-            if (const auto c = ParseTrueColorToken(value))
-                result.modeLineGradientStart = *c;
-        }
-        else if (key == "mode_line_gradient_end") {
-            if (const auto c = ParseTrueColorToken(value))
-                result.modeLineGradientEnd = *c;
-        }
-        else if (key == "echo_area_background") {
-            if (const auto c = ParseColorToken(value))
-                result.echoArea.background = *c;
-        }
-        else if (key == "echo_area_foreground") {
-            if (const auto c = ParseColorToken(value))
-                result.echoArea.foreground = *c;
-        }
-        else if (key == "line_number_foreground") {
-            if (const auto c = ParseColorToken(value))
-                result.lineNumberForeground = *c;
-        }
-        else if (key == "current_line_number_foreground") {
-            if (const auto c = ParseColorToken(value))
-                result.currentLineNumberForeground = *c;
-        }
-        else if (key == "selection_background") {
-            if (const auto c = ParseColorToken(value))
-                result.selectionBackground = *c;
-        }
-        else if (key == "isearch_match_background") {
-            if (const auto c = ParseColorToken(value))
-                result.isearchMatchBackground = *c;
-        }
-        else if (key == "tab_bar_background") {
-            if (const auto c = ParseColorToken(value))
-                result.tabBar.background = *c;
-        }
-        else if (key == "tab_bar_foreground") {
-            if (const auto c = ParseColorToken(value))
-                result.tabBar.foreground = *c;
-        }
-        else if (key == "active_tab_background") {
-            if (const auto c = ParseColorToken(value))
-                result.activeTab.background = *c;
-        }
-        else if (key == "active_tab_foreground") {
-            if (const auto c = ParseColorToken(value))
-                result.activeTab.foreground = *c;
-        }
-        else if (key == "scroll_bar_background") {
-            if (const auto c = ParseColorToken(value))
-                result.scrollBar.background = *c;
-        }
-        else if (key == "scroll_bar_foreground") {
-            if (const auto c = ParseColorToken(value))
-                result.scrollBar.foreground = *c;
-        }
-        else if (key == "scroll_bar_disabled_background") {
-            if (const auto c = ParseColorToken(value))
-                result.scrollBarDisabled.background = *c;
-        }
-        else if (key == "scroll_bar_disabled_foreground") {
-            if (const auto c = ParseColorToken(value))
-                result.scrollBarDisabled.foreground = *c;
-        }
-        else if (key == "binary_foreground") {
-            if (const auto c = ParseColorToken(value))
-                result.binaryForeground = *c;
-        }
-        else if (key == "ghost_text_foreground") {
-            if (const auto c = ParseColorToken(value))
-                result.ghostTextForeground = *c;
-        }
-        else if (key == "link_foreground") {
-            if (const auto c = ParseColorToken(value))
-                result.linkForeground = *c;
-        }
-        else if (key == "truncation_indicator_foreground") {
-            if (const auto c = ParseColorToken(value))
-                result.truncationIndicatorForeground = *c;
-        }
-        else if (key == "unsaved_change_indicator") {
-            if (const auto c = ParseColorToken(value))
-                result.unsavedChangeIndicator = *c;
-        }
-        else if (key == "diagnostic_error") {
-            if (const auto c = ParseColorToken(value))
-                result.diagnosticError = *c;
-        }
-        else if (key == "diagnostic_warning") {
-            if (const auto c = ParseColorToken(value))
-                result.diagnosticWarning = *c;
-        }
-        else if (key == "diagnostic_information") {
-            if (const auto c = ParseColorToken(value))
-                result.diagnosticInformation = *c;
-        }
-        else if (key == "diagnostic_hint") {
-            if (const auto c = ParseColorToken(value))
-                result.diagnosticHint = *c;
-        }
-        else if (key == "breakpoint_marker") {
-            if (const auto c = ParseColorToken(value))
-                result.breakpointMarker = *c;
-        }
-        else if (key == "execution_marker") {
-            if (const auto c = ParseColorToken(value))
-                result.executionMarker = *c;
-        }
-        else if (key == "execution_line_background") {
-            if (const auto c = ParseColorToken(value))
-                result.executionLineBackground = *c;
-        }
-        else if (key == "headline_level1_foreground") {
-            if (const auto c = ParseColorToken(value))
-                result.headlineLevel1Foreground = *c;
-        }
-        else if (key == "headline_level2_foreground") {
-            if (const auto c = ParseColorToken(value))
-                result.headlineLevel2Foreground = *c;
-        }
-        else if (key == "headline_level3_foreground") {
-            if (const auto c = ParseColorToken(value))
-                result.headlineLevel3Foreground = *c;
-        }
-        else if (key == "todo_keyword_foreground") {
-            if (const auto c = ParseColorToken(value))
-                result.todoKeywordForeground = *c;
-        }
-        else if (key == "done_keyword_foreground") {
-            if (const auto c = ParseColorToken(value))
-                result.doneKeywordForeground = *c;
-        }
-        else if (key == "checkbox_foreground") {
-            if (const auto c = ParseColorToken(value))
-                result.checkboxForeground = *c;
-        }
-        else if (key == "underline_foreground") {
-            if (const auto c = ParseColorToken(value))
-                result.underlineForeground = *c;
-        }
-        else if (key == "strikethrough_foreground") {
-            if (const auto c = ParseColorToken(value))
-                result.strikethroughForeground = *c;
-        }
-        else if (key == "keyword_modifier_foreground") {
-            if (const auto c = ParseColorToken(value))
-                result.keywordModifierForeground = *c;
-        }
-        else if (key == "method_foreground") {
-            if (const auto c = ParseColorToken(value))
-                result.methodForeground = *c;
-        }
-        else if (key == "constructor_foreground") {
-            if (const auto c = ParseColorToken(value))
-                result.constructorForeground = *c;
-        }
-        else if (key == "label_foreground") {
-            if (const auto c = ParseColorToken(value))
-                result.labelForeground = *c;
-        }
-        else if (key == "return_type_foreground") {
-            if (const auto c = ParseColorToken(value))
-                result.returnTypeForeground = *c;
-        }
-        else if (key == "include_path_foreground") {
-            if (const auto c = ParseColorToken(value))
-                result.includePathForeground = *c;
-        }
-        else if (key == "border_background") {
-            if (const auto c = ParseColorToken(value))
-                result.border.background = *c;
-        }
-        else if (key == "border_foreground") {
-            if (const auto c = ParseColorToken(value))
-                result.border.foreground = *c;
-        }
-        else if (key == "border_accent_background") {
-            if (const auto c = ParseColorToken(value))
-                result.borderAccent.background = *c;
-        }
-        else if (key == "border_accent_foreground") {
-            if (const auto c = ParseColorToken(value))
-                result.borderAccent.foreground = *c;
-        }
-        else if (key == "mode_line_focused_gradient_start") {
-            if (const auto c = ParseTrueColorToken(value))
-                result.modeLineFocusedGradientStart = *c;
-        }
-        else if (key == "mode_line_focused_gradient_end") {
-            if (const auto c = ParseTrueColorToken(value))
-                result.modeLineFocusedGradientEnd = *c;
-        }
-        // Unrecognized keys are ignored -- forward-compatible with older files.
+        // A false return (malformed value, unrecognized key) keeps base's
+        // own value -- ignored deliberately, forward-compatible with files
+        // written by newer versions.
+        SetThemeColorByKey(result, std::string_view(line).substr(0, eq), std::string_view(line).substr(eq + 1));
     }
 
     return result;
+}
+
+std::string SerializeThemeJanet(const Theme& theme) {
+    std::ostringstream out;
+    out << "# Generated by ned's save-theme command -- a snapshot of the theme that\n"
+           "# was active when it ran, as plain Janet. Edit freely; load it from\n"
+           "# init.janet with (dofile \"<this file's path>\") to make it the\n"
+           "# startup theme. Every color is set explicitly, so the base theme\n"
+           "# underneath doesn't show through anywhere.\n";
+    for (const ThemeColorKey& entry : kColorKeys) {
+        out << "(ned/theme-set \"" << entry.key << "\" \"" << ColorToToken(theme.*entry.field) << "\")\n";
+    }
+    for (const ThemeBrushKey& entry : kBrushKeys) {
+        out << "(ned/theme-set \"" << entry.prefix << "_background\" \""
+            << ColorToToken((theme.*entry.field).background) << "\")\n";
+        out << "(ned/theme-set \"" << entry.prefix << "_foreground\" \""
+            << ColorToToken((theme.*entry.field).foreground) << "\")\n";
+    }
+    return out.str();
 }
 
 std::filesystem::path ThemeFilePath() {
@@ -335,19 +210,34 @@ std::filesystem::path ThemeFilePath() {
     throw std::runtime_error("ned: cannot determine config directory (neither XDG_CONFIG_HOME nor HOME is set)");
 }
 
+std::filesystem::path ThemeJanetFilePath() {
+    return ThemeFilePath().parent_path() / "theme.janet";
+}
+
+namespace {
+
+    void WriteThemeContent(const std::string& content, const std::filesystem::path& path) {
+        std::filesystem::create_directories(path.parent_path());
+
+        std::ofstream file(path, std::ios::binary | std::ios::trunc);
+        if (!file) {
+            throw std::runtime_error("ned: cannot open theme file for writing: " + path.string());
+        }
+
+        file.write(content.data(), static_cast<std::streamsize>(content.size()));
+        if (!file) {
+            throw std::runtime_error("ned: error writing theme file: " + path.string());
+        }
+    }
+
+} // namespace
+
 void SaveThemeFile(const Theme& theme, const std::filesystem::path& path) {
-    std::filesystem::create_directories(path.parent_path());
+    WriteThemeContent(SerializeTheme(theme), path);
+}
 
-    std::ofstream file(path, std::ios::binary | std::ios::trunc);
-    if (!file) {
-        throw std::runtime_error("ned: cannot open theme file for writing: " + path.string());
-    }
-
-    const std::string content = SerializeTheme(theme);
-    file.write(content.data(), static_cast<std::streamsize>(content.size()));
-    if (!file) {
-        throw std::runtime_error("ned: error writing theme file: " + path.string());
-    }
+void SaveThemeJanetFile(const Theme& theme, const std::filesystem::path& path) {
+    WriteThemeContent(SerializeThemeJanet(theme), path);
 }
 
 std::optional<Theme> LoadThemeFile(const std::filesystem::path& path) {
