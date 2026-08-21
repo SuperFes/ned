@@ -103,3 +103,31 @@ TEST_CASE("BuildDetectedTheme derives the mode-line gradient from the detected b
     REQUIRE(theme.modeLineGradientStart.red > 0x80);
     REQUIRE(theme.modeLineGradientEnd.red < 0x80);
 }
+
+TEST_CASE("BuildDetectedTheme derives border chrome from the detected colors", "[TerminalColorProbe]") {
+    DetectedColors detected;
+    detected.background = Color::RGB(0x10, 0x10, 0x10);
+    detected.palette[5] = Color::RGB(0xc0, 0x40, 0xc0); // magenta -> border accent
+
+    const auto fallback = ned::ui::DarkTheme();
+    const auto theme    = BuildDetectedTheme(detected, fallback);
+
+    // Border line: a stronger tint of the detected background, not the fallback literal.
+    REQUIRE(theme.border.foreground == Color::RGB(0x10 + 45, 0x10 + 45, 0x10 + 45));
+    REQUIRE(theme.borderAccent.foreground == *detected.palette[5]);
+    // Focused gradient: pulled from the derived gradient toward the accent, so it
+    // must differ from both the fallback's literals and the plain derived gradient.
+    REQUIRE(theme.modeLineFocusedGradientStart != fallback.modeLineFocusedGradientStart);
+    REQUIRE(theme.modeLineFocusedGradientStart != theme.modeLineGradientStart);
+}
+
+TEST_CASE("BuildDetectedTheme keeps fallback border chrome when nothing was detected", "[TerminalColorProbe]") {
+    const DetectedColors detected;
+    const auto           fallback = ned::ui::DarkTheme();
+    const auto           theme    = BuildDetectedTheme(detected, fallback);
+
+    REQUIRE(theme.border == fallback.border);
+    REQUIRE(theme.borderAccent == fallback.borderAccent);
+    REQUIRE(theme.modeLineFocusedGradientStart == fallback.modeLineFocusedGradientStart);
+    REQUIRE(theme.modeLineFocusedGradientEnd == fallback.modeLineFocusedGradientEnd);
+}

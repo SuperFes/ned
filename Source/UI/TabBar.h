@@ -1,12 +1,22 @@
 //
-// A one-row tab bar listing every open buffer (tab-bar follow-up): the
-// active buffer's tab is drawn with a visually distinct brush, clicking a
-// tab switches to it (ActiveBuffer::Set), and the mouse wheel scrolls the
-// row horizontally when the tabs overflow the available width -- a `‹`/`›`
-// indicator (tab-close follow-up) appears at the corresponding edge whenever
-// there's more scrolled-past content in that direction, so the overflow is
-// visible rather than silently hidden. A visual complement to
-// switch-to-buffer, not a replacement for it.
+// A one-row tab bar listing every open buffer (tab-restyle follow-up: back
+// to one row -- the chrome redesign's second underline row read as too
+// tall in daily use). Each tab is its own distinct block on a row filled
+// with the buffer background, ending in a `▌` half-block cap drawn in the
+// tab's own block color (see kTabEndCap in the .cpp) -- the cap's
+// half-empty cell doubles as the separation between adjacent tabs, so the
+// strip never merges into one chrome-colored bar and needs no separate
+// gap column. The
+// active buffer's tab is drawn with a visually distinct brush -- and takes
+// the accent-tinted chrome background while an editor pane holds the
+// keyboard focus (see SetFocusProvider), the top-edge counterpart of the
+// focused mode-line gradient. Clicking a tab switches to it
+// (ActiveBuffer::Set), and the mouse wheel scrolls the row horizontally
+// when the tabs overflow the available width -- a `‹`/`›` indicator
+// (tab-close follow-up) appears at the corresponding edge whenever there's
+// more scrolled-past content in that direction, so the overflow is visible
+// rather than silently hidden. A visual complement to switch-to-buffer,
+// not a replacement for it.
 //
 // Each tab also has a close icon (`×`, tab-close follow-up) -- clicking it
 // requests closing that buffer via SetOnCloseRequest's handler rather than
@@ -50,6 +60,16 @@ class TabBar : public Widget {
     // to safely discard a modified buffer's changes on its own.
     void SetOnCloseRequest(std::function<void(text::Buffer&)> handler);
 
+    // Chrome-focus follow-up (retargeted by the tab-restyle follow-up from
+    // the removed underline row): when set and returning true, the active
+    // tab's block takes the accent-tinted chrome background
+    // (modeLineFocusedGradientStart) -- the same "this side has your
+    // keyboard" signal ProjectSidebar's accent frame gives when *it* is
+    // focused. Unset (the default, every pre-existing construction site
+    // and test) means never lit. main.cpp wires this to
+    // WindowManager::HasFocusedPane.
+    void SetFocusProvider(std::function<bool()> provider);
+
   private:
     // One tab's horizontal extent in unscrolled column space (i.e. before
     // subtracting scrollOffset_), plus which buffer it represents. Recomputed
@@ -71,6 +91,7 @@ class TabBar : public Widget {
     int scrollOffset_ = 0; // columns of tab content scrolled past on the left
 
     std::function<void(text::Buffer&)> onCloseRequest_;
+    std::function<bool()>              focusProvider_; // see SetFocusProvider
 };
 
 } // namespace ned::ui

@@ -43,7 +43,6 @@
 #include "UI/EventLoop.h"
 #include "UI/Layout.h"
 #include "UI/ProjectSidebar.h"
-#include "UI/SidebarToggle.h"
 #include "UI/TabBar.h"
 #include "UI/TerminalColorProbe.h"
 #include "UI/Theme.h"
@@ -474,14 +473,11 @@ int main(int argc, char** argv) {
         [wm = windowManager.get()]() -> ned::ui::ActiveBuffer& { return wm->FocusedActiveBuffer(); }, bufferList,
         theme);
 
-    // Always visible, even with the sidebar hidden -- the mouse-clickable
-    // way to show/hide ProjectSidebar (round-2 sidebar follow-up); C-c C-p
-    // does the same thing from the keyboard. Must live outside
-    // ProjectSidebar itself: once that widget's own .active flips false it
-    // stops being rendered entirely (see the Maybe() wrapping below), so a
-    // toggle drawn inside it would disappear along with it.
-    auto sidebarToggle = std::make_shared<ned::ui::SidebarToggle>(theme.scrollBar);
-
+    // Chrome-redesign follow-up: the old SidebarToggle («/») column is
+    // gone -- hiding the sidebar is a collapse to a 1-column border strip
+    // now (ProjectSidebar stays active and always paints *something*
+    // clickable; see its own header comment), so the "toggle must live
+    // outside the widget or it vanishes with it" problem no longer exists.
     auto projectSidebar = std::make_shared<ned::ui::ProjectSidebar>(
         [wm = windowManager.get()]() -> ned::ui::ActiveBuffer& { return wm->FocusedActiveBuffer(); }, bufferList,
         statusMessage, theme);
@@ -496,14 +492,23 @@ int main(int argc, char** argv) {
     projectSidebar->SetOnBinaryFileOpenRequest(
         [wm = windowManager.get()](const std::filesystem::path& path) { wm->RequestOpenBinaryFile(path); });
 
-    sidebarToggle->SetSidebar(projectSidebar.get());
+    // sidebar-keyboard-focus follow-up: Escape/C-g (or Enter opening a
+    // file) hands the keyboard back to the focused pane's BufferView --
+    // WindowManager::TakeFocus already handles the "no pane currently
+    // reports Focused()" state this necessarily runs in (the sidebar holds
+    // focus at that moment) via its first-leaf fallback.
+    projectSidebar->SetOnFocusReturn([wm = windowManager.get()] { wm->TakeFocus(); });
 
     // session-persistence slice 2: the restored session's sidebar state.
     // Applied before the first frame ever paints, so there's no visible
     // flash of the default state.
     if (restoredSession) {
         if (restoredSession->sidebarVisible) {
-            projectSidebar->active = *restoredSession->sidebarVisible;
+            // Chrome-redesign follow-up: hidden means collapsed-to-a-strip
+            // now, not Widget::active (see ProjectSidebar.h) -- the stored
+            // bool's meaning is unchanged, so old session files restore
+            // correctly.
+            projectSidebar->SetCollapsed(!*restoredSession->sidebarVisible);
         }
         if (restoredSession->sidebarWidth) {
             projectSidebar->SetWidth(*restoredSession->sidebarWidth);
@@ -522,6 +527,11 @@ int main(int argc, char** argv) {
     tabBar->SetOnCloseRequest(
         [wm = windowManager.get()](ned::text::Buffer& buffer) { wm->RequestCloseBuffer(buffer); });
 
+    // Chrome-focus follow-up: the tab underline is the editor region's
+    // frame -- lit in the accent while an editor pane holds the keyboard,
+    // the counterpart of ProjectSidebar's own focused accent frame.
+    tabBar->SetFocusProvider([wm = windowManager.get()] { return wm->HasFocusedPane(); });
+
     // ProjectSidebar's own width is drag-resizable at runtime (divider drag
     // -- see ProjectSidebar::UpdateResize), so it can't be a fixed value
     // computed once at composition time the way every other widget's is --
@@ -529,24 +539,26 @@ int main(int argc, char** argv) {
     // Container::Paint() call (the direct replacement for FTXUI's own
     // per-frame ElementDecorator lambda, confirmed during the original
     // TermOx -> FTXUI migration to be re-invoked every Render() call), so
-    // it always reflects whatever ProjectSidebar::Width() currently is.
-    // There's no Maybe(...)-equivalent wrapper needed for
-    // projectSidebar->active the way there was under FTXUI -- Container
-    // itself already skips an inactive child's layout/paint/event-dispatch
-    // entirely (see Layout.h's own header comment), so ProjectSidebar is
-    // just handed to bufferRow directly below.
+    // it always reflects whatever ProjectSidebar::Width() currently is --
+    // including the 1-column strip Width() reports while collapsed
+    // (chrome-redesign follow-up: hiding the sidebar is a collapse now,
+    // never an active-flag flip, so its double-click-to-expand border strip
+    // always stays laid out and clickable).
 
     // sidebar-header follow-up: tabBar now sits only above the pane area,
     // not above ProjectSidebar too -- ProjectSidebar spans the row that
     // used to belong to tabBar instead, using it for its own header (see
     // ProjectSidebar::Paint's own comment on that row).
+    // Back to Fixed(1) (tab-restyle follow-up): the chrome redesign's
+    // second underline row read as too tall in daily use -- distinct tab
+    // blocks and the active tab's own focus accent do that row's jobs now;
+    // see TabBar.h.
     Container mainColumn(Axis::Vertical, {
                                              {tabBar.get(), SizeSpec::Fixed(1)},
                                              {&windowManager->RootComponent(), SizeSpec::Flex()},
                                          });
 
     Container bufferRow(Axis::Horizontal, {
-                                              {sidebarToggle.get(), SizeSpec::Fixed(1)},
                                               {projectSidebar.get(), SizeSpec::DynamicFixed([raw = projectSidebar.get()] { return raw->Width(); })},
                                               {&mainColumn, SizeSpec::Flex()},
                                           });

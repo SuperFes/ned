@@ -2986,7 +2986,7 @@ TEST_CASE("Left-pressing inside BufferView takes keyboard focus", "[BufferView]"
     view.OnEvent(MousePress(0, 0)); // must not crash with no parent Container
 }
 
-TEST_CASE("C-c C-p toggles the registered project sidebar's active flag", "[BufferView]") {
+TEST_CASE("C-c C-p toggles the registered project sidebar's collapse state", "[BufferView]") {
     Fixture             fixture;
     ned::ui::BufferView view = fixture.View();
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
@@ -2994,16 +2994,36 @@ TEST_CASE("C-c C-p toggles the registered project sidebar's active flag", "[Buff
     ned::ui::ProjectSidebar sidebar(
         [&fixture]() -> ned::ui::ActiveBuffer& { return fixture.activeBuffer; }, fixture.bufferList, fixture.statusMessage,
         fixture.theme);
-    REQUIRE(sidebar.active); // starts visible
+    REQUIRE_FALSE(sidebar.Collapsed()); // starts expanded
     view.SetProjectSidebar(&sidebar);
 
     view.OnEvent(ned::ui::test::Ctrl('c'));
     view.OnEvent(ned::ui::test::Ctrl('p'));
-    REQUIRE_FALSE(sidebar.active);
+    REQUIRE(sidebar.Collapsed());
+    REQUIRE(sidebar.active); // chrome redesign: hiding collapses to a strip, never deactivates
 
     view.OnEvent(ned::ui::test::Ctrl('c'));
     view.OnEvent(ned::ui::test::Ctrl('p'));
-    REQUIRE(sidebar.active);
+    REQUIRE_FALSE(sidebar.Collapsed());
+}
+
+TEST_CASE("C-c p expands the sidebar if needed and hands it the keyboard focus", "[BufferView]") {
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
+
+    ned::ui::ProjectSidebar sidebar(
+        [&fixture]() -> ned::ui::ActiveBuffer& { return fixture.activeBuffer; }, fixture.bufferList, fixture.statusMessage,
+        fixture.theme);
+    sidebar.SetCollapsed(true);
+    view.SetProjectSidebar(&sidebar);
+    view.TakeFocus();
+
+    view.OnEvent(ned::ui::test::Ctrl('c'));
+    view.OnEvent(ned::ui::test::Character("p"));
+
+    REQUIRE_FALSE(sidebar.Collapsed()); // focusing an invisible tree would be meaningless
+    REQUIRE(sidebar.Focused());
 }
 
 // The pre-migration "reflows widths immediately" test doesn't have an

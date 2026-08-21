@@ -245,6 +245,26 @@ Theme BuildDetectedTheme(const DetectedColors& detected, const Theme& fallback) 
         result.modeLineGradientEnd   = Tint(*detected.background, -20);
     }
 
+    // Same "no palette slot for this" reasoning as the gradient above
+    // (chrome-redesign follow-up): border lines are a stronger tint of the
+    // detected background; the border accent maps to magenta (slot 5), the
+    // closest ANSI relative of the built-in themes' purple accent; and the
+    // focused-pane gradient is the derived gradient pulled toward that
+    // accent, mirroring how DarkTheme()'s own literals were produced.
+    if (detected.background) {
+        result.border.foreground = Tint(*detected.background, 45);
+    }
+    if (detected.palette[5]) {
+        result.borderAccent.foreground = *detected.palette[5];
+    }
+    if (detected.background) {
+        // 0.6, matching how DarkTheme()'s own focused-gradient literals
+        // were produced (bumped from 0.35 after live feedback that the
+        // focus signal barely read).
+        result.modeLineFocusedGradientStart = Color::Interpolate(0.6F, result.modeLineGradientStart, result.borderAccent.foreground);
+        result.modeLineFocusedGradientEnd   = Color::Interpolate(0.6F, result.modeLineGradientEnd, result.borderAccent.foreground);
+    }
+
     return result;
 }
 

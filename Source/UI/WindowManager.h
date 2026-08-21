@@ -233,6 +233,13 @@ class WindowManager {
     [[nodiscard]] bool FocusedPaneMinimapActive();
     [[nodiscard]] bool FocusedPaneScrollColumnActive();
 
+    // Chrome-focus follow-up: whether any pane's BufferView currently holds
+    // the keyboard focus -- i.e. the keyboard is "in the editor" rather
+    // than, say, the project sidebar. TabBar's underline accent keys off
+    // this (see main.cpp's wiring), derived fresh every call like the two
+    // queries above.
+    [[nodiscard]] bool HasFocusedPane();
+
     void SetVcsRunner(editor::vcs::VcsRunner* vcsRunner);
 
     // DAP client slice 1: same "forwarded to every pane, present and

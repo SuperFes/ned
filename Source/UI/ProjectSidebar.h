@@ -27,10 +27,22 @@
 // otherwise have scrolled off the top stay pinned there instead ("sticky
 // scroll", VS Code-style) -- see ComputeRowLayout/AncestorIndices in the
 // .cpp. No keyboard interaction is still a v1 scope cut, not an oversight;
-// see ROADMAP.md. SidebarToggle (a separate, always-visible sibling widget
-// -- see its own header comment) is the mouse-clickable way to hide/show
-// this widget; C-c C-p (toggle-project-sidebar) does the same thing from
-// the keyboard.
+// see ROADMAP.md.
+//
+// Chrome-redesign follow-up: the whole widget is framed by a rounded
+// border (Border.h) with the project name embedded in the top edge as the
+// header -- row 0 (the title row) and the bottom row are border, tree
+// content lives in rows [1, height-2] and columns [1, width-2]. The right
+// border column doubles as the resize divider (below) and its whole frame
+// takes the accent brush while a drag is live. Hiding/showing is a
+// *collapse* now, not Widget::active (which stays permanently true): while
+// Collapsed(), Width() reports 1 and Paint() draws a single border-column
+// strip with an accent hint glyph, so a mouse affordance to reopen never
+// vanishes -- this is what replaced the separate SidebarToggle widget.
+// Double-clicking the divider/strip toggles the collapse (same
+// kDoubleClickWindow timer file rows already use); C-c C-p
+// (toggle-project-sidebar) does the same from the keyboard via
+// ToggleCollapsed().
 //
 // The width is drag-resizable by the divider column (round-2 follow-up):
 // pressing on it starts a resize session (IsResizing()/UpdateResize()/
@@ -88,6 +100,22 @@ class ProjectSidebar : public Widget {
     void Paint(Canvas c) override;
     bool OnEvent(const Event& event) override;
 
+    // sidebar-keyboard-focus follow-up: focus-project-sidebar (C-c p) hands
+    // this widget the keyboard via Widget::TakeFocus; while Focused(), key
+    // events drive a selection cursor (Up/Down or C-p/C-n, Enter to
+    // open/toggle, Left/Right to collapse/expand a directory, Escape/C-g to
+    // return focus) and the frame paints in the accent brush -- the same
+    // "this has your attention" signal a resize drag already gives.
+    [[nodiscard]] bool Focusable() const override {
+        return true;
+    }
+
+    // Called when keyboard focus should go back to the editor (Escape/C-g,
+    // or after Enter opens a file). Unset (the default) is a safe no-op,
+    // matching every other Set* hook here; main.cpp wires this to
+    // WindowManager::TakeFocus.
+    void SetOnFocusReturn(std::function<void()> handler);
+
     // Current desired width in columns -- see this file's own header
     // comment for why main.cpp's composition root reads this every frame
     // rather than this widget mutating a stored layout policy directly.
@@ -98,6 +126,20 @@ class ProjectSidebar : public Widget {
     // afterward.
     [[nodiscard]] int Width() const;
     void              SetWidth(int width); // clamped to kMinSidebarWidth, same as a resize drag
+
+    // Collapse state (chrome-redesign follow-up) -- see this file's own
+    // header comment. Width() reports 1 while collapsed; width_ itself is
+    // untouched, so expanding restores the previous width exactly.
+    // Session persistence maps its stored sidebar-visibility bool onto
+    // !Collapsed() (main.cpp / WindowManager), no schema change needed.
+    [[nodiscard]] bool Collapsed() const;
+    void               SetCollapsed(bool collapsed);
+    void               ToggleCollapsed();
+
+    // The width an expanded sidebar has/would have -- unlike Width(), not
+    // masked by the collapse. What session persistence stores, so a resize
+    // survives a collapsed quit/relaunch.
+    [[nodiscard]] int ExpandedWidth() const;
 
     [[nodiscard]] bool IsResizing() const;
 
@@ -183,9 +225,19 @@ class ProjectSidebar : public Widget {
 
     int width_ = 30; // see Width()
 
+    bool collapsed_ = false; // see Collapsed()
+
     bool resizing_            = false;
     int  resizeAnchorGlobalX_ = 0; // this Row-space mouse x when the drag started
     int  resizeAnchorWidth_   = 0; // this widget's own width when the drag started
+
+    // Double-click detection for the divider/collapsed strip (chrome-
+    // redesign follow-up): a second press within kDoubleClickWindow toggles
+    // the collapse; a real drag (movement past +-1 column, see
+    // UpdateResize) clears the pending state so drag-resize never
+    // accidentally collapses.
+    bool                                  dividerClickPending_ = false;
+    std::chrono::steady_clock::time_point lastDividerPressTime_;
 
     void BeginResize(int globalMouseX);
 
@@ -198,11 +250,20 @@ class ProjectSidebar : public Widget {
 
     void OpenFileEntry(const std::filesystem::path& path, bool isDoubleClick);
 
+    // sidebar-keyboard-focus follow-up -- see Focusable() above.
+    std::function<void()> onFocusReturn_;
+    int                   selectedIndex_ = 0; // index into VisibleEntries, clamped at use
+
+    bool HandleKeyEvent(const Event& event);
+    void ToggleDirectory(const std::filesystem::path& path); // shared by mouse click and Enter
+    void EnsureSelectionVisible();
+
     [[nodiscard]] std::vector<editor::ProjectTreeEntry> VisibleEntries(
         const std::vector<editor::ProjectTreeEntry>& all) const;
 
     // sidebar-header follow-up: row 0 is always the project-name header
-    // (see Paint()'s own comment), never tree content -- every tree-row
+    // (the title-carrying top border since the chrome redesign), and the
+    // bottom row is border too -- never tree content. Every tree-row
     // computation (ComputeRowLayout/EntryIndexAtRow's viewportHeight, the
     // wheel-scroll clamp) works in this content-only height, not
     // size().height directly, and every row/y value crossing that boundary

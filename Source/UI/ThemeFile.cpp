@@ -75,6 +75,12 @@ std::string SerializeTheme(const Theme& theme) {
     out << "label_foreground=" << ColorToToken(theme.labelForeground) << '\n';
     out << "return_type_foreground=" << ColorToToken(theme.returnTypeForeground) << '\n';
     out << "include_path_foreground=" << ColorToToken(theme.includePathForeground) << '\n';
+    out << "border_background=" << ColorToToken(theme.border.background) << '\n';
+    out << "border_foreground=" << ColorToToken(theme.border.foreground) << '\n';
+    out << "border_accent_background=" << ColorToToken(theme.borderAccent.background) << '\n';
+    out << "border_accent_foreground=" << ColorToToken(theme.borderAccent.foreground) << '\n';
+    out << "mode_line_focused_gradient_start=" << ColorToToken(theme.modeLineFocusedGradientStart) << '\n';
+    out << "mode_line_focused_gradient_end=" << ColorToToken(theme.modeLineFocusedGradientEnd) << '\n';
     return out.str();
 }
 
@@ -286,6 +292,30 @@ Theme ParseTheme(std::string_view text, const Theme& base) {
         else if (key == "include_path_foreground") {
             if (const auto c = ParseColorToken(value))
                 result.includePathForeground = *c;
+        }
+        else if (key == "border_background") {
+            if (const auto c = ParseColorToken(value))
+                result.border.background = *c;
+        }
+        else if (key == "border_foreground") {
+            if (const auto c = ParseColorToken(value))
+                result.border.foreground = *c;
+        }
+        else if (key == "border_accent_background") {
+            if (const auto c = ParseColorToken(value))
+                result.borderAccent.background = *c;
+        }
+        else if (key == "border_accent_foreground") {
+            if (const auto c = ParseColorToken(value))
+                result.borderAccent.foreground = *c;
+        }
+        else if (key == "mode_line_focused_gradient_start") {
+            if (const auto c = ParseTrueColorToken(value))
+                result.modeLineFocusedGradientStart = *c;
+        }
+        else if (key == "mode_line_focused_gradient_end") {
+            if (const auto c = ParseTrueColorToken(value))
+                result.modeLineFocusedGradientEnd = *c;
         }
         // Unrecognized keys are ignored -- forward-compatible with older files.
     }

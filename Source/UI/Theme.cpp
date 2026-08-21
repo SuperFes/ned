@@ -264,7 +264,10 @@ Theme DarkTheme() {
         .currentLineNumberForeground   = Color::BrightWhite,
         .selectionBackground           = Color::Blue,
         .isearchMatchBackground        = Color::Yellow,
-        .tabBar                        = Brush{.background = Color::RGB(0x1b1b30), .foreground = Color::BrightBlack},
+        // fg was BrightBlack -- bumped alongside the tab-restyle follow-up
+        // so inactive tab labels actually read against their own block now
+        // that the blocks are the only chrome on the row.
+        .tabBar                        = Brush{.background = Color::RGB(0x1b1b30), .foreground = Color::RGB(0x9898b0)},
         .activeTab                     = Brush{.background = Color::RGB(0x2b2b40), .foreground = Color::BrightWhite, .bold = true},
         .scrollBar                     = Brush{.foreground = Color::BrightBlack},
         .scrollBarDisabled             = Brush{.foreground = Color::RGB(0x333340)},
@@ -288,6 +291,20 @@ Theme DarkTheme() {
         .checkboxForeground            = Color::BrightYellow,
         .underlineForeground           = Color::White,
         .strikethroughForeground       = Color::BrightBlack,
+        // The chrome family's two poles (chrome-redesign follow-up): border
+        // is a quiet structural blue-grey one step lighter than the
+        // 0x1b1b30/0x2b2b40 tab/mode-line chrome it frames; the accent is
+        // the same "blurple" truncationIndicatorForeground already uses, so
+        // attention-colored chrome stays one hue everywhere. The focused
+        // gradient is the base gradient pulled 60% toward that accent --
+        // was 35%, bumped after live feedback that the focus signal barely
+        // read next to how strongly the resize-drag accent pops --
+        // precomputed literals, not Interpolate calls, so a theme file can
+        // override the tint independently.
+        .border                        = Brush{.foreground = Color::RGB(0x3a3a50)},
+        .borderAccent                  = Brush{.foreground = Color::RGB(0x8f80e0), .bold = true},
+        .modeLineFocusedGradientStart  = Color::RGB(0x675ea0),
+        .modeLineFocusedGradientEnd    = Color::RGB(0x605799),
         .markupMarkerForeground        = Color::BrightBlack,
     };
 }
@@ -359,6 +376,14 @@ Theme LightTheme() {
         .checkboxForeground            = Color::RGB(0x8f6f1f),
         .underlineForeground           = Color::RGB(0x202020),
         .strikethroughForeground       = Color::RGB(0x808080),
+        // Same two-pole structure as DarkTheme's: a warm structural grey
+        // against the cream background, accent from the mode-line blue
+        // family, focused gradient pulled toward the light purple
+        // truncationIndicatorForeground uses.
+        .border                        = Brush{.background = background, .foreground = Color::RGB(0xc8c4b8)},
+        .borderAccent                  = Brush{.background = background, .foreground = Color::RGB(0x5f7fa0), .bold = true},
+        .modeLineFocusedGradientStart  = Color::RGB(0x6568bb),
+        .modeLineFocusedGradientEnd    = Color::RGB(0x585cae),
         .markupMarkerForeground        = Color::RGB(0xa8a496),
     };
 }

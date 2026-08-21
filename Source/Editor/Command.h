@@ -52,6 +52,12 @@ enum class InteractiveRequest { None,
                                 VisitSearchResult,
                                 ProjectReplace,
                                 ToggleProjectSidebar,
+                                // sidebar-keyboard-focus follow-up: one-shot direct action,
+                                // same shape as ToggleProjectSidebar -- BufferView expands
+                                // the registered sidebar if collapsed and hands it the
+                                // keyboard focus (ProjectSidebar's own key handling takes
+                                // over until Enter/Escape/C-g returns focus).
+                                FocusProjectSidebar,
                                 // org-agenda follow-up: another one-shot direct action, same
                                 // shape as ToggleProjectSidebar -- BufferView builds and
                                 // switches to a synthesized "*agenda*" buffer via

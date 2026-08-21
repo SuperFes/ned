@@ -1107,6 +1107,13 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           context.interactiveRequest = InteractiveRequest::ToggleProjectSidebar;
                       });
 
+    registry.Register("focus-project-sidebar",
+                      "Move keyboard focus into the project sidebar tree (Up/Down or C-p/C-n to move, Enter to "
+                      "open/toggle, Left/Right to collapse/expand, Escape or C-g to return to the editor).",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::FocusProjectSidebar;
+                      });
+
     // session-persistence slice 3: creates the project's .ned/ directory --
     // the strictly-opt-in marker nothing else ever creates -- so the
     // session moves to <root>/.ned/session.json and a .ned/init.janet can
@@ -2030,6 +2037,10 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("C-c v H"), "vcs-unstage-hunk");
     keymap.Bind(ParseKeySequence("C-c C-r"), "project-replace");
     keymap.Bind(ParseKeySequence("C-c C-p"), "toggle-project-sidebar");
+    // sidebar-keyboard-focus follow-up: the non-control second key beside
+    // the toggle's own C-c C-p, same pairing pattern the "C-c v" VCS
+    // family established for an otherwise-unused plain-letter slot.
+    keymap.Bind(ParseKeySequence("C-c p"), "focus-project-sidebar");
     keymap.Bind(ParseKeySequence("C-c m"), "toggle-minimap");
     keymap.Bind(ParseKeySequence("C-x k"), "kill-buffer");
     keymap.Bind(ParseKeySequence("C-c a"), "org-agenda"); // real Org's own actual binding

@@ -17,6 +17,16 @@ namespace {
     constexpr char32_t kMoreLeft  = U'‹';
     constexpr char32_t kMoreRight = U'›';
 
+    // U+258C LEFT HALF BLOCK (tab-restyle follow-up): the one-column end
+    // cap after each tab's close icon. Drawn with the tab's own block
+    // color as *foreground* on the row's buffer background, so the cell
+    // reads as the tab's block tapering off at half a column -- Block
+    // Elements are single-width in any monospace font, the same
+    // portability bar every other chrome glyph here already clears
+    // (Powerline-style rounded caps need a patched font, per
+    // ProjectSidebar's own long-standing no-Nerd-Font note).
+    constexpr char32_t kTabEndCap = U'▌';
+
     // 1-space padding, an asterisk if modified, a space, then the close
     // icon; one blank widget-background column as a separator before the
     // next tab (added by the caller, not here) keeps adjacent inactive tabs
@@ -49,27 +59,50 @@ std::vector<TabBar::TabLayout> TabBar::ComputeTabLayout() const {
     std::vector<TabLayout> layout;
     int                    col = 0;
     for (const auto& buffer : bufferList_.Buffers()) {
-        const int width = static_cast<int>(TabLabel(*buffer).size());
+        const int labelWidth = static_cast<int>(TabLabel(*buffer).size());
+        // +1: the end-cap column after the close icon (tab-restyle
+        // follow-up) -- part of the tab's own extent, so clicking it
+        // switches like anywhere else on the tab; closeColumn stays the
+        // label's final character (the × itself).
+        const int width = labelWidth + 1;
         layout.push_back(TabLayout{
-            .startColumn = col, .endColumn = col + width, .closeColumn = col + width - 1, .buffer = buffer.get()});
-        col += width + 1; // 1-column gap between tabs
+            .startColumn = col, .endColumn = col + width, .closeColumn = col + labelWidth - 1, .buffer = buffer.get()});
+        // No separate gap column: the cap's own half-empty cell (buffer
+        // background behind the ▌) is the visual separation between tabs.
+        col += width;
     }
     return layout;
 }
 
 void TabBar::Paint(Canvas c) {
+    // Tab-restyle follow-up: the row fills with the *buffer* background,
+    // not the tab chrome color -- the 1-column gaps between tabs (and the
+    // run after the last tab) show it through, so each tab reads as its
+    // own distinct block instead of the whole strip merging into one bar
+    // (the original fill made tabs visually indistinguishable, a real
+    // user report).
     for (int x = 0; x < c.size().width; ++x) {
         Cell& cell            = c[{.x = x, .y = 0}];
         cell.character        = " ";
-        cell.background_color = theme_.tabBar.background;
+        cell.background_color = theme_.background;
     }
 
     const text::Buffer*          active  = &activeBufferProvider_().Get();
     const text::Buffer*          preview = bufferList_.PreviewBuffer();
     const std::vector<TabLayout> layout  = ComputeTabLayout();
 
+    // Tab-restyle follow-up: with the underline row gone, the active tab
+    // itself carries the "keyboard is in the editor" accent -- its block
+    // takes the same accent-tinted chrome color the focused mode line's
+    // gradient starts from, so the top and bottom edges of a focused pane
+    // light up as one system (see SetFocusProvider).
+    Brush activeBrush = theme_.activeTab;
+    if (focusProvider_ && focusProvider_()) {
+        activeBrush.background = theme_.modeLineFocusedGradientStart;
+    }
+
     for (const TabLayout& tab : layout) {
-        Brush brush = (tab.buffer == active) ? theme_.activeTab : theme_.tabBar;
+        Brush brush = (tab.buffer == active) ? activeBrush : theme_.tabBar;
         if (tab.buffer == preview) {
             // Single-click-preview follow-up: italic marks a tab as
             // transient (VS Code's own convention for the same concept) --
@@ -87,6 +120,18 @@ void TabBar::Paint(Canvas c) {
             Cell& cell     = c[{.x = col, .y = 0}];
             cell.character = text::EncodeCodepointUtf8(label[i]);
             brush.ApplyTo(cell);
+        }
+
+        // The end cap -- see kTabEndCap. Assigned as a whole fresh Cell
+        // (not just character + colors) so no trait leaks in from whatever
+        // a previous frame left in this reused Screen cell.
+        const int capCol = tab.startColumn + static_cast<int>(label.size()) - scrollOffset_;
+        if (capCol >= 0 && capCol < c.size().width) {
+            Cell& cell            = c[{.x = capCol, .y = 0}];
+            cell                  = Cell{};
+            cell.character        = text::EncodeCodepointUtf8(kTabEndCap);
+            cell.foreground_color = brush.background;
+            cell.background_color = theme_.background;
         }
     }
 
@@ -107,6 +152,7 @@ void TabBar::Paint(Canvas c) {
             theme_.tabBar.ApplyTo(cell);
         }
     }
+
 }
 
 bool TabBar::OnEvent(const Event& event) {
@@ -158,6 +204,10 @@ bool TabBar::OnEvent(const Event& event) {
 
 void TabBar::SetOnCloseRequest(std::function<void(text::Buffer&)> handler) {
     onCloseRequest_ = std::move(handler);
+}
+
+void TabBar::SetFocusProvider(std::function<bool()> provider) {
+    focusProvider_ = std::move(provider);
 }
 
 } // namespace ned::ui
