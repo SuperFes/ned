@@ -125,6 +125,15 @@ Notcurses (TermOx → FTXUI → Notcurses over the project's life).
 - [ ] External-modification round 2: three-way merge when both buffer and disk changed
       (`SavedSnapshot_` gives a diff3 base for free), and Emacs' ask-on-first-edit
       supersession prompt.
+- [ ] **Minibuffer input history (`M-p`/`M-n`)** — `MinibufferPrompt` and every
+      prompt-driven `BufferView` `InputMode` (goto-line, find-file, project-search,
+      execute-command, VCS commit message, task name, register names, ...) have no
+      memory of previously entered values at all; each session starts blank. A general
+      fix is a shared per-prompt-kind history ring plus `M-p`/`M-n` wiring threaded
+      through every `Handle*Key` method — a systemic addition touching most of
+      `BufferView`'s interactive sessions, not a one-file change. (A scoped version —
+      just `execute-command` or just `goto-line` — would be much smaller; worth
+      deciding which shape before starting.)
 
 ### Collaboration & AI
 

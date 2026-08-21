@@ -2879,16 +2879,18 @@ void BufferView::EnsureStatusMessageFreshness() {
     // under them just because they paused for a few seconds mid-typing,
     // and it's already re-shown on every keystroke by the session's own
     // Handle*Key method regardless, so there's nothing for the idle timer
-    // to usefully guard here. Deliberately not just "skip arming a new
-    // deadline" -- also drops any deadline armed before this session
-    // started (Normal-mode message that was already showing when the
-    // session opened, and would otherwise silently expire mid-session and
-    // then, confusingly, expire the session's *own* text on the very next
-    // check right after the session ends) and keeps the snapshot synced so
-    // there's no stale diff to misfire against once back in Normal mode.
+    // to usefully guard here. Must also cancel any deadline already armed
+    // before this session started (a Normal-mode message that was showing
+    // when the session opened): statusMessageTimer_'s fire callback reads
+    // statusMessage_/statusMessageSnapshot_ live rather than a value
+    // captured at arm time, and the snapshot sync just below keeps them
+    // equal throughout the session -- so an uncancelled old timer would
+    // fire mid-session and find them "unchanged," wiping the session's own
+    // live text (e.g. the isearch query) right out from under the user.
     if (inputMode_ != InputMode::Normal) {
         statusMessageSnapshot_ = statusMessage_;
         statusMessageChangedAt_.reset();
+        statusMessageTimer_.Cancel(); // drop any deadline armed before this session started -- see the comment above
         return;
     }
 
@@ -4280,11 +4282,34 @@ void BufferView::HandleSearchKey(const editor::KeyChord& chord) {
     if (chord.Special == editor::SpecialKey::Backspace) {
         search_->DeleteChar();
     }
-    else if (chord.Control && chord.Codepoint == U's' && inputMode_ == InputMode::IsearchForward) {
-        search_->RepeatSearch();
+    else if (chord.Control && chord.Codepoint == U's') {
+        // C-s while already searching forward repeats; while searching
+        // backward it reverses direction instead (real Emacs isearch
+        // behavior) -- inputMode_ is kept in sync with search_'s own
+        // direction since InIsearchMatch reads it to know which end of the
+        // match point() is at.
+        if (inputMode_ == InputMode::IsearchBackward) {
+            search_->ReverseDirection();
+            inputMode_ = InputMode::IsearchForward;
+        }
+        else {
+            search_->RepeatSearch();
+        }
     }
-    else if (chord.Control && chord.Codepoint == U'r' && inputMode_ == InputMode::IsearchBackward) {
-        search_->RepeatSearch();
+    else if (chord.Control && chord.Codepoint == U'r') {
+        if (inputMode_ == InputMode::IsearchForward) {
+            search_->ReverseDirection();
+            inputMode_ = InputMode::IsearchBackward;
+        }
+        else {
+            search_->RepeatSearch();
+        }
+    }
+    else if (chord.Control && chord.Codepoint == U'w') {
+        search_->AppendWordAtPoint();
+    }
+    else if (chord.Control && chord.Codepoint == U'y') {
+        search_->AppendText(killRing_.Current());
     }
     else if (IsPlainCharacter(chord)) {
         search_->AppendChar(chord.Codepoint);

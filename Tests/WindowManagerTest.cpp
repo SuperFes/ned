@@ -275,6 +275,34 @@ TEST_CASE("Closing a buffer shown in a different, unfocused pane retargets that 
     REQUIRE(&manager.FocusedActiveBuffer().Get() != &other);                       // retargeted, not left dangling
 }
 
+TEST_CASE("Closing a buffer shown in an unfocused pane retargets it onto the most-recently-used buffer, not list order",
+          "[WindowManager]") {
+    Fixture                fixture;
+    ned::text::Buffer&     a       = fixture.bufferList.CreateBuffer("a");
+    ned::text::Buffer&     b       = fixture.bufferList.CreateBuffer("b");
+    ned::text::Buffer&     closing = fixture.bufferList.CreateBuffer("closing");
+    ned::ui::WindowManager manager = fixture.Manager();
+    manager.TakeFocus(); // FTXUI -> Notcurses migration: see Fixture::Manager()'s own doc comment
+
+    ned::ui::Widget& root = manager.RootComponent();
+    FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Character("2")}); // 2 panes, both on "scratch"
+
+    // Touch "a" then "b" in the focused pane -- bufferList_'s own creation
+    // (list) order is [a, b, closing], but MRU order is now [a, b] (b most
+    // recent), the opposite of list order for these two.
+    manager.FocusedActiveBuffer().Set(a);
+    manager.FocusedActiveBuffer().Set(b);
+
+    FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Character("o")}); // the other, unfocused pane
+    manager.FocusedActiveBuffer().Set(closing);
+    FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Character("o")}); // back to the focused pane (now on "b")
+
+    manager.RequestCloseBuffer(closing); // closes "closing", shown only in the unfocused pane
+
+    FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Character("o")}); // check the retargeted pane
+    REQUIRE(&manager.FocusedActiveBuffer().Get() == &b); // MRU pick -- not "a", list order's first non-closing entry
+}
+
 TEST_CASE("NotifyBufferClosing retargets every pane showing the closing buffer, including the focused one",
           "[WindowManager]") {
     // Regression test for a real, coredump-confirmed crash: ProjectSidebar::
