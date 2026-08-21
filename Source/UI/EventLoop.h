@@ -110,10 +110,16 @@ class EventLoop {
     // second thread).
     void Post(std::function<void()> fn);
 
-  private:
     // Runs every currently-queued Post()ed callback and returns whether any
-    // ran at all (the caller's cue that a repaint is worth doing).
+    // ran at all (the caller's cue that a repaint is worth doing). Public
+    // primarily for tests (terminal-panel follow-up, the TaskProcess::
+    // DispatchOutput precedent): a fixture with no Run() loop alive can
+    // still pump a background producer's Post-marshaled callbacks through
+    // by hand (PtyProcessTest's real-shell round trip); Run() itself is the
+    // only production caller, hence the internal-seam trailing underscore.
     bool DrainPosted_();
+
+  private:
     void Wake_();
 
     // sidebar/drag-resize-not-working follow-up: a real, confirmed-via-

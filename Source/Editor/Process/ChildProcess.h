@@ -34,6 +34,13 @@ namespace ned::editor::process {
 enum class StderrMode { Discard,
                         MergeWithStdout };
 
+// Resolves a command name against $PATH (or validates it directly if it
+// contains a '/', execvp's own convention), returning the runnable path or
+// std::nullopt. Shared by ChildProcess's own spawn and by
+// Terminal/PtyProcess, whose post-forkpty execve needs the resolution done
+// before forking (a $PATH walk isn't async-signal-safe).
+[[nodiscard]] std::optional<std::string> ResolveExecutable(const std::string& name);
+
 class ChildProcess {
   public:
     // argv[0] is resolved against $PATH (or treated as a literal path if it

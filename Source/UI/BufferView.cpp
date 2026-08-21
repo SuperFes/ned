@@ -651,6 +651,10 @@ void BufferView::SetOnBufferClosed(std::function<void(text::Buffer&)> handler) {
     onBufferClosed_ = std::move(handler);
 }
 
+void BufferView::SetOnTerminalToggle(std::function<void()> handler) {
+    onTerminalToggle_ = std::move(handler);
+}
+
 void BufferView::SetOnActiveBufferChanged(std::function<void(text::Buffer&)> handler) {
     onActiveBufferChanged_ = std::move(handler);
 }
@@ -3607,6 +3611,14 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             // ProjectSidebar.h), not a Widget::active flip.
             if (projectSidebar_ != nullptr) {
                 projectSidebar_->ToggleCollapsed();
+            }
+            return;
+        case editor::InteractiveRequest::ToggleTerminal:
+            // terminal-panel follow-up: one-shot direct action, same shape
+            // as the window-management requests just below -- the panel
+            // lives above this class, so only forward.
+            if (onTerminalToggle_) {
+                onTerminalToggle_();
             }
             return;
         case editor::InteractiveRequest::FocusProjectSidebar:

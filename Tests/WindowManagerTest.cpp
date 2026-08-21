@@ -4,8 +4,8 @@
 #include <string>
 
 #include "Editor/Commands.h"
-#include "Editor/Mode.h"
 #include "Editor/MinimapSettings.h"
+#include "Editor/Mode.h"
 #include "Editor/Register.h"
 #include "TestEvents.h"
 #include "Text/Buffer.h"
@@ -441,4 +441,25 @@ TEST_CASE("toggle-minimap flips Minimap/ScrollColumn active flags in lockstep op
     FeedSequence(root, {ned::ui::test::Ctrl('c'), ned::ui::test::Character("m")});
     REQUIRE(manager.FocusedPaneMinimapActive());
     REQUIRE_FALSE(manager.FocusedPaneScrollColumnActive());
+}
+
+TEST_CASE("SetOnTerminalToggle reaches the focused pane and survives a split", "[WindowManager]") {
+    Fixture                fixture;
+    ned::ui::WindowManager manager = fixture.Manager();
+    manager.TakeFocus();
+
+    ned::ui::Widget& root = manager.RootComponent();
+
+    int toggles = 0;
+    manager.SetOnTerminalToggle([&toggles] { ++toggles; });
+
+    FeedSequence(root, {ned::ui::test::Ctrl('c'), ned::ui::test::Character('t')});
+    REQUIRE(toggles == 1);
+
+    // A pane created *after* registration inherits the handler (MakePane
+    // applies the stored callback, the SetThemeApplier convention).
+    FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Character("2")});
+    FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Character("o")}); // focus the new pane
+    FeedSequence(root, {ned::ui::test::Ctrl('c'), ned::ui::test::Character('t')});
+    REQUIRE(toggles == 2);
 }

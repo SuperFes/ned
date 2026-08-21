@@ -1,6 +1,8 @@
 #include <clocale>
+#include <cstdlib>
 #include <exception>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <optional>
 #include <string>
@@ -28,6 +30,7 @@
 #include "Editor/Session.h"
 #include "Editor/TabWidth.h"
 #include "Editor/Tasks/TaskRunner.h"
+#include "Editor/Terminal/Config.h"
 #include "Editor/ThemeSetting.h"
 #include "Editor/Variables.h"
 #include "Editor/Vcs/VcsRunner.h"
@@ -45,9 +48,11 @@
 #include "UI/EchoArea.h"
 #include "UI/EventLoop.h"
 #include "UI/Layout.h"
+#include "UI/Overlay.h"
 #include "UI/ProjectSidebar.h"
 #include "UI/TabBar.h"
 #include "UI/TerminalColorProbe.h"
+#include "UI/TerminalPanel.h"
 #include "UI/Theme.h"
 #include "UI/ThemeFile.h"
 #include "UI/ThemeRegistry.h"
@@ -860,12 +865,64 @@ auto main(int argc, char** argv) -> int {
     // re-arm, so the chain ends one no-op repaint after the last activity.
     DeadlineTimer activityAnimationTimer;
 
+    // Terminal-panel follow-up: the floating-widget layer (see Overlay.h's
+    // own header comment for the three hooks below and why keyboard needs
+    // none). Inert until something is Show()n.
+    OverlayHost overlays;
+
+    // The built-in terminal drawer: full width, bottom
+    // TerminalHeightPercent() of the screen, floating just above the echo
+    // area row -- the placement function re-reads the Janet-configurable
+    // percentage on every Reflow/Show, the same pull-fresh convention
+    // ProjectSidebar's width already follows. Declared after eventLoop so
+    // its PtyProcess (background read thread + shell) is torn down first on
+    // the way out of main, the same owner-destroys-after-Run ordering every
+    // TaskProcess/LspClient owner relies on.
+    auto terminalPanel = std::make_shared<ned::ui::TerminalPanel>(theme);
+    terminalPanel->SetEventLoop(&eventLoop);
+    overlays.Add(*terminalPanel, [panel = terminalPanel.get()](Size size) {
+        // Maximized ([▲] button) covers the whole buffer area below the tab
+        // bar; otherwise the configured percentage of the screen.
+        const int yMax = std::max(1, size.height - 2); // above the echo area row
+        const int height =
+            panel->Maximized() ? yMax : std::max(4, size.height * ned::editor::terminal::TerminalHeightPercent() / 100);
+        return Box{.x_min = 0, .x_max = size.width - 1, .y_min = std::max(1, yMax - height + 1), .y_max = yMax};
+    });
+    // The maximize toggle changes what the placement above computes; Show on
+    // an already-visible overlay is exactly a re-box from the current size.
+    terminalPanel->SetOnLayoutChange([&overlays, panel = terminalPanel.get()] { overlays.Show(*panel); });
+    overlays.SetFocusReturn(*terminalPanel, [wm = windowManager.get()] { wm->TakeFocus(); });
+    // The toggle: hidden -> show+focus; visible -> hide (the focus-return
+    // above hands the keyboard back only if the panel actually held it).
+    // Deliberately NOT VS Code's three-state (visible-but-unfocused ->
+    // focus): C-` is only deliverable under the kitty keyboard protocol, so
+    // on a legacy-encoding terminal "C-c t, click into the buffer, C-c t"
+    // must be a complete keyboard show/hide cycle -- confirmed stuck-drawer
+    // feedback from real use, not a guess. Refocusing a visible panel is a
+    // click on it (or C-c t twice). Reached from the editor via
+    // toggle-terminal (C-` / C-c t), from the focused panel via its one
+    // reserved chord (C-`), and from the title row's close button (both in
+    // TerminalPanel.h).
+    auto toggleTerminal = [&overlays, panel = terminalPanel.get()] {
+        if (!overlays.IsVisible(*panel)) {
+            overlays.Show(*panel);
+            panel->EnsureStarted();
+            panel->TakeFocus();
+        }
+        else {
+            overlays.Hide(*panel);
+        }
+    };
+    windowManager->SetOnTerminalToggle(toggleTerminal);
+    terminalPanel->SetOnToggleRequest(toggleTerminal);
+
     EventLoopCallbacks callbacks;
 
     callbacks.onResize = [&](Size size) {
         screenBuffer = Screen(size.width, size.height);
 
         head.SetBox_(Box{.x_min = 0, .x_max = size.width - 1, .y_min = 0, .y_max = size.height - 1});
+        overlays.Reflow(size);
     };
 
     // event-routing split -- a keyboard Event only ever reached whichever
@@ -879,7 +936,13 @@ auto main(int argc, char** argv) -> int {
     // own Container::OnEvent, to the whole tree.
     callbacks.onEvent = [&](const Event& event) {
         if (event.is_mouse()) {
-            head.OnEvent(event);
+            // A visible overlay owns clicks inside its own Box; everything
+            // else keeps the broadcast dispatch (Container::OnEvent
+            // forwards to every active leaf) several widgets actively
+            // depend on -- see Overlay.h's header comment.
+            if (!overlays.OnMouseEvent(event)) {
+                head.OnEvent(event);
+            }
         }
         else if (Widget* focused = FocusedWidget()) {
             focused->OnEvent(event);
@@ -888,6 +951,7 @@ auto main(int argc, char** argv) -> int {
 
     callbacks.render = [&]() -> std::optional<Point> {
         head.Paint(Canvas(screenBuffer, head.Box_()));
+        overlays.Paint(screenBuffer);
         screenBuffer.Flush(eventLoop.StdPlane());
 
         if (!ned::editor::ActiveBackgroundActivities().empty()) {
@@ -907,14 +971,33 @@ auto main(int argc, char** argv) -> int {
 
     eventLoop.Run(callbacks);
 
+    // NED_DEBUG_SHUTDOWN (terminal-panel follow-up, mirroring
+    // NED_DEBUG_MOUSE's env-var-to-file pattern): if set to a file path,
+    // appends one line per post-Run stage -- the screen still shows the
+    // frozen "Shutting down..." frame through all of this (the terminal
+    // isn't restored until ~EventLoop's notcurses_stop), so a hang here is
+    // otherwise undiagnosable from the outside. The last line in the file
+    // names the stage that stuck. Next to free when unset.
+    const char* shutdownLogPath = std::getenv("NED_DEBUG_SHUTDOWN");
+    const auto  logShutdown     = [shutdownLogPath](const char* stage) {
+        if (shutdownLogPath != nullptr) {
+            std::ofstream(shutdownLogPath, std::ios::app) << stage << std::endl;
+        }
+    };
+
     // session-persistence slice 1: one final record+save on clean exit --
     // forced, so lastUsed refreshes (which deliberately don't mark the
     // store dirty, see FilePlaceStore::Record) still reach disk. Everything
     // recorded from is still alive here: bufferList/windowManager are
     // locals destroyed after this returns.
+    logShutdown("post-run: recording session places");
     windowManager->RecordSessionPlaces();
+    logShutdown("post-run: saving file places");
     ned::editor::SaveFilePlaces(/*force=*/true);
+    logShutdown("post-run: saving project session");
     windowManager->SaveProjectSessionNow();
+    logShutdown("post-run: explicit steps done; entering local destruction "
+                "(terminal pty, DAP, VCS, task runner, LSP clients, window tree, Janet, EventLoop/terminal restore)");
 
     return 0;
 }

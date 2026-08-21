@@ -87,10 +87,18 @@ Notcurses (TermOx → FTXUI → Notcurses over the project's life).
 
 ### Editor ergonomics
 
-- [ ] **Built-in terminal panel** — a real interactive pty (`forkpty`) plus
-      VT100/xterm emulation. Deliberately not a task-runner variant: the task runner
-      streams output into a read-only buffer, this needs genuine terminal emulation
-      and its own pty-backed path.
+- [ ] Terminal panel round 2 (v1 shipped: libvterm-backed drawer over the new
+      `OverlayHost` floating-widget layer, `toggle-terminal` on `` C-` ``/`C-c t`
+      plus a title-row `×` close button, 2000-line scrollback via
+      Shift+PageUp/Down, respawn-on-Enter after exit; `C-c t` on a visible panel
+      hides rather than focuses — the keyboard-complete cycle on legacy-encoding
+      terminals where `` C-` `` never arrives, a real live-use report).
+      Deliberate v1 cuts: no drag-resize of the drawer height (needs overlay
+      mouse-capture semantics; height is Janet-configurable via
+      `ned/set-terminal-height-percent` instead), no scrollback search/selection/
+      copy, no multiple terminals/tabs, no terminal-side mouse forwarding to the
+      shell (clicks focus the panel, wheel scrolls the ring — TUI apps inside the
+      terminal don't receive mouse events), and no OSC 52/title integration.
 - [ ] **Remote development** (SSH remote editing).
 - [ ] Emacs keymap round 2 (round-1's deliberate cuts): prefix arguments (`C-u`),
       `zap-to-char`, sentence/sexp motion, kill-append on consecutive kills.
@@ -106,9 +114,12 @@ Notcurses (TermOx → FTXUI → Notcurses over the project's life).
 - [ ] **AI-assisted editing** (inline completion, chat with codebase context) — the
       natural shape is a Janet-scriptable ACP-client integration; the task runner's
       subprocess transport was built to be reusable for exactly this
-      (`AcpManager`/`AcpClient` mirroring `LspManager`/`LspClient`). Note: ned still
-      has no floating/overlay/popup widget concept, and an LLM panel is the strongest
-      argument yet for building one.
+      (`AcpManager`/`AcpClient` mirroring `LspManager`/`LspClient`). The
+      floating/overlay widget layer this needs now exists (`UI/Overlay.h`'s
+      `OverlayHost`, terminal-panel follow-up): an LLM panel is one `Add()` with a
+      right-dock placement function. The same layer is the intended home for a
+      completion-popover replacement of ghost text, an M-x dropdown, and
+      code-action lists — all currently squeezed into the one-row EchoArea.
 - [ ] **Real-time collaborative editing** (CRDT-based) — the biggest lift in this
       file; last.
 
