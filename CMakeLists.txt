@@ -325,7 +325,7 @@ ned_add_treesitter_grammar(tree-sitter-markdown-inline https://github.com/tree-s
 
 ned_embed_treesitter_query("${tree-sitter-markdown-inline_SOURCE_DIR}/tree-sitter-markdown-inline/queries/highlights.scm" MarkdownInline)
 
-ned_add_treesitter_grammar(tree-sitter-org /Development/NED/tree-sitter-ned-org 05b4c7505c452f42330c681a067842d4cb49b174)
+ned_add_treesitter_grammar(tree-sitter-org https://github.com/SuperFes/tree-sitter-ned-org.git 05b4c7505c452f42330c681a067842d4cb49b174)
 
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/OrgHighlights.scm" Org)
 
