@@ -217,6 +217,40 @@ namespace {
                                 });
     }
 
+    // Fuchsia (user request, post-Phase-3): a dark theme built *around* one
+    // signature hue rather than a balanced spread -- fuchsia holds the
+    // keyword slot and the whole chrome accent family (borders' attention
+    // pole, truncation indicator, focused mode-line tint), on a dark plum
+    // background tinted toward it. The supporting cast is chosen on the
+    // color wheel relative to fuchsia: mint green (its complement) for
+    // strings, teal (split-complementary) for functions, warm gold/coral
+    // (triadic-side warmth) for types and annotations, and the red/magenta/
+    // purple slots stay in fuchsia's own analogous raspberry-pink-violet
+    // family so nothing clashes with the star.
+    Theme FuchsiaTheme() {
+        return ThemeFromPalette("fuchsia",
+                                ThemePalette{
+                                    .background               = Color::RGB(0x1e1526), // dark plum
+                                    .foreground               = Color::RGB(0xe8dff0),
+                                    .subtleForeground         = Color::RGB(0x8a7a99),
+                                    .red                      = Color::RGB(0xff5577), // raspberry
+                                    .orange                   = Color::RGB(0xff9070), // coral
+                                    .yellow                   = Color::RGB(0xf0c060), // warm gold
+                                    .green                    = Color::RGB(0x5fe0a8), // mint -- fuchsia's complement
+                                    .cyan                     = Color::RGB(0x52d5e8), // teal -- split-complementary
+                                    .blue                     = Color::RGB(0xf042d6), // fuchsia itself: the keyword slot
+                                    .purple                   = Color::RGB(0xb48cfa), // violet
+                                    .magenta                  = Color::RGB(0xff6ec7), // hot pink
+                                    .chromeBackground         = Color::RGB(0x170f1e),
+                                    .chromeBackgroundEmphasis = Color::RGB(0x2c2038),
+                                    .chromeForeground         = Color::RGB(0xf2e6f7),
+                                    .border                   = Color::RGB(0x4a3a5c),
+                                    .accent                   = Color::RGB(0xf042d6), // fuchsia again -- one signature, everywhere
+                                    .selectionBackground      = Color::RGB(0x4d2b54),
+                                    .searchMatchBackground    = Color::RGB(0x6b5a20),
+                                });
+    }
+
     // The cloned theme set (rich-theme-set follow-up, Phase 3): transcriptions
     // of the internet's most-shipped palettes into ThemePalette slots, each
     // with its upstream source. Slot assignment is by *hue*, not by upstream
@@ -585,6 +619,7 @@ namespace {
         {"high-contrast-light", HighContrastLightTheme},
         {"mono-dark", MonoDarkTheme},
         {"mono-light", MonoLightTheme},
+        {"fuchsia", FuchsiaTheme},
         {"solarized-dark", SolarizedDarkTheme},
         {"solarized-light", SolarizedLightTheme},
         {"gruvbox-dark", GruvboxDarkTheme},
