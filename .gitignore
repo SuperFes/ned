@@ -3,3 +3,6 @@ cmake-build-*/
 .idea/
 .claude/
 build-asan/
+build-sanitize/
+cmake-build-asan/
+cmake-build-debug/
