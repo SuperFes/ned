@@ -8,6 +8,4 @@
 - VCS-agnostic plugin system (git/hg/svn/jj via Janet plugins)
 - Multiple cursors  deferred, has a real design writeup already in the roadmap
 - Built-in terminal panel, task runner, remote SSH editing
-- Per-file session persistence (remember point/scroll per file)
-- Minimap, richer theme set
 - Companion tooling: setup wizard, tree-sitter-assisted formatter
