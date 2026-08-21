@@ -1,34 +1,64 @@
 # Ned
 
-A terminal-based text editor written in modern C++, aiming for Emacs-class feature
+A terminal-based text editor written in modern C++23, aiming for Emacs-class feature
 coverage with [Janet](https://janet-lang.org/) filling the role Elisp plays in Emacs —
-the editor is meant to be scriptable and extensible throughout, not a fixed app with a
-config file bolted on. The terminal UI is built on [TermOx](https://github.com/a-n-t-h-o-n-y/TermOx).
+the editor is scriptable and extensible throughout (buffers, commands, keymaps, modes,
+LSP/DAP/VCS/task-runner configuration), not a fixed app with a config file bolted on.
+The terminal UI is a from-scratch widget/layout/event-loop layer built directly on
+[Notcurses](https://github.com/dankamongmen/notcurses).
 
-This is early-stage: the current tree is a minimal skeleton (a Janet VM wired up, a
-placeholder TermOx window, and a not-yet-editable buffer type). See
-[`ROADMAP.md`](ROADMAP.md) for the full project plan and current phase.
+## Features
+
+- **Buffers, kill-ring, undo tree, isearch, query-replace, registers, rectangles,
+  multiple cursors** — the core Emacs-class editing vocabulary.
+- **Janet scripting throughout** — commands, keybindings, modes, and most editor
+  settings are reachable from a `~/.config/ned/init.janet`, not a fixed config format.
+- **Tree-sitter syntax highlighting** for C, C++, PHP, JavaScript, TypeScript/TSX,
+  HTML, CSS, Python, Bash, JSON, Janet, Markdown, YAML, TOML, Clojure/Jank, and Org,
+  with per-capture-name theming and code folding.
+- **LSP and DAP clients** for language server features (diagnostics, completion, code
+  actions, go-to-definition, rename) and debugging (breakpoints, stepping, variable
+  inspection).
+- **VCS integration** through a provider-agnostic plugin interface (bundled reference
+  implementation for git) — blame, log, diff, stage/unstage (including per-hunk),
+  commit, branches.
+- **A built-in terminal panel** (libvterm-backed), task runner, and Emacs-style
+  recursive window splitting.
+- **Org-mode-style structured editing** — headlines, TODO states, checkboxes, tables,
+  links, project-wide agenda — plus GFM table editing for Markdown.
+- **Project-wide search/replace, a file sidebar, session persistence** (restores open
+  files, point, and window layout per project), and a handful of bundled/clonable
+  color themes.
+
+See [`ROADMAP.md`](ROADMAP.md) for what's still open.
 
 ## Requirements
 
-- CMake 3.26+
-- A C++20-capable compiler (moving to C++23, see `ROADMAP.md`)
+- CMake 3.29+
+- Clang (the documented build uses Clang + LLD explicitly — see `CMakePresets.json`)
 - [Janet](https://janet-lang.org/) installed and discoverable via `pkg-config`
 
-TermOx and its dependencies (escape, signals-light, zzz) are fetched automatically by
-CMake via `FetchContent` — no manual setup needed for those.
+Everything else — Notcurses, `utf8proc`, CLI11, `nlohmann/json`, tree-sitter core plus
+every bundled grammar, `libvterm`, and Catch2 (tests) — is fetched automatically by
+CMake via `FetchContent`; no manual setup needed for those.
 
 ## Build
 
 ```sh
-cmake -S . -B build
+cmake --preset default   # Clang + LLD; see CMakePresets.json
 cmake --build build
 ./build/ned
 ```
 
+Run the test suite with `ctest --test-dir build`.
+
 ## Status
 
-No test suite yet. See `ROADMAP.md` for planned work, in order: text/buffer core,
-command & keymap system, Janet-as-extension-language integration, window/frame UI,
-editing feature parity, and — once the editor itself works — advanced TermOx theming
-(gradients, fades).
+Under active development. Real, daily-usable, and extensively tested (1495+ tests via
+`ctest`), but pre-1.0 — the Janet API surface, config file formats, and keybindings may
+still change. See [`ROADMAP.md`](ROADMAP.md) for what's open next.
+
+## License
+
+MIT — see [`LICENSE`](LICENSE). Third-party dependency licenses are listed in
+[`THIRD-PARTY-LICENSES.md`](THIRD-PARTY-LICENSES.md).
