@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <limits>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -39,6 +40,7 @@
 #include "Editor/Org.h"
 #include "Editor/ProjectReplace.h"
 #include "Editor/ProjectTrust.h"
+#include "Editor/PromptHistory.h"
 #include "Editor/QueryReplace.h"
 #include "Editor/Register.h"
 #include "Editor/Tasks/TaskRunner.h"
@@ -64,10 +66,12 @@ class BufferView : public Widget {
     // whatever this currently holds. activeBuffer, mode, and theme must
     // outlive this BufferView (matches how killRing/bufferList/dispatcher/
     // statusMessage are already externally-owned references with the same
-    // requirement).
+    // requirement). promptHistory is shared app-wide (like killRing/registers,
+    // not per-pane) -- minibuffer-history-recall follow-up, see
+    // TryNavigatePromptHistory's own doc comment.
     BufferView(ActiveBuffer& activeBuffer, text::KillRing& killRing, editor::RegisterTable& registers,
-               text::BufferList& bufferList, editor::Dispatcher& dispatcher, std::string& statusMessage,
-               const editor::Mode& mode, const Theme& theme);
+               editor::PromptHistory& promptHistory, text::BufferList& bufferList, editor::Dispatcher& dispatcher,
+               std::string& statusMessage, const editor::Mode& mode, const Theme& theme);
 
     BufferView(const BufferView&)            = delete;
     BufferView& operator=(const BufferView&) = delete;
@@ -480,6 +484,22 @@ class BufferView : public Widget {
         const editor::KeyChord&
             chord);        // shared by FindFile/SwitchToBuffer/ProjectSearch/CreateDirectory/FindScratch/StringRectangle -- see prompt_
     void CompletePrompt(); // Tab in HandlePromptKey -- find-file paths, buffer names, or scratch names, by inputMode_
+    // minibuffer-history-recall follow-up: the short static key
+    // promptHistory_ rings are recorded/recalled under for each of
+    // HandlePromptKey's own InputModes -- only covers modes reachable
+    // through HandlePromptKey (ExecuteCommand/ProjectFindFile use their own
+    // literal keys directly, having no shared label switch to hang this
+    // off of).
+    [[nodiscard]] static std::string_view HistoryKeyForInputMode(InputMode mode);
+    // M-p/M-n (Meta+p/Meta+n, no Control -- free to reuse here: ghost-text
+    // completion cycling is the only other M-n/M-p binding, and it's scoped
+    // to InputMode::Normal, which never reaches any prompt handler). Returns
+    // false for any other chord (caller falls through to its own
+    // Backspace/plain-character handling); true means prompt_'s text (and
+    // the browsing cursor) was updated and the caller should refresh its own
+    // status display and return. See promptHistoryIndex_/promptHistoryStash_
+    // for the browsing-state fields this reads and mutates.
+    [[nodiscard]] bool TryNavigatePromptHistory(const editor::KeyChord& chord, std::string_view key);
     void HandleProjectReplaceKey(const editor::KeyChord& chord);
     void HandleConfirmCloseBufferKey(const editor::KeyChord& chord);      // see RequestCloseBuffer/pendingClose_
     void HandleConfirmOverwriteSaveKey(const editor::KeyChord& chord);    // external-modification-safety: y -> save-buffer-force
@@ -1153,6 +1173,7 @@ class BufferView : public Widget {
     ActiveBuffer&          activeBuffer_;
     text::KillRing&        killRing_;
     editor::RegisterTable& registers_;
+    editor::PromptHistory& promptHistory_;
     text::BufferList&      bufferList_;
     editor::Dispatcher&    dispatcher_;
     std::string&           statusMessage_;
@@ -1247,6 +1268,15 @@ class BufferView : public Widget {
     std::string                              lastSearchQuery_;
     std::optional<editor::QueryReplace>      queryReplace_;
     std::optional<editor::MinibufferPrompt>  prompt_; // FindFile/SwitchToBuffer/ProjectSearch, distinguished by inputMode_
+    // minibuffer-history-recall follow-up: kNoHistoryIndex means "live
+    // editing, not browsing history" -- promptHistoryStash_ is the text
+    // prompt_ held right before the first M-p of a browsing run, restored by
+    // M-n once it walks back past the newest entry. Both reset in
+    // EndInteractiveSession() (every prompt session, successful or
+    // cancelled, passes through there). See TryNavigatePromptHistory.
+    static constexpr std::size_t             kNoHistoryIndex = std::numeric_limits<std::size_t>::max();
+    std::size_t                              promptHistoryIndex_ = kNoHistoryIndex;
+    std::string                              promptHistoryStash_;
     std::optional<editor::ProjectReplace>    projectReplace_;
     text::Buffer*                            pendingClose_     = nullptr;               // buffer awaiting y/n in ConfirmCloseBuffer
     TaskPromptAction                         taskPromptAction_ = TaskPromptAction::Run; // see InputMode::TaskName

@@ -390,6 +390,7 @@ add_library(ned_lib STATIC
         Source/Editor/Register.cpp
         Source/Editor/Rectangle.cpp
         Source/Editor/MinibufferPrompt.cpp
+        Source/Editor/PromptHistory.cpp
         Source/Editor/Mode.cpp
         Source/Editor/SyntaxTheme.cpp
         Source/Editor/ModeOverrides.cpp
@@ -632,6 +633,7 @@ if (NED_BUILD_TESTS)
             Tests/TerminalColorProbeTest.cpp
             Tests/ActiveBufferTest.cpp
             Tests/MinibufferPromptTest.cpp
+            Tests/PromptHistoryTest.cpp
             Tests/TabBarTest.cpp
             Tests/ScrollArrowButtonTest.cpp
             Tests/FinalNewlineTest.cpp

@@ -9,6 +9,7 @@
 #include <functional>
 
 #include "ActiveBuffer.h"
+#include "Editor/Lsp/LspManager.h"
 #include "Editor/Mode.h"
 #include "Text/Buffer.h"
 #include "Theme.h"
@@ -35,11 +36,20 @@ class ModeLine : public Widget {
     // ctor wires this to its own BufferView's Widget::Focused().
     void SetFocusProvider(std::function<bool()> provider);
 
+    // mode-line-lsp-indicator follow-up: unset (the default, every
+    // pre-existing construction site and test) means never show an LSP
+    // indicator -- same "safe no-op until wired" convention as
+    // SetFocusProvider above and every other Set* hook in this codebase.
+    // Wired by Pane/WindowManager::SetLspManager alongside BufferView's own
+    // copy of the same pointer.
+    void SetLspManager(editor::lsp::LspManager* lspManager);
+
   private:
-    const ActiveBuffer&   activeBuffer_;
-    const editor::Mode&   mode_;
-    const Theme&          theme_;
-    std::function<bool()> focusProvider_;
+    const ActiveBuffer&      activeBuffer_;
+    const editor::Mode&      mode_;
+    const Theme&             theme_;
+    std::function<bool()>    focusProvider_;
+    editor::lsp::LspManager* lspManager_ = nullptr;
 };
 
 } // namespace ned::ui

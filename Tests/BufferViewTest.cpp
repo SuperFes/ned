@@ -26,6 +26,7 @@
 #include "Editor/Lsp/Transport.h"
 #include "Editor/Mode.h"
 #include "Editor/ProjectRoot.h"
+#include "Editor/PromptHistory.h"
 #include "Editor/Register.h"
 #include "Editor/ScratchPad.h"
 #include "Editor/Session.h"
@@ -159,6 +160,7 @@ struct Fixture {
     ned::text::Buffer          buffer{"scratch"};
     ned::text::KillRing        killRing;
     ned::editor::RegisterTable registers;
+    ned::editor::PromptHistory promptHistory;
     ned::text::BufferList      bufferList;
 
     ned::editor::CommandRegistry registry{[] {
@@ -175,8 +177,8 @@ struct Fixture {
     ned::ui::ActiveBuffer activeBuffer{buffer};
 
     ned::ui::BufferView View() {
-        return ned::ui::BufferView(activeBuffer, killRing, registers, bufferList, dispatcher, statusMessage, mode,
-                                   theme);
+        return ned::ui::BufferView(activeBuffer, killRing, registers, promptHistory, bufferList, dispatcher,
+                                   statusMessage, mode, theme);
     }
 };
 
@@ -1499,7 +1501,7 @@ TEST_CASE("C-x C-c prompts for confirmation when a buffer has unsaved changes", 
     REQUIRE(buffer.Modified());
 
     ned::ui::ActiveBuffer activeBuffer(buffer);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
 
@@ -1515,7 +1517,7 @@ TEST_CASE("'n' cancels the quit-confirmation prompt and returns to normal editin
     buffer.InsertAtPoint("edit");
 
     ned::ui::ActiveBuffer activeBuffer(buffer);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
 
@@ -1541,7 +1543,7 @@ TEST_CASE("'y' at the quit-confirmation prompt does not crash key_press", "[Buff
     buffer.InsertAtPoint("edit");
 
     ned::ui::ActiveBuffer activeBuffer(buffer);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
 
@@ -1619,7 +1621,7 @@ TEST_CASE("C-x C-f prompts for a path, then find-file opens an existing file and
     Fixture               fixture;
     ned::text::Buffer&    scratch = fixture.bufferList.CreateBuffer("scratch");
     ned::ui::ActiveBuffer activeBuffer(scratch);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
 
@@ -1644,7 +1646,7 @@ TEST_CASE("find-file on a path that doesn't exist yet creates a new buffer and r
     Fixture               fixture;
     ned::text::Buffer&    scratch = fixture.bufferList.CreateBuffer("scratch");
     ned::ui::ActiveBuffer activeBuffer(scratch);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
 
@@ -1666,7 +1668,7 @@ TEST_CASE("Escape cancels the find-file prompt and returns to normal editing on 
     Fixture               fixture;
     ned::text::Buffer&    scratch = fixture.bufferList.CreateBuffer("scratch");
     ned::ui::ActiveBuffer activeBuffer(scratch);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
 
@@ -1689,7 +1691,7 @@ TEST_CASE("C-x b switches to another already-open buffer by name", "[BufferView]
     other.InsertAtPoint("from the other buffer");
 
     ned::ui::ActiveBuffer activeBuffer(scratch);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
 
@@ -1710,7 +1712,7 @@ TEST_CASE("switch-to-buffer reports an error and stays put for an unknown buffer
     ned::text::Buffer& scratch = fixture.bufferList.CreateBuffer("scratch");
 
     ned::ui::ActiveBuffer activeBuffer(scratch);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
 
@@ -2020,7 +2022,7 @@ TEST_CASE("Tab in switch-to-buffer completes a unique prefix and confirms with E
     other.InsertAtPoint("hi");
 
     ned::ui::ActiveBuffer activeBuffer(scratch);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
 
@@ -2042,7 +2044,7 @@ TEST_CASE("Tab in switch-to-buffer with ambiguous matches completes to the commo
     fixture.bufferList.CreateBuffer("alphabet");
 
     ned::ui::ActiveBuffer activeBuffer(scratch);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
 
@@ -2063,7 +2065,7 @@ TEST_CASE("Tab with no matches leaves the prompt untouched", "[BufferView]") {
     ned::text::Buffer& scratch = fixture.bufferList.CreateBuffer("scratch");
 
     ned::ui::ActiveBuffer activeBuffer(scratch);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
 
@@ -2087,7 +2089,7 @@ TEST_CASE("Tab in find-file completes a unique file path and Enter opens it", "[
     ned::text::Buffer& scratch = fixture.bufferList.CreateBuffer("scratch");
 
     ned::ui::ActiveBuffer activeBuffer(scratch);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
 
@@ -2120,7 +2122,7 @@ TEST_CASE("Tab in find-file with ambiguous matches completes to the common prefi
     ned::text::Buffer& scratch = fixture.bufferList.CreateBuffer("scratch");
 
     ned::ui::ActiveBuffer activeBuffer(scratch);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
 
@@ -2501,7 +2503,7 @@ TEST_CASE("Enter visits the result under point in a read-only results buffer", "
     results.SetPoint(results.Content().LineToByteOffset(1));
     results.SetReadOnly(true);
     ned::ui::ActiveBuffer activeBuffer(results);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
 
@@ -2535,7 +2537,7 @@ TEST_CASE("A mouse click visits the result under the click in a read-only result
     results.InsertAtPoint("some text\n" + path.string() + ":2: two\nmore text");
     results.SetReadOnly(true);
     ned::ui::ActiveBuffer activeBuffer(results);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
 
@@ -2711,7 +2713,7 @@ TEST_CASE("RequestCloseBuffer closes an unmodified, non-active buffer immediatel
     ned::text::Buffer&    scratch = fixture.bufferList.CreateBuffer("scratch");
     ned::text::Buffer&    other   = fixture.bufferList.CreateBuffer("other");
     ned::ui::ActiveBuffer activeBuffer(scratch);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
 
     view.RequestCloseBuffer(other);
@@ -2726,7 +2728,7 @@ TEST_CASE("RequestCloseBuffer closing the active buffer switches to another rema
     ned::text::Buffer&    scratch = fixture.bufferList.CreateBuffer("scratch");
     ned::text::Buffer&    other   = fixture.bufferList.CreateBuffer("other");
     ned::ui::ActiveBuffer activeBuffer(scratch);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
 
     view.RequestCloseBuffer(scratch);
@@ -2740,7 +2742,7 @@ TEST_CASE("RequestCloseBuffer closing the only remaining buffer replaces it with
     Fixture               fixture;
     ned::text::Buffer&    only = fixture.bufferList.CreateBuffer("only");
     ned::ui::ActiveBuffer activeBuffer(only);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
 
     view.RequestCloseBuffer(only);
@@ -2762,7 +2764,7 @@ TEST_CASE("RequestCloseBuffer closes a modified, read-only ('tossable') buffer i
     results.SetReadOnly(true);
     REQUIRE(results.Modified());
     ned::ui::ActiveBuffer activeBuffer(scratch);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
 
     view.RequestCloseBuffer(results);
@@ -2777,7 +2779,7 @@ TEST_CASE("quit doesn't prompt when the only modified buffer is read-only", "[Bu
     results.InsertAtPoint("/some/file.txt:1: match\n");
     results.SetReadOnly(true);
     ned::ui::ActiveBuffer activeBuffer(results);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
 
@@ -2797,7 +2799,7 @@ TEST_CASE("Typing into a read-only buffer reports the error via the status line,
     results.InsertAtPoint("original");
     results.SetReadOnly(true);
     ned::ui::ActiveBuffer activeBuffer(results);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
 
@@ -2813,7 +2815,7 @@ TEST_CASE("RequestCloseBuffer on a modified buffer prompts, 'y' confirms the clo
     ned::text::Buffer& other   = fixture.bufferList.CreateBuffer("other");
     other.InsertAtPoint("unsaved");
     ned::ui::ActiveBuffer activeBuffer(scratch);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
 
     view.RequestCloseBuffer(other);
@@ -2832,7 +2834,7 @@ TEST_CASE("RequestCloseBuffer on a modified buffer prompts, 'n' cancels and keep
     ned::text::Buffer& other   = fixture.bufferList.CreateBuffer("other");
     other.InsertAtPoint("unsaved");
     ned::ui::ActiveBuffer activeBuffer(scratch);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
 
     view.RequestCloseBuffer(other);
@@ -2848,7 +2850,7 @@ TEST_CASE("RequestCloseBuffer is a no-op while another interactive session is al
     ned::text::Buffer&    scratch = fixture.bufferList.CreateBuffer("scratch");
     ned::text::Buffer&    other   = fixture.bufferList.CreateBuffer("other");
     ned::ui::ActiveBuffer activeBuffer(scratch);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
 
@@ -2870,7 +2872,7 @@ TEST_CASE("RequestOpenBinaryFile prompts, 'y' opens the file as text anyway", "[
     Fixture               fixture;
     ned::text::Buffer&    scratch = fixture.bufferList.CreateBuffer("scratch");
     ned::ui::ActiveBuffer activeBuffer(scratch);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
 
     view.RequestOpenBinaryFile(path);
@@ -2896,7 +2898,7 @@ TEST_CASE("RequestOpenBinaryFile prompts, 'n' cancels without opening", "[Buffer
     Fixture               fixture;
     ned::text::Buffer&    scratch = fixture.bufferList.CreateBuffer("scratch");
     ned::ui::ActiveBuffer activeBuffer(scratch);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
 
     view.RequestOpenBinaryFile(path);
@@ -2920,7 +2922,7 @@ TEST_CASE("RequestOpenBinaryFile is a no-op while another interactive session is
     Fixture               fixture;
     ned::text::Buffer&    scratch = fixture.bufferList.CreateBuffer("scratch");
     ned::ui::ActiveBuffer activeBuffer(scratch);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
 
@@ -2976,7 +2978,7 @@ TEST_CASE("SetOnBufferClosed fires with the closing buffer before it's erased", 
     ned::text::Buffer&    scratch = fixture.bufferList.CreateBuffer("scratch");
     ned::text::Buffer&    other   = fixture.bufferList.CreateBuffer("other");
     ned::ui::ActiveBuffer activeBuffer(scratch);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
 
     ned::text::Buffer* closed = nullptr;
@@ -2993,7 +2995,7 @@ TEST_CASE("Closing a buffer is a safe no-op when no onBufferClosed handler is re
     ned::text::Buffer&    scratch = fixture.bufferList.CreateBuffer("scratch");
     ned::text::Buffer&    other   = fixture.bufferList.CreateBuffer("other");
     ned::ui::ActiveBuffer activeBuffer(scratch);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
 
     view.RequestCloseBuffer(other); // must not crash
@@ -3344,7 +3346,7 @@ TEST_CASE("C-c C-n renames a file on disk and follows the buffer that had it ope
     Fixture               fixture;
     ned::text::Buffer&    opened = fixture.bufferList.OpenOrCreateFile(from);
     ned::ui::ActiveBuffer activeBuffer(opened);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
 
@@ -3386,7 +3388,7 @@ TEST_CASE("rename-file on a directory relocates every open buffer nested inside 
     ned::text::Buffer&    bufferA = fixture.bufferList.OpenOrCreateFile(from / "a.txt");
     ned::text::Buffer&    bufferB = fixture.bufferList.OpenOrCreateFile(from / "sub" / "b.txt");
     ned::ui::ActiveBuffer activeBuffer(bufferA); // bufferB is open but not active
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
 
@@ -6262,7 +6264,7 @@ TEST_CASE("M-g g prompts for a line number and jumps point there", "[BufferView]
     Fixture               fixture;
     ned::text::Buffer&    scratch = fixture.bufferList.CreateBuffer("scratch");
     ned::ui::ActiveBuffer activeBuffer(scratch);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
 
@@ -6289,7 +6291,7 @@ TEST_CASE("goto-line rejects non-numeric input and stays usable", "[BufferView]"
     Fixture               fixture;
     ned::text::Buffer&    scratch = fixture.bufferList.CreateBuffer("scratch");
     ned::ui::ActiveBuffer activeBuffer(scratch);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
 
@@ -6308,11 +6310,129 @@ TEST_CASE("goto-line rejects non-numeric input and stays usable", "[BufferView]"
     REQUIRE(scratch.Text().find('z') == 0);
 }
 
+// --- minibuffer-history-recall follow-up: M-p/M-n --------------------------
+
+TEST_CASE("M-p in goto-line recalls previously submitted values, newest first", "[BufferView]") {
+    Fixture               fixture;
+    ned::text::Buffer&    scratch = fixture.bufferList.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
+                               fixture.statusMessage, fixture.mode, fixture.theme);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    scratch.InsertAtPoint("one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten");
+    scratch.SetPoint(0);
+
+    // Two prior goto-line sessions, each submitted with Enter.
+    view.OnEvent(ned::ui::test::Alt('g'));
+    view.OnEvent(ned::ui::test::Character("g"));
+    TypeText(view, "3");
+    view.OnEvent(ned::ui::test::Return());
+
+    view.OnEvent(ned::ui::test::Alt('g'));
+    view.OnEvent(ned::ui::test::Character("g"));
+    TypeText(view, "5");
+    view.OnEvent(ned::ui::test::Return());
+
+    // A third session recalls them newest-first, without typing anything.
+    view.OnEvent(ned::ui::test::Alt('g'));
+    view.OnEvent(ned::ui::test::Character("g"));
+    REQUIRE(fixture.statusMessage == "Goto line: ");
+
+    view.OnEvent(ned::ui::test::Alt('p'));
+    REQUIRE(fixture.statusMessage == "Goto line: 5");
+    view.OnEvent(ned::ui::test::Alt('p'));
+    REQUIRE(fixture.statusMessage == "Goto line: 3");
+
+    // At the oldest entry, a further M-p is a no-op.
+    view.OnEvent(ned::ui::test::Alt('p'));
+    REQUIRE(fixture.statusMessage == "Goto line: 3");
+
+    view.OnEvent(ned::ui::test::Return());
+    REQUIRE(scratch.Point() == scratch.Content().LineToByteOffset(2));
+}
+
+TEST_CASE("M-n in goto-line walks back toward the newest entry and restores the in-progress edit",
+          "[BufferView]") {
+    Fixture               fixture;
+    ned::text::Buffer&    scratch = fixture.bufferList.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
+                               fixture.statusMessage, fixture.mode, fixture.theme);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    scratch.InsertAtPoint("one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten");
+    scratch.SetPoint(0);
+
+    view.OnEvent(ned::ui::test::Alt('g'));
+    view.OnEvent(ned::ui::test::Character("g"));
+    TypeText(view, "3");
+    view.OnEvent(ned::ui::test::Return());
+
+    view.OnEvent(ned::ui::test::Alt('g'));
+    view.OnEvent(ned::ui::test::Character("g"));
+    TypeText(view, "5");
+    view.OnEvent(ned::ui::test::Return());
+
+    view.OnEvent(ned::ui::test::Alt('g'));
+    view.OnEvent(ned::ui::test::Character("g"));
+    TypeText(view, "9"); // an in-progress edit, never submitted
+
+    view.OnEvent(ned::ui::test::Alt('p'));
+    REQUIRE(fixture.statusMessage == "Goto line: 5");
+    view.OnEvent(ned::ui::test::Alt('p'));
+    REQUIRE(fixture.statusMessage == "Goto line: 3");
+
+    view.OnEvent(ned::ui::test::Alt('n'));
+    REQUIRE(fixture.statusMessage == "Goto line: 5");
+    view.OnEvent(ned::ui::test::Alt('n'));
+    REQUIRE(fixture.statusMessage == "Goto line: 9"); // restored, not the empty string
+
+    // Typing *while browsing* exits history mode outright -- a further M-p
+    // starts a fresh browse from this edited text (stashing it), rather than
+    // resuming the walk with the earlier, now-stale stash.
+    view.OnEvent(ned::ui::test::Alt('p'));
+    REQUIRE(fixture.statusMessage == "Goto line: 5"); // browsing again
+    TypeText(view, "9");
+    REQUIRE(fixture.statusMessage == "Goto line: 59");
+    view.OnEvent(ned::ui::test::Alt('p'));
+    REQUIRE(fixture.statusMessage == "Goto line: 5"); // fresh browse, not a continuation
+    view.OnEvent(ned::ui::test::Alt('n'));
+    REQUIRE(fixture.statusMessage == "Goto line: 59"); // restores the just-edited text, not "9"
+
+    view.OnEvent(ned::ui::test::Escape());
+}
+
+TEST_CASE("M-p in M-x recalls a previously typed fuzzy query", "[BufferView]") {
+    Fixture fixture;
+    // A registered command that does nothing interactive -- unlike
+    // switch-to-buffer/goto-line/etc., invoking it doesn't open a further
+    // prompt, so the session cleanly returns to Normal and a second M-x can
+    // reopen it within this same test.
+    fixture.registry.Register("zzz-history-sentinel", "", [](ned::editor::CommandContext&) {});
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "zzz-history-sentinel");
+    view.OnEvent(ned::ui::test::Return()); // submits, recording "zzz-history-sentinel"
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    REQUIRE(fixture.statusMessage.rfind("M-x ", 0) == 0);
+    REQUIRE(fixture.statusMessage.find("zzz-history-sentinel") == std::string::npos);
+
+    view.OnEvent(ned::ui::test::Alt('p'));
+    REQUIRE(fixture.statusMessage.find("[zzz-history-sentinel]") != std::string::npos);
+
+    view.OnEvent(ned::ui::test::Escape());
+}
+
 TEST_CASE("C-l recenters the viewport on point's line", "[BufferView]") {
     Fixture               fixture;
     ned::text::Buffer&    scratch = fixture.bufferList.CreateBuffer("scratch");
     ned::ui::ActiveBuffer activeBuffer(scratch);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 9}); // 10 rows
 
@@ -6344,7 +6464,7 @@ TEST_CASE("C-x C-s on an externally-changed file asks first; n cancels, y overwr
     Fixture               fixture;
     ned::text::Buffer&    buffer = fixture.bufferList.OpenOrCreateFile(path);
     ned::ui::ActiveBuffer activeBuffer(buffer);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
                                fixture.statusMessage, fixture.mode, fixture.theme);
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
 
@@ -6394,7 +6514,7 @@ TEST_CASE("Closing the active buffer lands on the most recently left buffer, not
     // The same wiring Pane's constructor does for the real editor.
     activeBuffer.SetOnChange([&fixture](ned::text::Buffer& current) { fixture.bufferList.TouchBuffer(current); });
     fixture.bufferList.TouchBuffer(a);
-    ned::ui::BufferView view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
+    ned::ui::BufferView view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
                              fixture.statusMessage, fixture.mode, fixture.theme);
 
     activeBuffer.Set(b); // a -> b -> c: "b" is the tab most recently left
@@ -6410,7 +6530,7 @@ TEST_CASE("Closing the active buffer falls back to list order when nothing was e
     ned::text::Buffer&    a = fixture.bufferList.CreateBuffer("a");
     ned::text::Buffer&    b = fixture.bufferList.CreateBuffer("b");
     ned::ui::ActiveBuffer activeBuffer(b); // no on-change hook, empty MRU order
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList,
                                fixture.dispatcher, fixture.statusMessage, fixture.mode, fixture.theme);
 
     view.RequestCloseBuffer(b);
@@ -6424,7 +6544,7 @@ TEST_CASE("tab-next/tab-previous cycle the active buffer in tab order, wrapping 
     ned::text::Buffer&    b = fixture.bufferList.CreateBuffer("b");
     ned::text::Buffer&    c = fixture.bufferList.CreateBuffer("c");
     ned::ui::ActiveBuffer activeBuffer(b);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList,
                                fixture.dispatcher, fixture.statusMessage, fixture.mode, fixture.theme);
 
     view.OnEvent(ned::ui::test::Ctrl('c'));
@@ -6448,7 +6568,7 @@ TEST_CASE("tab-next with a single tab stays put", "[BufferView]") {
     Fixture               fixture;
     ned::text::Buffer&    only = fixture.bufferList.CreateBuffer("only");
     ned::ui::ActiveBuffer activeBuffer(only);
-    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList,
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList,
                                fixture.dispatcher, fixture.statusMessage, fixture.mode, fixture.theme);
 
     view.OnEvent(ned::ui::test::Ctrl('c'));

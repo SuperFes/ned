@@ -48,14 +48,15 @@ namespace {
 } // namespace
 
 Pane::Pane(text::Buffer& buffer, text::KillRing& killRing, editor::RegisterTable& registers,
-           text::BufferList& bufferList, const editor::CommandRegistry& registry, const editor::Keymap& janetKeymap,
-           const editor::Keymap& globalKeymap, editor::Mode mode, std::string& statusMessage, const Theme& theme,
-           ProjectSidebar* projectSidebar, editor::lsp::LspManager* lspManager, editor::tasks::TaskRunner* taskRunner,
+           editor::PromptHistory& promptHistory, text::BufferList& bufferList, const editor::CommandRegistry& registry,
+           const editor::Keymap& janetKeymap, const editor::Keymap& globalKeymap, editor::Mode mode,
+           std::string& statusMessage, const Theme& theme, ProjectSidebar* projectSidebar,
+           editor::lsp::LspManager* lspManager, editor::tasks::TaskRunner* taskRunner,
            editor::vcs::VcsRunner* vcsRunner, editor::dap::DapManager* dapManager,
            std::function<void(editor::InteractiveRequest)> onWindowRequest,
            std::function<void(text::Buffer&)>              onBufferClosed) : activeBuffer_(buffer), mode_(std::move(mode)),
                                                                 dispatcher_(registry, editor::KeymapStack({&janetKeymap, &mode_.keymap, &globalKeymap})),
-                                                                bufferView_(std::make_shared<BufferView>(activeBuffer_, killRing, registers, bufferList, dispatcher_,
+                                                                bufferView_(std::make_shared<BufferView>(activeBuffer_, killRing, registers, promptHistory, bufferList, dispatcher_,
                                                                                                          statusMessage, mode_, theme)),
                                                                 modeLine_(std::make_shared<ModeLine>(activeBuffer_, mode_, theme)),
                                                                 scrollBar_(std::make_shared<ScrollBar>(theme.scrollBar)),
@@ -102,6 +103,7 @@ Pane::Pane(text::Buffer& buffer, text::KillRing& killRing, editor::RegisterTable
     scrollColumn_.active = !minimap_->active;
     bufferView_->SetProjectSidebar(projectSidebar);
     bufferView_->SetLspManager(lspManager);
+    modeLine_->SetLspManager(lspManager);
     bufferView_->SetTaskRunner(taskRunner);
     bufferView_->SetVcsRunner(vcsRunner);
     bufferView_->SetDapManager(dapManager);
@@ -139,6 +141,10 @@ bool Pane::ScrollColumnActive() const {
 
 BufferView& Pane::Buffer() {
     return *bufferView_;
+}
+
+ModeLine& Pane::ModeLineRef() {
+    return *modeLine_;
 }
 
 const editor::Mode& Pane::ModeRef() const {
@@ -288,10 +294,10 @@ namespace {
 } // namespace
 
 WindowManager::WindowManager(text::Buffer& initialBuffer, text::KillRing& killRing, editor::RegisterTable& registers,
-                             text::BufferList& bufferList, const editor::CommandRegistry& registry,
-                             const editor::Keymap& janetKeymap, const editor::Keymap& globalKeymap,
-                             editor::Mode initialMode, std::string& statusMessage,
-                             const Theme& theme) : killRing_(killRing), registers_(registers), bufferList_(bufferList), registry_(registry), janetKeymap_(janetKeymap),
+                             editor::PromptHistory& promptHistory, text::BufferList& bufferList,
+                             const editor::CommandRegistry& registry, const editor::Keymap& janetKeymap,
+                             const editor::Keymap& globalKeymap, editor::Mode initialMode, std::string& statusMessage,
+                             const Theme& theme) : killRing_(killRing), registers_(registers), promptHistory_(promptHistory), bufferList_(bufferList), registry_(registry), janetKeymap_(janetKeymap),
                                                    globalKeymap_(globalKeymap), statusMessage_(statusMessage), theme_(theme) {
     root_       = std::make_unique<WindowNode>();
     root_->kind = WindowNode::Kind::Leaf;
@@ -309,7 +315,7 @@ WindowManager::WindowManager(text::Buffer& initialBuffer, text::KillRing& killRi
 
 std::unique_ptr<Pane> WindowManager::MakePane(text::Buffer& buffer, editor::Mode mode) {
     auto pane = std::make_unique<Pane>(
-        buffer, killRing_, registers_, bufferList_, registry_, janetKeymap_, globalKeymap_, std::move(mode),
+        buffer, killRing_, registers_, promptHistory_, bufferList_, registry_, janetKeymap_, globalKeymap_, std::move(mode),
         statusMessage_, theme_, projectSidebar_, lspManager_, taskRunner_, vcsRunner_, dapManager_,
         [this](editor::InteractiveRequest request) { HandleWindowRequest(request); },
         [this](text::Buffer& closedBuffer) { HandleBufferClosed(closedBuffer); });
@@ -330,6 +336,7 @@ void WindowManager::SetLspManager(editor::lsp::LspManager* lspManager) {
     lspManager_ = lspManager;
     for (Pane* pane : Leaves()) {
         pane->Buffer().SetLspManager(lspManager);
+        pane->ModeLineRef().SetLspManager(lspManager);
     }
 }
 

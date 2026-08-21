@@ -53,21 +53,6 @@ namespace {
         return chord.Special == editor::SpecialKey::Escape || (chord.Control && chord.Codepoint == U'g');
     }
 
-    // LSP client follow-up: LspServerConfig.h's language keys ("c", "python",
-    // ...) are Mode's own name minus its "-mode" suffix -- every bundled
-    // *Mode() factory names itself exactly that way (see ModeOverrides.cpp's
-    // BundledModeFactories table, e.g. "c-mode"/"python-mode"), so this is a
-    // free derivation rather than a second naming table to keep in sync.
-    // Modes with no "-mode" suffix (there are none among the bundled ones,
-    // but a dynamically-registered one -- Editor/ModeOverrides.h -- could in
-    // principle be named anything) are returned unchanged.
-    std::string LanguageForMode(const editor::Mode& mode) {
-        constexpr std::string_view kSuffix = "-mode";
-        if (mode.name.size() > kSuffix.size() && mode.name.ends_with(kSuffix)) {
-            return mode.name.substr(0, mode.name.size() - kSuffix.size());
-        }
-        return mode.name;
-    }
 
     // Window-splitting requests forward to WindowManager (see
     // BufferView::StartInteractiveSession's own switch) and can
@@ -598,8 +583,9 @@ namespace {
 } // namespace
 
 BufferView::BufferView(ActiveBuffer& activeBuffer, text::KillRing& killRing, editor::RegisterTable& registers,
-                       text::BufferList& bufferList, editor::Dispatcher& dispatcher, std::string& statusMessage,
-                       const editor::Mode& mode, const Theme& theme) : activeBuffer_(activeBuffer), killRing_(killRing), registers_(registers), bufferList_(bufferList),
+                       editor::PromptHistory& promptHistory, text::BufferList& bufferList, editor::Dispatcher& dispatcher,
+                       std::string& statusMessage, const editor::Mode& mode, const Theme& theme) : activeBuffer_(activeBuffer), killRing_(killRing), registers_(registers),
+                                                                       promptHistory_(promptHistory), bufferList_(bufferList),
                                                                        dispatcher_(dispatcher), statusMessage_(statusMessage), mode_(mode), theme_(theme) {
     if (const char* path = std::getenv("NED_DEBUG_MOUSE"); path && *path) {
         debugMouseLogPath_ = path;
@@ -1438,7 +1424,7 @@ void BufferView::Paint(Canvas c) {
     // language (LspServerCommand returns nullopt, checked inside SyncBuffer
     // itself).
     if (lspManager_) {
-        lspManager_->SyncBuffer(buffer, LanguageForMode(mode_));
+        lspManager_->SyncBuffer(buffer, editor::LanguageKeyForMode(mode_));
     }
 
     // error-visibility follow-up: a cheap once-per-frame poll, the same
@@ -3800,7 +3786,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         // ending) arrive later through the WindowManager-wired
         // SetOnStopped/SetOnSessionEnded callbacks, not here.
         case editor::InteractiveRequest::DapContinue:
-            statusMessage_ = dapManager_ ? dapManager_->StartOrContinue(LanguageForMode(mode_)) : "No debugger available.";
+            statusMessage_ = dapManager_ ? dapManager_->StartOrContinue(editor::LanguageKeyForMode(mode_)) : "No debugger available.";
             return;
         case editor::InteractiveRequest::DapStop:
             statusMessage_ = dapManager_ ? dapManager_->StopSession() : "No debugger available.";
@@ -4249,6 +4235,8 @@ void BufferView::EndInteractiveSession() {
     search_.reset();
     queryReplace_.reset();
     prompt_.reset();
+    promptHistoryIndex_ = kNoHistoryIndex;
+    promptHistoryStash_.clear();
     projectReplace_.reset();
     pendingClose_ = nullptr;
     pendingBinaryOpenPath_.clear();
@@ -4394,6 +4382,92 @@ void BufferView::HandleQueryReplaceKey(const editor::KeyChord& chord) {
     }
 
     ScrollToShowPoint();
+}
+
+std::string_view BufferView::HistoryKeyForInputMode(InputMode mode) {
+    switch (mode) {
+        case InputMode::FindFile:
+            return "find-file";
+        case InputMode::SwitchToBuffer:
+            return "switch-to-buffer";
+        case InputMode::ProjectSearch:
+            return "project-search";
+        case InputMode::CreateDirectory:
+            return "create-directory";
+        case InputMode::FindScratch:
+            return "find-scratch";
+        case InputMode::GotoLine:
+            return "goto-line";
+        case InputMode::StringRectangle:
+            return "string-rectangle";
+        case InputMode::SetHeadlineTags:
+            return "set-headline-tags";
+        case InputMode::LspRenameNewName:
+            return "lsp-rename";
+        case InputMode::TaskName:
+            return "task-name";
+        case InputMode::DapEvaluate:
+            return "dap-evaluate";
+        case InputMode::VcsCommit:
+            return "vcs-commit";
+        case InputMode::VcsSwitchBranch:
+            return "vcs-switch-branch";
+        case InputMode::VcsCreateBranch:
+            return "vcs-create-branch";
+        default:
+            return "prompt"; // unreachable from HandlePromptKey's own dispatch guard; a safe shared fallback regardless
+    }
+}
+
+bool BufferView::TryNavigatePromptHistory(const editor::KeyChord& chord, std::string_view key) {
+    if (!chord.Meta || chord.Control) {
+        return false;
+    }
+    if (chord.Codepoint != U'p' && chord.Codepoint != U'n') {
+        return false;
+    }
+
+    // Deliberately never touches statusMessage_ itself, even at a history
+    // boundary (no entries yet / already at the oldest or the live edit) --
+    // every caller's own post-navigation refresh (plain StatusText() here,
+    // a re-ranked fuzzy-candidate line in ExecuteCommand/ProjectFindFile)
+    // runs unconditionally right after a true return, and there's no separate
+    // echo-area slot to show a transient "no more history" note in without
+    // that refresh immediately clobbering it -- so a boundary press is a
+    // silent no-op instead, same as Backspace on an already-empty prompt.
+    const std::vector<std::string>& entries = promptHistory_.Entries(key);
+
+    if (chord.Codepoint == U'p') { // older
+        if (promptHistoryIndex_ == kNoHistoryIndex) {
+            if (entries.empty()) {
+                return true;
+            }
+            promptHistoryStash_ = prompt_->Text();
+            promptHistoryIndex_ = 0;
+        }
+        else if (promptHistoryIndex_ + 1 < entries.size()) {
+            ++promptHistoryIndex_;
+        }
+        else {
+            return true; // already at the oldest entry
+        }
+        prompt_->SetText(entries[promptHistoryIndex_]);
+        return true;
+    }
+
+    // 'n', newer
+    if (promptHistoryIndex_ == kNoHistoryIndex) {
+        return true; // already at the live edit -- nothing to do
+    }
+    if (promptHistoryIndex_ > 0) {
+        --promptHistoryIndex_;
+        prompt_->SetText(entries[promptHistoryIndex_]);
+    }
+    else {
+        prompt_->SetText(promptHistoryStash_);
+        promptHistoryIndex_ = kNoHistoryIndex;
+    }
+    return true;
 }
 
 void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
@@ -4631,6 +4705,7 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
             }
         }
 
+        promptHistory_.Record(HistoryKeyForInputMode(inputMode_), input);
         EndInteractiveSession();
         return;
     }
@@ -4707,11 +4782,18 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
         return;
     }
 
+    if (TryNavigatePromptHistory(chord, HistoryKeyForInputMode(inputMode_))) {
+        statusMessage_ = prompt_->StatusText();
+        return;
+    }
+
     if (chord.Special == editor::SpecialKey::Backspace) {
         prompt_->DeleteChar();
+        promptHistoryIndex_ = kNoHistoryIndex; // editing exits history browsing -- see TryNavigatePromptHistory's own doc comment
     }
     else if (IsPlainCharacter(chord)) {
         prompt_->AppendChar(chord.Codepoint);
+        promptHistoryIndex_ = kNoHistoryIndex;
     }
     // Anything else is ignored -- stay in the prompt.
 
@@ -6119,6 +6201,8 @@ void BufferView::RefreshExecuteCommandStatus() {
 
 void BufferView::HandleExecuteCommandKey(const editor::KeyChord& chord) {
     if (chord.Special == editor::SpecialKey::Enter) {
+        promptHistory_.Record("execute-command", prompt_->Text());
+
         const std::vector<std::string> ranked =
             editor::FuzzyFilterAndRank(dispatcher_.Registry().Names(), prompt_->Text());
 
@@ -6142,6 +6226,12 @@ void BufferView::HandleExecuteCommandKey(const editor::KeyChord& chord) {
     if (IsQuit(chord)) {
         statusMessage_ = "Command cancelled.";
         EndInteractiveSession();
+        return;
+    }
+
+    if (TryNavigatePromptHistory(chord, "execute-command")) {
+        executeCommandSelection_ = 0;
+        RefreshExecuteCommandStatus();
         return;
     }
 
@@ -6172,13 +6262,15 @@ void BufferView::HandleExecuteCommandKey(const editor::KeyChord& chord) {
     // affordance would be redundant.
     if (chord.Special == editor::SpecialKey::Backspace) {
         prompt_->DeleteChar();
-        executeCommandSelection_ = 0;
+        promptHistoryIndex_       = kNoHistoryIndex; // editing exits history browsing -- see TryNavigatePromptHistory's own doc comment
+        executeCommandSelection_  = 0;
         RefreshExecuteCommandStatus();
         return;
     }
     if (IsPlainCharacter(chord)) {
         prompt_->AppendChar(chord.Codepoint);
-        executeCommandSelection_ = 0;
+        promptHistoryIndex_       = kNoHistoryIndex;
+        executeCommandSelection_  = 0;
         RefreshExecuteCommandStatus();
         return;
     }
@@ -6200,6 +6292,8 @@ void BufferView::RefreshProjectFindFileStatus() {
 
 void BufferView::HandleProjectFindFileKey(const editor::KeyChord& chord) {
     if (chord.Special == editor::SpecialKey::Enter) {
+        promptHistory_.Record("project-find-file", prompt_->Text());
+
         const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(projectFindFileCandidates_, prompt_->Text());
 
         if (ranked.empty()) {
@@ -6228,6 +6322,12 @@ void BufferView::HandleProjectFindFileKey(const editor::KeyChord& chord) {
         return;
     }
 
+    if (TryNavigatePromptHistory(chord, "project-find-file")) {
+        projectFindFileSelection_ = 0;
+        RefreshProjectFindFileStatus();
+        return;
+    }
+
     if (chord.Special == editor::SpecialKey::Down) {
         const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(projectFindFileCandidates_, prompt_->Text());
         if (!ranked.empty() && projectFindFileSelection_ + 1 < ranked.size()) {
@@ -6248,12 +6348,14 @@ void BufferView::HandleProjectFindFileKey(const editor::KeyChord& chord) {
     // HandleExecuteCommandKey above -- see that method's own comment.
     if (chord.Special == editor::SpecialKey::Backspace) {
         prompt_->DeleteChar();
+        promptHistoryIndex_       = kNoHistoryIndex; // editing exits history browsing -- see TryNavigatePromptHistory's own doc comment
         projectFindFileSelection_ = 0;
         RefreshProjectFindFileStatus();
         return;
     }
     if (IsPlainCharacter(chord)) {
         prompt_->AppendChar(chord.Codepoint);
+        promptHistoryIndex_       = kNoHistoryIndex;
         projectFindFileSelection_ = 0;
         RefreshProjectFindFileStatus();
         return;

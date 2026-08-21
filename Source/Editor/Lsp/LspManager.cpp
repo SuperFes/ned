@@ -318,6 +318,10 @@ void LspManager::AcknowledgeLogEntry() {
     hasUnseenLogEntry_ = false;
 }
 
+bool LspManager::HasRunningClient(const std::string& language) const {
+    return ExistingClientForLanguage(language) != nullptr;
+}
+
 void LspManager::NotifyBufferClosed(text::Buffer& buffer) {
     const auto it = bufferState_.find(&buffer);
     if (it == bufferState_.end()) {

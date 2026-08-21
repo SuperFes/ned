@@ -19,6 +19,7 @@
 #include "Editor/Commands.h"
 #include "Editor/Dispatcher.h"
 #include "Editor/Mode.h"
+#include "Editor/PromptHistory.h"
 #include "Editor/Register.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
@@ -154,6 +155,7 @@ TEST_CASE("BufferView::paint on a pathologically long single line stays fast", "
     ned::text::Buffer          buffer("scratch", ned::text::Rope(MakeSingleLongLine(5'000'000)));
     ned::text::KillRing        killRing;
     ned::editor::RegisterTable registers;
+    ned::editor::PromptHistory promptHistory;
     ned::text::BufferList      bufferList;
 
     ned::editor::CommandRegistry registry;
@@ -166,7 +168,7 @@ TEST_CASE("BufferView::paint on a pathologically long single line stays fast", "
     std::string statusMessage;
 
     ned::ui::ActiveBuffer activeBuffer(buffer);
-    ned::ui::BufferView   view(activeBuffer, killRing, registers, bufferList, dispatcher, statusMessage, mode, theme);
+    ned::ui::BufferView   view(activeBuffer, killRing, registers, promptHistory, bufferList, dispatcher, statusMessage, mode, theme);
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 23});
 
     ned::ui::Screen   screen = ned::ui::Screen(80, 24);
@@ -223,6 +225,7 @@ TEST_CASE("BufferView::paint on a large wrap-enabled document stays fast across 
     ned::text::Buffer          buffer("scratch", ned::text::Rope(MakeMultiLineContent(5'000)));
     ned::text::KillRing        killRing;
     ned::editor::RegisterTable registers;
+    ned::editor::PromptHistory promptHistory;
     ned::text::BufferList      bufferList;
 
     ned::editor::CommandRegistry registry;
@@ -236,7 +239,7 @@ TEST_CASE("BufferView::paint on a large wrap-enabled document stays fast across 
     std::string statusMessage;
 
     ned::ui::ActiveBuffer activeBuffer(buffer);
-    ned::ui::BufferView   view(activeBuffer, killRing, registers, bufferList, dispatcher, statusMessage, mode, theme);
+    ned::ui::BufferView   view(activeBuffer, killRing, registers, promptHistory, bufferList, dispatcher, statusMessage, mode, theme);
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 23});
 
     ned::ui::Screen   screen = ned::ui::Screen(80, 24);
@@ -281,6 +284,7 @@ TEST_CASE("BufferView::paint with JsonMode's tree-sitter highlighting stays fast
     ned::text::Buffer          buffer("scratch", ned::text::Rope(MakeLargeJsonArray(150)));
     ned::text::KillRing        killRing;
     ned::editor::RegisterTable registers;
+    ned::editor::PromptHistory promptHistory;
     ned::text::BufferList      bufferList;
 
     ned::editor::CommandRegistry registry;
@@ -293,7 +297,7 @@ TEST_CASE("BufferView::paint with JsonMode's tree-sitter highlighting stays fast
     std::string statusMessage;
 
     ned::ui::ActiveBuffer activeBuffer(buffer);
-    ned::ui::BufferView   view(activeBuffer, killRing, registers, bufferList, dispatcher, statusMessage, mode, theme);
+    ned::ui::BufferView   view(activeBuffer, killRing, registers, promptHistory, bufferList, dispatcher, statusMessage, mode, theme);
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 23});
 
     ned::ui::Screen   screen = ned::ui::Screen(80, 24);

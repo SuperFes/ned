@@ -202,6 +202,17 @@ Notcurses (TermOx → FTXUI → Notcurses over the project's life).
 - [ ] LSP deliberate cuts, revisit on demand: syncing every open buffer (not just the
       active one), incremental sync, idle server teardown, multi-root workspaces, raw
       subprocess stderr capture.
+- [ ] **Mode-line LSP status glyph, beyond running/idle** — the mode-line-lsp-indicator
+      follow-up (`ModeLine::SetLspManager`, `LspManager::HasRunningClient`) currently
+      shows only two states: the existing spinner+detail while a request is genuinely
+      in flight, and a static `●` for "running, idle." Not yet surfaced, though the data
+      already exists internally: a spawn failure (`LspManager::failedCommands_` — only
+      visible today via `*lsp log*`) and a disconnected/crashed server (`ClientDisconnected`
+      just erases the client, indistinguishable from "never configured"). Worth a small
+      status enum (e.g. connecting/ready/busy/error) with one glyph bound per state rather
+      than more ad hoc booleans; the busy state's existing `%`-complete detail text
+      ($/progress-driven) is the template for surfacing richer per-state detail (e.g. a
+      spawn-failure glyph tooltip-style showing the failed command) later too.
 - [ ] DAP deliberate cuts: attach mode, thread picker, watch expressions,
       conditional/logpoint breakpoints, adapter-verified breakpoint positions,
       setting variables, a REPL console.

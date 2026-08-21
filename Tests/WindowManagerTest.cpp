@@ -6,6 +6,7 @@
 #include "Editor/Commands.h"
 #include "Editor/MinimapSettings.h"
 #include "Editor/Mode.h"
+#include "Editor/PromptHistory.h"
 #include "Editor/Register.h"
 #include "TestEvents.h"
 #include "Text/Buffer.h"
@@ -21,6 +22,7 @@ struct Fixture {
     ned::text::Buffer          buffer{"scratch"};
     ned::text::KillRing        killRing;
     ned::editor::RegisterTable registers;
+    ned::editor::PromptHistory promptHistory;
     ned::text::BufferList      bufferList;
 
     ned::editor::CommandRegistry registry{[] {
@@ -41,8 +43,8 @@ struct Fixture {
     // fail to compile. Callers must call TakeFocus() themselves afterward
     // -- see FeedSequence's own header comment for why.
     ned::ui::WindowManager Manager() {
-        return ned::ui::WindowManager(buffer, killRing, registers, bufferList, registry, janetKeymap, globalKeymap,
-                                      ned::editor::FundamentalMode(), statusMessage, theme);
+        return ned::ui::WindowManager(buffer, killRing, registers, promptHistory, bufferList, registry, janetKeymap,
+                                      globalKeymap, ned::editor::FundamentalMode(), statusMessage, theme);
     }
 };
 
