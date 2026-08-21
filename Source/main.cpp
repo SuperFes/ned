@@ -25,6 +25,7 @@
 #include "Editor/ProjectRoot.h"
 #include "Editor/ProjectSession.h"
 #include "Editor/ProjectTrust.h"
+#include "Editor/PromptHistory.h"
 #include "Editor/Register.h"
 #include "Editor/ScriptingSession.h"
 #include "Editor/Session.h"
@@ -288,6 +289,7 @@ auto main(int argc, char** argv) -> int {
 
     ned::text::KillRing        killRing;
     ned::editor::RegisterTable registers;
+    ned::editor::PromptHistory promptHistory;
 
     ned::editor::CommandRegistry registry;
     ned::editor::RegisterBuiltinCommands(registry);
@@ -529,7 +531,7 @@ auto main(int argc, char** argv) -> int {
     // its own independent copy (see WindowManager.cpp's own comment on
     // where that copy is taken from).
     auto windowManager = std::make_shared<ned::ui::WindowManager>(
-        *buffer, killRing, registers, bufferList, registry, janetKeymap, globalKeymap, std::move(mode),
+        *buffer, killRing, registers, promptHistory, bufferList, registry, janetKeymap, globalKeymap, std::move(mode),
         statusMessage, theme);
 
     // TabBar/ProjectSidebar are still single, shared-app-wide widgets (real

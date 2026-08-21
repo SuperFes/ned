@@ -85,6 +85,7 @@ void ModeLine::Paint(Canvas c) {
         columns.emplace_back(1, ch);
     }
     const std::vector<editor::BackgroundActivity> activities = editor::ActiveBackgroundActivities();
+    bool                                           lspActivityShown = false;
     if (!activities.empty()) {
         const std::string_view frame = CurrentSpinnerFrame();
         for (const editor::BackgroundActivity& activity : activities) {
@@ -101,7 +102,28 @@ void ModeLine::Paint(Canvas c) {
                     columns.emplace_back(1, ch);
                 }
             }
+            lspActivityShown = lspActivityShown || activity.name == editor::lsp::kLspActivityName;
         }
+    }
+    // mode-line-lsp-indicator follow-up: a running server for this buffer's
+    // language previously vanished from the mode line the instant its last
+    // in-flight request resolved (ActiveBackgroundActivities() only reports
+    // *counted, currently in-flight* work -- see BackgroundActivity.h's own
+    // doc comment), which left no way to tell "no LSP configured" apart from
+    // "LSP configured and just idle" -- a real gap, since ClientForLanguage
+    // spawning is otherwise invisible. Only drawn when the request-driven
+    // block above didn't already draw an "LSP" entry (busy takes priority
+    // over idle, same entry, no duplicate). A plain filled dot rather than
+    // the spinner glyph -- deliberately static, so idle reads as visually
+    // distinct from actually-in-flight work at a glance.
+    if (!lspActivityShown && lspManager_ && lspManager_->HasRunningClient(editor::LanguageKeyForMode(mode_))) {
+        columns.emplace_back(" ");
+        columns.emplace_back(" ");
+        columns.emplace_back("L");
+        columns.emplace_back("S");
+        columns.emplace_back("P");
+        columns.emplace_back(" ");
+        columns.emplace_back("●");
     }
 
     // Chrome-redesign follow-up: the focused pane's gradient pulls toward
@@ -126,6 +148,10 @@ void ModeLine::Paint(Canvas c) {
 
 void ModeLine::SetFocusProvider(std::function<bool()> provider) {
     focusProvider_ = std::move(provider);
+}
+
+void ModeLine::SetLspManager(editor::lsp::LspManager* lspManager) {
+    lspManager_ = lspManager;
 }
 
 } // namespace ned::ui

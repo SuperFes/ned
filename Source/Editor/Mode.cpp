@@ -448,6 +448,14 @@ Mode FundamentalMode() {
     return Mode{.name = "fundamental-mode", .keymap = Keymap(), .highlight = HighlightFunction()};
 }
 
+std::string LanguageKeyForMode(const Mode& mode) {
+    constexpr std::string_view kSuffix = "-mode";
+    if (mode.name.size() > kSuffix.size() && mode.name.ends_with(kSuffix)) {
+        return mode.name.substr(0, mode.name.size() - kSuffix.size());
+    }
+    return mode.name;
+}
+
 Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& language, std::string_view querySource,
                                 std::string_view foldQuerySource) {
     const auto parser = std::make_shared<treesitter::Parser>(language);

@@ -11,6 +11,7 @@
 #include "Editor/Keymap.h"
 #include "Editor/Mode.h"
 #include "Editor/ProjectRoot.h"
+#include "Editor/PromptHistory.h"
 #include "Editor/Register.h"
 #include "Editor/Vcs/VcsProvider.h"
 #include "Editor/Vcs/VcsProviderRegistry.h"
@@ -45,6 +46,7 @@ struct Fixture {
     ned::text::Buffer          buffer{"scratch"};
     ned::text::KillRing        killRing;
     ned::editor::RegisterTable registers;
+    ned::editor::PromptHistory promptHistory;
     ned::text::BufferList      bufferList;
 
     ned::editor::CommandRegistry registry{[] {
@@ -61,7 +63,8 @@ struct Fixture {
     ned::ui::ActiveBuffer activeBuffer{buffer};
 
     BufferView View() {
-        return BufferView(activeBuffer, killRing, registers, bufferList, dispatcher, statusMessage, mode, theme);
+        return BufferView(activeBuffer, killRing, registers, promptHistory, bufferList, dispatcher, statusMessage,
+                          mode, theme);
     }
 };
 

@@ -40,6 +40,7 @@
 #include "Editor/Keymap.h"
 #include "Editor/Lsp/LspManager.h"
 #include "Editor/Mode.h"
+#include "Editor/PromptHistory.h"
 #include "Editor/Register.h"
 #include "Editor/Tasks/TaskRunner.h"
 #include "Editor/Vcs/VcsRunner.h"
@@ -78,7 +79,7 @@ class Pane {
     // -- or the app's initial buffer for the very first one). mode is moved
     // in as an owned copy, not a reference (window-splitting's own scope
     // decision -- see WindowManager.cpp's own comment on WHERE that copy is
-    // taken from). killRing/registers/bufferList/registry/janetKeymap/
+    // taken from). killRing/registers/promptHistory/bufferList/registry/janetKeymap/
     // globalKeymap/statusMessage/theme are shared app-wide and must outlive
     // every Pane; projectSidebar/lspManager may be nullptr (not yet wired up
     // when the first Pane is constructed, see
@@ -87,8 +88,9 @@ class Pane {
     // BufferView::SetOnWindowRequest/SetOnBufferClosed exactly -- forwarded
     // straight through to the BufferView this Pane owns.
     Pane(text::Buffer& buffer, text::KillRing& killRing, editor::RegisterTable& registers,
-         text::BufferList& bufferList, const editor::CommandRegistry& registry, const editor::Keymap& janetKeymap,
-         const editor::Keymap& globalKeymap, editor::Mode mode, std::string& statusMessage, const Theme& theme,
+         editor::PromptHistory& promptHistory, text::BufferList& bufferList, const editor::CommandRegistry& registry,
+         const editor::Keymap& janetKeymap, const editor::Keymap& globalKeymap, editor::Mode mode,
+         std::string& statusMessage, const Theme& theme,
          ProjectSidebar* projectSidebar, editor::lsp::LspManager* lspManager, editor::tasks::TaskRunner* taskRunner,
          editor::vcs::VcsRunner* vcsRunner, editor::dap::DapManager* dapManager,
          std::function<void(editor::InteractiveRequest)> onWindowRequest,
@@ -101,6 +103,7 @@ class Pane {
 
     [[nodiscard]] ActiveBuffer&       ActiveBufferRef();
     [[nodiscard]] BufferView&         Buffer();
+    [[nodiscard]] ModeLine&           ModeLineRef();
     [[nodiscard]] const editor::Mode& ModeRef() const;
 
     // FTXUI -> Notcurses migration: was Component() returning a shared,
@@ -196,13 +199,13 @@ class WindowManager {
     // Mode main.cpp already picks once at startup from that buffer's file
     // extension (unchanged from before window-splitting -- see this file's
     // header comment on the Mode-per-pane scope decision). killRing/
-    // registers/bufferList/registry/janetKeymap/globalKeymap/statusMessage/
+    // registers/promptHistory/bufferList/registry/janetKeymap/globalKeymap/statusMessage/
     // theme must outlive this WindowManager (the usual convention, matching
     // every other externally-owned reference already in this codebase).
     WindowManager(text::Buffer& initialBuffer, text::KillRing& killRing, editor::RegisterTable& registers,
-                  text::BufferList& bufferList, const editor::CommandRegistry& registry,
-                  const editor::Keymap& janetKeymap, const editor::Keymap& globalKeymap, editor::Mode initialMode,
-                  std::string& statusMessage,
+                  editor::PromptHistory& promptHistory, text::BufferList& bufferList,
+                  const editor::CommandRegistry& registry, const editor::Keymap& janetKeymap,
+                  const editor::Keymap& globalKeymap, editor::Mode initialMode, std::string& statusMessage,
                   const Theme& theme);
 
     WindowManager(const WindowManager&)            = delete;
@@ -460,6 +463,7 @@ class WindowManager {
 
     text::KillRing&                   killRing_;
     editor::RegisterTable&            registers_;
+    editor::PromptHistory&            promptHistory_;
     text::BufferList&                 bufferList_;
     const editor::CommandRegistry&    registry_;
     const editor::Keymap&             janetKeymap_;

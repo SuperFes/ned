@@ -216,6 +216,15 @@ class LspManager {
     [[nodiscard]] bool HasUnseenLogEntry() const;
     void               AcknowledgeLogEntry();
 
+    // mode-line-lsp-indicator follow-up: true if a server for language is
+    // currently running (spawned, not yet disconnected) -- never spawns one,
+    // mirrors ExistingClientForLanguage's own "just look, don't act" shape
+    // but public, since ModeLine needs this to distinguish "no LSP
+    // configured for this buffer" from "configured and just idle" (in-flight
+    // request activity is reported separately via the shared
+    // BackgroundActivity "LSP" entry -- see kLspActivityName).
+    [[nodiscard]] bool HasRunningClient(const std::string& language) const;
+
   private:
     // Returns the already-running client for language, or nullptr if none
     // is running and none is configured -- never spawns one. Used by

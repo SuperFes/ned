@@ -1,12 +1,20 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <memory>
 #include <string>
 
+#include <unistd.h>
+
 #include "Editor/BackgroundActivity.h"
+#include "Editor/Lsp/LspClient.h"
+#include "Editor/Lsp/LspManager.h"
+#include "Editor/Lsp/Transport.h"
 #include "Editor/Mode.h"
 #include "Text/Buffer.h"
+#include "Text/BufferList.h"
 #include "UI/ActiveBuffer.h"
+#include "UI/EventLoop.h"
 #include "UI/ModeLine.h"
 #include "UI/Theme.h"
 
@@ -22,6 +30,30 @@ std::string RowText(ned::ui::Screen& screen, int row, int width) {
 
 ned::ui::Screen MakeScreen(int width, int height) {
     return ned::ui::Screen(width, height);
+}
+
+// mode-line-lsp-indicator follow-up: registers a fake, already-"running"
+// client for language via LspManager::SetClientForTesting, mirroring
+// LspManagerTest.cpp's own FakeServer -- a raw pipe pair standing in for a
+// real language server, with nothing read from or written to it here (these
+// tests only care that LspManager::HasRunningClient reports true, not about
+// any real request/response traffic). Closing the "server" side's write end
+// (clientReadsHere[1]) right away, same as FakeServer's own destructor,
+// matters even though nothing is read from it in these tests: without an
+// EOF, the client's background read thread blocks in Transport::ReadFrame
+// forever, and LspClient's destructor -- which joins that thread -- then
+// hangs the whole test binary at LspManager's teardown (confirmed: this
+// exact omission hung ned_tests with zero output).
+void RegisterFakeRunningClient(ned::editor::lsp::LspManager& manager, const std::string& language, ned::ui::EventLoop& eventLoop) {
+    int clientWritesHere[2];
+    int clientReadsHere[2];
+    REQUIRE(::pipe(clientWritesHere) == 0);
+    REQUIRE(::pipe(clientReadsHere) == 0);
+    auto client = std::make_unique<ned::editor::lsp::LspClient>(
+        ned::editor::lsp::Transport(clientReadsHere[0], clientWritesHere[1]), eventLoop);
+    manager.SetClientForTesting(language, std::move(client));
+    ::close(clientReadsHere[1]);
+    ::close(clientWritesHere[0]);
 }
 
 } // namespace
@@ -201,4 +233,65 @@ TEST_CASE("ModeLine shows an active background activity with its spinner and det
     ned::editor::EndBackgroundActivity("LSP");
     modeLine.Paint(canvas);
     REQUIRE(RowText(screen, 0, 60).find("LSP") == std::string::npos); // gone the frame after the last End
+}
+
+TEST_CASE("ModeLine shows a static idle indicator for a running LSP client with no request in flight",
+          "[ModeLine]") {
+    ned::text::BufferList bufferList;
+    ned::ui::EventLoop    eventLoop;
+    ned::editor::lsp::LspManager manager(bufferList, eventLoop);
+    RegisterFakeRunningClient(manager, "c", eventLoop);
+
+    ned::text::Buffer     buffer("main.c", ned::text::Rope("int main() {}"));
+    ned::ui::ActiveBuffer activeBuffer(buffer);
+    ned::editor::Mode     mode  = ned::editor::CMode(); // LanguageKeyForMode -> "c", matching the client above
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    ned::ui::ModeLine     modeLine(activeBuffer, mode, theme);
+    modeLine.SetLspManager(&manager);
+
+    ned::ui::Screen screen = MakeScreen(60, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 0});
+
+    modeLine.Paint(canvas);
+    REQUIRE(RowText(screen, 0, 60).find("LSP") != std::string::npos); // running, even though nothing's in flight
+
+    // A real in-flight activity takes over the same "LSP" entry rather than
+    // producing a duplicate.
+    ned::editor::BeginBackgroundActivity("LSP");
+    modeLine.Paint(canvas);
+    const std::string busyRow = RowText(screen, 0, 60);
+    REQUIRE(std::count(busyRow.begin(), busyRow.end(), 'P') == 1);
+    ned::editor::EndBackgroundActivity("LSP");
+
+    // Back to the idle indicator once the request resolves -- still running,
+    // not hidden.
+    modeLine.Paint(canvas);
+    REQUIRE(RowText(screen, 0, 60).find("LSP") != std::string::npos);
+}
+
+TEST_CASE("ModeLine shows no LSP indicator when SetLspManager was never called, or no client runs for this buffer's language",
+          "[ModeLine]") {
+    ned::text::BufferList bufferList;
+    ned::ui::EventLoop    eventLoop;
+    ned::editor::lsp::LspManager manager(bufferList, eventLoop);
+    RegisterFakeRunningClient(manager, "python", eventLoop); // a different language than the buffer below
+
+    ned::text::Buffer     buffer("main.c", ned::text::Rope("int main() {}"));
+    ned::ui::ActiveBuffer activeBuffer(buffer);
+    ned::editor::Mode     mode  = ned::editor::CMode();
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    ned::ui::ModeLine     modeLine(activeBuffer, mode, theme);
+
+    ned::ui::Screen screen = MakeScreen(60, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 0});
+
+    // SetLspManager never called: no indicator at all, matching every
+    // pre-existing construction site's default.
+    modeLine.Paint(canvas);
+    REQUIRE(RowText(screen, 0, 60).find("LSP") == std::string::npos);
+
+    // Wired, but the only running client is for a different language.
+    modeLine.SetLspManager(&manager);
+    modeLine.Paint(canvas);
+    REQUIRE(RowText(screen, 0, 60).find("LSP") == std::string::npos);
 }

@@ -226,6 +226,20 @@ struct Mode {
     bool wrapLines = false;
 };
 
+// LSP/DAP client follow-up: LspServerConfig.h/DapConfig.h's language keys
+// ("c", "python", ...) are Mode's own name minus its "-mode" suffix -- every
+// bundled *Mode() factory names itself exactly that way (see
+// ModeOverrides.cpp's BundledModeFactories table, e.g. "c-mode"/
+// "python-mode"), so this is a free derivation rather than a second naming
+// table to keep in sync. Shared by BufferView (LSP sync, DAP
+// start-or-continue) and ModeLine (the mode-line-lsp-indicator follow-up) --
+// lives here, not in Editor/Lsp/, since it's a property of Mode's own naming
+// convention, not anything LSP-specific. Modes with no "-mode" suffix (there
+// are none among the bundled ones, but a dynamically-registered one --
+// Editor/ModeOverrides.h -- could in principle be named anything) are
+// returned unchanged.
+[[nodiscard]] std::string LanguageKeyForMode(const Mode& mode);
+
 // The default mode: no special keybindings, no highlighting.
 [[nodiscard]] Mode FundamentalMode();
 
