@@ -7,6 +7,7 @@
 #include <string>
 #include <system_error>
 
+#include "Backup.h"
 #include "CodeFold.h"
 #include "FinalNewline.h"
 #include "FormatOnSave.h"
@@ -698,7 +699,10 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                 continue;
             }
             try {
+                // Same backup/autosave pair as save-buffer's own body.
+                BackupFileBeforeSave(*buffer->Path());
                 buffer->Save();
+                RemoveAutoSave(*buffer->Path());
                 ++saved;
             }
             catch (const std::exception&) {
@@ -1001,7 +1005,20 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                 }
             }
 
+            // backup-and-recovery follow-up: preserve the file's prior
+            // on-disk content before the save's rename clobbers it, and
+            // drop the now-obsolete crash-recovery autosave once the save
+            // has actually succeeded. Both swallow their own failures --
+            // hooked here rather than inside Buffer::Save so Text/ stays
+            // policy-free and scratch auto-save (which calls Buffer::Save
+            // directly) never creates backup versions.
+            if (context.buffer.Path()) {
+                BackupFileBeforeSave(*context.buffer.Path());
+            }
             context.buffer.Save(EnsureFinalNewline());
+            if (context.buffer.Path()) {
+                RemoveAutoSave(*context.buffer.Path());
+            }
             if (context.message) {
                 *context.message = "Wrote " + context.buffer.Name() + (formatFailed ? " (format command failed)" : "");
             }
@@ -1238,6 +1255,17 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
         [](CommandContext& context) {
             context.interactiveRequest = InteractiveRequest::FindScratch;
         });
+
+    // backup-and-recovery follow-up. M-x-only, no default keybinding --
+    // recovery is a rare, deliberate act, matching Emacs' own unbound
+    // recover-file. The scriptable/macro-able path is ned/list-backups +
+    // ned/recover-backup (EditorBindings.cpp), not this prompt.
+    registry.Register("recover-file",
+                      "Restore the current buffer's content from a recent backup or crash-recovery autosave "
+                      "(prompts for the version; the restore is one undoable step and must be saved to keep).",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::RecoverFile;
+                      });
 
     registry.Register("split-window-below", "Split the current window into two, one above the other.",
                       [](CommandContext& context) {

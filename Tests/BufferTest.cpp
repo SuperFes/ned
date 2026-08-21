@@ -999,3 +999,59 @@ TEST_CASE("FinishLoad starts undo history clean at the loaded content, not at an
     buffer.Undo();
     REQUIRE(buffer.Text() == "final"); // undoing the one real edit lands exactly on FinishLoad's content
 }
+
+TEST_CASE("RestoreContent replaces content in one undoable step and leaves the buffer Modified", "[Buffer]") {
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_buffer_test_restore.txt";
+    std::ofstream(path) << "on disk\n";
+
+    Buffer buffer = Buffer::FromFile(path);
+    REQUIRE_FALSE(buffer.Modified());
+
+    buffer.RestoreContent("recovered snapshot\n");
+
+    REQUIRE(buffer.Text() == "recovered snapshot\n");
+    // Unlike Revert(), the buffer does not match disk -- the restore only
+    // becomes permanent via an explicit save.
+    REQUIRE(buffer.Modified());
+    // ... and the disk timestamp is untouched, so the file doesn't read as
+    // externally modified either.
+    REQUIRE_FALSE(buffer.ExternallyModified());
+
+    // Exactly one undo step returns to the pre-restore content -- and lands
+    // back on the saved snapshot, so Modified() clears again.
+    buffer.Undo();
+    REQUIRE(buffer.Text() == "on disk\n");
+    REQUIRE_FALSE(buffer.Modified());
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("RestoreContent clamps point and clears mark, secondary cursors, narrowing, and folds", "[Buffer]") {
+    Buffer buffer("scratch", ned::text::Rope("a long line of original content"));
+    buffer.SetPoint(buffer.Size());
+    buffer.SetMark(3);
+    buffer.AddCursorAt(5);
+    buffer.NarrowToRegion(2, 10);
+    buffer.SetFoldMarker(4, Buffer::FoldMarker::Collapsed);
+
+    buffer.RestoreContent("tiny");
+
+    REQUIRE(buffer.Point() <= buffer.Size());
+    REQUIRE_FALSE(buffer.HasMark());
+    REQUIRE_FALSE(buffer.HasSecondaryCursors());
+    REQUIRE_FALSE(buffer.IsNarrowed());
+    REQUIRE(buffer.FoldMarkers().empty());
+}
+
+TEST_CASE("RestoreContent to empty over a nonempty saved snapshot still reads Modified", "[Buffer]") {
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_buffer_test_restore_empty.txt";
+    std::ofstream(path) << "not empty\n";
+
+    Buffer buffer = Buffer::FromFile(path);
+    buffer.RestoreContent("");
+
+    REQUIRE(buffer.Text().empty());
+    REQUIRE(buffer.Modified()); // Modified()'s zero-length fallback covers what no byte range can represent
+
+    std::filesystem::remove(path);
+}

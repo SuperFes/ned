@@ -324,6 +324,7 @@ add_library(ned_lib STATIC
         Source/Editor/ProjectFileOps.cpp
         Source/Editor/AutoRevert.cpp
         Source/Editor/ScratchPad.cpp
+        Source/Editor/Backup.cpp
         Source/Editor/Session.cpp
         Source/Editor/ProjectSession.cpp
         Source/Editor/ProjectTrust.cpp
@@ -509,6 +510,7 @@ if (NED_BUILD_TESTS)
             Tests/ProjectRootTest.cpp
             Tests/ProjectFileOpsTest.cpp
             Tests/ScratchPadTest.cpp
+            Tests/BackupTest.cpp
             Tests/SessionTest.cpp
             Tests/ProjectSessionTest.cpp
             Tests/ProjectTrustTest.cpp

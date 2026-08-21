@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "Editor/AutoRevert.h"
+#include "Editor/Backup.h"
 #include "Editor/Dap/DapManager.h"
 #include "Editor/MinimapSettings.h"
 #include "Editor/ModeOverrides.h"
@@ -460,6 +461,13 @@ void WindowManager::StartAutoSaveTimer(EventLoop& eventLoop) {
             }
             eventLoop.Post([this] {
                 editor::AutoSaveScratchBuffers(bufferList_);
+                // backup-and-recovery follow-up: crash-recovery snapshots
+                // for regular file buffers ride the same tick (skips
+                // unmodified/unchanged buffers via a generation memo, so
+                // idle ticks cost nothing), plus the rate-limited backup
+                // pruning (at most once per hour).
+                editor::AutoSaveFileBuffers(bufferList_);
+                editor::MaybePruneBackups();
                 // external-modification-safety follow-up: piggybacked on
                 // this same tick -- reload any open, *unmodified* buffer
                 // whose file changed on disk (default on; see

@@ -69,6 +69,10 @@ enum class InteractiveRequest { None,
                                 DeleteFile,
                                 RenameFile,
                                 FindScratch,
+                                // backup-and-recovery follow-up: recover-file's pick-a-version
+                                // prompt over the active buffer's backups/autosave -- see
+                                // BufferView::HandleRecoverFileKey.
+                                RecoverFile,
                                 // org-set-tags follow-up: another prompt-shaped request (real
                                 // Org's own C-c C-q) -- tags are free-form text, not a small
                                 // fixed set to cycle through the way org-cycle-todo/

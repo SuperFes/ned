@@ -12,6 +12,7 @@
 
 #include <unistd.h>
 
+#include "Editor/Backup.h"
 #include "Editor/Commands.h"
 #include "Editor/Dap/DapClient.h"
 #include "Editor/Dap/DapConfig.h"
@@ -6399,4 +6400,143 @@ TEST_CASE("Enter in select-theme remembers the committed theme; Escape remembers
         REQUIRE(ned::editor::Variable("theme") == "nord");
         REQUIRE(std::filesystem::exists(h.stateGuard.dir / "ned" / "variables.json"));
     }
+}
+
+// -- backup-and-recovery follow-up: the recover-file prompt session ----------
+
+namespace {
+
+// Sandboxes XDG_STATE_HOME for backup storage and resets the Backup module's
+// process-wide settings/memos around each test (BackupTest.cpp's own guard
+// pair, pared to what these session tests need).
+struct RecoverFixtureSandbox {
+    explicit RecoverFixtureSandbox(const std::string& name)
+        : root(std::filesystem::temp_directory_path() / name), stateGuard("XDG_STATE_HOME", (root / "state").c_str()),
+          homeGuard("HOME", nullptr) {
+        ned::editor::ResetBackupsForTesting();
+        std::filesystem::remove_all(root);
+        std::filesystem::create_directories(root / "work");
+    }
+
+    ~RecoverFixtureSandbox() {
+        ned::editor::ResetBackupsForTesting();
+        std::error_code ec;
+        std::filesystem::remove_all(root, ec);
+    }
+
+    std::filesystem::path root;
+    EnvVarGuard           stateGuard;
+    EnvVarGuard           homeGuard;
+};
+
+void InvokeRecoverFile(ned::ui::BufferView& view) {
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "recover-file");
+    view.OnEvent(ned::ui::test::Return());
+}
+
+} // namespace
+
+TEST_CASE("recover-file reports when the buffer has no file or no backups, staying in normal editing",
+          "[BufferView]") {
+    const RecoverFixtureSandbox sandbox("ned_bufferview_test_recover_none");
+    Fixture                     fixture;
+    ned::ui::BufferView         view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    SECTION("pathless buffer") {
+        InvokeRecoverFile(view);
+        REQUIRE(fixture.statusMessage == "Buffer scratch has no file to recover");
+    }
+
+    SECTION("path-associated buffer with nothing backed up") {
+        const std::filesystem::path path = sandbox.root / "work" / "notes.txt";
+        fixture.buffer.SaveToFile(path);
+        InvokeRecoverFile(view);
+        REQUIRE(fixture.statusMessage == "No backups for scratch");
+    }
+
+    view.OnEvent(ned::ui::test::Character("z")); // proves inputMode_ is Normal
+    REQUIRE(fixture.buffer.Text().find('z') != std::string::npos);
+}
+
+TEST_CASE("recover-file restores the picked version as one undoable step, leaving the buffer modified",
+          "[BufferView]") {
+    const RecoverFixtureSandbox sandbox("ned_bufferview_test_recover_happy");
+    Fixture                     fixture;
+    fixture.buffer.InsertAtPoint("current content");
+
+    const std::filesystem::path path = sandbox.root / "work" / "notes.txt";
+    fixture.buffer.SaveToFile(path); // binds the path; disk now matches the buffer
+
+    // A backup version holding older content, as an earlier save would have
+    // left behind.
+    std::ofstream(path, std::ios::trunc) << "old version";
+    ned::editor::BackupFileBeforeSave(path, 1755700000);
+    std::ofstream(path, std::ios::trunc) << "current content\n"; // disk back to "current"
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    InvokeRecoverFile(view);
+    REQUIRE(fixture.statusMessage.find("Recover scratch -- version (1-1, Enter=1): ") != std::string::npos);
+
+    view.OnEvent(ned::ui::test::Return()); // Enter alone picks 1, the newest
+    REQUIRE(fixture.statusMessage.find("over buffer scratch? (y/n)") != std::string::npos);
+
+    view.OnEvent(ned::ui::test::Character("y"));
+    REQUIRE(fixture.buffer.Text() == "old version");
+    REQUIRE(fixture.buffer.Modified());
+    REQUIRE(fixture.statusMessage.find("Recovered") != std::string::npos);
+
+    fixture.buffer.Undo(); // exactly one step back to the pre-recover content
+    REQUIRE(fixture.buffer.Text() == "current content");
+}
+
+TEST_CASE("recover-file's y/n confirmation can decline, leaving the buffer untouched", "[BufferView]") {
+    const RecoverFixtureSandbox sandbox("ned_bufferview_test_recover_decline");
+    Fixture                     fixture;
+    fixture.buffer.InsertAtPoint("current content");
+
+    const std::filesystem::path path = sandbox.root / "work" / "notes.txt";
+    fixture.buffer.SaveToFile(path);
+    ned::editor::WriteAutoSave(path, "crash snapshot");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    InvokeRecoverFile(view);
+    view.OnEvent(ned::ui::test::Return());
+    REQUIRE(fixture.statusMessage.find("autosave (crash recovery)") != std::string::npos);
+
+    view.OnEvent(ned::ui::test::Character("n"));
+    REQUIRE(fixture.statusMessage == "Recover cancelled.");
+    REQUIRE(fixture.buffer.Text() == "current content");
+    REQUIRE_FALSE(fixture.buffer.Modified());
+
+    view.OnEvent(ned::ui::test::Character("z")); // back to normal editing
+    REQUIRE(fixture.buffer.Text().find('z') != std::string::npos);
+}
+
+TEST_CASE("recover-file rejects an out-of-range version number and ends the session", "[BufferView]") {
+    const RecoverFixtureSandbox sandbox("ned_bufferview_test_recover_range");
+    Fixture                     fixture;
+    fixture.buffer.InsertAtPoint("current content");
+
+    const std::filesystem::path path = sandbox.root / "work" / "notes.txt";
+    fixture.buffer.SaveToFile(path);
+    ned::editor::WriteAutoSave(path, "crash snapshot");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    InvokeRecoverFile(view);
+    TypeText(view, "9");
+    view.OnEvent(ned::ui::test::Return());
+
+    REQUIRE(fixture.statusMessage == "No such version: 9");
+    REQUIRE(fixture.buffer.Text() == "current content");
+
+    view.OnEvent(ned::ui::test::Character("z")); // back to normal editing
+    REQUIRE(fixture.buffer.Text().find('z') != std::string::npos);
 }

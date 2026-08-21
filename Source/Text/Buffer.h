@@ -128,6 +128,17 @@ class Buffer {
     // file having turned binary), leaving the buffer untouched.
     void Revert();
 
+    // Replaces this buffer's content wholesale from a string rather than
+    // from disk (backup-and-recovery follow-up: what recover-file /
+    // ned/recover-backup restore a snapshot through). Mirrors Revert()'s
+    // shape exactly -- one normal, undoable step; point clamped; mark,
+    // secondary cursors, narrowing, and fold markers cleared -- except it
+    // deliberately does NOT touch SavedSnapshot_/DiskTimestamp_ and marks
+    // the whole content as one unsaved range: the buffer reads Modified()
+    // afterward, because its content now differs from the file on disk,
+    // and the restore only becomes permanent via an explicit save.
+    void RestoreContent(std::string_view content);
+
     // read-only-buffers follow-up: a plain, directly-settable flag (unlike
     // Modified(), not derived from anything) -- for a synthesized,
     // no-file-to-save-to buffer (project-search results, project-replace's
