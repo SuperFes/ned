@@ -485,6 +485,7 @@ if (NED_BUILD_TESTS)
             Tests/PerformanceTest.cpp
             Tests/ThemeTest.cpp
             Tests/ThemePaletteTest.cpp
+            Tests/BundledThemesTest.cpp
             Tests/SyntaxThemeTest.cpp
             Tests/ThemeFileTest.cpp
             Tests/TerminalColorProbeTest.cpp
