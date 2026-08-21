@@ -22,39 +22,38 @@ extern char** environ;
 
 namespace ned::editor::process {
 
-namespace {
-
-    // Manual $PATH search -- see this file's own header comment for why this
-    // exists instead of just calling posix_spawnp.
-    std::optional<std::string> ResolveExecutable(const std::string& name) {
-        if (name.find('/') != std::string::npos) {
-            return (::access(name.c_str(), X_OK) == 0) ? std::optional<std::string>(name) : std::nullopt;
-        }
-        const char* pathEnv = std::getenv("PATH");
-        if (pathEnv == nullptr) {
-            return std::nullopt;
-        }
-        const std::string_view path(pathEnv);
-        std::size_t            start = 0;
-        while (start <= path.size()) {
-            const std::size_t      sep = path.find(':', start);
-            const std::string_view dir =
-                path.substr(start, sep == std::string_view::npos ? std::string_view::npos : sep - start);
-            if (!dir.empty()) {
-                const std::filesystem::path candidate = std::filesystem::path(dir) / name;
-                if (::access(candidate.c_str(), X_OK) == 0) {
-                    return candidate.string();
-                }
-            }
-            if (sep == std::string_view::npos) {
-                break;
-            }
-            start = sep + 1;
-        }
+// Manual $PATH search -- see this file's own header comment for why this
+// exists instead of just calling posix_spawnp. Hoisted out of the anonymous
+// namespace (terminal-panel follow-up) so PtyProcess's pre-fork resolution
+// can reuse it -- execve after forkpty needs an already-resolved path, since
+// a post-fork $PATH walk isn't async-signal-safe.
+std::optional<std::string> ResolveExecutable(const std::string& name) {
+    if (name.find('/') != std::string::npos) {
+        return (::access(name.c_str(), X_OK) == 0) ? std::optional<std::string>(name) : std::nullopt;
+    }
+    const char* pathEnv = std::getenv("PATH");
+    if (pathEnv == nullptr) {
         return std::nullopt;
     }
-
-} // namespace
+    const std::string_view path(pathEnv);
+    std::size_t            start = 0;
+    while (start <= path.size()) {
+        const std::size_t      sep = path.find(':', start);
+        const std::string_view dir =
+            path.substr(start, sep == std::string_view::npos ? std::string_view::npos : sep - start);
+        if (!dir.empty()) {
+            const std::filesystem::path candidate = std::filesystem::path(dir) / name;
+            if (::access(candidate.c_str(), X_OK) == 0) {
+                return candidate.string();
+            }
+        }
+        if (sep == std::string_view::npos) {
+            break;
+        }
+        start = sep + 1;
+    }
+    return std::nullopt;
+}
 
 ChildProcess::ChildProcess(const std::vector<std::string>& argv, StderrMode stderrMode) {
     if (argv.empty()) {

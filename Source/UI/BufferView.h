@@ -319,6 +319,14 @@ class BufferView : public Widget {
     // is a safe no-op, matching every other Set* hook here.
     void SetOnBufferClosed(std::function<void(text::Buffer&)> handler);
 
+    // terminal-panel follow-up: toggle-terminal's forwarding hook -- the
+    // panel is an OverlayHost overlay owned by main.cpp's composition, above
+    // even WindowManager's level, so like the window-management requests
+    // this class only forwards. main.cpp's three-state toggle lambda is the
+    // intended registrant (via WindowManager::SetOnTerminalToggle, which
+    // fans it out to every pane). Unset is a safe no-op.
+    void SetOnTerminalToggle(std::function<void()> handler);
+
     // per-buffer-mode follow-up: called at the top of Paint() whenever the
     // active buffer's identity has changed since the last Paint() call --
     // the same "recompute, don't cache, detect via pointer identity" idiom
@@ -1292,6 +1300,7 @@ class BufferView : public Widget {
     // Window-splitting follow-up: see SetOnWindowRequest/SetOnBufferClosed.
     std::function<void(editor::InteractiveRequest)> onWindowRequest_;
     std::function<void(text::Buffer&)>              onBufferClosed_;
+    std::function<void()>                           onTerminalToggle_;      // see SetOnTerminalToggle
     std::function<void(text::Buffer&)>              onActiveBufferChanged_; // see SetOnActiveBufferChanged
 
     // Caches mode_.highlight's result across Paint() calls (tree-sitter

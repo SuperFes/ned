@@ -1177,6 +1177,12 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           context.interactiveRequest = InteractiveRequest::ToggleProjectSidebar;
                       });
 
+    registry.Register("toggle-terminal",
+                      "Show and focus the built-in terminal drawer; hide it if it is already focused.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::ToggleTerminal;
+                      });
+
     registry.Register("focus-project-sidebar",
                       "Move keyboard focus into the project sidebar tree (Up/Down or C-p/C-n to move, Enter to "
                       "open/toggle, Left/Right to collapse/expand, Escape or C-g to return to the editor).",
@@ -2164,6 +2170,16 @@ Keymap BuildDefaultGlobalKeymap() {
     // family established for an otherwise-unused plain-letter slot.
     keymap.Bind(ParseKeySequence("C-c p"), "focus-project-sidebar");
     keymap.Bind(ParseKeySequence("C-c m"), "toggle-minimap");
+    // Terminal-panel follow-up: C-` is the reserved primary (the VS Code
+    // convention; only ever deliverable under the kitty keyboard protocol
+    // -- legacy encodings send NUL, which the Notcurses NUL patch maps to
+    // C-Space, deliberately left to the shell/set-mark), with "C-c t" as
+    // the portable fallback every terminal can produce. While the panel
+    // itself is focused only C-` toggles -- C-c must reach the shell as a
+    // plain byte, so a "C-c t" prefix chord can't exist there (see
+    // TerminalPanel.h's header comment).
+    keymap.Bind(ParseKeySequence("C-`"), "toggle-terminal");
+    keymap.Bind(ParseKeySequence("C-c t"), "toggle-terminal");
     keymap.Bind(ParseKeySequence("C-x k"), "kill-buffer");
     keymap.Bind(ParseKeySequence("C-c a"), "org-agenda"); // real Org's own actual binding
     keymap.Bind(ParseKeySequence("C-c C-d"), "create-directory");

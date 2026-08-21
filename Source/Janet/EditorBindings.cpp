@@ -28,6 +28,7 @@
 #include "Editor/SyntaxTheme.h"
 #include "Editor/TabWidth.h"
 #include "Editor/Tasks/TaskConfig.h"
+#include "Editor/Terminal/Config.h"
 #include "Editor/ThemeSetting.h"
 #include "Editor/Vcs/VcsProviderRegistry.h"
 #include "Editor/WrapOverrides.h"
@@ -144,6 +145,10 @@ namespace {
 
     void NedSetTabWidth(std::int64_t columns) {
         editor::SetTabWidth(static_cast<int>(columns));
+    }
+
+    void NedSetTerminalHeightPercent(std::int64_t percent) {
+        editor::terminal::SetTerminalHeightPercent(static_cast<int>(percent));
     }
 
     // rich-theme-set follow-up (Phase 1): stores the *name* only -- resolved
@@ -437,6 +442,9 @@ void InstallEditorBindings(Environment& env) {
         "defaults to \"xdg-open\"; empty string clears it entirely, disabling URL-following.");
     env.Register<&NedSetTabWidth>("ned", "set-tab-width",
                                   "Set the display width (in columns) a tab character expands to (default 4).");
+    env.Register<&NedSetTerminalHeightPercent>(
+        "ned", "set-terminal-height-percent",
+        "Set how much of the screen the terminal drawer covers, as a percentage (default 40, clamped to 10-90).");
     env.Register<&NedSetTheme>(
         "ned", "set-theme",
         "Select the startup theme by name (e.g. \"dark\", \"light\", \"ansi-dark\"). Overrides a saved --detect-theme "

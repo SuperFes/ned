@@ -227,6 +227,13 @@ class WindowManager {
     // doc comment for what main.cpp wires in).
     void SetThemeApplier(std::function<void(const Theme&)> applier);
 
+    // terminal-panel follow-up: same "forwarded to every pane, present and
+    // future" shape as SetThemeApplier above -- toggle-terminal can fire
+    // from whichever pane has focus, and the handler (main.cpp's
+    // three-state toggle over the OverlayHost-owned TerminalPanel) lives
+    // above this class entirely.
+    void SetOnTerminalToggle(std::function<void()> onToggle);
+
     // task-runner follow-up: same "forwarded to every pane, present and
     // future" shape as SetProjectSidebar/SetLspManager above.
     void SetTaskRunner(editor::tasks::TaskRunner* taskRunner);
@@ -466,6 +473,7 @@ class WindowManager {
     editor::dap::DapManager*          dapManager_     = nullptr; // see SetDapManager
     EventLoop*                        eventLoop_      = nullptr; // see SetEventLoop
     std::function<void(const Theme&)> themeApplier_;             // see SetThemeApplier
+    std::function<void()>             onTerminalToggle_;         // see SetOnTerminalToggle
 
     std::unique_ptr<WindowNode> root_;
     Container                   rootComponent_{Axis::Vertical, {}};

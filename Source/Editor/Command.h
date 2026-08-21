@@ -52,6 +52,12 @@ enum class InteractiveRequest { None,
                                 VisitSearchResult,
                                 ProjectReplace,
                                 ToggleProjectSidebar,
+                                // terminal-panel follow-up: one-shot direct action, same
+                                // shape as ToggleProjectSidebar -- BufferView just forwards
+                                // to the callback main.cpp registered (SetOnTerminalToggle),
+                                // since the panel is an OverlayHost overlay owned above the
+                                // window/pane level, not per-pane state.
+                                ToggleTerminal,
                                 // sidebar-keyboard-focus follow-up: one-shot direct action,
                                 // same shape as ToggleProjectSidebar -- BufferView expands
                                 // the registered sidebar if collapsed and hands it the

@@ -3099,6 +3099,38 @@ TEST_CASE("toggle-project-sidebar is a safe no-op when no sidebar is registered"
     view.OnEvent(ned::ui::test::Ctrl('p')); // must not crash
 }
 
+TEST_CASE("toggle-terminal reaches the registered callback from both bindings", "[BufferView]") {
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
+
+    int toggles = 0;
+    view.SetOnTerminalToggle([&toggles] { ++toggles; });
+
+    // The portable C-c t chord sequence...
+    view.OnEvent(ned::ui::test::Ctrl('c'));
+    view.OnEvent(ned::ui::test::Character('t'));
+    REQUIRE(toggles == 1);
+
+    // ...and the reserved C-` primary (kitty-protocol shape: lowercase-range
+    // codepoint id plus the Ctrl modifier bit).
+    ncinput input{};
+    input.id        = U'`';
+    input.modifiers = NCKEY_MOD_CTRL;
+    input.evtype    = NCTYPE_PRESS;
+    view.OnEvent(ned::ui::Event(input));
+    REQUIRE(toggles == 2);
+}
+
+TEST_CASE("toggle-terminal is a safe no-op when no handler is registered", "[BufferView]") {
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Ctrl('c'));
+    view.OnEvent(ned::ui::test::Character('t')); // must not crash
+}
+
 TEST_CASE("C-c C-d prompts for a path, then create-directory creates it on disk", "[BufferView]") {
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_bufferview_test_create_dir";
     std::filesystem::remove_all(dir);
