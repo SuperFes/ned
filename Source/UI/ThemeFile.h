@@ -1,9 +1,17 @@
 //
-// Persistence for a terminal-detected Theme (see TerminalColorProbe.h) as a
-// small human-readable "key=value" text file -- deliberately not Janet: this
-// is a cache of previously-detected colors, not a scripting API, so it
-// doesn't blur the "hardcoded C++ themes for now" line drawn for Theme
-// selection in general (see ROADMAP.md's Phase 6 notes).
+// Theme persistence, in two formats sharing one key table (ThemeFile.cpp's
+// kColorKeys/kBrushKeys):
+//
+// - "key=value" text (SerializeTheme/ParseTheme, theme.txt) -- the
+//   --detect-theme cache. Deliberately not Janet: a cache of previously-
+//   detected colors, not a scripting API (the original Phase 6 reasoning,
+//   still true for this format).
+// - Runnable Janet (SerializeThemeJanet, theme.janet) -- the save-theme
+//   command's output, theme-editing follow-up: one (ned/theme-set ...) call
+//   per color, hand-editable, loaded from init.janet via (dofile ...). This
+//   IS the scripting API the .txt format deliberately isn't -- the
+//   accumulated calls land in Editor/ThemeSetting.h's override store and
+//   main.cpp applies them via SetThemeColorByKey below.
 //
 
 #ifndef NED_UI_THEMEFILE_H
@@ -43,6 +51,31 @@ void SaveThemeFile(const Theme& theme, const std::filesystem::path& path);
 // on an I/O failure (as opposed to a parse issue, which degrades gracefully
 // per ParseTheme above and never throws).
 [[nodiscard]] std::optional<Theme> LoadThemeFile(const std::filesystem::path& path);
+
+// Theme-editing follow-up: the Janet-facing side of the same key table
+// SerializeTheme/ParseTheme walk (see ThemeFile.cpp's kColorKeys comment).
+//
+// SetThemeColorByKey assigns one keyed color -- exactly one ParseTheme line's
+// worth -- returning false for an unrecognized key or unparseable token
+// (caller decides whether that's worth reporting; ParseTheme itself stays
+// silently forward-compatible). This is what main.cpp uses to apply
+// `ned/theme-set` overrides from init.janet on top of the selected theme.
+bool SetThemeColorByKey(Theme& theme, std::string_view key, std::string_view token);
+
+// Renders a Theme as a runnable Janet script -- one
+// `(ned/theme-set "<key>" "<color>")` call per keyed color, same keys and
+// tokens as SerializeTheme -- for the save-theme command: written out,
+// hand-edited, then loaded from init.janet via a plain (dofile ...). Same
+// bold/italic limitation as the key=value format (colors only).
+[[nodiscard]] std::string SerializeThemeJanet(const Theme& theme);
+
+// $XDG_CONFIG_HOME/ned/theme.janet -- the save-theme command's output path,
+// same XDG resolution as ThemeFilePath above.
+[[nodiscard]] std::filesystem::path ThemeJanetFilePath();
+
+// SerializeThemeJanet to disk -- SaveThemeFile's exact write/error contract,
+// different serialization.
+void SaveThemeJanetFile(const Theme& theme, const std::filesystem::path& path);
 
 } // namespace ned::ui
 

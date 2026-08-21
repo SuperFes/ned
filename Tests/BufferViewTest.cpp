@@ -6308,3 +6308,47 @@ TEST_CASE("tab-next with a single tab stays put", "[BufferView]") {
 
     REQUIRE(&activeBuffer.Get() == &only);
 }
+
+// theme-editing follow-up: the save-theme command (M-x only, one-shot).
+TEST_CASE("save-theme writes the active theme as runnable Janet to the XDG config path", "[BufferView]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_bufferview_test_save_theme";
+    std::filesystem::remove_all(dir);
+
+    // Scoped XDG override, mirroring ThemeFileTest's EnvVarGuard shape.
+    const char*       previous = std::getenv("XDG_CONFIG_HOME");
+    const std::string restore  = previous ? previous : "";
+    setenv("XDG_CONFIG_HOME", dir.c_str(), 1);
+
+    {
+        Fixture             fixture;
+        ned::ui::BufferView view = fixture.View();
+        view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+        view.OnEvent(ned::ui::test::Alt('x'));
+        TypeText(view, "save-theme");
+        view.OnEvent(ned::ui::test::Return());
+
+        const std::filesystem::path expected = dir / "ned" / "theme.janet";
+        REQUIRE(fixture.statusMessage == "Saved theme to " + expected.string());
+        REQUIRE(std::filesystem::exists(expected));
+
+        std::ifstream      in(expected);
+        std::ostringstream content;
+        content << in.rdbuf();
+        // The fixture's theme is DarkTheme() -- spot-check one emitted call
+        // against a known value (keyword_foreground = Color::Blue = x:4).
+        REQUIRE(content.str().find("(ned/theme-set \"keyword_foreground\" \"x:4\")") != std::string::npos);
+        REQUIRE(content.str().find("(ned/theme-set \"background\" \"default\")") != std::string::npos);
+
+        view.OnEvent(ned::ui::test::Character("z")); // proves the one-shot returned to Normal mode
+        REQUIRE(fixture.buffer.Text() == "z");
+    }
+
+    if (previous) {
+        setenv("XDG_CONFIG_HOME", restore.c_str(), 1);
+    }
+    else {
+        unsetenv("XDG_CONFIG_HOME");
+    }
+    std::filesystem::remove_all(dir);
+}

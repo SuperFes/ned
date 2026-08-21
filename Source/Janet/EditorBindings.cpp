@@ -152,6 +152,13 @@ namespace {
         editor::SetPreferredThemeName(name);
     }
 
+    // Theme-editing follow-up: same string-only deferral as NedSetTheme just
+    // above -- keys/tokens are validated by ui::SetThemeColorByKey when
+    // main.cpp applies them, not here.
+    void NedThemeSet(std::string key, std::string token) {
+        editor::AddThemeColorOverride(key, token);
+    }
+
     void NedSetMinimapEnabled(bool enabled) {
         editor::SetMinimapEnabled(enabled);
     }
@@ -389,6 +396,11 @@ void InstallEditorBindings(Environment& env) {
         "ned", "set-theme",
         "Select the startup theme by name (e.g. \"dark\", \"light\", \"ansi-dark\"). Overrides a saved --detect-theme "
         "file; an unknown name is reported at startup and falls back. Empty string clears the preference.");
+    env.Register<&NedThemeSet>(
+        "ned", "theme-set",
+        "Override one theme color by key (e.g. (ned/theme-set \"keyword_foreground\" \"#f042d6\")) on top of the "
+        "startup theme -- keys match the theme file's own; the save-theme command writes a full theme.janet of "
+        "these calls for hand-editing, loaded via (dofile ...) from init.janet.");
     env.Register<&NedSetMinimapEnabled>(
         "ned", "set-minimap-enabled",
         "Enable/disable the minimap (replaces the plain scrollbar) as the default starting state for newly-opened "

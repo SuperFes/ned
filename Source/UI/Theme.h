@@ -117,11 +117,12 @@ struct Theme {
     Color includePathForeground;
 
     Color modeLineForeground;
-    // A gradient endpoint can't meaningfully be "default" or a palette
-    // index -- kept as plain Color (not restricted further) since
-    // ftxui::Color::Interpolate accepts any Color and produces a sensible
-    // result either way; ThemeFile.cpp's own serialization is what actually
-    // enforces "hex only" for these two keys.
+    // Any Color works as a gradient endpoint: Interpolate approximates
+    // Default/Palette16 endpoints via a fixed RGB table, and returns equal
+    // endpoints unchanged -- which is exactly how the ANSI fallback themes
+    // express "no gradient, stay a real palette color" (theme-editing
+    // follow-up: ThemeFile's old hex-only restriction on these keys was
+    // dropped for the same reason).
     Color modeLineGradientStart;
     Color modeLineGradientEnd;
 

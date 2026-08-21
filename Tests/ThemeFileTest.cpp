@@ -1,8 +1,10 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 
@@ -175,4 +177,94 @@ TEST_CASE("LoadThemeFile returns nullopt for a missing file", "[ThemeFile]") {
     std::filesystem::remove(path);
 
     REQUIRE_FALSE(LoadThemeFile(path).has_value());
+}
+
+// theme-editing follow-up: the shared key table's new coverage and the
+// theme.janet side.
+
+TEST_CASE("Round-trip preserves the per-SyntaxClass colors the old serializer dropped", "[ThemeFile]") {
+    // These 19 fields were never serialized before the shared key table --
+    // fine for --detect-theme's chrome-focused output, fatal for
+    // save-theme's edit-and-reload workflow.
+    const Theme original = DarkTheme();
+    const Theme restored = ParseTheme(SerializeTheme(original), LightTheme()); // deliberately mismatched base
+
+    REQUIRE(restored.docCommentForeground == original.docCommentForeground);
+    REQUIRE(restored.stringEscapeForeground == original.stringEscapeForeground);
+    REQUIRE(restored.controlKeywordForeground == original.controlKeywordForeground);
+    REQUIRE(restored.functionForeground == original.functionForeground);
+    REQUIRE(restored.functionBuiltinForeground == original.functionBuiltinForeground);
+    REQUIRE(restored.typeForeground == original.typeForeground);
+    REQUIRE(restored.typeBuiltinForeground == original.typeBuiltinForeground);
+    REQUIRE(restored.constantForeground == original.constantForeground);
+    REQUIRE(restored.constantBuiltinForeground == original.constantBuiltinForeground);
+    REQUIRE(restored.variableForeground == original.variableForeground);
+    REQUIRE(restored.variableBuiltinForeground == original.variableBuiltinForeground);
+    REQUIRE(restored.parameterForeground == original.parameterForeground);
+    REQUIRE(restored.propertyForeground == original.propertyForeground);
+    REQUIRE(restored.operatorForeground == original.operatorForeground);
+    REQUIRE(restored.punctuationForeground == original.punctuationForeground);
+    REQUIRE(restored.tagForeground == original.tagForeground);
+    REQUIRE(restored.attributeForeground == original.attributeForeground);
+    REQUIRE(restored.namespaceForeground == original.namespaceForeground);
+    REQUIRE(restored.markupMarkerForeground == original.markupMarkerForeground);
+    REQUIRE(restored.ghostTextForeground == original.ghostTextForeground);
+}
+
+TEST_CASE("Palette-index gradient endpoints round-trip since the hex-only restriction was dropped", "[ThemeFile]") {
+    // The ANSI fallback themes made a Palette16 gradient endpoint genuinely
+    // meaningful (equal endpoints pass through Interpolate unchanged).
+    const Theme original = ned::ui::AnsiDarkTheme();
+    const Theme restored = ParseTheme(SerializeTheme(original), DarkTheme());
+
+    REQUIRE(restored.modeLineGradientStart == original.modeLineGradientStart);
+    REQUIRE(restored.modeLineGradientEnd == original.modeLineGradientEnd);
+}
+
+TEST_CASE("SetThemeColorByKey assigns known keys and rejects unknown keys or bad tokens", "[ThemeFile]") {
+    Theme theme = DarkTheme();
+
+    REQUIRE(ned::ui::SetThemeColorByKey(theme, "keyword_foreground", "#f042d6"));
+    REQUIRE(theme.keywordForeground == Color::RGB(0xf042d6));
+
+    REQUIRE(ned::ui::SetThemeColorByKey(theme, "border_accent_foreground", "x:5"));
+    REQUIRE(theme.borderAccent.foreground == Color::Palette(5));
+
+    REQUIRE_FALSE(ned::ui::SetThemeColorByKey(theme, "no_such_key", "#112233"));
+    REQUIRE_FALSE(ned::ui::SetThemeColorByKey(theme, "keyword_foreground", "not-a-color"));
+    REQUIRE(theme.keywordForeground == Color::RGB(0xf042d6)); // the bad token assigned nothing
+}
+
+TEST_CASE("SerializeThemeJanet emits one ned/theme-set call per serialized color, round-trippable", "[ThemeFile]") {
+    const Theme       original = DarkTheme();
+    const std::string janet    = ned::ui::SerializeThemeJanet(original);
+
+    REQUIRE(janet.find("(ned/theme-set \"background\" ") != std::string::npos);
+    REQUIRE(janet.find("(ned/theme-set \"keyword_foreground\" ") != std::string::npos);
+    REQUIRE(janet.find("(ned/theme-set \"border_accent_foreground\" ") != std::string::npos);
+
+    // Re-apply every emitted (key, token) pair onto a mismatched base via
+    // SetThemeColorByKey -- exactly what the real ned/theme-set path does at
+    // startup -- and require the result to serialize identically to the
+    // original: the generated Janet is a complete, lossless snapshot.
+    Theme              rebuilt = LightTheme();
+    std::istringstream in{janet};
+    std::string        line;
+    while (std::getline(in, line)) {
+        if (line.rfind("(ned/theme-set \"", 0) != 0) {
+            continue; // header comment
+        }
+        const std::size_t keyStart = std::strlen("(ned/theme-set \"");
+        const std::size_t keyEnd   = line.find('"', keyStart);
+        const std::size_t valStart = line.find('"', keyEnd + 1) + 1;
+        const std::size_t valEnd   = line.find('"', valStart);
+        REQUIRE(ned::ui::SetThemeColorByKey(rebuilt, line.substr(keyStart, keyEnd - keyStart),
+                                            line.substr(valStart, valEnd - valStart)));
+    }
+    REQUIRE(SerializeTheme(rebuilt) == SerializeTheme(original));
+}
+
+TEST_CASE("ThemeJanetFilePath sits beside the theme.txt path", "[ThemeFile]") {
+    EnvVarGuard xdg("XDG_CONFIG_HOME", "/tmp/ned-xdg-test-config");
+    REQUIRE(ned::ui::ThemeJanetFilePath() == std::filesystem::path("/tmp/ned-xdg-test-config/ned/theme.janet"));
 }
