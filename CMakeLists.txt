@@ -1,5 +1,5 @@
-cmake_minimum_required(VERSION 3.26)
-project(Ned)
+cmake_minimum_required(VERSION 3.29)
+project(Ned VERSION 0.1.0)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -482,11 +482,14 @@ target_include_directories(ned_lib
 
 target_link_libraries(ned_lib
         PUBLIC ${Janet_LIBRARIES}
-        # FTXUI -> Notcurses migration: FTXUI itself is gone -- every widget
-        # (Widget/KeyTranslation/Theme/EventLoop/Layout and every concrete
-        # widget through main.cpp's own composition root) is ported onto
-        # Notcurses; see ROADMAP.md's migration entry for the full phase
-        # history.
+        # Every widget (Widget/KeyTranslation/Theme/EventLoop/Layout and every
+        # concrete widget through main.cpp's own composition root) is built on
+        # Notcurses. Shared, not static (notcurses' static build needs a
+        # static libdeflate/zlib this project has no reason to require) --
+        # notcurses' own CMakeLists.txt already installs notcurses-core's
+        # shared library to CMAKE_INSTALL_LIBDIR unconditionally, so
+        # `cmake --install` places it on the normal system library path
+        # alongside `ned` with no RPATH trick needed.
         PUBLIC notcurses-core
         # Terminal-panel follow-up: PUBLIC because vterm.h reaches ned_lib's
         # own headers via Source/Editor/Terminal/Emulator.h.
@@ -522,6 +525,38 @@ endif()
 add_executable(ned Source/main.cpp)
 
 target_link_libraries(ned PRIVATE ned_lib CLI11::CLI11)
+
+# Packaging follow-up: no install() rule existed at all before this -- fine
+# for `cmake --build build && ./build/ned` (this project's own documented
+# dev workflow), not fine for anything that needs a real `cmake --install`
+# (a system package, an ebuild, ...). Deliberately minimal: just the
+# executable, standard GNUInstallDirs layout, no desktop file/icon/man page
+# (see ROADMAP.md's "Documentation framework" entry for those).
+include(GNUInstallDirs)
+# notcurses-core is FetchContent'd with EXCLUDE_FROM_ALL (see its own
+# comment above), which also silently skips notcurses' own install(TARGETS
+# notcurses-core ...) rule even though the shared library itself still gets
+# built (as a dependency of ned_lib) -- confirmed empirically, not assumed:
+# a plain `cmake --install` installed only `ned`, and the resulting binary
+# fell back to whatever notcurses happens to already be on the host system
+# (a real, silent version/ABI mismatch risk, not just a missing-file one --
+# ned is built and tested against a specific pinned notcurses commit/patch,
+# see PatchNotcursesNulKey.cmake, that a system package won't carry).
+# Installed into a private, ned-only subdirectory rather than the shared
+# system libdir -- CMAKE_INSTALL_LIBDIR is also where a system notcurses
+# package installs its own same-SONAME libnotcurses-core.so.3, and two
+# packages both owning that exact path is a real install-time file
+# collision, not just an unlikely edge case (this machine already has one
+# installed). INSTALL_RPATH is what makes the *installed* copy of `ned`
+# look there -- deliberately not touching the build tree's own rpath, so
+# `cmake --build build && ./build/ned` (this project's documented dev
+# workflow) keeps resolving notcurses-core from build/_deps/ exactly as
+# before.
+set_target_properties(ned PROPERTIES
+    INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}/ned"
+)
+install(TARGETS ned RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+install(TARGETS notcurses-core LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}/ned")
 
 # Standalone diagnostic, not part of ned/ned_lib -- see its own header
 # comment (Tools/NotcursesAlphaProbe.cpp) for what it's answering. Links
