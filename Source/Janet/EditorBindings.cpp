@@ -14,6 +14,7 @@
 #include "Editor/FinalNewline.h"
 #include "Editor/FormatOnSave.h"
 #include "Editor/HighlightSettings.h"
+#include "Editor/InlineDiagnostics.h"
 #include "Editor/Link.h"
 #include "Editor/Lsp/LspServerConfig.h"
 #include "Editor/MinimapSettings.h"
@@ -214,8 +215,7 @@ namespace {
         }
         const std::vector<editor::BackupVersion> versions = editor::ListBackupVersions(*context.buffer.Path());
         if (index < 0 || static_cast<std::size_t>(index) >= versions.size()) {
-            throw std::runtime_error("ned: no backup version " + std::to_string(index) + " (have "
-                                     + std::to_string(versions.size()) + ")");
+            throw std::runtime_error("ned: no backup version " + std::to_string(index) + " (have " + std::to_string(versions.size()) + ")");
         }
         context.buffer.RestoreContent(editor::ReadBackupVersion(versions[static_cast<std::size_t>(index)].path));
     }
@@ -250,6 +250,10 @@ namespace {
 
     void NedSetCodeFoldingEnabled(bool enabled) {
         editor::SetCodeFoldingEnabled(enabled);
+    }
+
+    void NedSetInlineDiagnostics(bool enabled) {
+        editor::SetInlineDiagnosticsEnabled(enabled);
     }
 
     void NedRegisterLanguageGrammar(std::string name, std::string libraryPath, std::string queryPath,
@@ -514,6 +518,10 @@ void InstallEditorBindings(Environment& env) {
     env.Register<&NedSetCodeFoldingEnabled>(
         "ned", "set-code-folding-enabled",
         "Enable/disable the gutter code-folding affordance for modes with a fold query (default true).");
+    env.Register<&NedSetInlineDiagnostics>(
+        "ned", "set-inline-diagnostics",
+        "Enable/disable inline diagnostic annotation rows (carets + message under a line with an LSP diagnostic; "
+        "default true).");
     env.Register<&NedRegisterLanguageGrammar>(
         "ned", "register-language-grammar",
         "Load a tree-sitter grammar at runtime: (name library-path query-path fold-query-path). library-path is a "

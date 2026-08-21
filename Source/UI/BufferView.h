@@ -20,6 +20,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -545,6 +546,19 @@ class BufferView : public Widget {
     // offset as an earlier-in-the-buffer one shifts positions), then applies
     // each via Buffer::DeleteRange + Buffer::InsertAt.
     void ApplyCodeAction(const editor::lsp::CodeAction& action);
+    // code-actions-resolve follow-up (factored out for quick-fix). Sends
+    // codeAction/resolve first when the action arrived without its edit
+    // (action.resolvable), applying from inside that async callback;
+    // otherwise applies directly. Shared by HandleCodeActionConfirmKey's y
+    // branch and RequestQuickFixAtPoint.
+    void ResolveAndApplyCodeAction(const editor::lsp::CodeAction& action);
+    // quick-fix follow-up. Same request/staleness-guard shape as
+    // RequestCodeActionsAtPoint, but applies the response's single
+    // unambiguous fix immediately (a lone action, else a lone isPreferred
+    // one, else a lone quickfix-kind one -- undo is the safety net, per the
+    // user's own ask), entering the ordinary LspCodeActionSelect session
+    // only when no selector produces exactly one candidate.
+    void RequestQuickFixAtPoint();
 
     // go-to-definition follow-up. Mirrors RequestCodeActionsAtPoint's own
     // shape exactly: bumps definitionRequestGeneration_, calls
@@ -1448,6 +1462,22 @@ class BufferView : public Widget {
     mutable std::size_t                                                             diagnosticGutterCacheGeneration_ = 0;
     mutable std::vector<std::pair<std::size_t, text::Buffer::Diagnostic::Severity>> diagnosticLineSeverities_; // sorted by line
 
+    // inline-diagnostics follow-up: see EnsureInlineDiagnosticCache's own
+    // doc comment above for the two-generation gate (diagnostics AND
+    // content, unlike the gutter cache just above -- annotation rows shift
+    // whole-viewport row math, so a stale line mapping is worse than a
+    // stale icon).
+    struct InlineDiagnostic {
+        text::Buffer::Diagnostic::Severity severity;
+        std::size_t                        startByte;
+        std::size_t                        endByte;
+        std::string                        message;
+    };
+    mutable text::Buffer*                                     inlineDiagnosticCacheBuffer_            = nullptr;
+    mutable std::size_t                                       inlineDiagnosticCacheDiagGeneration_    = 0;
+    mutable std::size_t                                       inlineDiagnosticCacheContentGeneration_ = 0;
+    mutable std::unordered_map<std::size_t, InlineDiagnostic> inlineDiagnosticsByLine_;
+
     // VCS blame gutter: populated only by RequestBlameForCurrentBuffer's
     // async completion (never recomputed from Paint() -- see
     // EnsureBlameGutterCache's own doc comment for why), sorted by
@@ -1568,6 +1598,37 @@ class BufferView : public Widget {
     // discovered within the first `limit`-or-so lines, never by touching
     // the rest of the buffer.
     [[nodiscard]] bool VisibleRowCountAtLeast(std::size_t startLine, std::size_t endLineExclusive, std::size_t limit) const;
+
+    // inline-diagnostics follow-up. Jank-compiler-style annotation rows: a
+    // line carrying a diagnostic gets one extra virtual row directly below
+    // it -- carets under the span plus the (first line of the) message --
+    // rendered by Paint(), never buffer content. The row accounting rides
+    // RowsForLine (each annotated line simply reports one more row), which
+    // is what keeps CursorPosition/ScrollToShowPoint/MaxTopLine/
+    // ByteOffsetForPoint all agreeing about it for free -- the exact same
+    // seam line-wrap's own multi-row lines already went through; a click on
+    // an annotation row falls into ByteOffsetForPoint's existing
+    // clamp-to-last-segment behavior and lands on the annotated line
+    // itself, no special case needed (verified against that walk, not
+    // assumed).
+    //
+    // EnsureInlineDiagnosticCache (re)derives inlineDiagnosticsByLine_ --
+    // at most one entry per line, most severe first, earliest-starting on a
+    // tie, message truncated to its first line -- gated on the buffer plus
+    // BOTH DiagnosticsGeneration() (new server push) and
+    // ContentGeneration() (edits move byte offsets, so the line a stale
+    // span maps to can change), mirroring EnsureFoldGutterCache's own
+    // two-generation gate. AnnotationRowsForLine is the 0-or-1 count
+    // RowsForLine adds on -- always 0 while
+    // editor::InlineDiagnosticsEnabled() is off.
+    void                      EnsureInlineDiagnosticCache() const;
+    [[nodiscard]] std::size_t AnnotationRowsForLine(std::size_t line) const;
+    // Paints one annotation row for `line` at screen row `row`: carets
+    // under the diagnostic's visual span (skipped when wrap is on -- the
+    // annotation sits below the line's LAST wrap row, where first-row
+    // column positions would be a lie -- or when the span is scrolled out
+    // of view), then the message, both in the severity's own theme color.
+    void PaintInlineDiagnosticRow(Canvas& c, int row, std::size_t line, std::size_t gutterWidth);
 
     // hover/completion follow-up. See Command.h's InteractiveRequest::
     // LspComplete doc comment and this class's own OnAnimation for the

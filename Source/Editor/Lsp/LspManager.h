@@ -47,6 +47,17 @@ namespace ned::editor::lsp {
 // buffer rather than duplicating the literal.
 inline constexpr std::string_view kLspLogBufferName = "*lsp log*";
 
+// The initialize request params sent to every newly spawned server. A free
+// function (rather than inline in ClientForLanguage) so tests can assert on
+// the advertised capabilities without spawning a real server process --
+// SetClientForTesting bypasses the spawn path entirely, which is how the
+// missing codeActionLiteralSupport capability below went untested and
+// unnoticed: without it a spec-following server (clangd included) must
+// return bare Command objects instead of edit-carrying CodeAction literals,
+// which made every "fix available" diagnostic unapplyable ("has no edit to
+// apply") despite listing fine.
+[[nodiscard]] Json BuildInitializeParams(const std::filesystem::path& projectRoot);
+
 class LspManager {
   public:
     // bufferList (for resolving a publishDiagnostics notification's URI back
@@ -218,6 +229,13 @@ class LspManager {
 
     void HandlePublishDiagnostics(const nlohmann::json& params);
 
+    // workDoneProgress-support follow-up. Handles a "$/progress"
+    // notification: begin/end drive the shared "LSP" BackgroundActivity
+    // count, begin/report refresh its detail text ("indexing (45%)") -- how
+    // server-side busy state (clangd's background indexing, mainly) reaches
+    // the mode-line spinner with something more informative than a pulse.
+    void HandleProgress(const std::string& language, const nlohmann::json& params);
+
     // Shared by ClientForLanguage's real spawn path and
     // SetClientForTesting's injection path, so an injected test client
     // behaves identically to a real one -- was previously inlined only into
@@ -264,6 +282,16 @@ class LspManager {
     // documented v1 limitation, matching this subsystem's existing "static
     // config, no auto-retry" model (see LspServerConfig.h).
     std::unordered_map<std::string, std::vector<std::string>> failedCommands_;
+
+    // workDoneProgress-support follow-up. Every progress session currently
+    // between its "begin" and "end", keyed by language + '\x1f' + the
+    // token's own JSON dump (tokens are string-or-integer per spec; dump()
+    // normalizes both); the value is the begin's title, reused when a
+    // "report" refreshes the detail text without repeating it. Guards the
+    // Begin/End pairing against a confused server (duplicate begin, end
+    // without begin), and lets ClientDisconnected End whatever a dying
+    // server left open so the spinner can't run forever.
+    std::unordered_map<std::string, std::string> activeProgress_;
 
     bool hasUnseenLogEntry_ = false; // see HasUnseenLogEntry/AcknowledgeLogEntry
 };

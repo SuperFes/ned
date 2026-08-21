@@ -12,10 +12,10 @@
 
 #include "Application.h"
 
+#include "Editor/BackgroundActivity.h"
 #include "Editor/Backup.h"
 #include "Editor/Commands.h"
 #include "Editor/Dap/DapManager.h"
-#include "Editor/Dispatcher.h"
 #include "Editor/Keymap.h"
 #include "Editor/Lsp/LspManager.h"
 #include "Editor/Mode.h"
@@ -116,7 +116,7 @@ int RunDetectTheme(int argc, char** argv) {
 
 } // namespace
 
-int main(int argc, char** argv) {
+auto main(int argc, char** argv) -> int {
     if (argc > 1 && std::string_view(argv[1]) == "--detect-theme") {
         return RunDetectTheme(argc, argv);
     }
@@ -375,7 +375,7 @@ int main(int argc, char** argv) {
             ned::editor::RestoreFilePlace(*openBuffer, static_cast<std::size_t>(ned::editor::TabWidth()));
         }
     }
-    bufferList.SetOnFileOpened([](ned::text::Buffer& opened) {
+    bufferList.SetOnFileOpened([](ned::text::Buffer& opened) -> void {
         ned::editor::RestoreFilePlace(opened, static_cast<std::size_t>(ned::editor::TabWidth()));
     });
 
@@ -849,6 +849,17 @@ int main(int argc, char** argv) {
     // ftxui::Screen FTXUI itself owned and rebuilt every Render() call.
     Screen screenBuffer(0, 0);
 
+    // background-activity-spinner follow-up: while any BackgroundActivity is
+    // live, the mode line's spinner needs frames the event loop otherwise
+    // has no reason to produce (repaints are earned by input/posted work,
+    // not a clock). Re-armed from the render callback below on every frame
+    // that still shows activity -- the fired callback's body is empty on
+    // purpose, because merely draining a Post()ed task earns the next loop
+    // iteration a repaint (see EventLoop.cpp's needsRepaint comment), which
+    // re-runs render, which re-arms. Self-stopping: an idle frame doesn't
+    // re-arm, so the chain ends one no-op repaint after the last activity.
+    DeadlineTimer activityAnimationTimer;
+
     EventLoopCallbacks callbacks;
 
     callbacks.onResize = [&](Size size) {
@@ -878,6 +889,10 @@ int main(int argc, char** argv) {
     callbacks.render = [&]() -> std::optional<Point> {
         head.Paint(Canvas(screenBuffer, head.Box_()));
         screenBuffer.Flush(eventLoop.StdPlane());
+
+        if (!ned::editor::ActiveBackgroundActivities().empty()) {
+            activityAnimationTimer.Arm(eventLoop, ned::editor::kBackgroundActivitySpinnerInterval, [] {});
+        }
 
         if (const Widget* focused = FocusedWidget()) {
             if (const std::optional<Point> local = focused->CursorPosition()) {

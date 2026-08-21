@@ -18,6 +18,7 @@
 #include "Editor/Dap/DapConfig.h"
 #include "Editor/Dap/DapManager.h"
 #include "Editor/Dispatcher.h"
+#include "Editor/InlineDiagnostics.h"
 #include "Editor/Link.h"
 #include "Editor/Lsp/LspClient.h"
 #include "Editor/Lsp/LspManager.h"
@@ -1295,9 +1296,17 @@ TEST_CASE("The diagnostics gutter uses a distinct glyph per severity", "[BufferV
     ned::ui::BufferView view = fixture.View();
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 3});
 
+    // inline-diagnostics follow-up: off for this test -- every line here
+    // carries a diagnostic, so annotation rows would interleave and shift
+    // rows 1-3; this test is about the gutter glyphs alone. Restored below
+    // (process-wide state, same clean-up convention as BackgroundActivity's
+    // own tests).
+    ned::editor::SetInlineDiagnosticsEnabled(false);
+
     ned::ui::Screen screen = ned::ui::Screen(20, 4);
     ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 3});
     view.Paint(canvas);
+    ned::editor::SetInlineDiagnosticsEnabled(true);
 
     REQUIRE(screen.PixelAt(1, 0).character == "✗");
     REQUIRE(screen.PixelAt(1, 0).foreground_color == fixture.theme.diagnosticError);
@@ -6410,9 +6419,8 @@ namespace {
 // process-wide settings/memos around each test (BackupTest.cpp's own guard
 // pair, pared to what these session tests need).
 struct RecoverFixtureSandbox {
-    explicit RecoverFixtureSandbox(const std::string& name)
-        : root(std::filesystem::temp_directory_path() / name), stateGuard("XDG_STATE_HOME", (root / "state").c_str()),
-          homeGuard("HOME", nullptr) {
+    explicit RecoverFixtureSandbox(const std::string& name) : root(std::filesystem::temp_directory_path() / name), stateGuard("XDG_STATE_HOME", (root / "state").c_str()),
+                                                              homeGuard("HOME", nullptr) {
         ned::editor::ResetBackupsForTesting();
         std::filesystem::remove_all(root);
         std::filesystem::create_directories(root / "work");
@@ -6539,4 +6547,240 @@ TEST_CASE("recover-file rejects an out-of-range version number and ends the sess
 
     view.OnEvent(ned::ui::test::Character("z")); // back to normal editing
     REQUIRE(fixture.buffer.Text().find('z') != std::string::npos);
+}
+
+// quick-fix follow-up (C-c C-q, lsp-quick-fix): shared setup mirroring the
+// C-c C-a tests above -- the difference under test is only the pick-without-
+// asking policy in RequestQuickFixAtPoint.
+namespace {
+
+struct QuickFixHarness {
+    Fixture                      fixture;
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::lsp::LspManager manager{fixture.bufferList, eventLoop};
+    ned::editor::lsp::LspClient* client = nullptr;
+    FakeLspServer                server;
+    ned::ui::BufferView          view;
+    ned::text::Buffer*           buffer = nullptr;
+
+    explicit QuickFixHarness(const std::string& fileName) : server(FakeLspServer::Create(manager, "fundamental", eventLoop, client)), view(fixture.View()) {
+        buffer = &fixture.bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / fileName);
+        buffer->InsertAtPoint("bad_code");
+        fixture.activeBuffer.Set(*buffer);
+        view.SetLspManager(&manager);
+        view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+        ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
+        ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+        view.Paint(canvas);
+        (void)ReadRawLspFrame(server.serverStdinRead);
+    }
+
+    // Sends C-c C-q and answers the resulting codeAction request with
+    // actions; each entry is {title, newText, kind, isPreferred}.
+    struct ActionSpec {
+        std::string title;
+        std::string newText;
+        std::string kind;
+        bool        isPreferred = false;
+    };
+    void RespondWith(const std::vector<ActionSpec>& specs) {
+        view.OnEvent(ned::ui::test::Ctrl('c'));
+        view.OnEvent(ned::ui::test::Ctrl('q'));
+
+        const std::string raw     = ReadRawLspFrame(server.serverStdinRead);
+        const auto        request = ned::editor::lsp::Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+        REQUIRE(request["method"] == "textDocument/codeAction");
+        const std::string ownUri = request["params"]["textDocument"]["uri"].get<std::string>();
+
+        auto actions = ned::editor::lsp::Json::array();
+        for (const ActionSpec& spec : specs) {
+            ned::editor::lsp::Json action = {
+                {"title", spec.title},
+                {"edit",
+                 {{"changes",
+                   {{ownUri, ned::editor::lsp::Json::array(
+                                 {{{"range", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 8}}}}},
+                                   {"newText", spec.newText}}})}}}}},
+            };
+            if (!spec.kind.empty()) {
+                action["kind"] = spec.kind;
+            }
+            if (spec.isPreferred) {
+                action["isPreferred"] = true;
+            }
+            actions.push_back(std::move(action));
+        }
+        const auto response =
+            ned::editor::lsp::Json{{"jsonrpc", "2.0"}, {"id", LspRequestIdFromFrame(raw)}, {"result", std::move(actions)}};
+        client->DispatchFrame(response.dump());
+    }
+};
+
+} // namespace
+
+TEST_CASE("C-c C-q applies a lone quick fix immediately, no confirmation", "[BufferView]") {
+    QuickFixHarness harness("ned_bufferview_quick_fix_lone_test.txt");
+    harness.RespondWith({{.title = "Fix bad_code", .newText = "good_code", .kind = "quickfix"}});
+
+    REQUIRE(harness.buffer->Text() == "good_code");
+    REQUIRE(harness.fixture.statusMessage == "Applied \"Fix bad_code\".");
+}
+
+TEST_CASE("C-c C-q picks the lone isPreferred action out of several", "[BufferView]") {
+    QuickFixHarness harness("ned_bufferview_quick_fix_preferred_test.txt");
+    harness.RespondWith({{.title = "Refactor", .newText = "refactored", .kind = "refactor"},
+                         {.title = "The fix", .newText = "fixed", .kind = "quickfix", .isPreferred = true},
+                         {.title = "Other fix", .newText = "other", .kind = "quickfix"}});
+
+    REQUIRE(harness.buffer->Text() == "fixed");
+    REQUIRE(harness.fixture.statusMessage == "Applied \"The fix\".");
+}
+
+TEST_CASE("C-c C-q picks the lone quickfix-kind action when nothing is preferred", "[BufferView]") {
+    QuickFixHarness harness("ned_bufferview_quick_fix_kind_test.txt");
+    harness.RespondWith({{.title = "Refactor", .newText = "refactored", .kind = "refactor.rewrite"},
+                         {.title = "The fix", .newText = "fixed", .kind = "quickfix"}});
+
+    REQUIRE(harness.buffer->Text() == "fixed");
+}
+
+TEST_CASE("C-c C-q falls back to the selection list when the fix is ambiguous", "[BufferView]") {
+    QuickFixHarness harness("ned_bufferview_quick_fix_ambiguous_test.txt");
+    harness.RespondWith({{.title = "First fix", .newText = "first", .kind = "quickfix"},
+                         {.title = "Second fix", .newText = "second", .kind = "quickfix"}});
+
+    REQUIRE(harness.buffer->Text() == "bad_code"); // nothing applied
+    REQUIRE(harness.fixture.statusMessage.find("1) First fix") != std::string::npos);
+    REQUIRE(harness.fixture.statusMessage.find("2) Second fix") != std::string::npos);
+
+    harness.view.OnEvent(ned::ui::test::Character("2"));
+    harness.view.OnEvent(ned::ui::test::Character("y"));
+    REQUIRE(harness.buffer->Text() == "second");
+}
+
+TEST_CASE("C-c C-q with no actions reports \"No quick fix available.\"", "[BufferView]") {
+    QuickFixHarness harness("ned_bufferview_quick_fix_none_test.txt");
+    harness.RespondWith({});
+
+    REQUIRE(harness.buffer->Text() == "bad_code");
+    REQUIRE(harness.fixture.statusMessage == "No quick fix available.");
+}
+
+// inline-diagnostics follow-up.
+
+TEST_CASE("An inline diagnostic annotation row renders carets and message under the flagged line", "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("int x = 1;\nint y = 2;");
+    fixture.buffer.SetDiagnostics({
+        ned::text::Buffer::Diagnostic{
+            .startByte = 4, .endByte = 5, .severity = ned::text::Buffer::Diagnostic::Severity::Warning, .message = "unused variable x"},
+    });
+    fixture.buffer.SetPoint(0);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    ned::ui::Screen screen = ned::ui::Screen(40, 3);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+
+    const int gutter = GutterWidth(2);
+    // Row 0: the flagged line itself, unchanged.
+    REQUIRE(screen.PixelAt(gutter + 4, 0).character == "x");
+    // Row 1: the annotation -- a caret directly under the span, then the
+    // message, both in the severity's color; the gutter columns stay blank
+    // (no line number -- it's not a buffer line).
+    REQUIRE(screen.PixelAt(gutter + 4, 1).character == "^");
+    REQUIRE(screen.PixelAt(gutter + 4, 1).foreground_color == fixture.theme.diagnosticWarning);
+    const std::string annotationRow = RowText(screen, 1, 40);
+    REQUIRE(annotationRow.find("unused variable x") != std::string::npos);
+    REQUIRE(screen.PixelAt(0, 1).character == " ");
+    // Distinct-at-a-glance styling (user-reported: plain severity-colored
+    // text read as ordinary code): the severity's gutter glyph repeats
+    // between the carets and the message, and the message is italic.
+    REQUIRE(screen.PixelAt(gutter + 6, 1).character == "▲"); // caret at +4 (span is 1 wide), space, glyph at +6
+    REQUIRE(screen.PixelAt(gutter + 8, 1).character == "u"); // message starts one space after the glyph
+    REQUIRE(screen.PixelAt(gutter + 8, 1).italic);
+    REQUIRE_FALSE(screen.PixelAt(gutter + 4, 1).italic); // carets stay upright/bold
+    // Row 2: the next buffer line, shifted down by the annotation.
+    REQUIRE(RowText(screen, 2, 40).find("int y = 2;") != std::string::npos);
+}
+
+TEST_CASE("Inline diagnostic rows shift cursor position and are click-transparent", "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("bad line\ngood line");
+    fixture.buffer.SetDiagnostics({
+        ned::text::Buffer::Diagnostic{
+            .startByte = 0, .endByte = 3, .severity = ned::text::Buffer::Diagnostic::Severity::Error, .message = "broken"},
+    });
+    // Point on line 1 ("good line"): its screen row must account for line
+    // 0's annotation row above it.
+    fixture.buffer.SetPoint(fixture.buffer.Content().LineToByteOffset(1));
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 3});
+
+    ned::ui::Screen screen = ned::ui::Screen(40, 4);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 3});
+    view.Paint(canvas);
+
+    const auto cursor = view.CursorPosition();
+    REQUIRE(cursor.has_value());
+    REQUIRE(cursor->y == 2); // row 0 = "bad line", row 1 = annotation, row 2 = "good line"
+
+    // A click on the annotation row (row 1) lands point on the annotated
+    // line itself -- ByteOffsetForPoint's clamp-to-last-segment behavior.
+    const int gutter = GutterWidth(2);
+    view.OnEvent(MousePress(gutter, 1));
+    REQUIRE(fixture.buffer.Content().ByteOffsetToLine(fixture.buffer.Point()) == 0);
+}
+
+TEST_CASE("toggle-inline-diagnostics / the settings flag suppress annotation rows entirely", "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("bad\ngood");
+    fixture.buffer.SetDiagnostics({
+        ned::text::Buffer::Diagnostic{
+            .startByte = 0, .endByte = 3, .severity = ned::text::Buffer::Diagnostic::Severity::Error, .message = "broken"},
+    });
+    fixture.buffer.SetPoint(0);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 1});
+
+    ned::editor::SetInlineDiagnosticsEnabled(false);
+    ned::ui::Screen screen = ned::ui::Screen(40, 2);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 1});
+    view.Paint(canvas);
+    ned::editor::SetInlineDiagnosticsEnabled(true);
+
+    // With the flag off, row 1 is the next buffer line, not an annotation.
+    REQUIRE(RowText(screen, 1, 40).find("good") != std::string::npos);
+    REQUIRE(RowText(screen, 1, 40).find("broken") == std::string::npos);
+}
+
+TEST_CASE("The most severe diagnostic wins the line's single annotation row", "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("bad line");
+    fixture.buffer.SetDiagnostics({
+        ned::text::Buffer::Diagnostic{
+            .startByte = 0, .endByte = 3, .severity = ned::text::Buffer::Diagnostic::Severity::Hint, .message = "a hint"},
+        ned::text::Buffer::Diagnostic{
+            .startByte = 4, .endByte = 8, .severity = ned::text::Buffer::Diagnostic::Severity::Error, .message = "the error"},
+    });
+    fixture.buffer.SetPoint(0);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 1});
+
+    ned::ui::Screen screen = ned::ui::Screen(40, 2);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 1});
+    view.Paint(canvas);
+
+    const std::string annotationRow = RowText(screen, 1, 40);
+    REQUIRE(annotationRow.find("the error") != std::string::npos);
+    REQUIRE(annotationRow.find("a hint") == std::string::npos);
+    // Carets sit under the error's own span (columns 4-7), not the hint's.
+    const int gutter = GutterWidth(1);
+    REQUIRE(screen.PixelAt(gutter + 4, 1).character == "^");
+    REQUIRE(screen.PixelAt(gutter + 0, 1).character == " ");
 }

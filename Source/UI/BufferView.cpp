@@ -16,6 +16,7 @@
 #include "Editor/CodeFoldSettings.h"
 #include "Editor/FuzzyMatch.h"
 #include "Editor/HighlightSettings.h"
+#include "Editor/InlineDiagnostics.h"
 #include "Editor/Link.h"
 #include "Editor/Lsp/LspManager.h"
 #include "Editor/Lsp/LspServerConfig.h"
@@ -801,6 +802,43 @@ namespace {
         return 0; // unreachable -- silences a "not all enumerators handled" warning on some compilers
     }
 
+    // The one severity -> {glyph, bold} mapping shared by the diagnostics
+    // gutter column and the inline annotation rows (inline-diagnostics
+    // follow-up), so the two icon vocabularies can never drift apart. The
+    // matching theme color is severity-keyed too but needs the Theme, so
+    // callers pair this with their own theme_.diagnostic* lookup.
+    struct DiagnosticGlyph {
+        const char* glyph;
+        bool        bold;
+    };
+    DiagnosticGlyph DiagnosticGlyphFor(text::Buffer::Diagnostic::Severity severity) {
+        switch (severity) {
+            case text::Buffer::Diagnostic::Severity::Error:
+                return {"✗", true}; // ✗ BALLOT X -- the universal "failure" cross
+            case text::Buffer::Diagnostic::Severity::Warning:
+                return {"▲", true}; // ▲ -- the warning-triangle convention
+            case text::Buffer::Diagnostic::Severity::Information:
+                return {"i", true}; // bold i -- reads "info" directly, no circled-i needed
+            case text::Buffer::Diagnostic::Severity::Hint:
+                return {"·", false}; // · MIDDLE DOT -- deliberately subtle, matching a hint's low urgency
+        }
+        return {" ", false}; // unreachable, same convention as DiagnosticSeverityRank above
+    }
+
+    Color DiagnosticSeverityColor(const Theme& theme, text::Buffer::Diagnostic::Severity severity) {
+        switch (severity) {
+            case text::Buffer::Diagnostic::Severity::Error:
+                return theme.diagnosticError;
+            case text::Buffer::Diagnostic::Severity::Warning:
+                return theme.diagnosticWarning;
+            case text::Buffer::Diagnostic::Severity::Information:
+                return theme.diagnosticInformation;
+            case text::Buffer::Diagnostic::Severity::Hint:
+                return theme.diagnosticHint;
+        }
+        return theme.diagnosticInformation; // unreachable, same convention as DiagnosticSeverityRank above
+    }
+
     // VCS blame gutter: parses a plugin-supplied date string (expected
     // "YYYY-MM-DD" -- what git's own --date=short produces, and what
     // vcs-git.janet's log-argv/blame parsing actually emits) into an
@@ -859,6 +897,50 @@ void BufferView::EnsureDiagnosticGutterCache() const {
 
     diagnosticGutterCacheBuffer_     = &buffer;
     diagnosticGutterCacheGeneration_ = buffer.DiagnosticsGeneration();
+}
+
+void BufferView::EnsureInlineDiagnosticCache() const {
+    text::Buffer& buffer = activeBuffer_.Get();
+    if (inlineDiagnosticCacheBuffer_ == &buffer && inlineDiagnosticCacheDiagGeneration_ == buffer.DiagnosticsGeneration() &&
+        inlineDiagnosticCacheContentGeneration_ == buffer.ContentGeneration()) {
+        return;
+    }
+
+    inlineDiagnosticsByLine_.clear();
+    const text::Rope& content = buffer.Content();
+    for (const text::Buffer::Diagnostic& diagnostic : buffer.Diagnostics()) {
+        const std::size_t line = content.ByteOffsetToLine(std::min(diagnostic.startByte, content.ByteLength()));
+        const auto        it   = inlineDiagnosticsByLine_.find(line);
+        const bool        replaces =
+            it == inlineDiagnosticsByLine_.end() ||
+            DiagnosticSeverityRank(diagnostic.severity) > DiagnosticSeverityRank(it->second.severity) ||
+            (DiagnosticSeverityRank(diagnostic.severity) == DiagnosticSeverityRank(it->second.severity) &&
+             diagnostic.startByte < it->second.startByte);
+        if (!replaces) {
+            continue;
+        }
+        // First line of the message only -- one annotation row per line,
+        // "within reason" (clangd's notes/fix-its can make these multiline).
+        std::string message            = diagnostic.message.substr(0, diagnostic.message.find('\n'));
+        inlineDiagnosticsByLine_[line] = InlineDiagnostic{
+            .severity  = diagnostic.severity,
+            .startByte = diagnostic.startByte,
+            .endByte   = std::max(diagnostic.endByte, diagnostic.startByte + 1), // widen zero-length spans, same as the underline pass
+            .message   = std::move(message),
+        };
+    }
+
+    inlineDiagnosticCacheBuffer_            = &buffer;
+    inlineDiagnosticCacheDiagGeneration_    = buffer.DiagnosticsGeneration();
+    inlineDiagnosticCacheContentGeneration_ = buffer.ContentGeneration();
+}
+
+std::size_t BufferView::AnnotationRowsForLine(std::size_t line) const {
+    if (!editor::InlineDiagnosticsEnabled()) {
+        return 0;
+    }
+    EnsureInlineDiagnosticCache();
+    return inlineDiagnosticsByLine_.contains(line) ? 1 : 0;
 }
 
 void BufferView::EnsureBlameGutterCache() const {
@@ -1145,14 +1227,21 @@ void BufferView::EnsureRowCountCache() const {
 
 std::size_t BufferView::RowsForLine(std::size_t line) const {
     if (IsLineHidden(line)) {
-        return 0;
+        return 0; // hidden hides the annotation row too -- a fold swallows the whole line
     }
+    // inline-diagnostics follow-up: an annotated line reports one extra row
+    // here, at the single source every row-math consumer already shares
+    // (CursorPosition, ScrollToShowPoint, MaxTopLine, ByteOffsetForPoint,
+    // VisibleRowCountBetween/AtLeast) -- the same seam wrap continuation
+    // rows ride, so none of them can disagree about where an annotation
+    // shifted the rows below it.
+    const std::size_t annotationRows = AnnotationRowsForLine(line);
     if (!EffectiveWrapLines()) {
-        return 1;
+        return 1 + annotationRows;
     }
     EnsureRowCountCache();
     if (line >= rowCountPerLine_.size()) {
-        return 1;
+        return 1 + annotationRows;
     }
     if (rowCountPerLine_[line] == kRowCountUnknown) {
         // line-wrap follow-up: the real, lazy, per-line word-break scan --
@@ -1169,7 +1258,7 @@ std::size_t BufferView::RowsForLine(std::size_t line) const {
         rowCountPerLine_[line] =
             ComputeWrapSegments(content, lineStart, lineEnd, rowCountCacheContentWidth_, lineLinks).size();
     }
-    return rowCountPerLine_[line];
+    return rowCountPerLine_[line] + annotationRows; // memoized value is content rows only -- annotation state changes independently of the wrap cache's keys
 }
 
 std::size_t BufferView::VisibleRowCountBetween(std::size_t startLine, std::size_t endLineExclusive) const {
@@ -1491,11 +1580,21 @@ void BufferView::Paint(Canvas c) {
     // line -- feeds both the whole-line background wash below and the
     // gutter arrow, so the two can never disagree.
     bool currentLineIsExecutionLine = false;
+    // inline-diagnostics follow-up: set when the just-finished line carries
+    // an annotation -- the NEXT loop iteration renders that annotation row
+    // instead of a buffer line, mirroring how RowsForLine already counts it.
+    std::optional<std::size_t> pendingAnnotationLine;
     for (int row = 0; row < c.size().height; ++row) {
         for (int col = 0; col < c.size().width; ++col) {
             Cell& cell     = c[{.x = col, .y = row}];
             cell.character = " ";
             emptyBrush.ApplyTo(cell);
+        }
+
+        if (pendingAnnotationLine) {
+            PaintInlineDiagnosticRow(c, row, *pendingAnnotationLine, gutterWidth);
+            pendingAnnotationLine.reset();
+            continue; // consumed this row; `line` already points at the next buffer line
         }
 
         if (line < renderEndLine) {
@@ -1693,30 +1792,13 @@ void BufferView::Paint(Canvas c) {
                         Brush{.background = theme_.background, .foreground = theme_.background}.ApplyTo(cell);
                     }
                     else {
-                        const char* glyph = " ";
-                        Color       color = theme_.background;
-                        bool        bold  = true;
-                        switch (it->second) {
-                            case text::Buffer::Diagnostic::Severity::Error:
-                                glyph = "✗"; // ✗ BALLOT X -- the universal "failure" cross
-                                color = theme_.diagnosticError;
-                                break;
-                            case text::Buffer::Diagnostic::Severity::Warning:
-                                glyph = "▲"; // ▲ -- the warning-triangle convention
-                                color = theme_.diagnosticWarning;
-                                break;
-                            case text::Buffer::Diagnostic::Severity::Information:
-                                glyph = "i"; // bold i -- reads "info" directly, no circled-i needed
-                                color = theme_.diagnosticInformation;
-                                break;
-                            case text::Buffer::Diagnostic::Severity::Hint:
-                                glyph = "·"; // · MIDDLE DOT -- deliberately subtle, matching a hint's low urgency
-                                color = theme_.diagnosticHint;
-                                bold  = false;
-                                break;
-                        }
-                        cell.character = glyph;
-                        Brush{.background = theme_.background, .foreground = color, .bold = bold}.ApplyTo(cell);
+                        // Glyph choice shared with the inline annotation
+                        // rows via DiagnosticGlyphFor -- see its own doc
+                        // comment (was an inline switch here).
+                        const DiagnosticGlyph glyph = DiagnosticGlyphFor(it->second);
+                        cell.character              = glyph.glyph;
+                        Brush{.background = theme_.background, .foreground = DiagnosticSeverityColor(theme_, it->second), .bold = glyph.bold}
+                            .ApplyTo(cell);
                     }
                 }
 
@@ -2215,6 +2297,11 @@ void BufferView::Paint(Canvas c) {
                 ++segmentIndex;
             }
             else {
+                // inline-diagnostics follow-up: the annotation row renders
+                // after the line's LAST wrap row, before the next line.
+                if (AnnotationRowsForLine(line) > 0) {
+                    pendingAnnotationLine = line;
+                }
                 segmentIndex = 0;
                 line         = NextVisibleLine(line + 1, renderEndLine);
             }
@@ -2222,6 +2309,83 @@ void BufferView::Paint(Canvas c) {
         else {
             line = NextVisibleLine(line + 1, renderEndLine);
         }
+    }
+}
+
+void BufferView::PaintInlineDiagnosticRow(Canvas& c, int row, std::size_t line, std::size_t gutterWidth) {
+    const auto it = inlineDiagnosticsByLine_.find(line);
+    if (it == inlineDiagnosticsByLine_.end()) {
+        return; // shouldn't happen (RowsForLine and Paint share the cache within one frame) -- leave the blanked row
+    }
+    const InlineDiagnostic& diagnostic = it->second;
+
+    // Annotation styling is deliberately NOT plain severity-colored text --
+    // a user report caught exactly that reading as ordinary code (the
+    // warning amber sits right next to similarly-warm syntax hues): the
+    // message renders in italic, and the severity's own gutter glyph is
+    // repeated between the carets and the message, so an annotation row is
+    // recognizable as one at a glance in any theme.
+    const Color color = DiagnosticSeverityColor(theme_, diagnostic.severity);
+    const Brush caretBrush{.background = theme_.background, .foreground = color, .bold = true};
+    const Brush messageBrush{.background = theme_.background, .foreground = color, .italic = true};
+
+    const int width = c.size().width;
+    int       col   = static_cast<int>(gutterWidth);
+
+    // Carets under the diagnostic's visual span -- only when the column
+    // positions on the row above are trustworthy: wrap off (the annotation
+    // sits below the line's LAST wrap row, where first-row column math
+    // would lie) and the span's start still on-screen horizontally.
+    if (!EffectiveWrapLines()) {
+        const text::Buffer& buffer    = activeBuffer_.Get();
+        const text::Rope&   content   = buffer.Content();
+        const std::size_t   lineStart = content.LineToByteOffset(line);
+        const std::size_t   lineEnd =
+            (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
+        EnsureLinkCache();
+        const std::vector<RenderedLink> lineLinks = LinksForLine(linkCache_, lineStart, lineEnd, buffer.Point());
+
+        // Same leftColumn_-aware bound/offset arithmetic CursorPosition uses.
+        const int                bound = width + static_cast<int>(leftColumn_);
+        const std::optional<int> startCol =
+            VisualColumn(content, lineStart, std::min(diagnostic.startByte, lineEnd), bound, lineLinks);
+        if (startCol && *startCol >= static_cast<int>(leftColumn_)) {
+            const std::optional<int> endCol =
+                VisualColumn(content, lineStart, std::min(diagnostic.endByte, lineEnd), bound, lineLinks);
+            const int screenStart = static_cast<int>(gutterWidth) + *startCol - static_cast<int>(leftColumn_);
+            // A span running past the visual-column bound (endCol nullopt)
+            // degrades to a single caret at its start rather than flooding
+            // the row -- the message is the more useful content to keep.
+            const int caretCount = endCol ? std::max(1, *endCol - *startCol) : 1;
+            for (int i = 0; i < caretCount && screenStart + i < width; ++i) {
+                Cell& cell     = c[{.x = screenStart + i, .y = row}];
+                cell.character = "^";
+                caretBrush.ApplyTo(cell);
+            }
+            col = std::min(screenStart + caretCount, width) + 1;
+        }
+    }
+
+    // The severity's gutter glyph, repeated here so the annotation carries
+    // the same iconography the gutter column uses (see the styling comment
+    // above) -- then the message, truncated at the viewport; byte-per-cell,
+    // the same ASCII-ish rendering simplification ModeLine's own text
+    // documents.
+    const DiagnosticGlyph glyph = DiagnosticGlyphFor(diagnostic.severity);
+    if (col < width) {
+        Cell& cell     = c[{.x = col, .y = row}];
+        cell.character = glyph.glyph;
+        Brush{.background = theme_.background, .foreground = color, .bold = glyph.bold}.ApplyTo(cell);
+        col += 2; // glyph, then one separating space
+    }
+    for (const char ch : diagnostic.message) {
+        if (col >= width) {
+            break;
+        }
+        Cell& cell     = c[{.x = col, .y = row}];
+        cell.character = std::string(1, ch);
+        messageBrush.ApplyTo(cell);
+        ++col;
     }
 }
 
@@ -2923,6 +3087,81 @@ void BufferView::RequestCodeActionsAtPoint() {
         });
 }
 
+void BufferView::RequestQuickFixAtPoint() {
+    if (!lspManager_) {
+        statusMessage_ = "No LSP manager available.";
+        return;
+    }
+    text::Buffer&       buffer     = activeBuffer_.Get();
+    text::Buffer* const bufferPtr  = &buffer;
+    const std::size_t   point      = buffer.Point();
+    const std::size_t   generation = ++codeActionRequestGeneration_;
+
+    // Same diagnostic-at-point range preference as RequestCodeActionsAtPoint.
+    std::size_t rangeStart = point;
+    std::size_t rangeEnd   = point;
+    for (const text::Buffer::Diagnostic& diagnostic : buffer.Diagnostics()) {
+        const bool atPoint = (diagnostic.startByte == diagnostic.endByte) ? (point == diagnostic.startByte)
+                                                                          : (diagnostic.startByte <= point && point < diagnostic.endByte);
+        if (atPoint) {
+            rangeStart = diagnostic.startByte;
+            rangeEnd   = diagnostic.endByte;
+            break;
+        }
+    }
+
+    statusMessage_ = "Requesting quick fix...";
+    lspManager_->RequestCodeActions(
+        buffer, rangeStart, rangeEnd, [this, bufferPtr, point, generation](std::vector<editor::lsp::CodeAction> actions) {
+            if (generation != codeActionRequestGeneration_) {
+                return; // superseded by a newer request
+            }
+            if (bufferPtr != &activeBuffer_.Get() || activeBuffer_.Get().Point() != point) {
+                return; // buffer/point changed since the request was sent
+            }
+            if (actions.empty()) {
+                statusMessage_ = "No quick fix available.";
+                return;
+            }
+            // Pick without asking only when the choice is unambiguous: a
+            // lone action, else a lone isPreferred one (the server's own
+            // "this is the auto-fix" marker), else a lone quickfix-kind one.
+            // Anything murkier falls back to the ordinary selection list --
+            // silently applying one of several plausible fixes would be
+            // worse than one extra keystroke.
+            const editor::lsp::CodeAction* pick = nullptr;
+            if (actions.size() == 1) {
+                pick = &actions[0];
+            }
+            for (const auto selector : {+[](const editor::lsp::CodeAction& a) { return a.isPreferred; },
+                                        +[](const editor::lsp::CodeAction& a) { return a.kind.rfind("quickfix", 0) == 0; }}) {
+                if (pick != nullptr) {
+                    break;
+                }
+                const editor::lsp::CodeAction* sole = nullptr;
+                for (const editor::lsp::CodeAction& action : actions) {
+                    if (!selector(action)) {
+                        continue;
+                    }
+                    if (sole != nullptr) {
+                        sole = nullptr; // more than one match -- ambiguous, try the next selector
+                        break;
+                    }
+                    sole = &action;
+                }
+                pick = sole;
+            }
+            if (pick != nullptr) {
+                ResolveAndApplyCodeAction(*pick);
+                return;
+            }
+            pendingCodeActions_  = std::move(actions);
+            codeActionSelection_ = 0;
+            inputMode_           = InputMode::LspCodeActionSelect;
+            RefreshCodeActionSelectStatus();
+        });
+}
+
 void BufferView::RefreshCodeActionSelectStatus() {
     std::string status = "Code action: ";
     for (std::size_t i = 0; i < pendingCodeActions_.size(); ++i) {
@@ -2966,36 +3205,39 @@ void BufferView::HandleCodeActionSelectKey(const editor::KeyChord& chord) {
     statusMessage_ = "Apply \"" + pendingCodeActions_[codeActionSelection_].title + "\"? (y/n)";
 }
 
+void BufferView::ResolveAndApplyCodeAction(const editor::lsp::CodeAction& action) {
+    // code-actions-resolve follow-up: a server (clangd included)
+    // advertising resolveProvider deliberately sends this action back
+    // without an edit yet -- codeAction/resolve fills it in, only now
+    // that the user has actually chosen to apply it (see CodeAction::
+    // resolvable's own doc comment in LspContent.h for why this isn't
+    // done eagerly for every listed action). Fire-and-forget, same
+    // async shape as every other LSP request here: the caller continues
+    // immediately, ApplyCodeAction runs later from inside the callback
+    // once the resolved edit actually arrives.
+    if (action.resolvable && lspManager_) {
+        text::Buffer* const bufferPtr = &activeBuffer_.Get();
+        statusMessage_                = "Resolving \"" + action.title + "\"...";
+        lspManager_->ResolveCodeAction(activeBuffer_.Get(), action,
+                                       [this, bufferPtr, action](std::optional<editor::lsp::CodeAction> resolved) {
+                                           if (bufferPtr != &activeBuffer_.Get()) {
+                                               return; // active buffer changed since the resolve request was sent
+                                           }
+                                           if (!resolved || !resolved->hasEdit) {
+                                               statusMessage_ = "\"" + action.title + "\" could not be resolved.";
+                                               return;
+                                           }
+                                           ApplyCodeAction(*resolved);
+                                       });
+        return;
+    }
+    ApplyCodeAction(action);
+}
+
 void BufferView::HandleCodeActionConfirmKey(const editor::KeyChord& chord) {
     if (chord.Codepoint == U'y' || chord.Codepoint == U'Y') {
         const editor::lsp::CodeAction action = pendingCodeActions_[codeActionSelection_];
-        // code-actions-resolve follow-up: a server (clangd included)
-        // advertising resolveProvider deliberately sends this action back
-        // without an edit yet -- codeAction/resolve fills it in, only now
-        // that the user has actually chosen to apply it (see CodeAction::
-        // resolvable's own doc comment in LspContent.h for why this isn't
-        // done eagerly for every listed action). Fire-and-forget, same
-        // async shape as every other LSP request here: EndInteractiveSession()
-        // runs immediately, ApplyCodeAction runs later from inside the
-        // callback once the resolved edit actually arrives.
-        if (action.resolvable && lspManager_) {
-            text::Buffer* const bufferPtr = &activeBuffer_.Get();
-            statusMessage_                = "Resolving \"" + action.title + "\"...";
-            lspManager_->ResolveCodeAction(activeBuffer_.Get(), action,
-                                           [this, bufferPtr, action](std::optional<editor::lsp::CodeAction> resolved) {
-                                               if (bufferPtr != &activeBuffer_.Get()) {
-                                                   return; // active buffer changed since the resolve request was sent
-                                               }
-                                               if (!resolved || !resolved->hasEdit) {
-                                                   statusMessage_ = "\"" + action.title + "\" could not be resolved.";
-                                                   return;
-                                               }
-                                               ApplyCodeAction(*resolved);
-                                           });
-            EndInteractiveSession();
-            return;
-        }
-        ApplyCodeAction(action);
+        ResolveAndApplyCodeAction(action);
         EndInteractiveSession();
         return;
     }
@@ -3491,12 +3733,10 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             }
             inputMode_    = InputMode::RecoverFile;
             recoverStage_ = RecoverFileStage::PickingVersion;
-            prompt_.emplace("Recover " + buffer.Name() + " -- version (1-" + std::to_string(recoverVersions_.size())
-                            + ", Enter=1): ");
+            prompt_.emplace("Recover " + buffer.Name() + " -- version (1-" + std::to_string(recoverVersions_.size()) + ", Enter=1): ");
             std::string candidates;
             for (std::size_t index = 0; index < recoverVersions_.size(); ++index) {
-                candidates += (index == 0 ? "" : ", ") + std::to_string(index + 1) + ": "
-                              + recoverVersions_[index].label;
+                candidates += (index == 0 ? "" : ", ") + std::to_string(index + 1) + ": " + recoverVersions_[index].label;
             }
             statusMessage_ = prompt_->StatusText() + "  {" + candidates + "}";
             return;
@@ -3944,6 +4184,12 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         // response actually arrives (see that method's own doc comment).
         case editor::InteractiveRequest::LspCodeAction:
             RequestCodeActionsAtPoint();
+            return;
+        // quick-fix follow-up: same one-shot shape as LspCodeAction just
+        // above; only enters an InputMode when the fix choice turns out to
+        // be genuinely ambiguous (see RequestQuickFixAtPoint's doc comment).
+        case editor::InteractiveRequest::LspQuickFix:
+            RequestQuickFixAtPoint();
             return;
     }
 
@@ -5651,7 +5897,7 @@ void BufferView::HandleRenameFileKey(const editor::KeyChord& chord) {
 void BufferView::HandleRecoverFileKey(const editor::KeyChord& chord) {
     if (recoverStage_ == RecoverFileStage::PickingVersion) {
         if (chord.Special == editor::SpecialKey::Enter) {
-            const std::string input = prompt_->Text();
+            const std::string input  = prompt_->Text();
             std::size_t       choice = 1; // Enter alone means the newest
             if (!input.empty()) {
                 try {
@@ -5669,8 +5915,7 @@ void BufferView::HandleRecoverFileKey(const editor::KeyChord& chord) {
             recoverChoice_ = choice - 1;
             recoverStage_  = RecoverFileStage::Confirming;
             prompt_.reset();
-            statusMessage_ = "Recover \"" + recoverVersions_[recoverChoice_].label + "\" over buffer "
-                             + activeBuffer_.Get().Name() + "? (y/n)";
+            statusMessage_ = "Recover \"" + recoverVersions_[recoverChoice_].label + "\" over buffer " + activeBuffer_.Get().Name() + "? (y/n)";
             return;
         }
         if (IsQuit(chord)) {
@@ -5693,8 +5938,7 @@ void BufferView::HandleRecoverFileKey(const editor::KeyChord& chord) {
         try {
             const std::string content = editor::ReadBackupVersion(recoverVersions_[recoverChoice_].path);
             activeBuffer_.Get().RestoreContent(content);
-            statusMessage_ = "Recovered " + recoverVersions_[recoverChoice_].label
-                             + " -- buffer is modified; save to keep it";
+            statusMessage_ = "Recovered " + recoverVersions_[recoverChoice_].label + " -- buffer is modified; save to keep it";
         }
         catch (const std::exception& e) {
             statusMessage_ = e.what();

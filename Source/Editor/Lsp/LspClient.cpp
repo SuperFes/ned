@@ -2,7 +2,23 @@
 
 #include <utility>
 
+#include "Editor/BackgroundActivity.h"
+
 namespace ned::editor::lsp {
+
+namespace {
+
+    // background-activity-spinner follow-up: the registry API takes a
+    // std::string; build it from the shared string_view constant once.
+    const std::string kLspActivity{kLspActivityName};
+
+} // namespace
+
+LspClient::~LspClient() {
+    for (std::size_t i = 0; i < pending_.size(); ++i) {
+        EndBackgroundActivity(kLspActivity); // see the header's destructor comment
+    }
+}
 
 LspClient::LspClient(std::vector<std::string> argv, ned::ui::EventLoop& eventLoop) : transport_(std::move(argv)), eventLoop_(eventLoop) {
     StartReadLoop();
@@ -92,6 +108,7 @@ void LspClient::DispatchFrame(const std::string& frameText) {
         }
         ResponseCallback callback = std::move(it->second);
         pending_.erase(it);
+        EndBackgroundActivity(kLspActivity); // pairs with SendRequest's Begin
         if (callback) {
             if (message.contains("error")) {
                 callback(std::nullopt, message["error"]);
@@ -104,21 +121,41 @@ void LspClient::DispatchFrame(const std::string& frameText) {
     }
 
     if (message.contains("method")) {
-        // A notification (no "id") or a server-initiated request (has an
-        // "id" too, expecting a response) -- this slice only handles
-        // notifications; a server-initiated request is looked up the same
-        // way but simply never gets a response, since no server capability
-        // this client currently declares would ever prompt one.
-        const auto it = notificationHandlers_.find(message["method"].get<std::string>());
+        const std::string method = message["method"].get<std::string>();
+        const Json        params = message.contains("params") ? message["params"] : Json::object();
+
+        // workDoneProgress-support follow-up: a server-initiated *request*
+        // (has an "id" too, expects a response) now gets one --
+        // "window/workDoneProgress/create" is the first such request any
+        // declared capability can prompt, and leaving it unanswered stalls a
+        // spec-following server's progress reporting. No handler means a
+        // MethodNotFound error response per JSON-RPC, not silence.
+        if (message.contains("id")) {
+            const auto it = requestHandlers_.find(method);
+            Json       response;
+            if (it != requestHandlers_.end() && it->second) {
+                response = Json{{"jsonrpc", "2.0"}, {"id", message["id"]}, {"result", it->second(params)}};
+            }
+            else {
+                response = Json{{"jsonrpc", "2.0"},
+                                {"id", message["id"]},
+                                {"error", {{"code", -32601}, {"message", "method not found: " + method}}}};
+            }
+            transport_.WriteFrame(response.dump());
+            return;
+        }
+
+        const auto it = notificationHandlers_.find(method);
         if (it != notificationHandlers_.end() && it->second) {
-            it->second(message.contains("params") ? message["params"] : Json::object());
+            it->second(params);
         }
     }
 }
 
 void LspClient::SendRequest(const std::string& method, Json params, ResponseCallback callback) {
-    const int id       = nextRequestId_++;
-    pending_[id]       = std::move(callback);
+    const int id = nextRequestId_++;
+    pending_[id] = std::move(callback);
+    BeginBackgroundActivity(kLspActivity); // ended when the response dispatches, or by ~LspClient for a request never answered
     const Json message = {
         {"jsonrpc", "2.0"},
         {"id", id},
@@ -139,6 +176,10 @@ void LspClient::SendNotification(const std::string& method, Json params) {
 
 void LspClient::SetNotificationHandler(std::string method, NotificationHandler handler) {
     notificationHandlers_[std::move(method)] = std::move(handler);
+}
+
+void LspClient::SetRequestHandler(std::string method, RequestHandler handler) {
+    requestHandlers_[std::move(method)] = std::move(handler);
 }
 
 void LspClient::SetOnDisconnected(std::function<void(std::string reason)> handler) {

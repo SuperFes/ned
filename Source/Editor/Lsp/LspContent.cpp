@@ -130,8 +130,10 @@ CodeAction ExtractSingleCodeAction(const Json& item, const std::string& ownUri) 
     if (!item.is_object()) {
         return action;
     }
-    action.title = item.value("title", std::string());
-    action.raw   = item;
+    action.title       = item.value("title", std::string());
+    action.raw         = item;
+    action.kind        = item.value("kind", std::string());
+    action.isPreferred = item.value("isPreferred", false);
 
     if (const auto editIt = item.find("edit"); editIt != item.end()) {
         action.hasEdit = true;
