@@ -22,7 +22,7 @@ using ned::ui::ThemeNames;
 
 namespace {
 
-const std::vector<std::string> kOriginalEight = {
+const std::vector<std::string> kOriginals = {
     "major-dark",
     "major-light",
     "minor-dark",
@@ -31,6 +31,7 @@ const std::vector<std::string> kOriginalEight = {
     "mono-light",
     "high-contrast-dark",
     "high-contrast-light",
+    "fuchsia", // user-requested signature-hue dark theme (post-Phase-3)
 };
 
 // rich-theme-set Phase 3: the cloned set (see ThemeRegistry.cpp's own
@@ -59,9 +60,9 @@ Theme Resolve(const std::string& name) {
 
 } // namespace
 
-TEST_CASE("The original eight are all registered under their own names", "[BundledThemes]") {
+TEST_CASE("The original set is registered under their own names", "[BundledThemes]") {
     const std::vector<std::string> names = ThemeNames();
-    for (const std::string& name : kOriginalEight) {
+    for (const std::string& name : kOriginals) {
         INFO(name);
         REQUIRE(std::find(names.begin(), names.end(), name) != names.end());
         REQUIRE(Resolve(name).name == name);
@@ -69,7 +70,7 @@ TEST_CASE("The original eight are all registered under their own names", "[Bundl
 }
 
 TEST_CASE("Every bundled palette theme clears the standard contrast floor", "[BundledThemes]") {
-    for (const std::string& name : kOriginalEight) {
+    for (const std::string& name : kOriginals) {
         RequireForegroundContrast(Resolve(name), 40);
     }
     for (const std::string& name : kClones) {
