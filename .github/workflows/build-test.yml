@@ -1,9 +1,13 @@
 name: Build & Test
 
+# Disabled for now -- switched from push/pull_request to manual-only so it
+# doesn't fire automatically. Flip back to the commented-out triggers below
+# to re-enable.
 on:
-  push:
-    branches: [main]
-  pull_request:
+  # push:
+  #   branches: [main]
+  # pull_request:
+  workflow_dispatch:
 
 jobs:
   build-test:
