@@ -3636,13 +3636,13 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             }
             return;
         case editor::InteractiveRequest::FocusProjectSidebar:
-            // sidebar-keyboard-focus follow-up: expand if collapsed (focus
-            // into an invisible tree would be meaningless), then hand over
+            // sidebar-keyboard-focus follow-up: expands if collapsed (focus
+            // into an invisible tree would be meaningless) and hands over
             // the keyboard -- ProjectSidebar's own OnEvent drives the
-            // selection until it returns focus (see its header comment).
+            // selection until it returns focus, re-collapsing then if it
+            // was collapsed on entry (see TakeKeyboardFocus's own comment).
             if (projectSidebar_ != nullptr) {
-                projectSidebar_->SetCollapsed(false);
-                projectSidebar_->TakeFocus();
+                projectSidebar_->TakeKeyboardFocus();
             }
             return;
         case editor::InteractiveRequest::ToggleMinimap:

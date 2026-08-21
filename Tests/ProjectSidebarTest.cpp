@@ -5,6 +5,7 @@
 #include <fstream>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "Editor/ProjectRoot.h"
 #include "TestEvents.h"
@@ -1057,6 +1058,191 @@ TEST_CASE("Clicking a binary file hands off to the open-request handler when one
     REQUIRE(&activeBuffer.Get() == &scratch); // handler is responsible for actually opening it, not this widget
     REQUIRE(requestedPath.has_value());
     REQUIRE(requestedPath->filename() == "data.bin");
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("TakeKeyboardFocus expands a collapsed sidebar and returning focus re-collapses it", "[ProjectSidebar]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_sidebar_test_kbd_recollapse";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    {
+        std::ofstream(dir / "a.txt") << "aaa";
+    }
+    const CurrentPathGuard cwdGuard(dir);
+
+    ned::text::BufferList   list;
+    ned::text::Buffer&      scratch = list.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer   activeBuffer(scratch);
+    ned::ui::Theme          theme = ned::ui::DarkTheme();
+    std::string             statusMessage;
+    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    PlaceSidebar(sidebar, 28, 6);
+
+    bool focusReturned = false;
+    sidebar.SetOnFocusReturn([&focusReturned] { focusReturned = true; });
+
+    sidebar.SetCollapsed(true);
+    sidebar.TakeKeyboardFocus();
+    REQUIRE(sidebar.Focused());
+    REQUIRE_FALSE(sidebar.Collapsed()); // focus into a 1-column strip would be meaningless
+
+    sidebar.OnEvent(ned::ui::test::Escape());
+    REQUIRE(focusReturned);
+    REQUIRE(sidebar.Collapsed()); // summoned hidden -> goes back to hidden
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("TakeKeyboardFocus on an already-expanded sidebar leaves it expanded when focus returns",
+          "[ProjectSidebar]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_sidebar_test_kbd_expanded";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    {
+        std::ofstream(dir / "a.txt") << "aaa";
+    }
+    const CurrentPathGuard cwdGuard(dir);
+
+    ned::text::BufferList   list;
+    ned::text::Buffer&      scratch = list.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer   activeBuffer(scratch);
+    ned::ui::Theme          theme = ned::ui::DarkTheme();
+    std::string             statusMessage;
+    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    PlaceSidebar(sidebar, 28, 6);
+
+    bool focusReturned = false;
+    sidebar.SetOnFocusReturn([&focusReturned] { focusReturned = true; });
+
+    sidebar.TakeKeyboardFocus();
+    sidebar.OnEvent(ned::ui::test::Escape());
+    REQUIRE(focusReturned);
+    REQUIRE_FALSE(sidebar.Collapsed());
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("Enter opening a file from a keyboard-summoned collapsed sidebar re-collapses it too", "[ProjectSidebar]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_sidebar_test_kbd_open_recollapse";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    {
+        std::ofstream(dir / "a.txt") << "aaa";
+    }
+    const CurrentPathGuard cwdGuard(dir);
+
+    ned::text::BufferList   list;
+    ned::text::Buffer&      scratch = list.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer   activeBuffer(scratch);
+    ned::ui::Theme          theme = ned::ui::DarkTheme();
+    std::string             statusMessage;
+    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    PlaceSidebar(sidebar, 28, 6);
+
+    bool focusReturned = false;
+    sidebar.SetOnFocusReturn([&focusReturned] { focusReturned = true; });
+
+    sidebar.SetCollapsed(true);
+    sidebar.TakeKeyboardFocus();
+    sidebar.OnEvent(ned::ui::test::Return()); // opens a.txt (the first entry) and returns focus
+
+    REQUIRE(activeBuffer.Get().Text() == "aaa");
+    REQUIRE(focusReturned);
+    REQUIRE(sidebar.Collapsed());
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("A divider drag that moved commits its width once on release; a no-move click commits nothing",
+          "[ProjectSidebar]") {
+    ned::text::BufferList   list;
+    ned::text::Buffer&      scratch = list.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer   activeBuffer(scratch);
+    ned::ui::Theme          theme = ned::ui::DarkTheme();
+    std::string             statusMessage;
+    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    PlaceSidebar(sidebar, 20, 5);
+
+    std::optional<int> committedWidth;
+    int                commitCount = 0;
+    sidebar.SetOnWidthCommitted([&](int width) {
+        committedWidth = width;
+        ++commitCount;
+    });
+
+    // A press/release on the divider with no movement -- nothing to remember.
+    sidebar.OnEvent(MousePress(19, 0));
+    sidebar.OnEvent(MouseRelease(19, 0));
+    REQUIRE_FALSE(committedWidth.has_value());
+
+    // Wait out the double-click window so the next press starts a fresh
+    // resize instead of collapsing.
+    std::this_thread::sleep_for(std::chrono::milliseconds(450));
+
+    sidebar.OnEvent(MousePress(19, 0));
+    sidebar.OnEvent(MouseMove(12, 0));         // dragged 7 columns left
+    REQUIRE_FALSE(committedWidth.has_value()); // mid-drag: not committed yet
+    sidebar.OnEvent(MouseRelease(12, 0));
+
+    REQUIRE(committedWidth == 13);
+    REQUIRE(commitCount == 1);
+    REQUIRE(sidebar.Width() == 13);
+}
+
+TEST_CASE("Deliberate collapse toggles commit through the hook; programmatic changes don't", "[ProjectSidebar]") {
+    ned::text::BufferList   list;
+    ned::text::Buffer&      scratch = list.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer   activeBuffer(scratch);
+    ned::ui::Theme          theme = ned::ui::DarkTheme();
+    std::string             statusMessage;
+    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    PlaceSidebar(sidebar, 20, 5);
+
+    std::vector<bool> committed;
+    sidebar.SetOnCollapseCommitted([&](bool collapsed) { committed.push_back(collapsed); });
+
+    // Programmatic changes (session restore, remembered-variable startup
+    // application) must not rewrite the remembered preference.
+    sidebar.SetCollapsed(true);
+    sidebar.SetCollapsed(false);
+    REQUIRE(committed.empty());
+
+    sidebar.ToggleCollapsed(); // toggle-project-sidebar's path
+    sidebar.ToggleCollapsed();
+    REQUIRE(committed == std::vector<bool>{true, false});
+
+    // The divider double-click commits through the same helper.
+    sidebar.OnEvent(MousePress(19, 2));
+    sidebar.OnEvent(MousePress(19, 2));
+    REQUIRE(committed == std::vector<bool>{true, false, true});
+}
+
+TEST_CASE("A keyboard summon of a hidden sidebar never commits visibility", "[ProjectSidebar]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_sidebar_test_kbd_no_commit";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    {
+        std::ofstream(dir / "a.txt") << "aaa";
+    }
+    const CurrentPathGuard cwdGuard(dir);
+
+    ned::text::BufferList   list;
+    ned::text::Buffer&      scratch = list.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer   activeBuffer(scratch);
+    ned::ui::Theme          theme = ned::ui::DarkTheme();
+    std::string             statusMessage;
+    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    PlaceSidebar(sidebar, 28, 6);
+
+    std::vector<bool> committed;
+    sidebar.SetOnCollapseCommitted([&](bool collapsed) { committed.push_back(collapsed); });
+
+    sidebar.SetCollapsed(true);
+    sidebar.TakeKeyboardFocus();              // transient expand
+    sidebar.OnEvent(ned::ui::test::Escape()); // and its restore
+    REQUIRE(sidebar.Collapsed());
+    REQUIRE(committed.empty()); // a quick C-c p jump leaves the remembered preference alone
 
     std::filesystem::remove_all(dir);
 }

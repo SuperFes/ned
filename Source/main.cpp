@@ -569,6 +569,36 @@ auto main(int argc, char** argv) -> int {
     // focus at that moment) via its first-leaf fallback.
     projectSidebar->SetOnFocusReturn([wm = windowManager.get()] { wm->TakeFocus(); });
 
+    // sidebar-width-memory follow-up: a committed divider drag becomes the
+    // remembered global default width (read back a few lines below on the
+    // next launch).
+    projectSidebar->SetOnWidthCommitted(
+        [](int width) { ned::editor::SetVariable("sidebar-width", std::to_string(width)); });
+
+    // ...and a deliberate open/close toggle becomes the remembered global
+    // default visibility the same way (only user toggles commit -- see
+    // SetOnCollapseCommitted's own comment for why C-c p's transient
+    // expand never lands here).
+    projectSidebar->SetOnCollapseCommitted(
+        [](bool collapsed) { ned::editor::SetVariable("sidebar-visible", collapsed ? "false" : "true"); });
+
+    // sidebar-width-memory follow-up: the width the user last dragged the
+    // divider to, remembered globally (ProjectSidebar::EndResize writes it
+    // through variables.json). Applied before the session block below on
+    // purpose -- a project session's own per-project width is the more
+    // specific fact and wins by overwriting this one.
+    if (const auto rememberedWidth = ned::editor::Variable("sidebar-width")) {
+        try {
+            projectSidebar->SetWidth(std::stoi(*rememberedWidth));
+        }
+        catch (const std::exception&) {
+            // Malformed state (hand-edited variables.json) -- keep the default.
+        }
+    }
+    if (const auto rememberedVisible = ned::editor::Variable("sidebar-visible")) {
+        projectSidebar->SetCollapsed(*rememberedVisible == "false");
+    }
+
     // session-persistence slice 2: the restored session's sidebar state.
     // Applied before the first frame ever paints, so there's no visible
     // flash of the default state.

@@ -1,0 +1,36 @@
+{
+    "version": 6,
+    "configurePresets": [
+        {
+            "name": "default",
+            "displayName": "Clang + LLD (RelWithDebInfo)",
+            "binaryDir": "${sourceDir}/build",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "CMAKE_C_COMPILER": "clang",
+                "CMAKE_CXX_COMPILER": "clang++",
+                "CMAKE_LINKER_TYPE": "LLD"
+            }
+        },
+        {
+            "name": "sanitize",
+            "displayName": "Clang + LLD + ASan/UBSan (Debug)",
+            "inherits": "default",
+            "binaryDir": "${sourceDir}/build-sanitize",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "NED_ENABLE_SANITIZERS": "ON"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "default",
+            "configurePreset": "default"
+        },
+        {
+            "name": "sanitize",
+            "configurePreset": "sanitize"
+        }
+    ]
+}
