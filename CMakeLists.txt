@@ -336,6 +336,18 @@ ned_embed_treesitter_query("${tree-sitter-yaml_SOURCE_DIR}/queries/highlights.sc
 ned_add_treesitter_grammar(tree-sitter-toml https://github.com/tree-sitter-grammars/tree-sitter-toml.git v0.7.0)
 
 ned_embed_treesitter_query("${tree-sitter-toml_SOURCE_DIR}/queries/highlights.scm" Toml)
+
+# sogaiu/tree-sitter-clojure (same author as tree-sitter-janet-simple above);
+# one grammar serving both ClojureMode and JankMode -- jank is a Clojure
+# dialect with no tree-sitter grammar of its own anywhere (checked the
+# jank-lang GitHub org and a repo search directly, not assumed). The embedded
+# query is a repo-local vendored file, not the grammar's own
+# queries/highlights.scm -- upstream's is 281 bytes (literals/comments only);
+# see Source/Editor/TreeSitter/queries/clojure.scm's header comment.
+ned_add_treesitter_grammar(tree-sitter-clojure https://github.com/sogaiu/tree-sitter-clojure.git v0.0.13)
+
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/clojure.scm" Clojure)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/clojure-folds.scm" ClojureFolds)
 #------------------------------------------------------------------------------
 
 #--- Fetch Catch2 --------------------------------------------------------------
@@ -499,6 +511,7 @@ target_link_libraries(ned_lib
         PUBLIC tree-sitter-org
         PUBLIC tree-sitter-yaml
         PUBLIC tree-sitter-toml
+        PUBLIC tree-sitter-clojure
         PRIVATE ${CMAKE_DL_LIBS})
 
 if (NED_ENABLE_SANITIZERS)

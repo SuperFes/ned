@@ -139,6 +139,12 @@ TEST_CASE("ModeForPath resolves a representative sample of bundled extensions", 
     REQUIRE(ModeForPath("/some/path/config.yaml").name == "yaml-mode");
     REQUIRE(ModeForPath("/some/path/config.yml").name == "yaml-mode");
     REQUIRE(ModeForPath("/some/path/Cargo.toml").name == "toml-mode");
+    REQUIRE(ModeForPath("/some/path/core.clj").name == "clojure-mode");
+    REQUIRE(ModeForPath("/some/path/app.cljs").name == "clojure-mode");
+    REQUIRE(ModeForPath("/some/path/shared.cljc").name == "clojure-mode");
+    REQUIRE(ModeForPath("/some/path/deps.edn").name == "clojure-mode");
+    REQUIRE(ModeForPath("/some/path/task.bb").name == "clojure-mode");
+    REQUIRE(ModeForPath("/some/path/main.jank").name == "jank-mode");
 }
 
 TEST_CASE("ModeForPath falls back to FundamentalMode for an unrecognized extension", "[ModeOverrides]") {

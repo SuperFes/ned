@@ -40,6 +40,8 @@ namespace {
             {"bash-mode", BashMode},
             {"yaml-mode", YamlMode},
             {"toml-mode", TomlMode},
+            {"clojure-mode", ClojureMode},
+            {"jank-mode", JankMode},
             {"markdown-mode", MarkdownMode},
             {"org-mode", OrgMode},
         };
@@ -76,6 +78,12 @@ namespace {
             {".yml", "yaml-mode"},            {".toml", "toml-mode"},
             {".md", "markdown-mode"},
             {".markdown", "markdown-mode"},   {".org", "org-mode"},
+            // .edn is data, not code, but it's read with Clojure's own reader
+            // syntax -- same reasoning as .json -> json-mode. .bb is babashka,
+            // a Clojure dialect like jank but with no extra syntax of its own.
+            {".clj", "clojure-mode"},         {".cljs", "clojure-mode"},
+            {".cljc", "clojure-mode"},        {".edn", "clojure-mode"},
+            {".bb", "clojure-mode"},          {".jank", "jank-mode"},
         };
         return table;
     }

@@ -32,6 +32,11 @@ extern const char* const kMarkdownInline; // MarkdownMode()'s own hand-rolled in
 extern const char* const kOrg;
 extern const char* const kYaml;
 extern const char* const kToml;
+// Vendored from nvim-treesitter rather than sogaiu/tree-sitter-clojure's own
+// queries/highlights.scm (281 bytes -- literals and comments only); shared by
+// both ClojureMode and JankMode, mirroring kTypeScript's sharing above -- see
+// queries/clojure.scm's own header comment.
+extern const char* const kClojure;
 
 // generic-code-folding follow-up: hand-written "@fold" queries, one per
 // in-scope language (Source/Editor/TreeSitter/queries/*-folds.scm) -- no
@@ -47,6 +52,7 @@ extern const char* const kJsonFolds;
 extern const char* const kPythonFolds;
 extern const char* const kJavaScriptFolds;
 extern const char* const kTypeScriptFolds;
+extern const char* const kClojureFolds; // shared by ClojureMode and JankMode, same as kClojure above
 
 } // namespace ned::editor::treesitter::queries
 
