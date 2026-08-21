@@ -253,6 +253,18 @@ struct Theme {
 
     [[nodiscard]] Brush BrushFor(editor::SyntaxClass cls) const;
 
+    // exhaustive-highlighting follow-up: the capture-aware overload --
+    // BrushFor(cls)'s result with editor::ResolvedCaptureOverride's
+    // dotted-chain merge (Editor/SyntaxTheme.h) applied on top, so a
+    // per-capture-name override beats a per-SyntaxClass one, which beats
+    // the built-in theme -- most specific wins throughout. kNoCapture is
+    // exactly BrushFor(cls). BufferView is the only consumer today, through
+    // its own generation-checked brush cache (see ResolvedBrush there) --
+    // this does a name lookup plus up to a handful of locked map lookups
+    // per call, fine per-span, not something to call per rendered codepoint
+    // uncached.
+    [[nodiscard]] Brush BrushFor(editor::SyntaxClass cls, editor::CaptureId captureId) const;
+
   private:
     // The switch of built-in Dark/Light values BrushFor() used to
     // (and still does) compute directly -- split out so BrushFor() can

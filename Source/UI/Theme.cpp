@@ -105,31 +105,54 @@ Brush Theme::BuiltinBrushFor(editor::SyntaxClass cls) const {
 // straightforwardly first, matching this codebase's "prove it before
 // optimizing" discipline; revisit only if a real [Performance] test says
 // otherwise.
+namespace {
+
+    // The one "apply a partial override onto a concrete Brush" merge, shared
+    // by both BrushFor overloads below -- an unset field keeps what's
+    // already there, a set field replaces it.
+    void ApplyOverride(Brush& brush, const editor::SyntaxStyleOverride& override) {
+        if (override.foreground) {
+            if (const auto c = ParseColorToken(*override.foreground)) {
+                brush.foreground = *c;
+            }
+        }
+        if (override.background) {
+            if (const auto c = ParseColorToken(*override.background)) {
+                brush.background = *c;
+            }
+        }
+        if (override.bold) {
+            brush.bold = *override.bold;
+        }
+        if (override.italic) {
+            brush.italic = *override.italic;
+        }
+        if (override.underlined) {
+            brush.underlined = *override.underlined;
+        }
+        if (override.strikethrough) {
+            brush.strikethrough = *override.strikethrough;
+        }
+    }
+
+} // namespace
+
 Brush Theme::BrushFor(editor::SyntaxClass cls) const {
     Brush brush = BuiltinBrushFor(cls);
+    ApplyOverride(brush, editor::SyntaxOverrideFor(cls));
+    return brush;
+}
 
-    const editor::SyntaxStyleOverride override = editor::SyntaxOverrideFor(cls);
-    if (override.foreground) {
-        if (const auto c = ParseColorToken(*override.foreground)) {
-            brush.foreground = *c;
+// exhaustive-highlighting follow-up -- see the header. Applied after the
+// class-level merge so the capture chain (itself most-specific-first, see
+// ResolvedCaptureOverride) wins field-by-field over the class override.
+Brush Theme::BrushFor(editor::SyntaxClass cls, editor::CaptureId captureId) const {
+    Brush brush = BrushFor(cls);
+    if (captureId != editor::kNoCapture) {
+        const std::string name = editor::CaptureNameForId(captureId);
+        if (!name.empty()) {
+            ApplyOverride(brush, editor::ResolvedCaptureOverride(name));
         }
-    }
-    if (override.background) {
-        if (const auto c = ParseColorToken(*override.background)) {
-            brush.background = *c;
-        }
-    }
-    if (override.bold) {
-        brush.bold = *override.bold;
-    }
-    if (override.italic) {
-        brush.italic = *override.italic;
-    }
-    if (override.underlined) {
-        brush.underlined = *override.underlined;
-    }
-    if (override.strikethrough) {
-        brush.strikethrough = *override.strikethrough;
     }
     return brush;
 }

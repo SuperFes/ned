@@ -29,6 +29,7 @@
 #include "Editor/Rectangle.h"
 #include "Editor/ScratchPad.h"
 #include "Editor/Session.h"
+#include "Editor/SyntaxTheme.h"
 #include "Editor/TabWidth.h"
 #include "Editor/Variables.h"
 #include "Editor/WrapOverrides.h"
@@ -330,7 +331,7 @@ namespace {
     // Finds the RenderedLink (if any) starting exactly at offset -- every
     // consumer below only ever needs to check this at each codepoint
     // boundary it visits, links.size() being small (per-line) makes a linear
-    // scan the simplest correct option, same as SpansForLine/ClassAtOffset's
+    // scan the simplest correct option, same as SpansForLine/SpanAtOffset's
     // own approach for highlight spans.
     const RenderedLink* LinkStartingAt(const std::vector<RenderedLink>& links, std::size_t offset) {
         for (const RenderedLink& link : links) {
@@ -519,7 +520,7 @@ namespace {
 
     // Filters mode_.highlight's whole-buffer HighlightSpan list down to just
     // the spans overlapping [lineStart, lineEnd) -- called once per visible
-    // row from Paint(), *not* once per rendered codepoint, so ClassAtOffset
+    // row from Paint(), *not* once per rendered codepoint, so SpanAtOffset
     // below only ever scans a small, per-line list rather than the whole
     // file's spans on every single codepoint.
     std::vector<editor::HighlightSpan> SpansForLine(const std::vector<editor::HighlightSpan>& spans,
@@ -533,19 +534,23 @@ namespace {
         return lineSpans;
     }
 
-    // Finds the SyntaxClass applying at byteOffset from a (typically small,
-    // already line-filtered -- see SpansForLine) HighlightSpan list, Default
-    // if none covers it. Spans overlapping the same byte resolve in `spans`'
-    // own order, later wins -- see HighlightSpan's own doc comment in Mode.h
-    // for why.
-    editor::SyntaxClass ClassAtOffset(const std::vector<editor::HighlightSpan>& spans, std::size_t byteOffset) {
-        editor::SyntaxClass cls = editor::SyntaxClass::Default;
+    // Finds the winning HighlightSpan at byteOffset from a (typically small,
+    // already line-filtered -- see SpansForLine) HighlightSpan list; a
+    // synthetic Default/kNoCapture span if none covers it. Spans overlapping
+    // the same byte resolve in `spans`' own order, later wins -- see
+    // HighlightSpan's own doc comment in Mode.h for why. Returns the whole
+    // span rather than just its SyntaxClass (exhaustive-highlighting
+    // follow-up) so the render loop can reach the winning capture's own
+    // per-capture styling too; call sites that only care about the class
+    // read .syntaxClass and lose nothing.
+    editor::HighlightSpan SpanAtOffset(const std::vector<editor::HighlightSpan>& spans, std::size_t byteOffset) {
+        editor::HighlightSpan winner{.startByte = 0, .endByte = 0, .syntaxClass = editor::SyntaxClass::Default};
         for (const editor::HighlightSpan& span : spans) {
             if (span.startByte <= byteOffset && byteOffset < span.endByte) {
-                cls = span.syntaxClass;
+                winner = span;
             }
         }
-        return cls;
+        return winner;
     }
 
     // hover/completion follow-up: byte offset where the ASCII word/
@@ -1543,10 +1548,17 @@ void BufferView::Paint(Canvas c) {
         highlightCacheBuffer_ = nullptr;
         highlightCacheSpans_.clear();
     }
-    else if (highlightCacheBuffer_ != &buffer || highlightCacheGeneration_ != buffer.ContentGeneration()) {
-        highlightCacheSpans_      = mode_.highlight(buffer.Text());
-        highlightCacheBuffer_     = &buffer;
-        highlightCacheGeneration_ = buffer.ContentGeneration();
+    else if (highlightCacheBuffer_ != &buffer || highlightCacheGeneration_ != buffer.ContentGeneration() ||
+             highlightCacheClassGeneration_ != editor::CaptureClassGeneration()) {
+        // The CaptureClassGeneration() check (exhaustive-highlighting
+        // follow-up): a ned/set-capture-class remap changes the classes
+        // baked into these spans at parse time, unlike ned/set-capture-*
+        // style overrides, which only need ResolvedBrush's cheaper
+        // brush-cache flush.
+        highlightCacheSpans_           = mode_.highlight(buffer.Text());
+        highlightCacheBuffer_          = &buffer;
+        highlightCacheGeneration_      = buffer.ContentGeneration();
+        highlightCacheClassGeneration_ = editor::CaptureClassGeneration();
     }
     const std::vector<editor::HighlightSpan>& highlightSpans = highlightCacheSpans_;
 
@@ -1941,7 +1953,7 @@ void BufferView::Paint(Canvas c) {
                 // brighter) -- a directly computed Color, not routed
                 // through Theme::BrushFor(SyntaxClass), same bypass the
                 // diagnostic gutter's glyph coloring already uses (see
-                // ClassAtOffset's own precedent) since SyntaxClass is
+                // SpanAtOffset's own precedent) since SyntaxClass is
                 // tree-sitter-capture-oriented, not a fit for this.
                 if (blameColumnWidth > 0) {
                     const auto it = std::lower_bound(blameLineInfo_.begin(), blameLineInfo_.end(), line,
@@ -2049,8 +2061,8 @@ void BufferView::Paint(Canvas c) {
                 // glyph (tab expansion, control placeholder) inverts.
                 const bool secondaryCaretHere = IsSecondaryCursorAt(offset);
 
-                const editor::SyntaxClass cls   = ClassAtOffset(lineSpans, offset);
-                Brush                     brush = theme_.BrushFor(cls);
+                const editor::HighlightSpan span  = SpanAtOffset(lineSpans, offset);
+                Brush                       brush = ResolvedBrush(span.syntaxClass, span.captureId);
                 // diagnostics-UX follow-up: underline exactly the span the
                 // server flagged -- a non-disruptive "the problem is HERE"
                 // cue on top of whatever syntax color the cell already has
@@ -2960,7 +2972,7 @@ bool BufferView::ShouldSuppressAutoCompletion() const {
         const std::size_t                        lineEnd     = (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
         const std::vector<editor::HighlightSpan> lineSpans   = SpansForLine(highlightCacheSpans_, lineStart, lineEnd);
         const std::size_t                        priorOffset = content.PreviousCodepointBoundary(point);
-        switch (ClassAtOffset(lineSpans, priorOffset)) {
+        switch (SpanAtOffset(lineSpans, priorOffset).syntaxClass) {
             case editor::SyntaxClass::String:
             case editor::SyntaxClass::StringEscape:
             case editor::SyntaxClass::Comment:
@@ -6659,6 +6671,32 @@ bool BufferView::IsSecondaryCursorAt(std::size_t byteOffset) const {
         }
     }
     return false;
+}
+
+Brush BufferView::ResolvedBrush(editor::SyntaxClass cls, editor::CaptureId captureId) const {
+    // Flush on any style change (ned/set-syntax-* and ned/set-capture-*
+    // share one generation, SyntaxTheme.h) -- one locked counter read per
+    // call, versus the several locked map lookups plus a name lookup the
+    // capture-aware BrushFor does on a miss.
+    const std::size_t generation = editor::SyntaxThemeGeneration();
+    if (generation != brushCacheGeneration_ || theme_.name != brushCacheThemeName_) {
+        // The name check covers select-theme: the applier (main.cpp)
+        // assigns a whole new Theme into the one object theme_ refers to,
+        // which moves no SyntaxTheme generation -- every real theme (and
+        // both preview directions) carries a distinct name, and nothing
+        // mutates a live Theme's fields under an unchanged name today.
+        brushCache_.clear();
+        brushCacheGeneration_ = generation;
+        brushCacheThemeName_  = theme_.name;
+    }
+
+    const std::uint32_t key = (static_cast<std::uint32_t>(cls) << 16) | captureId;
+    if (const auto it = brushCache_.find(key); it != brushCache_.end()) {
+        return it->second;
+    }
+    const Brush brush = theme_.BrushFor(cls, captureId);
+    brushCache_.emplace(key, brush);
+    return brush;
 }
 
 bool BufferView::InIsearchMatch(std::size_t byteOffset) const {

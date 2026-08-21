@@ -46,11 +46,19 @@ Notcurses (TermOx → FTXUI → Notcurses over the project's life).
       buffer into per-language virtual documents (tree-sitter injection queries find
       the boundaries), sync each to its own server, remap positions back. Requires
       multi-server-per-buffer first.
-- [ ] **Exhaustive, per-capture-name-configurable tree-sitter highlighting** — a
-      sensible default mapping for *every* capture name a grammar can produce (today's
-      `SyntaxClass` is a curated 23), plus user override of any of it. Groundwork for
-      the tree-sitter formatter below. First step when picked up: enumerate the actual
-      capture names across the 13 bundled grammars.
+- [ ] Per-capture highlighting round 2 (v1 shipped, exhaustive-highlighting
+      follow-up: enumeration of all 17 bundled queries' 87 capture names, defaults
+      closing every gap found, `HighlightSpan` carrying an interned capture id, a
+      dotted-name-inheritance override store — capture chain beats `SyntaxClass`
+      override beats built-in theme, field by field — capture→class remapping, and
+      the `ned/set-capture-*`/`ned/capture-names` Janet surface). Deliberate cuts:
+      **language-scoped rules** (an explicit decision — one rule set for all
+      languages; the resolution walk in `SyntaxTheme.h` is the seam a
+      `<lang>/<name>` tier would prepend to later, and markdown's hardcoded
+      `punctuation.special` special case in `Mode.cpp` is the first candidate to
+      migrate onto it), per-capture styling in the Minimap (class-level only
+      there), and theme-file serialization of capture overrides (overlaps the
+      bold/italic round-trip loose end below).
 
 ### Navigation & search
 
@@ -153,8 +161,9 @@ Notcurses (TermOx → FTXUI → Notcurses over the project's life).
       and rejected (system grammar layouts aren't portable).
 - [ ] **Tree-sitter-assisted formatter** with JetBrains-level per-rule configurability
       ("a dprint clone that is actually awesome") — a substantial project per
-      language, not a utility. Needs the exhaustive-capture highlighting work above as
-      groundwork; scope it once concrete gaps left by external formatters are known.
+      language, not a utility. Its highlighting groundwork (exhaustive capture
+      enumeration + per-capture identity) shipped with the exhaustive-highlighting
+      follow-up; scope it once concrete gaps left by external formatters are known.
 
 ### Small loose ends
 

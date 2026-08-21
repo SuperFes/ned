@@ -102,6 +102,41 @@ TEST_CASE("Clearing an override restores the exact original built-in Brush", "[T
     REQUIRE(theme.BrushFor(SyntaxClass::Comment) == original);
 }
 
+TEST_CASE("Capture-aware BrushFor: capture chain beats class override beats built-in, field by field", "[Theme]") {
+    SyntaxThemeGuard guard;
+    struct CaptureGuard {
+        ~CaptureGuard() {
+            ned::editor::SetCaptureForeground("function", std::nullopt);
+            ned::editor::SetCaptureItalic("function.builtin", std::nullopt);
+        }
+    } captureGuard;
+    const Theme theme = DarkTheme();
+
+    // Class tier: the span's own class gets an overridden foreground, so
+    // the capture tier below has a real class-level value to beat.
+    SetSyntaxForeground(SyntaxClass::FunctionBuiltin, std::string("#101010"));
+    struct ClassGuard {
+        ~ClassGuard() {
+            SetSyntaxForeground(SyntaxClass::FunctionBuiltin, std::nullopt);
+        }
+    } classGuard;
+    // Capture tier: the base name recolors, a middle ancestor sets italic.
+    ned::editor::SetCaptureForeground("function", std::string("#202020"));
+    ned::editor::SetCaptureItalic("function.builtin", true);
+
+    const auto id    = ned::editor::InternCaptureName("function.builtin.static");
+    const auto brush = theme.BrushFor(SyntaxClass::FunctionBuiltin, id);
+    // Foreground comes from the capture chain's "function" level, beating
+    // the class override; italic from "function.builtin".
+    REQUIRE(brush.foreground == Color::RGB(0x20, 0x20, 0x20));
+    REQUIRE(brush.italic);
+    // Fields nothing set anywhere keep the built-in class value.
+    REQUIRE(brush.background == theme.BrushFor(SyntaxClass::FunctionBuiltin).background);
+
+    // kNoCapture degrades to exactly the class-tier result.
+    REQUIRE(theme.BrushFor(SyntaxClass::Function, ned::editor::kNoCapture) == theme.BrushFor(SyntaxClass::Function));
+}
+
 namespace {
 
 // Walks every SerializeTheme'd color token and fails on anything outside

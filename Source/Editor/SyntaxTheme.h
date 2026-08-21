@@ -31,6 +31,7 @@
 #include <cstddef>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "Mode.h"
@@ -65,6 +66,75 @@ void SetSyntaxStrikethrough(SyntaxClass cls, std::optional<bool> value);
 // [Performance] test ever asks for one (see this file's own header
 // comment on why BrushFor() doesn't cache this yet).
 [[nodiscard]] std::size_t SyntaxThemeGeneration();
+
+// ---------------------------------------------------------------------------
+// Per-capture-name styling (exhaustive-highlighting follow-up): the tier
+// *below* SyntaxClass in specificity. A capture name is the raw dotted
+// tree-sitter identity ("function.builtin.static"), and resolution walks it
+// most-specific-first ("function.builtin.static" -> "function.builtin" ->
+// "function"), each field taken from the most specific level that sets it,
+// before falling through to the per-SyntaxClass override above and finally
+// the built-in theme -- JetBrains' base-attributes-with-inheritance model,
+// with SyntaxClass playing the base-attributes role. Deliberately NOT
+// language-scoped (a text-first editor's one rule set covers big and small
+// languages alike -- an explicit user decision, not an oversight); the walk
+// below is the seam a language-scoped tier would prepend to later (try
+// "<lang>/<name>" chain first, then this unscoped chain) without reshaping
+// storage or API.
+//
+// Capture names here are the same trust boundary SyntaxClass names cross:
+// a malformed name (empty, leading '@', whitespace, or a leading/trailing/
+// doubled '.') is a real bad Janet call and throws std::runtime_error; an
+// unknown-but-well-formed name is fine -- overrides may be configured before
+// the grammar that produces the name is ever loaded.
+// ---------------------------------------------------------------------------
+
+// Interning: stable CaptureId (Mode.h) per distinct name, never kNoCapture
+// for a real name. Append-only for the process lifetime, same "load once,
+// no teardown story" scope cut the dynamic-grammar dlopen handles already
+// made. CaptureNameForId returns "" for kNoCapture or an id never handed
+// out.
+[[nodiscard]] CaptureId   InternCaptureName(std::string_view name);
+[[nodiscard]] std::string CaptureNameForId(CaptureId id);
+
+// Per-capture style overrides. Same field-by-field setter shape and hex
+// validation as the SyntaxClass setters above; nullopt clears that field.
+void SetCaptureForeground(const std::string& name, std::optional<std::string> hex);
+void SetCaptureBackground(const std::string& name, std::optional<std::string> hex);
+void SetCaptureBold(const std::string& name, std::optional<bool> value);
+void SetCaptureItalic(const std::string& name, std::optional<bool> value);
+void SetCaptureUnderlined(const std::string& name, std::optional<bool> value);
+void SetCaptureStrikethrough(const std::string& name, std::optional<bool> value);
+
+// Exact-name lookup, no inheritance walk -- the introspection counterpart
+// of SyntaxOverrideFor above (every field nullopt when nothing is
+// configured for exactly this name).
+[[nodiscard]] SyntaxStyleOverride CaptureOverrideFor(const std::string& name);
+
+// The inheritance walk described in the header comment above: each field
+// taken from the most specific dotted level that sets it. ui::Theme::
+// BrushFor applies the result on top of the SyntaxClass-level merge.
+// Setters above bump SyntaxThemeGeneration() (same generation as the
+// SyntaxClass setters -- both invalidate the same resolved-brush caching).
+[[nodiscard]] SyntaxStyleOverride ResolvedCaptureOverride(std::string_view name);
+
+// Capture -> SyntaxClass remapping: repoints what a capture name *is* (its
+// base class, hence every built-in color/trait that class carries) rather
+// than styling it field-by-field -- JetBrains' "inherit values from"
+// control. Consulted by Mode.cpp's SyntaxClassForCapture at every dotted
+// level, ahead of the built-in CaptureTable, so remapping "keyword" also
+// re-bases "keyword.operator"'s fallback. nullopt clears. Its own
+// generation, separate from SyntaxThemeGeneration(): a remap changes the
+// classes baked into cached HighlightSpans (BufferView must re-run the
+// highlight function), not just how a class renders (a cheap brush-cache
+// flush).
+void                                     SetSyntaxClassForCapture(const std::string& name, std::optional<SyntaxClass> cls);
+[[nodiscard]] std::optional<SyntaxClass> SyntaxClassOverrideForCapture(std::string_view name);
+[[nodiscard]] std::size_t                CaptureClassGeneration();
+
+// Every capture name this store has seen (interned, styled, or remapped),
+// sorted -- merged with Mode.h's BuiltinCaptureNames() by ned/capture-names.
+[[nodiscard]] std::vector<std::string> KnownCaptureNames();
 
 // Kebab-case name <-> SyntaxClass, e.g. "comment"/"doc-comment"/
 // "control-keyword" -- matching every other Janet-facing name convention

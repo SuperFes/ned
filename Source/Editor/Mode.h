@@ -11,6 +11,7 @@
 #define NED_EDITOR_MODE_H
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <optional>
 #include <string>
@@ -123,6 +124,20 @@ enum class SyntaxClass {
     Link,
 };
 
+// Interned identity for a tree-sitter capture name (exhaustive-highlighting
+// follow-up) -- the raw dotted name (e.g. "function.builtin") turned into a
+// small stable id by SyntaxTheme.h's InternCaptureName, so a HighlightSpan
+// can carry *which capture* produced it (not just the resolved SyntaxClass)
+// without storing a string per span. 0 is reserved for "no capture name" --
+// spans synthesized in C++ rather than from a query capture (Org headline
+// levels, markdown structural passes) carry 0 and are stylable only at the
+// SyntaxClass level, which is exactly the granularity they already resolve
+// at. uint16 rather than an enum: the id space is open-ended (any grammar,
+// bundled or dlopen'd, can introduce names), unlike the deliberately curated
+// SyntaxClass set below.
+using CaptureId                       = std::uint16_t;
+inline constexpr CaptureId kNoCapture = 0;
+
 // A single highlighted byte range [startByte, endByte) within a buffer's
 // full text, tagged with the class it should render as. Replaces the
 // original per-line HighlightLineFunction (tree-sitter foundation follow-up):
@@ -139,7 +154,20 @@ struct HighlightSpan {
     std::size_t startByte;
     std::size_t endByte;
     SyntaxClass syntaxClass;
+    // Which query capture produced this span (kNoCapture for C++-synthesized
+    // spans) -- what makes per-capture-name styling (SyntaxTheme.h's
+    // ResolvedCaptureOverride) reachable from the render path; syntaxClass
+    // above stays the always-valid base every consumer that doesn't care
+    // about capture granularity (Minimap, gutter classification) keeps
+    // using unchanged.
+    CaptureId captureId = kNoCapture;
 };
+
+// Every capture name Mode.cpp's built-in CaptureTable() maps to a
+// SyntaxClass, sorted (exhaustive-highlighting follow-up) -- the known
+// universe of names the bundled defaults cover, for introspection
+// (ned/capture-names merges this with whatever runtime interning has seen).
+[[nodiscard]] std::vector<std::string> BuiltinCaptureNames();
 
 // Given a buffer's full text (UTF-8), returns every highlighted span in it.
 // Called once per BufferView::paint() call, not once per visible line --
