@@ -11,22 +11,7 @@ LSP/DAP/VCS/task-runner configuration), not a fixed app with a config file bolte
 The terminal UI is a from-scratch widget/layout/event-loop layer built directly on
 [Notcurses](https://github.com/dankamongmen/notcurses).
 
-<!--
-Demo placeholder -- drop a recording in and swap in one of these:
-
-  A GIF, committed directly (simplest, but grows the repo permanently --
-  fine for something in the low single-digit MB range):
-    ![Demo](docs/demo.gif)
-
-  A video, hosted via a GitHub asset URL instead of committed (keeps repo
-  size flat -- drag-and-drop the file into a new GitHub issue/PR comment,
-  no need to actually submit it, then copy the
-  https://github.com/SuperFes/ned/assets/... or user-images... URL it
-  generates):
-    https://github.com/user-attachments/assets/REPLACE-ME
-
-    <video src="https://github.com/user-attachments/assets/REPLACE-ME" controls width="800"></video>
--->
+!(Docs/Screenshot_20260821_151203.png)
 
 ## Features
 
