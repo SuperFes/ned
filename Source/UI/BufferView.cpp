@@ -3401,6 +3401,27 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         case editor::InteractiveRequest::KillBuffer:
             RequestCloseBuffer(activeBuffer_.Get());
             return;
+        case editor::InteractiveRequest::TabNext:
+        case editor::InteractiveRequest::TabPrevious: {
+            // Tab-cycling follow-up: one-shot direct action -- next/previous
+            // in Buffers() (tab bar) order, wrapping at either end. Set()
+            // fires the MRU touch hook like any other switch, so tab-cycling
+            // and MRU close stay consistent for free.
+            const auto&         buffers = bufferList_.Buffers();
+            const text::Buffer* active  = &activeBuffer_.Get();
+            for (std::size_t i = 0; i < buffers.size(); ++i) {
+                if (buffers[i].get() != active) {
+                    continue;
+                }
+                const std::size_t count = buffers.size();
+                const std::size_t next  = (request == editor::InteractiveRequest::TabNext)
+                                              ? (i + 1) % count
+                                              : (i + count - 1) % count;
+                activeBuffer_.Set(*buffers[next]);
+                break;
+            }
+            return;
+        }
         case editor::InteractiveRequest::Recenter: {
             // One-shot direct action, same shape as ToggleProjectSidebar --
             // topLine_ is this widget's own state, so the command can only
@@ -5767,10 +5788,18 @@ void BufferView::CloseBufferNow(text::Buffer& buffer) {
 
     text::Buffer* replacement = nullptr;
     if (wasActive) {
-        for (const auto& candidate : bufferList_.Buffers()) {
-            if (candidate.get() != &buffer) {
-                replacement = candidate.get();
-                break;
+        // MRU-close follow-up: land on the buffer the user most recently
+        // left, not the first tab -- the ActiveBuffer on-change hook (see
+        // Pane's constructor) keeps this order current. Falls back to
+        // list order for buffers never activated (e.g. session-restored
+        // and never visited).
+        replacement = bufferList_.MostRecentlyUsedBuffer(&buffer);
+        if (replacement == nullptr) {
+            for (const auto& candidate : bufferList_.Buffers()) {
+                if (candidate.get() != &buffer) {
+                    replacement = candidate.get();
+                    break;
+                }
             }
         }
         // Closing the only remaining buffer would leave nothing to edit --

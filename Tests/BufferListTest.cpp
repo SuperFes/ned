@@ -456,7 +456,76 @@ TEST_CASE("A dedupe hit does not re-fire the on-file-opened hook or reload conte
 
     Buffer& again = list.OpenFile(path);
     REQUIRE(&again == &buffer);
-    REQUIRE(opens == 1);                      // revisit, not a fresh open
-    REQUIRE(again.Text() == "oriXginal");     // Buffer::Revert is the reload path, not OpenFile
+    REQUIRE(opens == 1);                  // revisit, not a fresh open
+    REQUIRE(again.Text() == "oriXginal"); // Buffer::Revert is the reload path, not OpenFile
     std::filesystem::remove(path);
+}
+
+TEST_CASE("TouchBuffer/MostRecentlyUsedBuffer track activation order", "[BufferList]") {
+    BufferList list;
+    Buffer&    a = list.CreateBuffer("a");
+    Buffer&    b = list.CreateBuffer("b");
+    Buffer&    c = list.CreateBuffer("c");
+
+    REQUIRE(list.MostRecentlyUsedBuffer() == nullptr); // nothing ever activated
+
+    list.TouchBuffer(a);
+    list.TouchBuffer(b);
+    list.TouchBuffer(c);
+    REQUIRE(list.MostRecentlyUsedBuffer() == &c);
+    REQUIRE(list.MostRecentlyUsedBuffer(&c) == &b); // the one most recently left
+
+    // Re-touching moves to the front of the order without duplicating.
+    list.TouchBuffer(a);
+    REQUIRE(list.MostRecentlyUsedBuffer() == &a);
+    REQUIRE(list.MostRecentlyUsedBuffer(&a) == &c);
+}
+
+TEST_CASE("Close purges the closed buffer from the MRU order", "[BufferList]") {
+    BufferList list;
+    Buffer&    a = list.CreateBuffer("a");
+    Buffer&    b = list.CreateBuffer("b");
+
+    list.TouchBuffer(a);
+    list.TouchBuffer(b);
+    list.Close("b");
+
+    REQUIRE(list.MostRecentlyUsedBuffer() == &a); // never the (freed) "b"
+}
+
+TEST_CASE("TouchBuffer ignores a buffer the list does not own", "[BufferList]") {
+    BufferList list;
+    list.CreateBuffer("owned");
+    Buffer foreign("foreign");
+
+    list.TouchBuffer(foreign);
+
+    REQUIRE(list.MostRecentlyUsedBuffer() == nullptr);
+}
+
+TEST_CASE("MoveBufferToIndex reorders Buffers() in both directions and clamps", "[BufferList]") {
+    BufferList list;
+    Buffer&    a = list.CreateBuffer("a");
+    Buffer&    b = list.CreateBuffer("b");
+    Buffer&    c = list.CreateBuffer("c");
+
+    REQUIRE(list.MoveBufferToIndex(a, 2)); // right: a,b,c -> b,c,a
+    REQUIRE(list.Buffers()[0].get() == &b);
+    REQUIRE(list.Buffers()[1].get() == &c);
+    REQUIRE(list.Buffers()[2].get() == &a);
+
+    REQUIRE(list.MoveBufferToIndex(a, 0)); // left: b,c,a -> a,b,c
+    REQUIRE(list.Buffers()[0].get() == &a);
+    REQUIRE(list.Buffers()[1].get() == &b);
+    REQUIRE(list.Buffers()[2].get() == &c);
+
+    REQUIRE(list.MoveBufferToIndex(b, 99)); // clamped to the last slot
+    REQUIRE(list.Buffers()[2].get() == &b);
+
+    REQUIRE(list.MoveBufferToIndex(c, 1)); // same index: a no-op success
+    REQUIRE(list.Buffers()[1].get() == &c);
+
+    Buffer foreign("foreign");
+    REQUIRE_FALSE(list.MoveBufferToIndex(foreign, 0));
+    REQUIRE(list.Count() == 3);
 }

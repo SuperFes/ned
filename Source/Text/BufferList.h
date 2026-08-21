@@ -101,6 +101,31 @@ class BufferList {
     [[nodiscard]] std::size_t                                 Count() const;
     [[nodiscard]] const std::vector<std::unique_ptr<Buffer>>& Buffers() const;
 
+    // MRU-close follow-up: records buffer as the most recently used. A
+    // no-op for a buffer this list doesn't own (guards against a stale
+    // pointer ever being recorded). ui::ActiveBuffer's on-change hook is
+    // what actually calls this (wired per Pane in WindowManager) -- the one
+    // choke point every buffer-switch path (tab click, find-file,
+    // switch-to-buffer, sidebar preview, pane reassignment) already funnels
+    // through -- so BufferList itself stays UI-agnostic, same as
+    // SetOnFileOpened above.
+    void TouchBuffer(const Buffer& buffer);
+
+    // The most recently touched buffer other than excluding, or nullptr if
+    // none has ever been touched (a buffer never activated -- e.g. opened
+    // by session restore and never visited -- is not in the MRU order).
+    // Close() purges its buffer from the order, so this never returns a
+    // dangling pointer. BufferView::CloseBufferNow uses this to land on
+    // the tab the user most recently left rather than the first tab.
+    [[nodiscard]] Buffer* MostRecentlyUsedBuffer(const Buffer* excluding = nullptr) const;
+
+    // Tab-reorder follow-up: moves buffer to targetIndex in Buffers()
+    // order (clamped to the valid range), shifting the buffers in between.
+    // Returns false for a buffer this list doesn't own. Buffers() order is
+    // what TabBar renders and what SaveProjectSessionNow persists, so a
+    // reorder both shows up immediately and survives a session restart.
+    bool MoveBufferToIndex(const Buffer& buffer, std::size_t targetIndex);
+
     // session-persistence follow-up: called with every freshly opened
     // path-associated buffer, right before OpenFile/OpenOrCreateFile
     // returns it -- the one central seam every open path (CLI, find-file,
@@ -130,6 +155,7 @@ class BufferList {
 
     std::vector<std::unique_ptr<Buffer>> buffers_;
     mutable Buffer*                      previewBuffer_ = nullptr; // see PreviewBuffer()
+    std::vector<Buffer*>                 mruOrder_;                // least recent first; see TouchBuffer()
 
     std::function<void(Buffer&, const std::filesystem::path&)> asyncFileOpener_; // see SetAsyncFileOpener()
     std::function<void(Buffer&)>                               onFileOpened_;    // see SetOnFileOpened()

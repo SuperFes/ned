@@ -354,3 +354,130 @@ TEST_CASE("Stress: hundreds of tabs in a narrow viewport stay memory-safe under 
 
     REQUIRE(list.Count() == 500); // survived without crashing or losing buffers
 }
+
+TEST_CASE("Paint auto-reveals the active tab when the active buffer changes", "[TabBar]") {
+    ned::text::BufferList list;
+    ned::text::Buffer&    first = list.CreateBuffer("first-buffer-name");
+    for (int i = 0; i < 10; ++i) {
+        list.CreateBuffer("buffer-" + std::to_string(i));
+    }
+    ned::text::Buffer& last = *list.Buffers().back();
+
+    ned::ui::ActiveBuffer activeBuffer(first);
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    ned::ui::TabBar       tabBar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, theme);
+    PlaceRow(tabBar, 20);
+
+    ned::ui::Screen screen = ned::ui::Screen(20, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 0});
+
+    tabBar.Paint(canvas);
+    REQUIRE(RowText(screen, 0, 20).find("buffer-9") == std::string::npos); // far past the right edge
+
+    // Switching to it (a fresh open, a switch-to-buffer, a tab click --
+    // TabBar only sees the resulting active-buffer change) scrolls its tab
+    // into view on the next paint.
+    activeBuffer.Set(last);
+    tabBar.Paint(canvas);
+    REQUIRE(RowText(screen, 0, 20).find("buffer-9") != std::string::npos);
+
+    // ... and switching back reveals the start of the row again.
+    activeBuffer.Set(first);
+    tabBar.Paint(canvas);
+    REQUIRE(RowText(screen, 0, 20).find("first-buffer-name") != std::string::npos);
+}
+
+TEST_CASE("Auto-reveal fires once per activation, not against manual scrolling", "[TabBar]") {
+    ned::text::BufferList list;
+    ned::text::Buffer&    first = list.CreateBuffer("first-buffer-name");
+    for (int i = 0; i < 10; ++i) {
+        list.CreateBuffer("buffer-" + std::to_string(i));
+    }
+
+    ned::ui::ActiveBuffer activeBuffer(first);
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    ned::ui::TabBar       tabBar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, theme);
+    PlaceRow(tabBar, 20);
+
+    ned::ui::Screen screen = ned::ui::Screen(20, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 0});
+
+    tabBar.Paint(canvas); // first's activation consumed here
+    for (int i = 0; i < 10; ++i) {
+        tabBar.OnEvent(MouseWheel(0, 0, ned::ui::MouseEvent::Button::WheelDown));
+    }
+    tabBar.Paint(canvas);
+    // The active (unchanged) tab is off-screen and stays there -- browsing
+    // the overflow isn't snapped back to the active tab every frame.
+    REQUIRE(RowText(screen, 0, 20).find("first-buffer-name") == std::string::npos);
+}
+
+TEST_CASE("Dragging a tab over another reorders the BufferList through the registered handler", "[TabBar]") {
+    ned::text::BufferList list;
+    ned::text::Buffer&    alpha = list.CreateBuffer("alpha");
+    ned::text::Buffer&    beta  = list.CreateBuffer("beta");
+
+    ned::ui::ActiveBuffer activeBuffer(alpha);
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    ned::ui::TabBar       tabBar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, theme);
+    PlaceRow(tabBar, 40);
+
+    tabBar.SetOnReorder([&list](ned::text::Buffer& buffer, std::size_t targetIndex) {
+        list.MoveBufferToIndex(buffer, targetIndex);
+    });
+
+    // " alpha ×" spans 0-7 (cap 8), " beta ×" spans 9-15 (cap 16).
+    tabBar.OnEvent(MousePress(2, 0)); // press on alpha's body starts the drag
+    tabBar.OnEvent(ned::ui::test::Mouse(12, 0, ned::ui::MouseEvent::Button::Left,
+                                        ned::ui::MouseEvent::Motion::Moved)); // over beta
+
+    REQUIRE(list.Buffers()[0].get() == &beta);
+    REQUIRE(list.Buffers()[1].get() == &alpha);
+
+    // Release ends the drag; a later plain hover motion must not reorder.
+    tabBar.OnEvent(ned::ui::test::Mouse(12, 0, ned::ui::MouseEvent::Button::Left,
+                                        ned::ui::MouseEvent::Motion::Released));
+    tabBar.OnEvent(ned::ui::test::Mouse(2, 0, ned::ui::MouseEvent::Button::None,
+                                        ned::ui::MouseEvent::Motion::Moved));
+    REQUIRE(list.Buffers()[0].get() == &beta);
+    REQUIRE(list.Buffers()[1].get() == &alpha);
+}
+
+TEST_CASE("Dragging a tab past the last tab moves it to the end", "[TabBar]") {
+    ned::text::BufferList list;
+    ned::text::Buffer&    alpha = list.CreateBuffer("alpha");
+    list.CreateBuffer("beta");
+    list.CreateBuffer("gamma");
+
+    ned::ui::ActiveBuffer activeBuffer(alpha);
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    ned::ui::TabBar       tabBar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, theme);
+    PlaceRow(tabBar, 40);
+
+    tabBar.SetOnReorder([&list](ned::text::Buffer& buffer, std::size_t targetIndex) {
+        list.MoveBufferToIndex(buffer, targetIndex);
+    });
+
+    tabBar.OnEvent(MousePress(2, 0));
+    tabBar.OnEvent(ned::ui::test::Mouse(39, 0, ned::ui::MouseEvent::Button::Left,
+                                        ned::ui::MouseEvent::Motion::Moved)); // past every tab
+
+    REQUIRE(list.Buffers().back().get() == &alpha);
+}
+
+TEST_CASE("Dragging with no reorder handler registered is a safe no-op", "[TabBar]") {
+    ned::text::BufferList list;
+    ned::text::Buffer&    alpha = list.CreateBuffer("alpha");
+    list.CreateBuffer("beta");
+
+    ned::ui::ActiveBuffer activeBuffer(alpha);
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    ned::ui::TabBar       tabBar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, theme);
+    PlaceRow(tabBar, 40);
+
+    tabBar.OnEvent(MousePress(2, 0));
+    tabBar.OnEvent(ned::ui::test::Mouse(12, 0, ned::ui::MouseEvent::Button::Left,
+                                        ned::ui::MouseEvent::Motion::Moved)); // must not crash
+
+    REQUIRE(list.Buffers()[0].get() == &alpha); // order untouched
+}

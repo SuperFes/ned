@@ -368,7 +368,7 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
             return;
         }
         const std::string previous = context.killRing.Current();
-        const std::string next    = context.killRing.YankPop();
+        const std::string next     = context.killRing.YankPop();
         if (context.buffer.Point() < previous.size()) {
             return; // the yanked text can't be where we expect; leave the buffer alone
         }
@@ -411,10 +411,10 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
         const std::size_t point   = buffer.Point();
         // Emacs' end-of-line special case: transpose the two graphemes
         // *before* point instead of the pair around it.
-        const bool atLineEnd = point == LineContentEnd(content, point);
-        std::size_t first;   // start of the earlier grapheme
-        std::size_t middle;  // boundary between the two
-        std::size_t last;    // end of the later grapheme
+        const bool  atLineEnd = point == LineContentEnd(content, point);
+        std::size_t first;  // start of the earlier grapheme
+        std::size_t middle; // boundary between the two
+        std::size_t last;   // end of the later grapheme
         if (atLineEnd) {
             if (point == 0) {
                 return;
@@ -600,9 +600,9 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
 
     registry.Register("back-to-indentation", "Move point to this line's first non-whitespace character.",
                       PerCursor([](CommandContext& context) {
-                          auto&             buffer  = context.buffer;
-                          const auto&       content = buffer.Content();
-                          std::size_t       target  = content.LineToByteOffset(content.ByteOffsetToLine(buffer.Point()));
+                          auto&       buffer  = context.buffer;
+                          const auto& content = buffer.Content();
+                          std::size_t target  = content.LineToByteOffset(content.ByteOffsetToLine(buffer.Point()));
                           while (target < content.ByteLength()) {
                               const auto decoded = content.CodepointAt(target);
                               if (decoded.codepoint != U' ' && decoded.codepoint != U'\t') {
@@ -691,7 +691,7 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
         // cut (these are the user's own buffers, and quit still confirms).
         // No format-on-save here either -- that stays save-buffer's own
         // single-buffer concern.
-        std::size_t saved  = 0;
+        std::size_t saved = 0;
         std::string failed;
         for (const auto& buffer : context.bufferList.Buffers()) {
             if (!buffer->Path().has_value() || !buffer->Modified()) {
@@ -1075,6 +1075,58 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     registry.Register("switch-to-buffer", "Switch to another open buffer by name.", [](CommandContext& context) {
         context.interactiveRequest = InteractiveRequest::SwitchToBuffer;
     });
+
+    // Tab-reorder follow-up: direct BufferList mutations, not
+    // interactiveRequests -- nothing to prompt for, and CommandContext
+    // already carries the (mutable) bufferList. Buffers() order is what
+    // TabBar renders and SaveProjectSessionNow persists, so both take
+    // effect immediately and survive a restart. The keyboard counterpart of
+    // TabBar's own drag-to-reorder.
+    // Tab-cycling follow-up: switching (as opposed to moving) is a one-shot
+    // InteractiveRequest -- the active-buffer pointer lives in BufferView's
+    // ActiveBuffer, not in anything CommandContext carries (LspShowLog's
+    // exact reasoning).
+    registry.Register("tab-next", "Switch to the next tab in the tab bar, wrapping at the end.",
+                      [](CommandContext& context) { context.interactiveRequest = InteractiveRequest::TabNext; });
+
+    registry.Register("tab-previous", "Switch to the previous tab in the tab bar, wrapping at the start.",
+                      [](CommandContext& context) { context.interactiveRequest = InteractiveRequest::TabPrevious; });
+
+    registry.Register("tab-move-left", "Move the current buffer's tab one position left in the tab bar.",
+                      [](CommandContext& context) {
+                          const auto& buffers = context.bufferList.Buffers();
+                          for (std::size_t i = 0; i < buffers.size(); ++i) {
+                              if (buffers[i].get() != &context.buffer) {
+                                  continue;
+                              }
+                              if (i == 0) {
+                                  if (context.message) {
+                                      *context.message = "Already the leftmost tab.";
+                                  }
+                                  return;
+                              }
+                              context.bufferList.MoveBufferToIndex(context.buffer, i - 1);
+                              return;
+                          }
+                      });
+
+    registry.Register("tab-move-right", "Move the current buffer's tab one position right in the tab bar.",
+                      [](CommandContext& context) {
+                          const auto& buffers = context.bufferList.Buffers();
+                          for (std::size_t i = 0; i < buffers.size(); ++i) {
+                              if (buffers[i].get() != &context.buffer) {
+                                  continue;
+                              }
+                              if (i + 1 == buffers.size()) {
+                                  if (context.message) {
+                                      *context.message = "Already the rightmost tab.";
+                                  }
+                                  return;
+                              }
+                              context.bufferList.MoveBufferToIndex(context.buffer, i + 1);
+                              return;
+                          }
+                      });
 
     registry.Register(
         "project-search",
@@ -2052,6 +2104,19 @@ Keymap BuildDefaultGlobalKeymap() {
     // reports SpecialKey::Enter instead, and that binding would be dead.
     keymap.Bind(ParseKeySequence("C-c C-n"), "rename-file");
     keymap.Bind(ParseKeySequence("C-c C-o"), "find-scratch");
+    // Tab-reorder follow-up: "<" and ">" read as "shove the tab that way",
+    // and both C-c chords were free (M-</M-> stay
+    // beginning/end-of-buffer, untouched).
+    keymap.Bind(ParseKeySequence("C-c <"), "tab-move-left");
+    keymap.Bind(ParseKeySequence("C-c >"), "tab-move-right");
+    // Tab-cycling follow-up: the unshifted keys under the same < and > --
+    // tap C-c ,/. to walk the tabs, hold Shift on the same chord to drag
+    // the tab along instead. C-x LEFT/RIGHT ride along on Emacs' own
+    // previous-buffer/next-buffer spots (both were free).
+    keymap.Bind(ParseKeySequence("C-c ,"), "tab-previous");
+    keymap.Bind(ParseKeySequence("C-c ."), "tab-next");
+    keymap.Bind(ParseKeySequence("C-x LEFT"), "tab-previous");
+    keymap.Bind(ParseKeySequence("C-x RIGHT"), "tab-next");
     // Links follow-up: free everywhere else in this keymap (confirmed by
     // reading the full bind list above) -- see open-link-at-point's own
     // registration comment above and OrgMode()'s doc comment for why Org

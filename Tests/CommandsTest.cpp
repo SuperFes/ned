@@ -2172,7 +2172,7 @@ TEST_CASE("save-some-buffers saves every modified file-backed buffer", "[Command
         out << "before";
     }
 
-    Fixture fixture;
+    Fixture            fixture;
     ned::text::Buffer& fileBuffer = fixture.bufferList.OpenOrCreateFile(path);
     fileBuffer.SetPoint(fileBuffer.Size());
     fileBuffer.InsertAtPoint(" after");
@@ -2242,4 +2242,37 @@ TEST_CASE("save-buffer asks before overwriting an externally-changed file; save-
     REQUIRE_FALSE(buffer.Modified());
 
     std::filesystem::remove(path);
+}
+
+TEST_CASE("tab-move-left/right reorder the current buffer among the tabs, stopping at the edges", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    ned::text::KillRing   killRing;
+    ned::text::BufferList list;
+    ned::text::Buffer&    a = list.CreateBuffer("a");
+    ned::text::Buffer&    b = list.CreateBuffer("b");
+    ned::text::Buffer&    c = list.CreateBuffer("c");
+
+    std::string    message;
+    CommandContext context{b, killRing, list};
+    context.message = &message;
+
+    registry.Invoke("tab-move-right", context); // a,b,c -> a,c,b
+    REQUIRE(list.Buffers()[1].get() == &c);
+    REQUIRE(list.Buffers()[2].get() == &b);
+
+    registry.Invoke("tab-move-right", context); // already rightmost -- stays, reports
+    REQUIRE(list.Buffers()[2].get() == &b);
+    REQUIRE_FALSE(message.empty());
+
+    message.clear();
+    registry.Invoke("tab-move-left", context); // a,c,b -> a,b,c
+    registry.Invoke("tab-move-left", context); // a,b,c -> b,a,c
+    REQUIRE(list.Buffers()[0].get() == &b);
+    REQUIRE(list.Buffers()[1].get() == &a);
+
+    registry.Invoke("tab-move-left", context); // already leftmost -- stays, reports
+    REQUIRE(list.Buffers()[0].get() == &b);
+    REQUIRE_FALSE(message.empty());
 }

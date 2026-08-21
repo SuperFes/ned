@@ -196,7 +196,59 @@ bool BufferList::Close(const std::string& name) {
         previewBuffer_ = nullptr;
     }
 
+    std::erase(mruOrder_, it->get());
     buffers_.erase(it);
+    return true;
+}
+
+void BufferList::TouchBuffer(const Buffer& buffer) {
+    const auto owned = std::find_if(buffers_.begin(), buffers_.end(), [&buffer](const std::unique_ptr<Buffer>& b) {
+        return b.get() == &buffer;
+    });
+    if (owned == buffers_.end()) {
+        return;
+    }
+    Buffer* raw = owned->get();
+    if (!mruOrder_.empty() && mruOrder_.back() == raw) {
+        return;
+    }
+    std::erase(mruOrder_, raw);
+    mruOrder_.push_back(raw);
+}
+
+Buffer* BufferList::MostRecentlyUsedBuffer(const Buffer* excluding) const {
+    for (auto it = mruOrder_.rbegin(); it != mruOrder_.rend(); ++it) {
+        if (*it != excluding) {
+            return *it;
+        }
+    }
+    return nullptr;
+}
+
+bool BufferList::MoveBufferToIndex(const Buffer& buffer, std::size_t targetIndex) {
+    const auto it = std::find_if(buffers_.begin(), buffers_.end(), [&buffer](const std::unique_ptr<Buffer>& b) {
+        return b.get() == &buffer;
+    });
+    if (it == buffers_.end()) {
+        return false;
+    }
+
+    const std::size_t from = static_cast<std::size_t>(it - buffers_.begin());
+    const std::size_t to   = std::min(targetIndex, buffers_.size() - 1);
+    if (from == to) {
+        return true;
+    }
+
+    if (from < to) {
+        std::rotate(buffers_.begin() + static_cast<std::ptrdiff_t>(from),
+                    buffers_.begin() + static_cast<std::ptrdiff_t>(from) + 1,
+                    buffers_.begin() + static_cast<std::ptrdiff_t>(to) + 1);
+    }
+    else {
+        std::rotate(buffers_.begin() + static_cast<std::ptrdiff_t>(to),
+                    buffers_.begin() + static_cast<std::ptrdiff_t>(from),
+                    buffers_.begin() + static_cast<std::ptrdiff_t>(from) + 1);
+    }
     return true;
 }
 

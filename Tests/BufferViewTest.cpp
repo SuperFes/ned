@@ -6124,3 +6124,75 @@ TEST_CASE("C-x C-s on an externally-changed file asks first; n cancels, y overwr
 
     std::filesystem::remove(path);
 }
+
+TEST_CASE("Closing the active buffer lands on the most recently left buffer, not the first tab", "[BufferView]") {
+    Fixture               fixture;
+    ned::text::Buffer&    a = fixture.bufferList.CreateBuffer("a");
+    ned::text::Buffer&    b = fixture.bufferList.CreateBuffer("b");
+    ned::text::Buffer&    c = fixture.bufferList.CreateBuffer("c");
+    ned::ui::ActiveBuffer activeBuffer(a);
+    // The same wiring Pane's constructor does for the real editor.
+    activeBuffer.SetOnChange([&fixture](ned::text::Buffer& current) { fixture.bufferList.TouchBuffer(current); });
+    fixture.bufferList.TouchBuffer(a);
+    ned::ui::BufferView view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList, fixture.dispatcher,
+                             fixture.statusMessage, fixture.mode, fixture.theme);
+
+    activeBuffer.Set(b); // a -> b -> c: "b" is the tab most recently left
+    activeBuffer.Set(c);
+    view.RequestCloseBuffer(c);
+
+    REQUIRE(fixture.bufferList.Count() == 2);
+    REQUIRE(&activeBuffer.Get() == &b); // not "a", the first in list order
+}
+
+TEST_CASE("Closing the active buffer falls back to list order when nothing was ever activated", "[BufferView]") {
+    Fixture               fixture;
+    ned::text::Buffer&    a = fixture.bufferList.CreateBuffer("a");
+    ned::text::Buffer&    b = fixture.bufferList.CreateBuffer("b");
+    ned::ui::ActiveBuffer activeBuffer(b); // no on-change hook, empty MRU order
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList,
+                               fixture.dispatcher, fixture.statusMessage, fixture.mode, fixture.theme);
+
+    view.RequestCloseBuffer(b);
+
+    REQUIRE(&activeBuffer.Get() == &a);
+}
+
+TEST_CASE("tab-next/tab-previous cycle the active buffer in tab order, wrapping at both ends", "[BufferView]") {
+    Fixture               fixture;
+    ned::text::Buffer&    a = fixture.bufferList.CreateBuffer("a");
+    ned::text::Buffer&    b = fixture.bufferList.CreateBuffer("b");
+    ned::text::Buffer&    c = fixture.bufferList.CreateBuffer("c");
+    ned::ui::ActiveBuffer activeBuffer(b);
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList,
+                               fixture.dispatcher, fixture.statusMessage, fixture.mode, fixture.theme);
+
+    view.OnEvent(ned::ui::test::Ctrl('c'));
+    view.OnEvent(ned::ui::test::Character('.'));
+    REQUIRE(&activeBuffer.Get() == &c);
+
+    view.OnEvent(ned::ui::test::Ctrl('c'));
+    view.OnEvent(ned::ui::test::Character('.')); // off the right end -- wraps to the first tab
+    REQUIRE(&activeBuffer.Get() == &a);
+
+    view.OnEvent(ned::ui::test::Ctrl('c'));
+    view.OnEvent(ned::ui::test::Character(',')); // off the left end -- wraps back to the last tab
+    REQUIRE(&activeBuffer.Get() == &c);
+
+    view.OnEvent(ned::ui::test::Ctrl('c'));
+    view.OnEvent(ned::ui::test::Character(','));
+    REQUIRE(&activeBuffer.Get() == &b);
+}
+
+TEST_CASE("tab-next with a single tab stays put", "[BufferView]") {
+    Fixture               fixture;
+    ned::text::Buffer&    only = fixture.bufferList.CreateBuffer("only");
+    ned::ui::ActiveBuffer activeBuffer(only);
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.bufferList,
+                               fixture.dispatcher, fixture.statusMessage, fixture.mode, fixture.theme);
+
+    view.OnEvent(ned::ui::test::Ctrl('c'));
+    view.OnEvent(ned::ui::test::Character('.'));
+
+    REQUIRE(&activeBuffer.Get() == &only);
+}

@@ -91,6 +91,35 @@ void TabBar::Paint(Canvas c) {
     const text::Buffer*          preview = bufferList_.PreviewBuffer();
     const std::vector<TabLayout> layout  = ComputeTabLayout();
 
+    // Active-tab auto-reveal (tab-reveal follow-up): whenever the active
+    // buffer has changed since the last Paint (a freshly opened file, a
+    // switch-to-buffer, a tab click on a partially visible tab), scroll
+    // just far enough that its whole tab is visible -- a newly opened
+    // file's tab landing past the right edge of an overflowing row was
+    // otherwise invisible, which read as the file not having opened at
+    // all. Only on a change, so manually wheel-scrolling away from the
+    // active tab isn't snapped back every frame. End-edge check first,
+    // start-edge second, so a tab wider than the whole row shows its
+    // start.
+    if (active != lastRevealedActive_) {
+        lastRevealedActive_ = active;
+        for (const TabLayout& tab : layout) {
+            if (tab.buffer == active) {
+                if (tab.endColumn - scrollOffset_ > c.size().width) {
+                    scrollOffset_ = tab.endColumn - c.size().width;
+                }
+                if (tab.startColumn < scrollOffset_) {
+                    scrollOffset_ = tab.startColumn;
+                }
+                break;
+            }
+        }
+    }
+    // Clamped every frame, not just on wheel/reveal -- closing a tab can
+    // shrink the row's total width out from under a large scrollOffset_.
+    const int totalTabWidth = layout.empty() ? 0 : layout.back().endColumn;
+    scrollOffset_           = std::clamp(scrollOffset_, 0, std::max(0, totalTabWidth - c.size().width));
+
     // Tab-restyle follow-up: with the underline row gone, the active tab
     // itself carries the "keyboard is in the editor" accent -- its block
     // takes the same accent-tinted chrome color the focused mode line's
@@ -152,7 +181,6 @@ void TabBar::Paint(Canvas c) {
             theme_.tabBar.ApplyTo(cell);
         }
     }
-
 }
 
 bool TabBar::OnEvent(const Event& event) {
@@ -182,10 +210,44 @@ bool TabBar::OnEvent(const Event& event) {
         return true;
     }
 
+    // Tab-reorder follow-up: a left-press on a tab's body (below) starts a
+    // potential drag; while it's held, Moved events reorder the dragged tab
+    // to whichever tab index the pointer is over (live, VS Code-style --
+    // the row re-lays-out as the drag progresses). Any release, or a Moved
+    // without the left button still down (a release that happened outside
+    // this row's bounds -- LocalMouseEvent never delivered it, same
+    // no-mouse-capture reality every drag in this codebase handles), ends
+    // the drag.
+    if (dragBuffer_ != nullptr && mouse->motion == MouseEvent::Motion::Released) {
+        dragBuffer_ = nullptr;
+        return true;
+    }
+    if (dragBuffer_ != nullptr && mouse->motion == MouseEvent::Motion::Moved) {
+        if (mouse->button != MouseEvent::Button::Left) {
+            dragBuffer_ = nullptr;
+            return false;
+        }
+        if (onReorder_) {
+            const int                    column = mouse->at.x + scrollOffset_;
+            const std::vector<TabLayout> layout = ComputeTabLayout();
+            for (std::size_t i = 0; i < layout.size(); ++i) {
+                const bool pastLastTab = (i + 1 == layout.size() && column >= layout[i].endColumn);
+                if ((column >= layout[i].startColumn && column < layout[i].endColumn) || pastLastTab) {
+                    if (layout[i].buffer != dragBuffer_) {
+                        onReorder_(*dragBuffer_, i);
+                    }
+                    break;
+                }
+            }
+        }
+        return true;
+    }
+
     if (mouse->button != MouseEvent::Button::Left || mouse->motion != MouseEvent::Motion::Pressed) {
         return false;
     }
 
+    dragBuffer_             = nullptr;
     const int clickedColumn = mouse->at.x + scrollOffset_;
     for (const TabLayout& tab : ComputeTabLayout()) {
         if (clickedColumn == tab.closeColumn) {
@@ -196,10 +258,15 @@ bool TabBar::OnEvent(const Event& event) {
         }
         if (clickedColumn >= tab.startColumn && clickedColumn < tab.endColumn) {
             activeBufferProvider_().Set(*tab.buffer);
+            dragBuffer_ = tab.buffer;
             return true;
         }
     }
     return true;
+}
+
+void TabBar::SetOnReorder(std::function<void(text::Buffer&, std::size_t)> handler) {
+    onReorder_ = std::move(handler);
 }
 
 void TabBar::SetOnCloseRequest(std::function<void(text::Buffer&)> handler) {

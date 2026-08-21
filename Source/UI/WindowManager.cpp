@@ -80,6 +80,14 @@ Pane::Pane(text::Buffer& buffer, text::KillRing& killRing, editor::RegisterTable
                                                                            }) {
     bufferView_->SetScrollBar(scrollBar_.get());
     bufferView_->SetScrollArrows(scrollUp_.get(), scrollDown_.get());
+    // MRU-close follow-up: every buffer switch in this pane (tab click,
+    // find-file, switch-to-buffer, sidebar preview, close reassignment)
+    // funnels through activeBuffer_.Set -- record it, so CloseBufferNow can
+    // land on the most recently left buffer. bufferList outlives every Pane
+    // (shared app-wide, per this constructor's own doc comment). The
+    // initial buffer is touched directly: Set never fired for it.
+    activeBuffer_.SetOnChange([&bufferList](text::Buffer& current) { bufferList.TouchBuffer(current); });
+    bufferList.TouchBuffer(buffer);
     // Chrome-redesign follow-up: this pane's mode line accent-tints its
     // gradient while this pane's own BufferView holds the keyboard focus --
     // the raw pointer outlives modeLine_ (both are members of this Pane).

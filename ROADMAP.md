@@ -860,6 +860,43 @@ each is, not by priority.
 - **Visual**
   - [x] Minimap — done: braille-glyph minimap widget replacing the scroll bar
         (`Source/UI/Minimap.h/.cpp`, commit `0e42708`).
+  - [x] Tab UX follow-up — **shipped 2026-08-20**, three user reports/asks in one slice:
+        - *Active-tab auto-reveal.* Opening/switching to a buffer whose tab sat past the
+          overflowing row's right edge left it invisible ("very confusing" — the file
+          looked like it hadn't opened). `TabBar::Paint` now scrolls just far enough to
+          fully reveal the active tab, but only when the active buffer *changed* since
+          the last paint (`lastRevealedActive_`, identity-compared, never dereferenced —
+          the `topLineValidatedBuffer_` convention), so manual wheel-browsing of the
+          overflow is never snapped back. `scrollOffset_` is also now clamped every
+          frame, not just on wheel — closing tabs could strand it past the shrunken row.
+        - *MRU close.* Closing the active tab used to land on the *first* tab; now it
+          lands on the tab most recently left. `BufferList` owns the MRU order
+          (`TouchBuffer`/`MostRecentlyUsedBuffer`, purged in `Close` so never dangling);
+          `ActiveBuffer` grew an on-change hook, wired per Pane to `TouchBuffer` — the
+          one choke point every switch path (tab click, find-file, switch-to-buffer,
+          sidebar preview, close reassignment) already funnels through.
+          `CloseBufferNow` asks MRU first, falling back to list order for
+          never-activated buffers (e.g. session-restored, never visited), then the
+          fresh-scratch conjuring as before.
+        - *Tab cycling.* `tab-next`/`tab-previous` (`C-c .`/`C-c ,` — the unshifted
+          keys under the move pair's `<`/`>`, so tap-to-walk vs. shift-to-drag lives
+          on one physical key pair; `C-x RIGHT`/`C-x LEFT` ride along on Emacs' own
+          next-buffer/previous-buffer spots) switch tabs in tab-bar order, wrapping at
+          both ends. One-shot `InteractiveRequest`s (`TabNext`/`TabPrevious`) since the
+          active-buffer pointer lives in BufferView, not the command layer — and the
+          switch goes through `ActiveBuffer::Set`, so cycling feeds the MRU order like
+          every other switch path.
+        - *Tab reordering.* `BufferList::MoveBufferToIndex` is the one mutation;
+          `tab-move-left`/`tab-move-right` (`C-c <`/`C-c >`) are the keyboard face and
+          drag-a-tab (live VS-Code-style reorder while held, `TabBar::SetOnReorder` —
+          same handler indirection as `SetOnCloseRequest`) the mouse face. Since
+          `Buffers()` order is what `SaveProjectSessionNow` persists and session restore
+          replays in order (verified end-to-end via a live tmux run before shipping:
+          reorder → quit → relaunch came back in the dragged order, active file
+          focused), a reorder survives a restart with zero new session state.
+        Known cut: the session's `openFiles` order can't preserve a CLI-named file's
+        old slot — `ned somefile` opens it first, so its tab leads and the session
+        fills in behind (the documented Kate-style "named file wins focus" behavior).
   - [ ] Rich built-in theme set. (Overlaps with Phase 6.)
 - **Companion tooling** (standalone utility programs shipped alongside `ned`, not part of
   the editor binary itself — the user's own framing: "towards the end of our dev, maybe

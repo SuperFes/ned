@@ -9,6 +9,9 @@
 #ifndef NED_UI_ACTIVEBUFFER_H
 #define NED_UI_ACTIVEBUFFER_H
 
+#include <functional>
+#include <utility>
+
 #include "Text/Buffer.h"
 
 namespace ned::ui {
@@ -22,11 +25,26 @@ class ActiveBuffer {
         return *current_;
     }
     void Set(text::Buffer& buffer) {
-        current_ = &buffer;
+        const bool changed = (current_ != &buffer);
+        current_           = &buffer;
+        if (changed && onChange_) {
+            onChange_(buffer);
+        }
+    }
+
+    // MRU-close follow-up: fires with the newly current buffer whenever Set
+    // actually changes it (never for a same-buffer Set). Unset by default
+    // (every pre-existing construction site and test), same no-op-by-
+    // absence convention as TabBar::SetOnCloseRequest. WindowManager's Pane
+    // wires this to text::BufferList::TouchBuffer, making Set the one choke
+    // point that keeps the MRU order current across every switch path.
+    void SetOnChange(std::function<void(text::Buffer&)> hook) {
+        onChange_ = std::move(hook);
     }
 
   private:
-    text::Buffer* current_;
+    text::Buffer*                      current_;
+    std::function<void(text::Buffer&)> onChange_;
 };
 
 } // namespace ned::ui

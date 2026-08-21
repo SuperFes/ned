@@ -301,25 +301,32 @@ enum class InteractiveRequest { None,
                                 // shape as ToggleProjectSidebar -- BufferView flips the registered
                                 // Minimap's own `active` flag directly (and the paired ScrollBar
                                 // column's opposite), no InputMode session needed.
-                                ToggleMinimap };
+                                ToggleMinimap,
+                                // Tab-cycling follow-up: two more one-shot direct actions, same
+                                // shape as KillBuffer -- switching this pane's own active buffer
+                                // needs activeBuffer_, which only BufferView has (LspShowLog's
+                                // exact reasoning). Next/previous in Buffers() (tab bar) order,
+                                // wrapping at either end.
+                                TabNext,
+                                TabPrevious };
 
 // Everything a command implementation might need. Built fresh per invocation
 // from live references -- never stored, so there's no lifetime concern beyond
 // the synchronous call it's used in.
 struct CommandContext {
-    text::Buffer&      buffer;
-    text::KillRing&    killRing;
-    text::BufferList&  bufferList;
-    KeyChord           triggeringKey{};              // the chord that completed this dispatch, if any
-    std::string*       message            = nullptr; // where a command reports a status/echo-area message, if anywhere
+    text::Buffer&     buffer;
+    text::KillRing&   killRing;
+    text::BufferList& bufferList;
+    KeyChord          triggeringKey{};   // the chord that completed this dispatch, if any
+    std::string*      message = nullptr; // where a command reports a status/echo-area message, if anywhere
     // Emacs' `last-command`: the name of the command the Dispatcher invoked
     // immediately before this one (empty on the first dispatch, or when
     // invoked outside Dispatcher::Feed -- see LastInvokedCommand's own doc
     // comment in Dispatcher.h). Only yank-pop reads this today. Placed after
     // `message` so the existing positional aggregate-init call sites
     // (BufferView::MakeContext, tests) stay valid.
-    std::string lastCommand;
-    bool               quit               = false;   // set by a command requesting the application exit
+    std::string        lastCommand;
+    bool               quit               = false; // set by a command requesting the application exit
     InteractiveRequest interactiveRequest = InteractiveRequest::None;
     // Rows currently visible in the buffer view, set by the host UI before
     // each dispatch (0 if unknown/headless) -- scroll-page-up/-down are the
