@@ -43,24 +43,38 @@ class BufferList {
     // hook set (the default -- e.g. every test that constructs a bare
     // BufferList), this always behaves exactly as before: fully
     // synchronous, fully loaded on return.
+    //
+    // Dedupe-by-path (duplicate-open fix): if a buffer for this path is
+    // already open (FindByPath), that buffer is returned as-is -- never a
+    // second, uniquified "name<2>" duplicate of the same file. Emacs'
+    // find-file-revisits-the-existing-buffer behavior, enforced here at
+    // the one choke point rather than at each of the many call sites
+    // (find-file's prompt, session restore, CLI args, LSP jumps, ...),
+    // most of which never checked. Reload-from-disk is Buffer::Revert's
+    // job, deliberately not this one's.
     Buffer& OpenFile(const std::filesystem::path& path, bool allowBinary = false);
 
     // OpenFile if path exists; otherwise a new, empty buffer already
     // associated with path (Buffer::NewFile) -- e.g. `ned newfile.txt` for a
     // file that doesn't exist yet. Still throws for a real I/O failure on an
-    // existing path (permissions, etc.), same as OpenFile.
+    // existing path (permissions, etc.), same as OpenFile. Same
+    // dedupe-by-path contract as OpenFile, including for a not-yet-saved
+    // NewFile buffer whose path still doesn't exist on disk.
     Buffer& OpenOrCreateFile(const std::filesystem::path& path, bool allowBinary = false);
 
     [[nodiscard]] Buffer*       Find(const std::string& name);
     [[nodiscard]] const Buffer* Find(const std::string& name) const;
 
     // Path-associated buffer already open, if any -- compares
-    // std::filesystem::absolute() of both sides, so a relative and an
-    // absolute path to the same file still match. A buffer with no
+    // std::filesystem::weakly_canonical() of both sides (falling back to
+    // absolute() when canonicalization fails), so a relative path, an
+    // absolute one, and a "./sub/../sub/file" or symlinked spelling of the
+    // same file all still match -- duplicate-open fix; was plain
+    // absolute(), which treated those as different files. A buffer with no
     // associated path (Path() == nullopt, e.g. a plain CreateBuffer scratch
-    // buffer) never matches. Used by ProjectSidebar's click handler
-    // (single-click-preview follow-up) to reuse an already-open buffer
-    // instead of OpenFile unconditionally creating a uniquified duplicate.
+    // buffer) never matches. Used by OpenFile/OpenOrCreateFile's own
+    // dedupe (above) and by ProjectSidebar's click handler (single-click-
+    // preview follow-up).
     [[nodiscard]] Buffer*       FindByPath(const std::filesystem::path& path);
     [[nodiscard]] const Buffer* FindByPath(const std::filesystem::path& path) const;
 

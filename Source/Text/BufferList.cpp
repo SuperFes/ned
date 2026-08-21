@@ -62,6 +62,11 @@ Buffer& BufferList::CreateBuffer(std::string name) {
 }
 
 Buffer& BufferList::OpenFile(const std::filesystem::path& path, bool allowBinary) {
+    // Dedupe-by-path -- see the header's own comment on this contract.
+    if (Buffer* existing = FindByPath(path)) {
+        return *existing;
+    }
+
     // Checked here, ahead of the size check below, so a large binary file
     // never even gets considered for the async path -- Buffer::FromFile
     // makes this same check for anyone calling it directly, but the async
@@ -108,6 +113,14 @@ void BufferList::SetOnFileOpened(std::function<void(Buffer&)> hook) {
 }
 
 Buffer& BufferList::OpenOrCreateFile(const std::filesystem::path& path, bool allowBinary) {
+    // Dedupe-by-path -- covers the NewFile branch below too (a second open
+    // of a not-yet-saved path must reuse the pending buffer, not stack a
+    // "name<2>" beside it); OpenFile repeats the check for its own direct
+    // callers.
+    if (Buffer* existing = FindByPath(path)) {
+        return *existing;
+    }
+
     if (std::filesystem::exists(path)) {
         return OpenFile(path, allowBinary);
     }
@@ -140,10 +153,26 @@ const Buffer* BufferList::Find(const std::string& name) const {
     return nullptr;
 }
 
+namespace {
+
+    // weakly_canonical resolves symlinks and "."/".." through every
+    // component that actually exists on disk (a not-yet-created NewFile
+    // path keeps its trailing pieces as-is -- exactly right for matching a
+    // pending unsaved buffer), so differently-spelled paths to the same
+    // file compare equal. The error_code overload never throws; on any
+    // failure fall back to plain absolute(), the pre-fix behavior.
+    std::filesystem::path NormalizedPathKey(const std::filesystem::path& path) {
+        std::error_code             ec;
+        const std::filesystem::path canonical = std::filesystem::weakly_canonical(path, ec);
+        return ec ? std::filesystem::absolute(path) : canonical;
+    }
+
+} // namespace
+
 Buffer* BufferList::FindByPath(const std::filesystem::path& path) {
-    const std::filesystem::path absolute = std::filesystem::absolute(path);
+    const std::filesystem::path key = NormalizedPathKey(path);
     for (auto& buffer : buffers_) {
-        if (buffer->Path() && std::filesystem::absolute(*buffer->Path()) == absolute) {
+        if (buffer->Path() && NormalizedPathKey(*buffer->Path()) == key) {
             return buffer.get();
         }
     }
