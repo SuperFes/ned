@@ -44,7 +44,7 @@ bool ToggleFoldAtLine(text::Buffer& buffer, const text::Rope& content,
         if (content.ByteOffsetToLine(block.first) != line) {
             continue;
         }
-        if (best == nullptr || (block.second - block.first) < (best->second - best->first)) {
+        if (best == nullptr || (block.second - block.first) > (best->second - best->first)) {
             best = &block;
         }
     }

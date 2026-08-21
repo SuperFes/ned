@@ -730,6 +730,20 @@ void BufferView::EnsureFoldGutterCache() const {
                 // here.
                 continue;
             }
+            if (!foldGutterEntries_.empty() && foldGutterEntries_.back().headerLine == headerLine) {
+                // Only the outermost block opening on a line gets a gutter
+                // affordance (lisp-nesting fix, clojure-and-jank follow-up:
+                // `:profiles {:dev {:dependencies [...` used to stack three
+                // ⊞/⊟ columns on one row). Two multi-line blocks sharing a
+                // header line are necessarily nested -- a sibling can't
+                // start before the previous multi-line block's closing line
+                // -- and regions arrive sorted by startByte, so the first
+                // entry added for a line is always the outermost; everything
+                // after it here is an inner block whose fold the outer one's
+                // covers. ToggleFoldAtLine's outermost-wins rule (CodeFold.h)
+                // is the keyboard half of this same decision.
+                continue;
+            }
             foldGutterEntries_.push_back(FoldGutterEntry{
                 .headerLine = headerLine,
                 .closerLine = closerLine,

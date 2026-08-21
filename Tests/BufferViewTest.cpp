@@ -4386,6 +4386,37 @@ TEST_CASE("A block written entirely on one line gets no fold icon", "[BufferView
     REQUIRE(screen.PixelAt(foldStart + 1, 0).character == " ");
 }
 
+TEST_CASE("Nested blocks opening on the same line get one fold affordance -- the outermost", "[BufferView]") {
+    // Regression test for a real, reported bug (clojure-and-jank follow-up):
+    // lisp code routinely opens several foldable collections on one line
+    // (`:profiles {:dev {:dependencies [...`), and the gutter used to stack
+    // one ⊟ per depth on that single row -- three affordances all folding
+    // essentially the same span. Only the outermost block gets an entry now;
+    // see EnsureFoldGutterCache's own comment.
+    Fixture fixture;
+    fixture.mode = ned::editor::ClojureMode();
+    // Three nested lists, all opening on line 0, all closing on line 1.
+    fixture.buffer.InsertAtPoint("(a (b (c\n1)))\n");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 1});
+    ned::ui::Screen screen = ned::ui::Screen(40, 2);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 1});
+    view.Paint(canvas);
+
+    const int foldStart = GutterWidth(2, /*foldColumn=*/4) - 4;
+    // One ⊟, in the outermost block's own column -- not a marker per depth.
+    REQUIRE(screen.PixelAt(foldStart, 0).character == "⊟");
+    REQUIRE(screen.PixelAt(foldStart + 1, 0).character == " ");
+    REQUIRE(screen.PixelAt(foldStart + 2, 0).character == " ");
+
+    // Clicking it collapses the outermost block, hiding the closing line.
+    view.OnEvent(MousePress(foldStart, 0));
+    view.Paint(canvas);
+    REQUIRE(screen.PixelAt(foldStart, 0).character == "⊞");
+    REQUIRE(ContentRowText(screen, 1, 1, 2, /*foldColumn=*/4) == " ");
+}
+
 TEST_CASE("A one-line block nested inside a real multi-line block still lets the outer block fold normally",
           "[BufferView]") {
     Fixture fixture;

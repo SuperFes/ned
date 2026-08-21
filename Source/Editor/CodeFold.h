@@ -52,8 +52,15 @@ FoldedLineRanges(const text::Buffer& buffer, const text::Rope& content,
 
 // Toggles the fold marker for whichever block in `blocks` starts on `line`
 // (its opening/header line -- e.g. the line with a function's `{`) --
-// innermost (smallest byte range) wins if more than one block happens to
-// open on the same line. Returns false (a no-op) if no block starts there.
+// outermost (largest byte range) wins if more than one block happens to
+// open on the same line. Was innermost-wins originally; flipped when the
+// first lisp buffers (clojure-and-jank follow-up) made same-line nesting
+// the common case rather than a degenerate one (`:profiles {:dev
+// {:dependencies [...` opens three blocks at once), and the gutter
+// (BufferView::EnsureFoldGutterCache) now only draws the outermost block's
+// affordance per header line for the same reason -- this keeps the
+// keyboard path folding the exact block the gutter shows. Returns false
+// (a no-op) if no block starts there.
 bool ToggleFoldAtLine(text::Buffer& buffer, const text::Rope& content,
                       const std::vector<std::pair<std::size_t, std::size_t>>& blocks, std::size_t line);
 

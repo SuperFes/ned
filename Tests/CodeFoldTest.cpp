@@ -116,7 +116,7 @@ TEST_CASE("ToggleFoldAtLine is a no-op when no block starts on that line", "[Cod
     REQUIRE_FALSE(ToggleFoldAtLine(buffer, buffer.Content(), blocks, 1)); // "    return 0;" -- no block starts here
 }
 
-TEST_CASE("ToggleFoldAtLine picks the innermost block when two start on the same line", "[CodeFold]") {
+TEST_CASE("ToggleFoldAtLine picks the outermost block when two start on the same line", "[CodeFold]") {
     const auto mode = CMode();
     Buffer     buffer("test.c");
     // Both the outer function body and (degenerately) an inner compound
@@ -127,14 +127,16 @@ TEST_CASE("ToggleFoldAtLine picks the innermost block when two start on the same
     REQUIRE(blocks.size() >= 2);
     REQUIRE(ToggleFoldAtLine(buffer, buffer.Content(), blocks, 0));
 
-    // The innermost (smallest) block is the one that got marked.
-    const auto* innermost = &blocks[0];
+    // The outermost (largest) block is the one that got marked -- the same
+    // block the fold gutter's own one-affordance-per-line rule shows; see
+    // ToggleFoldAtLine's doc comment for why this flipped from innermost.
+    const auto* outermost = &blocks[0];
     for (const auto& block : blocks) {
-        if ((block.second - block.first) < (innermost->second - innermost->first)) {
-            innermost = &block;
+        if ((block.second - block.first) > (outermost->second - outermost->first)) {
+            outermost = &block;
         }
     }
-    REQUIRE(buffer.FoldMarkerAt(innermost->first).has_value());
+    REQUIRE(buffer.FoldMarkerAt(outermost->first).has_value());
 }
 
 TEST_CASE("FoldRegionsWithDepth gives disjoint siblings depth 0", "[CodeFold]") {
