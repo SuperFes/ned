@@ -605,11 +605,19 @@ void WindowManager::ReassignPanesShowing(text::Buffer& closingBuffer, Pane* skip
     // per pane, so N panes all showing the one buffer being closed end up
     // sharing a single fresh scratch buffer rather than each conjuring
     // their own.
-    text::Buffer* replacement = nullptr;
-    for (const auto& candidate : bufferList_.Buffers()) {
-        if (candidate.get() != &closingBuffer) {
-            replacement = candidate.get();
-            break;
+    //
+    // MRU, matching BufferView::CloseBufferNow's own replacement pick --
+    // otherwise a pane retargeted here (not the one the user actually
+    // closed the buffer in) could land on an arbitrary, possibly long-stale
+    // buffer instead of the one most recently used. Falls back to list
+    // order for buffers never activated, same as CloseBufferNow.
+    text::Buffer* replacement = bufferList_.MostRecentlyUsedBuffer(&closingBuffer);
+    if (replacement == nullptr) {
+        for (const auto& candidate : bufferList_.Buffers()) {
+            if (candidate.get() != &closingBuffer) {
+                replacement = candidate.get();
+                break;
+            }
         }
     }
 

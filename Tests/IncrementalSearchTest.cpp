@@ -54,6 +54,108 @@ TEST_CASE("Backward search leaves point at the start of the match", "[Incrementa
     REQUIRE(buffer.Point() == dogStart + 1); // "og" starts one past "d"
 }
 
+TEST_CASE("RepeatSearch wraps around to the top of the document when it runs off the end", "[IncrementalSearch]") {
+    Buffer buffer("scratch", Rope(kText));
+    buffer.SetPoint(0);
+
+    IncrementalSearch search(buffer, IncrementalSearch::Direction::Forward);
+    search.AppendChar(U'o');
+    REQUIRE(buffer.Point() == 13); // "brown"'s o
+    search.RepeatSearch();
+    REQUIRE(buffer.Point() == 18); // "fox"'s o
+    search.RepeatSearch();
+    REQUIRE(buffer.Point() == 27); // "over"'s o
+    search.RepeatSearch();
+    REQUIRE(buffer.Point() == 42); // "dog"'s o, the last one in the document
+    search.RepeatSearch();
+    REQUIRE(search.Found());
+    REQUIRE(buffer.Point() == 13); // ran off the end -- wrapped back to "brown"'s o
+}
+
+TEST_CASE("RepeatSearch (backward) wraps around to the bottom of the document when it runs off the start", "[IncrementalSearch]") {
+    Buffer buffer("scratch", Rope(kText));
+    buffer.SetPoint(0); // start searching from the very top
+
+    IncrementalSearch search(buffer, IncrementalSearch::Direction::Backward);
+    search.AppendChar(U'o');
+    REQUIRE(search.Found());
+    const std::size_t dogO = std::string(kText).rfind('o');
+    REQUIRE(buffer.Point() == dogO); // wrapped immediately: nothing before point 0
+}
+
+TEST_CASE("Search is case-insensitive when the query has no uppercase letter", "[IncrementalSearch]") {
+    Buffer buffer("scratch", Rope("the quick brown FOX jumps over the lazy dog"));
+    buffer.SetPoint(0);
+
+    IncrementalSearch search(buffer, IncrementalSearch::Direction::Forward);
+    search.AppendChar(U'f');
+    search.AppendChar(U'o');
+    search.AppendChar(U'x');
+
+    REQUIRE(search.Found());
+    REQUIRE(buffer.Point() == 19); // matched uppercase "FOX" despite the all-lowercase query
+}
+
+TEST_CASE("Search becomes case-sensitive once the query contains an uppercase letter", "[IncrementalSearch]") {
+    Buffer buffer("scratch", Rope("The Fox and the fox"));
+    buffer.SetPoint(0);
+
+    IncrementalSearch search(buffer, IncrementalSearch::Direction::Forward);
+    search.AppendChar(U'F');
+    search.AppendChar(U'o');
+    search.AppendChar(U'x');
+
+    REQUIRE(search.Found());
+    REQUIRE(buffer.Point() == 7); // "Fox" (capital F), not "fox" later in the string
+}
+
+TEST_CASE("ReverseDirection flips a forward search to backward and re-searches", "[IncrementalSearch]") {
+    Buffer buffer("scratch", Rope(kText));
+    buffer.SetPoint(0);
+
+    IncrementalSearch search(buffer, IncrementalSearch::Direction::Forward);
+    search.AppendChar(U'o');
+    REQUIRE(buffer.Point() == 13); // "brown"'s o, found searching forward from 0
+
+    search.ReverseDirection();
+    REQUIRE(search.Found());
+    REQUIRE(search.StatusText() == "Backward I-search: o");
+    REQUIRE(buffer.Point() <= 13); // re-searched backward from the current point, didn't move forward
+}
+
+TEST_CASE("ReverseDirection on an empty query is a no-op", "[IncrementalSearch]") {
+    Buffer buffer("scratch", Rope(kText));
+    buffer.SetPoint(5);
+
+    IncrementalSearch search(buffer, IncrementalSearch::Direction::Forward);
+    search.ReverseDirection();
+
+    REQUIRE(search.StatusText() == "Backward I-search: ");
+    REQUIRE(buffer.Point() == 5); // untouched -- nothing to search for
+}
+
+TEST_CASE("AppendText appends arbitrary text to the query and re-searches", "[IncrementalSearch]") {
+    Buffer buffer("scratch", Rope(kText));
+    buffer.SetPoint(0);
+
+    IncrementalSearch search(buffer, IncrementalSearch::Direction::Forward);
+    search.AppendText("fox");
+
+    REQUIRE(search.Query() == "fox");
+    REQUIRE(search.Found());
+    REQUIRE(buffer.Point() == 19);
+}
+
+TEST_CASE("AppendWordAtPoint pulls the word at the current point into the query", "[IncrementalSearch]") {
+    Buffer buffer("scratch", Rope(kText));
+    buffer.SetPoint(16); // start of "fox"
+
+    IncrementalSearch search(buffer, IncrementalSearch::Direction::Forward);
+    search.AppendWordAtPoint();
+
+    REQUIRE(search.Query() == "fox");
+}
+
 TEST_CASE("A query with no match reports Found() == false and leaves point unmoved", "[IncrementalSearch]") {
     Buffer buffer("scratch", Rope(kText));
     buffer.SetPoint(0);
