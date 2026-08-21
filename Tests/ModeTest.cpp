@@ -370,6 +370,8 @@ TEST_CASE("In-scope modes have a fold hook installed", "[Mode]") {
     REQUIRE(static_cast<bool>(ned::editor::JavaScriptMode().fold));
     REQUIRE(static_cast<bool>(ned::editor::TypeScriptMode().fold));
     REQUIRE(static_cast<bool>(ned::editor::TsxMode().fold));
+    REQUIRE(static_cast<bool>(ned::editor::ClojureMode().fold));
+    REQUIRE(static_cast<bool>(ned::editor::JankMode().fold));
 }
 
 TEST_CASE("Out-of-scope and non-tree-sitter modes have no fold hook", "[Mode]") {
@@ -437,6 +439,37 @@ TEST_CASE("TomlMode has a highlighting hook installed and classifies a string as
     REQUIRE(HasSpan(spans, 6, 13, SyntaxClass::String));
 }
 
+TEST_CASE("ClojureMode has a highlighting hook installed and classifies core constructs", "[Mode]") {
+    const auto mode = ned::editor::ClojureMode();
+    REQUIRE(mode.name == "clojure-mode");
+    REQUIRE(static_cast<bool>(mode.highlight));
+
+    const auto spans = mode.highlight("; a comment\n(defn greet [name]\n  (str \"hi \" name))\n");
+    // [0,12), not [0,11): sogaiu's COMMENT token regex is `(;|#!).*\n?` --
+    // the trailing newline is part of the comment node, unlike C/YAML/....
+    REQUIRE(HasSpan(spans, 0, 12, SyntaxClass::Comment));
+    REQUIRE(HasSpan(spans, 13, 17, SyntaxClass::Keyword)); // `defn` -> @keyword.function
+    REQUIRE(HasSpan(spans, 38, 43, SyntaxClass::String));  // `"hi "`
+}
+
+// JankMode is the same grammar/query as ClojureMode under its own name (jank
+// is a Clojure dialect with no tree-sitter grammar of its own -- see Mode.h)
+// -- assert both halves of that: distinct identity, identical classification.
+TEST_CASE("JankMode shares ClojureMode's grammar and query under its own name", "[Mode]") {
+    const auto mode = ned::editor::JankMode();
+    REQUIRE(mode.name == "jank-mode");
+    REQUIRE(static_cast<bool>(mode.highlight));
+
+    const auto spans = mode.highlight("(defn add [a b]\n  (cpp/+ a b))\n");
+    REQUIRE(HasSpan(spans, 1, 5, SyntaxClass::Keyword)); // `defn`, same query as clojure-mode
+}
+
+TEST_CASE("ClojureMode's fold query finds a top-level form's body", "[Mode]") {
+    const auto mode   = ned::editor::ClojureMode();
+    const auto blocks = mode.fold("(defn f\n  [x]\n  x)\n");
+    REQUIRE_FALSE(blocks.empty());
+}
+
 TEST_CASE("Each *Mode() sets lineCommentPrefix to its language's real line-comment token, or leaves it empty", "[Mode]") {
     REQUIRE(CMode().lineCommentPrefix == "//");
     REQUIRE(CppMode().lineCommentPrefix == "//");
@@ -449,6 +482,8 @@ TEST_CASE("Each *Mode() sets lineCommentPrefix to its language's real line-comme
     REQUIRE(ned::editor::YamlMode().lineCommentPrefix == "#");
     REQUIRE(ned::editor::TomlMode().lineCommentPrefix == "#");
     REQUIRE(JanetMode().lineCommentPrefix == ";");
+    REQUIRE(ned::editor::ClojureMode().lineCommentPrefix == ";");
+    REQUIRE(ned::editor::JankMode().lineCommentPrefix == ";");
     REQUIRE(OrgMode().lineCommentPrefix == "#");
     // No native single-line-comment token to toggle.
     REQUIRE(JsonMode().lineCommentPrefix.empty());
@@ -478,6 +513,8 @@ TEST_CASE("MarkdownMode and OrgMode default to wrapLines true; every other bundl
     REQUIRE_FALSE(BashMode().wrapLines);
     REQUIRE_FALSE(ned::editor::YamlMode().wrapLines);
     REQUIRE_FALSE(ned::editor::TomlMode().wrapLines);
+    REQUIRE_FALSE(ned::editor::ClojureMode().wrapLines);
+    REQUIRE_FALSE(ned::editor::JankMode().wrapLines);
 }
 
 // structural-selection-expansion follow-up: every TreeSitterModeFromLanguage-

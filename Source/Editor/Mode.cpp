@@ -562,6 +562,19 @@ Mode TomlMode() {
     return mode;
 }
 
+Mode ClojureMode() {
+    Mode mode = TreeSitterMode("clojure-mode", "clojure", treesitter::queries::kClojure, treesitter::queries::kClojureFolds);
+    mode.lineCommentPrefix = ";"; // Lisp-family convention, same as JanetMode
+    return mode;
+}
+
+Mode JankMode() {
+    // Same grammar and query as ClojureMode, distinct name -- see Mode.h.
+    Mode mode = TreeSitterMode("jank-mode", "clojure", treesitter::queries::kClojure, treesitter::queries::kClojureFolds);
+    mode.lineCommentPrefix = ";";
+    return mode;
+}
+
 Mode MarkdownMode() {
     Mode mode = TreeSitterMode("markdown-mode", "markdown", treesitter::queries::kMarkdown);
     // Tables follow-up: the second Mode in this codebase to ever construct

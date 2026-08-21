@@ -278,6 +278,14 @@ struct Mode {
 // see Languages.h/.cpp.
 [[nodiscard]] Mode YamlMode();
 [[nodiscard]] Mode TomlMode();
+// clojure-and-jank follow-up: one grammar (sogaiu/tree-sitter-clojure) and
+// one vendored query (queries::kClojure) serving two distinct mode names --
+// jank is a Clojure dialect with no tree-sitter grammar of its own, so
+// JankMode shares ClojureMode's grammar/query wholesale (the TsxMode/
+// TypeScriptMode sharing pattern) while keeping its own name so the mode
+// line reads (jank-mode) in a .jank buffer.
+[[nodiscard]] Mode ClojureMode();
+[[nodiscard]] Mode JankMode();
 // Tables follow-up: unlike every other TreeSitterMode() call above, this
 // one's returned Mode gets a real keymap binding (TAB -> markdown-table-
 // align, see Editor/Markdown.h) layered on afterward -- the second Mode in

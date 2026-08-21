@@ -27,6 +27,7 @@ const TSLanguage* tree_sitter_markdown_inline(void);
 const TSLanguage* tree_sitter_org(void);
 const TSLanguage* tree_sitter_yaml(void);
 const TSLanguage* tree_sitter_toml(void);
+const TSLanguage* tree_sitter_clojure(void);
 }
 
 namespace ned::editor::treesitter {
@@ -97,6 +98,14 @@ std::optional<Language> LanguageByName(std::string_view name) {
     }
     if (name == "toml") {
         return Language(tree_sitter_toml());
+    }
+    // sogaiu/tree-sitter-clojure -- same author as janet-simple above, and the
+    // grammar every real consumer (nvim-treesitter, clojure-ts-mode for Emacs)
+    // builds on. One entry serves both ClojureMode and JankMode: jank is a
+    // Clojure dialect with no tree-sitter grammar of its own anywhere (checked
+    // the jank-lang GitHub org and a repo-wide search directly, not assumed).
+    if (name == "clojure") {
+        return Language(tree_sitter_clojure());
     }
     return std::nullopt;
 }
