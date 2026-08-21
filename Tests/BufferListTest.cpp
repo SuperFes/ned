@@ -403,3 +403,60 @@ TEST_CASE("SetAsyncLoadThreshold governs which files go to the async opener", "[
 
     std::filesystem::remove(smallPath);
 }
+
+TEST_CASE("OpenFile returns the already-open buffer for a path instead of a duplicate", "[BufferList]") {
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_bufferlist_dedupe.txt";
+    {
+        std::ofstream file(path);
+        file << "content";
+    }
+
+    BufferList list;
+    Buffer&    first  = list.OpenFile(path);
+    Buffer&    second = list.OpenFile(path);
+
+    REQUIRE(&first == &second);
+    REQUIRE(list.Count() == 1); // never a "name<2>" duplicate of the same file
+
+    // A differently-spelled path to the same file dedupes too.
+    const std::filesystem::path dotted = path.parent_path() / "." / path.filename();
+    REQUIRE(&list.OpenFile(dotted) == &first);
+    REQUIRE(&list.OpenOrCreateFile(path) == &first);
+    REQUIRE(list.Count() == 1);
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("OpenOrCreateFile reuses a pending not-yet-saved buffer for the same path", "[BufferList]") {
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_bufferlist_dedupe_new.txt";
+    std::filesystem::remove(path); // must not exist -- the NewFile branch
+
+    BufferList list;
+    Buffer&    first  = list.OpenOrCreateFile(path);
+    Buffer&    second = list.OpenOrCreateFile(path);
+
+    REQUIRE(&first == &second);
+    REQUIRE(list.Count() == 1);
+}
+
+TEST_CASE("A dedupe hit does not re-fire the on-file-opened hook or reload content", "[BufferList]") {
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_bufferlist_dedupe_hook.txt";
+    {
+        std::ofstream file(path);
+        file << "original";
+    }
+
+    BufferList  list;
+    std::size_t opens = 0;
+    list.SetOnFileOpened([&](Buffer&) { ++opens; });
+
+    Buffer& buffer = list.OpenFile(path);
+    buffer.SetPoint(3);
+    buffer.InsertAtPoint("X"); // unsaved edit -- must survive the second open
+
+    Buffer& again = list.OpenFile(path);
+    REQUIRE(&again == &buffer);
+    REQUIRE(opens == 1);                      // revisit, not a fresh open
+    REQUIRE(again.Text() == "oriXginal");     // Buffer::Revert is the reload path, not OpenFile
+    std::filesystem::remove(path);
+}
