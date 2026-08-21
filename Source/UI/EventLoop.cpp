@@ -101,6 +101,14 @@ Size EventLoop::TerminalSize() const {
     return Size{static_cast<int>(x), static_cast<int>(y)};
 }
 
+bool EventLoop::CanTrueColor() const {
+    return notcurses_cantruecolor(nc_);
+}
+
+unsigned EventLoop::PaletteSize() const {
+    return notcurses_palette_size(nc_);
+}
+
 void EventLoop::Wake_() {
     const char byte = 0;
     // Best-effort: if the pipe is momentarily full the reader will still

@@ -897,6 +897,31 @@ each is, not by priority.
         Known cut: the session's `openFiles` order can't preserve a CLI-named file's
         old slot — `ned somefile` opens it first, so its tab leads and the session
         fills in behind (the documented Kate-style "named file wins focus" behavior).
+  - [x] ANSI fallback themes — **shipped 2026-08-20**, user report: on a framebuffer
+        console (`TERM=linux`, 8 colors, no truecolor/256) the TrueColor-heavy themes
+        quantized down to washed-out or black-on-black. `AnsiDarkTheme()`/
+        `AnsiLightTheme()` (`UI/Theme.cpp`) are curated Palette16-only counterparts,
+        deliberately restricted to indices 0-7 plus `Color::Default` (an 8-color
+        terminal's terminfo may or may not map the Bright 8-15 range to bold+base;
+        brightness rides `Brush::bold` where one exists instead). `main.cpp` swaps the
+        theme local in place via `AnsiFallbackFor(theme)` (pure, picks the variant by
+        background luminance — also correctly overrides a `--detect-theme` file, which
+        is just as TrueColor as the built-ins) right after `EventLoop` construction,
+        gated on the new `EventLoop::CanTrueColor()`/`PaletteSize()` (notcurses
+        capability queries — they need the live context, which is why the check can't
+        run before the widgets are built; safe because every widget holds `const
+        Theme&`/`const Brush&` into that same local and repaints fresh per frame).
+        `Color::Interpolate` gained an equal-endpoints short-circuit so the ANSI
+        themes' flattened (start == end) mode-line gradients stay real palette colors
+        instead of degrading to the RGB approximation table. Verified end-to-end on a
+        query-silent raw pty with TERM=linux (tmux is *not* a valid simulator here —
+        it answers notcurses' startup interrogation and advertises truecolor
+        regardless of TERM): a full frame rendered with only basic SGR 30-49 codes,
+        zero `38;2`/`38;5`. Remaining `Interpolate` accents (echo-area dim, blame
+        ages) still produce TrueColor and quantize on such terminals — accepted,
+        they're per-cell accents, not the theme-wide wash-out. Follow-up hook: the
+        ANSI pair could later be user-selectable/theme-file-expressible on capable
+        terminals too (the serialization already round-trips `x:<n>` palette tokens).
   - [ ] Rich built-in theme set. (Overlaps with Phase 6.)
 - **Companion tooling** (standalone utility programs shipped alongside `ned`, not part of
   the editor binary itself — the user's own framing: "towards the end of our dev, maybe
