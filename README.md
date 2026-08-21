@@ -11,7 +11,7 @@ LSP/DAP/VCS/task-runner configuration), not a fixed app with a config file bolte
 The terminal UI is a from-scratch widget/layout/event-loop layer built directly on
 [Notcurses](https://github.com/dankamongmen/notcurses).
 
-!(Docs/Screenshot_20260821_151203.png)
+![Screenshot](Docs/Screenshot_20260821_151203.png)
 
 ## Features
 
