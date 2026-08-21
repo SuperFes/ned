@@ -4,9 +4,14 @@
 #include <sstream>
 #include <string>
 
+#include <algorithm>
+#include <vector>
+
 #include "Editor/SyntaxTheme.h"
+#include "Editor/ThemeSetting.h"
 #include "UI/Theme.h"
 #include "UI/ThemeFile.h"
+#include "UI/ThemeRegistry.h"
 
 using ned::editor::SetSyntaxBackground;
 using ned::editor::SetSyntaxBold;
@@ -156,4 +161,39 @@ TEST_CASE("AnsiFallbackFor picks the variant matching the theme's polarity", "[T
     Theme detectedDark      = DarkTheme();
     detectedDark.background = Color::RGB(0x1e1e2e); // a --detect-theme file from a dark terminal
     REQUIRE(AnsiFallbackFor(detectedDark).name == "ansi-dark");
+}
+
+// rich-theme-set follow-up (Phase 1): the name registry.
+
+TEST_CASE("ThemeByName resolves every registered name to a theme carrying that exact name", "[Theme]") {
+    const std::vector<std::string> names = ned::ui::ThemeNames();
+    REQUIRE_FALSE(names.empty());
+
+    for (const std::string& name : names) {
+        const auto theme = ned::ui::ThemeByName(name);
+        REQUIRE(theme.has_value());
+        // The table's key and the factory's own .name must agree -- the
+        // picker previews by table key and reports theme.name-adjacent
+        // strings, so a mismatch would be a real, user-visible confusion.
+        REQUIRE(theme->name == name);
+    }
+}
+
+TEST_CASE("ThemeNames is sorted and covers the four built-ins; unknown names resolve to nullopt", "[Theme]") {
+    const std::vector<std::string> names = ned::ui::ThemeNames();
+    REQUIRE(std::is_sorted(names.begin(), names.end()));
+    for (const char* expected : {"dark", "light", "ansi-dark", "ansi-light"}) {
+        REQUIRE(std::find(names.begin(), names.end(), expected) != names.end());
+    }
+    REQUIRE_FALSE(ned::ui::ThemeByName("no-such-theme").has_value());
+}
+
+TEST_CASE("PreferredThemeName round-trips and clears via empty string", "[Theme]") {
+    REQUIRE(ned::editor::PreferredThemeName().empty()); // default: no preference
+
+    ned::editor::SetPreferredThemeName("ansi-dark");
+    REQUIRE(ned::editor::PreferredThemeName() == "ansi-dark");
+
+    ned::editor::SetPreferredThemeName("");
+    REQUIRE(ned::editor::PreferredThemeName().empty());
 }

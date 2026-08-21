@@ -313,6 +313,7 @@ std::unique_ptr<Pane> WindowManager::MakePane(text::Buffer& buffer, editor::Mode
         [this](editor::InteractiveRequest request) { HandleWindowRequest(request); },
         [this](text::Buffer& closedBuffer) { HandleBufferClosed(closedBuffer); });
     pane->SetEventLoop(eventLoop_);
+    pane->Buffer().SetThemeApplier(themeApplier_);
     return pane;
 }
 
@@ -327,6 +328,13 @@ void WindowManager::SetLspManager(editor::lsp::LspManager* lspManager) {
     lspManager_ = lspManager;
     for (Pane* pane : Leaves()) {
         pane->Buffer().SetLspManager(lspManager);
+    }
+}
+
+void WindowManager::SetThemeApplier(std::function<void(const Theme&)> applier) {
+    themeApplier_ = std::move(applier);
+    for (Pane* pane : Leaves()) {
+        pane->Buffer().SetThemeApplier(themeApplier_);
     }
 }
 

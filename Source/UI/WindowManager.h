@@ -220,6 +220,13 @@ class WindowManager {
     // preview-swap, which isn't pane-driven at all) triggered it.
     void SetLspManager(editor::lsp::LspManager* lspManager);
 
+    // rich-theme-set follow-up (Phase 1): same "forwarded to every pane,
+    // present and future" shape as SetProjectSidebar/SetLspManager -- the
+    // select-theme picker runs in whichever pane has focus, so every pane's
+    // BufferView needs the applier (see BufferView::SetThemeApplier's own
+    // doc comment for what main.cpp wires in).
+    void SetThemeApplier(std::function<void(const Theme&)> applier);
+
     // task-runner follow-up: same "forwarded to every pane, present and
     // future" shape as SetProjectSidebar/SetLspManager above.
     void SetTaskRunner(editor::tasks::TaskRunner* taskRunner);
@@ -444,20 +451,21 @@ class WindowManager {
     [[nodiscard]] Pane*              FocusedPane();
     [[nodiscard]] std::vector<Pane*> Leaves() const;
 
-    text::KillRing&                killRing_;
-    editor::RegisterTable&         registers_;
-    text::BufferList&              bufferList_;
-    const editor::CommandRegistry& registry_;
-    const editor::Keymap&          janetKeymap_;
-    const editor::Keymap&          globalKeymap_;
-    std::string&                   statusMessage_;
-    const Theme&                   theme_;
-    ProjectSidebar*                projectSidebar_ = nullptr;
-    editor::lsp::LspManager*       lspManager_     = nullptr;
-    editor::tasks::TaskRunner*     taskRunner_     = nullptr;
-    editor::vcs::VcsRunner*        vcsRunner_      = nullptr;
-    editor::dap::DapManager*       dapManager_     = nullptr; // see SetDapManager
-    EventLoop*                     eventLoop_      = nullptr; // see SetEventLoop
+    text::KillRing&                   killRing_;
+    editor::RegisterTable&            registers_;
+    text::BufferList&                 bufferList_;
+    const editor::CommandRegistry&    registry_;
+    const editor::Keymap&             janetKeymap_;
+    const editor::Keymap&             globalKeymap_;
+    std::string&                      statusMessage_;
+    const Theme&                      theme_;
+    ProjectSidebar*                   projectSidebar_ = nullptr;
+    editor::lsp::LspManager*          lspManager_     = nullptr;
+    editor::tasks::TaskRunner*        taskRunner_     = nullptr;
+    editor::vcs::VcsRunner*           vcsRunner_      = nullptr;
+    editor::dap::DapManager*          dapManager_     = nullptr; // see SetDapManager
+    EventLoop*                        eventLoop_      = nullptr; // see SetEventLoop
+    std::function<void(const Theme&)> themeApplier_;             // see SetThemeApplier
 
     std::unique_ptr<WindowNode> root_;
     Container                   rootComponent_{Axis::Vertical, {}};

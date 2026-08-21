@@ -33,6 +33,7 @@
 #include "KeyTranslation.h"
 #include "Text/BinaryDetect.h"
 #include "Text/Utf8.h"
+#include "UI/ThemeRegistry.h"
 
 namespace ned::ui {
 
@@ -2429,6 +2430,11 @@ bool BufferView::OnKeyEvent(const Event& event) {
         ClampPointToNarrowing();
         return true;
     }
+    if (inputMode_ == InputMode::SelectTheme) {
+        HandleSelectThemeKey(*chord);
+        ClampPointToNarrowing();
+        return true;
+    }
     if (inputMode_ == InputMode::PointToRegister || inputMode_ == InputMode::JumpToRegister ||
         inputMode_ == InputMode::CopyToRegister || inputMode_ == InputMode::InsertRegister) {
         HandleRegisterKey(*chord);
@@ -3675,6 +3681,35 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             RefreshProjectFindFileStatus();
             return;
         }
+        // rich-theme-set follow-up (Phase 1): ProjectFindFile's "populate
+        // and show the full candidate list right away" shape over
+        // ui::ThemeNames(). No applier wired (headless BufferView tests
+        // that never call SetThemeApplier) means there's nothing a picked
+        // theme could be applied *to*, so report instead of opening a
+        // session whose Enter would silently do nothing. The initial
+        // selection starts on the currently-active theme's own name when
+        // it's in the list (it isn't for e.g. a --detect-theme file's
+        // "detected") -- so opening the picker previews no change at all
+        // until the user actually moves.
+        case editor::InteractiveRequest::SelectTheme: {
+            if (!themeApplier_) {
+                statusMessage_ = "Theme switching is not wired up.";
+                return;
+            }
+            selectThemeCandidates_ = ThemeNames();
+            themeBeforePreview_    = theme_;
+            inputMode_             = InputMode::SelectTheme;
+            prompt_.emplace("Theme (fuzzy): ");
+            selectThemeSelection_ = 0;
+            for (std::size_t i = 0; i < selectThemeCandidates_.size(); ++i) {
+                if (selectThemeCandidates_[i] == theme_.name) {
+                    selectThemeSelection_ = i;
+                    break;
+                }
+            }
+            RefreshSelectThemeStatus();
+            return;
+        }
         // kmacro-start-macro/kmacro-end-or-call-macro follow-up: one-shot
         // direct actions, same shape as ToggleProjectSidebar -- inputMode_
         // stays Normal, no prompt session. The actual recording state lives
@@ -3885,6 +3920,11 @@ void BufferView::EndInteractiveSession() {
     executeCommandSelection_  = 0;
     projectFindFileSelection_ = 0;
     projectFindFileCandidates_.clear(); // cached only for the duration of one session -- see its own doc comment in BufferView.h
+    selectThemeSelection_ = 0;
+    selectThemeCandidates_.clear();
+    // The cancel path re-applies this snapshot *before* calling here; the
+    // commit path applies the selected theme instead and lets this drop.
+    themeBeforePreview_.reset();
     pendingCodeActions_.clear();
     codeActionSelection_ = 0;
     pendingDefinitions_.clear();
@@ -5782,6 +5822,112 @@ void BufferView::HandleProjectFindFileKey(const editor::KeyChord& chord) {
     // Anything else is ignored -- stay in the prompt.
 }
 
+// rich-theme-set follow-up (Phase 1) -- see the declarations' own doc
+// comments in BufferView.h for the session's overall shape.
+void BufferView::RefreshSelectThemeStatus() {
+    const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(selectThemeCandidates_, prompt_->Text());
+    selectThemeSelection_                 = ranked.empty() ? 0 : std::min(selectThemeSelection_, ranked.size() - 1);
+
+    if (ranked.empty()) {
+        statusMessage_ = prompt_->StatusText();
+        return;
+    }
+    const std::string prefix  = prompt_->StatusText() + "  {";
+    const std::size_t columns = AvailableCandidateColumns(prefix.size());
+    statusMessage_            = prefix + FormatFuzzyCandidates(ranked, selectThemeSelection_, columns) + "}";
+}
+
+void BufferView::ApplySelectedThemePreview() {
+    if (!themeApplier_) {
+        return;
+    }
+    const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(selectThemeCandidates_, prompt_->Text());
+    if (ranked.empty()) {
+        // Nothing highlighted to preview -- show what the session started
+        // on rather than leaving whichever candidate was last previewed.
+        if (themeBeforePreview_) {
+            themeApplier_(*themeBeforePreview_);
+        }
+        return;
+    }
+    if (const auto named = ThemeByName(ranked[std::min(selectThemeSelection_, ranked.size() - 1)])) {
+        themeApplier_(*named);
+    }
+}
+
+void BufferView::HandleSelectThemeKey(const editor::KeyChord& chord) {
+    if (chord.Special == editor::SpecialKey::Enter) {
+        const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(selectThemeCandidates_, prompt_->Text());
+
+        if (ranked.empty()) {
+            // No candidate was showing either (ApplySelectedThemePreview's
+            // own empty-ranked branch already restored the snapshot when
+            // the list emptied), so this is a plain report-and-leave.
+            statusMessage_ = "No theme matching \"" + prompt_->Text() + "\"";
+            EndInteractiveSession();
+            return;
+        }
+
+        // Usually the highlighted candidate is already applied (every
+        // selection/rank change previews), but not always: an immediate
+        // Enter on a fresh session never previewed anything (and when the
+        // active theme isn't in the list at all -- a --detect-theme file --
+        // the initial highlight isn't the active theme either). Applying
+        // explicitly covers both and is a no-op re-apply otherwise.
+        const std::string selected = ranked[std::min(selectThemeSelection_, ranked.size() - 1)];
+        if (const auto named = ThemeByName(selected)) {
+            themeApplier_(*named);
+        }
+        statusMessage_ = "Theme: " + selected;
+        EndInteractiveSession();
+        return;
+    }
+    if (IsQuit(chord)) {
+        if (themeApplier_ && themeBeforePreview_) {
+            themeApplier_(*themeBeforePreview_);
+        }
+        statusMessage_ = "Theme selection cancelled.";
+        EndInteractiveSession();
+        return;
+    }
+
+    if (chord.Special == editor::SpecialKey::Down) {
+        const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(selectThemeCandidates_, prompt_->Text());
+        if (!ranked.empty() && selectThemeSelection_ + 1 < ranked.size()) {
+            ++selectThemeSelection_;
+        }
+        RefreshSelectThemeStatus();
+        ApplySelectedThemePreview();
+        return;
+    }
+    if (chord.Special == editor::SpecialKey::Up) {
+        if (selectThemeSelection_ > 0) {
+            --selectThemeSelection_;
+        }
+        RefreshSelectThemeStatus();
+        ApplySelectedThemePreview();
+        return;
+    }
+
+    // Same "typing re-snaps to the top match" reasoning as
+    // HandleExecuteCommandKey -- see that method's own comment.
+    if (chord.Special == editor::SpecialKey::Backspace) {
+        prompt_->DeleteChar();
+        selectThemeSelection_ = 0;
+        RefreshSelectThemeStatus();
+        ApplySelectedThemePreview();
+        return;
+    }
+    if (IsPlainCharacter(chord)) {
+        prompt_->AppendChar(chord.Codepoint);
+        selectThemeSelection_ = 0;
+        RefreshSelectThemeStatus();
+        ApplySelectedThemePreview();
+        return;
+    }
+    // Anything else is ignored -- stay in the prompt.
+}
+
 void BufferView::CloseBufferNow(text::Buffer& buffer) {
     const bool        wasActive = (&activeBuffer_.Get() == &buffer);
     const std::string name      = buffer.Name();
@@ -6069,6 +6215,10 @@ void BufferView::SetScrollArrows(ScrollArrowButton* up, ScrollArrowButton* down)
 
 void BufferView::SetProjectSidebar(ProjectSidebar* sidebar) {
     projectSidebar_ = sidebar;
+}
+
+void BufferView::SetThemeApplier(std::function<void(const Theme&)> applier) {
+    themeApplier_ = std::move(applier);
 }
 
 void BufferView::SetMinimap(Minimap* minimap, Widget* scrollColumn) {

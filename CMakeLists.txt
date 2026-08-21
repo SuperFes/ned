@@ -311,6 +311,7 @@ add_library(ned_lib STATIC
         Source/Editor/FinalNewline.cpp
         Source/Editor/FormatOnSave.cpp
         Source/Editor/TabWidth.cpp
+        Source/Editor/ThemeSetting.cpp
         Source/Editor/HighlightSettings.cpp
         Source/Editor/MinimapSettings.cpp
         Source/Editor/GitIgnore.cpp
@@ -370,6 +371,7 @@ add_library(ned_lib STATIC
         Source/UI/EchoArea.cpp
         Source/UI/Theme.cpp
         Source/UI/ThemePalette.cpp
+        Source/UI/ThemeRegistry.cpp
         Source/UI/ThemeFile.cpp
         Source/UI/TerminalColorProbe.cpp)
 

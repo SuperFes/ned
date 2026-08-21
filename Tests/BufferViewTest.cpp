@@ -5010,6 +5010,101 @@ TEST_CASE("project-find-file with no files under the project root reports so and
     std::filesystem::remove_all(dir);
 }
 
+// rich-theme-set follow-up (Phase 1): the select-theme picker. Same fuzzy
+// session shape as project-find-file above, entered via M-x (it has no
+// dedicated chord), with the one genuine addition under test: live preview
+// through the SetThemeApplier callback on every selection/rank change,
+// committed by Enter, reverted by Escape.
+
+namespace {
+
+// Opens the select-theme session via M-x and records every theme the
+// applier is handed, by name.
+struct ThemePickerHarness {
+    Fixture                  fixture;
+    ned::ui::BufferView      view = fixture.View();
+    std::vector<std::string> applied;
+
+    ThemePickerHarness() {
+        view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+        view.SetThemeApplier([this](const ned::ui::Theme& theme) { applied.push_back(theme.name); });
+        view.OnEvent(ned::ui::test::Alt('x'));
+        TypeText(view, "select-theme");
+        view.OnEvent(ned::ui::test::Return());
+    }
+};
+
+} // namespace
+
+TEST_CASE("select-theme opens on the active theme's own name, previewing nothing", "[BufferView]") {
+    ThemePickerHarness h;
+
+    REQUIRE(h.fixture.statusMessage.rfind("Theme (fuzzy): ", 0) == 0);
+    // The Fixture's active theme is DarkTheme() -- its name is highlighted,
+    // not merely listed, so an immediate Enter is a no-change commit.
+    REQUIRE(h.fixture.statusMessage.find("[dark]") != std::string::npos);
+    REQUIRE(h.fixture.statusMessage.find("ansi-dark") != std::string::npos);
+    REQUIRE(h.applied.empty());
+}
+
+TEST_CASE("Arrowing through select-theme previews each highlighted theme live", "[BufferView]") {
+    ThemePickerHarness h;
+
+    // Candidates are sorted: ansi-dark, ansi-light, dark, light -- the
+    // session opens highlighting "dark" (index 2), so Down highlights
+    // "light" and Up comes back to "dark", each previewing as it goes.
+    h.view.OnEvent(ned::ui::test::ArrowDown());
+    REQUIRE(h.fixture.statusMessage.find("[light]") != std::string::npos);
+    REQUIRE(h.applied == std::vector<std::string>{"light"});
+
+    h.view.OnEvent(ned::ui::test::ArrowUp());
+    REQUIRE(h.fixture.statusMessage.find("[dark]") != std::string::npos);
+    REQUIRE(h.applied == std::vector<std::string>{"light", "dark"});
+}
+
+TEST_CASE("Enter commits the highlighted theme and typing narrows with live preview", "[BufferView]") {
+    ThemePickerHarness h;
+
+    TypeText(h.view, "ansi-l");
+    REQUIRE(h.fixture.statusMessage.find("[ansi-light]") != std::string::npos);
+    REQUIRE_FALSE(h.applied.empty());
+    REQUIRE(h.applied.back() == "ansi-light");
+
+    h.view.OnEvent(ned::ui::test::Return());
+    REQUIRE(h.fixture.statusMessage == "Theme: ansi-light");
+    REQUIRE(h.applied.back() == "ansi-light");
+
+    h.view.OnEvent(ned::ui::test::Character("z")); // back to normal editing
+    REQUIRE(h.fixture.buffer.Text() == "z");
+}
+
+TEST_CASE("Escape cancels select-theme and restores the pre-session theme exactly", "[BufferView]") {
+    ThemePickerHarness h;
+
+    h.view.OnEvent(ned::ui::test::ArrowDown()); // preview "light"
+    REQUIRE(h.applied == std::vector<std::string>{"light"});
+
+    h.view.OnEvent(ned::ui::test::Escape());
+    REQUIRE(h.fixture.statusMessage == "Theme selection cancelled.");
+    // The revert re-applies the snapshot taken at session start -- the
+    // Fixture's own DarkTheme(), by value, not by registry lookup.
+    REQUIRE(h.applied == std::vector<std::string>{"light", "dark"});
+}
+
+TEST_CASE("select-theme without a wired applier reports instead of opening a session", "[BufferView]") {
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "select-theme");
+    view.OnEvent(ned::ui::test::Return());
+
+    REQUIRE(fixture.statusMessage == "Theme switching is not wired up.");
+    view.OnEvent(ned::ui::test::Character("z")); // proves we're in Normal mode, not a stuck prompt
+    REQUIRE(fixture.buffer.Text() == "z");
+}
+
 TEST_CASE("The visible candidate window is bounded by the real terminal width, not a fixed count", "[BufferView]") {
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_bufferview_test_project_find_file_width";
     std::filesystem::remove_all(dir);

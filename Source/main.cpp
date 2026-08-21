@@ -27,6 +27,7 @@
 #include "Editor/Session.h"
 #include "Editor/TabWidth.h"
 #include "Editor/Tasks/TaskRunner.h"
+#include "Editor/ThemeSetting.h"
 #include "Editor/Vcs/VcsRunner.h"
 
 #include "Janet/EditorBindings.h"
@@ -47,6 +48,7 @@
 #include "UI/TerminalColorProbe.h"
 #include "UI/Theme.h"
 #include "UI/ThemeFile.h"
+#include "UI/ThemeRegistry.h"
 #include "UI/WindowManager.h"
 
 using namespace ned::ui;
@@ -422,14 +424,26 @@ int main(int argc, char** argv) {
     // viewed, not the pane; a pane's Mode is only ever "whatever its current
     // buffer resolves to."
     //
-    // Uses a previously `ned --detect-theme`-generated file if one exists
-    // (never probes the terminal on a normal launch -- see
-    // UI/TerminalColorProbe.h), else the fixed DarkTheme() default. Theme
-    // selection is still not Janet-scriptable -- see ROADMAP.md's Phase 6
-    // notes for that scope call.
+    // Theme precedence (rich-theme-set follow-up, Phase 1): an explicit
+    // init.janet (ned/set-theme "name") wins -- it's deliberate user config,
+    // and init.janet already loaded above, so the preference is set by now
+    // -- then a previously `ned --detect-theme`-generated file if one
+    // exists (never probes the terminal on a normal launch -- see
+    // UI/TerminalColorProbe.h), else the fixed DarkTheme() default. An
+    // unresolvable configured name falls through to the next source rather
+    // than aborting, reported via the status line the same way a failed
+    // startup file open already is.
     // Not const: the ansi-fallback-theme check below (which can't run until
-    // EventLoop exists) may swap the whole value in place.
-    ned::ui::Theme theme = [] {
+    // EventLoop exists) may swap the whole value in place, and the
+    // select-theme picker's applier (wired below) reassigns it live.
+    ned::ui::Theme theme = [&statusMessage] {
+        const std::string preferred = ned::editor::PreferredThemeName();
+        if (!preferred.empty()) {
+            if (auto named = ned::ui::ThemeByName(preferred)) {
+                return *std::move(named);
+            }
+            statusMessage = "Unknown theme \"" + preferred + "\" (ned/set-theme)";
+        }
         try {
             if (const auto loaded = ned::ui::LoadThemeFile(ned::ui::ThemeFilePath())) {
                 return *loaded;
@@ -666,9 +680,24 @@ int main(int argc, char** argv) {
     // need the live notcurses context EventLoop's constructor just created.
     // This also intentionally overrides a --detect-theme file, which is
     // just as TrueColor as the built-ins and washes out the same way.
-    if (!eventLoop.CanTrueColor() && eventLoop.PaletteSize() < 256) {
+    const bool limitedTerminal = !eventLoop.CanTrueColor() && eventLoop.PaletteSize() < 256;
+    if (limitedTerminal) {
         theme = ned::ui::AnsiFallbackFor(theme);
     }
+
+    // rich-theme-set follow-up (Phase 1): the select-theme picker's applier
+    // -- the same in-place assignment the ANSI fallback just above
+    // established as safe (every widget holds `const Theme&`, or a
+    // `const Brush&` into it, bound to this same local and repaints fresh
+    // every frame). Routing the limited-terminal gate through here too
+    // means a live-picked TrueColor theme still degrades to its ANSI
+    // counterpart on a terminal that can't show it, exactly like the
+    // startup path. `theme` outlives eventLoop.Run() below as a plain
+    // local, so the reference captures are safe for every event this
+    // applier could ever run from.
+    windowManager->SetThemeApplier([&theme, limitedTerminal](const ned::ui::Theme& next) {
+        theme = limitedTerminal ? ned::ui::AnsiFallbackFor(next) : next;
+    });
 
     // LSP client follow-up: constructed here, not alongside bufferList/
     // killRing/registers above, since it needs a real EventLoop& to marshal
