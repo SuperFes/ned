@@ -557,7 +557,7 @@ auto main(int argc, char** argv) -> int {
     windowManager->SetProjectSidebar(projectSidebar.get());
 
     projectSidebar->SetOnBufferClosed(
-        [wm = windowManager.get()](ned::text::Buffer& buffer) { wm->NotifyBufferClosing(buffer); });
+        [wm = windowManager.get()](ned::text::Buffer& buffer) -> void { wm->NotifyBufferClosing(buffer); });
 
     projectSidebar->SetOnBinaryFileOpenRequest(
         [wm = windowManager.get()](const std::filesystem::path& path) { wm->RequestOpenBinaryFile(path); });

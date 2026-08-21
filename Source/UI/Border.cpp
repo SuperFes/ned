@@ -4,7 +4,7 @@
 
 namespace ned::ui {
 
-const BorderGlyphs& RoundedBorderGlyphs() {
+auto RoundedBorderGlyphs() -> const BorderGlyphs& {
     static const BorderGlyphs glyphs{
         .topLeft     = U'╭',
         .topRight    = U'╮',
@@ -38,12 +38,14 @@ void DrawBorder(Canvas& c, const Brush& brush, const BorderGlyphs& glyphs) {
         put(0, 0, vertical);
         return;
     }
+
     if (height == 1) {
         for (int x = 0; x < width; ++x) {
             put(x, 0, horizontal);
         }
         return;
     }
+
     if (width == 1) {
         for (int y = 0; y < height; ++y) {
             put(0, y, vertical);
@@ -55,10 +57,12 @@ void DrawBorder(Canvas& c, const Brush& brush, const BorderGlyphs& glyphs) {
         put(x, 0, horizontal);
         put(x, height - 1, horizontal);
     }
+
     for (int y = 1; y < height - 1; ++y) {
         put(0, y, vertical);
         put(width - 1, y, vertical);
     }
+
     put(0, 0, text::EncodeCodepointUtf8(glyphs.topLeft));
     put(width - 1, 0, text::EncodeCodepointUtf8(glyphs.topRight));
     put(0, height - 1, text::EncodeCodepointUtf8(glyphs.bottomLeft));
