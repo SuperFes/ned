@@ -1,75 +1,19 @@
 #include <catch2/catch_test_macros.hpp>
 
-#include <map>
-#include <sstream>
 #include <string>
 
+#include "ThemeTestSupport.h"
 #include "UI/Theme.h"
-#include "UI/ThemeFile.h"
 #include "UI/ThemePalette.h"
 
+using ned::tests::RequireForegroundContrast;
+using ned::tests::SerializedColors;
 using ned::ui::Color;
 using ned::ui::Theme;
 using ned::ui::ThemeFromPalette;
 using ned::ui::ThemePalette;
 
 namespace {
-
-// Rec. 601 luma, same formula AnsiFallbackFor uses (Theme.cpp) -- good
-// enough to order colors by perceived brightness for a contrast floor.
-int Luma(const Color& c) {
-    REQUIRE(c.kind == Color::Kind::TrueColor); // palette-derived themes are TrueColor throughout
-    return (299 * c.red + 587 * c.green + 114 * c.blue) / 1000;
-}
-
-std::map<std::string, Color> SerializedColors(const Theme& theme) {
-    std::map<std::string, Color> result;
-    std::istringstream           in{ned::ui::SerializeTheme(theme)};
-    std::string                  line;
-    while (std::getline(in, line)) {
-        const auto eq = line.find('=');
-        REQUIRE(eq != std::string::npos);
-        const auto color = ned::ui::ParseColorToken(std::string_view(line).substr(eq + 1));
-        REQUIRE(color.has_value());
-        result.emplace(line.substr(0, eq), *color);
-    }
-    return result;
-}
-
-// The automated black-on-black guard (rich-theme-set Phase 0): every
-// serialized *_foreground field must clear a luma-delta floor against the
-// background it actually renders over -- its own Brush's background when
-// that Brush sets one, the theme background otherwise. Two special cases:
-// mode_line_foreground renders over the gradient, so it's checked against
-// both endpoints instead; and the deliberately-quiet chrome (the border
-// lines, the disabled scroll bar -- structural marks designed to recede,
-// like DarkTheme's own near-background 0x3a3a50 border) gets a third of the
-// floor rather than a full skip, so "quiet" can never regress to
-// "invisible."
-void RequireForegroundContrast(const Theme& theme, int floor) {
-    const auto colors = SerializedColors(theme);
-
-    for (const auto& [key, color] : colors) {
-        const std::string suffix = "_foreground";
-        if (key.size() < suffix.size() || key.compare(key.size() - suffix.size(), suffix.size(), suffix) != 0) {
-            continue;
-        }
-        INFO(key);
-        const bool quietChrome = key == "scroll_bar_disabled_foreground" || key == "border_foreground";
-        const int  keyFloor    = quietChrome ? floor / 3 : floor;
-        if (key == "mode_line_foreground") {
-            REQUIRE(std::abs(Luma(color) - Luma(colors.at("mode_line_gradient_start"))) >= keyFloor);
-            REQUIRE(std::abs(Luma(color) - Luma(colors.at("mode_line_gradient_end"))) >= keyFloor);
-            continue;
-        }
-        Color      against    = theme.background;
-        const auto pairedBgIt = colors.find(key.substr(0, key.size() - suffix.size()) + "_background");
-        if (pairedBgIt != colors.end() && pairedBgIt->second.kind != Color::Kind::Default) {
-            against = pairedBgIt->second;
-        }
-        REQUIRE(std::abs(Luma(color) - Luma(against)) >= keyFloor);
-    }
-}
 
 // A One-Dark-flavored sample palette -- realistic values, not the future
 // bundled theme itself (that's Phase 2/3 data; this file tests the

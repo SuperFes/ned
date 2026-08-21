@@ -966,11 +966,24 @@ each is, not by priority.
           `send-keys M-x` gets swallowed as literal input under Notcurses — send
           `Escape`, pause, `x` instead; unit tests' constructed Alt events are
           unaffected).
-        - [ ] *Phase 2 — the original eight.* major-dark/-light (vivid saturated),
-          minor-dark/-light (muted/pastel), high-contrast-dark/-light (pure
-          black/white backgrounds, tested against a raised contrast floor),
-          mono-dark/-light (single-hue ramps; needs a small derivation variant since
-          accent hues collapse — bold/italic/underline carry the semantics instead).
+        - [x] *Phase 2 — the original eight* (**shipped 2026-08-20**). major-dark/
+          -light (vivid saturated), minor-dark/-light (muted/pastel),
+          high-contrast-dark/-light (pure black/white backgrounds, held to a raised
+          contrast floor — 90 luma delta vs. the standard 40 — by
+          `BundledThemesTest`, making "high contrast" a tested property rather than
+          a name), mono-dark/-light (grayscale). All eight are `ThemePalette`
+          literals inside `ThemeRegistry.cpp`'s own anonymous namespace, reachable
+          by name only — no exported factories, tests go through `ThemeByName` like
+          every real consumer. One deviation from the plan above: monochrome needed
+          *no* derivation variant — filling the eight accent hue slots with
+          grayscale luminance shades sends a single-ramp palette through the
+          standard `ThemeFromPalette` mapping unchanged (BrushFor's bold/italic
+          traits carry what hue can't), and a grayscale-invariant test (every
+          serialized color r==g==b, Default pass-throughs excepted) keeps it
+          honestly monochrome. Shared test helpers factored into
+          `Tests/ThemeTestSupport.h` for Phase 3's clones to reuse. Verified live
+          in tmux: all eight committed via the select-theme picker, each frame
+          painting exactly its palette's values.
         - [ ] *Phase 3 — clones (~14).* Solarized dark/light, Gruvbox dark/light,
           Nord, Dracula, Monokai, One Dark/One Light, Catppuccin Mocha/Latte, Tokyo
           Night night/day (stretch: Rosé Pine, Everforest, Zenburn, remaining

@@ -5050,16 +5050,17 @@ TEST_CASE("select-theme opens on the active theme's own name, previewing nothing
 TEST_CASE("Arrowing through select-theme previews each highlighted theme live", "[BufferView]") {
     ThemePickerHarness h;
 
-    // Candidates are sorted: ansi-dark, ansi-light, dark, light -- the
-    // session opens highlighting "dark" (index 2), so Down highlights
-    // "light" and Up comes back to "dark", each previewing as it goes.
+    // Candidates are the sorted registry names -- the session opens
+    // highlighting "dark", so Down highlights whichever name sorts next
+    // ("high-contrast-dark" as of Phase 2's additions) and Up comes back to
+    // "dark", each previewing as it goes.
     h.view.OnEvent(ned::ui::test::ArrowDown());
-    REQUIRE(h.fixture.statusMessage.find("[light]") != std::string::npos);
-    REQUIRE(h.applied == std::vector<std::string>{"light"});
+    REQUIRE(h.fixture.statusMessage.find("[high-contrast-dark]") != std::string::npos);
+    REQUIRE(h.applied == std::vector<std::string>{"high-contrast-dark"});
 
     h.view.OnEvent(ned::ui::test::ArrowUp());
     REQUIRE(h.fixture.statusMessage.find("[dark]") != std::string::npos);
-    REQUIRE(h.applied == std::vector<std::string>{"light", "dark"});
+    REQUIRE(h.applied == std::vector<std::string>{"high-contrast-dark", "dark"});
 }
 
 TEST_CASE("Enter commits the highlighted theme and typing narrows with live preview", "[BufferView]") {
@@ -5081,14 +5082,14 @@ TEST_CASE("Enter commits the highlighted theme and typing narrows with live prev
 TEST_CASE("Escape cancels select-theme and restores the pre-session theme exactly", "[BufferView]") {
     ThemePickerHarness h;
 
-    h.view.OnEvent(ned::ui::test::ArrowDown()); // preview "light"
-    REQUIRE(h.applied == std::vector<std::string>{"light"});
+    h.view.OnEvent(ned::ui::test::ArrowDown()); // preview the name sorting after "dark"
+    REQUIRE(h.applied == std::vector<std::string>{"high-contrast-dark"});
 
     h.view.OnEvent(ned::ui::test::Escape());
     REQUIRE(h.fixture.statusMessage == "Theme selection cancelled.");
     // The revert re-applies the snapshot taken at session start -- the
     // Fixture's own DarkTheme(), by value, not by registry lookup.
-    REQUIRE(h.applied == std::vector<std::string>{"light", "dark"});
+    REQUIRE(h.applied == std::vector<std::string>{"high-contrast-dark", "dark"});
 }
 
 TEST_CASE("select-theme without a wired applier reports instead of opening a session", "[BufferView]") {
