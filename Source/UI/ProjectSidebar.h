@@ -116,6 +116,34 @@ class ProjectSidebar : public Widget {
     // WindowManager::TakeFocus.
     void SetOnFocusReturn(std::function<void()> handler);
 
+    // focus-project-sidebar's (C-c p) entry point: expands a collapsed
+    // sidebar first (focus into a 1-column strip would be meaningless) and
+    // remembers that it *was* collapsed, so returning focus (Escape/C-g, or
+    // Enter opening a file) collapses it again -- a hidden sidebar summoned
+    // by keyboard goes back to hidden when the keyboard leaves, instead of
+    // staying expanded as a side effect of a quick file jump.
+    void TakeKeyboardFocus();
+
+    // Called with the new width when a divider drag ends having actually
+    // moved it (sidebar-width-memory follow-up). Unset (the default) is a
+    // safe no-op, matching every other Set* hook here; main.cpp wires this
+    // to editor::SetVariable("sidebar-width") so the last committed width
+    // becomes the global default for future runs -- the persistence policy
+    // deliberately lives at the wiring site, not in this widget, so
+    // unit-test drags never touch the real variables.json.
+    void SetOnWidthCommitted(std::function<void(int)> handler);
+
+    // Called with the new collapse state when the *user* deliberately
+    // toggles it (toggle-project-sidebar, or a divider/strip double-click)
+    // -- never for programmatic changes: session restore, and
+    // TakeKeyboardFocus's transient expand plus its focus-return restore,
+    // go through SetCollapsed directly and stay uncommitted, so a quick
+    // C-c p file jump can't overwrite the remembered preference. Unset is
+    // a safe no-op; main.cpp wires this to
+    // editor::SetVariable("sidebar-visible"), SetOnWidthCommitted's exact
+    // pattern.
+    void SetOnCollapseCommitted(std::function<void(bool)> handler);
+
     // Current desired width in columns -- see this file's own header
     // comment for why main.cpp's composition root reads this every frame
     // rather than this widget mutating a stored layout policy directly.
@@ -230,6 +258,8 @@ class ProjectSidebar : public Widget {
     bool resizing_            = false;
     int  resizeAnchorGlobalX_ = 0; // this Row-space mouse x when the drag started
     int  resizeAnchorWidth_   = 0; // this widget's own width when the drag started
+    int  resizeStartWidth_    = 0; // width_ at BeginResize -- EndResize persists to
+                                   // variables.json only if the drag actually changed it
 
     // Double-click detection for the divider/collapsed strip (chrome-
     // redesign follow-up): a second press within kDoubleClickWindow toggles
@@ -252,7 +282,18 @@ class ProjectSidebar : public Widget {
 
     // sidebar-keyboard-focus follow-up -- see Focusable() above.
     std::function<void()> onFocusReturn_;
+
+    std::function<void(int)> onWidthCommitted_; // see SetOnWidthCommitted
+
+    std::function<void(bool)> onCollapseCommitted_;            // see SetOnCollapseCommitted
+    void                      CommitCollapsed(bool collapsed); // SetCollapsed + the deliberate-toggle hook
     int                   selectedIndex_ = 0; // index into VisibleEntries, clamped at use
+
+    // See TakeKeyboardFocus. Cleared by ReturnFocus (the restore is
+    // one-shot) and by an explicit collapse while focused, whose end state
+    // is already what the flag would restore.
+    bool collapseOnFocusReturn_ = false;
+    void ReturnFocus(); // onFocusReturn_ plus the TakeKeyboardFocus collapse restore
 
     bool HandleKeyEvent(const Event& event);
     void ToggleDirectory(const std::filesystem::path& path); // shared by mouse click and Enter

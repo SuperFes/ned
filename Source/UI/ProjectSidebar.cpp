@@ -245,13 +245,43 @@ void ProjectSidebar::SetCollapsed(bool collapsed) {
     if (collapsed_ && Focused() && onFocusReturn_) {
         // Collapsing a keyboard-focused sidebar (C-c C-p while inside it)
         // would leave the keyboard captured by a 1-column strip -- hand
-        // focus back to the editor instead.
+        // focus back to the editor instead. An explicit collapse already
+        // lands on the state a pending TakeKeyboardFocus restore would
+        // recreate, so the flag is spent here too.
+        collapseOnFocusReturn_ = false;
         onFocusReturn_();
     }
 }
 
+void ProjectSidebar::TakeKeyboardFocus() {
+    collapseOnFocusReturn_ = collapsed_;
+    SetCollapsed(false);
+    TakeFocus();
+}
+
+void ProjectSidebar::ReturnFocus() {
+    // Hand focus back *before* re-collapsing: once Focused() is false,
+    // SetCollapsed(true)'s own captured-keyboard branch (above) can't fire
+    // onFocusReturn_ a second time.
+    const bool recollapse  = collapseOnFocusReturn_;
+    collapseOnFocusReturn_ = false;
+    if (onFocusReturn_) {
+        onFocusReturn_();
+    }
+    if (recollapse) {
+        SetCollapsed(true);
+    }
+}
+
 void ProjectSidebar::ToggleCollapsed() {
-    SetCollapsed(!collapsed_);
+    CommitCollapsed(!collapsed_);
+}
+
+void ProjectSidebar::CommitCollapsed(bool collapsed) {
+    SetCollapsed(collapsed);
+    if (onCollapseCommitted_) {
+        onCollapseCommitted_(collapsed_);
+    }
 }
 
 int ProjectSidebar::ExpandedWidth() const {
@@ -289,6 +319,14 @@ void ProjectSidebar::SetOnBinaryFileOpenRequest(std::function<void(const std::fi
 
 void ProjectSidebar::SetOnFocusReturn(std::function<void()> handler) {
     onFocusReturn_ = std::move(handler);
+}
+
+void ProjectSidebar::SetOnWidthCommitted(std::function<void(int)> handler) {
+    onWidthCommitted_ = std::move(handler);
+}
+
+void ProjectSidebar::SetOnCollapseCommitted(std::function<void(bool)> handler) {
+    onCollapseCommitted_ = std::move(handler);
 }
 
 void ProjectSidebar::Paint(Canvas c) {
@@ -420,7 +458,7 @@ bool ProjectSidebar::OnEvent(const Event& event) {
             const auto now = std::chrono::steady_clock::now();
             if (dividerClickPending_ && (now - lastDividerPressTime_) < kDoubleClickWindow) {
                 dividerClickPending_ = false;
-                SetCollapsed(false);
+                CommitCollapsed(false);
             }
             else {
                 dividerClickPending_  = true;
@@ -458,7 +496,7 @@ bool ProjectSidebar::OnEvent(const Event& event) {
         const auto now = std::chrono::steady_clock::now();
         if (dividerClickPending_ && (now - lastDividerPressTime_) < kDoubleClickWindow) {
             dividerClickPending_ = false;
-            SetCollapsed(true);
+            CommitCollapsed(true);
             return true;
         }
         dividerClickPending_  = true;
@@ -627,8 +665,8 @@ bool ProjectSidebar::HandleKeyEvent(const Event& event) {
 
     const std::vector<editor::ProjectTreeEntry> entries = VisibleEntries(CachedTree());
     if (entries.empty()) {
-        if (cancel && onFocusReturn_) {
-            onFocusReturn_();
+        if (cancel) {
+            ReturnFocus();
         }
         return true; // nothing to navigate; still consume -- we hold focus
     }
@@ -653,9 +691,7 @@ bool ProjectSidebar::HandleKeyEvent(const Event& event) {
             // preview), and it hands focus straight back to the editor --
             // the point of opening a file is to edit it.
             OpenFileEntry(entry.path, /*isDoubleClick=*/true);
-            if (onFocusReturn_) {
-                onFocusReturn_();
-            }
+            ReturnFocus();
         }
         return true;
     }
@@ -672,9 +708,7 @@ bool ProjectSidebar::HandleKeyEvent(const Event& event) {
         return true;
     }
     if (cancel) {
-        if (onFocusReturn_) {
-            onFocusReturn_();
-        }
+        ReturnFocus();
         return true;
     }
     return true; // every other key is consumed while this widget holds focus
@@ -701,6 +735,7 @@ void ProjectSidebar::BeginResize(int globalMouseX) {
     // very first resize drag after startup, before Width() has been read by
     // the composition root even once).
     resizeAnchorWidth_ = size().width;
+    resizeStartWidth_  = width_;
 }
 
 void ProjectSidebar::UpdateResize(int globalMouseX) {
@@ -721,7 +756,20 @@ void ProjectSidebar::UpdateResize(int globalMouseX) {
 }
 
 void ProjectSidebar::EndResize() {
+    if (!resizing_) {
+        return;
+    }
     resizing_ = false;
+    // sidebar-width-memory follow-up: a committed drag that actually moved
+    // the divider reports the new width; main.cpp wires this to
+    // editor::SetVariable so it persists as the global default width for
+    // future runs (a project session's own stored width still wins at
+    // startup). A divider click that never moved reports nothing, and the
+    // hook stays a policy-free callback so unit-test drags never touch the
+    // real variables.json.
+    if (width_ != resizeStartWidth_ && onWidthCommitted_) {
+        onWidthCommitted_(width_);
+    }
 }
 
 void ProjectSidebar::RevealPath(const std::filesystem::path& targetPath) {
