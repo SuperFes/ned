@@ -96,8 +96,11 @@ namespace {
     };
 
     // Brush-valued fields serialize as <prefix>_background/<prefix>_foreground
-    // pairs (bold/italic still deliberately don't round-trip -- the same
-    // pre-existing limitation as always, see ThemeFile.h).
+    // color pairs plus <prefix>_bold/_italic/_underlined/_strikethrough trait
+    // flags (bold/italic-round-trip follow-up -- closes the long-standing gap
+    // this table used to have: only background/foreground ever persisted,
+    // silently dropping e.g. activeTab's own bold on every save-theme/
+    // --detect-theme round-trip).
     struct ThemeBrushKey {
         std::string_view prefix;
         ui::Brush ui::Theme::* field;
@@ -113,6 +116,23 @@ namespace {
         {"border_accent", &Theme::borderAccent},
     };
 
+    // "true"/"false" only -- deliberately not case-insensitive or accepting
+    // any other spelling, matching ParseColorToken's own strict "the format
+    // this file itself writes, nothing looser" precedent.
+    std::string BoolToken(bool value) {
+        return value ? "true" : "false";
+    }
+
+    std::optional<bool> ParseBoolToken(std::string_view token) {
+        if (token == "true") {
+            return true;
+        }
+        if (token == "false") {
+            return false;
+        }
+        return std::nullopt;
+    }
+
 } // namespace
 
 std::string SerializeTheme(const Theme& theme) {
@@ -121,21 +141,25 @@ std::string SerializeTheme(const Theme& theme) {
         out << entry.key << '=' << ColorToToken(theme.*entry.field) << '\n';
     }
     for (const ThemeBrushKey& entry : kBrushKeys) {
-        out << entry.prefix << "_background=" << ColorToToken((theme.*entry.field).background) << '\n';
-        out << entry.prefix << "_foreground=" << ColorToToken((theme.*entry.field).foreground) << '\n';
+        const Brush& brush = theme.*entry.field;
+        out << entry.prefix << "_background=" << ColorToToken(brush.background) << '\n';
+        out << entry.prefix << "_foreground=" << ColorToToken(brush.foreground) << '\n';
+        out << entry.prefix << "_bold=" << BoolToken(brush.bold) << '\n';
+        out << entry.prefix << "_italic=" << BoolToken(brush.italic) << '\n';
+        out << entry.prefix << "_underlined=" << BoolToken(brush.underlined) << '\n';
+        out << entry.prefix << "_strikethrough=" << BoolToken(brush.strikethrough) << '\n';
     }
     return out.str();
 }
 
 bool SetThemeColorByKey(Theme& theme, std::string_view key, std::string_view token) {
-    // A malformed token assigns nothing, same as ParseTheme always did.
-    const std::optional<Color> color = ParseColorToken(token);
-    if (!color) {
-        return false;
-    }
-
     for (const ThemeColorKey& entry : kColorKeys) {
         if (entry.key == key) {
+            // A malformed token assigns nothing, same as ParseTheme always did.
+            const std::optional<Color> color = ParseColorToken(token);
+            if (!color) {
+                return false;
+            }
             theme.*entry.field = *color;
             return true;
         }
@@ -148,12 +172,36 @@ bool SetThemeColorByKey(Theme& theme, std::string_view key, std::string_view tok
             continue;
         }
         const std::string_view suffix = key.substr(entry.prefix.size());
-        if (suffix == "_background") {
-            (theme.*entry.field).background = *color;
+        if (suffix == "_background" || suffix == "_foreground") {
+            const std::optional<Color> color = ParseColorToken(token);
+            if (!color) {
+                return false;
+            }
+            ((suffix == "_background") ? (theme.*entry.field).background : (theme.*entry.field).foreground) = *color;
             return true;
         }
-        if (suffix == "_foreground") {
-            (theme.*entry.field).foreground = *color;
+        // bold/italic/underlined/strikethrough-round-trip follow-up: the
+        // same "malformed token assigns nothing" contract as the color
+        // suffixes above, via ParseBoolToken instead of ParseColorToken.
+        bool Brush::* traitField = nullptr;
+        if (suffix == "_bold") {
+            traitField = &Brush::bold;
+        }
+        else if (suffix == "_italic") {
+            traitField = &Brush::italic;
+        }
+        else if (suffix == "_underlined") {
+            traitField = &Brush::underlined;
+        }
+        else if (suffix == "_strikethrough") {
+            traitField = &Brush::strikethrough;
+        }
+        if (traitField != nullptr) {
+            const std::optional<bool> value = ParseBoolToken(token);
+            if (!value) {
+                return false;
+            }
+            (theme.*entry.field).*traitField = *value;
             return true;
         }
     }
@@ -190,10 +238,13 @@ std::string SerializeThemeJanet(const Theme& theme) {
         out << "(ned/theme-set \"" << entry.key << "\" \"" << ColorToToken(theme.*entry.field) << "\")\n";
     }
     for (const ThemeBrushKey& entry : kBrushKeys) {
-        out << "(ned/theme-set \"" << entry.prefix << "_background\" \""
-            << ColorToToken((theme.*entry.field).background) << "\")\n";
-        out << "(ned/theme-set \"" << entry.prefix << "_foreground\" \""
-            << ColorToToken((theme.*entry.field).foreground) << "\")\n";
+        const Brush& brush = theme.*entry.field;
+        out << "(ned/theme-set \"" << entry.prefix << "_background\" \"" << ColorToToken(brush.background) << "\")\n";
+        out << "(ned/theme-set \"" << entry.prefix << "_foreground\" \"" << ColorToToken(brush.foreground) << "\")\n";
+        out << "(ned/theme-set \"" << entry.prefix << "_bold\" \"" << BoolToken(brush.bold) << "\")\n";
+        out << "(ned/theme-set \"" << entry.prefix << "_italic\" \"" << BoolToken(brush.italic) << "\")\n";
+        out << "(ned/theme-set \"" << entry.prefix << "_underlined\" \"" << BoolToken(brush.underlined) << "\")\n";
+        out << "(ned/theme-set \"" << entry.prefix << "_strikethrough\" \"" << BoolToken(brush.strikethrough) << "\")\n";
     }
     return out.str();
 }

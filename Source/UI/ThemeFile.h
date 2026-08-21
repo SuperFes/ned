@@ -55,18 +55,19 @@ void SaveThemeFile(const Theme& theme, const std::filesystem::path& path);
 // Theme-editing follow-up: the Janet-facing side of the same key table
 // SerializeTheme/ParseTheme walk (see ThemeFile.cpp's kColorKeys comment).
 //
-// SetThemeColorByKey assigns one keyed color -- exactly one ParseTheme line's
-// worth -- returning false for an unrecognized key or unparseable token
-// (caller decides whether that's worth reporting; ParseTheme itself stays
-// silently forward-compatible). This is what main.cpp uses to apply
+// SetThemeColorByKey assigns one keyed color or Brush trait (bold/italic/
+// underlined/strikethrough, "true"/"false" tokens) -- exactly one ParseTheme
+// line's worth -- returning false for an unrecognized key or unparseable
+// token (caller decides whether that's worth reporting; ParseTheme itself
+// stays silently forward-compatible). This is what main.cpp uses to apply
 // `ned/theme-set` overrides from init.janet on top of the selected theme.
 bool SetThemeColorByKey(Theme& theme, std::string_view key, std::string_view token);
 
 // Renders a Theme as a runnable Janet script -- one
-// `(ned/theme-set "<key>" "<color>")` call per keyed color, same keys and
-// tokens as SerializeTheme -- for the save-theme command: written out,
-// hand-edited, then loaded from init.janet via a plain (dofile ...). Same
-// bold/italic limitation as the key=value format (colors only).
+// `(ned/theme-set "<key>" "<value>")` call per keyed color or Brush trait,
+// same keys and tokens as SerializeTheme -- for the save-theme command:
+// written out, hand-edited, then loaded from init.janet via a plain
+// (dofile ...).
 [[nodiscard]] std::string SerializeThemeJanet(const Theme& theme);
 
 // $XDG_CONFIG_HOME/ned/theme.janet -- the save-theme command's output path,

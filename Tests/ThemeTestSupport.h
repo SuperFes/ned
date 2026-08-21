@@ -27,6 +27,17 @@ inline int Luma(const ui::Color& c) {
     return (299 * c.red + 587 * c.green + 114 * c.blue) / 1000;
 }
 
+// bold/italic-round-trip follow-up: SerializeTheme's output isn't
+// color-only anymore -- each kBrushKeys entry also emits four
+// "<prefix>_bold"/"_italic"/"_underlined"/"_strikethrough" "true"/"false"
+// lines alongside its color pair (ThemeFile.cpp). Not a color, so
+// SerializedColors below skips them rather than asserting every line
+// parses as one; the suffix set mirrors ThemeFile.cpp's own closed list.
+inline bool IsBrushTraitKey(std::string_view key) {
+    return key.ends_with("_bold") || key.ends_with("_italic") || key.ends_with("_underlined") ||
+           key.ends_with("_strikethrough");
+}
+
 inline std::map<std::string, ui::Color> SerializedColors(const ui::Theme& theme) {
     std::map<std::string, ui::Color> result;
     std::istringstream               in{ui::SerializeTheme(theme)};
@@ -34,9 +45,13 @@ inline std::map<std::string, ui::Color> SerializedColors(const ui::Theme& theme)
     while (std::getline(in, line)) {
         const auto eq = line.find('=');
         REQUIRE(eq != std::string::npos);
+        const std::string key = line.substr(0, eq);
+        if (IsBrushTraitKey(key)) {
+            continue;
+        }
         const auto color = ui::ParseColorToken(std::string_view(line).substr(eq + 1));
         REQUIRE(color.has_value());
-        result.emplace(line.substr(0, eq), *color);
+        result.emplace(key, *color);
     }
     return result;
 }
