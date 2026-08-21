@@ -28,6 +28,7 @@
 #include "Editor/TabWidth.h"
 #include "Editor/Tasks/TaskRunner.h"
 #include "Editor/ThemeSetting.h"
+#include "Editor/Variables.h"
 #include "Editor/Vcs/VcsRunner.h"
 
 #include "Janet/EditorBindings.h"
@@ -353,6 +354,11 @@ int main(int argc, char** argv) {
     // loop). Every later open (find-file, sidebar click, LSP jump, ...)
     // funnels through BufferList's own on-file-opened seam instead.
     ned::editor::LoadFilePlaces();
+
+    // variables-store follow-up: editor-remembered key/value facts
+    // ($XDG_STATE_HOME/ned/variables.json) -- the "theme" variable
+    // participates in theme selection below, so this must load before it.
+    ned::editor::LoadVariables();
     if (ned::editor::SavePlaceEnabled()) {
         for (const auto& openBuffer : bufferList.Buffers()) {
             ned::editor::RestoreFilePlace(*openBuffer, static_cast<std::size_t>(ned::editor::TabWidth()));
@@ -424,19 +430,30 @@ int main(int argc, char** argv) {
     // viewed, not the pane; a pane's Mode is only ever "whatever its current
     // buffer resolves to."
     //
-    // Theme precedence (rich-theme-set follow-up, Phase 1): an explicit
-    // init.janet (ned/set-theme "name") wins -- it's deliberate user config,
-    // and init.janet already loaded above, so the preference is set by now
-    // -- then a previously `ned --detect-theme`-generated file if one
-    // exists (never probes the terminal on a normal launch -- see
-    // UI/TerminalColorProbe.h), else the fixed DarkTheme() default. An
-    // unresolvable configured name falls through to the next source rather
-    // than aborting, reported via the status line the same way a failed
-    // startup file open already is.
+    // Theme precedence (rich-theme-set follow-up, Phase 1; variables-store
+    // follow-up): the remembered "theme" variable (whatever the select-theme
+    // picker last committed) wins the *base* selection -- the newer
+    // expression of intent than init.janet's static (ned/set-theme ...) --
+    // then that explicit set-theme name, then a previously
+    // `ned --detect-theme`-generated file if one exists (never probes the
+    // terminal on a normal launch -- see UI/TerminalColorProbe.h), else the
+    // fixed DarkTheme() default. An unresolvable name at any step falls
+    // through to the next source rather than aborting, reported via the
+    // status line the same way a failed startup file open already is. And
+    // regardless of which base wins, the (ned/theme-set ...) overrides
+    // below apply last -- the user's explicit call: "the theme overrides
+    // should win out in the end," so a dofile'd theme.janet always
+    // determines the final look.
     // Not const: the ansi-fallback-theme check below (which can't run until
     // EventLoop exists) may swap the whole value in place, and the
     // select-theme picker's applier (wired below) reassigns it live.
     ned::ui::Theme theme = [&statusMessage] {
+        if (const auto remembered = ned::editor::Variable("theme")) {
+            if (auto named = ned::ui::ThemeByName(*remembered)) {
+                return *std::move(named);
+            }
+            statusMessage = "Unknown remembered theme \"" + *remembered + "\" (variables.json)";
+        }
         const std::string preferred = ned::editor::PreferredThemeName();
         if (!preferred.empty()) {
             if (auto named = ned::ui::ThemeByName(preferred)) {

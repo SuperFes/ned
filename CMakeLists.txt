@@ -312,6 +312,7 @@ add_library(ned_lib STATIC
         Source/Editor/FormatOnSave.cpp
         Source/Editor/TabWidth.cpp
         Source/Editor/ThemeSetting.cpp
+        Source/Editor/Variables.cpp
         Source/Editor/HighlightSettings.cpp
         Source/Editor/MinimapSettings.cpp
         Source/Editor/GitIgnore.cpp
@@ -485,6 +486,7 @@ if (NED_BUILD_TESTS)
             Tests/PerformanceTest.cpp
             Tests/ThemeTest.cpp
             Tests/ThemePaletteTest.cpp
+            Tests/VariablesTest.cpp
             Tests/BundledThemesTest.cpp
             Tests/SyntaxThemeTest.cpp
             Tests/ThemeFileTest.cpp
