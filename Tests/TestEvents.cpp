@@ -79,6 +79,19 @@ Event Alt(char letter) {
     return FromInput(input);
 }
 
+Event LegacyAlt(char letter) {
+    ncinput input{};
+    // Mirrors the exact ncinput walk_automaton (Notcurses' automaton.c)
+    // produces for a legacy-terminal fast ESC-prefixed Alt+letter press --
+    // confirmed by a live keyprobe, not assumed: id = the bare letter,
+    // the *deprecated* `alt` bool set, `modifiers` left empty (upstream
+    // never syncs the two -- see TranslateKey's own comment), and evtype
+    // NCTYPE_UNKNOWN (only kitty-protocol input gets a real PRESS).
+    input.id  = static_cast<std::uint32_t>(static_cast<unsigned char>(letter));
+    input.alt = true;
+    return FromInput(input);
+}
+
 Event CtrlAlt(char letter) {
     ncinput input{};
     input.id        = static_cast<std::uint32_t>(static_cast<unsigned char>(letter >= 'a' && letter <= 'z' ? letter - 'a' + 'A' : letter));

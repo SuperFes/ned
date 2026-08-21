@@ -102,16 +102,31 @@ TEST_CASE("TranslateKey maps graphic characters to literal codepoints", "[KeyTra
 
 // FTXUI -> Notcurses migration: was "arrives as one Event whose input() is
 // ESC followed by the key's own bytes" (a real upgrade, at the time, over
-// the pre-FTXUI translator's own Escape-then-key fallback) -- Notcurses
-// goes a step further still and hands Alt/Meta over as a genuine modifier
-// bit on an already-decoded ncinput, no ESC-prefix byte-timing heuristic
-// left at all, on any terminal Notcurses supports.
+// the pre-FTXUI translator's own Escape-then-key fallback). This modifier-
+// bit shape is what kitty-keyboard-protocol terminals actually produce; a
+// legacy terminal's fast ESC-prefixed press arrives differently -- see the
+// LegacyAlt case just below.
 TEST_CASE("TranslateKey maps Alt/Meta+letter to Meta chords", "[KeyTranslation]") {
     const auto altA = TranslateKey(ned::ui::test::Alt('a'));
     REQUIRE(altA.has_value());
     REQUIRE(altA->Meta);
     REQUIRE_FALSE(altA->Control);
     REQUIRE(altA->Codepoint == U'a');
+}
+
+// The legacy-terminal shape of the same press (every terminal without the
+// kitty keyboard protocol, tmux included): Notcurses merges the fast
+// ESC+letter pair into one ncinput but records Alt only in the deprecated
+// `alt` bool, never in `modifiers` -- a real upstream v3.0.14 gap,
+// confirmed via a live keyprobe after M-x failed to fire on real Alt+x
+// presses while this file's kitty-shaped case above passed. TranslateKey
+// must honor both shapes; see its own comment at the Meta branch.
+TEST_CASE("TranslateKey maps a legacy ESC-prefixed Alt+letter to a Meta chord", "[KeyTranslation]") {
+    const auto altX = TranslateKey(ned::ui::test::LegacyAlt('x'));
+    REQUIRE(altX.has_value());
+    REQUIRE(altX->Meta);
+    REQUIRE_FALSE(altX->Control);
+    REQUIRE(altX->Codepoint == U'x');
 }
 
 // FTXUI -> Notcurses migration: was a hand-built raw ESC + C0-control-byte

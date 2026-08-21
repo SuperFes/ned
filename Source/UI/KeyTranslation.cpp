@@ -182,7 +182,21 @@ std::optional<KeyChord> TranslateKey(const Event& event) {
         if (ncinput_shift_p(&input) && result->Special != SpecialKey::None) {
             result->Shift = true;
         }
-        if (ncinput_alt_p(&input)) {
+        // BOTH the modifiers-bit accessor AND the deprecated legacy `alt`
+        // bool -- a real, confirmed-via-live-probe Notcurses v3.0.14 bug,
+        // not belt-and-suspenders: for a legacy-terminal Alt+letter press
+        // (a fast ESC-prefixed letter -- every terminal without the kitty
+        // keyboard protocol, including tmux), walk_automaton (automaton.c)
+        // merges the two bytes into one ncinput but records Alt only in the
+        // deprecated `ni->alt` bool, and load_ncinput (in.c) never syncs
+        // the legacy bools into `modifiers` -- so ncinput_alt_p(), which
+        // reads only `modifiers`, is false for the exact event shape M-x
+        // arrives as in practice. Kitty-protocol terminals set `modifiers`
+        // directly and every other path zero-initializes the struct, so
+        // OR-ing the legacy field in can never false-positive. Found
+        // because M-x didn't fire on real fast Alt+x presses while every
+        // headless test (which constructed the kitty-style shape) passed.
+        if (ncinput_alt_p(&input) || input.alt) {
             result->Meta = true;
         }
         // Control is already folded in by DecodeBaseKey for a plain
