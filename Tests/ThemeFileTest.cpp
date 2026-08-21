@@ -10,6 +10,7 @@
 
 #include "UI/ThemeFile.h"
 
+using ned::ui::Brush;
 using ned::ui::Color;
 using ned::ui::DarkTheme;
 using ned::ui::LightTheme;
@@ -233,6 +234,88 @@ TEST_CASE("SetThemeColorByKey assigns known keys and rejects unknown keys or bad
     REQUIRE_FALSE(ned::ui::SetThemeColorByKey(theme, "no_such_key", "#112233"));
     REQUIRE_FALSE(ned::ui::SetThemeColorByKey(theme, "keyword_foreground", "not-a-color"));
     REQUIRE(theme.keywordForeground == Color::RGB(0xf042d6)); // the bad token assigned nothing
+}
+
+// bold/italic-round-trip follow-up: a Brush's trait fields (bold/italic/
+// underlined/strikethrough), previously silently dropped by every
+// serialization path here -- see this file's own header comment.
+
+TEST_CASE("SetThemeColorByKey assigns a Brush's bold/italic/underlined/strikethrough traits via true/false tokens",
+          "[ThemeFile]") {
+    Theme theme = DarkTheme();
+
+    REQUIRE(theme.activeTab.bold); // DarkTheme's own starting value
+    REQUIRE(ned::ui::SetThemeColorByKey(theme, "active_tab_bold", "false"));
+    REQUIRE_FALSE(theme.activeTab.bold);
+
+    REQUIRE(ned::ui::SetThemeColorByKey(theme, "border_italic", "true"));
+    REQUIRE(theme.border.italic);
+    REQUIRE(ned::ui::SetThemeColorByKey(theme, "border_underlined", "true"));
+    REQUIRE(theme.border.underlined);
+    REQUIRE(ned::ui::SetThemeColorByKey(theme, "border_strikethrough", "true"));
+    REQUIRE(theme.border.strikethrough);
+
+    // "border" is a prefix of "border_accent" -- confirms a trait key
+    // resolves to the right entry, not the shorter prefix's own leftover
+    // suffix match (the same disambiguation the pre-existing background/
+    // foreground suffix check already relies on).
+    REQUIRE(ned::ui::SetThemeColorByKey(theme, "border_accent_bold", "false"));
+    REQUIRE_FALSE(theme.borderAccent.bold);
+    REQUIRE(theme.border.bold == DarkTheme().border.bold); // untouched
+
+    REQUIRE_FALSE(ned::ui::SetThemeColorByKey(theme, "active_tab_bold", "not-a-bool"));
+    REQUIRE_FALSE(theme.activeTab.bold); // the bad token assigned nothing, prior value kept
+    REQUIRE_FALSE(ned::ui::SetThemeColorByKey(theme, "no_such_prefix_bold", "true"));
+}
+
+TEST_CASE("SerializeTheme/ParseTheme round-trips every Brush trait, not just background/foreground", "[ThemeFile]") {
+    Theme original = DarkTheme();
+    // Deliberately flip every trait on every kBrushKeys field away from
+    // DarkTheme's own defaults, so a trait silently not round-tripping
+    // would show up as a mismatch rather than an accidental match.
+    for (Brush Theme::* field :
+         {&Theme::echoArea, &Theme::tabBar, &Theme::activeTab, &Theme::scrollBar, &Theme::scrollBarDisabled,
+          &Theme::border, &Theme::borderAccent}) {
+        Brush& brush        = original.*field;
+        brush.bold          = !brush.bold;
+        brush.italic        = !brush.italic;
+        brush.underlined    = !brush.underlined;
+        brush.strikethrough = !brush.strikethrough;
+    }
+
+    const Theme restored = ParseTheme(SerializeTheme(original), LightTheme()); // deliberately mismatched base
+
+    REQUIRE(restored.echoArea == original.echoArea);
+    REQUIRE(restored.tabBar == original.tabBar);
+    REQUIRE(restored.activeTab == original.activeTab);
+    REQUIRE(restored.scrollBar == original.scrollBar);
+    REQUIRE(restored.scrollBarDisabled == original.scrollBarDisabled);
+    REQUIRE(restored.border == original.border);
+    REQUIRE(restored.borderAccent == original.borderAccent);
+}
+
+TEST_CASE("SerializeThemeJanet's Brush trait calls are round-trippable, same as the color calls", "[ThemeFile]") {
+    Theme original          = DarkTheme();
+    original.activeTab.bold = false; // flip away from DarkTheme's own true, so a dropped trait would show up
+
+    const std::string janet = ned::ui::SerializeThemeJanet(original);
+    REQUIRE(janet.find("(ned/theme-set \"active_tab_bold\" \"false\")") != std::string::npos);
+
+    Theme              rebuilt = LightTheme();
+    std::istringstream in{janet};
+    std::string        line;
+    while (std::getline(in, line)) {
+        if (line.rfind("(ned/theme-set \"", 0) != 0) {
+            continue; // header comment
+        }
+        const std::size_t keyStart = std::strlen("(ned/theme-set \"");
+        const std::size_t keyEnd   = line.find('"', keyStart);
+        const std::size_t valStart = line.find('"', keyEnd + 1) + 1;
+        const std::size_t valEnd   = line.find('"', valStart);
+        REQUIRE(ned::ui::SetThemeColorByKey(rebuilt, line.substr(keyStart, keyEnd - keyStart),
+                                            line.substr(valStart, valEnd - valStart)));
+    }
+    REQUIRE(SerializeTheme(rebuilt) == SerializeTheme(original));
 }
 
 TEST_CASE("SerializeThemeJanet emits one ned/theme-set call per serialized color, round-trippable", "[ThemeFile]") {

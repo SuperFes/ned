@@ -139,8 +139,6 @@ Notcurses (TermOx → FTXUI → Notcurses over the project's life).
       Everforest, Zenburn, Catppuccin Frappé/Macchiato, Tokyo Night Storm.
 - [ ] Make the ANSI theme pair user-selectable on capable terminals / expressible in
       theme files (serialization already round-trips `x:<n>` palette tokens).
-- [ ] Bold/italic round-trip in theme serialization (long-standing `Brush`
-      limitation — only background/foreground persist).
 - [ ] **Pixel-blitter minimap** — render the minimap via `NCBLITTER_PIXEL`
       (ncvisual-backed) on terminals that support it, keeping the braille-glyph
       renderer as the fallback everywhere else. Capability-gate at runtime

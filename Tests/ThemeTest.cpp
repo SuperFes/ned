@@ -9,6 +9,7 @@
 
 #include "Editor/SyntaxTheme.h"
 #include "Editor/ThemeSetting.h"
+#include "ThemeTestSupport.h"
 #include "UI/Theme.h"
 #include "UI/ThemeFile.h"
 #include "UI/ThemeRegistry.h"
@@ -148,6 +149,14 @@ void RequireAnsiRestricted(const Theme& theme) {
     while (std::getline(in, line)) {
         const auto eq = line.find('=');
         REQUIRE(eq != std::string::npos);
+        const std::string key = line.substr(0, eq);
+        // bold/italic-round-trip follow-up: SerializeTheme's Brush trait
+        // lines ("<prefix>_bold=true", etc., ThemeFile.cpp) aren't colors --
+        // this check is color-token-format-only, see ThemeTestSupport.h's
+        // IsBrushTraitKey for the same skip on the shared helper.
+        if (ned::tests::IsBrushTraitKey(key)) {
+            continue;
+        }
         const std::string token = line.substr(eq + 1);
         INFO(line);
         if (token == "default") {
