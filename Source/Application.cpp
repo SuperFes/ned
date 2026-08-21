@@ -5,10 +5,9 @@
 #include "Application.h"
 
 #include <bits/ostream.tcc>
-#include <iostream>
 
 namespace Ned {
-std::string Application::GetTitle() {
+auto Application::GetTitle() -> std::string {
     return Title();
 }
 
@@ -20,13 +19,13 @@ void Application::SetTitle(const char* title) {
     Title(title);
 }
 
-std::mutex& Application::Mutex() {
+auto Application::Mutex() -> std::mutex& {
     static std::mutex mutex;
 
     return mutex;
 }
 
-std::string Application::Title(const std::string& title) {
+auto Application::Title(const std::string& title) -> std::string {
     static std::string Title;
 
     if (title.empty()) {
