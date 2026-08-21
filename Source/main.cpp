@@ -712,7 +712,7 @@ auto main(int argc, char** argv) -> int {
         windowManager->RequestTrustProjectInit(
             deferredTrustPromptPath,
             [&janetEnv, &statusMessage](const std::filesystem::path&     initPath,
-                                        ned::editor::ProjectInitDecision decision) {
+                                        ned::editor::ProjectInitDecision decision) -> void {
                 if (decision == ned::editor::ProjectInitDecision::Decline) {
                     statusMessage = "Project init.janet not loaded.";
                     return;
@@ -779,7 +779,7 @@ auto main(int argc, char** argv) -> int {
     // startup path. `theme` outlives eventLoop.Run() below as a plain
     // local, so the reference captures are safe for every event this
     // applier could ever run from.
-    windowManager->SetThemeApplier([&theme, limitedTerminal](const ned::ui::Theme& next) {
+    windowManager->SetThemeApplier([&theme, limitedTerminal](const ned::ui::Theme& next) -> void {
         theme = limitedTerminal ? ned::ui::AnsiFallbackFor(next) : next;
     });
 
