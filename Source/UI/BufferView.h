@@ -140,6 +140,19 @@ class BufferView : public Widget {
     // FTXUI migration, see ROADMAP.md).
     void SetProjectSidebar(ProjectSidebar* sidebar);
 
+    // rich-theme-set follow-up (Phase 1): registers the callback the
+    // select-theme picker applies a Theme through -- wired by main.cpp (via
+    // WindowManager::SetThemeApplier) to an in-place assignment of the one
+    // Theme local every widget holds `const Theme&` into, the exact swap
+    // mechanism the ANSI fallback established there (and the applier is
+    // also where the limited-terminal AnsiFallbackFor gate stays in the
+    // loop -- this widget never needs to know about it). Unset (every
+    // test-constructed BufferView that doesn't wire one) makes select-theme
+    // report via statusMessage_ instead of opening a session -- the same
+    // "unset is a safe no-op" convention SetProjectSidebar/SetLspManager
+    // establish.
+    void SetThemeApplier(std::function<void(const Theme&)> applier);
+
     // LSP client follow-up: registers the shared LspManager so Paint() can
     // call SyncBuffer for the active buffer every frame -- nullptr (the
     // default) means no-op, the same "unset is a safe no-op" convention
@@ -404,7 +417,12 @@ class BufferView : public Widget {
                            // statusMessage_ from the callback (DapEvaluate's shape).
                            VcsCommit,
                            VcsSwitchBranch,
-                           VcsCreateBranch };
+                           VcsCreateBranch,
+                           // rich-theme-set follow-up (Phase 1): the select-theme
+                           // picker -- ProjectFindFile's fuzzy session shape over
+                           // theme names, plus live preview of the highlighted
+                           // candidate (see HandleSelectThemeKey below).
+                           SelectTheme };
 
     enum class DeleteFileStage { EnteringPath,
                                  Confirming };
@@ -617,6 +635,22 @@ class BufferView : public Widget {
     // invoking a command by name.
     void HandleProjectFindFileKey(const editor::KeyChord& chord);
     void RefreshProjectFindFileStatus();
+
+    // rich-theme-set follow-up (Phase 1): same shape as
+    // HandleProjectFindFileKey/RefreshProjectFindFileStatus just above but
+    // over ui::ThemeNames() (cached per session like the file list, though
+    // only for symmetry -- it's a cheap in-memory table), with one genuine
+    // addition: every selection/rank change also routes through
+    // ApplySelectedThemePreview, so the highlighted theme is what the whole
+    // UI is showing before Enter ever commits it. Enter keeps the previewed
+    // theme and reports it; Escape/C-g re-applies themeBeforePreview_ (a
+    // full Theme snapshot copied from theme_ at session start -- a copy,
+    // not a name, so cancelling restores exactly what was showing even if
+    // the active theme never came from the registry at all, e.g. a
+    // --detect-theme file).
+    void HandleSelectThemeKey(const editor::KeyChord& chord);
+    void RefreshSelectThemeStatus();
+    void ApplySelectedThemePreview();
 
     // Shared by OnKeyEvent's Normal-mode tail (Dispatcher::Feed) and
     // HandleExecuteCommandKey's Enter branch (CommandRegistry::Invoke by
@@ -1194,6 +1228,15 @@ class BufferView : public Widget {
     // cheap to re-enumerate" framing.
     std::vector<std::string> projectFindFileCandidates_;
     std::size_t              projectFindFileSelection_ = 0;
+
+    // rich-theme-set follow-up (Phase 1): the select-theme session's own
+    // mirror of the projectFindFile pair above, plus the pre-preview Theme
+    // snapshot (see HandleSelectThemeKey's doc comment) and the applier
+    // callback (see SetThemeApplier's).
+    std::vector<std::string>          selectThemeCandidates_;
+    std::size_t                       selectThemeSelection_ = 0;
+    std::optional<Theme>              themeBeforePreview_;
+    std::function<void(const Theme&)> themeApplier_;
 
     // kmacro-end-or-call-macro follow-up: reentrancy guard for ReplayMacro --
     // a macro can never structurally contain a call to replay itself (see

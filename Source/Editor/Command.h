@@ -85,6 +85,12 @@ enum class InteractiveRequest { None,
                                 // as-you-type) but over project files instead of command
                                 // names -- see BufferView::HandleProjectFindFileKey.
                                 ProjectFindFile,
+                                // rich-theme-set follow-up (Phase 1): the select-theme picker,
+                                // same fuzzy prompt-shaped session as ProjectFindFile just
+                                // above but over theme names, with the highlighted candidate
+                                // live-previewed before Enter commits -- see
+                                // BufferView::HandleSelectThemeKey.
+                                SelectTheme,
                                 // kmacro-start-macro/kmacro-end-or-call-macro follow-up: also
                                 // one-shot direct actions (BufferView::StartInteractiveSession
                                 // acts on them immediately, inputMode_ stays Normal), not

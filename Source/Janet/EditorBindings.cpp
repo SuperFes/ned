@@ -26,6 +26,7 @@
 #include "Editor/SyntaxTheme.h"
 #include "Editor/TabWidth.h"
 #include "Editor/Tasks/TaskConfig.h"
+#include "Editor/ThemeSetting.h"
 #include "Editor/Vcs/VcsProviderRegistry.h"
 #include "Editor/WrapOverrides.h"
 #include "JanetVcsProvider.h"
@@ -141,6 +142,14 @@ namespace {
 
     void NedSetTabWidth(std::int64_t columns) {
         editor::SetTabWidth(static_cast<int>(columns));
+    }
+
+    // rich-theme-set follow-up (Phase 1): stores the *name* only -- resolved
+    // against ui::ThemeByName by main.cpp at startup, after init.janet has
+    // loaded, so no validation is possible (or wanted) here; see
+    // Editor/ThemeSetting.h's own header comment for the layering.
+    void NedSetTheme(std::string name) {
+        editor::SetPreferredThemeName(name);
     }
 
     void NedSetMinimapEnabled(bool enabled) {
@@ -376,6 +385,10 @@ void InstallEditorBindings(Environment& env) {
         "defaults to \"xdg-open\"; empty string clears it entirely, disabling URL-following.");
     env.Register<&NedSetTabWidth>("ned", "set-tab-width",
                                   "Set the display width (in columns) a tab character expands to (default 4).");
+    env.Register<&NedSetTheme>(
+        "ned", "set-theme",
+        "Select the startup theme by name (e.g. \"dark\", \"light\", \"ansi-dark\"). Overrides a saved --detect-theme "
+        "file; an unknown name is reported at startup and falls back. Empty string clears the preference.");
     env.Register<&NedSetMinimapEnabled>(
         "ned", "set-minimap-enabled",
         "Enable/disable the minimap (replaces the plain scrollbar) as the default starting state for newly-opened "

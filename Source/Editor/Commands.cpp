@@ -1276,6 +1276,16 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           context.interactiveRequest = InteractiveRequest::ProjectFindFile;
                       });
 
+    // rich-theme-set follow-up (Phase 1): same "just signal intent" shape as
+    // project-find-file above. M-x reachable only, no default chord -- theme
+    // switching is an occasional act, not an editing motion worth a global
+    // binding.
+    registry.Register("select-theme",
+                      "Switch the color theme, narrowed by fuzzy matching, previewing the highlighted candidate live.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::SelectTheme;
+                      });
+
     registry.Register("kmacro-start-macro", "Begin recording a keyboard macro.", [](CommandContext& context) {
         context.interactiveRequest = InteractiveRequest::StartKbdMacro;
     });

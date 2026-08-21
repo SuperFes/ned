@@ -939,21 +939,33 @@ each is, not by priority.
           check that makes the high-contrast set mean something and catches the
           black-on-black class of bug for every future theme. The hand-built
           Dark/Light/ANSI themes stay untouched.
-        - [ ] *Phase 1 — registry + selection plumbing.* `ThemeByName`/`ThemeNames`
-          (the `BundledModeFactories` pattern); `ned/set-theme` Janet binding
-          (mutex-guarded static, `TabWidth.h` pattern) read at main.cpp's selection
-          point — precedence: init.janet `set-theme` > `--detect-theme` file >
-          `DarkTheme`. Plus the theme picker (user ask): a `select-theme` fuzzy
-          selector riding the `HandleProjectFindFileKey` shape (cached candidate
-          list, Up/Down + re-rank per keystroke), with **live preview** — the
-          highlighted theme is applied in place on every selection change (the exact
-          swap mechanism the ANSI fallback proved safe: every widget holds
-          `const Theme&` into main.cpp's local and repaints fresh), Enter commits,
-          Escape/C-g restores a `Theme` snapshot taken at session start. Applying
-          routes through a main.cpp-wired callback (which also keeps the
-          limited-terminal `AnsiFallbackFor` gate in the loop); interactive choice
-          deliberately not persisted in v1 — init.janet is the config surface,
-          Emacs' own `load-theme` convention.
+        - [x] *Phase 1 — registry + selection plumbing* (**shipped 2026-08-20**).
+          `UI/ThemeRegistry.h/.cpp` (`ThemeByName`/`ThemeNames`, the
+          `BundledModeFactories` pattern — deliberately a fixed compile-time table,
+          no runtime registration until Janet-defined themes are a real ask);
+          `ned/set-theme` Janet binding storing a *name only* in
+          `Editor/ThemeSetting.h/.cpp` (mutex-guarded static, `TabWidth.h` pattern —
+          resolution against the registry stays in main.cpp, keeping `Editor/` free
+          of UI dependencies), read at main.cpp's selection point — precedence:
+          init.janet `set-theme` > `--detect-theme` file > `DarkTheme`, with an
+          unresolvable name reported via the status line and falling through. Plus
+          the theme picker (user ask): `select-theme` (M-x only, no chord) rides the
+          `HandleProjectFindFileKey` fuzzy-session shape with **live preview** — the
+          highlighted theme is applied in place on every selection/rank change (the
+          exact swap mechanism the ANSI fallback proved safe, routed through a
+          main.cpp-wired applier callback — `WindowManager::SetThemeApplier`
+          forwarded per-pane — which also keeps the limited-terminal
+          `AnsiFallbackFor` gate in the loop for live switches), Enter applies+
+          commits, Escape/C-g restores a full `Theme` snapshot taken at session
+          start (a copy, not a name, so a `--detect-theme` file survives a
+          cancelled browse). The session opens highlighting the *current* theme's
+          name, so opening the picker previews no change until the user moves.
+          Interactive choice deliberately not persisted — init.janet is the config
+          surface, Emacs' own `load-theme` convention. Verified live in tmux:
+          preview/revert/commit/startup-name/unknown-name all exercised (note: tmux
+          `send-keys M-x` gets swallowed as literal input under Notcurses — send
+          `Escape`, pause, `x` instead; unit tests' constructed Alt events are
+          unaffected).
         - [ ] *Phase 2 — the original eight.* major-dark/-light (vivid saturated),
           minor-dark/-light (muted/pastel), high-contrast-dark/-light (pure
           black/white backgrounds, tested against a raised contrast floor),
