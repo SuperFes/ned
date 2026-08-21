@@ -4233,7 +4233,15 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             return;
     }
 
-    statusMessage_ = (inputMode_ == InputMode::QueryReplace) ? queryReplace_->StatusText() : search_->StatusText();
+    statusMessage_ = (inputMode_ == InputMode::QueryReplace) ? queryReplace_->StatusText() : SearchStatusText();
+}
+
+std::string BufferView::SearchStatusText() const {
+    std::string text = search_->StatusText();
+    if (search_->Query().empty() && !lastSearchQuery_.empty()) {
+        text += GhostForEchoArea(lastSearchQuery_);
+    }
+    return text;
 }
 
 void BufferView::EndInteractiveSession() {
@@ -4269,11 +4277,17 @@ void BufferView::EndInteractiveSession() {
 
 void BufferView::HandleSearchKey(const editor::KeyChord& chord) {
     if (chord.Special == editor::SpecialKey::Enter) {
+        if (!search_->Query().empty()) {
+            lastSearchQuery_ = search_->Query();
+        }
         search_->Accept();
         EndInteractiveSession();
         return;
     }
     if (IsQuit(chord)) {
+        if (!search_->Query().empty()) {
+            lastSearchQuery_ = search_->Query();
+        }
         search_->Cancel();
         EndInteractiveSession();
         return;
@@ -4283,12 +4297,18 @@ void BufferView::HandleSearchKey(const editor::KeyChord& chord) {
         search_->DeleteChar();
     }
     else if (chord.Control && chord.Codepoint == U's') {
-        // C-s while already searching forward repeats; while searching
-        // backward it reverses direction instead (real Emacs isearch
+        // An empty query recalls the last search string outright (real
+        // Emacs: C-s/C-r on a fresh isearch reuses the previous one, shown
+        // ghosted via SearchStatusText() up to this point). Otherwise, C-s
+        // while already searching forward repeats; while searching
+        // backward it reverses direction instead (also real Emacs isearch
         // behavior) -- inputMode_ is kept in sync with search_'s own
         // direction since InIsearchMatch reads it to know which end of the
         // match point() is at.
-        if (inputMode_ == InputMode::IsearchBackward) {
+        if (search_->Query().empty() && !lastSearchQuery_.empty()) {
+            search_->AppendText(lastSearchQuery_);
+        }
+        else if (inputMode_ == InputMode::IsearchBackward) {
             search_->ReverseDirection();
             inputMode_ = InputMode::IsearchForward;
         }
@@ -4297,7 +4317,10 @@ void BufferView::HandleSearchKey(const editor::KeyChord& chord) {
         }
     }
     else if (chord.Control && chord.Codepoint == U'r') {
-        if (inputMode_ == InputMode::IsearchForward) {
+        if (search_->Query().empty() && !lastSearchQuery_.empty()) {
+            search_->AppendText(lastSearchQuery_);
+        }
+        else if (inputMode_ == InputMode::IsearchForward) {
             search_->ReverseDirection();
             inputMode_ = InputMode::IsearchBackward;
         }
@@ -4316,7 +4339,7 @@ void BufferView::HandleSearchKey(const editor::KeyChord& chord) {
     }
     // Anything else (arrow keys, unrelated control combos) is ignored mid-search.
 
-    statusMessage_ = search_->StatusText();
+    statusMessage_ = SearchStatusText();
     ScrollToShowPoint();
 }
 

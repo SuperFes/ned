@@ -470,6 +470,10 @@ class BufferView : public Widget {
     void StartInteractiveSession(editor::InteractiveRequest request);
     void EndInteractiveSession();
     void HandleSearchKey(const editor::KeyChord& chord);
+    // search_->StatusText() plus a dimmed ghost of lastSearchQuery_ appended
+    // when the current query is still empty -- see lastSearchQuery_'s own
+    // doc comment.
+    [[nodiscard]] std::string SearchStatusText() const;
     void HandleQueryReplaceKey(const editor::KeyChord& chord);
     void HandleConfirmQuitKey(const editor::KeyChord& chord);
     void HandlePromptKey(
@@ -1232,6 +1236,15 @@ class BufferView : public Widget {
 
     InputMode                                inputMode_ = InputMode::Normal;
     std::optional<editor::IncrementalSearch> search_;
+    // The most recent non-empty isearch query, kept across sessions
+    // (Accept and Cancel both record it, matching real Emacs' search ring
+    // remembering a search string regardless of how the session ended).
+    // Ghosted (dimmed) into the echo area while the current session's own
+    // query is still empty, and C-s/C-r on an empty query reuses it
+    // outright instead of repeating/reversing -- both real Emacs isearch
+    // behaviors. Empty until the first isearch session in this BufferView's
+    // lifetime accepts or cancels with a non-empty query.
+    std::string                              lastSearchQuery_;
     std::optional<editor::QueryReplace>      queryReplace_;
     std::optional<editor::MinibufferPrompt>  prompt_; // FindFile/SwitchToBuffer/ProjectSearch, distinguished by inputMode_
     std::optional<editor::ProjectReplace>    projectReplace_;
