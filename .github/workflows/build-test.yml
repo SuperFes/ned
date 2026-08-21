@@ -1,0 +1,62 @@
+name: Build & Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-test:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: default
+            preset: default
+            binary_dir: build
+          - name: sanitize
+            preset: sanitize
+            binary_dir: build-sanitize
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld pkg-config
+
+      # CMAKE_LINKER_TYPE (CMakePresets.json's "default" preset) needs CMake
+      # >= 3.29; ubuntu-latest's preinstalled cmake isn't reliably that new.
+      - name: Install a recent CMake
+        run: pip install --upgrade "cmake>=3.29"
+
+      # Janet is a system dependency (pkg_check_modules(Janet REQUIRED
+      # janet) in CMakeLists.txt), not FetchContent'd -- not packaged in
+      # Ubuntu's own apt repos, and pinned to the exact version this
+      # codebase's own documented Janet-build-specific landmines (see
+      # Source/Janet/Value.h/Environment.h) were verified against.
+      - name: Build and install Janet
+        run: |
+          git clone --depth 1 --branch v1.32.1 https://github.com/janet-lang/janet.git /tmp/janet
+          make -C /tmp/janet -j"$(nproc)"
+          sudo make -C /tmp/janet install
+          sudo ldconfig
+
+      # Keyed on CMakeLists.txt's own hash -- invalidates automatically
+      # whenever a pinned dependency version actually changes there.
+      - name: Cache FetchContent dependencies
+        uses: actions/cache@v4
+        with:
+          path: ${{ matrix.binary_dir }}/_deps
+          key: fetchcontent-${{ matrix.name }}-${{ hashFiles('CMakeLists.txt') }}
+
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }}
+
+      - name: Build
+        run: cmake --build ${{ matrix.binary_dir }} -j"$(nproc)"
+
+      - name: Test
+        run: ctest --test-dir ${{ matrix.binary_dir }} --output-on-failure

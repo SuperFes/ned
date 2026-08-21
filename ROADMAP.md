@@ -171,6 +171,13 @@ Notcurses (TermOx → FTXUI → Notcurses over the project's life).
 
 ### Small loose ends
 
+- [ ] **`libned` as a real shared library** — `ned_lib` (static today) exists solely so
+      `ned_tests` can link real editor code without pulling in `main()`; a static lib
+      already does that job. Worth revisiting only if a second real consumer shows up
+      (an embedding use case, a separate CLI tool, ...) — would need symbol-visibility
+      curation (everything's exported by default today) and SONAME/ABI-versioning
+      discipline, neither of which pays for itself with zero external consumers. Raised
+      during the Gentoo packaging follow-up below.
 - [ ] Janet-expose remaining hardcoded constants: `kDiffRefreshDebounce` (1200ms),
       `kPageScrollFraction` (0.65), `kMaxBackupBytes` (64 MiB).
 - [ ] Session persistence gaps: window-split layout isn't persisted; a
