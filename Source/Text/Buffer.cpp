@@ -345,6 +345,30 @@ void Buffer::Revert() {
     DiskTimestamp_ = fresh.DiskTimestamp_;
 }
 
+void Buffer::RestoreContent(std::string_view content) {
+    Rope_  = Rope(content);
+    Point_ = SnapToGraphemeBoundary(Rope_, std::min(Point_, Rope_.ByteLength()));
+    Mark_.reset();
+    SecondaryCursors_.clear();
+    NarrowedRange_.reset();
+    FoldMarkers_.clear();
+    ++FoldGeneration_;
+
+    RecordOrAmendUndo(/*canAmend=*/false); // one normal, undoable step
+    GoalColumn_.reset();
+    ++ContentGeneration_;
+
+    // Unlike Revert(), the buffer does NOT match disk now -- the whole
+    // restored content is one unsaved range (an empty restore over a
+    // nonempty snapshot is already covered by Modified()'s own zero-length
+    // fallback, so nothing is marked for it here).
+    UnsavedChangeRanges_.clear();
+    if (Rope_.ByteLength() > 0) {
+        MergeUnsavedRange(UnsavedChangeRanges_, 0, Rope_.ByteLength());
+    }
+    ++UnsavedChangeGeneration_;
+}
+
 bool Buffer::Modified() const {
     if (!UnsavedChangeRanges_.empty()) {
         return true;

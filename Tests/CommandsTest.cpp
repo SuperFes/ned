@@ -1,10 +1,14 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string_view>
+#include <vector>
 
+#include "Editor/Backup.h"
 #include "Editor/Commands.h"
 #include "Editor/Dispatcher.h"
 #include "Editor/FormatOnSave.h"
@@ -2275,4 +2279,206 @@ TEST_CASE("tab-move-left/right reorder the current buffer among the tabs, stoppi
     registry.Invoke("tab-move-left", context); // already leftmost -- stays, reports
     REQUIRE(list.Buffers()[0].get() == &b);
     REQUIRE_FALSE(message.empty());
+}
+
+// -- backup-and-recovery follow-up: the save-path backup/autosave hooks ------
+
+namespace {
+
+// Mirrors InitFileTest.cpp's own EnvVarGuard exactly (each test file carries
+// its own copy by convention) -- here it sandboxes XDG_STATE_HOME so backup
+// versions land in a disposable directory, never the developer's real one.
+class EnvVarGuard {
+  public:
+    EnvVarGuard(const char* name, const char* value) : name_(name) {
+        if (const char* existing = std::getenv(name)) {
+            hadPrevious_ = true;
+            previous_    = existing;
+        }
+        if (value) {
+            setenv(name, value, 1);
+        }
+        else {
+            unsetenv(name);
+        }
+    }
+
+    ~EnvVarGuard() {
+        if (hadPrevious_) {
+            setenv(name_.c_str(), previous_.c_str(), 1);
+        }
+        else {
+            unsetenv(name_.c_str());
+        }
+    }
+
+    EnvVarGuard(const EnvVarGuard&)            = delete;
+    EnvVarGuard& operator=(const EnvVarGuard&) = delete;
+
+  private:
+    std::string name_;
+    bool        hadPrevious_ = false;
+    std::string previous_;
+};
+
+// One disposable backup sandbox per test (BackupTest.cpp's shape, pared to
+// what these save-path tests need).
+struct BackupHookSandbox {
+    explicit BackupHookSandbox(const std::string& name)
+        : root(std::filesystem::temp_directory_path() / name), stateGuard("XDG_STATE_HOME", (root / "state").c_str()),
+          dataGuard("XDG_DATA_HOME", (root / "data").c_str()), homeGuard("HOME", nullptr) {
+        ResetBackupsForTesting();
+        std::filesystem::remove_all(root);
+        std::filesystem::create_directories(root / "work");
+    }
+
+    ~BackupHookSandbox() {
+        ResetBackupsForTesting();
+        std::error_code ec;
+        std::filesystem::remove_all(root, ec);
+    }
+
+    std::filesystem::path root;
+    EnvVarGuard           stateGuard;
+    EnvVarGuard           dataGuard;
+    EnvVarGuard           homeGuard;
+};
+
+std::string ReadWholeFile(const std::filesystem::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+}
+
+} // namespace
+
+TEST_CASE("save-buffer preserves the prior disk content as a backup version and drops the autosave", "[Commands]") {
+    const BackupHookSandbox sandbox("ned_commands_test_backup_save");
+    CommandRegistry         registry;
+    RegisterBuiltinCommands(registry);
+
+    const std::filesystem::path path = sandbox.root / "work" / "notes.txt";
+    ned::text::Buffer           buffer("notes", ned::text::Rope("original"));
+    buffer.SaveToFile(path); // disk now holds "original\n"
+
+    // A crash-recovery autosave from the editing session that this save
+    // makes obsolete.
+    WriteAutoSave(path, "unsaved edits");
+    REQUIRE(std::filesystem::exists(BackupDirectoryForFile(path) / "autosave"));
+
+    buffer.SetPoint(buffer.Size());
+    buffer.InsertAtPoint(" plus edits");
+
+    ned::text::KillRing   killRing;
+    ned::text::BufferList bufferList;
+    std::string           message;
+    CommandContext        context{buffer, killRing, bufferList, KeyChord{}, &message};
+    registry.Invoke("save-buffer", context);
+
+    REQUIRE(ReadWholeFile(path) == "original plus edits\n");
+    const std::vector<BackupVersion> versions = ListBackupVersions(path);
+    REQUIRE(versions.size() == 1);
+    REQUIRE_FALSE(versions[0].isAutoSave); // the autosave is gone, only the version remains
+    REQUIRE(ReadBackupVersion(versions[0].path) == "original\n");
+}
+
+TEST_CASE("save-buffer-force backs up externally-written content the buffer never saw", "[Commands]") {
+    const BackupHookSandbox sandbox("ned_commands_test_backup_external");
+    CommandRegistry         registry;
+    RegisterBuiltinCommands(registry);
+
+    const std::filesystem::path path = sandbox.root / "work" / "notes.txt";
+    ned::text::Buffer           buffer("notes", ned::text::Rope("original"));
+    buffer.SaveToFile(path);
+
+    // Someone else rewrites the file underneath the buffer.
+    std::ofstream(path, std::ios::trunc) << "external content";
+
+    ned::text::KillRing   killRing;
+    ned::text::BufferList bufferList;
+    std::string           message;
+    CommandContext        context{buffer, killRing, bufferList, KeyChord{}, &message};
+    registry.Invoke("save-buffer-force", context);
+
+    const std::vector<BackupVersion> versions = ListBackupVersions(path);
+    REQUIRE(versions.size() == 1);
+    REQUIRE(ReadBackupVersion(versions[0].path) == "external content");
+}
+
+TEST_CASE("save-buffer's first save of a new file creates no backup version", "[Commands]") {
+    const BackupHookSandbox sandbox("ned_commands_test_backup_newfile");
+    CommandRegistry         registry;
+    RegisterBuiltinCommands(registry);
+
+    const std::filesystem::path path   = sandbox.root / "work" / "brand-new.txt";
+    ned::text::Buffer           buffer = ned::text::Buffer::NewFile(path);
+    buffer.InsertAtPoint("first content");
+
+    ned::text::KillRing   killRing;
+    ned::text::BufferList bufferList;
+    std::string           message;
+    CommandContext        context{buffer, killRing, bufferList, KeyChord{}, &message};
+    registry.Invoke("save-buffer", context);
+
+    REQUIRE(std::filesystem::exists(path)); // the save itself happened
+    REQUIRE(ListBackupVersions(path).empty());
+}
+
+TEST_CASE("save-some-buffers backs up each existing file it saves", "[Commands]") {
+    const BackupHookSandbox sandbox("ned_commands_test_backup_some");
+    CommandRegistry         registry;
+    RegisterBuiltinCommands(registry);
+
+    ned::text::KillRing   killRing;
+    ned::text::BufferList bufferList;
+
+    const std::filesystem::path pathA = sandbox.root / "work" / "a.txt";
+    const std::filesystem::path pathB = sandbox.root / "work" / "b.txt";
+    std::ofstream(pathA) << "a on disk";
+    std::ofstream(pathB) << "b on disk";
+    bufferList.OpenOrCreateFile(pathA).InsertAtPoint("edit ");
+    bufferList.OpenOrCreateFile(pathB).InsertAtPoint("edit ");
+
+    ned::text::Buffer buffer("driver"); // save-some-buffers works off bufferList, not context.buffer
+    std::string       message;
+    CommandContext    context{buffer, killRing, bufferList, KeyChord{}, &message};
+    registry.Invoke("save-some-buffers", context);
+
+    REQUIRE(ListBackupVersions(pathA).size() == 1);
+    REQUIRE(ReadBackupVersion(ListBackupVersions(pathA)[0].path) == "a on disk");
+    REQUIRE(ListBackupVersions(pathB).size() == 1);
+    REQUIRE(ReadBackupVersion(ListBackupVersions(pathB)[0].path) == "b on disk");
+}
+
+TEST_CASE("saving a scratch-directory buffer creates no backup version", "[Commands]") {
+    const BackupHookSandbox sandbox("ned_commands_test_backup_scratch");
+    CommandRegistry         registry;
+    RegisterBuiltinCommands(registry);
+
+    const std::filesystem::path scratchDir = sandbox.root / "data" / "ned" / "scratches";
+    std::filesystem::create_directories(scratchDir);
+    const std::filesystem::path path = scratchDir / "todo.txt";
+    std::ofstream(path) << "scratch on disk";
+
+    ned::text::BufferList bufferList;
+    ned::text::Buffer&    buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("edit ");
+
+    ned::text::KillRing killRing;
+    std::string         message;
+    CommandContext      context{buffer, killRing, bufferList, KeyChord{}, &message};
+    registry.Invoke("save-buffer", context);
+
+    REQUIRE_FALSE(buffer.Modified()); // saved
+    REQUIRE(ListBackupVersions(path).empty());
+}
+
+TEST_CASE("recover-file signals its interactive request", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    registry.Invoke("recover-file", context);
+
+    REQUIRE(context.interactiveRequest == InteractiveRequest::RecoverFile);
 }

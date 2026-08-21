@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "ActiveBuffer.h"
+#include "Editor/Backup.h"
 #include "Editor/CodeFold.h"
 #include "Editor/Command.h"
 #include "Editor/Dap/DapManager.h"
@@ -346,6 +347,12 @@ class BufferView : public Widget {
                            DeleteFile,
                            RenameFile,
                            FindScratch,
+                           // backup-and-recovery follow-up: recover-file's
+                           // pick-a-version prompt -- dedicated handler
+                           // (HandleRecoverFileKey), not a HandlePromptKey
+                           // branch, for the same else-chain reason
+                           // DeleteFile/RenameFile got their own.
+                           RecoverFile,
                            // Emacs-coverage follow-up: goto-line's own prompt
                            // (M-g g) -- same single-line session shape as
                            // CreateDirectory, no completion.
@@ -428,6 +435,10 @@ class BufferView : public Widget {
                                  Confirming };
     enum class RenameFileStage { EnteringSource,
                                  EnteringDestination };
+    // backup-and-recovery follow-up: recover-file's two linear stages,
+    // DeleteFileStage's exact shape (pick, then y/n).
+    enum class RecoverFileStage { PickingVersion,
+                                  Confirming };
     // task-runner follow-up: which action TaskName's prompt performs on
     // Enter -- Run calls TaskRunner::RunTask (and switches to the resulting
     // buffer), Cancel calls TaskRunner::CancelTask.
@@ -483,6 +494,16 @@ class BufferView : public Widget {
     // leaving that buffer pointing at a now-nonexistent path.
     void HandleDeleteFileKey(const editor::KeyChord& chord);
     void HandleRenameFileKey(const editor::KeyChord& chord);
+
+    // backup-and-recovery follow-up: recover-file's session, the same
+    // linear no-state-machine-class shape as HandleDeleteFileKey just
+    // above. PickingVersion collects a 1-based number into prompt_ (the
+    // candidates were listed in statusMessage_ by StartInteractiveSession;
+    // Enter alone means 1, the newest), then Confirming re-purposes
+    // statusMessage_ for the final y/n; y reads the chosen snapshot and
+    // restores it via Buffer::RestoreContent -- one undoable step, buffer
+    // left Modified() so only an explicit save makes the recovery stick.
+    void HandleRecoverFileKey(const editor::KeyChord& chord);
 
     // code-actions follow-up. RequestCodeActionsAtPoint mirrors
     // RequestCompletionAtPoint's shape: finds the diagnostic covering point
@@ -1207,6 +1228,15 @@ class BufferView : public Widget {
 
     RenameFileStage       renameStage_ = RenameFileStage::EnteringSource;
     std::filesystem::path renameSource_; // path entered in RenameFileStage::EnteringSource
+
+    // backup-and-recovery follow-up: the version list captured when the
+    // recover-file session opened (stable for the session's short life --
+    // the status line's numbering and the final restore must agree on
+    // indices, so this is deliberately not re-listed per keystroke), and
+    // the 0-based choice awaiting y/n in RecoverFileStage::Confirming.
+    RecoverFileStage                   recoverStage_ = RecoverFileStage::PickingVersion;
+    std::vector<editor::BackupVersion> recoverVersions_;
+    std::size_t                        recoverChoice_ = 0;
 
     // execute-extended-command follow-up: index into the ranked candidate
     // list FuzzyFilterAndRank produces fresh from prompt_->Text() on every

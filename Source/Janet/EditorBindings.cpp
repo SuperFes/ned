@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "Editor/AutoRevert.h"
+#include "Editor/Backup.h"
 #include "Editor/CodeFoldSettings.h"
 #include "Editor/Dap/DapConfig.h"
 #include "Editor/FinalNewline.h"
@@ -177,6 +178,46 @@ namespace {
 
     void NedSetScratchAutoSave(bool enabled) {
         editor::SetScratchAutoSaveEnabled(enabled);
+    }
+
+    // backup-and-recovery follow-up.
+    void NedSetFileAutoSave(bool enabled) {
+        editor::SetFileAutoSaveEnabled(enabled);
+    }
+
+    void NedSetBackupMaxAgeDays(std::int64_t days) {
+        editor::SetBackupMaxAgeDays(static_cast<int>(days));
+    }
+
+    void NedSetBackupMaxVersions(std::int64_t versions) {
+        editor::SetBackupMaxVersions(static_cast<int>(versions));
+    }
+
+    // The version list ned/recover-backup indexes into -- both must agree,
+    // so both go through editor::ListBackupVersions on the same buffer path.
+    std::vector<std::string> NedListBackups() {
+        const editor::CommandContext& context = CurrentContext();
+        if (!context.buffer.Path().has_value()) {
+            return {};
+        }
+        std::vector<std::string> paths;
+        for (const editor::BackupVersion& version : editor::ListBackupVersions(*context.buffer.Path())) {
+            paths.push_back(version.path.string());
+        }
+        return paths;
+    }
+
+    void NedRecoverBackup(std::int64_t index) {
+        editor::CommandContext& context = CurrentContext();
+        if (!context.buffer.Path().has_value()) {
+            throw std::runtime_error("ned: buffer \"" + context.buffer.Name() + "\" has no file to recover");
+        }
+        const std::vector<editor::BackupVersion> versions = editor::ListBackupVersions(*context.buffer.Path());
+        if (index < 0 || static_cast<std::size_t>(index) >= versions.size()) {
+            throw std::runtime_error("ned: no backup version " + std::to_string(index) + " (have "
+                                     + std::to_string(versions.size()) + ")");
+        }
+        context.buffer.RestoreContent(editor::ReadBackupVersion(versions[static_cast<std::size_t>(index)].path));
     }
 
     void NedSetAutoRevert(bool enabled) {
@@ -420,6 +461,26 @@ void InstallEditorBindings(Environment& env) {
         "ned", "set-scratch-auto-save",
         "Enable/disable automatically saving modified scratch notes (find-scratch) on a periodic timer (default "
         "true).");
+    env.Register<&NedSetFileAutoSave>(
+        "ned", "set-file-auto-save",
+        "Enable/disable periodic crash-recovery snapshots of modified file buffers into the backup store (default "
+        "true). Snapshots never touch the file itself and are dropped by a real save.");
+    env.Register<&NedSetBackupMaxAgeDays>(
+        "ned", "set-backup-max-age-days",
+        "Days a backup version is kept before pruning (default 14; <= 0 keeps versions regardless of age).");
+    env.Register<&NedSetBackupMaxVersions>(
+        "ned", "set-backup-max-versions",
+        "Backup versions kept per file, oldest pruned first (default 20; <= 0 keeps unlimited versions).");
+    env.Register<&NedListBackups>(
+        "ned", "list-backups",
+        "Backup snapshots recoverable for the current buffer, as an array of absolute paths -- the crash-recovery "
+        "autosave first if one exists, then saved versions newest-first. Empty for a pathless buffer or when "
+        "nothing was backed up. Index into it with ned/recover-backup.");
+    env.Register<&NedRecoverBackup>(
+        "ned", "recover-backup",
+        "Restore the current buffer's content from backup snapshot `index` (0 = the autosave if present, else the "
+        "newest version -- ned/list-backups' order). One undoable step; the buffer is left modified, so save to "
+        "keep the recovery. Panics on a bad index or unreadable snapshot.");
     env.Register<&NedSetAutoRevert>(
         "ned", "set-auto-revert",
         "Enable/disable automatically reloading an open, unmodified buffer when its file changes on disk (default "

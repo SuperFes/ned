@@ -2413,6 +2413,11 @@ bool BufferView::OnKeyEvent(const Event& event) {
         ClampPointToNarrowing();
         return true;
     }
+    if (inputMode_ == InputMode::RecoverFile) {
+        HandleRecoverFileKey(*chord);
+        ClampPointToNarrowing();
+        return true;
+    }
     if (inputMode_ == InputMode::ExecuteCommand) {
         // No ClampPointToNarrowing() here: HandleExecuteCommandKey's own
         // Enter branch already routes through RunCommandAndHandleOutcome
@@ -3471,6 +3476,31 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             prompt_.emplace("Find scratch: ");
             statusMessage_ = prompt_->StatusText();
             return;
+        case editor::InteractiveRequest::RecoverFile: {
+            // backup-and-recovery follow-up: both no-session outcomes
+            // (pathless buffer, nothing backed up) report and stay Normal.
+            text::Buffer& buffer = activeBuffer_.Get();
+            if (!buffer.Path().has_value()) {
+                statusMessage_ = "Buffer " + buffer.Name() + " has no file to recover";
+                return;
+            }
+            recoverVersions_ = editor::ListBackupVersions(*buffer.Path());
+            if (recoverVersions_.empty()) {
+                statusMessage_ = "No backups for " + buffer.Name();
+                return;
+            }
+            inputMode_    = InputMode::RecoverFile;
+            recoverStage_ = RecoverFileStage::PickingVersion;
+            prompt_.emplace("Recover " + buffer.Name() + " -- version (1-" + std::to_string(recoverVersions_.size())
+                            + ", Enter=1): ");
+            std::string candidates;
+            for (std::size_t index = 0; index < recoverVersions_.size(); ++index) {
+                candidates += (index == 0 ? "" : ", ") + std::to_string(index + 1) + ": "
+                              + recoverVersions_[index].label;
+            }
+            statusMessage_ = prompt_->StatusText() + "  {" + candidates + "}";
+            return;
+        }
         case editor::InteractiveRequest::RunTask:
             taskPromptAction_ = TaskPromptAction::Run;
             inputMode_        = InputMode::TaskName;
@@ -5616,6 +5646,68 @@ void BufferView::HandleRenameFileKey(const editor::KeyChord& chord) {
         prompt_->AppendChar(chord.Codepoint);
     }
     statusMessage_ = prompt_->StatusText();
+}
+
+void BufferView::HandleRecoverFileKey(const editor::KeyChord& chord) {
+    if (recoverStage_ == RecoverFileStage::PickingVersion) {
+        if (chord.Special == editor::SpecialKey::Enter) {
+            const std::string input = prompt_->Text();
+            std::size_t       choice = 1; // Enter alone means the newest
+            if (!input.empty()) {
+                try {
+                    choice = std::stoul(input);
+                }
+                catch (const std::exception&) {
+                    choice = 0; // non-numeric -- caught by the range check below
+                }
+            }
+            if (choice < 1 || choice > recoverVersions_.size()) {
+                statusMessage_ = "No such version: " + input;
+                EndInteractiveSession();
+                return;
+            }
+            recoverChoice_ = choice - 1;
+            recoverStage_  = RecoverFileStage::Confirming;
+            prompt_.reset();
+            statusMessage_ = "Recover \"" + recoverVersions_[recoverChoice_].label + "\" over buffer "
+                             + activeBuffer_.Get().Name() + "? (y/n)";
+            return;
+        }
+        if (IsQuit(chord)) {
+            statusMessage_ = "Recover cancelled.";
+            EndInteractiveSession();
+            return;
+        }
+        if (chord.Special == editor::SpecialKey::Backspace) {
+            prompt_->DeleteChar();
+        }
+        else if (IsPlainCharacter(chord) && chord.Codepoint >= U'0' && chord.Codepoint <= U'9') {
+            prompt_->AppendChar(chord.Codepoint);
+        }
+        statusMessage_ = prompt_->StatusText();
+        return;
+    }
+
+    // Confirming
+    if (chord.Codepoint == U'y' || chord.Codepoint == U'Y') {
+        try {
+            const std::string content = editor::ReadBackupVersion(recoverVersions_[recoverChoice_].path);
+            activeBuffer_.Get().RestoreContent(content);
+            statusMessage_ = "Recovered " + recoverVersions_[recoverChoice_].label
+                             + " -- buffer is modified; save to keep it";
+        }
+        catch (const std::exception& e) {
+            statusMessage_ = e.what();
+        }
+        EndInteractiveSession();
+        return;
+    }
+    if (chord.Codepoint == U'n' || chord.Codepoint == U'N' || IsQuit(chord)) {
+        statusMessage_ = "Recover cancelled.";
+        EndInteractiveSession();
+        return;
+    }
+    // Anything else is ignored -- stay in the prompt.
 }
 
 void BufferView::HandleRegisterKey(const editor::KeyChord& chord) {

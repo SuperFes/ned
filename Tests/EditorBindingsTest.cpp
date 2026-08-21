@@ -1,10 +1,14 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
+#include "Editor/Backup.h"
 #include "Editor/CodeFoldSettings.h"
 #include "Editor/Dispatcher.h"
 #include "Editor/FinalNewline.h"
@@ -403,4 +407,140 @@ TEST_CASE("ned/theme-set accumulates keyed overrides in insertion order", "[Edit
     REQUIRE(overrides[2] == std::pair<std::string, std::string>{"background", "#654321"});
 
     ned::editor::ClearThemeColorOverrides();
+}
+
+// -- backup-and-recovery follow-up: settings + scriptable recovery -----------
+
+namespace {
+
+// Mirrors InitFileTest.cpp's own EnvVarGuard exactly (each test file carries
+// its own copy by convention).
+class EnvVarGuard {
+  public:
+    EnvVarGuard(const char* name, const char* value) : name_(name) {
+        if (const char* existing = std::getenv(name)) {
+            hadPrevious_ = true;
+            previous_    = existing;
+        }
+        if (value) {
+            setenv(name, value, 1);
+        }
+        else {
+            unsetenv(name);
+        }
+    }
+
+    ~EnvVarGuard() {
+        if (hadPrevious_) {
+            setenv(name_.c_str(), previous_.c_str(), 1);
+        }
+        else {
+            unsetenv(name_.c_str());
+        }
+    }
+
+    EnvVarGuard(const EnvVarGuard&)            = delete;
+    EnvVarGuard& operator=(const EnvVarGuard&) = delete;
+
+  private:
+    std::string name_;
+    bool        hadPrevious_ = false;
+    std::string previous_;
+};
+
+struct BackupBindingsSandbox {
+    explicit BackupBindingsSandbox(const std::string& name)
+        : root(std::filesystem::temp_directory_path() / name), stateGuard("XDG_STATE_HOME", (root / "state").c_str()),
+          homeGuard("HOME", nullptr) {
+        ned::editor::ResetBackupsForTesting();
+        std::filesystem::remove_all(root);
+        std::filesystem::create_directories(root / "work");
+    }
+
+    ~BackupBindingsSandbox() {
+        ned::editor::ResetBackupsForTesting();
+        std::error_code ec;
+        std::filesystem::remove_all(root, ec);
+    }
+
+    std::filesystem::path root;
+    EnvVarGuard           stateGuard;
+    EnvVarGuard           homeGuard;
+};
+
+} // namespace
+
+TEST_CASE("ned/set-file-auto-save and the backup retention knobs round-trip", "[EditorBindings]") {
+    const BackupBindingsSandbox sandbox("ned_bindings_test_backup_settings");
+    Environment&                env = ned_tests::TestEnvironment();
+    InstallEditorBindings(env);
+
+    env.DoString("(ned/set-file-auto-save false)");
+    REQUIRE_FALSE(ned::editor::FileAutoSaveEnabled());
+    env.DoString("(ned/set-file-auto-save true)");
+    REQUIRE(ned::editor::FileAutoSaveEnabled());
+
+    env.DoString("(ned/set-backup-max-age-days 7)");
+    REQUIRE(ned::editor::BackupMaxAgeDays() == 7);
+    env.DoString("(ned/set-backup-max-versions 5)");
+    REQUIRE(ned::editor::BackupMaxVersions() == 5);
+}
+
+TEST_CASE("ned/list-backups and ned/recover-backup restore a snapshot without any prompt", "[EditorBindings]") {
+    const BackupBindingsSandbox sandbox("ned_bindings_test_backup_recover");
+    Environment&                env = ned_tests::TestEnvironment();
+    InstallEditorBindings(env);
+
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("current content");
+    const std::filesystem::path path = sandbox.root / "work" / "notes.txt";
+    fixture.buffer.SaveToFile(path);
+
+    // One saved version ("old version") and one newer crash autosave.
+    std::ofstream(path, std::ios::trunc) << "old version";
+    ned::editor::BackupFileBeforeSave(path, 1755700000);
+    std::ofstream(path, std::ios::trunc) << "current content\n";
+    ned::editor::WriteAutoSave(path, "crash snapshot");
+
+    ned::editor::ScriptingSessionScope session(ned::editor::ScriptingSession{fixture.registry, fixture.scriptKeymap});
+    ned::editor::CommandContext        context = fixture.Context();
+    ned::editor::CommandContextScope   contextScope(context);
+
+    const auto listed = FromJanet<std::vector<std::string>>(env.DoString("(ned/list-backups)"));
+    REQUIRE(listed.size() == 2);
+    REQUIRE(listed[0].ends_with("autosave"));
+    REQUIRE(listed[1].ends_with(".bak"));
+
+    env.DoString("(ned/recover-backup 0)");
+    REQUIRE(fixture.buffer.Text() == "crash snapshot");
+    REQUIRE(fixture.buffer.Modified());
+
+    env.DoString("(ned/recover-backup 1)");
+    REQUIRE(fixture.buffer.Text() == "old version");
+}
+
+TEST_CASE("ned/recover-backup panics on a bad index or pathless buffer, leaving the buffer untouched",
+          "[EditorBindings]") {
+    const BackupBindingsSandbox sandbox("ned_bindings_test_backup_errors");
+    Environment&                env = ned_tests::TestEnvironment();
+    InstallEditorBindings(env);
+
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("untouched");
+
+    ned::editor::ScriptingSessionScope session(ned::editor::ScriptingSession{fixture.registry, fixture.scriptKeymap});
+    ned::editor::CommandContext        context = fixture.Context();
+    ned::editor::CommandContextScope   contextScope(context);
+
+    // Pathless buffer: list is empty, recover panics.
+    REQUIRE(FromJanet<std::vector<std::string>>(env.DoString("(ned/list-backups)")).empty());
+    REQUIRE_THROWS_AS(env.DoString("(ned/recover-backup 0)"), std::runtime_error);
+
+    // Path-associated but out-of-range index.
+    const std::filesystem::path path = sandbox.root / "work" / "notes.txt";
+    fixture.buffer.SaveToFile(path);
+    ned::editor::WriteAutoSave(path, "crash snapshot");
+    REQUIRE_THROWS_AS(env.DoString("(ned/recover-backup 5)"), std::runtime_error);
+
+    REQUIRE(fixture.buffer.Text() == "untouched");
 }

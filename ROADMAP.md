@@ -610,6 +610,37 @@ each is, not by priority.
         the save-time confirmation owns that conflict. **Deferred, not designed in**:
         three-way merging when both sides changed (the `SavedSnapshot_` base rope makes
         a diff3 feasible later), and Emacs' ask-on-first-edit supersession prompt.
+  - [x] File preservation: backups, auto-save, recovery — **shipped 2026-08-20** (user
+        ask: Emacs-grade preservation without Emacs' sibling-file litter). Two tracks,
+        Emacs' proven model, all stored under `$XDG_STATE_HOME/ned/backups/<fnv1a64 of
+        the normalized path>/` (ProjectSession's exact hashed-filename recipe; a `path`
+        sidecar maps each hash-named directory back to its file, since the hash is
+        one-way): **backup versions** (`v-<UTC timestamp>-<seq2>.bak` — fixed-width
+        fields so lexicographic order is chronological; same-second saves probe
+        `-00`..`-99`) written by `save-buffer`/`save-buffer-force`/`save-some-buffers`
+        copying the file's prior *on-disk* content before the save's rename clobbers it
+        (hooked in Commands.cpp, deliberately not `Buffer::Save` — Text/ stays
+        policy-free, and scratch auto-save calls `Buffer::Save` directly so scratches
+        never version); and a rotating **`autosave`** crash snapshot per modified file
+        buffer, refreshed on the existing 5-second tick (`Editor/Backup.h/.cpp`'s
+        `AutoSaveFileBuffers`, skipping unchanged buffers via a `ContentGeneration()`
+        memo so idle ticks cost nothing) and dropped by a real save. Retention is
+        ned's own job: prune at startup plus rate-limited (hourly) on the tick —
+        versions older than 14 days, more than 20 per file, and orphaned autosaves,
+        all Janet-configurable (`ned/set-backup-max-age-days`/`-max-versions`, `<= 0`
+        disables; `ned/set-file-auto-save` toggles the snapshots). Recovery:
+        `M-x recover-file` (unbound, like Emacs' own) prompts over the buffer's
+        versions (autosave first, then newest-first) with a y/n confirm, restoring via
+        the new `Buffer::RestoreContent` — Revert()'s exact shape but leaving the
+        buffer `Modified()`, so one undo backs it out and only an explicit save keeps
+        it; `ned/list-backups` + `ned/recover-backup` are the prompt-free scriptable
+        path (keyboard macros can't drive prompts — `ReplayMacro` bails on a non-Normal
+        `inputMode_` — so macro-ability *required* the Janet route, not just allowed
+        it). **Scope cuts, recorded**: the 64 MiB `kMaxBackupBytes` skip constant isn't
+        Janet-exposed yet (the tick writes on the event-loop thread; the cap guards UI
+        stalls); no exit-time autosave flush (quit-with-unsaved-confirmed means the
+        user chose to discard; stale autosaves age out via prune); >100 same-second
+        saves overwrite the `-99` slot rather than widening the field.
   - [x] Multiple cursors / multi-cursor editing — **shipped 2026-08-20** as its own
         phase, exactly per the design pass below (kept as the original scoping record;
         every "genuinely missing" item it names landed as predicted, the relocation

@@ -12,6 +12,7 @@
 
 #include "Application.h"
 
+#include "Editor/Backup.h"
 #include "Editor/Commands.h"
 #include "Editor/Dap/DapManager.h"
 #include "Editor/Dispatcher.h"
@@ -354,6 +355,16 @@ int main(int argc, char** argv) {
     // loop). Every later open (find-file, sidebar click, LSP jump, ...)
     // funnels through BufferList's own on-file-opened seam instead.
     ned::editor::LoadFilePlaces();
+
+    // backup-and-recovery follow-up: startup backup pruning -- after
+    // LoadInitFile for the same reason as LoadFilePlaces above, so a
+    // ned/set-backup-max-* retention knob configured there governs it.
+    try {
+        ned::editor::PruneBackups();
+    }
+    catch (const std::exception&) {
+        // Unprunable backups must never block startup.
+    }
 
     // variables-store follow-up: editor-remembered key/value facts
     // ($XDG_STATE_HOME/ned/variables.json) -- the "theme" variable
