@@ -267,16 +267,23 @@ TEST_CASE("LspManager::StatusForLanguage reports NotConfigured, Running, and Spa
     using ned::editor::lsp::LspManager;
 
     REQUIRE(manager.StatusForLanguage("status-test-lang") == LspManager::LspStatus::NotConfigured);
+    REQUIRE(manager.SpawnFailureDetail("status-test-lang").empty());
+    REQUIRE(manager.DisconnectReason("status-test-lang").empty());
 
     LspClient* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "status-test-lang", eventLoop, client);
     REQUIRE(manager.StatusForLanguage("status-test-lang") == LspManager::LspStatus::Running);
+    REQUIRE(manager.SpawnFailureDetail("status-test-lang").empty());
 
     ned::editor::lsp::SetLspServerCommand("status-fail-lang", {"/definitely/does/not/exist/ned-fake-lsp"});
     Buffer& buffer = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-lsp-manager-status-test.txt");
     manager.SyncBuffer(buffer, "status-fail-lang");
     REQUIRE(manager.StatusForLanguage("status-fail-lang") == LspManager::LspStatus::SpawnFailed);
     REQUIRE(manager.StatusForLanguage("status-test-lang") == LspManager::LspStatus::Running); // unaffected by the other language's failure
+    // mode-line-lsp-status-round-3 follow-up: the spawn exception's message
+    // is retained for the mode line's detail text.
+    REQUIRE(manager.SpawnFailureDetail("status-fail-lang").find("ned-fake-lsp") != std::string::npos);
+    REQUIRE(manager.SpawnFailureDetail("status-test-lang").empty()); // unaffected by the other language's failure
 
     ned::editor::lsp::SetLspServerCommand("status-fail-lang", {}); // clean up global config state for other tests
 }

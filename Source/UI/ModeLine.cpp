@@ -133,16 +133,20 @@ void ModeLine::Paint(Canvas c) {
     // configured" draws nothing, unchanged from before this follow-up.
     if (!lspActivityShown && lspManager_) {
         using Status = editor::lsp::LspManager::LspStatus;
-        std::string_view glyph;
-        switch (lspManager_->StatusForLanguage(editor::LanguageKeyForMode(mode_))) {
+        const std::string languageKey = editor::LanguageKeyForMode(mode_);
+        std::string_view  glyph;
+        std::string        detail;
+        switch (lspManager_->StatusForLanguage(languageKey)) {
             case Status::Running:
                 glyph = "●";
                 break;
             case Status::SpawnFailed:
-                glyph = "✕";
+                glyph  = "✕";
+                detail = lspManager_->SpawnFailureDetail(languageKey);
                 break;
             case Status::Disconnected:
-                glyph = "○";
+                glyph  = "○";
+                detail = lspManager_->DisconnectReason(languageKey);
                 break;
             case Status::NotConfigured:
                 break;
@@ -155,6 +159,14 @@ void ModeLine::Paint(Canvas c) {
             columns.emplace_back("P");
             columns.emplace_back(" ");
             columns.emplace_back(glyph);
+            // mode-line-lsp-status-round-3 follow-up: same "detail text after
+            // a space" shape as the busy-activity block above.
+            if (!detail.empty()) {
+                columns.emplace_back(" ");
+                for (const char ch : detail) {
+                    columns.emplace_back(1, ch);
+                }
+            }
         }
     }
 

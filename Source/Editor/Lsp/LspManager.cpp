@@ -167,6 +167,7 @@ void LspManager::WireNotificationHandlers(LspClient& client, const std::string& 
     client.SetNotificationHandler("$/progress", [this, language](const Json& params) { HandleProgress(language, params); });
     client.SetOnDisconnected([this, language](std::string reason) {
         LogError(language, "server disconnected: " + reason);
+        disconnectDetail_[language] = reason;
         ClientDisconnected(language);
     });
 }
@@ -191,6 +192,7 @@ LspClient* LspManager::ClientForLanguage(const std::string& language) {
             return nullptr;
         }
         failedCommands_.erase(failed);
+        spawnFailureDetail_.erase(language);
     }
 
     std::unique_ptr<LspClient> client;
@@ -204,7 +206,8 @@ LspClient* LspManager::ClientForLanguage(const std::string& language) {
         // BufferView::Paint()) had no catch anywhere above it, crashing the
         // whole running editor the instant a buffer of a misconfigured-LSP
         // language was displayed. Report instead of crashing.
-        failedCommands_[language] = *command;
+        failedCommands_[language]   = *command;
+        spawnFailureDetail_[language] = e.what();
         LogError(language, e.what());
         return nullptr;
     }
@@ -219,6 +222,7 @@ LspClient* LspManager::ClientForLanguage(const std::string& language) {
     // resolves any prior disconnect -- StatusForLanguage should report
     // Running now, not a stale Disconnected from before this attempt.
     disconnectedLanguages_.erase(language);
+    disconnectDetail_.erase(language);
     return rawClient;
 }
 
@@ -267,6 +271,7 @@ void LspManager::SyncBuffer(text::Buffer& buffer, const std::string& language) {
 LspClient& LspManager::SetClientForTesting(std::string language, std::unique_ptr<LspClient> client) {
     WireNotificationHandlers(*client, language); // same wiring ClientForLanguage's real spawn path applies
     disconnectedLanguages_.erase(language);      // an injected client is "running," same as a real successful spawn
+    disconnectDetail_.erase(language);
     LspClient& ref                = *client;
     clients_[std::move(language)] = std::move(client);
     return ref;
@@ -340,6 +345,16 @@ LspManager::LspStatus LspManager::StatusForLanguage(const std::string& language)
         return LspStatus::Disconnected;
     }
     return LspStatus::NotConfigured;
+}
+
+std::string LspManager::SpawnFailureDetail(const std::string& language) const {
+    const auto it = spawnFailureDetail_.find(language);
+    return it != spawnFailureDetail_.end() ? it->second : std::string();
+}
+
+std::string LspManager::DisconnectReason(const std::string& language) const {
+    const auto it = disconnectDetail_.find(language);
+    return it != disconnectDetail_.end() ? it->second : std::string();
 }
 
 void LspManager::NotifyBufferClosed(text::Buffer& buffer) {

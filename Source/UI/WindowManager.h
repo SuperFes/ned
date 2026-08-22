@@ -40,6 +40,7 @@
 #include "Editor/Keymap.h"
 #include "Editor/Lsp/LspManager.h"
 #include "Editor/Mode.h"
+#include "Editor/ProjectSession.h"
 #include "Editor/PromptHistory.h"
 #include "Editor/Register.h"
 #include "Editor/Tasks/TaskRunner.h"
@@ -404,6 +405,24 @@ class WindowManager {
     // and once by main.cpp after the event loop exits.
     void SaveProjectSessionNow();
 
+    // session-persistence-window-layout follow-up: fills in data.windowLayout
+    // (and data.focusedPanePath) by walking root_ -- called from
+    // SaveProjectSessionNow alongside the fields above. Leaves both empty,
+    // untouched, if any leaf's buffer has no path (a scratch buffer showing
+    // in a pane, say) rather than capture a tree partial restore couldn't
+    // fully resolve anyway.
+    void CaptureWindowLayout(editor::ProjectSessionData& data);
+
+    // Rebuilds root_ from data.windowLayout, replacing whatever single
+    // default pane main.cpp's constructor call already established, then
+    // restores focus per data.focusedPanePath. A no-op (leaves the existing
+    // root_ alone) when windowLayout is empty, or when any referenced file
+    // isn't already open in bufferList_ -- main.cpp is expected to have
+    // opened every ProjectSessionData::openFiles entry first, the same
+    // ordering LoadActiveProjectSession's other restore steps already rely
+    // on.
+    void RestoreWindowLayout(const editor::ProjectSessionData& data);
+
     // Pixel-blitter-minimap follow-up: tears down every pane's Minimap
     // pixel-blitter plane while the Notcurses context is still guaranteed
     // alive. main.cpp's local-variable order means this WindowManager is
@@ -435,6 +454,12 @@ class WindowManager {
     void PurgeFinishedAsyncLoaders();
 
     [[nodiscard]] std::unique_ptr<Pane> MakePane(text::Buffer& buffer, editor::Mode mode);
+
+    // RestoreWindowLayout's own recursive builder -- nullptr on any
+    // unresolvable reference (out-of-range/self-or-forward-referencing
+    // index, a Leaf whose file isn't open in bufferList_), which
+    // RestoreWindowLayout treats as "abandon the whole restore."
+    [[nodiscard]] std::unique_ptr<WindowNode> BuildNodeFromLayout(const std::vector<editor::WindowLayoutNode>& nodes, std::size_t index);
 
     void HandleWindowRequest(editor::InteractiveRequest request);
     void HandleBufferClosed(text::Buffer& closedBuffer);

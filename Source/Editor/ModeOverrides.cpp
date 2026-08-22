@@ -111,6 +111,11 @@ void RegisterDynamicMode(const std::string& name, const std::filesystem::path& l
     g_dynamicModes.insert_or_assign(name, std::move(mode));
 }
 
+void RegisterMode(const std::string& name, Mode mode) {
+    const std::lock_guard lock(g_mutex);
+    g_dynamicModes.insert_or_assign(name, std::move(mode));
+}
+
 std::optional<Mode> ModeByName(const std::string& name) {
     {
         const std::lock_guard lock(g_mutex);

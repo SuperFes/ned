@@ -13,6 +13,32 @@
 
 namespace ned::editor::vcs {
 
+std::filesystem::path VcsCommitMessagePath() {
+    return std::filesystem::temp_directory_path() / std::string(kVcsCommitMessageFilename);
+}
+
+std::string ExtractCommitMessage(std::string_view bufferText) {
+    std::string result;
+    std::size_t lineStart = 0;
+    while (lineStart <= bufferText.size()) {
+        const std::size_t lineEnd = bufferText.find('\n', lineStart);
+        const std::size_t lineStop = lineEnd == std::string_view::npos ? bufferText.size() : lineEnd;
+        const std::string_view line = bufferText.substr(lineStart, lineStop - lineStart);
+        if (!line.starts_with('#')) {
+            result.append(line);
+            result.push_back('\n');
+        }
+        if (lineEnd == std::string_view::npos) {
+            break;
+        }
+        lineStart = lineEnd + 1;
+    }
+    while (!result.empty() && (result.back() == '\n' || result.back() == ' ' || result.back() == '\t' || result.back() == '\r')) {
+        result.pop_back();
+    }
+    return result;
+}
+
 namespace {
 
     // Diagnostic detail for a failed run -- distinguishes "the process

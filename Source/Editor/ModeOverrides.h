@@ -52,6 +52,15 @@ namespace ned::editor {
 void RegisterDynamicMode(const std::string& name, const std::filesystem::path& libraryPath,
                          const std::filesystem::path& queryPath = {}, const std::filesystem::path& foldQueryPath = {});
 
+// Registers an already-built Mode directly under name, into the same table
+// RegisterDynamicMode populates (ModeByName checks it first) -- for a Mode
+// whose only job is a keymap/comment-prefix with no grammar of its own
+// (e.g. the VCS commit-message buffer's finish/abort bindings, see
+// Editor/Vcs/VcsRunner.h). Overwrites any previous registration under name,
+// same "re-registering is expected use" convention RegisterDynamicMode
+// itself already follows.
+void RegisterMode(const std::string& name, Mode mode);
+
 // Looks up a Mode by name. Checks names registered via RegisterDynamicMode
 // first, then the bundled *Mode() functions' own names ("c-mode",
 // "json-mode", ... see BundledModeFactories in the .cpp) -- dynamic checked

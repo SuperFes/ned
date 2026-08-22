@@ -254,6 +254,14 @@ class BufferView : public Widget {
     // synchronous guards (no runner / modified buffer / no path) -- the
     // async tail past them needs a live EventLoop.
     void StageHunkAtPointForTesting(bool stage);
+    // multi-line-commit-message follow-up: same seam shape, for
+    // BeginVcsCommitMessage/FinishVcsCommitMessage/AbortVcsCommitMessage --
+    // RequestCommit's own guards (no provider registered) resolve
+    // synchronously (see VcsRunnerTest.cpp), so FinishVcsCommitMessageForTesting
+    // is fully exercisable without a live EventLoop too.
+    void BeginVcsCommitMessageForTesting();
+    void FinishVcsCommitMessageForTesting();
+    void AbortVcsCommitMessageForTesting();
 
     // FTXUI -> Notcurses migration: replaces
     // ftxui::ScreenInteractive::Active() (used to end the whole app on
@@ -428,16 +436,18 @@ class BufferView : public Widget {
                            // fires the async DAP evaluate request, the result landing in
                            // statusMessage_ from its callback.
                            DapEvaluate,
-                           // VCS vocabulary-completion follow-up: three more
-                           // HandlePromptKey-routed prompts. VcsCommit collects the
-                           // single-line commit message; VcsSwitchBranch is entered from
-                           // BeginVcsSwitchBranchPrompt's async branch-list callback (the
-                           // RequestRenameAtPoint enter-a-mode-from-a-callback pattern) so
-                           // Tab completes against vcsBranchCandidates_; VcsCreateBranch
-                           // is a plain name prompt. Enter fires the matching async
-                           // VcsRunner request fire-and-forget, results landing in
-                           // statusMessage_ from the callback (DapEvaluate's shape).
-                           VcsCommit,
+                           // VCS vocabulary-completion follow-up: two more
+                           // HandlePromptKey-routed prompts (the commit message itself
+                           // no longer goes through MinibufferPrompt -- see
+                           // InteractiveRequest::VcsCommit's own doc comment in
+                           // Command.h for the real buffer it collects into instead).
+                           // VcsSwitchBranch is entered from BeginVcsSwitchBranchPrompt's
+                           // async branch-list callback (the RequestRenameAtPoint
+                           // enter-a-mode-from-a-callback pattern) so Tab completes
+                           // against vcsBranchCandidates_; VcsCreateBranch is a plain
+                           // name prompt. Enter fires the matching async VcsRunner
+                           // request fire-and-forget, results landing in statusMessage_
+                           // from the callback (DapEvaluate's shape).
                            VcsSwitchBranch,
                            VcsCreateBranch,
                            // rich-theme-set follow-up (Phase 1): the select-theme
@@ -923,6 +933,21 @@ class BufferView : public Widget {
     // *earlier* unstaged edits in the same file is a recorded caveat, see
     // ROADMAP.md.)
     void StageOrUnstageHunkAtPoint(bool stage);
+    // multi-line-commit-message follow-up: opens (or, if one's already
+    // mid-composition, just switches to) the *vcs commit message* buffer --
+    // InteractiveRequest::VcsCommit's entry point.
+    void BeginVcsCommitMessage();
+    // InteractiveRequest::VcsCommitFinish/VcsCommitAbort's entry points --
+    // strip the '#'-comment template and fire RequestCommit, or just
+    // discard, then either way close the buffer via
+    // CloseVcsCommitMessageBuffer below.
+    void FinishVcsCommitMessage();
+    void AbortVcsCommitMessage();
+    // Shared by both: closes the commit-message buffer via CloseBufferNow
+    // (bypassing RequestCloseBuffer's "unsaved changes?" prompt -- finishing
+    // or aborting the commit already IS the user's confirmation) and
+    // best-effort removes its backing temp file.
+    void CloseVcsCommitMessageBuffer(text::Buffer& commitBuffer);
     // The file a stage/unstage acts on: in the *vcs status* buffer, the
     // "<path>:1:" prefix of the line at point (VisitVcsResult's own
     // parse); anywhere else, the active buffer's associated path.

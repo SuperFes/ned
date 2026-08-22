@@ -4,11 +4,9 @@
 //
 // A "project session" is the restorable shape of a working session in one
 // project root: which file buffers were open, which was active, the
-// sidebar's visibility/width, and the DAP breakpoint store (closing the
-// "persisting breakpoints across restarts" v1 cut recorded in ROADMAP.md's
-// DAP entry). Deliberately NOT persisted: window-split layout (an explicit
-// slice-2 cut -- panes reference buffers by address and the split tree is
-// real extra serialization surface for marginal value) and anything
+// sidebar's visibility/width, the window-split layout, and the DAP
+// breakpoint store (closing the "persisting breakpoints across restarts" v1
+// cut recorded in ROADMAP.md's DAP entry). Still not persisted: anything
 // derivable from the files themselves.
 //
 // Storage is contextual, per the user's own ask ("we should try to be
@@ -43,6 +41,29 @@
 
 namespace ned::editor {
 
+// One node of a captured window-split tree, stored flat (a vector, not a
+// pointer tree) so ProjectSessionData keeps ordinary value semantics --
+// default copy/equality both just work, no unique_ptr-vs-pointee-identity
+// trap to hand-roll (WindowNode itself, the *live* runtime tree in
+// Source/UI/WindowManager.h, is the pointer-based version this gets
+// captured from and rebuilt into). first/second are indices into the same
+// WindowLayoutNode vector, always < this node's own index -- the vector is
+// built post-order (children appended before their parent), so the root is
+// always the *last* element, and indices only ever point backward, which is
+// also what keeps a malformed/corrupted forward-or-self-referencing index
+// from recursing forever on restore.
+struct WindowLayoutNode {
+    enum class Kind { Leaf,
+                      SplitBelow,
+                      SplitRight };
+
+    Kind                                  kind = Kind::Leaf;
+    std::optional<std::filesystem::path>  file;          // Leaf only, absolute
+    std::optional<std::size_t>            first, second; // SplitBelow/SplitRight only
+
+    bool operator==(const WindowLayoutNode&) const = default;
+};
+
 struct ProjectSessionData {
     std::vector<std::filesystem::path>   openFiles; // absolute, in BufferList order
     std::optional<std::filesystem::path> activeFile;
@@ -51,6 +72,17 @@ struct ProjectSessionData {
     // Normalized path key -> sorted 1-based lines, DapManager's own store
     // shape verbatim (see DapManager::AllBreakpoints/RestoreBreakpoints).
     std::map<std::string, std::vector<std::size_t>> breakpoints;
+
+    // Empty means "no captured layout" (falls back to the pre-existing
+    // single-pane restore) -- WindowManager::CaptureWindowLayout leaves it
+    // empty rather than populate a partial tree when some leaf's buffer has
+    // no path (a scratch buffer showing in a pane, say). See
+    // WindowLayoutNode's own doc comment for the "root is the last element"
+    // convention. focusedPanePath is 0 (first) / 1 (second) at each split
+    // node walking down from the root to the leaf that had keyboard focus at
+    // capture time; empty means the root is itself that leaf.
+    std::vector<WindowLayoutNode> windowLayout;
+    std::vector<int>              focusedPanePath;
 
     bool operator==(const ProjectSessionData&) const = default;
 };

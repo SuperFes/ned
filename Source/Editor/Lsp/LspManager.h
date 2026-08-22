@@ -238,6 +238,16 @@ class LspManager {
     // look, don't act" shape, but public (ModeLine is the intended caller).
     [[nodiscard]] LspStatus StatusForLanguage(const std::string& language) const;
 
+    // mode-line-lsp-status-round-3 follow-up: the detail text behind a
+    // SpawnFailed/Disconnected glyph -- the spawn exception's e.what() for
+    // the former, the disconnect reason LspClient::SetOnDisconnected
+    // reported for the latter. "" when StatusForLanguage doesn't report the
+    // matching state (nothing latched yet, or a later event already cleared
+    // it) -- ModeLine is expected to call whichever one matches
+    // StatusForLanguage's current result.
+    [[nodiscard]] std::string SpawnFailureDetail(const std::string& language) const;
+    [[nodiscard]] std::string DisconnectReason(const std::string& language) const;
+
   private:
     // Returns the already-running client for language, or nullptr if none
     // is running and none is configured -- never spawns one. Used by
@@ -305,6 +315,12 @@ class LspManager {
     // config, no auto-retry" model (see LspServerConfig.h).
     std::unordered_map<std::string, std::vector<std::string>> failedCommands_;
 
+    // mode-line-lsp-status-round-3 follow-up: the exception message from the
+    // spawn attempt that populated failedCommands_[language] -- cleared
+    // wherever failedCommands_ itself is cleared, so the two never drift
+    // apart.
+    std::unordered_map<std::string, std::string> spawnFailureDetail_;
+
     // mode-line-lsp-status-round-2 follow-up: languages whose client most
     // recently ended via ClientDisconnected rather than a spawn failure --
     // what StatusForLanguage's Disconnected case reads. Cleared the moment
@@ -312,6 +328,11 @@ class LspManager {
     // again (see that method's own comment) -- a stale disconnect latch
     // must not outlive a real respawn.
     std::unordered_set<std::string> disconnectedLanguages_;
+
+    // mode-line-lsp-status-round-3 follow-up: the reason string
+    // LspClient::SetOnDisconnected reported, cleared wherever
+    // disconnectedLanguages_ itself is cleared.
+    std::unordered_map<std::string, std::string> disconnectDetail_;
 
     // workDoneProgress-support follow-up. Every progress session currently
     // between its "begin" and "end", keyed by language + '\x1f' + the

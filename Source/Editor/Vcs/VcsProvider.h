@@ -197,10 +197,12 @@ class VcsProvider {
         throw std::runtime_error("hunk unstaging not supported by this provider");
     }
 
-    // Commit whatever is currently staged, with a single-line message --
-    // multi-line commit messages are a recorded scope cut, not planned
-    // vocabulary (the message rides a MinibufferPrompt, which is one line
-    // by construction).
+    // Commit whatever is currently staged. message may be multi-line
+    // (multi-line-commit-message follow-up: composed in a real buffer, see
+    // BufferView::BeginVcsCommitMessage in Source/UI/BufferView.cpp) --
+    // passed straight through argv (no shell involved, see
+    // Process/ChildProcess.h), so an embedded newline needs no special
+    // handling here.
     [[nodiscard]] virtual VcsCommandSpec CommitArgv(const std::filesystem::path& root, const std::string& message) const {
         (void)root;
         (void)message;
