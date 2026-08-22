@@ -219,3 +219,110 @@ TEST_CASE("Starting a new recording doesn't clear the previous LastMacro until t
     dispatcher.StartRecording();                 // begin a second recording
     REQUIRE(dispatcher.LastMacro().size() == 1); // previous macro still intact mid-recording
 }
+
+// Prefix arguments (C-u / universal-argument follow-up).
+
+TEST_CASE("A prefix arg invokes the matched command that many times", "[Dispatcher]") {
+    CommandRegistry registry;
+    registry.Register("insert-x", "", [](CommandContext& context) { context.buffer.InsertAtPoint("x"); });
+
+    Keymap keymap;
+    keymap.Bind(ParseKeySequence("C-x"), "insert-x");
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    context.prefixArg      = 5;
+
+    REQUIRE(dispatcher.Feed(ParseKeyChord("C-x"), context) == Dispatcher::Outcome::Invoked);
+    REQUIRE(fixture.buffer.Text() == "xxxxx");
+}
+
+TEST_CASE("A repeated invoke is grouped into one undo step", "[Dispatcher]") {
+    CommandRegistry registry;
+    registry.Register("insert-x", "", [](CommandContext& context) { context.buffer.InsertAtPoint("x"); });
+
+    Keymap keymap;
+    keymap.Bind(ParseKeySequence("C-x"), "insert-x");
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    context.prefixArg      = 5;
+
+    dispatcher.Feed(ParseKeyChord("C-x"), context);
+    REQUIRE(fixture.buffer.Text() == "xxxxx");
+
+    fixture.buffer.Undo();
+    REQUIRE(fixture.buffer.Text().empty());
+}
+
+TEST_CASE("A negative prefix arg on a paired motion command flips direction", "[Dispatcher]") {
+    CommandRegistry registry;
+    registry.Register("forward-char", "", [](CommandContext& context) { context.buffer.MoveForward(); });
+    registry.Register("backward-char", "", [](CommandContext& context) { context.buffer.MoveBackward(); });
+
+    Keymap keymap;
+    keymap.Bind(ParseKeySequence("C-f"), "forward-char");
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("hello");
+    fixture.buffer.SetPoint(3);
+    CommandContext context = fixture.Context();
+    context.prefixArg      = -2;
+
+    dispatcher.Feed(ParseKeyChord("C-f"), context);
+    REQUIRE(fixture.buffer.Point() == 1);
+}
+
+TEST_CASE("A prefix arg of zero runs the command zero times", "[Dispatcher]") {
+    CommandRegistry registry;
+    registry.Register("insert-x", "", [](CommandContext& context) { context.buffer.InsertAtPoint("x"); });
+
+    Keymap keymap;
+    keymap.Bind(ParseKeySequence("C-x"), "insert-x");
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    context.prefixArg      = 0;
+
+    REQUIRE(dispatcher.Feed(ParseKeyChord("C-x"), context) == Dispatcher::Outcome::Invoked);
+    REQUIRE(fixture.buffer.Text().empty());
+}
+
+TEST_CASE("A prefix arg persists across a Pending outcome and clears once Invoked", "[Dispatcher]") {
+    CommandRegistry registry;
+    registry.Register("save-buffer", "", [](CommandContext& context) { context.buffer.InsertAtPoint("x"); });
+
+    Keymap keymap;
+    keymap.Bind(ParseKeySequence("C-x C-s"), "save-buffer");
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    context.prefixArg      = 3;
+
+    REQUIRE(dispatcher.Feed(ParseKeyChord("C-x"), context) == Dispatcher::Outcome::Pending);
+    REQUIRE(context.prefixArg == 3); // untouched mid-sequence
+
+    REQUIRE(dispatcher.Feed(ParseKeyChord("C-s"), context) == Dispatcher::Outcome::Invoked);
+    REQUIRE(fixture.buffer.Text() == "xxx");
+    REQUIRE_FALSE(context.prefixArg.has_value());
+}
+
+TEST_CASE("An unbound key cancels a pending prefix arg", "[Dispatcher]") {
+    CommandRegistry registry;
+    Keymap          keymap;
+    keymap.Bind(ParseKeySequence("C-x C-s"), "save-buffer");
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    context.prefixArg      = 3;
+
+    REQUIRE(dispatcher.Feed(ParseKeyChord("C-x"), context) == Dispatcher::Outcome::Pending);
+    REQUIRE(dispatcher.Feed(ParseKeyChord("C-z"), context) == Dispatcher::Outcome::Unbound);
+    REQUIRE_FALSE(context.prefixArg.has_value());
+}

@@ -39,6 +39,7 @@
 #include "Editor/MinibufferPrompt.h"
 #include "Editor/Mode.h"
 #include "Editor/Org.h"
+#include "Editor/PrefixArgument.h"
 #include "Editor/ProjectReplace.h"
 #include "Editor/ProjectTrust.h"
 #include "Editor/PromptHistory.h"
@@ -454,7 +455,16 @@ class BufferView : public Widget {
                            // picker -- ProjectFindFile's fuzzy session shape over
                            // theme names, plus live preview of the highlighted
                            // candidate (see HandleSelectThemeKey below).
-                           SelectTheme };
+                           SelectTheme,
+                           // prefix-argument follow-up: reading a C-u numeric
+                           // argument -- same multi-keystroke session shape as
+                           // Isearch*, driven by HandlePrefixArgumentKey via
+                           // Editor/PrefixArgument.h's PrefixArgumentReader. A
+                           // terminating (non-C-u/digit/"-") key exits this
+                           // mode and is re-dispatched normally through
+                           // DispatchChordNormally with pendingPrefixArg_
+                           // applied.
+                           PrefixArgument };
 
     enum class DeleteFileStage { EnteringPath,
                                  Confirming };
@@ -484,6 +494,13 @@ class BufferView : public Widget {
 
     void StartInteractiveSession(editor::InteractiveRequest request);
     void EndInteractiveSession();
+    // The shared "feed one chord through Dispatcher::Feed, handle the
+    // Pending/Unbound echo-area messages" tail every normal (InputMode::
+    // Normal) keystroke goes through -- factored out so
+    // HandlePrefixArgumentKey's terminating-key case can re-dispatch that
+    // same chord through the identical path once a reading session ends.
+    bool DispatchChordNormally(const editor::KeyChord& chord);
+    void HandlePrefixArgumentKey(const editor::KeyChord& chord);
     void HandleSearchKey(const editor::KeyChord& chord);
     // search_->StatusText() plus a dimmed ghost of lastSearchQuery_ appended
     // when the current query is still empty -- see lastSearchQuery_'s own
@@ -1283,6 +1300,20 @@ class BufferView : public Widget {
 
     InputMode                                inputMode_ = InputMode::Normal;
     std::optional<editor::IncrementalSearch> search_;
+    // prefix-argument follow-up: prefixArgReader_ is scoped to a single
+    // InputMode::PrefixArgument reading session (emplaced on entry, reset on
+    // a terminating key). pendingPrefixArg_ survives past that -- it's what
+    // DispatchChordNormally hands the *next* real dispatch as
+    // context.prefixArg, pre-clearing the member before that call (see its
+    // own doc comment for why: an Invoked outcome can synchronously destroy
+    // this BufferView, so nothing after may safely write a member) and
+    // restoring it only across a Pending (multi-chord sequence) outcome.
+    // Not cancelled by every other interactive-session detour a live
+    // prefixArg might precede (e.g. C-u immediately followed by a key that
+    // opens ConfirmOverwriteSave) -- a narrow, documented v1 edge case, not
+    // exhaustively handled.
+    std::optional<editor::PrefixArgumentReader> prefixArgReader_;
+    std::optional<long>                         pendingPrefixArg_;
     // The most recent non-empty isearch query, kept across sessions
     // (Accept and Cancel both record it, matching real Emacs' search ring
     // remembering a search string regardless of how the session ended).

@@ -1,8 +1,47 @@
 #include "Dispatcher.h"
 
+#include <unordered_map>
 #include <utility>
 
 namespace ned::editor {
+
+namespace {
+
+    // prefix-argument follow-up: a short, explicit list of direction-symmetric
+    // motion commands a negative prefix argument (C-u -, M-- once that entry
+    // point exists) flips to the opposite command -- hand-curated, same idiom
+    // as LspServerConfig's argv table, not a general mechanism. A command not
+    // in this table just runs abs(value) times regardless of sign.
+    const std::unordered_map<std::string, std::string>& DirectionPairs() {
+        static const std::unordered_map<std::string, std::string> pairs = {
+            {"forward-char", "backward-char"},
+            {"backward-char", "forward-char"},
+            {"next-line", "previous-line"},
+            {"previous-line", "next-line"},
+            {"forward-word", "backward-word"},
+            {"backward-word", "forward-word"},
+            {"scroll-page-down", "scroll-page-up"},
+            {"scroll-page-up", "scroll-page-down"},
+        };
+        return pairs;
+    }
+
+    struct PrefixArgResolution {
+        std::string commandName;
+        long        repeatCount;
+    };
+
+    PrefixArgResolution ResolvePrefixArg(const std::string& commandName, long value) {
+        if (value >= 0) {
+            return {commandName, value};
+        }
+        const auto&        pairs         = DirectionPairs();
+        const auto         it            = pairs.find(commandName);
+        const std::string& effectiveName = it != pairs.end() ? it->second : commandName;
+        return {effectiveName, -value};
+    }
+
+} // namespace
 
 Dispatcher::Dispatcher(const CommandRegistry& registry, KeymapStack keymaps) : registry_(registry), keymaps_(std::move(keymaps)) {
 }
@@ -37,7 +76,34 @@ Dispatcher::Outcome Dispatcher::Feed(const KeyChord& chord, CommandContext& cont
             }
             pending_.clear();
             context.lastCommand = lastInvokedCommand_;
-            registry_.Invoke(lookup.commandName, context);
+
+            if (context.prefixArg) {
+                const PrefixArgResolution resolution = ResolvePrefixArg(lookup.commandName, *context.prefixArg);
+                if (resolution.repeatCount == 1) {
+                    registry_.Invoke(resolution.commandName, context);
+                }
+                else if (resolution.repeatCount > 0) {
+                    // One undo step per keystroke, the same rule multi-cursor
+                    // edits already follow -- see Buffer::BeginUndoGroup.
+                    context.buffer.BeginUndoGroup();
+                    try {
+                        for (long i = 0; i < resolution.repeatCount; ++i) {
+                            registry_.Invoke(resolution.commandName, context);
+                        }
+                    }
+                    catch (...) {
+                        context.buffer.EndUndoGroup();
+                        throw;
+                    }
+                    context.buffer.EndUndoGroup();
+                }
+                // repeatCount == 0 (C-u 0 <cmd>): runs the command zero times.
+                context.prefixArg.reset();
+            }
+            else {
+                registry_.Invoke(lookup.commandName, context);
+            }
+
             lastInvokedCommand_ = lookup.commandName;
             return Outcome::Invoked;
         }
@@ -45,6 +111,7 @@ Dispatcher::Outcome Dispatcher::Feed(const KeyChord& chord, CommandContext& cont
             return Outcome::Pending;
         case Keymap::LookupResult::NoMatch:
             pending_.clear();
+            context.prefixArg.reset(); // an unbound key cancels a pending argument, matching Emacs
             return Outcome::Unbound;
     }
 
