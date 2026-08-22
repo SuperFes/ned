@@ -2652,6 +2652,14 @@ bool BufferView::OnKeyEvent(const Event& event) {
         ClampPointToNarrowing();
         return true;
     }
+    if (inputMode_ == InputMode::PrefixArgument) {
+        // No ClampPointToNarrowing(): reading a prefix argument never moves
+        // point itself -- a Continue outcome does nothing to the buffer, and
+        // a Terminate outcome re-dispatches through DispatchChordNormally,
+        // which already runs the same clamp any other normal dispatch does.
+        HandlePrefixArgumentKey(*chord);
+        return true;
+    }
 
     // hover/completion follow-up: ghost-text state only ever exists while
     // inputMode_ == Normal (every branch above returns before reaching
@@ -2690,6 +2698,10 @@ bool BufferView::OnKeyEvent(const Event& event) {
         return true;
     }
 
+    return DispatchChordNormally(*chord);
+}
+
+bool BufferView::DispatchChordNormally(const editor::KeyChord& chord) {
     // No ClampPointToNarrowing() here either: RunCommandAndHandleOutcome
     // handles it internally now (see its own doc comment) -- required,
     // not just tidier, since a dispatched command can be split-window/
@@ -2705,18 +2717,29 @@ bool BufferView::OnKeyEvent(const Event& event) {
     // Feed clears pending_ itself on a NoMatch/Unbound result, so there'd be
     // nothing left to read afterward otherwise.
     std::vector<editor::KeyChord> attemptedSequence = dispatcher_.Pending();
-    attemptedSequence.push_back(*chord);
+    attemptedSequence.push_back(chord);
 
     editor::Dispatcher::Outcome outcome = editor::Dispatcher::Outcome::Unbound;
     editor::CommandContext      context = MakeContext();
     context.viewportHeight              = size().height > 0 ? static_cast<std::size_t>(size().height) : 0;
-    const bool ran                      = RunCommandAndHandleOutcome(
+    // prefix-argument follow-up: hand this one dispatch attempt the pending
+    // value and clear the member up front -- Dispatcher::Feed decides
+    // whether it was actually consumed (Invoked/NoMatch) or must survive
+    // (Pending, a multi-chord sequence still in progress), restored below in
+    // the branch the comment beneath already establishes is safe to still
+    // touch `this` in. An Invoked outcome can synchronously destroy *this*
+    // (window-management commands), so nothing after that may write to a
+    // member -- pre-clearing here means the Invoked/consumed case doesn't
+    // need to.
+    context.prefixArg = pendingPrefixArg_;
+    pendingPrefixArg_.reset();
+    const bool ran = RunCommandAndHandleOutcome(
         context,
         [&] {
-            outcome = dispatcher_.Feed(*chord, context);
+            outcome = dispatcher_.Feed(chord, context);
             return outcome == editor::Dispatcher::Outcome::Invoked;
         },
-        &*chord);
+        &chord);
 
     // ran (not outcome) gates this: outcome can be stale -- if Feed's own
     // Match case invokes a command that throws, Feed never reaches its
@@ -2730,13 +2753,38 @@ bool BufferView::OnKeyEvent(const Event& event) {
     // comment).
     if (!ran) {
         if (outcome == editor::Dispatcher::Outcome::Pending) {
-            statusMessage_ = editor::FormatKeySequence(dispatcher_.Pending()) + "-"; // matches real Emacs' own "C-x-" while-waiting convention
+            pendingPrefixArg_ = context.prefixArg;                                      // Feed leaves it untouched mid-sequence -- keep it alive
+            statusMessage_    = editor::FormatKeySequence(dispatcher_.Pending()) + "-"; // matches real Emacs' own "C-x-" while-waiting convention
         }
         else if (outcome == editor::Dispatcher::Outcome::Unbound) {
             statusMessage_ = editor::FormatKeySequence(attemptedSequence) + " is undefined";
         }
     }
     return true;
+}
+
+void BufferView::HandlePrefixArgumentKey(const editor::KeyChord& chord) {
+    const editor::PrefixArgumentReader::Outcome outcome = prefixArgReader_->HandleKey(chord);
+    if (outcome == editor::PrefixArgumentReader::Outcome::Continue) {
+        statusMessage_ = prefixArgReader_->StatusText();
+        return;
+    }
+    // Terminate: chord doesn't belong to prefix-argument syntax. Capture the
+    // resolved value for the next dispatch, leave PrefixArgument mode, and
+    // re-run this same chord through the identical path any other
+    // Normal-mode keystroke goes through -- MakeContext() (called inside
+    // DispatchChordNormally) picks pendingPrefixArg_ up from there.
+    //
+    // Keyboard-macro recording note: like isearch/query-replace, keystrokes
+    // consumed here (the C-u itself excepted -- it's a normal single-chord
+    // binding, so it does go through Dispatcher::Feed and gets recorded)
+    // aren't individually recorded into an in-progress macro; only this
+    // final re-dispatched chord is. Same pre-existing limitation every other
+    // multi-keystroke InputMode session already has.
+    pendingPrefixArg_ = prefixArgReader_->Value();
+    prefixArgReader_.reset();
+    inputMode_ = InputMode::Normal;
+    DispatchChordNormally(chord);
 }
 
 bool BufferView::RunCommandAndHandleOutcome(editor::CommandContext& context, const std::function<bool()>& invoke,
@@ -3580,6 +3628,11 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             inputMode_ = InputMode::QueryReplace;
             queryReplace_.emplace(activeBuffer_.Get());
             break;
+        case editor::InteractiveRequest::UniversalArgument:
+            inputMode_ = InputMode::PrefixArgument;
+            prefixArgReader_.emplace();
+            statusMessage_ = prefixArgReader_->StatusText();
+            return;
         case editor::InteractiveRequest::ConfirmQuit: {
             inputMode_ = InputMode::ConfirmQuit;
             std::string names;
@@ -5021,8 +5074,8 @@ void BufferView::BeginVcsCommitMessage() {
     // vcs-commit while one is already mid-composition (switch to it as-is,
     // preserving whatever they've already typed) -- OpenOrCreateFile itself
     // always returns *some* buffer either way.
-    const bool     alreadyOpen = bufferList_.FindByPath(path) != nullptr;
-    text::Buffer&  commitBuffer = bufferList_.OpenOrCreateFile(path);
+    const bool    alreadyOpen  = bufferList_.FindByPath(path) != nullptr;
+    text::Buffer& commitBuffer = bufferList_.OpenOrCreateFile(path);
     if (!alreadyOpen) {
         commitBuffer.InsertAtPoint(editor::vcs::kVcsCommitMessageTemplate);
         commitBuffer.SetPoint(0);

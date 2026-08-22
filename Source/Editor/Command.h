@@ -14,6 +14,7 @@
 
 #include <cstddef>
 #include <functional>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -346,7 +347,15 @@ enum class InteractiveRequest { None,
                                 // exact reasoning). Next/previous in Buffers() (tab bar) order,
                                 // wrapping at either end.
                                 TabNext,
-                                TabPrevious };
+                                TabPrevious,
+                                // prefix-argument follow-up: a genuine multi-keystroke reading
+                                // session (same shape as IsearchForward/IsearchBackward, not a
+                                // one-shot direct action) -- BufferView drives
+                                // Editor/PrefixArgument.h's PrefixArgumentReader until a
+                                // terminating (non-C-u/digit/"-") key arrives, then re-dispatches
+                                // that key normally with the resolved value applied. See
+                                // Dispatcher::Feed for where the resolved value actually acts.
+                                UniversalArgument };
 
 // Everything a command implementation might need. Built fresh per invocation
 // from live references -- never stored, so there's no lifetime concern beyond
@@ -366,6 +375,17 @@ struct CommandContext {
     std::string        lastCommand;
     bool               quit               = false; // set by a command requesting the application exit
     InteractiveRequest interactiveRequest = InteractiveRequest::None;
+    // prefix-argument follow-up: the resolved C-u value applying to the
+    // *next* command's dispatch, set by the host UI before that dispatch
+    // (see Editor/PrefixArgument.h). Dispatcher::Feed is authoritative on
+    // consuming/clearing this -- it applies a repeat count (and, for a small
+    // hand-curated set of direction-symmetric motion commands, a direction
+    // flip on a negative value) and resets it back to nullopt once the
+    // resolved command has actually run, or when a key goes unbound.
+    // Untouched by commands invoked outside Feed (M-x's own Registry().Invoke
+    // path) -- a deliberate cut, same precedent as lastCommand above not
+    // updating there either.
+    std::optional<long> prefixArg;
     // Rows currently visible in the buffer view, set by the host UI before
     // each dispatch (0 if unknown/headless) -- scroll-page-up/-down are the
     // only commands that read this; everything else ignores it.

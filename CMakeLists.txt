@@ -411,6 +411,7 @@ add_library(ned_lib STATIC
         Source/Editor/Commands.cpp
         Source/Editor/ScriptingSession.cpp
         Source/Editor/IncrementalSearch.cpp
+        Source/Editor/PrefixArgument.cpp
         Source/Editor/QueryReplace.cpp
         Source/Editor/Register.cpp
         Source/Editor/Rectangle.cpp
@@ -653,6 +654,7 @@ if (NED_BUILD_TESTS)
             Tests/EchoAreaTest.cpp
             Tests/Utf8Test.cpp
             Tests/IncrementalSearchTest.cpp
+            Tests/PrefixArgumentTest.cpp
             Tests/QueryReplaceTest.cpp
             Tests/ModeTest.cpp
             Tests/CodeFoldTest.cpp

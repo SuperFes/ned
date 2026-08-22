@@ -231,7 +231,8 @@ namespace {
         if (!existing.empty() && existing.back() != '\n') {
             file << '\n';
         }
-        file << "# ned per-machine session state (window layout, open buffers)\n" << kEntry << '\n';
+        file << "# ned per-machine session state (window layout, open buffers)\n"
+             << kEntry << '\n';
         return true;
     }
 
@@ -1260,7 +1261,7 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           const bool gitignoreUpdated = AppendSessionJsonToGitignore(root);
                           if (context.message) {
                               *context.message = "Created " + nedDir.string() +
-                                                  (gitignoreUpdated ? "; added .ned/session.json to .gitignore" : "");
+                                                 (gitignoreUpdated ? "; added .ned/session.json to .gitignore" : "");
                           }
                       });
 
@@ -1379,6 +1380,16 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                       "Stop recording a keyboard macro, or replay the last recorded one if not currently recording.",
                       [](CommandContext& context) {
                           context.interactiveRequest = InteractiveRequest::EndOrCallKbdMacro;
+                      });
+
+    // prefix-argument follow-up: starts a multi-keystroke reading session
+    // (same shape as isearch, not a one-shot direct action) -- BufferView
+    // drives Editor/PrefixArgument.h's PrefixArgumentReader from here. See
+    // Dispatcher::Feed for where the resolved value actually acts on the
+    // command the session's terminating key resolves to.
+    registry.Register("universal-argument", "Begin reading a numeric prefix argument for the next command.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::UniversalArgument;
                       });
 
     registry.Register("point-to-register", "Save point in a register (prompts for the register name).",
@@ -2064,6 +2075,7 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("END"), "end-of-line");
     keymap.Bind(ParseKeySequence("C-k"), "kill-line");
     keymap.Bind(ParseKeySequence("C-y"), "yank");
+    keymap.Bind(ParseKeySequence("C-u"), "universal-argument");
     // Both C-_ and C-/, real Emacs' own pair of undo bindings -- and under
     // Notcurses both are genuinely needed, one per keyboard protocol: a
     // legacy terminal sends byte 0x1F for a physical Ctrl+/ (or Ctrl+_)

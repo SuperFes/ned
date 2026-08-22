@@ -29,6 +29,16 @@ class Dispatcher {
     // May invoke a command against context as a side effect. Sets
     // context.triggeringKey to chord before doing so (so e.g.
     // self-insert-command can read what was actually pressed).
+    //
+    // prefix-argument follow-up: on a Match, context.prefixArg (if set)
+    // resolves to a repeat count (and, for a short hand-curated list of
+    // direction-symmetric motion commands, a direction flip on a negative
+    // value -- see Dispatcher.cpp's ResolvePrefixArg) applied to the
+    // matched command, grouped into one undo step when the count isn't 1.
+    // context.prefixArg is reset to nullopt afterward (or on NoMatch, which
+    // cancels a pending argument the same way an unbound key does in real
+    // Emacs) -- left untouched on Prefix so it survives a multi-chord
+    // sequence.
     Outcome Feed(const KeyChord& chord, CommandContext& context);
 
     // Discards any in-progress prefix sequence (e.g. on C-g / Escape).

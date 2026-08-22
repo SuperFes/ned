@@ -552,6 +552,20 @@ TEST_CASE("key_press for a plain character self-inserts and advances the cursor"
     REQUIRE(fixture.buffer.Point() == 3);
 }
 
+TEST_CASE("C-u 3 <char> self-inserts the character 3 times as one undo step", "[BufferView]") {
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 9, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Ctrl('u'));
+    view.OnEvent(ned::ui::test::Character("3"));
+    view.OnEvent(ned::ui::test::Character("a"));
+
+    REQUIRE(fixture.buffer.Text() == "aaa");
+    fixture.buffer.Undo();
+    REQUIRE(fixture.buffer.Text().empty());
+}
+
 TEST_CASE("key_press for an untranslatable key is a safe no-op", "[BufferView]") {
     Fixture             fixture;
     ned::ui::BufferView view = fixture.View();
@@ -727,7 +741,7 @@ TEST_CASE("Isearch: an accepted query is ghosted on the next session and C-s on 
     view.OnEvent(ned::ui::test::Return()); // accept -- remembers "fox"
     REQUIRE(fixture.buffer.Point() == 19); // right after the first "fox"
 
-    view.OnEvent(ned::ui::test::Ctrl('s')); // fresh session, nothing typed yet
+    view.OnEvent(ned::ui::test::Ctrl('s'));                                            // fresh session, nothing typed yet
     REQUIRE(fixture.statusMessage == "I-search: " + ned::ui::GhostForEchoArea("fox")); // ghosted last query
 
     view.OnEvent(ned::ui::test::Ctrl('s')); // C-s on an empty query reuses the last search string outright
