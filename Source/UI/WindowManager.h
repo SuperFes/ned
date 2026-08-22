@@ -130,6 +130,13 @@ class Pane {
     [[nodiscard]] bool MinimapActive() const;
     [[nodiscard]] bool ScrollColumnActive() const;
 
+    // Pixel-blitter-minimap follow-up: tears down this pane's Minimap
+    // pixel-blitter plane, if it has one live, while the owning EventLoop's
+    // Notcurses context is still guaranteed alive -- see
+    // WindowManager::ReleaseMinimapPixelPlanes()'s own doc comment for why
+    // this can't just be left to ~Minimap().
+    void ReleaseMinimapPixelPlane();
+
   private:
     ActiveBuffer                       activeBuffer_;
     editor::Mode                       mode_; // owned copy -- see the class comment above
@@ -396,6 +403,19 @@ class WindowManager {
     // this run. Called from the same auto-save tick as RecordSessionPlaces
     // and once by main.cpp after the event loop exits.
     void SaveProjectSessionNow();
+
+    // Pixel-blitter-minimap follow-up: tears down every pane's Minimap
+    // pixel-blitter plane while the Notcurses context is still guaranteed
+    // alive. main.cpp's local-variable order means this WindowManager is
+    // destroyed *after* ~EventLoop already ran notcurses_stop (a
+    // pre-existing, deliberate ordering elsewhere in that file) -- a
+    // Minimap torn down that late would call ncplane_destroy on memory
+    // Notcurses already freed, a real, confirmed SIGABRT-on-exit, not a
+    // hypothetical one. Called once by main.cpp immediately after
+    // eventLoop.Run() returns, same "explicit final step, everything's
+    // still alive here" shape as RecordSessionPlaces/SaveProjectSessionNow
+    // just above.
+    void ReleaseMinimapPixelPlanes();
 
     // large-file-async-load follow-up: wires bufferList_.SetAsyncFileOpener
     // to spin up an AsyncFileLoader (Source/UI/AsyncFileLoader.h) per large

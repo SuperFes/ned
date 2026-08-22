@@ -58,6 +58,16 @@ int ScrollBar::PositionForRow(int row) const {
     }
     const int maxPosition = total - item_visual_length;
     const int clampedRow  = std::clamp(row, 0, height - 1);
+    // Plain proportional rounding (below) rounds down, so the very last
+    // clickable/draggable row could land short of the true end -- worse
+    // the taller the document is relative to this bar's own height (a real,
+    // reported bug: dragging to the bottom of a long file's scrollbar could
+    // stop dozens of lines short). Every real scrollbar guarantees "drag to
+    // the very bottom reaches the very end," so special-case it here rather
+    // than rely on rounding to land there by chance.
+    if (clampedRow >= height - 1) {
+        return maxPosition;
+    }
     return std::clamp(static_cast<int>((static_cast<long long>(clampedRow) * total) / height), 0, maxPosition);
 }
 

@@ -3652,6 +3652,13 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             // real estate.
             if (minimap_ != nullptr) {
                 minimap_->active = !minimap_->active;
+                if (!minimap_->active) {
+                    // Paint() never runs again once active is false (Layout.h's
+                    // Container skips inactive widgets outright), so this is the
+                    // only place that can tear down a live pixel-blitter plane
+                    // (Minimap.h's own ReleasePlane() doc comment).
+                    minimap_->ReleasePlane();
+                }
             }
             if (minimapScrollColumn_ != nullptr) {
                 minimapScrollColumn_->active = !minimapScrollColumn_->active;

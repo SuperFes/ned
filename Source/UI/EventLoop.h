@@ -88,6 +88,20 @@ class EventLoop {
     [[nodiscard]] bool     CanTrueColor() const;
     [[nodiscard]] unsigned PaletteSize() const;
 
+    // Pixel-blitter-minimap follow-up: whether this terminal can blit
+    // real, pixel-accurate bitmaps (NCBLIT_PIXEL, via sixel/Kitty/iTerm2/
+    // etc.) -- Minimap checks this once per Paint() to decide between the
+    // braille-glyph approximation and a real per-pixel raster, the same
+    // live-context capability-check shape CanTrueColor() already
+    // established for the ANSI-fallback-theme swap.
+    [[nodiscard]] bool CanPixelGraphics() const;
+
+    // Raw Notcurses context handle -- Minimap's pixel path needs this
+    // directly (ncvisual_from_rgba/ncvisual_blit both take a notcurses*,
+    // not just an ncplane*), exposed the same way StdPlane() already
+    // exposes the standard plane.
+    [[nodiscard]] notcurses* NotcursesContext() const;
+
     // Blocks until Exit() is called (from anywhere -- typically a Post()ed
     // callback reacting to CommandContext::quit, mirroring how the
     // FTXUI-era BufferView::OnKeyEvent used to call

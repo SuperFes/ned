@@ -135,6 +135,10 @@ bool Pane::MinimapActive() const {
     return minimap_->active;
 }
 
+void Pane::ReleaseMinimapPixelPlane() {
+    minimap_->ReleasePlane();
+}
+
 bool Pane::ScrollColumnActive() const {
     return scrollColumn_.active;
 }
@@ -159,6 +163,7 @@ void Pane::SetEventLoop(EventLoop* eventLoop) {
     bufferView_->SetEventLoop(eventLoop);
     scrollUp_->SetEventLoop(eventLoop);
     scrollDown_->SetEventLoop(eventLoop);
+    minimap_->SetEventLoop(eventLoop);
 }
 
 namespace {
@@ -842,6 +847,25 @@ std::vector<Pane*> WindowManager::Leaves() const {
     std::vector<Pane*> result;
     CollectLeaves(root_.get(), result);
     return result;
+}
+
+void WindowManager::ReleaseMinimapPixelPlanes() {
+    // main.cpp's local-variable declaration order (windowManager constructed
+    // before EventLoop -- a pre-existing, deliberate ordering elsewhere in
+    // that file's own carefully-sequenced setup) means locals are destroyed
+    // in the *opposite* order at shutdown: ~EventLoop (which calls
+    // notcurses_stop, freeing every plane and pile it owns) runs before this
+    // WindowManager and its Panes/Minimaps do. A Minimap pixel-blitter plane
+    // torn down that late would call ncplane_destroy on memory Notcurses
+    // already freed -- a real, confirmed SIGABRT on exit, not a
+    // hypothetical one. main.cpp calls this explicitly right after
+    // eventLoop.Run() returns, while the Notcurses context is still
+    // guaranteed alive, so every live plane is gone well before ~EventLoop
+    // ever runs; ~Minimap()'s own ReleasePlane() call becomes a no-op
+    // by the time it fires.
+    for (Pane* pane : Leaves()) {
+        pane->ReleaseMinimapPixelPlane();
+    }
 }
 
 } // namespace ned::ui

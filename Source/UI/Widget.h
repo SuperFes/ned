@@ -119,6 +119,16 @@ struct Color {
     [[nodiscard]] static Color Interpolate(float t, const Color& a, const Color& b);
 };
 
+// Approximates any Color -- including Default/Palette16, which have no
+// canonical RGB value of their own -- down to concrete RGB bytes, via the
+// same fixed ANSI-palette table Color::Interpolate already relies on
+// (Widget.cpp). Public because Minimap's pixel-blitter rasterizer
+// (Minimap.cpp) needs real RGB bytes to build an RGBA image for
+// ncvisual_from_rgba, not a terminal color channel -- Screen::Flush itself
+// still doesn't need this, it hands Color straight to Notcurses' own
+// fg/bg calls.
+void ColorToRgb8(const Color& color, std::uint8_t& r, std::uint8_t& g, std::uint8_t& b);
+
 inline constexpr Color Color::Default{};
 inline constexpr Color Color::Black         = Color::Palette(0);
 inline constexpr Color Color::Red           = Color::Palette(1);
