@@ -141,15 +141,6 @@ Notcurses (TermOx → FTXUI → Notcurses over the project's life).
 - [ ] **Real-time collaborative editing** (CRDT-based) — the biggest lift in this
       file; last.
 
-### Theming & visual
-
-- [ ] **Pixel-blitter minimap** — render the minimap via `NCBLITTER_PIXEL`
-      (ncvisual-backed) on terminals that support it, keeping the braille-glyph
-      renderer as the fallback everywhere else. Capability-gate at runtime
-      (`notcurses_canpixel`), the same live-context check pattern the ANSI theme
-      fallback uses. Decision is settled — the user wants this despite earlier
-      counterarguments; don't re-litigate, just sequence it.
-
 ### Documentation & companion tooling
 
 - [ ] **Documentation framework** — man page(s), PDF, and a web page generated from

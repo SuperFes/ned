@@ -41,11 +41,36 @@ set(USE_STATIC OFF CACHE BOOL "" FORCE)
 # "no input" return value, so no caller-side fix exists).
 FetchContent_Declare(notcurses
         GIT_REPOSITORY https://github.com/dankamongmen/notcurses.git
-        GIT_TAG v3.0.14
+        GIT_TAG v3.0.17
         GIT_SHALLOW TRUE
         PATCH_COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/CMake/PatchNotcursesNulKey.cmake
         EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(notcurses)
+# real-pixel-graphics-investigation follow-up: notcurses' own CMakeLists.txt
+# marks notcurses-core's include directory PRIVATE (its own choice, not a
+# mistake on its part -- see that file's target_include_directories(notcurses-core
+# BEFORE PRIVATE include ...) call), so target_link_libraries(... notcurses-core)
+# alone never propagates a header search path to anything linking against it,
+# and EXCLUDE_FROM_ALL above (see that flag's own comment further down this
+# file) means notcurses' own install() rules -- the other normal way a
+# consumer would find its headers -- never run either. Without this line,
+# every #include <notcurses/notcurses.h> in this project silently fell
+# through to the system's own installed notcurses headers (wherever a distro
+# package happens to provide one) instead of the version actually pinned and
+# linked above -- API-compatible enough that everything still compiled clean
+# with zero warnings, but a real, confirmed ABI mismatch: enum member order
+# in notcurses.h's own ncblitter_e changed between the system's notcurses
+# 3.0.8 and the version pinned here, so NCBLIT_PIXEL as this project's own
+# code understood it (compiled against the wrong header) and NCBLIT_PIXEL as
+# the actually-linked library understood it were two different integers --
+# silently asking the real library for a completely different blitter
+# (Braille) every single time, the actual root cause of a long, otherwise
+# inexplicable minimap-pixel-graphics investigation. Declared INTERFACE (not
+# PRIVATE/PUBLIC) since we're adding this to a target this project doesn't
+# itself define -- it must reach every consumer transitively via
+# target_link_libraries(... notcurses-core), not be used to compile
+# notcurses-core a second time.
+target_include_directories(notcurses-core INTERFACE "${notcurses_SOURCE_DIR}/include")
 #------------------------------------------------------------------------------
 
 #--- Fetch utf8proc -----------------------------------------------------------
@@ -574,6 +599,13 @@ target_link_libraries(notcurses_alpha_probe PRIVATE notcurses-core)
 # a possible minimap feature).
 add_executable(notcurses_pixel_probe Tools/NotcursesPixelProbe.cpp)
 target_link_libraries(notcurses_pixel_probe PRIVATE notcurses-core)
+
+# Same shape again -- see Tools/NotcursesMinimapProbe.cpp's own header
+# comment: exercises the exact small-owned-plane blit path
+# Minimap::EnsurePixelPlane() uses, at real minimap cell dimensions, next to
+# Notcurses' own non-pixel blitters for a direct comparison.
+add_executable(notcurses_minimap_probe Tools/NotcursesMinimapProbe.cpp)
+target_link_libraries(notcurses_minimap_probe PRIVATE notcurses-core)
 
 if (NED_BUILD_TESTS)
     enable_testing()

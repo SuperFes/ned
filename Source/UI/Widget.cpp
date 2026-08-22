@@ -59,24 +59,25 @@ namespace {
         {0xFF, 0xFF, 0xFF},
     };
 
-    void ToRgb(const Color& color, std::uint8_t& r, std::uint8_t& g, std::uint8_t& b) {
-        switch (color.kind) {
-            case Color::Kind::TrueColor:
-                r = color.red;
-                g = color.green;
-                b = color.blue;
-                return;
-            case Color::Kind::Palette16:
-                r = kPalette16Rgb[color.paletteIndex % 16][0];
-                g = kPalette16Rgb[color.paletteIndex % 16][1];
-                b = kPalette16Rgb[color.paletteIndex % 16][2];
-                return;
-            case Color::Kind::Default:
-                r = g = b = 0x80; // neutral mid-gray -- Default has no real RGB value to blend from
-                return;
-        }
-    }
 } // namespace
+
+void ColorToRgb8(const Color& color, std::uint8_t& r, std::uint8_t& g, std::uint8_t& b) {
+    switch (color.kind) {
+        case Color::Kind::TrueColor:
+            r = color.red;
+            g = color.green;
+            b = color.blue;
+            return;
+        case Color::Kind::Palette16:
+            r = kPalette16Rgb[color.paletteIndex % 16][0];
+            g = kPalette16Rgb[color.paletteIndex % 16][1];
+            b = kPalette16Rgb[color.paletteIndex % 16][2];
+            return;
+        case Color::Kind::Default:
+            r = g = b = 0x80; // neutral mid-gray -- Default has no real RGB value to blend from
+            return;
+    }
+}
 
 Color Color::Interpolate(float t, const Color& a, const Color& b) {
     // Equal endpoints come back unchanged, preserving a Default/Palette16
@@ -89,8 +90,8 @@ Color Color::Interpolate(float t, const Color& a, const Color& b) {
         return a;
     }
     std::uint8_t ar, ag, ab, br, bg, bb;
-    ToRgb(a, ar, ag, ab);
-    ToRgb(b, br, bg, bb);
+    ColorToRgb8(a, ar, ag, ab);
+    ColorToRgb8(b, br, bg, bb);
     t = std::clamp(t, 0.0F, 1.0F);
     return Color::RGB(static_cast<std::uint8_t>(ar + (static_cast<float>(br) - ar) * t),
                       static_cast<std::uint8_t>(ag + (static_cast<float>(bg) - ag) * t),

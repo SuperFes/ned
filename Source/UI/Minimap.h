@@ -2,21 +2,59 @@
 // Minimap widget follow-up. Replaces ScrollBar for a pane (WindowManager.cpp
 // toggles between the two via each other's own `active` flag, per the
 // user's own explicit choice during planning): a narrow (Editor/
-// MinimapSettings.h-configurable, default 5 columns), braille-glyph, real-
-// syntax-colored zoomed-out preview of the whole buffer that also acts as
-// the scrollbar -- click/drag exactly mirrors ScrollBar's own
-// PositionForRow/dragging_ shape (Source/UI/ScrollBar.cpp), and exposes the
-// same public scrollable_length/position/item_visual_length/SetOnScroll
-// surface so BufferView's existing per-Paint() sync code has a directly
-// analogous SetMinimap to add.
+// MinimapSettings.h-configurable, default 5 columns), real-syntax-colored
+// zoomed-out preview of the whole buffer that also acts as the scrollbar --
+// click/drag exactly mirrors ScrollBar's own PositionForRow/dragging_ shape
+// (Source/UI/ScrollBar.cpp), and exposes the same public
+// scrollable_length/position/item_visual_length/SetOnScroll surface so
+// BufferView's existing per-Paint() sync code has a directly analogous
+// SetMinimap to add.
 //
-// Real per-pixel rendering (Notcurses' NCBLIT_PIXEL, confirmed working via
-// Tools/NotcursesPixelProbe.cpp) is a deliberate v1 scope cut -- this
-// codebase's whole Source/UI/ render pipeline funnels through one shared
-// Screen/Cell grid (Widget.h), with no per-widget ncplane access at all;
-// real pixel blitting needs a new Screen/Flush-level bridging seam that
-// doesn't exist yet. Braille instead: works identically in every terminal,
-// no new Notcurses integration risk.
+// Rendering: builds one real RGBA density image (ForEachDensityDot -- one
+// dot per non-blank character, syntax-colored, same "1-2 chars per pixel"
+// compression the feature always had) and hands it to Notcurses'
+// ncvisual_blit, into a plane this widget owns outright (EnsurePlane()) --
+// letting Notcurses itself pick and draw the actual glyphs (or genuine
+// pixels). This sits *outside* the Screen/Cell grid every other widget
+// paints into (Widget.h): Notcurses forbids blitting pixels to the standard
+// plane itself, and even the non-pixel blitters need a real ncplane to draw
+// real glyph+color combinations Cell's single-codepoint/single-fg/single-bg
+// shape can't express (a quadrant/sextant/octant glyph blends two colors
+// *within* one cell). EventLoop::CanPixelGraphics() picks the blitter:
+// NCBLIT_PIXEL (real per-device-pixel graphics, sixel/Kitty/iTerm2) when the
+// terminal genuinely supports it, else NCBLIT_DEFAULT -- Notcurses' own
+// best-available-glyph-blitter auto-selection (octant -> sextant ->
+// quadrant -> half-block -> plain ASCII), never reimplemented here.
+//
+// Getting NCBLIT_PIXEL working took an embarrassingly long detour: it
+// consistently produced wrong-sized planes and squished/braille-quality
+// output, which looked exactly like a string of real notcurses bugs (bad
+// CHILDPLANE auto-sizing, NCSCALE_STRETCH not actually stretching, ...).
+// The *actual* cause was one project-level build bug, unrelated to any of
+// that: notcurses-core's own CMakeLists.txt marks its include directory
+// PRIVATE, so nothing in this project's CMakeLists.txt was ever telling our
+// own targets where the vendored/FetchContent'd headers live -- every
+// #include <notcurses/notcurses.h> in this codebase was silently resolving
+// to the *system's* installed notcurses headers instead (API-compatible
+// enough to compile clean, zero warnings). ncblitter_e's member order
+// differs between that system version and the one actually linked, so
+// NCBLIT_PIXEL as this project's own compiled code understood it, and
+// NCBLIT_PIXEL as the real, linked library understood it, were two
+// different integers -- every blit request was silently asking the real
+// library for Braille. Fixed once, at the root, in this project's own
+// CMakeLists.txt (an explicit target_include_directories(notcurses-core
+// INTERFACE ...) call, see its own comment there) -- not anything specific
+// to this file. A prior version of this file hand-rolled a
+// single-color-per-cell Unicode braille renderer instead of using
+// NCBLIT_DEFAULT -- strictly worse (one color per cell instead of real
+// two-color glyph blending) for no benefit, removed.
+//
+// The plane is created once (EnsurePlane(), sized in cells via
+// ncplane_create) and reused/reblitted in place across frames -- torn down
+// by ReleasePlane() (called from the destructor, and explicitly by
+// BufferView's toggle-minimap handler, since Paint() -- the only other
+// place that could notice a deactivation -- never runs once Widget::active
+// goes false, per Layout.h's Container skipping inactive widgets outright).
 //
 
 #ifndef NED_UI_MINIMAP_H
@@ -24,6 +62,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <string>
 #include <vector>
 
 #include "ActiveBuffer.h"
@@ -32,7 +71,11 @@
 #include "Theme.h"
 #include "Widget.h"
 
+struct ncplane; // <notcurses/notcurses.h> -- see plane_
+
 namespace ned::ui {
+
+class EventLoop;
 
 class Minimap : public Widget {
   public:
@@ -40,6 +83,27 @@ class Minimap : public Widget {
     // convention ModeLine's own constructor already establishes (both need
     // exactly buffer+mode+theme and nothing else).
     Minimap(const ActiveBuffer& activeBuffer, const editor::Mode& mode, const Theme& theme);
+
+    // Releases plane_ if one is still live -- a Minimap destroyed mid-
+    // session (pane closed, window split torn down) must not leave a stray
+    // bitmap/glyph plane behind in the standard pile.
+    ~Minimap() override;
+
+    // Wires this Minimap to the owning EventLoop so Paint() can reach
+    // StdPlane()/NotcursesContext() to blit into -- same "unset is a safe
+    // no-op, connect after construction" Set* convention every other
+    // cross-widget dependency in this codebase follows (SetScrollBar,
+    // SetProjectSidebar, ...). nullptr (the default) leaves Paint() unable
+    // to draw anything at all -- an unset Minimap is a real, if degenerate,
+    // configuration (mirrors every other widget's Set* hooks; not expected
+    // in practice, since WindowManager::SetEventLoop wires this at startup).
+    void SetEventLoop(EventLoop* eventLoop);
+
+    // Tears down plane_ if present, idempotent. Called from the destructor
+    // and from BufferView's toggle-minimap handler the instant
+    // Widget::active flips to false -- see this class's own header comment
+    // on why nothing else could clean this plane up.
+    void ReleasePlane() const;
 
     // Synced fresh every frame by BufferView (mirrors ScrollBar's own
     // public fields exactly, including semantics): position ranges over
@@ -60,29 +124,47 @@ class Minimap : public Widget {
     bool OnEvent(const Event& event) override;
 
   private:
-    // One rendered braille character cell: glyph starts at U+2800 (blank)
-    // and accumulates dot bits directly via |= (every braille codepoint is
-    // U+2800 plus a bitmask, so this stays a valid glyph at every step);
-    // foreground is the first non-Default SyntaxClass color found in this
-    // cell's mapped buffer region, in scan order -- unset (Color::Default)
-    // if the whole region was blank/whitespace.
-    struct MinimapCell {
-        char32_t glyph = U'⠀';
-        Color    foreground;
-    };
+    // Line/column -> density-map walk: at whatever subRows x subCols
+    // resolution the caller asks for, calls visit(subRow, subCol, offset)
+    // once per non-blank character within charsPerDot's column budget of
+    // its line's start -- offset is that character's buffer byte offset,
+    // for a syntax-class color lookup the caller does itself. charsPerDot
+    // is an explicit parameter, not read from editor::MinimapCharsPerDot()
+    // internally, because the two renderers now want genuinely different
+    // values: the glyph path still needs real horizontal compression (a
+    // braille/quadrant/octant cell only has 2-4 sub-columns to represent a
+    // line in at all), but the real-pixel path has enough columns to give
+    // each source character its own pixel column outright -- charsPerDot=1,
+    // a real line simply truncates past subCols characters rather than
+    // being squeezed to fit. Vertical compression (many source lines into
+    // one subRow) is unavoidable either way once a file has more lines than
+    // subRows, so that part of this walk is identical for both callers.
+    void ForEachDensityDot(int subRows, int subCols, int charsPerDot,
+                            const std::function<void(int subRow, int subCol, std::size_t offset)>& visit) const;
 
-    // (Re)builds grid_ from the active buffer's content + mode_.highlight,
-    // gated on (buffer identity, ContentGeneration(), size().height,
-    // MinimapWidth(), MinimapCharsPerDot()) all staying unchanged since the
-    // last call -- same generation-gated-cache shape
-    // BufferView::highlightCacheBuffer_ already established, computed
-    // independently here rather than through any new BufferView API (see
-    // this class's own header comment).
-    void EnsureCache() const;
+    // (Re)blits plane_ from the active buffer's content, gated on (buffer
+    // identity, ContentGeneration(), size().height, MinimapWidth(),
+    // MinimapCharsPerDot(), scrollable_length/position/item_visual_length
+    // -- the scroll-position band is baked directly into the raster rather
+    // than composited afterward, so it's part of the same reblit rather
+    // than a separate per-Paint() overlay) all staying unchanged since the
+    // last call. A no-op if nothing in that key changed and plane_ is still
+    // alive; always repositions the plane via ncplane_move_yx to track this
+    // widget's current Box_() either way, since a layout change (sidebar
+    // toggle, split) can move this widget without changing its size.
+    // Disables itself (planeUnavailable_) after one blit failure, rather
+    // than retrying every single frame forever.
+    void EnsurePlane() const;
+
+    // Paint()'s real body: calls EnsurePlane() then paints this widget's
+    // own Canvas region as a flat background (the real content comes from
+    // plane_, composited on top by the terminal itself, not from any Cell
+    // this writes).
+    void PaintPlane(Canvas c);
 
     // Row -> position, inverse of the vertical line-density mapping
-    // EnsureCache() uses -- shared so a click always lands exactly where
-    // it visually appears to. Identical formula to ScrollBar::PositionForRow,
+    // EnsurePlane() uses -- shared so a click always lands exactly where it
+    // visually appears to. Identical formula to ScrollBar::PositionForRow,
     // just against this widget's own scrollable_length/item_visual_length.
     [[nodiscard]] int PositionForRow(int row) const;
 
@@ -93,12 +175,35 @@ class Minimap : public Widget {
     std::function<void(int)> onScroll_;
     bool                      dragging_ = false;
 
-    mutable text::Buffer*            cacheBuffer_            = nullptr;
-    mutable std::size_t              cacheContentGeneration_ = 0;
-    mutable int                      cacheHeight_            = -1;
-    mutable int                      cacheWidth_             = -1;
-    mutable int                      cacheCharsPerDot_       = -1;
-    mutable std::vector<MinimapCell> grid_;                         // cacheWidth_ x cacheHeight_, row-major
+    EventLoop* eventLoop_ = nullptr; // see SetEventLoop
+
+    // NED_DEBUG_MOUSE-style opt-in diagnostic log (empty means disabled,
+    // the common case) -- traces EnsurePlane()'s capability check, computed
+    // geometry, and ncvisual_from_rgba/ncvisual_blit outcomes to a file,
+    // since a failure in that path is otherwise silent (Paint() just draws
+    // background) and unreproducible from outside a real terminal.
+    std::string debugLogPath_;
+    void        DebugLog(const std::string& line) const;
+
+    mutable text::Buffer* cacheBuffer_              = nullptr;
+    mutable std::size_t   cacheContentGeneration_   = 0;
+    mutable int           cacheHeight_               = -1;
+    mutable int           cacheWidth_                = -1;
+    mutable int           cacheCharsPerDot_          = -1;
+    mutable int           cacheScrollableLength_     = -1;
+    mutable int           cachePosition_             = -1;
+    mutable int           cacheItemVisualLength_     = -1;
+    // Only meaningful (and only compared) in real-pixel-graphics mode --
+    // NCBLIT_PIXEL's NCSCALE_NONE path needs the source raster built at
+    // exactly the terminal's real cell-pixel resolution (see EnsurePlane()'s
+    // own comment on why NCSCALE_NONE specifically), so a live font-size
+    // change mid-session has to invalidate the cache same as any other key
+    // field here.
+    mutable int cachePixelCellDimY_ = -1;
+    mutable int cachePixelCellDimX_ = -1;
+
+    mutable ncplane* plane_            = nullptr;
+    mutable bool     planeUnavailable_ = false;
 };
 
 } // namespace ned::ui

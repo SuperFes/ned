@@ -62,29 +62,37 @@ TEST_CASE("Minimap paints without crashing on an empty buffer", "[Minimap]") {
     minimap.Paint(canvas); // must not crash/throw
 }
 
-TEST_CASE("Minimap sets a braille dot for a non-whitespace line and none for a blank one", "[Minimap]") {
+TEST_CASE("Minimap paints a flat background when no EventLoop is wired", "[Minimap]") {
+    // Real-minimap-look follow-up: content now always renders via
+    // Notcurses' own ncvisual_blit into a plane this widget owns
+    // (Minimap.cpp's EnsurePlane()/PaintPlane()) -- invisible to a headless
+    // Screen/Canvas, which only ever sees this class's own flat-background
+    // backstop fill (the scroll-position band is baked into that plane's
+    // own raster, not painted separately into Cells -- real per-pixel
+    // transparency turned out not to be reliably supported across
+    // terminals for the Kitty pixel protocol, see EnsurePlane()'s own
+    // comment). SetEventLoop is never called here (the "unset is a safe
+    // no-op" contract every Set* hook in this codebase follows), so
+    // EnsurePlane() bails immediately and every Cell in this widget's
+    // region should come back as this theme's plain background -- the
+    // real, still-testable-without-a-live-terminal contract this class has.
     const MinimapSettingsGuard guard;
     SetMinimapWidth(1);
-    SetMinimapCharsPerDot(1);
 
     Fixture fixture;
-    // Exactly 4 lines against a 1-row-tall (4 sub-row) minimap divides
-    // evenly -- each line maps to exactly one sub-row with no
-    // rounding-driven overlap, so line 0 ("x") only ever sets the
-    // top-left dot.
-    fixture.buffer.InsertAtPoint("x\n\n\n"); // line 0: "x", lines 1-3: blank
+    fixture.buffer.InsertAtPoint("x\n\n\n");
 
     Minimap minimap = fixture.View();
-    minimap.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 0, .y_min = 0, .y_max = 0}); // 1x1 -- every line maps into this one cell
+    minimap.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 0, .y_min = 0, .y_max = 0});
 
     ned::ui::Screen screen = ned::ui::Screen(1, 1);
     ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 0, .y_min = 0, .y_max = 0});
     minimap.Paint(canvas);
 
-    // U+2800 (blank) plus bit 0x01 (top-left dot) == U+2801, since line 0's
-    // "x" sits at column 0 -- confirms a dot was actually set, not just
-    // "didn't crash."
-    REQUIRE(screen.PixelAt(0, 0).character == ned::text::EncodeCodepointUtf8(U'⠁'));
+    const ned::ui::Cell& cell = screen.PixelAt(0, 0);
+    REQUIRE(cell.character == " ");
+    REQUIRE(cell.foreground_color == fixture.theme.background);
+    REQUIRE(cell.background_color == fixture.theme.background);
 }
 
 TEST_CASE("Minimap does not render past MinimapWidth * MinimapCharsPerDot * 2 columns of a line", "[Minimap]") {

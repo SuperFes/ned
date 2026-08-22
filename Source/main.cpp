@@ -1012,6 +1012,15 @@ auto main(int argc, char** argv) -> int {
 
     eventLoop.Run(callbacks);
 
+    // Pixel-blitter-minimap follow-up: must run before eventLoop itself is
+    // destroyed (which happens at this function's own closing brace,
+    // *before* windowManager -- windowManager was declared earlier in this
+    // function, so it's destroyed later, after ~EventLoop already called
+    // notcurses_stop -- see WindowManager::ReleaseMinimapPixelPlanes()'s own
+    // doc comment for why that ordering makes a plane torn down by
+    // ~Minimap() itself a real, confirmed SIGABRT).
+    windowManager->ReleaseMinimapPixelPlanes();
+
     // NED_DEBUG_SHUTDOWN (terminal-panel follow-up, mirroring
     // NED_DEBUG_MOUSE's env-var-to-file pattern): if set to a file path,
     // appends one line per post-Run stage -- the screen still shows the
