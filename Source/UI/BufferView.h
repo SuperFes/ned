@@ -31,6 +31,7 @@
 #include "Editor/CodeFold.h"
 #include "Editor/Command.h"
 #include "Editor/Dap/DapManager.h"
+#include "Editor/DiffRefreshSettings.h"
 #include "Editor/Dispatcher.h"
 #include "Editor/IncrementalSearch.h"
 #include "Editor/Link.h"
@@ -478,9 +479,9 @@ class BufferView : public Widget {
     // when the current query is still empty -- see lastSearchQuery_'s own
     // doc comment.
     [[nodiscard]] std::string SearchStatusText() const;
-    void HandleQueryReplaceKey(const editor::KeyChord& chord);
-    void HandleConfirmQuitKey(const editor::KeyChord& chord);
-    void HandlePromptKey(
+    void                      HandleQueryReplaceKey(const editor::KeyChord& chord);
+    void                      HandleConfirmQuitKey(const editor::KeyChord& chord);
+    void                      HandlePromptKey(
         const editor::KeyChord&
             chord);        // shared by FindFile/SwitchToBuffer/ProjectSearch/CreateDirectory/FindScratch/StringRectangle -- see prompt_
     void CompletePrompt(); // Tab in HandlePromptKey -- find-file paths, buffer names, or scratch names, by inputMode_
@@ -500,11 +501,11 @@ class BufferView : public Widget {
     // status display and return. See promptHistoryIndex_/promptHistoryStash_
     // for the browsing-state fields this reads and mutates.
     [[nodiscard]] bool TryNavigatePromptHistory(const editor::KeyChord& chord, std::string_view key);
-    void HandleProjectReplaceKey(const editor::KeyChord& chord);
-    void HandleConfirmCloseBufferKey(const editor::KeyChord& chord);      // see RequestCloseBuffer/pendingClose_
-    void HandleConfirmOverwriteSaveKey(const editor::KeyChord& chord);    // external-modification-safety: y -> save-buffer-force
-    void HandleConfirmOpenBinaryKey(const editor::KeyChord& chord);       // see pendingBinaryOpenPath_
-    void HandleConfirmTrustProjectInitKey(const editor::KeyChord& chord); // see pendingTrustInitPath_
+    void               HandleProjectReplaceKey(const editor::KeyChord& chord);
+    void               HandleConfirmCloseBufferKey(const editor::KeyChord& chord);      // see RequestCloseBuffer/pendingClose_
+    void               HandleConfirmOverwriteSaveKey(const editor::KeyChord& chord);    // external-modification-safety: y -> save-buffer-force
+    void               HandleConfirmOpenBinaryKey(const editor::KeyChord& chord);       // see pendingBinaryOpenPath_
+    void               HandleConfirmTrustProjectInitKey(const editor::KeyChord& chord); // see pendingTrustInitPath_
     // Shared by HandlePromptKey's FindFile branch and the public
     // RequestOpenBinaryFile -- enters ConfirmOpenBinary and sets
     // pendingBinaryOpenPath_/statusMessage_.
@@ -852,7 +853,7 @@ class BufferView : public Widget {
     void ShowBlameDetailAtPoint();
 
     // Diff gutter markers follow-up: (re)arms diffRefreshTimer_ for
-    // kDiffRefreshDebounce -- called from RunCommandAndHandleOutcome after
+    // editor::DiffRefreshDebounce() -- called from RunCommandAndHandleOutcome after
     // any dispatch that actually changed buffer content, so rapid typing
     // keeps pushing the deadline out rather than spawning a `git diff` per
     // keystroke (the exact debounce shape completionDebounceTimer_ already
@@ -1265,21 +1266,21 @@ class BufferView : public Widget {
     // outright instead of repeating/reversing -- both real Emacs isearch
     // behaviors. Empty until the first isearch session in this BufferView's
     // lifetime accepts or cancels with a non-empty query.
-    std::string                              lastSearchQuery_;
-    std::optional<editor::QueryReplace>      queryReplace_;
-    std::optional<editor::MinibufferPrompt>  prompt_; // FindFile/SwitchToBuffer/ProjectSearch, distinguished by inputMode_
+    std::string                             lastSearchQuery_;
+    std::optional<editor::QueryReplace>     queryReplace_;
+    std::optional<editor::MinibufferPrompt> prompt_; // FindFile/SwitchToBuffer/ProjectSearch, distinguished by inputMode_
     // minibuffer-history-recall follow-up: kNoHistoryIndex means "live
     // editing, not browsing history" -- promptHistoryStash_ is the text
     // prompt_ held right before the first M-p of a browsing run, restored by
     // M-n once it walks back past the newest entry. Both reset in
     // EndInteractiveSession() (every prompt session, successful or
     // cancelled, passes through there). See TryNavigatePromptHistory.
-    static constexpr std::size_t             kNoHistoryIndex = std::numeric_limits<std::size_t>::max();
-    std::size_t                              promptHistoryIndex_ = kNoHistoryIndex;
-    std::string                              promptHistoryStash_;
-    std::optional<editor::ProjectReplace>    projectReplace_;
-    text::Buffer*                            pendingClose_     = nullptr;               // buffer awaiting y/n in ConfirmCloseBuffer
-    TaskPromptAction                         taskPromptAction_ = TaskPromptAction::Run; // see InputMode::TaskName
+    static constexpr std::size_t          kNoHistoryIndex     = std::numeric_limits<std::size_t>::max();
+    std::size_t                           promptHistoryIndex_ = kNoHistoryIndex;
+    std::string                           promptHistoryStash_;
+    std::optional<editor::ProjectReplace> projectReplace_;
+    text::Buffer*                         pendingClose_     = nullptr;               // buffer awaiting y/n in ConfirmCloseBuffer
+    TaskPromptAction                      taskPromptAction_ = TaskPromptAction::Run; // see InputMode::TaskName
 
     // open-binary-anyway follow-up: the path awaiting y/n in
     // ConfirmOpenBinary -- a path, not a Buffer* (unlike pendingClose_),
@@ -1475,13 +1476,6 @@ class BufferView : public Widget {
     // debugger UIs put breakpoint dots. Layout when every region is active:
     // [dap][diff][status][diagnostic][gap][digits][gap][fold][blame].
     static constexpr std::size_t kDapWidth = 1;
-    // A reasonable middle ground for a live, subprocess-backed refresh --
-    // long enough that a fast typist doesn't spawn `git diff` on every
-    // other keystroke, short enough that the gutter still feels live
-    // rather than stale. Not yet Janet-exposed, the same "hardcoded C++
-    // for now" scope cut kPageScrollFraction/TabWidth's own pre-setter
-    // history already established.
-    static constexpr std::chrono::milliseconds kDiffRefreshDebounce{1200};
 
     struct FoldGutterEntry {
         std::size_t headerLine;
@@ -1588,7 +1582,7 @@ class BufferView : public Widget {
     // Mirrors completionDebounceTimer_'s own "single pending fire,
     // re-arming cancels the previous one" shape (see that member's doc
     // comment) -- re-armed on every content-changing edit
-    // (RunCommandAndHandleOutcome), fired after kDiffRefreshDebounce of
+    // (RunCommandAndHandleOutcome), fired after editor::DiffRefreshDebounce() of
     // idle time. A save bypasses this and refreshes immediately instead
     // (see RunCommandAndHandleOutcome's own save-detection check).
     DeadlineTimer diffRefreshTimer_;

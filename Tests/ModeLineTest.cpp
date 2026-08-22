@@ -1,14 +1,18 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <chrono>
+#include <filesystem>
 #include <memory>
 #include <string>
+#include <thread>
 
 #include <unistd.h>
 
 #include "Editor/BackgroundActivity.h"
 #include "Editor/Lsp/LspClient.h"
 #include "Editor/Lsp/LspManager.h"
+#include "Editor/Lsp/LspServerConfig.h"
 #include "Editor/Lsp/Transport.h"
 #include "Editor/Mode.h"
 #include "Text/Buffer.h"
@@ -36,8 +40,8 @@ ned::ui::Screen MakeScreen(int width, int height) {
 // client for language via LspManager::SetClientForTesting, mirroring
 // LspManagerTest.cpp's own FakeServer -- a raw pipe pair standing in for a
 // real language server, with nothing read from or written to it here (these
-// tests only care that LspManager::HasRunningClient reports true, not about
-// any real request/response traffic). Closing the "server" side's write end
+// tests only care that LspManager::StatusForLanguage reports Running, not
+// about any real request/response traffic). Closing the "server" side's write end
 // (clientReadsHere[1]) right away, same as FakeServer's own destructor,
 // matters even though nothing is read from it in these tests: without an
 // EOF, the client's background read thread blocks in Transport::ReadFrame
@@ -232,13 +236,28 @@ TEST_CASE("ModeLine shows an active background activity with its spinner and det
 
     ned::editor::EndBackgroundActivity("LSP");
     modeLine.Paint(canvas);
-    REQUIRE(RowText(screen, 0, 60).find("LSP") == std::string::npos); // gone the frame after the last End
+    // minimum-visible-duration follow-up: ModeLine holds the last non-empty
+    // activity snapshot for a short grace window after BackgroundActivity
+    // itself reports empty, so a just-ended activity doesn't blink off
+    // within a single Paint() call -- see ModeLine.h's own doc comment on
+    // lastShownActivities_. Deliberately local to ModeLine's rendering, not
+    // BackgroundActivity itself (which keeps reporting empty immediately,
+    // unchanged -- see BackgroundActivityTest.cpp), so this still reads
+    // "LSP" right after End.
+    REQUIRE(RowText(screen, 0, 60).find("LSP") != std::string::npos);
+
+    // Once the grace window has genuinely elapsed (a real sleep -- ModeLine's
+    // hold is measured against the wall clock with no test-side injection
+    // point), it's gone.
+    std::this_thread::sleep_for(std::chrono::milliseconds(350));
+    modeLine.Paint(canvas);
+    REQUIRE(RowText(screen, 0, 60).find("LSP") == std::string::npos);
 }
 
 TEST_CASE("ModeLine shows a static idle indicator for a running LSP client with no request in flight",
           "[ModeLine]") {
-    ned::text::BufferList bufferList;
-    ned::ui::EventLoop    eventLoop;
+    ned::text::BufferList        bufferList;
+    ned::ui::EventLoop           eventLoop;
     ned::editor::lsp::LspManager manager(bufferList, eventLoop);
     RegisterFakeRunningClient(manager, "c", eventLoop);
 
@@ -271,8 +290,8 @@ TEST_CASE("ModeLine shows a static idle indicator for a running LSP client with 
 
 TEST_CASE("ModeLine shows no LSP indicator when SetLspManager was never called, or no client runs for this buffer's language",
           "[ModeLine]") {
-    ned::text::BufferList bufferList;
-    ned::ui::EventLoop    eventLoop;
+    ned::text::BufferList        bufferList;
+    ned::ui::EventLoop           eventLoop;
     ned::editor::lsp::LspManager manager(bufferList, eventLoop);
     RegisterFakeRunningClient(manager, "python", eventLoop); // a different language than the buffer below
 
@@ -294,4 +313,37 @@ TEST_CASE("ModeLine shows no LSP indicator when SetLspManager was never called, 
     modeLine.SetLspManager(&manager);
     modeLine.Paint(canvas);
     REQUIRE(RowText(screen, 0, 60).find("LSP") == std::string::npos);
+}
+
+TEST_CASE("ModeLine shows a distinct glyph for a spawn failure, not the running dot", "[ModeLine]") {
+    ned::text::BufferList        bufferList;
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::lsp::LspManager manager(bufferList, eventLoop);
+    ned::editor::lsp::SetLspServerCommand("modeline-spawn-fail-lang", {"/definitely/does/not/exist/ned-fake-lsp"});
+    ned::text::Buffer& buffer = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-modeline-spawn-fail-test.txt");
+    manager.SyncBuffer(buffer, "modeline-spawn-fail-lang"); // must not throw; latches the failure
+    REQUIRE(manager.StatusForLanguage("modeline-spawn-fail-lang") == ned::editor::lsp::LspManager::LspStatus::SpawnFailed);
+
+    ned::ui::ActiveBuffer activeBuffer(buffer);
+    // A stand-in mode whose name -- and so LanguageKeyForMode's result, no
+    // "-mode" suffix to strip -- matches the language just synced above.
+    ned::editor::Mode mode  = ned::editor::FundamentalMode();
+    mode.name               = "modeline-spawn-fail-lang";
+    ned::ui::Theme    theme = ned::ui::DarkTheme();
+    ned::ui::ModeLine modeLine(activeBuffer, mode, theme);
+    modeLine.SetLspManager(&manager);
+
+    // Wide enough that the long buffer/mode names used above don't push the
+    // LSP glyph past the visible column count -- narrower widths are fine
+    // for the other tests in this file, which use short buffer/mode names.
+    ned::ui::Screen screen = MakeScreen(100, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 99, .y_min = 0, .y_max = 0});
+
+    modeLine.Paint(canvas);
+    const std::string row = RowText(screen, 0, 100);
+    REQUIRE(row.find("LSP") != std::string::npos);
+    REQUIRE(row.find("✕") != std::string::npos);
+    REQUIRE(row.find("●") == std::string::npos); // not the running dot
+
+    ned::editor::lsp::SetLspServerCommand("modeline-spawn-fail-lang", {}); // clean up global config state for other tests
 }

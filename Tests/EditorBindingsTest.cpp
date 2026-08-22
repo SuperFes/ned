@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -10,6 +11,7 @@
 
 #include "Editor/Backup.h"
 #include "Editor/CodeFoldSettings.h"
+#include "Editor/DiffRefreshSettings.h"
 #include "Editor/Dispatcher.h"
 #include "Editor/FinalNewline.h"
 #include "Editor/FormatOnSave.h"
@@ -17,6 +19,7 @@
 #include "Editor/Keymap.h"
 #include "Editor/Link.h"
 #include "Editor/Lsp/LspServerConfig.h"
+#include "Editor/PageScroll.h"
 #include "Editor/ProjectRoot.h"
 #include "Editor/ScratchPad.h"
 #include "Editor/ScriptingSession.h"
@@ -449,9 +452,8 @@ class EnvVarGuard {
 };
 
 struct BackupBindingsSandbox {
-    explicit BackupBindingsSandbox(const std::string& name)
-        : root(std::filesystem::temp_directory_path() / name), stateGuard("XDG_STATE_HOME", (root / "state").c_str()),
-          homeGuard("HOME", nullptr) {
+    explicit BackupBindingsSandbox(const std::string& name) : root(std::filesystem::temp_directory_path() / name), stateGuard("XDG_STATE_HOME", (root / "state").c_str()),
+                                                              homeGuard("HOME", nullptr) {
         ned::editor::ResetBackupsForTesting();
         std::filesystem::remove_all(root);
         std::filesystem::create_directories(root / "work");
@@ -484,6 +486,26 @@ TEST_CASE("ned/set-file-auto-save and the backup retention knobs round-trip", "[
     REQUIRE(ned::editor::BackupMaxAgeDays() == 7);
     env.DoString("(ned/set-backup-max-versions 5)");
     REQUIRE(ned::editor::BackupMaxVersions() == 5);
+    env.DoString("(ned/set-backup-max-size-mb 16)");
+    REQUIRE(ned::editor::BackupMaxSizeMb() == 16);
+}
+
+TEST_CASE("ned/set-page-scroll-fraction configures the process-wide setting", "[EditorBindings]") {
+    Environment& env = ned_tests::TestEnvironment();
+    InstallEditorBindings(env);
+
+    env.DoString("(ned/set-page-scroll-fraction 0.5)");
+    REQUIRE(ned::editor::PageScrollFraction() == 0.5);
+    ned::editor::SetPageScrollFraction(0.65); // restore the default for other tests
+}
+
+TEST_CASE("ned/set-diff-refresh-debounce-ms configures the process-wide setting", "[EditorBindings]") {
+    Environment& env = ned_tests::TestEnvironment();
+    InstallEditorBindings(env);
+
+    env.DoString("(ned/set-diff-refresh-debounce-ms 500)");
+    REQUIRE(ned::editor::DiffRefreshDebounce() == std::chrono::milliseconds(500));
+    ned::editor::SetDiffRefreshDebounceMs(1200); // restore the default for other tests
 }
 
 TEST_CASE("ned/list-backups and ned/recover-backup restore a snapshot without any prompt", "[EditorBindings]") {

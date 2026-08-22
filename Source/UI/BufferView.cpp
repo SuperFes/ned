@@ -53,7 +53,6 @@ namespace {
         return chord.Special == editor::SpecialKey::Escape || (chord.Control && chord.Codepoint == U'g');
     }
 
-
     // Window-splitting requests forward to WindowManager (see
     // BufferView::StartInteractiveSession's own switch) and can
     // synchronously destroy the BufferView that's currently handling the
@@ -585,8 +584,8 @@ namespace {
 BufferView::BufferView(ActiveBuffer& activeBuffer, text::KillRing& killRing, editor::RegisterTable& registers,
                        editor::PromptHistory& promptHistory, text::BufferList& bufferList, editor::Dispatcher& dispatcher,
                        std::string& statusMessage, const editor::Mode& mode, const Theme& theme) : activeBuffer_(activeBuffer), killRing_(killRing), registers_(registers),
-                                                                       promptHistory_(promptHistory), bufferList_(bufferList),
-                                                                       dispatcher_(dispatcher), statusMessage_(statusMessage), mode_(mode), theme_(theme) {
+                                                                                                   promptHistory_(promptHistory), bufferList_(bufferList),
+                                                                                                   dispatcher_(dispatcher), statusMessage_(statusMessage), mode_(mode), theme_(theme) {
     if (const char* path = std::getenv("NED_DEBUG_MOUSE"); path && *path) {
         debugMouseLogPath_ = path;
     }
@@ -1048,9 +1047,9 @@ void BufferView::ScheduleDiffRefresh() {
     }
     // Same "Arm re-cancels any still-pending previous fire" debounce shape
     // completionDebounceTimer_ already established for LSP ghost-text
-    // completion -- rapid typing keeps pushing kDiffRefreshDebounce out
+    // completion -- rapid typing keeps pushing the debounce deadline out
     // rather than firing once per keystroke.
-    diffRefreshTimer_.Arm(*eventLoop_, kDiffRefreshDebounce, [this] { RequestDiffForCurrentBuffer(); });
+    diffRefreshTimer_.Arm(*eventLoop_, editor::DiffRefreshDebounce(), [this] { RequestDiffForCurrentBuffer(); });
 }
 
 void BufferView::DispatchDiffForTesting(std::vector<editor::vcs::VcsDiffHunk> hunks) {
@@ -6262,15 +6261,15 @@ void BufferView::HandleExecuteCommandKey(const editor::KeyChord& chord) {
     // affordance would be redundant.
     if (chord.Special == editor::SpecialKey::Backspace) {
         prompt_->DeleteChar();
-        promptHistoryIndex_       = kNoHistoryIndex; // editing exits history browsing -- see TryNavigatePromptHistory's own doc comment
-        executeCommandSelection_  = 0;
+        promptHistoryIndex_      = kNoHistoryIndex; // editing exits history browsing -- see TryNavigatePromptHistory's own doc comment
+        executeCommandSelection_ = 0;
         RefreshExecuteCommandStatus();
         return;
     }
     if (IsPlainCharacter(chord)) {
         prompt_->AppendChar(chord.Codepoint);
-        promptHistoryIndex_       = kNoHistoryIndex;
-        executeCommandSelection_  = 0;
+        promptHistoryIndex_      = kNoHistoryIndex;
+        executeCommandSelection_ = 0;
         RefreshExecuteCommandStatus();
         return;
     }
