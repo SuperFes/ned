@@ -33,9 +33,14 @@
 
 #include "LspClient.h"
 #include "LspContent.h"
+// prose-checking follow-up: diagnosticsBySource_ stores
+// std::vector<text::Buffer::Diagnostic> directly, which needs Buffer's full
+// definition to name that nested type -- a forward declaration is no longer
+// enough, unlike the rest of this header's Buffer/BufferList usage (all
+// by-reference parameters).
+#include "Text/Buffer.h"
 
 namespace ned::text {
-class Buffer;
 class BufferList;
 } // namespace ned::text
 
@@ -47,6 +52,19 @@ namespace ned::editor::lsp {
 // (Commands.cpp/BufferView.cpp), which must resolve to the exact same
 // buffer rather than duplicating the literal.
 inline constexpr std::string_view kLspLogBufferName = "*lsp log*";
+
+// prose-checking follow-up. A reserved language key, never a real value
+// LanguageKeyForMode(mode) can produce (that always comes from stripping a
+// Mode's own "-mode" suffix -- no bundled or dynamic mode is named "prose"),
+// used to slot the prose-checker connection into every one of this class's
+// otherwise per-real-language maps (clients_, bufferState_,
+// failedCommands_, disconnectedLanguages_, ...) as if it were just another
+// language. SyncBuffer syncs this key's server independently of whatever
+// buffer.Path()'s real primary language server is doing -- see its own doc
+// comment -- and it is only ever asked for diagnostics (didOpen/didChange/
+// publishDiagnostics), never hover/completion/code actions/definition/
+// rename.
+inline constexpr std::string_view kProseLanguageKey = "prose";
 
 // The initialize request params sent to every newly spawned server. A free
 // function (rather than inline in ClientForLanguage) so tests can assert on
@@ -81,6 +99,13 @@ class LspManager {
     // buffer.ContentGeneration() has advanced since the last sync -- mirrors
     // exactly how BufferView's own highlight cache already decides "has this
     // changed since I last looked."
+    //
+    // prose-checking follow-up: also syncs buffer to the prose-checker
+    // connection (kProseLanguageKey), completely independently -- whether
+    // the primary language server above is configured, running, or missing
+    // has no bearing on whether prose checking runs, and vice versa. Both
+    // publish diagnostics that get merged, not wholesale-replaced; see
+    // HandlePublishDiagnostics/PushMergedDiagnostics.
     //
     // Deliberately not called for every open buffer, only whichever is
     // currently active/visible -- a background buffer won't get live
@@ -256,10 +281,47 @@ class LspManager {
     [[nodiscard]] LspClient* ExistingClientForLanguage(const std::string& language) const;
 
     // Returns the running (lazily spawning one if needed) client for
-    // language, or nullptr if nothing is configured for it.
+    // language, or nullptr if nothing is configured for it. language ==
+    // kProseLanguageKey resolves its command via ProseCheckerCommand()
+    // instead of LspServerCommand(language) -- the only place that
+    // distinction is made; everything else here treats it like any other
+    // language key.
     LspClient* ClientForLanguage(const std::string& language);
 
-    void HandlePublishDiagnostics(const nlohmann::json& params);
+    struct BufferSyncState {
+        std::string language;
+        std::string uri;
+        std::size_t lastSyncedGeneration = 0;
+        int         version              = 0;
+        bool        opened               = false;
+    };
+
+    // prose-checking follow-up: SyncBuffer's actual body, generalized so it
+    // can independently target either the primary language server or the
+    // prose-checker connection. serverKey selects which entry of
+    // clients_/bufferState_ this call operates on (buffer's real language,
+    // or kProseLanguageKey); languageId is always the buffer's real
+    // language, sent as textDocument/didOpen's own "languageId" regardless
+    // of which server this call is talking to -- harper-ls needs the real
+    // language to know how to extract comments/strings from the document.
+    void SyncToServer(text::Buffer& buffer, const std::string& serverKey, const std::string& languageId);
+
+    // hover/completion/code-actions/definition/rename follow-up: resolves
+    // the *primary* language's BufferSyncState for buffer -- i.e. whichever
+    // entry in bufferState_[&buffer] isn't kProseLanguageKey -- since those
+    // requests are never routed to the prose checker. nullptr if buffer has
+    // no primary sync state at all (never synced, or synced only to prose).
+    [[nodiscard]] BufferSyncState* PrimarySyncState(text::Buffer& buffer);
+
+    // prose-checking follow-up: flattens every source language's current
+    // diagnostics slice for buffer (diagnosticsBySource_[&buffer]) into one
+    // vector and pushes it via buffer.SetDiagnostics -- the actual merge
+    // point that replaces the old "last publisher wins" wholesale replace.
+    // Called after any publish, and after a source's slice is dropped
+    // (disconnect) so stale diagnostics from a dead server don't linger.
+    void PushMergedDiagnostics(text::Buffer& buffer);
+
+    void HandlePublishDiagnostics(const nlohmann::json& params, const std::string& language);
 
     // workDoneProgress-support follow-up. Handles a "$/progress"
     // notification: begin/end drive the shared "LSP" BackgroundActivity
@@ -290,19 +352,25 @@ class LspManager {
     // about these buffers.
     void ClientDisconnected(const std::string& language);
 
-    struct BufferSyncState {
-        std::string language;
-        std::string uri;
-        std::size_t lastSyncedGeneration = 0;
-        int         version              = 0;
-        bool        opened               = false;
-    };
-
     text::BufferList&   bufferList_;
     ned::ui::EventLoop& eventLoop_;
 
     std::unordered_map<std::string, std::unique_ptr<LspClient>> clients_; // keyed by language
-    std::unordered_map<text::Buffer*, BufferSyncState>          bufferState_;
+
+    // prose-checking follow-up: outer key is the buffer, inner key is the
+    // server ("cpp", kProseLanguageKey, ...) -- a buffer now has up to two
+    // concurrent sync states (its primary language server and the prose
+    // checker), each tracking its own didOpen/version/lastSyncedGeneration
+    // independently. Was a flat unordered_map<Buffer*, BufferSyncState>
+    // before this could ever be true.
+    std::unordered_map<text::Buffer*, std::unordered_map<std::string, BufferSyncState>> bufferState_;
+
+    // prose-checking follow-up: per-buffer, per-source-language diagnostics
+    // -- what makes merging possible instead of each server's own
+    // publishDiagnostics wholesale-replacing whatever the other server just
+    // reported. PushMergedDiagnostics flattens this into the vector that
+    // actually reaches buffer.SetDiagnostics.
+    std::unordered_map<text::Buffer*, std::unordered_map<std::string, std::vector<text::Buffer::Diagnostic>>> diagnosticsBySource_;
 
     // error-visibility follow-up. A process-lifetime latch, keyed by
     // language, on the exact argv that last failed to spawn -- lets

@@ -2,10 +2,12 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
 #include <optional>
 #include <string>
 #include <vector>
 
+#include <poll.h>
 #include <unistd.h>
 
 #include "Editor/BackgroundActivity.h"
@@ -90,6 +92,16 @@ std::string ReadRawFrame(int fd) {
 
 int RequestIdFromFrame(const std::string& raw) {
     return Json::parse(raw.substr(raw.find("\r\n\r\n") + 4))["id"].get<int>();
+}
+
+// prose-checking follow-up: asserting "nothing was ever sent" can't use
+// ReadRawFrame's own blocking ::read (it would hang forever on a fd that
+// legitimately never gets written to -- the case under test). A short,
+// bounded poll() is the deliberate exception to this file's otherwise
+// blocking-read style, used only here.
+bool NoFrameArrives(int fd) {
+    pollfd pfd{.fd = fd, .events = POLLIN, .revents = 0};
+    return ::poll(&pfd, 1, 200) == 0; // 0 == timed out, nothing readable
 }
 
 } // namespace
@@ -704,4 +716,199 @@ TEST_CASE("LspManager answers window/workDoneProgress/create with a null result"
     REQUIRE(response["id"] == 3);
     REQUIRE(response.contains("result"));
     REQUIRE(response["result"].is_null());
+}
+
+// prose-checking follow-up: the prose-checker connection is just another
+// entry in the same clients_/bufferState_ maps under
+// LspManager::kProseLanguageKey (see LspManager.h's own doc comment on that
+// constant) -- SetClientForTesting works on it exactly like any other
+// language, so these tests never touch ProseChecker.h's real
+// auto-detect/enabled machinery at all (ProseCheckerTestGuard.cpp disables
+// that globally for the whole ned_tests binary regardless).
+
+TEST_CASE("SyncBuffer opens both the primary language server and the prose checker independently", "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-prose-sync-test.md";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("some text");
+
+    LspClient* primaryClient = nullptr;
+    LspClient* proseClient   = nullptr;
+    FakeServer primaryServer = FakeServer::Create(manager, "markdown", eventLoop, primaryClient);
+    FakeServer proseServer   = FakeServer::Create(manager, std::string(ned::editor::lsp::kProseLanguageKey), eventLoop, proseClient);
+
+    manager.SyncBuffer(buffer, "markdown");
+
+    const std::string primaryRaw  = ReadRawFrame(primaryServer.serverStdinRead);
+    const Json         primaryOpen = Json::parse(primaryRaw.substr(primaryRaw.find("\r\n\r\n") + 4));
+    REQUIRE(primaryOpen["method"] == "textDocument/didOpen");
+    REQUIRE(primaryOpen["params"]["textDocument"]["languageId"] == "markdown");
+
+    const std::string proseRaw  = ReadRawFrame(proseServer.serverStdinRead);
+    const Json         proseOpen = Json::parse(proseRaw.substr(proseRaw.find("\r\n\r\n") + 4));
+    REQUIRE(proseOpen["method"] == "textDocument/didOpen");
+    // The prose checker's own didOpen carries the buffer's real language as
+    // languageId, not the reserved "prose" server key -- harper-ls needs the
+    // real language to know how to extract comments/strings from a document.
+    REQUIRE(proseOpen["params"]["textDocument"]["languageId"] == "markdown");
+}
+
+TEST_CASE("Diagnostics published by the primary language server and the prose checker both land in Buffer::Diagnostics()",
+          "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-prose-merge-test.md";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("bad_code teh");
+
+    LspClient* primaryClient = nullptr;
+    LspClient* proseClient   = nullptr;
+    FakeServer primaryServer = FakeServer::Create(manager, "markdown", eventLoop, primaryClient);
+    FakeServer proseServer   = FakeServer::Create(manager, std::string(ned::editor::lsp::kProseLanguageKey), eventLoop, proseClient);
+    manager.SyncBuffer(buffer, "markdown");
+    (void)ReadRawFrame(primaryServer.serverStdinRead); // drain didOpen
+    (void)ReadRawFrame(proseServer.serverStdinRead);
+
+    const std::string uri = "file://" + path.string();
+    const Json         primaryDiagnostics = {
+        {"jsonrpc", "2.0"},
+        {"method", "textDocument/publishDiagnostics"},
+        {"params",
+         {{"uri", uri},
+          {"diagnostics", Json::array({{{"range", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 3}}}}},
+                                        {"severity", 1},
+                                        {"message", "syntax error"}}})}}},
+    };
+    primaryClient->DispatchFrame(primaryDiagnostics.dump());
+
+    const Json proseDiagnostics = {
+        {"jsonrpc", "2.0"},
+        {"method", "textDocument/publishDiagnostics"},
+        {"params",
+         {{"uri", uri},
+          {"diagnostics", Json::array({{{"range", {{"start", {{"line", 0}, {"character", 9}}}, {"end", {{"line", 0}, {"character", 12}}}}},
+                                        {"severity", 4},
+                                        {"message", "possible typo: teh"}}})}}},
+    };
+    proseClient->DispatchFrame(proseDiagnostics.dump());
+
+    REQUIRE(buffer.Diagnostics().size() == 2); // neither server's publish clobbered the other's
+    bool sawSyntaxError = false;
+    bool sawTypo        = false;
+    for (const Buffer::Diagnostic& diagnostic : buffer.Diagnostics()) {
+        sawSyntaxError |= diagnostic.message == "syntax error";
+        sawTypo |= diagnostic.message == "possible typo: teh";
+    }
+    REQUIRE(sawSyntaxError);
+    REQUIRE(sawTypo);
+}
+
+TEST_CASE("A second publish from one source replaces only that source's own diagnostics slice", "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-prose-reslice-test.md";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("bad_code teh");
+
+    LspClient* primaryClient = nullptr;
+    LspClient* proseClient   = nullptr;
+    FakeServer primaryServer = FakeServer::Create(manager, "markdown", eventLoop, primaryClient);
+    FakeServer proseServer   = FakeServer::Create(manager, std::string(ned::editor::lsp::kProseLanguageKey), eventLoop, proseClient);
+    manager.SyncBuffer(buffer, "markdown");
+    (void)ReadRawFrame(primaryServer.serverStdinRead);
+    (void)ReadRawFrame(proseServer.serverStdinRead);
+
+    const std::string uri = "file://" + path.string();
+    auto               diagnosticsNotification = [&](const std::string& message) {
+        return Json{
+            {"jsonrpc", "2.0"},
+            {"method", "textDocument/publishDiagnostics"},
+            {"params",
+             {{"uri", uri},
+              {"diagnostics", Json::array({{{"range", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 3}}}}},
+                                            {"severity", 1},
+                                            {"message", message}}})}}},
+        };
+    };
+
+    primaryClient->DispatchFrame(diagnosticsNotification("first error").dump());
+    proseClient->DispatchFrame(diagnosticsNotification("possible typo: teh").dump());
+    REQUIRE(buffer.Diagnostics().size() == 2);
+
+    // Primary republishes its own full current set (a real server does this
+    // on every didChange) -- only its own slice is replaced, the prose
+    // checker's diagnostic from before must survive untouched.
+    primaryClient->DispatchFrame(diagnosticsNotification("second error").dump());
+
+    REQUIRE(buffer.Diagnostics().size() == 2);
+    bool sawSecondError = false;
+    bool sawFirstError  = false;
+    bool sawTypo        = false;
+    for (const Buffer::Diagnostic& diagnostic : buffer.Diagnostics()) {
+        sawSecondError |= diagnostic.message == "second error";
+        sawFirstError |= diagnostic.message == "first error";
+        sawTypo |= diagnostic.message == "possible typo: teh";
+    }
+    REQUIRE(sawSecondError);
+    REQUIRE_FALSE(sawFirstError); // primary's own stale diagnostic is gone
+    REQUIRE(sawTypo);             // prose's diagnostic from before is untouched
+}
+
+TEST_CASE("NotifyBufferClosed sends didClose to every server the buffer was opened with", "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-prose-close-test.md";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("some text");
+
+    LspClient* primaryClient = nullptr;
+    LspClient* proseClient   = nullptr;
+    FakeServer primaryServer = FakeServer::Create(manager, "markdown", eventLoop, primaryClient);
+    FakeServer proseServer   = FakeServer::Create(manager, std::string(ned::editor::lsp::kProseLanguageKey), eventLoop, proseClient);
+    manager.SyncBuffer(buffer, "markdown");
+    (void)ReadRawFrame(primaryServer.serverStdinRead); // drain didOpen
+    (void)ReadRawFrame(proseServer.serverStdinRead);
+
+    manager.NotifyBufferClosed(buffer);
+
+    const std::string primaryRaw   = ReadRawFrame(primaryServer.serverStdinRead);
+    const Json         primaryClose = Json::parse(primaryRaw.substr(primaryRaw.find("\r\n\r\n") + 4));
+    REQUIRE(primaryClose["method"] == "textDocument/didClose");
+
+    const std::string proseRaw   = ReadRawFrame(proseServer.serverStdinRead);
+    const Json         proseClose = Json::parse(proseRaw.substr(proseRaw.find("\r\n\r\n") + 4));
+    REQUIRE(proseClose["method"] == "textDocument/didClose");
+}
+
+TEST_CASE("SyncBuffer never opens the prose checker for a binary buffer, but the primary language server still opens normally",
+          "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned-lsp-manager-prose-binary-test.bin";
+    {
+        std::ofstream out(path, std::ios::binary);
+        out.put('\0');
+        out << "some content after a nul byte";
+    }
+    Buffer& buffer = bufferList.OpenOrCreateFile(path, /*allowBinary=*/true);
+
+    LspClient* primaryClient = nullptr;
+    LspClient* proseClient   = nullptr;
+    FakeServer primaryServer = FakeServer::Create(manager, "fundamental", eventLoop, primaryClient);
+    FakeServer proseServer   = FakeServer::Create(manager, std::string(ned::editor::lsp::kProseLanguageKey), eventLoop, proseClient);
+
+    manager.SyncBuffer(buffer, "fundamental");
+
+    // The binary skip is scoped to the prose checker only -- the primary
+    // language server still opens the buffer exactly as it always has.
+    const std::string primaryRaw = ReadRawFrame(primaryServer.serverStdinRead);
+    REQUIRE(primaryRaw.find("textDocument/didOpen") != std::string::npos);
+
+    REQUIRE(NoFrameArrives(proseServer.serverStdinRead));
 }

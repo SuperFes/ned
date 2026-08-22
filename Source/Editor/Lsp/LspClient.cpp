@@ -20,11 +20,13 @@ LspClient::~LspClient() {
     }
 }
 
-LspClient::LspClient(std::vector<std::string> argv, ned::ui::EventLoop& eventLoop) : transport_(std::move(argv)), eventLoop_(eventLoop) {
+LspClient::LspClient(std::vector<std::string> argv, ned::ui::EventLoop& eventLoop)
+    : transport_(std::move(argv)), eventLoop_(eventLoop), handshakeComplete_(false) {
     StartReadLoop();
 }
 
-LspClient::LspClient(Transport transport, ned::ui::EventLoop& eventLoop) : transport_(std::move(transport)), eventLoop_(eventLoop) {
+LspClient::LspClient(Transport transport, ned::ui::EventLoop& eventLoop, bool startHandshakeComplete)
+    : transport_(std::move(transport)), eventLoop_(eventLoop), handshakeComplete_(startHandshakeComplete) {
     StartReadLoop();
 }
 
@@ -153,6 +155,15 @@ void LspClient::DispatchFrame(const std::string& frameText) {
 }
 
 void LspClient::SendRequest(const std::string& method, Json params, ResponseCallback callback) {
+    // handshake-ordering follow-up: see this method's own doc comment.
+    // "initialize" itself is exempt -- it's what starts the handshake.
+    if (!handshakeComplete_ && method != "initialize") {
+        pendingUntilHandshake_.emplace_back([this, method, params = std::move(params), callback = std::move(callback)]() mutable {
+            SendRequest(method, std::move(params), std::move(callback));
+        });
+        return;
+    }
+
     const int id = nextRequestId_++;
     pending_[id] = std::move(callback);
     BeginBackgroundActivity(kLspActivity); // ended when the response dispatches, or by ~LspClient for a request never answered
@@ -166,12 +177,28 @@ void LspClient::SendRequest(const std::string& method, Json params, ResponseCall
 }
 
 void LspClient::SendNotification(const std::string& method, Json params) {
+    // handshake-ordering follow-up: see this method's own doc comment.
+    // "initialized" itself is exempt -- it's what opens the gate below.
+    if (!handshakeComplete_ && method != "initialized") {
+        pendingUntilHandshake_.emplace_back(
+            [this, method, params = std::move(params)]() mutable { SendNotification(method, std::move(params)); });
+        return;
+    }
+
     const Json message = {
         {"jsonrpc", "2.0"},
         {"method", method},
         {"params", std::move(params)},
     };
     transport_.WriteFrame(message.dump());
+
+    if (method == "initialized") {
+        handshakeComplete_                              = true;
+        const std::vector<std::function<void()>> queued = std::move(pendingUntilHandshake_);
+        for (const std::function<void()>& thunk : queued) {
+            thunk(); // replays each queued SendRequest/SendNotification in the order it was originally called
+        }
+    }
 }
 
 void LspClient::SetNotificationHandler(std::string method, NotificationHandler handler) {

@@ -11,6 +11,8 @@
 #include "Editor/ProjectRoot.h"
 #include "LspPosition.h"
 #include "LspServerConfig.h"
+#include "ProseChecker.h"
+#include "Text/BinaryDetect.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
 
@@ -156,7 +158,7 @@ LspClient* LspManager::ExistingClientForLanguage(const std::string& language) co
 
 void LspManager::WireNotificationHandlers(LspClient& client, const std::string& language) {
     client.SetNotificationHandler("textDocument/publishDiagnostics",
-                                  [this](const Json& params) { HandlePublishDiagnostics(params); });
+                                  [this, language](const Json& params) { HandlePublishDiagnostics(params, language); });
     // workDoneProgress-support follow-up: the create request just
     // establishes a token the following "$/progress" notifications carry --
     // there's nothing to decide, its result is null by spec; HandleProgress
@@ -164,6 +166,24 @@ void LspManager::WireNotificationHandlers(LspClient& client, const std::string& 
     // from here, so an unsolicited-progress server (the spec explicitly
     // allows initiating progress without create) works identically.
     client.SetRequestHandler("window/workDoneProgress/create", [](const Json&) { return Json(nullptr); });
+    // prose-checking follow-up, found live against a real harper-ls: a
+    // config-pull server sends this right after "initialized" and, per spec,
+    // expects one result array entry per requested "items" scope -- unlike
+    // window/workDoneProgress/create (whose result is genuinely unused),
+    // harper-ls does not proceed to check any document at all until this
+    // gets a real (non-error) response. Before this handler existed, every
+    // such request fell through to DispatchFrame's generic "method not
+    // found" error response, and harper-ls silently never published a
+    // single diagnostic for the rest of the connection's lifetime -- no
+    // crash, no log entry, just permanent silence. null per item ("no
+    // client-side settings override, use your own defaults") is the
+    // standard response a config-pull server expects when the client has
+    // nothing more specific to offer, same convention VS Code's own client
+    // uses.
+    client.SetRequestHandler("workspace/configuration", [](const Json& params) {
+        const std::size_t itemCount = params.contains("items") && params["items"].is_array() ? params["items"].size() : 1;
+        return Json(std::vector<Json>(itemCount, Json(nullptr)));
+    });
     client.SetNotificationHandler("$/progress", [this, language](const Json& params) { HandleProgress(language, params); });
     client.SetOnDisconnected([this, language](std::string reason) {
         LogError(language, "server disconnected: " + reason);
@@ -177,7 +197,12 @@ LspClient* LspManager::ClientForLanguage(const std::string& language) {
         return existing;
     }
 
-    const std::optional<std::vector<std::string>> command = LspServerCommand(language);
+    // prose-checking follow-up: the one place kProseLanguageKey is treated
+    // differently from a real language -- its command comes from
+    // ProseCheckerCommand()'s auto-detect/override/enabled-toggle
+    // resolution instead of the plain per-language table.
+    const std::optional<std::vector<std::string>> command =
+        (language == kProseLanguageKey) ? ProseCheckerCommand() : LspServerCommand(language);
     if (!command) {
         return nullptr;
     }
@@ -231,22 +256,45 @@ void LspManager::SyncBuffer(text::Buffer& buffer, const std::string& language) {
         return; // a scratch buffer has no URI to tell a server about
     }
 
-    LspClient* client = ClientForLanguage(language);
+    SyncToServer(buffer, language, language);                 // primary language server
+    SyncToServer(buffer, std::string(kProseLanguageKey), language); // prose checker, independent of the above
+}
+
+void LspManager::SyncToServer(text::Buffer& buffer, const std::string& serverKey, const std::string& languageId) {
+    LspClient* client = ClientForLanguage(serverKey);
     if (!client) {
-        return; // nothing configured for this language
+        return; // nothing configured/running for this server
     }
 
-    BufferSyncState& state = bufferState_[&buffer];
+    BufferSyncState& state = bufferState_[&buffer][serverKey];
 
     if (!state.opened) {
-        state.language = language;
+        // prose-checking follow-up: never runs prose checking against a
+        // binary buffer -- keyed off the same LooksBinary heuristic
+        // Buffer::FromFile/ProjectSearch already use, not a new one.
+        // Scoped to the prose checker specifically (not the primary
+        // language server, whose own behavior here predates this feature
+        // and is out of its scope) -- sending harper-ls raw binary content
+        // as "text" is pure waste at best. Checked only on the not-yet-
+        // opened path, not every sync, to avoid a disk read every frame.
+        //
+        // std::filesystem::exists is checked first: LooksBinary treats an
+        // unreadable path as binary too (a sensible default for its own
+        // original "read the file" callers), but buffer.Path() naming a
+        // file that doesn't exist on disk yet just means an unsaved new
+        // buffer -- there's no on-disk content to be binary, and that must
+        // not be conflated with an actually-binary file.
+        if (serverKey == kProseLanguageKey && std::filesystem::exists(*buffer.Path()) && text::LooksBinary(*buffer.Path())) {
+            return;
+        }
+        state.language = serverKey;
         state.uri      = PathToUri(*buffer.Path());
         state.version  = 1;
         client->SendNotification("textDocument/didOpen", {
                                                              {"textDocument",
                                                               {
                                                                   {"uri", state.uri},
-                                                                  {"languageId", language},
+                                                                  {"languageId", languageId},
                                                                   {"version", state.version},
                                                                   {"text", buffer.Text()},
                                                               }},
@@ -266,6 +314,19 @@ void LspManager::SyncBuffer(text::Buffer& buffer, const std::string& language) {
                                                            {"contentChanges", Json::array({{{"text", buffer.Text()}}})},
                                                        });
     state.lastSyncedGeneration = buffer.ContentGeneration();
+}
+
+LspManager::BufferSyncState* LspManager::PrimarySyncState(text::Buffer& buffer) {
+    const auto it = bufferState_.find(&buffer);
+    if (it == bufferState_.end()) {
+        return nullptr;
+    }
+    for (auto& [serverKey, state] : it->second) {
+        if (serverKey != kProseLanguageKey) {
+            return &state;
+        }
+    }
+    return nullptr;
 }
 
 LspClient& LspManager::SetClientForTesting(std::string language, std::unique_ptr<LspClient> client) {
@@ -289,9 +350,28 @@ void LspManager::ClientDisconnected(const std::string& language) {
     // reconfigured command fails outright (StatusForLanguage's SpawnFailed
     // case takes priority over this one regardless).
     disconnectedLanguages_.insert(languageCopy);
+    // prose-checking follow-up: erase just this server's own sub-entry, not
+    // the whole buffer -- a buffer's other server (primary or prose,
+    // whichever languageCopy isn't) must keep its own sync state and
+    // diagnostics intact. Drop the outer entry too once it's left empty,
+    // and drop + re-flatten this server's now-stale diagnostics slice so
+    // Buffer::Diagnostics() doesn't keep reporting from a server that's no
+    // longer there.
     for (auto it = bufferState_.begin(); it != bufferState_.end();) {
-        if (it->second.language == languageCopy) {
+        it->second.erase(languageCopy);
+        if (it->second.empty()) {
             it = bufferState_.erase(it);
+        }
+        else {
+            ++it;
+        }
+    }
+    for (auto it = diagnosticsBySource_.begin(); it != diagnosticsBySource_.end();) {
+        if (it->second.erase(languageCopy) > 0) {
+            PushMergedDiagnostics(*it->first);
+        }
+        if (it->second.empty()) {
+            it = diagnosticsBySource_.erase(it);
         }
         else {
             ++it;
@@ -359,18 +439,24 @@ std::string LspManager::DisconnectReason(const std::string& language) const {
 
 void LspManager::NotifyBufferClosed(text::Buffer& buffer) {
     const auto it = bufferState_.find(&buffer);
-    if (it == bufferState_.end()) {
-        return;
-    }
-    if (it->second.opened) {
-        if (LspClient* client = ExistingClientForLanguage(it->second.language)) {
-            client->SendNotification("textDocument/didClose", {{"textDocument", {{"uri", it->second.uri}}}});
+    if (it != bufferState_.end()) {
+        // prose-checking follow-up: buffer may have up to two sync states
+        // (primary + prose) -- notify every server it was ever opened with,
+        // not just one.
+        for (const auto& perServer : it->second) {
+            const BufferSyncState& state = perServer.second;
+            if (state.opened) {
+                if (LspClient* client = ExistingClientForLanguage(state.language)) {
+                    client->SendNotification("textDocument/didClose", {{"textDocument", {{"uri", state.uri}}}});
+                }
+            }
         }
+        bufferState_.erase(it);
     }
-    bufferState_.erase(it);
+    diagnosticsBySource_.erase(&buffer);
 }
 
-void LspManager::HandlePublishDiagnostics(const Json& params) {
+void LspManager::HandlePublishDiagnostics(const Json& params, const std::string& language) {
     if (!params.contains("uri")) {
         return;
     }
@@ -407,7 +493,22 @@ void LspManager::HandlePublishDiagnostics(const Json& params) {
             });
         }
     }
-    buffer->SetDiagnostics(std::move(diagnostics));
+    // prose-checking follow-up: this server's own full current diagnostic
+    // set for buffer replaces only its own slice -- another server's slice
+    // (recorded independently the same way) is untouched. PushMergedDiagnostics
+    // is what actually reaches buffer.SetDiagnostics.
+    diagnosticsBySource_[buffer][language] = std::move(diagnostics);
+    PushMergedDiagnostics(*buffer);
+}
+
+void LspManager::PushMergedDiagnostics(text::Buffer& buffer) {
+    std::vector<text::Buffer::Diagnostic> merged;
+    if (const auto it = diagnosticsBySource_.find(&buffer); it != diagnosticsBySource_.end()) {
+        for (const auto& perSource : it->second) {
+            merged.insert(merged.end(), perSource.second.begin(), perSource.second.end());
+        }
+    }
+    buffer.SetDiagnostics(std::move(merged));
 }
 
 void LspManager::HandleProgress(const std::string& language, const Json& params) {
@@ -457,21 +558,21 @@ void LspManager::HandleProgress(const std::string& language, const Json& params)
 }
 
 void LspManager::RequestHover(text::Buffer& buffer, std::size_t byteOffset, HoverCallback callback) {
-    const auto it = bufferState_.find(&buffer);
-    if (it == bufferState_.end() || !it->second.opened) {
+    BufferSyncState* state = PrimarySyncState(buffer);
+    if (!state || !state->opened) {
         callback(std::nullopt); // never synced to a server -- nothing to ask
         return;
     }
-    LspClient* client = ExistingClientForLanguage(it->second.language);
+    LspClient* client = ExistingClientForLanguage(state->language);
     if (!client) {
         callback(std::nullopt);
         return;
     }
 
-    const std::string language = it->second.language;
+    const std::string language = state->language;
     const LspPosition position = BytePositionToLsp(buffer.Content(), byteOffset);
     const Json        params   = {
-        {"textDocument", {{"uri", it->second.uri}}},
+        {"textDocument", {{"uri", state->uri}}},
         {"position", {{"line", position.line}, {"character", position.character}}},
     };
     client->SendRequest("textDocument/hover", params,
@@ -490,21 +591,21 @@ void LspManager::RequestHover(text::Buffer& buffer, std::size_t byteOffset, Hove
 }
 
 void LspManager::RequestCompletion(text::Buffer& buffer, std::size_t byteOffset, CompletionCallback callback) {
-    const auto it = bufferState_.find(&buffer);
-    if (it == bufferState_.end() || !it->second.opened) {
+    BufferSyncState* state = PrimarySyncState(buffer);
+    if (!state || !state->opened) {
         callback({});
         return;
     }
-    LspClient* client = ExistingClientForLanguage(it->second.language);
+    LspClient* client = ExistingClientForLanguage(state->language);
     if (!client) {
         callback({});
         return;
     }
 
-    const std::string language = it->second.language;
+    const std::string language = state->language;
     const LspPosition position = BytePositionToLsp(buffer.Content(), byteOffset);
     const Json        params   = {
-        {"textDocument", {{"uri", it->second.uri}}},
+        {"textDocument", {{"uri", state->uri}}},
         {"position", {{"line", position.line}, {"character", position.character}}},
     };
     client->SendRequest("textDocument/completion", params,
@@ -523,12 +624,12 @@ void LspManager::RequestCompletion(text::Buffer& buffer, std::size_t byteOffset,
 }
 
 void LspManager::RequestCodeActions(text::Buffer& buffer, std::size_t rangeStartByte, std::size_t rangeEndByte, CodeActionCallback callback) {
-    const auto it = bufferState_.find(&buffer);
-    if (it == bufferState_.end() || !it->second.opened) {
+    BufferSyncState* state = PrimarySyncState(buffer);
+    if (!state || !state->opened) {
         callback({});
         return;
     }
-    LspClient* client = ExistingClientForLanguage(it->second.language);
+    LspClient* client = ExistingClientForLanguage(state->language);
     if (!client) {
         callback({});
         return;
@@ -546,8 +647,8 @@ void LspManager::RequestCodeActions(text::Buffer& buffer, std::size_t rangeStart
         diagnostics.push_back(DiagnosticToLsp(diagnostic, content));
     }
 
-    const std::string language = it->second.language;
-    const std::string uri      = it->second.uri;
+    const std::string language = state->language;
+    const std::string uri      = state->uri;
     const Json        params   = {
         {"textDocument", {{"uri", uri}}},
         {"range", {{"start", {{"line", start.line}, {"character", start.character}}}, {"end", {{"line", end.line}, {"character", end.character}}}}},
@@ -569,19 +670,19 @@ void LspManager::RequestCodeActions(text::Buffer& buffer, std::size_t rangeStart
 }
 
 void LspManager::ResolveCodeAction(text::Buffer& buffer, const CodeAction& action, ResolveCallback callback) {
-    const auto it = bufferState_.find(&buffer);
-    if (it == bufferState_.end() || !it->second.opened) {
+    BufferSyncState* state = PrimarySyncState(buffer);
+    if (!state || !state->opened) {
         callback(std::nullopt);
         return;
     }
-    LspClient* client = ExistingClientForLanguage(it->second.language);
+    LspClient* client = ExistingClientForLanguage(state->language);
     if (!client) {
         callback(std::nullopt);
         return;
     }
 
-    const std::string language = it->second.language;
-    const std::string uri      = it->second.uri;
+    const std::string language = state->language;
+    const std::string uri      = state->uri;
     client->SendRequest("codeAction/resolve", action.raw,
                         [this, language, callback = std::move(callback), uri](std::optional<Json> result, std::optional<Json> error) {
                             if (error) {
@@ -598,21 +699,21 @@ void LspManager::ResolveCodeAction(text::Buffer& buffer, const CodeAction& actio
 }
 
 void LspManager::RequestDefinition(text::Buffer& buffer, std::size_t byteOffset, DefinitionCallback callback) {
-    const auto it = bufferState_.find(&buffer);
-    if (it == bufferState_.end() || !it->second.opened) {
+    BufferSyncState* state = PrimarySyncState(buffer);
+    if (!state || !state->opened) {
         callback({});
         return;
     }
-    LspClient* client = ExistingClientForLanguage(it->second.language);
+    LspClient* client = ExistingClientForLanguage(state->language);
     if (!client) {
         callback({});
         return;
     }
 
-    const std::string language = it->second.language;
+    const std::string language = state->language;
     const LspPosition position = BytePositionToLsp(buffer.Content(), byteOffset);
     const Json        params   = {
-        {"textDocument", {{"uri", it->second.uri}}},
+        {"textDocument", {{"uri", state->uri}}},
         {"position", {{"line", position.line}, {"character", position.character}}},
     };
     client->SendRequest("textDocument/definition", params,
@@ -638,21 +739,21 @@ void LspManager::RequestDefinition(text::Buffer& buffer, std::size_t byteOffset,
 }
 
 void LspManager::RequestRename(text::Buffer& buffer, std::size_t byteOffset, const std::string& newName, RenameCallback callback) {
-    const auto it = bufferState_.find(&buffer);
-    if (it == bufferState_.end() || !it->second.opened) {
+    BufferSyncState* state = PrimarySyncState(buffer);
+    if (!state || !state->opened) {
         callback(std::nullopt);
         return;
     }
-    LspClient* client = ExistingClientForLanguage(it->second.language);
+    LspClient* client = ExistingClientForLanguage(state->language);
     if (!client) {
         callback(std::nullopt);
         return;
     }
 
-    const std::string language = it->second.language;
+    const std::string language = state->language;
     const LspPosition position = BytePositionToLsp(buffer.Content(), byteOffset);
     const Json        params   = {
-        {"textDocument", {{"uri", it->second.uri}}},
+        {"textDocument", {{"uri", state->uri}}},
         {"position", {{"line", position.line}, {"character", position.character}}},
         {"newName", newName},
     };

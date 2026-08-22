@@ -36,20 +36,14 @@ Notcurses (TermOx → FTXUI → Notcurses over the project's life).
 
 ### Language intelligence
 
-- [ ] **Spell/grammar checking as an LSP diagnostics channel** — not a hunspell
-      integration. `harper-ls` as the auto-wired default when on `PATH`;
-      fall back through other LSP-speaking checkers, ending in "no prose checking,"
-      never a hard failure; `ltex-ls`/LanguageTool stays opt-in user config (ned never
-      bundles or requires a JVM). The real work is **multi-server-per-buffer
-      diagnostics merging** — `LspManager` is strictly 1:1 (one language, one client
-      per buffer) today, and prose checking must attach to any prose-shaped buffer
-      independent of the primary language server. Never runs against binary buffers
-      (key off the existing binary classification).
 - [ ] **Embedded-language documents** (HTML with inline `<script>`/`<style>`,
-      Vue/Svelte-style SFCs) — a separate, larger follow-up to the above: segment the
-      buffer into per-language virtual documents (tree-sitter injection queries find
-      the boundaries), sync each to its own server, remap positions back. Requires
-      multi-server-per-buffer first.
+      Vue/Svelte-style SFCs) — segment the buffer into per-language virtual documents
+      (tree-sitter injection queries find the boundaries), sync each to its own
+      server, remap positions back. `LspManager` gained real multi-server-per-buffer
+      diagnostics merging with the prose-checking feature (harper-ls as a second,
+      independent diagnostics channel alongside the primary language server) — that
+      two-server shape is a fixed pair keyed by a reserved language key, not yet a
+      general N-server-per-buffer mechanism this would need.
 - [ ] Per-capture highlighting round 2 (v1 shipped, exhaustive-highlighting
       follow-up: enumeration of all 17 bundled queries' 87 capture names, defaults
       closing every gap found, `HighlightSpan` carrying an interned capture id, a

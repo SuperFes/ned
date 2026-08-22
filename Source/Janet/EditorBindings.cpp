@@ -19,6 +19,7 @@
 #include "Editor/InlineDiagnostics.h"
 #include "Editor/Link.h"
 #include "Editor/Lsp/LspServerConfig.h"
+#include "Editor/Lsp/ProseChecker.h"
 #include "Editor/MinimapSettings.h"
 #include "Editor/ModeOverrides.h"
 #include "Editor/PageScroll.h"
@@ -337,6 +338,18 @@ namespace {
 
     void NedSetLspCompletionDebounce(std::int64_t milliseconds) {
         editor::lsp::SetLspCompletionDebounceMs(static_cast<int>(milliseconds));
+    }
+
+    // prose-checking follow-up: same argv shape/empty-clears convention as
+    // NedSetLspCommand, but for the one, fixed prose-checker connection --
+    // auto-wired to harper-ls when it's on $PATH if no override is set (see
+    // Editor/Lsp/ProseChecker.h).
+    void NedSetProseCheckerCommand(std::vector<std::string> argv) {
+        editor::lsp::SetProseCheckerCommand(std::move(argv));
+    }
+
+    void NedSetProseCheckerEnabled(bool enabled) {
+        editor::lsp::SetProseCheckingEnabled(enabled);
     }
 
     // syntax-theme-overrides follow-up: "each themeable entry" (Comment,
@@ -701,6 +714,17 @@ void InstallEditorBindings(Environment& env) {
         "ned", "set-lsp-completion-debounce",
         "Set the delay, in milliseconds, after the last relevant keystroke before an automatic completion request "
         "is sent (default 350). Non-positive values are clamped to 1.");
+    env.Register<&NedSetProseCheckerCommand>(
+        "ned", "set-prose-checker-command",
+        "Set the command used to launch the prose/spell/grammar checker: (argv), e.g. "
+        "(ned/set-prose-checker-command [\"ltex-ls\"]) to use something other than the default. Same argv shape as "
+        "ned/set-lsp-command. With no override configured, ned auto-wires harper-ls if it's found on $PATH -- an "
+        "empty argv clears an explicit override and reverts to that auto-detection rather than disabling the "
+        "checker; use ned/set-prose-checker-enabled false to actually turn it off.");
+    env.Register<&NedSetProseCheckerEnabled>(
+        "ned", "set-prose-checker-enabled",
+        "Enable or disable prose/spell/grammar checking as a whole (default true). Diagnostics from it merge "
+        "alongside the buffer's primary language server's own diagnostics rather than replacing them.");
 
     env.Register<&NedSetSyntaxForeground>(
         "ned", "set-syntax-foreground",
