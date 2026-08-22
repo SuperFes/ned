@@ -450,6 +450,7 @@ add_library(ned_lib STATIC
         Source/Editor/Session.cpp
         Source/Editor/ProjectSession.cpp
         Source/Editor/ProjectTrust.cpp
+        Source/Editor/ProjectPlugins.cpp
         Source/Editor/Vcs/DiffPatch.cpp
         Source/Editor/Vcs/VcsProviderRegistry.cpp
         Source/Editor/Vcs/VcsRunner.cpp
@@ -694,6 +695,7 @@ if (NED_BUILD_TESTS)
             Tests/SessionTest.cpp
             Tests/ProjectSessionTest.cpp
             Tests/ProjectTrustTest.cpp
+            Tests/ProjectPluginsTest.cpp
             Tests/VcsProviderRegistryTest.cpp
             Tests/DiffPatchTest.cpp
             Tests/VcsRunnerTest.cpp

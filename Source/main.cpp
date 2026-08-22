@@ -1,9 +1,12 @@
 #include <clocale>
 #include <cstdlib>
+#include <deque>
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -23,6 +26,7 @@
 #include "Editor/MinimapSettings.h"
 #include "Editor/Mode.h"
 #include "Editor/ModeOverrides.h"
+#include "Editor/ProjectPlugins.h"
 #include "Editor/ProjectRoot.h"
 #include "Editor/ProjectSession.h"
 #include "Editor/ProjectTrust.h"
@@ -323,38 +327,51 @@ auto main(int argc, char** argv) -> int {
         statusMessage = std::string("init.janet error: ") + e.what();
     }
 
-    // session-persistence slice 3: project-local .ned/init.janet, loaded
-    // after the global init.janet so project config overrides user config
-    // -- but NEVER silently: this is arbitrary code execution triggered by
-    // opening a directory (the same concern class ROADMAP.md records
-    // against Org Babel). A file whose exact content was previously
-    // "always"-approved (and whose trust hasn't aged out unused -- see
-    // ProjectTrust.h) loads right here, early enough for its mode
-    // overrides/grammars to affect the initial buffer; anything else
-    // defers to a y/n/a prompt once the UI exists, below. The trust store
+    // session-persistence slice 3 (+ project-plugin-autoload follow-up):
+    // project-local .ned/plugins/*.janet, then .ned/init.janet, loaded after
+    // the global init.janet so project config overrides user config -- but
+    // NEVER silently: each is arbitrary code execution triggered by opening
+    // a directory (the same concern class ROADMAP.md records against Org
+    // Babel). A file whose exact content was previously "always"-approved
+    // (and whose trust hasn't aged out unused -- see ProjectTrust.h) loads
+    // right here, early enough for its mode overrides/grammars to affect the
+    // initial buffer; anything else defers to its own y/n/a prompt once the
+    // UI exists, below -- queued so a project with several new/changed files
+    // gets asked about all of them, not just the first. Plugins load first,
+    // mirroring LoadBundledPlugins-before-LoadInitFile: project init.janet
+    // can then override a project plugin's own registration, same as a
+    // user's init.janet can override a bundled plugin's. The trust store
     // loads after init.janet so a configured expiry window governs its
     // prune.
     const std::filesystem::path projectInitPath = projectRoot / ".ned" / "init.janet";
-    std::filesystem::path       deferredTrustPromptPath;
+
+    std::vector<std::filesystem::path> projectTrustCandidates = ned::editor::ProjectPluginFiles(projectRoot);
     {
         std::error_code projectInitEc;
         if (std::filesystem::is_regular_file(projectInitPath, projectInitEc)) {
-            ned::editor::LoadProjectTrust();
-            const std::optional<std::string> hash = ned::editor::HashFileContent(projectInitPath);
-            if (hash && ned::editor::IsProjectInitTrusted(projectInitPath, *hash)) {
+            projectTrustCandidates.push_back(projectInitPath);
+        }
+    }
+
+    std::deque<std::filesystem::path> deferredTrustPrompts;
+    if (!projectTrustCandidates.empty()) {
+        ned::editor::LoadProjectTrust();
+        for (const std::filesystem::path& candidate : projectTrustCandidates) {
+            const std::optional<std::string> hash = ned::editor::HashFileContent(candidate);
+            if (hash && ned::editor::IsProjectInitTrusted(candidate, *hash)) {
                 try {
-                    janetEnv.DoFile(projectInitPath);
+                    janetEnv.DoFile(candidate);
                 }
                 catch (const std::exception& e) {
-                    statusMessage = std::string("project init.janet error: ") + e.what();
+                    statusMessage = candidate.string() + " error: " + e.what();
                 }
-                ned::editor::TouchProjectTrust(projectInitPath);
-                ned::editor::SaveProjectTrust();
+                ned::editor::TouchProjectTrust(candidate);
             }
             else {
-                deferredTrustPromptPath = projectInitPath;
+                deferredTrustPrompts.push_back(candidate);
             }
         }
+        ned::editor::SaveProjectTrust();
     }
 
     // session-persistence slice 1: deliberately after LoadInitFile, not
@@ -729,38 +746,54 @@ auto main(int argc, char** argv) -> int {
         windowManager->RequestOpenBinaryFile(deferredBinaryOpenPath);
     }
 
-    // session-persistence slice 3: the untrusted-.ned/init.janet prompt
-    // deferred from the load site above, now that a focused pane exists to
-    // drive it (same deferral RequestOpenBinaryFile gets, and the same
-    // "must run after TakeFocus()" reason). Loading this late instead of
-    // beside the global init.janet is the accepted cost of prompting at
-    // all: mode overrides a first-time project init registers won't affect
-    // the already-selected initial Mode until the next buffer switch. The
-    // hash is recomputed at decision time so what gets recorded as trusted
-    // is exactly what got loaded, not what was on disk at startup.
-    if (!deferredTrustPromptPath.empty()) {
-        windowManager->RequestTrustProjectInit(
-            deferredTrustPromptPath,
-            [&janetEnv, &statusMessage](const std::filesystem::path&     initPath,
-                                        ned::editor::ProjectInitDecision decision) -> void {
-                if (decision == ned::editor::ProjectInitDecision::Decline) {
-                    statusMessage = "Project init.janet not loaded.";
-                    return;
-                }
-                if (decision == ned::editor::ProjectInitDecision::LoadAlways) {
-                    if (const auto hash = ned::editor::HashFileContent(initPath)) {
-                        ned::editor::RecordProjectInitTrust(initPath, *hash);
+    // session-persistence slice 3 (+ project-plugin-autoload follow-up): the
+    // untrusted-file prompt queue deferred from the load loop above, now
+    // that a focused pane exists to drive it (same deferral
+    // RequestOpenBinaryFile gets, and the same "must run after TakeFocus()"
+    // reason). Loading this late instead of beside the global init.janet is
+    // the accepted cost of prompting at all: mode/plugin overrides a
+    // first-time project file registers won't affect the already-selected
+    // initial Mode until the next buffer switch. Each entry gets its own
+    // y/n/a prompt, one at a time, chained through the decision callback --
+    // recursing through the same shared_ptr<function> so a project with
+    // several new/changed files gets asked about every one of them, not just
+    // the first. The hash is recomputed at decision time so what gets
+    // recorded as trusted is exactly what got loaded, not what was on disk
+    // at startup.
+    if (!deferredTrustPrompts.empty()) {
+        auto promptNext = std::make_shared<std::function<void()>>();
+        *promptNext      = [wm = windowManager.get(), &janetEnv, &statusMessage, deferredTrustPrompts,
+                       promptNext]() mutable -> void {
+            if (deferredTrustPrompts.empty()) {
+                return;
+            }
+            const std::filesystem::path path = deferredTrustPrompts.front();
+            deferredTrustPrompts.pop_front();
+            wm->RequestTrustProjectInit(
+                path, [&janetEnv, &statusMessage, promptNext](const std::filesystem::path&     initPath,
+                                                              ned::editor::ProjectInitDecision decision) -> void {
+                    if (decision == ned::editor::ProjectInitDecision::Decline) {
+                        statusMessage = initPath.string() + " not loaded.";
                     }
-                }
-                try {
-                    janetEnv.DoFile(initPath);
-                    ned::editor::TouchProjectTrust(initPath);
-                    statusMessage = "Loaded " + initPath.string();
-                }
-                catch (const std::exception& e) {
-                    statusMessage = std::string("project init.janet error: ") + e.what();
-                }
-            });
+                    else {
+                        if (decision == ned::editor::ProjectInitDecision::LoadAlways) {
+                            if (const auto hash = ned::editor::HashFileContent(initPath)) {
+                                ned::editor::RecordProjectInitTrust(initPath, *hash);
+                            }
+                        }
+                        try {
+                            janetEnv.DoFile(initPath);
+                            ned::editor::TouchProjectTrust(initPath);
+                            statusMessage = "Loaded " + initPath.string();
+                        }
+                        catch (const std::exception& e) {
+                            statusMessage = initPath.string() + " error: " + e.what();
+                        }
+                    }
+                    (*promptNext)();
+                });
+        };
+        (*promptNext)();
     }
 
     // FTXUI -> Notcurses migration: the Konsole-specific workaround that

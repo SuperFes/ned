@@ -4,6 +4,8 @@
 #include <cstddef>
 #include <exception>
 #include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <string>
 #include <system_error>
 
@@ -192,6 +194,45 @@ namespace {
         if (!buffer.HasMark()) {
             buffer.SetMark(buffer.Point());
         }
+    }
+
+    // ned-init-project follow-up. .ned/session.json is per-machine window/
+    // buffer-layout state (see ProjectSession.h's own header comment), not
+    // shared project config like .ned/init.janet -- committing it would just
+    // have each developer's local layout clobber the next one's on every
+    // commit. Returns true if the entry was newly appended (for the
+    // command's own status message); false if there's no .gitignore to
+    // append to, or it already ignores the entry. Deliberately never
+    // creates a .gitignore from scratch -- that's a bigger, more
+    // presumptuous step than this one-shot command should take silently.
+    bool AppendSessionJsonToGitignore(const std::filesystem::path& root) {
+        const std::filesystem::path gitignorePath = root / ".gitignore";
+        std::error_code             ec;
+        if (!std::filesystem::is_regular_file(gitignorePath, ec)) {
+            return false;
+        }
+
+        const char* kEntry = ".ned/session.json";
+        std::string existing;
+        {
+            std::ifstream file(gitignorePath, std::ios::binary);
+            existing.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+        }
+
+        std::istringstream lines(existing);
+        std::string        line;
+        while (std::getline(lines, line)) {
+            if (line == kEntry) {
+                return false; // already ignored
+            }
+        }
+
+        std::ofstream file(gitignorePath, std::ios::binary | std::ios::app);
+        if (!existing.empty() && existing.back() != '\n') {
+            file << '\n';
+        }
+        file << "# ned per-machine session state (window layout, open buffers)\n" << kEntry << '\n';
+        return true;
     }
 
 } // namespace
@@ -1195,7 +1236,11 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     // logic. Also activates session persistence for the *current* run when
     // the root wasn't a marker-carrying project at startup -- without
     // this, the newly initialized project wouldn't start saving until the
-    // next launch.
+    // next launch. Session-persistence-gaps follow-up: also offers (silently
+    // appends, matching the rest of this command's own no-prompt shape) a
+    // .gitignore entry for the newly-personal session.json -- see
+    // AppendSessionJsonToGitignore's own comment for why that one file, and
+    // not .ned/ wholesale (init.janet/plugins/ are meant to be committed).
     registry.Register("ned-init-project",
                       "Create the project's .ned/ directory (opt-in home for session data and a project init.janet).",
                       [](CommandContext& context) {
@@ -1212,8 +1257,10 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           if (SessionRestoreEnabled() && !ActiveProjectSessionRoot()) {
                               SetActiveProjectSessionRoot(root);
                           }
+                          const bool gitignoreUpdated = AppendSessionJsonToGitignore(root);
                           if (context.message) {
-                              *context.message = "Created " + nedDir.string();
+                              *context.message = "Created " + nedDir.string() +
+                                                  (gitignoreUpdated ? "; added .ned/session.json to .gitignore" : "");
                           }
                       });
 
