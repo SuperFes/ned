@@ -167,8 +167,6 @@ Notcurses (TermOx → FTXUI → Notcurses over the project's life).
       curation (everything's exported by default today) and SONAME/ABI-versioning
       discipline, neither of which pays for itself with zero external consumers. Raised
       during the Gentoo packaging follow-up below.
-- [ ] Session persistence gaps: a `.ned/plugins/*.janet` autoload dir;
-      `ned-init-project` offering a `.gitignore` append.
 - [ ] Hunk unstage matches point against the *cached* staged diff, which drifts when
       unstaged edits exist earlier in the file — exact in the common
       stage-then-undo flow; revisit only if it bites.

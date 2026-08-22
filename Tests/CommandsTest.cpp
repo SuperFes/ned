@@ -13,6 +13,8 @@
 #include "Editor/Dispatcher.h"
 #include "Editor/FormatOnSave.h"
 #include "Editor/Mode.h"
+#include "Editor/ProjectRoot.h"
+#include "Editor/ProjectSession.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
 #include "Text/KillRing.h"
@@ -2349,6 +2351,21 @@ std::string ReadWholeFile(const std::filesystem::path& path) {
     return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
 }
 
+// ProjectRoot() and the project-session-eligibility globals ned-init-project
+// touches are all process-wide state (ProjectRoot.h/ProjectSession.h);
+// restores both on scope exit even if a REQUIRE fails partway through,
+// mirroring ProjectRootTest.cpp's own CurrentPathGuard.
+struct ProjectRootGuard {
+    ProjectRootGuard() : previous_(ProjectRoot()) {}
+    ~ProjectRootGuard() {
+        SetProjectRoot(previous_);
+        ResetProjectSessionForTesting();
+    }
+
+  private:
+    std::filesystem::path previous_;
+};
+
 } // namespace
 
 TEST_CASE("save-buffer preserves the prior disk content as a backup version and drops the autosave", "[Commands]") {
@@ -2481,4 +2498,79 @@ TEST_CASE("recover-file signals its interactive request", "[Commands]") {
     registry.Invoke("recover-file", context);
 
     REQUIRE(context.interactiveRequest == InteractiveRequest::RecoverFile);
+}
+
+TEST_CASE("ned-init-project creates .ned/ and appends session.json to an existing .gitignore", "[Commands]") {
+    const ProjectRootGuard      guard;
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "ned_commands_test_init_project";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root);
+    std::ofstream(root / ".gitignore") << "build/\n";
+    SetProjectRoot(root);
+
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    std::string    message;
+    context.message = &message;
+
+    registry.Invoke("ned-init-project", context);
+
+    REQUIRE(std::filesystem::is_directory(root / ".ned"));
+    const std::string gitignore = ReadWholeFile(root / ".gitignore");
+    REQUIRE(gitignore.find("build/") != std::string::npos);
+    REQUIRE(gitignore.find(".ned/session.json") != std::string::npos);
+    REQUIRE(message.find(".gitignore") != std::string::npos);
+
+    std::filesystem::remove_all(root);
+}
+
+TEST_CASE("ned-init-project doesn't create a .gitignore that doesn't already exist", "[Commands]") {
+    const ProjectRootGuard      guard;
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "ned_commands_test_init_project_nogi";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root);
+    SetProjectRoot(root);
+
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    std::string    message;
+    context.message = &message;
+
+    registry.Invoke("ned-init-project", context);
+
+    REQUIRE(std::filesystem::is_directory(root / ".ned"));
+    REQUIRE_FALSE(std::filesystem::exists(root / ".gitignore"));
+    REQUIRE(message.find(".gitignore") == std::string::npos);
+
+    std::filesystem::remove_all(root);
+}
+
+TEST_CASE("ned-init-project doesn't duplicate an existing session.json .gitignore entry", "[Commands]") {
+    const ProjectRootGuard      guard;
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "ned_commands_test_init_project_dup";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root);
+    std::ofstream(root / ".gitignore") << "build/\n.ned/session.json\n";
+    SetProjectRoot(root);
+
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    std::string    message;
+    context.message = &message;
+
+    registry.Invoke("ned-init-project", context);
+
+    const std::string gitignore = ReadWholeFile(root / ".gitignore");
+    const std::size_t first     = gitignore.find(".ned/session.json");
+    REQUIRE(first != std::string::npos);
+    REQUIRE(gitignore.find(".ned/session.json", first + 1) == std::string::npos);
+    REQUIRE(message.find(".gitignore") == std::string::npos);
+
+    std::filesystem::remove_all(root);
 }
