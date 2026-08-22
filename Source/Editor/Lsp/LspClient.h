@@ -80,11 +80,26 @@ class LspClient {
   public:
     // Spawns argv as a new language server process. screen must outlive this
     // LspClient (see this file's own header comment on lifetime).
+    //
+    // handshake-ordering follow-up: this is the constructor real production
+    // spawns (LspManager::ClientForLanguage) always use, so it's the one
+    // that starts the SendRequest/SendNotification queue-until-initialized
+    // gate closed -- see those methods' own doc comments.
     LspClient(std::vector<std::string> argv, ned::ui::EventLoop& eventLoop);
 
     // Takes ownership of an already-open Transport directly -- for tests
-    // driving a raw pipe pair with no real subprocess involved.
-    LspClient(Transport transport, ned::ui::EventLoop& eventLoop);
+    // driving a raw pipe pair with no real subprocess involved. The
+    // handshake-ordering gate (see SendRequest/SendNotification) starts
+    // *open* by default -- a test-injected client (LspManager::
+    // SetClientForTesting) never goes through a real initialize/initialized
+    // exchange at all, by design, so gating it the same way production
+    // clients are would silently queue and drop every existing test's
+    // didOpen/etc. notifications instead of writing them. startHandshakeComplete
+    // is a test-only seam (public primarily for tests, mirroring
+    // SetClientForTesting/DispatchFrame's own precedent) for a test that
+    // specifically wants to exercise the gating/queuing behavior itself
+    // against a raw pipe pair, with no real subprocess.
+    LspClient(Transport transport, ned::ui::EventLoop& eventLoop, bool startHandshakeComplete = true);
 
     // Member destruction order does the real teardown work -- see header
     // comment. The body only balances the BackgroundActivity registry for
@@ -105,8 +120,31 @@ class LspClient {
     // is destroyed first, callback is simply dropped, uninvoked (matches
     // this class's own "abandoned at shutdown" convention -- see header
     // comment).
+    //
+    // handshake-ordering follow-up: for a real subprocess-spawned client
+    // (the std::vector<std::string> argv constructor), any call here made
+    // before "initialized" has actually gone out over the wire is queued
+    // and replayed, in order, right after it does -- not written
+    // immediately. Per spec the client must not send anything but the
+    // initialize request itself before initialized; LspManager::
+    // ClientForLanguage fires initialize and returns the client
+    // synchronously (the response only arrives on a later event-loop
+    // iteration via Post), and every caller downstream (SyncBuffer's
+    // didOpen chief among them) calls this on that same client immediately
+    // -- a guaranteed race, not a rare one, confirmed live against a real
+    // harper-ls: it silently never published a single diagnostic for a
+    // buffer whose didOpen it received before initialized, with no error of
+    // any kind to explain why. clangd tolerates the same ordering violation
+    // (evidently reordering/deferring internally); harper-ls does not.
+    // Method-name-recursion (queued calls call this method again once the
+    // gate opens) keeps this and SendRequest's own gating logic in exactly
+    // one place each rather than a second parallel queue-draining function.
     void SendRequest(const std::string& method, Json params, ResponseCallback callback);
 
+    // handshake-ordering follow-up: same gating as SendRequest, except
+    // "initialized" itself is always let through immediately -- it's what
+    // *opens* the gate (and flushes anything queued behind it), so gating it
+    // too would deadlock every call permanently queued behind it.
     void SendNotification(const std::string& method, Json params);
 
     // Replaces any existing handler for method. Invoked on the main thread
@@ -157,6 +195,14 @@ class LspClient {
     std::unordered_map<std::string, NotificationHandler> notificationHandlers_;
     std::unordered_map<std::string, RequestHandler>      requestHandlers_;
     std::function<void(std::string reason)>              onDisconnected_; // see SetOnDisconnected
+
+    // handshake-ordering follow-up: see SendRequest/SendNotification and the
+    // two constructors' own doc comments. handshakeComplete_ defaults to
+    // false only for the real-subprocess constructor; pendingUntilHandshake_
+    // holds every SendRequest/SendNotification call made before the gate
+    // opens, replayed in order once it does.
+    bool                                  handshakeComplete_ = true;
+    std::vector<std::function<void()>>    pendingUntilHandshake_;
 };
 
 } // namespace ned::editor::lsp

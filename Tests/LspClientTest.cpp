@@ -4,6 +4,7 @@
 #include <string_view>
 #include <vector>
 
+#include <poll.h>
 #include <unistd.h>
 
 #include "Editor/BackgroundActivity.h"
@@ -60,7 +61,8 @@ struct ClientFixture {
     int                serverStdoutWrite; // test writes to feed the client's read thread, if a test ever wants to
     LspClient          client;
 
-    ClientFixture(int readFd, int writeFd, Transport transport) : serverStdinRead(readFd), serverStdoutWrite(writeFd), client(std::move(transport), eventLoop) {
+    ClientFixture(int readFd, int writeFd, Transport transport, bool startHandshakeComplete)
+        : serverStdinRead(readFd), serverStdoutWrite(writeFd), client(std::move(transport), eventLoop, startHandshakeComplete) {
     }
 
     ~ClientFixture() {
@@ -72,11 +74,24 @@ struct ClientFixture {
     ClientFixture& operator=(const ClientFixture&) = delete;
 
     static ClientFixture Create() {
+        return CreateImpl(/*startHandshakeComplete=*/true);
+    }
+
+    // handshake-ordering follow-up: a fixture that starts *gated*, for tests
+    // exercising SendRequest/SendNotification's own queue-until-initialized
+    // behavior directly -- see LspClient.h's own doc comment on the
+    // startHandshakeComplete constructor parameter this threads through to.
+    static ClientFixture CreateGated() {
+        return CreateImpl(/*startHandshakeComplete=*/false);
+    }
+
+  private:
+    static ClientFixture CreateImpl(bool startHandshakeComplete) {
         int clientWritesHere[2]; // client's write end -> test's read end
         int clientReadsHere[2];  // test's write end -> client's read end
         REQUIRE(::pipe(clientWritesHere) == 0);
         REQUIRE(::pipe(clientReadsHere) == 0);
-        return ClientFixture(clientWritesHere[0], clientReadsHere[1], Transport(clientReadsHere[0], clientWritesHere[1]));
+        return ClientFixture(clientWritesHere[0], clientReadsHere[1], Transport(clientReadsHere[0], clientWritesHere[1]), startHandshakeComplete);
     }
 };
 
@@ -111,6 +126,64 @@ std::string ReadRawFrame(int fd) {
         }
     }
     return all;
+}
+
+// handshake-ordering follow-up: ReadRawFrame above reads a fixed number of
+// chunks and trusts each call starts at a fresh frame boundary -- true for
+// every other test here (each sends one message, then reads once), but not
+// for the "flush queued messages in order" test, which sends three
+// SendNotification calls back-to-back before ever reading: all three land
+// in the pipe together, so a single ::read() can return more than one
+// frame's worth at once, and ReadRawFrame's own Content-Length check only
+// looks for "at least the first frame," not "exactly." This reads
+// everything available once, then splits it into count discrete frames by
+// walking each one's own Content-Length in turn -- for that one test only.
+std::vector<Json> ReadQueuedFrames(int fd, std::size_t count) {
+    std::string all;
+    char        buffer[1024];
+    while (true) { // read until every frame is present
+        std::size_t     framesSoFar = 0;
+        std::string_view remaining(all);
+        while (true) {
+            const auto headerEnd = remaining.find("\r\n\r\n");
+            if (headerEnd == std::string_view::npos) {
+                break;
+            }
+            constexpr std::string_view kPrefix   = "Content-Length: ";
+            const auto                 prefixPos = remaining.find(kPrefix);
+            if (prefixPos == std::string_view::npos || prefixPos > headerEnd) {
+                break;
+            }
+            const std::size_t contentLength = std::stoul(std::string(remaining.substr(prefixPos + kPrefix.size())));
+            const std::size_t frameLength   = headerEnd + 4 + contentLength;
+            if (remaining.size() < frameLength) {
+                break;
+            }
+            ++framesSoFar;
+            remaining = remaining.substr(frameLength);
+        }
+        if (framesSoFar >= count) {
+            break;
+        }
+        const ssize_t n = ::read(fd, buffer, sizeof(buffer));
+        if (n <= 0) {
+            break;
+        }
+        all.append(buffer, static_cast<std::size_t>(n));
+    }
+
+    std::vector<Json> frames;
+    std::string_view  remaining(all);
+    for (std::size_t i = 0; i < count; ++i) {
+        const auto headerEnd = remaining.find("\r\n\r\n");
+        constexpr std::string_view kPrefix       = "Content-Length: ";
+        const auto                 prefixPos     = remaining.find(kPrefix);
+        const std::size_t          contentLength = std::stoul(std::string(remaining.substr(prefixPos + kPrefix.size())));
+        const std::string_view     body          = remaining.substr(headerEnd + 4, contentLength);
+        frames.push_back(Json::parse(body));
+        remaining = remaining.substr(headerEnd + 4 + contentLength);
+    }
+    return frames;
 }
 
 } // namespace
@@ -321,4 +394,61 @@ TEST_CASE("LspClient answers an unhandled server-initiated request with MethodNo
     const Json        response = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
     REQUIRE(response["id"] == 7);
     REQUIRE(response["error"]["code"] == -32601);
+}
+
+// handshake-ordering follow-up. Found live against a real harper-ls: a
+// caller (LspManager::SyncBuffer's didOpen chief among them) that calls
+// SendNotification/SendRequest on a freshly spawned client races ahead of
+// the initialize response, which only arrives on a later event-loop
+// iteration -- per spec nothing but the initialize request itself may be
+// sent before "initialized" goes out, and harper-ls enforces this exactly:
+// a didOpen that arrives first is silently never checked, with no error to
+// explain why. clangd tolerates the same violation; harper-ls does not.
+// These tests exercise the gate ClientFixture::CreateGated's own doc
+// comment describes.
+
+TEST_CASE("A gated LspClient queues SendNotification instead of writing it immediately", "[Lsp]") {
+    ClientFixture fixture = ClientFixture::CreateGated();
+
+    fixture.client.SendNotification("textDocument/didOpen", Json{{"marker", "queued"}});
+
+    pollfd pfd{.fd = fixture.serverStdinRead, .events = POLLIN, .revents = 0};
+    REQUIRE(::poll(&pfd, 1, 200) == 0); // nothing written yet -- still queued
+}
+
+TEST_CASE("A gated LspClient lets the initialize request itself through immediately", "[Lsp]") {
+    ClientFixture fixture = ClientFixture::CreateGated();
+
+    fixture.client.SendRequest("initialize", Json::object(), [](std::optional<Json>, std::optional<Json>) {});
+
+    const std::string raw     = ReadRawFrame(fixture.serverStdinRead);
+    const Json        message = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(message["method"] == "initialize");
+}
+
+TEST_CASE("Sending initialized flushes everything queued ahead of it, in order", "[Lsp]") {
+    ClientFixture fixture = ClientFixture::CreateGated();
+
+    fixture.client.SendNotification("textDocument/didOpen", Json{{"marker", "first"}});
+    fixture.client.SendNotification("textDocument/didChange", Json{{"marker", "second"}});
+    fixture.client.SendNotification("initialized", Json::object()); // opens the gate
+
+    const std::vector<Json> frames = ReadQueuedFrames(fixture.serverStdinRead, 3);
+    REQUIRE(frames[0]["method"] == "initialized"); // the notification that opened the gate is written first
+    REQUIRE(frames[1]["method"] == "textDocument/didOpen");
+    REQUIRE(frames[1]["params"]["marker"] == "first");
+    REQUIRE(frames[2]["method"] == "textDocument/didChange");
+    REQUIRE(frames[2]["params"]["marker"] == "second");
+}
+
+TEST_CASE("Once the gate is open, further calls write immediately with no more queuing", "[Lsp]") {
+    ClientFixture fixture = ClientFixture::CreateGated();
+
+    fixture.client.SendNotification("initialized", Json::object());
+    (void)ReadRawFrame(fixture.serverStdinRead); // drain "initialized"
+
+    fixture.client.SendNotification("textDocument/didOpen", Json::object());
+    const std::string raw     = ReadRawFrame(fixture.serverStdinRead);
+    const Json        message = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(message["method"] == "textDocument/didOpen"); // arrived without needing another "initialized"
 }
