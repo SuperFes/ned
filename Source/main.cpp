@@ -46,6 +46,7 @@
 #include "Text/KillRing.h"
 
 #include "UI/ActiveBuffer.h"
+#include "UI/DesktopThemeProbe.h"
 #include "UI/EchoArea.h"
 #include "UI/EventLoop.h"
 #include "UI/Layout.h"
@@ -449,19 +450,24 @@ auto main(int argc, char** argv) -> int {
     // buffer resolves to."
     //
     // Theme precedence (rich-theme-set follow-up, Phase 1; variables-store
-    // follow-up): the remembered "theme" variable (whatever the select-theme
-    // picker last committed) wins the *base* selection -- the newer
-    // expression of intent than init.janet's static (ned/set-theme ...) --
-    // then that explicit set-theme name, then a previously
-    // `ned --detect-theme`-generated file if one exists (never probes the
-    // terminal on a normal launch -- see UI/TerminalColorProbe.h), else the
-    // fixed DarkTheme() default. An unresolvable name at any step falls
-    // through to the next source rather than aborting, reported via the
-    // status line the same way a failed startup file open already is. And
-    // regardless of which base wins, the (ned/theme-set ...) overrides
-    // below apply last -- the user's explicit call: "the theme overrides
-    // should win out in the end," so a dofile'd theme.janet always
-    // determines the final look.
+    // follow-up; theme-polish follow-up, Phase 4): the remembered "theme"
+    // variable (whatever the select-theme picker last committed) wins the
+    // *base* selection -- the newer expression of intent than init.janet's
+    // static (ned/set-theme ...) -- then that explicit set-theme name, then
+    // a previously `ned --detect-theme`-generated file if one exists (never
+    // probes the terminal on a normal launch -- see
+    // UI/TerminalColorProbe.h), then a live desktop-environment probe (see
+    // UI/DesktopThemeProbe.h -- GNOME/KDE light-vs-dark preference plus
+    // accent color, via the freedesktop portal or a DE-specific fallback;
+    // unlike the terminal probe this is cheap and side-effect-free, so it
+    // runs unconditionally rather than needing an explicit --detect-theme
+    // invocation), else the fixed DarkTheme() default. An unresolvable name
+    // at any step falls through to the next source rather than aborting,
+    // reported via the status line the same way a failed startup file open
+    // already is. And regardless of which base wins, the (ned/theme-set
+    // ...) overrides below apply last -- the user's explicit call: "the
+    // theme overrides should win out in the end," so a dofile'd theme.janet
+    // always determines the final look.
     // Not const: the ansi-fallback-theme check below (which can't run until
     // EventLoop exists) may swap the whole value in place, and the
     // select-theme picker's applier (wired below) reassigns it live.
@@ -486,6 +492,9 @@ auto main(int argc, char** argv) -> int {
         }
         catch (const std::exception&) {
             // Missing XDG_CONFIG_HOME/HOME or an unreadable file -- fall back below.
+        }
+        if (const auto desktop = ned::ui::ProbeDesktopTheme()) {
+            return ned::ui::BuildDesktopTheme(*desktop);
         }
         return ned::ui::DarkTheme();
     }();

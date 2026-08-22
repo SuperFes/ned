@@ -52,6 +52,18 @@ const std::vector<std::string> kClones = {
     "tokyo-night-day",
 };
 
+// rich-theme-set Phase 4: additional flavors of an already-shipped family,
+// plus three new single-flavor clones (ThemeRegistry.cpp has each one's
+// upstream attribution).
+const std::vector<std::string> kPhase4Clones = {
+    "rose-pine",
+    "everforest",
+    "zenburn",
+    "catppuccin-frappe",
+    "catppuccin-macchiato",
+    "tokyo-night-storm",
+};
+
 Theme Resolve(const std::string& name) {
     const auto theme = ThemeByName(name);
     REQUIRE(theme.has_value());
@@ -76,11 +88,19 @@ TEST_CASE("Every bundled palette theme clears the standard contrast floor", "[Bu
     for (const std::string& name : kClones) {
         RequireForegroundContrast(Resolve(name), 40);
     }
+    for (const std::string& name : kPhase4Clones) {
+        RequireForegroundContrast(Resolve(name), 40);
+    }
 }
 
 TEST_CASE("The cloned themes are all registered under their own names", "[BundledThemes]") {
     const std::vector<std::string> names = ThemeNames();
     for (const std::string& name : kClones) {
+        INFO(name);
+        REQUIRE(std::find(names.begin(), names.end(), name) != names.end());
+        REQUIRE(Resolve(name).name == name);
+    }
+    for (const std::string& name : kPhase4Clones) {
         INFO(name);
         REQUIRE(std::find(names.begin(), names.end(), name) != names.end());
         REQUIRE(Resolve(name).name == name);
@@ -98,6 +118,16 @@ TEST_CASE("Cloned dark/light pairs sit on opposite background polarities", "[Bun
     REQUIRE(Luma(Resolve("catppuccin-latte").background) >= 128);
     REQUIRE(Luma(Resolve("tokyo-night").background) < 128);
     REQUIRE(Luma(Resolve("tokyo-night-day").background) >= 128);
+}
+
+TEST_CASE("Every Phase 4 clone is a dark background", "[BundledThemes]") {
+    // All six are dark-only flavors (Everforest/Zenburn/Rosé Pine have no
+    // bundled light counterpart; Catppuccin Frappé/Macchiato and Tokyo
+    // Night Storm slot into already-dark families).
+    for (const std::string& name : kPhase4Clones) {
+        INFO(name);
+        REQUIRE(Luma(Resolve(name).background) < 128);
+    }
 }
 
 TEST_CASE("The high-contrast pair clears a raised contrast floor", "[BundledThemes]") {

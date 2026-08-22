@@ -598,6 +598,179 @@ namespace {
                                 });
     }
 
+    // Stretch clone flavors (rich-theme-set follow-up, Phase 4): additional
+    // members of an already-shipped family (Catppuccin Frappé/Macchiato
+    // alongside Mocha/Latte, Tokyo Night Storm alongside Night/Day) plus
+    // three new single-flavor clones, same attribution/nearest-neighbor-hue
+    // conventions as the Phase 3 block above.
+
+    // Rosé Pine, main flavor -- https://rosepinetheme.com (MIT). No true
+    // green in the official palette (documented upstream): green reuses
+    // pine, which also stands in for blue since pine reads blue-teal rather
+    // than warm-green -- the same single-hue double-duty Monokai's own
+    // cyan/blue slots already do in this file.
+    Theme RosePineTheme() {
+        return ThemeFromPalette("rose-pine",
+                                ThemePalette{
+                                    .background               = Color::RGB(0x191724), // base
+                                    .foreground               = Color::RGB(0xe0def4), // text
+                                    .subtleForeground         = Color::RGB(0x6e6a86), // muted
+                                    .red                      = Color::RGB(0xeb6f92), // love
+                                    .orange                   = Color::RGB(0xf6c177), // gold
+                                    .yellow                   = Color::RGB(0xf6c177), // gold, reused -- no distinct yellow
+                                    .green                    = Color::RGB(0x31748f), // pine, nearest neighbor
+                                    .cyan                     = Color::RGB(0x9ccfd8), // foam
+                                    .blue                     = Color::RGB(0x31748f), // pine, nearest neighbor
+                                    .purple                   = Color::RGB(0xc4a7e7), // iris
+                                    .magenta                  = Color::RGB(0xebbcba), // rose
+                                    .chromeBackground         = Color::RGB(0x1f1d2e), // surface
+                                    .chromeBackgroundEmphasis = Color::RGB(0x26233a), // overlay
+                                    .chromeForeground         = Color::RGB(0xe0def4),
+                                    .border                   = Color::RGB(0x403d52), // highlightMed
+                                    .accent                   = Color::RGB(0xc4a7e7), // iris -- the signature Rosé Pine accent
+                                    .selectionBackground      = Color::RGB(0x403d52),
+                                    .searchMatchBackground    = Color::RGB(0x594a24),
+                                });
+    }
+
+    // Everforest (dark, medium contrast), Sainnhe Park --
+    // https://github.com/sainnhe/everforest (MIT). No true magenta/pink in
+    // the palette: the magenta slot reuses purple, matching upstream's own
+    // deliberately narrow, forest-toned hue set.
+    Theme EverforestTheme() {
+        return ThemeFromPalette("everforest",
+                                ThemePalette{
+                                    .background               = Color::RGB(0x2d353b), // bg0
+                                    .foreground               = Color::RGB(0xd3c6aa), // fg
+                                    .subtleForeground         = Color::RGB(0x7a8478), // grey0
+                                    .red                      = Color::RGB(0xe67e80),
+                                    .orange                   = Color::RGB(0xe69875),
+                                    .yellow                   = Color::RGB(0xdbbc7f),
+                                    .green                    = Color::RGB(0xa7c080),
+                                    .cyan                     = Color::RGB(0x83c092), // aqua
+                                    .blue                     = Color::RGB(0x7fbbb3),
+                                    .purple                   = Color::RGB(0xd699b6),
+                                    .magenta                  = Color::RGB(0xd699b6), // reused, no distinct magenta
+                                    .chromeBackground         = Color::RGB(0x272e33), // bg0 (hard variant)
+                                    .chromeBackgroundEmphasis = Color::RGB(0x343f44), // bg1
+                                    .chromeForeground         = Color::RGB(0xd3c6aa),
+                                    .border                   = Color::RGB(0x4f585e), // bg4
+                                    .accent                   = Color::RGB(0xa7c080), // green -- the "forest" in Everforest
+                                    .selectionBackground      = Color::RGB(0x3d484d), // bg2
+                                    .searchMatchBackground    = Color::RGB(0x5c4f28),
+                                });
+    }
+
+    // Zenburn, Jani Nurminen -- https://github.com/jnurmine/Zenburn (public
+    // domain / GPL, universally redistributed as a low-contrast vim/emacs
+    // colorscheme). No true magenta beyond its one "Magenta" accent, reused
+    // for purple too.
+    Theme ZenburnTheme() {
+        return ThemeFromPalette("zenburn",
+                                ThemePalette{
+                                    .background               = Color::RGB(0x3f3f3f),
+                                    .foreground               = Color::RGB(0xdcdccc),
+                                    .subtleForeground         = Color::RGB(0x709070),
+                                    .red                      = Color::RGB(0xcc9393),
+                                    .orange                   = Color::RGB(0xdfaf8f),
+                                    .yellow                   = Color::RGB(0xf0dfaf),
+                                    .green                    = Color::RGB(0x7f9f7f),
+                                    .cyan                     = Color::RGB(0x8cd0d3),
+                                    .blue                     = Color::RGB(0x94bff3),
+                                    .purple                   = Color::RGB(0xdc8cc3),
+                                    .magenta                  = Color::RGB(0xdc8cc3),
+                                    .chromeBackground         = Color::RGB(0x2b2b2b),
+                                    .chromeBackgroundEmphasis = Color::RGB(0x4f4f4f),
+                                    .chromeForeground         = Color::RGB(0xdcdccc),
+                                    .border                   = Color::RGB(0x5f5f5f),
+                                    .accent                   = Color::RGB(0xdfaf8f), // Zenburn's signature warm tan
+                                    .selectionBackground      = Color::RGB(0x4f4f4f),
+                                    .searchMatchBackground    = Color::RGB(0x6b6b35),
+                                });
+    }
+
+    // Catppuccin Frappé -- https://github.com/catppuccin/catppuccin (MIT),
+    // the second-darkest flavor alongside the already-shipped Mocha/Latte
+    // pair. Same role mapping as those two (red/peach/yellow/green/teal/
+    // blue/mauve/pink -> red/orange/yellow/green/cyan/blue/purple/magenta).
+    Theme CatppuccinFrappeTheme() {
+        return ThemeFromPalette("catppuccin-frappe",
+                                ThemePalette{
+                                    .background               = Color::RGB(0x303446), // base
+                                    .foreground               = Color::RGB(0xc6d0f5), // text
+                                    .subtleForeground         = Color::RGB(0x737994), // overlay0
+                                    .red                      = Color::RGB(0xe78284),
+                                    .orange                   = Color::RGB(0xef9f76), // peach
+                                    .yellow                   = Color::RGB(0xe5c890),
+                                    .green                    = Color::RGB(0xa6d189),
+                                    .cyan                     = Color::RGB(0x81c8be), // teal
+                                    .blue                     = Color::RGB(0x8caaee),
+                                    .purple                   = Color::RGB(0xca9ee6), // mauve
+                                    .magenta                  = Color::RGB(0xf4b8e4), // pink
+                                    .chromeBackground         = Color::RGB(0x292c3c), // mantle
+                                    .chromeBackgroundEmphasis = Color::RGB(0x414559), // surface0
+                                    .chromeForeground         = Color::RGB(0xc6d0f5),
+                                    .border                   = Color::RGB(0x51576d), // surface1
+                                    .accent                   = Color::RGB(0xbabbf1), // lavender
+                                    .selectionBackground      = Color::RGB(0x51576d),
+                                    .searchMatchBackground    = Color::RGB(0x5c4f28),
+                                });
+    }
+
+    Theme CatppuccinMacchiatoTheme() {
+        return ThemeFromPalette("catppuccin-macchiato",
+                                ThemePalette{
+                                    .background               = Color::RGB(0x24273a), // base
+                                    .foreground               = Color::RGB(0xcad3f5), // text
+                                    .subtleForeground         = Color::RGB(0x6e738d), // overlay0
+                                    .red                      = Color::RGB(0xed8796),
+                                    .orange                   = Color::RGB(0xf5a97f), // peach
+                                    .yellow                   = Color::RGB(0xeed49f),
+                                    .green                    = Color::RGB(0xa6da95),
+                                    .cyan                     = Color::RGB(0x8bd5ca), // teal
+                                    .blue                     = Color::RGB(0x8aadf4),
+                                    .purple                   = Color::RGB(0xc6a0f6), // mauve
+                                    .magenta                  = Color::RGB(0xf5bde6), // pink
+                                    .chromeBackground         = Color::RGB(0x1e2030), // mantle
+                                    .chromeBackgroundEmphasis = Color::RGB(0x363a4f), // surface0
+                                    .chromeForeground         = Color::RGB(0xcad3f5),
+                                    .border                   = Color::RGB(0x494d64), // surface1
+                                    .accent                   = Color::RGB(0xb7bdf8), // lavender
+                                    .selectionBackground      = Color::RGB(0x494d64),
+                                    .searchMatchBackground    = Color::RGB(0x5a4e28),
+                                });
+    }
+
+    // Tokyo Night Storm -- https://github.com/tokyo-night (MIT), the
+    // lighter-background third flavor alongside the already-shipped
+    // Night/Day pair. Every accent hue is identical to "night" (upstream's
+    // own storm variant only changes background/chrome tones, not the
+    // accent set), so this reuses TokyoNightTheme's literals for those
+    // slots verbatim.
+    Theme TokyoNightStormTheme() {
+        return ThemeFromPalette("tokyo-night-storm",
+                                ThemePalette{
+                                    .background               = Color::RGB(0x24283b),
+                                    .foreground               = Color::RGB(0xc0caf5),
+                                    .subtleForeground         = Color::RGB(0x565f89), // comment
+                                    .red                      = Color::RGB(0xf7768e),
+                                    .orange                   = Color::RGB(0xff9e64),
+                                    .yellow                   = Color::RGB(0xe0af68),
+                                    .green                    = Color::RGB(0x9ece6a),
+                                    .cyan                     = Color::RGB(0x7dcfff),
+                                    .blue                     = Color::RGB(0x7aa2f7),
+                                    .purple                   = Color::RGB(0x9d7cd8),
+                                    .magenta                  = Color::RGB(0xbb9af7),
+                                    .chromeBackground         = Color::RGB(0x1f2335), // bg_dark
+                                    .chromeBackgroundEmphasis = Color::RGB(0x292e42), // bg_highlight
+                                    .chromeForeground         = Color::RGB(0xc0caf5),
+                                    .border                   = Color::RGB(0x3b4261), // fg_gutter
+                                    .accent                   = Color::RGB(0x7aa2f7),
+                                    .selectionBackground      = Color::RGB(0x283457),
+                                    .searchMatchBackground    = Color::RGB(0x3d59a1), // blue0
+                                });
+    }
+
     struct ThemeFactory {
         std::string_view name;
         Theme (*make)();
@@ -633,6 +806,12 @@ namespace {
         {"catppuccin-latte", CatppuccinLatteTheme},
         {"tokyo-night", TokyoNightTheme},
         {"tokyo-night-day", TokyoNightDayTheme},
+        {"rose-pine", RosePineTheme},
+        {"everforest", EverforestTheme},
+        {"zenburn", ZenburnTheme},
+        {"catppuccin-frappe", CatppuccinFrappeTheme},
+        {"catppuccin-macchiato", CatppuccinMacchiatoTheme},
+        {"tokyo-night-storm", TokyoNightStormTheme},
     };
 
 } // namespace

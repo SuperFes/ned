@@ -34,7 +34,7 @@ The terminal UI is a from-scratch widget/layout/event-loop layer built directly 
   links, project-wide agenda — plus GFM table editing for Markdown.
 - **Project-wide search/replace, a file sidebar, session persistence** (restores open
   files, point, and window layout per project), and a handful of bundled/clonable
-  color themes.
+  color themes — see [`Docs/Themes.md`](Docs/Themes.md).
 
 See [`ROADMAP.md`](ROADMAP.md) for what's still open.
 
