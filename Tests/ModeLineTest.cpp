@@ -333,17 +333,22 @@ TEST_CASE("ModeLine shows a distinct glyph for a spawn failure, not the running 
     ned::ui::ModeLine modeLine(activeBuffer, mode, theme);
     modeLine.SetLspManager(&manager);
 
-    // Wide enough that the long buffer/mode names used above don't push the
-    // LSP glyph past the visible column count -- narrower widths are fine
+    // Wide enough that the long buffer/mode names used above, plus the
+    // spawn-failure detail text (the full "executable not found" message),
+    // don't push past the visible column count -- narrower widths are fine
     // for the other tests in this file, which use short buffer/mode names.
-    ned::ui::Screen screen = MakeScreen(100, 1);
-    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 99, .y_min = 0, .y_max = 0});
+    ned::ui::Screen screen = MakeScreen(200, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 199, .y_min = 0, .y_max = 0});
 
     modeLine.Paint(canvas);
-    const std::string row = RowText(screen, 0, 100);
+    const std::string row = RowText(screen, 0, 200);
     REQUIRE(row.find("LSP") != std::string::npos);
     REQUIRE(row.find("✕") != std::string::npos);
     REQUIRE(row.find("●") == std::string::npos); // not the running dot
+    // mode-line-lsp-status-round-3 follow-up: the spawn-failure detail text
+    // (the exception message, which names the failed binary) renders after
+    // the glyph.
+    REQUIRE(row.find("ned-fake-lsp") != std::string::npos);
 
     ned::editor::lsp::SetLspServerCommand("modeline-spawn-fail-lang", {}); // clean up global config state for other tests
 }

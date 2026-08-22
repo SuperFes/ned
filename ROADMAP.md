@@ -167,26 +167,19 @@ Notcurses (TermOx → FTXUI → Notcurses over the project's life).
       curation (everything's exported by default today) and SONAME/ABI-versioning
       discipline, neither of which pays for itself with zero external consumers. Raised
       during the Gentoo packaging follow-up below.
-- [ ] Session persistence gaps: window-split layout isn't persisted; a
-      `.ned/plugins/*.janet` autoload dir; `ned-init-project` offering a `.gitignore`
-      append.
+- [ ] Session persistence gaps: a `.ned/plugins/*.janet` autoload dir;
+      `ned-init-project` offering a `.gitignore` append.
 - [ ] Hunk unstage matches point against the *cached* staged diff, which drifts when
       unstaged edits exist earlier in the file — exact in the common
       stage-then-undo flow; revisit only if it bites.
 - [ ] LSP deliberate cuts, revisit on demand: syncing every open buffer (not just the
       active one), incremental sync, idle server teardown, multi-root workspaces, raw
       subprocess stderr capture.
-- [ ] Mode-line LSP status glyph round 3 — a spawn failure (`✕`) and a
-      disconnected/crashed server (`○`) now render distinctly from the running
-      dot (`●`), but there's still no detail text for either (the busy state's
-      `%`-complete detail text is the template for a spawn-failure glyph
-      tooltip-style showing the failed command, or a disconnect reason).
 - [ ] DAP deliberate cuts: attach mode, thread picker, watch expressions,
       conditional/logpoint breakpoints, adapter-verified breakpoint positions,
       setting variables, a REPL console.
-- [ ] VCS: multi-line commit messages (`MinibufferPrompt` is single-line by
-      construction). "Generalize the two-callback plugin shape past version control"
-      (cloud CLIs, Terraform, Docker) remains a framing, not a plan.
+- [ ] VCS: "Generalize the two-callback plugin shape past version control" (cloud
+      CLIs, Terraform, Docker) remains a framing, not a plan.
 - [ ] Self-hosting: no special-casing yet for editing ned's own config in ned
       itself — `ned/*` function/macro names and Janet-mode completion don't know
       about each other, so editing `init.janet`/`.ned/init.janet` gets no

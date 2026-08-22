@@ -20,6 +20,7 @@
 #include "Editor/Dap/DapManager.h"
 #include "Editor/Keymap.h"
 #include "Editor/Lsp/LspManager.h"
+#include "Editor/MinimapSettings.h"
 #include "Editor/Mode.h"
 #include "Editor/ModeOverrides.h"
 #include "Editor/ProjectRoot.h"
@@ -378,6 +379,12 @@ auto main(int argc, char** argv) -> int {
     // ($XDG_STATE_HOME/ned/variables.json) -- the "theme" variable
     // participates in theme selection below, so this must load before it.
     ned::editor::LoadVariables();
+    // Same precedence as the "theme" variable above: the last live C-c m
+    // toggle is a newer expression of intent than a static
+    // ned/set-minimap-enabled default, so it wins if present.
+    if (const auto remembered = ned::editor::Variable("minimap-enabled")) {
+        ned::editor::SetMinimapEnabled(*remembered == "true");
+    }
     if (ned::editor::SavePlaceEnabled()) {
         for (const auto& openBuffer : bufferList.Buffers()) {
             ned::editor::RestoreFilePlace(*openBuffer, static_cast<std::size_t>(ned::editor::TabWidth()));
@@ -542,6 +549,18 @@ auto main(int argc, char** argv) -> int {
     auto windowManager = std::make_shared<ned::ui::WindowManager>(
         *buffer, killRing, registers, promptHistory, bufferList, registry, janetKeymap, globalKeymap, std::move(mode),
         statusMessage, theme);
+
+    // session-persistence-window-layout follow-up: replaces the single
+    // default pane just constructed above with the restored split tree, if
+    // one was captured -- every file it references was already opened by
+    // the restoredSession->openFiles loop above, so RestoreWindowLayout only
+    // has to resolve buffers, never open any. A no-op (falls through to the
+    // single-pane default) when there's nothing to restore, restore is
+    // disabled, or a referenced file went missing since the session was
+    // captured.
+    if (restoredSession) {
+        windowManager->RestoreWindowLayout(*restoredSession);
+    }
 
     // TabBar/ProjectSidebar are still single, shared-app-wide widgets (real
     // Emacs has no per-window tab strip or file browser either) -- but a

@@ -645,6 +645,7 @@ if (NED_BUILD_TESTS)
             Tests/BufferViewBlameGutterTest.cpp
             Tests/BufferViewDiffGutterTest.cpp
             Tests/BufferViewVcsStatusTest.cpp
+            Tests/BufferViewVcsCommitTest.cpp
             Tests/WindowManagerTest.cpp
             Tests/ModeLineTest.cpp
             Tests/EchoAreaTest.cpp

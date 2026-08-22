@@ -3659,6 +3659,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
                     // (Minimap.h's own ReleasePlane() doc comment).
                     minimap_->ReleasePlane();
                 }
+                editor::SetVariable("minimap-enabled", minimap_->active ? "true" : "false");
             }
             if (minimapScrollColumn_ != nullptr) {
                 minimapScrollColumn_->active = !minimapScrollColumn_->active;
@@ -3897,13 +3898,13 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             StageOrUnstageHunkAtPoint(false);
             return;
         case editor::InteractiveRequest::VcsCommit:
-            if (!vcsRunner_) {
-                statusMessage_ = "no vcs runner configured";
-                return;
-            }
-            inputMode_ = InputMode::VcsCommit;
-            prompt_.emplace("Commit message: ");
-            statusMessage_ = prompt_->StatusText();
+            BeginVcsCommitMessage();
+            return;
+        case editor::InteractiveRequest::VcsCommitFinish:
+            FinishVcsCommitMessage();
+            return;
+        case editor::InteractiveRequest::VcsCommitAbort:
+            AbortVcsCommitMessage();
             return;
         case editor::InteractiveRequest::VcsBranches:
             RequestVcsBranchesBuffer();
@@ -4414,8 +4415,6 @@ std::string_view BufferView::HistoryKeyForInputMode(InputMode mode) {
             return "task-name";
         case InputMode::DapEvaluate:
             return "dap-evaluate";
-        case InputMode::VcsCommit:
-            return "vcs-commit";
         case InputMode::VcsSwitchBranch:
             return "vcs-switch-branch";
         case InputMode::VcsCreateBranch:
@@ -4616,30 +4615,6 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
                 });
             }
         }
-        else if (inputMode_ == InputMode::VcsCommit) {
-            if (input.empty()) {
-                statusMessage_ = "Empty commit message -- not committing.";
-            }
-            else if (!vcsRunner_) {
-                statusMessage_ = "no vcs runner configured";
-            }
-            else {
-                // Fire-and-forget, DapEvaluate's shape: EndInteractiveSession()
-                // below runs immediately, the summary lands in statusMessage_
-                // from the callback.
-                statusMessage_ = "Committing...";
-                vcsRunner_->RequestCommit(
-                    input,
-                    [this](std::string summary) {
-                        statusMessage_ = summary.empty() ? "Committed." : summary;
-                        RefreshVcsStatusBuffer();
-                        // The comparison point (HEAD for git) just moved, so
-                        // the current buffer's markers are stale now.
-                        RequestDiffForCurrentBuffer();
-                    },
-                    [this](std::string error) { statusMessage_ = "vcs commit: " + error; });
-            }
-        }
         else if (inputMode_ == InputMode::VcsSwitchBranch || inputMode_ == InputMode::VcsCreateBranch) {
             if (input.empty()) {
                 statusMessage_ = "No branch name given.";
@@ -4755,9 +4730,6 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
             case InputMode::DapEvaluate:
                 label = "Evaluate";
                 break;
-            case InputMode::VcsCommit:
-                label = "Commit";
-                break;
             case InputMode::VcsSwitchBranch:
                 label = "Switch branch";
                 break;
@@ -4776,14 +4748,13 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
         inputMode_ != InputMode::CreateDirectory && inputMode_ != InputMode::StringRectangle &&
         inputMode_ != InputMode::SetHeadlineTags && inputMode_ != InputMode::LspRenameNewName &&
         inputMode_ != InputMode::TaskName && inputMode_ != InputMode::DapEvaluate &&
-        inputMode_ != InputMode::VcsCommit && inputMode_ != InputMode::VcsCreateBranch &&
+        inputMode_ != InputMode::VcsCreateBranch &&
         inputMode_ != InputMode::GotoLine) { // completing a line number is meaningless
         // DapEvaluate excluded too: completing a debuggee expression
         // against buffer names would be meaningless, same reasoning as
-        // ProjectSearch's regex pattern. VcsCommit/VcsCreateBranch
-        // likewise (free text / a deliberately *new* name);
-        // VcsSwitchBranch is NOT excluded -- CompletePrompt completes it
-        // against the fetched branch list.
+        // ProjectSearch's regex pattern. VcsCreateBranch likewise
+        // (deliberately *new* free text); VcsSwitchBranch is NOT excluded --
+        // CompletePrompt completes it against the fetched branch list.
         CompletePrompt();
         return;
     }
@@ -5039,6 +5010,65 @@ void BufferView::RefreshVcsStatusBuffer() {
         [this](std::vector<editor::vcs::VcsStatusEntry> entries) { BuildVcsStatusBuffer(entries, /*announce=*/false); });
 }
 
+void BufferView::BeginVcsCommitMessage() {
+    if (!vcsRunner_) {
+        statusMessage_ = "no vcs runner configured";
+        return;
+    }
+    const std::filesystem::path path = editor::vcs::VcsCommitMessagePath();
+    // FindByPath, not the OpenOrCreateFile call below, decides whether this
+    // is a genuinely fresh commit (seed the template) or the user re-running
+    // vcs-commit while one is already mid-composition (switch to it as-is,
+    // preserving whatever they've already typed) -- OpenOrCreateFile itself
+    // always returns *some* buffer either way.
+    const bool     alreadyOpen = bufferList_.FindByPath(path) != nullptr;
+    text::Buffer&  commitBuffer = bufferList_.OpenOrCreateFile(path);
+    if (!alreadyOpen) {
+        commitBuffer.InsertAtPoint(editor::vcs::kVcsCommitMessageTemplate);
+        commitBuffer.SetPoint(0);
+    }
+    activeBuffer_.Set(commitBuffer);
+}
+
+void BufferView::FinishVcsCommitMessage() {
+    text::Buffer&     commitBuffer = activeBuffer_.Get();
+    const std::string message      = editor::vcs::ExtractCommitMessage(commitBuffer.Text());
+    CloseVcsCommitMessageBuffer(commitBuffer);
+    if (message.empty()) {
+        statusMessage_ = "Empty commit message -- not committing.";
+    }
+    else if (!vcsRunner_) {
+        statusMessage_ = "no vcs runner configured";
+    }
+    else {
+        // Fire-and-forget, DapEvaluate's shape: the buffer's already closed
+        // by the time this fires, the summary lands in statusMessage_ from
+        // the callback.
+        statusMessage_ = "Committing...";
+        vcsRunner_->RequestCommit(
+            message,
+            [this](std::string summary) {
+                statusMessage_ = summary.empty() ? "Committed." : summary;
+                RefreshVcsStatusBuffer();
+                // The comparison point (HEAD for git) just moved, so the
+                // current buffer's markers are stale now.
+                RequestDiffForCurrentBuffer();
+            },
+            [this](std::string error) { statusMessage_ = "vcs commit: " + error; });
+    }
+}
+
+void BufferView::AbortVcsCommitMessage() {
+    CloseVcsCommitMessageBuffer(activeBuffer_.Get());
+    statusMessage_ = "Commit aborted.";
+}
+
+void BufferView::CloseVcsCommitMessageBuffer(text::Buffer& commitBuffer) {
+    CloseBufferNow(commitBuffer);
+    std::error_code ec;
+    std::filesystem::remove(editor::vcs::VcsCommitMessagePath(), ec); // best-effort -- a leftover temp file is harmless
+}
+
 std::optional<std::filesystem::path> BufferView::ResolveVcsFileTarget() {
     text::Buffer& buffer = activeBuffer_.Get();
     if (buffer.Name() == kVcsStatusBufferName) {
@@ -5126,6 +5156,18 @@ void BufferView::StageOrUnstageHunkAtPoint(bool stage) {
 
 void BufferView::StageHunkAtPointForTesting(bool stage) {
     StageOrUnstageHunkAtPoint(stage);
+}
+
+void BufferView::BeginVcsCommitMessageForTesting() {
+    BeginVcsCommitMessage();
+}
+
+void BufferView::FinishVcsCommitMessageForTesting() {
+    FinishVcsCommitMessage();
+}
+
+void BufferView::AbortVcsCommitMessageForTesting() {
+    AbortVcsCommitMessage();
 }
 
 void BufferView::RequestVcsBranchesBuffer() {

@@ -14,6 +14,8 @@
 #include "InlineDiagnostics.h"
 #include "Lsp/LspManager.h"
 #include "Markdown.h"
+#include "Mode.h"
+#include "ModeOverrides.h"
 #include "Org.h"
 #include "PageScroll.h"
 #include "ProjectRoot.h"
@@ -21,6 +23,7 @@
 #include "TabWidth.h"
 #include "Text/Grapheme.h"
 #include "Text/Utf8.h"
+#include "Vcs/VcsRunner.h"
 
 namespace ned::editor {
 
@@ -1640,10 +1643,42 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                       [](CommandContext& context) {
                           context.interactiveRequest = InteractiveRequest::VcsUnstageFile;
                       });
-    registry.Register("vcs-commit", "Commit the staged changes, prompting for a single-line message.",
+    registry.Register("vcs-commit", "Commit the staged changes -- opens a *vcs commit message* buffer to compose in.",
                       [](CommandContext& context) {
                           context.interactiveRequest = InteractiveRequest::VcsCommit;
                       });
+    // multi-line-commit-message follow-up: only ever reachable via the
+    // commit-message buffer's own Mode-local keymap (see this function's
+    // ned::editor::RegisterMode/SetModeForFilename calls below), so these
+    // never appear on M-x or the global keymap.
+    registry.Register("vcs-commit-finish", "Finish composing and commit (bound C-c C-c in *vcs commit message*).",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::VcsCommitFinish;
+                      });
+    registry.Register("vcs-commit-abort", "Discard the in-progress commit message (bound C-c C-k in *vcs commit message*).",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::VcsCommitAbort;
+                      });
+    // multi-line-commit-message follow-up: registered once, here, so it's
+    // ready before the first vcs-commit ever runs -- a plain keymap-only
+    // Mode (no highlighting/folding of its own), resolved via
+    // ModeForBuffer/ModeForPath the instant BeginVcsCommitMessage switches
+    // to the commit-message buffer, since that buffer's real (if
+    // disposable) path is exactly kVcsCommitMessageFilename (see
+    // Editor/Vcs/VcsRunner.h's own doc comment on why a real path is
+    // required for this to resolve at all). wrapLines/lineCommentPrefix
+    // mirror MarkdownMode's own prose-buffer defaults -- a commit message
+    // is prose, and '#' is git's own comment convention.
+    {
+        Mode commitMode;
+        commitMode.name              = "vcs-commit-message-mode";
+        commitMode.lineCommentPrefix = "#";
+        commitMode.wrapLines         = true;
+        commitMode.keymap.Bind(ParseKeySequence("C-c C-c"), "vcs-commit-finish");
+        commitMode.keymap.Bind(ParseKeySequence("C-c C-k"), "vcs-commit-abort");
+        RegisterMode("vcs-commit-message-mode", std::move(commitMode));
+        SetModeForFilename(std::string(vcs::kVcsCommitMessageFilename), "vcs-commit-message-mode");
+    }
     registry.Register("vcs-stage-hunk", "Stage just the change hunk covering the line at point.",
                       [](CommandContext& context) {
                           context.interactiveRequest = InteractiveRequest::VcsStageHunk;

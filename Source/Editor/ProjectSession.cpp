@@ -71,6 +71,32 @@ std::string ProjectSessionToJson(const ProjectSessionData& data, const std::file
         breakpoints[pathKey] = lines;
     }
 
+    Json windowLayout = Json::array();
+    for (const WindowLayoutNode& node : data.windowLayout) {
+        Json entry;
+        switch (node.kind) {
+            case WindowLayoutNode::Kind::Leaf:
+                entry["kind"] = "leaf";
+                break;
+            case WindowLayoutNode::Kind::SplitBelow:
+                entry["kind"] = "below";
+                break;
+            case WindowLayoutNode::Kind::SplitRight:
+                entry["kind"] = "right";
+                break;
+        }
+        if (node.file) {
+            entry["file"] = node.file->string();
+        }
+        if (node.first) {
+            entry["first"] = *node.first;
+        }
+        if (node.second) {
+            entry["second"] = *node.second;
+        }
+        windowLayout.push_back(std::move(entry));
+    }
+
     Json json = {
         {"version", 1},
         // Purely informational (which project a hashed XDG filename belongs
@@ -87,6 +113,12 @@ std::string ProjectSessionToJson(const ProjectSessionData& data, const std::file
     }
     if (data.sidebarWidth) {
         json["sidebarWidth"] = *data.sidebarWidth;
+    }
+    if (!windowLayout.empty()) {
+        json["windowLayout"] = std::move(windowLayout);
+    }
+    if (!data.focusedPanePath.empty()) {
+        json["focusedPanePath"] = data.focusedPanePath;
     }
     return json.dump(2);
 }
@@ -122,6 +154,64 @@ std::optional<ProjectSessionData> ProjectSessionFromJson(std::string_view json) 
                     }
                 }
                 data.breakpoints.emplace(pathKey, std::move(parsedLines));
+            }
+        }
+        if (parsed.contains("windowLayout") && parsed["windowLayout"].is_array()) {
+            bool valid = true;
+            for (const Json& entry : parsed["windowLayout"]) {
+                if (!entry.is_object() || !entry.contains("kind") || !entry["kind"].is_string()) {
+                    valid = false;
+                    break;
+                }
+                WindowLayoutNode node;
+                const std::string kind = entry["kind"].get<std::string>();
+                if (kind == "leaf") {
+                    node.kind = WindowLayoutNode::Kind::Leaf;
+                    if (!entry.contains("file") || !entry["file"].is_string()) {
+                        valid = false;
+                        break;
+                    }
+                    node.file = std::filesystem::path(entry["file"].get<std::string>());
+                }
+                else if (kind == "below" || kind == "right") {
+                    node.kind = kind == "below" ? WindowLayoutNode::Kind::SplitBelow : WindowLayoutNode::Kind::SplitRight;
+                    if (!entry.contains("first") || !entry["first"].is_number_unsigned() || !entry.contains("second") ||
+                        !entry["second"].is_number_unsigned()) {
+                        valid = false;
+                        break;
+                    }
+                    // Guards against a corrupted/malformed file's forward or
+                    // self-referencing index recursing forever on restore --
+                    // see WindowLayoutNode's own doc comment on the
+                    // strictly-backward-pointing, post-order invariant.
+                    const auto first  = entry["first"].get<std::size_t>();
+                    const auto second = entry["second"].get<std::size_t>();
+                    if (first >= data.windowLayout.size() || second >= data.windowLayout.size()) {
+                        valid = false;
+                        break;
+                    }
+                    node.first  = first;
+                    node.second = second;
+                }
+                else {
+                    valid = false;
+                    break;
+                }
+                data.windowLayout.push_back(std::move(node));
+            }
+            if (!valid) {
+                // A whole malformed tree, not one skippable entry (unlike
+                // breakpoints above) -- indices are only meaningful relative
+                // to a fully-intact vector, so falls back to no persisted
+                // layout rather than restoring a partial/corrupt one.
+                data.windowLayout.clear();
+            }
+        }
+        if (parsed.contains("focusedPanePath") && parsed["focusedPanePath"].is_array()) {
+            for (const Json& choice : parsed["focusedPanePath"]) {
+                if (choice.is_number_integer()) {
+                    data.focusedPanePath.push_back(choice.get<int>());
+                }
             }
         }
         return data;

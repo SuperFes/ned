@@ -14,10 +14,12 @@
 #ifndef NED_EDITOR_VCS_VCSRUNNER_H
 #define NED_EDITOR_VCS_VCSRUNNER_H
 
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -29,6 +31,42 @@ class Buffer;
 } // namespace ned::text
 
 namespace ned::editor::vcs {
+
+// multi-line-commit-message follow-up: the commit-message buffer's backing
+// temp file -- real disk-backed content (mirroring git's own COMMIT_EDITMSG
+// convention exactly) is what lets ModeForBuffer/ModeOverrides resolve a
+// buffer-local Mode for it at all (a path-less scratch buffer always
+// resolves to FundamentalMode(), no override table consulted -- see
+// ModeOverrides::ModeForBuffer's own doc comment); "COMMIT_EDITMSG" is also
+// immediately recognizable in the tab bar. Shared between
+// BufferView::BeginVcsCommitMessage (opens it) and Commands.cpp's
+// RegisterBuiltinCommands (points ModeOverrides at it), the same
+// shared-constant precedent kLspLogBufferName established for *lsp log*.
+inline constexpr std::string_view kVcsCommitMessageFilename = "COMMIT_EDITMSG";
+
+// std::filesystem::temp_directory_path() / kVcsCommitMessageFilename -- a
+// function, not a plain constant, since temp_directory_path() itself can
+// throw (an unusual environment with no writable temp dir) and every real
+// call site already runs inside a context that tolerates that.
+[[nodiscard]] std::filesystem::path VcsCommitMessagePath();
+
+// Strips every '#'-prefixed line (git's own core.commentChar convention,
+// hard-coded the same way git itself defaults to it) and trims trailing
+// whitespace -- pure text processing, unit-testable with no Buffer/VcsRunner
+// involved. "" for an all-comments-or-blank result, which
+// BufferView::VcsCommitFinish treats as "nothing to commit."
+[[nodiscard]] std::string ExtractCommitMessage(std::string_view bufferText);
+
+// The instructional comment block BeginVcsCommitMessage seeds a freshly
+// created commit-message buffer with -- point lands on the blank first line
+// (Buffer::NewFile's own point-0 default), the same "type above the
+// comments" shape git's own $EDITOR-invoked COMMIT_EDITMSG has.
+inline constexpr std::string_view kVcsCommitMessageTemplate =
+    "\n"
+    "# Please enter the commit message for your changes. Lines starting\n"
+    "# with '#' will be ignored.\n"
+    "#\n"
+    "# C-c C-c to commit, C-c C-k to abort.\n";
 
 class VcsRunner {
   public:

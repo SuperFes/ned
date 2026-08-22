@@ -24,6 +24,7 @@ using ned::editor::SaveProjectSessionFile;
 using ned::editor::SessionsDirectory;
 using ned::editor::SetActiveProjectSessionRoot;
 using ned::editor::SetSessionRestoreEnabled;
+using ned::editor::WindowLayoutNode;
 
 namespace {
 
@@ -87,6 +88,23 @@ ProjectSessionData SampleData() {
     data.sidebarVisible = false;
     data.sidebarWidth   = 42;
     data.breakpoints    = {{"/project/a.cpp", {3, 17}}};
+
+    // A two-leaf SplitRight, post-order (children before parent -- see
+    // WindowLayoutNode's own doc comment): index 0 = a.cpp, index 1 = b.h,
+    // index 2 = the split, which is therefore the root (the last element).
+    WindowLayoutNode leafA;
+    leafA.kind = WindowLayoutNode::Kind::Leaf;
+    leafA.file = "/project/a.cpp";
+    WindowLayoutNode leafB;
+    leafB.kind = WindowLayoutNode::Kind::Leaf;
+    leafB.file = "/project/b.h";
+    WindowLayoutNode split;
+    split.kind   = WindowLayoutNode::Kind::SplitRight;
+    split.first  = 0;
+    split.second = 1;
+    data.windowLayout    = {leafA, leafB, split};
+    data.focusedPanePath = {1}; // b.h (the split's "second") had focus
+
     return data;
 }
 
@@ -120,6 +138,24 @@ TEST_CASE("ProjectSessionFromJson tolerates malformed input", "[ProjectSession]"
     REQUIRE(partial->openFiles == std::vector<std::filesystem::path>{"/a.cpp"});
     REQUIRE(partial->breakpoints ==
             std::map<std::string, std::vector<std::size_t>>{{"/a.cpp", {1, 5}}});
+}
+
+TEST_CASE("ProjectSessionFromJson discards a whole malformed windowLayout rather than a partial tree",
+          "[ProjectSession]") {
+    // Unlike breakpoints (one bad entry skipped, the rest kept), a
+    // windowLayout's indices are only meaningful relative to a fully-intact
+    // vector -- session-persistence-window-layout follow-up's own doc
+    // comment on WindowLayoutNode explains why. Here index 1's "second"
+    // points forward to index 2, which never precedes it -- session-restore
+    // must fall back to no persisted layout instead of building a corrupt
+    // tree.
+    const auto loaded = ProjectSessionFromJson(
+        R"({"version":1,"openFiles":[],"breakpoints":{},)"
+        R"("windowLayout":[{"kind":"leaf","file":"/a.cpp"},)"
+        R"({"kind":"right","first":0,"second":2},)"
+        R"({"kind":"leaf","file":"/b.h"}]})");
+    REQUIRE(loaded.has_value());
+    REQUIRE(loaded->windowLayout.empty());
 }
 
 TEST_CASE("HasProjectMarker and FindProjectMarkerRoot recognize VCS and .ned markers", "[ProjectSession]") {

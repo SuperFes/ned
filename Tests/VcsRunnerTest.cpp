@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <filesystem>
 #include <memory>
 #include <string>
 
@@ -11,9 +12,12 @@
 
 using ned::editor::vcs::ActiveProviderFor;
 using ned::editor::vcs::ClearRegistry;
+using ned::editor::vcs::ExtractCommitMessage;
+using ned::editor::vcs::kVcsCommitMessageFilename;
 using ned::editor::vcs::RegisterProvider;
 using ned::editor::vcs::VcsBlameLine;
 using ned::editor::vcs::VcsCommandSpec;
+using ned::editor::vcs::VcsCommitMessagePath;
 using ned::editor::vcs::VcsDiffHunk;
 using ned::editor::vcs::VcsLogEntry;
 using ned::editor::vcs::VcsProvider;
@@ -314,4 +318,26 @@ TEST_CASE("VcsRunner::RequestHunkApply surfaces a provider without the staged-di
         buffer, 1, /*stage=*/true, [] { FAIL("onSuccess should not be called"); },
         [&secondError](std::string message) { secondError = message; });
     REQUIRE_FALSE(secondError.empty());
+}
+
+TEST_CASE("VcsCommitMessagePath is the temp dir plus kVcsCommitMessageFilename", "[Vcs]") {
+    REQUIRE(VcsCommitMessagePath() == std::filesystem::temp_directory_path() / std::string(kVcsCommitMessageFilename));
+}
+
+TEST_CASE("ExtractCommitMessage strips '#'-prefixed lines and trims trailing whitespace", "[Vcs]") {
+    REQUIRE(ExtractCommitMessage("Fix the thing\n\n# Please enter the commit message...\n# with '#' ignored\n") ==
+            "Fix the thing");
+    REQUIRE(ExtractCommitMessage("Subject\nBody line 1\nBody line 2\n") == "Subject\nBody line 1\nBody line 2");
+}
+
+TEST_CASE("ExtractCommitMessage returns empty for an all-comments-or-blank buffer", "[Vcs]") {
+    REQUIRE(ExtractCommitMessage("").empty());
+    REQUIRE(ExtractCommitMessage("\n\n").empty());
+    REQUIRE(ExtractCommitMessage("# only a comment\n#another\n").empty());
+}
+
+TEST_CASE("ExtractCommitMessage keeps a '#' that isn't the first character of a line", "[Vcs]") {
+    // git's own comment convention: only a line whose *first* character is
+    // '#' is stripped -- "fix issue #42" is real message content.
+    REQUIRE(ExtractCommitMessage("fix issue #42\n") == "fix issue #42");
 }

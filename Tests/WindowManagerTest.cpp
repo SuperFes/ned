@@ -6,6 +6,7 @@
 #include "Editor/Commands.h"
 #include "Editor/MinimapSettings.h"
 #include "Editor/Mode.h"
+#include "Editor/ProjectSession.h"
 #include "Editor/PromptHistory.h"
 #include "Editor/Register.h"
 #include "TestEvents.h"
@@ -492,4 +493,111 @@ TEST_CASE("SetOnTerminalToggle reaches the focused pane and survives a split", "
     FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Character("o")}); // focus the new pane
     FeedSequence(root, {ned::ui::test::Ctrl('c'), ned::ui::test::Character('t')});
     REQUIRE(toggles == 2);
+}
+
+TEST_CASE("CaptureWindowLayout captures a split tree and the focused leaf's path", "[WindowManager]") {
+    Fixture                fixture;
+    ned::ui::WindowManager manager = fixture.Manager();
+    manager.TakeFocus();
+
+    const std::filesystem::path pathA =
+        std::filesystem::temp_directory_path() / "ned_window_manager_test_capture_a.txt";
+    const std::filesystem::path pathB =
+        std::filesystem::temp_directory_path() / "ned_window_manager_test_capture_b.txt";
+    ned::text::Buffer& bufferA = fixture.bufferList.OpenOrCreateFile(pathA);
+    ned::text::Buffer& bufferB = fixture.bufferList.OpenOrCreateFile(pathB);
+
+    ned::ui::Widget& root = manager.RootComponent();
+    manager.FocusedActiveBuffer().Set(bufferA);
+    FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Character("3")}); // SplitRight -- focus stays on this (now bufferA) pane
+    FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Character("o")}); // focus the new (second) pane
+    manager.FocusedActiveBuffer().Set(bufferB);
+    FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Character("o")}); // back to the original (bufferA, "first") pane
+
+    ned::editor::ProjectSessionData data;
+    manager.CaptureWindowLayout(data);
+
+    // Post-order: two leaves then the split, so the split (the root) is the
+    // last element -- see WindowLayoutNode's own doc comment.
+    REQUIRE(data.windowLayout.size() == 3);
+    const ned::editor::WindowLayoutNode& rootNode = data.windowLayout.back();
+    REQUIRE(rootNode.kind == ned::editor::WindowLayoutNode::Kind::SplitRight);
+    REQUIRE(rootNode.first.has_value());
+    REQUIRE(rootNode.second.has_value());
+    REQUIRE(data.windowLayout[*rootNode.first].file == std::filesystem::absolute(pathA));
+    REQUIRE(data.windowLayout[*rootNode.second].file == std::filesystem::absolute(pathB));
+    // The original ("first") pane, showing bufferA, had focus at capture time.
+    REQUIRE(data.focusedPanePath == std::vector<int>{0});
+}
+
+TEST_CASE("CaptureWindowLayout leaves windowLayout empty when a leaf's buffer has no path", "[WindowManager]") {
+    Fixture                fixture; // fixture.buffer ("scratch") has no path
+    ned::ui::WindowManager manager = fixture.Manager();
+    manager.TakeFocus();
+
+    ned::editor::ProjectSessionData data;
+    manager.CaptureWindowLayout(data);
+
+    REQUIRE(data.windowLayout.empty());
+}
+
+TEST_CASE("RestoreWindowLayout rebuilds a split tree and restores the recorded focus", "[WindowManager]") {
+    Fixture fixture;
+
+    const std::filesystem::path pathA =
+        std::filesystem::temp_directory_path() / "ned_window_manager_test_restore_a.txt";
+    const std::filesystem::path pathB =
+        std::filesystem::temp_directory_path() / "ned_window_manager_test_restore_b.txt";
+    fixture.bufferList.OpenOrCreateFile(pathA);
+    ned::text::Buffer& bufferB = fixture.bufferList.OpenOrCreateFile(pathB);
+
+    ned::editor::WindowLayoutNode leafA;
+    leafA.kind = ned::editor::WindowLayoutNode::Kind::Leaf;
+    leafA.file = std::filesystem::absolute(pathA);
+    ned::editor::WindowLayoutNode leafB;
+    leafB.kind = ned::editor::WindowLayoutNode::Kind::Leaf;
+    leafB.file = std::filesystem::absolute(pathB);
+    ned::editor::WindowLayoutNode split;
+    split.kind   = ned::editor::WindowLayoutNode::Kind::SplitRight;
+    split.first  = 0;
+    split.second = 1;
+
+    ned::editor::ProjectSessionData data;
+    data.windowLayout    = {leafA, leafB, split};
+    data.focusedPanePath = {1}; // bufferB, the split's "second"
+
+    ned::ui::WindowManager manager = fixture.Manager();
+    manager.RestoreWindowLayout(data);
+
+    REQUIRE(manager.WindowCount() == 2);
+    REQUIRE(&manager.FocusedActiveBuffer().Get() == &bufferB);
+}
+
+TEST_CASE("RestoreWindowLayout is a no-op when windowLayout is empty", "[WindowManager]") {
+    Fixture                fixture;
+    ned::ui::WindowManager manager = fixture.Manager();
+    manager.TakeFocus();
+
+    ned::editor::ProjectSessionData data; // windowLayout left empty
+    manager.RestoreWindowLayout(data);
+
+    REQUIRE(manager.WindowCount() == 1);
+}
+
+TEST_CASE("RestoreWindowLayout leaves the existing default pane alone when a referenced file isn't open",
+          "[WindowManager]") {
+    Fixture                fixture;
+    ned::ui::WindowManager manager = fixture.Manager();
+    manager.TakeFocus();
+
+    ned::editor::WindowLayoutNode leaf;
+    leaf.kind = ned::editor::WindowLayoutNode::Kind::Leaf;
+    leaf.file = "/definitely/not/open/anywhere/ned-window-layout-test.txt";
+
+    ned::editor::ProjectSessionData data;
+    data.windowLayout = {leaf};
+
+    manager.RestoreWindowLayout(data);
+
+    REQUIRE(manager.WindowCount() == 1);
 }

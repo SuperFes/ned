@@ -303,15 +303,27 @@ enum class InteractiveRequest { None,
                                 // VcsUnstageFile are one-shot too, acting on the *vcs status*
                                 // buffer's line at point when that's the active buffer, else
                                 // on the active buffer's own file (BufferView::
-                                // ResolveVcsFileTarget). VcsCommit/VcsSwitchBranch/
-                                // VcsCreateBranch are prompt-shaped (HandlePromptKey):
-                                // commit collects a single-line message; switch-branch
+                                // ResolveVcsFileTarget). VcsSwitchBranch/VcsCreateBranch
+                                // are prompt-shaped (HandlePromptKey): switch-branch
                                 // fetches the branch list first so Tab completes against
                                 // real branch names; create-branch is a plain name prompt.
+                                // multi-line-commit-message follow-up: VcsCommit is no
+                                // longer prompt-shaped -- it's a one-shot direct action
+                                // that opens/switches to the *vcs commit message* buffer
+                                // (BufferView::BeginVcsCommitMessage), a real,
+                                // multi-line-editable buffer rather than MinibufferPrompt
+                                // (which is single-line by construction). VcsCommitFinish
+                                // (bound C-c C-c) and VcsCommitAbort (bound C-c C-k) are
+                                // that buffer's own Mode-local keymap, wired only while
+                                // it's the active buffer (see Commands.cpp's
+                                // RegisterBuiltinCommands and Editor/Vcs/VcsRunner.h's
+                                // kVcsCommitMessageFilename).
                                 VcsStatus,
                                 VcsStageFile,
                                 VcsUnstageFile,
                                 VcsCommit,
+                                VcsCommitFinish,
+                                VcsCommitAbort,
                                 VcsBranches,
                                 VcsSwitchBranch,
                                 VcsCreateBranch,

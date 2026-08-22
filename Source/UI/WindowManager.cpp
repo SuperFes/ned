@@ -575,7 +575,146 @@ void WindowManager::SaveProjectSessionNow() {
         data.breakpoints = dapManager_->AllBreakpoints();
     }
 
+    CaptureWindowLayout(data);
+
     editor::SaveActiveProjectSession(data);
+}
+
+namespace {
+
+    // Post-order: appends node's children before node itself, so every
+    // index a parent records for its children is already < the parent's own
+    // (freshly-appended) index -- see WindowLayoutNode's own doc comment.
+    // Returns nullopt (aborting the whole capture) the moment any leaf's
+    // buffer has no path.
+    std::optional<std::size_t> CaptureLayoutNode(const WindowNode& node, std::vector<editor::WindowLayoutNode>& out) {
+        if (node.kind == WindowNode::Kind::Leaf) {
+            const std::optional<std::filesystem::path> path = node.pane->ActiveBufferRef().Get().Path();
+            if (!path) {
+                return std::nullopt;
+            }
+            editor::WindowLayoutNode entry;
+            entry.kind = editor::WindowLayoutNode::Kind::Leaf;
+            entry.file = std::filesystem::absolute(*path);
+            out.push_back(std::move(entry));
+            return out.size() - 1;
+        }
+
+        const std::optional<std::size_t> first = CaptureLayoutNode(*node.first, out);
+        if (!first) {
+            return std::nullopt;
+        }
+        const std::optional<std::size_t> second = CaptureLayoutNode(*node.second, out);
+        if (!second) {
+            return std::nullopt;
+        }
+        editor::WindowLayoutNode entry;
+        entry.kind = node.kind == WindowNode::Kind::SplitBelow ? editor::WindowLayoutNode::Kind::SplitBelow
+                                                                 : editor::WindowLayoutNode::Kind::SplitRight;
+        entry.first  = first;
+        entry.second = second;
+        out.push_back(std::move(entry));
+        return out.size() - 1;
+    }
+
+    // Walks down from node building path (0 = first, 1 = second) until it
+    // reaches the leaf holding focused -- true the moment path is complete,
+    // leaving path untouched-beyond-its-prefix on a dead end so the caller's
+    // own push/pop backtracking stays simple.
+    bool FindFocusedPath(const WindowNode& node, const Pane* focused, std::vector<int>& path) {
+        if (node.kind == WindowNode::Kind::Leaf) {
+            return node.pane.get() == focused;
+        }
+        path.push_back(0);
+        if (FindFocusedPath(*node.first, focused, path)) {
+            return true;
+        }
+        path.back() = 1;
+        if (FindFocusedPath(*node.second, focused, path)) {
+            return true;
+        }
+        path.pop_back();
+        return false;
+    }
+
+} // namespace
+
+void WindowManager::CaptureWindowLayout(editor::ProjectSessionData& data) {
+    std::vector<editor::WindowLayoutNode> layout;
+    if (!CaptureLayoutNode(*root_, layout)) {
+        return; // some leaf's buffer has no path -- see this method's own header comment
+    }
+    data.windowLayout = std::move(layout);
+
+    data.focusedPanePath.clear();
+    if (const Pane* focused = FocusedPane()) {
+        std::vector<int> path;
+        if (FindFocusedPath(*root_, focused, path)) {
+            data.focusedPanePath = std::move(path);
+        }
+    }
+}
+
+std::unique_ptr<WindowNode> WindowManager::BuildNodeFromLayout(const std::vector<editor::WindowLayoutNode>& nodes, std::size_t index) {
+    if (index >= nodes.size()) {
+        return nullptr;
+    }
+    const editor::WindowLayoutNode& entry = nodes[index];
+
+    if (entry.kind == editor::WindowLayoutNode::Kind::Leaf) {
+        if (!entry.file) {
+            return nullptr;
+        }
+        text::Buffer* buffer = bufferList_.FindByPath(*entry.file);
+        if (buffer == nullptr) {
+            return nullptr;
+        }
+        auto node   = std::make_unique<WindowNode>();
+        node->kind  = WindowNode::Kind::Leaf;
+        node->pane  = MakePane(*buffer, editor::ModeForBuffer(*buffer));
+        return node;
+    }
+
+    // Guards a corrupted/malformed file's forward-or-self-referencing index
+    // against recursing forever -- ProjectSessionFromJson already enforces
+    // this on load, this is defense in depth against any other caller.
+    if (!entry.first || !entry.second || *entry.first >= index || *entry.second >= index) {
+        return nullptr;
+    }
+    std::unique_ptr<WindowNode> first  = BuildNodeFromLayout(nodes, *entry.first);
+    std::unique_ptr<WindowNode> second = BuildNodeFromLayout(nodes, *entry.second);
+    if (!first || !second) {
+        return nullptr;
+    }
+    auto node    = std::make_unique<WindowNode>();
+    node->kind   = entry.kind == editor::WindowLayoutNode::Kind::SplitBelow ? WindowNode::Kind::SplitBelow : WindowNode::Kind::SplitRight;
+    node->first  = std::move(first);
+    node->second = std::move(second);
+    return node;
+}
+
+void WindowManager::RestoreWindowLayout(const editor::ProjectSessionData& data) {
+    if (data.windowLayout.empty()) {
+        return;
+    }
+    std::unique_ptr<WindowNode> newRoot = BuildNodeFromLayout(data.windowLayout, data.windowLayout.size() - 1);
+    if (!newRoot) {
+        return; // some referenced file wasn't open -- leave the existing default single-pane root_ alone
+    }
+    root_ = std::move(newRoot);
+    RebuildComponentTree();
+
+    WindowNode* target = root_.get();
+    for (const int choice : data.focusedPanePath) {
+        if (target->kind == WindowNode::Kind::Leaf) {
+            break; // a path longer than the actual tree depth -- stop where the tree does
+        }
+        target = choice == 0 ? target->first.get() : target->second.get();
+    }
+    while (target->kind != WindowNode::Kind::Leaf) {
+        target = target->first.get(); // an empty/too-short path -- fall back to the first leaf
+    }
+    target->pane->Buffer().TakeFocus();
 }
 
 void WindowManager::EnableAsyncFileLoading(EventLoop& eventLoop) {
