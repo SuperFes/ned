@@ -28,6 +28,10 @@ namespace {
         return kSpinnerFrames[static_cast<std::size_t>((elapsed / editor::kBackgroundActivitySpinnerInterval) % kSpinnerFrames.size())];
     }
 
+    // minimum-visible-duration follow-up: see lastShownActivities_' own doc
+    // comment in ModeLine.h.
+    constexpr std::chrono::milliseconds kMinimumVisibleDuration{300};
+
 } // namespace
 
 ModeLine::ModeLine(const ActiveBuffer& activeBuffer, const editor::Mode& mode, const Theme& theme) : activeBuffer_(activeBuffer), mode_(mode), theme_(theme) {
@@ -84,8 +88,22 @@ void ModeLine::Paint(Canvas c) {
     for (const char ch : text) {
         columns.emplace_back(1, ch);
     }
-    const std::vector<editor::BackgroundActivity> activities = editor::ActiveBackgroundActivities();
-    bool                                           lspActivityShown = false;
+    // minimum-visible-duration follow-up: fall back to the last non-empty
+    // snapshot for a little while after the real list goes empty -- see
+    // lastShownActivities_'s own doc comment in ModeLine.h.
+    std::vector<editor::BackgroundActivity> activities = editor::ActiveBackgroundActivities();
+    const auto                              now        = std::chrono::steady_clock::now();
+    if (!activities.empty()) {
+        lastShownActivities_   = activities;
+        lastShownActivitiesAt_ = now;
+    }
+    else if (!lastShownActivities_.empty() && now - lastShownActivitiesAt_ < kMinimumVisibleDuration) {
+        activities = lastShownActivities_;
+    }
+    else {
+        lastShownActivities_.clear();
+    }
+    bool lspActivityShown = false;
     if (!activities.empty()) {
         const std::string_view frame = CurrentSpinnerFrame();
         for (const editor::BackgroundActivity& activity : activities) {
@@ -105,25 +123,39 @@ void ModeLine::Paint(Canvas c) {
             lspActivityShown = lspActivityShown || activity.name == editor::lsp::kLspActivityName;
         }
     }
-    // mode-line-lsp-indicator follow-up: a running server for this buffer's
-    // language previously vanished from the mode line the instant its last
-    // in-flight request resolved (ActiveBackgroundActivities() only reports
-    // *counted, currently in-flight* work -- see BackgroundActivity.h's own
-    // doc comment), which left no way to tell "no LSP configured" apart from
-    // "LSP configured and just idle" -- a real gap, since ClientForLanguage
-    // spawning is otherwise invisible. Only drawn when the request-driven
-    // block above didn't already draw an "LSP" entry (busy takes priority
-    // over idle, same entry, no duplicate). A plain filled dot rather than
-    // the spinner glyph -- deliberately static, so idle reads as visually
-    // distinct from actually-in-flight work at a glance.
-    if (!lspActivityShown && lspManager_ && lspManager_->HasRunningClient(editor::LanguageKeyForMode(mode_))) {
-        columns.emplace_back(" ");
-        columns.emplace_back(" ");
-        columns.emplace_back("L");
-        columns.emplace_back("S");
-        columns.emplace_back("P");
-        columns.emplace_back(" ");
-        columns.emplace_back("●");
+    // mode-line-lsp-status-round-2 follow-up: beyond "running, idle" (a
+    // plain filled dot, deliberately static so it reads as visually distinct
+    // from actually-in-flight work at a glance), also surface a spawn
+    // failure and a disconnected/crashed server -- previously both silently
+    // indistinguishable from "no LSP configured at all." Only drawn when the
+    // request-driven block above didn't already draw an "LSP" entry (busy
+    // takes priority over any of these, same entry, no duplicate); "not
+    // configured" draws nothing, unchanged from before this follow-up.
+    if (!lspActivityShown && lspManager_) {
+        using Status = editor::lsp::LspManager::LspStatus;
+        std::string_view glyph;
+        switch (lspManager_->StatusForLanguage(editor::LanguageKeyForMode(mode_))) {
+            case Status::Running:
+                glyph = "●";
+                break;
+            case Status::SpawnFailed:
+                glyph = "✕";
+                break;
+            case Status::Disconnected:
+                glyph = "○";
+                break;
+            case Status::NotConfigured:
+                break;
+        }
+        if (!glyph.empty()) {
+            columns.emplace_back(" ");
+            columns.emplace_back(" ");
+            columns.emplace_back("L");
+            columns.emplace_back("S");
+            columns.emplace_back("P");
+            columns.emplace_back(" ");
+            columns.emplace_back(glyph);
+        }
     }
 
     // Chrome-redesign follow-up: the focused pane's gradient pulls toward

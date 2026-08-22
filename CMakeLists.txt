@@ -404,6 +404,8 @@ add_library(ned_lib STATIC
         Source/Editor/FinalNewline.cpp
         Source/Editor/FormatOnSave.cpp
         Source/Editor/TabWidth.cpp
+        Source/Editor/PageScroll.cpp
+        Source/Editor/DiffRefreshSettings.cpp
         Source/Editor/ThemeSetting.cpp
         Source/Editor/Variables.cpp
         Source/Editor/HighlightSettings.cpp
@@ -639,6 +641,8 @@ if (NED_BUILD_TESTS)
             Tests/FinalNewlineTest.cpp
             Tests/FormatOnSaveTest.cpp
             Tests/TabWidthTest.cpp
+            Tests/PageScrollTest.cpp
+            Tests/DiffRefreshSettingsTest.cpp
             Tests/HighlightSettingsTest.cpp
             Tests/MinimapSettingsTest.cpp
             Tests/MinimapTest.cpp

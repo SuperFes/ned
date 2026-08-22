@@ -130,6 +130,14 @@ void               SetBackupMaxAgeDays(int days);
 [[nodiscard]] int  BackupMaxAgeDays(); // default 14
 void               SetBackupMaxVersions(int versions);
 [[nodiscard]] int  BackupMaxVersions(); // default 20
+// Files/buffers past this size (in MiB) are skipped by both the version-
+// backup and autosave writers -- see BackupFileBeforeSave/AutoSaveFileBuffers'
+// own doc comments for why (the timer tick runs on the event-loop thread, so
+// copying a multi-hundred-MiB file every few seconds would stall the UI).
+// Non-positive values are clamped to 1 rather than rejected, same as
+// TabWidth::SetTabWidth's own convention.
+void              SetBackupMaxSizeMb(int megabytes);
+[[nodiscard]] int BackupMaxSizeMb(); // default 64
 // Resets every setting above to its default and clears the auto-save
 // generation memo and MaybePruneBackups' last-run stamp -- process-wide
 // statics leak between Catch2 cases otherwise (ResetFilePlacesForTesting's

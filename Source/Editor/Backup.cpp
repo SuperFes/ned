@@ -22,12 +22,6 @@ namespace {
     constexpr std::string_view kPathSidecarName  = "path";
     constexpr std::string_view kVersionExtension = ".bak";
 
-    // Buffers/files past this size are skipped by both writers: the timer
-    // tick runs on the event-loop thread, and copying out a multi-hundred-MiB
-    // file every few seconds would stall the UI. Not yet Janet-configurable
-    // -- a knob can follow if anyone actually hits it.
-    constexpr std::uintmax_t kMaxBackupBytes = 64ull * 1024 * 1024;
-
     constexpr std::int64_t kPruneIntervalSeconds = 3600;
 
     // Duplicated from ProjectSession.cpp's private copy, the same "not worth
@@ -63,6 +57,16 @@ namespace {
     int& MaxVersionsStorage() {
         static int versions = 20;
         return versions;
+    }
+
+    int& MaxSizeMbStorage() {
+        static int megabytes = 64;
+        return megabytes;
+    }
+
+    std::uintmax_t MaxBackupBytes() {
+        const std::lock_guard<std::mutex> lock(BackupMutex());
+        return static_cast<std::uintmax_t>(MaxSizeMbStorage()) * 1024 * 1024;
     }
 
     // NormalizePathKey string -> the ContentGeneration() last written as that
@@ -335,7 +339,7 @@ void BackupFileBeforeSave(const std::filesystem::path& file, std::optional<std::
             return;
         }
         const std::uintmax_t size = std::filesystem::file_size(file, ec);
-        if (ec || size > kMaxBackupBytes) {
+        if (ec || size > MaxBackupBytes()) {
             return;
         }
 
@@ -380,7 +384,7 @@ void AutoSaveFileBuffers(text::BufferList& bufferList) {
             if (IsScratchFile(*buffer->Path())) {
                 continue; // AutoSaveScratchBuffers' territory
             }
-            if (buffer->Content().ByteLength() > kMaxBackupBytes) {
+            if (buffer->Content().ByteLength() > MaxBackupBytes()) {
                 continue;
             }
 
@@ -471,11 +475,22 @@ int BackupMaxVersions() {
     return MaxVersionsStorage();
 }
 
+void SetBackupMaxSizeMb(int megabytes) {
+    const std::lock_guard<std::mutex> lock(BackupMutex());
+    MaxSizeMbStorage() = std::max(1, megabytes);
+}
+
+int BackupMaxSizeMb() {
+    const std::lock_guard<std::mutex> lock(BackupMutex());
+    return MaxSizeMbStorage();
+}
+
 void ResetBackupsForTesting() {
     const std::lock_guard<std::mutex> lock(BackupMutex());
     AutoSaveEnabledStorage() = true;
     MaxAgeDaysStorage()      = 14;
     MaxVersionsStorage()     = 20;
+    MaxSizeMbStorage()       = 64;
     AutoSaveGenerationStorage().clear();
     LastPruneStorage().reset();
 }

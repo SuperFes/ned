@@ -215,6 +215,10 @@ LspClient* LspManager::ClientForLanguage(const std::string& language) {
                            [rawClient](std::optional<Json>, std::optional<Json>) { rawClient->SendNotification("initialized", Json::object()); });
 
     clients_.emplace(language, std::move(client));
+    // mode-line-lsp-status-round-2 follow-up: a successful (re)spawn
+    // resolves any prior disconnect -- StatusForLanguage should report
+    // Running now, not a stale Disconnected from before this attempt.
+    disconnectedLanguages_.erase(language);
     return rawClient;
 }
 
@@ -262,6 +266,7 @@ void LspManager::SyncBuffer(text::Buffer& buffer, const std::string& language) {
 
 LspClient& LspManager::SetClientForTesting(std::string language, std::unique_ptr<LspClient> client) {
     WireNotificationHandlers(*client, language); // same wiring ClientForLanguage's real spawn path applies
+    disconnectedLanguages_.erase(language);      // an injected client is "running," same as a real successful spawn
     LspClient& ref                = *client;
     clients_[std::move(language)] = std::move(client);
     return ref;
@@ -273,6 +278,12 @@ void LspManager::ClientDisconnected(const std::string& language) {
     // so the rest of this function isn't reading freed memory.
     const std::string languageCopy = language;
     clients_.erase(languageCopy);
+    // mode-line-lsp-status-round-2 follow-up: latch the disconnect so
+    // StatusForLanguage can report it, distinct from "never configured" --
+    // cleared the moment a fresh spawn succeeds (ClientForLanguage) or the
+    // reconfigured command fails outright (StatusForLanguage's SpawnFailed
+    // case takes priority over this one regardless).
+    disconnectedLanguages_.insert(languageCopy);
     for (auto it = bufferState_.begin(); it != bufferState_.end();) {
         if (it->second.language == languageCopy) {
             it = bufferState_.erase(it);
@@ -318,8 +329,17 @@ void LspManager::AcknowledgeLogEntry() {
     hasUnseenLogEntry_ = false;
 }
 
-bool LspManager::HasRunningClient(const std::string& language) const {
-    return ExistingClientForLanguage(language) != nullptr;
+LspManager::LspStatus LspManager::StatusForLanguage(const std::string& language) const {
+    if (ExistingClientForLanguage(language) != nullptr) {
+        return LspStatus::Running;
+    }
+    if (failedCommands_.contains(language)) {
+        return LspStatus::SpawnFailed;
+    }
+    if (disconnectedLanguages_.contains(language)) {
+        return LspStatus::Disconnected;
+    }
+    return LspStatus::NotConfigured;
 }
 
 void LspManager::NotifyBufferClosed(text::Buffer& buffer) {

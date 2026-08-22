@@ -15,6 +15,7 @@
 #include "Lsp/LspManager.h"
 #include "Markdown.h"
 #include "Org.h"
+#include "PageScroll.h"
 #include "ProjectRoot.h"
 #include "ProjectSession.h"
 #include "TabWidth.h"
@@ -102,15 +103,8 @@ namespace {
         buffer.SetPoint(curr.start + (nextText.size() + 1) + column);
     }
 
-    // Fraction of the viewport height a page up/down moves -- a fixed constant
-    // for now rather than user-configurable (same "hardcoded C++ for now"
-    // scope call as Theme selection in Phase 6; see ROADMAP.md). Emacs' own
-    // default (`next-screen-context-lines` = 2 lines of overlap) works out to
-    // roughly this same ballpark for a typical terminal height.
-    constexpr double kPageScrollFraction = 0.65;
-
     std::size_t PageLineCount(std::size_t viewportHeight) {
-        return std::max<std::size_t>(1, static_cast<std::size_t>(static_cast<double>(viewportHeight) * kPageScrollFraction));
+        return std::max<std::size_t>(1, static_cast<std::size_t>(static_cast<double>(viewportHeight) * PageScrollFraction()));
     }
 
     // Shift+Arrow follow-up: shared by the four shift-select-* commands

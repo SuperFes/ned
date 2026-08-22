@@ -12,6 +12,7 @@
 #include "Editor/Backup.h"
 #include "Editor/CodeFoldSettings.h"
 #include "Editor/Dap/DapConfig.h"
+#include "Editor/DiffRefreshSettings.h"
 #include "Editor/FinalNewline.h"
 #include "Editor/FormatOnSave.h"
 #include "Editor/HighlightSettings.h"
@@ -20,6 +21,7 @@
 #include "Editor/Lsp/LspServerConfig.h"
 #include "Editor/MinimapSettings.h"
 #include "Editor/ModeOverrides.h"
+#include "Editor/PageScroll.h"
 #include "Editor/ProjectRoot.h"
 #include "Editor/ProjectSession.h"
 #include "Editor/ProjectTrust.h"
@@ -152,6 +154,14 @@ namespace {
         editor::terminal::SetTerminalHeightPercent(static_cast<int>(percent));
     }
 
+    void NedSetPageScrollFraction(double fraction) {
+        editor::SetPageScrollFraction(fraction);
+    }
+
+    void NedSetDiffRefreshDebounceMs(std::int64_t milliseconds) {
+        editor::SetDiffRefreshDebounceMs(static_cast<int>(milliseconds));
+    }
+
     // rich-theme-set follow-up (Phase 1): stores the *name* only -- resolved
     // against ui::ThemeByName by main.cpp at startup, after init.janet has
     // loaded, so no validation is possible (or wanted) here; see
@@ -198,6 +208,10 @@ namespace {
 
     void NedSetBackupMaxVersions(std::int64_t versions) {
         editor::SetBackupMaxVersions(static_cast<int>(versions));
+    }
+
+    void NedSetBackupMaxSizeMb(std::int64_t megabytes) {
+        editor::SetBackupMaxSizeMb(static_cast<int>(megabytes));
     }
 
     // The version list ned/recover-backup indexes into -- both must agree,
@@ -531,6 +545,13 @@ void InstallEditorBindings(Environment& env) {
     env.Register<&NedSetTerminalHeightPercent>(
         "ned", "set-terminal-height-percent",
         "Set how much of the screen the terminal drawer covers, as a percentage (default 40, clamped to 10-90).");
+    env.Register<&NedSetPageScrollFraction>(
+        "ned", "set-page-scroll-fraction",
+        "Set the fraction of the viewport height a page up/down moves (default 0.65, clamped to (0, 1]).");
+    env.Register<&NedSetDiffRefreshDebounceMs>(
+        "ned", "set-diff-refresh-debounce-ms",
+        "Set how long, in milliseconds, the VCS diff gutter waits after the last edit before refreshing (default "
+        "1200; non-positive values are clamped to 1).");
     env.Register<&NedSetTheme>(
         "ned", "set-theme",
         "Select the startup theme by name (e.g. \"dark\", \"light\", \"ansi-dark\"). Overrides a saved --detect-theme "
@@ -567,6 +588,10 @@ void InstallEditorBindings(Environment& env) {
     env.Register<&NedSetBackupMaxAgeDays>(
         "ned", "set-backup-max-age-days",
         "Days a backup version is kept before pruning (default 14; <= 0 keeps versions regardless of age).");
+    env.Register<&NedSetBackupMaxSizeMb>(
+        "ned", "set-backup-max-size-mb",
+        "Files/buffers past this size, in MiB, are skipped by both the version-backup and autosave writers (default "
+        "64; non-positive values are clamped to 1).");
     env.Register<&NedSetBackupMaxVersions>(
         "ned", "set-backup-max-versions",
         "Backup versions kept per file, oldest pruned first (default 20; <= 0 keeps unlimited versions).");

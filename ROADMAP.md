@@ -125,15 +125,6 @@ Notcurses (TermOx → FTXUI → Notcurses over the project's life).
 - [ ] External-modification round 2: three-way merge when both buffer and disk changed
       (`SavedSnapshot_` gives a diff3 base for free), and Emacs' ask-on-first-edit
       supersession prompt.
-- [ ] **Minibuffer input history (`M-p`/`M-n`)** — `MinibufferPrompt` and every
-      prompt-driven `BufferView` `InputMode` (goto-line, find-file, project-search,
-      execute-command, VCS commit message, task name, register names, ...) have no
-      memory of previously entered values at all; each session starts blank. A general
-      fix is a shared per-prompt-kind history ring plus `M-p`/`M-n` wiring threaded
-      through every `Handle*Key` method — a systemic addition touching most of
-      `BufferView`'s interactive sessions, not a one-file change. (A scoped version —
-      just `execute-command` or just `goto-line` — would be much smaller; worth
-      deciding which shape before starting.)
 
 ### Collaboration & AI
 
@@ -191,8 +182,6 @@ Notcurses (TermOx → FTXUI → Notcurses over the project's life).
       curation (everything's exported by default today) and SONAME/ABI-versioning
       discipline, neither of which pays for itself with zero external consumers. Raised
       during the Gentoo packaging follow-up below.
-- [ ] Janet-expose remaining hardcoded constants: `kDiffRefreshDebounce` (1200ms),
-      `kPageScrollFraction` (0.65), `kMaxBackupBytes` (64 MiB).
 - [ ] Session persistence gaps: window-split layout isn't persisted; a
       `.ned/plugins/*.janet` autoload dir; `ned-init-project` offering a `.gitignore`
       append.
@@ -202,17 +191,11 @@ Notcurses (TermOx → FTXUI → Notcurses over the project's life).
 - [ ] LSP deliberate cuts, revisit on demand: syncing every open buffer (not just the
       active one), incremental sync, idle server teardown, multi-root workspaces, raw
       subprocess stderr capture.
-- [ ] **Mode-line LSP status glyph, beyond running/idle** — the mode-line-lsp-indicator
-      follow-up (`ModeLine::SetLspManager`, `LspManager::HasRunningClient`) currently
-      shows only two states: the existing spinner+detail while a request is genuinely
-      in flight, and a static `●` for "running, idle." Not yet surfaced, though the data
-      already exists internally: a spawn failure (`LspManager::failedCommands_` — only
-      visible today via `*lsp log*`) and a disconnected/crashed server (`ClientDisconnected`
-      just erases the client, indistinguishable from "never configured"). Worth a small
-      status enum (e.g. connecting/ready/busy/error) with one glyph bound per state rather
-      than more ad hoc booleans; the busy state's existing `%`-complete detail text
-      ($/progress-driven) is the template for surfacing richer per-state detail (e.g. a
-      spawn-failure glyph tooltip-style showing the failed command) later too.
+- [ ] Mode-line LSP status glyph round 3 — a spawn failure (`✕`) and a
+      disconnected/crashed server (`○`) now render distinctly from the running
+      dot (`●`), but there's still no detail text for either (the busy state's
+      `%`-complete detail text is the template for a spawn-failure glyph
+      tooltip-style showing the failed command, or a disconnect reason).
 - [ ] DAP deliberate cuts: attach mode, thread picker, watch expressions,
       conditional/logpoint breakpoints, adapter-verified breakpoint positions,
       setting variables, a REPL console.

@@ -260,6 +260,27 @@ TEST_CASE("LspManager::SyncBuffer reports a spawn failure via *lsp log* instead 
     ned::editor::lsp::SetLspServerCommand("spawn-fail-lang", {}); // clean up global config state for other tests
 }
 
+TEST_CASE("LspManager::StatusForLanguage reports NotConfigured, Running, and SpawnFailed", "[Lsp]") {
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    using ned::editor::lsp::LspManager;
+
+    REQUIRE(manager.StatusForLanguage("status-test-lang") == LspManager::LspStatus::NotConfigured);
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "status-test-lang", eventLoop, client);
+    REQUIRE(manager.StatusForLanguage("status-test-lang") == LspManager::LspStatus::Running);
+
+    ned::editor::lsp::SetLspServerCommand("status-fail-lang", {"/definitely/does/not/exist/ned-fake-lsp"});
+    Buffer& buffer = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-lsp-manager-status-test.txt");
+    manager.SyncBuffer(buffer, "status-fail-lang");
+    REQUIRE(manager.StatusForLanguage("status-fail-lang") == LspManager::LspStatus::SpawnFailed);
+    REQUIRE(manager.StatusForLanguage("status-test-lang") == LspManager::LspStatus::Running); // unaffected by the other language's failure
+
+    ned::editor::lsp::SetLspServerCommand("status-fail-lang", {}); // clean up global config state for other tests
+}
+
 TEST_CASE("LspManager::RequestCompletion round-trips a real request/response through an injected client", "[Lsp]") {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;

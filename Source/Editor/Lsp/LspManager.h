@@ -25,6 +25,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -216,14 +217,26 @@ class LspManager {
     [[nodiscard]] bool HasUnseenLogEntry() const;
     void               AcknowledgeLogEntry();
 
-    // mode-line-lsp-indicator follow-up: true if a server for language is
-    // currently running (spawned, not yet disconnected) -- never spawns one,
-    // mirrors ExistingClientForLanguage's own "just look, don't act" shape
-    // but public, since ModeLine needs this to distinguish "no LSP
-    // configured for this buffer" from "configured and just idle" (in-flight
-    // request activity is reported separately via the shared
-    // BackgroundActivity "LSP" entry -- see kLspActivityName).
-    [[nodiscard]] bool HasRunningClient(const std::string& language) const;
+    // mode-line-lsp-status-round-2 follow-up: a connection-status enum
+    // beyond plain running/idle, so the mode line can also tell "the last
+    // spawn attempt for this language failed" and "was running, then the
+    // server disconnected/crashed" apart from "nothing configured at all" --
+    // previously ClientDisconnected erasing the client left those three
+    // cases indistinguishable (see this subsystem's own ROADMAP.md entry).
+    // Deliberately says nothing about in-flight-request activity -- that's
+    // reported separately via the shared BackgroundActivity "LSP" entry
+    // (see kLspActivityName); ModeLine draws that on top of, and with
+    // priority over, whatever this reports.
+    enum class LspStatus {
+        NotConfigured, // nothing registered for this language, or a client was never attempted
+        Running,       // a client is currently spawned and connected
+        SpawnFailed,   // the last spawn attempt for the currently-configured command failed
+        Disconnected,  // was running, then the server exited/crashed -- not yet respawned
+    };
+
+    // Never spawns a client -- mirrors ExistingClientForLanguage's own "just
+    // look, don't act" shape, but public (ModeLine is the intended caller).
+    [[nodiscard]] LspStatus StatusForLanguage(const std::string& language) const;
 
   private:
     // Returns the already-running client for language, or nullptr if none
@@ -291,6 +304,14 @@ class LspManager {
     // documented v1 limitation, matching this subsystem's existing "static
     // config, no auto-retry" model (see LspServerConfig.h).
     std::unordered_map<std::string, std::vector<std::string>> failedCommands_;
+
+    // mode-line-lsp-status-round-2 follow-up: languages whose client most
+    // recently ended via ClientDisconnected rather than a spawn failure --
+    // what StatusForLanguage's Disconnected case reads. Cleared the moment
+    // ClientForLanguage successfully spawns a fresh client for the language
+    // again (see that method's own comment) -- a stale disconnect latch
+    // must not outlive a real respawn.
+    std::unordered_set<std::string> disconnectedLanguages_;
 
     // workDoneProgress-support follow-up. Every progress session currently
     // between its "begin" and "end", keyed by language + '\x1f' + the
