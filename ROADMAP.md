@@ -143,12 +143,6 @@ Notcurses (TermOx → FTXUI → Notcurses over the project's life).
 
 ### Theming & visual
 
-- [ ] Theme polish (the planned "phase 4"): keep the tmux sweep script in-repo, theme
-      documentation, and the `--detect-theme` precedence note.
-- [ ] Stretch clone themes, each one `ThemePalette` literal away: Rosé Pine,
-      Everforest, Zenburn, Catppuccin Frappé/Macchiato, Tokyo Night Storm. (Solarized,
-      Gruvbox, Nord, Dracula, Monokai, One Dark/Light, Catppuccin Mocha/Latte, and
-      Tokyo Night/Day already shipped — see `UI/ThemeRegistry.cpp`.)
 - [ ] **Pixel-blitter minimap** — render the minimap via `NCBLITTER_PIXEL`
       (ncvisual-backed) on terminals that support it, keeping the braille-glyph
       renderer as the fallback everywhere else. Capability-gate at runtime

@@ -477,7 +477,8 @@ add_library(ned_lib STATIC
         Source/UI/ThemePalette.cpp
         Source/UI/ThemeRegistry.cpp
         Source/UI/ThemeFile.cpp
-        Source/UI/TerminalColorProbe.cpp)
+        Source/UI/TerminalColorProbe.cpp
+        Source/UI/DesktopThemeProbe.cpp)
 
 target_include_directories(ned_lib
         PUBLIC Source
@@ -633,6 +634,7 @@ if (NED_BUILD_TESTS)
             Tests/SyntaxThemeTest.cpp
             Tests/ThemeFileTest.cpp
             Tests/TerminalColorProbeTest.cpp
+            Tests/DesktopThemeProbeTest.cpp
             Tests/ActiveBufferTest.cpp
             Tests/MinibufferPromptTest.cpp
             Tests/PromptHistoryTest.cpp
