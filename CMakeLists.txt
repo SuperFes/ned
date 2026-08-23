@@ -465,6 +465,7 @@ add_library(ned_lib STATIC
         Source/Editor/ProjectTree.cpp
         Source/Editor/ProjectRoot.cpp
         Source/Editor/ProjectSettings.cpp
+        Source/Editor/ToolchainIncludePaths.cpp
         Source/Editor/ProjectFileOps.cpp
         Source/Editor/AutoRevert.cpp
         Source/Editor/AutoMerge.cpp
@@ -731,6 +732,7 @@ if (NED_BUILD_TESTS)
             Tests/ProjectTreeTest.cpp
             Tests/ProjectRootTest.cpp
             Tests/ProjectSettingsTest.cpp
+            Tests/ToolchainIncludePathsTest.cpp
             Tests/ProjectFileOpsTest.cpp
             Tests/ScratchPadTest.cpp
             Tests/BackupTest.cpp

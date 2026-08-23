@@ -38,6 +38,7 @@
 #include "Editor/Tasks/TaskConfig.h"
 #include "Editor/Terminal/Config.h"
 #include "Editor/ThemeSetting.h"
+#include "Editor/ToolchainIncludePaths.h"
 #include "Editor/Vcs/VcsProviderRegistry.h"
 #include "Editor/WrapOverrides.h"
 #include "JanetVcsProvider.h"
@@ -368,6 +369,12 @@ namespace {
 
     void NedSetLspCompletionDebounce(std::int64_t milliseconds) {
         editor::lsp::SetLspCompletionDebounceMs(static_cast<int>(milliseconds));
+    }
+
+    // toolchain-include-paths follow-up: same "just forward to the
+    // process-wide setter" shape as NedSetLspCompletionDebounce above.
+    void NedSetIncludePathCacheTtlSeconds(std::int64_t seconds) {
+        editor::SetIncludePathCacheTtlSeconds(static_cast<int>(seconds));
     }
 
     // prose-checking follow-up: same argv shape/empty-clears convention as
@@ -766,6 +773,12 @@ void InstallEditorBindings(Environment& env) {
         "ned", "set-lsp-completion-debounce",
         "Set the delay, in milliseconds, after the last relevant keystroke before an automatic completion request "
         "is sent (default 350). Non-positive values are clamped to 1.");
+    env.Register<&NedSetIncludePathCacheTtlSeconds>(
+        "ned", "set-include-path-cache-ttl-seconds",
+        "Set how long (in seconds) a compiler-derived default include-path result stays cached before "
+        "open-link-at-point/LSP resolution re-probes the real toolchain (default 86400, i.e. 24h). 0 or negative "
+        "disables caching outright -- every lookup re-probes. See also refresh-toolchain-include-paths for a "
+        "manual, immediate cache clear.");
     env.Register<&NedSetProseCheckerCommand>(
         "ned", "set-prose-checker-command",
         "Set the command used to launch the prose/spell/grammar checker: (argv), e.g. "
