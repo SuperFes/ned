@@ -8,6 +8,7 @@
 #include <string_view>
 #include <vector>
 
+#include "Editor/AutoPair.h"
 #include "Editor/Backup.h"
 #include "Editor/Commands.h"
 #include "Editor/Dispatcher.h"
@@ -1273,6 +1274,131 @@ TEST_CASE("self-insert-command is a no-op when triggered by a special key", "[Co
 
     registry.Invoke("self-insert-command", context);
     REQUIRE(buffer.Text().empty());
+}
+
+TEST_CASE("self-insert-command pairs a quote typed inside a just-paired bracket (if (\" scenario)", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    auto type = [&](char c) {
+        context.triggeringKey.Special   = SpecialKey::None;
+        context.triggeringKey.Codepoint = static_cast<char32_t>(c);
+        registry.Invoke("self-insert-command", context);
+    };
+
+    for (char c : std::string_view("if (")) {
+        type(c);
+    }
+    REQUIRE(fixture.buffer.Text() == "if ()");
+    REQUIRE(fixture.buffer.Point() == 4); // "if (|)"
+
+    type('"');
+    REQUIRE(fixture.buffer.Text() == "if (\"\")");
+    REQUIRE(fixture.buffer.Point() == 5); // "if (\"|\")"
+}
+
+TEST_CASE("self-insert-command respects the active Mode's autoPairs: Janet mode skips single quotes, still pairs "
+          "double quotes and brackets",
+          "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    const Mode     janetMode = JanetMode();
+    context.mode             = &janetMode;
+
+    auto type = [&](char c) {
+        context.triggeringKey.Special   = SpecialKey::None;
+        context.triggeringKey.Codepoint = static_cast<char32_t>(c);
+        registry.Invoke("self-insert-command", context);
+    };
+
+    type('\''); // real Janet quote-macro syntax, e.g. '(a b c) -- must not pair
+    REQUIRE(fixture.buffer.Text() == "'");
+
+    type('"'); // Janet strings are still double-quoted -- must pair
+    REQUIRE(fixture.buffer.Text() == "'\"\"");
+    REQUIRE(fixture.buffer.Point() == 2); // "'\"|\""
+
+    fixture.buffer.SetPoint(fixture.buffer.Content().ByteLength()); // past both quotes
+    type('(');                                                      // and brackets pair as usual, regardless of mode
+    REQUIRE(fixture.buffer.Text() == "'\"\"()");
+}
+
+TEST_CASE("self-insert-command/backward-delete-char pair nothing when SetAutoPairEnabled(false)", "[Commands]") {
+    struct AutoPairEnabledGuard {
+        ~AutoPairEnabledGuard() {
+            SetAutoPairEnabled(true);
+        }
+    } guard;
+    SetAutoPairEnabled(false);
+
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    context.triggeringKey.Special   = SpecialKey::None;
+    context.triggeringKey.Codepoint = '(';
+    registry.Invoke("self-insert-command", context);
+    REQUIRE(fixture.buffer.Text() == "("); // no auto-inserted closer
+
+    fixture.buffer.InsertAtPoint(")"); // "()" with point between, as if typed plainly
+    fixture.buffer.SetPoint(1);
+    registry.Invoke("backward-delete-char", context); // must delete only the "(" -- not the adjacent-pair collapse
+    REQUIRE(fixture.buffer.Text() == ")");
+}
+
+TEST_CASE("self-insert-command suppresses quote pairing when point is already inside a comment", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    const Mode     cMode   = CMode();
+    context.mode           = &cMode;
+
+    auto type = [&](std::string_view text) {
+        for (const char c : text) {
+            context.triggeringKey.Special   = SpecialKey::None;
+            context.triggeringKey.Codepoint = static_cast<char32_t>(c);
+            registry.Invoke("self-insert-command", context);
+        }
+    };
+
+    type("// hello ");
+    REQUIRE(fixture.buffer.Text() == "// hello ");
+
+    type("\""); // inside a line comment -- must NOT pair
+    REQUIRE(fixture.buffer.Text() == "// hello \"");
+}
+
+TEST_CASE("self-insert-command still pairs a quote typed in ordinary code, not inside a string/comment",
+          "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    const Mode     cMode   = CMode();
+    context.mode           = &cMode;
+
+    auto type = [&](std::string_view text) {
+        for (const char c : text) {
+            context.triggeringKey.Special   = SpecialKey::None;
+            context.triggeringKey.Codepoint = static_cast<char32_t>(c);
+            registry.Invoke("self-insert-command", context);
+        }
+    };
+
+    type("int x = ");
+    type("\"");
+    REQUIRE(fixture.buffer.Text() == "int x = \"\"");
 }
 
 TEST_CASE("Up/Down and C-n/C-p bindings move point by line", "[Commands]") {

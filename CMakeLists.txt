@@ -447,6 +447,7 @@ add_library(ned_lib STATIC
         Source/Editor/QueryReplace.cpp
         Source/Editor/Register.cpp
         Source/Editor/Rectangle.cpp
+        Source/Editor/AutoPair.cpp
         Source/Editor/MinibufferPrompt.cpp
         Source/Editor/PromptHistory.cpp
         Source/Editor/Mode.cpp
@@ -676,6 +677,7 @@ if (NED_BUILD_TESTS)
             Tests/KillRingTest.cpp
             Tests/RegisterTest.cpp
             Tests/RectangleTest.cpp
+            Tests/AutoPairTest.cpp
             Tests/AutoRevertTest.cpp
             Tests/AutoMergeTest.cpp
             Tests/ThreeWayMergeTest.cpp
