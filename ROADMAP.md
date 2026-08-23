@@ -111,8 +111,6 @@ Notcurses (TermOx → FTXUI → Notcurses over the project's life).
       wheel scrolls the ring — TUI apps inside the terminal don't receive mouse
       events), and no OSC 52/title integration.
 - [ ] **Remote development** (SSH remote editing).
-- [ ] Emacs keymap round 2 (round-1's deliberate cuts): `zap-to-char`, sentence/sexp
-      motion, kill-append on consecutive kills.
 
 ### Collaboration & AI
 

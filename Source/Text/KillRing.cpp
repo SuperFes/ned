@@ -40,6 +40,17 @@ void KillRing::KillPieces(std::vector<std::string> pieces) {
     yankIndex_ = 0;
 }
 
+void KillRing::AppendToCurrent(std::string text, bool prepend) {
+    if (ring_.empty() || ring_.front().pieces.size() != 1) {
+        Kill(std::move(text));
+        return;
+    }
+    std::string& existing = ring_.front().pieces.front();
+    existing              = prepend ? text + existing : existing + text;
+    ring_.front().joined  = existing; // single piece -- joined is just the piece itself
+    yankIndex_            = 0;
+}
+
 bool KillRing::Empty() const {
     return ring_.empty();
 }

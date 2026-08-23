@@ -621,3 +621,42 @@ TEST_CASE("JsonMode's expandSelection grows an existing selection to its next en
     REQUIRE(pairRange.has_value());
     REQUIRE(text.substr(pairRange->first, pairRange->second - pairRange->first) == "\"a\": 1");
 }
+
+// Emacs-keymap-round-2 follow-up (forward-sexp/backward-sexp).
+
+TEST_CASE("Tree-sitter-backed modes have a sexpMotion hook installed; Fundamental/Org don't", "[Mode]") {
+    REQUIRE(static_cast<bool>(CMode().sexpMotion));
+    REQUIRE(static_cast<bool>(JsonMode().sexpMotion));
+
+    REQUIRE_FALSE(static_cast<bool>(FundamentalMode().sexpMotion));
+    REQUIRE_FALSE(static_cast<bool>(OrgMode().sexpMotion));
+}
+
+TEST_CASE("JsonMode's sexpMotion steps forward/backward over sibling array elements", "[Mode]") {
+    const auto        mode = JsonMode();
+    const std::string text = "[1, 2, 3]";
+
+    const auto afterFirst = mode.sexpMotion(text, 1, /*forward=*/true);
+    REQUIRE(afterFirst.has_value());
+    REQUIRE(*afterFirst == 2); // over "1"
+
+    const auto afterSecond = mode.sexpMotion(text, *afterFirst, /*forward=*/true);
+    REQUIRE(afterSecond.has_value());
+    REQUIRE(text.substr(4, *afterSecond - 4) == "2"); // over the comma/space gap, then over "2"
+
+    const auto backToSecondStart = mode.sexpMotion(text, *afterSecond, /*forward=*/false);
+    REQUIRE(backToSecondStart.has_value());
+    REQUIRE(*backToSecondStart == 4); // start of "2"
+
+    const auto backToFirstStart = mode.sexpMotion(text, *backToSecondStart, /*forward=*/false);
+    REQUIRE(backToFirstStart.has_value());
+    REQUIRE(*backToFirstStart == 1); // start of "1"
+}
+
+TEST_CASE("JsonMode's sexpMotion returns nullopt at the buffer's start/end", "[Mode]") {
+    const auto        mode = JsonMode();
+    const std::string text = "[1, 2, 3]";
+
+    REQUIRE_FALSE(mode.sexpMotion(text, text.size(), /*forward=*/true).has_value());
+    REQUIRE_FALSE(mode.sexpMotion(text, 0, /*forward=*/false).has_value());
+}

@@ -361,7 +361,16 @@ enum class InteractiveRequest { None,
                                 // terminating (non-C-u/digit/"-") key arrives, then re-dispatches
                                 // that key normally with the resolved value applied. See
                                 // Dispatcher::Feed for where the resolved value actually acts.
-                                UniversalArgument };
+                                UniversalArgument,
+                                // Emacs-keymap-round-2 follow-up: zap-to-char (M-z) reads exactly
+                                // one further character (the target to kill up to) -- same
+                                // prompt-shaped, no-MinibufferPrompt shape as PointToRegister/etc.
+                                // above, driven by BufferView::HandleZapToCharKey. See
+                                // CommandContext::zapToCharAppend below for how the kill-append
+                                // decision crosses from this command's own invocation (which has
+                                // real access to lastCommand) to that later keystroke (which
+                                // doesn't, since it never goes through Dispatcher::Feed).
+                                ZapToChar };
 
 // Everything a command implementation might need. Built fresh per invocation
 // from live references -- never stored, so there's no lifetime concern beyond
@@ -401,6 +410,18 @@ struct CommandContext {
     // once); ordinary motion/editing commands never touch it, so it stays
     // nullopt and BufferView's normal ScrollToShowPoint() runs unchanged.
     std::optional<std::size_t> newlyAddedCursorPoint;
+    // Emacs-keymap-round-2 follow-up (kill-append): set by the zap-to-char
+    // command to whether the kill it's about to request (on the character
+    // keystroke that follows, once InteractiveRequest::ZapToChar's session
+    // is under way) should append to the current kill-ring entry --
+    // decided here, inside zap-to-char's own invocation, since that's the
+    // one point with real access to lastCommand; the later keystroke that
+    // actually performs the kill bypasses Dispatcher::Feed entirely (same
+    // shape as the register commands) and so never sees a meaningful
+    // lastCommand of its own. BufferView::RunCommandAndHandleOutcome reads
+    // this immediately after invoking zap-to-char and stashes it for that
+    // later keystroke to consume.
+    bool zapToCharAppend = false;
     // Rows currently visible in the buffer view, set by the host UI before
     // each dispatch (0 if unknown/headless) -- scroll-page-up/-down are the
     // only commands that read this; everything else ignores it.
@@ -412,6 +433,8 @@ struct CommandContext {
     // context is never stored past the synchronous call it's used in (see
     // this struct's own doc comment above), so a raw, non-owning pointer is
     // fine here the same way it already is for `message` below.
+    // code-fold-toggle/toggle-line-comment/forward-sexp/backward-sexp read
+    // this; everything else ignores it.
     const Mode* mode = nullptr;
     // hover/completion follow-up: the editor-wide LspManager, set by the
     // host UI before each dispatch (nullptr if unset, e.g. headless tests)

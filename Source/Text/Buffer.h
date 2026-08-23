@@ -363,6 +363,18 @@ class Buffer {
     void MoveForwardWord();
     void MoveBackwardWord();
 
+    // Point -> the end of the current/next sentence forward, or the
+    // start of the current/previous sentence backward -- Emacs'
+    // forward-sentence/backward-sentence (M-e/M-a). "Sentence end" is a
+    // '.'/'!'/'?' followed by whitespace or buffer end; the landing spot
+    // skips that trailing whitespace too, so a run of forward-sentence
+    // calls lands on each sentence's first real character in turn. Plain
+    // ASCII punctuation/whitespace scan, no locale/abbreviation awareness
+    // (e.g. "Mr. Smith" reads as two sentences) -- same deliberate v1
+    // scope cut MoveForwardWord/MoveBackwardWord make for word characters.
+    void MoveForwardSentence();
+    void MoveBackwardSentence();
+
     // Point -> the same column `count` lines below/above, Emacs-style: a run
     // of consecutive vertical-motion calls (uninterrupted by any other
     // point-moving or editing call) remembers the *original* column as a

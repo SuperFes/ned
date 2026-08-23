@@ -4076,6 +4076,107 @@ TEST_CASE("Multi-cursor copy-to-register then insert-register distributes pieces
     REQUIRE(other.Text() == "helloX\nworldY\n");
 }
 
+// Emacs-keymap-round-2 follow-up (zap-to-char).
+
+TEST_CASE("zap-to-char kills forward up to and including the target character", "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("hello, world");
+    fixture.buffer.SetPoint(0);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Alt('z'));
+    REQUIRE(fixture.statusMessage == "Zap to char: ");
+    view.OnEvent(ned::ui::test::Character(","));
+
+    REQUIRE(fixture.buffer.Text() == " world");
+    REQUIRE(fixture.buffer.Point() == 0);
+    REQUIRE(fixture.killRing.Current() == "hello,");
+    REQUIRE(fixture.statusMessage.empty());
+}
+
+TEST_CASE("zap-to-char reports when the character doesn't occur after point", "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("hello");
+    fixture.buffer.SetPoint(0);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Alt('z'));
+    view.OnEvent(ned::ui::test::Character("z"));
+
+    REQUIRE(fixture.buffer.Text() == "hello");
+    REQUIRE(fixture.statusMessage == "No such character.");
+}
+
+TEST_CASE("Escape cancels a pending zap-to-char without killing anything", "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("hello, world");
+    fixture.buffer.SetPoint(0);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Alt('z'));
+    view.OnEvent(ned::ui::test::Escape());
+
+    REQUIRE(fixture.buffer.Text() == "hello, world");
+    REQUIRE(fixture.killRing.Empty());
+    REQUIRE(fixture.statusMessage == "Zap to char cancelled.");
+}
+
+TEST_CASE("Consecutive zap-to-char kills append into one kill-ring entry", "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("a.b.c.");
+    fixture.buffer.SetPoint(0);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Alt('z'));
+    view.OnEvent(ned::ui::test::Character(".")); // kills "a."
+    view.OnEvent(ned::ui::test::Alt('z'));
+    view.OnEvent(ned::ui::test::Character(".")); // consecutive -- appends "b."
+
+    REQUIRE(fixture.buffer.Text() == "c.");
+    REQUIRE(fixture.killRing.Current() == "a.b.");
+}
+
+TEST_CASE("An intervening command breaks the zap-to-char append chain", "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("a.b.c.");
+    fixture.buffer.SetPoint(0);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Alt('z'));
+    view.OnEvent(ned::ui::test::Character(".")); // kills "a."
+    view.OnEvent(ned::ui::test::Ctrl('f'));      // ordinary motion command in between
+    view.OnEvent(ned::ui::test::Alt('z'));
+    view.OnEvent(ned::ui::test::Character(".")); // a fresh entry, not an append
+
+    REQUIRE(fixture.killRing.Current() != "a.b.");
+}
+
+TEST_CASE("Multi-cursor zap-to-char kills one piece per cursor", "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("a.x\nb.y\n");
+    fixture.buffer.SetPoint(0);    // before "a.x"
+    fixture.buffer.AddCursorAt(4); // before "b.y"
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 4});
+
+    view.OnEvent(ned::ui::test::Alt('z'));
+    view.OnEvent(ned::ui::test::Character("."));
+
+    REQUIRE(fixture.buffer.Text() == "x\ny\n");
+    REQUIRE(fixture.killRing.CurrentPieces() == std::vector<std::string>{"a.", "b."});
+}
+
 TEST_CASE("Multi-cursor kill-rectangle then yank-rectangle distributes blocks 1:1", "[BufferView]") {
     Fixture fixture;
     fixture.buffer.InsertAtPoint("abcdef\nghijkl\nABCDEF\nGHIJKL");

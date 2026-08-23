@@ -51,6 +51,14 @@ class Node {
     // The immediate parent, or a null Node (see IsNull()) at the root.
     [[nodiscard]] Node Parent() const;
 
+    // Emacs-keymap-round-2 follow-up (forward-sexp/backward-sexp): the next/
+    // previous named sibling at this node's own level, or a null Node (see
+    // IsNull()) if there isn't one -- unlike Parent()/
+    // NamedDescendantForByteRange, which only walk *up*, these are what
+    // sexp motion needs to move *sideways* between sibling forms.
+    [[nodiscard]] Node NextNamedSibling() const;
+    [[nodiscard]] Node PrevNamedSibling() const;
+
     // The smallest named node whose byte range fully contains [start, end].
     // A null Node (see IsNull()) if the tree has no such node (e.g. an
     // out-of-range request).

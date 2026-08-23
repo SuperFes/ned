@@ -96,6 +96,31 @@ TEST_CASE("Node::NamedDescendantForByteRange finds the smallest named node conta
     REQUIRE(exact.EndByte() == number.EndByte());
 }
 
+// Emacs-keymap-round-2 follow-up (forward-sexp/backward-sexp).
+TEST_CASE("Node::NextNamedSibling/PrevNamedSibling walk between sibling nodes", "[TreeSitter]") {
+    Parser            parser(*LanguageByName("json"));
+    const std::string text = "[1, 2, 3]";
+    Tree              tree = parser.Parse(text);
+
+    const Node first = tree.RootNode().NamedDescendantForByteRange(1, 1);
+    REQUIRE(first.Type() == "number");
+    REQUIRE(first.StartByte() == 1);
+
+    const Node second = first.NextNamedSibling();
+    REQUIRE_FALSE(second.IsNull());
+    REQUIRE(second.Type() == "number");
+    REQUIRE(second.StartByte() == 4);
+
+    const Node third = second.NextNamedSibling();
+    REQUIRE_FALSE(third.IsNull());
+    REQUIRE(third.StartByte() == 7);
+    REQUIRE(third.NextNamedSibling().IsNull()); // no fourth element
+
+    REQUIRE(third.PrevNamedSibling().StartByte() == second.StartByte());
+    REQUIRE(second.PrevNamedSibling().StartByte() == first.StartByte());
+    REQUIRE(first.PrevNamedSibling().IsNull());
+}
+
 TEST_CASE("Query::Captures finds string and number literals with correct byte ranges", "[TreeSitter]") {
     const Language    language = *LanguageByName("json");
     Parser            parser(language);

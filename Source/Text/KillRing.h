@@ -32,6 +32,20 @@ class KillRing {
     // like Kill(pieces[0]).
     void KillPieces(std::vector<std::string> pieces);
 
+    // Emacs-keymap-round-2 follow-up (kill-append): appends (or, if
+    // `prepend`, prepends -- for a backward-direction kill like
+    // backward-kill-word) text onto the most recent entry instead of
+    // pushing a new one, matching real Emacs' kill-append: consecutive
+    // kill commands (kill-line, kill-word, ...) with no other command in
+    // between accumulate into one kill-ring entry rather than each
+    // shadowing the last. Only meaningful against a single-piece entry --
+    // falls back to Kill(text) (a fresh entry) when the ring is empty or
+    // the most recent entry has more than one piece (a multi-cursor kill,
+    // which has no single sensible append target), so a caller never needs
+    // a special first-kill/first-multi-cursor-kill case. Resets the yank
+    // pointer to this (now-extended) entry, same as Kill/KillPieces.
+    void AppendToCurrent(std::string text, bool prepend);
+
     [[nodiscard]] bool Empty() const;
 
     // The current yank target (what C-y would insert): the current entry's

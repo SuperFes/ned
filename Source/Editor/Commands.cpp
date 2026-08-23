@@ -154,6 +154,20 @@ namespace {
         };
     }
 
+    // Emacs-keymap-round-2 follow-up (kill-append): the small, fixed family
+    // of commands that participate in kill-append -- whether *this* kill
+    // appends/prepends to the kill ring's most recent entry depends only on
+    // whether the immediately preceding command was one of these (Emacs'
+    // own `last-command` check), regardless of that prior kill's own
+    // direction. kill-ring-save is deliberately excluded: it doesn't
+    // delete anything, and real repeated-M-w use is rare enough that
+    // folding it in isn't worth the surprise of a non-destructive copy
+    // silently growing a kill entry.
+    bool IsKillCommand(const std::string& name) {
+        return name == "kill-line" || name == "kill-region" || name == "kill-word" || name == "backward-kill-word" ||
+               name == "zap-to-char";
+    }
+
     // multi-cursor-round-2 follow-up: like PerCursor, but for a kill/copy
     // that must land in one shared KillRing entry (one piece per cursor)
     // rather than each cursor acting in isolation. fn returns the killed/
@@ -164,11 +178,24 @@ namespace {
     // later 1:1 yank. Nothing is pushed to the ring at all if no cursor
     // killed anything (kill-region/kill-ring-save's existing "no mark, no
     // ring push" no-op, generalized to every cursor).
+    //
+    // Emacs-keymap-round-2 follow-up (kill-append): prependOnAppend, when
+    // non-null, is read *after* fn returns (so fn itself can compute it,
+    // e.g. kill-region deciding forward-vs-backward from the region's own
+    // orientation) and only ever consulted in the single-cursor path --
+    // multi-cursor kill-append is a deliberate v1 cut, same "no sensible
+    // single append target" reasoning KillRing::AppendToCurrent's own doc
+    // comment gives for a multi-piece entry.
     template <typename Fn>
-    void KillPerCursor(CommandContext& context, Fn fn) {
+    void KillPerCursor(CommandContext& context, Fn fn, bool* prependOnAppend = nullptr) {
         if (!context.buffer.HasSecondaryCursors()) {
             if (std::optional<std::string> text = fn(context)) {
-                context.killRing.KillPieces({std::move(*text)});
+                if (IsKillCommand(context.lastCommand)) {
+                    context.killRing.AppendToCurrent(std::move(*text), prependOnAppend != nullptr && *prependOnAppend);
+                }
+                else {
+                    context.killRing.KillPieces({std::move(*text)});
+                }
             }
             return;
         }
@@ -321,6 +348,13 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     registry.Register("backward-word", "Move point backward one word.",
                       PerCursor([](CommandContext& context) { context.buffer.MoveBackwardWord(); }));
 
+    // Emacs-keymap-round-2 follow-up.
+    registry.Register("forward-sentence", "Move point forward to the end of the current/next sentence.",
+                      PerCursor([](CommandContext& context) { context.buffer.MoveForwardSentence(); }));
+
+    registry.Register("backward-sentence", "Move point backward to the start of the current/previous sentence.",
+                      PerCursor([](CommandContext& context) { context.buffer.MoveBackwardSentence(); }));
+
     registry.Register("scroll-page-down", "Move point down by roughly a page.", [](CommandContext& context) {
         context.buffer.MoveDownLines(PageLineCount(context.viewportHeight), TabWidth());
     });
@@ -428,15 +462,24 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     // rather than surfacing a status message for what's a routine, frequent
     // no-op (pressing C-w before ever setting a mark).
     registry.Register("kill-region", "Kill (cut) the region between point and mark into the kill ring.", [](CommandContext& context) {
-        KillPerCursor(context, [](CommandContext& context) -> std::optional<std::string> {
-            if (!context.buffer.HasMark()) {
-                return std::nullopt;
-            }
-            const auto [start, end] = context.buffer.Region();
-            std::string text        = context.buffer.DeleteRange(start, end - start);
-            context.buffer.ClearMark();
-            return text;
-        });
+        // kill-append follow-up: prepend rather than append when the
+        // region sat *before* point (point == region end) -- mirrors real
+        // Emacs' kill-region deciding kill-append's own before-p from the
+        // same point-vs-region-end comparison.
+        bool prepend = false;
+        KillPerCursor(
+            context,
+            [&prepend](CommandContext& context) -> std::optional<std::string> {
+                if (!context.buffer.HasMark()) {
+                    return std::nullopt;
+                }
+                const auto [start, end] = context.buffer.Region();
+                prepend                 = context.buffer.Point() == end;
+                std::string text        = context.buffer.DeleteRange(start, end - start);
+                context.buffer.ClearMark();
+                return text;
+            },
+            &prepend);
     });
 
     registry.Register("exchange-point-and-mark", "Swap point and mark.", [](CommandContext& context) {
@@ -522,7 +565,13 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
         context.buffer.MoveForwardWord();
         const std::size_t end = context.buffer.Point();
         if (end > start) {
-            context.killRing.Kill(context.buffer.DeleteRange(start, end - start));
+            std::string text = context.buffer.DeleteRange(start, end - start);
+            if (IsKillCommand(context.lastCommand)) {
+                context.killRing.AppendToCurrent(std::move(text), /*prepend=*/false);
+            }
+            else {
+                context.killRing.Kill(std::move(text));
+            }
         }
     });
 
@@ -532,7 +581,13 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
         context.buffer.MoveBackwardWord();
         const std::size_t start = context.buffer.Point();
         if (end > start) {
-            context.killRing.Kill(context.buffer.DeleteRange(start, end - start));
+            std::string text = context.buffer.DeleteRange(start, end - start);
+            if (IsKillCommand(context.lastCommand)) {
+                context.killRing.AppendToCurrent(std::move(text), /*prepend=*/true);
+            }
+            else {
+                context.killRing.Kill(std::move(text));
+            }
         }
     });
 
@@ -1521,6 +1576,18 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           context.interactiveRequest = InteractiveRequest::InsertRegister;
                       });
 
+    // Emacs-keymap-round-2 follow-up: reads one further character (the
+    // target) the same prompt-shaped, no-MinibufferPrompt way the register
+    // commands above do -- see BufferView::HandleZapToCharKey for the
+    // actual scan-and-kill and CommandContext::zapToCharAppend's own doc
+    // comment for why the kill-append decision is made here rather than
+    // there.
+    registry.Register("zap-to-char", "Kill forward from point up to and including the next occurrence of a character.",
+                      [](CommandContext& context) {
+                          context.zapToCharAppend    = IsKillCommand(context.lastCommand);
+                          context.interactiveRequest = InteractiveRequest::ZapToChar;
+                      });
+
     registry.Register("kill-rectangle", "Kill the rectangle defined by point and mark, saving it for yank-rectangle.",
                       [](CommandContext& context) {
                           context.interactiveRequest = InteractiveRequest::KillRectangle;
@@ -1941,6 +2008,37 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                 *context.message = "No foldable block starts here.";
             }
         });
+    // Emacs-keymap-round-2 follow-up: needs context.mode for the same
+    // reason code-fold-toggle above does -- structural motion depends on
+    // the active Mode's own parsed syntax tree (Mode::sexpMotion), not
+    // something Buffer/Text can compute on its own.
+    registry.Register(
+        "forward-sexp", "Move point forward over one balanced expression, using the active mode's syntax tree.",
+        PerCursor([](CommandContext& context) {
+            if (context.mode == nullptr || !context.mode->sexpMotion) {
+                if (context.message) {
+                    *context.message = "No sexp motion available in this mode.";
+                }
+                return;
+            }
+            if (const auto target = context.mode->sexpMotion(context.buffer.Text(), context.buffer.Point(), true)) {
+                context.buffer.SetPoint(*target);
+            }
+        }));
+    registry.Register(
+        "backward-sexp", "Move point backward over one balanced expression, using the active mode's syntax tree.",
+        PerCursor([](CommandContext& context) {
+            if (context.mode == nullptr || !context.mode->sexpMotion) {
+                if (context.message) {
+                    *context.message = "No sexp motion available in this mode.";
+                }
+                return;
+            }
+            if (const auto target = context.mode->sexpMotion(context.buffer.Text(), context.buffer.Point(), false)) {
+                context.buffer.SetPoint(*target);
+            }
+        }));
+
     // toggle-line-comment follow-up: needs context.mode for the same
     // reason code-fold-toggle above does -- comment-prefix-per-language is
     // a Mode property (Mode::lineCommentPrefix), not a Command one.
@@ -2453,6 +2551,16 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("ESC f"), "forward-word");
     keymap.Bind(ParseKeySequence("M-b"), "backward-word");
     keymap.Bind(ParseKeySequence("ESC b"), "backward-word");
+    // Emacs-keymap-round-2 follow-up: sentence/sexp motion and zap-to-char,
+    // each on its real Emacs default.
+    keymap.Bind(ParseKeySequence("M-e"), "forward-sentence");
+    keymap.Bind(ParseKeySequence("ESC e"), "forward-sentence");
+    keymap.Bind(ParseKeySequence("M-a"), "backward-sentence");
+    keymap.Bind(ParseKeySequence("ESC a"), "backward-sentence");
+    keymap.Bind(ParseKeySequence("C-M-f"), "forward-sexp");
+    keymap.Bind(ParseKeySequence("C-M-b"), "backward-sexp");
+    keymap.Bind(ParseKeySequence("M-z"), "zap-to-char");
+    keymap.Bind(ParseKeySequence("ESC z"), "zap-to-char");
     // Unlike the ESC-only bindings above (whose own comment is stale --
     // real Alt/Meta detection is reliable post-FTXUI-migration, see
     // Source/UI/KeyTranslation.h's own header comment -- flagged here, not
