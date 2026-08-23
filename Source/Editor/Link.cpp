@@ -142,6 +142,17 @@ namespace {
 
 } // namespace
 
+std::string_view StripDelimiters(std::string_view token) {
+    if (token.size() >= 2) {
+        const char first = token.front();
+        const char last  = token.back();
+        if ((first == '"' && last == '"') || (first == '\'' && last == '\'') || (first == '<' && last == '>')) {
+            return token.substr(1, token.size() - 2);
+        }
+    }
+    return token;
+}
+
 std::optional<DetectedLink> DetectLinkAtPoint(std::string_view bufferText, std::size_t point) {
     const auto [lineStart, lineEnd] = LineBoundsAtPoint(bufferText, point);
     const std::string_view line     = bufferText.substr(lineStart, lineEnd - lineStart);
@@ -191,16 +202,12 @@ std::optional<DetectedLink> DetectLinkAtPoint(std::string_view bufferText, std::
         // plain word like "TODO" from resolving, which doesn't apply here
         // (a delimited, extensionless case like <vector> is exactly what
         // this is meant to catch).
-        bool wasDelimited = false;
-        if (tokenEnd - tokenStart >= 2) {
-            const char first = bufferText[tokenStart];
-            const char last  = bufferText[tokenEnd - 1];
-            if ((first == '"' && last == '"') || (first == '\'' && last == '\'') ||
-                (first == '<' && last == '>')) {
-                ++tokenStart;
-                --tokenEnd;
-                wasDelimited = true;
-            }
+        const std::string_view rawToken   = bufferText.substr(tokenStart, tokenEnd - tokenStart);
+        const std::string_view stripped   = StripDelimiters(rawToken);
+        const bool              wasDelimited = stripped.size() != rawToken.size();
+        if (wasDelimited) {
+            tokenStart = static_cast<std::size_t>(stripped.data() - bufferText.data());
+            tokenEnd   = tokenStart + stripped.size();
         }
         if (tokenEnd > tokenStart) {
             const std::string_view token = bufferText.substr(tokenStart, tokenEnd - tokenStart);
@@ -257,23 +264,66 @@ LinkKind ClassifyTarget(std::string_view target) {
     return LinkKind::File;
 }
 
+namespace {
+
+    // import-target-tree-sitter follow-up: tries candidate as-is, then
+    // candidate with each of candidateExtensions appended, then
+    // candidate/basename.extension for each (basename, extension) pair in
+    // indexBasenames x candidateExtensions -- the package/directory-import
+    // shape (a JS "./foo" resolving via "./foo/index.js", a Python "foo.bar"
+    // resolving via "foo/bar/__init__.py"). With both lists empty this is
+    // exactly the single exists() check ResolveFileLink always did. When
+    // candidate exists but is itself a directory and indexBasenames is
+    // non-empty, the exact match is deliberately skipped in favor of an
+    // index-file match inside it -- a bare directory isn't something a text
+    // buffer can open, so "foo" resolving to a real directory "foo/" is only
+    // useful once it's actually resolved on down to "foo/index.js".
+    std::optional<std::filesystem::path> TryVariants(const std::filesystem::path&    candidate,
+                                                      const std::vector<std::string>& candidateExtensions,
+                                                      const std::vector<std::string>& indexBasenames) {
+        const bool preferIndexOverDirectory = !indexBasenames.empty() && std::filesystem::is_directory(candidate);
+        if (!preferIndexOverDirectory && std::filesystem::exists(candidate)) {
+            return candidate;
+        }
+        for (const std::string& extension : candidateExtensions) {
+            std::filesystem::path withExtension = candidate;
+            withExtension += ("." + extension);
+            if (std::filesystem::exists(withExtension)) {
+                return withExtension;
+            }
+        }
+        for (const std::string& basename : indexBasenames) {
+            for (const std::string& extension : candidateExtensions) {
+                if (const std::filesystem::path indexFile = candidate / (basename + "." + extension);
+                    std::filesystem::exists(indexFile)) {
+                    return indexFile;
+                }
+            }
+        }
+        return std::nullopt;
+    }
+
+} // namespace
+
 std::optional<std::filesystem::path> ResolveFileLink(const std::string& target, const std::filesystem::path& baseDirectory,
-                                                     const std::vector<std::filesystem::path>& includePaths) {
+                                                     const std::vector<std::filesystem::path>& includePaths,
+                                                     const std::vector<std::string>&           candidateExtensions,
+                                                     const std::vector<std::string>&           indexBasenames) {
     const std::filesystem::path targetPath(target);
 
     if (targetPath.is_absolute()) {
-        return std::filesystem::exists(targetPath) ? std::optional(targetPath) : std::nullopt;
+        return TryVariants(targetPath, candidateExtensions, indexBasenames);
     }
 
-    if (const std::filesystem::path relativeToBase = baseDirectory / targetPath; std::filesystem::exists(relativeToBase)) {
-        return relativeToBase;
+    if (const auto resolved = TryVariants(baseDirectory / targetPath, candidateExtensions, indexBasenames)) {
+        return resolved;
     }
-    if (const std::filesystem::path relativeToRoot = ProjectRoot() / targetPath; std::filesystem::exists(relativeToRoot)) {
-        return relativeToRoot;
+    if (const auto resolved = TryVariants(ProjectRoot() / targetPath, candidateExtensions, indexBasenames)) {
+        return resolved;
     }
     for (const std::filesystem::path& includePath : includePaths) {
-        if (const std::filesystem::path candidate = includePath / targetPath; std::filesystem::exists(candidate)) {
-            return candidate;
+        if (const auto resolved = TryVariants(includePath / targetPath, candidateExtensions, indexBasenames)) {
+            return resolved;
         }
     }
     return std::nullopt;

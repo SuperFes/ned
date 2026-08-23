@@ -101,11 +101,13 @@ namespace {
 } // namespace
 
 void RegisterDynamicMode(const std::string& name, const std::filesystem::path& libraryPath,
-                         const std::filesystem::path& queryPath, const std::filesystem::path& foldQueryPath) {
-    const treesitter::Language language        = treesitter::LoadDynamicLanguage(libraryPath, name);
-    const std::string          querySource     = queryPath.empty() ? std::string() : ReadFileOrThrow(queryPath);
-    const std::string          foldQuerySource = foldQueryPath.empty() ? std::string() : ReadFileOrThrow(foldQueryPath);
-    Mode                       mode            = TreeSitterModeFromLanguage(name, language, querySource, foldQuerySource);
+                         const std::filesystem::path& queryPath, const std::filesystem::path& foldQueryPath,
+                         const std::filesystem::path& importQueryPath) {
+    const treesitter::Language language          = treesitter::LoadDynamicLanguage(libraryPath, name);
+    const std::string          querySource       = queryPath.empty() ? std::string() : ReadFileOrThrow(queryPath);
+    const std::string          foldQuerySource   = foldQueryPath.empty() ? std::string() : ReadFileOrThrow(foldQueryPath);
+    const std::string          importQuerySource = importQueryPath.empty() ? std::string() : ReadFileOrThrow(importQueryPath);
+    Mode mode = TreeSitterModeFromLanguage(name, language, querySource, foldQuerySource, importQuerySource);
 
     const std::lock_guard lock(g_mutex);
     g_dynamicModes.insert_or_assign(name, std::move(mode));

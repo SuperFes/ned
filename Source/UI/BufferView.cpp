@@ -18,11 +18,13 @@
 #include "Editor/FuzzyMatch.h"
 #include "Editor/HeaderSource.h"
 #include "Editor/HighlightSettings.h"
+#include "Editor/ImportResolutionConfig.h"
 #include "Editor/InlineDiagnostics.h"
 #include "Editor/Link.h"
 #include "Editor/Lsp/LspManager.h"
 #include "Editor/Lsp/LspServerConfig.h"
 #include "Editor/Multibuffer.h"
+#include "Editor/NodeModules.h"
 #include "Editor/Org.h"
 #include "Editor/ProjectAgenda.h"
 #include "Editor/ProjectFileOps.h"
@@ -6266,6 +6268,31 @@ void BufferView::OpenLinkAtPoint() {
         // already established for fold-cycle -> table-align.
     }
 
+    // import-target-tree-sitter follow-up: a mode with an import query
+    // configured (Mode::importTarget) gets first refusal, the same
+    // "mode-specific first, generic fallback" chain the org-mode block above
+    // already established -- generalized across every language uniformly
+    // (including a future dynamically-loaded one) since this branches on
+    // whether the function is set, never on mode_.name.
+    if (mode_.importTarget) {
+        if (const auto imported = mode_.importTarget(buffer.Text(), buffer.Point())) {
+            std::string target = imported->target;
+            if (imported->isModulePath) {
+                std::replace(target.begin(), target.end(), '.', '/');
+            }
+            OpenDetectedLink(editor::link::DetectedLink{
+                .kind      = editor::link::LinkKind::File,
+                .target    = std::move(target),
+                .startByte = imported->startByte,
+                .endByte   = imported->endByte,
+            });
+            return;
+        }
+        // No import at point under this mode's own query -- fall through to
+        // the generic path below (e.g. a URL or bare file path elsewhere on
+        // the same line).
+    }
+
     const auto detected = editor::link::DetectLinkAtPoint(buffer.Text(), buffer.Point());
     if (!detected) {
         statusMessage_ = "No link at point.";
@@ -6295,12 +6322,26 @@ void BufferView::OpenDetectedLink(const editor::link::DetectedLink& detected) {
     // the real compiler's own system search paths appended as a last-resort
     // fallback for an angle-form/system include ProjectSettings never
     // mentioned at all.
-    std::vector<std::filesystem::path> includePaths = editor::IncludePathsForMode(projectSettings, mode_.name);
-    const std::vector<std::filesystem::path> toolchainPaths =
-        editor::ToolchainIncludePathsForLanguage(editor::LanguageKeyForMode(mode_));
+    const std::string                        languageKey = editor::LanguageKeyForMode(mode_);
+    std::vector<std::filesystem::path>       includePaths = editor::IncludePathsForMode(projectSettings, mode_.name);
+    const std::vector<std::filesystem::path> toolchainPaths = editor::ToolchainIncludePathsForLanguage(languageKey);
     includePaths.insert(includePaths.end(), toolchainPaths.begin(), toolchainPaths.end());
 
-    const auto resolved = editor::link::ResolveFileLink(detected.target, baseDirectory, includePaths);
+    // import-target-tree-sitter follow-up: per-language extension/index-file/
+    // package-dir parameters (Editor/ImportResolutionConfig.h) widen what
+    // ResolveFileLink can find beyond an exact on-disk match -- a relative
+    // JS/TS import written without its real extension, a Python package's
+    // __init__.py, a bare "import x from 'lodash'" package specifier.
+    const editor::ImportResolutionConfig importConfig =
+        editor::ResolveImportResolutionConfig(projectSettings, languageKey);
+    if (importConfig.searchPackageDirs) {
+        const std::vector<std::filesystem::path> packageDirs =
+            editor::NodeModulesSearchPaths(baseDirectory, editor::ProjectRoot());
+        includePaths.insert(includePaths.end(), packageDirs.begin(), packageDirs.end());
+    }
+
+    const auto resolved = editor::link::ResolveFileLink(detected.target, baseDirectory, includePaths,
+                                                         importConfig.extensions, importConfig.indexBasenames);
     if (!resolved) {
         statusMessage_ = "No such file: " + detected.target;
         return;

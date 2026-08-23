@@ -10,6 +10,7 @@
 #include <utility>
 
 #include "Key.h"
+#include "Link.h"
 #include "Org.h"
 #include "SyntaxTheme.h"
 #include "TreeSitter/Languages.h"
@@ -457,7 +458,7 @@ std::string LanguageKeyForMode(const Mode& mode) {
 }
 
 Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& language, std::string_view querySource,
-                                std::string_view foldQuerySource) {
+                                std::string_view foldQuerySource, std::string_view importQuerySource) {
     const auto parser = std::make_shared<treesitter::Parser>(language);
 
     // Shared between highlight and fold below (generic-code-folding
@@ -669,16 +670,102 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
         return at.StartByte();
     };
 
+    // import-target-tree-sitter follow-up: a fifth closure sharing the same
+    // parser/sharedParse as highlight/fold/expandSelection/sexpMotion above,
+    // for the same "don't trigger a redundant full reparse on the same
+    // Paint() cycle" reason. Only built when an import query source was
+    // actually given; otherwise mode.importTarget stays a default-
+    // constructed, empty std::function -- the "no import query configured"
+    // signal BufferView checks for before falling back to Editor/Link.h's
+    // generic, mode-agnostic detection. No per-language branching here at
+    // all -- every language's own *-imports.scm query does the language-
+    // specific work by tagging its own captures "import.target"/
+    // "import.module"/"import.statement" (see Mode.h's ImportTarget doc
+    // comment); this closure only ever looks for those three fixed names.
+    ImportTargetFunction importTarget;
+    if (!importQuerySource.empty()) {
+        const auto importQuery = std::make_shared<treesitter::Query>(language, importQuerySource);
+        importTarget = [parser, importQuery, sharedParse](std::string_view bufferText,
+                                                           std::size_t      point) -> std::optional<ImportTarget> {
+            if (!sharedParse->lastTree.has_value() || sharedParse->lastText != bufferText) {
+                sharedParse->lastTree = parser->Parse(bufferText);
+                sharedParse->lastText.assign(bufferText);
+            }
+            const treesitter::Tree& tree = *sharedParse->lastTree;
+            if (tree.IsNull()) {
+                return std::nullopt;
+            }
+
+            struct TargetCapture {
+                std::size_t targetStart, targetEnd;
+                bool        isModule;
+            };
+            std::vector<TargetCapture>                        targets;
+            std::vector<std::pair<std::size_t, std::size_t>> statements;
+            for (const treesitter::QueryCapture& capture : importQuery->Captures(tree.RootNode(), bufferText)) {
+                if (capture.name == "import.statement") {
+                    statements.emplace_back(capture.startByte, capture.endByte);
+                }
+                else if (capture.name == "import.target") {
+                    targets.push_back({capture.startByte, capture.endByte, false});
+                }
+                else if (capture.name == "import.module") {
+                    targets.push_back({capture.startByte, capture.endByte, true});
+                }
+            }
+
+            // The resolvable range for a target is the tightest
+            // "import.statement" range enclosing it (so point anywhere in
+            // e.g. "from foo.bar import baz" resolves, not just on "foo.bar"
+            // itself), falling back to the target's own range when no
+            // enclosing statement capture exists at all (e.g. Python's plain
+            // "import a.b, c.d", where each name's own range is already the
+            // most specific answer).
+            const TargetCapture* best      = nullptr;
+            std::size_t          bestStart = 0;
+            std::size_t          bestEnd   = 0;
+            for (const TargetCapture& target : targets) {
+                std::size_t rangeStart    = target.targetStart;
+                std::size_t rangeEnd      = target.targetEnd;
+                bool        haveStatement = false;
+                for (const auto& [statementStart, statementEnd] : statements) {
+                    if (statementStart <= target.targetStart && target.targetEnd <= statementEnd &&
+                        (!haveStatement || (statementEnd - statementStart) < (rangeEnd - rangeStart))) {
+                        rangeStart    = statementStart;
+                        rangeEnd      = statementEnd;
+                        haveStatement = true;
+                    }
+                }
+                if (rangeStart <= point && point <= rangeEnd && (!best || (rangeEnd - rangeStart) < (bestEnd - bestStart))) {
+                    best      = &target;
+                    bestStart = rangeStart;
+                    bestEnd   = rangeEnd;
+                }
+            }
+            if (!best) {
+                return std::nullopt;
+            }
+
+            std::string text(bufferText.substr(best->targetStart, best->targetEnd - best->targetStart));
+            if (!best->isModule) {
+                text = std::string(link::StripDelimiters(text));
+            }
+            return ImportTarget{
+                .target = std::move(text), .isModulePath = best->isModule, .startByte = bestStart, .endByte = bestEnd};
+        };
+    }
+
     return Mode{.name            = std::move(name),
                 .keymap          = Keymap(),
                 .highlight       = std::move(highlight),
                 .fold            = std::move(fold),
                 .expandSelection = std::move(expandSelection),
-                .sexpMotion      = std::move(sexpMotion)};
+                .sexpMotion      = std::move(sexpMotion),
+                .importTarget    = std::move(importTarget)};
 }
 
 Mode TreeSitterMode(std::string name, std::string_view languageName, const char* querySource,
-                    const char* foldQuerySource) {
+                    const char* foldQuerySource, const char* importQuerySource) {
     const auto language = treesitter::LanguageByName(languageName);
     // Every languageName this is called with (below) names a grammar
     // Languages.cpp always bundles -- if this ever fires it's a build-time
@@ -686,11 +773,12 @@ Mode TreeSitterMode(std::string name, std::string_view languageName, const char*
     // no-longer-bundled name), not a runtime condition to recover from
     // gracefully.
     return TreeSitterModeFromLanguage(std::move(name), *language, querySource,
-                                      foldQuerySource != nullptr ? std::string_view(foldQuerySource) : std::string_view());
+                                      foldQuerySource != nullptr ? std::string_view(foldQuerySource) : std::string_view(),
+                                      importQuerySource != nullptr ? std::string_view(importQuerySource) : std::string_view());
 }
 
 Mode JanetMode() {
-    Mode mode              = TreeSitterMode("janet-mode", "janet", treesitter::queries::kJanet);
+    Mode mode = TreeSitterMode("janet-mode", "janet", treesitter::queries::kJanet, nullptr, treesitter::queries::kJanetImports);
     mode.lineCommentPrefix = ";"; // Lisp-family convention
     return mode;
 }
@@ -703,39 +791,41 @@ Mode JsonMode() {
 }
 
 Mode CMode() {
-    Mode mode              = TreeSitterMode("c-mode", "c", treesitter::queries::kC, treesitter::queries::kCFolds);
+    Mode mode = TreeSitterMode("c-mode", "c", treesitter::queries::kC, treesitter::queries::kCFolds, treesitter::queries::kCImports);
     mode.lineCommentPrefix = "//";
     return mode;
 }
 
 Mode CppMode() {
-    Mode mode              = TreeSitterMode("cpp-mode", "cpp", treesitter::queries::kCpp, treesitter::queries::kCppFolds);
+    Mode mode = TreeSitterMode("cpp-mode", "cpp", treesitter::queries::kCpp, treesitter::queries::kCppFolds,
+                               treesitter::queries::kCImports);
     mode.lineCommentPrefix = "//";
     return mode;
 }
 
 Mode PhpMode() {
-    Mode mode              = TreeSitterMode("php-mode", "php", treesitter::queries::kPhp);
+    Mode mode = TreeSitterMode("php-mode", "php", treesitter::queries::kPhp, nullptr, treesitter::queries::kPhpImports);
     mode.lineCommentPrefix = "//";
     return mode;
 }
 
 Mode JavaScriptMode() {
     Mode mode              = TreeSitterMode("javascript-mode", "javascript", treesitter::queries::kJavaScript,
-                                            treesitter::queries::kJavaScriptFolds);
+                                            treesitter::queries::kJavaScriptFolds, treesitter::queries::kJavaScriptImports);
     mode.lineCommentPrefix = "//";
     return mode;
 }
 
 Mode TypeScriptMode() {
     Mode mode              = TreeSitterMode("typescript-mode", "typescript", treesitter::queries::kTypeScript,
-                                            treesitter::queries::kTypeScriptFolds);
+                                            treesitter::queries::kTypeScriptFolds, treesitter::queries::kTypeScriptImports);
     mode.lineCommentPrefix = "//";
     return mode;
 }
 
 Mode TsxMode() {
-    Mode mode              = TreeSitterMode("tsx-mode", "tsx", treesitter::queries::kTypeScript, treesitter::queries::kTypeScriptFolds);
+    Mode mode              = TreeSitterMode("tsx-mode", "tsx", treesitter::queries::kTypeScript, treesitter::queries::kTypeScriptFolds,
+                                            treesitter::queries::kTypeScriptImports);
     mode.lineCommentPrefix = "//";
     return mode;
 }
@@ -749,17 +839,18 @@ Mode HtmlMode() {
 Mode CssMode() {
     // No lineCommentPrefix -- same reasoning as HtmlMode, CSS only has
     // block comments (/* */).
-    return TreeSitterMode("css-mode", "css", treesitter::queries::kCss);
+    return TreeSitterMode("css-mode", "css", treesitter::queries::kCss, nullptr, treesitter::queries::kCssImports);
 }
 
 Mode PythonMode() {
-    Mode mode              = TreeSitterMode("python-mode", "python", treesitter::queries::kPython, treesitter::queries::kPythonFolds);
+    Mode mode              = TreeSitterMode("python-mode", "python", treesitter::queries::kPython, treesitter::queries::kPythonFolds,
+                                            treesitter::queries::kPythonImports);
     mode.lineCommentPrefix = "#";
     return mode;
 }
 
 Mode BashMode() {
-    Mode mode              = TreeSitterMode("bash-mode", "bash", treesitter::queries::kBash);
+    Mode mode = TreeSitterMode("bash-mode", "bash", treesitter::queries::kBash, nullptr, treesitter::queries::kBashImports);
     mode.lineCommentPrefix = "#";
     return mode;
 }
@@ -777,14 +868,16 @@ Mode TomlMode() {
 }
 
 Mode ClojureMode() {
-    Mode mode              = TreeSitterMode("clojure-mode", "clojure", treesitter::queries::kClojure, treesitter::queries::kClojureFolds);
+    Mode mode = TreeSitterMode("clojure-mode", "clojure", treesitter::queries::kClojure, treesitter::queries::kClojureFolds,
+                               treesitter::queries::kClojureImports);
     mode.lineCommentPrefix = ";"; // Lisp-family convention, same as JanetMode
     return mode;
 }
 
 Mode JankMode() {
     // Same grammar and query as ClojureMode, distinct name -- see Mode.h.
-    Mode mode              = TreeSitterMode("jank-mode", "clojure", treesitter::queries::kClojure, treesitter::queries::kClojureFolds);
+    Mode mode = TreeSitterMode("jank-mode", "clojure", treesitter::queries::kClojure, treesitter::queries::kClojureFolds,
+                               treesitter::queries::kClojureImports);
     mode.lineCommentPrefix = ";";
     return mode;
 }

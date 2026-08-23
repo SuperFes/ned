@@ -316,6 +316,9 @@ ned_add_treesitter_grammar(tree-sitter-c https://github.com/tree-sitter/tree-sit
 
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/c.scm" C)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/c-folds.scm" CFolds)
+# import-target-tree-sitter follow-up: shared by CMode and CppMode below --
+# both grammars define preproc_include identically.
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/c-imports.scm" CImports)
 
 ned_add_treesitter_grammar(tree-sitter-cpp https://github.com/tree-sitter/tree-sitter-cpp.git v0.23.4)
 
@@ -325,11 +328,13 @@ ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter
 ned_add_treesitter_grammar(tree-sitter-php https://github.com/tree-sitter/tree-sitter-php.git v0.24.2 php)
 
 ned_embed_treesitter_query("${tree-sitter-php_SOURCE_DIR}/queries/highlights.scm" Php)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/php-imports.scm" PhpImports)
 
 ned_add_treesitter_grammar(tree-sitter-javascript https://github.com/tree-sitter/tree-sitter-javascript.git v0.25.0)
 
 ned_embed_treesitter_query("${tree-sitter-javascript_SOURCE_DIR}/queries/highlights.scm" JavaScript)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/javascript-folds.scm" JavaScriptFolds)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/javascript-imports.scm" JavaScriptImports)
 
 ned_fetch_treesitter_source(tree-sitter-typescript-src https://github.com/tree-sitter/tree-sitter-typescript.git v0.23.2)
 
@@ -338,6 +343,9 @@ ned_add_treesitter_grammar_target(tree-sitter-tsx "${tree-sitter-typescript-src_
 
 ned_embed_treesitter_query("${tree-sitter-typescript-src_SOURCE_DIR}/queries/highlights.scm" TypeScript)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/typescript-folds.scm" TypeScriptFolds)
+# import-target-tree-sitter follow-up: shared by TypeScriptMode and TsxMode,
+# same sharing as the highlight/fold queries above.
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/typescript-imports.scm" TypeScriptImports)
 
 ned_add_treesitter_grammar(tree-sitter-html https://github.com/tree-sitter/tree-sitter-html.git v0.23.2)
 
@@ -346,19 +354,23 @@ ned_embed_treesitter_query("${tree-sitter-html_SOURCE_DIR}/queries/highlights.sc
 ned_add_treesitter_grammar(tree-sitter-css https://github.com/tree-sitter/tree-sitter-css.git v0.25.0)
 
 ned_embed_treesitter_query("${tree-sitter-css_SOURCE_DIR}/queries/highlights.scm" Css)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/css-imports.scm" CssImports)
 
 ned_add_treesitter_grammar(tree-sitter-python https://github.com/tree-sitter/tree-sitter-python.git v0.25.0)
 
 ned_embed_treesitter_query("${tree-sitter-python_SOURCE_DIR}/queries/highlights.scm" Python)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/python-folds.scm" PythonFolds)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/python-imports.scm" PythonImports)
 
 ned_add_treesitter_grammar(tree-sitter-bash https://github.com/tree-sitter/tree-sitter-bash.git v0.25.1)
 
 ned_embed_treesitter_query("${tree-sitter-bash_SOURCE_DIR}/queries/highlights.scm" Bash)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/bash-imports.scm" BashImports)
 
 ned_add_treesitter_grammar(tree-sitter-janet-simple https://github.com/sogaiu/tree-sitter-janet-simple.git v0.0.7)
 
 ned_embed_treesitter_query("${tree-sitter-janet-simple_SOURCE_DIR}/queries/highlights.scm" Janet)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/janet-imports.scm" JanetImports)
 
 ned_add_treesitter_grammar(tree-sitter-markdown https://github.com/tree-sitter-grammars/tree-sitter-markdown.git v0.5.3 tree-sitter-markdown)
 
@@ -391,6 +403,7 @@ ned_add_treesitter_grammar(tree-sitter-clojure https://github.com/sogaiu/tree-si
 
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/clojure.scm" Clojure)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/clojure-folds.scm" ClojureFolds)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/clojure-imports.scm" ClojureImports)
 #------------------------------------------------------------------------------
 
 #--- Fetch Catch2 --------------------------------------------------------------
@@ -466,6 +479,8 @@ add_library(ned_lib STATIC
         Source/Editor/ProjectRoot.cpp
         Source/Editor/ProjectSettings.cpp
         Source/Editor/ToolchainIncludePaths.cpp
+        Source/Editor/NodeModules.cpp
+        Source/Editor/ImportResolutionConfig.cpp
         Source/Editor/ProjectFileOps.cpp
         Source/Editor/AutoRevert.cpp
         Source/Editor/AutoMerge.cpp
@@ -733,6 +748,9 @@ if (NED_BUILD_TESTS)
             Tests/ProjectRootTest.cpp
             Tests/ProjectSettingsTest.cpp
             Tests/ToolchainIncludePathsTest.cpp
+            Tests/NodeModulesTest.cpp
+            Tests/ImportResolutionConfigTest.cpp
+            Tests/ImportTargetTest.cpp
             Tests/ProjectFileOpsTest.cpp
             Tests/ScratchPadTest.cpp
             Tests/BackupTest.cpp

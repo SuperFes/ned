@@ -54,6 +54,29 @@ extern const char* const kJavaScriptFolds;
 extern const char* const kTypeScriptFolds;
 extern const char* const kClojureFolds; // shared by ClojureMode and JankMode, same as kClojure above
 
+// import-target-tree-sitter follow-up: hand-written "@import.target"/
+// "@import.module"/"@import.statement" queries, one per in-scope language
+// (Source/Editor/TreeSitter/queries/*-imports.scm) -- no upstream grammar
+// repo or nvim-treesitter/Neovim-core query set ships one of these for any
+// language (same "checked directly, not assumed" convention the fold
+// queries above already established). kCImports is shared by CMode and
+// CppMode; kTypeScriptImports is shared by TypeScriptMode and TsxMode;
+// kClojureImports is shared by ClojureMode and JankMode -- same sharing each
+// language's own highlight/fold query already uses. Languages with no
+// import query (JSON/HTML/YAML/TOML/Markdown/Org/fundamental-mode -- no real
+// per-language import *statement* to key off of, or already otherwise
+// covered, see ROADMAP.md) have no corresponding constant here; their
+// Mode::importTarget simply stays empty.
+extern const char* const kCImports;
+extern const char* const kPhpImports;
+extern const char* const kJavaScriptImports;
+extern const char* const kTypeScriptImports;
+extern const char* const kPythonImports;
+extern const char* const kBashImports;
+extern const char* const kCssImports;
+extern const char* const kClojureImports;
+extern const char* const kJanetImports;
+
 } // namespace ned::editor::treesitter::queries
 
 #endif // NED_EDITOR_TREESITTER_QUERIES_H
