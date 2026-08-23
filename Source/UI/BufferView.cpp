@@ -12,12 +12,13 @@
 #include <utility>
 #include <vector>
 
+#include "Border.h"
 #include "EchoArea.h"
 #include "Editor/CodeFoldSettings.h"
 #include "Editor/FuzzyMatch.h"
+#include "Editor/HeaderSource.h"
 #include "Editor/HighlightSettings.h"
 #include "Editor/InlineDiagnostics.h"
-#include "Editor/HeaderSource.h"
 #include "Editor/Link.h"
 #include "Editor/Lsp/LspManager.h"
 #include "Editor/Lsp/LspServerConfig.h"
@@ -922,6 +923,12 @@ void BufferView::EnsureInlineDiagnosticCache() const {
     inlineDiagnosticsByLine_.clear();
     const text::Rope& content = buffer.Content();
     for (const text::Buffer::Diagnostic& diagnostic : buffer.Diagnostics()) {
+        // prose-diagnostic-callout follow-up: the prose/grammar checker's
+        // diagnostics never get this code-style caret+message annotation
+        // row -- see PaintProseDiagnosticCallouts instead.
+        if (diagnostic.origin != text::Buffer::Diagnostic::Origin::Code) {
+            continue;
+        }
         const std::size_t line = content.ByteOffsetToLine(std::min(diagnostic.startByte, content.ByteLength()));
         const auto        it   = inlineDiagnosticsByLine_.find(line);
         const bool        replaces =
@@ -1604,6 +1611,20 @@ void BufferView::Paint(Canvas c) {
     // an annotation -- the NEXT loop iteration renders that annotation row
     // instead of a buffer line, mirroring how RowsForLine already counts it.
     std::optional<std::size_t> pendingAnnotationLine;
+    // prose-diagnostic-callout follow-up: recorded per screen row as the main
+    // loop below paints it, then walked in one pass by
+    // PaintProseDiagnosticCallouts after the loop -- kNoRowLine marks a row
+    // that isn't showing any real buffer line content (an annotation row, or
+    // a blank trailing row past end-of-buffer), so a callout brace never
+    // mistakes one for open space or mistakes it for part of a line's own
+    // span. rowContentEndColumn defaults to "fully blocked" (the row's own
+    // width) for exactly that reason -- an unrecognized row must never look
+    // like free room; the two branches below that leave a row's `line`
+    // untouched (the annotation-row continue, and the past-end-of-buffer
+    // blank-row case) explicitly correct that default where it's actually
+    // known to be safe.
+    std::vector<std::size_t> rowLine(static_cast<std::size_t>(c.size().height), kNoRowLine);
+    std::vector<int>         rowContentEndColumn(static_cast<std::size_t>(c.size().height), c.size().width);
     for (int row = 0; row < c.size().height; ++row) {
         for (int col = 0; col < c.size().width; ++col) {
             Cell& cell     = c[{.x = col, .y = row}];
@@ -1636,6 +1657,12 @@ void BufferView::Paint(Canvas c) {
                 currentLineLinks = LinksForLine(linkCache_, lineStart, lineEnd, point);
                 currentLineDiagnosticSpans.clear();
                 for (const text::Buffer::Diagnostic& diagnostic : buffer.Diagnostics()) {
+                    // prose-diagnostic-callout follow-up: no code-style
+                    // underline for the prose/grammar checker's own
+                    // diagnostics -- see PaintProseDiagnosticCallouts.
+                    if (diagnostic.origin != text::Buffer::Diagnostic::Origin::Code) {
+                        continue;
+                    }
                     const std::size_t spanEnd = std::max(diagnostic.endByte, diagnostic.startByte + 1);
                     if (diagnostic.startByte < lineEnd && spanEnd > lineStart) {
                         currentLineDiagnosticSpans.emplace_back(diagnostic.startByte, spanEnd);
@@ -2307,6 +2334,14 @@ void BufferView::Paint(Canvas c) {
                 }
             }
 
+            // prose-diagnostic-callout follow-up: this row's real content
+            // ends at `col` (everything painted above it -- text, truncation
+            // indicator, fold ellipsis/preview, ghost completion -- has
+            // already advanced it) -- see rowLine/rowContentEndColumn's own
+            // doc comment above the row loop.
+            rowLine[row]             = line;
+            rowContentEndColumn[row] = col;
+
             // line-wrap follow-up: advance to the next wrap segment (row)
             // of the same buffer line if there is one, otherwise advance to
             // the next visible buffer line -- was an unconditional
@@ -2327,9 +2362,16 @@ void BufferView::Paint(Canvas c) {
             }
         }
         else {
-            line = NextVisibleLine(line + 1, renderEndLine);
+            // prose-diagnostic-callout follow-up: past end-of-buffer -- this
+            // row was already blanked by the top-of-loop wash, genuinely
+            // empty past the gutter, so a callout brace may use it as
+            // padding.
+            rowContentEndColumn[row] = static_cast<int>(gutterWidth);
+            line                     = NextVisibleLine(line + 1, renderEndLine);
         }
     }
+
+    PaintProseDiagnosticCallouts(c, rowLine, rowContentEndColumn, gutterWidth);
 }
 
 void BufferView::PaintInlineDiagnosticRow(Canvas& c, int row, std::size_t line, std::size_t gutterWidth) {
@@ -2406,6 +2448,201 @@ void BufferView::PaintInlineDiagnosticRow(Canvas& c, int row, std::size_t line, 
         cell.character = std::string(1, ch);
         messageBrush.ApplyTo(cell);
         ++col;
+    }
+}
+
+namespace {
+    // prose-diagnostic-callout follow-up: one Prose diagnostic reduced to
+    // just what PaintProseDiagnosticCallouts' clustering/rendering passes
+    // need -- computed once per diagnostic in the gathering pass below, then
+    // read repeatedly (never re-derived) by both.
+    struct ProseCalloutItem {
+        int                                firstRow;
+        int                                lastRow;
+        int                                messageRow; // the flagged block's own middle row
+        text::Buffer::Diagnostic::Severity severity;
+        std::string                        message; // first line only, see EnsureInlineDiagnosticCache's own precedent
+    };
+} // namespace
+
+void BufferView::PaintProseDiagnosticCallouts(Canvas& c, const std::vector<std::size_t>& rowLine,
+                                              const std::vector<int>& rowContentEndColumn, std::size_t gutterWidth) {
+    const int height = c.size().height;
+    const int width  = c.size().width;
+
+    // First/last screen row currently showing each buffer line's content --
+    // see this method's own header-comment for why an entry's absence here
+    // (a line scrolled/folded out of view) means "skip this diagnostic's
+    // callout entirely," not "clamp it."
+    std::unordered_map<std::size_t, std::pair<int, int>> lineRowRange;
+    for (int row = 0; row < height; ++row) {
+        if (rowLine[row] == kNoRowLine) {
+            continue;
+        }
+        auto [it, inserted] = lineRowRange.try_emplace(rowLine[row], row, row);
+        if (!inserted) {
+            it->second.first  = std::min(it->second.first, row);
+            it->second.second = std::max(it->second.second, row);
+        }
+    }
+    if (lineRowRange.empty()) {
+        return;
+    }
+
+    const text::Buffer& buffer     = activeBuffer_.Get();
+    const text::Rope&   content    = buffer.Content();
+    const std::size_t   byteLength = content.ByteLength();
+    const auto&         glyphs     = RoundedBorderGlyphs();
+
+    // Gathering pass: every on-screen Prose diagnostic reduced to a
+    // ProseCalloutItem, sorted by its own firstRow -- the clustering pass
+    // right below needs that ordering to do a single linear merge.
+    std::vector<ProseCalloutItem> items;
+    for (const text::Buffer::Diagnostic& diagnostic : buffer.Diagnostics()) {
+        if (diagnostic.origin != text::Buffer::Diagnostic::Origin::Prose) {
+            continue;
+        }
+
+        const std::size_t startByte = std::min(diagnostic.startByte, byteLength);
+        const std::size_t lastByte =
+            diagnostic.endByte > diagnostic.startByte ? std::min(diagnostic.endByte - 1, byteLength) : startByte;
+        const std::size_t firstLine = content.ByteOffsetToLine(startByte);
+        const std::size_t lastLine  = content.ByteOffsetToLine(lastByte);
+
+        const auto firstIt = lineRowRange.find(firstLine);
+        const auto lastIt  = lineRowRange.find(lastLine);
+        if (firstIt == lineRowRange.end() || lastIt == lineRowRange.end()) {
+            continue; // the flagged block isn't fully on screen -- gutter icon + bottom hint carry it instead
+        }
+
+        const int firstRow = firstIt->second.first;
+        const int lastRow  = lastIt->second.second;
+        if (firstRow > lastRow) {
+            continue; // defensive -- shouldn't happen, rows only ever advance with `line`
+        }
+
+        items.push_back(ProseCalloutItem{
+            .firstRow   = firstRow,
+            .lastRow    = lastRow,
+            .messageRow = firstRow + (lastRow - firstRow) / 2,
+            .severity   = diagnostic.severity,
+            .message    = diagnostic.message.substr(0, diagnostic.message.find('\n')),
+        });
+    }
+    if (items.empty()) {
+        return;
+    }
+    std::sort(items.begin(), items.end(), [](const auto& a, const auto& b) { return a.firstRow < b.firstRow; });
+
+    // Clustering pass: a run of items whose own [firstRow, lastRow] blocks
+    // sit within one row of each other (touching once each gets its usual
+    // 1-row corner padding) shares a single spine instead of each getting
+    // its own separate corners -- exactly the "group them together when
+    // there's a whole bunch" a page of clustered comment/prose diagnostics
+    // otherwise produces. clusterStart/clusterEnd index into `items`
+    // ([start, end)); clusterLastRow tracks the running max lastRow seen so
+    // far in the open cluster (items are sorted by firstRow, not lastRow,
+    // so a later item's own block can still end earlier than an in-progress
+    // one -- max, not simply the latest item's own lastRow).
+    std::size_t clusterStart   = 0;
+    int         clusterLastRow = items[0].lastRow;
+    for (std::size_t i = 1; i <= items.size(); ++i) {
+        const bool endOfRun = i == items.size() || items[i].firstRow > clusterLastRow + 2;
+        if (!endOfRun) {
+            clusterLastRow = std::max(clusterLastRow, items[i].lastRow);
+            continue;
+        }
+
+        const std::size_t clusterEnd      = i;
+        const int         clusterFirstRow = items[clusterStart].firstRow;
+        const int         topRow          = clusterFirstRow > 0 ? clusterFirstRow - 1 : clusterFirstRow;
+        const int         bottomRow       = clusterLastRow + 1 < height ? clusterLastRow + 1 : clusterLastRow;
+
+        int anchorCol = static_cast<int>(gutterWidth);
+        for (int row = topRow; row <= bottomRow; ++row) {
+            anchorCol = std::max(anchorCol, rowContentEndColumn[row]);
+        }
+        anchorCol += 2; // small gap between the pane's own text and the callout
+
+        constexpr int kBranchOverhead  = 3; // "├─ "
+        constexpr int kMinMessageChars = 6; // not worth drawing a callout that can't show a few real words
+        if (anchorCol + kBranchOverhead + kMinMessageChars <= width) {
+            // Most-severe item in the cluster colors its shared spine
+            // (corners + vertical bar) -- same "most severe wins" precedent
+            // EnsureDiagnosticGutterCache's own per-line collapse already
+            // uses; each branch row keeps its OWN item's severity color,
+            // same as before clustering existed.
+            std::size_t mostSevere = clusterStart;
+            for (std::size_t i2 = clusterStart + 1; i2 < clusterEnd; ++i2) {
+                if (DiagnosticSeverityRank(items[i2].severity) > DiagnosticSeverityRank(items[mostSevere].severity)) {
+                    mostSevere = i2;
+                }
+            }
+            const Brush spineBrush{
+                .background = theme_.background, .foreground = DiagnosticSeverityColor(theme_, items[mostSevere].severity), .bold = true};
+
+            // Row -> the (possibly several, on a messageRow collision)
+            // items landing on it -- built once per cluster rather than
+            // scanning all of clusterStart..clusterEnd per row.
+            std::unordered_map<int, std::vector<std::size_t>> itemsByMessageRow;
+            for (std::size_t i2 = clusterStart; i2 < clusterEnd; ++i2) {
+                itemsByMessageRow[items[i2].messageRow].push_back(i2);
+            }
+
+            for (int row = topRow; row <= bottomRow; ++row) {
+                const auto rowIt = itemsByMessageRow.find(row);
+                if (rowIt != itemsByMessageRow.end()) {
+                    const ProseCalloutItem& first   = items[rowIt->second.front()];
+                    std::string             message = first.message;
+                    if (rowIt->second.size() > 1) {
+                        message += " (+" + std::to_string(rowIt->second.size() - 1) + " more)";
+                    }
+                    const Brush branchBrush{
+                        .background = theme_.background, .foreground = DiagnosticSeverityColor(theme_, first.severity), .bold = true};
+                    const Brush messageBrush{
+                        .background = theme_.background, .foreground = DiagnosticSeverityColor(theme_, first.severity), .italic = true};
+
+                    int col = anchorCol;
+                    for (const char32_t glyph : {U'├', glyphs.horizontal}) {
+                        Cell& cell     = c[{.x = col, .y = row}];
+                        cell.character = text::EncodeCodepointUtf8(glyph);
+                        branchBrush.ApplyTo(cell);
+                        ++col;
+                    }
+                    if (col < width) {
+                        Cell& cell     = c[{.x = col, .y = row}];
+                        cell.character = " ";
+                        branchBrush.ApplyTo(cell);
+                        ++col;
+                    }
+                    for (const char ch : message) {
+                        if (col >= width) {
+                            break;
+                        }
+                        Cell& cell     = c[{.x = col, .y = row}];
+                        cell.character = std::string(1, ch);
+                        messageBrush.ApplyTo(cell);
+                        ++col;
+                    }
+                }
+                else {
+                    const char32_t glyph = (row == topRow)      ? glyphs.topRight
+                                           : (row == bottomRow) ? glyphs.bottomRight
+                                                                : glyphs.vertical;
+                    Cell&          cell  = c[{.x = anchorCol, .y = row}];
+                    cell.character       = text::EncodeCodepointUtf8(glyph);
+                    spineBrush.ApplyTo(cell);
+                }
+            }
+        }
+        // else: no room -- drop the whole cluster, relying on the gutter
+        // icon + bottom hint, matching a single dropped callout's own
+        // "otherwise the hint is enough" fallback.
+
+        if (i < items.size()) {
+            clusterStart   = i;
+            clusterLastRow = items[i].lastRow;
+        }
     }
 }
 

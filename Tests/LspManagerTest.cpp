@@ -572,7 +572,7 @@ TEST_CASE("LspManager::RequestSwitchSourceHeader sends a bare TextDocumentIdenti
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
 
-    bool                                  invoked = false;
+    bool                                 invoked = false;
     std::optional<std::filesystem::path> got;
     manager.RequestSwitchSourceHeader(buffer, [&](std::optional<std::filesystem::path> path) {
         invoked = true;
@@ -610,7 +610,7 @@ TEST_CASE("LspManager::RequestSwitchSourceHeader resolves to nullopt on a null r
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
 
-    bool                                  invoked = false;
+    bool                                 invoked = false;
     std::optional<std::filesystem::path> got;
     manager.RequestSwitchSourceHeader(buffer, [&](std::optional<std::filesystem::path> path) {
         invoked = true;
@@ -635,7 +635,7 @@ TEST_CASE("LspManager::RequestSwitchSourceHeader resolves to nullopt when the bu
     LspManager         manager(bufferList, eventLoop);
     Buffer&            buffer = bufferList.CreateBuffer("scratch");
 
-    bool                                  invoked = false;
+    bool                                 invoked = false;
     std::optional<std::filesystem::path> got;
     manager.RequestSwitchSourceHeader(buffer, [&](std::optional<std::filesystem::path> path) {
         invoked = true;
@@ -829,12 +829,12 @@ TEST_CASE("SyncBuffer opens both the primary language server and the prose check
     manager.SyncBuffer(buffer, "markdown");
 
     const std::string primaryRaw  = ReadRawFrame(primaryServer.serverStdinRead);
-    const Json         primaryOpen = Json::parse(primaryRaw.substr(primaryRaw.find("\r\n\r\n") + 4));
+    const Json        primaryOpen = Json::parse(primaryRaw.substr(primaryRaw.find("\r\n\r\n") + 4));
     REQUIRE(primaryOpen["method"] == "textDocument/didOpen");
     REQUIRE(primaryOpen["params"]["textDocument"]["languageId"] == "markdown");
 
     const std::string proseRaw  = ReadRawFrame(proseServer.serverStdinRead);
-    const Json         proseOpen = Json::parse(proseRaw.substr(proseRaw.find("\r\n\r\n") + 4));
+    const Json        proseOpen = Json::parse(proseRaw.substr(proseRaw.find("\r\n\r\n") + 4));
     REQUIRE(proseOpen["method"] == "textDocument/didOpen");
     // The prose checker's own didOpen carries the buffer's real language as
     // languageId, not the reserved "prose" server key -- harper-ls needs the
@@ -859,8 +859,8 @@ TEST_CASE("Diagnostics published by the primary language server and the prose ch
     (void)ReadRawFrame(primaryServer.serverStdinRead); // drain didOpen
     (void)ReadRawFrame(proseServer.serverStdinRead);
 
-    const std::string uri = "file://" + path.string();
-    const Json         primaryDiagnostics = {
+    const std::string uri                = "file://" + path.string();
+    const Json        primaryDiagnostics = {
         {"jsonrpc", "2.0"},
         {"method", "textDocument/publishDiagnostics"},
         {"params",
@@ -886,8 +886,20 @@ TEST_CASE("Diagnostics published by the primary language server and the prose ch
     bool sawSyntaxError = false;
     bool sawTypo        = false;
     for (const Buffer::Diagnostic& diagnostic : buffer.Diagnostics()) {
-        sawSyntaxError |= diagnostic.message == "syntax error";
-        sawTypo |= diagnostic.message == "possible typo: teh";
+        if (diagnostic.message == "syntax error") {
+            sawSyntaxError = true;
+            // prose-diagnostic-callout follow-up: the real ("markdown") server's
+            // own diagnostic must stay tagged Code -- BufferView renders that
+            // origin with the ordinary underline/inline-annotation treatment.
+            REQUIRE(diagnostic.origin == Buffer::Diagnostic::Origin::Code);
+        }
+        else if (diagnostic.message == "possible typo: teh") {
+            sawTypo = true;
+            // The prose checker's own connection is keyed by kProseLanguageKey
+            // regardless of the buffer's real language -- see
+            // HandlePublishDiagnostics' own origin derivation.
+            REQUIRE(diagnostic.origin == Buffer::Diagnostic::Origin::Prose);
+        }
     }
     REQUIRE(sawSyntaxError);
     REQUIRE(sawTypo);
@@ -909,8 +921,8 @@ TEST_CASE("A second publish from one source replaces only that source's own diag
     (void)ReadRawFrame(primaryServer.serverStdinRead);
     (void)ReadRawFrame(proseServer.serverStdinRead);
 
-    const std::string uri = "file://" + path.string();
-    auto               diagnosticsNotification = [&](const std::string& message) {
+    const std::string uri                     = "file://" + path.string();
+    auto              diagnosticsNotification = [&](const std::string& message) {
         return Json{
             {"jsonrpc", "2.0"},
             {"method", "textDocument/publishDiagnostics"},
@@ -964,11 +976,11 @@ TEST_CASE("NotifyBufferClosed sends didClose to every server the buffer was open
     manager.NotifyBufferClosed(buffer);
 
     const std::string primaryRaw   = ReadRawFrame(primaryServer.serverStdinRead);
-    const Json         primaryClose = Json::parse(primaryRaw.substr(primaryRaw.find("\r\n\r\n") + 4));
+    const Json        primaryClose = Json::parse(primaryRaw.substr(primaryRaw.find("\r\n\r\n") + 4));
     REQUIRE(primaryClose["method"] == "textDocument/didClose");
 
     const std::string proseRaw   = ReadRawFrame(proseServer.serverStdinRead);
-    const Json         proseClose = Json::parse(proseRaw.substr(proseRaw.find("\r\n\r\n") + 4));
+    const Json        proseClose = Json::parse(proseRaw.substr(proseRaw.find("\r\n\r\n") + 4));
     REQUIRE(proseClose["method"] == "textDocument/didClose");
 }
 

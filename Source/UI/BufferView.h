@@ -1886,6 +1886,39 @@ class BufferView : public Widget {
     // of view), then the message, both in the severity's own theme color.
     void PaintInlineDiagnosticRow(Canvas& c, int row, std::size_t line, std::size_t gutterWidth);
 
+    // prose-diagnostic-callout follow-up: the prose/spell/grammar checker's
+    // own diagnostics (text::Buffer::Diagnostic::Origin::Prose -- harper-ls
+    // via Editor/Lsp/ProseChecker.h, see LspManager::kProseLanguageKey) get
+    // no code-style underline or PaintInlineDiagnosticRow annotation row
+    // (see the origin filters at those two call sites) -- instead, a small
+    // rounded callout brace grows in the pane's right margin, spanning
+    // exactly the screen rows the diagnostic's own flagged block occupies
+    // (padded by one row above/below for its corners), with the message on
+    // the block's own middle row. Called once per Paint(), after the main
+    // per-row loop finishes, from Paint() itself.
+    //
+    // rowLine[row]/rowContentEndColumn[row] are Paint()'s own per-row
+    // bookkeeping (index 0..c.size().height): rowLine identifies which
+    // buffer line (if any) a row is currently showing real content for --
+    // the sentinel kNoRowLine marks a row that isn't (an inline-diagnostic
+    // annotation row, or blank space past end-of-buffer) -- and
+    // rowContentEndColumn is the rightmost column that row's own content
+    // (gutter excluded) actually reached, defaulting to "fully blocked"
+    // (the row's own width) for any row Paint() didn't explicitly mark safe,
+    // so an unrecognized row can never look like free room to draw into.
+    //
+    // A diagnostic whose block isn't (fully) on screen, or whose brace
+    // wouldn't fit horizontally against every row it would need, is
+    // silently skipped entirely -- no partial/shrunk fallback -- relying on
+    // the gutter's own severity icon (EnsureDiagnosticGutterCache, which
+    // doesn't distinguish origin) and the point-line echo-area hint
+    // (BufferView.cpp's own once-per-frame diagnostic-echo poll, likewise
+    // origin-agnostic) to still carry the signal, matching this feature's
+    // own "otherwise the bottom hint is enough" design.
+    static constexpr std::size_t kNoRowLine = static_cast<std::size_t>(-1);
+    void                         PaintProseDiagnosticCallouts(Canvas& c, const std::vector<std::size_t>& rowLine,
+                                                              const std::vector<int>& rowContentEndColumn, std::size_t gutterWidth);
+
     // hover/completion follow-up. See Command.h's InteractiveRequest::
     // LspComplete doc comment and this class's own OnAnimation for the
     // request/debounce flow; GhostCompletion itself is transient UI state,

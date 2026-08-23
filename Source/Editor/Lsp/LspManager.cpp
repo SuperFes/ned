@@ -231,7 +231,7 @@ LspClient* LspManager::ClientForLanguage(const std::string& language) {
         // BufferView::Paint()) had no catch anywhere above it, crashing the
         // whole running editor the instant a buffer of a misconfigured-LSP
         // language was displayed. Report instead of crashing.
-        failedCommands_[language]   = *command;
+        failedCommands_[language]     = *command;
         spawnFailureDetail_[language] = e.what();
         LogError(language, e.what());
         return nullptr;
@@ -256,7 +256,7 @@ void LspManager::SyncBuffer(text::Buffer& buffer, const std::string& language) {
         return; // a scratch buffer has no URI to tell a server about
     }
 
-    SyncToServer(buffer, language, language);                 // primary language server
+    SyncToServer(buffer, language, language);                       // primary language server
     SyncToServer(buffer, std::string(kProseLanguageKey), language); // prose checker, independent of the above
 }
 
@@ -470,6 +470,14 @@ void LspManager::HandlePublishDiagnostics(const Json& params, const std::string&
         return; // not an open buffer -- nothing to update
     }
 
+    // prose-diagnostic-callout follow-up: language is the same per-server
+    // key HandlePublishDiagnostics is registered under (see the
+    // SetNotificationHandler wiring above, capturing `language` per
+    // language) -- kProseLanguageKey identifies the reserved prose-checker
+    // connection, everything else is a real code language server.
+    const text::Buffer::Diagnostic::Origin origin =
+        (language == kProseLanguageKey) ? text::Buffer::Diagnostic::Origin::Prose : text::Buffer::Diagnostic::Origin::Code;
+
     std::vector<text::Buffer::Diagnostic> diagnostics;
     if (params.contains("diagnostics")) {
         const text::Rope& content = buffer->Content();
@@ -489,6 +497,7 @@ void LspManager::HandlePublishDiagnostics(const Json& params, const std::string&
                 .startByte = startByte,
                 .endByte   = endByte,
                 .severity  = SeverityFromLsp(item.value("severity", 3)),
+                .origin    = origin,
                 .message   = item.value("message", std::string()),
             });
         }
