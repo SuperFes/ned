@@ -68,6 +68,78 @@ namespace {
         return {lineStart, lineEnd};
     }
 
+    // [start, end) byte range of point's own "statement" within its line --
+    // the nearest ';'/',' strictly before/after point, or the line's own
+    // bounds if neither appears. This is what lets a quoted/bracketed
+    // target be found anywhere in "#include <vector>" without point having
+    // to land on "<vector>" itself, while still not reaching across into an
+    // unrelated statement on the same line (e.g. "foo(); #include <bar>").
+    std::pair<std::size_t, std::size_t> StatementSegmentBounds(std::string_view bufferText, std::size_t lineStart,
+                                                               std::size_t lineEnd, std::size_t point) {
+        std::size_t segStart = point;
+        while (segStart > lineStart && bufferText[segStart - 1] != ';' && bufferText[segStart - 1] != ',') {
+            --segStart;
+        }
+        std::size_t segEnd = point;
+        while (segEnd < lineEnd && bufferText[segEnd] != ';' && bufferText[segEnd] != ',') {
+            ++segEnd;
+        }
+        return {segStart, segEnd};
+    }
+
+    // True if line (leading whitespace trimmed) starts with "#include" --
+    // the one C-family construct where bare angle brackets denote a file
+    // path, as opposed to template syntax ("vector<int>") that happens to
+    // share the same delimiter characters.
+    bool LineIsPreprocessorInclude(std::string_view line) {
+        std::size_t i = 0;
+        while (i < line.size() && std::isspace(static_cast<unsigned char>(line[i]))) {
+            ++i;
+        }
+        return line.substr(i).rfind("#include", 0) == 0;
+    }
+
+    // One quote- or angle-bracket-delimited run found while scanning a
+    // statement segment for a link-shaped target. Absolute offsets into the
+    // same bufferText DetectLinkAtPoint was called with, so callers can
+    // compare directly against point; [start, end) spans the delimiters
+    // themselves, not just their contents.
+    struct DelimitedRun {
+        std::size_t start;
+        std::size_t end;
+    };
+
+    // Finds every "..."/'...' run in [segStart, segEnd), plus every <...>
+    // run too when includeAngle is set (LineIsPreprocessorInclude gates
+    // that from the caller) -- one pass, matching pairs of the same
+    // delimiter on the same line; not nested/escaped-quote-aware, since a
+    // real #include/import target never needs either.
+    std::vector<DelimitedRun> FindDelimitedRuns(std::string_view bufferText, std::size_t segStart, std::size_t segEnd,
+                                                bool includeAngle) {
+        std::vector<DelimitedRun> runs;
+        std::size_t                i = segStart;
+        while (i < segEnd) {
+            const char c       = bufferText[i];
+            char       closing = 0;
+            if (c == '"' || c == '\'') {
+                closing = c;
+            }
+            else if (c == '<' && includeAngle) {
+                closing = '>';
+            }
+            if (closing != 0) {
+                const std::size_t closeIndex = bufferText.find(closing, i + 1);
+                if (closeIndex != std::string_view::npos && closeIndex < segEnd) {
+                    runs.push_back({i, closeIndex + 1});
+                    i = closeIndex + 1;
+                    continue;
+                }
+            }
+            ++i;
+        }
+        return runs;
+    }
+
 } // namespace
 
 std::optional<DetectedLink> DetectLinkAtPoint(std::string_view bufferText, std::size_t point) {
@@ -94,7 +166,11 @@ std::optional<DetectedLink> DetectLinkAtPoint(std::string_view bufferText, std::
         }
     }
 
-    // 2. Whitespace-delimited token under point, if path-shaped.
+    // 2. Whitespace-delimited token under point, if path-shaped. Tried
+    // before the broadened, statement-wide step 3 below -- an exact match
+    // right under the cursor always wins over a guess from surrounding
+    // context, so step 3 only ever runs when point isn't sitting on a
+    // usable candidate of its own.
     {
         std::size_t tokenStart = point;
         while (tokenStart > lineStart && !std::isspace(static_cast<unsigned char>(bufferText[tokenStart - 1]))) {
@@ -134,6 +210,38 @@ std::optional<DetectedLink> DetectLinkAtPoint(std::string_view bufferText, std::
                     .target    = std::string(token),
                     .startByte = tokenStart,
                     .endByte   = tokenEnd,
+                };
+            }
+        }
+    }
+
+    // 3. Fallback: a quoted/angle-bracketed target anywhere within point's
+    // own statement, reached only when step 2 found nothing right under
+    // the cursor -- see this function's own doc comment in Link.h for the
+    // full reasoning (why point doesn't need to land on the target's own
+    // bytes here, and why angle brackets are gated on "#include").
+    {
+        const auto [segStart, segEnd] = StatementSegmentBounds(bufferText, lineStart, lineEnd, point);
+        const std::vector<DelimitedRun> runs = FindDelimitedRuns(bufferText, segStart, segEnd, LineIsPreprocessorInclude(line));
+
+        const DelimitedRun* best         = nullptr;
+        std::size_t         bestDistance = std::string_view::npos;
+        for (const DelimitedRun& run : runs) {
+            const std::size_t distance = (point < run.start) ? run.start - point : (point > run.end ? point - run.end : 0);
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                best         = &run;
+            }
+        }
+        if (best && best->end - best->start >= 2) {
+            const std::size_t targetStart = best->start + 1;
+            const std::size_t targetEnd   = best->end - 1;
+            if (targetEnd > targetStart) {
+                return DetectedLink{
+                    .kind      = LinkKind::File,
+                    .target    = std::string(bufferText.substr(targetStart, targetEnd - targetStart)),
+                    .startByte = targetStart,
+                    .endByte   = targetEnd,
                 };
             }
         }
