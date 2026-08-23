@@ -1378,6 +1378,17 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
             context.interactiveRequest = InteractiveRequest::ProjectReplace;
         });
 
+    // find-all-references follow-up: same "just signal intent" shape as
+    // project-search/project-replace above -- the identifier-at-point scan,
+    // SearchDirectory call, and multibuffer construction all live in
+    // BufferView, which is what owns BufferList/ActiveBuffer.
+    registry.Register(
+        "project-find-references",
+        "Find every whole-word match for the identifier at point across the project, in a *references* multibuffer.",
+        [](CommandContext& context) {
+            context.interactiveRequest = InteractiveRequest::ProjectFindReferences;
+        });
+
     registry.Register("toggle-project-sidebar", "Show or hide the left-side project tree.",
                       [](CommandContext& context) {
                           context.interactiveRequest = InteractiveRequest::ToggleProjectSidebar;
@@ -1959,6 +1970,14 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                       [](CommandContext& context) {
                           context.interactiveRequest = InteractiveRequest::VcsFullDiffBuffer;
                       });
+    // Diagnostics-multibuffer follow-up: M-x reachable only, same "no
+    // dedicated binding needed" precedent vcs-blame-buffer/vcs-show-log
+    // established -- this is a "look around the whole project" companion to
+    // lsp-show-diagnostic's own point-based, single-buffer lookup.
+    registry.Register("lsp-diagnostics-buffer", "Show every open buffer's LSP diagnostics, stitched into one *diagnostics* buffer.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::DiagnosticsBuffer;
+                      });
     // M-x only, like vcs-blame-buffer -- vcs-switch-branch's own prompt
     // already Tab-completes against the real branch list, so the buffer
     // view is the "look around" companion, not the primary path.
@@ -2453,6 +2472,8 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("C-M-i"), "lsp-complete");
     keymap.Bind(ParseKeySequence("M-."), "lsp-goto-definition"); // real Emacs' own xref-find-definitions binding
     keymap.Bind(ParseKeySequence("ESC ."), "lsp-goto-definition");
+    keymap.Bind(ParseKeySequence("M-?"), "project-find-references"); // real Emacs' own xref-find-references binding
+    keymap.Bind(ParseKeySequence("ESC ?"), "project-find-references");
     // header-source-switching follow-up: "M-o" is free (grepped the full
     // bind list in this function) and matches the VS Code/CLion C/C++
     // extensions' own Alt+O convention for this exact action -- no
