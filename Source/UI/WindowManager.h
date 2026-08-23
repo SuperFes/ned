@@ -138,6 +138,14 @@ class Pane {
     // this can't just be left to ~Minimap().
     void ReleaseMinimapPixelPlane();
 
+    // per-buffer-highlight-cache follow-up: erases buffer's entry from this
+    // pane's own BufferView/Minimap per-buffer highlight/fold caches.
+    // Called for every pane (not just one showing buffer right now) from
+    // WindowManager::ReassignPanesShowing -- the shared close funnel -- so
+    // a closed Buffer* can never linger as a stale cache key in a pane that
+    // merely visited it in the past.
+    void ClearBufferCaches(text::Buffer& buffer);
+
   private:
     ActiveBuffer                       activeBuffer_;
     editor::Mode                       mode_; // owned copy -- see the class comment above

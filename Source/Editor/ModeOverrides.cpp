@@ -14,10 +14,17 @@ namespace ned::editor {
 
 namespace {
 
-    std::mutex                                   g_mutex;
-    std::unordered_map<std::string, Mode>        g_dynamicModes;
-    std::unordered_map<std::string, std::string> g_extensionOverrides;
-    std::unordered_map<std::string, std::string> g_filenameOverrides;
+    std::mutex                                        g_mutex;
+    std::unordered_map<std::string, Mode>             g_dynamicModes;
+    std::unordered_map<std::string, std::string>      g_extensionOverrides;
+    std::unordered_map<std::string, std::string>      g_filenameOverrides;
+    // per-buffer-mode-cache follow-up: see CachedModeForBuffer's own doc
+    // comment in the header. Keyed by raw Buffer* -- only ever compared for
+    // identity, never dereferenced, so an entry outliving its buffer briefly
+    // (between close and ClearModeCacheFor running) is harmless as long as
+    // it's gone before any other buffer could reuse the same address; the
+    // WindowManager close funnel guarantees that.
+    std::unordered_map<const text::Buffer*, Mode> g_modeCache;
 
     // The bundled *Mode() functions' own names (Mode.cpp), so ModeByName can
     // resolve one the same way it resolves a dynamically-registered name --
@@ -111,11 +118,18 @@ void RegisterDynamicMode(const std::string& name, const std::filesystem::path& l
 
     const std::lock_guard lock(g_mutex);
     g_dynamicModes.insert_or_assign(name, std::move(mode));
+    // A re-registration under a name some already-cached buffer resolved to
+    // would otherwise never take effect for it -- see g_modeCache's own
+    // comment. Registration is rare (init.janet load time, or an
+    // interactive re-eval), so a wholesale flush here is simpler and cheap
+    // enough versus tracking which cached buffers actually used this name.
+    g_modeCache.clear();
 }
 
 void RegisterMode(const std::string& name, Mode mode) {
     const std::lock_guard lock(g_mutex);
     g_dynamicModes.insert_or_assign(name, std::move(mode));
+    g_modeCache.clear();
 }
 
 std::optional<Mode> ModeByName(const std::string& name) {
@@ -135,11 +149,13 @@ std::optional<Mode> ModeByName(const std::string& name) {
 void SetModeForExtension(const std::string& extension, const std::string& modeName) {
     const std::lock_guard lock(g_mutex);
     g_extensionOverrides.insert_or_assign(StripLeadingDot(extension), modeName);
+    g_modeCache.clear(); // see RegisterMode's own comment on why
 }
 
 void SetModeForFilename(const std::string& filename, const std::string& modeName) {
     const std::lock_guard lock(g_mutex);
     g_filenameOverrides.insert_or_assign(filename, modeName);
+    g_modeCache.clear(); // see RegisterMode's own comment on why
 }
 
 std::optional<Mode> ModeForFileOverride(const std::filesystem::path& path) {
@@ -178,6 +194,34 @@ Mode ModeForBuffer(const text::Buffer& buffer) {
         return ModeForPath(*buffer.Path());
     }
     return FundamentalMode();
+}
+
+Mode CachedModeForBuffer(const text::Buffer& buffer) {
+    {
+        const std::lock_guard lock(g_mutex);
+        if (const auto it = g_modeCache.find(&buffer); it != g_modeCache.end()) {
+            return it->second;
+        }
+    }
+    // Built with g_mutex released -- ModeForBuffer (via ModeForPath/
+    // ModeForFileOverride/ModeByName) takes it itself, internally, and
+    // g_mutex isn't recursive. Main-thread-only per this function's own
+    // header comment, so there's no real race to build the same buffer's
+    // Mode twice; insert_or_assign rather than emplace just in case, so a
+    // hypothetical double-build overwrites rather than leaving two entries.
+    Mode                   mode = ModeForBuffer(buffer);
+    const std::lock_guard  lock(g_mutex);
+    return g_modeCache.insert_or_assign(&buffer, std::move(mode)).first->second;
+}
+
+void ClearModeCacheFor(const text::Buffer& buffer) {
+    const std::lock_guard lock(g_mutex);
+    g_modeCache.erase(&buffer);
+}
+
+void InsertPrewarmedMode(const text::Buffer& buffer, Mode mode) {
+    const std::lock_guard lock(g_mutex);
+    g_modeCache.try_emplace(&buffer, std::move(mode)); // no-op if already cached
 }
 
 } // namespace ned::editor

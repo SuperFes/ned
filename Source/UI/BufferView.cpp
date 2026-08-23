@@ -23,6 +23,7 @@
 #include "Editor/Link.h"
 #include "Editor/Lsp/LspManager.h"
 #include "Editor/Lsp/LspServerConfig.h"
+#include "Editor/ModeOverrides.h"
 #include "Editor/Multibuffer.h"
 #include "Editor/NodeModules.h"
 #include "Editor/Org.h"
@@ -661,6 +662,19 @@ void BufferView::SetOnActiveBufferChanged(std::function<void(text::Buffer&)> han
     onActiveBufferChanged_ = std::move(handler);
 }
 
+void BufferView::ClearBufferCaches(text::Buffer& buffer) {
+    highlightCacheByBuffer_.erase(&buffer);
+    foldableBlocksCacheByBuffer_.erase(&buffer);
+    if (highlightCacheBuffer_ == &buffer) {
+        highlightCacheBuffer_ = nullptr;
+        highlightCacheSpans_.clear();
+    }
+    if (foldableBlocksCacheBuffer_ == &buffer) {
+        foldableBlocksCacheBuffer_ = nullptr;
+        foldableBlocksCache_.clear();
+    }
+}
+
 void BufferView::EnsureFoldableBlocksCache() const {
     text::Buffer& buffer = activeBuffer_.Get();
 
@@ -675,7 +689,23 @@ void BufferView::EnsureFoldableBlocksCache() const {
         return;
     }
 
-    foldableBlocksCache_           = editor::codefold::FoldableBlocks(mode_, buffer.Text());
+    // per-buffer-highlight-cache follow-up: persists across a buffer
+    // switch -- see foldableBlocksCacheByBuffer_'s own doc comment in
+    // BufferView.h, and highlightCacheByBuffer_'s for the full reasoning
+    // this mirrors.
+    const auto it = foldableBlocksCacheByBuffer_.find(&buffer);
+    if (it == foldableBlocksCacheByBuffer_.end() || it->second.contentGeneration != buffer.ContentGeneration() ||
+        it->second.modeName != mode_.name) {
+        FoldableBlocksCacheEntry entry;
+        entry.ranges            = editor::codefold::FoldableBlocks(mode_, buffer.Text());
+        entry.contentGeneration = buffer.ContentGeneration();
+        entry.modeName          = mode_.name;
+        foldableBlocksCache_    = entry.ranges;
+        foldableBlocksCacheByBuffer_.insert_or_assign(&buffer, std::move(entry));
+    }
+    else {
+        foldableBlocksCache_ = it->second.ranges;
+    }
     foldableBlocksCacheBuffer_     = &buffer;
     foldableBlocksCacheGeneration_ = buffer.ContentGeneration();
 }
@@ -1560,12 +1590,27 @@ void BufferView::Paint(Canvas c) {
     }
     else if (highlightCacheBuffer_ != &buffer || highlightCacheGeneration_ != buffer.ContentGeneration() ||
              highlightCacheClassGeneration_ != editor::CaptureClassGeneration()) {
-        // The CaptureClassGeneration() check (exhaustive-highlighting
-        // follow-up): a ned/set-capture-class remap changes the classes
-        // baked into these spans at parse time, unlike ned/set-capture-*
-        // style overrides, which only need ResolvedBrush's cheaper
-        // brush-cache flush.
-        highlightCacheSpans_           = mode_.highlight(buffer.Text());
+        // per-buffer-highlight-cache follow-up: persists across a buffer
+        // switch, not just repeated Paint() calls on the same buffer -- see
+        // highlightCacheByBuffer_'s own doc comment in BufferView.h. The
+        // CaptureClassGeneration() check (exhaustive-highlighting
+        // follow-up) and the modeName check (this follow-up) both matter
+        // here for the same reason: either can make a stale entry's spans
+        // wrong even though buffer's content hasn't changed at all.
+        const auto it = highlightCacheByBuffer_.find(&buffer);
+        if (it == highlightCacheByBuffer_.end() || it->second.contentGeneration != buffer.ContentGeneration() ||
+            it->second.classGeneration != editor::CaptureClassGeneration() || it->second.modeName != mode_.name) {
+            HighlightCacheEntry entry;
+            entry.spans             = mode_.highlight(buffer.Text());
+            entry.contentGeneration = buffer.ContentGeneration();
+            entry.classGeneration   = editor::CaptureClassGeneration();
+            entry.modeName          = mode_.name;
+            highlightCacheSpans_    = entry.spans;
+            highlightCacheByBuffer_.insert_or_assign(&buffer, std::move(entry));
+        }
+        else {
+            highlightCacheSpans_ = it->second.spans;
+        }
         highlightCacheBuffer_          = &buffer;
         highlightCacheGeneration_      = buffer.ContentGeneration();
         highlightCacheClassGeneration_ = editor::CaptureClassGeneration();
@@ -7189,10 +7234,18 @@ void BufferView::HandleRenameFileKey(const editor::KeyChord& chord) {
                 if (canonicalPath == sourceCanonical) {
                     buffer->SetPath(destination);
                     buffer->Rename(destination.filename().string());
+                    // per-buffer-mode-cache follow-up: a rename can change
+                    // which Mode applies (e.g. .txt -> .cpp) without
+                    // touching content at all -- CachedModeForBuffer would
+                    // otherwise keep returning the Mode built for the old
+                    // path forever, since its cache is keyed purely by
+                    // buffer identity with no path check of its own.
+                    editor::ClearModeCacheFor(*buffer);
                 }
                 else if (const std::filesystem::path relative = canonicalPath.lexically_relative(sourceCanonical);
                          !relative.empty() && *relative.begin() != "..") {
                     buffer->SetPath(destination / relative);
+                    editor::ClearModeCacheFor(*buffer);
                 }
             }
 

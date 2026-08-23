@@ -6,6 +6,9 @@
 #include "Editor/ModeOverrides.h"
 #include "Text/Buffer.h"
 
+using ned::editor::CachedModeForBuffer;
+using ned::editor::ClearModeCacheFor;
+using ned::editor::InsertPrewarmedMode;
 using ned::editor::ModeByName;
 using ned::editor::ModeForBuffer;
 using ned::editor::ModeForFileOverride;
@@ -166,4 +169,66 @@ TEST_CASE("ModeForBuffer falls back to FundamentalMode for a path-less buffer", 
 TEST_CASE("ModeForBuffer resolves via the buffer's own path", "[ModeOverrides]") {
     ned::text::Buffer buffer = ned::text::Buffer::NewFile("/some/path/main.cpp");
     REQUIRE(ModeForBuffer(buffer).name == "cpp-mode");
+}
+
+// per-buffer-mode-cache follow-up. Every test here calls ClearModeCacheFor
+// at the end to restore process-wide cache state for whichever test runs
+// next -- same discipline "ModeForPath prefers a configured override..."
+// already follows for g_extensionOverrides above.
+
+TEST_CASE("CachedModeForBuffer resolves via the buffer's own path, same as ModeForBuffer, when nothing is cached yet",
+          "[ModeOverrides]") {
+    ned::text::Buffer buffer = ned::text::Buffer::NewFile("/some/path/cached-resolve-test.cpp");
+    REQUIRE(CachedModeForBuffer(buffer).name == "cpp-mode");
+    ClearModeCacheFor(buffer);
+}
+
+TEST_CASE("CachedModeForBuffer falls back to FundamentalMode for a path-less buffer, same as ModeForBuffer",
+          "[ModeOverrides]") {
+    ned::text::Buffer scratch("scratch");
+    REQUIRE(CachedModeForBuffer(scratch).name == "fundamental-mode");
+    ClearModeCacheFor(scratch);
+}
+
+TEST_CASE("CachedModeForBuffer returns a manually pre-inserted (prewarmed) Mode instead of resolving fresh",
+          "[ModeOverrides]") {
+    // No override registered for this extension at all -- a real
+    // (uncached) resolution would fall back to FundamentalMode, so seeing
+    // anything else back proves the cache was actually consulted first.
+    ned::text::Buffer buffer = ned::text::Buffer::NewFile("/some/path/prewarm-identity-test.prewarm-test-ext");
+
+    ned::editor::Mode fake;
+    fake.name = "fake-prewarmed-mode";
+    InsertPrewarmedMode(buffer, fake);
+
+    REQUIRE(CachedModeForBuffer(buffer).name == "fake-prewarmed-mode");
+    ClearModeCacheFor(buffer);
+}
+
+TEST_CASE("InsertPrewarmedMode never clobbers a Mode some other path already cached", "[ModeOverrides]") {
+    ned::text::Buffer buffer = ned::text::Buffer::NewFile("/some/path/no-clobber-test.no-clobber-test-ext");
+
+    ned::editor::Mode first;
+    first.name = "first-cached-mode";
+    InsertPrewarmedMode(buffer, first);
+    REQUIRE(CachedModeForBuffer(buffer).name == "first-cached-mode");
+
+    ned::editor::Mode second;
+    second.name = "second-cached-mode";
+    InsertPrewarmedMode(buffer, second); // no-op: buffer is already cached
+
+    REQUIRE(CachedModeForBuffer(buffer).name == "first-cached-mode");
+    ClearModeCacheFor(buffer);
+}
+
+TEST_CASE("ClearModeCacheFor removes a buffer's cached Mode, so the next call resolves fresh", "[ModeOverrides]") {
+    ned::text::Buffer buffer = ned::text::Buffer::NewFile("/some/path/clear-cache-test.cpp");
+
+    ned::editor::Mode fake;
+    fake.name = "fake-mode";
+    InsertPrewarmedMode(buffer, fake);
+    REQUIRE(CachedModeForBuffer(buffer).name == "fake-mode");
+
+    ClearModeCacheFor(buffer);
+    REQUIRE(CachedModeForBuffer(buffer).name == "cpp-mode"); // real resolution, not the stale fake entry
 }

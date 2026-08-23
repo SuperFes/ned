@@ -122,6 +122,49 @@ void SetModeForFilename(const std::string& filename, const std::string& modeName
 // buffer), otherwise ModeForPath(*buffer.Path()).
 [[nodiscard]] Mode ModeForBuffer(const text::Buffer& buffer);
 
+// per-buffer-mode-cache follow-up: memoized ModeForBuffer, keyed by buffer
+// identity. A Mode's highlight/fold/expandSelection/sexpMotion closures
+// each carry a shared_ptr<treesitter::Parser>/Query/parsed-tree cache
+// (Mode.cpp's TreeSitterModeFromLanguage) -- ModeForBuffer rebuilds all of
+// that from scratch on every call, so calling it fresh on every buffer
+// switch (as WindowManager used to) silently discarded an already-parsed
+// tree the moment the user looked at a different buffer, forcing a full
+// tree-sitter reparse on switching back even though nothing about that
+// buffer had changed. This caches the built Mode per buffer instead, so a
+// repeat call returns a cheap copy (Mode itself is a small value type;
+// copying it just copies a few std::functions, sharing their captured
+// state) that still has last call's parsed tree warm. Every real Mode-
+// resolution call site (main.cpp's initial pane, WindowManager's active-
+// buffer-changed callback and split/session-restore pane construction)
+// should call this instead of ModeForBuffer directly; ModeForBuffer itself
+// stays the uncached primitive this builds on, and what tests exercise
+// directly to avoid depending on cache state across TEST_CASEs.
+// Main-thread only, like every other piece of state in this file -- Mode
+// resolution never happens off the UI thread.
+[[nodiscard]] Mode CachedModeForBuffer(const text::Buffer& buffer);
+
+// Erases buffer's entry (if any) from CachedModeForBuffer's cache. Called
+// from WindowManager's shared buffer-close funnel (ReassignPanesShowing,
+// alongside Multibuffer.h's ClearMultibufferIndexFor -- the same
+// established "close funnel clears every per-buffer cache keyed by this
+// Buffer*" precedent) so a closed buffer's cached Mode -- and the real
+// tree-sitter Parser/Query/tree it holds onto -- doesn't linger forever,
+// and so a *different*, later buffer can never accidentally key-collide
+// with it if the allocator reuses the same address. Also the right call
+// after rebinding a still-open buffer to a new path (SetPath, e.g.
+// rename-file) whose extension resolves to a different mode -- otherwise
+// the cached Mode built for the old path would never update.
+void ClearModeCacheFor(const text::Buffer& buffer);
+
+// background-mode-prewarm follow-up: installs mode into the cache for
+// buffer, but only if nothing is cached for it yet -- unlike
+// CachedModeForBuffer's own insert_or_assign, this never clobbers a Mode
+// some other path (a real switch, another prewarm) already resolved and
+// may already be in active use by a live pane sharing its tree-sitter
+// tree cache. The one caller is ModePrewarm.cpp's background-thread
+// completion callback.
+void InsertPrewarmedMode(const text::Buffer& buffer, Mode mode);
+
 } // namespace ned::editor
 
 #endif // NED_EDITOR_MODEOVERRIDES_H

@@ -393,6 +393,15 @@ class BufferView : public Widget {
     // matching every other Set* hook here.
     void SetOnActiveBufferChanged(std::function<void(text::Buffer&)> handler);
 
+    // per-buffer-highlight-cache follow-up: erases buffer's entry from this
+    // pane's own highlightCacheByBuffer_/foldableBlocksCacheByBuffer_ (see
+    // their own doc comments). Called from WindowManager::
+    // ReassignPanesShowing -- the shared close funnel every real buffer
+    // close already goes through -- for every pane, not just one currently
+    // showing buffer, since a pane can hold a stale entry for a buffer it
+    // merely visited in the past.
+    void ClearBufferCaches(text::Buffer& buffer);
+
   private:
     enum class InputMode { Normal,
                            IsearchForward,
@@ -1624,6 +1633,30 @@ class BufferView : public Widget {
     // has.
     std::size_t highlightCacheClassGeneration_ = 0;
 
+    // per-buffer-highlight-cache follow-up: the three fields just above only
+    // remember the *most recently painted* buffer -- switching away and
+    // back (A -> B -> A) was a guaranteed miss even though nothing about A
+    // itself had changed, forcing a full mode_.highlight() re-run (a real
+    // tree-sitter query-capture walk, not a free call) purely because some
+    // other buffer got painted in between. This persists that same result
+    // across a switch, keyed by buffer identity, alongside the modeName
+    // that produced it -- checked in addition to content/class generation
+    // because a rename (BufferView::SetPath call sites) can change which
+    // Mode applies to a still-open buffer whose content hasn't changed at
+    // all, and mode_ itself only resyncs on the *next* active-buffer-change
+    // (see WindowManager.cpp's own comment on that), so a stale entry here
+    // needs its own independent tell. Cleared via ClearBufferCaches, called
+    // from WindowManager::ReassignPanesShowing (the shared close funnel
+    // every real close already goes through) so a closed Buffer* never
+    // lingers as a cache key indefinitely.
+    struct HighlightCacheEntry {
+        std::size_t                        contentGeneration = 0;
+        std::size_t                        classGeneration   = 0;
+        std::string                        modeName;
+        std::vector<editor::HighlightSpan> spans;
+    };
+    std::unordered_map<text::Buffer*, HighlightCacheEntry> highlightCacheByBuffer_;
+
     // exhaustive-highlighting follow-up: Theme::BrushFor(cls, captureId)
     // resolved once per distinct (class, capture) pair per style
     // generation, not once per rendered codepoint -- the capture-aware
@@ -1672,6 +1705,17 @@ class BufferView : public Widget {
     mutable text::Buffer*                                    foldableBlocksCacheBuffer_     = nullptr;
     mutable std::size_t                                      foldableBlocksCacheGeneration_ = 0;
     mutable std::vector<std::pair<std::size_t, std::size_t>> foldableBlocksCache_;
+    // per-buffer-highlight-cache follow-up: same persistence-across-a-switch
+    // fix as highlightCacheByBuffer_ above, for mode_.fold instead of
+    // mode_.highlight -- see that member's own doc comment for the full
+    // reasoning (single-slot eviction on switch, modeName's role, and the
+    // ClearBufferCaches/close-funnel cleanup).
+    struct FoldableBlocksCacheEntry {
+        std::size_t                                       contentGeneration = 0;
+        std::string                                        modeName;
+        std::vector<std::pair<std::size_t, std::size_t>> ranges;
+    };
+    mutable std::unordered_map<text::Buffer*, FoldableBlocksCacheEntry> foldableBlocksCacheByBuffer_;
     // depth-aware-fold-gutter follow-up: a small, fixed number of gutter
     // columns (not a viewport-dependent width -- an explicit user choice,
     // so the gutter's own size never jumps around while scrolling past a

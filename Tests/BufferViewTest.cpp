@@ -399,6 +399,30 @@ TEST_CASE("BufferView paints the buffer's first line and positions the cursor", 
     REQUIRE(*view.CursorPosition() == ned::ui::Point{.x = GutterWidth(1) + 5, .y = 0});
 }
 
+// per-buffer-highlight-cache follow-up: ClearBufferCaches is what
+// WindowManager::ReassignPanesShowing calls on every pane for a genuinely
+// closing buffer -- exercised here both before the cache could hold
+// anything for buffer (a fresh BufferView) and after a real Paint() call
+// actually populated it.
+TEST_CASE("BufferView::ClearBufferCaches is a safe no-op, with or without a prior paint", "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("hello");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 10, .y_min = 0, .y_max = 2});
+    REQUIRE_NOTHROW(view.ClearBufferCaches(fixture.buffer));
+
+    ned::ui::Screen screen = ned::ui::Screen(11, 3);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 10, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+    REQUIRE_NOTHROW(view.ClearBufferCaches(fixture.buffer));
+
+    // The cache being gone doesn't break a subsequent repaint -- it just
+    // recomputes, same as a first-ever paint would.
+    view.Paint(canvas);
+    REQUIRE(ContentRowText(screen, 0, 5, 1) == "hello");
+}
+
 TEST_CASE("A tab character expands to TabWidth() space columns, not one raw codepoint", "[BufferView]") {
     // A raw tab byte sent straight to a real terminal is interpreted as
     // "jump to the next tab stop" rather than "print one glyph," which

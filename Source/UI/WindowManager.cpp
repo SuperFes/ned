@@ -117,7 +117,7 @@ Pane::Pane(text::Buffer& buffer, text::KillRing& killRing, editor::RegisterTable
     // swap highlighting/folding/keymap/expand-selection all at once, since
     // dispatcher_'s KeymapStack above already points at &mode_.keymap (the
     // member's own stable address), not a snapshot taken at construction.
-    bufferView_->SetOnActiveBufferChanged([this](text::Buffer& changedBuffer) { mode_ = editor::ModeForBuffer(changedBuffer); });
+    bufferView_->SetOnActiveBufferChanged([this](text::Buffer& changedBuffer) { mode_ = editor::CachedModeForBuffer(changedBuffer); });
 
     scrollBar_->SetOnScroll(
         [this](int position) { bufferView_->SetTopLine(static_cast<std::size_t>(position)); });
@@ -140,6 +140,11 @@ bool Pane::MinimapActive() const {
 
 void Pane::ReleaseMinimapPixelPlane() {
     minimap_->ReleasePlane();
+}
+
+void Pane::ClearBufferCaches(text::Buffer& buffer) {
+    bufferView_->ClearBufferCaches(buffer);
+    minimap_->ClearBufferCache(buffer);
 }
 
 bool Pane::ScrollColumnActive() const {
@@ -737,7 +742,7 @@ std::unique_ptr<WindowNode> WindowManager::BuildNodeFromLayout(const std::vector
         }
         auto node  = std::make_unique<WindowNode>();
         node->kind = WindowNode::Kind::Leaf;
-        node->pane = MakePane(*buffer, editor::ModeForBuffer(*buffer));
+        node->pane = MakePane(*buffer, editor::CachedModeForBuffer(*buffer));
         return node;
     }
 
@@ -822,6 +827,17 @@ void WindowManager::ReassignPanesShowing(text::Buffer& closingBuffer, Pane* skip
     // where a multibuffer's MultibufferIndex (if any -- a safe no-op
     // otherwise) gets cleared rather than dangling on a freed Buffer*.
     editor::multibuffer::ClearMultibufferIndexFor(closingBuffer);
+    // per-buffer-mode-cache/per-buffer-highlight-cache follow-up: same
+    // "close funnel clears every per-buffer cache keyed by this Buffer*"
+    // precedent as the multibuffer index just above -- see
+    // CachedModeForBuffer's/Pane::ClearBufferCaches's own doc comments.
+    // Every pane is cleared, not just ones currently showing closingBuffer
+    // (skipped via `skip` below) -- a pane can hold a stale cache entry for
+    // a buffer it merely visited in the past, not just its current one.
+    editor::ClearModeCacheFor(closingBuffer);
+    for (Pane* pane : Leaves()) {
+        pane->ClearBufferCaches(closingBuffer);
+    }
 
     // Computed once, shared across every affected pane -- not recomputed
     // (and not re-created, in the CreateBuffer("scratch") fallback case)

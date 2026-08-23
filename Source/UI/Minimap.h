@@ -63,6 +63,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "ActiveBuffer.h"
@@ -104,6 +105,14 @@ class Minimap : public Widget {
     // Widget::active flips to false -- see this class's own header comment
     // on why nothing else could clean this plane up.
     void ReleasePlane() const;
+
+    // per-buffer-highlight-cache follow-up: erases buffer's entry from
+    // this Minimap's own per-buffer highlight-span cache (see
+    // highlightCacheByBuffer_'s own doc comment below). Called from
+    // WindowManager::ReassignPanesShowing -- the shared close funnel every
+    // real buffer close already goes through -- for every pane, not just
+    // one currently showing buffer.
+    void ClearBufferCache(text::Buffer& buffer);
 
     // Synced fresh every frame by BufferView (mirrors ScrollBar's own
     // public fields exactly, including semantics): position ranges over
@@ -197,6 +206,25 @@ class Minimap : public Widget {
     // background) and unreproducible from outside a real terminal.
     std::string debugLogPath_;
     void        DebugLog(const std::string& line) const;
+
+    // per-buffer-highlight-cache follow-up: the raster/plane cache below
+    // (cacheBuffer_ etc.) is keyed on scroll position/viewport size too, so
+    // it invalidates on nearly every scroll tick -- but the expensive part
+    // of rebuilding it, mode_.highlight(buffer.Text()) (a real tree-sitter
+    // parse + query-capture walk on a fresh Mode, unrelated to scroll
+    // position at all), doesn't need to be redone that often. This is a
+    // narrower cache just for that call's result, keyed by buffer identity
+    // like BufferView's own highlightCacheByBuffer_ -- see that member's
+    // doc comment (BufferView.h) for the full reasoning, including why
+    // modeName is checked alongside content/class generation. Cleared via
+    // ClearBufferCache from the same WindowManager close funnel.
+    struct HighlightCacheEntry {
+        std::size_t                        contentGeneration = 0;
+        std::size_t                        classGeneration   = 0;
+        std::string                        modeName;
+        std::vector<editor::HighlightSpan> spans;
+    };
+    mutable std::unordered_map<text::Buffer*, HighlightCacheEntry> highlightCacheByBuffer_;
 
     mutable text::Buffer* cacheBuffer_              = nullptr;
     mutable std::size_t   cacheContentGeneration_   = 0;
