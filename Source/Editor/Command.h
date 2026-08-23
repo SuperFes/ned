@@ -385,7 +385,13 @@ enum class InteractiveRequest { None,
                                 // entry point). See Editor/Acp/AcpManager.h.
                                 AcpStartSession,
                                 AcpSendPrompt,
-                                AcpStopSession };
+                                AcpStopSession,
+                                // ACP chat panel follow-up: one-shot direct action, same shape
+                                // as ToggleTerminal above -- BufferView just forwards to the
+                                // callback main.cpp registered (SetOnAcpPanelToggle), since the
+                                // panel is an OverlayHost overlay owned above the window/pane
+                                // level, not per-pane state.
+                                AcpTogglePanel };
 
 // Everything a command implementation might need. Built fresh per invocation
 // from live references -- never stored, so there's no lifetime concern beyond

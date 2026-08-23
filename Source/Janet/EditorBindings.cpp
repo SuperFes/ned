@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "Editor/Acp/AcpConfig.h"
+#include "Editor/Acp/AcpPanelConfig.h"
 #include "Editor/AutoMerge.h"
 #include "Editor/AutoRevert.h"
 #include "Editor/Backup.h"
@@ -340,6 +341,16 @@ namespace {
     // ["claude-code-acp"]).
     void NedSetAcpAgent(std::string name, std::vector<std::string> argv) {
         editor::acp::SetAcpAgentCommand(name, std::move(argv));
+    }
+
+    // ACP chat panel: which edge the dock hugs and how much of the screen it
+    // covers, mirroring NedSetTerminalHeightPercent's own shape.
+    void NedSetAcpPanelDock(std::string side) {
+        editor::acp::SetAcpPanelDock(side);
+    }
+
+    void NedSetAcpPanelSizePercent(std::int64_t percent) {
+        editor::acp::SetAcpPanelSizePercent(static_cast<int>(percent));
     }
 
     // hover/completion follow-up: the only way LspServerConfig.h's own
@@ -731,6 +742,14 @@ void InstallEditorBindings(Environment& env) {
         "(ned/set-acp-agent \"claude-code\" [\"claude-code-acp\"]). Same argv shape and $PATH resolution as "
         "ned/set-lsp-command; an empty argv clears the configured command for name. acp-send-prompt (C-c a p) is "
         "the entry point that spawns and talks to whichever agent name it's given.");
+    env.Register<&NedSetAcpPanelDock>(
+        "ned", "set-acp-panel-dock",
+        "Dock the ACP chat panel at the \"bottom\" (default) or \"right\" edge. Any other value is ignored. Takes "
+        "effect on the next resize or panel show.");
+    env.Register<&NedSetAcpPanelSizePercent>(
+        "ned", "set-acp-panel-size-percent",
+        "Set how much of the screen the ACP chat panel covers, as a percentage (default 30, clamped to 15-70) -- "
+        "height when docked at the bottom, width when docked at the right.");
     env.Register<&NedSetLspAutoComplete>(
         "ned", "set-lsp-auto-complete",
         "Enable or disable automatic LSP completion ghost text while typing (default true). Manual completion "

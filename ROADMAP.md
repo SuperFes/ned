@@ -126,24 +126,38 @@ Notcurses (TermOx → FTXUI → Notcurses over the project's life).
       numbered-choice prompt mirroring `LspCodeActionSelect`) — same client/manager
       split as `LspManager`/`LspClient`, built directly on `Process/ChildProcess`
       exactly as anticipated. `acp-start-session`/`acp-send-prompt`/`acp-stop-session`
-      (`C-c a s`/`C-c a p`/`C-c a k`) stream a session into a plain read-only
-      `"*acp: <agent>*"` buffer — `TaskRunner`'s own output-buffer convention reused
-      rather than a new widget. Deliberate v1 cuts, still open: a real chat overlay
-      panel (`UI/Overlay.h`'s `OverlayHost` — an `Add()` with a right-dock placement
-      function — is the intended home once built, also for a completion-popover
-      replacement of ghost text, an M-x dropdown, and code-action lists currently
-      squeezed into the one-row EchoArea); `terminal/*` tool-call support (spawning
-      real `ChildProcess`/pty-backed terminals on the agent's behalf) and
-      `elicitation/create` structured forms — both left undeclared as client
-      capabilities, so a spec-compliant agent won't invoke them, rather than answered
-      badly; multiple concurrent agents/sessions; `session/load` history replay;
+      (`C-c a s`/`C-c a p`/`C-c a k` — unreachable by typing, see below;
+      `M-x`/Janet only for now) stream a session into a plain read-only
+      `"*acp: <agent>*"` buffer — `TaskRunner`'s own output-buffer convention, kept
+      alongside the real chat panel below rather than replaced. A real dockable chat
+      panel shipped as a follow-up (`UI/AcpPanel.h`, an `OverlayHost` overlay, bottom by
+      default/right via `ned/set-acp-panel-dock`, `acp-toggle-panel` on `C-c c`), built
+      on a new structured transcript (`AcpManager::Transcript()`, `Buffer::Diagnostic`-
+      style wholesale-replace + generation counter) rather than the flat output buffer.
+      Deliberate cuts, still open: permission-prompt *resolution* stays in `BufferView`'s
+      existing echo-area flow, the panel only displays the pending prompt; no scrollback
+      in the panel (same v1 cut `TerminalPanel` itself has); a completion-popover
+      replacement for ghost text, an M-x dropdown, and code-action lists currently
+      squeezed into the one-row EchoArea are still unbuilt (the panel didn't turn into a
+      general popover host); `terminal/*` tool-call support (spawning real
+      `ChildProcess`/pty-backed terminals on the agent's behalf) and `elicitation/create`
+      structured forms — both left undeclared as client capabilities, so a
+      spec-compliant agent won't invoke them, rather than answered badly; multiple
+      concurrent agents/sessions; `session/load` history replay;
       `session/set_config_option`/`session/set_mode` surfaced to the user; MCP server
       passthrough (`session/new`'s `mcpServers` is always sent as `[]`). The exact
       `session/update` sub-schema (message-chunk/tool-call/plan discriminated union)
-      also isn't pinned down here against the authoritative ACP JSON schema, only
+      still isn't pinned down here against the authoritative ACP JSON schema, only
       informally documented at the time this was written — `AcpManager::
-      HandleSessionUpdate`'s defensive, best-effort parsing is expected to need
-      widening once exercised against a real agent.
+      HandleSessionUpdate`'s defensive, best-effort parsing (now including a `"plan"`
+      branch, previously silently dropped) is expected to need widening once exercised
+      against a real agent. Also newly found, not yet fixed: `Keymap::Resolve` returns a
+      `Match` the instant a node's own command is set, before consulting its children, so
+      any `C-c a <x>` binding is unreachable by typing once `C-c a` itself is bound to
+      `org-agenda` — confirmed live, affects `acp-start-session`/`acp-send-prompt`/
+      `acp-stop-session` today; `acp-toggle-panel` avoided the same trap by binding
+      `C-c c` instead. Worth a real fix (Emacs-style: only fire a shorter match once no
+      longer sequence can still complete) if more prefix collisions like this turn up.
 - [ ] **Real-time collaborative editing** (CRDT-based) — the biggest lift in this
       file; last.
 

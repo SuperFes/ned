@@ -18,6 +18,7 @@
 #include "Application.h"
 
 #include "Editor/Acp/AcpManager.h"
+#include "Editor/Acp/AcpPanelConfig.h"
 #include "Editor/BackgroundActivity.h"
 #include "Editor/Backup.h"
 #include "Editor/Commands.h"
@@ -51,6 +52,7 @@
 #include "Text/BufferList.h"
 #include "Text/KillRing.h"
 
+#include "UI/AcpPanel.h"
 #include "UI/ActiveBuffer.h"
 #include "UI/DesktopThemeProbe.h"
 #include "UI/EchoArea.h"
@@ -1014,6 +1016,45 @@ auto main(int argc, char** argv) -> int {
     };
     windowManager->SetOnTerminalToggle(toggleTerminal);
     terminalPanel->SetOnToggleRequest(toggleTerminal);
+
+    // ACP chat panel follow-up: same OverlayHost-overlay shape as
+    // terminalPanel just above, dockable at the bottom (default, mirroring
+    // the terminal drawer's own geometry) or the right edge, per the
+    // Janet-configurable ned/set-acp-panel-dock -- re-read fresh on every
+    // Reflow/Show, the same pull-fresh convention every other percent-style
+    // setting in this file already follows.
+    ned::ui::AcpPanel acpPanel(theme);
+    acpPanel.SetAcpManager(&acpManager);
+    overlays.Add(acpPanel, [](Size size) {
+        const int yMax = std::max(1, size.height - 2); // above the echo area row
+        if (ned::editor::acp::GetAcpPanelDock() == ned::editor::acp::AcpPanelDock::Right) {
+            const int width = std::clamp(size.width * ned::editor::acp::AcpPanelSizePercent() / 100, 20, size.width - 1);
+            return Box{.x_min = size.width - width, .x_max = size.width - 1, .y_min = 1, .y_max = yMax};
+        }
+        const int height = std::max(4, size.height * ned::editor::acp::AcpPanelSizePercent() / 100);
+        return Box{.x_min = 0, .x_max = size.width - 1, .y_min = std::max(1, yMax - height + 1), .y_max = yMax};
+    });
+    overlays.SetFocusReturn(acpPanel, [wm = windowManager.get()] { wm->TakeFocus(); });
+    // Auto-opens the panel the instant a session actually produces
+    // content -- regardless of whether the session was started via the
+    // panel's own future entry points or the existing echo-area
+    // acp-start-session prompt.
+    acpManager.SetOnTranscriptChanged([&overlays, panel = &acpPanel] {
+        if (!overlays.IsVisible(*panel)) {
+            overlays.Show(*panel);
+        }
+    });
+    auto toggleAcpPanel = [&overlays, panel = &acpPanel] {
+        if (!overlays.IsVisible(*panel)) {
+            overlays.Show(*panel);
+            panel->TakeFocus();
+        }
+        else {
+            overlays.Hide(*panel);
+        }
+    };
+    windowManager->SetOnAcpPanelToggle(toggleAcpPanel);
+    acpPanel.SetOnToggleRequest(toggleAcpPanel);
 
     EventLoopCallbacks callbacks;
 

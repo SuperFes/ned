@@ -245,6 +245,12 @@ class WindowManager {
     // above this class entirely.
     void SetOnTerminalToggle(std::function<void()> onToggle);
 
+    // ACP chat panel: same "forwarded to every pane, present and future"
+    // shape as SetOnTerminalToggle immediately above -- acp-toggle-panel can
+    // fire from whichever pane has focus, and the handler (main.cpp's toggle
+    // over the OverlayHost-owned AcpPanel) lives above this class entirely.
+    void SetOnAcpPanelToggle(std::function<void()> onToggle);
+
     // task-runner follow-up: same "forwarded to every pane, present and
     // future" shape as SetProjectSidebar/SetLspManager above.
     void SetTaskRunner(editor::tasks::TaskRunner* taskRunner);
@@ -533,6 +539,7 @@ class WindowManager {
     EventLoop*                        eventLoop_      = nullptr; // see SetEventLoop
     std::function<void(const Theme&)> themeApplier_;             // see SetThemeApplier
     std::function<void()>             onTerminalToggle_;         // see SetOnTerminalToggle
+    std::function<void()>             onAcpPanelToggle_;         // see SetOnAcpPanelToggle
 
     std::unique_ptr<WindowNode> root_;
     Container                   rootComponent_{Axis::Vertical, {}};

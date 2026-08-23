@@ -1,0 +1,255 @@
+//
+// AcpPanel (Source/UI/AcpPanel.h) -- headless coverage over a real
+// AcpManager wired to a pipe-backed AcpClient, the same ManagerFixture/
+// DispatchFrame pattern AcpManagerTest.cpp uses, plus TerminalPanelTest's
+// own per-cell Screen::PixelAt painting convention.
+//
+
+#include <catch2/catch_test_macros.hpp>
+
+#include <memory>
+#include <string>
+
+#include <unistd.h>
+
+#include "Editor/Acp/AcpClient.h"
+#include "Editor/Acp/AcpManager.h"
+#include "Editor/Acp/Transport.h"
+#include "TestEvents.h"
+#include "Text/BufferList.h"
+#include "UI/AcpPanel.h"
+#include "UI/EventLoop.h"
+#include "UI/Widget.h"
+
+namespace {
+
+using ned::editor::acp::AcpClient;
+using ned::editor::acp::AcpManager;
+using ned::editor::acp::Json;
+using ned::editor::acp::Transport;
+using ned::ui::AcpPanel;
+using ned::ui::Box;
+using ned::ui::Canvas;
+using ned::ui::Screen;
+using ned::ui::Theme;
+
+constexpr int kWidth  = 40;
+constexpr int kHeight = 6; // 1 title + 4 content + 1 input
+
+// Mirrors AcpManagerTest.cpp's own MessageReader/ManagerFixture exactly --
+// duplicated rather than shared across Tests/ files, matching this
+// codebase's existing per-test-file fixture convention (no shared Tests/
+// support header for this shape).
+struct MessageReader {
+    int         fd;
+    std::string buffer;
+
+    Json Next() {
+        for (int i = 0; i < 16; ++i) {
+            const auto newlinePos = buffer.find('\n');
+            if (newlinePos != std::string::npos) {
+                const std::string line = buffer.substr(0, newlinePos);
+                buffer.erase(0, newlinePos + 1);
+                return Json::parse(line);
+            }
+            char          chunk[512];
+            const ssize_t n = ::read(fd, chunk, sizeof(chunk));
+            if (n <= 0) {
+                break;
+            }
+            buffer.append(chunk, static_cast<std::size_t>(n));
+        }
+        FAIL("no complete message available on fd");
+        return Json::object();
+    }
+};
+
+std::string ResultFrame(const Json& id, const Json& result) {
+    return Json{{"jsonrpc", "2.0"}, {"id", id}, {"result", result}}.dump();
+}
+
+struct Fixture {
+    ned::ui::EventLoop    eventLoop;
+    ned::text::BufferList bufferList;
+    AcpManager            manager{bufferList, eventLoop};
+    Theme                 theme = ned::ui::DarkTheme();
+    AcpPanel              panel{theme};
+    Screen                screen{kWidth, kHeight};
+
+    int           agentStdinRead   = -1;
+    int           agentStdoutWrite = -1;
+    AcpClient*    client           = nullptr;
+    MessageReader reader{-1};
+
+    Fixture() {
+        panel.SetAcpManager(&manager);
+        panel.SetBox_(Box{.x_min = 0, .x_max = kWidth - 1, .y_min = 0, .y_max = kHeight - 1});
+    }
+
+    void InjectClient() {
+        int clientWritesHere[2];
+        int clientReadsHere[2];
+        REQUIRE(::pipe(clientWritesHere) == 0);
+        REQUIRE(::pipe(clientReadsHere) == 0);
+        agentStdinRead   = clientWritesHere[0];
+        agentStdoutWrite = clientReadsHere[1];
+        reader.fd        = agentStdinRead;
+        client           = &manager.SetClientForTesting(
+            std::make_unique<AcpClient>(Transport(clientReadsHere[0], clientWritesHere[1]), eventLoop));
+    }
+
+    void StartActiveSession(const std::string& agentName) {
+        manager.StartSession(agentName);
+        const Json initializeRequest = reader.Next();
+        client->DispatchFrame(ResultFrame(initializeRequest["id"], Json::object()));
+        const Json sessionNewRequest = reader.Next();
+        client->DispatchFrame(ResultFrame(sessionNewRequest["id"], Json{{"sessionId", "s1"}}));
+        REQUIRE(manager.State() == AcpManager::SessionState::Active);
+    }
+
+    void Paint() {
+        panel.Paint(Canvas(screen, panel.Box_()));
+    }
+
+    [[nodiscard]] std::string RowText(int y) {
+        std::string text;
+        for (int x = 0; x < kWidth; ++x) {
+            text += screen.PixelAt(x, y).character;
+        }
+        while (!text.empty() && text.back() == ' ') {
+            text.pop_back();
+        }
+        return text;
+    }
+
+    ~Fixture() {
+        if (agentStdoutWrite >= 0) {
+            ::close(agentStdoutWrite);
+        }
+        if (agentStdinRead >= 0) {
+            ::close(agentStdinRead);
+        }
+    }
+};
+
+} // namespace
+
+TEST_CASE("AcpPanel's title row shows the agent name and state", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code");
+    fixture.Paint();
+
+    REQUIRE(fixture.RowText(0).find("claude-code") != std::string::npos);
+    REQUIRE(fixture.RowText(0).find("[active]") != std::string::npos);
+}
+
+TEST_CASE("AcpPanel renders a Plan transcript entry's checkbox glyphs", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code");
+
+    const Json plan = {
+        {"jsonrpc", "2.0"},
+        {"method", "session/update"},
+        {"params",
+         {{"sessionId", "s1"},
+          {"update",
+           {{"sessionUpdate", "plan"}, {"entries", Json::array({Json{{"content", "Trim common suffix"}, {"status", "completed"}}})}}}}},
+    };
+    fixture.client->DispatchFrame(plan.dump());
+    fixture.Paint();
+
+    bool foundCheckedStep = false;
+    for (int y = 1; y < kHeight - 1; ++y) {
+        if (fixture.RowText(y).find("[x] Trim common suffix") != std::string::npos) {
+            foundCheckedStep = true;
+        }
+    }
+    REQUIRE(foundCheckedStep);
+}
+
+TEST_CASE("AcpPanel's input row shows typed text and a caret", "[AcpPanel]") {
+    Fixture fixture;
+
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Character('h')));
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Character('i')));
+    fixture.Paint();
+
+    const std::string inputRow = fixture.RowText(kHeight - 1);
+    REQUIRE(inputRow.find("Prompt: hi") != std::string::npos);
+    REQUIRE(fixture.screen.PixelAt(static_cast<int>(std::string("Prompt: hi").size()), kHeight - 1).inverted);
+}
+
+TEST_CASE("AcpPanel's Backspace deletes the last typed character", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.panel.OnEvent(ned::ui::test::Character('h'));
+    fixture.panel.OnEvent(ned::ui::test::Character('i'));
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Backspace()));
+    fixture.Paint();
+
+    REQUIRE(fixture.RowText(kHeight - 1).find("Prompt: h") != std::string::npos);
+    REQUIRE(fixture.RowText(kHeight - 1).find("Prompt: hi") == std::string::npos);
+}
+
+TEST_CASE("AcpPanel's Enter sends the typed prompt through AcpManager and clears the input row", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code");
+
+    fixture.panel.OnEvent(ned::ui::test::Character('h'));
+    fixture.panel.OnEvent(ned::ui::test::Character('i'));
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Return()));
+
+    const Json promptRequest = fixture.reader.Next();
+    REQUIRE(promptRequest["method"] == "session/prompt");
+    REQUIRE(promptRequest["params"]["prompt"][0]["text"] == "hi");
+
+    fixture.Paint();
+    REQUIRE(fixture.RowText(kHeight - 1) == "Prompt:");
+}
+
+TEST_CASE("AcpPanel's Escape and its [x] close button both invoke the toggle callback", "[AcpPanel]") {
+    Fixture fixture;
+    int     toggles = 0;
+    fixture.panel.SetOnToggleRequest([&toggles] { ++toggles; });
+
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Escape()));
+    REQUIRE(toggles == 1);
+
+    fixture.panel.OnEvent(
+        ned::ui::test::Mouse(kWidth - 3, 0, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Pressed));
+    REQUIRE(toggles == 2);
+}
+
+TEST_CASE("AcpPanel shows the pending permission prompt's options, display-only", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code");
+
+    const Json request = {
+        {"jsonrpc", "2.0"},
+        {"id", 3},
+        {"method", "session/request_permission"},
+        {"params",
+         {{"sessionId", "s1"},
+          {"toolCall", {{"title", "Edit main.cpp"}}},
+          {"options", Json::array({Json{{"optionId", "allow-once"}, {"name", "Allow once"}, {"kind", "allow_once"}}})}}},
+    };
+    fixture.client->DispatchFrame(request.dump());
+    fixture.Paint();
+
+    bool foundDescription = false;
+    bool foundOption      = false;
+    for (int y = 1; y < kHeight - 1; ++y) {
+        const std::string row = fixture.RowText(y);
+        if (row.find("Edit main.cpp") != std::string::npos) {
+            foundDescription = true;
+        }
+        if (row.find("[1] Allow once") != std::string::npos) {
+            foundOption = true;
+        }
+    }
+    REQUIRE(foundDescription);
+    REQUIRE(foundOption);
+}

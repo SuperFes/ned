@@ -645,6 +645,10 @@ void BufferView::SetOnTerminalToggle(std::function<void()> handler) {
     onTerminalToggle_ = std::move(handler);
 }
 
+void BufferView::SetOnAcpPanelToggle(std::function<void()> handler) {
+    onAcpPanelToggle_ = std::move(handler);
+}
+
 void BufferView::SetOnActiveBufferChanged(std::function<void(text::Buffer&)> handler) {
     onActiveBufferChanged_ = std::move(handler);
 }
@@ -3974,6 +3978,14 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             return;
         case editor::InteractiveRequest::AcpStopSession:
             statusMessage_ = acpManager_ ? acpManager_->StopSession() : "No ACP manager available.";
+            return;
+        case editor::InteractiveRequest::AcpTogglePanel:
+            // ACP chat panel: one-shot direct action, same shape as
+            // ToggleTerminal above -- the panel lives above this class,
+            // only forward.
+            if (onAcpPanelToggle_) {
+                onAcpPanelToggle_();
+            }
             return;
         // VCS blame gutter follow-up: one-shot direct actions, same shape
         // as ProjectAgenda/LspGotoDefinition above -- doesn't touch

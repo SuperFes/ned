@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -271,4 +272,142 @@ TEST_CASE("AcpManager::StopSession sends session/close and reaches Inactive", "[
 
     const Json closeRequest = fixture.reader.Next();
     REQUIRE(closeRequest["method"] == "session/close");
+}
+
+namespace {
+
+Json AgentMessageChunkUpdate(const std::string& text) {
+    return Json{
+        {"jsonrpc", "2.0"},
+        {"method", "session/update"},
+        {"params", {{"sessionId", "s1"}, {"update", {{"sessionUpdate", "agent_message_chunk"}, {"content", {{"type", "text"}, {"text", text}}}}}}},
+    };
+}
+
+} // namespace
+
+TEST_CASE("AcpManager coalesces consecutive agent_message_chunk updates into one transcript entry", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent"); // already pushes one "session ready" SessionEvent entry
+    const std::size_t baseline             = fixture.manager.Transcript().size();
+    const std::size_t generationAfterReady = fixture.manager.TranscriptGeneration();
+
+    fixture.client->DispatchFrame(AgentMessageChunkUpdate("Hello").dump());
+    fixture.client->DispatchFrame(AgentMessageChunkUpdate(" there").dump());
+
+    const auto& transcript = fixture.manager.Transcript();
+    REQUIRE(transcript.size() == baseline + 1);
+    REQUIRE(transcript.back().kind == AcpManager::TranscriptEntry::Kind::AgentText);
+    REQUIRE(transcript.back().text == "Hello there");
+    REQUIRE(fixture.manager.TranscriptGeneration() == generationAfterReady + 2);
+}
+
+TEST_CASE("AcpManager's transcript entry count and text mirror a session/prompt exchange", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+
+    fixture.manager.SendPrompt("what does this do?");
+    const Json promptRequest = fixture.reader.Next();
+    fixture.client->DispatchFrame(ResultFrame(promptRequest["id"], Json{{"stopReason", "end_turn"}}));
+
+    const auto& transcript = fixture.manager.Transcript();
+    const auto  userEntry =
+        std::find_if(transcript.begin(), transcript.end(), [](const auto& e) { return e.kind == AcpManager::TranscriptEntry::Kind::UserMessage; });
+    REQUIRE(userEntry != transcript.end());
+    REQUIRE(userEntry->text == "what does this do?");
+}
+
+TEST_CASE("AcpManager parses a plan session/update into one Plan transcript entry and replaces it on the next plan update", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+    const std::size_t baseline = fixture.manager.Transcript().size();
+
+    const Json firstPlan = {
+        {"jsonrpc", "2.0"},
+        {"method", "session/update"},
+        {"params",
+         {{"sessionId", "s1"},
+          {"update",
+           {{"sessionUpdate", "plan"},
+            {"entries", Json::array({Json{{"content", "Trim common suffix first"}, {"status", "completed"}},
+                                     Json{{"content", "Re-run LCS diff"}, {"status", "pending"}}})}}}}},
+    };
+    fixture.client->DispatchFrame(firstPlan.dump());
+
+    REQUIRE(fixture.manager.Transcript().size() == baseline + 1);
+    const auto& planEntry = fixture.manager.Transcript().back();
+    REQUIRE(planEntry.kind == AcpManager::TranscriptEntry::Kind::Plan);
+    REQUIRE(planEntry.planSteps.size() == 2);
+    REQUIRE(planEntry.planSteps[0] == "[x] Trim common suffix first");
+    REQUIRE(planEntry.planSteps[1] == "[ ] Re-run LCS diff");
+
+    const std::size_t generationAfterFirstPlan = fixture.manager.TranscriptGeneration();
+
+    const Json secondPlan = {
+        {"jsonrpc", "2.0"},
+        {"method", "session/update"},
+        {"params",
+         {{"sessionId", "s1"},
+          {"update",
+           {{"sessionUpdate", "plan"},
+            {"entries", Json::array({Json{{"content", "Trim common suffix first"}, {"status", "completed"}},
+                                     Json{{"content", "Re-run LCS diff"}, {"status", "completed"}},
+                                     Json{{"content", "Update tests"}, {"status", "pending"}}})}}}}},
+    };
+    fixture.client->DispatchFrame(secondPlan.dump());
+
+    // Replaced in place, not appended -- same entry count, new content.
+    REQUIRE(fixture.manager.Transcript().size() == baseline + 1);
+    REQUIRE(fixture.manager.Transcript().back().planSteps.size() == 3);
+    REQUIRE(fixture.manager.Transcript().back().planSteps[1] == "[x] Re-run LCS diff");
+    REQUIRE(fixture.manager.TranscriptGeneration() > generationAfterFirstPlan);
+}
+
+TEST_CASE("AcpManager matches tool_call_update to its tool_call by toolCallId instead of appending a duplicate entry", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+    const std::size_t baseline = fixture.manager.Transcript().size();
+
+    const Json toolCall = {
+        {"jsonrpc", "2.0"},
+        {"method", "session/update"},
+        {"params",
+         {{"sessionId", "s1"},
+          {"update", {{"sessionUpdate", "tool_call"}, {"toolCallId", "tc1"}, {"title", "read_text_file"}, {"status", "pending"}}}}},
+    };
+    fixture.client->DispatchFrame(toolCall.dump());
+
+    REQUIRE(fixture.manager.Transcript().size() == baseline + 1);
+    REQUIRE(fixture.manager.Transcript().back().status == "pending");
+
+    const Json toolCallUpdate = {
+        {"jsonrpc", "2.0"},
+        {"method", "session/update"},
+        {"params",
+         {{"sessionId", "s1"},
+          {"update", {{"sessionUpdate", "tool_call_update"}, {"toolCallId", "tc1"}, {"title", "read_text_file"}, {"status", "completed"}}}}},
+    };
+    fixture.client->DispatchFrame(toolCallUpdate.dump());
+
+    REQUIRE(fixture.manager.Transcript().size() == baseline + 1); // updated in place, not appended
+    REQUIRE(fixture.manager.Transcript().back().status == "completed");
+}
+
+TEST_CASE("AcpManager::SetOnTranscriptChanged fires on every transcript-affecting event", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+
+    int callCount = 0;
+    fixture.manager.SetOnTranscriptChanged([&] { ++callCount; });
+
+    fixture.StartActiveSession("test-agent"); // at least the "session ready" event
+    REQUIRE(callCount > 0);
+
+    const int countBeforeChunk = callCount;
+    fixture.client->DispatchFrame(AgentMessageChunkUpdate("hi").dump());
+    REQUIRE(callCount == countBeforeChunk + 1);
 }
