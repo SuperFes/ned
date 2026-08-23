@@ -6037,6 +6037,23 @@ bool BufferView::OnMouseEvent(const Event& event) {
         const std::size_t offset = ByteOffsetForPoint(mouse->at);
         buffer.ClearMark();
         buffer.SetPoint(offset);
+
+        // Universal-clickable-affordances follow-up: Ctrl+Click opens the
+        // link under the click, the mouse counterpart to open-link-at-
+        // point's own C-c C-l -- same VS Code/browser convention (plain
+        // click still just places point, matching every other mode) and
+        // available in every mode without any per-mode wiring, since
+        // OpenLinkAtPoint() already tries Org's bracket links first and
+        // falls back to the generic bare-URL/file-path scan for everything
+        // else. Takes priority over the read-only visit-result click below
+        // -- an explicit Ctrl+Click is a more specific request than a plain
+        // click, so it shouldn't silently fall back to a visit when the
+        // clicked position isn't on a link.
+        if (mouse->control) {
+            OpenLinkAtPoint();
+            return true;
+        }
+
         dragAnchor_ = offset;
         // project-search-visit-result follow-up: a click on a read-only
         // ("tossable") results buffer visits the result under the click,

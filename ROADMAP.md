@@ -57,6 +57,38 @@ Notcurses (TermOx → FTXUI → Notcurses over the project's life).
       migrate onto it), per-capture styling in the Minimap (class-level only
       there), and theme-file serialization of capture overrides (overlaps the
       bold/italic round-trip loose end below).
+- [ ] **Header/source switching** (`M-o` or similar — real go-to-definition,
+      `lsp-goto-definition`/`M-.`, already ships via ordinary
+      `textDocument/definition`; this is the distinct "same logical file, other
+      half" hop). clangd exposes `textDocument/switchSourceHeader` as a custom
+      LSP extension for exactly this — no new wire-protocol plumbing needed,
+      `LspClient::SendRequest` already takes an arbitrary method string, so this
+      is a new `LspManager` method plus a command/keybinding. Only meaningful
+      where a server actually implements the extension (clangd does; nothing
+      else bundled-config'd today does); needs a non-LSP fallback for languages
+      with no such extension and no clean single-definition-file split anyway
+      (same-basename/known-extension-pairs heuristic, scanning sibling
+      directories — a real fallback, not a v1 cut, since C/C++ users are the
+      only ones with a server-native answer).
+- [ ] **Go-to-file-at-point for include/import-style directives**
+      (`#include "foo.h"`/`<vector>`, Python `import`/`from ... import`, JS/TS
+      `import`/`require(...)`, Rust `mod`/`use`, ...) — distinct from
+      `Link.h`'s generic bare-path detection (`DetectLinkAtPoint`'s file
+      candidate needs a whitespace-delimited, slash-or-extension-shaped token;
+      a quoted `"foo.h"` or angle-bracketed `<vector>` doesn't parse as one,
+      and even a correctly-extracted target needs *language-specific*
+      resolution rules Link.h has no notion of — quote-form C/C++ searches the
+      including file's own directory before any include path, angle-form
+      searches only compiler/project include paths (clangd's own compilation
+      database, not filesystem-guessable); JS/TS needs `node_modules`
+      resolution plus extension/`index.*` inference; Python needs package/
+      `sys.path`-style resolution). Likely shape: a small per-mode
+      `IncludeTarget` extraction function (tree-sitter query per language,
+      mirroring `Mode::fold`/`expandSelection`'s "one function pointer per
+      capability" shape) feeding a per-language resolver, with LSP as a
+      first-choice resolver where a server can answer it (clangd again
+      supports resolving `#include` targets via `textDocument/documentLink`)
+      and the hand-rolled resolver as fallback where it can't.
 
 ### Navigation & search
 
@@ -91,9 +123,6 @@ Notcurses (TermOx → FTXUI → Notcurses over the project's life).
 - [ ] Clocking/time tracking.
 - [ ] Markdown (GFM) table editing surface — Org's table ops didn't carry over because
       GFM's delimiter row holds per-column alignment state a column op must rewrite.
-- [ ] **Universal clickable in-buffer affordances** — file paths and URLs clickable in
-      *every* mode (open the file, `xdg-open` the URL), generalizing the
-      click-to-action plumbing Org links use rather than keeping it Org-specific.
 
 ### Editor ergonomics
 
