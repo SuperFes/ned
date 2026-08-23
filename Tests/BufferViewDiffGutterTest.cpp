@@ -155,6 +155,46 @@ TEST_CASE("A pane's very first Paint requests the diff for its initial buffer", 
     ned::editor::vcs::ClearRegistry();
 }
 
+TEST_CASE("RefreshVcsDiff requests a fresh diff for the active buffer on demand", "[BufferView][Vcs]") {
+    // vcs-diff-gutter-staleness follow-up: the public entry point
+    // WindowManager's autosave-timer sweep and toggle-terminal's closing
+    // edge both call, to catch VCS state that changed for a reason ned
+    // itself didn't cause (a commit run from another terminal, or from
+    // inside ned's own embedded TerminalPanel).
+    ned::editor::vcs::ClearRegistry();
+    bool diffRequested = false;
+    ned::editor::vcs::RegisterProvider("recording", std::make_unique<RecordingProvider>(diffRequested));
+    const auto previousRoot = ned::editor::ProjectRoot();
+    ned::editor::SetProjectRoot("/tmp");
+
+    {
+        Fixture fixture;
+        fixture.buffer.SetPath("/tmp/ned-refresh-diff-test.c");
+        fixture.buffer.InsertAtPoint("hello");
+
+        ned::ui::EventLoop          eventLoop;
+        ned::editor::vcs::VcsRunner runner(eventLoop);
+
+        BufferView view = fixture.View();
+        view.SetVcsRunner(&runner);
+
+        REQUIRE_FALSE(diffRequested); // constructing/wiring alone doesn't request anything
+        view.RefreshVcsDiff();
+        REQUIRE(diffRequested);
+    }
+
+    ned::editor::SetProjectRoot(previousRoot);
+    ned::editor::vcs::ClearRegistry();
+}
+
+TEST_CASE("RefreshVcsDiff is a silent no-op with no VcsRunner wired", "[BufferView][Vcs]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("hello");
+    BufferView view = fixture.View();
+
+    view.RefreshVcsDiff(); // must not throw/crash
+}
+
 TEST_CASE("Diff markers render in the diff column itself, not under the status swatch", "[BufferView][Vcs]") {
     // Regression test: the swatch/notch used to be drawn at statusStart --
     // one column right of the diff column that GutterWidth reserves --

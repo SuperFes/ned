@@ -1,19 +1,26 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <filesystem>
+#include <memory>
+#include <stdexcept>
 #include <string>
 
 #include "Editor/Commands.h"
 #include "Editor/MinimapSettings.h"
 #include "Editor/Mode.h"
+#include "Editor/ProjectRoot.h"
 #include "Editor/ProjectSession.h"
 #include "Editor/PromptHistory.h"
 #include "Editor/Register.h"
+#include "Editor/Vcs/VcsProvider.h"
+#include "Editor/Vcs/VcsProviderRegistry.h"
+#include "Editor/Vcs/VcsRunner.h"
 #include "TestEvents.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
 #include "Text/KillRing.h"
 #include "UI/ActiveBuffer.h"
+#include "UI/EventLoop.h"
 #include "UI/Theme.h"
 #include "UI/WindowManager.h"
 
@@ -89,6 +96,30 @@ void RenderFullScreen(ned::ui::Widget& root, ned::ui::Screen& screen) {
     root.SetBox_(ned::ui::Box{.x_min = 0, .x_max = screen.Width() - 1, .y_min = 0, .y_max = screen.Height() - 1});
     root.Paint(ned::ui::Canvas(screen, root.Box_()));
 }
+
+// vcs-diff-gutter-staleness follow-up: mirrors BufferViewDiffGutterTest.cpp's
+// own RecordingProvider (a distinct anonymous-namespace class -- can't share
+// across translation units), counting instead of just recording so a
+// multi-pane test can confirm every pane, not just one, requested a diff.
+// Detect below is VcsProvider's only pure-virtual method; every other
+// operation not overridden here already default-throws "not supported by
+// this provider," which is fine -- nothing but DiffArgv is ever called.
+class CountingDiffProvider : public ned::editor::vcs::VcsProvider {
+  public:
+    explicit CountingDiffProvider(int& count) : count_(count) {
+    }
+
+    [[nodiscard]] bool Detect(const std::filesystem::path&) const override {
+        return true;
+    }
+    [[nodiscard]] ned::editor::vcs::VcsCommandSpec DiffArgv(const std::filesystem::path&) const override {
+        ++count_;
+        throw std::runtime_error("recorded -- no real spawn wanted");
+    }
+
+  private:
+    int& count_;
+};
 
 } // namespace
 
@@ -493,6 +524,45 @@ TEST_CASE("SetOnTerminalToggle reaches the focused pane and survives a split", "
     FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Character("o")}); // focus the new pane
     FeedSequence(root, {ned::ui::test::Ctrl('c'), ned::ui::test::Character('t')});
     REQUIRE(toggles == 2);
+}
+
+TEST_CASE("RefreshVcsDiffGutters requests a fresh diff for every live pane, not just the focused one",
+          "[WindowManager][Vcs]") {
+    // vcs-diff-gutter-staleness follow-up: WindowManager's own sweep (the
+    // autosave-timer tick, and toggle-terminal's closing edge) must reach
+    // every open pane, not only the focused one -- a split showing the same
+    // file in two panes should refresh both.
+    ned::editor::vcs::ClearRegistry();
+    int  diffRequests = 0;
+    ned::editor::vcs::RegisterProvider("counting", std::make_unique<CountingDiffProvider>(diffRequests));
+    const auto previousRoot = ned::editor::ProjectRoot();
+    ned::editor::SetProjectRoot("/tmp");
+
+    {
+        Fixture                fixture;
+        fixture.buffer.SetPath("/tmp/ned-window-manager-diff-test.c");
+        fixture.buffer.InsertAtPoint("hello");
+
+        ned::ui::WindowManager manager = fixture.Manager();
+        manager.TakeFocus();
+
+        ned::ui::EventLoop          eventLoop;
+        ned::editor::vcs::VcsRunner runner(eventLoop);
+        manager.SetVcsRunner(&runner);
+
+        manager.RefreshVcsDiffGutters();
+        REQUIRE(diffRequests == 1); // one window so far
+
+        ned::ui::Widget& root = manager.RootComponent();
+        FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Character("2")}); // split-window-below
+        REQUIRE(manager.WindowCount() == 2);
+
+        manager.RefreshVcsDiffGutters();
+        REQUIRE(diffRequests == 3); // +2 -- both panes (same underlying buffer) refreshed
+    }
+
+    ned::editor::SetProjectRoot(previousRoot);
+    ned::editor::vcs::ClearRegistry();
 }
 
 TEST_CASE("CaptureWindowLayout captures a split tree and the focused leaf's path", "[WindowManager]") {

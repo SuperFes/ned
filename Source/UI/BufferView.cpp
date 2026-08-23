@@ -1146,6 +1146,10 @@ void BufferView::RequestDiffForCurrentBuffer() {
         [](const std::string&) {}); // silent -- see this method's own header comment
 }
 
+void BufferView::RefreshVcsDiff() {
+    RequestDiffForCurrentBuffer();
+}
+
 void BufferView::EnsureHiddenLineRangesCache() const {
     text::Buffer& buffer = activeBuffer_.Get();
 
