@@ -17,6 +17,9 @@ namespace {
     std::mutex g_debounceMutex;
     int        g_completionDebounceMs = 350;
 
+    std::mutex g_diagnosticsDebounceMutex;
+    int        g_diagnosticsDebounceMs = 500;
+
 } // namespace
 
 void SetLspServerCommand(const std::string& language, std::vector<std::string> argv) {
@@ -56,6 +59,16 @@ void SetLspCompletionDebounceMs(int milliseconds) {
 int LspCompletionDebounceMs() {
     const std::lock_guard<std::mutex> lock(g_debounceMutex);
     return g_completionDebounceMs;
+}
+
+void SetLspDiagnosticsDebounceMs(int milliseconds) {
+    const std::lock_guard<std::mutex> lock(g_diagnosticsDebounceMutex);
+    g_diagnosticsDebounceMs = (milliseconds > 0) ? milliseconds : 1;
+}
+
+int LspDiagnosticsDebounceMs() {
+    const std::lock_guard<std::mutex> lock(g_diagnosticsDebounceMutex);
+    return g_diagnosticsDebounceMs;
 }
 
 } // namespace ned::editor::lsp

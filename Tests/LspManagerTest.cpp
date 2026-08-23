@@ -1,10 +1,12 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <poll.h>
@@ -104,6 +106,30 @@ int RequestIdFromFrame(const std::string& raw) {
 bool NoFrameArrives(int fd) {
     pollfd pfd{.fd = fd, .events = POLLIN, .revents = 0};
     return ::poll(&pfd, 1, 200) == 0; // 0 == timed out, nothing readable
+}
+
+// diagnostics-debounce follow-up: HandlePublishDiagnostics no longer applies
+// a publish synchronously -- it (re)arms a per-buffer DeadlineTimer (see
+// LspServerConfig.h's LspDiagnosticsDebounceMs) whose fire is Post()ed onto
+// eventLoop from a background thread. Polls DrainPosted_ until predicate is
+// true or a generous deadline passes, the same real-timer idiom
+// PtyProcessTest.cpp's own tests already use.
+template <typename Predicate>
+void WaitUntil(ned::ui::EventLoop& eventLoop, Predicate predicate) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (!predicate() && std::chrono::steady_clock::now() < deadline) {
+        eventLoop.DrainPosted_();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+}
+
+// A plain byte-count check is a sufficient predicate whenever a publish
+// changes the total, but not when one message is swapped for another at the
+// same count (see "A second publish from one source replaces only that
+// source's own diagnostics slice" below, which waits on message content
+// instead).
+void WaitForDiagnosticCount(ned::ui::EventLoop& eventLoop, const Buffer& buffer, std::size_t expectedCount) {
+    WaitUntil(eventLoop, [&] { return buffer.Diagnostics().size() == expectedCount; });
 }
 
 } // namespace
@@ -361,10 +387,92 @@ TEST_CASE("LspManager routes a real publishDiagnostics notification into Buffer:
                                         {"message", "syntax error"}}})}}},
     };
     client->DispatchFrame(notification.dump());
+    WaitForDiagnosticCount(eventLoop, buffer, 1);
 
     REQUIRE(buffer.Diagnostics().size() == 1);
     REQUIRE(buffer.Diagnostics()[0].message == "syntax error");
     REQUIRE(buffer.Diagnostics()[0].severity == Buffer::Diagnostic::Severity::Error);
+}
+
+TEST_CASE("A publishDiagnostics notification is not applied until the debounce delay elapses", "[Lsp]") {
+    const int originalDebounceMs = ned::editor::lsp::LspDiagnosticsDebounceMs();
+    ned::editor::lsp::SetLspDiagnosticsDebounceMs(100);
+
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-diagnostics-debounce-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("bad code");
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    const Json notification = {
+        {"jsonrpc", "2.0"},
+        {"method", "textDocument/publishDiagnostics"},
+        {"params",
+         {{"uri", "file://" + path.string()},
+          {"diagnostics", Json::array({{{"range", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 3}}}}},
+                                        {"severity", 1},
+                                        {"message", "syntax error"}}})}}},
+    };
+    client->DispatchFrame(notification.dump());
+    eventLoop.DrainPosted_();
+    REQUIRE(buffer.Diagnostics().empty()); // still pending -- the debounce delay hasn't elapsed yet
+
+    WaitForDiagnosticCount(eventLoop, buffer, 1);
+    REQUIRE(buffer.Diagnostics().size() == 1);
+
+    ned::editor::lsp::SetLspDiagnosticsDebounceMs(originalDebounceMs);
+}
+
+TEST_CASE("A rapid burst of publishes collapses into a single application using only the latest content", "[Lsp]") {
+    const int originalDebounceMs = ned::editor::lsp::LspDiagnosticsDebounceMs();
+    ned::editor::lsp::SetLspDiagnosticsDebounceMs(150);
+
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned-lsp-manager-diagnostics-burst-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("bad code bad code bad code");
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    auto notificationFor = [&](const std::string& message) {
+        return Json{
+            {"jsonrpc", "2.0"},
+            {"method", "textDocument/publishDiagnostics"},
+            {"params",
+             {{"uri", "file://" + path.string()},
+              {"diagnostics", Json::array({{{"range", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 3}}}}},
+                                            {"severity", 1},
+                                            {"message", message}}})}}},
+        };
+    };
+
+    // Three publishes in quick succession -- each one rearms the same
+    // buffer-level debounce timer, so only the last should ever reach the
+    // buffer, and only once, well after the burst.
+    client->DispatchFrame(notificationFor("first pass").dump());
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    client->DispatchFrame(notificationFor("second pass").dump());
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    client->DispatchFrame(notificationFor("final pass").dump());
+    eventLoop.DrainPosted_();
+    REQUIRE(buffer.Diagnostics().empty()); // still coalescing -- none of the three has landed yet
+
+    WaitUntil(eventLoop, [&] { return !buffer.Diagnostics().empty(); });
+    REQUIRE(buffer.Diagnostics().size() == 1);
+    REQUIRE(buffer.Diagnostics()[0].message == "final pass");
+
+    ned::editor::lsp::SetLspDiagnosticsDebounceMs(originalDebounceMs);
 }
 
 TEST_CASE("LspManager::RequestCodeActions sends the range and overlapping diagnostics, and round-trips a real response",
@@ -1068,6 +1176,7 @@ TEST_CASE("Diagnostics published by the primary language server and the prose ch
                                         {"message", "possible typo: teh"}}})}}},
     };
     proseClient->DispatchFrame(proseDiagnostics.dump());
+    WaitForDiagnosticCount(eventLoop, buffer, 2);
 
     REQUIRE(buffer.Diagnostics().size() == 2); // neither server's publish clobbered the other's
     bool sawSyntaxError = false;
@@ -1123,12 +1232,21 @@ TEST_CASE("A second publish from one source replaces only that source's own diag
 
     primaryClient->DispatchFrame(diagnosticsNotification("first error").dump());
     proseClient->DispatchFrame(diagnosticsNotification("possible typo: teh").dump());
+    WaitForDiagnosticCount(eventLoop, buffer, 2);
     REQUIRE(buffer.Diagnostics().size() == 2);
 
     // Primary republishes its own full current set (a real server does this
     // on every didChange) -- only its own slice is replaced, the prose
     // checker's diagnostic from before must survive untouched.
     primaryClient->DispatchFrame(diagnosticsNotification("second error").dump());
+    // Total count stays 2 across this replacement (one message swapped for
+    // another), so WaitForDiagnosticCount's own count check can't detect
+    // when the debounced application has actually landed -- wait on the
+    // new message's content instead.
+    WaitUntil(eventLoop, [&] {
+        return std::any_of(buffer.Diagnostics().begin(), buffer.Diagnostics().end(),
+                            [](const Buffer::Diagnostic& d) { return d.message == "second error"; });
+    });
 
     REQUIRE(buffer.Diagnostics().size() == 2);
     bool sawSecondError = false;

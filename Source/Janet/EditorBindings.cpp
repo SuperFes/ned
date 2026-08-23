@@ -377,6 +377,14 @@ namespace {
         editor::lsp::SetLspCompletionDebounceMs(static_cast<int>(milliseconds));
     }
 
+    // diagnostics-debounce follow-up: same "just forward to the process-wide
+    // setter" shape as NedSetLspCompletionDebounce, for how long a buffer's
+    // inline diagnostics wait after the server's most recent publish before
+    // actually updating (see LspManager::HandlePublishDiagnostics).
+    void NedSetLspDiagnosticsDebounce(std::int64_t milliseconds) {
+        editor::lsp::SetLspDiagnosticsDebounceMs(static_cast<int>(milliseconds));
+    }
+
     // toolchain-include-paths follow-up: same "just forward to the
     // process-wide setter" shape as NedSetLspCompletionDebounce above.
     void NedSetIncludePathCacheTtlSeconds(std::int64_t seconds) {
@@ -804,6 +812,12 @@ void InstallEditorBindings(Environment& env) {
         "ned", "set-lsp-completion-debounce",
         "Set the delay, in milliseconds, after the last relevant keystroke before an automatic completion request "
         "is sent (default 350). Non-positive values are clamped to 1.");
+    env.Register<&NedSetLspDiagnosticsDebounce>(
+        "ned", "set-lsp-diagnostics-debounce",
+        "Set the delay, in milliseconds, after the LSP server's most recently received diagnostics publish for a "
+        "buffer before it's actually applied (default 500) -- keeps inline diagnostics from repainting on nearly "
+        "every keystroke while typing, settling in only once the server goes quiet for this long. Non-positive "
+        "values are clamped to 1.");
     env.Register<&NedSetIncludePathCacheTtlSeconds>(
         "ned", "set-include-path-cache-ttl-seconds",
         "Set how long (in seconds) a compiler-derived default include-path result stays cached before "

@@ -525,6 +525,7 @@ void LspManager::NotifyBufferClosed(text::Buffer& buffer) {
         bufferState_.erase(it);
     }
     diagnosticsBySource_.erase(&buffer);
+    diagnosticsDebounceTimers_.erase(&buffer); // cancels a pending timer before it can fire against a dead buffer
 }
 
 void LspManager::HandlePublishDiagnostics(const Json& params, const std::string& language) {
@@ -578,7 +579,15 @@ void LspManager::HandlePublishDiagnostics(const Json& params, const std::string&
     // (recorded independently the same way) is untouched. PushMergedDiagnostics
     // is what actually reaches buffer.SetDiagnostics.
     diagnosticsBySource_[buffer][language] = std::move(diagnostics);
-    PushMergedDiagnostics(*buffer);
+
+    // diagnostics-debounce follow-up: applying this immediately would mean
+    // inline diagnostics repaint on essentially every keystroke (a server
+    // re-publishes after every didChange, which SyncBuffer sends on every
+    // content-generation bump) -- (re)arm buffer's own debounce timer
+    // instead, collapsing a rapid-typing burst of publishes into one
+    // application once the buffer goes quiet for a beat.
+    diagnosticsDebounceTimers_[buffer].Arm(eventLoop_, std::chrono::milliseconds(LspDiagnosticsDebounceMs()),
+                                           [this, buffer] { PushMergedDiagnostics(*buffer); });
 }
 
 void LspManager::PushMergedDiagnostics(text::Buffer& buffer) {

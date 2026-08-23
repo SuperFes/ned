@@ -443,6 +443,16 @@ class LspManager {
     // actually reaches buffer.SetDiagnostics.
     std::unordered_map<text::Buffer*, std::unordered_map<std::string, std::vector<text::Buffer::Diagnostic>>> diagnosticsBySource_;
 
+    // diagnostics-debounce follow-up: one debounce timer per buffer with a
+    // pending publish -- HandlePublishDiagnostics (re)arms the buffer's
+    // entry on every publish instead of pushing to buffer.SetDiagnostics
+    // immediately, so a burst of publishes from rapid typing collapses into
+    // a single application once LspDiagnosticsDebounceMs() passes with no
+    // further publish for that buffer. NotifyBufferClosed erases (and so
+    // cancels) a buffer's entry before it can fire against a Buffer* that
+    // may no longer be valid.
+    std::unordered_map<text::Buffer*, ned::ui::DeadlineTimer> diagnosticsDebounceTimers_;
+
     // error-visibility follow-up. A process-lifetime latch, keyed by
     // language, on the exact argv that last failed to spawn -- lets
     // ClientForLanguage stop retrying (and re-logging) a known-bad command

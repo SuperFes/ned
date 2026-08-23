@@ -55,6 +55,18 @@ void              SetLspAutoCompleteEnabled(bool enabled); // default true
 void             SetLspCompletionDebounceMs(int milliseconds); // default 350
 [[nodiscard]] int LspCompletionDebounceMs();
 
+// diagnostics-debounce follow-up: how long LspManager waits, after the most
+// recently received publishDiagnostics for a buffer, before actually
+// applying the merged result to it (see LspManager::HandlePublishDiagnostics).
+// A server re-analyzes and republishes after every didChange -- which
+// SyncBuffer sends on every keystroke's content generation bump -- so
+// without this, inline diagnostic squiggles/callouts churn on essentially
+// every character typed rather than settling in once typing actually
+// pauses. Same non-positive-clamped-to-1ms convention as the completion
+// debounce above.
+void             SetLspDiagnosticsDebounceMs(int milliseconds); // default 500
+[[nodiscard]] int LspDiagnosticsDebounceMs();
+
 } // namespace ned::editor::lsp
 
 #endif // NED_EDITOR_LSP_LSPSERVERCONFIG_H
