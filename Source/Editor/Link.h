@@ -35,22 +35,41 @@ struct DetectedLink {
 
 // Scans only the line containing point (bufferText may be the whole buffer --
 // this never looks outside that one line, matching Org.h's own line-oriented
-// parsers). Two candidate shapes, tried in order:
+// parsers). Three candidate shapes, tried in order:
 //   1. A bare "https?://..." URL, trimmed of one trailing punctuation
 //      character (one of ")]}>.,;:!?'\"") so a URL at the end of a sentence
 //      doesn't swallow its own period -- a deliberate simplification against
 //      a real balanced-paren linkifier, not attempted here.
-//   2. Otherwise, the whitespace-delimited token under point, classified as a
-//      File candidate only if it looks path-shaped -- contains '/', or has a
-//      '.'-plus-suffix that looks like a file extension. A bare word (no
-//      slash, no extension-shaped dot) is never treated as a File candidate
-//      at all: without this, a project with a real file literally named
-//      "TODO" at its root would make the plain word "TODO" resolve and open
-//      unexpectedly. Existence on disk is deliberately NOT checked here --
-//      see ResolveFileLink below -- so this stays a pure, testable function
-//      over plain text, the same "UI-agnostic, string_view in" shape every
-//      other Source/Editor/ parser already uses.
-// nullopt if point isn't on either shape.
+//   2. The whitespace-delimited token under point, classified as a File
+//      candidate only if it looks path-shaped -- contains '/', or has a
+//      '.'-plus-suffix that looks like a file extension -- or is itself
+//      already quote-/angle-bracket-delimited (see step 3's own stripping
+//      logic, applied here too when point sits precisely inside the
+//      delimiters). A bare word (no slash, no extension-shaped dot, no
+//      delimiters) is never treated as a File candidate at all: without
+//      this, a project with a real file literally named "TODO" at its root
+//      would make the plain word "TODO" resolve and open unexpectedly. An
+//      exact match here always wins over step 3's broader guess below.
+//   3. Fallback, tried only when step 2 found nothing right under the
+//      cursor: a quoted ("..."/'...') target anywhere within point's own
+//      statement -- bounded by the nearest ';'/',' on either side, or the
+//      whole line if there's neither -- regardless of whether point lands
+//      on the target's own bytes. Point anywhere on `#include "foo.h"` or
+//      `require("foo")` opens the same file landing exactly on "foo.h"
+//      would: the quotes are already an unambiguous "this is a path"
+//      signal, so there's no reason to also demand point sit precisely
+//      inside them. An angle-bracketed (<...>) target gets the same
+//      statement-wide treatment, but only when the line (leading
+//      whitespace trimmed) starts with "#include" -- that's the one
+//      construct in any C-family language where bare angle brackets denote
+//      a file path; without this guard, point anywhere on an ordinary
+//      template line (`std::vector<int> x;`) would misfire on "<int>".
+//      Multiple candidates in the same statement resolve to whichever is
+//      closest to point.
+// Existence on disk is deliberately NOT checked here -- see ResolveFileLink
+// below -- so this stays a pure, testable function over plain text, the
+// same "UI-agnostic, string_view in" shape every other Source/Editor/ parser
+// already uses. nullopt if point isn't on any of the three shapes.
 [[nodiscard]] std::optional<DetectedLink> DetectLinkAtPoint(std::string_view bufferText, std::size_t point);
 
 // Classifies an already-isolated target string -- e.g. Org's own extracted

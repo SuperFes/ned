@@ -72,6 +72,59 @@ TEST_CASE("DetectLinkAtPoint strips angle brackets off a #include-style target",
     CHECK(detected->target == "vector");
 }
 
+TEST_CASE("DetectLinkAtPoint finds a #include target with point anywhere on the line, not just on the target itself",
+          "[Link]") {
+    const std::string text = "#include <vector>\n";
+
+    for (const std::string_view needle : {"#", "include", "clude"}) {
+        const std::size_t point = text.find(needle);
+        REQUIRE(point != std::string::npos);
+        const auto detected = DetectLinkAtPoint(text, point);
+        REQUIRE(detected.has_value());
+        CHECK(detected->kind == LinkKind::File);
+        CHECK(detected->target == "vector");
+    }
+}
+
+TEST_CASE("DetectLinkAtPoint finds a quoted #include target with point anywhere on the line", "[Link]") {
+    const std::string text  = "#include \"Editor/Acp/AcpManager.h\"\n";
+    const std::size_t point = text.find("#include");
+
+    const auto detected = DetectLinkAtPoint(text, point);
+    REQUIRE(detected.has_value());
+    CHECK(detected->kind == LinkKind::File);
+    CHECK(detected->target == "Editor/Acp/AcpManager.h");
+}
+
+TEST_CASE("DetectLinkAtPoint does not treat template angle brackets as a file target on a non-#include line", "[Link]") {
+    const std::string text  = "std::vector<int> values;\n";
+    const std::size_t point = text.find("values");
+
+    // Point is on the bare word "values" -- not path-shaped, not
+    // delimited -- and the line doesn't start with #include, so the
+    // <int> angle-bracket run must never be picked up as a guess.
+    REQUIRE_FALSE(DetectLinkAtPoint(text, point).has_value());
+}
+
+TEST_CASE("DetectLinkAtPoint prefers an exact match under point over a delimited target elsewhere in the statement",
+          "[Link]") {
+    const std::string text  = "see src/main.cpp or \"notes.txt\" for details\n";
+    const std::size_t point = text.find("main.cpp");
+
+    const auto detected = DetectLinkAtPoint(text, point);
+    REQUIRE(detected.has_value());
+    CHECK(detected->target == "src/main.cpp"); // not "notes.txt", despite being on the same (comma/semicolon-free) line
+}
+
+TEST_CASE("DetectLinkAtPoint's statement scope stops at a semicolon, not the whole line", "[Link]") {
+    const std::string text  = "foo(); #include <vector>\n";
+    const std::size_t point = text.find("foo");
+
+    // Point's own statement ("foo();") has no delimited target at all --
+    // the <vector> on the other side of the ';' must not leak across.
+    REQUIRE_FALSE(DetectLinkAtPoint(text, point).has_value());
+}
+
 TEST_CASE("DetectLinkAtPoint never classifies a bare word as a File candidate", "[Link]") {
     const std::string text  = "TODO buy milk\n";
     const std::size_t point = text.find("TODO");
