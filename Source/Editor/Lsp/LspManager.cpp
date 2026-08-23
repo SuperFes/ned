@@ -9,6 +9,7 @@
 
 #include "Editor/BackgroundActivity.h"
 #include "Editor/ProjectRoot.h"
+#include "Editor/ProjectSettings.h"
 #include "LspPosition.h"
 #include "LspServerConfig.h"
 #include "ProseChecker.h"
@@ -42,6 +43,31 @@ namespace {
             return std::nullopt;
         }
         return std::filesystem::path(uri.substr(kPrefix.size()));
+    }
+
+    // project-settings-lsp-init-options follow-up. Resolves a dotted "section"
+    // path (e.g. "phpactor", "intelephense.environment" -- exactly the shape a
+    // real workspace/configuration request item's own "section" field takes) into
+    // tree, walking one object level per '.'-separated segment. Returns JSON null
+    // ("no client-side override, use your own defaults") the instant a segment is
+    // missing or the tree isn't an object at that point -- the same fallback
+    // WireNotificationHandlers' workspace/configuration handler already used
+    // before any lspWorkspaceConfiguration existed to resolve against.
+    Json ResolveConfigurationSection(const Json& tree, const std::string& section) {
+        const Json* current = &tree;
+        std::size_t start   = 0;
+        while (true) {
+            const std::size_t dot     = section.find('.', start);
+            const std::string segment = section.substr(start, dot == std::string::npos ? std::string::npos : dot - start);
+            if (!current->is_object() || !current->contains(segment)) {
+                return Json(nullptr);
+            }
+            current = &current->at(segment);
+            if (dot == std::string::npos) {
+                return *current;
+            }
+            start = dot + 1;
+        }
     }
 
     text::Buffer::Diagnostic::Severity SeverityFromLsp(int severity) {
@@ -114,7 +140,7 @@ namespace {
 
 } // namespace
 
-Json BuildInitializeParams(const std::filesystem::path& projectRoot) {
+Json BuildInitializeParams(const std::filesystem::path& projectRoot, const Json& initializationOptions) {
     // codeActionLiteralSupport is load-bearing, not boilerplate: per the LSP
     // spec a server may only return edit-carrying CodeAction literals to a
     // client that advertises it, and must fall back to bare Command objects
@@ -134,7 +160,7 @@ Json BuildInitializeParams(const std::filesystem::path& projectRoot) {
     // window.workDoneProgress (workDoneProgress-support follow-up) invites
     // "$/progress" reporting -- server-side busy state (clangd's background
     // indexing) for the mode-line spinner; see HandleProgress.
-    return Json{
+    Json params = Json{
         {"processId", static_cast<std::int64_t>(::getpid())},
         {"rootUri", PathToUri(projectRoot)},
         {"capabilities",
@@ -148,6 +174,10 @@ Json BuildInitializeParams(const std::filesystem::path& projectRoot) {
               {"resolveSupport", {{"properties", Json::array({"edit"})}}}}}}},
           {"window", {{"workDoneProgress", true}}}}},
     };
+    if (!initializationOptions.empty()) {
+        params["initializationOptions"] = initializationOptions;
+    }
+    return params;
 }
 
 LspManager::LspManager(text::BufferList& bufferList, ned::ui::EventLoop& eventLoop) : bufferList_(bufferList), eventLoop_(eventLoop) {
@@ -158,7 +188,7 @@ LspClient* LspManager::ExistingClientForLanguage(const std::string& language) co
     return it != clients_.end() ? it->second.get() : nullptr;
 }
 
-void LspManager::WireNotificationHandlers(LspClient& client, const std::string& language) {
+void LspManager::WireNotificationHandlers(LspClient& client, const std::string& language, const Json& workspaceConfiguration) {
     client.SetNotificationHandler("textDocument/publishDiagnostics",
                                   [this, language](const Json& params) { HandlePublishDiagnostics(params, language); });
     // workDoneProgress-support follow-up: the create request just
@@ -177,14 +207,26 @@ void LspManager::WireNotificationHandlers(LspClient& client, const std::string& 
     // such request fell through to DispatchFrame's generic "method not
     // found" error response, and harper-ls silently never published a
     // single diagnostic for the rest of the connection's lifetime -- no
-    // crash, no log entry, just permanent silence. null per item ("no
-    // client-side settings override, use your own defaults") is the
-    // standard response a config-pull server expects when the client has
-    // nothing more specific to offer, same convention VS Code's own client
-    // uses.
-    client.SetRequestHandler("workspace/configuration", [](const Json& params) {
-        const std::size_t itemCount = params.contains("items") && params["items"].is_array() ? params["items"].size() : 1;
-        return Json(std::vector<Json>(itemCount, Json(nullptr)));
+    // crash, no log entry, just permanent silence.
+    //
+    // project-settings-lsp-init-options follow-up: each requested item's
+    // "section" is now resolved against workspaceConfiguration
+    // (Editor/ProjectSettings.h's lspWorkspaceConfiguration) -- still null
+    // ("no client-side override, use your own defaults", the standard
+    // response VS Code's own client sends too) for any section nothing was
+    // configured for, or when a request item carries no section at all.
+    client.SetRequestHandler("workspace/configuration", [workspaceConfiguration](const Json& params) {
+        if (!params.contains("items") || !params["items"].is_array()) {
+            return Json(std::vector<Json>(1, Json(nullptr)));
+        }
+        std::vector<Json> results;
+        results.reserve(params["items"].size());
+        for (const Json& item : params["items"]) {
+            const bool hasSection = item.contains("section") && item["section"].is_string();
+            results.push_back(hasSection ? ResolveConfigurationSection(workspaceConfiguration, item["section"].get<std::string>())
+                                        : Json(nullptr));
+        }
+        return Json(results);
     });
     client.SetNotificationHandler("$/progress", [this, language](const Json& params) { HandleProgress(language, params); });
     client.SetOnDisconnected([this, language](std::string reason) {
@@ -238,11 +280,25 @@ LspClient* LspManager::ClientForLanguage(const std::string& language) {
         LogError(language, e.what());
         return nullptr;
     }
-    WireNotificationHandlers(*client, language);
+    const editor::ProjectSettings projectSettings = editor::LoadProjectSettings(editor::ProjectRoot());
+    WireNotificationHandlers(*client, language, projectSettings.lspWorkspaceConfiguration);
 
     LspClient* rawClient = client.get();
-    rawClient->SendRequest("initialize", BuildInitializeParams(editor::ProjectRoot()),
-                           [rawClient](std::optional<Json>, std::optional<Json>) { rawClient->SendNotification("initialized", Json::object()); });
+    // project-settings-lsp-init-options follow-up: initializationOptions
+    // covers servers that only read config at handshake time;
+    // workspace/didChangeConfiguration (sent right after "initialized",
+    // only when lspWorkspaceConfiguration is non-empty) covers the "push"
+    // model some servers expect instead -- see ProjectSettings.h's own doc
+    // comment on lspWorkspaceConfiguration for why both exist side by side.
+    rawClient->SendRequest(
+        "initialize",
+        BuildInitializeParams(editor::ProjectRoot(), editor::LspInitializationOptionsForLanguage(projectSettings, language)),
+        [rawClient, workspaceConfiguration = projectSettings.lspWorkspaceConfiguration](std::optional<Json>, std::optional<Json>) {
+            rawClient->SendNotification("initialized", Json::object());
+            if (!workspaceConfiguration.empty()) {
+                rawClient->SendNotification("workspace/didChangeConfiguration", Json{{"settings", workspaceConfiguration}});
+            }
+        });
 
     clients_.emplace(language, std::move(client));
     // mode-line-lsp-status-round-2 follow-up: a successful (re)spawn
@@ -343,8 +399,9 @@ LspManager::BufferSyncState* LspManager::ResolveSyncState(text::Buffer& buffer, 
     return stateIt != it->second.end() ? &stateIt->second : nullptr;
 }
 
-LspClient& LspManager::SetClientForTesting(std::string language, std::unique_ptr<LspClient> client) {
-    WireNotificationHandlers(*client, language); // same wiring ClientForLanguage's real spawn path applies
+LspClient& LspManager::SetClientForTesting(std::string language, std::unique_ptr<LspClient> client,
+                                          const Json& workspaceConfiguration) {
+    WireNotificationHandlers(*client, language, workspaceConfiguration); // same wiring ClientForLanguage's real spawn path applies
     disconnectedLanguages_.erase(language);      // an injected client is "running," same as a real successful spawn
     disconnectDetail_.erase(language);
     LspClient& ref                = *client;

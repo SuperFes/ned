@@ -27,6 +27,7 @@
 #include "Editor/ProjectAgenda.h"
 #include "Editor/ProjectFileOps.h"
 #include "Editor/ProjectRoot.h"
+#include "Editor/ProjectSettings.h"
 #include "Editor/ProjectSearch.h"
 #include "Editor/ProjectTree.h"
 #include "Editor/Rectangle.h"
@@ -6286,7 +6287,9 @@ void BufferView::OpenDetectedLink(const editor::link::DetectedLink& detected) {
     text::Buffer&               buffer = activeBuffer_.Get();
     const std::filesystem::path baseDirectory =
         buffer.Path() ? buffer.Path()->parent_path() : editor::ProjectRoot();
-    const auto resolved = editor::link::ResolveFileLink(detected.target, baseDirectory);
+    const editor::ProjectSettings projectSettings = editor::LoadProjectSettings(editor::ProjectRoot());
+    const auto resolved = editor::link::ResolveFileLink(detected.target, baseDirectory,
+                                                        editor::IncludePathsForMode(projectSettings, mode_.name));
     if (!resolved) {
         statusMessage_ = "No such file: " + detected.target;
         return;

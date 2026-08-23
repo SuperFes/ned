@@ -104,9 +104,31 @@ std::optional<DetectedLink> DetectLinkAtPoint(std::string_view bufferText, std::
         while (tokenEnd < lineEnd && !std::isspace(static_cast<unsigned char>(bufferText[tokenEnd]))) {
             ++tokenEnd;
         }
+        // Strip one layer of surrounding quote/angle-bracket delimiters --
+        // e.g. #include "foo.h"/<foo.h>, or a quoted JS/Python import -- so
+        // the delimiters themselves don't end up as part of the path handed
+        // to ResolveFileLink (which would then look for a file literally
+        // named "foo.h", quotes included, and never find it). An explicitly
+        // delimited token (unlike a bare word) is already unambiguously a
+        // quoted/bracketed reference, so it skips the extension-or-slash
+        // LooksPathShaped test below -- that heuristic exists only to keep a
+        // plain word like "TODO" from resolving, which doesn't apply here
+        // (a delimited, extensionless case like <vector> is exactly what
+        // this is meant to catch).
+        bool wasDelimited = false;
+        if (tokenEnd - tokenStart >= 2) {
+            const char first = bufferText[tokenStart];
+            const char last  = bufferText[tokenEnd - 1];
+            if ((first == '"' && last == '"') || (first == '\'' && last == '\'') ||
+                (first == '<' && last == '>')) {
+                ++tokenStart;
+                --tokenEnd;
+                wasDelimited = true;
+            }
+        }
         if (tokenEnd > tokenStart) {
             const std::string_view token = bufferText.substr(tokenStart, tokenEnd - tokenStart);
-            if (LooksPathShaped(token)) {
+            if (wasDelimited || LooksPathShaped(token)) {
                 return DetectedLink{
                     .kind      = LinkKind::File,
                     .target    = std::string(token),
@@ -127,7 +149,8 @@ LinkKind ClassifyTarget(std::string_view target) {
     return LinkKind::File;
 }
 
-std::optional<std::filesystem::path> ResolveFileLink(const std::string& target, const std::filesystem::path& baseDirectory) {
+std::optional<std::filesystem::path> ResolveFileLink(const std::string& target, const std::filesystem::path& baseDirectory,
+                                                     const std::vector<std::filesystem::path>& includePaths) {
     const std::filesystem::path targetPath(target);
 
     if (targetPath.is_absolute()) {
@@ -139,6 +162,11 @@ std::optional<std::filesystem::path> ResolveFileLink(const std::string& target, 
     }
     if (const std::filesystem::path relativeToRoot = ProjectRoot() / targetPath; std::filesystem::exists(relativeToRoot)) {
         return relativeToRoot;
+    }
+    for (const std::filesystem::path& includePath : includePaths) {
+        if (const std::filesystem::path candidate = includePath / targetPath; std::filesystem::exists(candidate)) {
+            return candidate;
+        }
     }
     return std::nullopt;
 }

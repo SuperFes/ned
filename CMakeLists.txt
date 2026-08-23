@@ -464,6 +464,7 @@ add_library(ned_lib STATIC
         Source/Editor/ProjectReplace.cpp
         Source/Editor/ProjectTree.cpp
         Source/Editor/ProjectRoot.cpp
+        Source/Editor/ProjectSettings.cpp
         Source/Editor/ProjectFileOps.cpp
         Source/Editor/AutoRevert.cpp
         Source/Editor/AutoMerge.cpp
@@ -729,6 +730,7 @@ if (NED_BUILD_TESTS)
             Tests/ProjectReplaceTest.cpp
             Tests/ProjectTreeTest.cpp
             Tests/ProjectRootTest.cpp
+            Tests/ProjectSettingsTest.cpp
             Tests/ProjectFileOpsTest.cpp
             Tests/ScratchPadTest.cpp
             Tests/BackupTest.cpp

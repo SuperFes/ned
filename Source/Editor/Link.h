@@ -19,6 +19,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace ned::editor::link {
 
@@ -62,12 +63,16 @@ struct DetectedLink {
 
 // Resolves target to a real, existing file: tried as an absolute path, then
 // relative to baseDirectory (typically the active buffer's own containing
-// directory), then relative to editor::ProjectRoot(). nullopt if none exist
-// on disk -- unlike find-file, a link to a path that doesn't exist is a dead
-// link to be reported as such, never silently turned into a new empty
-// buffer/file.
-[[nodiscard]] std::optional<std::filesystem::path> ResolveFileLink(const std::string&           target,
-                                                                   const std::filesystem::path& baseDirectory);
+// directory), then relative to editor::ProjectRoot(), then relative to each of
+// includePaths in order (ProjectSettings.h's includePaths -- a non-project-relative
+// #include/import target, e.g. an angle-form C/C++ #include or a vendored
+// dependency, needs a directory list to search since it isn't found under
+// baseDirectory/ProjectRoot at all). nullopt if none exist on disk -- unlike
+// find-file, a link to a path that doesn't exist is a dead link to be reported as
+// such, never silently turned into a new empty buffer/file.
+[[nodiscard]] std::optional<std::filesystem::path> ResolveFileLink(
+    const std::string& target, const std::filesystem::path& baseDirectory,
+    const std::vector<std::filesystem::path>& includePaths = {});
 
 // Process-wide, mutex-guarded static state (mirrors TabWidth.h's exact
 // pattern) -- unlike FormatOnSave.h's FormatCommand, which defaults unset
