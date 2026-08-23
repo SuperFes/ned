@@ -705,6 +705,26 @@ class BufferView : public Widget {
     // opened buffer's own content.
     void JumpToDefinition(const editor::lsp::LspManager::ResolvedLocation& location);
 
+    // header-source-switching follow-up. Bumps
+    // switchHeaderSourceRequestGeneration_ and calls LspManager::
+    // RequestSwitchSourceHeader (clangd's own custom LSP extension) when an
+    // LspManager is set; nullopt from that -- no client running, server has
+    // no counterpart to offer, or LSP unavailable at all -- falls through to
+    // OpenHeaderSourceCounterpartOrReport's Editor/HeaderSource.h filesystem
+    // heuristic, unlike RequestDefinitionAtPoint's own LSP-required "No LSP
+    // manager available." refusal: LSP is a nice-to-have accelerant here,
+    // not the only path, since every non-C/C++ language reaches the
+    // heuristic unconditionally.
+    void SwitchHeaderSource();
+    // Shared tail: tries the filesystem heuristic and reports "No
+    // corresponding header/source file found." on failure, opening the
+    // counterpart via OpenHeaderSourceCounterpart on success.
+    void OpenHeaderSourceCounterpartOrReport(const std::filesystem::path& path);
+    // Opens path (BufferList::OpenOrCreateFile) and switches to it -- no
+    // position to restore, unlike JumpToDefinition, since a header/source
+    // counterpart has no natural corresponding point.
+    void OpenHeaderSourceCounterpart(const std::filesystem::path& path);
+
     // rename follow-up. StartInteractiveSession's LspRename case opens the
     // synchronous "New name: " prompt (inputMode_ = LspRenameNewName);
     // HandlePromptKey's own Enter branch for that mode calls this once the
@@ -1927,6 +1947,11 @@ class BufferView : public Widget {
     std::vector<editor::lsp::LspManager::ResolvedLocation> pendingDefinitions_;
     std::size_t                                            definitionSelection_         = 0;
     std::size_t                                            definitionRequestGeneration_ = 0;
+
+    // header-source-switching follow-up: same staleness-guard shape as
+    // definitionRequestGeneration_ above, no selection list needed --
+    // switchSourceHeader never returns more than one candidate.
+    std::size_t switchHeaderSourceRequestGeneration_ = 0;
 
     // rename follow-up: same staleness-guard shape once more.
     // pendingRename_/renameTitle_ are valid only while inputMode_ ==

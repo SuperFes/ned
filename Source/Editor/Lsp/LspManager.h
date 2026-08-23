@@ -181,6 +181,22 @@ class LspManager {
     // shape as RequestHover/RequestCompletion/RequestCodeActions.
     void RequestDefinition(text::Buffer& buffer, std::size_t byteOffset, DefinitionCallback callback);
 
+    // header-source-switching follow-up. clangd's own custom LSP extension
+    // (not in the base spec -- no textDocument/definition-style position
+    // needed, just the document itself) for jumping between a C/C++ header
+    // and its implementation file. Sent as {"uri": ...} directly, not
+    // wrapped in a "textDocument" object -- that's the extension's actual
+    // wire shape (a bare TextDocumentIdentifier as params), unlike every
+    // other request in this file. Response is a single URI string, or null
+    // if the server has no counterpart to offer -- callback receives
+    // nullopt in that case (server said no, server doesn't implement the
+    // extension at all -- most servers besides clangd -- no client running,
+    // or an error), never a distinction the caller needs: BufferView::
+    // SwitchHeaderSource falls back to Editor/HeaderSource.h's filesystem
+    // heuristic uniformly on nullopt.
+    using SwitchHeaderCallback = std::function<void(std::optional<std::filesystem::path> path)>;
+    void RequestSwitchSourceHeader(text::Buffer& buffer, SwitchHeaderCallback callback);
+
     // rename follow-up. One URI's worth of edits, uri already resolved to a
     // real filesystem path -- mirrors ResolvedLocation's own reasoning
     // above. A RenameEdit (LspContent.h) whose uri doesn't resolve is

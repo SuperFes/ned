@@ -57,19 +57,6 @@ Notcurses (TermOx → FTXUI → Notcurses over the project's life).
       migrate onto it), per-capture styling in the Minimap (class-level only
       there), and theme-file serialization of capture overrides (overlaps the
       bold/italic round-trip loose end below).
-- [ ] **Header/source switching** (`M-o` or similar — real go-to-definition,
-      `lsp-goto-definition`/`M-.`, already ships via ordinary
-      `textDocument/definition`; this is the distinct "same logical file, other
-      half" hop). clangd exposes `textDocument/switchSourceHeader` as a custom
-      LSP extension for exactly this — no new wire-protocol plumbing needed,
-      `LspClient::SendRequest` already takes an arbitrary method string, so this
-      is a new `LspManager` method plus a command/keybinding. Only meaningful
-      where a server actually implements the extension (clangd does; nothing
-      else bundled-config'd today does); needs a non-LSP fallback for languages
-      with no such extension and no clean single-definition-file split anyway
-      (same-basename/known-extension-pairs heuristic, scanning sibling
-      directories — a real fallback, not a v1 cut, since C/C++ users are the
-      only ones with a server-native answer).
 - [ ] **Go-to-file-at-point for include/import-style directives**
       (`#include "foo.h"`/`<vector>`, Python `import`/`from ... import`, JS/TS
       `import`/`require(...)`, Rust `mod`/`use`, ...) — distinct from

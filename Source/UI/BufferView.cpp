@@ -17,6 +17,7 @@
 #include "Editor/FuzzyMatch.h"
 #include "Editor/HighlightSettings.h"
 #include "Editor/InlineDiagnostics.h"
+#include "Editor/HeaderSource.h"
 #include "Editor/Link.h"
 #include "Editor/Lsp/LspManager.h"
 #include "Editor/Lsp/LspServerConfig.h"
@@ -3504,6 +3505,59 @@ void BufferView::JumpToDefinition(const editor::lsp::LspManager::ResolvedLocatio
     }
 }
 
+void BufferView::SwitchHeaderSource() {
+    text::Buffer& buffer = activeBuffer_.Get();
+    if (!buffer.Path()) {
+        statusMessage_ = "Buffer has no associated file.";
+        return;
+    }
+    const std::filesystem::path path = *buffer.Path();
+
+    // header-source-switching follow-up: LSP absence (no manager, no client
+    // running for this buffer's language) falls straight to the filesystem
+    // heuristic -- unlike lsp-goto-definition, that's the normal path for
+    // every language except C/C++, not an error.
+    if (!lspManager_) {
+        OpenHeaderSourceCounterpartOrReport(path);
+        return;
+    }
+
+    text::Buffer* const bufferPtr  = &buffer;
+    const std::size_t   generation = ++switchHeaderSourceRequestGeneration_;
+    statusMessage_                 = "Switching header/source...";
+    lspManager_->RequestSwitchSourceHeader(
+        buffer, [this, bufferPtr, generation, path](std::optional<std::filesystem::path> counterpart) {
+            if (generation != switchHeaderSourceRequestGeneration_ || bufferPtr != &activeBuffer_.Get()) {
+                return; // superseded/buffer switched since the request was sent
+            }
+            if (counterpart) {
+                OpenHeaderSourceCounterpart(*counterpart);
+                return;
+            }
+            OpenHeaderSourceCounterpartOrReport(path);
+        });
+}
+
+void BufferView::OpenHeaderSourceCounterpartOrReport(const std::filesystem::path& path) {
+    if (const auto counterpart = editor::headersource::FindCounterpart(path)) {
+        OpenHeaderSourceCounterpart(*counterpart);
+        return;
+    }
+    statusMessage_ = "No corresponding header/source file found.";
+}
+
+void BufferView::OpenHeaderSourceCounterpart(const std::filesystem::path& path) {
+    try {
+        text::Buffer& opened = bufferList_.OpenOrCreateFile(path);
+        activeBuffer_.Set(opened);
+        statusMessage_.clear();
+        ScrollToShowPoint();
+    }
+    catch (const std::exception& e) {
+        statusMessage_ = e.what();
+    }
+}
+
 void BufferView::RequestRenameAtPoint(const std::string& newName) {
     if (!lspManager_) {
         statusMessage_ = "No LSP manager available.";
@@ -3769,6 +3823,9 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             return;
         case editor::InteractiveRequest::LspGotoDefinition:
             RequestDefinitionAtPoint();
+            return;
+        case editor::InteractiveRequest::SwitchHeaderSource:
+            SwitchHeaderSource();
             return;
         case editor::InteractiveRequest::LspRename:
             inputMode_ = InputMode::LspRenameNewName;

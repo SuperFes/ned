@@ -428,6 +428,7 @@ add_library(ned_lib STATIC
         Source/Editor/Table.cpp
         Source/Editor/Markdown.cpp
         Source/Editor/Link.cpp
+        Source/Editor/HeaderSource.cpp
         Source/Editor/FinalNewline.cpp
         Source/Editor/FormatOnSave.cpp
         Source/Editor/TabWidth.cpp
@@ -673,6 +674,7 @@ if (NED_BUILD_TESTS)
             Tests/MarkdownTest.cpp
             Tests/MarkdownHighlightTest.cpp
             Tests/LinkTest.cpp
+            Tests/HeaderSourceTest.cpp
             Tests/PerformanceTest.cpp
             Tests/ThemeTest.cpp
             Tests/ThemePaletteTest.cpp
