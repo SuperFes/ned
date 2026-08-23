@@ -1828,6 +1828,21 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           context.interactiveRequest = InteractiveRequest::DapEvaluate;
                       });
 
+    // ACP client slice 2: same "just set interactiveRequest" shape as
+    // run-task/dap-continue above -- BufferView holds the shared AcpManager
+    // and does the actual work (see Editor/Acp/AcpManager.h). Agent and
+    // launch command both come from init.janet (ned/set-acp-agent).
+    registry.Register("acp-start-session", "Start an Agent Client Protocol (ACP) session with a configured agent, streaming into a buffer.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::AcpStartSession;
+                      });
+    registry.Register("acp-send-prompt", "Send a message to the active ACP session.", [](CommandContext& context) {
+        context.interactiveRequest = InteractiveRequest::AcpSendPrompt;
+    });
+    registry.Register("acp-stop-session", "Stop the active ACP session.", [](CommandContext& context) {
+        context.interactiveRequest = InteractiveRequest::AcpStopSession;
+    });
+
     // VCS blame gutter follow-up: same "just set interactiveRequest" shape
     // as lsp-show-log/run-task above -- BufferView owns the actual
     // VcsRunner request. vcs-show-blame stays on the current buffer,
@@ -2438,6 +2453,11 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("F10"), "dap-step-over");
     keymap.Bind(ParseKeySequence("F11"), "dap-step-into");
     keymap.Bind(ParseKeySequence("S-F11"), "dap-step-out");
+    // ACP client slice 2: "C-c a" prefix (a for agent), mirroring "C-c v"'s
+    // own choice of an otherwise-unused letter+prefix combination.
+    keymap.Bind(ParseKeySequence("C-c a s"), "acp-start-session");
+    keymap.Bind(ParseKeySequence("C-c a p"), "acp-send-prompt");
+    keymap.Bind(ParseKeySequence("C-c a k"), "acp-stop-session"); // "k" for kill, matching Emacs' own kill-process vocabulary
     keymap.Bind(ParseKeySequence("C-c C-v"), "project-search-visit-result");
     // VCS blame gutter follow-up: "C-c v" prefix, mirroring "C-c C-b"/
     // "C-c C-M-b" run-task/cancel-task's own choice of an otherwise-unused

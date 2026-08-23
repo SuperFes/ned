@@ -458,6 +458,10 @@ add_library(ned_lib STATIC
         Source/Editor/Vcs/VcsProviderRegistry.cpp
         Source/Editor/Vcs/VcsRunner.cpp
         Source/Editor/Process/ChildProcess.cpp
+        Source/Editor/Acp/Transport.cpp
+        Source/Editor/Acp/AcpClient.cpp
+        Source/Editor/Acp/AcpConfig.cpp
+        Source/Editor/Acp/AcpManager.cpp
         Source/Editor/Lsp/Transport.cpp
         Source/Editor/Lsp/LspClient.cpp
         Source/Editor/Lsp/LspServerConfig.cpp
@@ -707,6 +711,10 @@ if (NED_BUILD_TESTS)
             Tests/DiffPatchTest.cpp
             Tests/VcsRunnerTest.cpp
             Tests/BackgroundActivityTest.cpp
+            Tests/AcpTransportTest.cpp
+            Tests/AcpClientTest.cpp
+            Tests/AcpConfigTest.cpp
+            Tests/AcpManagerTest.cpp
             Tests/LspTransportTest.cpp
             Tests/LspClientTest.cpp
             Tests/LspServerConfigTest.cpp

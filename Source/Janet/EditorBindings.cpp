@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "Editor/Acp/AcpConfig.h"
 #include "Editor/AutoMerge.h"
 #include "Editor/AutoRevert.h"
 #include "Editor/Backup.h"
@@ -331,6 +332,14 @@ namespace {
     // name, mirroring NedSetLspCommand's own empty-clears convention.
     void NedSetTaskCommand(std::string name, std::vector<std::string> argv) {
         editor::tasks::SetTaskCommand(name, std::move(argv));
+    }
+
+    // ACP client slice 1: same argv shape/empty-clears convention as
+    // NedSetTaskCommand -- an ACP agent is keyed by an arbitrary user-chosen
+    // name, not a language, e.g. (ned/set-acp-agent "claude-code"
+    // ["claude-code-acp"]).
+    void NedSetAcpAgent(std::string name, std::vector<std::string> argv) {
+        editor::acp::SetAcpAgentCommand(name, std::move(argv));
     }
 
     // hover/completion follow-up: the only way LspServerConfig.h's own
@@ -716,6 +725,12 @@ void InstallEditorBindings(Environment& env) {
         "Set the command run by run-task for a task name: (name argv), e.g. (ned/set-task-command \"build\" "
         "[\"cmake\" \"--build\" \".\"]). argv is an array or tuple of strings -- argv[0] the executable (resolved "
         "against $PATH), the rest its arguments. An empty argv clears the configured command for name.");
+    env.Register<&NedSetAcpAgent>(
+        "ned", "set-acp-agent",
+        "Set the command used to launch an Agent Client Protocol (ACP) coding agent: (name argv), e.g. "
+        "(ned/set-acp-agent \"claude-code\" [\"claude-code-acp\"]). Same argv shape and $PATH resolution as "
+        "ned/set-lsp-command; an empty argv clears the configured command for name. acp-send-prompt (C-c a p) is "
+        "the entry point that spawns and talks to whichever agent name it's given.");
     env.Register<&NedSetLspAutoComplete>(
         "ned", "set-lsp-auto-complete",
         "Enable or disable automatic LSP completion ghost text while typing (default true). Manual completion "

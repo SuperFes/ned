@@ -93,7 +93,7 @@ class Pane {
          const editor::Keymap& janetKeymap, const editor::Keymap& globalKeymap, editor::Mode mode,
          std::string& statusMessage, const Theme& theme,
          ProjectSidebar* projectSidebar, editor::lsp::LspManager* lspManager, editor::tasks::TaskRunner* taskRunner,
-         editor::vcs::VcsRunner* vcsRunner, editor::dap::DapManager* dapManager,
+         editor::vcs::VcsRunner* vcsRunner, editor::dap::DapManager* dapManager, editor::acp::AcpManager* acpManager,
          std::function<void(editor::InteractiveRequest)> onWindowRequest,
          std::function<void(text::Buffer&)>              onBufferClosed);
 
@@ -274,6 +274,15 @@ class WindowManager {
     // "the focused pane" fresh when a breakpoint actually fires, rather
     // than capturing some pane that may have been closed by then.
     void SetDapManager(editor::dap::DapManager* dapManager);
+
+    // ACP client slice 2: same "forwarded to every pane, present and
+    // future" shape as SetDapManager above -- plus this is where
+    // SetOnPermissionRequest/SetOnSessionEnded get wired, since
+    // WindowManager is the one owner that can resolve "the focused pane"
+    // fresh when a permission request actually arrives, rather than
+    // capturing some pane that may have been closed by then (identical
+    // reasoning to SetDapManager's own SetOnStopped wiring).
+    void SetAcpManager(editor::acp::AcpManager* acpManager);
 
     // FTXUI -> Notcurses migration: forwarded to every pane, present and
     // future, same shape as SetProjectSidebar/SetLspManager above -- see
@@ -520,6 +529,7 @@ class WindowManager {
     editor::tasks::TaskRunner*        taskRunner_     = nullptr;
     editor::vcs::VcsRunner*           vcsRunner_      = nullptr;
     editor::dap::DapManager*          dapManager_     = nullptr; // see SetDapManager
+    editor::acp::AcpManager*          acpManager_     = nullptr; // see SetAcpManager
     EventLoop*                        eventLoop_      = nullptr; // see SetEventLoop
     std::function<void(const Theme&)> themeApplier_;             // see SetThemeApplier
     std::function<void()>             onTerminalToggle_;         // see SetOnTerminalToggle

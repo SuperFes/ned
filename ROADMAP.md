@@ -114,16 +114,36 @@ Notcurses (TermOx → FTXUI → Notcurses over the project's life).
 
 ### Collaboration & AI
 
-- [ ] **AI-assisted editing** (inline completion, chat with codebase context) — the
-      natural shape is a Janet-scriptable ACP-client integration; `Process/ChildProcess`
-      (the shared subprocess primitive `Lsp`/`Dap`/`Tasks`/`Vcs` all already build on) is
-      reusable for this too, following the same client/manager split as `LspManager`/
-      `LspClient` — not yet started, no `AcpManager`/`AcpClient` exists. The
-      floating/overlay widget layer this needs now exists (`UI/Overlay.h`'s
-      `OverlayHost`, terminal-panel follow-up): an LLM panel is one `Add()` with a
-      right-dock placement function. The same layer is the intended home for a
-      completion-popover replacement of ghost text, an M-x dropdown, and
-      code-action lists — all currently squeezed into the one-row EchoArea.
+- [ ] **AI-assisted editing** (inline completion, chat with codebase context) — a
+      Janet-scriptable Agent Client Protocol (ACP, Zed's open agent/editor standard)
+      integration, `Editor/Acp/` (v1 shipped): `Transport` (newline-delimited JSON-RPC,
+      distinct from `Lsp`/`Dap`'s shared `Content-Length` framing — the one real wire-
+      level difference from those siblings) + `AcpClient` (bidirectional, with an
+      async-capable agent→client `RequestHandler` LSP's synchronous-only one couldn't
+      model) + `AcpManager` (single-session handshake, `fs/read_text_file`/
+      `fs/write_text_file` bridged into real buffers reusing `AutoRevert`/`AutoMerge`'s
+      own Revert/MergeExternalChanges gating, `session/request_permission` as a
+      numbered-choice prompt mirroring `LspCodeActionSelect`) — same client/manager
+      split as `LspManager`/`LspClient`, built directly on `Process/ChildProcess`
+      exactly as anticipated. `acp-start-session`/`acp-send-prompt`/`acp-stop-session`
+      (`C-c a s`/`C-c a p`/`C-c a k`) stream a session into a plain read-only
+      `"*acp: <agent>*"` buffer — `TaskRunner`'s own output-buffer convention reused
+      rather than a new widget. Deliberate v1 cuts, still open: a real chat overlay
+      panel (`UI/Overlay.h`'s `OverlayHost` — an `Add()` with a right-dock placement
+      function — is the intended home once built, also for a completion-popover
+      replacement of ghost text, an M-x dropdown, and code-action lists currently
+      squeezed into the one-row EchoArea); `terminal/*` tool-call support (spawning
+      real `ChildProcess`/pty-backed terminals on the agent's behalf) and
+      `elicitation/create` structured forms — both left undeclared as client
+      capabilities, so a spec-compliant agent won't invoke them, rather than answered
+      badly; multiple concurrent agents/sessions; `session/load` history replay;
+      `session/set_config_option`/`session/set_mode` surfaced to the user; MCP server
+      passthrough (`session/new`'s `mcpServers` is always sent as `[]`). The exact
+      `session/update` sub-schema (message-chunk/tool-call/plan discriminated union)
+      also isn't pinned down here against the authoritative ACP JSON schema, only
+      informally documented at the time this was written — `AcpManager::
+      HandleSessionUpdate`'s defensive, best-effort parsing is expected to need
+      widening once exercised against a real agent.
 - [ ] **Real-time collaborative editing** (CRDT-based) — the biggest lift in this
       file; last.
 

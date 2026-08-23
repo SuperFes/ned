@@ -27,6 +27,7 @@
 #include <vector>
 
 #include "ActiveBuffer.h"
+#include "Editor/Acp/AcpManager.h"
 #include "Editor/Backup.h"
 #include "Editor/CodeFold.h"
 #include "Editor/Command.h"
@@ -189,6 +190,24 @@ class BufferView : public Widget {
     // (the dap-* commands report "No debugger available." via
     // statusMessage_ if this was never called).
     void SetDapManager(editor::dap::DapManager* dapManager);
+
+    // ACP client slice 2: registers the shared AcpManager -- same "unset is
+    // a safe no-op" convention as SetDapManager (the acp-* commands report
+    // "No ACP manager available." via statusMessage_ if this was never
+    // called).
+    void SetAcpManager(editor::acp::AcpManager* acpManager);
+
+    // ACP client slice 2: entered directly by WindowManager's AcpManager
+    // wiring the moment a session/request_permission request arrives (an
+    // agent-initiated request, never reached through the ordinary
+    // InteractiveRequest/StartInteractiveSession path -- see
+    // InteractiveRequest's own doc comment in Command.h) -- same "public so
+    // an external async callback can drive this pane" shape JumpToPathLine
+    // establishes for DapManager's stopped event. Enters
+    // InputMode::AcpPermissionPrompt and renders prompt as a numbered
+    // choice list (RefreshAcpPermissionPromptStatus), the same
+    // LspCodeActionSelect shape.
+    void ShowAcpPermissionPrompt(const editor::acp::AcpManager::PermissionPrompt& prompt);
 
     // Opens path (via BufferList::OpenOrCreateFile) and moves point to the
     // start of line (1-indexed, matching the "path:line" convention every
@@ -461,6 +480,20 @@ class BufferView : public Widget {
                            // from the callback (DapEvaluate's shape).
                            VcsSwitchBranch,
                            VcsCreateBranch,
+                           // ACP client slice 2: AcpAgentName/AcpPromptText are
+                           // HandlePromptKey-routed plain-text prompts (agent name,
+                           // then message text), same shape as TaskName/DapEvaluate
+                           // above. AcpPermissionPrompt is different in kind -- never
+                           // entered through StartInteractiveSession/HandlePromptKey at
+                           // all, since a session/request_permission request is
+                           // agent-initiated, not user-command-initiated; entered
+                           // directly by ShowAcpPermissionPrompt (called from
+                           // WindowManager's AcpManager wiring) and driven by its own
+                           // HandleAcpPermissionPromptKey, the same numbered-list shape
+                           // LspCodeActionSelect uses.
+                           AcpAgentName,
+                           AcpPromptText,
+                           AcpPermissionPrompt,
                            // rich-theme-set follow-up (Phase 1): the select-theme
                            // picker -- ProjectFindFile's fuzzy session shape over
                            // theme names, plus live preview of the highlighted
@@ -608,6 +641,20 @@ class BufferView : public Widget {
     // ApplyCodeAction and ends the session; n/N/Escape/C-g cancels --
     // mirrors HandleDeleteFileKey's own Confirming-stage shape exactly.
     void HandleCodeActionConfirmKey(const editor::KeyChord& chord);
+    // ACP client slice 2: same numbered-list rendering as
+    // RefreshCodeActionSelectStatus, over pendingAcpPermissionOptions_/
+    // acpPermissionSelection_ instead -- called by ShowAcpPermissionPrompt
+    // and again by HandleAcpPermissionPromptKey whenever Up/Down changes
+    // the selection.
+    void RefreshAcpPermissionPromptStatus();
+    // Up/Down move acpPermissionSelection_ (clamped) and refresh; a digit
+    // '1'-'9' or Enter resolves the (possibly just-picked) option directly
+    // via AcpManager::ResolvePermissionPrompt -- unlike a code action,
+    // there is no separate confirm stage: the options an agent offers are
+    // already the concrete choices ("Allow once", "Reject", ...), not a
+    // list of actions needing a second y/n. Escape/C-g resolves as
+    // cancelled via AcpManager::CancelPermissionPrompt.
+    void HandleAcpPermissionPromptKey(const editor::KeyChord& chord);
     // Refuses (reports via statusMessage_, no buffer mutation) if
     // action.touchesOtherFiles or it has no edit to apply. Otherwise
     // resolves each WorkspaceTextEdit's LspPositions to byte offsets against
@@ -1319,6 +1366,16 @@ class BufferView : public Widget {
     editor::tasks::TaskRunner* taskRunner_          = nullptr; // see SetTaskRunner
     editor::vcs::VcsRunner*    vcsRunner_           = nullptr; // see SetVcsRunner
     editor::dap::DapManager*   dapManager_          = nullptr; // see SetDapManager
+    editor::acp::AcpManager*   acpManager_          = nullptr; // see SetAcpManager
+
+    // ACP client slice 2: valid only while inputMode_ ==
+    // InputMode::AcpPermissionPrompt (populated by ShowAcpPermissionPrompt,
+    // consumed by RefreshAcpPermissionPromptStatus/HandleAcpPermissionPromptKey)
+    // -- same "not cleared eagerly outside that mode" convention
+    // pendingCodeActions_/codeActionSelection_ establish.
+    std::vector<editor::acp::AcpManager::PermissionOption> pendingAcpPermissionOptions_;
+    std::size_t                                            acpPermissionSelection_ = 0;
+    std::string                                            acpPermissionDescription_;
 
     // EnsureDapPathKey's cache (slice 2): the active buffer's normalized
     // breakpoint-path key, recomputed only when the buffer or its path
