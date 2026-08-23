@@ -743,6 +743,8 @@ if (NED_BUILD_TESTS)
             Tests/DynamicGrammarTest.cpp
             Tests/ModeOverridesTest.cpp
             Tests/MultibufferTest.cpp
+            Tests/BufferViewDiagnosticsBufferTest.cpp
+            Tests/BufferViewProjectFindReferencesTest.cpp
             Tests/WrapOverridesTest.cpp
             Tests/BorderTest.cpp
             Tests/ProjectSidebarTest.cpp

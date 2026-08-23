@@ -283,6 +283,17 @@ class BufferView : public Widget {
     void FinishVcsCommitMessageForTesting();
     void AbortVcsCommitMessageForTesting();
 
+    // Diagnostics-multibuffer follow-up: same "public primarily for tests"
+    // seam, but RequestDiagnosticsBuffer needs no live EventLoop at all --
+    // it's fully synchronous, no VcsRunner-style callback in between. This
+    // is a plain passthrough rather than a partial "guards only" exposure.
+    void RequestDiagnosticsBufferForTesting();
+
+    // find-all-references follow-up: same seam again, for
+    // RequestProjectFindReferences -- fully synchronous, no live EventLoop
+    // needed, same reasoning as RequestDiagnosticsBufferForTesting above.
+    void RequestProjectFindReferencesForTesting();
+
     // FTXUI -> Notcurses migration: replaces
     // ftxui::ScreenInteractive::Active() (used to end the whole app on
     // `quit`/confirmed ConfirmQuit) and backs completionDebounceDeadline_/
@@ -1013,6 +1024,42 @@ class BufferView : public Widget {
     // buffer -- an explicit "nothing changed" is more informative than a
     // silent no-op.
     void RequestVcsFullDiffBuffer();
+
+    // Diagnostics-multibuffer follow-up: lsp-diagnostics-buffer's entry
+    // point -- synchronous (every diagnostic is already resident on its own
+    // open Buffer, no VcsRunner-style subprocess round trip needed), unlike
+    // RequestVcsFullDiffBuffer's async shape. Builds one excerpt per
+    // Code-origin diagnostic (its own single source line, verbatim) via
+    // Editor/Multibuffer.h's BuildMultibuffer, then translates each
+    // diagnostic's original (per-source-buffer) byte range into the
+    // composite buffer's own byte space and re-applies it via
+    // Buffer::SetDiagnostics -- deliberately not a new LineTint (unlike
+    // vcs-full-diff-buffer's Added/Removed wash): reusing the composite
+    // buffer's own real Diagnostic entries means the ordinary diagnostic
+    // gutter glyph, underline, severity color, and inline-annotation row
+    // every other diagnostic view already draws light up unmodified, no new
+    // rendering path or hardcoded color needed.
+    void RequestDiagnosticsBuffer();
+
+    // find-all-references follow-up: project-find-references's entry point
+    // -- synchronous, same shape as RequestDiagnosticsBuffer (SearchDirectory
+    // is now an in-process RE2 scan, no subprocess round trip). Finds the
+    // ASCII word/identifier region at point (a local scan, same
+    // classification as Commands.cpp's own WordRegionAt -- see that
+    // function's doc comment for why this is a small duplicated copy rather
+    // than a new shared seam), builds a whole-word pattern ("\\bword\\b" --
+    // safe to embed unescaped since the word-scan only ever admits
+    // [A-Za-z0-9_], none of them regex metacharacters), and runs it through
+    // SearchDirectory(ProjectRoot(), ...). One excerpt per matching line
+    // (SearchMatch::lineText, no extra context) stitched into
+    // "*references: <word>*" via Editor/Multibuffer.h's BuildMultibuffer --
+    // vcs-visit-result already jumps to source from any excerpt, same as
+    // RequestVcsFullDiffBuffer/RequestDiagnosticsBuffer's own buffers. A
+    // fast textual approximation (matches inside comments/strings too, and
+    // can't tell one same-named symbol from another in a different scope) --
+    // not real semantic LSP references, which don't exist as a client
+    // capability yet at all (see ROADMAP.md).
+    void RequestProjectFindReferences();
 
     // VCS vocabulary-completion follow-up. vcs-status's entry point --
     // async VcsRunner::RequestStatus, building/switching to the *vcs

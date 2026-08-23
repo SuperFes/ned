@@ -4438,6 +4438,12 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         case editor::InteractiveRequest::VcsFullDiffBuffer:
             RequestVcsFullDiffBuffer();
             return;
+        case editor::InteractiveRequest::DiagnosticsBuffer:
+            RequestDiagnosticsBuffer();
+            return;
+        case editor::InteractiveRequest::ProjectFindReferences:
+            RequestProjectFindReferences();
+            return;
         case editor::InteractiveRequest::VcsCommit:
             BeginVcsCommitMessage();
             return;
@@ -5734,6 +5740,196 @@ void BufferView::RequestVcsFullDiffBuffer() {
         [this](std::string error) { statusMessage_ = "vcs full diff: " + error; });
 }
 
+void BufferView::RequestDiagnosticsBuffer() {
+    // One entry per Code-origin diagnostic across every open, path-backed
+    // buffer -- prose/spell-check diagnostics (Editor/Lsp/LspManager.h's
+    // kProseLanguageKey) stay out, matching the recent split that moved
+    // them out of the code-diagnostic gutter entirely (they get their own
+    // review flow, not this one). source is a raw pointer into
+    // bufferList_'s own storage, valid for this whole synchronous function
+    // (no callback/await in between, unlike RequestVcsFullDiffBuffer).
+    struct PendingDiagnostic {
+        text::Buffer*            source;
+        text::Buffer::Diagnostic diagnostic;
+        std::size_t              sourceLineStart;
+    };
+    std::vector<PendingDiagnostic> pending;
+    for (const auto& bufferPtr : bufferList_.Buffers()) {
+        text::Buffer& buffer = *bufferPtr;
+        if (!buffer.Path() || buffer.Diagnostics().empty() || editor::multibuffer::MultibufferIndexFor(buffer)) {
+            continue;
+        }
+        const text::Rope& content = buffer.Content();
+        for (const text::Buffer::Diagnostic& diagnostic : buffer.Diagnostics()) {
+            if (diagnostic.origin != text::Buffer::Diagnostic::Origin::Code) {
+                continue;
+            }
+            const std::size_t line = content.ByteOffsetToLine(std::min(diagnostic.startByte, content.ByteLength()));
+            pending.push_back(PendingDiagnostic{&buffer, diagnostic, content.LineToByteOffset(line)});
+        }
+    }
+
+    // Grouped per file, top-to-bottom within a file -- a scannable
+    // "problems list," not whatever order each language server happened to
+    // report diagnostics in.
+    std::sort(pending.begin(), pending.end(), [](const PendingDiagnostic& a, const PendingDiagnostic& b) {
+        const std::filesystem::path& pathA = *a.source->Path();
+        const std::filesystem::path& pathB = *b.source->Path();
+        return pathA != pathB ? pathA < pathB : a.diagnostic.startByte < b.diagnostic.startByte;
+    });
+
+    // One excerpt per diagnostic -- its own single source line, verbatim
+    // (not a multi-line context window: the header already names the exact
+    // file/line, and this keeps the composite-offset translation below a
+    // fixed "past the header" arithmetic instead of needing real line
+    // math against the composite buffer).
+    std::vector<editor::multibuffer::ExcerptSource> excerpts;
+    excerpts.reserve(pending.size());
+    for (const PendingDiagnostic& item : pending) {
+        const text::Rope& content = item.source->Content();
+        const std::size_t line    = content.ByteOffsetToLine(item.sourceLineStart);
+        const std::size_t lineEnd = (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
+        // U+25B8, ProjectSidebar's own disclosure triangle -- same header
+        // glyph vcs-full-diff-buffer's excerpts use, for visual consistency
+        // between the two multibuffer consumers.
+        std::string header = "▸ " + item.source->Path()->string() + ":" + std::to_string(line + 1);
+        std::string body    = content.Substring(item.sourceLineStart, lineEnd - item.sourceLineStart);
+        excerpts.push_back(editor::multibuffer::ExcerptSource{
+            *item.source->Path(), line + 1, line + 1, std::move(header), std::move(body), {}});
+    }
+
+    text::Buffer& results = editor::multibuffer::BuildMultibuffer(bufferList_, "*diagnostics*", excerpts);
+    activeBuffer_.Set(results);
+    statusMessage_ =
+        excerpts.empty() ? "No diagnostics." : std::to_string(excerpts.size()) + " diagnostic" + (excerpts.size() == 1 ? "" : "s");
+
+    // Re-attaches each original diagnostic's real severity/message onto the
+    // composite buffer, translated into composite byte space, instead of a
+    // new LineTint -- see this method's own doc comment in BufferView.h for
+    // why: it makes the ordinary diagnostic gutter glyph/underline/
+    // severity-color/inline-annotation pipeline (Theme::diagnosticError et
+    // al., all driven off Buffer::Diagnostics()) light up unmodified. Every
+    // excerpt above is exactly one header line + one body line, so the
+    // body's own start byte is a fixed offset (header length + its
+    // newline) past the excerpt's span start. ExcerptSpan order matches
+    // excerpts' own order 1:1 here: BuildMultibuffer appends excerpts
+    // sequentially so composite bytes only increase, and
+    // MultibufferIndex::SetSpans's sort-by-compositeStartByte is a no-op on
+    // an already-increasing sequence.
+    if (editor::multibuffer::MultibufferIndex* index = editor::multibuffer::MultibufferIndexFor(results)) {
+        const std::vector<editor::multibuffer::ExcerptSpan>& spans = index->Spans();
+        std::vector<text::Buffer::Diagnostic>                composited;
+        composited.reserve(pending.size());
+        for (std::size_t i = 0; i < pending.size() && i < spans.size(); ++i) {
+            const editor::multibuffer::ExcerptSpan& span      = spans[i];
+            const std::size_t                       bodyLen   = excerpts[i].bodyText.size();
+            const std::size_t                       bodyStart = span.compositeStartByte + excerpts[i].headerText.size() + 1;
+
+            const text::Buffer::Diagnostic& original = pending[i].diagnostic;
+            std::size_t startDelta = original.startByte > pending[i].sourceLineStart ? original.startByte - pending[i].sourceLineStart : 0;
+            startDelta             = std::min(startDelta, bodyLen);
+            std::size_t endDelta   = original.endByte > pending[i].sourceLineStart ? original.endByte - pending[i].sourceLineStart : startDelta;
+            endDelta               = std::min(endDelta, bodyLen);
+            if (endDelta <= startDelta) {
+                endDelta = std::min(bodyLen, startDelta + 1); // widen a zero-length span, same as the inline-diagnostic underline pass
+            }
+
+            text::Buffer::Diagnostic translated = original;
+            translated.startByte                = bodyStart + startDelta;
+            translated.endByte                  = bodyStart + endDelta;
+            composited.push_back(translated);
+        }
+        results.SetDiagnostics(std::move(composited));
+    }
+}
+
+namespace {
+
+    // find-all-references follow-up: [start, end) of the ASCII word/
+    // identifier point sits inside or immediately after, or nullopt when
+    // point touches no word at all. Same classification Commands.cpp's own
+    // (anonymous-namespace-private) WordRegionAt uses for select-next-
+    // occurrence/select-all-occurrences -- duplicated here rather than
+    // shared, the same "not worth a new seam for something this small" call
+    // that function's own doc comment already makes, and the one
+    // WordPrefixStart above makes too (that one only scans backward, for a
+    // completion prefix -- this needs the full symmetric span).
+    std::optional<std::pair<std::size_t, std::size_t>> WordRegionAtPoint(const text::Rope& content, std::size_t point) {
+        const auto isWordChar = [](char32_t codepoint) {
+            return (codepoint < 0x80) && (std::isalnum(static_cast<unsigned char>(codepoint)) != 0 || codepoint == U'_');
+        };
+
+        std::size_t start = std::min(point, content.ByteLength());
+        while (start > 0) {
+            const std::size_t previous = content.PreviousCodepointBoundary(start);
+            if (!isWordChar(content.CodepointAt(previous).codepoint)) {
+                break;
+            }
+            start = previous;
+        }
+        std::size_t end = std::min(point, content.ByteLength());
+        while (end < content.ByteLength()) {
+            const auto decoded = content.CodepointAt(end);
+            if (!isWordChar(decoded.codepoint)) {
+                break;
+            }
+            end += decoded.byteLength;
+        }
+        if (start == end) {
+            return std::nullopt;
+        }
+        return std::pair{start, end};
+    }
+
+} // namespace
+
+void BufferView::RequestProjectFindReferences() {
+    const text::Buffer& buffer  = activeBuffer_.Get();
+    const text::Rope&    content = buffer.Content();
+
+    const std::optional<std::pair<std::size_t, std::size_t>> wordRegion = WordRegionAtPoint(content, buffer.Point());
+    if (!wordRegion) {
+        statusMessage_ = "No identifier at point.";
+        return;
+    }
+    const std::string word = content.Substring(wordRegion->first, wordRegion->second - wordRegion->first);
+
+    std::vector<editor::SearchMatch> matches;
+    try {
+        // "\bword\b" -- safe to embed the word unescaped: WordRegionAtPoint
+        // only ever admits [A-Za-z0-9_], none of them RE2 metacharacters.
+        matches = editor::SearchDirectory(editor::ProjectRoot(), "\\b" + word + "\\b");
+    }
+    catch (const editor::SearchPatternError& e) {
+        statusMessage_ = std::string("Invalid regex: ") + e.what();
+        return;
+    }
+
+    if (matches.empty()) {
+        statusMessage_ = "No references to \"" + word + "\" found.";
+        return;
+    }
+
+    const std::filesystem::path root = editor::ProjectRoot();
+    std::vector<editor::multibuffer::ExcerptSource> excerpts;
+    excerpts.reserve(matches.size());
+    for (const editor::SearchMatch& match : matches) {
+        std::error_code             ec;
+        const std::filesystem::path relative = std::filesystem::relative(match.file, root, ec);
+        const std::string           displayPath = (!ec && !relative.empty()) ? relative.string() : match.file.string();
+
+        excerpts.push_back(editor::multibuffer::ExcerptSource{
+            match.file, match.lineNumber, match.lineNumber,
+            "▸ " + displayPath + ":" + std::to_string(match.lineNumber), // U+25B8, same disclosure triangle vcs-full-diff-buffer's headers use
+            match.lineText, {}});
+    }
+
+    text::Buffer& results = editor::multibuffer::BuildMultibuffer(bufferList_, "*references: " + word + "*", excerpts);
+    activeBuffer_.Set(results);
+    statusMessage_ = std::to_string(matches.size()) + " reference" + (matches.size() == 1 ? "" : "s") + " to \"" + word +
+                     "\" -- C-c v v to visit";
+}
+
 namespace {
     // Root-scoped singletons, unlike the per-file "*vcs blame <name>*"/
     // "*vcs log <name>*" buffers -- see BuildVcsStatusBuffer's own header
@@ -5947,6 +6143,14 @@ void BufferView::StageOrUnstageHunkAtPoint(bool stage) {
 
 void BufferView::StageHunkAtPointForTesting(bool stage) {
     StageOrUnstageHunkAtPoint(stage);
+}
+
+void BufferView::RequestDiagnosticsBufferForTesting() {
+    RequestDiagnosticsBuffer();
+}
+
+void BufferView::RequestProjectFindReferencesForTesting() {
+    RequestProjectFindReferences();
 }
 
 void BufferView::BeginVcsCommitMessageForTesting() {

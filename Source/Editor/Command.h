@@ -52,6 +52,20 @@ enum class InteractiveRequest { None,
                                 ProjectSearch,
                                 VisitSearchResult,
                                 ProjectReplace,
+                                // find-all-references follow-up: one-shot direct action, same
+                                // shape as VcsFullDiffBuffer/DiagnosticsBuffer -- switches to a
+                                // synthesized, read-only "*references: <word>*" multibuffer
+                                // (Editor/Multibuffer.h) built from a whole-word RE2 scan
+                                // (Editor/ProjectSearch.h's now-internal SearchDirectory) for
+                                // the identifier at point, one excerpt per matching line. A
+                                // fast textual approximation, not real semantic LSP references
+                                // (no textDocument/references support exists yet -- see
+                                // ROADMAP.md's Multibuffers entry for why this was reframed to
+                                // not wait on that). vcs-visit-result already jumps to source
+                                // from any excerpt -- MultibufferIndexFor/VisitVcsResult are
+                                // generic over which multibuffer consumer built the buffer, not
+                                // VCS-specific despite the name.
+                                ProjectFindReferences,
                                 ToggleProjectSidebar,
                                 // terminal-panel follow-up: one-shot direct action, same
                                 // shape as ToggleProjectSidebar -- BufferView just forwards
@@ -352,6 +366,20 @@ enum class InteractiveRequest { None,
                                 // anywhere inside an excerpt's body, not just a single
                                 // "path:line:" index line.
                                 VcsFullDiffBuffer,
+                                // Diagnostics-multibuffer follow-up: same shape as
+                                // VcsFullDiffBuffer -- switches to a synthesized, read-only
+                                // "*diagnostics*" buffer stitching every open buffer's
+                                // Code-origin LSP diagnostics together (one composite source
+                                // line per diagnostic), built entirely synchronously
+                                // (BufferList::Buffers() is already in memory, no VcsRunner-
+                                // style async round trip needed). Its buffer carries a
+                                // MultibufferIndex like VcsFullDiffBuffer's does, so
+                                // vcs-visit-result jumps to source from any excerpt, and it
+                                // also carries real Buffer::Diagnostic entries translated into
+                                // composite byte space, so the ordinary diagnostic gutter/
+                                // underline/severity-color/inline-annotation pipeline lights up
+                                // unmodified -- no new rendering path.
+                                DiagnosticsBuffer,
                                 // Minimap widget follow-up: another one-shot direct action, same
                                 // shape as ToggleProjectSidebar -- BufferView flips the registered
                                 // Minimap's own `active` flag directly (and the paired ScrollBar
