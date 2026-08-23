@@ -1953,6 +1953,12 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                       [](CommandContext& context) {
                           context.interactiveRequest = InteractiveRequest::VcsUnstageHunk;
                       });
+    // Multibuffers follow-up: M-x/keybinding reachable, same shape as
+    // vcs-blame-buffer/vcs-show-log above.
+    registry.Register("vcs-full-diff-buffer", "Show every changed file's real diff, stitched into one *vcs diff* buffer.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::VcsFullDiffBuffer;
+                      });
     // M-x only, like vcs-blame-buffer -- vcs-switch-branch's own prompt
     // already Tab-completes against the real branch list, so the buffer
     // view is the "look around" companion, not the primary path.
@@ -2486,7 +2492,7 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("C-c A s"), "acp-start-session");
     keymap.Bind(ParseKeySequence("C-c A p"), "acp-send-prompt");
     keymap.Bind(ParseKeySequence("C-c A k"), "acp-stop-session"); // "k" for kill, matching Emacs' own kill-process vocabulary
-    keymap.Bind(ParseKeySequence("C-c c"), "acp-toggle-panel"); // "c" for chat
+    keymap.Bind(ParseKeySequence("C-c c"), "acp-toggle-panel");   // "c" for chat
     keymap.Bind(ParseKeySequence("C-c C-v"), "project-search-visit-result");
     // VCS blame gutter follow-up: "C-c v" prefix, mirroring "C-c C-b"/
     // "C-c C-M-b" run-task/cancel-task's own choice of an otherwise-unused
@@ -2508,6 +2514,9 @@ Keymap BuildDefaultGlobalKeymap() {
     // Hunk-staging follow-up: "h" for hunk, its shifted twin for the
     // reverse -- an uppercase letter is just a distinct codepoint chord at
     // the terminal level, nothing special-cased.
+    // Multibuffers follow-up: "d" for diff, next to the other "C-c v"
+    // one-shot views (b/l above).
+    keymap.Bind(ParseKeySequence("C-c v d"), "vcs-full-diff-buffer");
     keymap.Bind(ParseKeySequence("C-c v h"), "vcs-stage-hunk");
     keymap.Bind(ParseKeySequence("C-c v H"), "vcs-unstage-hunk");
     keymap.Bind(ParseKeySequence("C-c C-r"), "project-replace");

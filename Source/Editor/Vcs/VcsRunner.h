@@ -100,6 +100,13 @@ class VcsRunner {
     // concurrent diffs if refreshes are requested faster than one completes.
     void RequestDiff(const text::Buffer& buffer, std::function<void(std::vector<VcsDiffHunk>)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
 
+    // Multibuffers follow-up: root-scoped, real raw diff text (every changed
+    // file, real context lines) -- see VcsProvider::WorkingDiffArgv's own
+    // doc comment for how this differs from RequestDiff above. No parse
+    // half: onComplete gets the raw stdout, meant for Vcs/DiffPatch.h's
+    // ParseDiffHunks, not a provider-side structured parse.
+    void RequestFullDiff(std::function<void(std::string rawDiff)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
+
     // Vocabulary-completion follow-up: the status/stage/unstage/commit/
     // branch operations, same provider-resolution/duplicate-guard/error
     // conventions as the three above. Root-scoped operations (status,

@@ -342,6 +342,16 @@ enum class InteractiveRequest { None,
                                 // from mismatched line numbers would pick the wrong hunk.
                                 VcsStageHunk,
                                 VcsUnstageHunk,
+                                // Multibuffers follow-up: one-shot direct action, same shape as
+                                // VcsBlameBuffer/VcsShowLog -- switches to a synthesized,
+                                // read-only "*vcs diff*" buffer stitching every changed file's
+                                // real diff hunks together (Editor/Multibuffer.h), once the
+                                // async VcsRunner::RequestFullDiff result arrives. Unlike those,
+                                // its buffer also carries a MultibufferIndex, so
+                                // vcs-visit-result (VisitVcsResult) jumps to source from
+                                // anywhere inside an excerpt's body, not just a single
+                                // "path:line:" index line.
+                                VcsFullDiffBuffer,
                                 // Minimap widget follow-up: another one-shot direct action, same
                                 // shape as ToggleProjectSidebar -- BufferView flips the registered
                                 // Minimap's own `active` flag directly (and the paired ScrollBar

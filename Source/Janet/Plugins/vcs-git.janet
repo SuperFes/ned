@@ -35,6 +35,16 @@
 (defn diff-argv [path]
   ["git" "-C" (dirname path) "diff" "--no-color" "-U0" "--" path])
 
+## --- multibuffers: full working-tree diff ---------------------------------
+##
+## Unlike diff-argv above (single file, -U0 for the gutter), this is
+## root-scoped (every changed file in one call) and keeps git's normal
+## default context (3 lines) -- meant to be read in a *vcs diff* multibuffer,
+## not just measured for gutter markers.
+
+(defn working-diff-argv [root]
+  ["git" "-C" root "diff" "--no-color"])
+
 ## --- status/stage/unstage/commit/branch (vocabulary-completion) ----------
 ##
 ## The root-scoped operations get the project root as their argument (see
@@ -250,6 +260,7 @@
    :parse-log parse-log
    :diff-argv diff-argv
    :parse-diff parse-diff
+   :working-diff-argv working-diff-argv
    :status-argv status-argv
    :parse-status parse-status
    :stage-argv stage-argv

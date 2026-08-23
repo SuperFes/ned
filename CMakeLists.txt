@@ -421,6 +421,7 @@ add_library(ned_lib STATIC
         Source/Editor/Mode.cpp
         Source/Editor/SyntaxTheme.cpp
         Source/Editor/ModeOverrides.cpp
+        Source/Editor/Multibuffer.cpp
         Source/Editor/WrapOverrides.cpp
         Source/Editor/CodeFold.cpp
         Source/Editor/CodeFoldSettings.cpp
@@ -741,6 +742,7 @@ if (NED_BUILD_TESTS)
             Tests/TreeSitterTest.cpp
             Tests/DynamicGrammarTest.cpp
             Tests/ModeOverridesTest.cpp
+            Tests/MultibufferTest.cpp
             Tests/WrapOverridesTest.cpp
             Tests/BorderTest.cpp
             Tests/ProjectSidebarTest.cpp

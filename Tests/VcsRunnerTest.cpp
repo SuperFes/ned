@@ -179,6 +179,11 @@ TEST_CASE("VcsRunner root-scoped requests report an error when no provider is re
         [](std::vector<ned::editor::vcs::VcsBranchEntry>) { FAIL("onComplete should not be called"); },
         [&error](std::string message) { error = message; });
     REQUIRE_FALSE(error.empty());
+
+    error.clear();
+    runner.RequestFullDiff([](std::string) { FAIL("onComplete should not be called"); },
+                           [&error](std::string message) { error = message; });
+    REQUIRE_FALSE(error.empty());
 }
 
 TEST_CASE("VcsRunner surfaces the provider's own 'not supported' answer for unimplemented operations", "[VcsRunner]") {
@@ -226,6 +231,11 @@ TEST_CASE("VcsRunner surfaces the provider's own 'not supported' answer for unim
     runner.RequestBranchCreate(
         "dev", [] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
     REQUIRE(error == "branch creation not supported by this provider");
+
+    error.clear();
+    runner.RequestFullDiff([](std::string) { FAIL("onComplete should not be called"); },
+                           [&error](std::string message) { error = message; });
+    REQUIRE(error == "full diff not supported by this provider");
 }
 
 namespace {

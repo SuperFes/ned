@@ -19,6 +19,7 @@ namespace {
         "parse-log",
         "diff-argv",
         "parse-diff",
+        "working-diff-argv",
         "status-argv",
         "parse-status",
         "stage-argv",
@@ -267,6 +268,14 @@ std::vector<editor::vcs::VcsDiffHunk> JanetVcsProvider::ParseDiff(const std::str
         return VcsProvider::ParseDiff(stdout_);
     }
     return ParseDiffHunks(CallWithString(*fn, stdout_));
+}
+
+editor::vcs::VcsCommandSpec JanetVcsProvider::WorkingDiffArgv(const std::filesystem::path& root) const {
+    const std::string* fn = InternalName("working-diff-argv");
+    if (!fn) {
+        return VcsProvider::WorkingDiffArgv(root);
+    }
+    return ParseCommandSpec(CallWithString(*fn, root.string()));
 }
 
 editor::vcs::VcsCommandSpec JanetVcsProvider::StatusArgv(const std::filesystem::path& root) const {

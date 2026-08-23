@@ -8,6 +8,7 @@
 #include <notcurses/notcurses.h>
 
 #include "Editor/MinimapSettings.h"
+#include "Editor/Multibuffer.h"
 #include "EventLoop.h"
 
 namespace ned::ui {
@@ -37,12 +38,12 @@ namespace {
     // cosmetic minimap, not the real highlighter.
     editor::SyntaxClass ClassAt(const std::vector<IndexedSpan>& sortedSpans, std::size_t offset) {
         constexpr std::size_t kMaxBackwardScan = 64;
-        auto it = std::upper_bound(sortedSpans.begin(), sortedSpans.end(), offset,
-                                    [](std::size_t value, const IndexedSpan& span) { return value < span.startByte; });
-        std::size_t          scanned = 0;
-        std::size_t           bestIndex = 0;
-        bool                  found     = false;
-        editor::SyntaxClass   best      = editor::SyntaxClass::Default;
+        auto                  it               = std::upper_bound(sortedSpans.begin(), sortedSpans.end(), offset,
+                                                                  [](std::size_t value, const IndexedSpan& span) { return value < span.startByte; });
+        std::size_t           scanned          = 0;
+        std::size_t           bestIndex        = 0;
+        bool                  found            = false;
+        editor::SyntaxClass   best             = editor::SyntaxClass::Default;
         while (it != sortedSpans.begin() && scanned < kMaxBackwardScan) {
             --it;
             ++scanned;
@@ -63,8 +64,7 @@ namespace {
 
 } // namespace
 
-Minimap::Minimap(const ActiveBuffer& activeBuffer, const editor::Mode& mode, const Theme& theme)
-    : activeBuffer_(activeBuffer), mode_(mode), theme_(theme) {
+Minimap::Minimap(const ActiveBuffer& activeBuffer, const editor::Mode& mode, const Theme& theme) : activeBuffer_(activeBuffer), mode_(mode), theme_(theme) {
     if (const char* path = std::getenv("NED_DEBUG_MINIMAP"); path && *path) {
         debugLogPath_ = path;
     }
@@ -99,10 +99,10 @@ void Minimap::ReleasePlane() const {
 }
 
 void Minimap::ForEachDensityDot(int subRows, int subCols, int charsPerDot,
-                                 const std::function<void(int, int, std::size_t)>& visit) const {
-    text::Buffer&      buffer      = activeBuffer_.Get();
-    const text::Rope&  content     = buffer.Content();
-    const std::size_t  totalLines  = content.LineCount();
+                                const std::function<void(int, int, std::size_t)>& visit) const {
+    text::Buffer&     buffer     = activeBuffer_.Get();
+    const text::Rope& content    = buffer.Content();
+    const std::size_t totalLines = content.LineCount();
     if (totalLines == 0 || subRows <= 0 || subCols <= 0) {
         return;
     }
@@ -149,7 +149,7 @@ void Minimap::EnsurePlane() const {
     const int width  = editor::MinimapWidth();
     if (eventLoop_ == nullptr || width <= 0 || height <= 0) {
         DebugLog("EnsurePlane: bail -- eventLoop_=" + std::string(eventLoop_ == nullptr ? "null" : "set") +
-                  " width=" + std::to_string(width) + " height=" + std::to_string(height));
+                 " width=" + std::to_string(width) + " height=" + std::to_string(height));
         ReleasePlane();
         return;
     }
@@ -274,19 +274,66 @@ void Minimap::EnsurePlane() const {
     ColorToRgb8(backgroundApprox, bgR, bgG, bgB);
     ColorToRgb8(theme_.selectionBackground, bandR, bandG, bandB);
 
+    // Multibuffers follow-up: a *vcs diff*-style multibuffer's own added/
+    // removed lines get the same background wash here that the main
+    // BufferView gives them (Editor/Multibuffer.h's LineTint) -- without
+    // this the minimap renders as a flat, undifferentiated blob for a view
+    // whose entire point is showing where the changes are at a glance.
+    // Looked up once per raster build (this buffer's content never changes
+    // after BuildMultibuffer constructs it, so EnsurePlane's own
+    // cacheContentGeneration_ check already keeps this from recomputing
+    // every frame), not per dot -- a plain per-line lookup, same "cosmetic
+    // minimap, not the real highlighter" posture ClassAt's own comment
+    // states for syntax color.
+    const auto*       multibufferIndex  = editor::multibuffer::MultibufferIndexFor(buffer);
+    const std::size_t totalLinesForTint = buffer.Content().LineCount();
+    std::uint8_t      addedR = 0, addedG = 0, addedB = 0, removedR = 0, removedG = 0, removedB = 0;
+    if (multibufferIndex) {
+        ColorToRgb8(theme_.diffAddedBackground, addedR, addedG, addedB);
+        ColorToRgb8(theme_.diffRemovedBackground, removedR, removedG, removedB);
+    }
+
     for (int py = 0; py < dotRows; ++py) {
-        const bool         inBand = py >= bandTop && py < bandTop + bandRows;
-        const std::uint8_t r      = inBand ? bandR : bgR;
-        const std::uint8_t g      = inBand ? bandG : bgG;
-        const std::uint8_t b      = inBand ? bandB : bgB;
+        const bool   inBand = py >= bandTop && py < bandTop + bandRows;
+        std::uint8_t r = bgR, g = bgG, b = bgB;
+        if (inBand) {
+            r = bandR;
+            g = bandG;
+            b = bandB;
+        }
+        else if (multibufferIndex != nullptr && totalLinesForTint > 0) {
+            // Same subRow -> line mapping ForEachDensityDot uses below (py
+            // here IS a subRow -- dotRows/subRows are the same value this
+            // raster is built at) -- a whole dot-row can span many lines of
+            // a short diff or a fraction of one on a long file; taking the
+            // tint of the row's own first line is an approximation, not
+            // exact per-line resolution, the same trade-off ClassAt's
+            // bounded backward scan already makes for syntax color.
+            const std::size_t line = static_cast<std::size_t>(
+                (static_cast<long long>(py) * static_cast<long long>(totalLinesForTint)) / dotRows);
+            switch (multibufferIndex->TintForLine(line)) {
+                case editor::multibuffer::LineTint::Added:
+                    r = addedR;
+                    g = addedG;
+                    b = addedB;
+                    break;
+                case editor::multibuffer::LineTint::Removed:
+                    r = removedR;
+                    g = removedG;
+                    b = removedB;
+                    break;
+                default:
+                    break;
+            }
+        }
         for (int px = 0; px < dotCols; ++px) {
             const std::size_t idx = (static_cast<std::size_t>(py) * static_cast<std::size_t>(dotCols) +
                                      static_cast<std::size_t>(px)) *
                                     4;
-            pixels[idx + 0] = r;
-            pixels[idx + 1] = g;
-            pixels[idx + 2] = b;
-            pixels[idx + 3] = 255;
+            pixels[idx + 0]       = r;
+            pixels[idx + 1]       = g;
+            pixels[idx + 2]       = b;
+            pixels[idx + 3]       = 255;
         }
     }
 
@@ -338,16 +385,16 @@ void Minimap::EnsurePlane() const {
         // complaint (a quadrant/sextant/octant glyph's own 2-color-per-cell
         // blending already reads calmer than a real image's continuous
         // per-pixel color at this small a size).
-        const Color dotColor = usePixel ? Color::Interpolate(0.45F, fg, backgroundApprox) : fg;
+        const Color  dotColor = usePixel ? Color::Interpolate(0.45F, fg, backgroundApprox) : fg;
         std::uint8_t r, g, b;
         ColorToRgb8(dotColor, r, g, b);
         const std::size_t idx = (static_cast<std::size_t>(subRow) * static_cast<std::size_t>(dotCols) +
                                  static_cast<std::size_t>(subCol + leftMarginCols)) *
                                 4;
-        pixels[idx + 0] = r;
-        pixels[idx + 1] = g;
-        pixels[idx + 2] = b;
-        pixels[idx + 3] = 255;
+        pixels[idx + 0]       = r;
+        pixels[idx + 1]       = g;
+        pixels[idx + 2]       = b;
+        pixels[idx + 3]       = 255;
     });
 
     if (needNewPlane) {
@@ -357,7 +404,7 @@ void Minimap::EnsurePlane() const {
         nopts.x    = Box_().x_min;
         nopts.rows = static_cast<unsigned>(height);
         nopts.cols = static_cast<unsigned>(width);
-        plane_ = ncplane_create(eventLoop_->StdPlane(), &nopts);
+        plane_     = ncplane_create(eventLoop_->StdPlane(), &nopts);
         if (plane_ == nullptr) {
             DebugLog("EnsurePlane: ncplane_create returned null, giving up for this session");
             planeUnavailable_ = true;
@@ -426,10 +473,10 @@ void Minimap::PaintPlane(Canvas c) {
     // blit failed this frame or hasn't landed on the terminal yet.
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
-            Cell& out             = c[{.x = x, .y = y}];
-            out.character         = " ";
-            out.foreground_color  = theme_.background;
-            out.background_color  = theme_.background;
+            Cell& out            = c[{.x = x, .y = y}];
+            out.character        = " ";
+            out.foreground_color = theme_.background;
+            out.background_color = theme_.background;
         }
     }
 }
