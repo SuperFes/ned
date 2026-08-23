@@ -51,15 +51,26 @@ struct RectangleBounds {
 // kill-ring (no shared rotation, just the one most-recently-killed
 // rectangle) -- matched here with its own tiny type rather than folding
 // into text::KillRing.
+//
+// multi-cursor-rectangle follow-up: Set(lines) is equivalent to
+// SetBlocks({lines}) -- Lines() always reads blocks_.front(), the "single
+// most-recent rectangle" view every pre-multi-cursor call site still reads
+// (and what a multi-cursor yank falls back to on a piece-count mismatch,
+// see YankRectangleLines below). Narrower than KillRing/RegisterTable's own
+// "join into one blob" mismatch fallback -- column data has no sensible
+// joined shape the way killed text lines do, so a mismatch here just
+// collapses to today's single-block behavior instead.
 class RectangleClipboard {
   public:
     void Set(std::vector<std::string> lines);
+    void SetBlocks(std::vector<std::vector<std::string>> blocks);
 
-    [[nodiscard]] const std::vector<std::string>& Lines() const;
-    [[nodiscard]] bool                            Empty() const;
+    [[nodiscard]] const std::vector<std::string>&              Lines() const;
+    [[nodiscard]] const std::vector<std::vector<std::string>>& Blocks() const;
+    [[nodiscard]] bool                                         Empty() const;
 
   private:
-    std::vector<std::string> lines_;
+    std::vector<std::vector<std::string>> blocks_;
 };
 
 // Process-wide, mutex-guarded static state, mirroring TabWidth.h/
@@ -71,6 +82,7 @@ class RectangleClipboard {
 // instruction of its own -- see Rectangle.cpp/ROADMAP.md for the fuller
 // reasoning.
 void                                    SetRectangleClipboard(std::vector<std::string> lines);
+void                                    SetRectangleClipboardBlocks(std::vector<std::vector<std::string>> blocks);
 [[nodiscard]] const RectangleClipboard& GlobalRectangleClipboard();
 
 // Deletes the column range bounds describes, line by line, returning the
@@ -101,6 +113,14 @@ void DeleteRectangle(text::Buffer& buffer, std::size_t tabWidth);
 // its end if the clipboard has more lines than there are lines left below
 // point.
 void YankRectangle(text::Buffer& buffer, std::size_t tabWidth);
+
+// multi-cursor-rectangle follow-up: YankRectangle's real logic, taking an
+// explicit block of lines instead of always reading
+// GlobalRectangleClipboard().Lines() -- what a multi-cursor yank-rectangle
+// calls per cursor with that cursor's own block.
+// YankRectangle(buffer, tabWidth) is a one-line wrapper around this with
+// GlobalRectangleClipboard().Lines().
+void YankRectangleLines(text::Buffer& buffer, const std::vector<std::string>& lines, std::size_t tabWidth);
 
 // Replaces the column range with replacement on every line of the region.
 // Precondition: buffer.HasMark().

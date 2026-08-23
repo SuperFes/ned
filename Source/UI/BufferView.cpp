@@ -2900,7 +2900,16 @@ bool BufferView::RunCommandAndHandleOutcome(editor::CommandContext& context, con
     }
 
     ClampPointToNarrowing();
-    ScrollToShowPoint();
+    // multi-cursor-round-2 follow-up: a command that just added a secondary
+    // cursor (add-cursor-above/-below, select-next-occurrence) reports its
+    // new offset here instead of moving point itself -- scroll to show that
+    // cursor rather than the ordinary (unmoved) primary point.
+    if (context.newlyAddedCursorPoint) {
+        ScrollToShowOffset(*context.newlyAddedCursorPoint);
+    }
+    else {
+        ScrollToShowPoint();
+    }
     return ran;
 }
 
@@ -4135,39 +4144,107 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         // direct actions, same shape as ToggleProjectSidebar -- inputMode_
         // stays Normal, no prompt session. See Editor/Rectangle.h for where
         // the actual operations live.
-        case editor::InteractiveRequest::KillRectangle:
-            if (!activeBuffer_.Get().HasMark()) {
-                statusMessage_ = "No rectangle region selected.";
+        case editor::InteractiveRequest::KillRectangle: {
+            text::Buffer& buffer = activeBuffer_.Get();
+            if (!buffer.HasSecondaryCursors()) {
+                if (!buffer.HasMark()) {
+                    statusMessage_ = "No rectangle region selected.";
+                }
+                else {
+                    editor::KillRectangle(buffer, editor::TabWidth());
+                    statusMessage_.clear();
+                }
+                return;
             }
-            else {
-                editor::KillRectangle(activeBuffer_.Get(), editor::TabWidth());
+            // multi-cursor-round-2 follow-up: each cursor already carries
+            // its own optional mark, so KillRectangle itself needs no
+            // change -- just run it per cursor and collect what it
+            // published to the (single-slot) clipboard each time into one
+            // multi-block entry afterward.
+            std::vector<std::vector<std::string>> blocks;
+            bool                                  any = false;
+            buffer.ForEachCursor([&] {
+                if (buffer.HasMark()) {
+                    editor::KillRectangle(buffer, editor::TabWidth());
+                    blocks.push_back(editor::GlobalRectangleClipboard().Lines());
+                    any = true;
+                }
+                else {
+                    blocks.emplace_back();
+                }
+            });
+            if (any) {
+                editor::SetRectangleClipboardBlocks(std::move(blocks));
                 statusMessage_.clear();
             }
-            return;
-        case editor::InteractiveRequest::DeleteRectangle:
-            if (!activeBuffer_.Get().HasMark()) {
+            else {
                 statusMessage_ = "No rectangle region selected.";
             }
-            else {
-                editor::DeleteRectangle(activeBuffer_.Get(), editor::TabWidth());
-                statusMessage_.clear();
-            }
             return;
-        case editor::InteractiveRequest::YankRectangle:
+        }
+        case editor::InteractiveRequest::DeleteRectangle: {
+            text::Buffer& buffer = activeBuffer_.Get();
+            if (!buffer.HasSecondaryCursors()) {
+                if (!buffer.HasMark()) {
+                    statusMessage_ = "No rectangle region selected.";
+                }
+                else {
+                    editor::DeleteRectangle(buffer, editor::TabWidth());
+                    statusMessage_.clear();
+                }
+                return;
+            }
+            bool any = false;
+            buffer.ForEachCursor([&] {
+                if (buffer.HasMark()) {
+                    editor::DeleteRectangle(buffer, editor::TabWidth());
+                    any = true;
+                }
+            });
+            statusMessage_ = any ? std::string() : "No rectangle region selected.";
+            return;
+        }
+        case editor::InteractiveRequest::YankRectangle: {
+            text::Buffer& buffer = activeBuffer_.Get();
             if (editor::GlobalRectangleClipboard().Empty()) {
                 statusMessage_ = "No rectangle to yank.";
+                return;
             }
-            else {
-                editor::YankRectangle(activeBuffer_.Get(), editor::TabWidth());
+            if (!buffer.HasSecondaryCursors()) {
+                editor::YankRectangle(buffer, editor::TabWidth());
                 statusMessage_.clear();
+                return;
             }
+            // multi-cursor-round-2 follow-up: 1:1 block-per-cursor when the
+            // block count matches how many cursors are live right now, else
+            // fall back to the single most-recent block (Lines()) at every
+            // cursor -- narrower than KillRing/RegisterTable's own "join
+            // into one blob" mismatch fallback, see RectangleClipboard's
+            // own doc comment for why.
+            const auto&       blocks      = editor::GlobalRectangleClipboard().Blocks();
+            const std::size_t cursorCount = 1 + buffer.SecondaryCursors().size();
+            const bool        perCursor   = blocks.size() == cursorCount;
+            std::size_t       i           = 0;
+            buffer.ForEachCursor([&] {
+                editor::YankRectangleLines(buffer, perCursor ? blocks[i] : editor::GlobalRectangleClipboard().Lines(),
+                                           editor::TabWidth());
+                ++i;
+            });
+            statusMessage_.clear();
             return;
+        }
         // string-rectangle follow-up: the one rectangle command that's a
         // real prompt session (needs one line of typed replacement text) --
         // HasMark() is checked here, before ever opening the prompt, so
         // there's nothing to cancel out of if there's no region at all.
+        // multi-cursor-round-2 follow-up: with secondary cursors active,
+        // this optimistically opens the prompt without pre-scanning every
+        // cursor for a mark (that scan would need its own ForEachCursor
+        // pass just to answer a yes/no gate) -- if it turns out none of
+        // them have one, the confirm handler below silently does nothing,
+        // a narrow, accepted v1 gap rather than a full pre-check.
         case editor::InteractiveRequest::StringRectangle:
-            if (!activeBuffer_.Get().HasMark()) {
+            if (!activeBuffer_.Get().HasMark() && !activeBuffer_.Get().HasSecondaryCursors()) {
                 statusMessage_ = "No rectangle region selected.";
             }
             else {
@@ -4592,7 +4669,21 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
             }
         }
         else if (inputMode_ == InputMode::StringRectangle) {
-            editor::StringRectangle(activeBuffer_.Get(), input, editor::TabWidth());
+            text::Buffer& buffer = activeBuffer_.Get();
+            if (!buffer.HasSecondaryCursors()) {
+                editor::StringRectangle(buffer, input, editor::TabWidth());
+            }
+            else {
+                // multi-cursor-round-2 follow-up: one shared, user-typed
+                // replacement string applied to every cursor's own
+                // rectangle -- no piece-distribution question here, unlike
+                // kill/yank.
+                buffer.ForEachCursor([&] {
+                    if (buffer.HasMark()) {
+                        editor::StringRectangle(buffer, input, editor::TabWidth());
+                    }
+                });
+            }
             statusMessage_.clear();
         }
         else if (inputMode_ == InputMode::SetHeadlineTags) {
@@ -6233,17 +6324,33 @@ void BufferView::HandleRegisterKey(const editor::KeyChord& chord) {
         return; // ignore, keep waiting for a register name
     }
 
-    const char32_t name = chord.Codepoint;
+    const char32_t name   = chord.Codepoint;
+    text::Buffer&  buffer = activeBuffer_.Get();
     switch (inputMode_) {
-        case InputMode::PointToRegister:
-            registers_.SetPoint(name, activeBuffer_.Get().Name(), activeBuffer_.Get().Point());
+        case InputMode::PointToRegister: {
+            // multi-cursor-round-2 follow-up: [0] is the primary's point,
+            // the rest are every secondary's, in cursor order.
+            std::vector<std::size_t> points{buffer.Point()};
+            for (const auto& cursor : buffer.SecondaryCursors()) {
+                points.push_back(cursor.point);
+            }
+            registers_.SetPoint(name, buffer.Name(), std::move(points));
             statusMessage_ = "Point stored in register.";
             break;
+        }
         case InputMode::JumpToRegister:
             if (const editor::PointRegisterValue* value = registers_.Point(name)) {
                 if (text::Buffer* target = bufferList_.Find(value->bufferName)) {
                     activeBuffer_.Set(*target);
-                    target->SetPoint(value->byteOffset); // Buffer::SetPoint already clamps out-of-range offsets
+                    // multi-cursor-round-2 follow-up: restores the primary
+                    // point plus a secondary cursor for every further saved
+                    // offset -- byteOffsets is never empty (RegisterTable::
+                    // SetPoint's own guarantee).
+                    target->ClearSecondaryCursors();
+                    target->SetPoint(value->byteOffsets.front()); // Buffer::SetPoint already clamps out-of-range offsets
+                    for (std::size_t i = 1; i < value->byteOffsets.size(); ++i) {
+                        target->AddCursorAt(value->byteOffsets[i]);
+                    }
                     statusMessage_.clear();
                 }
                 else {
@@ -6255,24 +6362,68 @@ void BufferView::HandleRegisterKey(const editor::KeyChord& chord) {
             }
             break;
         case InputMode::CopyToRegister:
-            if (!activeBuffer_.Get().HasMark()) {
-                statusMessage_ = "No region to copy.";
+            if (!buffer.HasSecondaryCursors()) {
+                if (!buffer.HasMark()) {
+                    statusMessage_ = "No region to copy.";
+                }
+                else {
+                    const auto [start, end] = buffer.Region();
+                    registers_.SetText(name, buffer.Content().Substring(start, end - start));
+                    statusMessage_ = "Copied to register.";
+                }
             }
             else {
-                const auto [start, end] = activeBuffer_.Get().Region();
-                registers_.SetText(name, activeBuffer_.Get().Content().Substring(start, end - start));
-                statusMessage_ = "Copied to register.";
+                // multi-cursor-round-2 follow-up: same "one piece per
+                // cursor, empty for a cursor with no mark" shape
+                // KillPerCursor uses for kill-region/kill-ring-save.
+                std::vector<std::string> pieces;
+                bool                     any = false;
+                buffer.ForEachCursor([&] {
+                    if (buffer.HasMark()) {
+                        const auto [start, end] = buffer.Region();
+                        pieces.push_back(buffer.Content().Substring(start, end - start));
+                        any = true;
+                    }
+                    else {
+                        pieces.emplace_back();
+                    }
+                });
+                if (any) {
+                    registers_.SetTextPieces(name, std::move(pieces));
+                    statusMessage_ = "Copied to register.";
+                }
+                else {
+                    statusMessage_ = "No region to copy.";
+                }
             }
             break;
-        case InputMode::InsertRegister:
-            if (const std::string* text = registers_.Text(name)) {
-                activeBuffer_.Get().InsertAtPoint(*text);
-                statusMessage_.clear();
-            }
-            else {
+        case InputMode::InsertRegister: {
+            const std::string* blob = registers_.Text(name);
+            if (!blob) {
                 statusMessage_ = "Register does not contain text.";
+                break;
             }
+            if (!buffer.HasSecondaryCursors()) {
+                buffer.InsertAtPoint(*blob);
+                statusMessage_.clear();
+                break;
+            }
+            // multi-cursor-round-2 follow-up: distribute 1:1 in cursor
+            // order when the entry's own piece count matches how many
+            // cursors are live right now, else fall back to the whole
+            // joined blob at every cursor -- same rule multi-cursor yank
+            // uses on KillRing.
+            const std::vector<std::string>& pieces      = *registers_.TextPieces(name); // guaranteed present alongside blob
+            const std::size_t               cursorCount = 1 + buffer.SecondaryCursors().size();
+            const bool                      perCursor   = pieces.size() == cursorCount;
+            std::size_t                     i           = 0;
+            buffer.ForEachCursor([&] {
+                buffer.InsertAtPoint(perCursor ? pieces[i] : *blob);
+                ++i;
+            });
+            statusMessage_.clear();
             break;
+        }
         default:
             break; // unreachable -- OnKeyEvent only routes here for the four modes above
     }
@@ -6655,8 +6806,13 @@ void BufferView::EnsureTopLineValidForActiveBuffer() {
 }
 
 void BufferView::ScrollToShowPoint() {
+    ScrollToShowOffset(activeBuffer_.Get().Point());
+    ScrollToShowPointHorizontally();
+}
+
+void BufferView::ScrollToShowOffset(std::size_t offset) {
     const text::Rope& content   = activeBuffer_.Get().Content();
-    const std::size_t pointLine = content.ByteOffsetToLine(activeBuffer_.Get().Point());
+    const std::size_t pointLine = content.ByteOffsetToLine(offset);
 
     if (pointLine < topLine_) {
         topLine_ = pointLine;
@@ -6708,11 +6864,13 @@ void BufferView::ScrollToShowPoint() {
             topLine_ = newTop;
         }
     }
-    // line-wrap follow-up: every call site here wants "make sure point is
-    // visible," full stop -- folding the horizontal half in here means
-    // every one of ScrollToShowPoint()'s existing call sites gets it for
-    // free, rather than needing a second call added at each of them.
-    ScrollToShowPointHorizontally();
+    // multi-cursor-round-2 follow-up: no ScrollToShowPointHorizontally()
+    // call here -- it always reads activeBuffer_.Get().Point() directly, so
+    // calling it for an arbitrary secondary-cursor offset would scroll
+    // horizontally to the *primary's* column instead, wrong for exactly the
+    // case this parameterized form exists for. ScrollToShowPoint() (below)
+    // still gets both, since it always wants "make sure point itself is
+    // fully visible."
 }
 
 void BufferView::ScrollToShowPointHorizontally() {

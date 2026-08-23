@@ -8,15 +8,27 @@
 namespace ned::editor {
 
 void RectangleClipboard::Set(std::vector<std::string> lines) {
-    lines_ = std::move(lines);
+    SetBlocks({std::move(lines)});
+}
+
+void RectangleClipboard::SetBlocks(std::vector<std::vector<std::string>> blocks) {
+    blocks_ = std::move(blocks);
 }
 
 const std::vector<std::string>& RectangleClipboard::Lines() const {
-    return lines_;
+    static const std::vector<std::string> kEmpty;
+    return blocks_.empty() ? kEmpty : blocks_.front();
+}
+
+const std::vector<std::vector<std::string>>& RectangleClipboard::Blocks() const {
+    return blocks_;
 }
 
 bool RectangleClipboard::Empty() const {
-    return lines_.empty();
+    // A block is empty only when the cursor it came from had no mark (see
+    // BufferView's multi-cursor KillRectangle handling) -- "nothing to
+    // yank" means every block is empty, not just the first.
+    return std::all_of(blocks_.begin(), blocks_.end(), [](const std::vector<std::string>& block) { return block.empty(); });
 }
 
 namespace {
@@ -36,6 +48,11 @@ namespace {
 void SetRectangleClipboard(std::vector<std::string> lines) {
     const std::lock_guard<std::mutex> lock(ClipboardMutex());
     ClipboardStorage().Set(std::move(lines));
+}
+
+void SetRectangleClipboardBlocks(std::vector<std::vector<std::string>> blocks) {
+    const std::lock_guard<std::mutex> lock(ClipboardMutex());
+    ClipboardStorage().SetBlocks(std::move(blocks));
 }
 
 const RectangleClipboard& GlobalRectangleClipboard() {
@@ -91,13 +108,15 @@ void DeleteRectangle(text::Buffer& buffer, std::size_t tabWidth) {
 }
 
 void YankRectangle(text::Buffer& buffer, std::size_t tabWidth) {
-    const RectangleClipboard& clipboard = GlobalRectangleClipboard();
+    YankRectangleLines(buffer, GlobalRectangleClipboard().Lines(), tabWidth);
+}
 
+void YankRectangleLines(text::Buffer& buffer, const std::vector<std::string>& lines, std::size_t tabWidth) {
     const std::size_t startLine = buffer.Content().ByteOffsetToLine(buffer.Point());
     const std::size_t targetColumn =
         buffer.VisualColumnForByteOffset(buffer.Content().LineToByteOffset(startLine), buffer.Point(), tabWidth);
 
-    for (std::size_t i = 0; i < clipboard.Lines().size(); ++i) {
+    for (std::size_t i = 0; i < lines.size(); ++i) {
         const std::size_t currentLine = startLine + i;
         if (currentLine >= buffer.Content().LineCount()) {
             buffer.InsertAt(buffer.Size(), "\n");
@@ -124,7 +143,7 @@ void YankRectangle(text::Buffer& buffer, std::size_t tabWidth) {
         else {
             insertAt = buffer.ByteOffsetForLineAndColumn(currentLine, targetColumn, tabWidth);
         }
-        buffer.InsertAt(insertAt, clipboard.Lines()[i]);
+        buffer.InsertAt(insertAt, lines[i]);
     }
 }
 

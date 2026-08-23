@@ -179,3 +179,42 @@ TEST_CASE("SetRectangleClipboard/GlobalRectangleClipboard round-trip", "[Rectang
     SetRectangleClipboard({"x", "y"});
     REQUIRE(GlobalRectangleClipboard().Lines() == std::vector<std::string>{"x", "y"});
 }
+
+// multi-cursor-rectangle follow-up.
+
+TEST_CASE("Set is equivalent to SetBlocks with a single block", "[Rectangle]") {
+    RectangleClipboard clipboard;
+
+    clipboard.Set({"a", "b"});
+    REQUIRE(clipboard.Blocks() == std::vector<std::vector<std::string>>{{"a", "b"}});
+    REQUIRE(clipboard.Lines() == std::vector<std::string>{"a", "b"});
+}
+
+TEST_CASE("SetBlocks stores multiple blocks; Lines() reads the first", "[Rectangle]") {
+    RectangleClipboard clipboard;
+
+    clipboard.SetBlocks({{"1", "2"}, {"x", "y", "z"}});
+    REQUIRE(clipboard.Blocks().size() == 2);
+    REQUIRE(clipboard.Lines() == std::vector<std::string>{"1", "2"});
+    REQUIRE_FALSE(clipboard.Empty());
+}
+
+TEST_CASE("RectangleClipboard is Empty only when every block is empty", "[Rectangle]") {
+    RectangleClipboard clipboard;
+    REQUIRE(clipboard.Empty());
+
+    clipboard.SetBlocks({{}, {}});
+    REQUIRE(clipboard.Empty()); // no cursor actually killed anything
+
+    clipboard.SetBlocks({{}, {"row"}});
+    REQUIRE_FALSE(clipboard.Empty()); // one cursor did
+}
+
+TEST_CASE("YankRectangleLines matches YankRectangle given the same lines", "[Rectangle]") {
+    Buffer buffer("test", Rope("ABCDE\nXY"));
+    buffer.SetPoint(buffer.ByteOffsetForLineAndColumn(0, 3, 1));
+
+    ned::editor::YankRectangleLines(buffer, {"11", "22"}, 1);
+
+    REQUIRE(buffer.Text() == "ABC11DE\nXY 22");
+}
