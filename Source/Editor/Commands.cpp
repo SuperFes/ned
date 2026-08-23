@@ -2458,21 +2458,19 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("F10"), "dap-step-over");
     keymap.Bind(ParseKeySequence("F11"), "dap-step-into");
     keymap.Bind(ParseKeySequence("S-F11"), "dap-step-out");
-    // ACP client slice 2: "C-c a" prefix (a for agent), mirroring "C-c v"'s
-    // own choice of an otherwise-unused letter+prefix combination.
-    keymap.Bind(ParseKeySequence("C-c a s"), "acp-start-session");
-    keymap.Bind(ParseKeySequence("C-c a p"), "acp-send-prompt");
-    keymap.Bind(ParseKeySequence("C-c a k"), "acp-stop-session"); // "k" for kill, matching Emacs' own kill-process vocabulary
-    // NOT under the "C-c a" prefix (unlike the three bindings just above):
-    // Keymap::Resolve returns Match the instant a node's own command is set,
-    // before ever consulting its children -- confirmed live (tmux) and by
-    // this file's own "org-agenda sets interactiveRequest and is bound to
-    // C-c a" test in CommandsTest.cpp, which shows "C-c" "a" alone already
-    // resolves to Invoked/org-agenda. "C-c a" carries org-agenda as its own
-    // command, so C-c a <anything> is structurally unreachable by typing --
-    // a pre-existing condition the three bindings just above already share
-    // (out of scope to relitigate here); a fourth one under the same broken
-    // prefix would just be more dead keymap entries.
+    // ACP client slice 2 (keymap-collision follow-up): "C-c A" prefix
+    // (shifted "a" for agent), not plain "C-c a" -- that's already
+    // org-agenda's own leaf binding (real Org's actual binding), and
+    // Keymap::Resolve fires the instant a node's own command is set without
+    // ever consulting its children, so "C-c a <anything>" is structurally
+    // unreachable once "C-c a" itself is bound (confirmed live via tmux;
+    // see Keymap::AmbiguousBindings and CommandsTest.cpp's regression test).
+    // Uppercase A is just a distinct codepoint chord at the terminal level,
+    // the same trick "C-c v H" already uses for vcs-unstage-hunk beside its
+    // lowercase twin.
+    keymap.Bind(ParseKeySequence("C-c A s"), "acp-start-session");
+    keymap.Bind(ParseKeySequence("C-c A p"), "acp-send-prompt");
+    keymap.Bind(ParseKeySequence("C-c A k"), "acp-stop-session"); // "k" for kill, matching Emacs' own kill-process vocabulary
     keymap.Bind(ParseKeySequence("C-c c"), "acp-toggle-panel"); // "c" for chat
     keymap.Bind(ParseKeySequence("C-c C-v"), "project-search-visit-result");
     // VCS blame gutter follow-up: "C-c v" prefix, mirroring "C-c C-b"/

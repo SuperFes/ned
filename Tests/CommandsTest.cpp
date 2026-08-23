@@ -1183,6 +1183,27 @@ TEST_CASE("org-agenda sets interactiveRequest and is bound to C-c a", "[Commands
     REQUIRE(fixture.buffer.Text().empty()); // the command itself doesn't touch the buffer
 }
 
+// keymap-collision follow-up: guards against reintroducing the class of bug
+// that made "C-c a s"/"C-c a p"/"C-c a k" unreachable by typing once "C-c a"
+// was bound to org-agenda (see Keymap::Resolve's own comment and
+// ROADMAP.md). AmbiguousBindings() flags any sequence that is both a
+// complete command binding and a prefix of a longer one -- Resolve fires the
+// shorter Match first and never consults the longer children, so such a
+// binding can never be typed. Every shipped keymap with real nesting
+// (the global default plus Org's and Markdown's mode-local overlays) is
+// checked here; a future collision like this should fail ctest, not need
+// another live tmux session to find.
+TEST_CASE("shipped keymaps have no unreachable-by-typing bindings", "[Commands][Keymap]") {
+    const Keymap global = BuildDefaultGlobalKeymap();
+    CHECK(global.AmbiguousBindings().empty());
+
+    const Keymap org = OrgMode().keymap;
+    CHECK(org.AmbiguousBindings().empty());
+
+    const Keymap markdown = MarkdownMode().keymap;
+    CHECK(markdown.AmbiguousBindings().empty());
+}
+
 TEST_CASE("isearch/query-replace commands set interactiveRequest, not the buffer", "[Commands]") {
     CommandRegistry registry;
     RegisterBuiltinCommands(registry);

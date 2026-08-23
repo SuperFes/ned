@@ -52,6 +52,24 @@ Keymap::Lookup Keymap::Resolve(const std::vector<KeyChord>& sequence) const {
     return {LookupResult::NoMatch, {}};
 }
 
+void Keymap::CollectAmbiguousBindings(const Node& node, std::vector<KeyChord>& sequence, std::vector<std::string>& out) {
+    if (node.command && !node.children.empty()) {
+        out.push_back(FormatKeySequence(sequence));
+    }
+    for (const auto& [chord, child] : node.children) {
+        sequence.push_back(chord);
+        CollectAmbiguousBindings(*child, sequence, out);
+        sequence.pop_back();
+    }
+}
+
+std::vector<std::string> Keymap::AmbiguousBindings() const {
+    std::vector<std::string> out;
+    std::vector<KeyChord>    sequence;
+    CollectAmbiguousBindings(root_, sequence, out);
+    return out;
+}
+
 KeymapStack::KeymapStack(std::vector<const Keymap*> layers) : layers_(std::move(layers)) {}
 
 Keymap::Lookup KeymapStack::Resolve(const std::vector<KeyChord>& sequence) const {
