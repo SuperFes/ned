@@ -33,6 +33,7 @@
 #include "Editor/ScriptingSession.h"
 #include "Editor/Session.h"
 #include "Editor/SyntaxTheme.h"
+#include "Editor/SearchSettings.h"
 #include "Editor/TabWidth.h"
 #include "Editor/Tasks/TaskConfig.h"
 #include "Editor/Terminal/Config.h"
@@ -152,6 +153,10 @@ namespace {
 
     void NedSetTabWidth(std::int64_t columns) {
         editor::SetTabWidth(static_cast<int>(columns));
+    }
+
+    void NedSetProjectSearchThreads(std::int64_t threads) {
+        editor::SetProjectSearchThreads(static_cast<int>(threads));
     }
 
     void NedSetTerminalHeightPercent(std::int64_t percent) {
@@ -580,6 +585,9 @@ void InstallEditorBindings(Environment& env) {
         "defaults to \"xdg-open\"; empty string clears it entirely, disabling URL-following.");
     env.Register<&NedSetTabWidth>("ned", "set-tab-width",
                                   "Set the display width (in columns) a tab character expands to (default 4).");
+    env.Register<&NedSetProjectSearchThreads>(
+        "ned", "set-project-search-threads",
+        "Set the worker-thread cap for project-wide search/replace's internal file scan (default 4).");
     env.Register<&NedSetTerminalHeightPercent>(
         "ned", "set-terminal-height-percent",
         "Set how much of the screen the terminal drawer covers, as a percentage (default 40, clamped to 10-90).");

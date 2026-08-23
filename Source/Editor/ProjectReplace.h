@@ -49,9 +49,10 @@ class ProjectReplace {
     // EnteringPattern -> EnteringReplacement. Runs SearchDirectory(root,
     // pattern) as a side effect, populating Matches() so the caller can
     // preview the affected files/lines before the replacement text is even
-    // entered. Throws std::regex_error if the pattern is invalid; the stage
-    // does not advance in that case. A no-op if the pattern is empty or the
-    // stage isn't EnteringPattern.
+    // entered. Throws SearchPatternError if the pattern is invalid (RE2
+    // syntax -- see ProjectSearch.h); the stage does not advance in that
+    // case. A no-op if the pattern is empty or the stage isn't
+    // EnteringPattern.
     void ConfirmPattern();
 
     // EnteringReplacement -> Confirming, or straight to Done if there were
@@ -85,9 +86,15 @@ class ProjectReplace {
 // then std::filesystem::rename, mirroring Buffer::SaveToFile's own safety
 // pattern, so a failure partway through a given file can't leave it
 // truncated. Skips (without counting) any file that can't be read or
-// written. Throws std::regex_error if pattern is invalid -- shouldn't
-// happen in practice, since ProjectReplace::Confirm only ever reaches this
-// after ConfirmPattern already validated the identical pattern text.
+// written. Throws std::regex_error if pattern is invalid -- still
+// std::regex here, unlike ConfirmPattern's own SearchDirectory-backed RE2
+// validation (internal-project-search follow-up), pending the "PCRE2 for
+// in-file matching/replacing" roadmap item. That split-engine gap means
+// ConfirmPattern succeeding no longer guarantees this will too (RE2 accepts
+// some syntax, like \p{...} Unicode classes, std::regex's ECMAScript
+// grammar doesn't) -- ProjectReplace::Confirm's own caller
+// (BufferView::HandleProjectReplaceKey) catches this rather than assuming
+// it can't happen.
 [[nodiscard]] ReplaceSummary ReplaceMatches(const std::vector<SearchMatch>& matches, const std::string& pattern,
                                             const std::string& replacement);
 

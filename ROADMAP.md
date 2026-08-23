@@ -12,9 +12,9 @@ An Emacs-class terminal editor: buffers, windows, keymaps, modes, minibuffer,
 kill-ring, undo tree, isearch — "everything is a programmable command," with Janet
 filling Elisp's role. The whole editor is a Janet-scriptable environment, not a C++
 app with a config file bolted on. Modern, memory-safe C++23; TUI rendered with
-Notcurses (TermOx → FTXUI → Notcurses over the project's life).
+Notcurses.
 
-## Guiding constraints
+## Guiding Constraints
 
 - **Memory safety.** No raw owning pointers — `unique_ptr`/`shared_ptr`,
   `string`/`string_view`, `vector`/`span`. Janet's C heap is external and stays
@@ -24,17 +24,15 @@ Notcurses (TermOx → FTXUI → Notcurses over the project's life).
 - **XDG Base Directory compliance.** Config → `$XDG_CONFIG_HOME/ned/`, user data →
   `$XDG_DATA_HOME/ned/`, caches → `$XDG_CACHE_HOME/ned/`, other persistent state →
   `$XDG_STATE_HOME/ned/`. Never a bare dot-file in `$HOME`.
-- **Keep `Source/UI/` loosely coupled from the TUI library where it's cheap.** This
-  paid for itself twice (TermOx → FTXUI, FTXUI → Notcurses) — both migrations stayed
-  contained to `Source/UI/` and never touched `Text/`/`Editor/`/`Janet/`.
+- **Keep `Source/UI/` loosely coupled from the TUI library where it's cheap.**.
 
-## Open items
+## Open Items
 
-### Embedded language
+### Embedded Language
 - [ ] **Jank replaces Janet** - Once I'm able to do so, I'd love to replace our
       internal scripting representation to move to [jank](https://github.com/jank-lang/jank)
 
-### Language intelligence
+### Language Intelligence
 
 - [ ] **Embedded-language documents** (HTML with inline `<script>`/`<style>`,
       Vue/Svelte-style SFCs) — segment the buffer into per-language virtual documents
@@ -79,10 +77,58 @@ Notcurses (TermOx → FTXUI → Notcurses over the project's life).
 
 ### Navigation & search
 
-- [ ] **Multibuffers** — a virtual buffer stitching excerpts from multiple
-      files/locations (all references, all diagnostics, fuller VCS history views) into
-      one scrollable, editable view. A good fit for the Rope design; needs its own
-      design pass.
+- [ ] **Multibuffers** — `Editor/Multibuffer.h`'s stitching primitive shipped, read-only
+      v1 scope (see its own header comment). Three consumers so far:
+      `vcs-full-diff-buffer` (every changed file's real diff hunks),
+      `lsp-diagnostics-buffer` (every open buffer's Code-origin LSP diagnostics, one
+      excerpt per diagnostic, reusing the ordinary diagnostic gutter/underline/
+      severity-color pipeline via real composite-space `Buffer::Diagnostic` entries
+      rather than a new tint), and `project-find-references` (`M-?`/`ESC ?` -- one
+      excerpt per whole-word RE2 match for the identifier at point, across the
+      project; a fast textual approximation, not real semantic LSP references, which
+      still don't exist as a client capability -- see the `.gitignore` item below for
+      where the RE2 engine it's built on came from). Every consumer shares the same
+      jump-to-source path: `vcs-visit-result` (`C-c v v`) is generic over
+      `MultibufferIndex`, not actually VCS-specific despite the name inherited from
+      its first consumer -- worth a rename/rebind to something like
+      `multibuffer-visit-result` once a fourth consumer makes the misnomer harder to
+      justify. Still open: fuller VCS history views (e.g. a full commit's diff from
+      `*vcs log*`, not just the working tree), making a multibuffer genuinely editable
+      (each excerpt writing back to its real source buffer) rather than read-only, and
+      a result cap/warning for `project-find-references` on a very common short
+      identifier (no limit today -- thousands of matches would build a proportionally
+      huge composite buffer).
+- [ ] **`.gitignore` correctness gap left by dropping `rg`** -- `ProjectSearch.cpp`'s
+      backend is now an internal, multi-threaded RE2 engine (no more `rg` shell-out or
+      single-threaded `std::regex_search`-per-line fallback; thread count is a
+      configurable setting, `Editor/SearchSettings.h`, `ned/set-project-search-threads`,
+      default 4 -- this is I/O-bound, not CPU-bound, so more threads than that mostly
+      just contends on the same disk/page cache). One correctness gap this shipped
+      with rather than closed: dropping `rg` also dropped its superior `.gitignore`
+      handling -- `GitIgnore.h`'s `GitIgnoreMatcher` is still root-`.gitignore`-only,
+      not nested/global/`.git/info/exclude`-aware the way `rg` was, so a project
+      relying on any of those will see different (too-inclusive) results than it did
+      under `rg`. This is the shared backend for `ProjectSearch`/`ProjectReplace`'s
+      match-finding and for the find-all-references multibuffer consumer above.
+- [ ] **PCRE2 for in-file regex matching/replacing** (eventually, after the RE2
+      search work above) -- `Editor/QueryReplace.cpp`'s `query-replace-regexp` and
+      `Editor/ProjectReplace.cpp`'s actual per-file rewrite step are the only two
+      user-facing "type your own regex" surfaces left on plain `std::regex`
+      (ECMAScript syntax) now that project search itself has moved to RE2 (see above; everywhere
+      else `std::regex` appears in this codebase -- `GitIgnore.cpp`'s glob
+      translation, `Link.cpp`/`Org.cpp`'s hardcoded patterns, `TreeSitter/Query.cpp`'s
+      `#match?` predicate compilation, `BufferView.cpp`'s fixed result-line parsing --
+      is internal fixed-pattern plumbing, not user-typed). PCRE2 (also
+      `FetchContent`'d) is the deliberate choice over RE2 for this pair: `std::regex`
+      per the C++ standard's ECMAScript grammar has no lookbehind support at all and
+      no named capture groups, is essentially byte-oriented rather than genuinely
+      Unicode-aware (`\p{...}` classes), and its interpreter (no JIT) has a long-
+      standing reputation as one of the slower mainstream regex engines -- PCRE2's
+      JIT (`pcre2_jit_compile`) closes that gap while adding the missing features.
+      Still a backtracking engine underneath (unlike RE2), so this needs a real
+      match-limit (`pcre2_set_match_limit`) as a safety net -- moving to PCRE2 doesn't
+      remove the catastrophic-backtracking exposure `std::regex` already has today,
+      it just makes the common case faster and the syntax more complete.
 
 ### Large files
 
