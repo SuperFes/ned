@@ -254,6 +254,15 @@ struct Mode {
     // for this mode, same "empty means not configured" convention as
     // highlight/fold/expandSelection above.
     SexpMotionFunction sexpMotion;
+    // auto-pair-brackets-and-quotes follow-up: the (opener, closer) pairs
+    // self-insert-command/backward-delete-char auto-close/skip-over/delete
+    // as a unit for this mode -- empty (the default) means no pairing at
+    // all, same "empty means not configured" convention as highlight/fold
+    // above. Most *Mode() factories set this to Editor/AutoPair.h's
+    // DefaultAutoPairs(); Lisp-family modes (Janet/Clojure/Jank) use
+    // LispAutoPairs() instead, dropping the '' entry since a bare quote
+    // there is the reader's own quote macro, not a paired delimiter.
+    std::vector<std::pair<char, char>> autoPairs;
     // import-target-tree-sitter follow-up: empty function (the default)
     // means open-link-at-point has no import/include query configured for
     // this mode, same "empty means not configured" convention as

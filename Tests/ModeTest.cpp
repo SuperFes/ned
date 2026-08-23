@@ -1,21 +1,26 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include "Editor/AutoPair.h"
 #include "Editor/Key.h"
 #include "Editor/Mode.h"
 #include "Editor/Org.h"
 #include "Editor/SyntaxTheme.h"
 
 using ned::editor::BashMode;
+using ned::editor::ClojureMode;
 using ned::editor::CMode;
 using ned::editor::CppMode;
 using ned::editor::CssMode;
+using ned::editor::DefaultAutoPairs;
 using ned::editor::FundamentalMode;
 using ned::editor::HighlightSpan;
 using ned::editor::HtmlMode;
 using ned::editor::JanetMode;
+using ned::editor::JankMode;
 using ned::editor::JavaScriptMode;
 using ned::editor::JsonMode;
 using ned::editor::Keymap;
+using ned::editor::LispAutoPairs;
 using ned::editor::MarkdownMode;
 using ned::editor::OrgMode;
 using ned::editor::ParseKeySequence;
@@ -659,4 +664,24 @@ TEST_CASE("JsonMode's sexpMotion returns nullopt at the buffer's start/end", "[M
 
     REQUIRE_FALSE(mode.sexpMotion(text, text.size(), /*forward=*/true).has_value());
     REQUIRE_FALSE(mode.sexpMotion(text, 0, /*forward=*/false).has_value());
+}
+
+TEST_CASE("FundamentalMode/CppMode/OrgMode use the full DefaultAutoPairs, including single and double quotes",
+          "[Mode]") {
+    REQUIRE(FundamentalMode().autoPairs == DefaultAutoPairs());
+    REQUIRE(CppMode().autoPairs == DefaultAutoPairs());
+    REQUIRE(OrgMode().autoPairs == DefaultAutoPairs());
+}
+
+TEST_CASE("JanetMode/ClojureMode/JankMode use LispAutoPairs, excluding the single-quote pair", "[Mode]") {
+    REQUIRE(JanetMode().autoPairs == LispAutoPairs());
+    REQUIRE(ClojureMode().autoPairs == LispAutoPairs());
+    REQUIRE(JankMode().autoPairs == LispAutoPairs());
+
+    // LispAutoPairs itself still has double quotes and every bracket -- only
+    // the reader's own quote macro (') is excluded.
+    REQUIRE(LispAutoPairs() != DefaultAutoPairs());
+    for (const auto& pair : LispAutoPairs()) {
+        REQUIRE(pair.first != '\'');
+    }
 }

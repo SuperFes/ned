@@ -9,6 +9,7 @@
 #include <unordered_map>
 #include <utility>
 
+#include "AutoPair.h"
 #include "Key.h"
 #include "Link.h"
 #include "Org.h"
@@ -447,7 +448,8 @@ std::vector<std::string> BuiltinCaptureNames() {
 }
 
 Mode FundamentalMode() {
-    return Mode{.name = "fundamental-mode", .keymap = Keymap(), .highlight = HighlightFunction()};
+    return Mode{
+        .name = "fundamental-mode", .keymap = Keymap(), .highlight = HighlightFunction(), .autoPairs = DefaultAutoPairs()};
 }
 
 std::string LanguageKeyForMode(const Mode& mode) {
@@ -739,6 +741,7 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
                 .fold            = std::move(fold),
                 .expandSelection = std::move(expandSelection),
                 .sexpMotion      = std::move(sexpMotion),
+                .autoPairs       = DefaultAutoPairs(),
                 .importTarget    = std::move(importTarget)};
 }
 
@@ -758,6 +761,7 @@ Mode TreeSitterMode(std::string name, std::string_view languageName, const char*
 Mode JanetMode() {
     Mode mode = TreeSitterMode("janet-mode", "janet", treesitter::queries::kJanet, nullptr, treesitter::queries::kJanetImports);
     mode.lineCommentPrefix = ";"; // Lisp-family convention
+    mode.autoPairs         = LispAutoPairs(); // '(...) is the reader's quote macro, not a paired delimiter
     return mode;
 }
 
@@ -849,6 +853,7 @@ Mode ClojureMode() {
     Mode mode = TreeSitterMode("clojure-mode", "clojure", treesitter::queries::kClojure, treesitter::queries::kClojureFolds,
                                treesitter::queries::kClojureImports);
     mode.lineCommentPrefix = ";"; // Lisp-family convention, same as JanetMode
+    mode.autoPairs         = LispAutoPairs(); // same reasoning as JanetMode
     return mode;
 }
 
@@ -857,6 +862,7 @@ Mode JankMode() {
     Mode mode = TreeSitterMode("jank-mode", "clojure", treesitter::queries::kClojure, treesitter::queries::kClojureFolds,
                                treesitter::queries::kClojureImports);
     mode.lineCommentPrefix = ";";
+    mode.autoPairs         = LispAutoPairs(); // same reasoning as JanetMode
     return mode;
 }
 
@@ -1089,7 +1095,12 @@ Mode OrgMode() {
     // Real Org's own comment-line convention (org-comment-string's default).
     // line-wrap follow-up: same reasoning as MarkdownMode() -- Org files
     // are prose too.
-    return Mode{.name = "org-mode", .keymap = std::move(keymap), .highlight = std::move(highlight), .lineCommentPrefix = "#", .wrapLines = true};
+    return Mode{.name              = "org-mode",
+                .keymap            = std::move(keymap),
+                .highlight         = std::move(highlight),
+                .lineCommentPrefix = "#",
+                .autoPairs         = DefaultAutoPairs(),
+                .wrapLines         = true};
 }
 
 } // namespace ned::editor

@@ -11,6 +11,7 @@
 #include "Editor/Acp/AcpConfig.h"
 #include "Editor/Acp/AcpPanelConfig.h"
 #include "Editor/AutoMerge.h"
+#include "Editor/AutoPair.h"
 #include "Editor/AutoRevert.h"
 #include "Editor/Backup.h"
 #include "Editor/CodeFoldSettings.h"
@@ -253,6 +254,10 @@ namespace {
 
     void NedSetAutoRevert(bool enabled) {
         editor::SetAutoRevertEnabled(enabled);
+    }
+
+    void NedSetAutoPairEnabled(bool enabled) {
+        editor::SetAutoPairEnabled(enabled);
     }
 
     void NedSetAutoMerge(bool enabled) {
@@ -679,6 +684,12 @@ void InstallEditorBindings(Environment& env) {
         "ned", "set-auto-revert",
         "Enable/disable automatically reloading an open, unmodified buffer when its file changes on disk (default "
         "true). A buffer with local edits is never auto-reverted; saving it instead asks before overwriting.");
+    env.Register<&NedSetAutoPairEnabled>(
+        "ned", "set-auto-pair-enabled",
+        "Enable/disable auto-closing matching brackets/quotes as you type -- typing an opener inserts its "
+        "matching closer, typing a redundant closer skips over it, backspace between an empty pair removes both "
+        "(default true). Which characters pair is per-mode (Mode's own autoPairs); this only turns the whole "
+        "feature on or off.");
     env.Register<&NedSetAutoMerge>(
         "ned", "set-auto-merge",
         "Enable/disable automatically three-way merging a buffer's local edits with a file that also changed on "

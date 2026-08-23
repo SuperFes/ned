@@ -9,6 +9,7 @@
 #include <string>
 #include <system_error>
 
+#include "AutoPair.h"
 #include "Backup.h"
 #include "Clipboard.h"
 #include "CodeFold.h"
@@ -154,6 +155,54 @@ namespace {
             }
             context.buffer.ForEachCursor([&fn, &context] { fn(context); });
         };
+    }
+
+    // auto-pair-brackets-and-quotes follow-up: the single grapheme
+    // immediately before/after point, or empty at a buffer boundary --
+    // exactly what AutoPairQuery::charBefore/charAfter want. Shared by
+    // self-insert-command and backward-delete-char rather than duplicating
+    // the boundary lookup in both.
+    std::string GraphemeBefore(const text::Buffer& buffer) {
+        const std::size_t point = buffer.Point();
+        const std::size_t start = text::PreviousGraphemeBoundary(buffer.Content(), point);
+        return buffer.Content().Substring(start, point - start);
+    }
+
+    std::string GraphemeAfter(const text::Buffer& buffer) {
+        const std::size_t point = buffer.Point();
+        const std::size_t end   = text::NextGraphemeBoundary(buffer.Content(), point);
+        return buffer.Content().Substring(point, end - point);
+    }
+
+    // auto-pair-brackets-and-quotes follow-up: the SyntaxClass covering the
+    // grapheme immediately before point -- what DecideSelfInsert's
+    // classAtPoint wants for the "already inside a string/comment" quote
+    // suppression. Reads it off the character *before* point (not point
+    // itself, which sits in the gap between two characters) -- the same
+    // "what color would this text already render as" question BufferView's
+    // own per-character rendering asks, just reused for a decision instead
+    // of a paint. point == 0 or no highlighter configured both mean
+    // "unknown," same as SyntaxClass's own default -- deliberately never
+    // treated as "definitely not in a string," since a false negative here
+    // only costs a missed suppression (still-plain pairing), not a wrong one.
+    //
+    // Deliberately only called for a symmetric (quote-like) opener -- see
+    // self-insert-command's own call site -- since Mode::highlight is a real
+    // (if now incrementally-cached, see IncrementalParseCache) parse over the
+    // buffer's full text, not something to pay on every keystroke.
+    SyntaxClass SyntaxClassAtPoint(const Mode* mode, const text::Buffer& buffer, std::size_t point) {
+        if (!mode || !mode->highlight || point == 0) {
+            return SyntaxClass::Default;
+        }
+        const std::vector<HighlightSpan> spans = mode->highlight(buffer.Text());
+        const std::size_t                probe = point - 1;
+        SyntaxClass                      winner = SyntaxClass::Default;
+        for (const HighlightSpan& span : spans) {
+            if (span.startByte <= probe && probe < span.endByte) {
+                winner = span.syntaxClass; // later spans win on overlap -- Mode.h's own documented rule
+            }
+        }
+        return winner;
     }
 
     // Emacs-keymap-round-2 follow-up (kill-append): the small, fixed family
@@ -385,6 +434,22 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
 
     registry.Register("backward-delete-char", "Delete the grapheme cluster before point.", PerCursor([](CommandContext& context) {
                           context.buffer.ClearMark();
+                          // auto-pair-brackets-and-quotes follow-up: backspacing
+                          // between an empty pair ("(|)", "\"|\"") removes both
+                          // sides as one edit instead of leaving the lone closer
+                          // behind. context.mode nullptr falls back to
+                          // DefaultAutoPairs(), same reasoning as self-insert-command.
+                          if (AutoPairEnabled()) {
+                              const std::string                         before = GraphemeBefore(context.buffer);
+                              const std::string                         after  = GraphemeAfter(context.buffer);
+                              const std::vector<std::pair<char, char>>& pairs =
+                                  context.mode ? context.mode->autoPairs : DefaultAutoPairs();
+                              if (ShouldDeleteAdjacentPair(before, after, pairs)) {
+                                  const std::size_t start = context.buffer.Point() - before.size();
+                                  context.buffer.DeleteRange(start, before.size() + after.size());
+                                  return;
+                              }
+                          }
                           context.buffer.DeleteBackwardAtPoint();
                       }));
 
@@ -1128,10 +1193,81 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                       }));
 
     registry.Register("self-insert-command", "Insert the character that was pressed.", PerCursor([](CommandContext& context) {
-                          context.buffer.ClearMark();
-                          if (context.triggeringKey.Special == SpecialKey::None && context.triggeringKey.Codepoint != 0) {
-                              context.buffer.InsertAtPoint(text::EncodeCodepointUtf8(context.triggeringKey.Codepoint));
+                          if (context.triggeringKey.Special != SpecialKey::None || context.triggeringKey.Codepoint == 0) {
+                              context.buffer.ClearMark();
+                              return;
                           }
+                          const std::string inserted = text::EncodeCodepointUtf8(context.triggeringKey.Codepoint);
+
+                          // auto-pair-brackets-and-quotes follow-up: only a
+                          // single-byte ASCII delimiter is ever in the pair
+                          // table, so a multi-byte codepoint always falls
+                          // through to the plain insert below unchanged.
+                          // context.mode is nullptr in a headless/test context
+                          // (see Command.h's own doc comment); falls back to
+                          // DefaultAutoPairs() there rather than pairing nothing.
+                          if (inserted.size() == 1 && AutoPairEnabled()) {
+                              text::Buffer&      buffer = context.buffer;
+                              const std::size_t  point  = buffer.Point();
+                              const std::vector<std::pair<char, char>>& pairs =
+                                  context.mode ? context.mode->autoPairs : DefaultAutoPairs();
+                              // Named locals, not temporaries -- query below holds
+                              // string_views into these, which must outlive it.
+                              const std::string before = GraphemeBefore(buffer);
+                              const std::string after  = GraphemeAfter(buffer);
+
+                              AutoPairQuery query;
+                              query.typed        = inserted[0];
+                              query.charBefore   = before;
+                              query.charAfter    = after;
+                              query.hasSelection = buffer.HasMark();
+                              query.pairs        = &pairs;
+                              // Only a symmetric (quote-like) opener ever reads
+                              // classAtPoint (DecideSelfInsert's own
+                              // IsQuotePair branch) -- gate the real
+                              // Mode::highlight call behind that same check so
+                              // ordinary bracket/letter keystrokes never pay
+                              // for it.
+                              if (const std::optional<char> closer = ClosingCharFor(query.typed, pairs);
+                                  closer && *closer == query.typed) {
+                                  query.classAtPoint = SyntaxClassAtPoint(context.mode, buffer, point);
+                              }
+
+                              switch (DecideSelfInsert(query)) {
+                                  case PairAction::InsertPair: {
+                                      const std::optional<char> closer = ClosingCharFor(query.typed, pairs);
+                                      buffer.ClearMark();
+                                      buffer.InsertAtPoint(std::string(1, query.typed) + std::string(1, *closer));
+                                      buffer.SetPoint(point + 1); // land between the pair, not after it
+                                      return;
+                                  }
+                                  case PairAction::SkipOver:
+                                      buffer.ClearMark();
+                                      buffer.SetPoint(point + query.charAfter.size());
+                                      return;
+                                  case PairAction::WrapSelection: {
+                                      const auto [start, end]   = buffer.Region();
+                                      const std::optional<char> closer = ClosingCharFor(query.typed, pairs);
+                                      buffer.ClearMark();
+                                      // InsertAt always records a hard undo step (no
+                                      // amend, see its own doc comment) -- group the
+                                      // pair of edits so wrapping a selection undoes
+                                      // as one step, not two.
+                                      buffer.BeginUndoGroup();
+                                      buffer.InsertAt(start, std::string(1, query.typed));
+                                      buffer.InsertAt(end + 1, std::string(1, *closer)); // +1: the opener just inserted at start shifted end
+                                      buffer.EndUndoGroup();
+                                      buffer.SetPoint(end + 2); // land after the newly-inserted closer
+                                      return;
+                                  }
+                                  case PairAction::InsertPlain:
+                                  case PairAction::DeleteAdjacentPair:
+                                      break; // ordinary self-insert below
+                              }
+                          }
+
+                          context.buffer.ClearMark();
+                          context.buffer.InsertAtPoint(inserted);
                       }));
 
     // A literal-tab insert, not real indent logic (Emacs' own
