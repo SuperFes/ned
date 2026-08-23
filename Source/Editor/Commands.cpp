@@ -25,10 +25,10 @@
 #include "ProjectRoot.h"
 #include "ProjectSession.h"
 #include "TabWidth.h"
-#include "ToolchainIncludePaths.h"
 #include "Text/Grapheme.h"
 #include "Text/ThreeWayMerge.h"
 #include "Text/Utf8.h"
+#include "ToolchainIncludePaths.h"
 #include "Vcs/VcsRunner.h"
 
 namespace ned::editor {
@@ -194,8 +194,8 @@ namespace {
         if (!mode || !mode->highlight || point == 0) {
             return SyntaxClass::Default;
         }
-        const std::vector<HighlightSpan> spans = mode->highlight(buffer.Text());
-        const std::size_t                probe = point - 1;
+        const std::vector<HighlightSpan> spans  = mode->highlight(buffer.Text());
+        const std::size_t                probe  = point - 1;
         SyntaxClass                      winner = SyntaxClass::Default;
         for (const HighlightSpan& span : spans) {
             if (span.startByte <= probe && probe < span.endByte) {
@@ -1207,8 +1207,8 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           // (see Command.h's own doc comment); falls back to
                           // DefaultAutoPairs() there rather than pairing nothing.
                           if (inserted.size() == 1 && AutoPairEnabled()) {
-                              text::Buffer&      buffer = context.buffer;
-                              const std::size_t  point  = buffer.Point();
+                              text::Buffer&                             buffer = context.buffer;
+                              const std::size_t                         point  = buffer.Point();
                               const std::vector<std::pair<char, char>>& pairs =
                                   context.mode ? context.mode->autoPairs : DefaultAutoPairs();
                               // Named locals, not temporaries -- query below holds
@@ -1246,7 +1246,7 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                                       buffer.SetPoint(point + query.charAfter.size());
                                       return;
                                   case PairAction::WrapSelection: {
-                                      const auto [start, end]   = buffer.Region();
+                                      const auto [start, end]          = buffer.Region();
                                       const std::optional<char> closer = ClosingCharFor(query.typed, pairs);
                                       buffer.ClearMark();
                                       // InsertAt always records a hard undo step (no
@@ -1671,6 +1671,27 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     registry.Register("other-window", "Move focus to the next window.", [](CommandContext& context) {
         context.interactiveRequest = InteractiveRequest::OtherWindow;
     });
+
+    // Split-resize follow-up: real Emacs' own enlarge-window/shrink-window/
+    // enlarge-window-horizontally/shrink-window-horizontally, same division
+    // of which three get a default binding -- Emacs itself leaves plain
+    // shrink-window (vertical) unbound, M-x/Janet-only, so this does too.
+    registry.Register("enlarge-window", "Grow the current window taller against its nearest horizontal split.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::EnlargeWindow;
+                      });
+    registry.Register("shrink-window", "Shrink the current window against its nearest horizontal split.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::ShrinkWindow;
+                      });
+    registry.Register("enlarge-window-horizontally", "Grow the current window wider against its nearest vertical split.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::EnlargeWindowHorizontally;
+                      });
+    registry.Register("shrink-window-horizontally", "Shrink the current window against its nearest vertical split.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::ShrinkWindowHorizontally;
+                      });
 
     registry.Register("execute-extended-command",
                       "Run a command by name (M-x), narrowed by fuzzy matching as you type.",
@@ -2802,6 +2823,9 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("C-x 0"), "delete-window");
     keymap.Bind(ParseKeySequence("C-x 1"), "delete-other-windows");
     keymap.Bind(ParseKeySequence("C-x o"), "other-window");
+    keymap.Bind(ParseKeySequence("C-x ^"), "enlarge-window");
+    keymap.Bind(ParseKeySequence("C-x }"), "enlarge-window-horizontally");
+    keymap.Bind(ParseKeySequence("C-x {"), "shrink-window-horizontally");
     keymap.Bind(ParseKeySequence("M-f"), "forward-word");
     keymap.Bind(ParseKeySequence("ESC f"), "forward-word");
     keymap.Bind(ParseKeySequence("M-b"), "backward-word");

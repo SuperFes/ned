@@ -1,5 +1,6 @@
 #include "ProjectSession.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <exception>
@@ -94,6 +95,9 @@ std::string ProjectSessionToJson(const ProjectSessionData& data, const std::file
         if (node.second) {
             entry["second"] = *node.second;
         }
+        if (node.kind != WindowLayoutNode::Kind::Leaf) {
+            entry["ratio"] = node.ratio;
+        }
         windowLayout.push_back(std::move(entry));
     }
 
@@ -163,7 +167,7 @@ std::optional<ProjectSessionData> ProjectSessionFromJson(std::string_view json) 
                     valid = false;
                     break;
                 }
-                WindowLayoutNode node;
+                WindowLayoutNode  node;
                 const std::string kind = entry["kind"].get<std::string>();
                 if (kind == "leaf") {
                     node.kind = WindowLayoutNode::Kind::Leaf;
@@ -192,6 +196,12 @@ std::optional<ProjectSessionData> ProjectSessionFromJson(std::string_view json) 
                     }
                     node.first  = first;
                     node.second = second;
+                    if (entry.contains("ratio") && entry["ratio"].is_number()) {
+                        // Clamped defensively -- a hand-edited or corrupted
+                        // session file shouldn't be able to smuggle in a
+                        // degenerate (<=0 or >=1) split.
+                        node.ratio = std::clamp(entry["ratio"].get<float>(), 0.1f, 0.9f);
+                    }
                 }
                 else {
                     valid = false;
