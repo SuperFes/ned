@@ -1,8 +1,11 @@
 #include "WindowManager.h"
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <mutex>
+#include <optional>
 #include <utility>
 
 #include "Editor/AutoMerge.h"
@@ -25,26 +28,147 @@ namespace {
     // this moved here, verbatim, from BufferView.
     constexpr std::chrono::milliseconds kScratchAutoSaveInterval{5000};
 
-    // The one-column vertical divider between a SplitRight's two children --
-    // chrome-redesign follow-up: now drawn with the theme's border brush so
+    // The one-column/one-row divider between a split's two children --
+    // chrome-redesign follow-up: drawn with the theme's border brush so
     // split dividers, the sidebar frame, and the tab underline all read as
-    // one line family (was untouched Color::Default, matching FTXUI's own
-    // colorless separator()).
-    class VerticalDivider : public Widget {
+    // one line family. Split-resize follow-up: doubles as the mouse-drag
+    // resize handle for both split kinds (a SplitBelow previously drew no
+    // divider at all -- the top pane's own ModeLine row stood in as the
+    // visual boundary -- but that row belongs to the Pane, not this WindowNode,
+    // giving nothing here to grab; a real, WindowNode-owned row is what
+    // gives drag-resize a stable place to live, symmetric with SplitRight's
+    // own column), and takes the accent brush while a drag is live, same
+    // "show it's grabbed" signal ProjectSidebar's own resize divider already
+    // gives.
+    //
+    // Owns its own drag state exactly like ProjectSidebar
+    // (BeginResize/UpdateResize/EndResize, IsResizing()) -- node is the
+    // WindowNode this divider belongs to (stable: a WindowNode is always
+    // heap-allocated via unique_ptr and never moved once built, the same
+    // invariant Pane itself relies on), mutated directly since
+    // BuildComponent's DynamicFixed SizeSpec for `first` reads node.ratio
+    // fresh every Paint() -- no rebuild needed mid-drag. onResizingChanged
+    // is how WindowManager's own resizingSplit_ flag (consulted by every
+    // pane's BufferView, see WindowManager.h's own comment) tracks whether
+    // *this* divider is the one currently live.
+    class SplitDivider : public Widget {
       public:
-        explicit VerticalDivider(const Theme& theme) : theme_(theme) {
+        SplitDivider(const Theme& theme, bool vertical, WindowNode& node, std::function<void(bool)> onResizingChanged) : theme_(theme), vertical_(vertical), node_(node), onResizingChanged_(std::move(onResizingChanged)) {
         }
 
         void Paint(Canvas c) override {
-            for (int y = 0; y < c.size().height; ++y) {
-                Cell& cell     = c[{.x = 0, .y = y}];
-                cell.character = "│"; // BOX DRAWINGS LIGHT VERTICAL
-                theme_.border.ApplyTo(cell);
+            const Brush& brush = resizing_ ? theme_.borderAccent : theme_.border;
+            if (vertical_) {
+                for (int y = 0; y < c.size().height; ++y) {
+                    Cell& cell     = c[{.x = 0, .y = y}];
+                    cell.character = "│"; // BOX DRAWINGS LIGHT VERTICAL
+                    brush.ApplyTo(cell);
+                }
+            }
+            else {
+                for (int x = 0; x < c.size().width; ++x) {
+                    Cell& cell     = c[{.x = x, .y = 0}];
+                    cell.character = "─"; // BOX DRAWINGS LIGHT HORIZONTAL
+                    brush.ApplyTo(cell);
+                }
             }
         }
 
+        bool OnEvent(const Event& event) override {
+            if (!event.is_mouse()) {
+                return false;
+            }
+            const MouseEvent rawMouse    = event.mouse();
+            const int        globalCoord = vertical_ ? rawMouse.at.x : rawMouse.at.y;
+
+            // Checked first, regardless of position -- same "every leaf gets
+            // every event, a live drag session owns move/release outright"
+            // contract ProjectSidebar's own IsResizing()-gated handling in
+            // BufferView relies on (see Widget.h's own header comment).
+            if (resizing_) {
+                if (rawMouse.motion == MouseEvent::Motion::Moved) {
+                    UpdateResize(globalCoord);
+                    return true;
+                }
+                if (rawMouse.motion == MouseEvent::Motion::Released) {
+                    EndResize();
+                    return true;
+                }
+            }
+
+            const auto mouse = LocalMouseEvent(event);
+            if (!mouse) {
+                return false;
+            }
+            if (mouse->button == MouseEvent::Button::Left && mouse->motion == MouseEvent::Motion::Pressed) {
+                BeginResize(globalCoord);
+                return true;
+            }
+            return false;
+        }
+
+        [[nodiscard]] bool IsResizing() const {
+            return resizing_;
+        }
+
       private:
-        const Theme& theme_;
+        void BeginResize(int globalCoord) {
+            resizing_          = true;
+            anchorGlobalCoord_ = globalCoord;
+            anchorRatio_       = node_.ratio;
+            if (onResizingChanged_) {
+                onResizingChanged_(true);
+            }
+        }
+
+        // Anchored to the drag's total displacement from its start (same
+        // shape as ProjectSidebar::UpdateResize's own doc comment on why --
+        // a growing drag delivers move events from BufferView's own
+        // OnMouseEvent once it strays past this divider's own thin box, so
+        // this must keep working from globalCoord alone, not anything
+        // relative to a Box_() this call may not even be inside anymore).
+        // node_.container's own Box_() was already set by its parent's
+        // LayoutChildren before this frame's Paint() reached it -- valid to
+        // read here regardless of whether a Paint has happened *this* frame
+        // yet, since a mouse-driven Moved event only ever follows at least
+        // one prior full frame.
+        void UpdateResize(int globalCoord) {
+            if (!node_.container) {
+                return;
+            }
+            const Box&  box        = node_.container->Box_();
+            const int   totalLen   = vertical_ ? (box.x_max - box.x_min + 1) : (box.y_max - box.y_min + 1);
+            const int   available  = std::max(1, totalLen - 1); // minus this divider's own 1-cell thickness
+            const int   delta      = globalCoord - anchorGlobalCoord_;
+            const float ratioDelta = static_cast<float>(delta) / static_cast<float>(available);
+
+            // A minimum-pixel floor (not a fixed ratio floor) so a resize
+            // never shrinks either side below something still usable,
+            // adaptively scaled to whatever room actually exists -- same
+            // reasoning as ProjectSidebar's own kMinSidebarWidth, expressed
+            // as a ratio since that's what's actually stored here.
+            constexpr int kMinPanePixels = 4;
+            const float   minRatio       = std::min(0.5f, static_cast<float>(kMinPanePixels) / static_cast<float>(std::max(1, totalLen)));
+            const float   maxRatio       = 1.0f - minRatio;
+
+            node_.ratio = std::clamp(anchorRatio_ + ratioDelta, minRatio, maxRatio);
+        }
+
+        void EndResize() {
+            resizing_ = false;
+            if (onResizingChanged_) {
+                onResizingChanged_(false);
+            }
+        }
+
+        const Theme&              theme_;
+        bool                      vertical_; // true: SplitRight's column divider; false: SplitBelow's row divider
+        WindowNode&               node_;
+        std::function<void(bool)> onResizingChanged_;
+
+        bool  resizing_          = false;
+        int   anchorGlobalCoord_ = 0;
+        float anchorRatio_       = 0.5f;
     };
 
 } // namespace
@@ -304,6 +428,40 @@ namespace {
         return ExtractPane(node->second, target);
     }
 
+    bool ContainsPane(const WindowNode* node, const Pane* target) {
+        if (node->kind == WindowNode::Kind::Leaf) {
+            return node->pane.get() == target;
+        }
+        return ContainsPane(node->first.get(), target) || ContainsPane(node->second.get(), target);
+    }
+
+    // Split-resize follow-up: the *nearest* ancestor of `target` (closest to
+    // the leaf, not the root) whose own kind matches axisKind -- i.e. the
+    // one split boundary that actually sits directly against target's own
+    // pane along that axis. Recurses into whichever child contains target
+    // first, so a deeper match always wins over a shallower one along the
+    // same path. targetInFirst tells the caller which side of that split
+    // target is on (grow means "make that side bigger").
+    struct SplitAncestor {
+        WindowNode* node;
+        bool        targetInFirst;
+    };
+
+    std::optional<SplitAncestor> FindNearestSplitAncestor(WindowNode* node, const Pane* target, WindowNode::Kind axisKind) {
+        if (node->kind == WindowNode::Kind::Leaf) {
+            return std::nullopt;
+        }
+        const bool  targetInFirst   = ContainsPane(node->first.get(), target);
+        WindowNode* childWithTarget = targetInFirst ? node->first.get() : node->second.get();
+        if (auto deeper = FindNearestSplitAncestor(childWithTarget, target, axisKind)) {
+            return deeper;
+        }
+        if (node->kind == axisKind) {
+            return SplitAncestor{node, targetInFirst};
+        }
+        return std::nullopt;
+    }
+
 } // namespace
 
 WindowManager::WindowManager(text::Buffer& initialBuffer, text::KillRing& killRing, editor::RegisterTable& registers,
@@ -336,6 +494,9 @@ std::unique_ptr<Pane> WindowManager::MakePane(text::Buffer& buffer, editor::Mode
     pane->Buffer().SetThemeApplier(themeApplier_);
     pane->Buffer().SetOnTerminalToggle(onTerminalToggle_);
     pane->Buffer().SetOnAcpPanelToggle(onAcpPanelToggle_);
+    // Split-resize follow-up: see WindowManager.h's own resizingSplit_
+    // comment and BufferView::SetSplitResizeQuery's own doc comment.
+    pane->Buffer().SetSplitResizeQuery([this] { return resizingSplit_; });
     return pane;
 }
 
@@ -695,6 +856,7 @@ namespace {
                                                                  : editor::WindowLayoutNode::Kind::SplitRight;
         entry.first  = first;
         entry.second = second;
+        entry.ratio  = node.ratio; // split-resize follow-up: survive a session restore, not just this run
         out.push_back(std::move(entry));
         return out.size() - 1;
     }
@@ -772,6 +934,7 @@ std::unique_ptr<WindowNode> WindowManager::BuildNodeFromLayout(const std::vector
     node->kind   = entry.kind == editor::WindowLayoutNode::Kind::SplitBelow ? WindowNode::Kind::SplitBelow : WindowNode::Kind::SplitRight;
     node->first  = std::move(first);
     node->second = std::move(second);
+    node->ratio  = std::clamp(entry.ratio, 0.1f, 0.9f); // clamp defends against a hand-edited/corrupted session file
     return node;
 }
 
@@ -827,8 +990,20 @@ void WindowManager::HandleWindowRequest(editor::InteractiveRequest request) {
         case editor::InteractiveRequest::OtherWindow:
             OtherWindow();
             return;
+        case editor::InteractiveRequest::EnlargeWindow:
+            ResizeFocusedWindow(WindowNode::Kind::SplitBelow, /*grow=*/true);
+            return;
+        case editor::InteractiveRequest::ShrinkWindow:
+            ResizeFocusedWindow(WindowNode::Kind::SplitBelow, /*grow=*/false);
+            return;
+        case editor::InteractiveRequest::EnlargeWindowHorizontally:
+            ResizeFocusedWindow(WindowNode::Kind::SplitRight, /*grow=*/true);
+            return;
+        case editor::InteractiveRequest::ShrinkWindowHorizontally:
+            ResizeFocusedWindow(WindowNode::Kind::SplitRight, /*grow=*/false);
+            return;
         default:
-            return; // BufferView only ever forwards these five
+            return; // BufferView only ever forwards these nine
     }
 }
 
@@ -1010,6 +1185,30 @@ void WindowManager::OtherWindow() {
     }
 }
 
+void WindowManager::ResizeFocusedWindow(WindowNode::Kind axis, bool grow) {
+    Pane* focused = FocusedPane();
+    if (focused == nullptr) {
+        return;
+    }
+    const std::optional<SplitAncestor> ancestor = FindNearestSplitAncestor(root_.get(), focused, axis);
+    if (!ancestor) {
+        return; // no split along this axis above the focused pane -- e.g. enlarge-window in a single window
+    }
+
+    // Growing target's own side means growing `first`'s ratio when target
+    // is in `first`, shrinking it (so `second` grows instead) when target
+    // is in `second` -- and shrinking is just the same step in reverse.
+    constexpr float kResizeStep = 0.02f;
+    const float     step        = (grow == ancestor->targetInFirst) ? kResizeStep : -kResizeStep;
+
+    // Fixed fractional bounds here (not the mouse-drag path's adaptive
+    // pixel floor) -- a keyboard command has no live Box_() guaranteed
+    // (e.g. before the very first Paint()), so this can't scale off actual
+    // terminal size the way SplitDivider::UpdateResize does; 10%/90% is a
+    // sane floor regardless of terminal size.
+    ancestor->node->ratio = std::clamp(ancestor->node->ratio + step, 0.1f, 0.9f);
+}
+
 void WindowManager::RebuildComponentTree() {
     // FTXUI -> Notcurses migration: was DetachAllChildren()+Add(... |
     // ApplyFlex) against a Vertical Container -- Layout.h's own Container
@@ -1030,29 +1229,58 @@ Widget& WindowManager::BuildComponent(WindowNode* node) const {
     Widget& first  = BuildComponent(node->first.get());
     Widget& second = BuildComponent(node->second.get());
 
+    // Split-resize follow-up: `first` is sized directly from node->ratio,
+    // re-read fresh every Paint() (see WindowNode::ratio's own doc comment)
+    // -- `second` takes SizeSpec::Flex(), the remainder after `first`'s
+    // DynamicFixed size and the divider's own Fixed(1) are subtracted, the
+    // same "whatever's left" mechanism every other Flex child in this
+    // codebase already relies on. Captures the raw WindowNode* node itself
+    // (heap-owned by its parent, never moved once built), reading
+    // node->container->Box_() -- valid by the time this runs: it's called
+    // from *node->container's own* LayoutChildren, and a Container's Box_()
+    // is always set by its parent before Paint()/LayoutChildren ever run on
+    // it (see Layout.h's own header comment).
+    auto firstSize = [node]() -> int {
+        if (!node->container) {
+            return 0;
+        }
+        const Box& box       = node->container->Box_();
+        const bool vertical  = node->kind == WindowNode::Kind::SplitRight;
+        const int  totalLen  = vertical ? (box.x_max - box.x_min + 1) : (box.y_max - box.y_min + 1);
+        const int  available = std::max(0, totalLen - 1); // minus the divider's own 1-cell thickness
+        return static_cast<int>(std::lround(node->ratio * available));
+    };
+
     if (node->kind == WindowNode::Kind::SplitRight) {
         if (!node->divider) {
-            node->divider = std::make_unique<VerticalDivider>(theme_);
+            node->divider = std::make_unique<SplitDivider>(theme_, /*vertical=*/true, *node,
+                                                           [this](bool active) { resizingSplit_ = active; });
         }
         if (!node->container) {
             node->container = std::make_unique<Container>(Axis::Horizontal, std::vector<Container::Child>{});
         }
         node->container->SetChildren({
-            {&first, SizeSpec::Flex()},
+            {&first, SizeSpec::DynamicFixed(firstSize)},
             {node->divider.get(), SizeSpec::Fixed(1)},
             {&second, SizeSpec::Flex()},
         });
         return *node->container;
     }
 
-    // SplitBelow -- the top pane's own ModeLine row already provides the
-    // visual boundary, no separate divider needed (see this file's own
-    // header comment).
+    // SplitBelow -- previously relied on the top pane's own ModeLine row as
+    // the visual boundary, no separate divider; split-resize follow-up gives
+    // it a real, WindowNode-owned row instead (see SplitDivider's own header
+    // comment for why that row is what makes drag-resize possible here).
+    if (!node->divider) {
+        node->divider = std::make_unique<SplitDivider>(theme_, /*vertical=*/false, *node,
+                                                       [this](bool active) { resizingSplit_ = active; });
+    }
     if (!node->container) {
         node->container = std::make_unique<Container>(Axis::Vertical, std::vector<Container::Child>{});
     }
     node->container->SetChildren({
-        {&first, SizeSpec::Flex()},
+        {&first, SizeSpec::DynamicFixed(firstSize)},
+        {node->divider.get(), SizeSpec::Fixed(1)},
         {&second, SizeSpec::Flex()},
     });
     return *node->container;

@@ -177,8 +177,10 @@ class Pane {
 };
 
 // A recursive binary tree: a Leaf is one live Pane; a SplitBelow/SplitRight
-// node is two children divided horizontally/vertically. No ratio field yet
-// -- see this file's own header comment on why fixed 50/50 is the v1 choice.
+// node is two children divided horizontally/vertically. Split-resize
+// follow-up: ratio (below) replaced this file's own "fixed 50/50, no
+// drag-to-resize yet" v1 note -- see WindowManager.cpp's SplitDivider for
+// how it's read/written.
 struct WindowNode {
     enum class Kind { Leaf,
                       SplitBelow,
@@ -187,6 +189,15 @@ struct WindowNode {
     Kind                        kind = Kind::Leaf;
     std::unique_ptr<Pane>       pane;          // Kind::Leaf
     std::unique_ptr<WindowNode> first, second; // Kind::SplitBelow / SplitRight
+
+    // Split-resize follow-up: `first`'s fractional share of the split's main
+    // axis (0..1); `second` always takes whatever's left. Read fresh every
+    // Paint() by the DynamicFixed SizeSpec BuildComponent gives `first` --
+    // not baked into `container`'s children_ at build time -- so a live
+    // mouse-drag (SplitDivider::UpdateResize mutates this directly) or a
+    // keyboard enlarge-/shrink-window command takes effect on the very next
+    // frame with no rebuild. Unused for Kind::Leaf.
+    float ratio = 0.5f;
 
     // FTXUI -> Notcurses migration: FTXUI's own Container::Horizontal/
     // Vertical calls used to be built fresh, ephemerally, inside
@@ -513,6 +524,15 @@ class WindowManager {
     void DeleteOtherWindows();
     void OtherWindow();
 
+    // Split-resize follow-up: the keyboard half of split-pane resize
+    // (enlarge-window/shrink-window/-horizontally). axis selects which
+    // ancestor split kind is eligible (SplitBelow for the plain pair,
+    // SplitRight for the -horizontally pair); grow true nudges the ratio so
+    // the focused pane's own side gets bigger, false shrinks it. A no-op if
+    // the focused pane has no ancestor split of the requested axis (e.g.
+    // enlarge-window in a single, unsplit window).
+    void ResizeFocusedWindow(WindowNode::Kind axis, bool grow);
+
     // Rebuilds rootComponent_'s children from the current root_ tree shape
     // -- called after every structural mutation (split/close). Does NOT by
     // itself restore focus -- callers must explicitly TakeFocus()
@@ -564,6 +584,23 @@ class WindowManager {
 
     std::unique_ptr<WindowNode> root_;
     Container                   rootComponent_{Axis::Vertical, {}};
+
+    // Split-resize follow-up: true while any live SplitDivider (anywhere in
+    // root_) is mid-drag -- set/cleared via the callback BuildComponent
+    // wires into each divider at construction. Every pane's own BufferView
+    // (SetSplitResizeQuery, wired in MakePane) consults this so a drag that
+    // strays outside its own divider's column/row doesn't get misread as a
+    // text-selection drag by whichever pane the cursor currently sits over.
+    // Only one drag can ever be live at a time (one mouse), so a single flag
+    // -- not one per divider -- is enough, the same "one resizing_ bool
+    // suffices" precedent ProjectSidebar's own single instance already set.
+    // mutable: set from the onResizingChanged callback BuildComponent wires
+    // into each divider, and BuildComponent itself is const (it only ever
+    // mutates WindowNode fields reached through its `node` parameter, never
+    // WindowManager's own state directly -- this callback is the one
+    // exception, transient UI drag state that doesn't change what
+    // BuildComponent itself observably builds).
+    mutable bool resizingSplit_ = false;
 
     // See StartAutoSaveTimer's own comment above.
     std::jthread autoSaveThread_;

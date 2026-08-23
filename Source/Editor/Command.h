@@ -185,6 +185,15 @@ enum class InteractiveRequest { None,
                                 DeleteWindow,
                                 DeleteOtherWindows,
                                 OtherWindow,
+                                // Split-resize follow-up: same "forward to WindowManager" shape
+                                // as the five window-management values just above -- grows/shrinks
+                                // the focused pane against its nearest matching-axis split
+                                // ancestor by one step (repeatable via the ordinary prefix-argument
+                                // mechanism, no special-casing needed here).
+                                EnlargeWindow,
+                                ShrinkWindow,
+                                EnlargeWindowHorizontally,
+                                ShrinkWindowHorizontally,
                                 // Links follow-up: another one-shot direct action (same shape as
                                 // VisitSearchResult/ToggleProjectSidebar) -- BufferView's own
                                 // OpenLinkAtPoint does the actual detect-and-open, trying Org's

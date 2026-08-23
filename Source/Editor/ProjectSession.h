@@ -57,9 +57,14 @@ struct WindowLayoutNode {
                       SplitBelow,
                       SplitRight };
 
-    Kind                                  kind = Kind::Leaf;
-    std::optional<std::filesystem::path>  file;          // Leaf only, absolute
-    std::optional<std::size_t>            first, second; // SplitBelow/SplitRight only
+    Kind                                 kind = Kind::Leaf;
+    std::optional<std::filesystem::path> file;          // Leaf only, absolute
+    std::optional<std::size_t>           first, second; // SplitBelow/SplitRight only
+    // Split-resize follow-up: `first`'s fractional share of the split
+    // (SplitBelow/SplitRight only) -- WindowManager::CaptureWindowLayout's
+    // own WindowNode::ratio, persisted so a resized layout survives a
+    // restart instead of snapping back to 50/50 every restore.
+    float ratio = 0.5f;
 
     bool operator==(const WindowLayoutNode&) const = default;
 };

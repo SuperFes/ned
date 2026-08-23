@@ -334,7 +334,7 @@ TEST_CASE("Closing a buffer shown in an unfocused pane retargets it onto the mos
     manager.RequestCloseBuffer(closing); // closes "closing", shown only in the unfocused pane
 
     FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Character("o")}); // check the retargeted pane
-    REQUIRE(&manager.FocusedActiveBuffer().Get() == &b); // MRU pick -- not "a", list order's first non-closing entry
+    REQUIRE(&manager.FocusedActiveBuffer().Get() == &b);                           // MRU pick -- not "a", list order's first non-closing entry
 }
 
 TEST_CASE("NotifyBufferClosing retargets every pane showing the closing buffer, including the focused one",
@@ -533,13 +533,13 @@ TEST_CASE("RefreshVcsDiffGutters requests a fresh diff for every live pane, not 
     // every open pane, not only the focused one -- a split showing the same
     // file in two panes should refresh both.
     ned::editor::vcs::ClearRegistry();
-    int  diffRequests = 0;
+    int diffRequests = 0;
     ned::editor::vcs::RegisterProvider("counting", std::make_unique<CountingDiffProvider>(diffRequests));
     const auto previousRoot = ned::editor::ProjectRoot();
     ned::editor::SetProjectRoot("/tmp");
 
     {
-        Fixture                fixture;
+        Fixture fixture;
         fixture.buffer.SetPath("/tmp/ned-window-manager-diff-test.c");
         fixture.buffer.InsertAtPoint("hello");
 
@@ -670,4 +670,225 @@ TEST_CASE("RestoreWindowLayout leaves the existing default pane alone when a ref
     manager.RestoreWindowLayout(data);
 
     REQUIRE(manager.WindowCount() == 1);
+}
+
+// Split-resize follow-up: a fresh 50/50 SplitRight puts its column divider
+// at x == lround(0.5 * available), where available = screen width - 1 (the
+// divider's own 1 cell) -- the same math BuildComponent's firstSize lambda
+// and SplitDivider::UpdateResize both use. Screen width is deliberately 81,
+// not the round 80 an 80-column terminal would suggest: with an 80-wide
+// screen, available (79) is odd, so 0.5 * 79 == 39.5 lands exactly on a
+// rounding tie, and a subsequent drag's own delta/available division can
+// round-trip a hair either side of the *next* tie depending on
+// platform-specific float rounding noise -- a real, confirmed flake this
+// test hit before switching to an even `available`, where every target
+// lands on a plain integer (nowhere near a tie) and small float noise can
+// never flip which way lround() rounds. Verified directly against the
+// rendered '│' glyph rather than a new test-only ratio accessor, matching
+// this file's own existing style of asserting on rendered/observable
+// behavior (e.g. the tree-order regression test above) rather than reaching
+// into WindowManager's internals.
+TEST_CASE("Dragging a SplitRight divider resizes the split", "[WindowManager][SplitResize]") {
+    Fixture                fixture;
+    ned::ui::WindowManager manager = fixture.Manager();
+    manager.TakeFocus();
+
+    ned::ui::Widget& root = manager.RootComponent();
+    FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Character("3")}); // SplitRight
+    REQUIRE(manager.WindowCount() == 2);
+
+    ned::ui::Screen screen = ned::ui::Screen(81, 24); // available == 80, even -- see this test's own header comment
+    RenderFullScreen(root, screen);
+    REQUIRE(screen.PixelAt(40, 0).character == "\xe2\x94\x82"); // '│'
+
+    root.OnEvent(ned::ui::test::Mouse(40, 5, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Pressed));
+    root.OnEvent(ned::ui::test::Mouse(50, 5, ned::ui::MouseEvent::Button::None, ned::ui::MouseEvent::Motion::Moved)); // +10 columns
+    root.OnEvent(ned::ui::test::Mouse(50, 5, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Released));
+
+    screen = ned::ui::Screen(81, 24);
+    RenderFullScreen(root, screen);
+    REQUIRE(screen.PixelAt(50, 0).character == "\xe2\x94\x82"); // the divider followed the drag 1:1
+    REQUIRE(screen.PixelAt(40, 0).character != "\xe2\x94\x82"); // and isn't still at the old spot too
+}
+
+TEST_CASE("Dragging a SplitBelow divider resizes the split", "[WindowManager][SplitResize]") {
+    Fixture                fixture;
+    ned::ui::WindowManager manager = fixture.Manager();
+    manager.TakeFocus();
+
+    ned::ui::Widget& root = manager.RootComponent();
+    FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Character("2")}); // SplitBelow
+    REQUIRE(manager.WindowCount() == 2);
+
+    // Height 25, not 24 -- available (24) needs to be even for the same
+    // reason the SplitRight test above uses width 81; see its own header
+    // comment.
+    ned::ui::Screen screen = ned::ui::Screen(80, 25);
+    RenderFullScreen(root, screen);
+    REQUIRE(screen.PixelAt(0, 12).character == "\xe2\x94\x80"); // '─', lround(0.5 * 24) == 12
+
+    root.OnEvent(ned::ui::test::Mouse(0, 12, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Pressed));
+    root.OnEvent(ned::ui::test::Mouse(0, 8, ned::ui::MouseEvent::Button::None, ned::ui::MouseEvent::Motion::Moved)); // -4 rows
+    root.OnEvent(ned::ui::test::Mouse(0, 8, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Released));
+
+    screen = ned::ui::Screen(80, 25);
+    RenderFullScreen(root, screen);
+    REQUIRE(screen.PixelAt(0, 8).character == "\xe2\x94\x80");
+}
+
+// Split-resize follow-up: while a divider is mid-drag, a stray move/release
+// landing over a neighboring pane's own BufferView must not be misread as a
+// text-selection drag there -- see BufferView::SetSplitResizeQuery's own
+// header comment for the real cross-widget hazard this guards against
+// (every leaf gets every event regardless of position, so the second pane's
+// BufferView receives these too).
+TEST_CASE("A split-divider drag passing over a neighboring pane doesn't start a selection there",
+          "[WindowManager][SplitResize]") {
+    Fixture                fixture;
+    ned::ui::WindowManager manager = fixture.Manager();
+    manager.TakeFocus();
+
+    ned::ui::Widget& root = manager.RootComponent();
+    FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Character("3")}); // SplitRight
+
+    ned::ui::Screen screen = ned::ui::Screen(80, 24);
+    RenderFullScreen(root, screen);
+
+    root.OnEvent(ned::ui::test::Mouse(40, 5, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Pressed));
+    // Deep into the *second* pane's own territory, not just past the divider.
+    root.OnEvent(ned::ui::test::Mouse(70, 5, ned::ui::MouseEvent::Button::None, ned::ui::MouseEvent::Motion::Moved));
+    root.OnEvent(ned::ui::test::Mouse(70, 5, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Released));
+
+    // fixture.buffer (shown in both panes, split-window semantics) never
+    // picked up a mark/selection from the stray move -- it was still the
+    // divider's own drag the whole time.
+    REQUIRE_FALSE(fixture.buffer.HasMark());
+}
+
+TEST_CASE("enlarge-window-horizontally/shrink-window-horizontally nudge a SplitRight's ratio", "[WindowManager][SplitResize]") {
+    Fixture                fixture;
+    ned::ui::WindowManager manager = fixture.Manager();
+    manager.TakeFocus();
+
+    ned::ui::Widget& root = manager.RootComponent();
+    FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Character("3")}); // SplitRight, focus stays on "first"
+
+    ned::ui::Screen screen = ned::ui::Screen(80, 24);
+    RenderFullScreen(root, screen);
+    REQUIRE(screen.PixelAt(40, 0).character == "\xe2\x94\x82");
+
+    FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Character("}")}); // enlarge-window-horizontally
+    screen = ned::ui::Screen(80, 24);
+    RenderFullScreen(root, screen);
+    REQUIRE(screen.PixelAt(41, 0).character == "\xe2\x94\x82"); // focused ("first") pane grew
+
+    FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Character("{")}); // shrink-window-horizontally
+    FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Character("{")});
+    screen = ned::ui::Screen(80, 24);
+    RenderFullScreen(root, screen);
+    // 0.52 - 0.02 - 0.02 == 0.48 -> lround(0.48 * 79) == 38, past where it started.
+    REQUIRE(screen.PixelAt(38, 0).character == "\xe2\x94\x82");
+}
+
+TEST_CASE("enlarge-window is a no-op with no split along that axis", "[WindowManager][SplitResize]") {
+    Fixture                fixture;
+    ned::ui::WindowManager manager = fixture.Manager();
+    manager.TakeFocus();
+
+    ned::ui::Widget& root = manager.RootComponent();
+    FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Character("^")}); // enlarge-window: no SplitBelow exists at all
+
+    REQUIRE(manager.WindowCount() == 1); // didn't crash, didn't split anything either
+}
+
+// Split-resize follow-up: the *nearest* matching-axis ancestor wins, not
+// the root -- regression coverage for FindNearestSplitAncestor's own
+// recurse-into-child-first shape. Tree: SplitRight(A, SplitBelow(B, C)),
+// focused on C (nested two levels deep, on the "second" side of both
+// splits).
+TEST_CASE("Vertical/horizontal resize each walk up to their own nearest matching-axis split", "[WindowManager][SplitResize]") {
+    Fixture                fixture;
+    ned::ui::WindowManager manager = fixture.Manager();
+    manager.TakeFocus();
+
+    ned::ui::Widget& root = manager.RootComponent();
+    FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Character("3")}); // SplitRight -> A | (focus stays on A)
+    FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Character("o")}); // focus the second pane
+    FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Character("2")}); // split it below -> A | (B / C), focus stays on B
+    FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Character("o")}); // focus C (innermost, "second" of both splits)
+    REQUIRE(manager.WindowCount() == 3);
+
+    // Outer SplitRight divider: x == lround(0.5 * (80 - 1)) == 40. Inner
+    // SplitBelow divider: the "second" child of the outer split keeps the
+    // full 0..39 row range (SplitRight only narrows width), so its own
+    // y == lround(0.5 * (40 - 1)) == 20.
+    ned::ui::Screen screen = ned::ui::Screen(80, 40);
+    RenderFullScreen(root, screen);
+    REQUIRE(screen.PixelAt(40, 0).character == "\xe2\x94\x82");
+    REQUIRE(screen.PixelAt(60, 20).character == "\xe2\x94\x80");
+
+    FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Character("^")}); // enlarge-window (vertical) -- inner SplitBelow only
+    screen = ned::ui::Screen(80, 40);
+    RenderFullScreen(root, screen);
+    REQUIRE(screen.PixelAt(40, 0).character == "\xe2\x94\x82"); // outer divider untouched
+    // C is the inner split's "second" child, so growing it shrinks B's own
+    // ratio (0.5 -> 0.48), moving the inner divider up by one row:
+    // lround(0.48 * 39) == 19.
+    REQUIRE(screen.PixelAt(60, 19).character == "\xe2\x94\x80");
+    REQUIRE(screen.PixelAt(60, 20).character != "\xe2\x94\x80");
+
+    FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Character("}")}); // enlarge-window-horizontally -- outer SplitRight only
+    screen = ned::ui::Screen(80, 40);
+    RenderFullScreen(root, screen);
+    // Same reasoning one level up: A's ratio shrinks 0.5 -> 0.48, moving the
+    // outer divider from 40 to lround(0.48 * 79) == 38.
+    REQUIRE(screen.PixelAt(38, 0).character == "\xe2\x94\x82");
+    REQUIRE(screen.PixelAt(60, 19).character == "\xe2\x94\x80"); // inner divider untouched by the outer-axis command
+}
+
+TEST_CASE("A resized split's ratio survives CaptureWindowLayout + RestoreWindowLayout", "[WindowManager][SplitResize]") {
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_window_manager_test_resize_ratio.txt";
+
+    ned::editor::ProjectSessionData data;
+    {
+        Fixture fixture;
+        fixture.bufferList.OpenOrCreateFile(path);
+
+        ned::ui::WindowManager manager = fixture.Manager();
+        manager.TakeFocus();
+        manager.FocusedActiveBuffer().Set(fixture.bufferList.OpenOrCreateFile(path));
+
+        // Split-window semantics duplicate the buffer into the new pane
+        // too, so both leaves end up pointing at `path` -- fine for
+        // CaptureWindowLayout (each leaf is recorded independently) and one
+        // less file this test needs to juggle.
+        ned::ui::Widget& root = manager.RootComponent();
+        FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Character("3")}); // SplitRight
+
+        // Width 81, not 80 -- available (80) needs to be even, same
+        // rounding-tie reasoning as "Dragging a SplitRight divider resizes
+        // the split"'s own header comment.
+        ned::ui::Screen screen = ned::ui::Screen(81, 24);
+        RenderFullScreen(root, screen);
+
+        root.OnEvent(ned::ui::test::Mouse(40, 5, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Pressed));
+        root.OnEvent(ned::ui::test::Mouse(55, 5, ned::ui::MouseEvent::Button::None, ned::ui::MouseEvent::Motion::Moved));
+        root.OnEvent(ned::ui::test::Mouse(55, 5, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Released));
+
+        manager.CaptureWindowLayout(data);
+    }
+
+    REQUIRE(data.windowLayout.size() == 3);
+    REQUIRE(data.windowLayout.back().ratio != 0.5f); // the drag actually got captured, not just the default
+
+    Fixture fixture2;
+    fixture2.bufferList.OpenOrCreateFile(path);
+
+    ned::ui::WindowManager manager2 = fixture2.Manager();
+    manager2.RestoreWindowLayout(data);
+
+    ned::ui::Widget& root2   = manager2.RootComponent();
+    ned::ui::Screen  screen2 = ned::ui::Screen(81, 24);
+    RenderFullScreen(root2, screen2);
+    REQUIRE(screen2.PixelAt(55, 0).character == "\xe2\x94\x82"); // restored at the resized position, not back to 40
 }

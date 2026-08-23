@@ -32,15 +32,15 @@
 #include "Editor/ProjectAgenda.h"
 #include "Editor/ProjectFileOps.h"
 #include "Editor/ProjectRoot.h"
-#include "Editor/ProjectSettings.h"
-#include "Editor/ToolchainIncludePaths.h"
 #include "Editor/ProjectSearch.h"
+#include "Editor/ProjectSettings.h"
 #include "Editor/ProjectTree.h"
 #include "Editor/Rectangle.h"
 #include "Editor/ScratchPad.h"
 #include "Editor/Session.h"
 #include "Editor/SyntaxTheme.h"
 #include "Editor/TabWidth.h"
+#include "Editor/ToolchainIncludePaths.h"
 #include "Editor/Variables.h"
 #include "Editor/Vcs/DiffPatch.h"
 #include "Editor/WrapOverrides.h"
@@ -646,6 +646,10 @@ editor::CommandContext BufferView::MakeContext() {
 
 void BufferView::SetOnWindowRequest(std::function<void(editor::InteractiveRequest)> handler) {
     onWindowRequest_ = std::move(handler);
+}
+
+void BufferView::SetSplitResizeQuery(std::function<bool()> query) {
+    splitResizeQuery_ = std::move(query);
 }
 
 void BufferView::SetOnBufferClosed(std::function<void(text::Buffer&)> handler) {
@@ -3452,7 +3456,7 @@ void BufferView::RequestCompletionAtPoint() {
     // SpawnFailed/Disconnected all fall back to scanning the buffer itself
     // rather than asking a server that isn't there.
     const std::string languageKey = editor::LanguageKeyForMode(mode_);
-    const bool         hasRunningLsp =
+    const bool        hasRunningLsp =
         lspManager_ && lspManager_->StatusForLanguage(languageKey) == editor::lsp::LspManager::LspStatus::Running;
     if (!hasRunningLsp) {
         ApplyDabbrevCompletion(buffer, point);
@@ -4981,6 +4985,15 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         case editor::InteractiveRequest::DeleteWindow:
         case editor::InteractiveRequest::DeleteOtherWindows:
         case editor::InteractiveRequest::OtherWindow:
+        // Split-resize follow-up: same forward-only shape as the five
+        // above -- unlike those, none of these ever reshape the tree (a
+        // resize only mutates a WindowNode's own ratio), so `this` stays
+        // valid afterward and these are deliberately NOT part of
+        // IsWindowManagementRequest's own "the pane may be gone" check.
+        case editor::InteractiveRequest::EnlargeWindow:
+        case editor::InteractiveRequest::ShrinkWindow:
+        case editor::InteractiveRequest::EnlargeWindowHorizontally:
+        case editor::InteractiveRequest::ShrinkWindowHorizontally:
             if (onWindowRequest_) {
                 onWindowRequest_(request);
             }
@@ -5958,7 +5971,7 @@ void BufferView::RequestDiagnosticsBuffer() {
         // glyph vcs-full-diff-buffer's excerpts use, for visual consistency
         // between the two multibuffer consumers.
         std::string header = "▸ " + item.source->Path()->string() + ":" + std::to_string(line + 1);
-        std::string body    = content.Substring(item.sourceLineStart, lineEnd - item.sourceLineStart);
+        std::string body   = content.Substring(item.sourceLineStart, lineEnd - item.sourceLineStart);
         excerpts.push_back(editor::multibuffer::ExcerptSource{
             *item.source->Path(), line + 1, line + 1, std::move(header), std::move(body), {}});
     }
@@ -5990,11 +6003,11 @@ void BufferView::RequestDiagnosticsBuffer() {
             const std::size_t                       bodyLen   = excerpts[i].bodyText.size();
             const std::size_t                       bodyStart = span.compositeStartByte + excerpts[i].headerText.size() + 1;
 
-            const text::Buffer::Diagnostic& original = pending[i].diagnostic;
-            std::size_t startDelta = original.startByte > pending[i].sourceLineStart ? original.startByte - pending[i].sourceLineStart : 0;
-            startDelta             = std::min(startDelta, bodyLen);
-            std::size_t endDelta   = original.endByte > pending[i].sourceLineStart ? original.endByte - pending[i].sourceLineStart : startDelta;
-            endDelta               = std::min(endDelta, bodyLen);
+            const text::Buffer::Diagnostic& original   = pending[i].diagnostic;
+            std::size_t                     startDelta = original.startByte > pending[i].sourceLineStart ? original.startByte - pending[i].sourceLineStart : 0;
+            startDelta                                 = std::min(startDelta, bodyLen);
+            std::size_t endDelta                       = original.endByte > pending[i].sourceLineStart ? original.endByte - pending[i].sourceLineStart : startDelta;
+            endDelta                                   = std::min(endDelta, bodyLen);
             if (endDelta <= startDelta) {
                 endDelta = std::min(bodyLen, startDelta + 1); // widen a zero-length span, same as the inline-diagnostic underline pass
             }
@@ -6050,7 +6063,7 @@ namespace {
 
 void BufferView::RequestProjectFindReferences() {
     const text::Buffer& buffer  = activeBuffer_.Get();
-    const text::Rope&    content = buffer.Content();
+    const text::Rope&   content = buffer.Content();
 
     const std::optional<std::pair<std::size_t, std::size_t>> wordRegion = WordRegionAtPoint(content, buffer.Point());
     if (!wordRegion) {
@@ -6075,18 +6088,19 @@ void BufferView::RequestProjectFindReferences() {
         return;
     }
 
-    const std::filesystem::path root = editor::ProjectRoot();
+    const std::filesystem::path                     root = editor::ProjectRoot();
     std::vector<editor::multibuffer::ExcerptSource> excerpts;
     excerpts.reserve(matches.size());
     for (const editor::SearchMatch& match : matches) {
         std::error_code             ec;
-        const std::filesystem::path relative = std::filesystem::relative(match.file, root, ec);
+        const std::filesystem::path relative    = std::filesystem::relative(match.file, root, ec);
         const std::string           displayPath = (!ec && !relative.empty()) ? relative.string() : match.file.string();
 
         excerpts.push_back(editor::multibuffer::ExcerptSource{
             match.file, match.lineNumber, match.lineNumber,
             "▸ " + displayPath + ":" + std::to_string(match.lineNumber), // U+25B8, same disclosure triangle vcs-full-diff-buffer's headers use
-            match.lineText, {}});
+            match.lineText,
+            {}});
     }
 
     text::Buffer& results = editor::multibuffer::BuildMultibuffer(bufferList_, "*references: " + word + "*", excerpts);
@@ -6483,8 +6497,8 @@ void BufferView::OpenDetectedLink(const editor::link::DetectedLink& detected) {
     // the real compiler's own system search paths appended as a last-resort
     // fallback for an angle-form/system include ProjectSettings never
     // mentioned at all.
-    const std::string                        languageKey = editor::LanguageKeyForMode(mode_);
-    std::vector<std::filesystem::path>       includePaths = editor::IncludePathsForMode(projectSettings, mode_.name);
+    const std::string                        languageKey    = editor::LanguageKeyForMode(mode_);
+    std::vector<std::filesystem::path>       includePaths   = editor::IncludePathsForMode(projectSettings, mode_.name);
     const std::vector<std::filesystem::path> toolchainPaths = editor::ToolchainIncludePathsForLanguage(languageKey);
     includePaths.insert(includePaths.end(), toolchainPaths.begin(), toolchainPaths.end());
 
@@ -6502,7 +6516,7 @@ void BufferView::OpenDetectedLink(const editor::link::DetectedLink& detected) {
     }
 
     const auto resolved = editor::link::ResolveFileLink(detected.target, baseDirectory, includePaths,
-                                                         importConfig.extensions, importConfig.indexBasenames);
+                                                        importConfig.extensions, importConfig.indexBasenames);
     if (!resolved) {
         statusMessage_ = "No such file: " + detected.target;
         return;
@@ -6948,6 +6962,18 @@ bool BufferView::OnMouseEvent(const Event& event) {
         }
     }
 
+    // Split-resize follow-up: same "checked first, regardless of position"
+    // cooperation as the ProjectSidebar guard just above -- a split divider
+    // dragged past a neighboring pane's own edge delivers move/release
+    // events here too. The divider itself (not this BufferView) owns the
+    // drag; this only needs to stay out of the way so a stray Moved/Released
+    // doesn't start or extend a stale text selection using this pane's own
+    // (unrelated) dragAnchor_ while some other pane's divider is live.
+    if (splitResizeQuery_ && splitResizeQuery_() &&
+        (rawMouse.motion == MouseEvent::Motion::Moved || rawMouse.motion == MouseEvent::Motion::Released)) {
+        return true;
+    }
+
     const auto mouse = LocalMouseEvent(event);
     if (!mouse) {
         return false;
@@ -6989,8 +7015,8 @@ bool BufferView::OnMouseEvent(const Event& event) {
         // block, not whatever's innermost at that line) -- clicking a plain
         // guide line ('│'/'└', not a header cell) is a no-op, matching how
         // indent guides are inert-to-click in every mainstream editor.
-        const std::size_t foldColumnWidth   = FoldGutterActive() ? kMaxFoldDepthColumns : 0;
-        const std::size_t blameColumnWidth  = BlameGutterActive() ? kBlameWidth : 0;
+        const std::size_t foldColumnWidth  = FoldGutterActive() ? kMaxFoldDepthColumns : 0;
+        const std::size_t blameColumnWidth = BlameGutterActive() ? kBlameWidth : 0;
         // Mirrors GutterWidth()/Paint()'s own
         // [status][gap][digits][gap][symbol][fold][blame] layout -- foldStart
         // is where the fold region actually starts on screen: GutterWidth()

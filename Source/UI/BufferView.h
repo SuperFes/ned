@@ -370,6 +370,15 @@ class BufferView : public Widget {
     // however many BufferViews exist) is the intended registrant.
     void SetOnWindowRequest(std::function<void(editor::InteractiveRequest)> handler);
 
+    // Split-resize follow-up: the same "checked first, regardless of
+    // position, ahead of this widget's own mouse handling" cooperation
+    // OnMouseEvent already gives ProjectSidebar's own IsResizing() -- but a
+    // query callback rather than a single owned pointer, since WindowManager
+    // may own any number of live split dividers (nested splits) at once, not
+    // just one. Unset (or a null/never-true query) is a safe no-op, matching
+    // every other Set* hook here.
+    void SetSplitResizeQuery(std::function<bool()> query);
+
     // Window-splitting follow-up: called from CloseBufferNow, before the
     // buffer is actually erased from bufferList_, with the buffer that's
     // about to close -- so a multi-pane owner can retarget any *other* pane
@@ -1505,12 +1514,13 @@ class BufferView : public Widget {
     // the use site.
     text::Buffer* diffSyncBuffer_ = nullptr;
 
-    std::size_t                dragAnchor_ = 0;                // point position at the last mouse press, for drag-selection
-    std::optional<std::string> debugMouseLogPath_;             // see LogMouseEvent
-    ScrollBar*                 scrollBar_           = nullptr; // see SetScrollBar
-    ScrollArrowButton*         scrollUpArrow_       = nullptr; // see SetScrollArrows
-    ScrollArrowButton*         scrollDownArrow_     = nullptr;
-    ProjectSidebar*            projectSidebar_      = nullptr; // see SetProjectSidebar
+    std::size_t                dragAnchor_ = 0;            // point position at the last mouse press, for drag-selection
+    std::optional<std::string> debugMouseLogPath_;         // see LogMouseEvent
+    ScrollBar*                 scrollBar_       = nullptr; // see SetScrollBar
+    ScrollArrowButton*         scrollUpArrow_   = nullptr; // see SetScrollArrows
+    ScrollArrowButton*         scrollDownArrow_ = nullptr;
+    ProjectSidebar*            projectSidebar_  = nullptr;     // see SetProjectSidebar
+    std::function<bool()>      splitResizeQuery_;              // see SetSplitResizeQuery
     Minimap*                   minimap_             = nullptr; // see SetMinimap
     Widget*                    minimapScrollColumn_ = nullptr; // see SetMinimap
     editor::lsp::LspManager*   lspManager_          = nullptr; // see SetLspManager
@@ -1759,8 +1769,8 @@ class BufferView : public Widget {
     // reasoning (single-slot eviction on switch, modeName's role, and the
     // ClearBufferCaches/close-funnel cleanup).
     struct FoldableBlocksCacheEntry {
-        std::size_t                                       contentGeneration = 0;
-        std::string                                        modeName;
+        std::size_t                                      contentGeneration = 0;
+        std::string                                      modeName;
         std::vector<std::pair<std::size_t, std::size_t>> ranges;
     };
     mutable std::unordered_map<text::Buffer*, FoldableBlocksCacheEntry> foldableBlocksCacheByBuffer_;
@@ -1891,8 +1901,8 @@ class BufferView : public Widget {
     // overwrite during the by-line collapse already produces that), sorted
     // by line for the per-row lower_bound lookup Paint() does, same shape as
     // diagnosticLineSeverities_ just above.
-    mutable text::Buffer*                                          symbolGutterCacheBuffer_            = nullptr;
-    mutable std::size_t                                            symbolGutterCacheContentGeneration_ = 0;
+    mutable text::Buffer*                                           symbolGutterCacheBuffer_            = nullptr;
+    mutable std::size_t                                             symbolGutterCacheContentGeneration_ = 0;
     mutable std::vector<std::pair<std::size_t, editor::SymbolKind>> symbolGutterLineKinds_;
 
     // inline-diagnostics follow-up: see EnsureInlineDiagnosticCache's own
@@ -2134,7 +2144,7 @@ class BufferView : public Widget {
     // re-check RequestCompletionAtPoint's own callback also does.
     std::size_t completionRequestGeneration_ = 0;
 
-    void                      RequestCompletionAtPoint();
+    void RequestCompletionAtPoint();
     // dabbrev-fallback follow-up: the "no running LSP client for this
     // buffer's language" half of RequestCompletionAtPoint -- scans the
     // buffer itself (Editor/DabbrevComplete.h) for candidates instead of
