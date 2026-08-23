@@ -4014,6 +4014,132 @@ TEST_CASE("copy-to-register then insert-register round-trips region text into a 
     REQUIRE(fixture.statusMessage.empty());
 }
 
+// multi-cursor-round-2 follow-up.
+
+TEST_CASE("Multi-cursor point-to-register then jump-to-register recreates every cursor", "[BufferView]") {
+    Fixture            fixture;
+    ned::text::Buffer& scratch = fixture.bufferList.CreateBuffer("scratch");
+    scratch.InsertAtPoint("hello world");
+    scratch.SetPoint(5);
+    scratch.AddCursorAt(11);
+    fixture.activeBuffer.Set(scratch);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Ctrl('x'));
+    view.OnEvent(ned::ui::test::Character("r"));
+    view.OnEvent(ned::ui::test::Character(" "));
+    view.OnEvent(ned::ui::test::Character("a"));
+    REQUIRE(fixture.statusMessage == "Point stored in register.");
+
+    scratch.SetPoint(0);
+    scratch.ClearSecondaryCursors();
+
+    view.OnEvent(ned::ui::test::Ctrl('x'));
+    view.OnEvent(ned::ui::test::Character("r"));
+    view.OnEvent(ned::ui::test::Character("j"));
+    view.OnEvent(ned::ui::test::Character("a"));
+
+    REQUIRE(scratch.Point() == 5);
+    REQUIRE(scratch.SecondaryCursors().size() == 1);
+    REQUIRE(scratch.SecondaryCursors()[0].point == 11);
+}
+
+TEST_CASE("Multi-cursor copy-to-register then insert-register distributes pieces 1:1", "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("hello world");
+    fixture.buffer.SetPoint(0);
+    fixture.buffer.SetMark(5);         // primary's own region: "hello"
+    fixture.buffer.AddCursorAt(11, 6); // secondary: mark=6, point=11 -> "world"
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Ctrl('x'));
+    view.OnEvent(ned::ui::test::Character("r"));
+    view.OnEvent(ned::ui::test::Character("s"));
+    view.OnEvent(ned::ui::test::Character("c"));
+    REQUIRE(fixture.statusMessage == "Copied to register.");
+
+    ned::text::Buffer& other = fixture.bufferList.CreateBuffer("other");
+    other.InsertAtPoint("X\nY\n");
+    other.SetPoint(0);    // before "X"
+    other.AddCursorAt(2); // before "Y"
+    fixture.activeBuffer.Set(other);
+
+    view.OnEvent(ned::ui::test::Ctrl('x'));
+    view.OnEvent(ned::ui::test::Character("r"));
+    view.OnEvent(ned::ui::test::Character("i"));
+    view.OnEvent(ned::ui::test::Character("c"));
+
+    REQUIRE(other.Text() == "helloX\nworldY\n");
+}
+
+TEST_CASE("Multi-cursor kill-rectangle then yank-rectangle distributes blocks 1:1", "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("abcdef\nghijkl\nABCDEF\nGHIJKL");
+
+    fixture.buffer.SetMark(fixture.buffer.ByteOffsetForLineAndColumn(0, 1, 1));
+    fixture.buffer.SetPoint(fixture.buffer.ByteOffsetForLineAndColumn(1, 4, 1)); // primary rectangle: lines 0-1, cols[1,4)
+
+    const std::size_t secondaryMark  = fixture.buffer.ByteOffsetForLineAndColumn(2, 1, 1);
+    const std::size_t secondaryPoint = fixture.buffer.ByteOffsetForLineAndColumn(3, 4, 1);
+    fixture.buffer.AddCursorAt(secondaryPoint, secondaryMark); // secondary rectangle: lines 2-3, cols[1,4)
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 4});
+
+    view.OnEvent(ned::ui::test::Ctrl('x'));
+    view.OnEvent(ned::ui::test::Character("r"));
+    view.OnEvent(ned::ui::test::Character("k"));
+
+    REQUIRE(fixture.buffer.Text() == "aef\ngkl\nAEF\nGKL");
+    REQUIRE_FALSE(fixture.buffer.HasMark());
+    REQUIRE(fixture.buffer.HasSecondaryCursors()); // 2 distinct cursors remain, each landed at its own rectangle's start
+
+    fixture.buffer.ClearSecondaryCursors();
+    fixture.buffer.SetPoint(fixture.buffer.ByteOffsetForLineAndColumn(0, 3, 1));               // end of "aef"
+    const std::size_t secondaryYankPoint = fixture.buffer.ByteOffsetForLineAndColumn(2, 3, 1); // end of "AEF"
+    fixture.buffer.AddCursorAt(secondaryYankPoint);
+
+    view.OnEvent(ned::ui::test::Ctrl('x'));
+    view.OnEvent(ned::ui::test::Character("r"));
+    view.OnEvent(ned::ui::test::Character("y"));
+
+    REQUIRE(fixture.buffer.Text() == "aefbcd\ngklhij\nAEFBCD\nGKLHIJ");
+}
+
+TEST_CASE("add-cursor-below scrolls the view to show the newly added cursor", "[BufferView]") {
+    Fixture     fixture;
+    std::string content;
+    for (int i = 0; i < 10; ++i) {
+        content += "line" + std::to_string(i) + "\n";
+    }
+    fixture.buffer.InsertAtPoint(content);
+    fixture.buffer.SetPoint(0);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 1}); // 2 lines visible
+
+    ned::ui::Screen screen = ned::ui::Screen(20, 2);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 1});
+
+    view.Paint(canvas);
+    REQUIRE(ContentRowText(screen, 0, 5, 10) == "line0");
+
+    // add-cursor-below 5 times lands the newest secondary cursor on line 5,
+    // well past the 2-row viewport starting at line 0 -- proves
+    // ScrollToShowOffset (not the ordinary, unmoved-primary
+    // ScrollToShowPoint) ran.
+    for (int i = 0; i < 5; ++i) {
+        view.OnEvent(ned::ui::test::ArrowDownCtrl());
+    }
+
+    view.Paint(canvas);
+    REQUIRE(ContentRowText(screen, 1, 5, 10) == "line5");
+}
+
 TEST_CASE("insert-register and jump-to-register on a never-set register report the right error",
           "[BufferView]") {
     Fixture             fixture;

@@ -386,6 +386,15 @@ struct CommandContext {
     // path) -- a deliberate cut, same precedent as lastCommand above not
     // updating there either.
     std::optional<long> prefixArg;
+    // multi-cursor-round-2 follow-up: set by add-cursor-below/-above and
+    // select-next-occurrence right after AddCursorAt, to the offset they
+    // just added -- an outbound field the same shape as message, letting
+    // BufferView scroll to show the newly added cursor instead of the
+    // (unmoved) primary point. select-all-occurrences deliberately leaves
+    // this unset (no single natural target when many cursors are added at
+    // once); ordinary motion/editing commands never touch it, so it stays
+    // nullopt and BufferView's normal ScrollToShowPoint() runs unchanged.
+    std::optional<std::size_t> newlyAddedCursorPoint;
     // Rows currently visible in the buffer view, set by the host UI before
     // each dispatch (0 if unknown/headless) -- scroll-page-up/-down are the
     // only commands that read this; everything else ignores it.

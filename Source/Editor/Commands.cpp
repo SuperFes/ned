@@ -134,9 +134,14 @@ namespace {
     // the command body itself stays completely multi-cursor-unaware.
     // Applied explicitly, per command, to the basic motion/editing set
     // below rather than globally: which commands are per-cursor is a real
-    // decision (kill-ring commands, rectangles, registers, narrowing all
-    // deliberately stay primary-only in v1 -- see ROADMAP.md), not a
-    // default to inherit silently.
+    // decision, not a default to inherit silently. Narrowing stays
+    // primary-only (still an open ROADMAP item); kill-ring/register/
+    // rectangle commands round out multi-cursor support via KillPerCursor
+    // below and BufferView's own per-cursor register/rectangle handling
+    // (see the multi-cursor-round-2 follow-up comments there) instead of
+    // this exact helper, since they need to compose a shared KillRing/
+    // RegisterTable/RectangleClipboard entry across cursors rather than
+    // just repeating an unaware fn per cursor.
     template <typename Fn>
     auto PerCursor(Fn fn) {
         return [fn](CommandContext& context) {
@@ -146,6 +151,36 @@ namespace {
             }
             context.buffer.ForEachCursor([&fn, &context] { fn(context); });
         };
+    }
+
+    // multi-cursor-round-2 follow-up: like PerCursor, but for a kill/copy
+    // that must land in one shared KillRing entry (one piece per cursor)
+    // rather than each cursor acting in isolation. fn returns the killed/
+    // copied text for the current cursor, or nullopt if there was nothing
+    // to kill there (e.g. kill-line at buffer end, kill-region/
+    // kill-ring-save with no mark) -- contributes an empty piece rather
+    // than being skipped, so piece count always matches cursor count for a
+    // later 1:1 yank. Nothing is pushed to the ring at all if no cursor
+    // killed anything (kill-region/kill-ring-save's existing "no mark, no
+    // ring push" no-op, generalized to every cursor).
+    template <typename Fn>
+    void KillPerCursor(CommandContext& context, Fn fn) {
+        if (!context.buffer.HasSecondaryCursors()) {
+            if (std::optional<std::string> text = fn(context)) {
+                context.killRing.KillPieces({std::move(*text)});
+            }
+            return;
+        }
+        std::vector<std::string> pieces;
+        bool                     any = false;
+        context.buffer.ForEachCursor([&] {
+            std::optional<std::string> text = fn(context);
+            any |= text.has_value();
+            pieces.push_back(std::move(text).value_or(std::string()));
+        });
+        if (any) {
+            context.killRing.KillPieces(std::move(pieces));
+        }
     }
 
     // Multi-cursor phase: [start, end) of the word point sits inside or
@@ -326,24 +361,46 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                       }));
 
     registry.Register("kill-line", "Kill from point to the end of the line, or the newline if already there.", [](CommandContext& context) {
-        context.buffer.ClearMark();
-        const std::size_t point   = context.buffer.Point();
-        const auto&       content = context.buffer.Content();
-        const std::size_t lineEnd = LineContentEnd(content, point);
+        KillPerCursor(context, [](CommandContext& context) -> std::optional<std::string> {
+            context.buffer.ClearMark();
+            const std::size_t point   = context.buffer.Point();
+            const auto&       content = context.buffer.Content();
+            const std::size_t lineEnd = LineContentEnd(content, point);
 
-        if (point < lineEnd) {
-            context.killRing.Kill(context.buffer.DeleteRange(point, lineEnd - point));
-        }
-        else if (lineEnd < content.ByteLength()) {
-            context.killRing.Kill(context.buffer.DeleteRange(point, 1));
-        }
+            if (point < lineEnd) {
+                return context.buffer.DeleteRange(point, lineEnd - point);
+            }
+            if (lineEnd < content.ByteLength()) {
+                return context.buffer.DeleteRange(point, 1);
+            }
+            return std::nullopt;
+        });
     });
 
     registry.Register("yank", "Insert the most recent kill-ring entry at point.", [](CommandContext& context) {
+        // Unconditional, matching the pre-multi-cursor behavior exactly:
+        // yank always clears an existing mark, even on an empty kill ring.
         context.buffer.ClearMark();
-        if (!context.killRing.Empty()) {
-            context.buffer.InsertAtPoint(context.killRing.Current());
+        if (context.killRing.Empty()) {
+            return;
         }
+        if (!context.buffer.HasSecondaryCursors()) {
+            context.buffer.InsertAtPoint(context.killRing.Current());
+            return;
+        }
+        // multi-cursor-round-2 follow-up: distribute 1:1 in cursor order
+        // when the entry's own piece count matches how many cursors are
+        // live right now, else fall back to the whole joined blob at every
+        // cursor (KillRing::Current()'s existing single-cursor meaning).
+        const std::vector<std::string>& pieces      = context.killRing.CurrentPieces();
+        const std::size_t               cursorCount = 1 + context.buffer.SecondaryCursors().size();
+        const bool                      perCursor   = pieces.size() == cursorCount;
+        std::size_t                     i           = 0;
+        context.buffer.ForEachCursor([&] {
+            context.buffer.ClearMark();
+            context.buffer.InsertAtPoint(perCursor ? pieces[i] : context.killRing.Current());
+            ++i;
+        });
     });
 
     // Emacs' C-SPC C-SPC idiom: a second press with the (still-empty) mark
@@ -370,12 +427,15 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     // rather than surfacing a status message for what's a routine, frequent
     // no-op (pressing C-w before ever setting a mark).
     registry.Register("kill-region", "Kill (cut) the region between point and mark into the kill ring.", [](CommandContext& context) {
-        if (!context.buffer.HasMark()) {
-            return;
-        }
-        const auto [start, end] = context.buffer.Region();
-        context.killRing.Kill(context.buffer.DeleteRange(start, end - start));
-        context.buffer.ClearMark();
+        KillPerCursor(context, [](CommandContext& context) -> std::optional<std::string> {
+            if (!context.buffer.HasMark()) {
+                return std::nullopt;
+            }
+            const auto [start, end] = context.buffer.Region();
+            std::string text        = context.buffer.DeleteRange(start, end - start);
+            context.buffer.ClearMark();
+            return text;
+        });
     });
 
     registry.Register("exchange-point-and-mark", "Swap point and mark.", [](CommandContext& context) {
@@ -408,15 +468,50 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
         if (context.killRing.Empty()) {
             return;
         }
-        const std::string previous = context.killRing.Current();
-        const std::string next     = context.killRing.YankPop();
-        if (context.buffer.Point() < previous.size()) {
-            return; // the yanked text can't be where we expect; leave the buffer alone
+        if (!context.buffer.HasSecondaryCursors()) {
+            const std::string previous = context.killRing.Current();
+            const std::string next     = context.killRing.YankPop();
+            if (context.buffer.Point() < previous.size()) {
+                return; // the yanked text can't be where we expect; leave the buffer alone
+            }
+            context.buffer.ClearMark();
+            context.buffer.BeginUndoGroup();
+            context.buffer.DeleteRange(context.buffer.Point() - previous.size(), previous.size());
+            context.buffer.InsertAtPoint(next);
+            context.buffer.EndUndoGroup();
+            return;
         }
-        context.buffer.ClearMark();
+        // multi-cursor-round-2 follow-up: previousPieces/previousBlob
+        // captured *before* advancing the ring (what the prior yank/
+        // yank-pop actually left before each cursor), nextPieces/nextBlob
+        // *after* -- same per-cursor-vs-whole-blob rule yank itself uses,
+        // applied independently to what's deleted and what's inserted. If
+        // the live cursor count changed since the previous yank/yank-pop,
+        // the per-cursor delete length can mismatch what's really there;
+        // the same point-vs-length bail-out guard the single-cursor body
+        // above already relies on protects against corruption there too
+        // (skips that cursor rather than deleting the wrong span).
+        const std::size_t              cursorCount     = 1 + context.buffer.SecondaryCursors().size();
+        const std::vector<std::string> previousPieces  = context.killRing.CurrentPieces();
+        const std::string              previousBlob    = context.killRing.Current();
+        const bool                     perCursorDelete = previousPieces.size() == cursorCount;
+
+        const std::string&              nextBlob        = context.killRing.YankPop();
+        const std::vector<std::string>& nextPieces      = context.killRing.CurrentPieces();
+        const bool                      perCursorInsert = nextPieces.size() == cursorCount;
+
         context.buffer.BeginUndoGroup();
-        context.buffer.DeleteRange(context.buffer.Point() - previous.size(), previous.size());
-        context.buffer.InsertAtPoint(next);
+        std::size_t i = 0;
+        context.buffer.ForEachCursor([&] {
+            const std::size_t  point    = context.buffer.Point();
+            const std::string& toDelete = perCursorDelete ? previousPieces[i] : previousBlob;
+            if (point >= toDelete.size()) {
+                context.buffer.ClearMark();
+                context.buffer.DeleteRange(point - toDelete.size(), toDelete.size());
+                context.buffer.InsertAtPoint(perCursorInsert ? nextPieces[i] : nextBlob);
+            }
+            ++i;
+        });
         context.buffer.EndUndoGroup();
     });
 
@@ -800,7 +895,9 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           }
                           const std::size_t column =
                               buffer.VisualColumnForByteOffset(content.LineToByteOffset(line), lowest, TabWidth());
-                          buffer.AddCursorAt(buffer.ByteOffsetForLineAndColumn(line + 1, column, TabWidth()));
+                          const std::size_t target = buffer.ByteOffsetForLineAndColumn(line + 1, column, TabWidth());
+                          buffer.AddCursorAt(target);
+                          context.newlyAddedCursorPoint = target;
                       });
 
     registry.Register("add-cursor-above", "Add a cursor one line above the top-most cursor.",
@@ -817,7 +914,9 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           }
                           const std::size_t column =
                               buffer.VisualColumnForByteOffset(content.LineToByteOffset(line), highest, TabWidth());
-                          buffer.AddCursorAt(buffer.ByteOffsetForLineAndColumn(line - 1, column, TabWidth()));
+                          const std::size_t target = buffer.ByteOffsetForLineAndColumn(line - 1, column, TabWidth());
+                          buffer.AddCursorAt(target);
+                          context.newlyAddedCursorPoint = target;
                       });
 
     // First press with no selection: select the word at point (mark at its
@@ -887,6 +986,7 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                               return;
                           }
                           buffer.AddCursorAt(candidate + needle.size(), candidate);
+                          context.newlyAddedCursorPoint = candidate + needle.size();
                           if (context.message) {
                               *context.message = std::to_string(buffer.SecondaryCursors().size() + 1) + " cursors";
                           }
@@ -926,12 +1026,15 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                       });
 
     registry.Register("kill-ring-save", "Copy the region between point and mark into the kill ring, without deleting it.", [](CommandContext& context) {
-        if (!context.buffer.HasMark()) {
-            return;
-        }
-        const auto [start, end] = context.buffer.Region();
-        context.killRing.Kill(context.buffer.Content().Substring(start, end - start));
-        context.buffer.ClearMark();
+        KillPerCursor(context, [](CommandContext& context) -> std::optional<std::string> {
+            if (!context.buffer.HasMark()) {
+                return std::nullopt;
+            }
+            const auto [start, end] = context.buffer.Region();
+            std::string text        = context.buffer.Content().Substring(start, end - start);
+            context.buffer.ClearMark();
+            return text;
+        });
     });
 
     registry.Register("undo", "Undo the last change.", [](CommandContext& context) {

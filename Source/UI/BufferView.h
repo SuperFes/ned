@@ -1001,8 +1001,19 @@ class BufferView : public Widget {
     // activeBuffer_.Set).
     void OpenDetectedLink(const editor::link::DetectedLink& detected);
 
-    // Adjusts the viewport (if needed) so point's line is visible.
+    // Adjusts the viewport (if needed) so point's line is visible. A thin
+    // wrapper over ScrollToShowOffset(activeBuffer_.Get().Point()) plus the
+    // horizontal counterpart below.
     void ScrollToShowPoint();
+
+    // multi-cursor-round-2 follow-up: ScrollToShowPoint()'s real (vertical
+    // only -- no horizontal counterpart, a deliberate scope cut) logic,
+    // parameterized on an explicit byte offset instead of always reading
+    // activeBuffer_.Get().Point() -- lets RunCommandAndHandleOutcome scroll
+    // to a newly added secondary cursor (add-cursor-above/-below,
+    // select-next-occurrence) instead of the unmoved primary point, via
+    // context.newlyAddedCursorPoint.
+    void ScrollToShowOffset(std::size_t offset);
 
     // line-wrap follow-up: horizontal counterpart to ScrollToShowPoint(),
     // called alongside it -- a no-op whenever the active buffer's

@@ -59,3 +59,36 @@ TEST_CASE("KillRing evicts the oldest entry once over capacity", "[KillRing]") {
     REQUIRE(ring.YankPop() == "2");
     REQUIRE(ring.YankPop() == "4"); // "1" is gone; wraps after only 3 entries
 }
+
+// multi-cursor-kill-ring follow-up.
+
+TEST_CASE("Kill is equivalent to KillPieces with a single piece", "[KillRing]") {
+    KillRing ring;
+
+    ring.Kill("solo");
+    REQUIRE(ring.CurrentPieces() == std::vector<std::string>{"solo"});
+    REQUIRE(ring.Current() == "solo");
+}
+
+TEST_CASE("KillPieces stores multiple pieces as one entry, joined by newlines", "[KillRing]") {
+    KillRing ring;
+
+    ring.KillPieces({"foo", "bar", "baz"});
+    REQUIRE(ring.CurrentPieces() == std::vector<std::string>{"foo", "bar", "baz"});
+    REQUIRE(ring.Current() == "foo\nbar\nbaz");
+}
+
+TEST_CASE("YankPop cycling preserves each entry's own piece shape", "[KillRing]") {
+    KillRing ring;
+
+    ring.Kill("single");
+    ring.KillPieces({"a", "b"});
+    REQUIRE(ring.CurrentPieces() == std::vector<std::string>{"a", "b"});
+
+    (void)ring.YankPop();
+    REQUIRE(ring.CurrentPieces() == std::vector<std::string>{"single"});
+    REQUIRE(ring.Current() == "single");
+
+    (void)ring.YankPop(); // wraps back around
+    REQUIRE(ring.CurrentPieces() == std::vector<std::string>{"a", "b"});
+}

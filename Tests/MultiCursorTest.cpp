@@ -32,6 +32,16 @@ struct CommandFixture {
         registry.Invoke(name, context);
     }
 
+    // multi-cursor-round-2 follow-up: like Invoke, but hands back the
+    // CommandContext afterward so a test can inspect an outbound field
+    // (newlyAddedCursorPoint) a plain Invoke() would otherwise discard.
+    ned::editor::CommandContext InvokeAndReturnContext(const std::string& name) {
+        ned::editor::CommandContext context{buffer, killRing, bufferList};
+        context.message = &message;
+        registry.Invoke(name, context);
+        return context;
+    }
+
     void TypeChar(char32_t codepoint) {
         ned::editor::CommandContext context{buffer, killRing, bufferList};
         context.message                 = &message;
@@ -269,4 +279,93 @@ TEST_CASE("keyboard-quit collapses to a single cursor", "[MultiCursor]") {
     fixture.Invoke("keyboard-quit");
     REQUIRE_FALSE(fixture.buffer.HasSecondaryCursors());
     REQUIRE_FALSE(fixture.buffer.HasMark());
+}
+
+// multi-cursor-round-2 follow-up: per-cursor kill-ring, and scroll-to-new-cursor
+// reporting via context.newlyAddedCursorPoint.
+
+TEST_CASE("add-cursor-below/add-cursor-above/select-next-occurrence report the newly added offset",
+          "[MultiCursor]") {
+    {
+        CommandFixture fixture;
+        fixture.buffer.InsertAtPoint("alpha\nbravo\ncharlie\n");
+        fixture.buffer.SetPoint(2); // line 0, column 2
+
+        auto context = fixture.InvokeAndReturnContext("add-cursor-below");
+        REQUIRE(context.newlyAddedCursorPoint.has_value());
+        REQUIRE(*context.newlyAddedCursorPoint == 8); // line 1, column 2 -- same as the earlier column test
+    }
+    {
+        CommandFixture fixture;
+        fixture.buffer.InsertAtPoint("foo bar foo baz foo\n");
+        fixture.buffer.SetPoint(1);
+        fixture.Invoke("select-next-occurrence"); // first press: word selection, no cursor added
+
+        auto context = fixture.InvokeAndReturnContext("select-next-occurrence"); // second press: adds a cursor
+        REQUIRE(context.newlyAddedCursorPoint.has_value());
+        REQUIRE(*context.newlyAddedCursorPoint == 11);
+    }
+    {
+        // select-all-occurrences deliberately never sets this -- no single
+        // natural target when many cursors are added at once.
+        CommandFixture fixture;
+        fixture.buffer.InsertAtPoint("x = x + x\n");
+        fixture.buffer.SetPoint(0);
+
+        auto context = fixture.InvokeAndReturnContext("select-all-occurrences");
+        REQUIRE_FALSE(context.newlyAddedCursorPoint.has_value());
+    }
+}
+
+TEST_CASE("Multi-cursor kill-line kills one piece per cursor; yank distributes 1:1", "[MultiCursor]") {
+    CommandFixture fixture;
+    fixture.buffer.InsertAtPoint("foo\nbar\n");
+    fixture.buffer.SetPoint(0);    // start of "foo"
+    fixture.buffer.AddCursorAt(4); // start of "bar"
+
+    fixture.Invoke("kill-line");
+    REQUIRE(fixture.buffer.Text() == "\n\n");
+
+    fixture.buffer.ClearSecondaryCursors();
+    fixture.buffer.SetPoint(0);
+    fixture.buffer.AddCursorAt(1);
+
+    fixture.Invoke("yank");
+    REQUIRE(fixture.buffer.Text() == "foo\nbar\n");
+}
+
+TEST_CASE("Multi-cursor yank falls back to the whole joined blob on a piece-count mismatch", "[MultiCursor]") {
+    CommandFixture fixture;
+    fixture.buffer.InsertAtPoint("foo\nbar\n");
+    fixture.buffer.SetPoint(0);
+    fixture.buffer.AddCursorAt(4);
+    fixture.Invoke("kill-line"); // pushes a 2-piece entry: "foo", "bar"
+    REQUIRE(fixture.buffer.Text() == "\n\n");
+
+    fixture.buffer.ClearSecondaryCursors();
+    fixture.buffer.SetPoint(0);
+    fixture.buffer.AddCursorAt(1);
+    fixture.buffer.AddCursorAt(2); // 3 live cursors now, but the entry only has 2 pieces
+
+    fixture.Invoke("yank");
+
+    std::size_t       count = 0;
+    std::size_t       pos   = 0;
+    const std::string text  = fixture.buffer.Text();
+    while ((pos = text.find("foo\nbar", pos)) != std::string::npos) {
+        ++count;
+        ++pos;
+    }
+    REQUIRE(count == 3); // the whole joined blob, at every cursor
+}
+
+TEST_CASE("Multi-cursor kill-region contributes an empty piece for a cursor with no mark", "[MultiCursor]") {
+    CommandFixture fixture;
+    fixture.buffer.InsertAtPoint("hello world");
+    fixture.buffer.SetPoint(0);
+    fixture.buffer.SetMark(5);      // primary's own region: "hello"
+    fixture.buffer.AddCursorAt(11); // no mark of its own
+
+    fixture.Invoke("kill-region");
+    REQUIRE(fixture.buffer.Text() == " world");
 }

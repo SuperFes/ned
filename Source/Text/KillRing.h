@@ -13,6 +13,7 @@
 #include <cstddef>
 #include <deque>
 #include <string>
+#include <vector>
 
 namespace ned::text {
 
@@ -22,22 +23,43 @@ class KillRing {
     explicit KillRing(std::size_t capacity = 120);
 
     // Pushes a new entry as the yank target, evicting the oldest entry once
-    // over capacity.
+    // over capacity. Equivalent to KillPieces({text}).
     void Kill(std::string text);
+
+    // multi-cursor-kill-ring follow-up: pushes one entry holding one piece
+    // per active cursor, in cursor order -- what a multi-cursor kill-line/
+    // kill-region/kill-ring-save pushes. pieces.size() == 1 behaves exactly
+    // like Kill(pieces[0]).
+    void KillPieces(std::vector<std::string> pieces);
 
     [[nodiscard]] bool Empty() const;
 
-    // The current yank target (what C-y would insert). Empty string if Empty().
+    // The current yank target (what C-y would insert): the current entry's
+    // pieces joined by "\n" -- unchanged single-cursor meaning; for a
+    // multi-cursor entry this is the whole-blob fallback a piece-count
+    // mismatch on yank falls back to. Empty string if Empty().
     [[nodiscard]] const std::string& Current() const;
 
-    // Cycles the yank pointer to the next-older entry and returns it (what
-    // repeated M-y cycles through). No-op returning Current() if Empty().
+    // multi-cursor-kill-ring follow-up: the current entry's individual
+    // pieces (size 1 for a plain Kill()) -- what a multi-cursor yank
+    // compares its live cursor count against to decide per-cursor vs
+    // whole-blob distribution.
+    [[nodiscard]] const std::vector<std::string>& CurrentPieces() const;
+
+    // Cycles the yank pointer to the next-older entry and returns its
+    // joined form (what repeated M-y cycles through) -- CurrentPieces()
+    // read right after reflects the same, now-current entry. No-op
+    // returning Current() if Empty().
     [[nodiscard]] const std::string& YankPop();
 
   private:
-    std::deque<std::string> ring_; // front = most recent
-    std::size_t              capacity_;
-    std::size_t              yankIndex_ = 0;
+    struct Entry {
+        std::vector<std::string> pieces; // always >= 1
+        std::string              joined; // pieces joined by "\n", cached at push time
+    };
+    std::deque<Entry> ring_; // front = most recent
+    std::size_t       capacity_;
+    std::size_t       yankIndex_ = 0;
 };
 
 } // namespace ned::text
