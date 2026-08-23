@@ -61,6 +61,23 @@ class GitIgnoreMatcher {
     std::vector<Rule> rules_;
 };
 
+// project-search-rg-removal follow-up: ProjectSearch.cpp's SearchDirectory
+// and ProjectTree.cpp's BuildProjectTree both used to construct a fresh
+// GitIgnoreMatcher -- re-reading and re-parsing root/".gitignore" from
+// scratch -- on every single call, which was the previous cost ripgrep's
+// own persistent process absorbed for free before it was replaced (see
+// ProjectSearch.h). Real call sites hit this constantly (every project-wide
+// search, every ProjectSidebar tree rebuild), while a real .gitignore only
+// changes when a user hand-edits it. This caches one matcher per absolute
+// root, rebuilding only when root/".gitignore"'s own last-write-time
+// changes underneath it (or the file's presence toggles) -- a single stat
+// call to detect staleness is far cheaper than unconditionally re-parsing.
+// Mutex-guarded static state, mirroring ProjectRoot.h/TabWidth.h's own
+// pattern for process-wide state, even though both real call sites only
+// ever call this from the main thread (each walks its directory tree
+// synchronously before any worker fan-out).
+[[nodiscard]] const GitIgnoreMatcher& CachedGitIgnoreMatcher(const std::filesystem::path& root);
+
 } // namespace ned::editor
 
 #endif // NED_EDITOR_GITIGNORE_H
