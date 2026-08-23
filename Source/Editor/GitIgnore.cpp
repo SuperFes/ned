@@ -1,6 +1,9 @@
 #include "GitIgnore.h"
 
 #include <fstream>
+#include <mutex>
+#include <optional>
+#include <unordered_map>
 
 namespace ned::editor {
 
@@ -122,6 +125,51 @@ bool GitIgnoreMatcher::IsIgnored(const std::filesystem::path& relativePath, bool
         }
     }
     return ignored;
+}
+
+namespace {
+
+    struct CacheEntry {
+        std::optional<std::filesystem::file_time_type> gitignoreMtime; // nullopt = no .gitignore when cached
+        GitIgnoreMatcher                                matcher;
+    };
+
+    std::mutex& CacheMutex() {
+        static std::mutex mutex;
+        return mutex;
+    }
+
+    std::unordered_map<std::string, CacheEntry>& Cache() {
+        static std::unordered_map<std::string, CacheEntry> cache;
+        return cache;
+    }
+
+    // nullopt if root/".gitignore" doesn't exist (or its mtime can't be
+    // read) -- distinct from any real timestamp, so a file's absence is its
+    // own cache key.
+    std::optional<std::filesystem::file_time_type> GitIgnoreMtime(const std::filesystem::path& root) {
+        std::error_code                    ec;
+        const std::filesystem::file_time_type mtime = std::filesystem::last_write_time(root / ".gitignore", ec);
+        if (ec) {
+            return std::nullopt;
+        }
+        return mtime;
+    }
+
+} // namespace
+
+const GitIgnoreMatcher& CachedGitIgnoreMatcher(const std::filesystem::path& root) {
+    const std::string                               key   = root.generic_string();
+    const std::optional<std::filesystem::file_time_type> mtime = GitIgnoreMtime(root);
+
+    const std::lock_guard<std::mutex> lock(CacheMutex());
+    std::unordered_map<std::string, CacheEntry>& cache = Cache();
+
+    auto it = cache.find(key);
+    if (it == cache.end() || it->second.gitignoreMtime != mtime) {
+        it = cache.insert_or_assign(key, CacheEntry{mtime, GitIgnoreMatcher(root)}).first;
+    }
+    return it->second.matcher;
 }
 
 } // namespace ned::editor

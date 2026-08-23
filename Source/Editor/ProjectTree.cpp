@@ -69,7 +69,7 @@ std::vector<ProjectTreeEntry> BuildProjectTree(const std::filesystem::path& root
         return entries;
     }
 
-    const GitIgnoreMatcher gitIgnore(absoluteRoot);
+    const GitIgnoreMatcher& gitIgnore = CachedGitIgnoreMatcher(absoluteRoot);
     WalkTree(absoluteRoot, absoluteRoot, gitIgnore, 0, shouldExpand, entries);
     return entries;
 }

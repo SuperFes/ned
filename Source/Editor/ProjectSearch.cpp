@@ -38,8 +38,9 @@ namespace {
         }
 
         // project-search-hang follow-up: see GitIgnore.h's own header
-        // comment for why this exists at all.
-        const GitIgnoreMatcher gitIgnore(absoluteRoot);
+        // comment for why this exists at all; project-search-rg-removal
+        // follow-up: cached rather than reparsed on every search.
+        const GitIgnoreMatcher& gitIgnore = CachedGitIgnoreMatcher(absoluteRoot);
 
         for (; it != end; it.increment(ec)) {
             if (ec) {

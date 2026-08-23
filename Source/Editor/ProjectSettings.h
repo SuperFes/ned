@@ -5,9 +5,9 @@
 // data a project can check in without asking anyone to trust running code just to
 // open the directory -- no trust prompt, same reasoning that already lets
 // GitIgnore.h read a project's .gitignore unconditionally. Read fresh on each call
-// rather than cached process-wide state (GitIgnoreMatcher's own "construct fresh
-// per use" precedent), since this is only consulted on an interactive link-open,
-// not a hot path.
+// rather than cached process-wide state (unlike GitIgnore.h's own
+// CachedGitIgnoreMatcher), since this is only consulted on an interactive
+// link-open, not a hot path.
 //
 // v1 scope: four fields.
 //
