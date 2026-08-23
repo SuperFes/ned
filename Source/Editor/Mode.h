@@ -208,6 +208,29 @@ using ExpandSelectionFunction =
 // "next enclosing node."
 using SexpMotionFunction = std::function<std::optional<std::size_t>(std::string_view bufferText, std::size_t point, bool forward)>;
 
+// import-target-tree-sitter follow-up: go-to-file-at-point for import/include
+// statements (open-link-at-point, C-c C-l), generalized across every
+// language via a per-mode tree-sitter query rather than per-language C++
+// text scanning -- see Editor/Link.h's own doc comment for the generic,
+// language-agnostic bare-URL/path detection this sits in front of. `target`
+// is the raw captured text; `isModulePath` distinguishes a dotted module
+// name (Python's `import foo.bar`, no delimiters -- caller converts '.' to
+// '/' before resolving) from a literal, possibly still quote/angle-bracket-
+// delimited path (`isModulePath == false`, e.g. C's #include or JS's
+// import). [startByte, endByte) is the resolvable range: the query's own
+// "@import.statement" capture when present (so point anywhere in the whole
+// statement resolves, not just on the target's own bytes -- e.g. point on
+// an imported *name* in Python's "from foo.bar import baz" still resolves
+// to "foo.bar"), else the target/module capture's own range.
+struct ImportTarget {
+    std::string target;
+    bool        isModulePath;
+    std::size_t startByte;
+    std::size_t endByte;
+};
+using ImportTargetFunction =
+    std::function<std::optional<ImportTarget>(std::string_view bufferText, std::size_t point)>;
+
 struct Mode {
     std::string       name;
     Keymap            keymap;
@@ -231,6 +254,12 @@ struct Mode {
     // for this mode, same "empty means not configured" convention as
     // highlight/fold/expandSelection above.
     SexpMotionFunction sexpMotion;
+    // import-target-tree-sitter follow-up: empty function (the default)
+    // means open-link-at-point has no import/include query configured for
+    // this mode, same "empty means not configured" convention as
+    // fold/expandSelection/sexpMotion above -- BufferView falls back to
+    // Editor/Link.h's generic, mode-agnostic bare-URL/path detection.
+    ImportTargetFunction importTarget;
     // line-wrap follow-up: this mode's own default for whether BufferView
     // should soft-wrap long lines at word boundaries instead of scrolling
     // horizontally -- false (matching every bundled mode except the two
@@ -275,8 +304,14 @@ struct Mode {
 // itself is also optional -- nullptr/empty leaves .highlight empty too, for
 // a grammar with no highlights.scm at all (e.g. one that only ships a fold
 // or locals query).
+// importQuerySource (import-target-tree-sitter follow-up): same optional,
+// embedded-static-storage-duration contract as foldQuerySource, but for an
+// "@import.target"/"@import.module"/"@import.statement"-capture query (see
+// Mode::importTarget's own doc comment) -- nullptr (the default) means this
+// language has no import query yet, leaving the returned Mode's
+// .importTarget empty.
 [[nodiscard]] Mode TreeSitterMode(std::string name, std::string_view languageName, const char* querySource,
-                                  const char* foldQuerySource = nullptr);
+                                  const char* foldQuerySource = nullptr, const char* importQuerySource = nullptr);
 
 // The shared construction logic TreeSitterMode above delegates to, split out
 // (dynamic-grammar-loading follow-up) so a caller that already has a
@@ -290,9 +325,11 @@ struct Mode {
 // compiles the pattern immediately and doesn't retain the source text past
 // that call. querySource is also optional (empty leaves .highlight empty,
 // same as an empty foldQuerySource leaves .fold empty) -- some real grammars
-// have no highlights.scm at all.
+// have no highlights.scm at all. importQuerySource: same optional contract,
+// see TreeSitterMode's own doc comment above.
 [[nodiscard]] Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& language,
-                                              std::string_view querySource = {}, std::string_view foldQuerySource = {});
+                                              std::string_view querySource = {}, std::string_view foldQuerySource = {},
+                                              std::string_view importQuerySource = {});
 
 // A real tree-sitter-backed Janet mode (bundle-remaining-grammars
 // follow-up), replacing the original hand-rolled per-line #-comment/

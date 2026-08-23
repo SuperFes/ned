@@ -80,6 +80,15 @@ struct DetectedLink {
 // (see BufferView::OpenLinkAtPoint's own Org-bracket-link handling).
 [[nodiscard]] LinkKind ClassifyTarget(std::string_view target);
 
+// Strips exactly one matching layer of "..."/'...'/<...> delimiters off
+// token, if present, else returns it unchanged -- the same stripping
+// DetectLinkAtPoint's own step 2 already does inline for a delimited token,
+// factored out (import-target-tree-sitter follow-up) so Mode.cpp's
+// tree-sitter-driven import-target closure can apply the identical rule to
+// an "@import.target" capture's raw node text (which, for a grammar with no
+// separate string-content node, still includes its own quotes/brackets).
+[[nodiscard]] std::string_view StripDelimiters(std::string_view token);
+
 // Resolves target to a real, existing file: tried as an absolute path, then
 // relative to baseDirectory (typically the active buffer's own containing
 // directory), then relative to editor::ProjectRoot(), then relative to each of
@@ -89,9 +98,25 @@ struct DetectedLink {
 // baseDirectory/ProjectRoot at all). nullopt if none exist on disk -- unlike
 // find-file, a link to a path that doesn't exist is a dead link to be reported as
 // such, never silently turned into a new empty buffer/file.
+//
+// candidateExtensions/indexBasenames (import-target-tree-sitter follow-up):
+// both default empty, which makes every candidate check below degenerate to
+// exactly the single std::filesystem::exists() check this function always
+// did -- a pure widening, not a behavior change, for every existing caller.
+// When non-empty, each candidate directory (baseDirectory, ProjectRoot(),
+// each includePaths entry, or target itself when absolute) is tried three
+// ways in order: the exact target; target with each extension appended
+// (".ts", ".py", ...) -- resolves a relative import/module path written
+// without its real on-disk extension; and, for each (basename, extension)
+// pair, target/basename.extension -- resolves a directory/package import to
+// its index file (JS's index.js, Python's __init__.py, ...). Callers supply
+// language-appropriate lists via ImportResolutionConfig.h, keyed by
+// Editor/Mode.h's LanguageKeyForMode -- these two lists are themselves never
+// hardcoded per-language logic here, just parameters.
 [[nodiscard]] std::optional<std::filesystem::path> ResolveFileLink(
     const std::string& target, const std::filesystem::path& baseDirectory,
-    const std::vector<std::filesystem::path>& includePaths = {});
+    const std::vector<std::filesystem::path>& includePaths = {},
+    const std::vector<std::string>& candidateExtensions = {}, const std::vector<std::string>& indexBasenames = {});
 
 // Process-wide, mutex-guarded static state (mirrors TabWidth.h's exact
 // pattern) -- unlike FormatOnSave.h's FormatCommand, which defaults unset

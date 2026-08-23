@@ -5,6 +5,7 @@
 
 #include "Editor/ProjectSettings.h"
 
+using ned::editor::ImportResolutionOverrideForLanguage;
 using ned::editor::IncludePathsForMode;
 using ned::editor::LoadProjectSettings;
 using ned::editor::LspInitializationOptionsForLanguage;
@@ -98,6 +99,38 @@ TEST_CASE("LoadProjectSettings parses lspWorkspaceConfiguration as a flat, langu
     CHECK(settings.lspWorkspaceConfiguration["phpactor"]["file_extensions"] == nlohmann::json::array({"php"}));
     CHECK(settings.lspWorkspaceConfiguration["intelephense"]["environment"]["includePaths"] ==
           nlohmann::json::array({"/stubs"}));
+
+    std::filesystem::remove_all(root);
+}
+
+TEST_CASE("LoadProjectSettings parses importResolution overrides per language", "[ProjectSettings]") {
+    const std::filesystem::path root = MakeTempRoot("ned_project_settings_test_import_resolution");
+    {
+        std::ofstream file(root / ".ned" / "settings.json");
+        file << R"({"importResolution": {
+                        "python": {"extensions": ["pyx"], "indexBasenames": ["__init__"], "searchPackageDirs": false},
+                        "javascript": {"searchPackageDirs": true}
+                    }})";
+    }
+
+    const ProjectSettings settings = LoadProjectSettings(root);
+
+    const auto& python = ImportResolutionOverrideForLanguage(settings, "python");
+    REQUIRE(python.extensions.size() == 1);
+    CHECK(python.extensions[0] == "pyx");
+    REQUIRE(python.indexBasenames.size() == 1);
+    CHECK(python.indexBasenames[0] == "__init__");
+    REQUIRE(python.searchPackageDirs.has_value());
+    CHECK_FALSE(*python.searchPackageDirs);
+
+    const auto& javascript = ImportResolutionOverrideForLanguage(settings, "javascript");
+    CHECK(javascript.extensions.empty());
+    REQUIRE(javascript.searchPackageDirs.has_value());
+    CHECK(*javascript.searchPackageDirs);
+
+    const auto& unconfigured = ImportResolutionOverrideForLanguage(settings, "rust");
+    CHECK(unconfigured.extensions.empty());
+    CHECK_FALSE(unconfigured.searchPackageDirs.has_value());
 
     std::filesystem::remove_all(root);
 }

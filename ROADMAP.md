@@ -55,25 +55,19 @@ Notcurses.
       migrate onto it), per-capture styling in the Minimap (class-level only
       there), and theme-file serialization of capture overrides (overlaps the
       bold/italic round-trip loose end below).
-- [ ] **Go-to-file-at-point for include/import-style directives**
-      (`#include "foo.h"`/`<vector>`, Python `import`/`from ... import`, JS/TS
-      `import`/`require(...)`, Rust `mod`/`use`, ...) — distinct from
-      `Link.h`'s generic bare-path detection (`DetectLinkAtPoint`'s file
-      candidate needs a whitespace-delimited, slash-or-extension-shaped token;
-      a quoted `"foo.h"` or angle-bracketed `<vector>` doesn't parse as one,
-      and even a correctly-extracted target needs *language-specific*
-      resolution rules Link.h has no notion of — quote-form C/C++ searches the
-      including file's own directory before any include path, angle-form
-      searches only compiler/project include paths (clangd's own compilation
-      database, not filesystem-guessable); JS/TS needs `node_modules`
-      resolution plus extension/`index.*` inference; Python needs package/
-      `sys.path`-style resolution). Likely shape: a small per-mode
-      `IncludeTarget` extraction function (tree-sitter query per language,
-      mirroring `Mode::fold`/`expandSelection`'s "one function pointer per
-      capability" shape) feeding a per-language resolver, with LSP as a
-      first-choice resolver where a server can answer it (clangd again
-      supports resolving `#include` targets via `textDocument/documentLink`)
-      and the hand-rolled resolver as fallback where it can't.
+- [ ] Go-to-file-at-point for import/include directives (v1 shipped:
+      `Mode::importTarget`, a tree-sitter-query-driven capability mirroring
+      `Mode::fold`/`expandSelection`'s "one function pointer per capability"
+      shape — every bundled language with a real import/include construct has
+      its own small `*-imports.scm` query, `RegisterDynamicMode` takes the
+      same query file for a runtime-loaded grammar). Still open: LSP as a
+      first-choice resolver ahead of the hand-rolled one where a server can
+      answer it (clangd supports `textDocument/documentLink` for `#include`);
+      Python's leading-dot relative imports (`from . import x`); PHP's
+      namespace `use` (needs a PSR-4 autoloader parse, out of scope for the
+      hand-rolled resolver); JS's dynamic `import(...)`; node_modules
+      `package.json` main/exports resolution beyond `index.*` inference;
+      Rust when it gets a bundled mode at all.
 
 ### Navigation & search
 

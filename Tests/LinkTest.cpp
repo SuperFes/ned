@@ -11,6 +11,7 @@ using ned::editor::link::LinkKind;
 using ned::editor::link::OpenUrl;
 using ned::editor::link::ResolveFileLink;
 using ned::editor::link::SetUrlOpenCommand;
+using ned::editor::link::StripDelimiters;
 using ned::editor::link::UrlOpenCommand;
 
 TEST_CASE("DetectLinkAtPoint finds a bare URL under point", "[Link]") {
@@ -202,6 +203,69 @@ TEST_CASE("ResolveFileLink falls back to includePaths for a target not found und
     const auto resolved = ResolveFileLink("vector", emptyBase, {includeDir});
     REQUIRE(resolved.has_value());
     CHECK(std::filesystem::equivalent(*resolved, header));
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("StripDelimiters strips one matching layer of quotes/angle-brackets", "[Link]") {
+    CHECK(StripDelimiters("\"foo.h\"") == "foo.h");
+    CHECK(StripDelimiters("'foo.h'") == "foo.h");
+    CHECK(StripDelimiters("<vector>") == "vector");
+    CHECK(StripDelimiters("foo.h") == "foo.h"); // no delimiters -- unchanged
+    CHECK(StripDelimiters("\"unbalanced") == "\"unbalanced");
+}
+
+TEST_CASE("ResolveFileLink with empty extension/index lists behaves exactly as before", "[Link]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_link_test_no_widening";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    const std::filesystem::path file = dir / "note.txt";
+    { std::ofstream(file) << "hi"; }
+
+    REQUIRE(ResolveFileLink("note.txt", dir).has_value());
+    REQUIRE_FALSE(ResolveFileLink("note", dir).has_value()); // no extension inference requested
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("ResolveFileLink appends a candidate extension to find a relative import written without one", "[Link]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_link_test_extension";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    const std::filesystem::path file = dir / "foo.ts";
+    { std::ofstream(file) << "export {};"; }
+
+    const auto resolved = ResolveFileLink("foo", dir, {}, {"ts", "js"});
+    REQUIRE(resolved.has_value());
+    CHECK(std::filesystem::equivalent(*resolved, file));
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("ResolveFileLink resolves a directory/package import via an index-file basename", "[Link]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_link_test_index";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir / "foo");
+    const std::filesystem::path indexFile = dir / "foo" / "index.js";
+    { std::ofstream(indexFile) << "module.exports = {};"; }
+
+    const auto resolved = ResolveFileLink("foo", dir, {}, {"js"}, {"index"});
+    REQUIRE(resolved.has_value());
+    CHECK(std::filesystem::equivalent(*resolved, indexFile));
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("ResolveFileLink resolves a Python package's __init__.py after dot-to-slash conversion", "[Link]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_link_test_python_package";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir / "foo" / "bar");
+    const std::filesystem::path initFile = dir / "foo" / "bar" / "__init__.py";
+    { std::ofstream(initFile) << "# package"; }
+
+    const auto resolved = ResolveFileLink("foo/bar", dir, {}, {"py"}, {"__init__"});
+    REQUIRE(resolved.has_value());
+    CHECK(std::filesystem::equivalent(*resolved, initFile));
 
     std::filesystem::remove_all(dir);
 }

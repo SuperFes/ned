@@ -49,8 +49,15 @@ namespace ned::editor {
 // mode missing one of those queries already has. Some real grammars ship
 // only one of the two (e.g. a fold/locals query but no highlights.scm), so
 // requiring both was never a real constraint to begin with.
+// importQueryPath (import-target-tree-sitter follow-up): same optional
+// contract, for an "@import.target"/"@import.module"/"@import.statement"
+// query (Mode::importTarget) -- this is what lets a runtime-dlopen'd grammar
+// participate in go-to-file-at-point exactly like a bundled one, by
+// supplying its own query file the same way it already can for
+// queryPath/foldQueryPath.
 void RegisterDynamicMode(const std::string& name, const std::filesystem::path& libraryPath,
-                         const std::filesystem::path& queryPath = {}, const std::filesystem::path& foldQueryPath = {});
+                         const std::filesystem::path& queryPath = {}, const std::filesystem::path& foldQueryPath = {},
+                         const std::filesystem::path& importQueryPath = {});
 
 // Registers an already-built Mode directly under name, into the same table
 // RegisterDynamicMode populates (ModeByName checks it first) -- for a Mode

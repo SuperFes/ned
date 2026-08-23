@@ -9,7 +9,7 @@
 // per use" precedent), since this is only consulted on an interactive link-open,
 // not a hot path.
 //
-// v1 scope: three fields.
+// v1 scope: four fields.
 //
 // includePaths -- extra directories Link.cpp's ResolveFileLink searches for a
 // non-project-relative include/import target (an angle-form C/C++ #include, a
@@ -53,7 +53,9 @@
 // it recognizes and ignores the rest, the same way a real editor's settings.json
 // works.
 //
-// All three default a mode/language/section with no entry to "nothing configured"
+// importResolution -- see ImportResolutionOverride's own doc comment below.
+//
+// All four default a mode/language/section with no entry to "nothing configured"
 // -- the same convention everywhere else in this codebase (GitIgnoreMatcher's
 // missing .gitignore, Mode::fold's empty function, ...).
 //
@@ -62,6 +64,7 @@
 #define NED_EDITOR_PROJECTSETTINGS_H
 
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -70,10 +73,25 @@
 
 namespace ned::editor {
 
+// import-target-tree-sitter follow-up: a project-local override of
+// Editor/ImportResolutionConfig.h's bundled per-language defaults (file
+// extensions/index-file basenames/package-dir search) -- keyed the same way
+// includePathsByMode is, by Editor/Mode.h's LanguageKeyForMode. Lets a
+// project widen a bundled language's defaults (an unusual extension a
+// codebase's own build actually uses) or configure resolution for a
+// language key with no bundled default at all -- a runtime-`dlopen`'d
+// grammar registered via ned/register-language-grammar under its own name.
+struct ImportResolutionOverride {
+    std::vector<std::string> extensions;
+    std::vector<std::string> indexBasenames;
+    std::optional<bool>      searchPackageDirs; // nullopt = inherit the bundled default's own value
+};
+
 struct ProjectSettings {
     std::unordered_map<std::string, std::vector<std::filesystem::path>> includePathsByMode;
     std::unordered_map<std::string, nlohmann::json>                     lspInitializationOptionsByLanguage;
     nlohmann::json                                                      lspWorkspaceConfiguration = nlohmann::json::object();
+    std::unordered_map<std::string, ImportResolutionOverride>           importResolutionByLanguage;
 };
 
 // Convenience accessor: settings.includePathsByMode[modeName], or an empty list if
@@ -86,6 +104,15 @@ struct ProjectSettings {
 // Editor/Mode.h's LanguageKeyForMode(mode).
 [[nodiscard]] const nlohmann::json& LspInitializationOptionsForLanguage(const ProjectSettings& settings,
                                                                         const std::string&      language);
+
+// Convenience accessor: settings.importResolutionByLanguage[language], or a
+// default-constructed (empty) ImportResolutionOverride if language has no
+// entry. Editor/ImportResolutionConfig.h's ResolveImportResolutionConfig is
+// what actually merges this with the bundled default -- this accessor just
+// mirrors the other two above, a plain lookup over ProjectSettings' own
+// storage.
+[[nodiscard]] const ImportResolutionOverride& ImportResolutionOverrideForLanguage(const ProjectSettings& settings,
+                                                                                  const std::string&      language);
 
 // Reads root/".ned/settings.json" if it exists and parses as valid JSON; a missing
 // file, an unreadable one, or one missing/misshaping a recognized key all just
