@@ -154,6 +154,12 @@ enum class InteractiveRequest { None,
                                 // BufferView runs the session (mirroring ConfirmCloseBuffer's
                                 // shape) and invokes "save-buffer-force" on y.
                                 ConfirmOverwriteSave,
+                                // external-modification-round-2 follow-up: save-buffer found
+                                // unresolved "<<<<<<<" conflict markers still in the buffer
+                                // (a pending AutoMerge conflict, or a hand-pasted one) and
+                                // wants a y/n confirmation before writing them to disk --
+                                // same shape as ConfirmOverwriteSave, "y" saves anyway.
+                                ConfirmSaveWithConflicts,
                                 // Window-splitting follow-up: structural window-management
                                 // actions, not single-buffer interactive sessions -- BufferView
                                 // just forwards these to whatever registered

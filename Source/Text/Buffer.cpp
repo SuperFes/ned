@@ -9,6 +9,7 @@
 
 #include "BinaryDetect.h"
 #include "Grapheme.h"
+#include "ThreeWayMerge.h"
 
 namespace ned::text {
 
@@ -125,8 +126,8 @@ Buffer Buffer::FromFile(const std::filesystem::path& path, bool allowBinary) {
     // reading -- if the file changes between this stat and the read below,
     // a later ExternallyModified() check sees a differing timestamp and
     // flags it, whereas stat-after-read would silently absorb that write.
-    std::error_code                                timestampError;
-    const std::filesystem::file_time_type          diskTime = std::filesystem::last_write_time(path, timestampError);
+    std::error_code                       timestampError;
+    const std::filesystem::file_time_type diskTime = std::filesystem::last_write_time(path, timestampError);
 
     std::ifstream file(path, std::ios::binary);
     if (!file) {
@@ -298,7 +299,7 @@ void Buffer::CaptureDiskTimestamp() {
     if (!Path_) {
         return;
     }
-    std::error_code ec;
+    std::error_code                       ec;
     const std::filesystem::file_time_type diskTime = std::filesystem::last_write_time(*Path_, ec);
     if (!ec) {
         DiskTimestamp_ = diskTime;
@@ -309,7 +310,7 @@ bool Buffer::ExternallyModified() const {
     if (!Path_) {
         return false;
     }
-    std::error_code ec;
+    std::error_code                       ec;
     const std::filesystem::file_time_type diskTime = std::filesystem::last_write_time(*Path_, ec);
     if (ec) {
         return false; // missing/unstatable: deletion isn't supersession (a save simply recreates it)
@@ -343,6 +344,48 @@ void Buffer::Revert() {
     UnsavedChangeRanges_.clear();
     ++UnsavedChangeGeneration_;
     DiskTimestamp_ = fresh.DiskTimestamp_;
+}
+
+std::size_t Buffer::MergeExternalChanges() {
+    if (!Path_) {
+        throw std::runtime_error("ned: buffer \"" + Name_ + "\" has no associated file path");
+    }
+    Buffer fresh = FromFile(*Path_); // throws on any read failure, leaving this buffer untouched
+
+    const std::string       base   = SavedSnapshot_.ToString();
+    const std::string       ours   = Rope_.ToString();
+    const std::string       theirs = fresh.Rope_.ToString();
+    const text::MergeResult result = text::ThreeWayMerge(base, ours, theirs);
+
+    Rope_  = Rope(result.mergedText);
+    Point_ = SnapToGraphemeBoundary(Rope_, std::min(result.firstConflictOffset.value_or(Point_), Rope_.ByteLength()));
+    Mark_.reset();
+    SecondaryCursors_.clear();
+    NarrowedRange_.reset();
+    FoldMarkers_.clear();
+    ++FoldGeneration_;
+
+    RecordOrAmendUndo(/*canAmend=*/false); // one normal, undoable step
+    GoalColumn_.reset();
+    ++ContentGeneration_;
+
+    // Unlike Revert(), the buffer does NOT match disk now -- it combines
+    // local edits with the external change, one unsaved range against the
+    // new baseline below (RestoreContent's own "can't precisely attribute
+    // a wholesale content replacement" shape).
+    UnsavedChangeRanges_.clear();
+    if (Rope_.ByteLength() > 0) {
+        MergeUnsavedRange(UnsavedChangeRanges_, 0, Rope_.ByteLength());
+    }
+    ++UnsavedChangeGeneration_;
+
+    // The new "last synced with disk" baseline is the freshly read disk
+    // content, NOT the merged result -- see this method's own doc comment
+    // in Buffer.h for why.
+    SavedSnapshot_ = std::move(fresh.Rope_);
+    DiskTimestamp_ = fresh.DiskTimestamp_;
+
+    return result.conflictCount;
 }
 
 void Buffer::RestoreContent(std::string_view content) {

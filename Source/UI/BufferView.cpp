@@ -2563,6 +2563,11 @@ bool BufferView::OnKeyEvent(const Event& event) {
         ClampPointToNarrowing();
         return true;
     }
+    if (inputMode_ == InputMode::ConfirmSaveWithConflicts) {
+        HandleConfirmSaveWithConflictsKey(*chord);
+        ClampPointToNarrowing();
+        return true;
+    }
     if (inputMode_ == InputMode::ConfirmOpenBinary) {
         HandleConfirmOpenBinaryKey(*chord);
         ClampPointToNarrowing();
@@ -3790,6 +3795,10 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         case editor::InteractiveRequest::ConfirmOverwriteSave:
             inputMode_     = InputMode::ConfirmOverwriteSave;
             statusMessage_ = activeBuffer_.Get().Name() + " changed on disk since it was read; save anyway? (y/n)";
+            return;
+        case editor::InteractiveRequest::ConfirmSaveWithConflicts:
+            inputMode_     = InputMode::ConfirmSaveWithConflicts;
+            statusMessage_ = activeBuffer_.Get().Name() + " still has unresolved <<<<<<< conflict markers; save anyway? (y/n)";
             return;
         case editor::InteractiveRequest::CreateDirectory:
             inputMode_ = InputMode::CreateDirectory;
@@ -6039,6 +6048,29 @@ void BufferView::HandleConfirmOverwriteSaveKey(const editor::KeyChord& chord) {
     }
     if (chord.Codepoint == U'n' || chord.Codepoint == U'N' || IsQuit(chord)) {
         statusMessage_ = "Save cancelled; the file on disk was left as-is.";
+        EndInteractiveSession();
+        return;
+    }
+    // Anything else is ignored -- stay in the prompt.
+}
+
+void BufferView::HandleConfirmSaveWithConflictsKey(const editor::KeyChord& chord) {
+    if (chord.Codepoint == U'y' || chord.Codepoint == U'Y') {
+        EndInteractiveSession();
+        // save-buffer-force is the same save body save-buffer runs, minus
+        // both gates (ExternallyModified() and HasConflictMarkers()) that
+        // could have routed us here -- see Commands.cpp.
+        editor::CommandContext context = MakeContext();
+        try {
+            dispatcher_.Registry().Invoke("save-buffer-force", context);
+        }
+        catch (const std::exception& e) {
+            statusMessage_ = e.what();
+        }
+        return;
+    }
+    if (chord.Codepoint == U'n' || chord.Codepoint == U'N' || IsQuit(chord)) {
+        statusMessage_ = "Save cancelled; resolve the <<<<<<< markers first.";
         EndInteractiveSession();
         return;
     }

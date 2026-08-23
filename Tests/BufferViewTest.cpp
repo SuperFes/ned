@@ -7152,3 +7152,49 @@ TEST_CASE("The most severe diagnostic wins the line's single annotation row", "[
     REQUIRE(screen.PixelAt(gutter + 4, 1).character == "^");
     REQUIRE(screen.PixelAt(gutter + 0, 1).character == " ");
 }
+
+// external-modification-round-2 follow-up: save-buffer's new
+// ConfirmSaveWithConflicts guard, end to end through real key events --
+// the one place this logic actually runs (Commands.cpp only sets
+// context.interactiveRequest; BufferView drives the y/n session).
+
+TEST_CASE("C-x C-s on a buffer with unresolved conflict markers asks before writing them", "[BufferView]") {
+    Fixture                     fixture;
+    const std::filesystem::path path =
+        std::filesystem::temp_directory_path() / "ned_bufferview_test_conflict_save.txt";
+    {
+        std::ofstream(path) << "original\n";
+    }
+
+    ned::text::Buffer& fileBuffer = fixture.bufferList.OpenOrCreateFile(path);
+    fileBuffer.SetPoint(0);
+    fileBuffer.InsertAtPoint("<<<<<<< buffer\nmine\n=======\ntheirs\n>>>>>>> disk\n");
+    fixture.activeBuffer.Set(fileBuffer);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Ctrl('x'));
+    view.OnEvent(ned::ui::test::Ctrl('s'));
+    REQUIRE(fixture.statusMessage == fileBuffer.Name() + " still has unresolved <<<<<<< conflict markers; save anyway? (y/n)");
+
+    view.OnEvent(ned::ui::test::Character("n"));
+    REQUIRE(fixture.statusMessage == "Save cancelled; resolve the <<<<<<< markers first.");
+    {
+        std::ifstream     in(path);
+        const std::string onDisk((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        REQUIRE(onDisk == "original\n"); // nothing was written
+    }
+
+    view.OnEvent(ned::ui::test::Ctrl('x'));
+    view.OnEvent(ned::ui::test::Ctrl('s'));
+    view.OnEvent(ned::ui::test::Character("y"));
+    REQUIRE_FALSE(fileBuffer.Modified());
+    {
+        std::ifstream     in(path);
+        const std::string onDisk((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        REQUIRE(onDisk.find("<<<<<<<") != std::string::npos); // saved anyway, markers and all
+    }
+
+    std::filesystem::remove(path);
+}

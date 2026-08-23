@@ -402,6 +402,7 @@ add_library(ned_lib STATIC
         Source/Text/Buffer.cpp
         Source/Text/BufferList.cpp
         Source/Text/BinaryDetect.cpp
+        Source/Text/ThreeWayMerge.cpp
         Source/Text/Utf8.cpp
         Source/Editor/Key.cpp
         Source/Editor/Command.cpp
@@ -444,6 +445,7 @@ add_library(ned_lib STATIC
         Source/Editor/ProjectRoot.cpp
         Source/Editor/ProjectFileOps.cpp
         Source/Editor/AutoRevert.cpp
+        Source/Editor/AutoMerge.cpp
         Source/Editor/BackgroundActivity.cpp
         Source/Editor/InlineDiagnostics.cpp
         Source/Editor/ScratchPad.cpp
@@ -624,6 +626,8 @@ if (NED_BUILD_TESTS)
             Tests/RegisterTest.cpp
             Tests/RectangleTest.cpp
             Tests/AutoRevertTest.cpp
+            Tests/AutoMergeTest.cpp
+            Tests/ThreeWayMergeTest.cpp
             Tests/BufferTest.cpp
             Tests/MultiCursorTest.cpp
             Tests/BufferListTest.cpp

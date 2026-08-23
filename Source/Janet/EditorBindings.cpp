@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "Editor/AutoMerge.h"
 #include "Editor/AutoRevert.h"
 #include "Editor/Backup.h"
 #include "Editor/CodeFoldSettings.h"
@@ -243,6 +244,10 @@ namespace {
 
     void NedSetAutoRevert(bool enabled) {
         editor::SetAutoRevertEnabled(enabled);
+    }
+
+    void NedSetAutoMerge(bool enabled) {
+        editor::SetAutoMergeEnabled(enabled);
     }
 
     void NedSetSavePlace(bool enabled) {
@@ -622,6 +627,11 @@ void InstallEditorBindings(Environment& env) {
         "ned", "set-auto-revert",
         "Enable/disable automatically reloading an open, unmodified buffer when its file changes on disk (default "
         "true). A buffer with local edits is never auto-reverted; saving it instead asks before overwriting.");
+    env.Register<&NedSetAutoMerge>(
+        "ned", "set-auto-merge",
+        "Enable/disable automatically three-way merging a buffer's local edits with a file that also changed on "
+        "disk (default true). A clean merge applies silently; a genuine conflict inserts <<<<<<< markers instead "
+        "of guessing. Always one undoable step. A separate toggle from ned/set-auto-revert.");
     env.Register<&NedSetSavePlace>(
         "ned", "set-save-place",
         "Enable/disable remembering each file's last point and scroll position across editor runs (default true). "

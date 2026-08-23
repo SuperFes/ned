@@ -113,9 +113,6 @@ Notcurses (TermOx → FTXUI → Notcurses over the project's life).
 - [ ] **Remote development** (SSH remote editing).
 - [ ] Emacs keymap round 2 (round-1's deliberate cuts): `zap-to-char`, sentence/sexp
       motion, kill-append on consecutive kills.
-- [ ] External-modification round 2: three-way merge when both buffer and disk changed
-      (`SavedSnapshot_` gives a diff3 base for free), and Emacs' ask-on-first-edit
-      supersession prompt.
 
 ### Collaboration & AI
 

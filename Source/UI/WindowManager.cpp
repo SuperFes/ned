@@ -5,6 +5,7 @@
 #include <mutex>
 #include <utility>
 
+#include "Editor/AutoMerge.h"
 #include "Editor/AutoRevert.h"
 #include "Editor/Backup.h"
 #include "Editor/Dap/DapManager.h"
@@ -500,6 +501,37 @@ void WindowManager::StartAutoSaveTimer(EventLoop& eventLoop) {
                     }
                     statusMessage_ = "Reverted (changed on disk): " + names;
                 }
+                // external-modification-round-2 follow-up: the conflicting
+                // half AutoRevertBuffers deliberately skips (a buffer with
+                // local edits AND a file that also changed) -- a three-way
+                // merge (default on; see AutoMerge.h) instead of a discard.
+                // Clean and conflicted merges get distinct status text so a
+                // conflict (unresolved "<<<<<<<" markers now sitting in the
+                // buffer) is never mistaken for a silent, fully-automatic
+                // one.
+                if (const std::vector<editor::AutoMergeResult> merged = editor::AutoMergeBuffers(bufferList_);
+                    !merged.empty()) {
+                    std::string clean;
+                    std::string conflicted;
+                    for (const editor::AutoMergeResult& result : merged) {
+                        if (result.conflictCount == 0) {
+                            clean += clean.empty() ? result.name : ", " + result.name;
+                        }
+                        else {
+                            conflicted += (conflicted.empty() ? "" : ", ") + result.name + " (" +
+                                          std::to_string(result.conflictCount) + ")";
+                        }
+                    }
+                    std::string message;
+                    if (!clean.empty()) {
+                        message = "Merged external changes: " + clean;
+                    }
+                    if (!conflicted.empty()) {
+                        message += (message.empty() ? "" : "; ") + std::string("conflict(s) in ") + conflicted +
+                                   " -- resolve <<<<<<< markers";
+                    }
+                    statusMessage_ = message;
+                }
                 // session-persistence slices 1+2: piggybacked on this
                 // existing tick rather than a second timer thread -- both
                 // saves skip the disk write entirely when nothing changed.
@@ -609,7 +641,7 @@ namespace {
             return std::nullopt;
         }
         editor::WindowLayoutNode entry;
-        entry.kind = node.kind == WindowNode::Kind::SplitBelow ? editor::WindowLayoutNode::Kind::SplitBelow
+        entry.kind   = node.kind == WindowNode::Kind::SplitBelow ? editor::WindowLayoutNode::Kind::SplitBelow
                                                                  : editor::WindowLayoutNode::Kind::SplitRight;
         entry.first  = first;
         entry.second = second;
@@ -669,9 +701,9 @@ std::unique_ptr<WindowNode> WindowManager::BuildNodeFromLayout(const std::vector
         if (buffer == nullptr) {
             return nullptr;
         }
-        auto node   = std::make_unique<WindowNode>();
-        node->kind  = WindowNode::Kind::Leaf;
-        node->pane  = MakePane(*buffer, editor::ModeForBuffer(*buffer));
+        auto node  = std::make_unique<WindowNode>();
+        node->kind = WindowNode::Kind::Leaf;
+        node->pane = MakePane(*buffer, editor::ModeForBuffer(*buffer));
         return node;
     }
 
