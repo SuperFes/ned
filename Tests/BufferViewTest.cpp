@@ -259,7 +259,7 @@ ned::ui::Event MouseWheel(int x, int y, ned::ui::MouseEvent::Button button) {
 // universal-clickable-affordances follow-up.
 ned::ui::Event MousePressCtrl(int x, int y) {
     return ned::ui::test::Mouse(x, y, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Pressed,
-                                 /*shift=*/false, /*meta=*/false, /*control=*/true);
+                                /*shift=*/false, /*meta=*/false, /*control=*/true);
 }
 
 // hover/completion follow-up: "C-M-i" as a real raw byte sequence -- ESC
@@ -1248,6 +1248,94 @@ TEST_CASE("A zero-width diagnostic still underlines the cell it points at", "[Bu
     const int gutter = GutterWidth(1);
     REQUIRE(screen.PixelAt(gutter + 1, 0).underlined);
     REQUIRE_FALSE(screen.PixelAt(gutter + 0, 0).underlined);
+}
+
+// prose-diagnostic-callout follow-up.
+
+TEST_CASE("A prose-origin diagnostic gets no underline and reserves no inline annotation row", "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("int x = 1;\nsecond line");
+    fixture.buffer.SetDiagnostics({
+        ned::text::Buffer::Diagnostic{.startByte = 4,
+                                      .endByte   = 5,
+                                      .severity  = ned::text::Buffer::Diagnostic::Severity::Hint,
+                                      .origin    = ned::text::Buffer::Diagnostic::Origin::Prose,
+                                      .message   = "passive voice"},
+    });
+    fixture.buffer.SetPoint(0);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 1});
+
+    ned::ui::Screen screen = ned::ui::Screen(20, 2);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 1});
+    view.Paint(canvas);
+
+    const int gutter = GutterWidth(2);
+    REQUIRE_FALSE(screen.PixelAt(gutter + 4, 0).underlined); // no code-style underline for a Prose diagnostic
+    // A Code-origin diagnostic here would insert an inline annotation row,
+    // pushing "second line" down to row 2 (off this 2-row canvas) -- Prose
+    // reserves no such row, so row 1 shows the buffer's real second line.
+    REQUIRE(ContentRowText(screen, 1, 20 - gutter, 2).starts_with("second line"));
+}
+
+TEST_CASE("A prose-origin diagnostic's callout brace spans its flagged line's block, padded for corners, "
+          "when there is room",
+          "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("one\ntwo\nthree");
+    const std::size_t lineTwoStart = fixture.buffer.Content().LineToByteOffset(1);
+    fixture.buffer.SetDiagnostics({
+        ned::text::Buffer::Diagnostic{.startByte = lineTwoStart,
+                                      .endByte   = lineTwoStart + 3, // "two"
+                                      .severity  = ned::text::Buffer::Diagnostic::Severity::Hint,
+                                      .origin    = ned::text::Buffer::Diagnostic::Origin::Prose,
+                                      .message   = "not a real word"},
+    });
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 49, .y_min = 0, .y_max = 2});
+
+    ned::ui::Screen screen = ned::ui::Screen(50, 3);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 49, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+
+    const int gutter = GutterWidth(3);
+    // Row 0 ("one") and row 2 ("three") aren't part of the flagged block --
+    // they're the brace's own padding rows, each getting one corner. Row 1
+    // ("two", the block's own only line) is the message row.
+    REQUIRE(ContentRowText(screen, 0, 50 - gutter, 3).find("╮") != std::string::npos); // ╮ top-right corner
+    const std::string row1 = ContentRowText(screen, 1, 50 - gutter, 3);
+    REQUIRE(row1.find("├") != std::string::npos); // ├ branch
+    REQUIRE(row1.find("not a real word") != std::string::npos);
+    REQUIRE(ContentRowText(screen, 2, 50 - gutter, 3).find("╯") != std::string::npos); // ╯ bottom-right corner
+}
+
+TEST_CASE("A prose-origin diagnostic's callout brace is dropped entirely when its own line leaves no room",
+          "[BufferView]") {
+    Fixture           fixture;
+    const std::string longLine(30, 'x'); // fills the whole 30-wide canvas past the gutter
+    fixture.buffer.InsertAtPoint(longLine);
+    fixture.buffer.SetDiagnostics({
+        ned::text::Buffer::Diagnostic{.startByte = 0,
+                                      .endByte   = static_cast<std::size_t>(longLine.size()),
+                                      .severity  = ned::text::Buffer::Diagnostic::Severity::Hint,
+                                      .origin    = ned::text::Buffer::Diagnostic::Origin::Prose,
+                                      .message   = "a hint that cannot fit"},
+    });
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 29, .y_min = 0, .y_max = 0});
+
+    ned::ui::Screen screen = ned::ui::Screen(30, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 29, .y_min = 0, .y_max = 0});
+    view.Paint(canvas);
+
+    const int         gutter = GutterWidth(1);
+    const std::string row0   = ContentRowText(screen, 0, 30 - gutter, 1);
+    REQUIRE(row0.find("╮") == std::string::npos); // ╮
+    REQUIRE(row0.find("├") == std::string::npos); // ├
+    REQUIRE(row0.find("╯") == std::string::npos); // ╯
 }
 
 TEST_CASE("Paint echoes the diagnostic on point's line and clears it after leaving the line", "[BufferView]") {
@@ -6112,8 +6200,8 @@ TEST_CASE("M-o switches to the file clangd's switchSourceHeader response names",
         std::ofstream(headerPath) << "// header\n";
     }
 
-    Fixture             fixture;
-    ned::text::Buffer&  buffer = fixture.bufferList.OpenOrCreateFile(sourcePath);
+    Fixture            fixture;
+    ned::text::Buffer& buffer = fixture.bufferList.OpenOrCreateFile(sourcePath);
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
@@ -6162,8 +6250,8 @@ TEST_CASE("M-o falls back to the filesystem heuristic when the server reports no
         std::ofstream(headerPath) << "// header\n";
     }
 
-    Fixture             fixture;
-    ned::text::Buffer&  buffer = fixture.bufferList.OpenOrCreateFile(sourcePath);
+    Fixture            fixture;
+    ned::text::Buffer& buffer = fixture.bufferList.OpenOrCreateFile(sourcePath);
     fixture.activeBuffer.Set(buffer);
 
     ned::ui::EventLoop           eventLoop;
