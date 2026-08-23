@@ -3,7 +3,9 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
+#include "Editor/TreeSitter/IncrementalParse.h"
 #include "Editor/TreeSitter/Languages.h"
 #include "Editor/TreeSitter/Parser.h"
 #include "Editor/TreeSitter/Query.h"
@@ -266,4 +268,92 @@ TEST_CASE("Tree is move-constructible and move-assignable", "[TreeSitter]") {
     Tree other = parser.Parse(R"({"b": 2})");
     other      = std::move(moved);
     REQUIRE_FALSE(other.IsNull());
+}
+
+namespace {
+
+    // Deep structural comparison, for asserting an incrementally reparsed
+    // tree is isomorphic to a from-scratch full parse of the same final
+    // text -- a shallow root-only check wouldn't catch a bad TSInputEdit
+    // (wrong byte offset or row/column) that only corrupts a subtree deeper
+    // than the root.
+    void RequireNodesMatch(const Node& a, const Node& b) {
+        REQUIRE(a.Type() == b.Type());
+        REQUIRE(a.StartByte() == b.StartByte());
+        REQUIRE(a.EndByte() == b.EndByte());
+        REQUIRE(a.IsNamed() == b.IsNamed());
+        REQUIRE(a.ChildCount() == b.ChildCount());
+        for (std::size_t i = 0; i < a.ChildCount(); ++i) {
+            RequireNodesMatch(a.Child(i), b.Child(i));
+        }
+    }
+
+} // namespace
+
+TEST_CASE("IncrementalParseCache returns the cached tree unchanged when text is identical", "[TreeSitter]") {
+    Parser                 parser(*LanguageByName("json"));
+    IncrementalParseCache  cache;
+    const std::string      text = R"({"a": 1})";
+
+    const Tree& first  = cache.Update(parser, text);
+    const Tree& second = cache.Update(parser, text);
+
+    REQUIRE(&first == &second);
+}
+
+TEST_CASE("IncrementalParseCache's incremental reparse matches a fresh full parse after a single edit", "[TreeSitter]") {
+    Parser                parser(*LanguageByName("json"));
+    IncrementalParseCache cache;
+
+    (void)cache.Update(parser, R"({"a": 1, "b": 2})");
+    const std::string edited = R"({"a": 100, "b": 2})"; // widens "1" to "100" in place
+    const Tree&        tree   = cache.Update(parser, edited);
+    REQUIRE_FALSE(tree.IsNull());
+
+    Parser     freshParser(*LanguageByName("json"));
+    const Tree freshTree = freshParser.Parse(edited);
+
+    RequireNodesMatch(tree.RootNode(), freshTree.RootNode());
+}
+
+TEST_CASE("IncrementalParseCache handles an edit that inserts newlines", "[TreeSitter]") {
+    Parser                parser(*LanguageByName("json"));
+    IncrementalParseCache cache;
+
+    (void)cache.Update(parser, "{\"a\": 1,\n \"b\": 2}");
+    const std::string edited = "{\"a\": 1,\n \"b\": 2,\n \"c\": 3}"; // appends a third key on a new line
+    const Tree&        tree   = cache.Update(parser, edited);
+    REQUIRE_FALSE(tree.IsNull());
+
+    Parser     freshParser(*LanguageByName("json"));
+    const Tree freshTree = freshParser.Parse(edited);
+
+    RequireNodesMatch(tree.RootNode(), freshTree.RootNode());
+}
+
+TEST_CASE("IncrementalParseCache stays correct across a sequence of edits", "[TreeSitter]") {
+    Parser                parser(*LanguageByName("json"));
+    IncrementalParseCache cache;
+
+    // Simulates typing a value in one keystroke at a time, each call
+    // incrementally reparsing against the previous edit's result rather
+    // than the original text.
+    const std::vector<std::string> steps = {
+        R"({"a": ""})",
+        R"({"a": "h"})",
+        R"({"a": "he"})",
+        R"({"a": "hel"})",
+        R"({"a": "hell"})",
+        R"({"a": "hello"})",
+    };
+    const Tree* tree = nullptr;
+    for (const std::string& step : steps) {
+        tree = &cache.Update(parser, step);
+    }
+    REQUIRE_FALSE(tree->IsNull());
+
+    Parser     freshParser(*LanguageByName("json"));
+    const Tree freshTree = freshParser.Parse(steps.back());
+
+    RequireNodesMatch(tree->RootNode(), freshTree.RootNode());
 }

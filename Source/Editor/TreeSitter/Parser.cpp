@@ -38,4 +38,8 @@ Tree Parser::Parse(std::string_view text) const {
     return Tree(ts_parser_parse_string(parser_, nullptr, text.data(), static_cast<uint32_t>(text.size())));
 }
 
+Tree Parser::Parse(std::string_view text, const Tree& oldTree) const {
+    return Tree(ts_parser_parse_string(parser_, oldTree.Raw(), text.data(), static_cast<uint32_t>(text.size())));
+}
+
 } // namespace ned::editor::treesitter

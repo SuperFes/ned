@@ -3,14 +3,13 @@
 // follow-up) -- see Node.h's header comment for the overall "why a
 // hand-rolled wrapper" rationale.
 //
-// Parse() always does a full re-parse of the text handed to it -- there's no
-// ts_tree_edit-based incremental reparsing yet. That's a deliberate,
-// documented v1 scope cut, not an oversight: tree-sitter is fast enough that
-// a full reparse is the right first cut for correctness, with incremental
-// editing as a follow-up optimization only if a real [Performance] test
-// says it's needed (matching this project's own established "prove it with
-// a test, don't pre-optimize" discipline -- see ROADMAP.md's rope-rebalance
-// and VisualColumn stories).
+// Parse(text) alone always does a full parse. Incremental-tree-sitter-
+// reparse follow-up: Parse(text, oldTree) instead reuses oldTree's unedited
+// subtrees, provided oldTree has already been brought up to date via
+// Tree::Edit -- most callers should reach for IncrementalParse.h's
+// IncrementalParseCache rather than calling this overload directly, since it
+// also derives the TSInputEdit itself from a plain "here is the new text"
+// diff against its own last call.
 //
 
 #ifndef NED_EDITOR_TREESITTER_PARSER_H
@@ -54,9 +53,15 @@ class Parser {
     Parser(const Parser&)            = delete;
     Parser& operator=(const Parser&) = delete;
 
-    // Full parse of text -- see this file's own header comment for why this
-    // isn't incremental yet.
+    // Full parse of text.
     [[nodiscard]] Tree Parse(std::string_view text) const;
+
+    // Incremental parse: oldTree must be the tree text was previously parsed
+    // into, already updated via Tree::Edit to describe every edit applied
+    // since that parse (see this file's own header comment). oldTree is read
+    // only, never mutated or invalidated by this call -- it's safe to let it
+    // go out of scope immediately after.
+    [[nodiscard]] Tree Parse(std::string_view text, const Tree& oldTree) const;
 
   private:
     TSParser* parser_ = nullptr;

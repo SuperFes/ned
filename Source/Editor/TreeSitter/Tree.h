@@ -38,6 +38,20 @@ class Tree {
     // see Node.h's own lifetime warning.
     [[nodiscard]] Node RootNode() const;
 
+    // Incremental-tree-sitter-reparse follow-up: records that the text this
+    // tree was parsed from has been edited, per tree-sitter's own
+    // ts_tree_edit contract -- mutates this Tree's internal byte/point
+    // bookkeeping in place so a subsequent Parser::Parse(newText, this) can
+    // reuse every subtree outside the edited range instead of reparsing from
+    // scratch. Must be called (once per edit, in order) before that call; a
+    // no-op if IsNull().
+    void Edit(const TSInputEdit& edit) noexcept;
+
+    // The raw TSTree*, for Parser::Parse's old-tree incremental-reparse
+    // overload. Non-owning -- still owned by this Tree. Not for use outside
+    // Source/Editor/TreeSitter/.
+    [[nodiscard]] const TSTree* Raw() const noexcept;
+
   private:
     TSTree* tree_ = nullptr;
 };

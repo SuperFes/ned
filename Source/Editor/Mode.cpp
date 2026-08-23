@@ -13,6 +13,7 @@
 #include "Link.h"
 #include "Org.h"
 #include "SyntaxTheme.h"
+#include "TreeSitter/IncrementalParse.h"
 #include "TreeSitter/Languages.h"
 #include "TreeSitter/Parser.h"
 #include "TreeSitter/Queries.h"
@@ -469,15 +470,12 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
     // independent full reparses regressed a real [Performance] test
     // (JsonMode's highlighting-stays-fast test) once JsonMode also gained a
     // real fold query, under -DNED_ENABLE_SANITIZERS=ON's heavier
-    // instrumentation -- caught by that test, not assumed. lastText is a
-    // real owned copy (not a string_view into the caller's buffer, whose
-    // lifetime this closure can't assume anything about past the call that
-    // handed it over).
-    struct SharedParse {
-        std::string                     lastText;
-        std::optional<treesitter::Tree> lastTree;
-    };
-    const auto sharedParse = std::make_shared<SharedParse>();
+    // instrumentation -- caught by that test, not assumed. Also what makes
+    // every reparse here incremental (incremental-tree-sitter-reparse
+    // follow-up) rather than full, per IncrementalParseCache's own doc
+    // comment -- one cache, reused by every closure below, since they all
+    // parse the exact same buffer text on the exact same cycle.
+    const auto sharedParse = std::make_shared<treesitter::IncrementalParseCache>();
 
     // parser/query/sharedParse are captured by shared_ptr, not by value --
     // Parser/Query/Tree are move-only (own a real tree-sitter handle each),
@@ -496,11 +494,7 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
     if (!querySource.empty()) {
         const auto query = std::make_shared<treesitter::Query>(language, querySource);
         highlight        = [parser, query, sharedParse](std::string_view bufferText) -> std::vector<HighlightSpan> {
-            if (!sharedParse->lastTree.has_value() || sharedParse->lastText != bufferText) {
-                sharedParse->lastTree = parser->Parse(bufferText);
-                sharedParse->lastText.assign(bufferText);
-            }
-            const treesitter::Tree& tree = *sharedParse->lastTree;
+            const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
             if (tree.IsNull()) {
                 return {};
             }
@@ -526,11 +520,7 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
     if (!foldQuerySource.empty()) {
         const auto foldQuery = std::make_shared<treesitter::Query>(language, foldQuerySource);
         fold                 = [parser, foldQuery, sharedParse](std::string_view bufferText) -> std::vector<std::pair<std::size_t, std::size_t>> {
-            if (!sharedParse->lastTree.has_value() || sharedParse->lastText != bufferText) {
-                sharedParse->lastTree = parser->Parse(bufferText);
-                sharedParse->lastText.assign(bufferText);
-            }
-            const treesitter::Tree& tree = *sharedParse->lastTree;
+            const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
             if (tree.IsNull()) {
                 return {};
             }
@@ -557,11 +547,7 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
     // expansion step, with no per-language "skip list" needed.
     ExpandSelectionFunction expandSelection = [parser, sharedParse](std::string_view bufferText, std::size_t startByte,
                                                                     std::size_t endByte) -> std::optional<std::pair<std::size_t, std::size_t>> {
-        if (!sharedParse->lastTree.has_value() || sharedParse->lastText != bufferText) {
-            sharedParse->lastTree = parser->Parse(bufferText);
-            sharedParse->lastText.assign(bufferText);
-        }
-        const treesitter::Tree& tree = *sharedParse->lastTree;
+        const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
         if (tree.IsNull()) {
             return std::nullopt;
         }
@@ -600,11 +586,7 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
     // than further out.
     SexpMotionFunction sexpMotion = [parser, sharedParse](std::string_view bufferText, std::size_t point,
                                                           bool forward) -> std::optional<std::size_t> {
-        if (!sharedParse->lastTree.has_value() || sharedParse->lastText != bufferText) {
-            sharedParse->lastTree = parser->Parse(bufferText);
-            sharedParse->lastText.assign(bufferText);
-        }
-        const treesitter::Tree& tree = *sharedParse->lastTree;
+        const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
         if (tree.IsNull()) {
             return std::nullopt;
         }
@@ -687,11 +669,7 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
         const auto importQuery = std::make_shared<treesitter::Query>(language, importQuerySource);
         importTarget = [parser, importQuery, sharedParse](std::string_view bufferText,
                                                            std::size_t      point) -> std::optional<ImportTarget> {
-            if (!sharedParse->lastTree.has_value() || sharedParse->lastText != bufferText) {
-                sharedParse->lastTree = parser->Parse(bufferText);
-                sharedParse->lastText.assign(bufferText);
-            }
-            const treesitter::Tree& tree = *sharedParse->lastTree;
+            const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
             if (tree.IsNull()) {
                 return std::nullopt;
             }
@@ -922,20 +900,14 @@ Mode MarkdownMode() {
     // uses internally (see its own doc comment) -- this closure does its
     // own full block parse plus one parse per "inline" node, so skipping
     // all of that when bufferText is unchanged since the last call matters
-    // here too, not just for the generic path.
-    struct SharedParse {
-        std::string                     lastText;
-        std::optional<treesitter::Tree> lastTree;
-    };
-    const auto sharedParse = std::make_shared<SharedParse>();
+    // here too, not just for the generic path. Also what makes this an
+    // incremental reparse rather than a full one (incremental-tree-sitter-
+    // reparse follow-up) -- see IncrementalParseCache's own doc comment.
+    const auto sharedParse = std::make_shared<treesitter::IncrementalParseCache>();
 
     mode.highlight = [blockParser, blockQuery, inlineParser, inlineQuery,
                       sharedParse](std::string_view bufferText) -> std::vector<HighlightSpan> {
-        if (!sharedParse->lastTree.has_value() || sharedParse->lastText != bufferText) {
-            sharedParse->lastTree = blockParser->Parse(bufferText);
-            sharedParse->lastText.assign(bufferText);
-        }
-        const treesitter::Tree& tree = *sharedParse->lastTree;
+        const treesitter::Tree& tree = sharedParse->Update(*blockParser, bufferText);
         if (tree.IsNull()) {
             return {};
         }
@@ -1030,9 +1002,16 @@ Mode OrgMode() {
     const auto orgLanguage = treesitter::LanguageByName("org");
     const auto parser      = std::make_shared<treesitter::Parser>(*orgLanguage);
     const auto query       = std::make_shared<treesitter::Query>(*orgLanguage, treesitter::queries::kOrg);
+    // Incremental-tree-sitter-reparse follow-up: this closure previously
+    // parsed unconditionally on every call, unlike every other Mode's own
+    // highlight closure -- no earlier "same text as last call" cache existed
+    // here at all. IncrementalParseCache closes both gaps: an unchanged-text
+    // call is now free, and a genuinely changed one reparses incrementally
+    // against the previous tree instead of from scratch.
+    const auto sharedParse = std::make_shared<treesitter::IncrementalParseCache>();
 
-    HighlightFunction highlight = [parser, query](std::string_view bufferText) -> std::vector<HighlightSpan> {
-        const treesitter::Tree tree = parser->Parse(bufferText);
+    HighlightFunction highlight = [parser, query, sharedParse](std::string_view bufferText) -> std::vector<HighlightSpan> {
+        const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
         if (tree.IsNull()) {
             return {};
         }
