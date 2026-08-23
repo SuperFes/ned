@@ -125,22 +125,35 @@ class Minimap : public Widget {
 
   private:
     // Line/column -> density-map walk: at whatever subRows x subCols
-    // resolution the caller asks for, calls visit(subRow, subCol, offset)
-    // once per non-blank character within charsPerDot's column budget of
-    // its line's start -- offset is that character's buffer byte offset,
-    // for a syntax-class color lookup the caller does itself. charsPerDot
-    // is an explicit parameter, not read from editor::MinimapCharsPerDot()
-    // internally, because the two renderers now want genuinely different
-    // values: the glyph path still needs real horizontal compression (a
-    // braille/quadrant/octant cell only has 2-4 sub-columns to represent a
-    // line in at all), but the real-pixel path has enough columns to give
-    // each source character its own pixel column outright -- charsPerDot=1,
-    // a real line simply truncates past subCols characters rather than
-    // being squeezed to fit. Vertical compression (many source lines into
-    // one subRow) is unavoidable either way once a file has more lines than
-    // subRows, so that part of this walk is identical for both callers.
-    void ForEachDensityDot(int subRows, int subCols, int charsPerDot,
-                            const std::function<void(int subRow, int subCol, std::size_t offset)>& visit) const;
+    // resolution the caller asks for, calls visit(subRow, subCol, offset,
+    // linesInRow) for the first non-blank character found within each
+    // charsPerDot-wide column group of each real line within charsPerDot's
+    // column budget of its line's start -- at most once per (subRow,
+    // subCol) per real line, not once per character (see below for why) --
+    // offset is that character's buffer byte offset, for a syntax-class
+    // color lookup the caller does itself. charsPerDot is an explicit
+    // parameter, not read from
+    // editor::MinimapCharsPerDot() internally, because the two renderers now
+    // want genuinely different values: the glyph path still needs real
+    // horizontal compression (a braille/quadrant/octant cell only has 2-4
+    // sub-columns to represent a line in at all), but the real-pixel path
+    // has enough columns to give each source character its own pixel column
+    // outright -- charsPerDot=1, a real line simply truncates past subCols
+    // characters rather than being squeezed to fit. Vertical compression
+    // (many source lines into one subRow) is unavoidable either way once a
+    // file has more lines than subRows, so that part of this walk is
+    // identical for both callers -- linesInRow (the same value for every
+    // visit() call within one subRow: how many real lines got compressed
+    // into it) is what lets a caller weight each hit's contribution rather
+    // than one line's ink flatly overwriting every other line compressed
+    // into the same row (weighted-minimap-density follow-up: a *references*
+    // multibuffer's own repeated separator/rule lines used to dominate every
+    // row they shared with the real matched-line content, since a rule
+    // line's near-full-width ink was whichever line happened to be walked
+    // last for that row).
+    void ForEachDensityDot(
+        int subRows, int subCols, int charsPerDot,
+        const std::function<void(int subRow, int subCol, std::size_t offset, std::size_t linesInRow)>& visit) const;
 
     // (Re)blits plane_ from the active buffer's content, gated on (buffer
     // identity, ContentGeneration(), size().height, MinimapWidth(),
