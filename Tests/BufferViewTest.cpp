@@ -256,6 +256,12 @@ ned::ui::Event MouseWheel(int x, int y, ned::ui::MouseEvent::Button button) {
     return ned::ui::test::Mouse(x, y, button, ned::ui::MouseEvent::Motion::Pressed);
 }
 
+// universal-clickable-affordances follow-up.
+ned::ui::Event MousePressCtrl(int x, int y) {
+    return ned::ui::test::Mouse(x, y, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Pressed,
+                                 /*shift=*/false, /*meta=*/false, /*control=*/true);
+}
+
 // hover/completion follow-up: "C-M-i" as a real raw byte sequence -- ESC
 // (Meta) followed by the C0 control byte for Ctrl+'i' (0x09) -- rather than
 // constructing a KeyChord directly, so this exercises the exact same
@@ -5093,6 +5099,58 @@ TEST_CASE("open-link-at-point reports failure when nothing at point looks like a
     view.OnEvent(ned::ui::test::Return());
 
     REQUIRE(fixture.statusMessage == "No link at point.");
+}
+
+// universal-clickable-affordances follow-up: Ctrl+Click is the mouse
+// counterpart to open-link-at-point, wired in BufferView::OnMouseEvent
+// rather than through the command registry -- these exercise that wiring
+// directly rather than re-testing DetectLinkAtPoint's own detection logic,
+// already covered above via the keyboard path.
+TEST_CASE("Ctrl+Click opens the URL under the click", "[BufferView]") {
+    const UrlOpenCommandGuard guard;
+    ned::editor::link::SetUrlOpenCommand("true"); // a real, always-succeeding no-op command
+
+    Fixture fixture; // FundamentalMode()
+    fixture.buffer.InsertAtPoint("see https://example.com here\n");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
+
+    // "https://example.com" starts right after "see " (4 columns in).
+    view.OnEvent(MousePressCtrl(GutterWidth(1) + 4 + 8, 0));
+
+    REQUIRE(fixture.statusMessage == "Opening https://example.com");
+}
+
+TEST_CASE("Ctrl+Click off any link still places point but reports no link, same as the keyboard path",
+          "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("just some plain text\n");
+    fixture.buffer.SetPoint(0);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(MousePressCtrl(GutterWidth(1) + 5, 0));
+
+    REQUIRE(fixture.buffer.Point() == 5);
+    REQUIRE(fixture.statusMessage == "No link at point.");
+}
+
+TEST_CASE("A plain click (no Ctrl) on a URL just places point, doesn't open it", "[BufferView]") {
+    const UrlOpenCommandGuard guard;
+    ned::editor::link::SetUrlOpenCommand("true");
+
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("see https://example.com here\n");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(MousePress(GutterWidth(1) + 4 + 8, 0));
+
+    REQUIRE(fixture.buffer.Point() == 4 + 8);
+    REQUIRE(fixture.statusMessage != "Opening https://example.com");
 }
 
 // structural-selection-expansion follow-up. M-=/M-- are simulated via their
