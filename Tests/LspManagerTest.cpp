@@ -22,6 +22,7 @@
 using ned::editor::lsp::CodeAction;
 using ned::editor::lsp::CompletionItem;
 using ned::editor::lsp::Json;
+using ned::editor::lsp::kProseLanguageKey;
 using ned::editor::lsp::LspClient;
 using ned::editor::lsp::LspManager;
 using ned::editor::lsp::Transport;
@@ -500,6 +501,123 @@ TEST_CASE("LspManager::ResolveCodeAction resolves to nullopt when the buffer was
 
     REQUIRE(invoked);
     REQUIRE_FALSE(gotResolved.has_value());
+}
+
+TEST_CASE("LspManager::RequestCodeActions with a serverKey routes to that connection, not the primary one", "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-prose-code-action-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("teh");
+
+    LspClient* primaryClient = nullptr;
+    LspClient* proseClient   = nullptr;
+    FakeServer primaryServer = FakeServer::Create(manager, "test-lang", eventLoop, primaryClient);
+    FakeServer proseServer   = FakeServer::Create(manager, std::string(kProseLanguageKey), eventLoop, proseClient);
+
+    manager.SyncBuffer(buffer, "test-lang"); // syncs both the primary language server and the prose connection
+    (void)ReadRawFrame(primaryServer.serverStdinRead);
+    (void)ReadRawFrame(proseServer.serverStdinRead);
+
+    bool                    invoked = false;
+    std::vector<CodeAction> gotActions;
+    manager.RequestCodeActions(
+        buffer, 0, 3, [&](std::vector<CodeAction> actions) {
+            invoked    = true;
+            gotActions = std::move(actions);
+        },
+        std::string(kProseLanguageKey));
+
+    REQUIRE(NoFrameArrives(primaryServer.serverStdinRead)); // never asked the primary language server
+
+    const std::string raw     = ReadRawFrame(proseServer.serverStdinRead);
+    const Json        request = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(request["method"] == "textDocument/codeAction");
+
+    const Json response = {
+        {"jsonrpc", "2.0"},
+        {"id", RequestIdFromFrame(raw)},
+        {"result", Json::array({{{"title", "Add to dictionary"}, {"command", "HarperAddToUserDict"}, {"arguments", Json::array()}}})},
+    };
+    proseClient->DispatchFrame(response.dump());
+
+    REQUIRE(invoked);
+    REQUIRE(gotActions.size() == 1);
+    REQUIRE(gotActions[0].title == "Add to dictionary");
+    REQUIRE(gotActions[0].command.has_value());
+    REQUIRE(gotActions[0].command->name == "HarperAddToUserDict");
+}
+
+TEST_CASE("LspManager::ExecuteCommand sends workspace/executeCommand and reports ok on a real response", "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-execute-command-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    bool invoked = false;
+    bool gotOk   = false;
+    manager.ExecuteCommand(buffer, {}, "HarperAddToUserDict", Json::array({"teh"}), [&](bool ok) {
+        invoked = true;
+        gotOk   = ok;
+    });
+
+    const std::string raw     = ReadRawFrame(server.serverStdinRead);
+    const Json        request = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(request["method"] == "workspace/executeCommand");
+    REQUIRE(request["params"]["command"] == "HarperAddToUserDict");
+    REQUIRE(request["params"]["arguments"] == Json::array({"teh"}));
+
+    const Json response = {{"jsonrpc", "2.0"}, {"id", RequestIdFromFrame(raw)}, {"result", Json(nullptr)}};
+    client->DispatchFrame(response.dump());
+
+    REQUIRE(invoked);
+    REQUIRE(gotOk);
+}
+
+TEST_CASE("LspManager::ExecuteCommand reports failure on a JSON-RPC error response", "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-execute-command-error-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead);
+
+    bool gotOk = true;
+    manager.ExecuteCommand(buffer, {}, "unknown.command", Json::array(), [&](bool ok) { gotOk = ok; });
+
+    const std::string raw = ReadRawFrame(server.serverStdinRead);
+    const Json response    = {{"jsonrpc", "2.0"}, {"id", RequestIdFromFrame(raw)}, {"error", {{"code", -32601}, {"message", "unknown command"}}}};
+    client->DispatchFrame(response.dump());
+
+    REQUIRE_FALSE(gotOk);
+}
+
+TEST_CASE("LspManager::ExecuteCommand reports failure when the buffer was never synced", "[Lsp]") {
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    Buffer&            buffer = bufferList.CreateBuffer("scratch");
+
+    bool invoked = false;
+    bool gotOk   = true;
+    manager.ExecuteCommand(buffer, {}, "whatever", Json::array(), [&](bool ok) {
+        invoked = true;
+        gotOk   = ok;
+    });
+
+    REQUIRE(invoked);
+    REQUIRE_FALSE(gotOk);
 }
 
 TEST_CASE("LspManager::RequestDefinition resolves a Location[] response's uris to real paths", "[Lsp]") {

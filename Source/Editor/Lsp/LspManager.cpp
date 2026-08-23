@@ -118,12 +118,14 @@ Json BuildInitializeParams(const std::filesystem::path& projectRoot) {
     // codeActionLiteralSupport is load-bearing, not boilerplate: per the LSP
     // spec a server may only return edit-carrying CodeAction literals to a
     // client that advertises it, and must fall back to bare Command objects
-    // (runnable only via workspace/executeCommand, which this client doesn't
-    // implement) otherwise. clangd honors that exactly -- without this, its
-    // "fix available" quickfixes (e.g. "remove #include directive") arrived
-    // as Commands with no "edit", and applying one reported "has no edit to
-    // apply". Confirmed against a real clangd 22 session both ways, not
-    // inferred from the spec alone.
+    // otherwise (executeCommand follow-up: now runnable via
+    // LspManager::ExecuteCommand/workspace/executeCommand, but a client
+    // that doesn't advertise this still gets the plain-Command fallback
+    // form regardless). clangd honors codeActionLiteralSupport exactly --
+    // without it, its "fix available" quickfixes (e.g. "remove #include
+    // directive") arrived as Commands with no "edit", and applying one
+    // reported "has no edit to apply". Confirmed against a real clangd 22
+    // session both ways, not inferred from the spec alone.
     //
     // dataSupport/resolveSupport (code-actions-resolve follow-up) advertise
     // that this client will call codeAction/resolve for a CodeAction sent
@@ -327,6 +329,18 @@ LspManager::BufferSyncState* LspManager::PrimarySyncState(text::Buffer& buffer) 
         }
     }
     return nullptr;
+}
+
+LspManager::BufferSyncState* LspManager::ResolveSyncState(text::Buffer& buffer, const std::string& serverKey) {
+    if (serverKey.empty()) {
+        return PrimarySyncState(buffer);
+    }
+    const auto it = bufferState_.find(&buffer);
+    if (it == bufferState_.end()) {
+        return nullptr;
+    }
+    const auto stateIt = it->second.find(serverKey);
+    return stateIt != it->second.end() ? &stateIt->second : nullptr;
 }
 
 LspClient& LspManager::SetClientForTesting(std::string language, std::unique_ptr<LspClient> client) {
@@ -632,8 +646,9 @@ void LspManager::RequestCompletion(text::Buffer& buffer, std::size_t byteOffset,
                         });
 }
 
-void LspManager::RequestCodeActions(text::Buffer& buffer, std::size_t rangeStartByte, std::size_t rangeEndByte, CodeActionCallback callback) {
-    BufferSyncState* state = PrimarySyncState(buffer);
+void LspManager::RequestCodeActions(text::Buffer& buffer, std::size_t rangeStartByte, std::size_t rangeEndByte, CodeActionCallback callback,
+                                    const std::string& serverKey) {
+    BufferSyncState* state = ResolveSyncState(buffer, serverKey);
     if (!state || !state->opened) {
         callback({});
         return;
@@ -678,8 +693,8 @@ void LspManager::RequestCodeActions(text::Buffer& buffer, std::size_t rangeStart
                         });
 }
 
-void LspManager::ResolveCodeAction(text::Buffer& buffer, const CodeAction& action, ResolveCallback callback) {
-    BufferSyncState* state = PrimarySyncState(buffer);
+void LspManager::ResolveCodeAction(text::Buffer& buffer, const CodeAction& action, ResolveCallback callback, const std::string& serverKey) {
+    BufferSyncState* state = ResolveSyncState(buffer, serverKey);
     if (!state || !state->opened) {
         callback(std::nullopt);
         return;
@@ -704,6 +719,33 @@ void LspManager::ResolveCodeAction(text::Buffer& buffer, const CodeAction& actio
                                 return;
                             }
                             callback(ExtractSingleCodeAction(*result, uri));
+                        });
+}
+
+void LspManager::ExecuteCommand(text::Buffer& buffer, const std::string& serverKey, const std::string& command, Json arguments,
+                                ExecuteCommandCallback callback) {
+    BufferSyncState* state = ResolveSyncState(buffer, serverKey);
+    if (!state || !state->opened) {
+        callback(false);
+        return;
+    }
+    LspClient* client = ExistingClientForLanguage(state->language);
+    if (!client) {
+        callback(false);
+        return;
+    }
+
+    const std::string language = state->language;
+    const Json        params   = {{"command", command}, {"arguments", std::move(arguments)}};
+    client->SendRequest("workspace/executeCommand", params,
+                        [this, language, callback = std::move(callback)](std::optional<Json> result, std::optional<Json> error) {
+                            (void)result; // discarded -- see this method's own doc comment in LspManager.h
+                            if (error) {
+                                LogError(language, ExtractErrorMessage(*error));
+                                callback(false);
+                                return;
+                            }
+                            callback(true);
                         });
 }
 

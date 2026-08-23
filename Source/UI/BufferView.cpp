@@ -3398,29 +3398,39 @@ void BufferView::RequestCodeActionsAtPoint() {
     const std::size_t   generation = ++codeActionRequestGeneration_;
 
     // Prefer the diagnostic covering point (same lookup lsp-show-diagnostic
-    // already does), else a zero-length range at point.
+    // already does), else a zero-length range at point. executeCommand/
+    // prose-code-actions follow-up: a Prose-origin diagnostic at point
+    // routes the whole request to the prose checker connection instead of
+    // the primary language server -- that server has no notion of a
+    // harper-ls-flagged word, only harper-ls's own connection does.
     std::size_t rangeStart = point;
     std::size_t rangeEnd   = point;
+    std::string serverKey; // empty -- primary language server, RequestCodeActions's own default
     for (const text::Buffer::Diagnostic& diagnostic : buffer.Diagnostics()) {
         const bool atPoint = (diagnostic.startByte == diagnostic.endByte) ? (point == diagnostic.startByte)
                                                                           : (diagnostic.startByte <= point && point < diagnostic.endByte);
         if (atPoint) {
             rangeStart = diagnostic.startByte;
             rangeEnd   = diagnostic.endByte;
+            if (diagnostic.origin == text::Buffer::Diagnostic::Origin::Prose) {
+                serverKey = editor::lsp::kProseLanguageKey;
+            }
             break;
         }
     }
 
     statusMessage_ = "Requesting code actions...";
     lspManager_->RequestCodeActions(
-        buffer, rangeStart, rangeEnd, [this, bufferPtr, point, generation](std::vector<editor::lsp::CodeAction> actions) {
+        buffer, rangeStart, rangeEnd,
+        [this, bufferPtr, point, generation, serverKey](std::vector<editor::lsp::CodeAction> actions) {
             if (generation != codeActionRequestGeneration_) {
                 return; // superseded by a newer request
             }
             if (bufferPtr != &activeBuffer_.Get() || activeBuffer_.Get().Point() != point) {
                 return; // buffer/point changed since the request was sent -- see RequestCompletionAtPoint's own identical guard
             }
-            pendingCodeActions_ = std::move(actions);
+            pendingCodeActions_  = std::move(actions);
+            codeActionServerKey_ = serverKey;
             if (pendingCodeActions_.empty()) {
                 statusMessage_ = "No code actions available.";
                 return;
@@ -3433,7 +3443,8 @@ void BufferView::RequestCodeActionsAtPoint() {
             }
             inputMode_ = InputMode::LspCodeActionSelect;
             RefreshCodeActionSelectStatus();
-        });
+        },
+        serverKey);
 }
 
 void BufferView::RequestQuickFixAtPoint() {
@@ -3446,28 +3457,35 @@ void BufferView::RequestQuickFixAtPoint() {
     const std::size_t   point      = buffer.Point();
     const std::size_t   generation = ++codeActionRequestGeneration_;
 
-    // Same diagnostic-at-point range preference as RequestCodeActionsAtPoint.
+    // Same diagnostic-at-point range/server-routing preference as
+    // RequestCodeActionsAtPoint -- see that method's own doc comment.
     std::size_t rangeStart = point;
     std::size_t rangeEnd   = point;
+    std::string serverKey;
     for (const text::Buffer::Diagnostic& diagnostic : buffer.Diagnostics()) {
         const bool atPoint = (diagnostic.startByte == diagnostic.endByte) ? (point == diagnostic.startByte)
                                                                           : (diagnostic.startByte <= point && point < diagnostic.endByte);
         if (atPoint) {
             rangeStart = diagnostic.startByte;
             rangeEnd   = diagnostic.endByte;
+            if (diagnostic.origin == text::Buffer::Diagnostic::Origin::Prose) {
+                serverKey = editor::lsp::kProseLanguageKey;
+            }
             break;
         }
     }
 
     statusMessage_ = "Requesting quick fix...";
     lspManager_->RequestCodeActions(
-        buffer, rangeStart, rangeEnd, [this, bufferPtr, point, generation](std::vector<editor::lsp::CodeAction> actions) {
+        buffer, rangeStart, rangeEnd,
+        [this, bufferPtr, point, generation, serverKey](std::vector<editor::lsp::CodeAction> actions) {
             if (generation != codeActionRequestGeneration_) {
                 return; // superseded by a newer request
             }
             if (bufferPtr != &activeBuffer_.Get() || activeBuffer_.Get().Point() != point) {
                 return; // buffer/point changed since the request was sent
             }
+            codeActionServerKey_ = serverKey;
             if (actions.empty()) {
                 statusMessage_ = "No quick fix available.";
                 return;
@@ -3508,7 +3526,8 @@ void BufferView::RequestQuickFixAtPoint() {
             codeActionSelection_ = 0;
             inputMode_           = InputMode::LspCodeActionSelect;
             RefreshCodeActionSelectStatus();
-        });
+        },
+        serverKey);
 }
 
 void BufferView::RefreshCodeActionSelectStatus() {
@@ -3567,17 +3586,26 @@ void BufferView::ResolveAndApplyCodeAction(const editor::lsp::CodeAction& action
     if (action.resolvable && lspManager_) {
         text::Buffer* const bufferPtr = &activeBuffer_.Get();
         statusMessage_                = "Resolving \"" + action.title + "\"...";
-        lspManager_->ResolveCodeAction(activeBuffer_.Get(), action,
-                                       [this, bufferPtr, action](std::optional<editor::lsp::CodeAction> resolved) {
-                                           if (bufferPtr != &activeBuffer_.Get()) {
-                                               return; // active buffer changed since the resolve request was sent
-                                           }
-                                           if (!resolved || !resolved->hasEdit) {
-                                               statusMessage_ = "\"" + action.title + "\" could not be resolved.";
-                                               return;
-                                           }
-                                           ApplyCodeAction(*resolved);
-                                       });
+        lspManager_->ResolveCodeAction(
+            activeBuffer_.Get(), action,
+            [this, bufferPtr, action](std::optional<editor::lsp::CodeAction> resolved) {
+                if (bufferPtr != &activeBuffer_.Get()) {
+                    return; // active buffer changed since the resolve request was sent
+                }
+                if (!resolved || (!resolved->hasEdit && !resolved->command)) {
+                    statusMessage_ = "\"" + action.title + "\" could not be resolved.";
+                    return;
+                }
+                // executeCommand follow-up: the spec only guarantees resolve
+                // fills in "edit" -- a compliant server that doesn't echo
+                // back a "command" the original action already carried must
+                // not silently drop it here.
+                if (!resolved->command && action.command) {
+                    resolved->command = action.command;
+                }
+                ApplyCodeAction(*resolved);
+            },
+            codeActionServerKey_);
         return;
     }
     ApplyCodeAction(action);
@@ -3638,13 +3666,34 @@ void BufferView::ApplyCodeAction(const editor::lsp::CodeAction& action) {
         statusMessage_ = "\"" + action.title + "\" edits other files -- not supported yet.";
         return;
     }
-    if (!action.hasEdit || action.edits.empty()) {
-        statusMessage_ = "\"" + action.title + "\" has no edit to apply.";
+    if (!action.hasEdit && !action.command) {
+        statusMessage_ = "\"" + action.title + "\" has no edit or command to apply.";
         return;
     }
 
-    ApplyWorkspaceTextEdits(activeBuffer_.Get(), action.edits);
-    statusMessage_ = "Applied \"" + action.title + "\".";
+    // executeCommand follow-up: apply the edit first, then execute the
+    // command -- spec order (some of harper-ls's own quickfixes carry
+    // both). Neither step depends on the other's outcome; the edit is
+    // synchronous, the command async, so the two failure paths report
+    // independently rather than one gating the other.
+    if (action.hasEdit && !action.edits.empty()) {
+        ApplyWorkspaceTextEdits(activeBuffer_.Get(), action.edits);
+    }
+    if (!action.command) {
+        statusMessage_ = "Applied \"" + action.title + "\".";
+        return;
+    }
+
+    text::Buffer* const bufferPtr = &activeBuffer_.Get();
+    const std::string   title     = action.title;
+    statusMessage_                = "Applying \"" + title + "\"...";
+    lspManager_->ExecuteCommand(activeBuffer_.Get(), codeActionServerKey_, action.command->name, action.command->arguments,
+                                [this, bufferPtr, title](bool ok) {
+                                    if (bufferPtr != &activeBuffer_.Get()) {
+                                        return; // active buffer changed since the request was sent
+                                    }
+                                    statusMessage_ = ok ? "Applied \"" + title + "\"." : "\"" + title + "\" command failed.";
+                                });
 }
 
 void BufferView::RequestDefinitionAtPoint() {
