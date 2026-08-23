@@ -2632,6 +2632,11 @@ bool BufferView::OnKeyEvent(const Event& event) {
         ClampPointToNarrowing();
         return true;
     }
+    if (inputMode_ == InputMode::ZapToChar) {
+        HandleZapToCharKey(*chord);
+        ClampPointToNarrowing();
+        return true;
+    }
     if (inputMode_ == InputMode::LspCodeActionSelect) {
         HandleCodeActionSelectKey(*chord);
         ClampPointToNarrowing();
@@ -2873,6 +2878,15 @@ bool BufferView::RunCommandAndHandleOutcome(editor::CommandContext& context, con
         // comment). Skip it there; every other request is a normal,
         // still-alive-*this* interactive session (isearch, a prompt, ...).
         const bool destroysThisPane = IsWindowManagementRequest(context.interactiveRequest);
+        // Emacs-keymap-round-2 follow-up: zap-to-char's own invocation is
+        // the only place with real access to context.lastCommand (see
+        // CommandContext::zapToCharAppend's own doc comment) -- stash its
+        // decision here, before the character keystroke that actually
+        // performs the kill (which bypasses Dispatcher::Feed, and so never
+        // sees a meaningful lastCommand of its own) needs it.
+        if (context.interactiveRequest == editor::InteractiveRequest::ZapToChar) {
+            pendingZapToCharAppend_ = context.zapToCharAppend;
+        }
         StartInteractiveSession(context.interactiveRequest);
         if (!destroysThisPane) {
             ClampPointToNarrowing();
@@ -4149,6 +4163,12 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             inputMode_     = InputMode::InsertRegister;
             statusMessage_ = "Insert register: ";
             return;
+        // Emacs-keymap-round-2 follow-up: same one-character-read shape as
+        // the register requests just above.
+        case editor::InteractiveRequest::ZapToChar:
+            inputMode_     = InputMode::ZapToChar;
+            statusMessage_ = "Zap to char: ";
+            return;
         // kill-rectangle/delete-rectangle/yank-rectangle follow-up: one-shot
         // direct actions, same shape as ToggleProjectSidebar -- inputMode_
         // stays Normal, no prompt session. See Editor/Rectangle.h for where
@@ -4386,6 +4406,7 @@ void BufferView::EndInteractiveSession() {
     projectReplace_.reset();
     pendingClose_ = nullptr;
     pendingBinaryOpenPath_.clear();
+    pendingZapToCharAppend_ = false;
     pendingTrustInitPath_.clear();
     onTrustDecision_ = nullptr;
     deleteStage_     = DeleteFileStage::EnteringPath;
@@ -6460,6 +6481,86 @@ void BufferView::HandleRegisterKey(const editor::KeyChord& chord) {
             break; // unreachable -- OnKeyEvent only routes here for the four modes above
     }
 
+    EndInteractiveSession();
+}
+
+void BufferView::HandleZapToCharKey(const editor::KeyChord& chord) {
+    if (IsQuit(chord)) {
+        statusMessage_ = "Zap to char cancelled.";
+        EndInteractiveSession();
+        return;
+    }
+    if (!IsPlainCharacter(chord)) {
+        return; // ignore, keep waiting for a target character
+    }
+
+    const char32_t target = chord.Codepoint;
+    const bool     append = pendingZapToCharAppend_;
+    text::Buffer&  buffer = activeBuffer_.Get();
+
+    // The offset just past the next occurrence of `target` at/after `from`,
+    // or nullopt if there isn't one -- forward scan, codepoint-granular
+    // (matches Buffer's own word-motion scanning style).
+    const auto findForward = [&](std::size_t from) -> std::optional<std::size_t> {
+        const text::Rope& content = buffer.Content();
+        const std::size_t total   = content.ByteLength();
+        std::size_t       offset  = from;
+        while (offset < total) {
+            const auto decoded = content.CodepointAt(offset);
+            offset += decoded.byteLength;
+            if (decoded.codepoint == target) {
+                return offset;
+            }
+        }
+        return std::nullopt;
+    };
+
+    if (!buffer.HasSecondaryCursors()) {
+        const std::size_t point = buffer.Point();
+        if (const auto end = findForward(point)) {
+            buffer.ClearMark();
+            std::string text = buffer.DeleteRange(point, *end - point);
+            if (append) {
+                killRing_.AppendToCurrent(std::move(text), /*prepend=*/false);
+            }
+            else {
+                killRing_.Kill(std::move(text));
+            }
+            statusMessage_.clear();
+        }
+        else {
+            statusMessage_ = "No such character.";
+        }
+        EndInteractiveSession();
+        return;
+    }
+
+    // multi-cursor: one piece per cursor, empty for a cursor with no match
+    // -- KillPerCursor's own resolution (Commands.cpp), duplicated here for
+    // the same reason CopyToRegister above duplicates it: KillPerCursor is
+    // file-local to Commands.cpp. Multi-cursor kill-append is a deliberate
+    // v1 cut (KillRing::AppendToCurrent's own doc comment) -- always a
+    // fresh entry here regardless of `append`.
+    std::vector<std::string> pieces;
+    bool                     any = false;
+    buffer.ForEachCursor([&] {
+        const std::size_t point = buffer.Point();
+        if (const auto end = findForward(point)) {
+            buffer.ClearMark();
+            pieces.push_back(buffer.DeleteRange(point, *end - point));
+            any = true;
+        }
+        else {
+            pieces.emplace_back();
+        }
+    });
+    if (any) {
+        killRing_.KillPieces(std::move(pieces));
+        statusMessage_.clear();
+    }
+    else {
+        statusMessage_ = "No such character.";
+    }
     EndInteractiveSession();
 }
 

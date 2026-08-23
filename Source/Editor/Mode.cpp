@@ -575,11 +575,106 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
         return std::make_pair(node.StartByte(), node.EndByte());
     };
 
+    // Emacs-keymap-round-2 follow-up: a fourth closure sharing the same
+    // parser/sharedParse as highlight/fold/expandSelection above, for the
+    // same "don't trigger a redundant full reparse on the same Paint()
+    // cycle" reason. Named-node-only, same rationale as expandSelection.
+    // `at` is the smallest named node whose span contains p (after the
+    // whitespace skip). Three cases:
+    //  - p sits exactly at at's own start/end: at itself is the sexp to
+    //    move over.
+    //  - p sits in the gap *between* two of at's own named children (e.g.
+    //    right after a list's separating comma) -- at is a container here,
+    //    not a token, so the answer is the next/previous of *at's own
+    //    children*, not at's sibling (at's sibling is a whole other
+    //    container one level up, way too big a jump).
+    //  - p sits strictly inside an unnamed leaf token at is built from
+    //    (rare -- at has no matching child either direction): climb at's
+    //    own ancestor chain for the next/previous named sibling instead,
+    //    since a sibling at a shallower level is still "the next sexp"
+    //    once the current level runs out of children/siblings.
+    // Falls back to at's own start/end if nothing is found at any level
+    // (e.g. p is inside the last child of the outermost node) -- still a
+    // real move, just to the edge of the innermost containing node rather
+    // than further out.
+    SexpMotionFunction sexpMotion = [parser, sharedParse](std::string_view bufferText, std::size_t point,
+                                                          bool forward) -> std::optional<std::size_t> {
+        if (!sharedParse->lastTree.has_value() || sharedParse->lastText != bufferText) {
+            sharedParse->lastTree = parser->Parse(bufferText);
+            sharedParse->lastText.assign(bufferText);
+        }
+        const treesitter::Tree& tree = *sharedParse->lastTree;
+        if (tree.IsNull()) {
+            return std::nullopt;
+        }
+
+        const auto isAsciiSpace = [](char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; };
+
+        if (forward) {
+            std::size_t p = point;
+            while (p < bufferText.size() && isAsciiSpace(bufferText[p])) {
+                ++p;
+            }
+            if (p >= bufferText.size()) {
+                return std::nullopt;
+            }
+            treesitter::Node at = tree.RootNode().NamedDescendantForByteRange(p, p);
+            if (at.IsNull()) {
+                return std::nullopt;
+            }
+            if (at.StartByte() == p) {
+                return at.EndByte();
+            }
+            for (std::size_t i = 0; i < at.ChildCount(); ++i) {
+                treesitter::Node child = at.Child(i);
+                if (child.IsNamed() && child.StartByte() >= p) {
+                    return child.EndByte();
+                }
+            }
+            for (treesitter::Node node = at; !node.IsNull(); node = node.Parent()) {
+                treesitter::Node sibling = node.NextNamedSibling();
+                if (!sibling.IsNull() && sibling.StartByte() >= p) {
+                    return sibling.EndByte();
+                }
+            }
+            return at.EndByte();
+        }
+
+        std::size_t p = point;
+        while (p > 0 && isAsciiSpace(bufferText[p - 1])) {
+            --p;
+        }
+        if (p == 0) {
+            return std::nullopt;
+        }
+        treesitter::Node at = tree.RootNode().NamedDescendantForByteRange(p - 1, p - 1);
+        if (at.IsNull()) {
+            return std::nullopt;
+        }
+        if (at.EndByte() == p) {
+            return at.StartByte();
+        }
+        for (std::size_t i = at.ChildCount(); i > 0; --i) {
+            treesitter::Node child = at.Child(i - 1);
+            if (child.IsNamed() && child.EndByte() <= p) {
+                return child.StartByte();
+            }
+        }
+        for (treesitter::Node node = at; !node.IsNull(); node = node.Parent()) {
+            treesitter::Node sibling = node.PrevNamedSibling();
+            if (!sibling.IsNull() && sibling.EndByte() <= p) {
+                return sibling.StartByte();
+            }
+        }
+        return at.StartByte();
+    };
+
     return Mode{.name            = std::move(name),
                 .keymap          = Keymap(),
                 .highlight       = std::move(highlight),
                 .fold            = std::move(fold),
-                .expandSelection = std::move(expandSelection)};
+                .expandSelection = std::move(expandSelection),
+                .sexpMotion      = std::move(sexpMotion)};
 }
 
 Mode TreeSitterMode(std::string name, std::string_view languageName, const char* querySource,

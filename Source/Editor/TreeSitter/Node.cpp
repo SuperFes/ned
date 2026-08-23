@@ -33,6 +33,14 @@ Node Node::Parent() const {
     return Node(ts_node_parent(node_));
 }
 
+Node Node::NextNamedSibling() const {
+    return Node(ts_node_next_named_sibling(node_));
+}
+
+Node Node::PrevNamedSibling() const {
+    return Node(ts_node_prev_named_sibling(node_));
+}
+
 Node Node::NamedDescendantForByteRange(std::size_t start, std::size_t end) const {
     return Node(ts_node_named_descendant_for_byte_range(node_, static_cast<uint32_t>(start), static_cast<uint32_t>(end)));
 }

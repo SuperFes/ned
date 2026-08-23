@@ -163,6 +163,100 @@ TEST_CASE("kill-line at end of line kills the newline, joining with the next lin
     REQUIRE(buffer.Text() == "hibye");
 }
 
+// Emacs-keymap-round-2 follow-up (kill-append).
+
+TEST_CASE("Consecutive kill-line calls append into one kill-ring entry", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+    Keymap     keymap = BuildDefaultGlobalKeymap();
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    fixture.buffer.InsertAtPoint("hello\nworld\n");
+    fixture.buffer.SetPoint(0);
+
+    dispatcher.Feed(ParseKeyChord("C-k"), context); // kills "hello", buffer now "\nworld\n"
+    dispatcher.Feed(ParseKeyChord("C-k"), context); // kills the newline -- second consecutive kill
+
+    REQUIRE(fixture.killRing.Current() == "hello\n");
+    REQUIRE(fixture.buffer.Text() == "world\n");
+}
+
+TEST_CASE("An intervening command breaks the kill-append chain", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+    Keymap     keymap = BuildDefaultGlobalKeymap();
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    fixture.buffer.InsertAtPoint("hello\nworld\n");
+    fixture.buffer.SetPoint(0);
+
+    dispatcher.Feed(ParseKeyChord("C-k"), context); // kills "hello"
+    dispatcher.Feed(ParseKeyChord("C-f"), context); // an ordinary motion command in between
+    dispatcher.Feed(ParseKeyChord("C-k"), context);
+
+    REQUIRE(fixture.killRing.Current() != "hello\n");
+}
+
+TEST_CASE("backward-kill-word prepends onto the current kill-ring entry", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+    Keymap     keymap = BuildDefaultGlobalKeymap();
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    fixture.buffer.InsertAtPoint("foo bar");
+    fixture.buffer.SetPoint(7); // buffer end
+
+    dispatcher.Feed(ParseKeyChord("M-DEL"), context); // kills "bar"
+    dispatcher.Feed(ParseKeyChord("M-DEL"), context); // kills "foo " -- prepends, since it's a backward kill
+
+    REQUIRE(fixture.killRing.Current() == "foo bar");
+}
+
+TEST_CASE("kill-region prepends when the killed region sat before point", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    fixture.killRing.Kill("X");
+    context.lastCommand = "kill-line"; // simulate an immediately preceding kill
+
+    fixture.buffer.InsertAtPoint("ab");
+    fixture.buffer.SetMark(0);
+    fixture.buffer.SetPoint(2); // point at region end -- region [0,2) sat *before* point
+
+    registry.Invoke("kill-region", context);
+    REQUIRE(fixture.killRing.Current() == "abX");
+}
+
+TEST_CASE("kill-region appends when the killed region sat after point", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    fixture.killRing.Kill("X");
+    context.lastCommand = "kill-line";
+
+    fixture.buffer.InsertAtPoint("ab");
+    fixture.buffer.SetPoint(0);
+    fixture.buffer.SetMark(2); // point at region start -- region [0,2) sat *after* point
+
+    registry.Invoke("kill-region", context);
+    REQUIRE(fixture.killRing.Current() == "Xab");
+}
+
 TEST_CASE("set-mark-command sets the mark at point", "[Commands]") {
     CommandRegistry registry;
     RegisterBuiltinCommands(registry);
@@ -1225,6 +1319,76 @@ TEST_CASE("ESC f / ESC b bindings move point by word", "[Commands]") {
     REQUIRE(fixture.buffer.Point() == 0); // back to the start of "hello"
 }
 
+TEST_CASE("M-e / M-a bindings move point by sentence", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+    Keymap     keymap = BuildDefaultGlobalKeymap();
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    fixture.buffer.InsertAtPoint("Foo. Bar.");
+    fixture.buffer.SetPoint(0);
+
+    REQUIRE(dispatcher.Feed(ParseKeyChord("M-e"), context) == Dispatcher::Outcome::Invoked);
+    REQUIRE(fixture.buffer.Point() == 5); // start of "Bar."
+
+    REQUIRE(dispatcher.Feed(ParseKeyChord("M-a"), context) == Dispatcher::Outcome::Invoked);
+    REQUIRE(fixture.buffer.Point() == 0); // back to the start of "Foo."
+}
+
+TEST_CASE("C-M-f / C-M-b bindings move point by sexp, using the active mode's syntax tree", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+    Keymap     keymap = BuildDefaultGlobalKeymap();
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    const Mode mode = CMode();
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    context.mode           = &mode;
+
+    fixture.buffer.InsertAtPoint("foo(a, b);");
+    fixture.buffer.SetPoint(0);
+
+    // Point 0 sits exactly at the "foo" identifier's own start -- the
+    // smallest named node there -- so the first move is just over "foo",
+    // not the whole call (a C grammar's call_expression and its function
+    // identifier share the same start byte; the *smallest* node wins).
+    REQUIRE(dispatcher.Feed(ParseKeyChord("C-M-f"), context) == Dispatcher::Outcome::Invoked);
+    REQUIRE(fixture.buffer.Point() == 3); // over "foo"
+
+    // Point 3 now sits exactly at the argument list's own start ("(") --
+    // the next move goes over the whole "(a, b)".
+    REQUIRE(dispatcher.Feed(ParseKeyChord("C-M-f"), context) == Dispatcher::Outcome::Invoked);
+    REQUIRE(fixture.buffer.Point() == 9); // over "(a, b)"
+
+    REQUIRE(dispatcher.Feed(ParseKeyChord("C-M-b"), context) == Dispatcher::Outcome::Invoked);
+    REQUIRE(fixture.buffer.Point() == 3); // back to the start of "(a, b)"
+
+    REQUIRE(dispatcher.Feed(ParseKeyChord("C-M-b"), context) == Dispatcher::Outcome::Invoked);
+    REQUIRE(fixture.buffer.Point() == 0); // back to the start of "foo"
+}
+
+TEST_CASE("forward-sexp reports no mode configured, mirroring code-fold-toggle", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    std::string    message;
+    context.message = &message;
+
+    fixture.buffer.InsertAtPoint("foo(a, b);");
+    fixture.buffer.SetPoint(0);
+
+    registry.Invoke("forward-sexp", context);
+    REQUIRE(message == "No sexp motion available in this mode.");
+    REQUIRE(fixture.buffer.Point() == 0);
+}
+
 TEST_CASE("scroll-page-down/scroll-page-up move by a fraction of CommandContext::viewportHeight", "[Commands]") {
     CommandRegistry registry;
     RegisterBuiltinCommands(registry);
@@ -1867,7 +2031,11 @@ TEST_CASE("kill-word and backward-kill-word kill into the kill ring", "[Commands
     REQUIRE(fixture.buffer.Text() == " world");
     REQUIRE(fixture.killRing.Current() == "hello");
 
-    fixture.buffer.SetPoint(fixture.buffer.Size());
+    // kill-append follow-up: a real, dispatched motion command in between
+    // (not a raw buffer.SetPoint(), which wouldn't touch lastCommand the
+    // way any actual keypress would) -- so the second kill below starts a
+    // fresh kill-ring entry rather than appending onto the first.
+    dispatcher.Feed(ParseKeyChord("C-e"), context);   // end-of-line
     dispatcher.Feed(ParseKeyChord("M-DEL"), context); // backward-kill-word
     REQUIRE(fixture.buffer.Text() == " ");
     REQUIRE(fixture.killRing.Current() == "world");

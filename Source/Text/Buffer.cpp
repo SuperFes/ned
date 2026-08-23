@@ -23,6 +23,16 @@ namespace {
                (codepoint >= U'0' && codepoint <= U'9') || codepoint == U'_';
     }
 
+    // See MoveForwardSentence/MoveBackwardSentence's own doc comment in
+    // Buffer.h for why this is a plain ASCII punctuation set.
+    bool IsSentenceEndCodepoint(char32_t codepoint) {
+        return codepoint == U'.' || codepoint == U'!' || codepoint == U'?';
+    }
+
+    bool IsSpaceOrNewlineCodepoint(char32_t codepoint) {
+        return codepoint == U' ' || codepoint == U'\t' || codepoint == U'\n' || codepoint == U'\r';
+    }
+
     // See VisualColumnForByteOffset's own doc comment in Buffer.h for why
     // this exists -- comfortably wider than any real terminal (even an
     // extreme ultra-wide setup), so every realistic file's tab-aware
@@ -994,6 +1004,66 @@ void Buffer::MoveBackwardWord() {
             break;
         }
         offset = previous;
+    }
+
+    Point_    = SnapToGraphemeBoundary(Rope_, offset);
+    CanAmend_ = false;
+    GoalColumn_.reset();
+}
+
+void Buffer::MoveForwardSentence() {
+    const std::size_t total  = Rope_.ByteLength();
+    std::size_t       offset = Point_;
+
+    while (offset < total && !IsSentenceEndCodepoint(Rope_.CodepointAt(offset).codepoint)) {
+        offset = Rope_.NextCodepointBoundary(offset);
+    }
+    if (offset < total) {
+        offset = Rope_.NextCodepointBoundary(offset); // past the sentence-ending punctuation itself
+        while (offset < total && IsSpaceOrNewlineCodepoint(Rope_.CodepointAt(offset).codepoint)) {
+            offset = Rope_.NextCodepointBoundary(offset);
+        }
+    }
+
+    Point_    = SnapToGraphemeBoundary(Rope_, offset);
+    CanAmend_ = false;
+    GoalColumn_.reset();
+}
+
+void Buffer::MoveBackwardSentence() {
+    std::size_t offset = Point_;
+
+    // Skip back over whitespace directly before point -- mirrors forward's
+    // own post-punctuation whitespace skip, so this can land right back
+    // where a preceding MoveForwardSentence call would have stopped.
+    while (offset > 0) {
+        const std::size_t previous = Rope_.PreviousCodepointBoundary(offset);
+        if (!IsSpaceOrNewlineCodepoint(Rope_.CodepointAt(previous).codepoint)) {
+            break;
+        }
+        offset = previous;
+    }
+    // Sitting right after a sentence-ending mark (the common case just
+    // after the whitespace skip above): hop back over it too, or the scan
+    // below would immediately re-find that same mark and refuse to move.
+    if (offset > 0) {
+        const std::size_t previous = Rope_.PreviousCodepointBoundary(offset);
+        if (IsSentenceEndCodepoint(Rope_.CodepointAt(previous).codepoint)) {
+            offset = previous;
+        }
+    }
+    while (offset > 0) {
+        const std::size_t previous = Rope_.PreviousCodepointBoundary(offset);
+        if (IsSentenceEndCodepoint(Rope_.CodepointAt(previous).codepoint)) {
+            break;
+        }
+        offset = previous;
+    }
+    // offset now sits right after the previous sentence's own end mark (or
+    // 0) -- skip forward over whitespace to land on the first real
+    // character, matching MoveForwardSentence's own landing spot.
+    while (offset < Rope_.ByteLength() && IsSpaceOrNewlineCodepoint(Rope_.CodepointAt(offset).codepoint)) {
+        offset = Rope_.NextCodepointBoundary(offset);
     }
 
     Point_    = SnapToGraphemeBoundary(Rope_, offset);

@@ -92,3 +92,50 @@ TEST_CASE("YankPop cycling preserves each entry's own piece shape", "[KillRing]"
     (void)ring.YankPop(); // wraps back around
     REQUIRE(ring.CurrentPieces() == std::vector<std::string>{"a", "b"});
 }
+
+// Emacs-keymap-round-2 follow-up (kill-append).
+
+TEST_CASE("AppendToCurrent grows the most recent single-piece entry", "[KillRing]") {
+    KillRing ring;
+
+    ring.Kill("foo");
+    ring.AppendToCurrent("bar", /*prepend=*/false);
+    REQUIRE(ring.Current() == "foobar");
+    REQUIRE(ring.CurrentPieces() == std::vector<std::string>{"foobar"});
+}
+
+TEST_CASE("AppendToCurrent with prepend inserts before the existing entry", "[KillRing]") {
+    KillRing ring;
+
+    ring.Kill("bar");
+    ring.AppendToCurrent("foo", /*prepend=*/true);
+    REQUIRE(ring.Current() == "foobar");
+}
+
+TEST_CASE("AppendToCurrent on an empty ring behaves like Kill", "[KillRing]") {
+    KillRing ring;
+
+    ring.AppendToCurrent("first", /*prepend=*/false);
+    REQUIRE(ring.Current() == "first");
+    REQUIRE(!ring.Empty());
+}
+
+TEST_CASE("AppendToCurrent against a multi-piece entry pushes a fresh entry instead", "[KillRing]") {
+    KillRing ring;
+
+    ring.KillPieces({"a", "b"});
+    ring.AppendToCurrent("solo", /*prepend=*/false);
+    REQUIRE(ring.CurrentPieces() == std::vector<std::string>{"solo"});
+    REQUIRE(ring.YankPop() == "a\nb"); // the multi-piece entry is still there, just no longer newest
+}
+
+TEST_CASE("AppendToCurrent resets the yank pointer to the extended entry", "[KillRing]") {
+    KillRing ring;
+
+    ring.Kill("a");
+    ring.Kill("b");
+    (void)ring.YankPop(); // now pointing at "a"
+
+    ring.AppendToCurrent("c", /*prepend=*/false);
+    REQUIRE(ring.Current() == "bc"); // append targets the ring's front ("b"), not the yank-cycled entry
+}

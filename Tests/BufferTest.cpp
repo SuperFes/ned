@@ -368,6 +368,34 @@ TEST_CASE("MoveForwardWord/MoveBackwardWord are no-ops at the buffer's edges", "
     REQUIRE(buffer.Point() == 0);
 }
 
+TEST_CASE("MoveForwardSentence lands at the start of the next sentence", "[Buffer]") {
+    Buffer buffer("scratch", ned::text::Rope("Foo. Bar. Baz."));
+
+    buffer.SetPoint(0);
+    buffer.MoveForwardSentence();
+    REQUIRE(buffer.Point() == 5); // past "Foo. " -- start of "Bar."
+
+    buffer.MoveForwardSentence();
+    REQUIRE(buffer.Point() == 10); // past "Bar. " -- start of "Baz."
+
+    buffer.MoveForwardSentence();
+    REQUIRE(buffer.Point() == 14); // no more sentence ends -- lands at buffer end
+}
+
+TEST_CASE("MoveBackwardSentence lands at the start of the current/previous sentence", "[Buffer]") {
+    Buffer buffer("scratch", ned::text::Rope("Foo. Bar. Baz."));
+
+    buffer.SetPoint(14); // buffer end
+    buffer.MoveBackwardSentence();
+    REQUIRE(buffer.Point() == 10); // start of "Baz.", the sentence point was in
+
+    buffer.MoveBackwardSentence();
+    REQUIRE(buffer.Point() == 5); // start of "Bar."
+
+    buffer.MoveBackwardSentence();
+    REQUIRE(buffer.Point() == 0); // start of "Foo."
+}
+
 TEST_CASE("MoveDownLines/MoveUpLines move by more than one line at once", "[Buffer]") {
     Buffer buffer("scratch", ned::text::Rope("aaaa\nbbbb\ncccc\ndddd\neeee"));
 
@@ -967,7 +995,7 @@ TEST_CASE("ReplaceContentForLoad swaps content and bumps ContentGeneration witho
 
     REQUIRE(buffer.Text() == "partial content");
     REQUIRE(buffer.ContentGeneration() > generationBefore);
-    REQUIRE(buffer.IsLoading()); // ReplaceContentForLoad is a preview swap, not the terminal call
+    REQUIRE(buffer.IsLoading());      // ReplaceContentForLoad is a preview swap, not the terminal call
     REQUIRE_FALSE(buffer.Modified()); // not a real edit -- must not mark the buffer dirty
 }
 

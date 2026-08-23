@@ -198,6 +198,16 @@ using FoldFunction = std::function<std::vector<std::pair<std::size_t, std::size_
 using ExpandSelectionFunction =
     std::function<std::optional<std::pair<std::size_t, std::size_t>>(std::string_view bufferText, std::size_t startByte, std::size_t endByte)>;
 
+// Emacs-keymap-round-2 follow-up: forward-sexp/backward-sexp support. Given
+// a buffer's full text, point, and a direction (true = forward, false =
+// backward), returns the new point after moving over one balanced
+// syntactic unit at the sibling level point sits in -- or std::nullopt at
+// the buffer's start/end, or when there's no parse tree at all. Unlike
+// ExpandSelectionFunction this also walks *sideways* (next/previous named
+// sibling), not just up -- "next sexp" means "next sibling form," not
+// "next enclosing node."
+using SexpMotionFunction = std::function<std::optional<std::size_t>(std::string_view bufferText, std::size_t point, bool forward)>;
+
 struct Mode {
     std::string       name;
     Keymap            keymap;
@@ -216,6 +226,11 @@ struct Mode {
     // structural selection support configured for this mode, same
     // "empty means not configured" convention as highlight/fold above.
     ExpandSelectionFunction expandSelection;
+    // Emacs-keymap-round-2 follow-up: empty function (the default) means
+    // forward-sexp/backward-sexp report there's no sexp motion configured
+    // for this mode, same "empty means not configured" convention as
+    // highlight/fold/expandSelection above.
+    SexpMotionFunction sexpMotion;
     // line-wrap follow-up: this mode's own default for whether BufferView
     // should soft-wrap long lines at word boundaries instead of scrolling
     // horizontally -- false (matching every bundled mode except the two

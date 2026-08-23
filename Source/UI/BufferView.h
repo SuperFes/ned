@@ -397,6 +397,11 @@ class BufferView : public Widget {
                            JumpToRegister,
                            CopyToRegister,
                            InsertRegister,
+                           // Emacs-keymap-round-2 follow-up: zap-to-char's
+                           // own one-character-read session, same shape as
+                           // the register modes above -- see
+                           // HandleZapToCharKey.
+                           ZapToChar,
                            StringRectangle,
                            SetHeadlineTags,
                            // code-actions follow-up: entered only once RequestCodeActionsAtPoint's
@@ -682,6 +687,15 @@ class BufferView : public Widget {
     // that character differs per inputMode_. See Editor/Register.h for where
     // the actual register storage lives (registers_ below).
     void HandleRegisterKey(const editor::KeyChord& chord);
+
+    // Emacs-keymap-round-2 follow-up: zap-to-char's own one-character-read
+    // session (same shape as HandleRegisterKey above) -- scans forward from
+    // point for the read character and kills up to and including it,
+    // per-cursor when secondary cursors are active (KillPerCursor's own
+    // "one piece per cursor, empty for no match" resolution). See
+    // pendingZapToCharAppend_'s own doc comment for the kill-append hint
+    // this reads.
+    void HandleZapToCharKey(const editor::KeyChord& chord);
 
     // execute-extended-command follow-up (M-x): given its own dedicated
     // method rather than folded into HandlePromptKey, since HandlePromptKey's
@@ -1369,6 +1383,14 @@ class BufferView : public Widget {
     // convention as pendingBinaryOpenPath_ just above.
     std::filesystem::path                                                          pendingTrustInitPath_;
     std::function<void(const std::filesystem::path&, editor::ProjectInitDecision)> onTrustDecision_;
+
+    // Emacs-keymap-round-2 follow-up: the kill-append decision zap-to-char's
+    // own invocation made (from context.lastCommand, which the character
+    // keystroke that actually performs the kill has no access to -- see
+    // CommandContext::zapToCharAppend's own doc comment), stashed here by
+    // RunCommandAndHandleOutcome right before StartInteractiveSession enters
+    // InputMode::ZapToChar, consumed by HandleZapToCharKey.
+    bool pendingZapToCharAppend_ = false;
 
     DeleteFileStage       deleteStage_ = DeleteFileStage::EnteringPath;
     std::filesystem::path deleteTarget_; // path awaiting y/n in DeleteFileStage::Confirming
