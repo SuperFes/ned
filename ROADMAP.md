@@ -293,12 +293,6 @@ argued against, not just added.
 
 Real, fairly uncontroversial gaps:
 
-- [ ] **System clipboard integration** (OSC 52, or shelling out to `xclip`/`wl-copy`/
-      `pbcopy`/`termux-clipboard-set` when present) for `KillRing`/yank. Kill-ring is
-      purely internal today — `kill-ring-save`/`yank` never touch the terminal's real
-      clipboard, so nothing killed in ned can be pasted into another app, and nothing
-      copied elsewhere can be yanked into ned. Arguably more everyday friction than
-      several already-tracked items, for a terminal editor especially.
 - [ ] **Auto-closing/matching brackets and quotes** (typing `(`/`"`/`{` inserts the
       closer too, typing the closer again just moves past it). VSCode/Sublime/JetBrains
       default this on; Emacs treats it as an opt-in minor mode (`electric-pair-mode`) —
@@ -400,6 +394,40 @@ architectural fight — it slots in as "another major-mode-shaped subsystem," wh
 codebase already does repeatedly (Org, VCS, DAP, ACP...), rather than requiring changes
 to `Keymap`/`KeymapStack`/`Dispatcher` themselves. Unscoped beyond this sketch — no
 estimate of which pieces would ship in a first cut.
+
+### Native Windows port (idea, unstarted — design sketch only)
+
+Raised alongside the system-clipboard work (`Editor/Clipboard.h`'s WSL detection covers
+running ned as a Linux binary under WSL today, shelling out to `clip.exe`/
+`powershell.exe` over WSL's own interop — real, already shipped). A *native* Windows
+build (running directly under Windows Terminal or a raw console host, no WSL layer) is a
+distinct, much larger effort: this codebase is POSIX throughout, not just at one or two
+call sites, so "port" means replacing the platform layer wholesale, not adding `#ifdef`s
+at the margins:
+
+- **Process spawning** (`Editor/Process/ChildProcess.h`, `posix_spawn` + `pipe`) needs a
+  `CreateProcess`/anonymous-pipe implementation behind the same `WriteAll`/`ReadSome`/
+  `WaitForExit`/`Kill` surface — every LSP/DAP/ACP/task/VCS subprocess integration in
+  `Editor/` is built on this one class, so a faithful reimplementation behind the
+  existing interface is what keeps all of them working unmodified.
+- **The embedded terminal panel** (`Editor/Terminal/PtyProcess.h`, `forkpty`) needs
+  ConPTY (`CreatePseudoConsole`) instead — a real API, but a different threading/
+  handle-lifetime shape than a POSIX pty fd pair.
+- **Raw terminal I/O** (`UI/TerminalColorProbe.h`'s `termios`/`poll` raw-mode probe, and
+  this feature's own OSC 52 write) needs the Win32 console API or, on a recent-enough
+  Windows Terminal, VT passthrough — Windows Terminal itself already speaks ANSI/VT and
+  OSC 52 natively, which is what makes this plausible at all rather than a dead end.
+- **Notcurses itself** would need to build and run against the Win32 console/Windows
+  Terminal target — worth checking Notcurses' own upstream platform support before
+  committing to this, since ned's entire `UI/` layer sits directly on it with no
+  abstraction gap to absorb a gap there.
+- A PowerShell-flavored bundled theme (matching PowerShell/Windows Terminal's own
+  default palette) would be a small, self-contained addition once the port itself
+  exists — `UI/ThemeRegistry.h`'s fixed name→factory table is exactly the extension
+  point, no new mechanism needed.
+
+Unscoped beyond this sketch — no estimate of effort or of which piece would need to land
+first (process spawning is the obvious dependency root: nothing else works without it).
 
 ## Won't do (at least not soon)
 

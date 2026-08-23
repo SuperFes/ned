@@ -10,6 +10,7 @@
 #include <system_error>
 
 #include "Backup.h"
+#include "Clipboard.h"
 #include "CodeFold.h"
 #include "FinalNewline.h"
 #include "FormatOnSave.h"
@@ -197,6 +198,7 @@ namespace {
                 else {
                     context.killRing.KillPieces({std::move(*text)});
                 }
+                CopyToSystemClipboard(context.killRing.Current());
             }
             return;
         }
@@ -209,6 +211,7 @@ namespace {
         });
         if (any) {
             context.killRing.KillPieces(std::move(pieces));
+            CopyToSystemClipboard(context.killRing.Current());
         }
     }
 
@@ -414,6 +417,19 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     });
 
     registry.Register("yank", "Insert the most recent kill-ring entry at point.", [](CommandContext& context) {
+        // Emacs' own interprogram-paste-function convention: something
+        // copied in another app since the last kill-ring push takes
+        // priority over ned's own kill ring, so it becomes what yank
+        // inserts. Pushed as a fresh entry (not consulted again by
+        // yank-pop, which only ever cycles pre-existing entries) only when
+        // it actually differs from the current head -- otherwise every
+        // yank of an unchanged system clipboard would keep growing the
+        // ring with duplicates.
+        if (std::optional<std::string> pasted = PasteFromSystemClipboard()) {
+            if (context.killRing.Empty() || *pasted != context.killRing.Current()) {
+                context.killRing.Kill(std::move(*pasted));
+            }
+        }
         // Unconditional, matching the pre-multi-cursor behavior exactly:
         // yank always clears an existing mark, even on an empty kill ring.
         context.buffer.ClearMark();
@@ -573,6 +589,7 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
             else {
                 context.killRing.Kill(std::move(text));
             }
+            CopyToSystemClipboard(context.killRing.Current());
         }
     });
 
@@ -589,6 +606,7 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
             else {
                 context.killRing.Kill(std::move(text));
             }
+            CopyToSystemClipboard(context.killRing.Current());
         }
     });
 

@@ -17,6 +17,7 @@
 #include "Editor/Dap/DapConfig.h"
 #include "Editor/DiffRefreshSettings.h"
 #include "Editor/FinalNewline.h"
+#include "Editor/Clipboard.h"
 #include "Editor/FormatOnSave.h"
 #include "Editor/HighlightSettings.h"
 #include "Editor/InlineDiagnostics.h"
@@ -387,6 +388,22 @@ namespace {
 
     void NedSetProseCheckerEnabled(bool enabled) {
         editor::lsp::SetProseCheckingEnabled(enabled);
+    }
+
+    // system-clipboard follow-up: same argv shape/empty-clears convention
+    // as NedSetProseCheckerCommand, but copy and paste are independently
+    // overridable (see Editor/Clipboard.h's own header comment for why
+    // there are two).
+    void NedSetClipboardCopyCommand(std::vector<std::string> argv) {
+        editor::SetClipboardCopyCommand(std::move(argv));
+    }
+
+    void NedSetClipboardPasteCommand(std::vector<std::string> argv) {
+        editor::SetClipboardPasteCommand(std::move(argv));
+    }
+
+    void NedSetClipboardEnabled(bool enabled) {
+        editor::SetClipboardEnabled(enabled);
     }
 
     // syntax-theme-overrides follow-up: "each themeable entry" (Comment,
@@ -793,6 +810,26 @@ void InstallEditorBindings(Environment& env) {
         "ned", "set-prose-checker-enabled",
         "Enable or disable prose/spell/grammar checking as a whole (default true). Diagnostics from it merge "
         "alongside the buffer's primary language server's own diagnostics rather than replacing them.");
+
+    env.Register<&NedSetClipboardCopyCommand>(
+        "ned", "set-clipboard-copy-command",
+        "Set the command kill-line/kill-region/kill-ring-save/kill-word/yank pipe killed text into to reach the "
+        "system clipboard: (argv), e.g. (ned/set-clipboard-copy-command [\"wl-copy\"]). With no override "
+        "configured, ned auto-detects wl-copy (Wayland), xclip/xsel (X11), pbcopy (macOS), or clip.exe (WSL) on "
+        "$PATH, in that order -- an empty argv clears an explicit override and reverts to that auto-detection. "
+        "ned also always writes an OSC 52 escape sequence directly to the terminal regardless of this setting, "
+        "since it's the only thing that reaches a *local* clipboard over an SSH session with no tool installed on "
+        "the remote host; use ned/set-clipboard-enabled false to turn off both mechanisms at once.");
+    env.Register<&NedSetClipboardPasteCommand>(
+        "ned", "set-clipboard-paste-command",
+        "Set the command yank reads the system clipboard from when it differs from the kill ring's own most "
+        "recent entry: (argv), e.g. (ned/set-clipboard-paste-command [\"wl-paste\" \"-n\"]). Same auto-detection/"
+        "empty-clears convention as ned/set-clipboard-copy-command, resolved independently of it. There is no OSC "
+        "52 read-back fallback for paste -- see Editor/Clipboard.h's own comment for why.");
+    env.Register<&NedSetClipboardEnabled>(
+        "ned", "set-clipboard-enabled",
+        "Enable or disable system-clipboard integration as a whole (default true) -- both the shelled-out CLI "
+        "tool and the OSC 52 write/read paths.");
 
     env.Register<&NedSetSyntaxForeground>(
         "ned", "set-syntax-foreground",
