@@ -28,6 +28,7 @@
 #include "Editor/ProjectFileOps.h"
 #include "Editor/ProjectRoot.h"
 #include "Editor/ProjectSettings.h"
+#include "Editor/ToolchainIncludePaths.h"
 #include "Editor/ProjectSearch.h"
 #include "Editor/ProjectTree.h"
 #include "Editor/Rectangle.h"
@@ -6288,8 +6289,18 @@ void BufferView::OpenDetectedLink(const editor::link::DetectedLink& detected) {
     const std::filesystem::path baseDirectory =
         buffer.Path() ? buffer.Path()->parent_path() : editor::ProjectRoot();
     const editor::ProjectSettings projectSettings = editor::LoadProjectSettings(editor::ProjectRoot());
-    const auto resolved = editor::link::ResolveFileLink(detected.target, baseDirectory,
-                                                        editor::IncludePathsForMode(projectSettings, mode_.name));
+
+    // toolchain-include-paths follow-up: project-configured includePaths
+    // always come first (a user override outranks a guessed default), with
+    // the real compiler's own system search paths appended as a last-resort
+    // fallback for an angle-form/system include ProjectSettings never
+    // mentioned at all.
+    std::vector<std::filesystem::path> includePaths = editor::IncludePathsForMode(projectSettings, mode_.name);
+    const std::vector<std::filesystem::path> toolchainPaths =
+        editor::ToolchainIncludePathsForLanguage(editor::LanguageKeyForMode(mode_));
+    includePaths.insert(includePaths.end(), toolchainPaths.begin(), toolchainPaths.end());
+
+    const auto resolved = editor::link::ResolveFileLink(detected.target, baseDirectory, includePaths);
     if (!resolved) {
         statusMessage_ = "No such file: " + detected.target;
         return;

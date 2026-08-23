@@ -23,6 +23,7 @@
 #include "ProjectRoot.h"
 #include "ProjectSession.h"
 #include "TabWidth.h"
+#include "ToolchainIncludePaths.h"
 #include "Text/Grapheme.h"
 #include "Text/ThreeWayMerge.h"
 #include "Text/Utf8.h"
@@ -2322,6 +2323,25 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     registry.Register("open-link-at-point", "Follow the link (Org bracket link, URL, or file path) at point.",
                       [](CommandContext& context) {
                           context.interactiveRequest = InteractiveRequest::OpenLinkAtPoint;
+                      });
+
+    // toolchain-include-paths follow-up: M-x only, no dedicated binding --
+    // same "look around/act on demand" precedent vcs-blame-buffer/
+    // vcs-show-log established for an infrequent, non-interactive action.
+    // Clears Editor/ToolchainIncludePaths.h's on-disk cache of compiler-
+    // derived default include paths (used by open-link-at-point/LSP
+    // resolution as a last-resort fallback below ProjectSettings' own
+    // configured includePaths), so the next lookup re-probes the real
+    // toolchain instead of reusing a result that might now be stale (e.g.
+    // right after a compiler upgrade).
+    registry.Register("refresh-toolchain-include-paths",
+                      "Clear the cached compiler-derived default include paths, so the next lookup re-probes the "
+                      "real toolchain.",
+                      [](CommandContext& context) {
+                          ClearToolchainIncludePathCache();
+                          if (context.message) {
+                              *context.message = "Toolchain include-path cache cleared.";
+                          }
                       });
 }
 
