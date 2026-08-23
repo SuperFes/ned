@@ -14,6 +14,7 @@
 
 #include "Border.h"
 #include "EchoArea.h"
+#include "Editor/Clipboard.h"
 #include "Editor/CodeFoldSettings.h"
 #include "Editor/FuzzyMatch.h"
 #include "Editor/HeaderSource.h"
@@ -7493,6 +7494,7 @@ void BufferView::HandleZapToCharKey(const editor::KeyChord& chord) {
             else {
                 killRing_.Kill(std::move(text));
             }
+            editor::CopyToSystemClipboard(killRing_.Current());
             statusMessage_.clear();
         }
         else {
@@ -7523,6 +7525,7 @@ void BufferView::HandleZapToCharKey(const editor::KeyChord& chord) {
     });
     if (any) {
         killRing_.KillPieces(std::move(pieces));
+        editor::CopyToSystemClipboard(killRing_.Current());
         statusMessage_.clear();
     }
     else {
