@@ -311,3 +311,52 @@ TEST_CASE("BufferView::paint with JsonMode's tree-sitter highlighting stays fast
 
     REQUIRE(duration_cast<milliseconds>(elapsed).count() < 500);
 }
+
+TEST_CASE("BufferView::paint stays fast repeatedly switching between two tree-sitter-highlighted buffers",
+          "[Performance]") {
+    // per-buffer-highlight-cache follow-up: highlightCacheBuffer_/
+    // foldableBlocksCacheBuffer_ (the two fields the test right above this
+    // one already exercises) only ever remember the *most recently
+    // painted* buffer -- switching to a second buffer and back used to be
+    // a guaranteed miss even though neither buffer's content had changed,
+    // forcing a full tree-sitter reparse + fold query run on every single
+    // switch back, purely because some other buffer got painted in
+    // between. This is what proved highlightCacheByBuffer_/
+    // foldableBlocksCacheByBuffer_ (BufferView.h) actually fix that, not
+    // just asserted it should: alternating Paint() between two buffers 50
+    // times total stays within the same bound the single-buffer 50-call
+    // test above uses, which it would not without those two caches --
+    // pre-fix, this is ~25 full reparses per buffer instead of 1.
+    ned::text::Buffer buffer1("scratch1", ned::text::Rope(MakeLargeJsonArray(150)));
+    ned::text::Buffer buffer2("scratch2", ned::text::Rope(MakeLargeJsonArray(150)));
+
+    ned::text::KillRing        killRing;
+    ned::editor::RegisterTable registers;
+    ned::editor::PromptHistory promptHistory;
+    ned::text::BufferList      bufferList;
+
+    ned::editor::CommandRegistry registry;
+    ned::editor::RegisterBuiltinCommands(registry);
+    ned::editor::Keymap     keymap = ned::editor::BuildDefaultGlobalKeymap();
+    ned::editor::Dispatcher dispatcher(registry, ned::editor::KeymapStack({&keymap}));
+    ned::editor::Mode       mode  = ned::editor::JsonMode();
+    ned::ui::Theme          theme = ned::ui::DarkTheme();
+
+    std::string statusMessage;
+
+    ned::ui::ActiveBuffer activeBuffer(buffer1);
+    ned::ui::BufferView   view(activeBuffer, killRing, registers, promptHistory, bufferList, dispatcher, statusMessage, mode, theme);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 23});
+
+    ned::ui::Screen screen = ned::ui::Screen(80, 24);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 23});
+
+    const auto start = steady_clock::now();
+    for (int i = 0; i < 50; ++i) {
+        activeBuffer.Set(i % 2 == 0 ? buffer1 : buffer2);
+        view.Paint(canvas);
+    }
+    const auto elapsed = steady_clock::now() - start;
+
+    REQUIRE(duration_cast<milliseconds>(elapsed).count() < 500);
+}

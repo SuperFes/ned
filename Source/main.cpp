@@ -28,6 +28,7 @@
 #include "Editor/MinimapSettings.h"
 #include "Editor/Mode.h"
 #include "Editor/ModeOverrides.h"
+#include "Editor/ModePrewarm.h"
 #include "Editor/ProjectPlugins.h"
 #include "Editor/ProjectRoot.h"
 #include "Editor/ProjectSession.h"
@@ -464,12 +465,12 @@ auto main(int argc, char** argv) -> int {
         }
     }
 
-    ned::editor::Mode mode = ned::editor::ModeForBuffer(*buffer);
+    ned::editor::Mode mode = ned::editor::CachedModeForBuffer(*buffer);
 
     // per-buffer-mode follow-up: this is just the *initial* Mode for
     // whichever pane WindowManager constructs first -- each Pane resyncs its
-    // own Mode fresh (via ned::editor::ModeForBuffer, the same function used
-    // here) whenever its active buffer actually changes (find-file,
+    // own Mode fresh (via ned::editor::CachedModeForBuffer, the same
+    // function used here) whenever its active buffer actually changes (find-file,
     // switch-to-buffer, a tab/sidebar click, visiting a search result,
     // etc.), see BufferView::SetOnActiveBufferChanged and Pane's own wiring
     // of it in WindowManager.cpp. Mode is a property of the buffer being
@@ -816,6 +817,27 @@ auto main(int argc, char** argv) -> int {
     // reading stdin now (see the --detect-theme branch's own comment above
     // for why RunDetectTheme must finish strictly before this point).
     EventLoop eventLoop;
+
+    // background-mode-prewarm follow-up: builds every already-open buffer's
+    // Mode (tree-sitter parse included) on a background thread right now,
+    // uniformly -- not just the buffer about to be shown first -- so
+    // switching to any of them later, even for the very first time, never
+    // pays for that build synchronously; see ModePrewarm.h's own doc
+    // comment. Buffers opened before this point (session restore, CLI
+    // args) couldn't be prewarmed any earlier than this: a background
+    // thread's only way to hand its result back to the main thread is
+    // eventLoop.Post, and eventLoop doesn't exist until the line above.
+    // modePrewarmer outlives eventLoop.Run() below, the same "declared
+    // before, destroyed after" scoping every other process-lifetime
+    // manager here (lspManager, dapManager, taskRunner, ...) already uses.
+    ned::editor::ModePrewarmer modePrewarmer(bufferList, eventLoop);
+    for (const auto& openBuffer : bufferList.Buffers()) {
+        modePrewarmer.Prewarm(*openBuffer);
+    }
+    bufferList.SetOnFileOpened([&modePrewarmer](ned::text::Buffer& opened) -> void {
+        ned::editor::RestoreFilePlace(opened, static_cast<std::size_t>(ned::editor::TabWidth()));
+        modePrewarmer.Prewarm(opened);
+    });
 
     // ansi-fallback-theme follow-up: with neither truecolor nor a 256-color
     // palette (e.g. the Linux framebuffer console, TERM=linux: 8 colors),

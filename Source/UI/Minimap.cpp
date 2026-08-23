@@ -9,6 +9,7 @@
 
 #include "Editor/MinimapSettings.h"
 #include "Editor/Multibuffer.h"
+#include "Editor/SyntaxTheme.h"
 #include "EventLoop.h"
 
 namespace ned::ui {
@@ -95,6 +96,13 @@ void Minimap::ReleasePlane() const {
     if (plane_ != nullptr) {
         ncplane_destroy(plane_);
         plane_ = nullptr;
+    }
+}
+
+void Minimap::ClearBufferCache(text::Buffer& buffer) {
+    highlightCacheByBuffer_.erase(&buffer);
+    if (cacheBuffer_ == &buffer) {
+        cacheBuffer_ = nullptr;
     }
 }
 
@@ -374,10 +382,29 @@ void Minimap::EnsurePlane() const {
 
     std::vector<IndexedSpan> sortedSpans;
     if (mode_.highlight) {
-        const std::vector<editor::HighlightSpan> spans = mode_.highlight(buffer.Text());
-        sortedSpans.reserve(spans.size());
-        for (std::size_t i = 0; i < spans.size(); ++i) {
-            sortedSpans.push_back(IndexedSpan{spans[i].startByte, spans[i].endByte, spans[i].syntaxClass, i});
+        // per-buffer-highlight-cache follow-up: this call used to run
+        // unconditionally every time the raster cache above missed --
+        // which includes every scroll tick, not just a buffer switch --
+        // even though its result only actually changes when buffer's
+        // content/mode does. See highlightCacheByBuffer_'s own doc comment
+        // in Minimap.h.
+        const auto it = highlightCacheByBuffer_.find(&buffer);
+        const std::vector<editor::HighlightSpan>* spans;
+        if (it == highlightCacheByBuffer_.end() || it->second.contentGeneration != buffer.ContentGeneration() ||
+            it->second.classGeneration != editor::CaptureClassGeneration() || it->second.modeName != mode_.name) {
+            HighlightCacheEntry entry;
+            entry.spans             = mode_.highlight(buffer.Text());
+            entry.contentGeneration = buffer.ContentGeneration();
+            entry.classGeneration   = editor::CaptureClassGeneration();
+            entry.modeName          = mode_.name;
+            spans                   = &highlightCacheByBuffer_.insert_or_assign(&buffer, std::move(entry)).first->second.spans;
+        }
+        else {
+            spans = &it->second.spans;
+        }
+        sortedSpans.reserve(spans->size());
+        for (std::size_t i = 0; i < spans->size(); ++i) {
+            sortedSpans.push_back(IndexedSpan{(*spans)[i].startByte, (*spans)[i].endByte, (*spans)[i].syntaxClass, i});
         }
         std::sort(sortedSpans.begin(), sortedSpans.end(),
                   [](const IndexedSpan& a, const IndexedSpan& b) { return a.startByte < b.startByte; });

@@ -62,6 +62,24 @@ TEST_CASE("Minimap paints without crashing on an empty buffer", "[Minimap]") {
     minimap.Paint(canvas); // must not crash/throw
 }
 
+// per-buffer-highlight-cache follow-up: ClearBufferCache doesn't touch
+// plane_/EnsurePlane at all -- just the highlight-span map -- so this
+// exercises it both before the cache could hold anything for buffer (a
+// fresh Minimap) and after a real Paint() call (still a no-op without a
+// wired EventLoop, per the test above, but the same code path a live
+// pane's own Minimap goes through on a real buffer close either way).
+TEST_CASE("Minimap::ClearBufferCache is a safe no-op, with or without a prior paint", "[Minimap]") {
+    Fixture  fixture;
+    Minimap  minimap = fixture.View();
+    minimap.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 4, .y_min = 0, .y_max = 9});
+    REQUIRE_NOTHROW(minimap.ClearBufferCache(fixture.buffer));
+
+    ned::ui::Screen screen = ned::ui::Screen(5, 10);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 4, .y_min = 0, .y_max = 9});
+    minimap.Paint(canvas);
+    REQUIRE_NOTHROW(minimap.ClearBufferCache(fixture.buffer));
+}
+
 TEST_CASE("Minimap paints a flat background when no EventLoop is wired", "[Minimap]") {
     // Real-minimap-look follow-up: content now always renders via
     // Notcurses' own ncvisual_blit into a plane this widget owns
