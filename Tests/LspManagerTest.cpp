@@ -559,6 +559,93 @@ TEST_CASE("LspManager::RequestDefinition resolves to an empty list when the buff
     REQUIRE(got.empty());
 }
 
+TEST_CASE("LspManager::RequestSwitchSourceHeader sends a bare TextDocumentIdentifier and resolves a string uri response",
+          "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-switch-header-test.cpp";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    bool                                  invoked = false;
+    std::optional<std::filesystem::path> got;
+    manager.RequestSwitchSourceHeader(buffer, [&](std::optional<std::filesystem::path> path) {
+        invoked = true;
+        got     = path;
+    });
+
+    const std::string raw     = ReadRawFrame(server.serverStdinRead);
+    const Json        request = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(request["method"] == "textDocument/switchSourceHeader");
+    REQUIRE(request["params"].contains("uri"));
+    REQUIRE_FALSE(request["params"].contains("textDocument")); // bare TextDocumentIdentifier, not wrapped
+
+    const std::filesystem::path headerPath = std::filesystem::temp_directory_path() / "ned-lsp-manager-switch-header-test.h";
+    const Json                  response   = {
+        {"jsonrpc", "2.0"},
+        {"id", RequestIdFromFrame(raw)},
+        {"result", "file://" + headerPath.string()},
+    };
+    client->DispatchFrame(response.dump());
+
+    REQUIRE(invoked);
+    REQUIRE(got.has_value());
+    REQUIRE(*got == headerPath);
+}
+
+TEST_CASE("LspManager::RequestSwitchSourceHeader resolves to nullopt on a null result (no counterpart)", "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-switch-header-null-test.cpp";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    bool                                  invoked = false;
+    std::optional<std::filesystem::path> got;
+    manager.RequestSwitchSourceHeader(buffer, [&](std::optional<std::filesystem::path> path) {
+        invoked = true;
+        got     = path;
+    });
+
+    const std::string raw      = ReadRawFrame(server.serverStdinRead);
+    const Json        response = {
+        {"jsonrpc", "2.0"},
+        {"id", RequestIdFromFrame(raw)},
+        {"result", nullptr},
+    };
+    client->DispatchFrame(response.dump());
+
+    REQUIRE(invoked);
+    REQUIRE_FALSE(got.has_value());
+}
+
+TEST_CASE("LspManager::RequestSwitchSourceHeader resolves to nullopt when the buffer was never synced", "[Lsp]") {
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    Buffer&            buffer = bufferList.CreateBuffer("scratch");
+
+    bool                                  invoked = false;
+    std::optional<std::filesystem::path> got;
+    manager.RequestSwitchSourceHeader(buffer, [&](std::optional<std::filesystem::path> path) {
+        invoked = true;
+        got     = path;
+    });
+
+    REQUIRE(invoked);
+    REQUIRE_FALSE(got.has_value());
+}
+
 TEST_CASE("LspManager::RequestRename sends newName and resolves a multi-file WorkspaceEdit's uris to real paths", "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;

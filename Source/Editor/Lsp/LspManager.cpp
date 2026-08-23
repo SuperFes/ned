@@ -738,6 +738,35 @@ void LspManager::RequestDefinition(text::Buffer& buffer, std::size_t byteOffset,
                         });
 }
 
+void LspManager::RequestSwitchSourceHeader(text::Buffer& buffer, SwitchHeaderCallback callback) {
+    BufferSyncState* state = PrimarySyncState(buffer);
+    if (!state || !state->opened) {
+        callback(std::nullopt);
+        return;
+    }
+    LspClient* client = ExistingClientForLanguage(state->language);
+    if (!client) {
+        callback(std::nullopt);
+        return;
+    }
+
+    const std::string language = state->language;
+    const Json        params   = {{"uri", state->uri}}; // bare TextDocumentIdentifier -- see this method's own header doc comment
+    client->SendRequest("textDocument/switchSourceHeader", params,
+                        [this, language, callback = std::move(callback)](std::optional<Json> result, std::optional<Json> error) {
+                            if (error) {
+                                LogError(language, ExtractErrorMessage(*error));
+                                callback(std::nullopt);
+                                return;
+                            }
+                            if (!result || !result->is_string()) {
+                                callback(std::nullopt);
+                                return;
+                            }
+                            callback(UriToPath(result->get<std::string>()));
+                        });
+}
+
 void LspManager::RequestRename(text::Buffer& buffer, std::size_t byteOffset, const std::string& newName, RenameCallback callback) {
     BufferSyncState* state = PrimarySyncState(buffer);
     if (!state || !state->opened) {

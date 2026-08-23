@@ -1768,6 +1768,15 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           context.interactiveRequest = InteractiveRequest::LspRename;
                       });
 
+    // header-source-switching follow-up: one more one-shot direct action
+    // (see InteractiveRequest::SwitchHeaderSource's own doc comment in
+    // Command.h) -- BufferView::SwitchHeaderSource owns the actual
+    // request/fallback logic.
+    registry.Register("switch-header-source", "Switch between a C/C++ header and its implementation file.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::SwitchHeaderSource;
+                      });
+
     // task-runner follow-up: two more prompt-shaped one-shot requests, same
     // "just signal intent" shape as every InteractiveRequest-routed command
     // above -- BufferView::HandlePromptKey's InputMode::TaskName case is
@@ -2438,6 +2447,12 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("C-M-i"), "lsp-complete");
     keymap.Bind(ParseKeySequence("M-."), "lsp-goto-definition"); // real Emacs' own xref-find-definitions binding
     keymap.Bind(ParseKeySequence("ESC ."), "lsp-goto-definition");
+    // header-source-switching follow-up: "M-o" is free (grepped the full
+    // bind list in this function) and matches the VS Code/CLion C/C++
+    // extensions' own Alt+O convention for this exact action -- no
+    // equivalent real-Emacs binding to align with instead (ff-find-other-
+    // file has no standard default keybinding of its own).
+    keymap.Bind(ParseKeySequence("M-o"), "switch-header-source");
     keymap.Bind(ParseKeySequence("C-c C-M-r"), "lsp-rename"); // C-c C-r is already project-replace
     keymap.Bind(ParseKeySequence("C-c C-b"), "run-task");
     // task-runner follow-up: same "shift/meta variant is the stronger

@@ -6093,6 +6093,172 @@ TEST_CASE("M-. with multiple definitions: digit-select jumps to the chosen one",
     std::filesystem::remove(secondPath);
 }
 
+// header-source-switching follow-up: M-o as a raw byte sequence, same
+// reasoning ManualGotoDefinitionEvent's own header comment gives.
+ned::ui::Event ManualSwitchHeaderSourceEvent() {
+    return ned::ui::test::Alt('o');
+}
+
+TEST_CASE("M-o switches to the file clangd's switchSourceHeader response names", "[BufferView]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_bufferview_switch_header_lsp_test";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    const std::filesystem::path sourcePath = dir / "widget.cpp";
+    const std::filesystem::path headerPath = dir / "widget.h";
+    {
+        std::ofstream(sourcePath) << "// source\n";
+    }
+    {
+        std::ofstream(headerPath) << "// header\n";
+    }
+
+    Fixture             fixture;
+    ned::text::Buffer&  buffer = fixture.bufferList.OpenOrCreateFile(sourcePath);
+    fixture.activeBuffer.Set(buffer);
+
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::LspClient* client = nullptr;
+    FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
+    ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+    (void)ReadRawLspFrame(server.serverStdinRead); // drain didOpen
+
+    view.OnEvent(ManualSwitchHeaderSourceEvent());
+
+    const std::string raw     = ReadRawLspFrame(server.serverStdinRead);
+    const auto        request = ned::editor::lsp::Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(request["method"] == "textDocument/switchSourceHeader");
+
+    const auto response = ned::editor::lsp::Json{
+        {"jsonrpc", "2.0"},
+        {"id", LspRequestIdFromFrame(raw)},
+        {"result", "file://" + headerPath.string()},
+    };
+    client->DispatchFrame(response.dump());
+
+    REQUIRE(fixture.activeBuffer.Get().Path() == headerPath);
+    REQUIRE(fixture.statusMessage.empty());
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("M-o falls back to the filesystem heuristic when the server reports no counterpart", "[BufferView]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_bufferview_switch_header_fallback_test";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    const std::filesystem::path sourcePath = dir / "widget.cpp";
+    const std::filesystem::path headerPath = dir / "widget.h";
+    {
+        std::ofstream(sourcePath) << "// source\n";
+    }
+    {
+        std::ofstream(headerPath) << "// header\n";
+    }
+
+    Fixture             fixture;
+    ned::text::Buffer&  buffer = fixture.bufferList.OpenOrCreateFile(sourcePath);
+    fixture.activeBuffer.Set(buffer);
+
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::LspClient* client = nullptr;
+    FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
+    ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+    (void)ReadRawLspFrame(server.serverStdinRead);
+
+    view.OnEvent(ManualSwitchHeaderSourceEvent());
+
+    const std::string raw      = ReadRawLspFrame(server.serverStdinRead);
+    const auto        response = ned::editor::lsp::Json{
+        {"jsonrpc", "2.0"},
+        {"id", LspRequestIdFromFrame(raw)},
+        {"result", nullptr},
+    };
+    client->DispatchFrame(response.dump());
+
+    REQUIRE(fixture.activeBuffer.Get().Path() == headerPath);
+    REQUIRE(fixture.statusMessage.empty());
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("M-o falls straight to the filesystem heuristic with no LSP manager set", "[BufferView]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_bufferview_switch_header_no_lsp_test";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    const std::filesystem::path sourcePath = dir / "widget.cpp";
+    const std::filesystem::path headerPath = dir / "widget.h";
+    {
+        std::ofstream(sourcePath) << "// source\n";
+    }
+    {
+        std::ofstream(headerPath) << "// header\n";
+    }
+
+    Fixture            fixture;
+    ned::text::Buffer& buffer = fixture.bufferList.OpenOrCreateFile(sourcePath);
+    fixture.activeBuffer.Set(buffer);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ManualSwitchHeaderSourceEvent());
+
+    REQUIRE(fixture.activeBuffer.Get().Path() == headerPath);
+    REQUIRE(fixture.statusMessage.empty());
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("M-o reports failure when neither LSP nor the filesystem heuristic find a counterpart", "[BufferView]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_bufferview_switch_header_missing_test";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    const std::filesystem::path sourcePath = dir / "widget.cpp";
+    {
+        std::ofstream(sourcePath) << "// source\n"; // no widget.h anywhere
+    }
+
+    Fixture            fixture;
+    ned::text::Buffer& buffer = fixture.bufferList.OpenOrCreateFile(sourcePath);
+    fixture.activeBuffer.Set(buffer);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ManualSwitchHeaderSourceEvent());
+
+    REQUIRE(&fixture.activeBuffer.Get() == &buffer); // unchanged
+    REQUIRE(fixture.statusMessage == "No corresponding header/source file found.");
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("M-o reports \"Buffer has no associated file.\" for a scratch buffer", "[BufferView]") {
+    Fixture fixture; // default buffer has no Path() of its own
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ManualSwitchHeaderSourceEvent());
+
+    REQUIRE(fixture.statusMessage == "Buffer has no associated file.");
+}
+
 TEST_CASE("C-c C-M-r prompts for a new name, then applies a multi-file rename across two buffers on y",
           "[BufferView]") {
     Fixture                     fixture;

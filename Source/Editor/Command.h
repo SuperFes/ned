@@ -391,7 +391,17 @@ enum class InteractiveRequest { None,
                                 // callback main.cpp registered (SetOnAcpPanelToggle), since the
                                 // panel is an OverlayHost overlay owned above the window/pane
                                 // level, not per-pane state.
-                                AcpTogglePanel };
+                                AcpTogglePanel,
+                                // header-source-switching follow-up: one-shot direct action, same
+                                // "async request, own response" shape as LspGotoDefinition above --
+                                // BufferView::SwitchHeaderSource tries clangd's
+                                // textDocument/switchSourceHeader extension first (when an LSP
+                                // client is running for the buffer's language), falling back to
+                                // Editor/HeaderSource.h's same-basename/sibling-directory heuristic
+                                // when the server has none, returns none, or no client is running
+                                // at all -- unlike LspGotoDefinition, LSP absence here is a normal
+                                // fallback path, not an error.
+                                SwitchHeaderSource };
 
 // Everything a command implementation might need. Built fresh per invocation
 // from live references -- never stored, so there's no lifetime concern beyond
