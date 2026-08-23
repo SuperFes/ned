@@ -16,6 +16,7 @@
 #include "EchoArea.h"
 #include "Editor/Clipboard.h"
 #include "Editor/CodeFoldSettings.h"
+#include "Editor/DabbrevComplete.h"
 #include "Editor/FuzzyMatch.h"
 #include "Editor/HeaderSource.h"
 #include "Editor/HighlightSettings.h"
@@ -3443,12 +3444,22 @@ void BufferView::EnsureStatusMessageFreshness() {
 }
 
 void BufferView::RequestCompletionAtPoint() {
-    if (!lspManager_) {
+    text::Buffer&     buffer = activeBuffer_.Get();
+    const std::size_t point  = buffer.Point();
+
+    // dabbrev-fallback follow-up: StatusForLanguage never spawns a client,
+    // so this is a pure "is one currently usable" check -- NotConfigured/
+    // SpawnFailed/Disconnected all fall back to scanning the buffer itself
+    // rather than asking a server that isn't there.
+    const std::string languageKey = editor::LanguageKeyForMode(mode_);
+    const bool         hasRunningLsp =
+        lspManager_ && lspManager_->StatusForLanguage(languageKey) == editor::lsp::LspManager::LspStatus::Running;
+    if (!hasRunningLsp) {
+        ApplyDabbrevCompletion(buffer, point);
         return;
     }
-    text::Buffer&       buffer     = activeBuffer_.Get();
+
     text::Buffer* const bufferPtr  = &buffer;
-    const std::size_t   point      = buffer.Point();
     const std::size_t   generation = ++completionRequestGeneration_;
 
     lspManager_->RequestCompletion(
@@ -3470,6 +3481,24 @@ void BufferView::RequestCompletionAtPoint() {
             }
             ghostCompletion_ = GhostCompletion{.requestPoint = point, .items = std::move(items), .selectedIndex = 0};
         });
+}
+
+void BufferView::ApplyDabbrevCompletion(text::Buffer& buffer, std::size_t point) {
+    const text::Rope& content     = buffer.Content();
+    const std::size_t prefixStart = WordPrefixStart(content, point);
+    const std::string prefix      = content.Substring(prefixStart, point - prefixStart);
+
+    std::vector<std::string> words = editor::CollectDabbrevCandidates(buffer.Text(), point, prefix);
+    if (words.empty()) {
+        ghostCompletion_.reset();
+        return;
+    }
+    std::vector<editor::lsp::CompletionItem> items;
+    items.reserve(words.size());
+    for (std::string& word : words) {
+        items.push_back(editor::lsp::CompletionItem{.label = word, .insertText = word});
+    }
+    ghostCompletion_ = GhostCompletion{.requestPoint = point, .items = std::move(items), .selectedIndex = 0};
 }
 
 bool BufferView::ShouldSuppressAutoCompletion() const {
@@ -3516,7 +3545,11 @@ bool BufferView::ShouldSuppressAutoCompletion() const {
 
 void BufferView::MaybeScheduleAutoCompletion(const editor::KeyChord& chord, std::size_t generationBefore) {
     ghostCompletion_.reset(); // typing invalidates any currently-shown suggestion
-    if (!lspManager_ || !editor::lsp::LspAutoCompleteEnabled()) {
+    // dabbrev-fallback follow-up: no longer gated on lspManager_ being set at
+    // all -- RequestCompletionAtPoint (fired once this debounce elapses)
+    // itself decides between an LSP request and the buffer-word fallback.
+    // The auto-popup toggle still governs both sources uniformly.
+    if (!editor::lsp::LspAutoCompleteEnabled()) {
         return;
     }
     if (chord.Control || chord.Meta || chord.Special != editor::SpecialKey::None) {

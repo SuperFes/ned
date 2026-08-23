@@ -2135,6 +2135,12 @@ class BufferView : public Widget {
     std::size_t completionRequestGeneration_ = 0;
 
     void                      RequestCompletionAtPoint();
+    // dabbrev-fallback follow-up: the "no running LSP client for this
+    // buffer's language" half of RequestCompletionAtPoint -- scans the
+    // buffer itself (Editor/DabbrevComplete.h) for candidates instead of
+    // asking a server, populating ghostCompletion_ synchronously (no
+    // generation/staleness bookkeeping needed, unlike the async LSP path).
+    void                      ApplyDabbrevCompletion(text::Buffer& buffer, std::size_t point);
     [[nodiscard]] bool        ShouldSuppressAutoCompletion() const;
     void                      MaybeScheduleAutoCompletion(const editor::KeyChord& chord, std::size_t generationBefore);
     void                      AcceptGhostCompletion();
