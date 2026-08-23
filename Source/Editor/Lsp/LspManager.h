@@ -75,7 +75,16 @@ inline constexpr std::string_view kProseLanguageKey = "prose";
 // return bare Command objects instead of edit-carrying CodeAction literals,
 // which made every "fix available" diagnostic unapplyable ("has no edit to
 // apply") despite listing fine.
-[[nodiscard]] Json BuildInitializeParams(const std::filesystem::path& projectRoot);
+//
+// initializationOptions (project-settings-lsp-init-options follow-up) is
+// merged in verbatim as the request's own "initializationOptions" field when
+// non-empty -- Editor/ProjectSettings.h's per-language
+// lspInitializationOptionsByLanguage is what ClientForLanguage actually
+// passes here; left as Json::object() (the default) for a language with
+// nothing configured, in which case the field is omitted entirely rather
+// than sent as an empty object.
+[[nodiscard]] Json BuildInitializeParams(const std::filesystem::path& projectRoot,
+                                        const Json& initializationOptions = Json::object());
 
 class LspManager {
   public:
@@ -260,8 +269,12 @@ class LspManager {
     // the same "no running ScreenInteractive::Loop() needed" reasoning
     // DispatchFrame's own doc comment explains. Production code
     // (ClientForLanguage) never calls this. Replaces any existing client
-    // already registered for language.
-    LspClient& SetClientForTesting(std::string language, std::unique_ptr<LspClient> client);
+    // already registered for language. workspaceConfiguration mirrors what
+    // ClientForLanguage would have loaded from ProjectSettings -- lets a test
+    // exercise the workspace/configuration handler's real section-resolution
+    // logic without a real .ned/settings.json on disk.
+    LspClient& SetClientForTesting(std::string language, std::unique_ptr<LspClient> client,
+                                  const Json& workspaceConfiguration = Json::object());
 
     // error-visibility follow-up. Finds (or, on the very first call in this
     // process's lifetime, creates) kLspLogBufferName and appends one
@@ -389,8 +402,14 @@ class LspManager {
     // publishDiagnostics routing. language (error-visibility follow-up) is
     // threaded through to the disconnect handler wired here, since a client
     // has no notion of its own language name -- both call sites already
-    // have it in scope.
-    void WireNotificationHandlers(LspClient& client, const std::string& language);
+    // have it in scope. workspaceConfiguration (project-settings-lsp-init-
+    // options follow-up) is what the workspace/configuration request handler
+    // resolves each requested section against -- see ProjectSettings.h's own
+    // doc comment on lspWorkspaceConfiguration for why this is a flat,
+    // language-agnostic tree rather than keyed by language like
+    // initializationOptions is.
+    void WireNotificationHandlers(LspClient& client, const std::string& language,
+                                  const Json& workspaceConfiguration = Json::object());
 
     // error-visibility follow-up. Called (on the main thread, via
     // LspClient::SetOnDisconnected's own Post-marshaled callback) the

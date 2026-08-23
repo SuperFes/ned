@@ -52,6 +52,26 @@ TEST_CASE("DetectLinkAtPoint classifies a dotted-extension token as a File candi
     CHECK(detected->target == "notes.txt");
 }
 
+TEST_CASE("DetectLinkAtPoint strips quotes off a #include-style target", "[Link]") {
+    const std::string text  = "#include \"Editor/Acp/AcpManager.h\"\n";
+    const std::size_t point = text.find("AcpManager");
+
+    const auto detected = DetectLinkAtPoint(text, point);
+    REQUIRE(detected.has_value());
+    CHECK(detected->kind == LinkKind::File);
+    CHECK(detected->target == "Editor/Acp/AcpManager.h");
+}
+
+TEST_CASE("DetectLinkAtPoint strips angle brackets off a #include-style target", "[Link]") {
+    const std::string text  = "#include <vector>\n";
+    const std::size_t point = text.find("vector");
+
+    const auto detected = DetectLinkAtPoint(text, point);
+    REQUIRE(detected.has_value());
+    CHECK(detected->kind == LinkKind::File);
+    CHECK(detected->target == "vector");
+}
+
 TEST_CASE("DetectLinkAtPoint never classifies a bare word as a File candidate", "[Link]") {
     const std::string text  = "TODO buy milk\n";
     const std::size_t point = text.find("TODO");
@@ -108,6 +128,27 @@ TEST_CASE("ResolveFileLink returns nullopt when nothing exists anywhere it looks
     std::filesystem::create_directory(dir);
 
     REQUIRE_FALSE(ResolveFileLink("does-not-exist.txt", dir).has_value());
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("ResolveFileLink falls back to includePaths for a target not found under baseDirectory/root", "[Link]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_link_test_include_paths";
+    std::filesystem::remove_all(dir);
+    const std::filesystem::path includeDir = dir / "vendored" / "include";
+    std::filesystem::create_directories(includeDir);
+    const std::filesystem::path header = includeDir / "vector";
+    {
+        std::ofstream(header) << "// stand-in for a system header";
+    }
+    const std::filesystem::path emptyBase = dir / "empty_base";
+    std::filesystem::create_directories(emptyBase);
+
+    REQUIRE_FALSE(ResolveFileLink("vector", emptyBase).has_value());
+
+    const auto resolved = ResolveFileLink("vector", emptyBase, {includeDir});
+    REQUIRE(resolved.has_value());
+    CHECK(std::filesystem::equivalent(*resolved, header));
 
     std::filesystem::remove_all(dir);
 }

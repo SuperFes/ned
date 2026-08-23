@@ -52,13 +52,14 @@ struct FakeServer {
     FakeServer& operator=(const FakeServer&) = delete;
     FakeServer(FakeServer&&)                 = default;
 
-    static FakeServer Create(LspManager& manager, const std::string& language, ned::ui::EventLoop& eventLoop, LspClient*& outClient) {
+    static FakeServer Create(LspManager& manager, const std::string& language, ned::ui::EventLoop& eventLoop, LspClient*& outClient,
+                            const Json& workspaceConfiguration = Json::object()) {
         int clientWritesHere[2]; // client's write end -> test's read end
         int clientReadsHere[2];  // test's write end -> client's read end
         REQUIRE(::pipe(clientWritesHere) == 0);
         REQUIRE(::pipe(clientReadsHere) == 0);
         auto client = std::make_unique<LspClient>(Transport(clientReadsHere[0], clientWritesHere[1]), eventLoop);
-        outClient   = &manager.SetClientForTesting(language, std::move(client));
+        outClient   = &manager.SetClientForTesting(language, std::move(client), workspaceConfiguration);
         return FakeServer(clientWritesHere[0], clientReadsHere[1]);
     }
 };
@@ -867,6 +868,24 @@ TEST_CASE("BuildInitializeParams absolutizes a relative rootUri", "[Lsp]") {
     REQUIRE(rootUri.find("relative/dir") != std::string::npos);
 }
 
+TEST_CASE("BuildInitializeParams omits initializationOptions when none is given", "[Lsp]") {
+    const Json params = ned::editor::lsp::BuildInitializeParams(std::filesystem::path("/some/project"));
+    REQUIRE_FALSE(params.contains("initializationOptions"));
+}
+
+TEST_CASE("BuildInitializeParams merges a non-empty initializationOptions verbatim", "[Lsp]") {
+    // project-settings-lsp-init-options follow-up: e.g. a PHP project that
+    // always preloads a bootstrap file before any real request runs, and
+    // needs its language server told about that file via whatever shape its
+    // own initializationOptions schema expects -- BuildInitializeParams
+    // itself is unopinionated about the contents, just merges them in.
+    const Json options = Json{{"bootstrapFiles", Json::array({"bootstrap.php"})}};
+    const Json params  = ned::editor::lsp::BuildInitializeParams(std::filesystem::path("/some/project"), options);
+
+    REQUIRE(params.contains("initializationOptions"));
+    REQUIRE(params["initializationOptions"] == options);
+}
+
 TEST_CASE("LspManager tracks $/progress begin/report/end as LSP background activity with detail", "[Lsp]") {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
@@ -921,6 +940,56 @@ TEST_CASE("LspManager answers window/workDoneProgress/create with a null result"
     REQUIRE(response["id"] == 3);
     REQUIRE(response.contains("result"));
     REQUIRE(response["result"].is_null());
+}
+
+TEST_CASE("LspManager resolves workspace/configuration sections against lspWorkspaceConfiguration", "[Lsp]") {
+    // project-settings-lsp-init-options follow-up: a config-pull server
+    // (e.g. intelephense/phpactor-style) asks for its own section by dotted
+    // path -- confirm both a top-level and a nested section resolve, and an
+    // unconfigured one still falls back to null rather than erroring.
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+
+    const Json workspaceConfig = Json{{"phpactor", {{"file_extensions", Json::array({"php"})}}},
+                                      {"intelephense", {{"environment", {{"includePaths", Json::array({"/stubs"})}}}}}};
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "php", eventLoop, client, workspaceConfig);
+
+    const Json request = {{"jsonrpc", "2.0"},
+                          {"id", 7},
+                          {"method", "workspace/configuration"},
+                          {"params",
+                           {{"items", Json::array({{{"section", "phpactor"}}, {{"section", "intelephense.environment"}}, {{"section", "unconfigured.section"}}})}}}};
+    client->DispatchFrame(request.dump());
+
+    const std::string raw      = ReadRawFrame(server.serverStdinRead);
+    const Json        response = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(response["id"] == 7);
+    REQUIRE(response["result"].is_array());
+    REQUIRE(response["result"].size() == 3);
+    CHECK(response["result"][0] == Json{{"file_extensions", Json::array({"php"})}});
+    CHECK(response["result"][1] == Json{{"includePaths", Json::array({"/stubs"})}});
+    CHECK(response["result"][2].is_null());
+}
+
+TEST_CASE("LspManager answers workspace/configuration with null for every item when nothing is configured", "[Lsp]") {
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+
+    const Json request = {{"jsonrpc", "2.0"}, {"id", 9}, {"method", "workspace/configuration"}, {"params", {{"items", Json::array({{{"section", "anything"}}})}}}};
+    client->DispatchFrame(request.dump());
+
+    const std::string raw      = ReadRawFrame(server.serverStdinRead);
+    const Json        response = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(response["result"].is_array());
+    REQUIRE(response["result"].size() == 1);
+    CHECK(response["result"][0].is_null());
 }
 
 // prose-checking follow-up: the prose-checker connection is just another
