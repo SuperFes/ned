@@ -92,7 +92,14 @@ Notcurses.
       `MultibufferIndex`, not actually VCS-specific despite the name inherited from
       its first consumer -- worth a rename/rebind to something like
       `multibuffer-visit-result` once a fourth consumer makes the misnomer harder to
-      justify. Still open: fuller VCS history views (e.g. a full commit's diff from
+      justify. Plain `*project-search*` results are a separate command entirely
+      (`project-search-visit-result`, `C-c C-v`) with its own regex-based `path:line:`
+      parse, not the `MultibufferIndex` one -- confirmed confusing in practice (two
+      different chords depending on which results buffer you're in). Worth unifying
+      the two into one command/binding that tries `MultibufferIndexFor` first and
+      falls back to the `path:line:` regex, so every results-style buffer (plain
+      search, diff, references, diagnostics) answers to the same "visit" chord.
+      Still open: fuller VCS history views (e.g. a full commit's diff from
       `*vcs log*`, not just the working tree), making a multibuffer genuinely editable
       (each excerpt writing back to its real source buffer) rather than read-only, and
       a result cap/warning for `project-find-references` on a very common short
