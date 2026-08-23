@@ -98,8 +98,9 @@ void Minimap::ReleasePlane() const {
     }
 }
 
-void Minimap::ForEachDensityDot(int subRows, int subCols, int charsPerDot,
-                                const std::function<void(int, int, std::size_t)>& visit) const {
+void Minimap::ForEachDensityDot(
+    int subRows, int subCols, int charsPerDot,
+    const std::function<void(int subRow, int subCol, std::size_t offset, std::size_t linesInRow)>& visit) const {
     text::Buffer&     buffer     = activeBuffer_.Get();
     const text::Rope& content    = buffer.Content();
     const std::size_t totalLines = content.LineCount();
@@ -121,20 +122,33 @@ void Minimap::ForEachDensityDot(int subRows, int subCols, int charsPerDot,
             lineEnd = lineStart + 1;
         }
         lineEnd = std::min(lineEnd, totalLines);
+        const std::size_t linesInRow = lineEnd - lineStart;
 
         for (std::size_t line = lineStart; line < lineEnd; ++line) {
             const std::size_t lineStartByte = content.LineToByteOffset(line);
             const std::size_t lineEndByte =
                 (line + 1 < totalLines) ? content.LineToByteOffset(line + 1) : content.ByteLength();
 
-            std::size_t offset = lineStartByte;
-            int         column = 0;
+            std::size_t offset          = lineStartByte;
+            int         column          = 0;
+            int         lastVisitedCol  = -1; // weighted-minimap-density follow-up: see below
             while (offset < lineEndByte && column < maxColumn) {
                 const auto decoded = content.CodepointAt(offset);
                 if (!IsBlank(decoded.codepoint)) {
                     const int subCol = column / std::max(charsPerDot, 1);
-                    if (subCol < subCols) {
-                        visit(subRow, subCol, offset);
+                    // At most one visit() per (subRow, subCol) per real
+                    // line, not one per character -- a caller weighting
+                    // hits by linesInRow (a density: "how many of the
+                    // lines sharing this row actually had ink here")
+                    // needs "did this line touch this dot at all," not
+                    // "how many of this line's own characters happened to
+                    // land in the same charsPerDot-wide group" (a single
+                    // dense line could otherwise saturate that count on
+                    // its own, defeating the whole point of weighting by
+                    // line count).
+                    if (subCol < subCols && subCol != lastVisitedCol) {
+                        visit(subRow, subCol, offset, linesInRow);
+                        lastVisitedCol = subCol;
                     }
                 }
                 ++column;
@@ -243,16 +257,37 @@ void Minimap::EnsurePlane() const {
     // it is always hit.
     const int cellDotRows     = dotRows / height; // exact -- dotRows is always a multiple of height
     const int total           = std::max(scrollable_length, 1);
+    const bool scrolls        = total > item_visual_length;
     const int bandRowsCells   = std::clamp(static_cast<int>((static_cast<long long>(item_visual_length) * height) / total), 1, height);
     const int maxBandTopCells = height - bandRowsCells;
     const int bandTopCells =
-        (total > item_visual_length)
-            ? std::clamp(static_cast<int>((static_cast<long long>(position) * maxBandTopCells) /
-                                          std::max(total - item_visual_length, 1)),
-                         0, maxBandTopCells)
-            : 0;
+        scrolls ? std::clamp(static_cast<int>((static_cast<long long>(position) * maxBandTopCells) /
+                                               std::max(total - item_visual_length, 1)),
+                             0, maxBandTopCells)
+                : 0;
     const int bandTop  = bandTopCells * cellDotRows;
     const int bandRows = bandRowsCells * cellDotRows;
+
+    // minimap-natural-scale follow-up: a buffer short enough to need no
+    // scrolling at all used to still have its handful of real lines
+    // stretched across the full dotRows canvas (the same resolution a
+    // buffer with thousands of lines uses) -- a short file's minimap read
+    // as big, blocky, stretched-out glyphs bearing no visible resemblance
+    // to "a zoomed-out version of a few short lines." One dot-row per real
+    // line instead when there's nothing to scroll to (the user's own
+    // framing), leaving the remainder of the canvas as plain background
+    // below it -- deliberately *not* cellDotRows dot-rows per line (an
+    // earlier version of this fix tried that, replicating one line's data
+    // cellDotRows times for "the same per-line resolution the scrolling
+    // case uses"): every one of those replicated sub-rows ends up pixel-
+    // identical to its neighbors, which is exactly the perfectly-uniform-
+    // per-cell source block shape Notcurses' NCBLIT_DEFAULT auto-blitter
+    // renders as blank (confirmed live -- see this class's own git history/
+    // the investigation that found it). One real dot-row per line instead
+    // lets adjacent *different* lines share a terminal cell's sub-rows
+    // exactly like the scrolling/compressed case already does, giving each
+    // cell real internal variation to render instead of a uniform block.
+    const int contentSubRows = scrolls ? dotRows : std::clamp(static_cast<int>(buffer.Content().LineCount()), 0, dotRows);
 
     // theme_.background is Color::Default in most bundled themes
     // (deliberately -- see DarkTheme()'s own comment -- "let the
@@ -355,47 +390,90 @@ void Minimap::EnsurePlane() const {
     // ForEachDensityDot's own doc comment.
     const int effectiveCharsPerDot = usePixel ? 1 : editor::MinimapCharsPerDot();
 
-    ForEachDensityDot(dotRows, contentCols, effectiveCharsPerDot, [&](int subRow, int subCol, std::size_t offset) {
-        // defaultForeground (ordinary buffer text), not lineNumberForeground
-        // (a deliberately dim gutter color) -- most real code is plain
-        // identifiers/punctuation with no distinct SyntaxClass span at all,
-        // so this fallback is what most of the minimap's "ink" actually
-        // renders in; the dim gutter color made most of it read as flat
-        // gray instead of matching how the real buffer looks.
-        Color fg = theme_.defaultForeground;
-        if (!sortedSpans.empty()) {
-            const editor::SyntaxClass cls = ClassAt(sortedSpans, offset);
-            if (cls != editor::SyntaxClass::Default) {
-                fg = theme_.BrushFor(cls).foreground;
+    // weighted-minimap-density follow-up: accumulate, per (subRow, subCol),
+    // how many of the real lines compressed into that row actually had ink
+    // there (hitCount, out of rowLineCount[subRow]) and whichever color was
+    // last seen there -- then blend proportionally to that fraction below,
+    // rather than one line's ink flatly overwriting whatever an earlier
+    // line sharing the same row already wrote. Without this, a *references*
+    // multibuffer's own repeated separator/rule lines (near-full-width ink
+    // on almost every one of them) dominated every row they shared with the
+    // real matched-line content, since whichever line ForEachDensityDot
+    // happened to walk last for that row is what a flat overwrite would
+    // have shown.
+    std::vector<std::uint16_t> hitCount(static_cast<std::size_t>(contentSubRows) * static_cast<std::size_t>(contentCols), 0);
+    std::vector<Color>         hitColor(hitCount.size(), theme_.defaultForeground);
+    std::vector<std::size_t>   rowLineCount(static_cast<std::size_t>(std::max(contentSubRows, 1)), 1);
+
+    ForEachDensityDot(contentSubRows, contentCols, effectiveCharsPerDot,
+                      [&](int subRow, int subCol, std::size_t offset, std::size_t linesInRow) {
+                          // defaultForeground (ordinary buffer text), not lineNumberForeground
+                          // (a deliberately dim gutter color) -- most real code is plain
+                          // identifiers/punctuation with no distinct SyntaxClass span at all,
+                          // so this fallback is what most of the minimap's "ink" actually
+                          // renders in; the dim gutter color made most of it read as flat
+                          // gray instead of matching how the real buffer looks.
+                          Color fg = theme_.defaultForeground;
+                          if (!sortedSpans.empty()) {
+                              const editor::SyntaxClass cls = ClassAt(sortedSpans, offset);
+                              if (cls != editor::SyntaxClass::Default) {
+                                  fg = theme_.BrushFor(cls).foreground;
+                              }
+                          }
+                          const std::size_t idx = static_cast<std::size_t>(subRow) * static_cast<std::size_t>(contentCols) +
+                                                  static_cast<std::size_t>(subCol);
+                          ++hitCount[idx];
+                          hitColor[idx]                                       = fg; // last-hit color -- one representative color per pixel is enough here
+                          rowLineCount[static_cast<std::size_t>(subRow)] = std::max<std::size_t>(linesInRow, 1);
+                      });
+
+    for (int subRow = 0; subRow < contentSubRows; ++subRow) {
+        for (int subCol = 0; subCol < contentCols; ++subCol) {
+            const std::size_t idx =
+                static_cast<std::size_t>(subRow) * static_cast<std::size_t>(contentCols) + static_cast<std::size_t>(subCol);
+            if (hitCount[idx] == 0) {
+                continue; // stays whatever the background/band loop above already painted
             }
+            const float density = std::min(
+                1.0F, static_cast<float>(hitCount[idx]) / static_cast<float>(rowLineCount[static_cast<std::size_t>(subRow)]));
+
+            // Real-pixel mode only: blend each dot's color partway towards the
+            // background (real RGB blending, not alpha -- confirmed live that
+            // partial alpha compositing isn't reliable for the Kitty pixel
+            // protocol across terminals, see the background-fill comment
+            // above) -- full syntax saturation on every non-blank character
+            // read as visually overwhelming compared to the real editor (a
+            // direct, live user complaint), and it drowned out the
+            // scroll-position band. Blending towards backgroundApprox rather
+            // than a fixed gray is what makes this "saturate towards light or
+            // dark" -- a dark theme's near-black target dims every color
+            // towards black, a light theme's own light background would
+            // lighten them instead, both automatically, no separate light/dark
+            // branch needed. Glyph mode is unaffected -- it never had this
+            // complaint (a quadrant/sextant/octant glyph's own 2-color-per-cell
+            // blending already reads calmer than a real image's continuous
+            // per-pixel color at this small a size).
+            const Color  dotColor = usePixel ? Color::Interpolate(0.45F, hitColor[idx], backgroundApprox) : hitColor[idx];
+            std::uint8_t inkR, inkG, inkB;
+            ColorToRgb8(dotColor, inkR, inkG, inkB);
+
+            const std::size_t pixelIdx = (static_cast<std::size_t>(subRow) * static_cast<std::size_t>(dotCols) +
+                                          static_cast<std::size_t>(subCol + leftMarginCols)) *
+                                         4;
+            // Blend from whatever's already there (background or the
+            // scroll-position band, painted above) towards the ink color,
+            // proportional to density -- a column only 1 of 4 compressed
+            // lines actually touched reads as a faint hint, not full-strength
+            // ink the way a flat overwrite would have shown it.
+            pixels[pixelIdx + 0] = static_cast<std::uint8_t>(
+                static_cast<float>(pixels[pixelIdx + 0]) + density * (static_cast<float>(inkR) - static_cast<float>(pixels[pixelIdx + 0])));
+            pixels[pixelIdx + 1] = static_cast<std::uint8_t>(
+                static_cast<float>(pixels[pixelIdx + 1]) + density * (static_cast<float>(inkG) - static_cast<float>(pixels[pixelIdx + 1])));
+            pixels[pixelIdx + 2] = static_cast<std::uint8_t>(
+                static_cast<float>(pixels[pixelIdx + 2]) + density * (static_cast<float>(inkB) - static_cast<float>(pixels[pixelIdx + 2])));
+            pixels[pixelIdx + 3] = 255;
         }
-        // Real-pixel mode only: blend each dot's color partway towards the
-        // background (real RGB blending, not alpha -- confirmed live that
-        // partial alpha compositing isn't reliable for the Kitty pixel
-        // protocol across terminals, see the background-fill comment
-        // above) -- full syntax saturation on every non-blank character
-        // read as visually overwhelming compared to the real editor (a
-        // direct, live user complaint), and it drowned out the
-        // scroll-position band. Blending towards backgroundApprox rather
-        // than a fixed gray is what makes this "saturate towards light or
-        // dark" -- a dark theme's near-black target dims every color
-        // towards black, a light theme's own light background would
-        // lighten them instead, both automatically, no separate light/dark
-        // branch needed. Glyph mode is unaffected -- it never had this
-        // complaint (a quadrant/sextant/octant glyph's own 2-color-per-cell
-        // blending already reads calmer than a real image's continuous
-        // per-pixel color at this small a size).
-        const Color  dotColor = usePixel ? Color::Interpolate(0.45F, fg, backgroundApprox) : fg;
-        std::uint8_t r, g, b;
-        ColorToRgb8(dotColor, r, g, b);
-        const std::size_t idx = (static_cast<std::size_t>(subRow) * static_cast<std::size_t>(dotCols) +
-                                 static_cast<std::size_t>(subCol + leftMarginCols)) *
-                                4;
-        pixels[idx + 0]       = r;
-        pixels[idx + 1]       = g;
-        pixels[idx + 2]       = b;
-        pixels[idx + 3]       = 255;
-    });
+    }
 
     if (needNewPlane) {
         ReleasePlane();
