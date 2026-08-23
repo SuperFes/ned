@@ -2337,6 +2337,8 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("C-e"), "end-of-line");
     keymap.Bind(ParseKeySequence("HOME"), "beginning-of-line");
     keymap.Bind(ParseKeySequence("END"), "end-of-line");
+    keymap.Bind(ParseKeySequence("C-HOME"), "beginning-of-buffer");
+    keymap.Bind(ParseKeySequence("C-END"), "end-of-buffer");
     keymap.Bind(ParseKeySequence("C-k"), "kill-line");
     keymap.Bind(ParseKeySequence("C-y"), "yank");
     keymap.Bind(ParseKeySequence("C-u"), "universal-argument");
