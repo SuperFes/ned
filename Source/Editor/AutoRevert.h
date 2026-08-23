@@ -4,10 +4,11 @@
 // the editor -- the "the file changed and I hadn't touched it, just show me
 // the new content" half of external-change handling. The conflicting half
 // (the buffer has local edits too) is deliberately not handled here at all:
-// a buffer with local edits is never touched, and the save-time
-// supersession check (save-buffer, Commands.cpp) owns that conflict via an
-// explicit overwrite confirmation instead. Automatic three-way merging of
-// both-sides-changed content was considered and deferred -- see ROADMAP.md.
+// a buffer with local edits is never touched by this sweep -- see
+// AutoMerge.h's AutoMergeBuffers for that half (a three-way merge via
+// Buffer::MergeExternalChanges, not a discard). The save-time supersession
+// check (save-buffer, Commands.cpp) still separately guards a save against
+// overwriting a file this sweep hasn't caught up to yet.
 //
 
 #ifndef NED_EDITOR_AUTOREVERT_H

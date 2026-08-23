@@ -24,6 +24,7 @@
 #include "ProjectSession.h"
 #include "TabWidth.h"
 #include "Text/Grapheme.h"
+#include "Text/ThreeWayMerge.h"
 #include "Text/Utf8.h"
 #include "Vcs/VcsRunner.h"
 
@@ -1179,6 +1180,14 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
         // y/n confirmation instead of writing anything.
         if (context.buffer.ExternallyModified()) {
             context.interactiveRequest = InteractiveRequest::ConfirmOverwriteSave;
+            return;
+        }
+        // external-modification-round-2 follow-up: never silently write
+        // unresolved "<<<<<<<" conflict markers to disk either -- same
+        // "hand the decision to a y/n confirmation" shape as the
+        // ExternallyModified() check just above.
+        if (text::HasConflictMarkers(context.buffer.Text())) {
+            context.interactiveRequest = InteractiveRequest::ConfirmSaveWithConflicts;
             return;
         }
         saveBufferBody(context);

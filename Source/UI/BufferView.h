@@ -386,6 +386,11 @@ class BufferView : public Widget {
                            // buffer -- y/n before overwriting, mirroring
                            // ConfirmCloseBuffer's shape.
                            ConfirmOverwriteSave,
+                           // external-modification-round-2 follow-up: save-buffer
+                           // found unresolved "<<<<<<<" conflict markers still in
+                           // the buffer -- y/n before writing them to disk, same
+                           // shape as ConfirmOverwriteSave.
+                           ConfirmSaveWithConflicts,
                            ExecuteCommand,
                            ProjectFindFile,
                            PointToRegister,
@@ -529,10 +534,11 @@ class BufferView : public Widget {
     // for the browsing-state fields this reads and mutates.
     [[nodiscard]] bool TryNavigatePromptHistory(const editor::KeyChord& chord, std::string_view key);
     void               HandleProjectReplaceKey(const editor::KeyChord& chord);
-    void               HandleConfirmCloseBufferKey(const editor::KeyChord& chord);      // see RequestCloseBuffer/pendingClose_
-    void               HandleConfirmOverwriteSaveKey(const editor::KeyChord& chord);    // external-modification-safety: y -> save-buffer-force
-    void               HandleConfirmOpenBinaryKey(const editor::KeyChord& chord);       // see pendingBinaryOpenPath_
-    void               HandleConfirmTrustProjectInitKey(const editor::KeyChord& chord); // see pendingTrustInitPath_
+    void               HandleConfirmCloseBufferKey(const editor::KeyChord& chord);       // see RequestCloseBuffer/pendingClose_
+    void               HandleConfirmOverwriteSaveKey(const editor::KeyChord& chord);     // external-modification-safety: y -> save-buffer-force
+    void               HandleConfirmSaveWithConflictsKey(const editor::KeyChord& chord); // external-modification-round-2: y -> save-buffer-force
+    void               HandleConfirmOpenBinaryKey(const editor::KeyChord& chord);        // see pendingBinaryOpenPath_
+    void               HandleConfirmTrustProjectInitKey(const editor::KeyChord& chord);  // see pendingTrustInitPath_
     // Shared by HandlePromptKey's FindFile branch and the public
     // RequestOpenBinaryFile -- enters ConfirmOpenBinary and sets
     // pendingBinaryOpenPath_/statusMessage_.

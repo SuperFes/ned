@@ -2250,6 +2250,44 @@ TEST_CASE("save-buffer asks before overwriting an externally-changed file; save-
     std::filesystem::remove(path);
 }
 
+TEST_CASE("save-buffer asks before writing unresolved conflict markers; save-buffer-force writes", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_commands_test_conflict_save.txt";
+    {
+        std::ofstream out(path);
+        out << "original\n";
+    }
+
+    ned::text::Buffer     buffer = ned::text::Buffer::FromFile(path);
+    ned::text::KillRing   killRing;
+    ned::text::BufferList bufferList;
+    CommandContext        context{buffer, killRing, bufferList};
+
+    buffer.SetPoint(0);
+    buffer.InsertAtPoint("<<<<<<< buffer\nmine\n=======\ntheirs\n>>>>>>> disk\n");
+
+    registry.Invoke("save-buffer", context);
+    REQUIRE(context.interactiveRequest == InteractiveRequest::ConfirmSaveWithConflicts);
+    {
+        std::ifstream in(path);
+        std::string   onDisk((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        REQUIRE(onDisk == "original\n"); // nothing was written
+    }
+
+    registry.Invoke("save-buffer-force", context);
+    REQUIRE_FALSE(buffer.Modified());
+    {
+        std::ifstream in(path);
+        std::string   onDisk((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        REQUIRE(onDisk == buffer.Text());
+        REQUIRE(onDisk.find("<<<<<<<") != std::string::npos); // saved anyway, markers and all
+    }
+
+    std::filesystem::remove(path);
+}
+
 TEST_CASE("tab-move-left/right reorder the current buffer among the tabs, stopping at the edges", "[Commands]") {
     CommandRegistry registry;
     RegisterBuiltinCommands(registry);
@@ -2326,9 +2364,8 @@ class EnvVarGuard {
 // One disposable backup sandbox per test (BackupTest.cpp's shape, pared to
 // what these save-path tests need).
 struct BackupHookSandbox {
-    explicit BackupHookSandbox(const std::string& name)
-        : root(std::filesystem::temp_directory_path() / name), stateGuard("XDG_STATE_HOME", (root / "state").c_str()),
-          dataGuard("XDG_DATA_HOME", (root / "data").c_str()), homeGuard("HOME", nullptr) {
+    explicit BackupHookSandbox(const std::string& name) : root(std::filesystem::temp_directory_path() / name), stateGuard("XDG_STATE_HOME", (root / "state").c_str()),
+                                                          dataGuard("XDG_DATA_HOME", (root / "data").c_str()), homeGuard("HOME", nullptr) {
         ResetBackupsForTesting();
         std::filesystem::remove_all(root);
         std::filesystem::create_directories(root / "work");
@@ -2356,7 +2393,8 @@ std::string ReadWholeFile(const std::filesystem::path& path) {
 // restores both on scope exit even if a REQUIRE fails partway through,
 // mirroring ProjectRootTest.cpp's own CurrentPathGuard.
 struct ProjectRootGuard {
-    ProjectRootGuard() : previous_(ProjectRoot()) {}
+    ProjectRootGuard() : previous_(ProjectRoot()) {
+    }
     ~ProjectRootGuard() {
         SetProjectRoot(previous_);
         ResetProjectSessionForTesting();

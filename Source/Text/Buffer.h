@@ -128,6 +128,30 @@ class Buffer {
     // file having turned binary), leaving the buffer untouched.
     void Revert();
 
+    // external-modification-round-2 follow-up: unlike Revert() (which
+    // discards this buffer's local edits wholesale), three-way merges
+    // fresh disk content into them, using SavedSnapshot_ as the diff3 base
+    // -- exactly the content both this buffer's local edits and the
+    // external disk change diverged from (see Text/ThreeWayMerge.h).
+    // Typical caller precondition is the same shape AutoRevertBuffers/
+    // AutoMergeBuffers already check (Modified() && ExternallyModified()),
+    // but not enforced here -- calling this when the file hasn't actually
+    // changed just degrades to a trivial "ours, unchanged" merge. Throws
+    // like FromFile/Revert() on any read failure, leaving the buffer
+    // untouched. Recorded as one normal, undoable step; mark, secondary
+    // cursors, narrowing, and fold markers are cleared the same way
+    // Revert() clears them (line numbers/offsets can shift arbitrarily);
+    // point lands on the merge's first conflict marker if there is one,
+    // else stays where it was (clamped). Unlike Revert(), SavedSnapshot_/
+    // DiskTimestamp_ advance to the *freshly read disk content*, not the
+    // merged result: the buffer now combines local edits with the external
+    // change, so Modified() correctly stays true (there's real unsaved
+    // content), while a later ExternallyModified() check correctly goes
+    // back to false until the file changes again. Returns the number of
+    // genuine conflicts merged in as "<<<<<<<" markers -- 0 is a fully
+    // automatic, silent merge.
+    [[nodiscard]] std::size_t MergeExternalChanges();
+
     // Replaces this buffer's content wholesale from a string rather than
     // from disk (backup-and-recovery follow-up: what recover-file /
     // ned/recover-backup restore a snapshot through). Mirrors Revert()'s
@@ -563,8 +587,8 @@ class Buffer {
     // and disk are brought into agreement: load, save, revert.
     void CaptureDiskTimestamp();
 
-    std::string                                        Name_;
-    std::optional<std::filesystem::path>               Path_;
+    std::string                          Name_;
+    std::optional<std::filesystem::path> Path_;
     // The file's last_write_time as of the last load/save/revert -- what
     // ExternallyModified() compares against. nullopt for a pathless or
     // NewFile() buffer (no on-disk content has ever been seen).
