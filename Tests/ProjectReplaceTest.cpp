@@ -11,6 +11,7 @@ using ned::editor::ProjectReplace;
 using ned::editor::ReplaceMatches;
 using ned::editor::ReplaceSummary;
 using ned::editor::SearchMatch;
+using ned::editor::SearchPatternError;
 
 namespace {
 
@@ -63,7 +64,7 @@ TEST_CASE("Full flow: pattern, replacement, confirm rewrites the matched files",
     std::filesystem::remove_all(dir);
 }
 
-TEST_CASE("ConfirmPattern throws std::regex_error and stays in EnteringPattern on invalid syntax", "[ProjectReplace]") {
+TEST_CASE("ConfirmPattern throws SearchPatternError and stays in EnteringPattern on invalid syntax", "[ProjectReplace]") {
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_replace_test_badregex";
     std::filesystem::remove_all(dir);
     std::filesystem::create_directory(dir);
@@ -71,7 +72,7 @@ TEST_CASE("ConfirmPattern throws std::regex_error and stays in EnteringPattern o
     ProjectReplace pr(dir);
     Type(pr, "(");
 
-    REQUIRE_THROWS_AS(pr.ConfirmPattern(), std::regex_error);
+    REQUIRE_THROWS_AS(pr.ConfirmPattern(), SearchPatternError);
     REQUIRE(pr.CurrentStage() == ProjectReplace::Stage::EnteringPattern);
 
     std::filesystem::remove_all(dir);

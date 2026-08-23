@@ -110,6 +110,24 @@ set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(nlohmann_json)
 #------------------------------------------------------------------------------
 
+#--- Fetch RE2 (internal-project-search follow-up) ------------------------------
+# The regex engine behind the internal, multi-threaded project-search backend
+# that replaces the `rg` shell-out (Editor/ProjectSearch.cpp) -- linear-time,
+# no-backtracking matching, the same engine-model philosophy `rg` itself uses.
+# Pinned to the last tag before RE2's CMake build started hard-requiring
+# Abseil (2023-06-01 added `find_package(absl REQUIRED)` with no FetchContent
+# fallback of its own) -- pulling in all of Abseil transitively just for
+# regex matching isn't worth it here; 2022-12-01 still builds standalone
+# against nothing but pthreads.
+FetchContent_Declare(re2
+        GIT_REPOSITORY https://github.com/google/re2.git
+        GIT_TAG 2022-12-01
+        GIT_SHALLOW TRUE
+        EXCLUDE_FROM_ALL)
+set(RE2_BUILD_TESTING OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(re2)
+#------------------------------------------------------------------------------
+
 #--- Fetch tree-sitter (core) --------------------------------------------------
 FetchContent_Declare(tree-sitter
         GIT_REPOSITORY https://github.com/tree-sitter/tree-sitter.git
@@ -440,6 +458,7 @@ add_library(ned_lib STATIC
         Source/Editor/HighlightSettings.cpp
         Source/Editor/MinimapSettings.cpp
         Source/Editor/GitIgnore.cpp
+        Source/Editor/SearchSettings.cpp
         Source/Editor/ProjectSearch.cpp
         Source/Editor/ProjectAgenda.cpp
         Source/Editor/ProjectReplace.cpp
@@ -557,7 +576,11 @@ target_link_libraries(ned_lib
         PUBLIC tree-sitter-yaml
         PUBLIC tree-sitter-toml
         PUBLIC tree-sitter-clojure
-        PRIVATE ${CMAKE_DL_LIBS})
+        PRIVATE ${CMAKE_DL_LIBS}
+        # internal-project-search follow-up: only ProjectSearch.cpp's own
+        # implementation includes RE2 headers, so this stays off the public
+        # link interface.
+        PRIVATE re2::re2)
 
 if (NED_ENABLE_SANITIZERS)
     target_compile_options(ned_lib PUBLIC -fsanitize=address,undefined -fno-omit-frame-pointer)
@@ -700,6 +723,7 @@ if (NED_BUILD_TESTS)
             Tests/MinimapTest.cpp
             Tests/OverlayTest.cpp
             Tests/GitIgnoreTest.cpp
+            Tests/SearchSettingsTest.cpp
             Tests/ProjectSearchTest.cpp
             Tests/ProjectAgendaTest.cpp
             Tests/ProjectReplaceTest.cpp

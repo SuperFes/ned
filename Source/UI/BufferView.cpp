@@ -5160,7 +5160,7 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
                                      " for \"" + input + "\" -- C-c C-v to visit";
                 }
             }
-            catch (const std::regex_error& e) {
+            catch (const editor::SearchPatternError& e) {
                 statusMessage_ = std::string("Invalid regex: ") + e.what();
             }
         }
@@ -6508,7 +6508,7 @@ void BufferView::HandleProjectReplaceKey(const editor::KeyChord& chord) {
                 try {
                     projectReplace_->ConfirmPattern();
                 }
-                catch (const std::regex_error& e) {
+                catch (const editor::SearchPatternError& e) {
                     statusMessage_ = std::string("Invalid regex: ") + e.what();
                     return; // stays in EnteringPattern; don't overwrite the message below
                 }
@@ -6541,10 +6541,23 @@ void BufferView::HandleProjectReplaceKey(const editor::KeyChord& chord) {
 
     // Confirming: a single whole-batch y/n, not QueryReplace's per-match y/n/!/q.
     if (chord.Codepoint == U'y') {
-        const editor::ReplaceSummary summary = projectReplace_->Confirm();
-        statusMessage_                       = "Replaced " + std::to_string(summary.replacementCount) + " occurrence" +
-                                               (summary.replacementCount == 1 ? "" : "s") + " in " + std::to_string(summary.filesChanged) +
-                                               " file" + (summary.filesChanged == 1 ? "" : "s") + ".";
+        // internal-project-search follow-up: ConfirmPattern validated this
+        // same pattern text against RE2 (SearchDirectory's engine);
+        // ReplaceMatches's actual rewrite still runs on std::regex until the
+        // "eventually PCRE2" roadmap item lands, and the two engines' syntax
+        // doesn't fully agree (RE2's \p{...} Unicode classes, for one) -- so
+        // unlike before, a pattern reaching here genuinely can throw. Caught
+        // here rather than left to propagate, same as every other
+        // interactive failure in this file.
+        try {
+            const editor::ReplaceSummary summary = projectReplace_->Confirm();
+            statusMessage_                       = "Replaced " + std::to_string(summary.replacementCount) + " occurrence" +
+                                                   (summary.replacementCount == 1 ? "" : "s") + " in " + std::to_string(summary.filesChanged) +
+                                                   " file" + (summary.filesChanged == 1 ? "" : "s") + ".";
+        }
+        catch (const std::exception& e) {
+            statusMessage_ = std::string("Project replace: ") + e.what();
+        }
         EndInteractiveSession();
     }
     else if (chord.Codepoint == U'n') {

@@ -1,16 +1,16 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
-#include <cstdlib>
 #include <filesystem>
 #include <fstream>
-#include <regex>
 #include <string>
 
 #include "Editor/ProjectSearch.h"
+#include "Editor/SearchSettings.h"
 
 using ned::editor::SearchDirectory;
 using ned::editor::SearchMatch;
+using ned::editor::SearchPatternError;
 
 namespace {
 
@@ -19,44 +19,15 @@ bool AnyMatchIn(const std::vector<SearchMatch>& matches, const std::filesystem::
                        [&](const SearchMatch& m) { return m.file == file && m.lineNumber == line; });
 }
 
-// ripgrep-search follow-up. Mirrors BufferViewTest.cpp's own EnvVarGuard
-// exactly (kept as a separate copy rather than shared -- not worth a new
-// dependency between the two test binaries for something this small, the
-// same call this codebase's own production code already makes elsewhere).
-// Used to force SearchDirectory down its builtin-scanner fallback path by
-// pointing $PATH somewhere with no "rg" on it, regardless of whether the
-// machine actually running this test suite has ripgrep installed.
-class EnvVarGuard {
-  public:
-    EnvVarGuard(const char* name, const char* value) : name_(name) {
-        if (const char* existing = std::getenv(name)) {
-            hadPrevious_ = true;
-            previous_    = existing;
-        }
-        if (value) {
-            setenv(name, value, 1);
-        }
-        else {
-            unsetenv(name);
-        }
+// internal-project-search follow-up: ProjectSearchThreads is process-wide
+// state (SearchSettings.h) -- mirrors TabWidthTest.cpp's own TabWidthGuard.
+struct ProjectSearchThreadsGuard {
+    explicit ProjectSearchThreadsGuard(int threads) {
+        ned::editor::SetProjectSearchThreads(threads);
     }
-
-    ~EnvVarGuard() {
-        if (hadPrevious_) {
-            setenv(name_.c_str(), previous_.c_str(), 1);
-        }
-        else {
-            unsetenv(name_.c_str());
-        }
+    ~ProjectSearchThreadsGuard() {
+        ned::editor::SetProjectSearchThreads(4);
     }
-
-    EnvVarGuard(const EnvVarGuard&)            = delete;
-    EnvVarGuard& operator=(const EnvVarGuard&) = delete;
-
-  private:
-    std::string name_;
-    bool        hadPrevious_ = false;
-    std::string previous_;
 };
 
 } // namespace
@@ -163,12 +134,26 @@ TEST_CASE("SearchDirectory returns an empty list when nothing matches", "[Projec
     std::filesystem::remove_all(dir);
 }
 
-TEST_CASE("SearchDirectory throws std::regex_error for an invalid pattern", "[ProjectSearch]") {
+TEST_CASE("SearchDirectory throws SearchPatternError for an invalid pattern", "[ProjectSearch]") {
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_search_test_badregex";
     std::filesystem::remove_all(dir);
     std::filesystem::create_directory(dir);
 
-    REQUIRE_THROWS_AS(SearchDirectory(dir, "("), std::regex_error);
+    REQUIRE_THROWS_AS(SearchDirectory(dir, "("), SearchPatternError);
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("SearchDirectory rejects std::regex-only syntax RE2 doesn't support", "[ProjectSearch]") {
+    // internal-project-search follow-up: a concrete example of the syntax
+    // gap ProjectReplace.h's own doc comment now calls out -- backreferences
+    // are valid std::regex ECMAScript syntax but RE2 deliberately doesn't
+    // support them (no catastrophic-backtracking exposure that way).
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_search_test_backref";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+
+    REQUIRE_THROWS_AS(SearchDirectory(dir, R"((\w+) \1)"), SearchPatternError);
 
     std::filesystem::remove_all(dir);
 }
@@ -177,12 +162,11 @@ TEST_CASE("SearchDirectory skips a directory excluded by .gitignore, without des
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_search_test_gitignore";
     std::filesystem::remove_all(dir);
     std::filesystem::create_directories(dir / "build" / "nested");
-    // A real .gitignore almost always implies a real git repo -- a bare
-    // .gitignore with no .git marker at all is not itself a case either
-    // backend needs to treat as "this project has a real .gitignore":
-    // ripgrep's own VCS-ignore support only activates once it can actually
-    // detect a repository (confirmed directly, not assumed), and this
-    // fixture mirrors that real-world shape rather than the rarer one.
+    // GitIgnoreMatcher itself doesn't require a real .git marker -- it just
+    // reads root/.gitignore unconditionally (GitIgnore.cpp's own
+    // constructor) -- but a bare .gitignore with no .git at all is the
+    // rarer real-world shape, so this fixture includes one anyway to mirror
+    // an actual project.
     std::filesystem::create_directory(dir / ".git");
     {
         std::ofstream(dir / ".gitignore") << "build/\n";
@@ -225,41 +209,44 @@ TEST_CASE("SearchDirectory honors a .gitignore glob pattern and a negation", "[P
     std::filesystem::remove_all(dir);
 }
 
-TEST_CASE("SearchDirectory still returns correct results when ripgrep isn't on $PATH (builtin-scanner fallback)",
+TEST_CASE("SearchDirectory finds every match across more files than the worker-thread cap, in deterministic order",
           "[ProjectSearch]") {
-    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_search_test_no_rg";
+    // internal-project-search follow-up: pins the thread cap below the file
+    // count so the parallel path (SearchFilesParallel's atomic work-stealing
+    // counter) is actually exercised, not just the "one file, no real
+    // contention" shape every other test above happens to hit. Results are
+    // reassembled back into original file-visitation order regardless of
+    // which worker processed which file -- REQUIRE (not a set comparison)
+    // below checks that ordering directly, not just membership.
+    const ProjectSearchThreadsGuard threadsGuard(2);
+
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_search_test_manyfiles";
     std::filesystem::remove_all(dir);
     std::filesystem::create_directory(dir);
-    {
-        std::ofstream(dir / "a.txt") << "first\nneedle here\n";
+
+    constexpr int kFileCount = 20;
+    for (int i = 0; i < kFileCount; ++i) {
+        std::ofstream(dir / (std::string("file") + std::to_string(i) + ".txt")) << "needle " << i << "\n";
     }
 
-    // An empty $PATH means FindRipgrepOnPath() can't find anything --
-    // forces SearchDirectory down the builtin std::filesystem::
-    // recursive_directory_iterator + std::regex_search path regardless of
-    // whether ripgrep is actually installed on the machine running this
-    // test suite.
-    const EnvVarGuard pathGuard("PATH", "");
-
     const std::vector<SearchMatch> matches = SearchDirectory(dir, "needle");
+    REQUIRE(matches.size() == static_cast<std::size_t>(kFileCount));
+    for (int i = 0; i < kFileCount; ++i) {
+        REQUIRE(AnyMatchIn(matches, std::filesystem::absolute(dir / (std::string("file") + std::to_string(i) + ".txt")), 1));
+    }
 
-    REQUIRE(matches.size() == 1);
-    REQUIRE(matches.front().file.filename() == "a.txt");
-    REQUIRE(matches.front().lineNumber == 2);
-    REQUIRE(matches.front().lineText == "needle here");
-
-    std::filesystem::remove_all(dir);
-}
-
-TEST_CASE("SearchDirectory throws std::regex_error before ever attempting to run ripgrep", "[ProjectSearch]") {
-    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_search_test_badregex_rg";
-    std::filesystem::remove_all(dir);
-    std::filesystem::create_directory(dir);
-
-    // Whether or not ripgrep is installed and would be tried, an invalid
-    // pattern must be rejected first, uniformly -- SearchDirectory
-    // constructs its own std::regex before ever looking for "rg" on $PATH.
-    REQUIRE_THROWS_AS(SearchDirectory(dir, "("), std::regex_error);
+    // Same directory walk order every time (std::filesystem::
+    // recursive_directory_iterator, single-threaded, unaffected by the
+    // parallel search stage below it) -- so re-running the identical search
+    // must reproduce the identical match order, proving SearchFilesParallel's
+    // per-file result slots really did get reassembled deterministically
+    // rather than in whatever order threads happened to finish.
+    const std::vector<SearchMatch> matchesAgain = SearchDirectory(dir, "needle");
+    REQUIRE(matchesAgain.size() == matches.size());
+    for (std::size_t i = 0; i < matches.size(); ++i) {
+        REQUIRE(matches[i].file == matchesAgain[i].file);
+        REQUIRE(matches[i].lineNumber == matchesAgain[i].lineNumber);
+    }
 
     std::filesystem::remove_all(dir);
 }
