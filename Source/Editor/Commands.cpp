@@ -1842,6 +1842,11 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     registry.Register("acp-stop-session", "Stop the active ACP session.", [](CommandContext& context) {
         context.interactiveRequest = InteractiveRequest::AcpStopSession;
     });
+    // ACP chat panel follow-up: same "just set interactiveRequest" shape as
+    // toggle-terminal -- WindowManager owns the actual OverlayHost panel.
+    registry.Register("acp-toggle-panel", "Show, focus, or hide the ACP chat panel.", [](CommandContext& context) {
+        context.interactiveRequest = InteractiveRequest::AcpTogglePanel;
+    });
 
     // VCS blame gutter follow-up: same "just set interactiveRequest" shape
     // as lsp-show-log/run-task above -- BufferView owns the actual
@@ -2458,6 +2463,17 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("C-c a s"), "acp-start-session");
     keymap.Bind(ParseKeySequence("C-c a p"), "acp-send-prompt");
     keymap.Bind(ParseKeySequence("C-c a k"), "acp-stop-session"); // "k" for kill, matching Emacs' own kill-process vocabulary
+    // NOT under the "C-c a" prefix (unlike the three bindings just above):
+    // Keymap::Resolve returns Match the instant a node's own command is set,
+    // before ever consulting its children -- confirmed live (tmux) and by
+    // this file's own "org-agenda sets interactiveRequest and is bound to
+    // C-c a" test in CommandsTest.cpp, which shows "C-c" "a" alone already
+    // resolves to Invoked/org-agenda. "C-c a" carries org-agenda as its own
+    // command, so C-c a <anything> is structurally unreachable by typing --
+    // a pre-existing condition the three bindings just above already share
+    // (out of scope to relitigate here); a fourth one under the same broken
+    // prefix would just be more dead keymap entries.
+    keymap.Bind(ParseKeySequence("C-c c"), "acp-toggle-panel"); // "c" for chat
     keymap.Bind(ParseKeySequence("C-c C-v"), "project-search-visit-result");
     // VCS blame gutter follow-up: "C-c v" prefix, mirroring "C-c C-b"/
     // "C-c C-M-b" run-task/cancel-task's own choice of an otherwise-unused

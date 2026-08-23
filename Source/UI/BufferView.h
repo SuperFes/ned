@@ -361,6 +361,13 @@ class BufferView : public Widget {
     // fans it out to every pane). Unset is a safe no-op.
     void SetOnTerminalToggle(std::function<void()> handler);
 
+    // ACP chat panel: acp-toggle-panel's forwarding hook, same shape and
+    // reasoning as SetOnTerminalToggle immediately above -- the panel is
+    // another OverlayHost overlay owned by main.cpp's composition, wired via
+    // WindowManager::SetOnAcpPanelToggle fanning out to every pane. Unset is
+    // a safe no-op.
+    void SetOnAcpPanelToggle(std::function<void()> handler);
+
     // per-buffer-mode follow-up: called at the top of Paint() whenever the
     // active buffer's identity has changed since the last Paint() call --
     // the same "recompute, don't cache, detect via pointer identity" idiom
@@ -1505,6 +1512,7 @@ class BufferView : public Widget {
     std::function<void(editor::InteractiveRequest)> onWindowRequest_;
     std::function<void(text::Buffer&)>              onBufferClosed_;
     std::function<void()>                           onTerminalToggle_;      // see SetOnTerminalToggle
+    std::function<void()>                           onAcpPanelToggle_;      // see SetOnAcpPanelToggle
     std::function<void(text::Buffer&)>              onActiveBufferChanged_; // see SetOnActiveBufferChanged
 
     // Caches mode_.highlight's result across Paint() calls (tree-sitter

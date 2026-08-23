@@ -72,6 +72,39 @@ class AcpManager {
                               Active };
     [[nodiscard]] SessionState State() const;
 
+    // The agent name passed to the most recent StartSession -- empty before
+    // any session has ever started. Panel header display only.
+    [[nodiscard]] const std::string& AgentName() const;
+
+    // A structured, UI-renderable view of the session alongside the flat
+    // "*acp: <agent>*" output buffer (AppendToOutputBuffer/OutputBuffer
+    // above) -- that buffer stays exactly as it was for v1 consumers;
+    // this is additive, for AcpPanel. Wholesale-replace-in-place semantics
+    // for Plan/ToolCall entries, matching Buffer::Diagnostic's own
+    // SetDiagnostics precedent, since a "plan" or "tool_call_update" is a
+    // fresh authoritative snapshot of that one plan/tool-call, not an
+    // independent new event.
+    struct TranscriptEntry {
+        enum class Kind { UserMessage,
+                          AgentText,
+                          ToolCall,
+                          Plan,
+                          Permission,
+                          SessionEvent };
+        Kind                       kind;
+        std::string                text;       // message text / tool-call title / session event text / permission description
+        std::string                status;     // tool-call or plan status, best-effort, may be empty
+        std::vector<std::string>   planSteps;  // Kind::Plan only
+        std::optional<std::string> toolCallId; // Kind::ToolCall only, for tool_call_update matching
+    };
+    [[nodiscard]] const std::vector<TranscriptEntry>& Transcript() const;
+    // Bumped on every Transcript()-affecting mutation -- cheap change
+    // detection for a UI cache, mirroring Buffer::DiagnosticsGeneration.
+    [[nodiscard]] std::size_t TranscriptGeneration() const;
+    // Fires after every Transcript()-affecting mutation. Connect-after-
+    // construction, unset is a safe no-op, this class's usual convention.
+    void SetOnTranscriptChanged(std::function<void()> handler);
+
     // Finds-or-creates "*acp: <agent>*" (SetReadOnly(true) before the first
     // append; a "--- new session ---" separator is appended first if the
     // buffer already has content from a prior session -- TaskRunner::RunTask's
@@ -156,6 +189,13 @@ class AcpManager {
     void          AppendToOutputBuffer(std::string_view text);
     text::Buffer& OutputBuffer(const std::string& agentName);
 
+    void PushOrAppendAgentText(std::string_view text);
+    void PushOrUpdateToolCall(const Json& update);
+    void PushOrReplacePlan(const Json& update);
+    void PushTranscriptEntry(TranscriptEntry entry);
+    void PushSessionEvent(std::string text);
+    void NotifyTranscriptChanged();
+
     text::BufferList&   bufferList_;
     ned::ui::EventLoop& eventLoop_;
 
@@ -170,6 +210,11 @@ class AcpManager {
 
     std::function<void(const PermissionPrompt&)> onPermissionRequest_;
     std::function<void(std::string)>             onSessionEnded_;
+
+    std::vector<TranscriptEntry> transcript_;
+    std::size_t                  transcriptGeneration_ = 0;
+    std::optional<std::size_t>   livePlanEntryIndex_; // index into transcript_, reset on EndSession
+    std::function<void()>        onTranscriptChanged_;
 };
 
 } // namespace ned::editor::acp

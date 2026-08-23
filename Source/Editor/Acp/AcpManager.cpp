@@ -74,6 +74,22 @@ AcpManager::SessionState AcpManager::State() const {
     return state_;
 }
 
+const std::string& AcpManager::AgentName() const {
+    return agentName_;
+}
+
+const std::vector<AcpManager::TranscriptEntry>& AcpManager::Transcript() const {
+    return transcript_;
+}
+
+std::size_t AcpManager::TranscriptGeneration() const {
+    return transcriptGeneration_;
+}
+
+void AcpManager::SetOnTranscriptChanged(std::function<void()> handler) {
+    onTranscriptChanged_ = std::move(handler);
+}
+
 text::Buffer& AcpManager::OutputBuffer(const std::string& agentName) {
     const std::string bufferName = AcpOutputBufferName(agentName);
     text::Buffer*     buffer     = bufferList_.Find(bufferName);
@@ -91,11 +107,96 @@ void AcpManager::AppendToOutputBuffer(std::string_view text) {
     OutputBuffer(agentName_).AppendWhileReadOnly(text);
 }
 
+void AcpManager::PushTranscriptEntry(TranscriptEntry entry) {
+    transcript_.push_back(std::move(entry));
+    ++transcriptGeneration_;
+    NotifyTranscriptChanged();
+}
+
+void AcpManager::PushSessionEvent(std::string text) {
+    PushTranscriptEntry(TranscriptEntry{.kind = TranscriptEntry::Kind::SessionEvent, .text = std::move(text)});
+}
+
+void AcpManager::NotifyTranscriptChanged() {
+    if (onTranscriptChanged_) {
+        onTranscriptChanged_();
+    }
+}
+
+void AcpManager::PushOrAppendAgentText(std::string_view text) {
+    if (!transcript_.empty() && transcript_.back().kind == TranscriptEntry::Kind::AgentText) {
+        transcript_.back().text += text;
+        ++transcriptGeneration_;
+        NotifyTranscriptChanged();
+        return;
+    }
+    PushTranscriptEntry(TranscriptEntry{.kind = TranscriptEntry::Kind::AgentText, .text = std::string(text)});
+}
+
+void AcpManager::PushOrUpdateToolCall(const Json& update) {
+    const std::string title      = update.value("title", update.value("kind", std::string("tool call")));
+    const std::string status     = update.value("status", std::string());
+    const std::string toolCallId = update.value("toolCallId", std::string());
+
+    if (!toolCallId.empty()) {
+        for (auto it = transcript_.rbegin(); it != transcript_.rend(); ++it) {
+            if (it->kind == TranscriptEntry::Kind::ToolCall && it->toolCallId == toolCallId) {
+                it->text   = title;
+                it->status = status;
+                ++transcriptGeneration_;
+                NotifyTranscriptChanged();
+                return;
+            }
+        }
+    }
+    PushTranscriptEntry(TranscriptEntry{
+        .kind       = TranscriptEntry::Kind::ToolCall,
+        .text       = title,
+        .status     = status,
+        .toolCallId = toolCallId.empty() ? std::nullopt : std::optional<std::string>(toolCallId),
+    });
+}
+
+void AcpManager::PushOrReplacePlan(const Json& update) {
+    std::vector<std::string> steps;
+    if (update.contains("entries") && update["entries"].is_array()) {
+        for (const Json& entryJson : update["entries"]) {
+            std::string content;
+            if (entryJson.contains("content")) {
+                if (entryJson["content"].is_string()) {
+                    content = entryJson["content"].get<std::string>();
+                }
+                else if (entryJson["content"].is_object()) {
+                    content = entryJson["content"].value("text", std::string());
+                }
+            }
+            if (content.empty()) {
+                content = entryJson.value("description", std::string());
+            }
+            const std::string status = entryJson.value("status", std::string());
+            const char*       glyph  = status == "completed" ? "[x] " : status == "in_progress" ? "[~] "
+                                                                                                : "[ ] ";
+            steps.push_back(glyph + content);
+        }
+    }
+
+    if (livePlanEntryIndex_ && *livePlanEntryIndex_ < transcript_.size()) {
+        transcript_[*livePlanEntryIndex_].planSteps = std::move(steps);
+        ++transcriptGeneration_;
+        NotifyTranscriptChanged();
+        return;
+    }
+    livePlanEntryIndex_ = transcript_.size();
+    PushTranscriptEntry(TranscriptEntry{.kind = TranscriptEntry::Kind::Plan, .planSteps = std::move(steps)});
+}
+
 text::Buffer* AcpManager::StartSession(const std::string& agentName) {
     text::Buffer& buffer = OutputBuffer(agentName);
 
     if (state_ != SessionState::Inactive) {
-        buffer.AppendWhileReadOnly("\nAn ACP session (" + agentName_ + ") is already running -- acp-stop-session first.\n");
+        const std::string message = "An ACP session (" + agentName_ + ") is already running -- acp-stop-session first.";
+        buffer.AppendWhileReadOnly("\n" + message + "\n");
+        PushSessionEvent(message);
         return &buffer;
     }
 
@@ -108,7 +209,9 @@ text::Buffer* AcpManager::StartSession(const std::string& agentName) {
     if (!client_) {
         const auto argv = AcpAgentCommand(agentName);
         if (!argv) {
-            buffer.AppendWhileReadOnly("\nNo command configured for ACP agent \"" + agentName + "\" (see ned/set-acp-agent).\n");
+            const std::string message = "No command configured for ACP agent \"" + agentName + "\" (see ned/set-acp-agent).";
+            buffer.AppendWhileReadOnly("\n" + message + "\n");
+            PushSessionEvent(message);
             return &buffer;
         }
         try {
@@ -116,7 +219,9 @@ text::Buffer* AcpManager::StartSession(const std::string& agentName) {
         }
         catch (const std::exception& e) {
             client_.reset();
-            buffer.AppendWhileReadOnly(std::string("\nFailed to start ACP agent: ") + e.what() + "\n");
+            const std::string message = std::string("Failed to start ACP agent: ") + e.what();
+            buffer.AppendWhileReadOnly("\n" + message + "\n");
+            PushSessionEvent(message);
             return &buffer;
         }
     }
@@ -135,7 +240,9 @@ text::Buffer* AcpManager::StartSession(const std::string& agentName) {
         [this](std::optional<Json> result, std::optional<Json> error) {
             (void)result;
             if (error) {
-                AppendToOutputBuffer("\nACP initialize failed: " + error->value("message", std::string("unknown error")) + "\n");
+                const std::string message = "ACP initialize failed: " + error->value("message", std::string("unknown error"));
+                AppendToOutputBuffer("\n" + message + "\n");
+                PushSessionEvent(message);
                 state_ = SessionState::Inactive;
                 return;
             }
@@ -147,14 +254,17 @@ text::Buffer* AcpManager::StartSession(const std::string& agentName) {
                 },
                 [this](std::optional<Json> newResult, std::optional<Json> newError) {
                     if (newError || !newResult || !newResult->contains("sessionId")) {
-                        AppendToOutputBuffer("\nsession/new failed" +
-                                             (newError ? (": " + newError->value("message", std::string())) : std::string()) + "\n");
+                        const std::string message =
+                            "session/new failed" + (newError ? (": " + newError->value("message", std::string())) : std::string());
+                        AppendToOutputBuffer("\n" + message + "\n");
+                        PushSessionEvent(message);
                         state_ = SessionState::Inactive;
                         return;
                     }
                     sessionId_ = (*newResult)["sessionId"].get<std::string>();
                     state_     = SessionState::Active;
                     AppendToOutputBuffer("\n[session ready]\n");
+                    PushSessionEvent("session ready");
                 });
         });
 
@@ -166,6 +276,7 @@ std::string AcpManager::SendPrompt(const std::string& text) {
         return "No active ACP session (see acp-start-session).";
     }
     AppendToOutputBuffer("\n> " + text + "\n");
+    PushTranscriptEntry(TranscriptEntry{.kind = TranscriptEntry::Kind::UserMessage, .text = text});
     client_->SendRequest(
         "session/prompt",
         Json{
@@ -174,11 +285,14 @@ std::string AcpManager::SendPrompt(const std::string& text) {
         },
         [this](std::optional<Json> result, std::optional<Json> error) {
             if (error) {
-                AppendToOutputBuffer("\n[error: " + error->value("message", std::string("prompt failed")) + "]\n");
+                const std::string message = "error: " + error->value("message", std::string("prompt failed"));
+                AppendToOutputBuffer("\n[" + message + "]\n");
+                PushSessionEvent(message);
                 return;
             }
             const std::string stopReason = result ? result->value("stopReason", std::string("end")) : std::string("end");
             AppendToOutputBuffer("\n[" + stopReason + "]\n");
+            PushSessionEvent(stopReason);
         });
     return "Sent.";
 }
@@ -287,6 +401,7 @@ void AcpManager::WireClient(AcpClient& client) {
         pendingPermissionPrompt_  = prompt;
         pendingPermissionRespond_ = std::move(respond);
         AppendToOutputBuffer("\n[permission requested: " + prompt.description + "]\n");
+        PushTranscriptEntry(TranscriptEntry{.kind = TranscriptEntry::Kind::Permission, .text = prompt.description});
         if (onPermissionRequest_) {
             onPermissionRequest_(prompt);
         }
@@ -304,13 +419,25 @@ void AcpManager::HandleSessionUpdate(const Json& params) {
 
     if (kind == "agent_message_chunk" || kind == "agent_thought_chunk" || kind == "user_message_chunk") {
         if (update.contains("content") && update["content"].is_object() && update["content"].value("type", std::string()) == "text") {
-            AppendToOutputBuffer(update["content"].value("text", std::string()));
+            const std::string text = update["content"].value("text", std::string());
+            AppendToOutputBuffer(text);
+            // user_message_chunk is the agent echoing what SendPrompt
+            // already pushed as one clean Kind::UserMessage entry --
+            // coalescing it here too would duplicate that entry.
+            if (kind != "user_message_chunk") {
+                PushOrAppendAgentText(text);
+            }
         }
         return;
     }
     if (kind == "tool_call" || kind == "tool_call_update") {
         const std::string title = update.value("title", update.value("kind", std::string("tool call")));
         AppendToOutputBuffer("\n[tool: " + title + "]\n");
+        PushOrUpdateToolCall(update);
+        return;
+    }
+    if (kind == "plan") {
+        PushOrReplacePlan(update);
         return;
     }
     // Unrecognized/forward-compatible update kind -- see this class's own
@@ -325,10 +452,12 @@ void AcpManager::EndSession(std::string reason) {
     sessionId_.clear();
     pendingPermissionPrompt_.reset();
     pendingPermissionRespond_ = nullptr;
+    livePlanEntryIndex_.reset();
     if (client_) {
         retired_.push_back(std::move(client_)); // never destroyed mid-callback -- see header comment
     }
     AppendToOutputBuffer("\n[" + reason + "]\n");
+    PushSessionEvent(reason);
     if (onSessionEnded_) {
         onSessionEnded_(std::move(reason));
     }
@@ -345,6 +474,7 @@ void AcpManager::ResolvePermissionPrompt(const std::string& optionId) {
     RespondFn respond = std::move(pendingPermissionRespond_);
     pendingPermissionPrompt_.reset();
     AppendToOutputBuffer("[selected: " + optionId + "]\n");
+    PushSessionEvent("selected: " + optionId);
     respond(Json{{"outcome", {{"outcome", "selected"}, {"optionId", optionId}}}}, std::nullopt);
 }
 
@@ -355,6 +485,7 @@ void AcpManager::CancelPermissionPrompt() {
     RespondFn respond = std::move(pendingPermissionRespond_);
     pendingPermissionPrompt_.reset();
     AppendToOutputBuffer("[permission cancelled]\n");
+    PushSessionEvent("permission cancelled");
     respond(Json{{"outcome", {{"outcome", "cancelled"}}}}, std::nullopt);
 }
 

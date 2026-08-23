@@ -461,6 +461,7 @@ add_library(ned_lib STATIC
         Source/Editor/Acp/Transport.cpp
         Source/Editor/Acp/AcpClient.cpp
         Source/Editor/Acp/AcpConfig.cpp
+        Source/Editor/Acp/AcpPanelConfig.cpp
         Source/Editor/Acp/AcpManager.cpp
         Source/Editor/Lsp/Transport.cpp
         Source/Editor/Lsp/LspClient.cpp
@@ -499,6 +500,7 @@ add_library(ned_lib STATIC
         Source/UI/Minimap.cpp
         Source/UI/Overlay.cpp
         Source/UI/TerminalPanel.cpp
+        Source/UI/AcpPanel.cpp
         Source/UI/BufferView.cpp
         Source/UI/WindowManager.cpp
         Source/UI/AsyncFileLoader.cpp
@@ -715,6 +717,7 @@ if (NED_BUILD_TESTS)
             Tests/AcpClientTest.cpp
             Tests/AcpConfigTest.cpp
             Tests/AcpManagerTest.cpp
+            Tests/AcpPanelTest.cpp
             Tests/LspTransportTest.cpp
             Tests/LspClientTest.cpp
             Tests/LspServerConfigTest.cpp
