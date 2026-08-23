@@ -460,8 +460,47 @@ std::string LanguageKeyForMode(const Mode& mode) {
     return mode.name;
 }
 
+SyntaxClass SyntaxClassFor(SymbolKind kind) {
+    switch (kind) {
+        case SymbolKind::Callable:
+            return SyntaxClass::Function;
+        case SymbolKind::TypeLike:
+            return SyntaxClass::Type;
+        case SymbolKind::Data:
+            return SyntaxClass::Constant;
+    }
+    return SyntaxClass::Default; // unreachable, same convention as SyntaxClassForCapture's own default
+}
+
+std::optional<SymbolKind> SymbolKindFromCaptureName(std::string_view captureName) {
+    // The ctags/nvim-treesitter tags.scm convention -- checked directly
+    // against every bundled grammar that ships one (C/C++/PHP/JavaScript/
+    // TypeScript/Python), not assumed; a few extra plausible names
+    // (struct/enum/variable/property) are included defensively for a future
+    // language's own tags.scm, which may spell these slightly differently
+    // than the ones actually observed. Anything not starting with
+    // "definition." (a "@reference.*" capture, or a nested "@name"/"@doc"/
+    // "@local.scope" from the same pattern match) is deliberately not a
+    // match here -- see this function's own doc comment in Mode.h.
+    if (captureName == "definition.function" || captureName == "definition.method") {
+        return SymbolKind::Callable;
+    }
+    if (captureName == "definition.class" || captureName == "definition.interface" ||
+        captureName == "definition.type" || captureName == "definition.module" ||
+        captureName == "definition.struct" || captureName == "definition.enum") {
+        return SymbolKind::TypeLike;
+    }
+    if (captureName == "definition.constant" || captureName == "definition.var" ||
+        captureName == "definition.variable" || captureName == "definition.field" ||
+        captureName == "definition.property") {
+        return SymbolKind::Data;
+    }
+    return std::nullopt;
+}
+
 Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& language, std::string_view querySource,
-                                std::string_view foldQuerySource, std::string_view importQuerySource) {
+                                std::string_view foldQuerySource, std::string_view importQuerySource,
+                                std::string_view symbolKindQuerySource) {
     const auto parser = std::make_shared<treesitter::Parser>(language);
 
     // Shared between highlight and fold below (generic-code-folding
@@ -535,6 +574,35 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
             }
             std::sort(ranges.begin(), ranges.end());
             return ranges;
+        };
+    }
+
+    // gutter-symbol-kind follow-up: a query against the same parser -- shares
+    // sharedParse's cached Tree with highlight/fold above. Only built when a
+    // tags query source was actually given; otherwise mode.symbolKind stays
+    // a default-constructed, empty std::function, the same "no support"
+    // signal fold/highlight above already use. tags.scm mixes
+    // "@definition.*" captures (what this wants) with "@reference.*"/
+    // "@name"/"@doc"/"@local.scope" ones from the same pattern match --
+    // SymbolKindFromCaptureName is what filters to only the former.
+    SymbolKindFunction symbolKind;
+    if (!symbolKindQuerySource.empty()) {
+        const auto symbolKindQuery = std::make_shared<treesitter::Query>(language, symbolKindQuerySource);
+        symbolKind = [parser, symbolKindQuery, sharedParse](std::string_view bufferText) -> std::vector<SymbolMarker> {
+            const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
+            if (tree.IsNull()) {
+                return {};
+            }
+
+            std::vector<SymbolMarker> markers;
+            for (const treesitter::QueryCapture& capture : symbolKindQuery->Captures(tree.RootNode(), bufferText)) {
+                if (const std::optional<SymbolKind> kind = SymbolKindFromCaptureName(capture.name)) {
+                    markers.push_back({.startByte = capture.startByte, .kind = *kind});
+                }
+            }
+            std::sort(markers.begin(), markers.end(),
+                      [](const SymbolMarker& a, const SymbolMarker& b) { return a.startByte < b.startByte; });
+            return markers;
         };
     }
 
@@ -742,11 +810,12 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
                 .expandSelection = std::move(expandSelection),
                 .sexpMotion      = std::move(sexpMotion),
                 .autoPairs       = DefaultAutoPairs(),
+                .symbolKind      = std::move(symbolKind),
                 .importTarget    = std::move(importTarget)};
 }
 
 Mode TreeSitterMode(std::string name, std::string_view languageName, const char* querySource,
-                    const char* foldQuerySource, const char* importQuerySource) {
+                    const char* foldQuerySource, const char* importQuerySource, const char* symbolKindQuerySource) {
     const auto language = treesitter::LanguageByName(languageName);
     // Every languageName this is called with (below) names a grammar
     // Languages.cpp always bundles -- if this ever fires it's a build-time
@@ -755,7 +824,8 @@ Mode TreeSitterMode(std::string name, std::string_view languageName, const char*
     // gracefully.
     return TreeSitterModeFromLanguage(std::move(name), *language, querySource,
                                       foldQuerySource != nullptr ? std::string_view(foldQuerySource) : std::string_view(),
-                                      importQuerySource != nullptr ? std::string_view(importQuerySource) : std::string_view());
+                                      importQuerySource != nullptr ? std::string_view(importQuerySource) : std::string_view(),
+                                      symbolKindQuerySource != nullptr ? std::string_view(symbolKindQuerySource) : std::string_view());
 }
 
 Mode JanetMode() {
@@ -773,41 +843,45 @@ Mode JsonMode() {
 }
 
 Mode CMode() {
-    Mode mode = TreeSitterMode("c-mode", "c", treesitter::queries::kC, treesitter::queries::kCFolds, treesitter::queries::kCImports);
+    Mode mode = TreeSitterMode("c-mode", "c", treesitter::queries::kC, treesitter::queries::kCFolds,
+                               treesitter::queries::kCImports, treesitter::queries::kCTags);
     mode.lineCommentPrefix = "//";
     return mode;
 }
 
 Mode CppMode() {
     Mode mode = TreeSitterMode("cpp-mode", "cpp", treesitter::queries::kCpp, treesitter::queries::kCppFolds,
-                               treesitter::queries::kCImports);
+                               treesitter::queries::kCImports, treesitter::queries::kCppTags);
     mode.lineCommentPrefix = "//";
     return mode;
 }
 
 Mode PhpMode() {
-    Mode mode = TreeSitterMode("php-mode", "php", treesitter::queries::kPhp, nullptr, treesitter::queries::kPhpImports);
+    Mode mode = TreeSitterMode("php-mode", "php", treesitter::queries::kPhp, nullptr, treesitter::queries::kPhpImports,
+                               treesitter::queries::kPhpTags);
     mode.lineCommentPrefix = "//";
     return mode;
 }
 
 Mode JavaScriptMode() {
     Mode mode              = TreeSitterMode("javascript-mode", "javascript", treesitter::queries::kJavaScript,
-                                            treesitter::queries::kJavaScriptFolds, treesitter::queries::kJavaScriptImports);
+                                            treesitter::queries::kJavaScriptFolds, treesitter::queries::kJavaScriptImports,
+                                            treesitter::queries::kJavaScriptTags);
     mode.lineCommentPrefix = "//";
     return mode;
 }
 
 Mode TypeScriptMode() {
     Mode mode              = TreeSitterMode("typescript-mode", "typescript", treesitter::queries::kTypeScript,
-                                            treesitter::queries::kTypeScriptFolds, treesitter::queries::kTypeScriptImports);
+                                            treesitter::queries::kTypeScriptFolds, treesitter::queries::kTypeScriptImports,
+                                            treesitter::queries::kTypeScriptTags);
     mode.lineCommentPrefix = "//";
     return mode;
 }
 
 Mode TsxMode() {
     Mode mode              = TreeSitterMode("tsx-mode", "tsx", treesitter::queries::kTypeScript, treesitter::queries::kTypeScriptFolds,
-                                            treesitter::queries::kTypeScriptImports);
+                                            treesitter::queries::kTypeScriptImports, treesitter::queries::kTypeScriptTags);
     mode.lineCommentPrefix = "//";
     return mode;
 }
@@ -826,7 +900,7 @@ Mode CssMode() {
 
 Mode PythonMode() {
     Mode mode              = TreeSitterMode("python-mode", "python", treesitter::queries::kPython, treesitter::queries::kPythonFolds,
-                                            treesitter::queries::kPythonImports);
+                                            treesitter::queries::kPythonImports, treesitter::queries::kPythonTags);
     mode.lineCommentPrefix = "#";
     return mode;
 }

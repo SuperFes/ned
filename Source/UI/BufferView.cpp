@@ -876,6 +876,26 @@ namespace {
         return {" ", false}; // unreachable, same convention as DiagnosticSeverityRank above
     }
 
+    // gutter-symbol-kind follow-up: one glyph per SymbolKind bucket, the
+    // same "small alphabet of clear, single-character indicators" convention
+    // DiagnosticGlyphFor above establishes -- plain Unicode, not Nerd Font
+    // codicons, so it renders correctly in any UTF-8 terminal without a
+    // patched font (matching ✗/▲/i/· above, and this project's own general
+    // avoidance of font-dependent glyphs elsewhere in the gutter). Color
+    // comes from the matching SyntaxClass (editor::SyntaxClassFor), not from
+    // here -- this only picks the shape.
+    const char* SymbolGlyphFor(editor::SymbolKind kind) {
+        switch (kind) {
+            case editor::SymbolKind::Callable:
+                return "ƒ"; // LATIN SMALL LETTER F WITH HOOK -- the standard "function" glyph
+            case editor::SymbolKind::TypeLike:
+                return "◇"; // WHITE DIAMOND -- a class/interface/type/module definition
+            case editor::SymbolKind::Data:
+                return "="; // a constant/variable-like definition
+        }
+        return " "; // unreachable, same convention as DiagnosticGlyphFor above
+    }
+
     Color DiagnosticSeverityColor(const Theme& theme, text::Buffer::Diagnostic::Severity severity) {
         switch (severity) {
             case text::Buffer::Diagnostic::Severity::Error:
@@ -948,6 +968,43 @@ void BufferView::EnsureDiagnosticGutterCache() const {
 
     diagnosticGutterCacheBuffer_     = &buffer;
     diagnosticGutterCacheGeneration_ = buffer.DiagnosticsGeneration();
+}
+
+void BufferView::EnsureSymbolGutterCache() const {
+    text::Buffer& buffer = activeBuffer_.Get();
+
+    // Eligibility gate -- mirrors FoldGutterActive's own mode_.fold/
+    // ReadOnly() reasoning (a real query run against a synthesized
+    // "path:line: text" results buffer produces meaningless markers, not an
+    // empty result). Stamped as up to date even when ineligible so a repeat
+    // call this same frame/buffer stays a cheap no-op.
+    if (!mode_.symbolKind || buffer.ReadOnly()) {
+        symbolGutterLineKinds_.clear();
+        symbolGutterCacheBuffer_            = &buffer;
+        symbolGutterCacheContentGeneration_ = buffer.ContentGeneration();
+        return;
+    }
+
+    if (symbolGutterCacheBuffer_ == &buffer && symbolGutterCacheContentGeneration_ == buffer.ContentGeneration()) {
+        return;
+    }
+
+    const text::Rope& content = buffer.Content();
+    // mode_.symbolKind already returns markers sorted by startByte (Mode.cpp's
+    // own closure) -- collapsing to one entry per line via a plain overwrite
+    // in that order keeps the LAST (highest-byte-offset) marker on a line
+    // that somehow has more than one, the same "later wins" convention
+    // HighlightSpan's own doc comment establishes elsewhere in this file.
+    std::unordered_map<std::size_t, editor::SymbolKind> kindByLine;
+    for (const editor::SymbolMarker& marker : mode_.symbolKind(buffer.Text())) {
+        kindByLine[content.ByteOffsetToLine(marker.startByte)] = marker.kind;
+    }
+    symbolGutterLineKinds_.assign(kindByLine.begin(), kindByLine.end());
+    std::sort(symbolGutterLineKinds_.begin(), symbolGutterLineKinds_.end(),
+              [](const auto& a, const auto& b) { return a.first < b.first; });
+
+    symbolGutterCacheBuffer_            = &buffer;
+    symbolGutterCacheContentGeneration_ = buffer.ContentGeneration();
 }
 
 void BufferView::EnsureInlineDiagnosticCache() const {
@@ -1424,13 +1481,16 @@ void BufferView::Paint(Canvas c) {
     // these columns only when actually wanted (see its own doc comment) --
     // recomputing the same condition here keeps the layout math below in
     // agreement with it without a second source of truth. Column offsets,
-    // left to right: [diff][status][diagnostic][gap][digits][gap][fold][blame]
-    // (diff-gutter-markers follow-up put diff leftmost, matching real
-    // editors' own git-gutter placement -- see kDiffWidth's own doc
-    // comment; blame stayed the rightmost region, past fold).
-    const std::size_t foldColumnWidth  = FoldGutterActive() ? kMaxFoldDepthColumns : 0;
-    const std::size_t blameColumnWidth = BlameGutterActive() ? kBlameWidth : 0;
-    const std::size_t diffColumnWidth  = DiffGutterActive() ? kDiffWidth : 0;
+    // left to right: [diff][status][diagnostic][gap][digits][gap][symbol]
+    // [fold][blame] (diff-gutter-markers follow-up put diff leftmost,
+    // matching real editors' own git-gutter placement -- see kDiffWidth's
+    // own doc comment; blame stayed the rightmost region, past fold; symbol
+    // -- gutter-symbol-kind follow-up -- sits just before fold, clustering
+    // the two structure-related columns together).
+    const std::size_t foldColumnWidth   = FoldGutterActive() ? kMaxFoldDepthColumns : 0;
+    const std::size_t blameColumnWidth  = BlameGutterActive() ? kBlameWidth : 0;
+    const std::size_t diffColumnWidth   = DiffGutterActive() ? kDiffWidth : 0;
+    const std::size_t symbolColumnWidth = SymbolGutterActive() ? kSymbolWidth : 0;
     // DAP client slice 2: the debug-marker column, leftmost of all when
     // active -- see kDapWidth's own doc comment for the full layout.
     const std::size_t dapColumnWidth  = DapGutterActive() ? kDapWidth : 0;
@@ -1460,7 +1520,8 @@ void BufferView::Paint(Canvas c) {
     const std::size_t lineNumberGapWidth = LineNumberGutterActive() ? kLineNumberGap : 0;
     const std::size_t digitsStart        = diagnosticStart + kDiagnosticWidth + lineNumberGapWidth;
     const std::size_t gutterDigits       = LineNumberGutterActive() ? std::to_string(totalLines).size() : 0;
-    const std::size_t foldStart          = digitsStart + gutterDigits + lineNumberGapWidth;
+    const std::size_t symbolStart        = digitsStart + gutterDigits + lineNumberGapWidth;
+    const std::size_t foldStart          = symbolStart + symbolColumnWidth;
     const std::size_t blameStart         = foldStart + foldColumnWidth;
 
     // status-gutter unsaved-change-indicator follow-up: recomputed once
@@ -1997,6 +2058,23 @@ void BufferView::Paint(Canvas c) {
                 // exactly the right structure: an ancestor's own range can
                 // never close before a still-open descendant mapped to the
                 // same (capped) column does.
+                // gutter-symbol-kind follow-up: one glyph on each definition
+                // line, colored via the matching SyntaxClass (a function
+                // definition's glyph is colored the same as a function name
+                // would be in the buffer text itself) -- same sorted-by-line
+                // lower_bound lookup the blame gutter below already uses.
+                // Placed right before fold, matching [digits][gap][symbol]
+                // [fold][blame]'s own layout comment above.
+                if (symbolColumnWidth > 0 && static_cast<int>(symbolStart) < c.size().width) {
+                    const auto it = std::lower_bound(symbolGutterLineKinds_.begin(), symbolGutterLineKinds_.end(), line,
+                                                     [](const auto& entry, std::size_t l) { return entry.first < l; });
+                    if (it != symbolGutterLineKinds_.end() && it->first == line) {
+                        Cell& cell     = c[{.x = static_cast<int>(symbolStart), .y = row}];
+                        cell.character = SymbolGlyphFor(it->second);
+                        theme_.BrushFor(editor::SyntaxClassFor(it->second)).ApplyTo(cell);
+                    }
+                }
+
                 if (foldColumnWidth > 0) {
                     foldGutterHeaderAtColumn.fill(nullptr);
                     // <= line, not == line: when topLine_ > 0 (scrolled past
@@ -6755,24 +6833,33 @@ std::size_t BufferView::GutterWidth() const {
     const std::size_t totalLines = activeBuffer_.Get().Content().LineCount();
     // status/line-number-spacing follow-up (LSP client follow-up: gained a
     // second, dedicated diagnostic column -- see kDiagnosticWidth's own doc
-    // comment): [status][diagnostic][gap][digits][gap][fold], left to right
-    // -- status and diagnostic are always reserved; the fold region
+    // comment): [status][diagnostic][gap][digits][gap][symbol][fold], left
+    // to right -- status and diagnostic are always reserved; the fold region
     // (generic-code-folding / depth-aware-fold-gutter follow-ups) only when
     // a mode has a real fold query and the feature is enabled, a fixed
     // kMaxFoldDepthColumns-wide reservation (not one that grows with how
     // deep the currently-visible content happens to nest -- an explicit
     // user choice, so the gutter's own width never jumps around while
-    // scrolling past a deeply nested region).
-    const std::size_t foldColumn  = FoldGutterActive() ? kMaxFoldDepthColumns : 0;
-    const std::size_t blameColumn = BlameGutterActive() ? kBlameWidth : 0;
-    const std::size_t diffColumn  = DiffGutterActive() ? kDiffWidth : 0;
-    const std::size_t dapColumn   = DapGutterActive() ? kDapWidth : 0;
+    // scrolling past a deeply nested region). symbol (gutter-symbol-kind
+    // follow-up), unlike fold, IS data-driven -- see SymbolGutterActive's
+    // own doc comment for why.
+    const std::size_t foldColumn   = FoldGutterActive() ? kMaxFoldDepthColumns : 0;
+    const std::size_t blameColumn  = BlameGutterActive() ? kBlameWidth : 0;
+    const std::size_t diffColumn   = DiffGutterActive() ? kDiffWidth : 0;
+    const std::size_t dapColumn    = DapGutterActive() ? kDapWidth : 0;
+    const std::size_t symbolColumn = SymbolGutterActive() ? kSymbolWidth : 0;
     // Multibuffers follow-up: the line-number digits + both surrounding
     // gaps collapse to zero width together when LineNumberGutterActive()
     // is false -- see its own doc comment.
     const std::size_t lineNumberColumn =
         LineNumberGutterActive() ? (kLineNumberGap + std::to_string(totalLines).size() + kLineNumberGap) : 0;
-    return dapColumn + diffColumn + kStatusWidth + kDiagnosticWidth + lineNumberColumn + foldColumn + blameColumn;
+    return dapColumn + diffColumn + kStatusWidth + kDiagnosticWidth + lineNumberColumn + symbolColumn + foldColumn +
+           blameColumn;
+}
+
+bool BufferView::SymbolGutterActive() const {
+    EnsureSymbolGutterCache();
+    return !symbolGutterLineKinds_.empty();
 }
 
 bool BufferView::DiffGutterActive() const {
@@ -6869,14 +6956,18 @@ bool BufferView::OnMouseEvent(const Event& event) {
         // block, not whatever's innermost at that line) -- clicking a plain
         // guide line ('│'/'└', not a header cell) is a no-op, matching how
         // indent guides are inert-to-click in every mainstream editor.
-        const std::size_t foldColumnWidth  = FoldGutterActive() ? kMaxFoldDepthColumns : 0;
-        const std::size_t blameColumnWidth = BlameGutterActive() ? kBlameWidth : 0;
+        const std::size_t foldColumnWidth   = FoldGutterActive() ? kMaxFoldDepthColumns : 0;
+        const std::size_t blameColumnWidth  = BlameGutterActive() ? kBlameWidth : 0;
         // Mirrors GutterWidth()/Paint()'s own
-        // [status][gap][digits][gap][fold][blame] layout -- foldStart is
-        // where the fold region actually starts on screen, which (VCS
-        // blame gutter follow-up) now has to account for blame's own
-        // width too, since blame sits to the right of fold, not fold being
-        // the rightmost region anymore.
+        // [status][gap][digits][gap][symbol][fold][blame] layout -- foldStart
+        // is where the fold region actually starts on screen: GutterWidth()
+        // minus fold's and blame's own widths leaves everything to fold's
+        // *left* (dap/diff/status/diagnostic/line-numbers/symbol, gutter-
+        // symbol-kind follow-up), which is exactly foldStart -- no separate
+        // symbol subtraction needed here, unlike the other three call sites
+        // this check's own doc comment warns about, since this one derives
+        // from the already-symbol-aware GutterWidth() instead of summing
+        // column starts independently.
         const std::size_t foldStart = GutterWidth() - foldColumnWidth - blameColumnWidth;
         if (foldColumnWidth > 0 && mouse->at.x >= static_cast<int>(foldStart) &&
             static_cast<std::size_t>(mouse->at.x) < foldStart + foldColumnWidth) {

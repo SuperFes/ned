@@ -207,24 +207,29 @@ std::string RowText(ned::ui::Screen& screen, int row, int width) {
 }
 
 // Mirrors BufferView::GutterWidth's formula --
-// [status][diagnostic][gap][digits][gap][fold] (LSP client follow-up added
-// the diagnostic column): a fixed leading status column, a fixed diagnostic
-// column, a gap, digits in the last line number, a second gap, then
-// foldColumn trailing columns (generic-code-folding follow-up) for a mode
-// with a real fold query -- default 0, since most existing callers exercise
-// a mode without one. Content starts at this column, not 0.
-int GutterWidth(std::size_t totalLines, int foldColumn = 0) {
+// [status][diagnostic][gap][digits][gap][symbol][fold] (LSP client follow-up
+// added the diagnostic column; gutter-symbol-kind follow-up added symbol): a
+// fixed leading status column, a fixed diagnostic column, a gap, digits in
+// the last line number, a second gap, then symbolColumn (default 0 -- only
+// nonzero for a real-mode test buffer whose content actually has a
+// "@definition.*"-matching construct, e.g. CMode's `int main(void) {`
+// fold-test fixtures) and foldColumn trailing columns (generic-code-folding
+// follow-up) for a mode with a real fold query -- default 0, since most
+// existing callers exercise a mode without one. Content starts at this
+// column, not 0.
+int GutterWidth(std::size_t totalLines, int foldColumn = 0, int symbolColumn = 0) {
     constexpr int kStatusWidth     = 1;
     constexpr int kDiagnosticWidth = 1;
     constexpr int kLineNumberGap   = 1;
     return kStatusWidth + kDiagnosticWidth + kLineNumberGap + static_cast<int>(std::to_string(totalLines).size()) +
-           kLineNumberGap + foldColumn;
+           kLineNumberGap + symbolColumn + foldColumn;
 }
 
 // Row text starting right after the gutter, rather than from column 0.
-std::string ContentRowText(ned::ui::Screen& screen, int row, int width, std::size_t totalLines, int foldColumn = 0) {
+std::string ContentRowText(ned::ui::Screen& screen, int row, int width, std::size_t totalLines, int foldColumn = 0,
+                           int symbolColumn = 0) {
     std::string out;
-    const int   gutter = GutterWidth(totalLines, foldColumn);
+    const int   gutter = GutterWidth(totalLines, foldColumn, symbolColumn);
     for (int col = 0; col < width; ++col) {
         out += screen.PixelAt(gutter + col, row).character;
     }
@@ -4661,7 +4666,7 @@ TEST_CASE("Clicking the fold gutter column collapses a code block, hiding its bo
     ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 29, .y_min = 0, .y_max = 2});
     view.Paint(canvas); // establishes the foldable-blocks cache before the click
 
-    const int foldStart = GutterWidth(3, /*foldColumn=*/4) - 4;
+    const int foldStart = GutterWidth(3, /*foldColumn=*/4, /*symbolColumn=*/1) - 4;
     view.OnEvent(MousePress(foldStart, 0)); // fold column, row 0 -- the function's own opening line
     view.Paint(canvas);
 
@@ -4671,14 +4676,14 @@ TEST_CASE("Clicking the fold gutter column collapses a code block, hiding its bo
     // row 0 instead gets the fold ellipsis plus a preview of that closing
     // line's own trimmed content, and row 1 (nothing left to show -- only
     // 3 lines exist and 2 are now hidden) is blank.
-    REQUIRE(ContentRowText(screen, 0, 20, 3, /*foldColumn=*/4) == "int main(void) { … }");
-    REQUIRE(ContentRowText(screen, 1, 1, 3, /*foldColumn=*/4) == " ");
+    REQUIRE(ContentRowText(screen, 0, 20, 3, /*foldColumn=*/4, /*symbolColumn=*/1) == "int main(void) { … }");
+    REQUIRE(ContentRowText(screen, 1, 1, 3, /*foldColumn=*/4, /*symbolColumn=*/1) == " ");
 
     // Clicking again expands it back.
     view.OnEvent(MousePress(foldStart, 0));
     view.Paint(canvas);
     REQUIRE(screen.PixelAt(foldStart, 0).character == "⊟"); // expanded glyph
-    REQUIRE(ContentRowText(screen, 1, 4, 3, /*foldColumn=*/4) == "    ");
+    REQUIRE(ContentRowText(screen, 1, 4, 3, /*foldColumn=*/4, /*symbolColumn=*/1) == "    ");
 }
 
 TEST_CASE("Nested fold regions render guide lines at increasing depth columns for an expanded block", "[BufferView]") {
@@ -4692,7 +4697,7 @@ TEST_CASE("Nested fold regions render guide lines at increasing depth columns fo
     ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 4});
     view.Paint(canvas);
 
-    const int foldStart = GutterWidth(5, /*foldColumn=*/4) - 4;
+    const int foldStart = GutterWidth(5, /*foldColumn=*/4, /*symbolColumn=*/1) - 4;
 
     // Row 0: outer (depth 0) block's own header, column 0.
     REQUIRE(screen.PixelAt(foldStart, 0).character == "⊟");
@@ -4724,7 +4729,7 @@ TEST_CASE("Clicking a specific depth column toggles only that column's block", "
     ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 4});
     view.Paint(canvas);
 
-    const int foldStart = GutterWidth(5, /*foldColumn=*/4) - 4;
+    const int foldStart = GutterWidth(5, /*foldColumn=*/4, /*symbolColumn=*/1) - 4;
     view.OnEvent(MousePress(foldStart + 1, 1)); // inner block's own header, column 1
     view.Paint(canvas);
 
@@ -4752,7 +4757,7 @@ TEST_CASE("Collapsing an outer block leaves no guide line for its now-hidden nes
     ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 4});
     view.Paint(canvas);
 
-    const int foldStart = GutterWidth(5, /*foldColumn=*/4) - 4;
+    const int foldStart = GutterWidth(5, /*foldColumn=*/4, /*symbolColumn=*/1) - 4;
     view.OnEvent(MousePress(foldStart, 0)); // outer block's own header, column 0
     view.Paint(canvas);
 
@@ -4787,7 +4792,7 @@ TEST_CASE("Blocks nested deeper than the gutter's columns draw no fold affordanc
     ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 10});
     view.Paint(canvas);
 
-    const int foldStart = GutterWidth(11, /*foldColumn=*/4) - 4;
+    const int foldStart = GutterWidth(11, /*foldColumn=*/4, /*symbolColumn=*/1) - 4;
 
     // Depths 0-3 each get their own header in their own column...
     REQUIRE(screen.PixelAt(foldStart + 0, 0).character == "⊟");
@@ -4815,7 +4820,7 @@ TEST_CASE("A block written entirely on one line gets no fold icon", "[BufferView
     ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
     view.Paint(canvas);
 
-    const int foldStart = GutterWidth(1, /*foldColumn=*/4) - 4;
+    const int foldStart = GutterWidth(1, /*foldColumn=*/4, /*symbolColumn=*/1) - 4;
     REQUIRE(screen.PixelAt(foldStart, 0).character == " ");
     REQUIRE(screen.PixelAt(foldStart + 1, 0).character == " ");
 }
@@ -4865,7 +4870,7 @@ TEST_CASE("A one-line block nested inside a real multi-line block still lets the
     ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
     view.Paint(canvas);
 
-    const int foldStart = GutterWidth(3, /*foldColumn=*/4) - 4;
+    const int foldStart = GutterWidth(3, /*foldColumn=*/4, /*symbolColumn=*/1) - 4;
     REQUIRE(screen.PixelAt(foldStart, 0).character == "⊟");     // outer block's own toggle, unaffected
     REQUIRE(screen.PixelAt(foldStart + 1, 1).character == " "); // one-line "if" body -- no icon
 }
@@ -4902,7 +4907,7 @@ TEST_CASE("Fold header glyphs still render after scrolling past an earlier folda
     view.Paint(canvas);
 
     // "int late(void) {" is line 63 -- the first visible row.
-    const int foldStart = GutterWidth(fixture.buffer.Content().LineCount(), /*foldColumn=*/4) - 4;
+    const int foldStart = GutterWidth(fixture.buffer.Content().LineCount(), /*foldColumn=*/4, /*symbolColumn=*/1) - 4;
     REQUIRE(screen.PixelAt(foldStart, 0).character == "⊟");
 }
 
