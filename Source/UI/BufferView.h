@@ -1974,6 +1974,15 @@ class BufferView : public Widget {
     std::size_t                          codeActionSelection_         = 0;
     std::size_t                          codeActionRequestGeneration_ = 0;
 
+    // executeCommand/prose-code-actions follow-up: which LspManager
+    // serverKey pendingCodeActions_ was requested from -- empty for the
+    // primary language server (RequestCodeActions's own default), else
+    // editor::lsp::kProseLanguageKey when point sat on a Prose-origin
+    // diagnostic. Threaded through ResolveAndApplyCodeAction/ApplyCodeAction
+    // so a command carried by one of these actions executes against the
+    // same connection it was listed from.
+    std::string codeActionServerKey_;
+
     // go-to-definition follow-up: same staleness-guard/selection-list shape
     // as pendingCodeActions_/codeActionSelection_/codeActionRequestGeneration_
     // just above, valid only while inputMode_ == LspGotoDefinitionSelect.

@@ -238,6 +238,56 @@ TEST_CASE("ExtractSingleCodeAction is not resolvable once it already has an edit
     REQUIRE_FALSE(action.resolvable); // already has its edit -- nothing to resolve
 }
 
+TEST_CASE("ExtractSingleCodeAction parses a bare Command item's command/arguments", "[Lsp]") {
+    const Json       item   = {{"title", "Add to dictionary"}, {"command", "HarperAddToUserDict"}, {"arguments", Json::array({"teh"})}};
+    const CodeAction action = ExtractSingleCodeAction(item, "file:///a.c");
+
+    REQUIRE(action.command.has_value());
+    REQUIRE(action.command->name == "HarperAddToUserDict");
+    REQUIRE(action.command->arguments == Json::array({"teh"}));
+}
+
+TEST_CASE("ExtractSingleCodeAction parses a real CodeAction's nested command object", "[Lsp]") {
+    const Json item = {
+        {"title", "Ignore this lint"},
+        {"kind", "quickfix"},
+        {"command", {{"title", "Ignore this lint"}, {"command", "HarperIgnoreLint"}, {"arguments", Json::array({1, 2})}}},
+    };
+    const CodeAction action = ExtractSingleCodeAction(item, "file:///a.c");
+
+    REQUIRE(action.command.has_value());
+    REQUIRE(action.command->name == "HarperIgnoreLint");
+    REQUIRE(action.command->arguments == Json::array({1, 2}));
+}
+
+TEST_CASE("ExtractSingleCodeAction defaults a command's missing arguments to an empty array", "[Lsp]") {
+    const Json item = {{"title", "Run"}, {"command", "myserver.fixit"}};
+    REQUIRE(ExtractSingleCodeAction(item, "file:///a.c").command->arguments == Json::array());
+}
+
+TEST_CASE("ExtractSingleCodeAction parses an item carrying both an edit and a command", "[Lsp]") {
+    // The roadmap's own "Replace with X" case: a real CodeAction that
+    // applies an edit AND separately asks the client to execute a command.
+    const Json textEdit = {{"range", MakeRange(0, 0, 0, 3)}, {"newText", "the"}};
+    const Json item      = {
+        {"title", "Replace with \"the\""},
+        {"kind", "quickfix"},
+        {"edit", {{"changes", {{"file:///a.c", Json::array({textEdit})}}}}},
+        {"command", {{"title", "Record fix"}, {"command", "HarperRecordLint"}}},
+    };
+
+    const CodeAction action = ExtractSingleCodeAction(item, "file:///a.c");
+    REQUIRE(action.hasEdit);
+    REQUIRE(action.edits.size() == 1);
+    REQUIRE(action.command.has_value());
+    REQUIRE(action.command->name == "HarperRecordLint");
+}
+
+TEST_CASE("ExtractSingleCodeAction leaves command unset when the item has none", "[Lsp]") {
+    const Json item = {{"title", "No command here"}, {"kind", "quickfix"}};
+    REQUIRE_FALSE(ExtractSingleCodeAction(item, "file:///a.c").command.has_value());
+}
+
 TEST_CASE("ExtractDefinitionLocations parses a bare Location object", "[Lsp]") {
     const Json                            result    = {{"uri", "file:///a.c"}, {"range", MakeRange(4, 2, 4, 10)}};
     const std::vector<DefinitionLocation> locations = ExtractDefinitionLocations(result);

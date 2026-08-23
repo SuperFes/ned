@@ -150,8 +150,17 @@ class LspManager {
     // Buffer::Diagnostic overlapping that range is sent as "context.
     // diagnostics", the same information a real editor's own quick-fix menu
     // would show the server.
+    //
+    // executeCommand follow-up: serverKey routes to a specific connection
+    // (bufferState_'s own per-server key -- see SyncToServer) instead of
+    // always the primary language server; empty (the default) keeps the
+    // original PrimarySyncState-only behavior. BufferView passes
+    // kProseLanguageKey here when point sits on a Prose-origin diagnostic,
+    // so "add to dictionary"/"ignore" actions from the prose checker
+    // connection are reachable through this same request.
     using CodeActionCallback = std::function<void(std::vector<CodeAction> actions)>;
-    void RequestCodeActions(text::Buffer& buffer, std::size_t rangeStartByte, std::size_t rangeEndByte, CodeActionCallback callback);
+    void RequestCodeActions(text::Buffer& buffer, std::size_t rangeStartByte, std::size_t rangeEndByte, CodeActionCallback callback,
+                            const std::string& serverKey = {});
 
     // code-actions-resolve follow-up. Sends codeAction/resolve with
     // action.raw verbatim (the LSP spec requires round-tripping the exact
@@ -160,9 +169,27 @@ class LspManager {
     // comment in LspContent.h). callback receives the resolved CodeAction
     // (hasEdit true if the server actually filled it in) or nullopt on any
     // failure (buffer never synced, no running client, or an error
-    // response).
+    // response). serverKey: see RequestCodeActions's own doc comment above.
     using ResolveCallback = std::function<void(std::optional<CodeAction> resolved)>;
-    void ResolveCodeAction(text::Buffer& buffer, const CodeAction& action, ResolveCallback callback);
+    void ResolveCodeAction(text::Buffer& buffer, const CodeAction& action, ResolveCallback callback, const std::string& serverKey = {});
+
+    // executeCommand follow-up. Sends workspace/executeCommand for a
+    // CodeAction::CodeActionCommand extracted from a prior code-action
+    // response -- what actually runs a bare-Command (or edit-and-command)
+    // quick fix, harper-ls's "add to dictionary"/"ignore" among them. No
+    // check against the server's own executeCommandProvider capability
+    // (this file never gates any other request on the server's advertised
+    // capabilities either -- just sends it and handles the error response
+    // like everything else here). callback receives false on any failure
+    // (buffer never synced, no running client, or an error response), true
+    // otherwise; the request's own "result" is discarded -- a server that
+    // needs to push an edit back in response is expected to do so via its
+    // own workspace/applyEdit request, which this client doesn't handle yet
+    // (out of scope: every command this feature targets is confirmed to
+    // persist server-side with no such round trip -- see ROADMAP.md history).
+    using ExecuteCommandCallback = std::function<void(bool ok)>;
+    void ExecuteCommand(text::Buffer& buffer, const std::string& serverKey, const std::string& command, Json arguments,
+                        ExecuteCommandCallback callback);
 
     // go-to-definition follow-up. A DefinitionLocation (LspContent.h) with
     // its uri already resolved to a real filesystem path -- BufferView has
@@ -328,6 +355,15 @@ class LspManager {
     // requests are never routed to the prose checker. nullptr if buffer has
     // no primary sync state at all (never synced, or synced only to prose).
     [[nodiscard]] BufferSyncState* PrimarySyncState(text::Buffer& buffer);
+
+    // executeCommand follow-up. Generalizes PrimarySyncState for a caller
+    // that can name which server it wants: empty serverKey delegates to
+    // PrimarySyncState unchanged, a non-empty one looks up that exact
+    // bufferState_[&buffer] entry (e.g. kProseLanguageKey) instead of
+    // whichever isn't kProseLanguageKey. RequestCodeActions/ResolveCodeAction/
+    // ExecuteCommand all resolve through this rather than PrimarySyncState
+    // directly, so any of them can be routed to the prose connection.
+    [[nodiscard]] BufferSyncState* ResolveSyncState(text::Buffer& buffer, const std::string& serverKey);
 
     // prose-checking follow-up: flattens every source language's current
     // diagnostics slice for buffer (diagnosticsBySource_[&buffer]) into one

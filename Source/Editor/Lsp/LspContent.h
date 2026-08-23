@@ -87,6 +87,26 @@ struct CodeAction {
     std::string kind;
     bool        isPreferred = false;
 
+    // executeCommand follow-up. The nested Command object a real
+    // CodeAction's own "command" field carries, or -- for a bare Command
+    // response item, which *is* one of these shapes at the top level --
+    // that item's own command/arguments folded in here identically, so
+    // BufferView::ApplyCodeAction need not care which wire shape produced
+    // it. Independent of hasEdit/resolvable: a resolvable action
+    // legitimately has neither edit nor command yet (codeAction/resolve
+    // only ever fills in "edit" per spec, never "command"). name is the
+    // opaque, server-defined command identifier (e.g. harper-ls's
+    // "HarperAddToUserDict"); arguments is the raw "arguments" array
+    // round-tripped verbatim -- the client has no business interpreting it,
+    // only replaying it back via workspace/executeCommand.
+    struct CodeActionCommand {
+        std::string name;
+        Json        arguments; // [] if the server sent no "arguments" at all
+
+        bool operator==(const CodeActionCommand&) const = default;
+    };
+    std::optional<CodeActionCommand> command;
+
     bool operator==(const CodeAction&) const = default;
 };
 

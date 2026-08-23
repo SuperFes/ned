@@ -147,6 +147,26 @@ CodeAction ExtractSingleCodeAction(const Json& item, const std::string& ownUri) 
         // genuinely edit-less action.
         action.resolvable = item.contains("kind");
     }
+
+    // executeCommand follow-up: a real CodeAction nests its Command as an
+    // object under "command"; a bare Command response item instead *is*
+    // that Command, with "command" as the (string) command name directly on
+    // item itself -- is_object()/is_string() is exactly how those two shapes
+    // differ on this shared key.
+    if (const auto commandIt = item.find("command"); commandIt != item.end()) {
+        if (commandIt->is_object()) {
+            action.command = CodeAction::CodeActionCommand{
+                .name      = commandIt->value("command", std::string()),
+                .arguments = commandIt->value("arguments", Json::array()),
+            };
+        }
+        else if (commandIt->is_string()) {
+            action.command = CodeAction::CodeActionCommand{
+                .name      = commandIt->get<std::string>(),
+                .arguments = item.value("arguments", Json::array()),
+            };
+        }
+    }
     return action;
 }
 

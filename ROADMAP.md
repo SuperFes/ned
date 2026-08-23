@@ -44,51 +44,6 @@ Notcurses (TermOx → FTXUI → Notcurses over the project's life).
       independent diagnostics channel alongside the primary language server) — that
       two-server shape is a fixed pair keyed by a reserved language key, not yet a
       general N-server-per-buffer mechanism this would need.
-- [ ] **Persist grammar/spelling choices from the prose checker** (harper-ls) — right
-      now a flagged word/phrase can only be read (gutter icon, right-margin callout,
-      bottom-status hint from the prose-diagnostic-callout work); there's no way to
-      tell harper-ls "this is a real word" or "ignore this specific lint." No new
-      persistence layer of ned's own turns out to be needed for that once it's wired
-      up: harper-ls already advertises `executeCommandProvider` with
-      `HarperAddToUserDict`/`HarperAddToWSDict`/`HarperAddToFileDict`/
-      `HarperIgnoreLint`/`HarperRecordLint`/`HarperOpen`, and a live JSON-RPC probe
-      against harper-ls 1.8.0 confirmed `HarperAddToUserDict` persists to
-      `~/.config/harper-ls/dictionary.txt` (global, harper-ls's own XDG path) and
-      `HarperAddToWSDict` persists to a plain `<project-root>/.harper-dictionary.txt`
-      dotfile harper-ls writes itself — outside `ProjectTrust`'s scope (that registry
-      only ever gates loading `.ned/init.janet`, nothing else) and not a
-      code-execution surface, so no new trust gating is needed for it.
-      `HarperAddToFileDict`'s and `HarperIgnoreLint`'s own persistence still need the
-      same live verification before relying on them.
-
-      Three real gaps stand between here and there, all confirmed against harper-ls's
-      own `textDocument/codeAction` response for a real diagnostic:
-      1. **`workspace/executeCommand` doesn't exist in this codebase at all** (zero
-         call sites in `LspClient`/`LspManager`). The "Add to dictionary"/"Ignore"
-         actions carry *only* a `command`, no `edit` — they cannot function through
-         any path that doesn't send this request.
-      2. **`CodeAction` (`Editor/Lsp/LspContent.h`) has no `command`/`data` field** —
-         parsing only ever reads `edit`/`kind`/`isPreferred`; a bare `Command` (no
-         `edit`) parses to `resolvable=false`, a dead end today (the struct's own doc
-         comment calls executing a server-side Command "out of this codebase's
-         scope" — a deliberate v1 cut this feature needs to lift).
-         `BufferView::ApplyCodeAction` mirrors this: applies `.edits` only, never
-         inspects a `command`. A spec-correct apply needs both, in order (apply the
-         edit if any, then execute the command if any — some of harper's own
-         "Replace with X" quickfixes already carry both).
-      3. **The prose connection is explicitly excluded from code actions**
-         (`LspManager.h`'s `kProseLanguageKey` doc comment: "never hover/completion/
-         code actions/definition/rename"), and `RequestCodeActions` is hardwired to a
-         buffer's *primary* language server via `PrimarySyncState`, not addressable to
-         an arbitrary language key — lifting this needs either a parameter or a
-         parallel `RequestProseCodeActions`, gated to fire only when point sits within
-         a `Buffer::Diagnostic::Origin::Prose` span (the same origin tag the
-         prose-diagnostic-callout feature already added).
-
-      Likely shape once those three exist: extend the existing `lsp-code-actions`
-      picker (`InputMode::LspCodeActionSelect`) to also query the prose connection
-      when point is on a Prose diagnostic, reusing its UI wholesale rather than
-      building a second picker.
 - [ ] Per-capture highlighting round 2 (v1 shipped, exhaustive-highlighting
       follow-up: enumeration of all 17 bundled queries' 87 capture names, defaults
       closing every gap found, `HighlightSpan` carrying an interned capture id, a
