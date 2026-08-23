@@ -34,4 +34,14 @@ Node Tree::RootNode() const {
     return Node(ts_tree_root_node(tree_));
 }
 
+void Tree::Edit(const TSInputEdit& edit) noexcept {
+    if (!IsNull()) {
+        ts_tree_edit(tree_, &edit);
+    }
+}
+
+const TSTree* Tree::Raw() const noexcept {
+    return tree_;
+}
+
 } // namespace ned::editor::treesitter

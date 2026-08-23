@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.29)
-project(Ned VERSION 0.1.0)
+project(Ned VERSION 0.5.0)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -521,6 +521,7 @@ add_library(ned_lib STATIC
         Source/Editor/TreeSitter/Node.cpp
         Source/Editor/TreeSitter/Tree.cpp
         Source/Editor/TreeSitter/Parser.cpp
+        Source/Editor/TreeSitter/IncrementalParse.cpp
         Source/Editor/TreeSitter/Query.cpp
         Source/Editor/TreeSitter/Languages.cpp
         Source/Editor/TreeSitter/DynamicGrammar.cpp

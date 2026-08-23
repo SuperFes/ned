@@ -285,6 +285,122 @@ Notcurses.
       `UI/ThemeFile.h`); a general settings surface would generalize that.
       Vague, unscoped — from `Stuff.md`.
 
+### Gaps found comparing against mainstream editors (2026-08-23 survey)
+
+Named so they're a conscious decision, not an oversight — being in a mainstream editor
+isn't by itself a reason ned needs it too; several below are listed specifically to be
+argued against, not just added.
+
+Real, fairly uncontroversial gaps:
+
+- [ ] **System clipboard integration** (OSC 52, or shelling out to `xclip`/`wl-copy`/
+      `pbcopy`/`termux-clipboard-set` when present) for `KillRing`/yank. Kill-ring is
+      purely internal today — `kill-ring-save`/`yank` never touch the terminal's real
+      clipboard, so nothing killed in ned can be pasted into another app, and nothing
+      copied elsewhere can be yanked into ned. Arguably more everyday friction than
+      several already-tracked items, for a terminal editor especially.
+- [ ] **Auto-closing/matching brackets and quotes** (typing `(`/`"`/`{` inserts the
+      closer too, typing the closer again just moves past it). VSCode/Sublime/JetBrains
+      default this on; Emacs treats it as an opt-in minor mode (`electric-pair-mode`) —
+      ned should follow Emacs' precedent here (a togglable mode, not a forced-on
+      default) rather than assume VSCode's.
+- [ ] **Buffer-local completion fallback** for a file with no LSP server configured
+      (Emacs' `dabbrev-expand`/`hippie-expand`, Vim's `<C-n>`/`<C-p>` keyword
+      completion) — scan open buffers for word-prefix matches. LSP ghost-text
+      completion (`LspManager::RequestCompletion`) is the only completion source
+      today; a plain-text buffer, a README, or a language nobody's configured a server
+      for gets no completion at all.
+- [ ] **Live per-line VCS diff gutter** ("this line added/changed/removed since the
+      last commit," recomputed as you type — Gitsigns/GitGutter's own feature) —
+      distinct from the blame gutter already shipped (committed history, not
+      working-tree state) and from `vcs-status` (file-level, not line-level).
+- [ ] **Split-pane resize** (drag or keyboard) — `WindowManager`'s own header comment
+      already documents "fixed 50/50 splits only, no drag-resize yet," but it was never
+      promoted to a tracked item here.
+- [ ] **Structured test-runner integration** (discover a project's test framework,
+      gutter pass/fail marks per test, jump-to-failing-test) — `TaskRunner` only shells
+      out and streams raw combined stdout/stderr; nothing parses a test framework's own
+      result format into anything more structured than a scrollback buffer.
+- [ ] **Snippet expansion** (TextMate-style tabstops — `for<TAB>` expands to a
+      skeleton with fill-in fields, `<TAB>` hops between them). No bundled engine, no
+      `ned/*` scripting surface for one. A sizable feature — the tabstop-cursor
+      relocation-on-edit problem it needs is structurally the same one
+      `Buffer::AddCursorAt`'s secondary-cursor relocation already solves, worth
+      building on rather than inventing a second edit-relocation mechanism.
+- [ ] Trailing-whitespace / indentation-guide visualization.
+- [ ] A real visual side-by-side 3-way merge/diff view. `AutoMerge` already
+      auto-resolves the common case and drops real `<<<<<<<`/`=======`/`>>>>>>>`
+      conflict markers into the buffer for a genuine divergence (deliberately, so the
+      auto-resolved case needs no bespoke UI at all — see `Text/ThreeWayMerge.h`) but a
+      real conflict today is still hand-edited text markers, not a visual diff.
+- [ ] A plugin marketplace/package registry (VSCode extensions, MELPA/straight.el).
+      Ned's whole model is one Janet-scriptable environment plus opt-in project-local
+      plugins (`Editor/ProjectPlugins.h`) gated by `ProjectTrust`'s hash-based,
+      disuse-expiring trust registry — a marketplace implies a supply-chain-trust
+      problem this project has so far deliberately stayed out of. Leaning "won't do"
+      rather than "open," named here so that's a conscious call, not silence.
+- [ ] A single fuzzy command palette unifying M-x/find-file/switch-buffer into one
+      popup (VSCode/Sublime's Cmd+Shift+P). Real Emacs itself keeps these as separate,
+      purpose-built commands with their own bindings — consistent with this project's
+      stated Emacs-class-parity vision, so this reads as a different, already-chosen
+      philosophy rather than an obvious gap.
+
+### Input model: optional Vim/vi keybinding emulation (idea, unstarted — design sketch only)
+
+Raised as a question: could ned support Vim-style modal keybindings *alongside* its
+existing Emacs-style ones, not as a replacement? Genuinely feasible, and this
+architecture happens to already carry most of the pieces an evil-mode-style emulation
+layer (Vim-inside-Emacs, the proven precedent — also IdeaVim, VSCode Vim) is built
+from, rather than needing a second parallel input stack. Kept on the roadmap on
+adoption grounds specifically, not personal taste — modal editing is not this
+project's own preference, but a huge fraction of the people who'd otherwise try ned
+already have Vim muscle memory, and "you have to give that up" is a real adoption
+tax an opt-in mode removes at no cost to anyone who doesn't touch the setting:
+
+- **Not literally simultaneous.** A key like `d` can't mean both "self-insert" and
+  "delete operator" at the same instant with no disambiguating state — that's a
+  genuine conflict, not a restriction to design around. What *is* feasible, and what
+  every real Vim-emulation-inside-another-editor does, is a mode flag (global setting
+  or per-buffer minor mode, plus a `--vim`-style CLI flag as a third entry point) that
+  selects which top `KeymapStack` layer is live: an Insert state that IS ned's existing
+  default layer (self-insert + every current Emacs binding, unchanged), versus
+  Normal/Visual/Operator-pending states that are new, Vim-specific layers.
+  `Mode`/`KeymapStack` already treat "a minor mode is just another keymap layer, OR'd
+  in by `KeymapStack::Match`" as the standing convention (see `Mode.h`'s own doc
+  comment) — this reuses that unmodified.
+- **Normal-mode keymap**: mechanical but large — bind the full printable-ASCII range to
+  Vim commands (`h`/`j`/`k`/`l` motion, `x`/`dd`/`yy`/`p`, etc.) rather than leaving any
+  of it to fall through to `self-insert-command`, since in Vim's Normal mode almost
+  nothing should insert text. Ordinary `Keymap` work, just wide.
+- **Operator + motion composition** (`d` + `w` deletes a word, `c` + `i` + `"` changes
+  inside quotes) is the one genuinely new mechanism — Vim's operators compose with
+  *any* motion generically, which `KeyChord`'s static pre-declared sequences don't
+  model directly. Needs an explicit operator-pending state machine reading the next
+  fully-resolved motion (itself a normal command, with its own optional count prefix)
+  as a target offset rather than moving point directly, then applying delete/change/
+  yank over `[point, target)` — the same *shape* `Editor/PrefixArgument.h`'s
+  `PrefixArgumentReader` and `Editor/IncrementalSearch.h` already use (a pure,
+  buffer-free state machine `BufferView` drives key-by-key), not a new kind of
+  component for this codebase. Text objects (`di(`, `ci"`) are motions in this same
+  sense and can lean on the tree-sitter infrastructure `sexpMotion`/
+  `expandSelection` already parse for.
+- **Visual mode** maps fairly directly onto region selection and `Rectangle.h` already
+  shipped (char/line/block visual = point+mark region / line-extended region /
+  rectangle selection, respectively) — mostly new bindings over existing primitives.
+- **Macros and registers** need no new mechanism at all: `Dispatcher` already records
+  keyboard macros natively (`q`/`@` would just be new bindings onto it), and
+  `Editor/Register.h`'s single-char-keyed `RegisterTable` is already Vim-register-shaped.
+- **Ex commands** (`:w`, `:%s/foo/bar/g`, `:q`) are a new `BufferView::InputMode` parsing
+  ex-command syntax, mapping onto the existing `CommandRegistry` (`save-buffer`,
+  `project-replace-regexp`, ...) the same way M-x already does — a parser and a mapping
+  table, not new editing primitives.
+
+Net: a genuinely large feature (comparable in scope to the Org-mode work), but not an
+architectural fight — it slots in as "another major-mode-shaped subsystem," which this
+codebase already does repeatedly (Org, VCS, DAP, ACP...), rather than requiring changes
+to `Keymap`/`KeymapStack`/`Dispatcher` themselves. Unscoped beyond this sketch — no
+estimate of which pieces would ship in a first cut.
+
 ## Won't do (at least not soon)
 
 - **Org Babel** — subsystem-sized, and arbitrary code execution triggered by opening a
