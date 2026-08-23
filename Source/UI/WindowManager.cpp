@@ -11,6 +11,7 @@
 #include "Editor/Dap/DapManager.h"
 #include "Editor/MinimapSettings.h"
 #include "Editor/ModeOverrides.h"
+#include "Editor/Multibuffer.h"
 #include "Editor/ProjectSession.h"
 #include "Editor/ScratchPad.h"
 #include "Editor/Session.h"
@@ -816,6 +817,12 @@ void WindowManager::HandleWindowRequest(editor::InteractiveRequest request) {
 }
 
 void WindowManager::ReassignPanesShowing(text::Buffer& closingBuffer, Pane* skip) {
+    // Multibuffers follow-up: the one choke point both HandleBufferClosed
+    // and NotifyBufferClosing funnel through for any real close, so this is
+    // where a multibuffer's MultibufferIndex (if any -- a safe no-op
+    // otherwise) gets cleared rather than dangling on a freed Buffer*.
+    editor::multibuffer::ClearMultibufferIndexFor(closingBuffer);
+
     // Computed once, shared across every affected pane -- not recomputed
     // (and not re-created, in the CreateBuffer("scratch") fallback case)
     // per pane, so N panes all showing the one buffer being closed end up

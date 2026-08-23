@@ -4,7 +4,9 @@
 
 #include "Editor/Vcs/DiffPatch.h"
 
+using ned::editor::vcs::DiffHunkText;
 using ned::editor::vcs::ExtractHunkPatch;
+using ned::editor::vcs::ParseDiffHunks;
 
 namespace {
 
@@ -132,4 +134,61 @@ TEST_CASE("ExtractHunkPatch returns nothing for empty or hunkless input", "[Diff
     REQUIRE_FALSE(ExtractHunkPatch("diff --git a/x b/x\n--- a/x\n+++ b/x\n", 1).has_value());
     // A malformed hunk header is skipped, not crashed on.
     REQUIRE_FALSE(ExtractHunkPatch("@@ garbage @@\n+x\n", 1).has_value());
+}
+
+TEST_CASE("ParseDiffHunks pairs every hunk with its own file across a multi-file diff", "[DiffPatch]") {
+    const auto hunks = ParseDiffHunks(kTwoHunkDiff);
+    REQUIRE(hunks.size() == 2);
+
+    REQUIRE(hunks[0].filePath == "file.txt");
+    REQUIRE(hunks[0].hunkHeader == "@@ -2 +2 @@ context text");
+    REQUIRE(hunks[0].bodyText == "-old line two\n+new line two\n");
+    REQUIRE(hunks[0].oldStart == 2);
+    REQUIRE(hunks[0].oldCount == 1);
+    REQUIRE(hunks[0].newStart == 2);
+    REQUIRE(hunks[0].newCount == 1);
+
+    REQUIRE(hunks[1].filePath == "file.txt");
+    REQUIRE(hunks[1].hunkHeader == "@@ -5,0 +6,2 @@");
+    REQUIRE(hunks[1].bodyText == "+added line six\n+added line seven\n");
+    REQUIRE(hunks[1].oldStart == 5);
+    REQUIRE(hunks[1].oldCount == 0);
+    REQUIRE(hunks[1].newStart == 6);
+    REQUIRE(hunks[1].newCount == 2);
+}
+
+TEST_CASE("ParseDiffHunks skips a hunk whose header is malformed on either side", "[DiffPatch]") {
+    // A well-formed new side but garbage old side (and vice versa) both
+    // degrade to "skip this hunk" rather than a half-populated result.
+    REQUIRE(ParseDiffHunks("diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ garbage +1 @@\n+x\n").empty());
+    REQUIRE(ParseDiffHunks("diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 garbage @@\n+x\n").empty());
+}
+
+TEST_CASE("ParseDiffHunks attributes each hunk to the right file in a multi-file diff", "[DiffPatch]") {
+    const std::string diff  = "diff --git a/a.txt b/a.txt\n"
+                              "--- a/a.txt\n"
+                              "+++ b/a.txt\n"
+                              "@@ -1 +1 @@\n"
+                              "-a old\n"
+                              "+a new\n"
+                              "diff --git a/b.txt b/b.txt\n"
+                              "--- a/b.txt\n"
+                              "+++ b/b.txt\n"
+                              "@@ -1 +1 @@\n"
+                              "-b old\n"
+                              "+b new\n";
+    const auto        hunks = ParseDiffHunks(diff);
+    REQUIRE(hunks.size() == 2);
+    REQUIRE(hunks[0].filePath == "a.txt");
+    REQUIRE(hunks[0].bodyText.find("a new") != std::string::npos);
+    REQUIRE(hunks[1].filePath == "b.txt");
+    REQUIRE(hunks[1].bodyText.find("b new") != std::string::npos);
+}
+
+TEST_CASE("ParseDiffHunks returns nothing for empty, hunkless, or fileless input", "[DiffPatch]") {
+    REQUIRE(ParseDiffHunks("").empty());
+    REQUIRE(ParseDiffHunks("diff --git a/x b/x\n--- a/x\n+++ b/x\n").empty());
+    // A hunk with no preceding "diff --git" has no file to attribute it to.
+    REQUIRE(ParseDiffHunks("@@ -1 +1 @@\n-x\n+y\n").empty());
+    REQUIRE(ParseDiffHunks("@@ garbage @@\n+x\n").empty());
 }

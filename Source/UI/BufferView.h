@@ -1004,6 +1004,16 @@ class BufferView : public Widget {
     // is a silent no-op, same as any other non-matching line.
     void BuildVcsLogBuffer(const std::filesystem::path& path, const std::vector<editor::vcs::VcsLogEntry>& entries);
 
+    // Multibuffers follow-up: vcs-full-diff-buffer's entry point -- async
+    // VcsRunner::RequestFullDiff, then Vcs/DiffPatch.h's ParseDiffHunks and
+    // Editor/Multibuffer.h's BuildMultibuffer turn the raw diff text into a
+    // real, stitched "*vcs diff*" buffer (one excerpt per hunk, each
+    // carrying its own file/line provenance for vcs-visit-result to jump
+    // to). Empty result (a clean working tree) still switches to the
+    // buffer -- an explicit "nothing changed" is more informative than a
+    // silent no-op.
+    void RequestVcsFullDiffBuffer();
+
     // VCS vocabulary-completion follow-up. vcs-status's entry point --
     // async VcsRunner::RequestStatus, building/switching to the *vcs
     // status* buffer on completion.
@@ -1188,6 +1198,16 @@ class BufferView : public Widget {
     // EnsureDapPathKey below, so no filesystem canonicalization happens per
     // frame.
     [[nodiscard]] bool DapGutterActive() const;
+
+    // Multibuffers follow-up: false when the active buffer carries a
+    // MultibufferIndex (Editor/Multibuffer.h) -- unlike every XGutterActive
+    // above (which each reserve a column only when there's real data to
+    // show), this one hides an otherwise-always-on column: a *vcs diff*-
+    // style multibuffer's own composite line numbers (1, 2, 3, ...) are
+    // meaningless noise next to the dual old/new line-number columns
+    // RequestVcsFullDiffBuffer already bakes directly into the text, so the
+    // real gutter would just be redundant clutter, not a useful cross-check.
+    [[nodiscard]] bool LineNumberGutterActive() const;
 
     // Recomputes dapPathKey_ (DapManager::NormalizePathKey of the active
     // buffer's path, empty when pathless) only when the active buffer's

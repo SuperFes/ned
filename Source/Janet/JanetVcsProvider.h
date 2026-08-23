@@ -18,7 +18,8 @@ namespace ned::janet {
 
 // A plugin supplies its callbacks as one struct/table keyed by keyword
 // (:detect, :blame-argv, :parse-blame, :log-argv, :parse-log, :diff-argv,
-// :parse-diff, :status-argv, :parse-status, :stage-argv, :unstage-argv,
+// :parse-diff, :working-diff-argv -- multibuffers follow-up -- :status-argv,
+// :parse-status, :stage-argv, :unstage-argv,
 // :staged-diff-argv, :stage-patch-argv, :unstage-patch-argv -- hunk-staging
 // follow-up -- :commit-argv, :branch-list-argv, :parse-branch-list,
 // :branch-switch-argv, :branch-create-argv) -- vocabulary-completion
@@ -62,6 +63,8 @@ class JanetVcsProvider : public editor::vcs::VcsProvider {
 
     [[nodiscard]] editor::vcs::VcsCommandSpec           DiffArgv(const std::filesystem::path& path) const override;
     [[nodiscard]] std::vector<editor::vcs::VcsDiffHunk> ParseDiff(const std::string& stdout_) const override;
+
+    [[nodiscard]] editor::vcs::VcsCommandSpec WorkingDiffArgv(const std::filesystem::path& root) const override;
 
     [[nodiscard]] editor::vcs::VcsCommandSpec              StatusArgv(const std::filesystem::path& root) const override;
     [[nodiscard]] std::vector<editor::vcs::VcsStatusEntry> ParseStatus(const std::string& stdout_) const override;

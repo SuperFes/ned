@@ -306,6 +306,8 @@ Theme DarkTheme() {
         .breakpointMarker              = Color::RGB(0xe06c75), // same red family as diagnosticError -- both mean "attention here"
         .executionMarker               = Color::RGB(0xe5c07b), // the conventional debugger yellow
         .executionLineBackground       = Color::RGB(0x3a3a28), // a dim warm wash the yellow arrow reads against
+        .diffAddedBackground           = Color::RGB(0x2a3a2a), // dim green wash, dark enough to keep default-foreground text legible
+        .diffRemovedBackground         = Color::RGB(0x3a2a2a), // dim red wash, same lightness as diffAddedBackground
         .headlineLevel1Foreground      = Color::BrightBlue,
         .headlineLevel2Foreground      = Color::BrightCyan,
         .headlineLevel3Foreground      = Color::BrightGreen,
@@ -391,6 +393,8 @@ Theme LightTheme() {
         .breakpointMarker              = Color::RGB(0xc0392b),
         .executionMarker               = Color::RGB(0xb58900),
         .executionLineBackground       = Color::RGB(0xf4ecd0),
+        .diffAddedBackground           = Color::RGB(0xe0f0d8), // light green wash, dark text stays legible
+        .diffRemovedBackground         = Color::RGB(0xf5dcdc), // light red wash, same lightness as diffAddedBackground
         .headlineLevel1Foreground      = Color::RGB(0x1f4fa0),
         .headlineLevel2Foreground      = Color::RGB(0x1f7a7a),
         .headlineLevel3Foreground      = Color::RGB(0x2f6f2f),
@@ -478,6 +482,8 @@ Theme AnsiDarkTheme() {
         .breakpointMarker              = Color::Red,
         .executionMarker               = Color::Yellow,
         .executionLineBackground       = Color::Blue,
+        .diffAddedBackground           = Color::Green,
+        .diffRemovedBackground         = Color::Red,
         .headlineLevel1Foreground      = Color::Blue,
         .headlineLevel2Foreground      = Color::Cyan,
         .headlineLevel3Foreground      = Color::Green,
@@ -554,6 +560,8 @@ Theme AnsiLightTheme() {
         .breakpointMarker              = Color::Red,
         .executionMarker               = Color::Yellow,
         .executionLineBackground       = Color::Cyan,
+        .diffAddedBackground           = Color::Green,
+        .diffRemovedBackground         = Color::Red,
         .headlineLevel1Foreground      = Color::Blue,
         .headlineLevel2Foreground      = Color::Magenta,
         .headlineLevel3Foreground      = Color::Green,

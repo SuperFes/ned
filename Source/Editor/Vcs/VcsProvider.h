@@ -140,6 +140,20 @@ class VcsProvider {
         throw std::runtime_error("diff not supported by this provider");
     }
 
+    // Multibuffers follow-up: the whole working tree's changed content
+    // against root, with real (non-zero) context lines -- unlike DiffArgv
+    // above, which is deliberately -U0/single-file for the gutter's own
+    // "which lines changed" needs, this is meant to be read, not just
+    // measured, so it's root-scoped (every changed file, not one) and
+    // keeps a provider's normal default context. No parse half: the raw
+    // diff text is consumed directly by Vcs/DiffPatch.h's ParseDiffHunks,
+    // the same "verbatim, never reconstructed" posture ExtractHunkPatch
+    // already takes toward diff output.
+    [[nodiscard]] virtual VcsCommandSpec WorkingDiffArgv(const std::filesystem::path& root) const {
+        (void)root;
+        throw std::runtime_error("full diff not supported by this provider");
+    }
+
     // Everything below is the vocabulary-completion follow-up's optional
     // half: default-throwing rather than pure virtual (see this header's
     // own top comment). Operations without a parse counterpart

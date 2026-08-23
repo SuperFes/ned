@@ -209,6 +209,18 @@ struct Theme {
     Color executionMarker;
     Color executionLineBackground;
 
+    // Multibuffers follow-up: whole-line content backgrounds for the *vcs
+    // diff* multibuffer's own added/removed lines -- deliberately a real
+    // Theme field (unlike the live diff gutter's marker glyph, which stays
+    // a bare Color constant; see BufferView.cpp's own comment on why a
+    // content-area wash was removed from the live gutter after user
+    // feedback about fighting syntax-highlighted text contrast). Safe here
+    // specifically because this multibuffer's excerpt lines carry no syntax
+    // highlighting of their own to fight -- there's nothing competing for
+    // the same pixels.
+    Color diffAddedBackground;
+    Color diffRemovedBackground;
+
     // Org-mode syntax-highlighting follow-up: one Color per new
     // Org-specific SyntaxClass member (Mode.h) -- headline levels cycle
     // through 3 distinct, bold hues; TodoKeyword/DoneKeyword use the

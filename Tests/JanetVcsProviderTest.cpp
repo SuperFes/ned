@@ -38,6 +38,7 @@ TEST_CASE("ned/vcs-register-provider registers a provider resolvable via ActiveP
          :parse-log (fn [stdout] [{:hash "def456" :author "Bea" :date "2026-01-02" :summary "did another thing"}])
          :diff-argv (fn [path] ["fake-vcs" "diff" path])
          :parse-diff (fn [stdout] [{:old-start 2 :old-count 1 :new-start 2 :new-count 3}])
+         :working-diff-argv (fn [root] ["fake-vcs" "working-diff" root])
          :status-argv (fn [root] ["fake-vcs" "status" root])
          :parse-status (fn [stdout] [{:state "??" :path "new.txt"}])
          :stage-argv (fn [path] ["fake-vcs" "stage" path])
@@ -80,6 +81,9 @@ TEST_CASE("ned/vcs-register-provider registers a provider resolvable via ActiveP
     REQUIRE(hunks[0].oldCount == 1);
     REQUIRE(hunks[0].newStart == 2);
     REQUIRE(hunks[0].newCount == 3);
+
+    const auto workingDiffArgv = provider->WorkingDiffArgv("/repo");
+    REQUIRE(workingDiffArgv.argv == std::vector<std::string>{"fake-vcs", "working-diff", "/repo"});
 
     // The vocabulary-completion operations, including both two-string-arg
     // shapes (commit's root+message, branch-switch/-create's root+name).
@@ -208,6 +212,7 @@ TEST_CASE("a provider registered without an operation's callbacks reports it as 
     REQUIRE_THROWS_WITH(provider->BranchCreateArgv("/root", "dev"), "branch creation not supported by this provider");
     REQUIRE_THROWS_WITH(provider->LogArgv("x"), "log not supported by this provider");
     REQUIRE_THROWS_WITH(provider->DiffArgv("x"), "diff not supported by this provider");
+    REQUIRE_THROWS_WITH(provider->WorkingDiffArgv("/root"), "full diff not supported by this provider");
 }
 
 TEST_CASE("ned/vcs-register-provider rejects a callbacks argument without :detect", "[JanetVcsProvider]") {

@@ -21,9 +21,9 @@ std::string ExtractCommitMessage(std::string_view bufferText) {
     std::string result;
     std::size_t lineStart = 0;
     while (lineStart <= bufferText.size()) {
-        const std::size_t lineEnd = bufferText.find('\n', lineStart);
-        const std::size_t lineStop = lineEnd == std::string_view::npos ? bufferText.size() : lineEnd;
-        const std::string_view line = bufferText.substr(lineStart, lineStop - lineStart);
+        const std::size_t      lineEnd  = bufferText.find('\n', lineStart);
+        const std::size_t      lineStop = lineEnd == std::string_view::npos ? bufferText.size() : lineEnd;
+        const std::string_view line     = bufferText.substr(lineStart, lineStop - lineStart);
         if (!line.starts_with('#')) {
             result.append(line);
             result.push_back('\n');
@@ -293,6 +293,15 @@ void VcsRunner::RequestDiff(const text::Buffer& buffer, std::function<void(std::
             onError(e.what());
         }
     });
+}
+
+void VcsRunner::RequestFullDiff(std::function<void(std::string)> onComplete, std::function<void(std::string)> onError) {
+    const std::filesystem::path root = ProjectRoot();
+    RunProviderOperation(
+        "full diff", "full-diff:" + root.string(),
+        [&root](VcsProvider& provider) { return provider.WorkingDiffArgv(root); },
+        [onComplete = std::move(onComplete)](VcsProvider&, std::string output) { onComplete(std::move(output)); },
+        std::move(onError));
 }
 
 void VcsRunner::RunProviderOperation(const char* operation, const std::string& key,

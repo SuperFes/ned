@@ -143,6 +143,20 @@ TEST_CASE("bundled git plugin blames a real, minimal temp git repo end to end", 
     REQUIRE(hunks[0].oldCount == 1);
     REQUIRE(hunks[0].newStart == 1);
     REQUIRE(hunks[0].newCount == 1);
+
+    // Multibuffers follow-up: the root-scoped, real-context working-tree
+    // diff, run through ParseDiffHunks end to end against real git output.
+    const auto workingDiffSpec = provider->WorkingDiffArgv(repoRoot);
+    REQUIRE_FALSE(workingDiffSpec.argv.empty());
+
+    const std::string workingDiffOutput = RunToCompletion(workingDiffSpec.argv);
+    const auto        workingHunks      = ned::editor::vcs::ParseDiffHunks(workingDiffOutput);
+
+    REQUIRE(workingHunks.size() == 1);
+    REQUIRE(workingHunks[0].filePath == "file.txt");
+    REQUIRE(workingHunks[0].newStart == 1);
+    REQUIRE(workingHunks[0].newCount == 1);
+    REQUIRE(workingHunks[0].bodyText.find("+hello world, changed") != std::string::npos);
 }
 
 TEST_CASE("bundled git plugin parses porcelain status and branch lists", "[GitVcsPlugin]") {

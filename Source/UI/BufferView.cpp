@@ -22,6 +22,7 @@
 #include "Editor/Link.h"
 #include "Editor/Lsp/LspManager.h"
 #include "Editor/Lsp/LspServerConfig.h"
+#include "Editor/Multibuffer.h"
 #include "Editor/Org.h"
 #include "Editor/ProjectAgenda.h"
 #include "Editor/ProjectFileOps.h"
@@ -34,6 +35,7 @@
 #include "Editor/SyntaxTheme.h"
 #include "Editor/TabWidth.h"
 #include "Editor/Variables.h"
+#include "Editor/Vcs/DiffPatch.h"
 #include "Editor/WrapOverrides.h"
 #include "KeyTranslation.h"
 #include "Text/BinaryDetect.h"
@@ -1410,10 +1412,17 @@ void BufferView::Paint(Canvas c) {
             dapStop.reset(); // stopped in some other file -- nothing to mark here
         }
     }
-    const std::size_t digitsStart  = diagnosticStart + kDiagnosticWidth + kLineNumberGap;
-    const std::size_t gutterDigits = gutterWidth - digitsStart - kLineNumberGap - foldColumnWidth - blameColumnWidth;
-    const std::size_t foldStart    = digitsStart + gutterDigits + kLineNumberGap;
-    const std::size_t blameStart   = foldStart + foldColumnWidth;
+    // Multibuffers follow-up: LineNumberGutterActive() recomputed here
+    // (not derived from gutterWidth by subtraction) for the same
+    // "recompute the same condition, don't make gutterWidth a second
+    // source of truth" reason foldColumnWidth/blameColumnWidth/
+    // diffColumnWidth above already recompute their own XActive() checks
+    // rather than trying to unpack them back out of gutterWidth.
+    const std::size_t lineNumberGapWidth = LineNumberGutterActive() ? kLineNumberGap : 0;
+    const std::size_t digitsStart        = diagnosticStart + kDiagnosticWidth + lineNumberGapWidth;
+    const std::size_t gutterDigits       = LineNumberGutterActive() ? std::to_string(totalLines).size() : 0;
+    const std::size_t foldStart          = digitsStart + gutterDigits + lineNumberGapWidth;
+    const std::size_t blameStart         = foldStart + foldColumnWidth;
 
     // status-gutter unsaved-change-indicator follow-up: recomputed once
     // per Paint() call (not per row) -- see EnsureUnsavedChangeCache's own
@@ -1597,6 +1606,13 @@ void BufferView::Paint(Canvas c) {
     // feeds the subtle background tint applied per character below
     // (Removed has no line to tint, only Added/Modified ever populate this).
     std::optional<DiffLineKind> currentLineDiffTint;
+    // Multibuffers follow-up: same "compute once per line" shape as
+    // currentLineDiffTint above, but for the *vcs diff* multibuffer's own
+    // stitched added/removed lines (a static property of that buffer's
+    // content, not a live comparison against disk the way the source-file
+    // diff gutter is) -- see the per-character brush selection below for
+    // why a content-area wash is safe here specifically.
+    std::optional<editor::multibuffer::LineTint> currentMultibufferTint;
     // diagnostics-UX follow-up: the diagnostic byte spans overlapping the
     // current line, feeding the per-character underline below -- same
     // "compute once per line" shape as everything above. A zero-length
@@ -1675,6 +1691,12 @@ void BufferView::Paint(Canvas c) {
                                                          [](const auto& entry, std::size_t targetLine) { return entry.first < targetLine; });
                     if (diffIt != diffLineKinds_.end() && diffIt->first == line && diffIt->second != DiffLineKind::Removed) {
                         currentLineDiffTint = diffIt->second;
+                    }
+                }
+                currentMultibufferTint.reset();
+                if (const auto* multibufferIndex = editor::multibuffer::MultibufferIndexFor(buffer)) {
+                    if (const auto tint = multibufferIndex->TintForLine(line); tint != editor::multibuffer::LineTint::None) {
+                        currentMultibufferTint = tint;
                     }
                 }
                 if (wrapActive) {
@@ -1849,34 +1871,47 @@ void BufferView::Paint(Canvas c) {
                     }
                 }
 
-                const std::string number  = std::to_string(line + 1); // 1-indexed, matches ModeLine's L/C convention
-                const std::size_t padding = gutterDigits > number.size() ? gutterDigits - number.size() : 0;
-                // Leading gap (status/line-number-spacing follow-up -- the
-                // line-number gutter now gets breathing room on BOTH sides,
-                // not just the trailing gap it already had). Sits right after
-                // the diagnostic column now (LSP client follow-up), not
-                // directly after the status column -- digitsStart itself
-                // already accounts for kDiagnosticWidth, so this is just
-                // "one column before digitsStart."
-                if (static_cast<int>(digitsStart - kLineNumberGap) < c.size().width) {
-                    Cell& cell     = c[{.x = static_cast<int>(digitsStart - kLineNumberGap), .y = row}];
-                    cell.character = " ";
-                    gutterGapBrush.ApplyTo(cell);
-                }
-                for (std::size_t i = 0; i < padding && static_cast<int>(digitsStart + i) < c.size().width; ++i) {
-                    Cell& cell     = c[{.x = static_cast<int>(digitsStart + i), .y = row}];
-                    cell.character = " ";
-                    gutterBrush.ApplyTo(cell);
-                }
-                for (std::size_t i = 0; i < number.size() && static_cast<int>(digitsStart + padding + i) < c.size().width; ++i) {
-                    Cell& cell     = c[{.x = static_cast<int>(digitsStart + padding + i), .y = row}];
-                    cell.character = std::string(1, number[i]);
-                    gutterBrush.ApplyTo(cell);
-                }
-                if (static_cast<int>(digitsStart + gutterDigits) < c.size().width) {
-                    Cell& cell     = c[{.x = static_cast<int>(digitsStart + gutterDigits), .y = row}];
-                    cell.character = " ";
-                    gutterGapBrush.ApplyTo(cell);
+                // Multibuffers follow-up: entirely skipped (not just
+                // zero-width) for a buffer whose own composite line numbers
+                // would be meaningless noise next to the dual old/new
+                // columns already baked into a *vcs diff*-style excerpt's
+                // own text -- see LineNumberGutterActive()'s own doc
+                // comment. gutterDigits/digitsStart are already computed
+                // as 0-width/collapsed in that case (see this function's
+                // own gutterDigits/digitsStart derivation above), but the
+                // digit string itself (line + 1) is never zero-width, so
+                // the write loop below has to be skipped outright rather
+                // than trusted to naturally emit nothing.
+                if (LineNumberGutterActive()) {
+                    const std::string number  = std::to_string(line + 1); // 1-indexed, matches ModeLine's L/C convention
+                    const std::size_t padding = gutterDigits > number.size() ? gutterDigits - number.size() : 0;
+                    // Leading gap (status/line-number-spacing follow-up -- the
+                    // line-number gutter now gets breathing room on BOTH sides,
+                    // not just the trailing gap it already had). Sits right after
+                    // the diagnostic column now (LSP client follow-up), not
+                    // directly after the status column -- digitsStart itself
+                    // already accounts for kDiagnosticWidth, so this is just
+                    // "one column before digitsStart."
+                    if (static_cast<int>(digitsStart - kLineNumberGap) < c.size().width) {
+                        Cell& cell     = c[{.x = static_cast<int>(digitsStart - kLineNumberGap), .y = row}];
+                        cell.character = " ";
+                        gutterGapBrush.ApplyTo(cell);
+                    }
+                    for (std::size_t i = 0; i < padding && static_cast<int>(digitsStart + i) < c.size().width; ++i) {
+                        Cell& cell     = c[{.x = static_cast<int>(digitsStart + i), .y = row}];
+                        cell.character = " ";
+                        gutterBrush.ApplyTo(cell);
+                    }
+                    for (std::size_t i = 0; i < number.size() && static_cast<int>(digitsStart + padding + i) < c.size().width; ++i) {
+                        Cell& cell     = c[{.x = static_cast<int>(digitsStart + padding + i), .y = row}];
+                        cell.character = std::string(1, number[i]);
+                        gutterBrush.ApplyTo(cell);
+                    }
+                    if (static_cast<int>(digitsStart + gutterDigits) < c.size().width) {
+                        Cell& cell     = c[{.x = static_cast<int>(digitsStart + gutterDigits), .y = row}];
+                        cell.character = " ";
+                        gutterGapBrush.ApplyTo(cell);
+                    }
                 }
 
                 // depth-aware-fold-gutter follow-up: one column per nesting
@@ -2107,6 +2142,34 @@ void BufferView::Paint(Canvas c) {
                     // number carry the whole signal; currentLineDiffTint
                     // survives only for the latter.
                     brush.background = theme_.executionLineBackground;
+                }
+                else if (currentMultibufferTint) {
+                    // Multibuffers follow-up: unlike the live diff gutter's
+                    // content area (deliberately left untinted after user
+                    // feedback that a whole-line wash fights syntax-
+                    // highlighted text -- see the comment two cases above),
+                    // this buffer's excerpt lines carry no syntax
+                    // highlighting to fight in the first place, so a real
+                    // background wash is safe and is the whole point of
+                    // this dedicated diff view. Header/Rule get no
+                    // background at all -- bold text and box-drawing
+                    // glyphs are already visually distinct on their own
+                    // (an "ASCII outline" follow-up ask), a wash would just
+                    // fight the rule glyph's own default color.
+                    switch (*currentMultibufferTint) {
+                        case editor::multibuffer::LineTint::Added:
+                            brush.background = theme_.diffAddedBackground;
+                            break;
+                        case editor::multibuffer::LineTint::Removed:
+                            brush.background = theme_.diffRemovedBackground;
+                            break;
+                        case editor::multibuffer::LineTint::Header:
+                            brush.bold = true;
+                            break;
+                        case editor::multibuffer::LineTint::Rule:
+                        case editor::multibuffer::LineTint::None:
+                            break;
+                    }
                 }
 
                 if (decoded.codepoint == U'\t') {
@@ -4372,6 +4435,9 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         case editor::InteractiveRequest::VcsUnstageHunk:
             StageOrUnstageHunkAtPoint(false);
             return;
+        case editor::InteractiveRequest::VcsFullDiffBuffer:
+            RequestVcsFullDiffBuffer();
+            return;
         case editor::InteractiveRequest::VcsCommit:
             BeginVcsCommitMessage();
             return;
@@ -5445,12 +5511,27 @@ void BufferView::JumpToPathLine(const std::filesystem::path& path, std::size_t l
 }
 
 void BufferView::VisitVcsResult() {
-    const text::Buffer& buffer    = activeBuffer_.Get();
-    const text::Rope&   content   = buffer.Content();
-    const std::size_t   point     = buffer.Point();
-    const std::size_t   line      = content.ByteOffsetToLine(point);
-    const std::size_t   lineStart = content.LineToByteOffset(line);
-    const std::size_t   lineEnd =
+    const text::Buffer& buffer = activeBuffer_.Get();
+
+    // Multibuffers follow-up: a *vcs diff* buffer carries a MultibufferIndex
+    // mapping the whole composite byte space back to (source path, source
+    // line) -- this works from any line inside an excerpt's body, not just
+    // a single "path:line:" index line the regex-based fallback below
+    // requires, so it takes over entirely once a buffer is one of these
+    // (never falls through to the regex path for the same buffer).
+    if (editor::multibuffer::MultibufferIndex* index = editor::multibuffer::MultibufferIndexFor(buffer)) {
+        if (const editor::multibuffer::ExcerptSpan* span = index->SpanAtOffset(buffer.Point());
+            span && span->sourceStartLine > 0) {
+            JumpToPathLine(span->sourcePath, span->sourceStartLine);
+        }
+        return;
+    }
+
+    const text::Rope& content   = buffer.Content();
+    const std::size_t point     = buffer.Point();
+    const std::size_t line      = content.ByteOffsetToLine(point);
+    const std::size_t lineStart = content.LineToByteOffset(line);
+    const std::size_t lineEnd =
         (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
     const std::string lineText = content.Substring(lineStart, lineEnd - lineStart);
 
@@ -5538,6 +5619,119 @@ void BufferView::BuildVcsLogBuffer(const std::filesystem::path& path, const std:
     results.SetPoint(0);
     results.SetReadOnly(true);
     activeBuffer_.Set(results);
+}
+
+namespace {
+
+    // Right-aligns number into a fixed kDiffLineNumberWidth-wide field, or a
+    // blank field of the same width if number is unset (the line doesn't
+    // exist on that side of the diff) -- widens rather than truncates for a
+    // number too large to fit, never lossy.
+    constexpr int kDiffLineNumberWidth = 4;
+
+    std::string FormatDiffLineNumber(std::optional<std::size_t> number) {
+        if (!number) {
+            return std::string(kDiffLineNumberWidth, ' ');
+        }
+        std::string text = std::to_string(*number);
+        return text.size() >= static_cast<std::size_t>(kDiffLineNumberWidth) ? text
+                                                                             : std::string(kDiffLineNumberWidth - text.size(), ' ') + text;
+    }
+
+    // Reformats one hunk's raw +/-/context body (git's own leading-marker-
+    // per-line convention) into "old new marker content" rows -- old/new
+    // line numbers side by side (blank on whichever side a line doesn't
+    // exist), so a change reads without cross-referencing a separate
+    // gutter. Appends one LineTint per emitted row to tints, in order,
+    // consumed by BuildMultibuffer's own line-tint zip (ExcerptSource::
+    // lineTints). A line this doesn't recognize (git's "\ No newline at end
+    // of file" marker, or anything unexpected) passes through with blank
+    // numbers and no tint rather than being guessed at.
+    std::string FormatDiffHunkBody(const editor::vcs::DiffHunkText& hunk, std::vector<editor::multibuffer::LineTint>& tints) {
+        std::string formatted;
+        std::size_t oldLine = hunk.oldStart;
+        std::size_t newLine = hunk.newStart;
+        std::size_t pos     = 0;
+        const auto& body    = hunk.bodyText;
+        while (pos < body.size()) {
+            const std::size_t      eol     = body.find('\n', pos);
+            const std::size_t      lineEnd = (eol == std::string::npos) ? body.size() : eol;
+            const std::string_view line(body.data() + pos, lineEnd - pos);
+
+            std::optional<std::size_t>    oldNum;
+            std::optional<std::size_t>    newNum;
+            char                          marker  = ' ';
+            editor::multibuffer::LineTint tint    = editor::multibuffer::LineTint::None;
+            std::string_view              content = line;
+
+            if (line.starts_with('+')) {
+                newNum  = newLine++;
+                marker  = '+';
+                tint    = editor::multibuffer::LineTint::Added;
+                content = line.substr(1);
+            }
+            else if (line.starts_with('-')) {
+                oldNum  = oldLine++;
+                marker  = '-';
+                tint    = editor::multibuffer::LineTint::Removed;
+                content = line.substr(1);
+            }
+            else if (line.starts_with(' ')) {
+                oldNum  = oldLine++;
+                newNum  = newLine++;
+                content = line.substr(1);
+            }
+
+            formatted += FormatDiffLineNumber(oldNum);
+            formatted += ' ';
+            formatted += FormatDiffLineNumber(newNum);
+            formatted += ' ';
+            formatted += marker;
+            formatted += ' ';
+            formatted.append(content);
+            formatted += '\n';
+            tints.push_back(tint);
+
+            pos = (eol == std::string::npos) ? body.size() : eol + 1;
+        }
+        return formatted;
+    }
+
+} // namespace
+
+void BufferView::RequestVcsFullDiffBuffer() {
+    if (!vcsRunner_) {
+        statusMessage_ = "no vcs runner configured";
+        return;
+    }
+    const std::filesystem::path root = editor::ProjectRoot();
+    vcsRunner_->RequestFullDiff(
+        [this, root](std::string rawDiff) {
+            const std::vector<editor::vcs::DiffHunkText> hunks = editor::vcs::ParseDiffHunks(rawDiff);
+
+            std::vector<editor::multibuffer::ExcerptSource> excerpts;
+            excerpts.reserve(hunks.size());
+            for (const editor::vcs::DiffHunkText& hunk : hunks) {
+                std::vector<editor::multibuffer::LineTint> tints;
+                std::string                                formattedBody = FormatDiffHunkBody(hunk, tints);
+
+                // newCount == 0 is a pure deletion (see DiffPatch.h's own
+                // doc comment on Covers) -- there's no real new-side line to
+                // jump to, so this excerpt's header is still shown but
+                // sourceStartLine stays 0 ("no single source line applies",
+                // ExcerptSource's own documented convention).
+                const std::size_t sourceLine = hunk.newCount > 0 ? hunk.newStart : 0;
+                excerpts.push_back(editor::multibuffer::ExcerptSource{
+                    root / hunk.filePath, sourceLine, sourceLine + (hunk.newCount > 0 ? hunk.newCount - 1 : 0),
+                    "▸ " + hunk.filePath + "  " + hunk.hunkHeader, // U+25B8 -- ProjectSidebar's own disclosure triangle
+                    std::move(formattedBody), std::move(tints)});
+            }
+
+            text::Buffer& results = editor::multibuffer::BuildMultibuffer(bufferList_, "*vcs diff*", excerpts);
+            activeBuffer_.Set(results);
+            statusMessage_ = excerpts.empty() ? "Working tree clean." : std::to_string(excerpts.size()) + " changed hunk" + (excerpts.size() == 1 ? "" : "s");
+        },
+        [this](std::string error) { statusMessage_ = "vcs full diff: " + error; });
 }
 
 namespace {
@@ -6251,12 +6445,20 @@ std::size_t BufferView::GutterWidth() const {
     const std::size_t blameColumn = BlameGutterActive() ? kBlameWidth : 0;
     const std::size_t diffColumn  = DiffGutterActive() ? kDiffWidth : 0;
     const std::size_t dapColumn   = DapGutterActive() ? kDapWidth : 0;
-    return dapColumn + diffColumn + kStatusWidth + kDiagnosticWidth + kLineNumberGap + std::to_string(totalLines).size() +
-           kLineNumberGap + foldColumn + blameColumn;
+    // Multibuffers follow-up: the line-number digits + both surrounding
+    // gaps collapse to zero width together when LineNumberGutterActive()
+    // is false -- see its own doc comment.
+    const std::size_t lineNumberColumn =
+        LineNumberGutterActive() ? (kLineNumberGap + std::to_string(totalLines).size() + kLineNumberGap) : 0;
+    return dapColumn + diffColumn + kStatusWidth + kDiagnosticWidth + lineNumberColumn + foldColumn + blameColumn;
 }
 
 bool BufferView::DiffGutterActive() const {
     return !diffLineKinds_.empty();
+}
+
+bool BufferView::LineNumberGutterActive() const {
+    return editor::multibuffer::MultibufferIndexFor(activeBuffer_.Get()) == nullptr;
 }
 
 bool BufferView::DapGutterActive() const {
