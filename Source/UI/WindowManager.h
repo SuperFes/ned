@@ -405,6 +405,19 @@ class WindowManager {
     // once, for the real running editor only.
     void StartAutoSaveTimer(EventLoop& eventLoop);
 
+    // vcs-diff-gutter-staleness follow-up: refreshes every live pane's own
+    // diff gutter (BufferView::RefreshVcsDiff, silently no-op with no
+    // VcsRunner wired) -- the gutter's freshness is otherwise purely
+    // event-driven off things ned itself did (an edit, a buffer switch, a
+    // save, ned's own vcs-commit/stage/unstage), so a commit/checkout run
+    // from outside ned (another terminal, or the embedded TerminalPanel)
+    // previously left it stale indefinitely. Called from two places: the
+    // auto-save timer's own tick below (a periodic catch-all for any
+    // external source) and main.cpp's toggle-terminal closing edge (an
+    // instant refresh right when the embedded terminal -- the most likely
+    // place to run a git command from inside ned -- closes).
+    void RefreshVcsDiffGutters();
+
     // session-persistence slice 1: records every open file buffer's current
     // place (Editor/Session.h) -- all of bufferList_ first with no viewport
     // information, then each live pane's own active buffer again with its

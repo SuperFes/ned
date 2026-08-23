@@ -1026,7 +1026,7 @@ auto main(int argc, char** argv) -> int {
     // toggle-terminal (C-` / C-c t), from the focused panel via its one
     // reserved chord (C-`), and from the title row's close button (both in
     // TerminalPanel.h).
-    auto toggleTerminal = [&overlays, panel = terminalPanel.get()] {
+    auto toggleTerminal = [&overlays, panel = terminalPanel.get(), wm = windowManager.get()] {
         if (!overlays.IsVisible(*panel)) {
             overlays.Show(*panel);
             panel->EnsureStarted();
@@ -1034,6 +1034,13 @@ auto main(int argc, char** argv) -> int {
         }
         else {
             overlays.Hide(*panel);
+            // vcs-diff-gutter-staleness follow-up: closing the embedded
+            // terminal is the single most likely moment a `git commit`/
+            // `git checkout` just ran from inside ned itself -- refresh
+            // every pane's diff gutter right away rather than waiting out
+            // the periodic autosave-tick sweep (WindowManager::
+            // StartAutoSaveTimer) that otherwise catches this too.
+            wm->RefreshVcsDiffGutters();
         }
     };
     windowManager->SetOnTerminalToggle(toggleTerminal);

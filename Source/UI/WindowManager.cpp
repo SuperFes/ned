@@ -577,9 +577,20 @@ void WindowManager::StartAutoSaveTimer(EventLoop& eventLoop) {
                 RecordSessionPlaces();
                 editor::SaveFilePlaces();
                 SaveProjectSessionNow();
+                // vcs-diff-gutter-staleness follow-up: same tick, same
+                // "unattended sweep, cheap when nothing changed" posture as
+                // AutoRevertBuffers/AutoMergeBuffers above -- see
+                // RefreshVcsDiffGutters' own doc comment in the header.
+                RefreshVcsDiffGutters();
             });
         }
     });
+}
+
+void WindowManager::RefreshVcsDiffGutters() {
+    for (Pane* pane : Leaves()) {
+        pane->Buffer().RefreshVcsDiff();
+    }
 }
 
 void WindowManager::RecordSessionPlaces() {

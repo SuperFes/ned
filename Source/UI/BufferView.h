@@ -185,6 +185,20 @@ class BufferView : public Widget {
     // degrades with no TaskRunner).
     void SetVcsRunner(editor::vcs::VcsRunner* vcsRunner);
 
+    // vcs-diff-gutter-staleness follow-up: a public entry point for
+    // WindowManager to force this pane's diff gutter fresh from outside --
+    // the periodic autosave-timer sweep (AutoRevertBuffers/AutoMergeBuffers'
+    // own tick) and toggle-terminal's closing edge (running `git commit`/
+    // `git checkout` in the embedded terminal, then closing it, previously
+    // left every open buffer's gutter showing the pre-commit diff
+    // indefinitely -- nothing in this codebase polls for VCS state changing
+    // for a reason ned itself didn't cause). Just forwards to
+    // RequestDiffForCurrentBuffer below, which already silently no-ops with
+    // no VcsRunner wired -- this exists as its own public method rather than
+    // widening that one's access, since its own doc comment specifically
+    // describes two different, narrower existing call sites.
+    void RefreshVcsDiff();
+
     // DAP client slice 1: registers the shared DapManager -- same "unset is
     // a safe no-op" convention as SetLspManager/SetTaskRunner/SetVcsRunner
     // (the dap-* commands report "No debugger available." via
