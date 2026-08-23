@@ -1259,6 +1259,26 @@ class BufferView : public Widget {
     // against HEAD reserves no column).
     [[nodiscard]] bool DiffGutterActive() const;
 
+    // gutter-symbol-kind follow-up: self-ensuring, same shape as
+    // DapGutterActive() below -- calls EnsureSymbolGutterCache() itself
+    // (cheap after the first call per Paint(), generation-gated) rather than
+    // relying on a separate unconditional Ensure* call elsewhere in Paint()
+    // the way EnsureDiagnosticGutterCache/EnsureUnsavedChangeCache/
+    // EnsureBlameGutterCache are -- unlike those three (async- or
+    // externally-driven data an XGutterActive() check can safely read
+    // slightly stale), symbolGutterLineKinds_ is synchronous, recomputed
+    // straight from mode_.symbolKind on every genuine content change, so it
+    // must be current *within this same Paint() call* the moment the
+    // column-width math runs, not just by the time the render loop gets to
+    // it a few hundred lines later. Same "only reserve the column when
+    // there's something to show" gate DiffGutterActive/BlameGutterActive
+    // use, not FoldGutterActive's fixed-width-regardless-of-content
+    // reservation -- a symbol landmark on every definition line in a large
+    // file is common enough that "no functions in this file" should cost
+    // zero gutter width, not reserve a column nobody needs (the packed-
+    // gutter concern this whole follow-up was built around).
+    [[nodiscard]] bool SymbolGutterActive() const;
+
     // DAP client slice 2: whether the leftmost debug-marker column
     // (breakpoint dot / execution arrow) is reserved this frame -- true
     // only when the active buffer has a real path AND (it has breakpoints,
@@ -1363,6 +1383,20 @@ class BufferView : public Widget {
     // column regardless of language, it's just empty when nothing's been
     // reported.
     void EnsureDiagnosticGutterCache() const;
+    // gutter-symbol-kind follow-up: (re)derives symbolGutterLineKinds_ from
+    // mode_.symbolKind(buffer.Text()) -- gated on the buffer plus
+    // ContentGeneration() alone (no second generation counter needed, unlike
+    // EnsureUnsavedChangeCache/EnsureInlineDiagnosticCache -- there's no
+    // "cleared independent of content" event for this the way a save clears
+    // unsaved ranges or a fresh diagnostics publish replaces diagnostics).
+    // Clears (and stamps the cache as up to date, so a repeat call is still
+    // a cheap no-op) rather than recomputing at all when mode_.symbolKind is
+    // unset or the buffer is read-only -- same eligibility mode_.fold/
+    // CodeFoldingEnabled()/ReadOnly() form for FoldGutterActive, just
+    // checked inline here instead of a separate public predicate, since
+    // SymbolGutterActive() itself is the data-driven "anything to show"
+    // question, not this eligibility gate.
+    void EnsureSymbolGutterCache() const;
     // VCS blame gutter: unlike EnsureDiagnosticGutterCache/EnsureFoldGutterCache,
     // this does NOT recompute blameLineInfo_ from anything -- there's no
     // cheap synchronous source to recompute it from (populating it means
@@ -1781,6 +1815,14 @@ class BufferView : public Widget {
     // debugger UIs put breakpoint dots. Layout when every region is active:
     // [dap][diff][status][diagnostic][gap][digits][gap][fold][blame].
     static constexpr std::size_t kDapWidth = 1;
+    // gutter-symbol-kind follow-up: a single glyph (function/type/data) on
+    // each definition line, placed between the line-number digits and fold
+    // (structure-related columns clustered together) -- layout when every
+    // region is active: [dap][diff][status][diagnostic][gap][digits][gap]
+    // [symbol][fold][blame]. See SymbolGutterActive's own doc comment for
+    // why this is reserved only when the current buffer actually has
+    // markers, unlike fold's fixed-width-regardless-of-content reservation.
+    static constexpr std::size_t kSymbolWidth = 1;
 
     struct FoldGutterEntry {
         std::size_t headerLine;
@@ -1842,6 +1884,16 @@ class BufferView : public Widget {
     mutable text::Buffer*                                                           diagnosticGutterCacheBuffer_     = nullptr;
     mutable std::size_t                                                             diagnosticGutterCacheGeneration_ = 0;
     mutable std::vector<std::pair<std::size_t, text::Buffer::Diagnostic::Severity>> diagnosticLineSeverities_; // sorted by line
+
+    // gutter-symbol-kind follow-up: at most one {line, SymbolKind} entry per
+    // definition line (the LAST marker wins when a line has more than one --
+    // markers arrive startByte-sorted from mode_.symbolKind, so a plain
+    // overwrite during the by-line collapse already produces that), sorted
+    // by line for the per-row lower_bound lookup Paint() does, same shape as
+    // diagnosticLineSeverities_ just above.
+    mutable text::Buffer*                                          symbolGutterCacheBuffer_            = nullptr;
+    mutable std::size_t                                            symbolGutterCacheContentGeneration_ = 0;
+    mutable std::vector<std::pair<std::size_t, editor::SymbolKind>> symbolGutterLineKinds_;
 
     // inline-diagnostics follow-up: see EnsureInlineDiagnosticCache's own
     // doc comment above for the two-generation gate (diagnostics AND

@@ -77,6 +77,26 @@ extern const char* const kCssImports;
 extern const char* const kClojureImports;
 extern const char* const kJanetImports;
 
+// gutter-symbol-kind follow-up: each bundled grammar's own real
+// queries/tags.scm, consumed directly and unmodified -- the ctags/
+// nvim-treesitter "@definition.function"/"@definition.class"/etc. convention
+// (see Mode.h's SymbolKindFromCaptureName for the capture-name -> SymbolKind
+// mapping). Only languages whose upstream grammar repo actually ships a
+// tags.scm get a constant here (checked directly against the fetched
+// sources, not assumed) -- JSON/HTML/CSS/YAML/TOML/Bash/Janet/Clojure/
+// Markdown/Org have no meaningful "function/class definition" concept, or
+// their grammar simply doesn't ship one; their Mode::symbolKind stays empty,
+// same "empty means not configured" convention every other optional Mode
+// capability already uses. kTypeScriptTags is shared by TypeScriptMode and
+// TsxMode, same sharing kTypeScript/kTypeScriptFolds/kTypeScriptImports
+// already use.
+extern const char* const kCTags;
+extern const char* const kCppTags;
+extern const char* const kPhpTags;
+extern const char* const kJavaScriptTags;
+extern const char* const kTypeScriptTags;
+extern const char* const kPythonTags;
+
 } // namespace ned::editor::treesitter::queries
 
 #endif // NED_EDITOR_TREESITTER_QUERIES_H

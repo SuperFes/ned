@@ -29,6 +29,7 @@ using ned::editor::PythonMode;
 using ned::editor::SyntaxClass;
 using ned::editor::TsxMode;
 using ned::editor::TypeScriptMode;
+using ned::editor::YamlMode;
 
 namespace {
 
@@ -40,6 +41,22 @@ bool HasSpan(const std::vector<HighlightSpan>& spans, std::size_t start, std::si
         }
     }
     return false;
+}
+
+// gutter-symbol-kind follow-up: markers arrive startByte-sorted from
+// mode.symbolKind itself (Mode.cpp's own closure) -- just their kinds, in
+// that order, is a robust enough check without hand-computing each
+// grammar's own exact definition-node byte span (function_declarator vs.
+// the whole function_definition vs. just the name differs per language/
+// capture, and getting one wrong would make the test itself wrong, not the
+// code under test).
+std::vector<ned::editor::SymbolKind> KindsInOrder(const std::vector<ned::editor::SymbolMarker>& markers) {
+    std::vector<ned::editor::SymbolKind> kinds;
+    kinds.reserve(markers.size());
+    for (const ned::editor::SymbolMarker& marker : markers) {
+        kinds.push_back(marker.kind);
+    }
+    return kinds;
 }
 
 } // namespace
@@ -684,4 +701,97 @@ TEST_CASE("JanetMode/ClojureMode/JankMode use LispAutoPairs, excluding the singl
     for (const auto& pair : LispAutoPairs()) {
         REQUIRE(pair.first != '\'');
     }
+}
+
+TEST_CASE("SymbolKindFromCaptureName maps the ctags/nvim-treesitter definition vocabulary, ignoring reference/name/"
+          "doc captures",
+          "[Mode]") {
+    using ned::editor::SymbolKind;
+    using ned::editor::SymbolKindFromCaptureName;
+
+    REQUIRE(SymbolKindFromCaptureName("definition.function") == SymbolKind::Callable);
+    REQUIRE(SymbolKindFromCaptureName("definition.method") == SymbolKind::Callable);
+    REQUIRE(SymbolKindFromCaptureName("definition.class") == SymbolKind::TypeLike);
+    REQUIRE(SymbolKindFromCaptureName("definition.interface") == SymbolKind::TypeLike);
+    REQUIRE(SymbolKindFromCaptureName("definition.type") == SymbolKind::TypeLike);
+    REQUIRE(SymbolKindFromCaptureName("definition.module") == SymbolKind::TypeLike);
+    REQUIRE(SymbolKindFromCaptureName("definition.constant") == SymbolKind::Data);
+    REQUIRE(SymbolKindFromCaptureName("definition.field") == SymbolKind::Data);
+
+    // Everything a real tags.scm mixes into the same query but isn't itself
+    // a definition site.
+    REQUIRE_FALSE(SymbolKindFromCaptureName("reference.call").has_value());
+    REQUIRE_FALSE(SymbolKindFromCaptureName("reference.class").has_value());
+    REQUIRE_FALSE(SymbolKindFromCaptureName("name").has_value());
+    REQUIRE_FALSE(SymbolKindFromCaptureName("doc").has_value());
+    REQUIRE_FALSE(SymbolKindFromCaptureName("local.scope").has_value());
+}
+
+TEST_CASE("SyntaxClassFor borrows each SymbolKind's color from the matching syntax class", "[Mode]") {
+    using ned::editor::SymbolKind;
+    using ned::editor::SyntaxClassFor;
+
+    REQUIRE(SyntaxClassFor(SymbolKind::Callable) == SyntaxClass::Function);
+    REQUIRE(SyntaxClassFor(SymbolKind::TypeLike) == SyntaxClass::Type);
+    REQUIRE(SyntaxClassFor(SymbolKind::Data) == SyntaxClass::Constant);
+}
+
+TEST_CASE("A language with no bundled tags.scm (e.g. BashMode) has no symbolKind support configured", "[Mode]") {
+    REQUIRE_FALSE(static_cast<bool>(BashMode().symbolKind));
+    REQUIRE_FALSE(static_cast<bool>(YamlMode().symbolKind));
+}
+
+TEST_CASE("CMode's symbolKind classifies a function definition and a struct definition", "[Mode]") {
+    using ned::editor::SymbolKind;
+    const auto mode = CMode();
+    REQUIRE(static_cast<bool>(mode.symbolKind));
+
+    const auto markers = mode.symbolKind("int add(int a, int b) { return a + b; }\nstruct Point { int x; int y; };\n");
+    REQUIRE(KindsInOrder(markers) == std::vector{SymbolKind::Callable, SymbolKind::TypeLike});
+}
+
+TEST_CASE("CppMode's symbolKind classifies a class definition and one of its methods", "[Mode]") {
+    using ned::editor::SymbolKind;
+    const auto mode = CppMode();
+    REQUIRE(static_cast<bool>(mode.symbolKind));
+
+    const auto markers = mode.symbolKind("class Widget {\npublic:\n    int getValue() const { return value_; }\n};\n");
+    REQUIRE(KindsInOrder(markers) == std::vector{SymbolKind::TypeLike, SymbolKind::Callable});
+}
+
+TEST_CASE("PhpMode's symbolKind classifies a class definition and one of its methods", "[Mode]") {
+    using ned::editor::SymbolKind;
+    const auto mode = PhpMode();
+    REQUIRE(static_cast<bool>(mode.symbolKind));
+
+    const auto markers = mode.symbolKind("<?php\nclass Foo {\n    public function bar() {}\n}\n");
+    REQUIRE(KindsInOrder(markers) == std::vector{SymbolKind::TypeLike, SymbolKind::Callable});
+}
+
+TEST_CASE("JavaScriptMode's symbolKind classifies a function declaration", "[Mode]") {
+    using ned::editor::SymbolKind;
+    const auto mode = JavaScriptMode();
+    REQUIRE(static_cast<bool>(mode.symbolKind));
+
+    const auto markers = mode.symbolKind("function add(a, b) { return a + b; }\n");
+    REQUIRE(KindsInOrder(markers) == std::vector{SymbolKind::Callable});
+}
+
+TEST_CASE("TypeScriptMode's symbolKind classifies an interface declaration", "[Mode]") {
+    using ned::editor::SymbolKind;
+    const auto mode = TypeScriptMode();
+    REQUIRE(static_cast<bool>(mode.symbolKind));
+
+    const auto markers = mode.symbolKind("interface Point {\n    x: number;\n}\n");
+    REQUIRE(KindsInOrder(markers) == std::vector{SymbolKind::TypeLike});
+}
+
+TEST_CASE("PythonMode's symbolKind classifies a function definition and a class definition", "[Mode]") {
+    using ned::editor::SymbolKind;
+    const auto mode = PythonMode();
+    REQUIRE(static_cast<bool>(mode.symbolKind));
+
+    REQUIRE(KindsInOrder(mode.symbolKind("def add(a, b):\n    return a + b\n")) ==
+            std::vector{SymbolKind::Callable});
+    REQUIRE(KindsInOrder(mode.symbolKind("class Point:\n    pass\n")) == std::vector{SymbolKind::TypeLike});
 }

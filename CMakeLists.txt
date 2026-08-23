@@ -319,22 +319,35 @@ ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter
 # import-target-tree-sitter follow-up: shared by CMode and CppMode below --
 # both grammars define preproc_include identically.
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/c-imports.scm" CImports)
+# gutter-symbol-kind follow-up: the grammar's own real queries/tags.scm
+# (ctags/nvim-treesitter's own "@definition.*"/"@reference.*" convention),
+# consumed unmodified -- same "use the real upstream file directly" approach
+# highlights.scm/folds.scm already establish for grammars without local
+# customization.
+ned_embed_treesitter_query("${tree-sitter-c_SOURCE_DIR}/queries/tags.scm" CTags)
 
 ned_add_treesitter_grammar(tree-sitter-cpp https://github.com/tree-sitter/tree-sitter-cpp.git v0.23.4)
 
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/cpp.scm" Cpp)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/cpp-folds.scm" CppFolds)
+ned_embed_treesitter_query("${tree-sitter-cpp_SOURCE_DIR}/queries/tags.scm" CppTags)
 
 ned_add_treesitter_grammar(tree-sitter-php https://github.com/tree-sitter/tree-sitter-php.git v0.24.2 php)
 
 ned_embed_treesitter_query("${tree-sitter-php_SOURCE_DIR}/queries/highlights.scm" Php)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/php-imports.scm" PhpImports)
+# gutter-symbol-kind follow-up: see CTags' own comment above (Source/Editor/
+# TreeSitter/Queries.h).
+ned_embed_treesitter_query("${tree-sitter-php_SOURCE_DIR}/queries/tags.scm" PhpTags)
 
 ned_add_treesitter_grammar(tree-sitter-javascript https://github.com/tree-sitter/tree-sitter-javascript.git v0.25.0)
 
 ned_embed_treesitter_query("${tree-sitter-javascript_SOURCE_DIR}/queries/highlights.scm" JavaScript)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/javascript-folds.scm" JavaScriptFolds)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/javascript-imports.scm" JavaScriptImports)
+# gutter-symbol-kind follow-up: see CTags' own comment above for why this is
+# the grammar's real, unmodified queries/tags.scm.
+ned_embed_treesitter_query("${tree-sitter-javascript_SOURCE_DIR}/queries/tags.scm" JavaScriptTags)
 
 ned_fetch_treesitter_source(tree-sitter-typescript-src https://github.com/tree-sitter/tree-sitter-typescript.git v0.23.2)
 
@@ -346,6 +359,10 @@ ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter
 # import-target-tree-sitter follow-up: shared by TypeScriptMode and TsxMode,
 # same sharing as the highlight/fold queries above.
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/typescript-imports.scm" TypeScriptImports)
+# gutter-symbol-kind follow-up: see CTags' own comment above; shared by
+# TypeScriptMode and TsxMode, same sharing as the highlight/fold/imports
+# queries above.
+ned_embed_treesitter_query("${tree-sitter-typescript-src_SOURCE_DIR}/queries/tags.scm" TypeScriptTags)
 
 ned_add_treesitter_grammar(tree-sitter-html https://github.com/tree-sitter/tree-sitter-html.git v0.23.2)
 
@@ -361,6 +378,8 @@ ned_add_treesitter_grammar(tree-sitter-python https://github.com/tree-sitter/tre
 ned_embed_treesitter_query("${tree-sitter-python_SOURCE_DIR}/queries/highlights.scm" Python)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/python-folds.scm" PythonFolds)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/python-imports.scm" PythonImports)
+# gutter-symbol-kind follow-up: see CTags' own comment above.
+ned_embed_treesitter_query("${tree-sitter-python_SOURCE_DIR}/queries/tags.scm" PythonTags)
 
 ned_add_treesitter_grammar(tree-sitter-bash https://github.com/tree-sitter/tree-sitter-bash.git v0.25.1)
 
@@ -704,6 +723,7 @@ if (NED_BUILD_TESTS)
             Tests/BufferViewTest.cpp
             Tests/BufferViewBlameGutterTest.cpp
             Tests/BufferViewDiffGutterTest.cpp
+            Tests/BufferViewSymbolGutterTest.cpp
             Tests/BufferViewVcsStatusTest.cpp
             Tests/BufferViewVcsCommitTest.cpp
             Tests/WindowManagerTest.cpp

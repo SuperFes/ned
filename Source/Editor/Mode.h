@@ -231,6 +231,55 @@ struct ImportTarget {
 using ImportTargetFunction =
     std::function<std::optional<ImportTarget>(std::string_view bufferText, std::size_t point)>;
 
+// gutter-symbol-kind follow-up: a coarse landmark kind for the gutter's
+// symbol-kind column -- deliberately not a reuse of SyntaxClass's own finer
+// Function/FunctionBuiltin/Type/TypeBuiltin/Constant/ConstantBuiltin split
+// (those exist for syntax *coloring*; this is a single-glyph gutter
+// indicator, three buckets is plenty). SyntaxClassFor below is what ties a
+// SymbolKind back to a real theme color, so a custom theme needs no new
+// fields of its own for this.
+enum class SymbolKind {
+    Callable, // a function or method definition
+    TypeLike, // a class/interface/type-alias/enum/struct/module definition
+    Data,     // a constant/variable-like definition
+};
+
+// The SyntaxClass a SymbolKind's gutter glyph borrows its color from --
+// Callable renders like a function name would in the buffer, TypeLike like a
+// type name, Data like a constant.
+[[nodiscard]] SyntaxClass SyntaxClassFor(SymbolKind kind);
+
+// One "definition site" landmark -- startByte is the definition capture's
+// own start (BufferView maps it to a line via ByteOffsetToLine the same way
+// diagnostics/diff hunks already do; a definition spanning multiple lines,
+// e.g. a multi-line function signature, only ever marks its first line).
+struct SymbolMarker {
+    std::size_t startByte;
+    SymbolKind  kind;
+};
+
+// Given a buffer's full text, returns every definition-site landmark in it
+// -- one entry per matched "@definition.*" capture from the language's own
+// queries/tags.scm (the ctags/nvim-treesitter convention; see
+// SymbolKindFromCaptureName below). Empty function (the default) means "no
+// symbol-kind support configured for this mode," same "empty means not
+// configured" convention as HighlightFunction/FoldFunction above -- most
+// bundled grammars have no tags.scm at all (JSON/HTML/CSS/... have no
+// meaningful function/class-definition concept), so this stays empty for
+// them rather than guessing.
+using SymbolKindFunction = std::function<std::vector<SymbolMarker>(std::string_view bufferText)>;
+
+// Maps a tags.scm capture name (without the leading '@', e.g.
+// "definition.function") onto a SymbolKind -- nullopt for anything that
+// isn't itself a *definition* capture: a nested "@name"/"@doc"/
+// "@local.scope" capture from the same pattern match, or a "@reference.*"
+// one (a *use*, not a definition -- tags.scm files mix both in the same
+// query). Shared by every TreeSitterModeFromLanguage-built symbolKind
+// closure (Mode.cpp) rather than duplicated per language, since this naming
+// vocabulary is the same ctags convention across every grammar that ships a
+// tags.scm, not something each language's query invents independently.
+[[nodiscard]] std::optional<SymbolKind> SymbolKindFromCaptureName(std::string_view captureName);
+
 struct Mode {
     std::string       name;
     Keymap            keymap;
@@ -263,6 +312,12 @@ struct Mode {
     // LispAutoPairs() instead, dropping the '' entry since a bare quote
     // there is the reader's own quote macro, not a paired delimiter.
     std::vector<std::pair<char, char>> autoPairs;
+    // gutter-symbol-kind follow-up: empty function (the default) means no
+    // symbol-kind support configured for this mode, same "empty means not
+    // configured" convention as highlight/fold/expandSelection/sexpMotion/
+    // importTarget above -- BufferView's symbol-kind gutter column simply
+    // never reserves space for a Mode with this unset.
+    SymbolKindFunction symbolKind;
     // import-target-tree-sitter follow-up: empty function (the default)
     // means open-link-at-point has no import/include query configured for
     // this mode, same "empty means not configured" convention as
@@ -319,8 +374,14 @@ struct Mode {
 // Mode::importTarget's own doc comment) -- nullptr (the default) means this
 // language has no import query yet, leaving the returned Mode's
 // .importTarget empty.
+// symbolKindQuerySource (gutter-symbol-kind follow-up): same optional
+// contract, but for a "@definition.*"-capture tags.scm query (see
+// Mode::symbolKind's own doc comment) -- nullptr (the default) means this
+// language has no tags query yet, leaving the returned Mode's .symbolKind
+// empty.
 [[nodiscard]] Mode TreeSitterMode(std::string name, std::string_view languageName, const char* querySource,
-                                  const char* foldQuerySource = nullptr, const char* importQuerySource = nullptr);
+                                  const char* foldQuerySource = nullptr, const char* importQuerySource = nullptr,
+                                  const char* symbolKindQuerySource = nullptr);
 
 // The shared construction logic TreeSitterMode above delegates to, split out
 // (dynamic-grammar-loading follow-up) so a caller that already has a
@@ -338,7 +399,8 @@ struct Mode {
 // see TreeSitterMode's own doc comment above.
 [[nodiscard]] Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& language,
                                               std::string_view querySource = {}, std::string_view foldQuerySource = {},
-                                              std::string_view importQuerySource = {});
+                                              std::string_view importQuerySource = {},
+                                              std::string_view symbolKindQuerySource = {});
 
 // A real tree-sitter-backed Janet mode (bundle-remaining-grammars
 // follow-up), replacing the original hand-rolled per-line #-comment/
