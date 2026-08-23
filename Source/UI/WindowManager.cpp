@@ -53,7 +53,7 @@ Pane::Pane(text::Buffer& buffer, text::KillRing& killRing, editor::RegisterTable
            const editor::Keymap& janetKeymap, const editor::Keymap& globalKeymap, editor::Mode mode,
            std::string& statusMessage, const Theme& theme, ProjectSidebar* projectSidebar,
            editor::lsp::LspManager* lspManager, editor::tasks::TaskRunner* taskRunner,
-           editor::vcs::VcsRunner* vcsRunner, editor::dap::DapManager* dapManager,
+           editor::vcs::VcsRunner* vcsRunner, editor::dap::DapManager* dapManager, editor::acp::AcpManager* acpManager,
            std::function<void(editor::InteractiveRequest)> onWindowRequest,
            std::function<void(text::Buffer&)>              onBufferClosed) : activeBuffer_(buffer), mode_(std::move(mode)),
                                                                 dispatcher_(registry, editor::KeymapStack({&janetKeymap, &mode_.keymap, &globalKeymap})),
@@ -108,6 +108,7 @@ Pane::Pane(text::Buffer& buffer, text::KillRing& killRing, editor::RegisterTable
     bufferView_->SetTaskRunner(taskRunner);
     bufferView_->SetVcsRunner(vcsRunner);
     bufferView_->SetDapManager(dapManager);
+    bufferView_->SetAcpManager(acpManager);
     bufferView_->SetOnWindowRequest(std::move(onWindowRequest));
     bufferView_->SetOnBufferClosed(std::move(onBufferClosed));
     // per-buffer-mode follow-up: Mode is a property of the buffer being
@@ -322,7 +323,7 @@ WindowManager::WindowManager(text::Buffer& initialBuffer, text::KillRing& killRi
 std::unique_ptr<Pane> WindowManager::MakePane(text::Buffer& buffer, editor::Mode mode) {
     auto pane = std::make_unique<Pane>(
         buffer, killRing_, registers_, promptHistory_, bufferList_, registry_, janetKeymap_, globalKeymap_, std::move(mode),
-        statusMessage_, theme_, projectSidebar_, lspManager_, taskRunner_, vcsRunner_, dapManager_,
+        statusMessage_, theme_, projectSidebar_, lspManager_, taskRunner_, vcsRunner_, dapManager_, acpManager_,
         [this](editor::InteractiveRequest request) { HandleWindowRequest(request); },
         [this](text::Buffer& closedBuffer) { HandleBufferClosed(closedBuffer); });
     pane->SetEventLoop(eventLoop_);
@@ -409,6 +410,30 @@ void WindowManager::SetDapManager(editor::dap::DapManager* dapManager) {
         }
     });
     dapManager->SetOnSessionEnded([this](std::string reason) { statusMessage_ = std::move(reason); });
+}
+
+void WindowManager::SetAcpManager(editor::acp::AcpManager* acpManager) {
+    acpManager_ = acpManager;
+    for (Pane* pane : Leaves()) {
+        pane->Buffer().SetAcpManager(acpManager);
+    }
+    if (acpManager == nullptr) {
+        return;
+    }
+    // Same "resolve the focused pane fresh at fire time" reasoning as
+    // SetDapManager's own SetOnStopped wiring just above -- a specific
+    // BufferView captured when this was called could be a pane that's
+    // since been split away or closed.
+    acpManager->SetOnPermissionRequest([this](const editor::acp::AcpManager::PermissionPrompt& prompt) {
+        Pane* pane = FocusedPane();
+        if (pane == nullptr && !Leaves().empty()) {
+            pane = Leaves().front();
+        }
+        if (pane != nullptr) {
+            pane->Buffer().ShowAcpPermissionPrompt(prompt);
+        }
+    });
+    acpManager->SetOnSessionEnded([this](std::string reason) { statusMessage_ = std::move(reason); });
 }
 
 void WindowManager::SetEventLoop(EventLoop* eventLoop) {

@@ -2582,7 +2582,16 @@ bool BufferView::OnKeyEvent(const Event& event) {
         inputMode_ == InputMode::ProjectSearch || inputMode_ == InputMode::CreateDirectory ||
         inputMode_ == InputMode::FindScratch || inputMode_ == InputMode::StringRectangle ||
         inputMode_ == InputMode::SetHeadlineTags || inputMode_ == InputMode::TaskName ||
-        inputMode_ == InputMode::GotoLine) {
+        inputMode_ == InputMode::GotoLine || inputMode_ == InputMode::AcpAgentName ||
+        inputMode_ == InputMode::AcpPromptText ||
+        // OnKeyEvent-dispatch-gap follow-up: DapEvaluate/VcsSwitchBranch/
+        // VcsCreateBranch are all handled inside HandlePromptKey (and
+        // documented there as routing through it, same shape as
+        // TaskName/GotoLine above) but were never actually reachable from a
+        // real keystroke -- missing here, so input silently fell through to
+        // ordinary self-insert-command instead of the prompt.
+        inputMode_ == InputMode::DapEvaluate || inputMode_ == InputMode::VcsSwitchBranch ||
+        inputMode_ == InputMode::VcsCreateBranch) {
         HandlePromptKey(*chord);
         ClampPointToNarrowing();
         return true;
@@ -2634,6 +2643,11 @@ bool BufferView::OnKeyEvent(const Event& event) {
     }
     if (inputMode_ == InputMode::ZapToChar) {
         HandleZapToCharKey(*chord);
+        ClampPointToNarrowing();
+        return true;
+    }
+    if (inputMode_ == InputMode::AcpPermissionPrompt) {
+        HandleAcpPermissionPromptKey(*chord);
         ClampPointToNarrowing();
         return true;
     }
@@ -3940,6 +3954,27 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             prompt_.emplace("Evaluate: ");
             statusMessage_ = prompt_->StatusText();
             return;
+        // ACP client slice 2: AcpStartSession/AcpSendPrompt are prompt-shaped
+        // (HandlePromptKey), same "just enter the mode and prime the
+        // prompt" shape as DapEvaluate above; AcpStopSession is a one-shot
+        // direct action, same shape as DapStop.
+        case editor::InteractiveRequest::AcpStartSession:
+            inputMode_ = InputMode::AcpAgentName;
+            prompt_.emplace("ACP agent: ");
+            statusMessage_ = prompt_->StatusText();
+            return;
+        case editor::InteractiveRequest::AcpSendPrompt:
+            if (!acpManager_) {
+                statusMessage_ = "No ACP manager available.";
+                return;
+            }
+            inputMode_ = InputMode::AcpPromptText;
+            prompt_.emplace("ACP prompt: ");
+            statusMessage_ = prompt_->StatusText();
+            return;
+        case editor::InteractiveRequest::AcpStopSession:
+            statusMessage_ = acpManager_ ? acpManager_->StopSession() : "No ACP manager available.";
+            return;
         // VCS blame gutter follow-up: one-shot direct actions, same shape
         // as ProjectAgenda/LspGotoDefinition above -- doesn't touch
         // inputMode_, the async result (or a status-message error) arrives
@@ -4579,6 +4614,10 @@ std::string_view BufferView::HistoryKeyForInputMode(InputMode mode) {
             return "vcs-switch-branch";
         case InputMode::VcsCreateBranch:
             return "vcs-create-branch";
+        case InputMode::AcpAgentName:
+            return "acp-agent-name";
+        case InputMode::AcpPromptText:
+            return "acp-prompt-text";
         default:
             return "prompt"; // unreachable from HandlePromptKey's own dispatch guard; a safe shared fallback regardless
     }
@@ -4772,6 +4811,25 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
                 }
             }
         }
+        else if (inputMode_ == InputMode::AcpAgentName) {
+            if (input.empty()) {
+                statusMessage_ = "No agent name given.";
+            }
+            else if (!acpManager_) {
+                statusMessage_ = "No ACP manager available.";
+            }
+            else if (text::Buffer* buffer = acpManager_->StartSession(input)) {
+                activeBuffer_.Set(*buffer);
+                statusMessage_.clear();
+            }
+        }
+        else if (inputMode_ == InputMode::AcpPromptText) {
+            // Fire-and-forget, same async shape as DapEvaluate below: the
+            // reply streams into the output buffer asynchronously via
+            // AcpManager's own session/update handling, not through this
+            // return value.
+            statusMessage_ = acpManager_ ? acpManager_->SendPrompt(input) : "No ACP manager available.";
+        }
         else if (inputMode_ == InputMode::DapEvaluate) {
             if (input.empty()) {
                 statusMessage_.clear();
@@ -4910,6 +4968,12 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
             case InputMode::VcsCreateBranch:
                 label = "Create branch";
                 break;
+            case InputMode::AcpAgentName:
+                label = "Start ACP session";
+                break;
+            case InputMode::AcpPromptText:
+                label = "Send ACP prompt";
+                break;
             default:
                 label = "Prompt";
                 break;
@@ -4922,13 +4986,17 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
         inputMode_ != InputMode::CreateDirectory && inputMode_ != InputMode::StringRectangle &&
         inputMode_ != InputMode::SetHeadlineTags && inputMode_ != InputMode::LspRenameNewName &&
         inputMode_ != InputMode::TaskName && inputMode_ != InputMode::DapEvaluate &&
-        inputMode_ != InputMode::VcsCreateBranch &&
+        inputMode_ != InputMode::VcsCreateBranch && inputMode_ != InputMode::AcpAgentName &&
+        inputMode_ != InputMode::AcpPromptText &&
         inputMode_ != InputMode::GotoLine) { // completing a line number is meaningless
         // DapEvaluate excluded too: completing a debuggee expression
         // against buffer names would be meaningless, same reasoning as
         // ProjectSearch's regex pattern. VcsCreateBranch likewise
         // (deliberately *new* free text); VcsSwitchBranch is NOT excluded --
         // CompletePrompt completes it against the fetched branch list.
+        // AcpAgentName/AcpPromptText: same free-text reasoning as
+        // VcsCreateBranch -- no established candidate list to complete
+        // against.
         CompletePrompt();
         return;
     }
@@ -7175,6 +7243,69 @@ void BufferView::SetTaskRunner(editor::tasks::TaskRunner* taskRunner) {
 
 void BufferView::SetDapManager(editor::dap::DapManager* dapManager) {
     dapManager_ = dapManager;
+}
+
+void BufferView::SetAcpManager(editor::acp::AcpManager* acpManager) {
+    acpManager_ = acpManager;
+}
+
+void BufferView::ShowAcpPermissionPrompt(const editor::acp::AcpManager::PermissionPrompt& prompt) {
+    pendingAcpPermissionOptions_ = prompt.options;
+    acpPermissionSelection_      = 0;
+    inputMode_                   = InputMode::AcpPermissionPrompt;
+    acpPermissionDescription_    = prompt.description;
+    RefreshAcpPermissionPromptStatus();
+}
+
+void BufferView::RefreshAcpPermissionPromptStatus() {
+    std::string status = acpPermissionDescription_ + ": ";
+    for (std::size_t i = 0; i < pendingAcpPermissionOptions_.size(); ++i) {
+        if (i > 0) {
+            status += "  ";
+        }
+        const bool selected = (i == acpPermissionSelection_);
+        status += (selected ? "[" : "") + std::to_string(i + 1) + ") " + pendingAcpPermissionOptions_[i].name + (selected ? "]" : "");
+    }
+    statusMessage_ = status;
+}
+
+void BufferView::HandleAcpPermissionPromptKey(const editor::KeyChord& chord) {
+    if (IsQuit(chord)) {
+        if (acpManager_) {
+            acpManager_->CancelPermissionPrompt();
+        }
+        statusMessage_ = "Permission request cancelled.";
+        EndInteractiveSession();
+        return;
+    }
+    if (chord.Special == editor::SpecialKey::Down) {
+        acpPermissionSelection_ = (acpPermissionSelection_ + 1) % pendingAcpPermissionOptions_.size();
+        RefreshAcpPermissionPromptStatus();
+        return;
+    }
+    if (chord.Special == editor::SpecialKey::Up) {
+        acpPermissionSelection_ = (acpPermissionSelection_ + pendingAcpPermissionOptions_.size() - 1) % pendingAcpPermissionOptions_.size();
+        RefreshAcpPermissionPromptStatus();
+        return;
+    }
+    std::size_t chosen = acpPermissionSelection_;
+    if (IsPlainCharacter(chord) && chord.Codepoint >= U'1' && chord.Codepoint <= U'9') {
+        const std::size_t index = static_cast<std::size_t>(chord.Codepoint - U'1');
+        if (index >= pendingAcpPermissionOptions_.size()) {
+            return; // out of range -- stay in the selection list
+        }
+        chosen = index;
+    }
+    else if (chord.Special != editor::SpecialKey::Enter) {
+        return; // anything else is ignored -- stay in the selection list
+    }
+
+    const editor::acp::AcpManager::PermissionOption& option = pendingAcpPermissionOptions_[chosen];
+    if (acpManager_) {
+        acpManager_->ResolvePermissionPrompt(option.optionId);
+    }
+    statusMessage_ = "Selected \"" + option.name + "\".";
+    EndInteractiveSession();
 }
 
 void BufferView::SetEventLoop(EventLoop* eventLoop) {

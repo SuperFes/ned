@@ -17,6 +17,7 @@
 
 #include "Application.h"
 
+#include "Editor/Acp/AcpManager.h"
 #include "Editor/BackgroundActivity.h"
 #include "Editor/Backup.h"
 #include "Editor/Commands.h"
@@ -762,16 +763,15 @@ auto main(int argc, char** argv) -> int {
     // at startup.
     if (!deferredTrustPrompts.empty()) {
         auto promptNext = std::make_shared<std::function<void()>>();
-        *promptNext      = [wm = windowManager.get(), &janetEnv, &statusMessage, deferredTrustPrompts,
-                       promptNext]() mutable -> void {
+        *promptNext     = [wm = windowManager.get(), &janetEnv, &statusMessage, deferredTrustPrompts,
+                           promptNext]() mutable -> void {
             if (deferredTrustPrompts.empty()) {
                 return;
             }
             const std::filesystem::path path = deferredTrustPrompts.front();
             deferredTrustPrompts.pop_front();
             wm->RequestTrustProjectInit(
-                path, [&janetEnv, &statusMessage, promptNext](const std::filesystem::path&     initPath,
-                                                              ned::editor::ProjectInitDecision decision) -> void {
+                path, [&janetEnv, &statusMessage, promptNext](const std::filesystem::path& initPath, ned::editor::ProjectInitDecision decision) -> void {
                     if (decision == ned::editor::ProjectInitDecision::Decline) {
                         statusMessage = initPath.string() + " not loaded.";
                     }
@@ -885,6 +885,12 @@ auto main(int argc, char** argv) -> int {
     if (restoredSession && !restoredSession->breakpoints.empty()) {
         dapManager.RestoreBreakpoints(restoredSession->breakpoints);
     }
+
+    // ACP client slice 2: same "constructed here, needs a real EventLoop&"
+    // shape as dapManager just above, and the same "wired into
+    // windowManager, connect after construction" convention.
+    ned::editor::acp::AcpManager acpManager(bufferList, eventLoop);
+    windowManager->SetAcpManager(&acpManager);
 
     // FTXUI -> Notcurses migration: BufferView's completion-debounce/
     // status-message-idle-timeout DeadlineTimers and ScrollArrowButton's

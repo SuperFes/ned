@@ -1343,6 +1343,33 @@ TEST_CASE("The stopped line gets an execution arrow and a background wash", "[Bu
     REQUIRE(screen.PixelAt(contentStart, 0).background_color == fixture.theme.background); // other lines untouched
 }
 
+// OnKeyEvent-dispatch-gap follow-up: DapEvaluate/VcsSwitchBranch/VcsCreateBranch
+// are all handled inside HandlePromptKey and documented as routing through it
+// (same shape as TaskName/GotoLine/etc.), but OnKeyEvent's own dispatch chain
+// never actually sent those three InputModes there -- a real keystroke fell
+// through to ordinary self-insert-command instead of the prompt. dap-evaluate
+// is the one exercised here (no vcsRunner_ wiring needed to reach it, unlike
+// the two vcs-* commands); the fix is one shared dispatch condition, so this
+// stands in for all three.
+TEST_CASE("dap-evaluate's prompt captures keystrokes instead of falling through to normal editing", "[BufferView]") {
+    Fixture                      fixture;
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::dap::DapManager manager(eventLoop);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetDapManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "dap-evaluate");
+    view.OnEvent(ned::ui::test::Return());
+    REQUIRE(fixture.statusMessage == "Evaluate: ");
+
+    view.OnEvent(ned::ui::test::Character("x"));
+    REQUIRE(fixture.statusMessage == "Evaluate: x");
+    REQUIRE(fixture.buffer.Text().empty()); // must NOT have landed as a self-inserted character
+}
+
 TEST_CASE("The diagnostics gutter uses a distinct glyph per severity", "[BufferView]") {
     Fixture fixture;
     fixture.buffer.InsertAtPoint("one\ntwo\nthree\nfour");
@@ -3672,13 +3699,14 @@ TEST_CASE("M-x prompts for a command name, listing every command alphabetically 
 
     REQUIRE(fixture.statusMessage.rfind("M-x ", 0) == 0);
     // Display is capped to kMaxVisibleCandidates (see FormatFuzzyCandidates)
-    // -- "add-cursor-above" is alphabetically first among registered
-    // commands (was "backward-char" until the multi-cursor phase added
-    // commands sorting ahead of it), so it's always within that window
-    // regardless of how many other commands exist. The selected entry is
-    // bracketed, not asterisk-prefixed (fuzzy-candidate-list-styling
-    // follow-up).
-    REQUIRE(fixture.statusMessage.find("[add-cursor-above]") != std::string::npos);
+    // -- "acp-send-prompt" is alphabetically first among registered commands
+    // (was "add-cursor-above", before that "backward-char" -- the ACP
+    // client slice 2 follow-up added three "acp-*" commands sorting ahead
+    // of it, the same shift its own comment already anticipated happening
+    // again), so it's always within that window regardless of how many
+    // other commands exist. The selected entry is bracketed, not
+    // asterisk-prefixed (fuzzy-candidate-list-styling follow-up).
+    REQUIRE(fixture.statusMessage.find("[acp-send-prompt]") != std::string::npos);
     REQUIRE(fixture.statusMessage.find("more") != std::string::npos); // more than 6 commands are registered
 }
 

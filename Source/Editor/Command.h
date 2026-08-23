@@ -370,7 +370,22 @@ enum class InteractiveRequest { None,
                                 // decision crosses from this command's own invocation (which has
                                 // real access to lastCommand) to that later keystroke (which
                                 // doesn't, since it never goes through Dispatcher::Feed).
-                                ZapToChar };
+                                ZapToChar,
+                                // ACP client slice 2: three prompt/one-shot requests, same "just
+                                // set interactiveRequest" shape as run-task/cancel-task/DapContinue
+                                // above -- BufferView holds the shared AcpManager (SetAcpManager,
+                                // mirroring SetDapManager) and does the actual work.
+                                // AcpStartSession/AcpSendPrompt are prompt-shaped (HandlePromptKey
+                                // collects an agent name / message text); AcpStopSession is a
+                                // one-shot direct action. A session/request_permission prompt is
+                                // never reached through this enum at all -- it's agent-initiated,
+                                // not user-command-initiated, so BufferView::ShowAcpPermissionPrompt
+                                // is called directly by WindowManager's AcpManager wiring instead
+                                // (JumpToPathLine's own precedent for an externally-triggered
+                                // entry point). See Editor/Acp/AcpManager.h.
+                                AcpStartSession,
+                                AcpSendPrompt,
+                                AcpStopSession };
 
 // Everything a command implementation might need. Built fresh per invocation
 // from live references -- never stored, so there's no lifetime concern beyond
