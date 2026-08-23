@@ -3,6 +3,7 @@
 #include "Editor/Key.h"
 #include "Editor/Keymap.h"
 
+using ned::editor::FormatKeySequence;
 using ned::editor::Keymap;
 using ned::editor::KeymapStack;
 using ned::editor::ParseKeySequence;
@@ -93,4 +94,23 @@ TEST_CASE("KeymapStack reports NoMatch only when no layer recognizes the sequenc
 
     const KeymapStack stack({&global});
     REQUIRE(stack.Resolve(ParseKeySequence("C-z")).result == Keymap::LookupResult::NoMatch);
+}
+
+TEST_CASE("AmbiguousBindings is empty for a keymap with no shorter-command/longer-sibling overlap", "[Keymap]") {
+    Keymap keymap;
+    keymap.Bind(ParseKeySequence("C-x C-s"), "save-buffer");
+    keymap.Bind(ParseKeySequence("C-x C-f"), "find-file");
+    keymap.Bind(ParseKeySequence("C-n"), "next-line");
+
+    REQUIRE(keymap.AmbiguousBindings().empty());
+}
+
+TEST_CASE("AmbiguousBindings reports a sequence bound to a command that is also a prefix of a longer one", "[Keymap]") {
+    Keymap keymap;
+    keymap.Bind(ParseKeySequence("C-c a"), "org-agenda");
+    keymap.Bind(ParseKeySequence("C-c a s"), "acp-start-session");
+
+    const auto ambiguous = keymap.AmbiguousBindings();
+    REQUIRE(ambiguous.size() == 1);
+    REQUIRE(ambiguous.front() == FormatKeySequence(ParseKeySequence("C-c a")));
 }

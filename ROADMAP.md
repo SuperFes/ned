@@ -151,13 +151,26 @@ Notcurses (TermOx → FTXUI → Notcurses over the project's life).
       informally documented at the time this was written — `AcpManager::
       HandleSessionUpdate`'s defensive, best-effort parsing (now including a `"plan"`
       branch, previously silently dropped) is expected to need widening once exercised
-      against a real agent. Also newly found, not yet fixed: `Keymap::Resolve` returns a
-      `Match` the instant a node's own command is set, before consulting its children, so
-      any `C-c a <x>` binding is unreachable by typing once `C-c a` itself is bound to
-      `org-agenda` — confirmed live, affects `acp-start-session`/`acp-send-prompt`/
-      `acp-stop-session` today; `acp-toggle-panel` avoided the same trap by binding
-      `C-c c` instead. Worth a real fix (Emacs-style: only fire a shorter match once no
-      longer sequence can still complete) if more prefix collisions like this turn up.
+      against a real agent. Also newly found, keymap-collision follow-up: `Keymap::Resolve`
+      returns a `Match` the instant a node's own command is set, before consulting its
+      children, so any `C-c a <x>` binding was unreachable by typing once `C-c a` itself
+      was bound to `org-agenda` — confirmed live, affected `acp-start-session`/
+      `acp-send-prompt`/`acp-stop-session`; `acp-toggle-panel` avoided the same trap by
+      binding `C-c c` instead. Worked around by moving the three ACP session commands to
+      `C-c A s/p/k` (shifted "A", distinct from plain "C-c a"), and
+      `Keymap::AmbiguousBindings()` (walks the trie for any node holding both a `command`
+      and non-empty `children`) now guards the shipped default/Org/Markdown keymaps via
+      `CommandsTest.cpp`'s "shipped keymaps have no unreachable-by-typing bindings" test
+      — a future collision like this fails `ctest` instead of needing another live tmux
+      session to find. Still open: `AmbiguousBindings()` is diagnostic only, not
+      enforcement — `Keymap::Bind` still lets a caller construct this shape, it's just
+      caught by the regression test for the keymaps that ship today. A real structural
+      fix (Emacs' own `define-key` semantics: reject/restructure a bind that would shadow
+      an existing command with a longer sequence, or vice versa) would change `Bind`'s
+      signature across every call site including `ned/define-key` (would need to surface
+      as a catchable Janet error for user init.janet scripts) — worth doing eventually,
+      deferred as its own change since it's a multi-file API change, not a one-off
+      collision fix.
 - [ ] **Real-time collaborative editing** (CRDT-based) — the biggest lift in this
       file; last.
 

@@ -43,6 +43,15 @@ class Keymap {
 
     [[nodiscard]] Lookup Resolve(const std::vector<KeyChord>& sequence) const;
 
+    // Every bound sequence that is also a strict prefix of at least one
+    // longer bound sequence, formatted via FormatKeySequence -- these are
+    // structurally unreachable by typing (Resolve fires the shorter Match
+    // before ever consulting the longer children; see Keymap.cpp's Resolve).
+    // Diagnostic only: doesn't change Bind/Resolve behavior, just surfaces
+    // the class of bug CommandsTest.cpp's keymap-collision regression test
+    // checks the shipped default keymap against.
+    [[nodiscard]] std::vector<std::string> AmbiguousBindings() const;
+
   private:
     // Every existing Mode factory constructs an empty Keymap() and nothing
     // pre-existing ever copy-constructs a Mode (always moved/RVO'd), so this
@@ -73,6 +82,8 @@ class Keymap {
             return *this;
         }
     };
+
+    static void CollectAmbiguousBindings(const Node& node, std::vector<KeyChord>& sequence, std::vector<std::string>& out);
 
     Node root_;
 };
