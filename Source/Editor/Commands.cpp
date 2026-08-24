@@ -1622,6 +1622,13 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           context.interactiveRequest = InteractiveRequest::ProjectAgenda;
                       });
 
+    // diagnostics-log follow-up: global, same "reachable from any mode"
+    // precedent org-agenda above already follows.
+    registry.Register("show-messages", "Show the *Messages* buffer -- a filterable, on-disk-backed log of ned's own errors/diagnostics.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::ShowMessages;
+                      });
+
     registry.Register("create-directory", "Create a new directory (prompts for its path).",
                       [](CommandContext& context) {
                           context.interactiveRequest = InteractiveRequest::CreateDirectory;

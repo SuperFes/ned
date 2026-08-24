@@ -17,6 +17,7 @@
 #include "Editor/Clipboard.h"
 #include "Editor/CodeFoldSettings.h"
 #include "Editor/Dap/DapConfig.h"
+#include "Editor/DiagnosticsLog.h"
 #include "Editor/DiffRefreshSettings.h"
 #include "Editor/FinalNewline.h"
 #include "Editor/FormatOnSave.h"
@@ -130,13 +131,20 @@ namespace {
         const std::string invokeExpr = "(" + internalName + ")";
         JanetTable*       env        = g_env;
 
-        session.registry.Register(name, docstring, [env, invokeExpr](editor::CommandContext& context) {
+        session.registry.Register(name, docstring, [env, invokeExpr, name](editor::CommandContext& context) {
             editor::CommandContextScope contextScope(context);
 
-            Janet     out;
-            const int signal = janet_dostring(env, invokeExpr.c_str(), "ned-command", &out);
+            // diagnostics-log follow-up: no path/line here either -- see
+            // DoStringCapturingStacktrace's own doc comment in Environment.h
+            // for why the captured text never carries a location, "ned-command"
+            // synthetic sourcePath or not.
+            Janet       out;
+            std::string capturedError;
+            const int   signal = DoStringCapturingStacktrace(env, invokeExpr, "ned-command", &out, &capturedError);
             if (signal != 0) {
-                throw std::runtime_error("ned: error running janet command (see stderr for details)");
+                editor::LogMessage(editor::LogCategory::Janet, editor::LogSeverity::Error,
+                                    "command \"" + name + "\": " + capturedError);
+                throw std::runtime_error(capturedError);
             }
         });
     }
@@ -167,6 +175,24 @@ namespace {
 
     void NedSetTerminalHeightPercent(std::int64_t percent) {
         editor::terminal::SetTerminalHeightPercent(static_cast<int>(percent));
+    }
+
+    // diagnostics-log follow-up: deliberately does NOT reach into
+    // CurrentContext() to force an immediate "*Messages*" rebuild -- unlike
+    // ned/insert and friends, this (like every other ned/set-* setting
+    // binding) must work when called from init.janet at startup, outside
+    // any CommandContextScope. The buffer rebuilds lazily, the next time
+    // show-messages runs.
+    void NedSetLogCategoryVisible(std::string category, bool visible) {
+        const std::optional<editor::LogCategory> parsed = editor::LogCategoryFromString(category);
+        if (!parsed) {
+            throw std::runtime_error("ned: unknown log category \"" + category + "\"");
+        }
+        editor::SetLogCategoryVisible(*parsed, visible);
+    }
+
+    void NedSetLogMaxEntries(std::int64_t maxEntries) {
+        editor::SetLogMaxEntries(static_cast<std::size_t>(std::max<std::int64_t>(1, maxEntries)));
     }
 
     void NedSetPageScrollFraction(double fraction) {
@@ -654,6 +680,13 @@ void InstallEditorBindings(Environment& env) {
         "defaults to \"xdg-open\"; empty string clears it entirely, disabling URL-following.");
     env.Register<&NedSetTabWidth>("ned", "set-tab-width",
                                   "Set the display width (in columns) a tab character expands to (default 4).");
+    env.Register<&NedSetLogCategoryVisible>(
+        "ned", "set-log-category-visible",
+        "Show/hide one category (\"general\"/\"janet\"/\"lsp\"/\"dap\"/\"acp\"/\"vcs\"/\"task\"/\"subprocess\") in the "
+        "*Messages* buffer -- \"lsp\" defaults hidden, everything else visible.");
+    env.Register<&NedSetLogMaxEntries>(
+        "ned", "set-log-max-entries",
+        "Set how many recent *Messages* entries are kept in memory (default 5000) -- infinity doesn't exist in RAM.");
     env.Register<&NedSetProjectSearchThreads>(
         "ned", "set-project-search-threads",
         "Set the worker-thread cap for project-wide search/replace's internal file scan (default 4).");

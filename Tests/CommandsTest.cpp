@@ -1184,6 +1184,17 @@ TEST_CASE("org-agenda sets interactiveRequest and is bound to C-c a", "[Commands
     REQUIRE(fixture.buffer.Text().empty()); // the command itself doesn't touch the buffer
 }
 
+TEST_CASE("show-messages sets interactiveRequest and is reachable via M-x (no dedicated keychord)", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    registry.Invoke("show-messages", context);
+    REQUIRE(context.interactiveRequest == InteractiveRequest::ShowMessages);
+    REQUIRE(fixture.buffer.Text().empty()); // the command itself doesn't touch the buffer
+}
+
 TEST_CASE("org-clock-report sets interactiveRequest and is bound to C-c C-x r in Org's own keymap", "[Commands]") {
     CommandRegistry registry;
     RegisterBuiltinCommands(registry);

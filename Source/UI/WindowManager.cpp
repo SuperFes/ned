@@ -12,6 +12,7 @@
 #include "Editor/AutoRevert.h"
 #include "Editor/Backup.h"
 #include "Editor/Dap/DapManager.h"
+#include "Editor/DiagnosticsLog.h"
 #include "Editor/MinimapSettings.h"
 #include "Editor/ModeOverrides.h"
 #include "Editor/Multibuffer.h"
@@ -697,6 +698,9 @@ void WindowManager::StartAutoSaveTimer(EventLoop& eventLoop) {
                 // pruning (at most once per hour).
                 editor::AutoSaveFileBuffers(bufferList_);
                 editor::MaybePruneBackups();
+                // diagnostics-log follow-up: same rate-limited-once-per-hour
+                // posture as MaybePruneBackups above.
+                editor::MaybePruneLogFiles();
                 // external-modification-safety follow-up: piggybacked on
                 // this same tick -- reload any open, *unmodified* buffer
                 // whose file changed on disk (default on; see

@@ -87,6 +87,11 @@ enum class InteractiveRequest { None,
                                 // BuildAgendaMultibuffer (a sectioned Editor/Multibuffer.h
                                 // view, not the flat BuildResultsBuffer this used to build).
                                 ProjectAgenda,
+                                // diagnostics-log follow-up: another one-shot direct action,
+                                // same shape as ProjectAgenda just above -- BufferView
+                                // rebuilds and switches to the "*Messages*" buffer
+                                // (Editor/DiagnosticsLog.h's RebuildMessagesBuffer).
+                                ShowMessages,
                                 CreateDirectory,
                                 DeleteFile,
                                 RenameFile,

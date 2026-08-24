@@ -2,6 +2,8 @@
 
 #include <utility>
 
+#include "Editor/DiagnosticsLog.h"
+
 namespace ned::editor::dap {
 
 DapClient::DapClient(std::vector<std::string> argv, ned::ui::EventLoop& eventLoop) : transport_(std::move(argv)), eventLoop_(eventLoop) {
@@ -24,6 +26,7 @@ void DapClient::StartReadLoop() {
             }
             catch (const std::exception&) {
                 eventLoop_.Post([this] {
+                    LogMessage(LogCategory::Dap, LogSeverity::Warning, "malformed frame from adapter");
                     if (onDisconnected_) {
                         onDisconnected_("malformed frame from adapter");
                     }
@@ -32,6 +35,7 @@ void DapClient::StartReadLoop() {
             }
             if (!frame) {
                 eventLoop_.Post([this] {
+                    LogMessage(LogCategory::Dap, LogSeverity::Warning, "adapter exited (EOF)");
                     if (onDisconnected_) {
                         onDisconnected_("adapter exited (EOF)");
                     }
@@ -48,8 +52,11 @@ void DapClient::DispatchFrame(const std::string& frameText) {
     try {
         message = Json::parse(frameText);
     }
-    catch (const std::exception&) {
-        return; // malformed JSON from the adapter — ignore rather than crash the editor
+    catch (const std::exception& e) {
+        // malformed JSON from the adapter — ignore rather than crash the
+        // editor, but no longer silently: diagnostics-log follow-up.
+        LogMessage(LogCategory::Dap, LogSeverity::Warning, std::string("malformed JSON frame: ") + e.what());
+        return;
     }
 
     const std::string type = message.value("type", "");

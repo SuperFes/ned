@@ -11,6 +11,7 @@
 
 #include "Editor/Backup.h"
 #include "Editor/CodeFoldSettings.h"
+#include "Editor/DiagnosticsLog.h"
 #include "Editor/DiffRefreshSettings.h"
 #include "Editor/Dispatcher.h"
 #include "Editor/FinalNewline.h"
@@ -497,6 +498,24 @@ TEST_CASE("ned/set-page-scroll-fraction configures the process-wide setting", "[
     env.DoString("(ned/set-page-scroll-fraction 0.5)");
     REQUIRE(ned::editor::PageScrollFraction() == 0.5);
     ned::editor::SetPageScrollFraction(0.65); // restore the default for other tests
+}
+
+TEST_CASE("ned/set-log-category-visible and ned/set-log-max-entries configure DiagnosticsLog", "[EditorBindings]") {
+    ned::editor::ResetDiagnosticsLogForTesting();
+    Environment& env = ned_tests::TestEnvironment();
+    InstallEditorBindings(env);
+
+    REQUIRE_FALSE(ned::editor::LogCategoryVisible(ned::editor::LogCategory::Lsp));
+    env.DoString("(ned/set-log-category-visible \"lsp\" true)");
+    REQUIRE(ned::editor::LogCategoryVisible(ned::editor::LogCategory::Lsp));
+
+    REQUIRE(ned::editor::LogMaxEntries() == 5000);
+    env.DoString("(ned/set-log-max-entries 10)");
+    REQUIRE(ned::editor::LogMaxEntries() == 10);
+
+    REQUIRE_THROWS_AS(env.DoString("(ned/set-log-category-visible \"not-a-category\" true)"), std::runtime_error);
+
+    ned::editor::ResetDiagnosticsLogForTesting();
 }
 
 TEST_CASE("ned/set-diff-refresh-debounce-ms configures the process-wide setting", "[EditorBindings]") {

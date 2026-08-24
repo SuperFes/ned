@@ -2,6 +2,8 @@
 
 #include <utility>
 
+#include "Editor/DiagnosticsLog.h"
+
 namespace ned::editor::acp {
 
 AcpClient::AcpClient(std::vector<std::string> argv, ned::ui::EventLoop& eventLoop) : transport_(std::move(argv)), eventLoop_(eventLoop) {
@@ -25,6 +27,7 @@ void AcpClient::StartReadLoop() {
             }
             catch (const std::exception&) {
                 eventLoop_.Post([this] {
+                    LogMessage(LogCategory::Acp, LogSeverity::Warning, "malformed message from agent");
                     if (onDisconnected_) {
                         onDisconnected_("malformed message from agent");
                     }
@@ -41,6 +44,7 @@ void AcpClient::StartReadLoop() {
                 // so this callback either runs before destruction starts or
                 // never runs at all.
                 eventLoop_.Post([this] {
+                    LogMessage(LogCategory::Acp, LogSeverity::Warning, "agent exited (EOF)");
                     if (onDisconnected_) {
                         onDisconnected_("agent exited (EOF)");
                     }
@@ -60,8 +64,11 @@ void AcpClient::DispatchFrame(const std::string& frameText) {
     try {
         message = Json::parse(frameText);
     }
-    catch (const std::exception&) {
-        return; // malformed JSON from the agent -- ignore rather than crash the editor
+    catch (const std::exception& e) {
+        // malformed JSON from the agent -- ignore rather than crash the
+        // editor, but no longer silently: diagnostics-log follow-up.
+        LogMessage(LogCategory::Acp, LogSeverity::Warning, std::string("malformed JSON frame: ") + e.what());
+        return;
     }
 
     if (message.contains("id") && (message.contains("result") || message.contains("error"))) {

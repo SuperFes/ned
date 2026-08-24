@@ -98,11 +98,11 @@ class Environment {
     }
 
     // Evaluates code and returns the value of its last top-level form.
-    // Throws std::runtime_error on a Janet-level evaluation error; Janet's
-    // own error reporting already writes details to stderr, so the
-    // exception message doesn't try to duplicate them (a known simplification,
-    // revisit if/when errors need to surface somewhere other than stderr,
-    // e.g. an editor echo area).
+    // Throws std::runtime_error on a Janet-level evaluation error --
+    // diagnostics-log follow-up: the thrown message, and the
+    // ned/*-diagnostics-log entry logged alongside it, now carry Janet's own
+    // real captured stacktrace text (see DoStringCapturingStacktrace below)
+    // rather than a generic "see stderr for details" placeholder.
     Janet DoString(const std::string& code, const std::string& sourcePath = "eval");
     Janet DoFile(const std::filesystem::path& path);
 
@@ -125,6 +125,30 @@ class Environment {
 
     JanetTable* env_;
 };
+
+// diagnostics-log follow-up: runs janet_dostring and, on a nonzero return
+// signal, stringifies the real error value janet_dostring's own contract
+// already leaves in *out (via janet_to_string) into *capturedError, rather
+// than the generic "see stderr for details" placeholder every caller used
+// to throw instead. Free function, not an Environment method, because
+// EditorBindings.cpp's command-invocation path (NedRegisterCommand's
+// invocation lambda) only ever holds a raw JanetTable*, not an Environment&
+// -- both callers share this rather than each hand-rolling the same
+// *out-stringification.
+//
+// No location (path/line) is ever extractable from the captured text --
+// tmux/unit-verified against both a runtime panic and a compile error: Janet
+// really does print a real stacktrace/"path:line:col:"-prefixed message
+// straight to the process's raw stderr on failure (confirming the original
+// "see stderr for details" comment this replaced was accurate), but that
+// text is neither reachable through Janet's ":err" dynamic binding (tried
+// first; came back empty) nor present in *out, which only ever holds the
+// bare message with any location prefix already stripped. A real fix would
+// need the raw stderr fd redirected around this call -- out of scope here,
+// noted on this feature's own ROADMAP.md entry rather than attempted with
+// string-parsing that provably can't work.
+int DoStringCapturingStacktrace(JanetTable* env, const std::string& code, const std::string& sourcePath, Janet* out,
+                                 std::string* capturedError);
 
 } // namespace ned::janet
 

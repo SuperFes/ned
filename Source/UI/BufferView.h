@@ -1146,6 +1146,13 @@ class BufferView : public Widget {
     // matches org-clock-in/-out's own buffer-scoped posture.
     void BuildClockReportMultibuffer();
 
+    // diagnostics-log follow-up: show-messages's own entry point --
+    // rebuilds "*Messages*" from Editor/DiagnosticsLog.h's in-memory ring
+    // (currently-visible categories only) and switches this pane's active
+    // buffer to it, same one-liner shape RunTask-adjacent buffer switches
+    // use elsewhere.
+    void ShowMessagesBuffer();
+
     // find-all-references follow-up: project-find-references's entry point
     // -- synchronous, same shape as RequestDiagnosticsBuffer (SearchDirectory
     // is now an in-process RE2 scan, no subprocess round trip). Finds the
