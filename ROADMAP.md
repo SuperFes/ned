@@ -97,18 +97,27 @@ Notcurses.
       a result cap/warning for `project-find-references` on a very common short
       identifier (no limit today -- thousands of matches would build a proportionally
       huge composite buffer).
-- [ ] **`.gitignore` correctness gap left by dropping `rg`** -- `ProjectSearch.cpp`'s
-      backend is now an internal, multi-threaded RE2 engine (no more `rg` shell-out or
-      single-threaded `std::regex_search`-per-line fallback; thread count is a
-      configurable setting, `Editor/SearchSettings.h`, `ned/set-project-search-threads`,
-      default 4 -- this is I/O-bound, not CPU-bound, so more threads than that mostly
-      just contends on the same disk/page cache). One correctness gap this shipped
-      with rather than closed: dropping `rg` also dropped its superior `.gitignore`
-      handling -- `GitIgnore.h`'s `GitIgnoreMatcher` is still root-`.gitignore`-only,
-      not nested/global/`.git/info/exclude`-aware the way `rg` was, so a project
-      relying on any of those will see different (too-inclusive) results than it did
-      under `rg`. This is the shared backend for `ProjectSearch`/`ProjectReplace`'s
-      match-finding and for the find-all-references multibuffer consumer above.
+- [x] **`.gitignore` correctness gap left by dropping `rg`** (shipped 2026-08-24) --
+      `GitIgnore.h`'s `GitIgnoreMatcher` (the shared walk filter behind
+      `ProjectSearch`/`ProjectReplace`/`ProjectTree` and the find-all-references
+      multibuffer consumer) is no longer root-`.gitignore`-only: it now consults the
+      same sources real git does, in git's precedence order -- the global ignore file
+      (`core.excludesFile` resolved via a minimal INI scan of `~/.gitconfig`/
+      `$XDG_CONFIG_HOME/git/config`/`$GIT_CONFIG_GLOBAL`, defaulting to
+      `$XDG_CONFIG_HOME/git/ignore`), `<gitdir>/info/exclude` (a `.git` *file*'s
+      worktree `gitdir:` pointer followed), and nested `.gitignore` files (lazily
+      loaded per queried directory -- since both walkers prune ignored directories,
+      a `.gitignore` inside `node_modules/` is never even read; each file's patterns
+      match relative to its own directory, deeper overriding shallower). Global/
+      info-exclude only apply when the root has a `.git` entry, matching git itself.
+      The glob translator also gained real `**` semantics and character classes
+      (`[a-z]`, `[!abc]`) while it was open. `CachedGitIgnoreMatcher`'s staleness
+      check widened from "root `.gitignore` mtime" to `AnySourceChanged()` -- one
+      stat per consulted file, absence recorded too, so a nested `.gitignore`
+      appearing later still invalidates. Deliberate cuts: backslash escapes
+      (`\#foo`) and POSIX named classes (`[[:alnum:]]`) in patterns (both rare);
+      `IsIgnored` answers for the queried path only, relying on the walkers'
+      directory pruning rather than re-checking every ancestor per file.
 - [ ] **PCRE2 for in-file regex matching/replacing** (eventually, after the RE2
       search work above) -- `Editor/QueryReplace.cpp`'s `query-replace-regexp` and
       `Editor/ProjectReplace.cpp`'s actual per-file rewrite step are the only two
