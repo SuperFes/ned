@@ -48,6 +48,7 @@
 #include "Editor/Register.h"
 #include "Editor/Snippet.h"
 #include "Editor/Tasks/TaskRunner.h"
+#include "Editor/TestRun/TestRunner.h"
 #include "Editor/Vcs/VcsProvider.h"
 #include "Editor/Vcs/VcsRunner.h"
 #include "EventLoop.h"
@@ -182,6 +183,12 @@ class BufferView : public Widget {
     // cancel-task can reach it -- same "unset is a safe no-op" convention
     // SetLspManager already establishes.
     void SetTaskRunner(editor::tasks::TaskRunner* taskRunner);
+
+    // test-runner integration: registers the shared TestRunner -- same
+    // "unset is a safe no-op" convention as SetTaskRunner (the run-tests
+    // family reports "No test runner available." via statusMessage_ if this
+    // was never called).
+    void SetTestRunner(editor::testrun::TestRunner* testRunner);
 
     // VCS blame gutter: registers the shared VcsRunner -- same "unset is a
     // safe no-op" convention SetLspManager/SetTaskRunner already establish
@@ -670,7 +677,7 @@ class BufferView : public Widget {
     // BufferView's buffer isn't necessarily in any BufferList. nullptr
     // means the buffer is genuinely gone (closed mid-session).
     [[nodiscard]] text::Buffer* ResolveSnippetBuffer();
-    void HandleSearchKey(const editor::KeyChord& chord);
+    void                        HandleSearchKey(const editor::KeyChord& chord);
     // search_->StatusText() plus a dimmed ghost of lastSearchQuery_ appended
     // when the current query is still empty -- see lastSearchQuery_'s own
     // doc comment.
@@ -1407,6 +1414,14 @@ class BufferView : public Widget {
     // gutter concern this whole follow-up was built around).
     [[nodiscard]] bool SymbolGutterActive() const;
 
+    // test-runner integration: self-ensuring, SymbolGutterActive's exact
+    // shape (calls EnsureTestGutterCache() itself -- the width math needs
+    // it current within this same Paint() call). Active only when the mode
+    // has test discovery, the buffer is an ordinary editable one, markers
+    // were actually discovered, and a parsed TestRunner outcome exists to
+    // match them against -- "no results yet" costs zero gutter width.
+    [[nodiscard]] bool TestGutterActive() const;
+
     // DAP client slice 2: whether the leftmost debug-marker column
     // (breakpoint dot / execution arrow) is reserved this frame -- true
     // only when the active buffer has a real path AND (it has breakpoints,
@@ -1525,6 +1540,12 @@ class BufferView : public Widget {
     // SymbolGutterActive() itself is the data-driven "anything to show"
     // question, not this eligibility gate.
     void EnsureSymbolGutterCache() const;
+    // test-runner integration: (re)derives testGutterLineStatuses_ from
+    // mode_.testDiscovery(buffer.Text()) matched against the TestRunner's
+    // latest parsed outcome (MatchesTestName, TestRun/TestResult.h) --
+    // EnsureSymbolGutterCache's shape with the extra outcome-generation
+    // stamp; see the member's own comment below.
+    void EnsureTestGutterCache() const;
     // VCS blame gutter: unlike EnsureDiagnosticGutterCache/EnsureFoldGutterCache,
     // this does NOT recompute blameLineInfo_ from anything -- there's no
     // cheap synchronous source to recompute it from (populating it means
@@ -1637,21 +1658,22 @@ class BufferView : public Widget {
     // the use site.
     text::Buffer* diffSyncBuffer_ = nullptr;
 
-    std::size_t                dragAnchor_ = 0;            // point position at the last mouse press, for drag-selection
-    std::optional<std::string> debugMouseLogPath_;         // see LogMouseEvent
-    ScrollBar*                 scrollBar_       = nullptr; // see SetScrollBar
-    ScrollArrowButton*         scrollUpArrow_   = nullptr; // see SetScrollArrows
-    ScrollArrowButton*         scrollDownArrow_ = nullptr;
-    ProjectSidebar*            projectSidebar_  = nullptr;     // see SetProjectSidebar
-    std::function<bool()>      splitResizeQuery_;              // see SetSplitResizeQuery
-    Minimap*                   minimap_             = nullptr; // see SetMinimap
-    Widget*                    minimapScrollColumn_ = nullptr; // see SetMinimap
-    editor::lsp::LspManager*   lspManager_          = nullptr; // see SetLspManager
-    editor::tasks::TaskRunner* taskRunner_          = nullptr; // see SetTaskRunner
-    editor::vcs::VcsRunner*    vcsRunner_           = nullptr; // see SetVcsRunner
-    editor::dap::DapManager*   dapManager_          = nullptr; // see SetDapManager
-    editor::acp::AcpManager*   acpManager_          = nullptr; // see SetAcpManager
-    const janet::Environment*  janetEnv_            = nullptr; // see SetJanetEnvironment
+    std::size_t                  dragAnchor_ = 0;            // point position at the last mouse press, for drag-selection
+    std::optional<std::string>   debugMouseLogPath_;         // see LogMouseEvent
+    ScrollBar*                   scrollBar_       = nullptr; // see SetScrollBar
+    ScrollArrowButton*           scrollUpArrow_   = nullptr; // see SetScrollArrows
+    ScrollArrowButton*           scrollDownArrow_ = nullptr;
+    ProjectSidebar*              projectSidebar_  = nullptr;     // see SetProjectSidebar
+    std::function<bool()>        splitResizeQuery_;              // see SetSplitResizeQuery
+    Minimap*                     minimap_             = nullptr; // see SetMinimap
+    Widget*                      minimapScrollColumn_ = nullptr; // see SetMinimap
+    editor::lsp::LspManager*     lspManager_          = nullptr; // see SetLspManager
+    editor::tasks::TaskRunner*   taskRunner_          = nullptr; // see SetTaskRunner
+    editor::testrun::TestRunner* testRunner_          = nullptr; // see SetTestRunner
+    editor::vcs::VcsRunner*      vcsRunner_           = nullptr; // see SetVcsRunner
+    editor::dap::DapManager*     dapManager_          = nullptr; // see SetDapManager
+    editor::acp::AcpManager*     acpManager_          = nullptr; // see SetAcpManager
+    const janet::Environment*    janetEnv_            = nullptr; // see SetJanetEnvironment
 
     // ACP client slice 2: valid only while inputMode_ ==
     // InputMode::AcpPermissionPrompt (populated by ShowAcpPermissionPrompt,
@@ -1971,6 +1993,11 @@ class BufferView : public Widget {
     // markers, unlike fold's fixed-width-regardless-of-content reservation.
     static constexpr std::size_t kSymbolWidth = 1;
 
+    // test-runner integration: the per-test pass/fail column, reserved (to
+    // the symbol column's immediate left) only while TestGutterActive() --
+    // same data-driven no-data-no-width policy.
+    static constexpr std::size_t kTestWidth = 1;
+
     struct FoldGutterEntry {
         std::size_t headerLine;
         std::size_t closerLine; // inclusive
@@ -2041,6 +2068,18 @@ class BufferView : public Widget {
     mutable text::Buffer*                                           symbolGutterCacheBuffer_            = nullptr;
     mutable std::size_t                                             symbolGutterCacheContentGeneration_ = 0;
     mutable std::vector<std::pair<std::size_t, editor::SymbolKind>> symbolGutterLineKinds_;
+
+    // test-runner integration: per-line pass/fail/skip marks, the symbol
+    // cache's shape with one extra generation stamp -- invalidated by a
+    // content change (discovery re-runs) OR a fresh parsed outcome
+    // (TestRunner::OutcomeGeneration()). Unlike symbolGutterLineKinds_ the
+    // data is half external (the outcome) and half derived (discovery) --
+    // both stamps together are what keep it honest. See
+    // EnsureTestGutterCache in BufferView.cpp.
+    mutable text::Buffer*                                                            testGutterCacheBuffer_            = nullptr;
+    mutable std::size_t                                                              testGutterCacheContentGeneration_ = 0;
+    mutable std::size_t                                                              testGutterCacheOutcomeGeneration_ = 0;
+    mutable std::vector<std::pair<std::size_t, editor::testrun::TestResult::Status>> testGutterLineStatuses_;
 
     // inline-diagnostics follow-up: see EnsureInlineDiagnosticCache's own
     // doc comment above for the two-generation gate (diagnostics AND

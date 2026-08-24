@@ -179,9 +179,10 @@ Pane::Pane(text::Buffer& buffer, text::KillRing& killRing, editor::RegisterTable
            const editor::Keymap& janetKeymap, const editor::Keymap& globalKeymap, editor::Mode mode,
            std::string& statusMessage, const Theme& theme, ProjectSidebar* projectSidebar,
            editor::lsp::LspManager* lspManager, editor::tasks::TaskRunner* taskRunner,
-           editor::vcs::VcsRunner* vcsRunner, editor::dap::DapManager* dapManager, editor::acp::AcpManager* acpManager,
-           const janet::Environment* janetEnv, std::function<void(editor::InteractiveRequest)> onWindowRequest,
-           std::function<void(text::Buffer&)> onBufferClosed) : activeBuffer_(buffer), mode_(std::move(mode)),
+           editor::testrun::TestRunner* testRunner, editor::vcs::VcsRunner* vcsRunner, editor::dap::DapManager* dapManager,
+           editor::acp::AcpManager* acpManager, const janet::Environment* janetEnv,
+           std::function<void(editor::InteractiveRequest)> onWindowRequest,
+           std::function<void(text::Buffer&)>              onBufferClosed) : activeBuffer_(buffer), mode_(std::move(mode)),
                                                                 dispatcher_(registry, editor::KeymapStack({&janetKeymap, &mode_.keymap, &globalKeymap})),
                                                                 bufferView_(std::make_shared<BufferView>(activeBuffer_, killRing, registers, promptHistory, bufferList, dispatcher_,
                                                                                                          statusMessage, mode_, theme)),
@@ -232,6 +233,7 @@ Pane::Pane(text::Buffer& buffer, text::KillRing& killRing, editor::RegisterTable
     bufferView_->SetLspManager(lspManager);
     modeLine_->SetLspManager(lspManager);
     bufferView_->SetTaskRunner(taskRunner);
+    bufferView_->SetTestRunner(testRunner);
     bufferView_->SetVcsRunner(vcsRunner);
     bufferView_->SetDapManager(dapManager);
     bufferView_->SetAcpManager(acpManager);
@@ -489,7 +491,8 @@ WindowManager::WindowManager(text::Buffer& initialBuffer, text::KillRing& killRi
 std::unique_ptr<Pane> WindowManager::MakePane(text::Buffer& buffer, editor::Mode mode) {
     auto pane = std::make_unique<Pane>(
         buffer, killRing_, registers_, promptHistory_, bufferList_, registry_, janetKeymap_, globalKeymap_, std::move(mode),
-        statusMessage_, theme_, projectSidebar_, lspManager_, taskRunner_, vcsRunner_, dapManager_, acpManager_, janetEnv_,
+        statusMessage_, theme_, projectSidebar_, lspManager_, taskRunner_, testRunner_, vcsRunner_, dapManager_, acpManager_,
+        janetEnv_,
         [this](editor::InteractiveRequest request) { HandleWindowRequest(request); },
         [this](text::Buffer& closedBuffer) { HandleBufferClosed(closedBuffer); });
     pane->SetEventLoop(eventLoop_);
@@ -535,6 +538,13 @@ void WindowManager::SetOnAcpPanelToggle(std::function<void()> onToggle) {
     onAcpPanelToggle_ = std::move(onToggle);
     for (Pane* pane : Leaves()) {
         pane->Buffer().SetOnAcpPanelToggle(onAcpPanelToggle_);
+    }
+}
+
+void WindowManager::SetTestRunner(editor::testrun::TestRunner* testRunner) {
+    testRunner_ = testRunner;
+    for (Pane* pane : Leaves()) {
+        pane->Buffer().SetTestRunner(testRunner);
     }
 }
 

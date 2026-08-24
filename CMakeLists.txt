@@ -355,6 +355,7 @@ ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter
 # Same vendored-not-upstream reasoning as CTags above -- see cpp-tags.scm's
 # own header comment.
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/cpp-tags.scm" CppTags)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/cpp-tests.scm" CppTests)
 
 ned_add_treesitter_grammar(tree-sitter-php https://github.com/tree-sitter/tree-sitter-php.git v0.24.2 php)
 
@@ -368,6 +369,7 @@ ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter
 # above, PHP's own tags.scm has no "most vexing parse"-style ambiguity to fix
 # -- see c-tags.scm's own header comment for why those two needed vendoring.
 ned_embed_treesitter_query("${tree-sitter-php_SOURCE_DIR}/queries/tags.scm" PhpTags)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/php-tests.scm" PhpTests)
 
 ned_add_treesitter_grammar(tree-sitter-javascript https://github.com/tree-sitter/tree-sitter-javascript.git v0.25.0)
 
@@ -378,6 +380,7 @@ ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter
 # grammar's real, unmodified queries/tags.scm; no vendoring needed here
 # either.
 ned_embed_treesitter_query("${tree-sitter-javascript_SOURCE_DIR}/queries/tags.scm" JavaScriptTags)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/javascript-tests.scm" JavaScriptTests)
 
 ned_fetch_treesitter_source(tree-sitter-typescript-src https://github.com/tree-sitter/tree-sitter-typescript.git v0.23.2)
 
@@ -393,6 +396,7 @@ ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter
 # TypeScriptMode and TsxMode, same sharing as the highlight/fold/imports
 # queries above.
 ned_embed_treesitter_query("${tree-sitter-typescript-src_SOURCE_DIR}/queries/tags.scm" TypeScriptTags)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/typescript-tests.scm" TypeScriptTests)
 
 ned_add_treesitter_grammar(tree-sitter-html https://github.com/tree-sitter/tree-sitter-html.git v0.23.2)
 
@@ -410,6 +414,7 @@ ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/python-imports.scm" PythonImports)
 # gutter-symbol-kind follow-up: see PhpTags' own comment above.
 ned_embed_treesitter_query("${tree-sitter-python_SOURCE_DIR}/queries/tags.scm" PythonTags)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/python-tests.scm" PythonTests)
 
 ned_add_treesitter_grammar(tree-sitter-bash https://github.com/tree-sitter/tree-sitter-bash.git v0.25.1)
 
@@ -580,6 +585,11 @@ add_library(ned_lib STATIC
         Source/Editor/Tasks/TaskConfig.cpp
         Source/Editor/Tasks/TaskProcess.cpp
         Source/Editor/Tasks/TaskRunner.cpp
+        Source/Editor/TestRun/TestOutputParser.cpp
+        Source/Editor/TestRun/TestResult.cpp
+        Source/Editor/TestRun/TestResultsBuffer.cpp
+        Source/Editor/TestRun/TestRunConfig.cpp
+        Source/Editor/TestRun/TestRunner.cpp
         Source/Editor/Dap/DapConfig.cpp
         Source/Editor/Dap/DapClient.cpp
         Source/Editor/Dap/DapManager.cpp
@@ -883,6 +893,13 @@ if (NED_BUILD_TESTS)
             Tests/TaskConfigTest.cpp
             Tests/TaskProcessTest.cpp
             Tests/TaskRunnerTest.cpp
+            Tests/TestOutputParserTest.cpp
+            Tests/BufferViewTestGutterTest.cpp
+            Tests/TestDiscoveryTest.cpp
+            Tests/TestResultsBufferTest.cpp
+            Tests/TestRunConfigTest.cpp
+            Tests/TestRunnerTest.cpp
+            Tests/JanetTestParserTest.cpp
             Tests/PtyProcessTest.cpp
             Tests/TerminalEmulatorTest.cpp
             Tests/TerminalPanelTest.cpp

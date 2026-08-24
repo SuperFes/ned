@@ -43,6 +43,8 @@
 #include "Editor/TabWidth.h"
 #include "Editor/Tasks/TaskConfig.h"
 #include "Editor/Terminal/Config.h"
+#include "Editor/TestRun/TestOutputParser.h"
+#include "Editor/TestRun/TestRunConfig.h"
 #include "Editor/ThemeSetting.h"
 #include "Editor/ToolchainIncludePaths.h"
 #include "Editor/TrimOnSave.h"
@@ -396,6 +398,156 @@ namespace {
     // ["claude-code-acp"]).
     void NedSetAcpAgent(std::string name, std::vector<std::string> argv) {
         editor::acp::SetAcpAgentCommand(name, std::move(argv));
+    }
+
+    // test-runner-integration: the one project-wide test command plus the
+    // format its output parses as -- (ned/set-test-command ["ctest"
+    // "--test-dir" "build"] "ctest"). Empty argv clears, NedSetTaskCommand's
+    // convention throughout this group.
+    void NedSetTestCommand(std::vector<std::string> argv, std::string format) {
+        editor::testrun::SetTestCommand(std::move(argv), std::move(format));
+    }
+
+    void NedSetTestFilterCommand(std::vector<std::string> argvTemplate) {
+        editor::testrun::SetTestFilterCommand(std::move(argvTemplate));
+    }
+
+    void NedSetTestResultsFile(std::string path) {
+        editor::testrun::SetTestResultsFile(std::move(path));
+    }
+
+    // Converts a Janet test parser's return value into a TestRunOutcome --
+    // either a bare array of result tables, or a table {:results [...]
+    // :failures-only true :passed n} for the metadata a failures-only
+    // format needs. Field reading follows JanetVcsProvider.cpp's
+    // "degrade, don't crash" convention: a malformed entry is skipped, a
+    // missing field defaults, never a panic.
+    editor::testrun::TestRunOutcome JanetTestOutcome(Janet value, const std::string& formatName) {
+        using editor::testrun::TestResult;
+        editor::testrun::TestRunOutcome outcome;
+        outcome.format   = formatName;
+        outcome.parsedOk = true;
+
+        Janet resultsValue = value;
+        if (janet_checktype(value, JANET_TABLE) || janet_checktype(value, JANET_STRUCT)) {
+            const Janet results = janet_get(value, janet_ckeywordv("results"));
+            if (!janet_checktype(results, JANET_NIL)) {
+                resultsValue             = results;
+                const Janet failuresOnly = janet_get(value, janet_ckeywordv("failures-only"));
+                outcome.failuresOnly     = janet_checktype(failuresOnly, JANET_BOOLEAN) && janet_unwrap_boolean(failuresOnly);
+                const Janet parsed       = janet_get(value, janet_ckeywordv("parsed-ok"));
+                if (janet_checktype(parsed, JANET_BOOLEAN)) {
+                    outcome.parsedOk = janet_unwrap_boolean(parsed);
+                }
+                const Janet passed = janet_get(value, janet_ckeywordv("passed"));
+                if (janet_checktype(passed, JANET_NUMBER) && janet_unwrap_number(passed) > 0) {
+                    outcome.passed = static_cast<std::size_t>(janet_unwrap_number(passed));
+                }
+            }
+        }
+
+        const Janet* items = nullptr;
+        std::int32_t count = 0;
+        if (!janet_indexed_view(resultsValue, &items, &count)) {
+            throw std::runtime_error("ned: a test parser must return an array of result tables (or {:results [...]})");
+        }
+        const auto stringField = [](Janet entry, const char* key) -> std::string {
+            const Janet field = janet_get(entry, janet_ckeywordv(key));
+            if (!janet_checktype(field, JANET_STRING)) {
+                return {};
+            }
+            return FromJanet<std::string>(field);
+        };
+        for (std::int32_t i = 0; i < count; ++i) {
+            if (!janet_checktype(items[i], JANET_TABLE) && !janet_checktype(items[i], JANET_STRUCT)) {
+                continue;
+            }
+            TestResult result;
+            result.name = stringField(items[i], "name");
+            if (result.name.empty()) {
+                continue;
+            }
+            const Janet status = janet_get(items[i], janet_ckeywordv("status"));
+            std::string statusName;
+            if (janet_checktype(status, JANET_KEYWORD)) {
+                const auto* keyword = janet_unwrap_keyword(status);
+                statusName          = std::string(reinterpret_cast<const char*>(keyword), janet_string_length(keyword));
+            }
+            else if (janet_checktype(status, JANET_STRING)) {
+                statusName = FromJanet<std::string>(status);
+            }
+            if (statusName == "passed") {
+                result.status = TestResult::Status::Passed;
+            }
+            else if (statusName == "skipped") {
+                result.status = TestResult::Status::Skipped;
+            }
+            else {
+                result.status = TestResult::Status::Failed; // :failed, and the safe default for anything unrecognized
+            }
+            result.file      = stringField(items[i], "file");
+            const Janet line = janet_get(items[i], janet_ckeywordv("line"));
+            if (janet_checktype(line, JANET_NUMBER) && janet_unwrap_number(line) > 0) {
+                result.line = static_cast<std::size_t>(janet_unwrap_number(line));
+            }
+            result.message = stringField(items[i], "message");
+            outcome.results.push_back(std::move(result));
+        }
+
+        std::size_t passedInList = 0;
+        for (const TestResult& result : outcome.results) {
+            switch (result.status) {
+                case TestResult::Status::Passed:
+                    ++passedInList;
+                    break;
+                case TestResult::Status::Failed:
+                    ++outcome.failed;
+                    break;
+                case TestResult::Status::Skipped:
+                    ++outcome.skipped;
+                    break;
+            }
+        }
+        if (outcome.passed == 0) {
+            outcome.passed = passedInList;
+        }
+        return outcome;
+    }
+
+    // Registers fn as the parser for a test format name, resolved by
+    // TestRunner ahead of the built-in table (so a user parser may
+    // deliberately shadow a built-in name). Same janet_def-not-RootedValue
+    // invocation shape as NedRegisterCommand above -- see that function's
+    // comment and Value.h's CAUTION. The wrapped fn only ever runs on the
+    // main thread (TestRunner documents this), which is what makes a Janet
+    // callback legal here at all. A nil fn clears the registration.
+    void NedRegisterTestParser(std::string name, Janet fn) {
+        if (!g_env) {
+            throw std::runtime_error("ned: janet environment not installed");
+        }
+        if (janet_checktype(fn, JANET_NIL)) {
+            editor::testrun::RegisterTestParser(name, {});
+            return;
+        }
+        const std::string internalName = "ned/test-parser-" + name;
+        janet_def(g_env, internalName.c_str(), fn, "");
+
+        JanetTable* env = g_env;
+        editor::testrun::RegisterTestParser(name, [env, internalName, name](const std::string& output) {
+            const std::string argName  = "ned/test-parser-arg";
+            const Janet       argValue = janet_wrap_string(
+                janet_string(reinterpret_cast<const std::uint8_t*>(output.data()), static_cast<std::int32_t>(output.size())));
+            janet_def(env, argName.c_str(), argValue, "");
+
+            const std::string invokeExpr = "(" + internalName + " " + argName + ")";
+            Janet             out;
+            std::string       capturedError;
+            const int         signal = DoStringCapturingStacktrace(env, invokeExpr, "ned-test-parser", &out, &capturedError);
+            if (signal != 0) {
+                throw std::runtime_error("ned: test parser \"" + name + "\": " + capturedError);
+            }
+            return JanetTestOutcome(out, name);
+        });
     }
 
     // capture-templates follow-up: registers a template org-capture (C-c k)
@@ -889,6 +1041,36 @@ void InstallEditorBindings(Environment& env) {
         "Set the command run by run-task for a task name: (name argv), e.g. (ned/set-task-command \"build\" "
         "[\"cmake\" \"--build\" \".\"]). argv is an array or tuple of strings -- argv[0] the executable (resolved "
         "against $PATH), the rest its arguments. An empty argv clears the configured command for name.");
+    env.Register<&NedSetTestCommand>(
+        "ned", "set-test-command",
+        "Set the project's test command and output format: (argv format), e.g. (ned/set-test-command "
+        "[\"ctest\" \"--test-dir\" \"build\"] \"ctest\"). argv is an array or tuple of strings -- argv[0] the "
+        "executable (resolved against $PATH). format names a built-in parser (\"ctest\", \"catch2\", \"pytest\", "
+        "\"go-json\", \"cargo\", \"junit-xml\", \"phpunit\") or one registered via ned/register-test-parser (a "
+        "registered name wins over a built-in). run-tests (C-c T t) streams raw output into *test output* and, on "
+        "exit, parses it into the *test results* buffer and the per-test gutter marks. An empty argv clears the "
+        "configured command.");
+    env.Register<&NedSetTestFilterCommand>(
+        "ned", "set-test-filter-command",
+        "Set the argv template run-test-at-point and rerun-failed-tests use to run a single test: (argv-template), "
+        "where each element may contain {test} and/or {file} placeholders substituted per element (never through a "
+        "shell), e.g. (ned/set-test-filter-command [\"ctest\" \"--test-dir\" \"build\" \"-R\" \"^{test}$\"]) or "
+        "(ned/set-test-filter-command [\"pytest\" \"-v\" \"-k\" \"{test}\"]). Output parses with the same format "
+        "ned/set-test-command configured. An empty argv clears it.");
+    env.Register<&NedSetTestResultsFile>(
+        "ned", "set-test-results-file",
+        "Parse this file's contents after a test run exits instead of the run's own stdout/stderr -- for formats "
+        "written to a file, e.g. JUnit XML: (ned/set-test-results-file \"/tmp/results.xml\") paired with "
+        "(ned/set-test-command [\"pytest\" \"--junitxml\" \"/tmp/results.xml\"] \"junit-xml\"). An empty string "
+        "clears it.");
+    env.Register<&NedRegisterTestParser>(
+        "ned", "register-test-parser",
+        "Register a Janet function as the parser for a test output format: (name fn). fn receives the run's raw "
+        "combined output (or the results file's contents, see ned/set-test-results-file) as one string and returns "
+        "an array of result tables {:name \"...\" :status :passed|:failed|:skipped :file \"...\" :line n :message "
+        "\"...\"} -- only :name and :status are required -- or a table {:results [...] :failures-only true :passed "
+        "n} when the format only names failures. The name is then usable as ned/set-test-command's format; "
+        "registering a built-in format's name deliberately overrides it. A nil fn clears the registration.");
     env.Register<&NedOrgCaptureRegisterTemplate>(
         "ned", "org-capture-register-template",
         "Register an org-capture template: (key name target-file template headline), e.g. "

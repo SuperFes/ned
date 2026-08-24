@@ -45,6 +45,8 @@
 #include "Editor/Session.h"
 #include "Editor/SyntaxTheme.h"
 #include "Editor/TabWidth.h"
+#include "Editor/TestRun/TestResultsBuffer.h"
+#include "Editor/TestRun/TestRunConfig.h"
 #include "Editor/ToolchainIncludePaths.h"
 #include "Editor/Variables.h"
 #include "Editor/Vcs/DiffPatch.h"
@@ -653,6 +655,7 @@ editor::CommandContext BufferView::MakeContext() {
     context.mode       = &mode_;
     context.lspManager = lspManager_;
     context.taskRunner = taskRunner_;
+    context.testRunner = testRunner_;
     return context;
 }
 
@@ -913,6 +916,33 @@ namespace {
         return " "; // unreachable, same convention as DiagnosticGlyphFor above
     }
 
+    // test-runner integration: the per-test gutter mark. Colors are the
+    // diff gutter's own bare Palette16 constants (not Theme fields) --
+    // see the diff-column paint block's comment for that precedent.
+    const char* TestGlyphFor(editor::testrun::TestResult::Status status) {
+        switch (status) {
+            case editor::testrun::TestResult::Status::Passed:
+                return "✓"; // CHECK MARK
+            case editor::testrun::TestResult::Status::Failed:
+                return "✗"; // BALLOT X, the diagnostic column's own error glyph
+            case editor::testrun::TestResult::Status::Skipped:
+                return "−"; // MINUS SIGN
+        }
+        return " "; // unreachable, same convention as DiagnosticGlyphFor above
+    }
+
+    Color TestStatusColor(editor::testrun::TestResult::Status status) {
+        switch (status) {
+            case editor::testrun::TestResult::Status::Passed:
+                return Color::BrightGreen;
+            case editor::testrun::TestResult::Status::Failed:
+                return Color::BrightRed;
+            case editor::testrun::TestResult::Status::Skipped:
+                return Color::BrightYellow;
+        }
+        return Color::BrightGreen; // unreachable
+    }
+
     Color DiagnosticSeverityColor(const Theme& theme, text::Buffer::Diagnostic::Severity severity) {
         switch (severity) {
             case text::Buffer::Diagnostic::Severity::Error:
@@ -1022,6 +1052,95 @@ void BufferView::EnsureSymbolGutterCache() const {
 
     symbolGutterCacheBuffer_            = &buffer;
     symbolGutterCacheContentGeneration_ = buffer.ContentGeneration();
+}
+
+void BufferView::EnsureTestGutterCache() const {
+    text::Buffer& buffer = activeBuffer_.Get();
+
+    // Eligibility gate, EnsureSymbolGutterCache's exact shape -- plus the
+    // runner itself: no runner wired (tests) or no parsed outcome yet means
+    // nothing to mark, at zero width.
+    if (!mode_.testDiscovery || buffer.ReadOnly() || testRunner_ == nullptr || !testRunner_->LatestOutcome()) {
+        testGutterLineStatuses_.clear();
+        testGutterCacheBuffer_            = &buffer;
+        testGutterCacheContentGeneration_ = buffer.ContentGeneration();
+        testGutterCacheOutcomeGeneration_ = testRunner_ != nullptr ? testRunner_->OutcomeGeneration() : 0;
+        return;
+    }
+
+    if (testGutterCacheBuffer_ == &buffer && testGutterCacheContentGeneration_ == buffer.ContentGeneration() &&
+        testGutterCacheOutcomeGeneration_ == testRunner_->OutcomeGeneration()) {
+        return;
+    }
+
+    const editor::testrun::TestRunOutcome& outcome = *testRunner_->LatestOutcome();
+    const std::string                      bufferBasename =
+        buffer.Path() ? buffer.Path()->filename().string() : std::string();
+
+    testGutterLineStatuses_.clear();
+    const text::Rope& content = buffer.Content();
+    for (const editor::TestMarker& marker : mode_.testDiscovery(buffer.Text())) {
+        // Aggregate every matching result (parameterized instances, go
+        // subtests): Failed beats Passed beats Skipped. The result's file,
+        // when it names one at all, is only a basename-level *filter*
+        // against cross-file name collisions -- the name is the real key
+        // (results carry cwd-relative or basename-only paths, see
+        // TestOutputParser.h; anything path-shaped stricter than a
+        // basename comparison would reject its own legitimate matches).
+        std::optional<editor::testrun::TestResult::Status> aggregate;
+        for (const editor::testrun::TestResult& result : outcome.results) {
+            if (!editor::testrun::MatchesTestName(marker.name, result.name)) {
+                continue;
+            }
+            if (!result.file.empty() && !bufferBasename.empty() &&
+                std::filesystem::path(result.file).filename().string() != bufferBasename) {
+                continue;
+            }
+            if (result.status == editor::testrun::TestResult::Status::Failed) {
+                aggregate = result.status;
+                break;
+            }
+            if (!aggregate || (aggregate == editor::testrun::TestResult::Status::Skipped &&
+                               result.status == editor::testrun::TestResult::Status::Passed)) {
+                aggregate = result.status;
+            }
+        }
+        // A discovered test with no result at all reads as "passed" only
+        // when the format never names passing tests, the run was a full
+        // (unfiltered) one, and the output genuinely parsed -- otherwise
+        // absence means "not run", which gets no mark rather than a guess.
+        if (!aggregate && outcome.failuresOnly && outcome.parsedOk && !testRunner_->LastRunWasFiltered()) {
+            aggregate = editor::testrun::TestResult::Status::Passed;
+        }
+        if (aggregate) {
+            testGutterLineStatuses_.emplace_back(content.ByteOffsetToLine(marker.startByte), *aggregate);
+        }
+    }
+    // One entry per line, Failed winning a same-line tie (a class marker and
+    // a same-line method can't collide in practice, but two markers on one
+    // line must not produce two sort keys).
+    const auto tieRank = [](editor::testrun::TestResult::Status status) {
+        switch (status) {
+            case editor::testrun::TestResult::Status::Failed:
+                return 0;
+            case editor::testrun::TestResult::Status::Passed:
+                return 1;
+            case editor::testrun::TestResult::Status::Skipped:
+                return 2;
+        }
+        return 3;
+    };
+    std::sort(testGutterLineStatuses_.begin(), testGutterLineStatuses_.end(),
+              [&](const auto& a, const auto& b) {
+                  return a.first != b.first ? a.first < b.first : tieRank(a.second) < tieRank(b.second);
+              });
+    testGutterLineStatuses_.erase(std::unique(testGutterLineStatuses_.begin(), testGutterLineStatuses_.end(),
+                                              [](const auto& a, const auto& b) { return a.first == b.first; }),
+                                  testGutterLineStatuses_.end());
+
+    testGutterCacheBuffer_            = &buffer;
+    testGutterCacheContentGeneration_ = buffer.ContentGeneration();
+    testGutterCacheOutcomeGeneration_ = testRunner_->OutcomeGeneration();
 }
 
 void BufferView::EnsureInlineDiagnosticCache() const {
@@ -1425,6 +1544,18 @@ void BufferView::Paint(Canvas c) {
         if (onActiveBufferChanged_) {
             onActiveBufferChanged_(buffer);
         }
+        // The callback just (possibly) replaced mode_ -- but a GutterWidth()
+        // call during the switch's own event handling (ScrollToShowPoint,
+        // CursorPosition) may already have run the mode-derived gutter
+        // caches against this buffer under the OLD mode and stamped them
+        // current-and-empty, which the (buffer, generation) gate can't
+        // detect (neither stamp changes with the mode). Confirmed live via
+        // an instrumented trace: switching back to a python buffer after
+        // visiting a fundamental-mode one left the symbol/test columns
+        // permanently blank until the next edit. Discarding the stamps here
+        // forces one recompute under the mode that will actually paint.
+        symbolGutterCacheBuffer_ = nullptr;
+        testGutterCacheBuffer_   = nullptr;
     }
     // Diff gutter markers follow-up: a newly-active buffer's diff markers
     // belong to a completely different file -- clearing immediately
@@ -1508,6 +1639,9 @@ void BufferView::Paint(Canvas c) {
     const std::size_t blameColumnWidth  = BlameGutterActive() ? kBlameWidth : 0;
     const std::size_t diffColumnWidth   = DiffGutterActive() ? kDiffWidth : 0;
     const std::size_t symbolColumnWidth = SymbolGutterActive() ? kSymbolWidth : 0;
+    // test-runner integration: pass/fail marks, immediately left of the
+    // symbol column (landmark columns clustered together).
+    const std::size_t testColumnWidth = TestGutterActive() ? kTestWidth : 0;
     // DAP client slice 2: the debug-marker column, leftmost of all when
     // active -- see kDapWidth's own doc comment for the full layout.
     const std::size_t dapColumnWidth  = DapGutterActive() ? kDapWidth : 0;
@@ -1537,7 +1671,8 @@ void BufferView::Paint(Canvas c) {
     const std::size_t lineNumberGapWidth = LineNumberGutterActive() ? kLineNumberGap : 0;
     const std::size_t digitsStart        = diagnosticStart + kDiagnosticWidth + lineNumberGapWidth;
     const std::size_t gutterDigits       = LineNumberGutterActive() ? std::to_string(totalLines).size() : 0;
-    const std::size_t symbolStart        = digitsStart + gutterDigits + lineNumberGapWidth;
+    const std::size_t testStart          = digitsStart + gutterDigits + lineNumberGapWidth;
+    const std::size_t symbolStart        = testStart + testColumnWidth;
     const std::size_t foldStart          = symbolStart + symbolColumnWidth;
     const std::size_t blameStart         = foldStart + foldColumnWidth;
 
@@ -2120,6 +2255,19 @@ void BufferView::Paint(Canvas c) {
                         Cell& cell     = c[{.x = static_cast<int>(symbolStart), .y = row}];
                         cell.character = SymbolGlyphFor(it->second);
                         theme_.BrushFor(editor::SyntaxClassFor(it->second)).ApplyTo(cell);
+                    }
+                }
+
+                // test-runner integration: the pass/fail mark on a discovered
+                // test's own first line -- symbol block's exact lookup shape.
+                if (testColumnWidth > 0 && static_cast<int>(testStart) < c.size().width) {
+                    const auto it = std::lower_bound(testGutterLineStatuses_.begin(), testGutterLineStatuses_.end(), line,
+                                                     [](const auto& entry, std::size_t l) { return entry.first < l; });
+                    if (it != testGutterLineStatuses_.end() && it->first == line) {
+                        Cell& cell            = c[{.x = static_cast<int>(testStart), .y = row}];
+                        cell.character        = TestGlyphFor(it->second);
+                        cell.foreground_color = TestStatusColor(it->second);
+                        cell.bold             = true;
                     }
                 }
 
@@ -4791,6 +4939,106 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             prompt_.emplace("Cancel task: ");
             statusMessage_ = prompt_->StatusText();
             return;
+        // test-runner integration: one-shot direct actions (no prompt --
+        // one project-wide test command, see the enum's own comment).
+        case editor::InteractiveRequest::RunTests: {
+            if (!testRunner_) {
+                statusMessage_ = "No test runner available.";
+                return;
+            }
+            const bool alreadyRunning = testRunner_->IsRunning();
+            if (text::Buffer* buffer = testRunner_->RunAll()) {
+                activeBuffer_.Set(*buffer);
+            }
+            statusMessage_ = alreadyRunning ? "Tests already running." : (testRunner_->IsRunning() ? "Running tests..." : "");
+            return;
+        }
+        case editor::InteractiveRequest::CancelTests:
+            if (!testRunner_) {
+                statusMessage_ = "No test runner available.";
+            }
+            else if (testRunner_->IsRunning()) {
+                testRunner_->Cancel();
+                statusMessage_ = "Cancelling tests...";
+            }
+            else {
+                statusMessage_ = "No test run in progress.";
+            }
+            return;
+        case editor::InteractiveRequest::ShowTestResults: {
+            if (!testRunner_) {
+                statusMessage_ = "No test runner available.";
+                return;
+            }
+            const std::optional<editor::testrun::TestRunOutcome>& outcome = testRunner_->LatestOutcome();
+            if (!outcome) {
+                statusMessage_ = "No test results yet -- run-tests (C-c T t) first.";
+                return;
+            }
+            activeBuffer_.Set(editor::testrun::RebuildTestResultsBuffer(bufferList_, *outcome));
+            return;
+        }
+        case editor::InteractiveRequest::RunTestAtPoint: {
+            if (!testRunner_) {
+                statusMessage_ = "No test runner available.";
+                return;
+            }
+            if (!mode_.testDiscovery) {
+                statusMessage_ = "No test discovery configured for " + mode_.name + ".";
+                return;
+            }
+            if (!editor::testrun::TestFilterCommand()) {
+                statusMessage_ = "No test filter command configured (see ned/set-test-filter-command).";
+                return;
+            }
+            text::Buffer& buffer = activeBuffer_.Get();
+            // Innermost (smallest-span) discovered definition containing
+            // point -- a describe() picks the it() under point, a PHPUnit
+            // class its method.
+            const std::size_t                 point = buffer.Point();
+            std::optional<editor::TestMarker> target;
+            for (editor::TestMarker& marker : mode_.testDiscovery(buffer.Text())) {
+                if (marker.startByte <= point && point < marker.endByte &&
+                    (!target || (marker.endByte - marker.startByte) < (target->endByte - target->startByte))) {
+                    target = std::move(marker);
+                }
+            }
+            if (!target) {
+                statusMessage_ = "No test definition at point.";
+                return;
+            }
+            const std::string file = buffer.Path() ? buffer.Path()->string() : std::string();
+            if (text::Buffer* output = testRunner_->RunFiltered(target->name, file)) {
+                activeBuffer_.Set(*output);
+            }
+            statusMessage_ = "Running \"" + target->name + "\"...";
+            return;
+        }
+        case editor::InteractiveRequest::RerunFailedTests: {
+            if (!testRunner_) {
+                statusMessage_ = "No test runner available.";
+                return;
+            }
+            if (testRunner_->IsRunning()) {
+                statusMessage_ = "Tests already running.";
+                return;
+            }
+            if (!editor::testrun::TestFilterCommand()) {
+                statusMessage_ = "No test filter command configured (see ned/set-test-filter-command).";
+                return;
+            }
+            const std::size_t queued = testRunner_->RerunFailed();
+            if (queued == 0) {
+                statusMessage_ = "No failed tests to re-run.";
+                return;
+            }
+            if (text::Buffer* output = bufferList_.Find(editor::testrun::TestOutputBufferName())) {
+                activeBuffer_.Set(*output);
+            }
+            statusMessage_ = "Re-running " + std::to_string(queued) + " failed test" + (queued == 1 ? "" : "s") +
+                             " sequentially...";
+            return;
+        }
         // DAP client slice 1: one-shot direct actions, same shape as
         // VcsShowBlame just below -- the synchronous half of each answer
         // (DapManager's returned status string) lands in statusMessage_
@@ -6595,7 +6843,7 @@ namespace {
             const std::chrono::minutes own     = editor::org::TotalClockedMinutes(bufferText, *node.headline);
             const std::chrono::minutes subtree = editor::org::TotalClockedMinutesForSubtree(bufferText, node);
             if (own.count() > 0 || subtree.count() > 0) {
-                const std::size_t line = node.headline->lineNumber + 1; // 1-indexed, matching every other multibuffer consumer
+                const std::size_t line   = node.headline->lineNumber + 1; // 1-indexed, matching every other multibuffer consumer
                 std::string       header = "▸ " + node.headline->title + "  " + sourcePath.string() + ":" + std::to_string(line);
                 std::string       body   = "own " + FormatClockMinutes(own) + "   subtree " + FormatClockMinutes(subtree);
                 excerpts.push_back(editor::multibuffer::ExcerptSource{sourcePath, line, line, std::move(header), std::move(body), {}});
@@ -6609,10 +6857,10 @@ namespace {
 } // namespace
 
 void BufferView::BuildClockReportMultibuffer() {
-    text::Buffer&      buffer     = activeBuffer_.Get();
-    const std::string  bufferText = buffer.Text();
-    const std::vector<editor::org::Headline>     headlines = editor::org::ParseOutline(bufferText, editor::org::TodoKeywords());
-    const std::vector<editor::org::HeadlineNode> tree      = editor::org::BuildHeadlineTree(headlines);
+    text::Buffer&                                buffer     = activeBuffer_.Get();
+    const std::string                            bufferText = buffer.Text();
+    const std::vector<editor::org::Headline>     headlines  = editor::org::ParseOutline(bufferText, editor::org::TodoKeywords());
+    const std::vector<editor::org::HeadlineNode> tree       = editor::org::BuildHeadlineTree(headlines);
     // sourcePath is empty for a not-yet-saved buffer -- jump-to-source is
     // then a silent no-op on any excerpt, the same "no source, no jump"
     // posture every other multibuffer consumer here already has.
@@ -7507,18 +7755,24 @@ std::size_t BufferView::GutterWidth() const {
     const std::size_t diffColumn   = DiffGutterActive() ? kDiffWidth : 0;
     const std::size_t dapColumn    = DapGutterActive() ? kDapWidth : 0;
     const std::size_t symbolColumn = SymbolGutterActive() ? kSymbolWidth : 0;
+    const std::size_t testColumn   = TestGutterActive() ? kTestWidth : 0;
     // Multibuffers follow-up: the line-number digits + both surrounding
     // gaps collapse to zero width together when LineNumberGutterActive()
     // is false -- see its own doc comment.
     const std::size_t lineNumberColumn =
         LineNumberGutterActive() ? (kLineNumberGap + std::to_string(totalLines).size() + kLineNumberGap) : 0;
-    return dapColumn + diffColumn + kStatusWidth + kDiagnosticWidth + lineNumberColumn + symbolColumn + foldColumn +
-           blameColumn;
+    return dapColumn + diffColumn + kStatusWidth + kDiagnosticWidth + lineNumberColumn + testColumn + symbolColumn +
+           foldColumn + blameColumn;
 }
 
 bool BufferView::SymbolGutterActive() const {
     EnsureSymbolGutterCache();
     return !symbolGutterLineKinds_.empty();
+}
+
+bool BufferView::TestGutterActive() const {
+    EnsureTestGutterCache();
+    return !testGutterLineStatuses_.empty();
 }
 
 bool BufferView::DiffGutterActive() const {
@@ -9008,6 +9262,10 @@ void BufferView::SetLspManager(editor::lsp::LspManager* lspManager) {
 
 void BufferView::SetTaskRunner(editor::tasks::TaskRunner* taskRunner) {
     taskRunner_ = taskRunner;
+}
+
+void BufferView::SetTestRunner(editor::testrun::TestRunner* testRunner) {
+    testRunner_ = testRunner;
 }
 
 void BufferView::SetDapManager(editor::dap::DapManager* dapManager) {

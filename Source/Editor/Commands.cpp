@@ -2024,6 +2024,35 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
         context.interactiveRequest = InteractiveRequest::CancelTask;
     });
 
+    // test-runner integration: one-shot direct actions (no prompt -- one
+    // project-wide test command, see Editor/TestRun/TestRunConfig.h), same
+    // "just signal intent" shape as run-task/cancel-task above --
+    // BufferView holds the shared TestRunner and does the actual work.
+    registry.Register("run-tests",
+                      "Run the project's tests (see ned/set-test-command), streaming output into *test output* and "
+                      "parsing results into *test results* and the per-test gutter marks.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::RunTests;
+                      });
+    registry.Register("cancel-tests", "Cancel the test run started by run-tests.", [](CommandContext& context) {
+        context.interactiveRequest = InteractiveRequest::CancelTests;
+    });
+    registry.Register("show-test-results", "Show the parsed failures from the last test run (*test results*).",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::ShowTestResults;
+                      });
+    registry.Register("run-test-at-point",
+                      "Run only the test definition containing point (Mode::testDiscovery), through the configured "
+                      "filter template (see ned/set-test-filter-command).",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::RunTestAtPoint;
+                      });
+    registry.Register("rerun-failed-tests",
+                      "Re-run every currently-failed test, one filtered run per test, merging the results.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::RerunFailedTests;
+                      });
+
     // DAP client slice 1: four one-shot direct actions, same "just set
     // interactiveRequest" shape as run-task/cancel-task above --
     // BufferView holds the shared DapManager and does the actual work (see
@@ -2919,6 +2948,18 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("C-c A p"), "acp-send-prompt");
     keymap.Bind(ParseKeySequence("C-c A k"), "acp-stop-session"); // "k" for kill, matching Emacs' own kill-process vocabulary
     keymap.Bind(ParseKeySequence("C-c c"), "acp-toggle-panel");   // "c" for chat
+    // test-runner integration: "C-c T" prefix (shifted "t" for tests --
+    // plain "C-c t" is toggle-terminal's own leaf binding below, so a
+    // "C-c t <x>" prefix is structurally unreachable, the exact
+    // Keymap::Resolve trap "C-c A" documents above). Every binding under it
+    // is a 3-key chord with no command on the prefix node itself, keeping
+    // Keymap::AmbiguousBindings (and CommandsTest.cpp's regression test)
+    // clean.
+    keymap.Bind(ParseKeySequence("C-c T t"), "run-tests");
+    keymap.Bind(ParseKeySequence("C-c T k"), "cancel-tests"); // "k" for kill, the C-c A k convention
+    keymap.Bind(ParseKeySequence("C-c T r"), "show-test-results");
+    keymap.Bind(ParseKeySequence("C-c T ."), "run-test-at-point"); // "." for at-point
+    keymap.Bind(ParseKeySequence("C-c T f"), "rerun-failed-tests");
     keymap.Bind(ParseKeySequence("C-c C-v"), "project-search-visit-result");
     // VCS blame gutter follow-up: "C-c v" prefix, mirroring "C-c C-b"/
     // "C-c C-M-b" run-task/cancel-task's own choice of an otherwise-unused

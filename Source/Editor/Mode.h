@@ -280,6 +280,27 @@ using SymbolKindFunction = std::function<std::vector<SymbolMarker>(std::string_v
 // tags.scm, not something each language's query invents independently.
 [[nodiscard]] std::optional<SymbolKind> SymbolKindFromCaptureName(std::string_view captureName);
 
+// test-runner integration: one discovered test definition. [startByte,
+// endByte) covers the whole definition including its body where the parse
+// gives one (run-test-at-point's innermost-containing-point resolution
+// needs the body; the gutter only ever reads startByte's line); name is
+// the test's own name as the framework would report it (string-literal
+// delimiters already stripped), what the gutter matches against a
+// TestRunOutcome's result names.
+struct TestMarker {
+    std::size_t startByte;
+    std::size_t endByte;
+    std::string name;
+};
+
+// Given a buffer's full text, returns every test definition in it, in tree
+// order -- one entry per "@test.definition"/"@test.name" capture pair from
+// the language's own *-tests.scm query (a ned-local capture convention,
+// mirroring importTarget's fixed "import.*" trio -- there is no upstream
+// tests.scm convention to borrow). Empty function (the default) means "no
+// test discovery configured for this mode," the standing convention.
+using TestDiscoveryFunction = std::function<std::vector<TestMarker>(std::string_view bufferText)>;
+
 struct Mode {
     std::string       name;
     Keymap            keymap;
@@ -324,6 +345,11 @@ struct Mode {
     // fold/expandSelection/sexpMotion above -- BufferView falls back to
     // Editor/Link.h's generic, mode-agnostic bare-URL/path detection.
     ImportTargetFunction importTarget;
+    // test-runner integration: empty function (the default) means no test
+    // discovery configured for this mode, same "empty means not configured"
+    // convention as everything above -- run-test-at-point reports it, and
+    // BufferView's test gutter simply never activates.
+    TestDiscoveryFunction testDiscovery;
     // line-wrap follow-up: this mode's own default for whether BufferView
     // should soft-wrap long lines at word boundaries instead of scrolling
     // horizontally -- false (matching every bundled mode except the two
@@ -379,9 +405,14 @@ struct Mode {
 // Mode::symbolKind's own doc comment) -- nullptr (the default) means this
 // language has no tags query yet, leaving the returned Mode's .symbolKind
 // empty.
+// testQuerySource (test-runner integration): same optional contract, but
+// for a "@test.definition"/"@test.name"-capture query (see
+// Mode::testDiscovery's own doc comment) -- nullptr (the default) means
+// this language has no test-discovery query yet, leaving the returned
+// Mode's .testDiscovery empty.
 [[nodiscard]] Mode TreeSitterMode(std::string name, std::string_view languageName, const char* querySource,
                                   const char* foldQuerySource = nullptr, const char* importQuerySource = nullptr,
-                                  const char* symbolKindQuerySource = nullptr);
+                                  const char* symbolKindQuerySource = nullptr, const char* testQuerySource = nullptr);
 
 // The shared construction logic TreeSitterMode above delegates to, split out
 // (dynamic-grammar-loading follow-up) so a caller that already has a
@@ -400,7 +431,8 @@ struct Mode {
 [[nodiscard]] Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& language,
                                               std::string_view querySource = {}, std::string_view foldQuerySource = {},
                                               std::string_view importQuerySource     = {},
-                                              std::string_view symbolKindQuerySource = {});
+                                              std::string_view symbolKindQuerySource = {},
+                                              std::string_view testQuerySource       = {});
 
 // A real tree-sitter-backed Janet mode (bundle-remaining-grammars
 // follow-up), replacing the original hand-rolled per-line #-comment/

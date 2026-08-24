@@ -364,10 +364,64 @@ argued against, not just added.
 
 Real, fairly uncontroversial gaps:
 
-- [ ] **Structured test-runner integration** (discover a project's test framework,
-      gutter pass/fail marks per test, jump-to-failing-test) — `TaskRunner` only shells
-      out and streams raw combined stdout/stderr; nothing parses a test framework's own
-      result format into anything more structured than a scrollback buffer.
+- [x] **Structured test-runner integration** (shipped 2026-08-24) —
+      `Editor/TestRun/`: seven built-in output parsers (`TestOutputParser.h` —
+      ctest, Catch2 console, pytest, `go test -json`, cargo test, hand-rolled
+      tolerant JUnit XML, PHPUnit console; every format's line shapes pinned
+      against real captured tool output except PHPUnit's, which follows the
+      documented 9–11 console format), a Janet-pluggable parser registry
+      (`ned/register-test-parser` — fn gets the raw output string, returns
+      result tables or `{:results [...] :failures-only true :passed n}`; a
+      registered name deliberately shadows a built-in, the user's escape hatch
+      for a mis-parsing format), and `TestRunner` (TaskRunner's shape for the
+      one project-wide `ned/set-test-command` argv+format pair: streams raw
+      output into read-only `"*test output*"` while accumulating, parses on
+      the main thread at exit — optionally from `ned/set-test-results-file`
+      for file-writing formats like JUnit XML — and stores a generation-counted
+      `TestRunOutcome`; filtered runs merge by name instead of replacing).
+      UI: `run-tests`/`cancel-tests`/`show-test-results`/`run-test-at-point`/
+      `rerun-failed-tests` on a new `C-c T` prefix (shifted "T" — plain
+      `C-c t` is toggle-terminal's leaf, the `C-c A` collision precedent);
+      `"*test results*"` is a `path:line:`-prefixed failures worklist carrying
+      one synthetic `Buffer::Diagnostic` per failure/skip line
+      (`RebuildTestResultsBuffer`, the `*Messages*` precedent — severity
+      glyphs, underlines, and Enter/click jump-to-failing-test all ride
+      existing pipelines with zero new plumbing), refreshed in place on every
+      parse while open; a per-test ✓/✗/− gutter column (bare Palette16
+      constants, the diff-gutter precedent) lights discovered test definitions
+      via `Mode::testDiscovery` — a seventh tree-sitter Mode capability with a
+      ned-local `@test.definition`/`@test.name` capture convention, new
+      `*-tests.scm` queries for C++ (Catch2 `TEST_CASE`/`SCENARIO`/
+      `TEST_CASE_METHOD` + gtest `TEST`/`TEST_F`/`TEST_P` — written against
+      the grammar's real error-recovery parse of unexpanded macros, whose
+      sibling `compound_statement` body the closure re-attaches), Python,
+      JS/TS(X), and PHP (`test*`/`#[Test]`/`*Test` classes) — matched against
+      results by a tolerant pure rule (`MatchesTestName`: exact, `[param]`
+      stripping, `parent/subtest`, trailing `Class::method`-style segment;
+      Failed beats Passed beats Skipped on aggregation, basename-level file
+      filter). `run-test-at-point` resolves the innermost definition
+      containing point through the `{test}`/`{file}` placeholder template
+      (`ned/set-test-filter-command`, per-element substitution, never a
+      shell); `rerun-failed-tests` chains one sequential filtered run per
+      failed test from each exit (framework-agnostic and correct; `pytest
+      --lf`-style native rerun stays the faster per-framework config). A
+      pre-existing symbol-gutter staleness bug came out in live verification
+      and is fixed for both columns: a `GutterWidth()` call during a buffer
+      switch's own event handling could stamp the mode-derived gutter caches
+      current-and-empty under the *old* mode before `Paint()`'s resync
+      replaced it (confirmed via instrumented trace, marks stayed blank until
+      the next edit) — the resync now discards both stamps. Worked plug-in
+      example (any unsupported framework):
+      `(ned/set-test-command ["mix" "test"] "mix")` +
+      `(ned/register-test-parser "mix" (fn [output] ...))` parsing lines into
+      `@[{:name ... :status :failed :file ... :line n :message ...}]`.
+      Deliberate cuts: Catch2/PHPUnit pass marks are *inferred* from a clean
+      full run (failures-only formats never name passing tests; junit-xml via
+      results-file is the precise alternative); pytest needs `-v` (or
+      junit-xml) for per-test pass marks; go's basename-only `file:line` can
+      miss jump-to-source in multi-directory modules; no Go/Rust *discovery*
+      (no bundled modes — their output still parses); no gutter-click
+      run-this-test; timeouts/parallelism stay the framework's own business.
 - [x] **Snippet expansion** (shipped 2026-08-24) — TextMate-style tabstops:
       `Editor/Snippet.h` (pure `ParseSnippet` + `SnippetSession`),
       `Editor/SnippetRegistry.h` (`ned/register-snippet`, per-language-key +
