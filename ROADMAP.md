@@ -246,9 +246,6 @@ Notcurses.
       over into visibly order-dependent failures; fixed by adding the same
       `RegistryResetGuard` pattern to `BufferViewTest.cpp`'s shared `Fixture` the three
       other files already use.
-- [ ] Markdown (GFM) table editing surface — Org's table ops didn't carry over because
-      GFM's delimiter row holds per-column alignment state a column op must rewrite.
-
 ### Editor ergonomics
 
 - [ ] Terminal panel round 2 (v1 shipped: libvterm-backed drawer over the

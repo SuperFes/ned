@@ -953,6 +953,30 @@ Mode MarkdownMode() {
     // below) -- no shadowing risk, Markdown has no fold-cycle or other TAB
     // use to compete with.
     mode.keymap.Bind(ParseKeySequence("TAB"), "markdown-table-align");
+    // Markdown table editing surface follow-up: real Org's own
+    // table-editing bindings (see OrgMode() below), mirrored here.
+    // S-TAB is unbound globally, so no shadowing; M-UP/M-DOWN
+    // deliberately shadow the global move-line-up/move-line-down with
+    // markdown-metaup/markdown-metadown, which fall back to the exact
+    // same line move outside a table. Every Meta chord gets the same
+    // dual M-/ESC-prefix binding the global keymap uses.
+    mode.keymap.Bind(ParseKeySequence("S-TAB"), "markdown-table-previous-cell");
+    mode.keymap.Bind(ParseKeySequence("M-UP"), "markdown-metaup");
+    mode.keymap.Bind(ParseKeySequence("ESC UP"), "markdown-metaup");
+    mode.keymap.Bind(ParseKeySequence("M-DOWN"), "markdown-metadown");
+    mode.keymap.Bind(ParseKeySequence("ESC DOWN"), "markdown-metadown");
+    mode.keymap.Bind(ParseKeySequence("M-S-DOWN"), "markdown-table-insert-row");
+    mode.keymap.Bind(ParseKeySequence("ESC S-DOWN"), "markdown-table-insert-row");
+    mode.keymap.Bind(ParseKeySequence("M-S-UP"), "markdown-table-kill-row");
+    mode.keymap.Bind(ParseKeySequence("ESC S-UP"), "markdown-table-kill-row");
+    mode.keymap.Bind(ParseKeySequence("M-S-RIGHT"), "markdown-table-insert-column");
+    mode.keymap.Bind(ParseKeySequence("ESC S-RIGHT"), "markdown-table-insert-column");
+    mode.keymap.Bind(ParseKeySequence("M-S-LEFT"), "markdown-table-delete-column");
+    mode.keymap.Bind(ParseKeySequence("ESC S-LEFT"), "markdown-table-delete-column");
+    mode.keymap.Bind(ParseKeySequence("M-LEFT"), "markdown-table-move-column-left");
+    mode.keymap.Bind(ParseKeySequence("ESC LEFT"), "markdown-table-move-column-left");
+    mode.keymap.Bind(ParseKeySequence("M-RIGHT"), "markdown-table-move-column-right");
+    mode.keymap.Bind(ParseKeySequence("ESC RIGHT"), "markdown-table-move-column-right");
     // No lineCommentPrefix -- Markdown (unlike Org, see OrgMode() below)
     // has no native comment-line convention of its own to toggle.
     // line-wrap follow-up: prose benefits far more from wrapping at word
