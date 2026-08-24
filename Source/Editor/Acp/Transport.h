@@ -17,6 +17,7 @@
 #ifndef NED_EDITOR_ACP_TRANSPORT_H
 #define NED_EDITOR_ACP_TRANSPORT_H
 
+#include <chrono>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -27,6 +28,12 @@
 #include "Editor/Process/ChildProcess.h"
 
 namespace ned::editor::acp {
+
+// subprocess-hang-protection follow-up -- see Lsp/Transport.h's identical
+// kFrameStallTimeout constant/reasoning; ACP's messages are single lines, not
+// multi-line frames, but the same "silence is normal between messages, never
+// mid-message" policy applies.
+inline constexpr std::chrono::milliseconds kMessageStallTimeout{30000};
 
 class Transport {
   public:
@@ -63,8 +70,12 @@ class Transport {
     // needs to detect and react to, not an exceptional one. A blank line
     // (the agent writing a bare "\n", e.g. as a keepalive) is returned as an
     // empty string, not treated as EOF -- callers skip it rather than this
-    // layer guessing at agent-specific keepalive conventions.
-    [[nodiscard]] std::optional<std::string> ReadMessage() const;
+    // layer guessing at agent-specific keepalive conventions. Throws
+    // std::runtime_error (subprocess-hang-protection follow-up) if a message
+    // stalls mid-line for longer than stallTimeout -- a parameter, not a
+    // hardcoded sleep, purely so tests can shorten it; real callers always
+    // take the kMessageStallTimeout default.
+    [[nodiscard]] std::optional<std::string> ReadMessage(std::chrono::milliseconds stallTimeout = kMessageStallTimeout) const;
 
     [[nodiscard]] pid_t Pid() const noexcept;
 

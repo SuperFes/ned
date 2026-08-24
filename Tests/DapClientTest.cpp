@@ -1,6 +1,8 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <chrono>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <unistd.h>
@@ -136,6 +138,40 @@ TEST_CASE("DapClient correlates a success response to its request callback by re
     REQUIRE(called);
     REQUIRE(ok);
     REQUIRE(body["supportsConfigurationDoneRequest"] == true);
+}
+
+TEST_CASE("DapClient::ExpireStaleRequests resolves a stuck request with success=false", "[Dap]") {
+    // subprocess-hang-protection follow-up.
+    ClientFixture fixture = ClientFixture::Create();
+
+    bool        invoked = false;
+    bool        success = true;
+    std::string message;
+    fixture.client.SendRequest("evaluate", Json::object(), [&](bool ok, Json, std::string msg) {
+        invoked = true;
+        success = ok;
+        message = std::move(msg);
+    });
+    REQUIRE_FALSE(invoked);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    fixture.client.ExpireStaleRequests(std::chrono::milliseconds(1));
+
+    REQUIRE(invoked);
+    REQUIRE_FALSE(success);
+    REQUIRE_FALSE(message.empty());
+}
+
+TEST_CASE("DapClient::ExpireStaleRequests leaves a request younger than maxAge untouched", "[Dap]") {
+    // subprocess-hang-protection follow-up.
+    ClientFixture fixture = ClientFixture::Create();
+
+    bool invoked = false;
+    fixture.client.SendRequest("evaluate", Json::object(), [&](bool, Json, std::string) { invoked = true; });
+
+    fixture.client.ExpireStaleRequests(std::chrono::milliseconds(60000));
+
+    REQUIRE_FALSE(invoked);
 }
 
 TEST_CASE("DapClient reports a failed response's own message", "[Dap]") {

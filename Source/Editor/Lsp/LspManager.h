@@ -18,6 +18,7 @@
 #ifndef NED_EDITOR_LSP_LSPMANAGER_H
 #define NED_EDITOR_LSP_LSPMANAGER_H
 
+#include <chrono>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -84,7 +85,7 @@ inline constexpr std::string_view kProseLanguageKey = "prose";
 // nothing configured, in which case the field is omitted entirely rather
 // than sent as an empty object.
 [[nodiscard]] Json BuildInitializeParams(const std::filesystem::path& projectRoot,
-                                        const Json& initializationOptions = Json::object());
+                                         const Json&                  initializationOptions = Json::object());
 
 class LspManager {
   public:
@@ -132,6 +133,14 @@ class LspManager {
     // buffer was never synced (e.g. it had no LSP support configured, or no
     // path).
     void NotifyBufferClosed(text::Buffer& buffer);
+
+    // subprocess-hang-protection follow-up. Sweeps every running client's
+    // own ExpireStaleRequests -- meant to be wired into a periodic
+    // background tick (WindowManager::StartAutoSaveTimer), not called
+    // per-frame. See LspClient::ExpireStaleRequests's own doc comment for
+    // what "stale" means and why. maxAge is forwarded as-is, defaulted the
+    // same way, purely so tests can shorten it.
+    void ExpireStaleRequests(std::chrono::milliseconds maxAge = kDefaultRequestTimeout);
 
     // hover/completion follow-up. Both resolve buffer's server/URI purely
     // from bufferState_ (populated by SyncBuffer's prior didOpen) rather
@@ -274,7 +283,7 @@ class LspManager {
     // exercise the workspace/configuration handler's real section-resolution
     // logic without a real .ned/settings.json on disk.
     LspClient& SetClientForTesting(std::string language, std::unique_ptr<LspClient> client,
-                                  const Json& workspaceConfiguration = Json::object());
+                                   const Json& workspaceConfiguration = Json::object());
 
     // error-visibility follow-up. Finds (or, on the very first call in this
     // process's lifetime, creates) kLspLogBufferName and appends one

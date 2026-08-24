@@ -25,6 +25,7 @@
 #ifndef NED_EDITOR_DAP_DAPCLIENT_H
 #define NED_EDITOR_DAP_DAPCLIENT_H
 
+#include <chrono>
 #include <functional>
 #include <optional>
 #include <string>
@@ -49,6 +50,12 @@ using Json = nlohmann::json;
 // object.
 using ResponseCallback = std::function<void(bool success, Json body, std::string message)>;
 using EventHandler     = std::function<void(const Json& body)>;
+
+// subprocess-hang-protection follow-up -- see Lsp/LspClient.h's identical
+// kDefaultRequestTimeout constant/reasoning; DAP requests (evaluate, a
+// stepping command against a busy debuggee, ...) get the same generous
+// margin.
+inline constexpr std::chrono::milliseconds kDefaultRequestTimeout{30000};
 
 class DapClient {
   public:
@@ -89,6 +96,13 @@ class DapClient {
     // test with no running Run() loop calls this directly instead).
     void DispatchFrame(const std::string& frameText);
 
+    // subprocess-hang-protection follow-up -- see LspClient::ExpireStaleRequests's
+    // identical doc comment; DAP has no BackgroundActivity spinner to pair, so
+    // this is otherwise the same shape (synthetic failure via the existing
+    // success=false/message callback branch, no new handling needed at any
+    // call site).
+    void ExpireStaleRequests(std::chrono::milliseconds maxAge = kDefaultRequestTimeout);
+
   private:
     void StartReadLoop();
 
@@ -97,8 +111,13 @@ class DapClient {
 
     ned::ui::EventLoop& eventLoop_;
 
+    struct PendingRequest {
+        ResponseCallback                      callback;
+        std::chrono::steady_clock::time_point sentAt;
+    };
+
     int                                           nextSeq_ = 1;
-    std::unordered_map<int, ResponseCallback>     pending_; // keyed by the request's own seq
+    std::unordered_map<int, PendingRequest>       pending_; // keyed by the request's own seq
     std::unordered_map<std::string, EventHandler> eventHandlers_;
     std::function<void(std::string reason)>       onDisconnected_;
 };

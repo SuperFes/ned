@@ -1,7 +1,9 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <chrono>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <signal.h>
@@ -97,6 +99,43 @@ TEST_CASE("ChildProcess::WaitForExit reports nullopt after Kill", "[Process]") {
     // nothing left to wait on -- matches the documented "safe to call even
     // if Kill() was called first" contract.
     REQUIRE_FALSE(child.WaitForExit().has_value());
+}
+
+TEST_CASE("ChildProcess::ReadSome(timeout) returns nullopt when nothing arrives in time", "[Process]") {
+    int toChild[2];
+    REQUIRE(::pipe(toChild) == 0);
+    ChildProcess reader(toChild[0], -1);
+    ChildProcess writer(-1, toChild[1]); // kept alive -- no EOF, just silence
+
+    REQUIRE_FALSE(reader.ReadSome(std::chrono::milliseconds(50)).has_value());
+}
+
+TEST_CASE("ChildProcess::ReadSome(timeout) returns data once it arrives within the window", "[Process]") {
+    int toChild[2];
+    REQUIRE(::pipe(toChild) == 0);
+    ChildProcess reader(toChild[0], -1);
+    ChildProcess writer(-1, toChild[1]);
+
+    std::jthread delayedWriter([&writer] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        writer.WriteAll("late data");
+    });
+
+    const auto chunk = reader.ReadSome(std::chrono::milliseconds(2000));
+    REQUIRE(chunk.has_value());
+    REQUIRE(*chunk == "late data");
+}
+
+TEST_CASE("ChildProcess::WaitReadable reports EOF as readable", "[Process]") {
+    int toChild[2];
+    REQUIRE(::pipe(toChild) == 0);
+    ChildProcess reader(toChild[0], -1);
+    {
+        ChildProcess writer(-1, toChild[1]);
+    } // destructor closes write end -- EOF
+
+    REQUIRE(reader.WaitReadable(std::chrono::milliseconds(2000)));
+    REQUIRE(reader.ReadSome().empty());
 }
 
 TEST_CASE("ChildProcess merges stderr onto stdout when requested", "[Process]") {

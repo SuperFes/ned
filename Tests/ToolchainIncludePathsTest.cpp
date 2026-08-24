@@ -61,10 +61,9 @@ class EnvVarGuard {
 // the cache file lands inside it rather than a real user's ~/.cache/ned.
 struct CacheSandbox {
     std::filesystem::path root;
-    EnvVarGuard            guard;
+    EnvVarGuard           guard;
 
-    CacheSandbox()
-        : root(std::filesystem::temp_directory_path() / "ned-toolchain-include-paths-test"), guard("XDG_CACHE_HOME", root.string().c_str()) {
+    CacheSandbox() : root(std::filesystem::temp_directory_path() / "ned-toolchain-include-paths-test"), guard("XDG_CACHE_HOME", root.string().c_str()) {
         std::filesystem::remove_all(root);
         std::filesystem::create_directories(root);
     }
@@ -134,6 +133,20 @@ TEST_CASE("QueryToolchainIncludePaths finds the real compiler's system include s
     CHECK(anyExists);
 }
 
+TEST_CASE("QueryToolchainIncludePaths kills the compiler and returns nullopt when it exceeds readTimeout",
+          "[ToolchainIncludePaths]") {
+    // subprocess-hang-protection follow-up. Uses the real compiler with an
+    // unreasonably short readTimeout (0ms) rather than a fake hanging tool --
+    // CompilerAndLanguageFlagFor hardcodes "c++"/"cc", so there's no seam to
+    // inject a substitute argv the way Clipboard's SetClipboardPasteCommand
+    // allows.
+    if (!ned::editor::process::ResolveExecutable("c++")) {
+        SKIP("c++ not found on $PATH");
+    }
+
+    REQUIRE_FALSE(QueryToolchainIncludePaths("cpp", std::chrono::milliseconds(0)).has_value());
+}
+
 TEST_CASE("ToolchainIncludePathsForLanguage returns an empty list for an unsupported language", "[ToolchainIncludePaths]") {
     CacheSandbox sandbox;
     CHECK(ToolchainIncludePathsForLanguage("python").empty());
@@ -141,7 +154,7 @@ TEST_CASE("ToolchainIncludePathsForLanguage returns an empty list for an unsuppo
 
 TEST_CASE("ToolchainIncludePathsForLanguage serves a fresh cached entry without re-probing", "[ToolchainIncludePaths]") {
     CacheSandbox sandbox;
-    TtlGuard      ttlGuard;
+    TtlGuard     ttlGuard;
     SetIncludePathCacheTtlSeconds(86400);
 
     // A path a real compiler would never report -- proves this came from
@@ -159,7 +172,7 @@ TEST_CASE("ToolchainIncludePathsForLanguage re-probes once a cached entry has ex
     }
 
     CacheSandbox sandbox;
-    TtlGuard      ttlGuard;
+    TtlGuard     ttlGuard;
     SetIncludePathCacheTtlSeconds(1);
 
     sandbox.WriteCacheEntry("cpp", {"/totally/fake/only-in-cache"}, NowUnixSeconds() - 999999);
@@ -175,7 +188,7 @@ TEST_CASE("ToolchainIncludePathsForLanguage treats a TTL of 0 as caching disable
     }
 
     CacheSandbox sandbox;
-    TtlGuard      ttlGuard;
+    TtlGuard     ttlGuard;
     SetIncludePathCacheTtlSeconds(0);
 
     // Even a just-written, technically-fresh entry must be ignored.

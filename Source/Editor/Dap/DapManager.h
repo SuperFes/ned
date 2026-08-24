@@ -33,6 +33,7 @@
 #ifndef NED_EDITOR_DAP_DAPMANAGER_H
 #define NED_EDITOR_DAP_DAPMANAGER_H
 
+#include <chrono>
 #include <cstddef>
 #include <filesystem>
 #include <functional>
@@ -135,6 +136,12 @@ class DapManager {
     // runs long before any session can exist, so that path is a
     // robustness guard, not a designed-for flow.
     void RestoreBreakpoints(std::map<std::string, std::vector<std::size_t>> breakpoints);
+
+    // subprocess-hang-protection follow-up. A no-op if no session is active;
+    // otherwise forwards to the live client_'s own ExpireStaleRequests. See
+    // LspManager::ExpireStaleRequests's identical wiring/reasoning -- meant
+    // to be called from the same periodic background tick.
+    void ExpireStaleRequests(std::chrono::milliseconds maxAge = kDefaultRequestTimeout);
 
     // Slice 3: the inspection requests backing the *debug* buffer. Each
     // callback runs on the main thread with parsed results ([] on any

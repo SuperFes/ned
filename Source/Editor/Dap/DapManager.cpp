@@ -99,6 +99,12 @@ void DapManager::RestoreBreakpoints(std::map<std::string, std::vector<std::size_
     }
 }
 
+void DapManager::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
+    if (client_) {
+        client_->ExpireStaleRequests(maxAge);
+    }
+}
+
 std::string DapManager::StartOrContinue(const std::string& language) {
     if (state_ == SessionState::Stopped) {
         client_->SendRequest("continue", Json{{"threadId", stoppedThreadId_}},

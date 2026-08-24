@@ -248,14 +248,35 @@ Notcurses.
 - [ ] Hunk unstage matches point against the *cached* staged diff, which drifts when
       unstaged edits exist earlier in the file — exact in the common
       stage-then-undo flow; revisit only if it bites.
-- [ ] **No subprocess hang/timeout protection** — `Editor/Process/ChildProcess.h` (the
-      shared spawn/pipe primitive every LSP/DAP/ACP/Task/VCS integration is built on,
-      per its own header comment) has no timeout concept anywhere: `WriteAll`/
-      `ReadSome`/`WaitForExit` are all unbounded waits. A hung language server or a
-      task command stuck in an infinite loop blocks its owning background thread
-      forever with no recovery path and no user-visible "kill it" affordance beyond
-      the OS. Worth a bounded-wait/kill-after-timeout option on this one shared class
-      rather than five separate per-subsystem fixes (2026-08-24 audit).
+- [x] **Subprocess hang/timeout protection** (2026-08-24 audit, shipped 2026-08-24) —
+      `Editor/Process/ChildProcess.h` gained `WaitReadable`/`ReadSome(timeout)`
+      (poll()-based), the shared primitive three independent fixes build on, each
+      matched to what it actually protects against rather than one bolted-on read
+      timeout: (1) `Clipboard.cpp::PasteFromSystemClipboard`/
+      `ToolchainIncludePaths.cpp::QueryToolchainIncludePaths` — the two call sites that
+      run synchronously on the *main thread* (a paste keystroke, first LSP-config
+      resolve for a language) and could freeze the whole editor on a hung `wl-paste`/
+      `clang++ -E -v` — now kill and fail gracefully past a 5s read timeout; (2)
+      `Lsp/Transport.cpp` (shared by DAP) and `Acp/Transport.cpp` bound every read
+      *after* a frame/message's first byte to a 30s stall timeout — idle *between*
+      messages stays unbounded (normal), silence *mid*-message throws, reusing
+      `LspClient`/`DapClient`/`AcpClient`'s existing malformed-frame disconnect path
+      with no new plumbing (their disconnect reason is now the real exception message,
+      not a fixed string, so a stall reads differently from a genuinely malformed
+      frame in `*Messages*`); (3) `LspClient`/`DapClient`/`AcpClient`'s `pending_` maps
+      gained a `sentAt` timestamp and `ExpireStaleRequests(maxAge)`, swept every 5s
+      from `WindowManager::StartAutoSaveTimer`'s existing background tick via
+      `LspManager`/`DapManager`/`AcpManager::ExpireStaleRequests()` — a request a
+      server simply never answers (previously a permanently-spinning hover/completion
+      with no error) now resolves with a synthetic timeout failure after 30s, through
+      each protocol's existing error-callback shape (no new handling at any call
+      site). `TaskProcess`'s own read loop deliberately got no timeout: silence isn't
+      a hang signal for a legitimately slow build/test, and `Cancel()` (already wired
+      to `cancel-task`, `SIGKILL`-based) already provides a working user-triggered
+      recovery path that unblocks the blocking read via EOF — audited, not an
+      oversight. Still open: every timeout is a single hardcoded constant per
+      mechanism, not a `ned/set-*` Janet surface; no user-facing "this looks hung"
+      affordance beyond the `*Messages*` log entry a recovered timeout produces.
 - [ ] LSP deliberate cuts, revisit on demand: syncing every open buffer (not just the
       active one), incremental sync, idle server teardown, multi-root workspaces, raw
       subprocess stderr capture.

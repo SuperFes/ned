@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <chrono>
 #include <stdexcept>
 #include <string>
 
@@ -106,6 +107,35 @@ TEST_CASE("Transport::ReadMessage throws on EOF mid-message", "[Acp]") {
     }
 
     REQUIRE_THROWS_AS(reader.ReadMessage(), std::runtime_error);
+}
+
+TEST_CASE("Transport::ReadMessage does not stall on ordinary idle silence between messages", "[Acp]") {
+    // subprocess-hang-protection follow-up: a very short stallTimeout must
+    // never fire while genuinely waiting for a fresh message's first byte.
+    TransportPair pair = TransportPair::Create();
+
+    pair.a.WriteMessage("hello");
+    const auto received = pair.b.ReadMessage(std::chrono::milliseconds(1));
+
+    REQUIRE(received == "hello");
+}
+
+TEST_CASE("Transport::ReadMessage throws when a message stalls mid-line", "[Acp]") {
+    // subprocess-hang-protection follow-up.
+    int toB[2];
+    REQUIRE(::pipe(toB) == 0);
+    Transport reader(toB[0], -1);
+    Transport writer(-1, toB[1]); // kept alive -- no EOF, just silence after the partial write
+
+    const std::string partial = "{\"incomplete";
+    std::size_t       written = 0;
+    while (written < partial.size()) {
+        const ssize_t result = ::write(toB[1], partial.data() + written, partial.size() - written);
+        REQUIRE(result > 0);
+        written += static_cast<std::size_t>(result);
+    }
+
+    REQUIRE_THROWS_AS(reader.ReadMessage(std::chrono::milliseconds(50)), std::runtime_error);
 }
 
 TEST_CASE("Transport constructor throws for an executable that can't be found on $PATH", "[Acp]") {

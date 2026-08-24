@@ -33,6 +33,7 @@
 #ifndef NED_EDITOR_TOOLCHAININCLUDEPATHS_H
 #define NED_EDITOR_TOOLCHAININCLUDEPATHS_H
 
+#include <chrono>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -42,9 +43,14 @@ namespace ned::editor {
 
 // Runs the compiler for language (currently just "c"/"cpp") and parses its
 // real system include search paths -- nullopt for any other language, or if
-// the compiler isn't on $PATH, spawning it fails, or its output doesn't
-// parse as expected. Never throws.
-[[nodiscard]] std::optional<std::vector<std::filesystem::path>> QueryToolchainIncludePaths(const std::string& language);
+// the compiler isn't on $PATH, spawning it fails, its output doesn't parse
+// as expected, or it produces no output within readTimeout
+// (subprocess-hang-protection follow-up -- this runs synchronously on the
+// main thread on first resolve for a language, so a hung compiler is killed
+// rather than freezing the editor; readTimeout is a parameter, not a
+// hardcoded sleep, purely so tests can shorten it). Never throws.
+[[nodiscard]] std::optional<std::vector<std::filesystem::path>> QueryToolchainIncludePaths(
+    const std::string& language, std::chrono::milliseconds readTimeout = std::chrono::milliseconds(5000));
 
 // Cached wrapper around QueryToolchainIncludePaths: serves a cached,
 // not-yet-expired result from $XDG_CACHE_HOME/ned/toolchain-include-paths.json

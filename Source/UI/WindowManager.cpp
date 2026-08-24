@@ -755,6 +755,21 @@ void WindowManager::StartAutoSaveTimer(EventLoop& eventLoop) {
                 // AutoRevertBuffers/AutoMergeBuffers above -- see
                 // RefreshVcsDiffGutters' own doc comment in the header.
                 RefreshVcsDiffGutters();
+                // subprocess-hang-protection follow-up: same tick, same
+                // "unattended sweep" posture -- resolves any LSP/DAP/ACP
+                // request that's been waiting past kDefaultRequestTimeout
+                // with a synthetic timeout failure instead of leaving it
+                // permanently pending. A no-op on every ordinary tick (no
+                // request outstanding that long).
+                if (lspManager_) {
+                    lspManager_->ExpireStaleRequests();
+                }
+                if (dapManager_) {
+                    dapManager_->ExpireStaleRequests();
+                }
+                if (acpManager_) {
+                    acpManager_->ExpireStaleRequests();
+                }
             });
         }
     });

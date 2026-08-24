@@ -38,6 +38,7 @@
 #ifndef NED_EDITOR_ACP_ACPCLIENT_H
 #define NED_EDITOR_ACP_ACPCLIENT_H
 
+#include <chrono>
 #include <functional>
 #include <optional>
 #include <string>
@@ -66,6 +67,10 @@ using NotificationHandler = std::function<void(const Json& params)>;
 // comment on why this differs from a plain synchronous return.
 using RespondFn      = std::function<void(std::optional<Json> result, std::optional<Json> error)>;
 using RequestHandler = std::function<void(const Json& params, RespondFn respond)>;
+
+// subprocess-hang-protection follow-up -- see Lsp/LspClient.h's identical
+// kDefaultRequestTimeout constant/reasoning.
+inline constexpr std::chrono::milliseconds kDefaultRequestTimeout{30000};
 
 class AcpClient {
   public:
@@ -125,6 +130,10 @@ class AcpClient {
     // with no running EventLoop::Run() loop calls this directly instead.
     void DispatchFrame(const std::string& frameText);
 
+    // subprocess-hang-protection follow-up -- see LspClient::ExpireStaleRequests's
+    // identical doc comment.
+    void ExpireStaleRequests(std::chrono::milliseconds maxAge = kDefaultRequestTimeout);
+
   private:
     void StartReadLoop();
 
@@ -133,8 +142,13 @@ class AcpClient {
 
     ned::ui::EventLoop& eventLoop_;
 
+    struct PendingRequest {
+        ResponseCallback                      callback;
+        std::chrono::steady_clock::time_point sentAt;
+    };
+
     int                                                  nextRequestId_ = 1;
-    std::unordered_map<int, ResponseCallback>            pending_;
+    std::unordered_map<int, PendingRequest>              pending_;
     std::unordered_map<std::string, NotificationHandler> notificationHandlers_;
     std::unordered_map<std::string, RequestHandler>      requestHandlers_;
     std::function<void(std::string reason)>              onDisconnected_; // see SetOnDisconnected

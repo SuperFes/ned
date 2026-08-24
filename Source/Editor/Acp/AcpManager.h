@@ -38,6 +38,7 @@
 #ifndef NED_EDITOR_ACP_ACPMANAGER_H
 #define NED_EDITOR_ACP_ACPMANAGER_H
 
+#include <chrono>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -129,6 +130,12 @@ class AcpManager {
     // (DapManager::StopSession's own "must not depend on the agent
     // answering" shape) -- returns a short status string.
     std::string StopSession();
+
+    // subprocess-hang-protection follow-up. A no-op if no session is active;
+    // otherwise forwards to the live client_'s own ExpireStaleRequests. See
+    // LspManager::ExpireStaleRequests's identical wiring/reasoning -- meant
+    // to be called from the same periodic background tick.
+    void ExpireStaleRequests(std::chrono::milliseconds maxAge = kDefaultRequestTimeout);
 
     // session/request_permission, exposed for BufferView to render as a
     // numbered-choice prompt (LspCodeActionSelect's own shape) -- Editor/

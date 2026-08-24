@@ -1,7 +1,9 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <chrono>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 #include <poll.h>
@@ -61,8 +63,7 @@ struct ClientFixture {
     int                serverStdoutWrite; // test writes to feed the client's read thread, if a test ever wants to
     LspClient          client;
 
-    ClientFixture(int readFd, int writeFd, Transport transport, bool startHandshakeComplete)
-        : serverStdinRead(readFd), serverStdoutWrite(writeFd), client(std::move(transport), eventLoop, startHandshakeComplete) {
+    ClientFixture(int readFd, int writeFd, Transport transport, bool startHandshakeComplete) : serverStdinRead(readFd), serverStdoutWrite(writeFd), client(std::move(transport), eventLoop, startHandshakeComplete) {
     }
 
     ~ClientFixture() {
@@ -142,7 +143,7 @@ std::vector<Json> ReadQueuedFrames(int fd, std::size_t count) {
     std::string all;
     char        buffer[1024];
     while (true) { // read until every frame is present
-        std::size_t     framesSoFar = 0;
+        std::size_t      framesSoFar = 0;
         std::string_view remaining(all);
         while (true) {
             const auto headerEnd = remaining.find("\r\n\r\n");
@@ -175,7 +176,7 @@ std::vector<Json> ReadQueuedFrames(int fd, std::size_t count) {
     std::vector<Json> frames;
     std::string_view  remaining(all);
     for (std::size_t i = 0; i < count; ++i) {
-        const auto headerEnd = remaining.find("\r\n\r\n");
+        const auto                 headerEnd     = remaining.find("\r\n\r\n");
         constexpr std::string_view kPrefix       = "Content-Length: ";
         const auto                 prefixPos     = remaining.find(kPrefix);
         const std::size_t          contentLength = std::stoul(std::string(remaining.substr(prefixPos + kPrefix.size())));
@@ -324,6 +325,57 @@ TEST_CASE("SetNotificationHandler replaces a previous handler for the same metho
     fixture.client.DispatchFrame(notification.dump());
 
     REQUIRE(callCount == 1); // only the second (replacing) handler ran
+}
+
+TEST_CASE("LspClient::ExpireStaleRequests resolves a stuck request with a synthetic timeout error", "[Lsp]") {
+    // subprocess-hang-protection follow-up.
+    ClientFixture fixture = ClientFixture::Create();
+
+    bool                invoked = false;
+    std::optional<Json> gotResult;
+    std::optional<Json> gotError;
+    fixture.client.SendRequest("textDocument/hover", Json::object(), [&](std::optional<Json> result, std::optional<Json> error) {
+        invoked   = true;
+        gotResult = result;
+        gotError  = error;
+    });
+    REQUIRE_FALSE(invoked);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    fixture.client.ExpireStaleRequests(std::chrono::milliseconds(1));
+
+    REQUIRE(invoked);
+    REQUIRE_FALSE(gotResult.has_value());
+    REQUIRE(gotError.has_value());
+    REQUIRE((*gotError)["code"] == -32001);
+}
+
+TEST_CASE("LspClient::ExpireStaleRequests leaves a request younger than maxAge untouched", "[Lsp]") {
+    // subprocess-hang-protection follow-up.
+    ClientFixture fixture = ClientFixture::Create();
+
+    bool invoked = false;
+    fixture.client.SendRequest("textDocument/hover", Json::object(), [&](std::optional<Json>, std::optional<Json>) { invoked = true; });
+
+    fixture.client.ExpireStaleRequests(std::chrono::milliseconds(60000)); // real request is only milliseconds old
+
+    REQUIRE_FALSE(invoked);
+}
+
+TEST_CASE("LspClient::ExpireStaleRequests ends the LSP background-activity spinner for an expired request", "[Lsp]") {
+    // subprocess-hang-protection follow-up: mirrors DispatchFrame's own
+    // Begin/End pairing -- an expired request must not leave the mode-line
+    // spinner running forever, same as a real response would.
+    ClientFixture fixture = ClientFixture::Create();
+
+    const std::size_t before = ned::editor::ActiveBackgroundActivities().size();
+    fixture.client.SendRequest("textDocument/hover", Json::object(), [](std::optional<Json>, std::optional<Json>) {});
+    REQUIRE(ned::editor::ActiveBackgroundActivities().size() == before + 1);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    fixture.client.ExpireStaleRequests(std::chrono::milliseconds(1));
+
+    REQUIRE(ned::editor::ActiveBackgroundActivities().size() == before);
 }
 
 // error-visibility follow-up. The real background-read-loop -> EOF ->

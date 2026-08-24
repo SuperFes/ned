@@ -224,7 +224,7 @@ void LspManager::WireNotificationHandlers(LspClient& client, const std::string& 
         for (const Json& item : params["items"]) {
             const bool hasSection = item.contains("section") && item["section"].is_string();
             results.push_back(hasSection ? ResolveConfigurationSection(workspaceConfiguration, item["section"].get<std::string>())
-                                        : Json(nullptr));
+                                         : Json(nullptr));
         }
         return Json(results);
     });
@@ -400,9 +400,9 @@ LspManager::BufferSyncState* LspManager::ResolveSyncState(text::Buffer& buffer, 
 }
 
 LspClient& LspManager::SetClientForTesting(std::string language, std::unique_ptr<LspClient> client,
-                                          const Json& workspaceConfiguration) {
+                                           const Json& workspaceConfiguration) {
     WireNotificationHandlers(*client, language, workspaceConfiguration); // same wiring ClientForLanguage's real spawn path applies
-    disconnectedLanguages_.erase(language);      // an injected client is "running," same as a real successful spawn
+    disconnectedLanguages_.erase(language);                              // an injected client is "running," same as a real successful spawn
     disconnectDetail_.erase(language);
     LspClient& ref                = *client;
     clients_[std::move(language)] = std::move(client);
@@ -526,6 +526,12 @@ void LspManager::NotifyBufferClosed(text::Buffer& buffer) {
     }
     diagnosticsBySource_.erase(&buffer);
     diagnosticsDebounceTimers_.erase(&buffer); // cancels a pending timer before it can fire against a dead buffer
+}
+
+void LspManager::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
+    for (const auto& entry : clients_) {
+        entry.second->ExpireStaleRequests(maxAge);
+    }
 }
 
 void LspManager::HandlePublishDiagnostics(const Json& params, const std::string& language) {

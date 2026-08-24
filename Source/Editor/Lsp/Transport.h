@@ -14,6 +14,7 @@
 #ifndef NED_EDITOR_LSP_TRANSPORT_H
 #define NED_EDITOR_LSP_TRANSPORT_H
 
+#include <chrono>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -24,6 +25,17 @@
 #include "Editor/Process/ChildProcess.h"
 
 namespace ned::editor::lsp {
+
+// subprocess-hang-protection follow-up. Once a frame has started arriving,
+// further silence is always anomalous (a connection legitimately idles
+// *between* frames, never mid-frame) -- ReadFrame bounds every read after a
+// frame's first byte by this, so a server that starts sending and then
+// wedges mid-message eventually surfaces as a reported disconnect instead of
+// leaking the read loop forever. Generous on purpose: never meant to fire
+// against a real, working server, only a genuinely stuck one. A named
+// constant (not buried in Transport.cpp) so ReadFrame's test-only override
+// parameter below has something to default to.
+inline constexpr std::chrono::milliseconds kFrameStallTimeout{30000};
 
 class Transport {
   public:
@@ -59,8 +71,12 @@ class Transport {
     // stdout. Returns std::nullopt on EOF (the server exited) rather than
     // throwing -- that's an ordinary, expected outcome a caller needs to
     // detect and react to, not an exceptional one. Throws std::runtime_error
-    // if a frame is malformed (missing/unparseable Content-Length).
-    [[nodiscard]] std::optional<std::string> ReadFrame() const;
+    // if a frame is malformed (missing/unparseable Content-Length) or
+    // (subprocess-hang-protection follow-up) if it stalls mid-frame for
+    // longer than stallTimeout -- a parameter, not a hardcoded sleep, purely
+    // so tests can shorten it; real callers always take the kFrameStallTimeout
+    // default.
+    [[nodiscard]] std::optional<std::string> ReadFrame(std::chrono::milliseconds stallTimeout = kFrameStallTimeout) const;
 
     [[nodiscard]] pid_t Pid() const noexcept;
 

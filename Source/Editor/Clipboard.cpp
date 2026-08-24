@@ -6,6 +6,7 @@
 
 #include <unistd.h>
 
+#include "DiagnosticsLog.h"
 #include "Process/ChildProcess.h"
 
 namespace ned::editor {
@@ -29,8 +30,8 @@ namespace {
     // Memoized separately from the two overrides above: an unset override
     // should still only scan $PATH/the environment once per process, not
     // once per Resolved*Command() call.
-    std::mutex                    g_detectMutex;
-    bool                          g_detectResolved = false;
+    std::mutex                   g_detectMutex;
+    bool                         g_detectResolved = false;
     std::optional<PlatformTools> g_detected;
 
     bool EnvIsSet(const char* name) {
@@ -53,12 +54,12 @@ namespace {
         if (EnvIsSet("DISPLAY")) {
             if (process::ResolveExecutable("xclip")) {
                 g_detected = PlatformTools{.copyArgv  = {"xclip", "-selection", "clipboard", "-in"},
-                                            .pasteArgv = {"xclip", "-selection", "clipboard", "-out"}};
+                                           .pasteArgv = {"xclip", "-selection", "clipboard", "-out"}};
                 return g_detected;
             }
             if (process::ResolveExecutable("xsel")) {
                 g_detected = PlatformTools{.copyArgv  = {"xsel", "--clipboard", "--input"},
-                                            .pasteArgv = {"xsel", "--clipboard", "--output"}};
+                                           .pasteArgv = {"xsel", "--clipboard", "--output"}};
                 return g_detected;
             }
         }
@@ -72,7 +73,7 @@ namespace {
         // this file's own header comment.
         if (process::ResolveExecutable("clip.exe") && process::ResolveExecutable("powershell.exe")) {
             g_detected = PlatformTools{.copyArgv  = {"clip.exe"},
-                                        .pasteArgv = {"powershell.exe", "-NoProfile", "-Command", "Get-Clipboard"}};
+                                       .pasteArgv = {"powershell.exe", "-NoProfile", "-Command", "Get-Clipboard"}};
             return g_detected;
         }
 
@@ -116,7 +117,7 @@ namespace {
 
     void WriteOsc52(std::string_view text) {
         const std::string sequence = BuildOsc52CopySequence(text, EnvIsSet("TMUX"));
-        std::size_t        written  = 0;
+        std::size_t       written  = 0;
         while (written < sequence.size()) {
             const ssize_t result = ::write(STDOUT_FILENO, sequence.data() + written, sequence.size() - written);
             if (result <= 0) {
@@ -207,7 +208,7 @@ void CopyToSystemClipboard(std::string_view text) {
     WriteOsc52(text);
 }
 
-std::optional<std::string> PasteFromSystemClipboard() {
+std::optional<std::string> PasteFromSystemClipboard(std::chrono::milliseconds readTimeout) {
     if (!ClipboardEnabled()) {
         return std::nullopt;
     }
@@ -218,9 +219,22 @@ std::optional<std::string> PasteFromSystemClipboard() {
     try {
         process::ChildProcess child(*argv);
         std::string           output;
-        std::string           chunk;
-        while (!(chunk = child.ReadSome()).empty()) {
-            output += chunk;
+        while (true) {
+            const std::optional<std::string> chunk = child.ReadSome(readTimeout);
+            if (!chunk) {
+                // subprocess-hang-protection follow-up: no data within
+                // readTimeout -- the tool is unresponsive (a real Wayland
+                // clipboard-manager failure mode). Kill it (SIGKILL is
+                // unblockable, so this is bounded) rather than let a
+                // main-thread paste keystroke hang the whole editor.
+                child.Kill();
+                LogMessage(LogCategory::Subprocess, LogSeverity::Warning, "clipboard paste tool timed out, killed: " + (*argv)[0]);
+                return std::nullopt;
+            }
+            if (chunk->empty()) {
+                break; // EOF
+            }
+            output += *chunk;
         }
         const std::optional<int> exitCode = child.WaitForExit();
         if (exitCode && *exitCode == 0) {

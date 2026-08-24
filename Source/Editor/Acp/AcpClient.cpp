@@ -25,11 +25,14 @@ void AcpClient::StartReadLoop() {
             try {
                 message = transport_.ReadMessage(); // blocks
             }
-            catch (const std::exception&) {
-                eventLoop_.Post([this] {
-                    LogMessage(LogCategory::Acp, LogSeverity::Warning, "malformed message from agent");
+            catch (const std::exception& e) {
+                // Malformed message, or (subprocess-hang-protection
+                // follow-up) a mid-message stall -- see LspClient.cpp's
+                // identical comment.
+                eventLoop_.Post([this, reason = std::string(e.what())] {
+                    LogMessage(LogCategory::Acp, LogSeverity::Warning, reason);
                     if (onDisconnected_) {
-                        onDisconnected_("malformed message from agent");
+                        onDisconnected_(reason);
                     }
                 });
                 return;
@@ -76,7 +79,7 @@ void AcpClient::DispatchFrame(const std::string& frameText) {
         if (it == pending_.end()) {
             return; // unknown/already-handled id -- ignore
         }
-        ResponseCallback callback = std::move(it->second);
+        ResponseCallback callback = std::move(it->second.callback);
         pending_.erase(it);
         if (callback) {
             if (message.contains("error")) {
@@ -125,7 +128,7 @@ void AcpClient::DispatchFrame(const std::string& frameText) {
 
 void AcpClient::SendRequest(const std::string& method, Json params, ResponseCallback callback) {
     const int id       = nextRequestId_++;
-    pending_[id]       = std::move(callback);
+    pending_[id]       = PendingRequest{std::move(callback), std::chrono::steady_clock::now()};
     const Json message = {
         {"jsonrpc", "2.0"},
         {"id", id},
@@ -133,6 +136,28 @@ void AcpClient::SendRequest(const std::string& method, Json params, ResponseCall
         {"params", std::move(params)},
     };
     transport_.WriteMessage(message.dump());
+}
+
+void AcpClient::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
+    // subprocess-hang-protection follow-up -- see LspClient::ExpireStaleRequests's
+    // identical reasoning/collect-then-invoke shape.
+    const std::chrono::steady_clock::time_point   now = std::chrono::steady_clock::now();
+    std::vector<std::pair<int, ResponseCallback>> expired;
+    for (auto it = pending_.begin(); it != pending_.end();) {
+        if (now - it->second.sentAt >= maxAge) {
+            expired.emplace_back(it->first, std::move(it->second.callback));
+            it = pending_.erase(it);
+        }
+        else {
+            ++it;
+        }
+    }
+    for (auto& [id, callback] : expired) {
+        LogMessage(LogCategory::Acp, LogSeverity::Warning, "request " + std::to_string(id) + " timed out waiting for a response");
+        if (callback) {
+            callback(std::nullopt, Json{{"code", -32001}, {"message", "ned: request timed out waiting for a response"}});
+        }
+    }
 }
 
 void AcpClient::SendNotification(const std::string& method, Json params) {

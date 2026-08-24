@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <chrono>
 #include <stdexcept>
 #include <string>
 
@@ -98,6 +99,58 @@ TEST_CASE("Transport::ReadFrame throws on a frame with no Content-Length header"
     }
 
     REQUIRE_THROWS_AS(reader.ReadFrame(), std::runtime_error);
+}
+
+TEST_CASE("Transport::ReadFrame does not stall on ordinary idle silence between frames", "[Lsp]") {
+    // subprocess-hang-protection follow-up: a very short stallTimeout must
+    // never fire while genuinely waiting for the *first* byte of a fresh
+    // frame -- only mid-frame silence is bounded.
+    TransportPair pair = TransportPair::Create();
+
+    pair.a.WriteFrame("hello");
+    const auto received = pair.b.ReadFrame(std::chrono::milliseconds(1));
+
+    REQUIRE(received == "hello");
+}
+
+TEST_CASE("Transport::ReadFrame throws when a frame stalls mid-header", "[Lsp]") {
+    // subprocess-hang-protection follow-up.
+    int toB[2];
+    REQUIRE(::pipe(toB) == 0);
+    Transport reader(toB[0], -1);
+    Transport writer(-1, toB[1]);
+
+    // Partial header line, no terminating "\r\n\r\n", and nothing more ever
+    // arrives -- exactly what a stuck server looks like mid-message.
+    const std::string partial = "Content-Le";
+    std::size_t       written = 0;
+    while (written < partial.size()) {
+        const ssize_t result = ::write(toB[1], partial.data() + written, partial.size() - written);
+        REQUIRE(result > 0);
+        written += static_cast<std::size_t>(result);
+    }
+
+    REQUIRE_THROWS_AS(reader.ReadFrame(std::chrono::milliseconds(50)), std::runtime_error);
+}
+
+TEST_CASE("Transport::ReadFrame throws when a frame stalls mid-body", "[Lsp]") {
+    // subprocess-hang-protection follow-up.
+    int toB[2];
+    REQUIRE(::pipe(toB) == 0);
+    Transport reader(toB[0], -1);
+    Transport writer(-1, toB[1]);
+
+    // A complete, valid header announcing 5 body bytes, but only 2 ever
+    // arrive.
+    const std::string partial = "Content-Length: 5\r\n\r\nab";
+    std::size_t       written = 0;
+    while (written < partial.size()) {
+        const ssize_t result = ::write(toB[1], partial.data() + written, partial.size() - written);
+        REQUIRE(result > 0);
+        written += static_cast<std::size_t>(result);
+    }
+
+    REQUIRE_THROWS_AS(reader.ReadFrame(std::chrono::milliseconds(50)), std::runtime_error);
 }
 
 TEST_CASE("Transport constructor throws for an executable that can't be found on $PATH", "[Lsp]") {
