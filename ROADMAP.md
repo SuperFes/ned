@@ -353,12 +353,20 @@ Real, fairly uncontroversial gaps:
       gutter pass/fail marks per test, jump-to-failing-test) — `TaskRunner` only shells
       out and streams raw combined stdout/stderr; nothing parses a test framework's own
       result format into anything more structured than a scrollback buffer.
-- [ ] **Snippet expansion** (TextMate-style tabstops — `for<TAB>` expands to a
-      skeleton with fill-in fields, `<TAB>` hops between them). No bundled engine, no
-      `ned/*` scripting surface for one. A sizable feature — the tabstop-cursor
-      relocation-on-edit problem it needs is structurally the same one
-      `Buffer::AddCursorAt`'s secondary-cursor relocation already solves, worth
-      building on rather than inventing a second edit-relocation mechanism.
+- [x] **Snippet expansion** (shipped 2026-08-24) — TextMate-style tabstops:
+      `Editor/Snippet.h` (pure `ParseSnippet` + `SnippetSession`),
+      `Editor/SnippetRegistry.h` (`ned/register-snippet`, per-language-key +
+      `""`-global tiers), `Buffer::SnippetRange` (a sixth relocated tracked field
+      with active-aware gravity — built on the existing relocation primitives as
+      anticipated, though *not* literally on secondary cursors, which dedupe by
+      point and clear on undo), smart-TAB triggering via `indent-for-tab-command`
+      (+ `expand-snippet` for TAB-shadowed modes), live mirrors, an
+      `InputMode::Snippet` session with per-keystroke undo grouping/mirror sync in
+      `RunCommandAndHandleOutcome` hooks, active-field theme wash, and full LSP
+      `insertTextFormat: 2` support (`snippetSupport` now advertised; raw
+      `${1:...}` insertion bug fixed). Deliberate cuts: `$TM_*` variables,
+      choices, transforms, nested placeholders' inner stops, bundled default
+      snippets, macro-replay continuation through a session.
 - [ ] A real visual side-by-side 3-way merge/diff view. `AutoMerge` already
       auto-resolves the common case and drops real `<<<<<<<`/`=======`/`>>>>>>>`
       conflict markers into the buffer for a genuine divergence (deliberately, so the

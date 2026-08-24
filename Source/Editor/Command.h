@@ -487,7 +487,16 @@ enum class InteractiveRequest { None,
                                 // buffer only, not project-wide -- clocking commands
                                 // (org-clock-in/-out) are themselves buffer-scoped, see
                                 // Editor/Org.h's own top comment, item 8.
-                                OrgClockReport };
+                                OrgClockReport,
+                                // snippet-expansion follow-up: the requesting command found a
+                                // registered snippet trigger (or a snippet-format completion) and
+                                // filled CommandContext::snippetExpansion below; BufferView
+                                // performs the actual expansion (delete the trigger, insert the
+                                // parsed skeleton, start the tabstop session -- see
+                                // Editor/Snippet.h) since a live session is driven key-by-key
+                                // through its InputMode machinery, the same seam every other
+                                // session-shaped request here uses.
+                                SnippetExpand };
 
 // Everything a command implementation might need. Built fresh per invocation
 // from live references -- never stored, so there's no lifetime concern beyond
@@ -569,6 +578,19 @@ struct CommandContext {
     // "a UI fact/resource a command needs" shape as lspManager above. Only
     // run-task/cancel-task read this.
     tasks::TaskRunner* taskRunner = nullptr;
+    // snippet-expansion follow-up: outbound, paired with
+    // InteractiveRequest::SnippetExpand -- what to replace with which
+    // registered snippet body. [replaceStart, replaceEnd) is the trigger
+    // word (or a completion's typed prefix); body is the raw snippet
+    // syntax, parsed by BufferView at expansion time (Editor/Snippet.h).
+    // At the end of this struct per its own doc comment above -- existing
+    // positional aggregate-init call sites stay valid.
+    struct SnippetExpansionRequest {
+        std::size_t replaceStart;
+        std::size_t replaceEnd;
+        std::string body;
+    };
+    std::optional<SnippetExpansionRequest> snippetExpansion;
 };
 
 using CommandFunction = std::function<void(CommandContext&)>;

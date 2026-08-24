@@ -24,6 +24,7 @@
 #include "PageScroll.h"
 #include "ProjectRoot.h"
 #include "ProjectSession.h"
+#include "SnippetRegistry.h"
 #include "TabWidth.h"
 #include "Text/Grapheme.h"
 #include "Text/ThreeWayMerge.h"
@@ -297,6 +298,30 @@ namespace {
             return std::nullopt;
         }
         return std::pair{start, end};
+    }
+
+    // snippet-expansion follow-up: if the word ending exactly at point is a
+    // registered snippet trigger for the buffer's language (mode-specific
+    // tier first, then the "" global tier -- see Editor/SnippetRegistry.h),
+    // requests the expansion and reports true. Point must sit at the word's
+    // own end -- TAB mid-word or after whitespace never triggers, so plain
+    // indenting keeps working everywhere a trigger doesn't exactly match.
+    // A null context.mode (headless) looks up global snippets only.
+    bool TrySnippetTrigger(CommandContext& context) {
+        const auto region = WordRegionAt(context.buffer.Content(), context.buffer.Point());
+        if (!region || region->second != context.buffer.Point()) {
+            return false;
+        }
+        const std::string trigger =
+            context.buffer.Content().Substring(region->first, region->second - region->first);
+        const std::string languageKey = context.mode != nullptr ? LanguageKeyForMode(*context.mode) : "";
+        const auto        body        = SnippetBodyForTrigger(languageKey, trigger);
+        if (!body) {
+            return false;
+        }
+        context.snippetExpansion   = CommandContext::SnippetExpansionRequest{region->first, region->second, *body};
+        context.interactiveRequest = InteractiveRequest::SnippetExpand;
+        return true;
     }
 
     // The byte offset where a cursor's selection starts (its region's low
@@ -1271,18 +1296,32 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           context.buffer.InsertAtPoint(inserted);
                       }));
 
-    // A literal-tab insert, not real indent logic (Emacs' own
-    // indent-for-tab-command computes indentation; this codebase has no
-    // per-mode indent rules yet) -- the v1 scope call is just "typing Tab
-    // in Normal mode does something sane" rather than being silently
-    // swallowed as Unbound. Global, but a mode's own keymap (e.g.
+    // Snippet expansion first, then a literal-tab insert -- not real indent
+    // logic (Emacs' own indent-for-tab-command computes indentation; this
+    // codebase has no per-mode indent rules yet); the v1 scope call is just
+    // "typing Tab in Normal mode does something sane" rather than being
+    // silently swallowed as Unbound. Global, but a mode's own keymap (e.g.
     // org-mode's org-cycle, markdown-mode's markdown-table-align) still
     // wins via KeymapStack's priority order, so this only ever fires where
-    // nothing more specific claimed TAB first.
-    registry.Register("indent-for-tab-command", "Insert a tab character at point.", [](CommandContext& context) {
-        context.buffer.ClearMark();
-        context.buffer.InsertAtPoint("\t");
-    });
+    // nothing more specific claimed TAB first (snippet expansion in those
+    // modes goes through the expand-snippet command instead).
+    registry.Register("indent-for-tab-command",
+                      "Expand the snippet trigger before point, or insert a tab character.",
+                      [](CommandContext& context) {
+                          if (TrySnippetTrigger(context)) {
+                              return;
+                          }
+                          context.buffer.ClearMark();
+                          context.buffer.InsertAtPoint("\t");
+                      });
+
+    registry.Register("expand-snippet",
+                      "Expand the registered snippet whose trigger word ends at point.",
+                      [](CommandContext& context) {
+                          if (!TrySnippetTrigger(context) && context.message != nullptr) {
+                              *context.message = "No snippet matches the word before point.";
+                          }
+                      });
 
     // move-line-up/move-line-down follow-up: swaps the current line with
     // its neighbor by replacing the byte span covering both with them

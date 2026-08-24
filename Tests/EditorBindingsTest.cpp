@@ -24,6 +24,7 @@
 #include "Editor/ProjectRoot.h"
 #include "Editor/ScratchPad.h"
 #include "Editor/ScriptingSession.h"
+#include "Editor/SnippetRegistry.h"
 #include "Editor/SyntaxTheme.h"
 #include "Editor/ThemeSetting.h"
 #include "Janet/EditorBindings.h"
@@ -584,4 +585,32 @@ TEST_CASE("ned/recover-backup panics on a bad index or pathless buffer, leaving 
     REQUIRE_THROWS_AS(env.DoString("(ned/recover-backup 5)"), std::runtime_error);
 
     REQUIRE(fixture.buffer.Text() == "untouched");
+}
+
+TEST_CASE("ned/register-snippet and ned/snippet-triggers round-trip the registry", "[EditorBindings]") {
+    Environment& env = ned_tests::TestEnvironment();
+    InstallEditorBindings(env);
+    struct RegistryGuard {
+        ~RegistryGuard() {
+            ned::editor::ClearAllSnippets();
+        }
+    } guard;
+    ned::editor::ClearAllSnippets();
+
+    env.DoString(R"janet((ned/register-snippet "cpp" "for" "for (${1:i};)"))janet");
+    env.DoString(R"((ned/register-snippet "" "todo" "TODO: $0"))");
+    REQUIRE(ned::editor::SnippetBodyForTrigger("cpp", "for") == "for (${1:i};)");
+    REQUIRE(ned::editor::SnippetBodyForTrigger("python", "todo") == "TODO: $0");
+
+    // Empty body clears.
+    env.DoString(R"((ned/register-snippet "cpp" "for" ""))");
+    REQUIRE(!ned::editor::SnippetBodyForTrigger("cpp", "for").has_value());
+
+    // snippet-triggers returns the merged, sorted view.
+    env.DoString(R"((ned/register-snippet "cpp" "while" "w"))");
+    env.DoString(R"((def triggers (ned/snippet-triggers "cpp")))");
+    env.DoString(R"((assert (deep= triggers @["todo" "while"])))");
+
+    // An empty trigger panics with a real error.
+    REQUIRE_THROWS(env.DoString(R"((ned/register-snippet "cpp" "" "body"))"));
 }

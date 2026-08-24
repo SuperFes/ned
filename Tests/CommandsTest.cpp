@@ -16,6 +16,7 @@
 #include "Editor/Mode.h"
 #include "Editor/ProjectRoot.h"
 #include "Editor/ProjectSession.h"
+#include "Editor/SnippetRegistry.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
 #include "Text/KillRing.h"
@@ -2957,4 +2958,106 @@ TEST_CASE("ned-init-project doesn't duplicate an existing session.json .gitignor
     REQUIRE(message.find(".gitignore") == std::string::npos);
 
     std::filesystem::remove_all(root);
+}
+
+// --- Snippet trigger detection (snippet-expansion follow-up) --------------
+
+namespace {
+
+// The snippet registry is process-wide state (see Editor/SnippetRegistry.h)
+// -- same RAII isolation FormatCommandGuard gives FormatCommand.
+struct SnippetRegistryGuard {
+    SnippetRegistryGuard() {
+        ned::editor::ClearAllSnippets();
+    }
+    ~SnippetRegistryGuard() {
+        ned::editor::ClearAllSnippets();
+    }
+};
+
+} // namespace
+
+TEST_CASE("indent-for-tab-command requests expansion of a registered trigger", "[Commands]") {
+    const SnippetRegistryGuard guard;
+    RegisterSnippet("", "for", "for (${1:i};)");
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("for");
+    CommandContext context = fixture.Context();
+    registry.Invoke("indent-for-tab-command", context);
+    REQUIRE(context.interactiveRequest == InteractiveRequest::SnippetExpand);
+    REQUIRE(context.snippetExpansion.has_value());
+    REQUIRE(context.snippetExpansion->replaceStart == 0);
+    REQUIRE(context.snippetExpansion->replaceEnd == 3);
+    REQUIRE(context.snippetExpansion->body == "for (${1:i};)");
+    // The command itself mutates nothing -- BufferView performs the expansion.
+    REQUIRE(fixture.buffer.Text() == "for");
+}
+
+TEST_CASE("indent-for-tab-command inserts a literal tab when nothing matches", "[Commands]") {
+    const SnippetRegistryGuard guard;
+    RegisterSnippet("", "for", "body");
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("while");
+    CommandContext context = fixture.Context();
+    registry.Invoke("indent-for-tab-command", context);
+    REQUIRE(context.interactiveRequest == InteractiveRequest::None);
+    REQUIRE(fixture.buffer.Text() == "while\t");
+}
+
+TEST_CASE("A snippet trigger only fires with point exactly at the word's end", "[Commands]") {
+    const SnippetRegistryGuard guard;
+    RegisterSnippet("", "for", "body");
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("for");
+    fixture.buffer.SetPoint(2); // mid-word
+    CommandContext context = fixture.Context();
+    registry.Invoke("indent-for-tab-command", context);
+    REQUIRE(context.interactiveRequest == InteractiveRequest::None);
+    REQUIRE(fixture.buffer.Text() == "fo\tr");
+}
+
+TEST_CASE("Snippet trigger lookup keys on the buffer's mode language", "[Commands]") {
+    const SnippetRegistryGuard guard;
+    RegisterSnippet("cpp", "for", "cpp-body");
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture cppFixture;
+    cppFixture.buffer.InsertAtPoint("for");
+    Mode cppMode;
+    cppMode.name              = "cpp-mode";
+    CommandContext cppContext = cppFixture.Context();
+    cppContext.mode           = &cppMode;
+    registry.Invoke("indent-for-tab-command", cppContext);
+    REQUIRE(cppContext.interactiveRequest == InteractiveRequest::SnippetExpand);
+    REQUIRE(cppContext.snippetExpansion->body == "cpp-body");
+
+    // A null mode (headless) sees only the "" global tier -- no cpp match.
+    Fixture plainFixture;
+    plainFixture.buffer.InsertAtPoint("for");
+    CommandContext plainContext = plainFixture.Context();
+    registry.Invoke("indent-for-tab-command", plainContext);
+    REQUIRE(plainContext.interactiveRequest == InteractiveRequest::None);
+    REQUIRE(plainFixture.buffer.Text() == "for\t");
+}
+
+TEST_CASE("expand-snippet reports when no trigger matches", "[Commands]") {
+    const SnippetRegistryGuard guard;
+    CommandRegistry            registry;
+    RegisterBuiltinCommands(registry);
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("nomatch");
+    std::string    message;
+    CommandContext context = fixture.Context();
+    context.message        = &message;
+    registry.Invoke("expand-snippet", context);
+    REQUIRE(context.interactiveRequest == InteractiveRequest::None);
+    REQUIRE(message == "No snippet matches the word before point.");
+    REQUIRE(fixture.buffer.Text() == "nomatch"); // no literal-tab fallback here
 }

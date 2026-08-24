@@ -498,6 +498,8 @@ add_library(ned_lib STATIC
         Source/Editor/CodeFoldSettings.cpp
         Source/Editor/Org.cpp
         Source/Editor/OrgCapture.cpp
+        Source/Editor/Snippet.cpp
+        Source/Editor/SnippetRegistry.cpp
         Source/Editor/Table.cpp
         Source/Editor/Markdown.cpp
         Source/Editor/Link.cpp
@@ -734,6 +736,8 @@ if (NED_BUILD_TESTS)
             Tests/RectangleTest.cpp
             Tests/AutoPairTest.cpp
             Tests/DabbrevCompleteTest.cpp
+            Tests/SnippetTest.cpp
+            Tests/SnippetRegistryTest.cpp
             Tests/JanetSymbolCompleteTest.cpp
             Tests/AutoRevertTest.cpp
             Tests/AutoMergeTest.cpp

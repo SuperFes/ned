@@ -46,6 +46,7 @@
 #include "Editor/PromptHistory.h"
 #include "Editor/QueryReplace.h"
 #include "Editor/Register.h"
+#include "Editor/Snippet.h"
 #include "Editor/Tasks/TaskRunner.h"
 #include "Editor/Vcs/VcsProvider.h"
 #include "Editor/Vcs/VcsRunner.h"
@@ -591,7 +592,19 @@ class BufferView : public Widget {
                            // mode and is re-dispatched normally through
                            // DispatchChordNormally with pendingPrefixArg_
                            // applied.
-                           PrefixArgument };
+                           PrefixArgument,
+                           // snippet-expansion follow-up: a live tabstop
+                           // session (Editor/Snippet.h's SnippetSession) --
+                           // TAB/S-TAB hop fields, ESC ends, and everything
+                           // else re-dispatches through DispatchChordNormally
+                           // (HandlePrefixArgumentKey's own re-dispatch
+                           // shape), with RunCommandAndHandleOutcome's
+                           // snippet hooks wrapping each dispatched edit and
+                           // its mirror sync in one undo group. Being a
+                           // non-Normal mode, macro replay stops at an
+                           // expansion (ReplayMacro's existing rule) -- an
+                           // inherited, deliberate limitation.
+                           Snippet };
 
     enum class DeleteFileStage { EnteringPath,
                                  Confirming };
@@ -632,6 +645,31 @@ class BufferView : public Widget {
     // same chord through the identical path once a reading session ends.
     bool DispatchChordNormally(const editor::KeyChord& chord);
     void HandlePrefixArgumentKey(const editor::KeyChord& chord);
+    // snippet-expansion follow-up. HandleSnippetKey classifies only: the
+    // navigation/end chords it consumes, everything else falls through to
+    // DispatchChordNormally as its last statement (nothing after -- the
+    // dispatched command can destroy *this*, HandlePrefixArgumentKey's
+    // exact constraint); the per-keystroke buffer work (undo group, armed
+    // pristine-placeholder delete, mirror sync, end-of-session checks)
+    // lives in RunCommandAndHandleOutcome's snippet hooks, where *this* is
+    // provably alive and command-driven edits (kill-line, yank, C-u
+    // repeats) get identical treatment to plain typing.
+    void HandleSnippetKey(const editor::KeyChord& chord);
+    // Performs a requested expansion (parse, replace [replaceStart,
+    // replaceEnd), start the session) against the active buffer -- the
+    // InteractiveRequest::SnippetExpand case and the snippet-format
+    // LSP-completion accept path both land here.
+    void BeginSnippetExpansion(std::size_t replaceStart, std::size_t replaceEnd, const std::string& body);
+    // Clears the session's buffer-side ranges (buffer re-resolved by name
+    // -- a buffer closed mid-session is a safe no-op) and resets the
+    // members; leaves the expanded text in place.
+    void EndSnippetSession();
+    // The session buffer, re-resolved by name per use (AsyncFileLoader's
+    // own never-hold-a-Buffer* precedent): BufferList::Find first, falling
+    // back to the active buffer when its name matches -- a headless
+    // BufferView's buffer isn't necessarily in any BufferList. nullptr
+    // means the buffer is genuinely gone (closed mid-session).
+    [[nodiscard]] text::Buffer* ResolveSnippetBuffer();
     void HandleSearchKey(const editor::KeyChord& chord);
     // search_->StatusText() plus a dimmed ghost of lastSearchQuery_ appended
     // when the current query is still empty -- see lastSearchQuery_'s own
@@ -1515,6 +1553,10 @@ class BufferView : public Widget {
     // at byteOffset -- Paint() inverts that cell as the secondary caret.
     [[nodiscard]] bool IsSecondaryCursorAt(std::size_t byteOffset) const;
     [[nodiscard]] bool InIsearchMatch(std::size_t byteOffset) const;
+    // snippet-expansion follow-up: whether byteOffset falls inside the live
+    // session's active tabstop field -- InIsearchMatch's exact per-cell
+    // paint-loop shape, backing the snippetFieldBackground wash.
+    [[nodiscard]] bool InActiveSnippetField(std::size_t byteOffset) const;
 
     // exhaustive-highlighting follow-up: theme_.BrushFor(cls, captureId)
     // through brushCache_ (below) -- the render loop's only path to a
@@ -1644,6 +1686,17 @@ class BufferView : public Widget {
     // exhaustively handled.
     std::optional<editor::PrefixArgumentReader> prefixArgReader_;
     std::optional<long>                         pendingPrefixArg_;
+    // snippet-expansion follow-up: the live tabstop session (see
+    // InputMode::Snippet above). pendingSnippetExpansion_ carries a
+    // command's CommandContext::snippetExpansion from
+    // RunCommandAndHandleOutcome's stash (the pendingZapToCharAppend_
+    // shape) to StartInteractiveSession's SnippetExpand case;
+    // snippetPendingPristineDelete_ arms HandleSnippetKey's
+    // "first typed character replaces the pristine placeholder" delete for
+    // the pre-dispatch hook to apply.
+    std::optional<editor::SnippetSession>                          snippetSession_;
+    std::optional<editor::CommandContext::SnippetExpansionRequest> pendingSnippetExpansion_;
+    bool                                                           snippetPendingPristineDelete_ = false;
     // The most recent non-empty isearch query, kept across sessions
     // (Accept and Cancel both record it, matching real Emacs' search ring
     // remembering a search string regardless of how the session ended).

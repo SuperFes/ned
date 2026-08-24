@@ -66,6 +66,7 @@ Theme ThemeFromPalette(std::string name, const ThemePalette& p) {
         .currentLineNumberForeground   = p.foreground,
         .selectionBackground           = p.selectionBackground,
         .isearchMatchBackground        = p.searchMatchBackground,
+        .snippetFieldBackground        = p.selectionBackground,
         .tabBar                        = Brush{.background = p.chromeBackground, .foreground = dimChromeForeground},
         .activeTab                     = Brush{.background = p.chromeBackgroundEmphasis, .foreground = p.chromeForeground, .bold = true},
         .scrollBar                     = Brush{.foreground = p.subtleForeground},
