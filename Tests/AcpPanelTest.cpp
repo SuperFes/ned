@@ -209,7 +209,7 @@ TEST_CASE("AcpPanel's Enter sends the typed prompt through AcpManager and clears
     REQUIRE(fixture.RowText(kHeight - 1) == "Prompt:");
 }
 
-TEST_CASE("AcpPanel's Escape and its [x] close button both invoke the toggle callback", "[AcpPanel]") {
+TEST_CASE("AcpPanel's Escape and its close (x) button both invoke the toggle callback", "[AcpPanel]") {
     Fixture fixture;
     int     toggles = 0;
     fixture.panel.SetOnToggleRequest([&toggles] { ++toggles; });

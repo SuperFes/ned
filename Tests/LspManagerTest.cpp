@@ -729,7 +729,7 @@ TEST_CASE("LspManager::ExecuteCommand reports failure when the buffer was never 
     REQUIRE_FALSE(gotOk);
 }
 
-TEST_CASE("LspManager::RequestDefinition resolves a Location[] response's uris to real paths", "[Lsp]") {
+TEST_CASE("LspManager::RequestDefinition resolves a Location-array response's uris to real paths", "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
     LspManager                  manager(bufferList, eventLoop);
