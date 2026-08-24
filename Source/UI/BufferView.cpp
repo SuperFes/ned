@@ -43,6 +43,7 @@
 #include "Editor/ToolchainIncludePaths.h"
 #include "Editor/Variables.h"
 #include "Editor/Vcs/DiffPatch.h"
+#include "Editor/WhitespaceSettings.h"
 #include "Editor/WrapOverrides.h"
 #include "KeyTranslation.h"
 #include "Text/BinaryDetect.h"
@@ -248,6 +249,11 @@ namespace {
     // last column when wrap is off and the line is too long for the
     // viewport -- see the render loop's own use below.
     constexpr char32_t kTruncationIndicator = U'»';
+
+    // Whitespace-visualization follow-up: overwrites a leading-whitespace
+    // cell that lands exactly on an indent-width column boundary -- see the
+    // render loop's own use below.
+    constexpr char32_t kIndentGuide = U'│';
 
     char32_t HexDigit(char32_t nibble) {
         return (nibble < 10) ? (U'0' + nibble) : (U'A' + (nibble - 10));
@@ -1721,6 +1727,16 @@ void BufferView::Paint(Canvas c) {
     std::vector<WrapSegment>           lineSegments;
     std::vector<editor::HighlightSpan> currentLineSpans;
     std::vector<RenderedLink>          currentLineLinks;
+    // Whitespace-visualization follow-up: same "compute once per line, not
+    // once per row/character" shape as currentLineSpans/currentLineLinks
+    // above. currentLineTrailingWhitespaceStart is the byte offset of the
+    // first byte in the line's own trailing run of spaces/tabs (lineEnd
+    // itself if the line has no trailing whitespace, so the `offset >=`
+    // check below is trivially false); currentLineIndentEnd is the byte
+    // offset one past the line's own leading run of spaces/tabs (lineStart
+    // itself if the line has no leading whitespace at all).
+    std::size_t currentLineTrailingWhitespaceStart = 0;
+    std::size_t currentLineIndentEnd               = 0;
     // Diff gutter markers follow-up: same "compute once per line, not once
     // per row/character" shape as currentLineSpans/currentLineLinks above --
     // feeds the subtle background tint applied per character below
@@ -1791,6 +1807,27 @@ void BufferView::Paint(Canvas c) {
             if (segmentIndex == 0) {
                 currentLineSpans = SpansForLine(highlightSpans, lineStart, lineEnd);
                 currentLineLinks = LinksForLine(linkCache_, lineStart, lineEnd, point);
+                // Whitespace-visualization follow-up: skipped (both fields
+                // left at their "empty run" default) unless at least one of
+                // the two features is on, so a default-off installation pays
+                // no extra Substring-per-line cost here.
+                currentLineTrailingWhitespaceStart = lineEnd;
+                currentLineIndentEnd               = lineStart;
+                if (editor::TrailingWhitespaceHighlightEnabled() || editor::IndentGuidesEnabled()) {
+                    const std::string lineText      = content.Substring(lineStart, lineEnd - lineStart);
+                    std::size_t       trailingStart = lineText.size();
+                    while (trailingStart > 0 &&
+                           (lineText[trailingStart - 1] == ' ' || lineText[trailingStart - 1] == '\t')) {
+                        --trailingStart;
+                    }
+                    currentLineTrailingWhitespaceStart = lineStart + trailingStart;
+
+                    std::size_t indentEnd = 0;
+                    while (indentEnd < lineText.size() && (lineText[indentEnd] == ' ' || lineText[indentEnd] == '\t')) {
+                        ++indentEnd;
+                    }
+                    currentLineIndentEnd = lineStart + indentEnd;
+                }
                 currentLineDiagnosticSpans.clear();
                 for (const text::Buffer::Diagnostic& diagnostic : buffer.Diagnostics()) {
                     // prose-diagnostic-callout follow-up: no code-style
@@ -2308,6 +2345,16 @@ void BufferView::Paint(Canvas c) {
                             break;
                     }
                 }
+                else if (editor::TrailingWhitespaceHighlightEnabled() && offset >= currentLineTrailingWhitespaceStart) {
+                    // Whitespace-visualization follow-up: lowest priority of
+                    // this chain, same reasoning as every case above it --
+                    // an active isearch/selection/execution/multibuffer
+                    // overlay always wins over this purely cosmetic wash.
+                    // offset >= currentLineTrailingWhitespaceStart already
+                    // guarantees this cell is a space/tab (see that field's
+                    // own doc comment), so no codepoint check is needed here.
+                    brush.background = theme_.trailingWhitespaceBackground;
+                }
 
                 if (decoded.codepoint == U'\t') {
                     // A real terminal treats a raw tab byte as "jump to the next
@@ -2321,11 +2368,25 @@ void BufferView::Paint(Canvas c) {
                     // real terminal's actual column count -- in agreement.
                     // editor::TabWidth() is a *display* setting only; the
                     // buffer's real tab byte is untouched.
-                    const int tabWidth = editor::TabWidth();
+                    const int  tabWidth = editor::TabWidth();
+                    const bool inIndent = editor::IndentGuidesEnabled() && offset < currentLineIndentEnd;
                     for (int i = 0; i < tabWidth && col < c.size().width; ++i) {
-                        Cell& cell     = c[{.x = col, .y = row}];
-                        cell.character = " ";
-                        brush.ApplyTo(cell);
+                        Cell&     cell          = c[{.x = col, .y = row}];
+                        const int displayColumn = col - static_cast<int>(gutterWidth);
+                        if (inIndent && displayColumn > 0 && displayColumn % tabWidth == 0) {
+                            // Whitespace-visualization follow-up: a guide
+                            // glyph in place of one of the expanded tab's
+                            // space cells, at each indent-width column --
+                            // see currentLineIndentEnd's own doc comment.
+                            cell.character        = text::EncodeCodepointUtf8(kIndentGuide);
+                            Brush guideBrush      = brush;
+                            guideBrush.foreground = theme_.indentGuideForeground;
+                            guideBrush.ApplyTo(cell);
+                        }
+                        else {
+                            cell.character = " ";
+                            brush.ApplyTo(cell);
+                        }
                         if (i == 0 && secondaryCaretHere) {
                             cell.inverted = true;
                         }
@@ -2362,9 +2423,24 @@ void BufferView::Paint(Canvas c) {
                     }
                 }
                 else {
-                    Cell& cell     = c[{.x = col, .y = row}];
-                    cell.character = text::EncodeCodepointUtf8(decoded.codepoint);
-                    brush.ApplyTo(cell);
+                    Cell&     cell          = c[{.x = col, .y = row}];
+                    const int displayColumn = col - static_cast<int>(gutterWidth);
+                    // offset < currentLineIndentEnd here only ever holds for
+                    // a space cell (see that field's own doc comment: the
+                    // scan that computes it stops at the first non-space/tab
+                    // byte), so decoded.codepoint is guaranteed U' ' whenever
+                    // this substitutes a guide glyph.
+                    if (editor::IndentGuidesEnabled() && offset < currentLineIndentEnd && displayColumn > 0 &&
+                        displayColumn % editor::TabWidth() == 0) {
+                        cell.character        = text::EncodeCodepointUtf8(kIndentGuide);
+                        Brush guideBrush      = brush;
+                        guideBrush.foreground = theme_.indentGuideForeground;
+                        guideBrush.ApplyTo(cell);
+                    }
+                    else {
+                        cell.character = text::EncodeCodepointUtf8(decoded.codepoint);
+                        brush.ApplyTo(cell);
+                    }
                     if (secondaryCaretHere) {
                         cell.inverted = true;
                     }

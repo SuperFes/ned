@@ -221,6 +221,15 @@ struct Theme {
     Color diffAddedBackground;
     Color diffRemovedBackground;
 
+    // Whitespace-visualization follow-up: a subtle background wash for
+    // trailing whitespace (BufferView::Paint()'s own "is this cell still
+    // inside the line's trailing run" check), and the foreground for the
+    // vertical indent-guide glyph drawn at each indent-width column within
+    // a line's own leading whitespace. Both gated off by default -- see
+    // Editor/WhitespaceSettings.h.
+    Color trailingWhitespaceBackground;
+    Color indentGuideForeground;
+
     // Org-mode syntax-highlighting follow-up: one Color per new
     // Org-specific SyntaxClass member (Mode.h) -- headline levels cycle
     // through 3 distinct, bold hues; TodoKeyword/DoneKeyword use the

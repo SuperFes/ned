@@ -493,6 +493,7 @@ add_library(ned_lib STATIC
         Source/Editor/Variables.cpp
         Source/Editor/HighlightSettings.cpp
         Source/Editor/MinimapSettings.cpp
+        Source/Editor/WhitespaceSettings.cpp
         Source/Editor/GitIgnore.cpp
         Source/Editor/SearchSettings.cpp
         Source/Editor/ProjectSearch.cpp
@@ -766,6 +767,7 @@ if (NED_BUILD_TESTS)
             Tests/DiffRefreshSettingsTest.cpp
             Tests/HighlightSettingsTest.cpp
             Tests/MinimapSettingsTest.cpp
+            Tests/WhitespaceSettingsTest.cpp
             Tests/MinimapTest.cpp
             Tests/OverlayTest.cpp
             Tests/GitIgnoreTest.cpp

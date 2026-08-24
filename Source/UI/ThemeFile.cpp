@@ -87,6 +87,8 @@ namespace {
         {"execution_line_background", &Theme::executionLineBackground},
         {"diff_added_background", &Theme::diffAddedBackground},
         {"diff_removed_background", &Theme::diffRemovedBackground},
+        {"trailing_whitespace_background", &Theme::trailingWhitespaceBackground},
+        {"indent_guide_foreground", &Theme::indentGuideForeground},
         {"headline_level1_foreground", &Theme::headlineLevel1Foreground},
         {"headline_level2_foreground", &Theme::headlineLevel2Foreground},
         {"headline_level3_foreground", &Theme::headlineLevel3Foreground},

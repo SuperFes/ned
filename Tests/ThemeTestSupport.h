@@ -62,10 +62,10 @@ inline std::map<std::string, ui::Color> SerializedColors(const ui::Theme& theme)
 // that Brush sets one, the theme background otherwise. Two special cases:
 // mode_line_foreground renders over the gradient, so it's checked against
 // both endpoints instead; and the deliberately-quiet chrome (the border
-// lines, the disabled scroll bar -- structural marks designed to recede,
-// like DarkTheme's own near-background 0x3a3a50 border) gets a third of the
-// floor rather than a full skip, so "quiet" can never regress to
-// "invisible."
+// lines, the disabled scroll bar, the indent guide -- structural marks
+// designed to recede, like DarkTheme's own near-background 0x3a3a50 border)
+// gets a third of the floor rather than a full skip, so "quiet" can never
+// regress to "invisible."
 inline void RequireForegroundContrast(const ui::Theme& theme, int floor) {
     const auto colors = SerializedColors(theme);
 
@@ -75,8 +75,9 @@ inline void RequireForegroundContrast(const ui::Theme& theme, int floor) {
             continue;
         }
         INFO(theme.name << ": " << key);
-        const bool quietChrome = key == "scroll_bar_disabled_foreground" || key == "border_foreground";
-        const int  keyFloor    = quietChrome ? floor / 3 : floor;
+        const bool quietChrome =
+            key == "scroll_bar_disabled_foreground" || key == "border_foreground" || key == "indent_guide_foreground";
+        const int keyFloor = quietChrome ? floor / 3 : floor;
         if (key == "mode_line_foreground") {
             REQUIRE(std::abs(Luma(color) - Luma(colors.at("mode_line_gradient_start"))) >= keyFloor);
             REQUIRE(std::abs(Luma(color) - Luma(colors.at("mode_line_gradient_end"))) >= keyFloor);
