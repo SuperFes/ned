@@ -293,24 +293,6 @@ argued against, not just added.
 
 Real, fairly uncontroversial gaps:
 
-- [ ] **Auto-closing/matching brackets and quotes** (typing `(`/`"`/`{` inserts the
-      closer too, typing the closer again just moves past it). VSCode/Sublime/JetBrains
-      default this on; Emacs treats it as an opt-in minor mode (`electric-pair-mode`) —
-      ned should follow Emacs' precedent here (a togglable mode, not a forced-on
-      default) rather than assume VSCode's.
-- [ ] **Buffer-local completion fallback** for a file with no LSP server configured
-      (Emacs' `dabbrev-expand`/`hippie-expand`, Vim's `<C-n>`/`<C-p>` keyword
-      completion) — scan open buffers for word-prefix matches. LSP ghost-text
-      completion (`LspManager::RequestCompletion`) is the only completion source
-      today; a plain-text buffer, a README, or a language nobody's configured a server
-      for gets no completion at all.
-- [ ] **Live per-line VCS diff gutter** ("this line added/changed/removed since the
-      last commit," recomputed as you type — Gitsigns/GitGutter's own feature) —
-      distinct from the blame gutter already shipped (committed history, not
-      working-tree state) and from `vcs-status` (file-level, not line-level).
-- [ ] **Split-pane resize** (drag or keyboard) — `WindowManager`'s own header comment
-      already documents "fixed 50/50 splits only, no drag-resize yet," but it was never
-      promoted to a tracked item here.
 - [ ] **Structured test-runner integration** (discover a project's test framework,
       gutter pass/fail marks per test, jump-to-failing-test) — `TaskRunner` only shells
       out and streams raw combined stdout/stderr; nothing parses a test framework's own
@@ -321,7 +303,6 @@ Real, fairly uncontroversial gaps:
       relocation-on-edit problem it needs is structurally the same one
       `Buffer::AddCursorAt`'s secondary-cursor relocation already solves, worth
       building on rather than inventing a second edit-relocation mechanism.
-- [ ] Trailing-whitespace / indentation-guide visualization.
 - [ ] A real visual side-by-side 3-way merge/diff view. `AutoMerge` already
       auto-resolves the common case and drops real `<<<<<<<`/`=======`/`>>>>>>>`
       conflict markers into the buffer for a genuine divergence (deliberately, so the
