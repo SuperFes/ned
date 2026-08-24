@@ -1053,6 +1053,14 @@ Mode OrgMode() {
     // "C-c a" briefly had for the ACP commands.
     keymap.Bind(ParseKeySequence("C-c C-x p"), "org-set-property");
     keymap.Bind(ParseKeySequence("C-c C-x d"), "org-delete-property");
+    // Clocking follow-up: real Org's own bindings are "C-c C-x C-i"/
+    // "C-c C-x C-o" -- deliberately using a plain final letter here
+    // instead ("i"/"o", not "C-i"/"C-o"): Ctrl-I is byte-identical to Tab
+    // over a raw terminal with no Kitty keyboard protocol assumed, an
+    // unnecessary reliability risk for no real gain under this same
+    // "C-c C-x" prefix p/d already use safely above.
+    keymap.Bind(ParseKeySequence("C-c C-x i"), "org-clock-in");
+    keymap.Bind(ParseKeySequence("C-c C-x o"), "org-clock-out");
     // Scheduling/recurrence follow-up: real Org's own bindings -- both
     // deliberately shadow a global command (project-search/create-directory)
     // the same way C-c C-p already does; see Mode.h's own doc comment.

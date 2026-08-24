@@ -773,6 +773,7 @@ if (NED_BUILD_TESTS)
             Tests/CodeFoldTest.cpp
             Tests/OrgTest.cpp
             Tests/OrgCaptureTest.cpp
+            Tests/OrgClockTest.cpp
             Tests/TableTest.cpp
             Tests/MarkdownTest.cpp
             Tests/MarkdownHighlightTest.cpp
