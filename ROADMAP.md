@@ -118,25 +118,40 @@ Notcurses.
       (`\#foo`) and POSIX named classes (`[[:alnum:]]`) in patterns (both rare);
       `IsIgnored` answers for the queried path only, relying on the walkers'
       directory pruning rather than re-checking every ancestor per file.
-- [ ] **PCRE2 for in-file regex matching/replacing** (eventually, after the RE2
-      search work above) -- `Editor/QueryReplace.cpp`'s `query-replace-regexp` and
-      `Editor/ProjectReplace.cpp`'s actual per-file rewrite step are the only two
-      user-facing "type your own regex" surfaces left on plain `std::regex`
-      (ECMAScript syntax) now that project search itself has moved to RE2 (see above; everywhere
-      else `std::regex` appears in this codebase -- `GitIgnore.cpp`'s glob
-      translation, `Link.cpp`/`Org.cpp`'s hardcoded patterns, `TreeSitter/Query.cpp`'s
-      `#match?` predicate compilation, `BufferView.cpp`'s fixed result-line parsing --
-      is internal fixed-pattern plumbing, not user-typed). PCRE2 (also
-      `FetchContent`'d) is the deliberate choice over RE2 for this pair: `std::regex`
-      per the C++ standard's ECMAScript grammar has no lookbehind support at all and
-      no named capture groups, is essentially byte-oriented rather than genuinely
-      Unicode-aware (`\p{...}` classes), and its interpreter (no JIT) has a long-
-      standing reputation as one of the slower mainstream regex engines -- PCRE2's
-      JIT (`pcre2_jit_compile`) closes that gap while adding the missing features.
-      Still a backtracking engine underneath (unlike RE2), so this needs a real
-      match-limit (`pcre2_set_match_limit`) as a safety net -- moving to PCRE2 doesn't
-      remove the catastrophic-backtracking exposure `std::regex` already has today,
-      it just makes the common case faster and the syntax more complete.
+- [x] **PCRE2 for in-file regex matching/replacing** (shipped 2026-08-24) --
+      `Editor/RegexPattern.h/.cpp`, a pimpl'd RAII wrapper (pcre2.h stays off the
+      public include surface, RE2's own privacy treatment) now backing both
+      `Editor/QueryReplace.cpp` and `Editor/ProjectReplace.cpp`'s `ReplaceMatches`,
+      the last two user-facing "type your own regex" surfaces that were on
+      `std::regex` (everywhere else `std::regex` remains -- `GitIgnore.cpp`,
+      `Link.cpp`/`Org.cpp`, `TreeSitter/Query.cpp`, `BufferView.cpp`'s result-line
+      parsing -- is internal fixed-pattern plumbing, deliberately untouched).
+      Compiled `UTF | UCP | MULTILINE | MATCH_INVALID_UTF` with an LF newline
+      convention: `^`/`$` anchor at line boundaries (what an editor user expects,
+      and what makes project-replace's per-line search preview agree with its
+      whole-file rewrite), `\w`/`\b`/`\p{...}` are Unicode-aware, and stray invalid
+      bytes in a "text-looking" file are tolerated rather than an error. JIT'd via
+      `pcre2_jit_compile` (silent interpreter fallback), with
+      `pcre2_set_match_limit` (1M steps, tighter than PCRE2's 10M default) as the
+      catastrophic-backtracking safety net -- a trip throws `RegexPatternError`,
+      which `BufferView`'s handlers surface as a status message ending the session
+      rather than a crash or a frozen UI. Two structural bug fixes came free:
+      `QueryReplace`'s documented ^-anchoring limitation (it searched trimmed
+      subranges; `RegexPattern::Search` takes a start offset over the whole
+      subject, so `^`/`\b`/lookbehind see preceding context), and replacement
+      expansion is now hand-rolled (`FormatReplacement`) preserving the
+      ECMAScript `$1`/`$&`/`` $` ``/`$'`/`$$` set `std::smatch::format` provided
+      while adding `${name}` named groups. Zero-width-match stepping advances a
+      whole codepoint (new `Text/Utf8.h` `NextCodepointBoundary`), never
+      mid-UTF-8-sequence. The old "RE2-validated pattern can still throw at
+      rewrite time" split-engine gap is practically closed (PCRE2 accepts
+      essentially everything RE2 does); the reverse constraint is documented and
+      stands: lookaround/backreferences work in single-buffer
+      `query-replace-regexp` but not project-replace, whose preview is RE2's
+      linear-time engine by design. Deliberate cuts: no `\1`-style Emacs
+      backreference syntax in replacements (kept `$`-style from the std::regex
+      era), no user-configurable match limit, and `IncrementalSearch` stays
+      literal-only (regex isearch was never in scope).
 
 ### Large files
 

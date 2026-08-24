@@ -5574,7 +5574,7 @@ void BufferView::HandleSearchKey(const editor::KeyChord& chord) {
     ScrollToShowPoint();
 }
 
-void BufferView::HandleQueryReplaceKey(const editor::KeyChord& chord) {
+void BufferView::HandleQueryReplaceKeyInner(const editor::KeyChord& chord) {
     const auto stage = queryReplace_->CurrentStage();
 
     if (stage == editor::QueryReplace::Stage::EnteringPattern || stage == editor::QueryReplace::Stage::EnteringReplacement) {
@@ -5583,7 +5583,7 @@ void BufferView::HandleQueryReplaceKey(const editor::KeyChord& chord) {
                 try {
                     queryReplace_->ConfirmPattern();
                 }
-                catch (const std::regex_error& e) {
+                catch (const editor::RegexPatternError& e) {
                     statusMessage_ = std::string("Invalid regex: ") + e.what();
                     return; // stays in EnteringPattern; don't overwrite the message below
                 }
@@ -5618,6 +5618,24 @@ void BufferView::HandleQueryReplaceKey(const editor::KeyChord& chord) {
     }
 
     statusMessage_ = queryReplace_->StatusText();
+    return;
+}
+
+void BufferView::HandleQueryReplaceKey(const editor::KeyChord& chord) {
+    // in-file-regex follow-up: any stage that *searches* (ConfirmReplacement's
+    // first find, every y/n/! step) can throw RegexPatternError if PCRE2's
+    // match-limit safety net trips on a catastrophically backtracking
+    // pattern -- retrying the same key would just trip it again, so end the
+    // session with the error visible rather than crash or loop.
+    try {
+        HandleQueryReplaceKeyInner(chord);
+    }
+    catch (const editor::RegexPatternError& e) {
+        queryReplace_->Cancel();
+        statusMessage_ = std::string("Query replace: ") + e.what();
+        EndInteractiveSession();
+        return;
+    }
 
     if (queryReplace_->CurrentStage() == editor::QueryReplace::Stage::Done) {
         EndInteractiveSession();
@@ -7366,14 +7384,13 @@ void BufferView::HandleProjectReplaceKey(const editor::KeyChord& chord) {
 
     // Confirming: a single whole-batch y/n, not QueryReplace's per-match y/n/!/q.
     if (chord.Codepoint == U'y') {
-        // internal-project-search follow-up: ConfirmPattern validated this
-        // same pattern text against RE2 (SearchDirectory's engine);
-        // ReplaceMatches's actual rewrite still runs on std::regex until the
-        // "eventually PCRE2" roadmap item lands, and the two engines' syntax
-        // doesn't fully agree (RE2's \p{...} Unicode classes, for one) -- so
-        // unlike before, a pattern reaching here genuinely can throw. Caught
-        // here rather than left to propagate, same as every other
-        // interactive failure in this file.
+        // in-file-regex follow-up: ConfirmPattern validated this same
+        // pattern text against RE2 (SearchDirectory's engine) and the
+        // rewrite now runs on PCRE2 (RegexPattern), which accepts
+        // essentially everything RE2 does -- but the rewrite can still
+        // throw at match time if the match-limit safety net trips (see
+        // RegexPattern.h). Caught here rather than left to propagate, same
+        // as every other interactive failure in this file.
         try {
             const editor::ReplaceSummary summary = projectReplace_->Confirm();
             statusMessage_                       = "Replaced " + std::to_string(summary.replacementCount) + " occurrence" +

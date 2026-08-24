@@ -79,22 +79,25 @@ class ProjectReplace {
 };
 
 // Rewrites every unique file referenced in matches, replacing every
-// occurrence of pattern with replacement -- std::regex_replace over each
-// file's *full* content (not line-by-line), so multiple occurrences on one
-// line are all counted and replaced, not just the single SearchMatch
-// recorded per matching line. Writes via a sibling "<path>.ned-tmp" file
-// then std::filesystem::rename, mirroring Buffer::SaveToFile's own safety
+// occurrence of pattern with replacement -- RegexPattern::ReplaceAll (PCRE2,
+// in-file-regex follow-up; formerly std::regex) over each file's *full*
+// content (not line-by-line), so multiple occurrences on one line are all
+// counted and replaced, not just the single SearchMatch recorded per
+// matching line -- and, with PCRE2_MULTILINE, ^/$ anchor at every line
+// boundary of that full content, matching what the per-line search preview
+// showed. Writes via a sibling "<path>.ned-tmp" file then
+// std::filesystem::rename, mirroring Buffer::SaveToFile's own safety
 // pattern, so a failure partway through a given file can't leave it
 // truncated. Skips (without counting) any file that can't be read or
-// written. Throws std::regex_error if pattern is invalid -- still
-// std::regex here, unlike ConfirmPattern's own SearchDirectory-backed RE2
-// validation (internal-project-search follow-up), pending the "PCRE2 for
-// in-file matching/replacing" roadmap item. That split-engine gap means
-// ConfirmPattern succeeding no longer guarantees this will too (RE2 accepts
-// some syntax, like \p{...} Unicode classes, std::regex's ECMAScript
-// grammar doesn't) -- ProjectReplace::Confirm's own caller
-// (BufferView::HandleProjectReplaceKey) catches this rather than assuming
-// it can't happen.
+// written. Throws RegexPatternError if pattern is invalid. The old
+// split-engine caveat (RE2-validated pattern failing here) is practically
+// closed -- PCRE2 accepts essentially everything ConfirmPattern's RE2
+// preview does -- but the reverse constraint remains: PCRE2-only syntax
+// (lookaround, backreferences) is rejected up front by the RE2-backed
+// preview, so it can't be used in a *project* replace, only in the
+// single-buffer query-replace-regexp. ProjectReplace::Confirm's caller
+// (BufferView::HandleProjectReplaceKey) still catches exceptions here --
+// the match-limit safety net can trip at rewrite time (see RegexPattern.h).
 [[nodiscard]] ReplaceSummary ReplaceMatches(const std::vector<SearchMatch>& matches, const std::string& pattern,
                                             const std::string& replacement);
 

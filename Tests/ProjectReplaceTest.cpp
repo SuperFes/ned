@@ -2,12 +2,13 @@
 
 #include <filesystem>
 #include <fstream>
-#include <regex>
 #include <string_view>
 
 #include "Editor/ProjectReplace.h"
+#include "Editor/RegexPattern.h"
 
 using ned::editor::ProjectReplace;
+using ned::editor::RegexPatternError;
 using ned::editor::ReplaceMatches;
 using ned::editor::ReplaceSummary;
 using ned::editor::SearchMatch;
@@ -177,6 +178,44 @@ TEST_CASE("ReplaceMatches deduplicates multiple matches referencing the same fil
     std::filesystem::remove_all(dir);
 }
 
-TEST_CASE("ReplaceMatches throws std::regex_error for an invalid pattern", "[ProjectReplace]") {
-    REQUIRE_THROWS_AS(ReplaceMatches({}, "(", "x"), std::regex_error);
+TEST_CASE("ReplaceMatches throws RegexPatternError for an invalid pattern", "[ProjectReplace]") {
+    REQUIRE_THROWS_AS(ReplaceMatches({}, "(", "x"), RegexPatternError);
+}
+
+TEST_CASE("ReplaceMatches anchors ^ per line of the file, matching the per-line search preview", "[ProjectReplace]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_replace_test_anchor";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    {
+        std::ofstream(dir / "file.txt") << "foo\nbarfoo\nfoo\n";
+    }
+
+    const std::vector<SearchMatch> matches{SearchMatch{dir / "file.txt", 1, "foo"}};
+    const ReplaceSummary           summary = ReplaceMatches(matches, "^foo", "baz");
+
+    // in-file-regex follow-up: the search preview matches per line, so ^foo
+    // matched lines 1 and 3 -- the rewrite (over full file content, PCRE2
+    // multiline) must agree, not anchor only at the file start the way the
+    // old std::regex engine did.
+    REQUIRE(summary.replacementCount == 2);
+    REQUIRE(ReadFile(dir / "file.txt") == "baz\nbarfoo\nbaz\n");
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("ReplaceMatches supports lookaround and named-group replacements", "[ProjectReplace]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_replace_test_pcre2";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    {
+        std::ofstream(dir / "file.txt") << "count = 1; amount = 2;\n";
+    }
+
+    const std::vector<SearchMatch> matches{SearchMatch{dir / "file.txt", 1, "count = 1; amount = 2;"}};
+    const ReplaceSummary           summary = ReplaceMatches(matches, "(?<name>\\w+)(?= = \\d)", "my_${name}");
+
+    REQUIRE(summary.replacementCount == 2);
+    REQUIRE(ReadFile(dir / "file.txt") == "my_count = 1; my_amount = 2;\n");
+
+    std::filesystem::remove_all(dir);
 }
