@@ -911,6 +911,12 @@ Mode BashMode() {
     return mode;
 }
 
+Mode FishMode() {
+    Mode mode = TreeSitterMode("fish-mode", "fish", treesitter::queries::kFish);
+    mode.lineCommentPrefix = "#";
+    return mode;
+}
+
 Mode YamlMode() {
     Mode mode              = TreeSitterMode("yaml-mode", "yaml", treesitter::queries::kYaml);
     mode.lineCommentPrefix = "#";

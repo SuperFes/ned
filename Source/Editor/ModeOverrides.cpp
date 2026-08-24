@@ -45,6 +45,7 @@ namespace {
             {"css-mode", CssMode},
             {"python-mode", PythonMode},
             {"bash-mode", BashMode},
+            {"fish-mode", FishMode},
             {"yaml-mode", YamlMode},
             {"toml-mode", TomlMode},
             {"clojure-mode", ClojureMode},
@@ -83,6 +84,7 @@ namespace {
             {".pyw", "python-mode"},          {".sh", "bash-mode"},
             {".bash", "bash-mode"},           {".yaml", "yaml-mode"},
             {".yml", "yaml-mode"},            {".toml", "toml-mode"},
+            {".fish", "fish-mode"},
             {".md", "markdown-mode"},
             {".markdown", "markdown-mode"},   {".org", "org-mode"},
             // .edn is data, not code, but it's read with Clojure's own reader

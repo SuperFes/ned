@@ -437,6 +437,9 @@ struct Mode {
 [[nodiscard]] Mode CssMode();
 [[nodiscard]] Mode PythonMode();
 [[nodiscard]] Mode BashMode();
+// ram02z/tree-sitter-fish -- same "community-maintained, ships a real
+// queries/highlights.scm" bar as yaml/toml below.
+[[nodiscard]] Mode FishMode();
 // yaml/toml follow-up: tree-sitter-grammars/tree-sitter-yaml and
 // tree-sitter-grammars/tree-sitter-toml, both community-maintained, both
 // ship a pre-generated src/parser.c and a real queries/highlights.scm --

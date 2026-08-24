@@ -37,6 +37,7 @@ extern const char* const kToml;
 // both ClojureMode and JankMode, mirroring kTypeScript's sharing above -- see
 // queries/clojure.scm's own header comment.
 extern const char* const kClojure;
+extern const char* const kFish;
 
 // generic-code-folding follow-up: hand-written "@fold" queries, one per
 // in-scope language (Source/Editor/TreeSitter/queries/*-folds.scm) -- no
@@ -89,7 +90,14 @@ extern const char* const kJanetImports;
 // same "empty means not configured" convention every other optional Mode
 // capability already uses. kTypeScriptTags is shared by TypeScriptMode and
 // TsxMode, same sharing kTypeScript/kTypeScriptFolds/kTypeScriptImports
-// already use.
+// already use. kCTags/kCppTags are the one exception to "unmodified" --
+// upstream's own @definition.function pattern is ambiguous with C/C++'s
+// "most vexing parse" (confirmed live against a real false positive, a local
+// variable declared with constructor-call-style syntax getting the function
+// glyph -- see BufferViewSymbolGutterTest.cpp), so these two are repo-local
+// vendored files (Source/Editor/TreeSitter/queries/c-tags.scm/cpp-tags.scm)
+// instead of the grammar's own; see c-tags.scm's own header comment for the
+// full story.
 extern const char* const kCTags;
 extern const char* const kCppTags;
 extern const char* const kPhpTags;
