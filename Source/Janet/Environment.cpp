@@ -1,5 +1,7 @@
 #include "Environment.h"
 
+#include "Editor/DiagnosticsLog.h"
+
 #include <algorithm>
 #include <fstream>
 #include <iterator>
@@ -24,11 +26,44 @@ void Environment::RegisterRaw(const char* prefix, const char* name, const char* 
     janet_cfuns_prefix(env_, prefix, regs);
 }
 
+int DoStringCapturingStacktrace(JanetTable* env, const std::string& code, const std::string& sourcePath, Janet* out,
+                                 std::string* capturedError) {
+    // janet_dostring does independently print a real stacktrace straight to
+    // the process's raw stderr on failure (tmux/unit-verified,
+    // diagnostics-log follow-up -- confirming the original "see stderr for
+    // details" comment this replaced was accurate) but that text is neither
+    // capturable through Janet's ":err" dynamic binding (tried first; came
+    // back empty every time -- apparently not the mechanism janet_dostring's
+    // own default error reporting uses) nor present in *out. *out only ever
+    // holds the bare panic/compile-error message with any "path:line:col:"
+    // prefix already stripped -- verified for both a runtime panic and a
+    // compile error -- so there is no location to extract from it; a real
+    // fix would need the raw stderr fd redirected around this call, out of
+    // scope here (see this feature's own ROADMAP.md entry). janet_to_string
+    // is what turns *out into displayable text.
+    const int signal = janet_dostring(env, code.c_str(), sourcePath.c_str(), out);
+
+    if (signal != 0 && capturedError) {
+        const JanetString description = janet_to_string(*out);
+        *capturedError                = std::string(reinterpret_cast<const char*>(description),
+                                                      static_cast<std::size_t>(janet_string_length(description)));
+        if (capturedError->empty()) {
+            *capturedError = "ned: janet error evaluating " + sourcePath + " (no error value captured)";
+        }
+    }
+    return signal;
+}
+
 Janet Environment::DoString(const std::string& code, const std::string& sourcePath) {
-    Janet     out;
-    const int signal = janet_dostring(env_, code.c_str(), sourcePath.c_str(), &out);
+    Janet       out;
+    std::string capturedError;
+    const int   signal = DoStringCapturingStacktrace(env_, code, sourcePath, &out, &capturedError);
     if (signal != 0) {
-        throw std::runtime_error("ned: janet error evaluating " + sourcePath + " (see stderr for details)");
+        // No path/line: see DoStringCapturingStacktrace's own doc comment
+        // for why that's never available here, even though sourcePath is
+        // known -- the captured text itself never carries a location.
+        editor::LogMessage(editor::LogCategory::Janet, editor::LogSeverity::Error, capturedError);
+        throw std::runtime_error(capturedError);
     }
     return out;
 }

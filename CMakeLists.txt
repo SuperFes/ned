@@ -532,6 +532,7 @@ add_library(ned_lib STATIC
         Source/Editor/InlineDiagnostics.cpp
         Source/Editor/ScratchPad.cpp
         Source/Editor/Backup.cpp
+        Source/Editor/DiagnosticsLog.cpp
         Source/Editor/Session.cpp
         Source/Editor/ProjectSession.cpp
         Source/Editor/ProjectTrust.cpp
@@ -821,6 +822,7 @@ if (NED_BUILD_TESTS)
             Tests/ProjectFileOpsTest.cpp
             Tests/ScratchPadTest.cpp
             Tests/BackupTest.cpp
+            Tests/DiagnosticsLogTest.cpp
             Tests/SessionTest.cpp
             Tests/ProjectSessionTest.cpp
             Tests/ProjectTrustTest.cpp

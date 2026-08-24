@@ -3,6 +3,7 @@
 #include <utility>
 
 #include "Editor/BackgroundActivity.h"
+#include "Editor/DiagnosticsLog.h"
 
 namespace ned::editor::lsp {
 
@@ -49,6 +50,7 @@ void LspClient::StartReadLoop() {
                 // onDisconnected_, same Post-marshaling reasoning as the
                 // real-frame case below.
                 eventLoop_.Post([this] {
+                    LogMessage(LogCategory::Lsp, LogSeverity::Warning, "malformed frame from server");
                     if (onDisconnected_) {
                         onDisconnected_("malformed frame from server");
                     }
@@ -70,6 +72,7 @@ void LspClient::StartReadLoop() {
                 // pending Post, so this callback either runs before
                 // destruction starts or never runs at all.
                 eventLoop_.Post([this] {
+                    LogMessage(LogCategory::Lsp, LogSeverity::Warning, "server exited (EOF)");
                     if (onDisconnected_) {
                         onDisconnected_("server exited (EOF)");
                     }
@@ -99,8 +102,11 @@ void LspClient::DispatchFrame(const std::string& frameText) {
     try {
         message = Json::parse(frameText);
     }
-    catch (const std::exception&) {
-        return; // malformed JSON from the server -- ignore rather than crash the editor
+    catch (const std::exception& e) {
+        // malformed JSON from the server -- ignore rather than crash the
+        // editor, but no longer silently: diagnostics-log follow-up.
+        LogMessage(LogCategory::Lsp, LogSeverity::Warning, std::string("malformed JSON frame: ") + e.what());
+        return;
     }
 
     if (message.contains("id") && (message.contains("result") || message.contains("error"))) {

@@ -248,9 +248,58 @@ Notcurses.
 - [ ] Hunk unstage matches point against the *cached* staged diff, which drifts when
       unstaged edits exist earlier in the file — exact in the common
       stage-then-undo flow; revisit only if it bites.
+- [ ] **No subprocess hang/timeout protection** — `Editor/Process/ChildProcess.h` (the
+      shared spawn/pipe primitive every LSP/DAP/ACP/Task/VCS integration is built on,
+      per its own header comment) has no timeout concept anywhere: `WriteAll`/
+      `ReadSome`/`WaitForExit` are all unbounded waits. A hung language server or a
+      task command stuck in an infinite loop blocks its owning background thread
+      forever with no recovery path and no user-visible "kill it" affordance beyond
+      the OS. Worth a bounded-wait/kill-after-timeout option on this one shared class
+      rather than five separate per-subsystem fixes (2026-08-24 audit).
 - [ ] LSP deliberate cuts, revisit on demand: syncing every open buffer (not just the
       active one), incremental sync, idle server teardown, multi-root workspaces, raw
       subprocess stderr capture.
+- [ ] **Diagnostics/error log round 2** (v1 shipped 2026-08-24: `Editor/DiagnosticsLog.h`,
+      a `"*Messages*"` buffer — plain find-or-create like `TaskRunner`'s own output
+      buffers, not a real `Editor/Multibuffer.h` composite — rebuilt from an in-memory,
+      cap-configurable (`ned/set-log-max-entries`, default 5000) ring on every category
+      filter change; category visibility (`ned/set-log-category-visible`, `lsp` hidden
+      by default) and best-effort daily-file disk persistence under
+      `$XDG_STATE_HOME/ned/logs/`, retention mirroring `Backup.h`'s age-cap shape.
+      Severity glyph/color comes free from the *existing* diagnostics gutter pipeline —
+      each visible line gets a synthetic `Buffer::Diagnostic` rather than a hand-rolled
+      `Mode::HighlightFunction` — and click/Enter-to-visit a `path:line:`-suffixed entry
+      rides `BufferView::VisitResultUnderPoint`'s existing regex fallback, no new visit
+      command needed. Wired into `Environment::DoString`/`DoFile` and
+      `EditorBindings.cpp`'s command-invocation path (both now surface Janet's *real*
+      error text via `janet_dostring`'s `*out`, replacing the old generic "see stderr
+      for details" throw) and into `LspClient`/`DapClient`/`AcpClient`'s previously
+      fully-silent malformed-JSON `DispatchFrame` catch plus their `onDisconnected_`
+      sites. Confirmed dead end, tmux/unit-verified rather than assumed: no path/line is
+      extractable for a Janet error from anything reachable in C++ — `*out` never
+      carries a location for either a runtime panic or a compile error (its
+      `"path:line:col:"` prefix is stripped before reaching `*out`), and Janet's real
+      stacktrace/compile-error text only ever reaches the process's raw stderr, not
+      Janet's `":err"` dynamic binding (tried) or anything else capturable short of
+      redirecting the real stderr fd around the call. Still open: that fd-redirect (the
+      only route to a real location for a Janet error); LSP stderr capture and the
+      `ChildProcess` timeout gap above are prerequisites for logging *those* failures
+      instead of just disconnecting silently; the ~20 other `BufferView.cpp`
+      `statusMessage_`-only catches, `VcsRunner.cpp`'s one orphaned catch, and folding
+      `TaskRunner` exit-code failures in, are all still un-wired (the umbrella
+      `RunCommandAndHandleOutcome` catch already benefits from the Janet fix above with
+      no changes of its own needed).
+- [ ] **Janet's raw stacktrace/compile-error print corrupts the live TUI** — found
+      chasing the item above: `janet_dostring` writes a real, unbuffered stacktrace
+      straight to the process's raw stderr on every Janet-level error (confirmed via a
+      direct `ned_tests` run showing the print land *before* Catch2's own banner in
+      combined output), bypassing Notcurses' `Screen`/`Cell`-diffing render pipeline
+      entirely — the same class of bug `BufferView`'s tab-expansion and C0/DEL-rendering
+      fixes exist to prevent for buffer *content*, but here the source is Janet's own C
+      library, not anything ned constructs. Only ever seen as a transient flash (the
+      next `EventLoop::Run` repaint overwrites it), not persistent corruption, so likely
+      low-severity in practice — not confirmed against every terminal. Fixing it for
+      real needs the same raw-stderr-fd redirect noted above.
 - [ ] DAP deliberate cuts: attach mode, thread picker, watch expressions,
       conditional/logpoint breakpoints, adapter-verified breakpoint positions,
       setting variables, a REPL console.
@@ -262,7 +311,7 @@ Notcurses.
       `UI/ThemeFile.h`); a general settings surface would generalize that.
       Vague, unscoped — from `Stuff.md`.
 
-### Gaps found comparing against mainstream editors (2026-08-23 survey)
+### Gaps found comparing against mainstream editors (2026-08-23 survey, +2026-08-24)
 
 Named so they're a conscious decision, not an oversight — being in a mainstream editor
 isn't by itself a reason ned needs it too; several below are listed specifically to be
@@ -296,6 +345,13 @@ Real, fairly uncontroversial gaps:
       purpose-built commands with their own bindings — consistent with this project's
       stated Emacs-class-parity vision, so this reads as a different, already-chosen
       philosophy rather than an obvious gap.
+- [ ] **Auto-revert/auto-merge are pure polling, not file-watcher-driven** —
+      `AutoRevert.h`/`AutoMerge.h` run entirely off the shared background timer tick
+      (`WindowManager::StartAutoSaveTimer`); nothing in the tree uses inotify/kqueue/
+      FSEvents. External-change detection latency is bounded by the timer interval
+      rather than immediate, unlike VSCode/Sublime's watcher-driven revert. The real
+      merge logic (`Text/ThreeWayMerge.h`) already exists — a watcher would mostly
+      just lower trigger latency, not add new logic.
 
 ### Input model: optional Vim/vi keybinding emulation (idea, unstarted — design sketch only)
 

@@ -19,6 +19,7 @@
 #include "Editor/Clipboard.h"
 #include "Editor/CodeFoldSettings.h"
 #include "Editor/DabbrevComplete.h"
+#include "Editor/DiagnosticsLog.h"
 #include "Editor/FuzzyMatch.h"
 #include "Editor/HeaderSource.h"
 #include "Editor/HighlightSettings.h"
@@ -4487,6 +4488,9 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         case editor::InteractiveRequest::ProjectAgenda:
             BuildAgendaMultibuffer();
             return;
+        case editor::InteractiveRequest::ShowMessages:
+            ShowMessagesBuffer();
+            return;
         case editor::InteractiveRequest::OrgClockReport:
             BuildClockReportMultibuffer();
             return;
@@ -6274,6 +6278,16 @@ void BufferView::RequestDiagnosticsBuffer() {
         }
         results.SetDiagnostics(std::move(composited));
     }
+}
+
+void BufferView::ShowMessagesBuffer() {
+    editor::RebuildMessagesBuffer(bufferList_);
+    text::Buffer* messages = bufferList_.Find(std::string(editor::MessagesBufferName()));
+    if (!messages) {
+        return; // unreachable -- RebuildMessagesBuffer always finds-or-creates it
+    }
+    activeBuffer_.Set(*messages);
+    statusMessage_.clear();
 }
 
 void BufferView::BuildAgendaMultibuffer() {
