@@ -1128,3 +1128,145 @@ TEST_CASE("RestoreContent to empty over a nonempty saved snapshot still reads Mo
 
     std::filesystem::remove(path);
 }
+
+// --- Snippet ranges (snippet-expansion follow-up) ------------------------
+
+namespace {
+
+Buffer::SnippetRange SnipRange(std::size_t id, int index, std::size_t start, std::size_t end,
+                               bool active = false) {
+    return Buffer::SnippetRange{id, index, start, end, active};
+}
+
+} // namespace
+
+TEST_CASE("Snippet ranges relocate around an insert entirely before or after them", "[Buffer]") {
+    Buffer buffer("scratch", ned::text::Rope("for (i; i < n; ++i)"));
+    buffer.SetSnippetRanges({SnipRange(1, 1, 5, 6, true), SnipRange(2, 1, 8, 9), SnipRange(3, 1, 17, 18)});
+
+    buffer.InsertAt(0, "XX"); // before everything
+    REQUIRE(buffer.SnippetRanges()[0].start == 7);
+    REQUIRE(buffer.SnippetRanges()[0].end == 8);
+    REQUIRE(buffer.SnippetRanges()[1].start == 10);
+    REQUIRE(buffer.SnippetRanges()[2].start == 19);
+
+    buffer.InsertAt(buffer.Size(), "YY"); // after everything
+    REQUIRE(buffer.SnippetRanges()[0].start == 7);
+    REQUIRE(buffer.SnippetRanges()[2].end == 20);
+}
+
+TEST_CASE("Active snippet range grows on an insert at either of its own edges", "[Buffer]") {
+    Buffer buffer("scratch", ned::text::Rope("abXcd"));
+    buffer.SetSnippetRanges({SnipRange(1, 1, 2, 3, true)});
+
+    buffer.InsertAt(3, "Y"); // at the active end -> grows
+    REQUIRE(buffer.SnippetRanges()[0] == SnipRange(1, 1, 2, 4, true));
+
+    buffer.InsertAt(2, "Z"); // at the active start -> grows (start pinned)
+    REQUIRE(buffer.SnippetRanges()[0] == SnipRange(1, 1, 2, 5, true));
+}
+
+TEST_CASE("Inactive snippet range excludes an insert at either edge", "[Buffer]") {
+    Buffer buffer("scratch", ned::text::Rope("abXcd"));
+    buffer.SetSnippetRanges({SnipRange(1, 1, 2, 3, false)});
+
+    buffer.InsertAt(3, "Y"); // at the inactive end -> stays outside
+    REQUIRE(buffer.SnippetRanges()[0] == SnipRange(1, 1, 2, 3, false));
+
+    buffer.InsertAt(2, "Z"); // at the inactive start -> shifts right, stays outside
+    REQUIRE(buffer.SnippetRanges()[0] == SnipRange(1, 1, 3, 4, false));
+}
+
+TEST_CASE("Adjacent snippet fields never overlap on a boundary insert", "[Buffer]") {
+    // "${1:a}${2:b}" expanded: field 1 = [0,1), field 2 = [1,2).
+    Buffer left("scratch", ned::text::Rope("ab"));
+    left.SetSnippetRanges({SnipRange(1, 1, 0, 1, true), SnipRange(2, 2, 1, 2)});
+    left.InsertAt(1, "X"); // at the seam, left field active -> left grows
+    REQUIRE(left.SnippetRanges()[0] == SnipRange(1, 1, 0, 2, true));
+    REQUIRE(left.SnippetRanges()[1] == SnipRange(2, 2, 2, 3, false));
+
+    Buffer right("scratch", ned::text::Rope("ab"));
+    right.SetSnippetRanges({SnipRange(1, 1, 0, 1), SnipRange(2, 2, 1, 2, true)});
+    right.InsertAt(1, "X"); // at the seam, right field active -> right grows
+    REQUIRE(right.SnippetRanges()[0] == SnipRange(1, 1, 0, 1, false));
+    REQUIRE(right.SnippetRanges()[1] == SnipRange(2, 2, 1, 3, true));
+}
+
+TEST_CASE("Empty snippet fields behave by gravity on an insert at their position", "[Buffer]") {
+    Buffer buffer("scratch", ned::text::Rope("abcd"));
+    buffer.SetSnippetRanges({SnipRange(1, 1, 2, 2, true), SnipRange(2, 2, 2, 2, false)});
+
+    buffer.InsertAt(2, "XY");
+    // Active empty field absorbs the insert...
+    REQUIRE(buffer.SnippetRanges()[0] == SnipRange(1, 1, 2, 4, true));
+    // ...the inactive empty one moves past it without inverting.
+    REQUIRE(buffer.SnippetRanges()[1] == SnipRange(2, 2, 4, 4, false));
+}
+
+TEST_CASE("Snippet ranges at buffer boundaries relocate correctly", "[Buffer]") {
+    Buffer buffer("scratch", ned::text::Rope("ab"));
+    buffer.SetSnippetRanges({SnipRange(1, 1, 0, 1, true), SnipRange(2, 0, 2, 2)});
+
+    buffer.InsertAt(0, "Z"); // offset 0, before the active start? No: at it -> grows
+    REQUIRE(buffer.SnippetRanges()[0] == SnipRange(1, 1, 0, 2, true));
+    REQUIRE(buffer.SnippetRanges()[1] == SnipRange(2, 0, 3, 3, false));
+}
+
+TEST_CASE("Snippet ranges relocate through deletes and keep an emptied field", "[Buffer]") {
+    Buffer buffer("scratch", ned::text::Rope("for (idx; idx)"));
+    buffer.SetSnippetRanges({SnipRange(1, 1, 5, 8, true), SnipRange(2, 1, 10, 13)});
+
+    buffer.DeleteRange(6, 1); // partial, inside the active field
+    REQUIRE(buffer.SnippetRanges()[0] == SnipRange(1, 1, 5, 7, true));
+    REQUIRE(buffer.SnippetRanges()[1] == SnipRange(2, 1, 9, 12));
+
+    buffer.DeleteRange(9, 3); // fully consumes the mirror -> degenerate, kept
+    REQUIRE(buffer.SnippetRanges()[1] == SnipRange(2, 1, 9, 9));
+
+    buffer.DeleteRange(4, 4); // spans past the active field's start and end
+    REQUIRE(buffer.SnippetRanges()[0] == SnipRange(1, 1, 4, 4, true));
+}
+
+TEST_CASE("Point-driven edits relocate snippet ranges too", "[Buffer]") {
+    Buffer buffer("scratch", ned::text::Rope("ab")); // field [1,1) active between a and b
+    buffer.SetSnippetRanges({SnipRange(1, 1, 1, 1, true)});
+    buffer.SetPoint(1);
+    buffer.InsertAtPoint("xy");
+    REQUIRE(buffer.SnippetRanges()[0] == SnipRange(1, 1, 1, 3, true));
+    buffer.DeleteBackwardAtPoint();
+    REQUIRE(buffer.SnippetRanges()[0] == SnipRange(1, 1, 1, 2, true));
+    buffer.SetPoint(1);
+    buffer.DeleteForwardAtPoint();
+    REQUIRE(buffer.SnippetRanges()[0] == SnipRange(1, 1, 1, 1, true));
+}
+
+TEST_CASE("Undo and redo clear snippet ranges", "[Buffer]") {
+    Buffer buffer("scratch", ned::text::Rope("ab"));
+    buffer.SetPoint(1);
+    buffer.InsertAtPoint("x");
+    buffer.SetSnippetRanges({SnipRange(1, 1, 1, 2, true)});
+    buffer.Undo();
+    REQUIRE(buffer.SnippetRanges().empty());
+    buffer.SetSnippetRanges({SnipRange(1, 1, 0, 1, true)});
+    buffer.Redo();
+    REQUIRE(buffer.SnippetRanges().empty());
+}
+
+TEST_CASE("SetActiveSnippetRange and UpdateSnippetRange adjust the set in place", "[Buffer]") {
+    Buffer buffer("scratch", ned::text::Rope("abcdef"));
+    buffer.SetSnippetRanges({SnipRange(1, 1, 0, 1, true), SnipRange(2, 2, 2, 3)});
+
+    buffer.SetActiveSnippetRange(2);
+    REQUIRE_FALSE(buffer.SnippetRanges()[0].active);
+    REQUIRE(buffer.SnippetRanges()[1].active);
+
+    buffer.UpdateSnippetRange(1, 4, 5);
+    REQUIRE(buffer.SnippetRanges()[0] == SnipRange(1, 1, 4, 5, false));
+
+    buffer.SetActiveSnippetRange(99); // unknown id clears every flag
+    REQUIRE_FALSE(buffer.SnippetRanges()[0].active);
+    REQUIRE_FALSE(buffer.SnippetRanges()[1].active);
+
+    buffer.ClearSnippetRanges();
+    REQUIRE(buffer.SnippetRanges().empty());
+}

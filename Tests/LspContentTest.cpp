@@ -364,3 +364,17 @@ TEST_CASE("ExtractRenameEdits returns no edits for a result with no \"changes\" 
 TEST_CASE("ExtractRenameEdits returns no edits for a non-object result", "[Lsp]") {
     REQUIRE_FALSE(ExtractRenameEdits(Json(nullptr)).hasEdit);
 }
+
+TEST_CASE("ExtractCompletionItems reads insertTextFormat's snippet flag", "[Lsp]") {
+    const auto                        result = ned::editor::lsp::Json::array({
+        {{"label", "plain"}, {"insertText", "plain"}, {"insertTextFormat", 1}},
+        {{"label", "snip"}, {"insertText", "snip(${1:x})"}, {"insertTextFormat", 2}},
+        {{"label", "unspecified"}, {"insertText", "unspecified"}},
+    });
+    const std::vector<CompletionItem> items  = ExtractCompletionItems(result);
+    REQUIRE(items.size() == 3);
+    REQUIRE_FALSE(items[0].isSnippet);
+    REQUIRE(items[1].isSnippet);
+    REQUIRE(items[1].insertText == "snip(${1:x})");
+    REQUIRE_FALSE(items[2].isSnippet); // absent defaults to PlainText per the spec
+}

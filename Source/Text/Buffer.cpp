@@ -810,6 +810,75 @@ void Buffer::MarkUnsavedRangeDeleted(std::size_t rangeStart, std::size_t rangeEn
     ++UnsavedChangeGeneration_;
 }
 
+void Buffer::SetSnippetRanges(std::vector<SnippetRange> ranges) {
+    SnippetRanges_ = std::move(ranges);
+}
+
+const std::vector<Buffer::SnippetRange>& Buffer::SnippetRanges() const {
+    return SnippetRanges_;
+}
+
+void Buffer::ClearSnippetRanges() {
+    SnippetRanges_.clear();
+}
+
+void Buffer::SetActiveSnippetRange(std::size_t id) {
+    for (SnippetRange& range : SnippetRanges_) {
+        range.active = range.id == id;
+    }
+}
+
+void Buffer::UpdateSnippetRange(std::size_t id, std::size_t start, std::size_t end) {
+    for (SnippetRange& range : SnippetRanges_) {
+        if (range.id == id) {
+            range.start = start;
+            range.end   = end;
+            return;
+        }
+    }
+}
+
+void Buffer::RelocateSnippetRangesForInsert(std::size_t insertOffset, std::size_t length) {
+    for (SnippetRange& range : SnippetRanges_) {
+        if (range.active) {
+            // The active field grows when text lands at either of its own
+            // edges: an insert exactly at start stays outside-left of the
+            // shift (start keeps its position, the new text is inside), an
+            // insert exactly at end pushes end right.
+            if (insertOffset < range.start) {
+                range.start += length;
+            }
+            if (insertOffset <= range.end) {
+                range.end += length;
+            }
+        }
+        else {
+            // An inactive field excludes a boundary insert entirely, so an
+            // insert at the seam between two adjacent fields extends only
+            // whichever one is active.
+            if (insertOffset <= range.start) {
+                range.start += length;
+            }
+            if (insertOffset < range.end) {
+                range.end += length;
+            }
+        }
+        // A degenerate inactive range sitting exactly at insertOffset gets
+        // its start pushed but not its end -- re-order rather than leaving
+        // an inverted range behind.
+        range.end = std::max(range.start, range.end);
+    }
+}
+
+void Buffer::RelocateSnippetRangesForDelete(std::size_t rangeStart, std::size_t rangeEnd) {
+    for (SnippetRange& range : SnippetRanges_) {
+        range.start = RelocateForDelete(range.start, rangeStart, rangeEnd);
+        range.end   = RelocateForDelete(range.end, rangeStart, rangeEnd);
+        // A field fully inside the deletion becomes degenerate and is kept
+        // -- an emptied field is still a navigable, refillable field.
+    }
+}
+
 void Buffer::InsertAtPoint(std::string_view text) {
     if (ReadOnly_ || Loading_) {
         throw std::runtime_error("Buffer is read-only.");
@@ -832,6 +901,7 @@ void Buffer::InsertAtPoint(std::string_view text) {
     }
     RelocateFoldMarkersForInsert(insertOffset, text.size());
     RelocateSecondaryCursorsForInsert(insertOffset, text.size());
+    RelocateSnippetRangesForInsert(insertOffset, text.size());
     MarkUnsavedRangeInserted(insertOffset, text.size());
 
     RecordOrAmendUndo(/*canAmend=*/true);
@@ -865,6 +935,7 @@ void Buffer::DeleteBackwardAtPoint() {
     }
     RelocateFoldMarkersForDelete(start, end);
     RelocateSecondaryCursorsForDelete(start, end);
+    RelocateSnippetRangesForDelete(start, end);
     MarkUnsavedRangeDeleted(start, end);
 
     RecordOrAmendUndo(/*canAmend=*/false);
@@ -898,6 +969,7 @@ void Buffer::DeleteForwardAtPoint() {
     }
     RelocateFoldMarkersForDelete(start, end);
     RelocateSecondaryCursorsForDelete(start, end);
+    RelocateSnippetRangesForDelete(start, end);
     MarkUnsavedRangeDeleted(start, end);
 
     RecordOrAmendUndo(/*canAmend=*/false);
@@ -939,6 +1011,7 @@ std::string Buffer::DeleteRange(std::size_t byteOffset, std::size_t byteLength) 
     }
     RelocateFoldMarkersForDelete(byteOffset, rangeEnd);
     RelocateSecondaryCursorsForDelete(byteOffset, rangeEnd);
+    RelocateSnippetRangesForDelete(byteOffset, rangeEnd);
     MarkUnsavedRangeDeleted(byteOffset, rangeEnd);
 
     RecordOrAmendUndo(/*canAmend=*/false);
@@ -981,6 +1054,7 @@ void Buffer::InsertAtImpl(std::size_t byteOffset, std::string_view text) {
     }
     RelocateFoldMarkersForInsert(byteOffset, text.size());
     RelocateSecondaryCursorsForInsert(byteOffset, text.size());
+    RelocateSnippetRangesForInsert(byteOffset, text.size());
     MarkUnsavedRangeInserted(byteOffset, text.size());
 
     RecordOrAmendUndo(/*canAmend=*/false);
@@ -1238,6 +1312,20 @@ void Buffer::ClampCursorsToContent() {
         const std::size_t length = Rope_.ByteLength();
         std::erase_if(FoldMarkers_, [length](const auto& entry) { return entry.first > length; });
     }
+    // Snippet ranges are all-or-nothing: a set with any endpoint past the
+    // new end is no longer a coherent field layout, and there's no sensible
+    // per-range clamp (a clamped field would overlap arbitrarily with
+    // whatever's left) -- drop the whole set and let the owning session
+    // treat that as its end-of-session cue. Belt-and-suspenders: the only
+    // real path here (Undo/Redo) already cleared them outright.
+    if (!SnippetRanges_.empty()) {
+        const std::size_t length     = Rope_.ByteLength();
+        const bool        anyPastEnd = std::any_of(SnippetRanges_.begin(), SnippetRanges_.end(),
+                                                   [length](const SnippetRange& range) { return range.end > length; });
+        if (anyPastEnd) {
+            SnippetRanges_.clear();
+        }
+    }
 }
 
 void Buffer::Undo() {
@@ -1248,6 +1336,7 @@ void Buffer::Undo() {
     UndoTree_.Undo();
     Rope_ = UndoTree_.Current();
     ClearSecondaryCursors(); // v1 decision -- see AddCursorAt's doc comment
+    ClearSnippetRanges();    // same v1 decision -- see SnippetRange's doc comment
     ClampCursorsToContent();
     CanAmend_ = false;
     GoalColumn_.reset();
@@ -1263,6 +1352,7 @@ void Buffer::Redo() {
     UndoTree_.Redo();
     Rope_ = UndoTree_.Current();
     ClearSecondaryCursors(); // v1 decision -- see AddCursorAt's doc comment
+    ClearSnippetRanges();    // same v1 decision -- see SnippetRange's doc comment
     ClampCursorsToContent();
     CanAmend_ = false;
     GoalColumn_.reset();

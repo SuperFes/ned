@@ -165,7 +165,16 @@ Json BuildInitializeParams(const std::filesystem::path& projectRoot, const Json&
         {"rootUri", PathToUri(projectRoot)},
         {"capabilities",
          {{"textDocument",
-           {{"codeAction",
+           // completionItem.snippetSupport (snippet-expansion follow-up) is
+           // load-bearing the same way codeActionLiteralSupport below is:
+           // per the spec a server may only send insertTextFormat: 2
+           // (snippet-syntax) items to a client advertising this, so
+           // without it a conforming server (clangd's function-argument
+           // completions, rust-analyzer, tsserver) never sends the snippet
+           // form at all -- the accept path expands them via
+           // Editor/Snippet.h into a real tabstop session.
+           {{"completion", {{"completionItem", {{"snippetSupport", true}}}}},
+            {"codeAction",
              {{"codeActionLiteralSupport",
                {{"codeActionKind",
                  {{"valueSet", Json::array({"", "quickfix", "refactor", "refactor.extract", "refactor.inline", "refactor.rewrite",

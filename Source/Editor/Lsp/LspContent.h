@@ -27,6 +27,13 @@ using Json = nlohmann::json;
 struct CompletionItem {
     std::string label;
     std::string insertText; // falls back to label if the server omitted it
+    // snippet-expansion follow-up: insertTextFormat == 2 -- insertText is
+    // TextMate snippet syntax (${1:...}), not literal text; the accept path
+    // must expand it (Editor/Snippet.h), never insert it raw. Trailing with
+    // a default so every existing designated-init call site (including the
+    // dabbrev/Janet-synthesized items, which are never snippets) keeps
+    // compiling unchanged.
+    bool isSnippet = false;
 
     bool operator==(const CompletionItem&) const = default;
 };

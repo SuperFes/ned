@@ -471,6 +471,52 @@ class Buffer {
     // on every frame.
     [[nodiscard]] std::size_t FoldGeneration() const;
 
+    // Snippet-expansion follow-up: a live snippet session's tabstop fields,
+    // as identity-carrying byte ranges relocated across every content-
+    // mutating edit through the same RelocateForInsert/RelocateForDelete
+    // primitives every other tracked position rides. Deliberately NOT
+    // stored as secondary cursors (those are deduplicated by point and
+    // cleared on undo -- either would silently destroy a tabstop's
+    // identity/ordinal) and NOT a FoldMarkers_-style map (unique keys lose
+    // an entry when a delete collapses two fields together); the closest
+    // structural sibling is UnsavedChangeRanges_ (a plain vector of ranges,
+    // both endpoints relocated). Buffer has no idea what the ranges mean --
+    // interpreting them as tabstops is entirely Editor/Snippet.h's job,
+    // the same split FoldMarker has with Org/CodeFold.
+    //
+    // Gravity is active-aware: the (at most one) active range grows when
+    // text is inserted at either of its own edges (typing at the active
+    // field's boundary extends the field), while an inactive range excludes
+    // a boundary insert (so an insert at the seam between two adjacent
+    // fields lands in whichever of the two is active, never both). A range
+    // whose content is fully deleted becomes degenerate (start == end) and
+    // is kept -- an emptied field is still a navigable, refillable field.
+    // Undo()/Redo() clear the whole set (the same v1 simplification
+    // secondary cursors make: restoring field positions across a snapshot
+    // restore has no obviously-right answer, and the owning session treats
+    // "ranges gone" as its cue to end).
+    struct SnippetRange {
+        std::size_t id;           // stable identity across relocation
+        int         tabstopIndex; // 0 = final stop; mirrors share an index
+        std::size_t start;        // invariant: start <= end
+        std::size_t end;
+        bool        active = false;
+
+        bool operator==(const SnippetRange&) const = default;
+    };
+    void                                           SetSnippetRanges(std::vector<SnippetRange> ranges);
+    [[nodiscard]] const std::vector<SnippetRange>& SnippetRanges() const;
+    void                                           ClearSnippetRanges();
+    // Marks the range with this id active (clearing every other range's
+    // flag); unknown id just clears them all.
+    void SetActiveSnippetRange(std::size_t id);
+    // Explicitly repairs one range's endpoints -- the mirror-sync rewrite
+    // (delete a mirror's old content, insert the new) leaves the rewritten
+    // range degenerate under its own inactive gravity, so relocation alone
+    // can't recapture the fresh text; the session pins it back here.
+    // Unknown id is a no-op.
+    void UpdateSnippetRange(std::size_t id, std::size_t start, std::size_t end);
+
     // status-gutter unsaved-change-indicator follow-up: byte ranges touched
     // by an edit since this buffer was last loaded/saved -- sorted, merged,
     // non-overlapping. Relocated across every content-mutating edit the
@@ -593,6 +639,14 @@ class Buffer {
     // the five content-mutation sites.
     void RelocateSecondaryCursorsForInsert(std::size_t insertOffset, std::size_t length);
     void RelocateSecondaryCursorsForDelete(std::size_t rangeStart, std::size_t rangeEnd);
+    // Snippet-expansion follow-up: SnippetRanges_'s own leg of the same
+    // per-field relocation, called beside the two above at each of the five
+    // content-mutation sites. The insert half implements the active-aware
+    // gravity described at SnippetRange's own doc comment rather than
+    // RelocateForInsert's uniform at-or-after rule; the delete half is both
+    // endpoints through RelocateForDelete unchanged.
+    void RelocateSnippetRangesForInsert(std::size_t insertOffset, std::size_t length);
+    void RelocateSnippetRangesForDelete(std::size_t rangeStart, std::size_t rangeEnd);
     // Re-sorts by point and drops duplicates (of each other or of the
     // primary) -- edits can collapse two cursors onto one position, the
     // same "collapses toward one surviving position" behavior Mark_ has.
@@ -639,6 +693,7 @@ class Buffer {
     std::size_t                       ContentGeneration_ = 0; // see ContentGeneration()
     std::map<std::size_t, FoldMarker> FoldMarkers_;           // see FoldMarker's own doc comment above
     std::size_t                       FoldGeneration_ = 0;    // see FoldGeneration()
+    std::vector<SnippetRange>         SnippetRanges_;         // see SnippetRange's own doc comment above
 
     std::vector<Diagnostic> Diagnostics_;               // see Diagnostics()'s own doc comment
     std::size_t             DiagnosticsGeneration_ = 0; // see DiagnosticsGeneration()

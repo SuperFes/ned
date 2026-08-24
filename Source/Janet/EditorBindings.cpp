@@ -38,6 +38,7 @@
 #include "Editor/ScriptingSession.h"
 #include "Editor/SearchSettings.h"
 #include "Editor/Session.h"
+#include "Editor/SnippetRegistry.h"
 #include "Editor/SyntaxTheme.h"
 #include "Editor/TabWidth.h"
 #include "Editor/Tasks/TaskConfig.h"
@@ -412,6 +413,18 @@ namespace {
         }
         editor::org::RegisterCaptureTemplate(editor::org::CaptureTemplate{
             key[0], std::move(name), std::move(targetFile), std::move(templateText), std::move(headline)});
+    }
+
+    // snippet-expansion follow-up: registers a trigger-word snippet
+    // (Editor/SnippetRegistry.h) -- language-key "" means every mode, an
+    // empty body clears, re-registering overwrites (NedSetTaskCommand's own
+    // conventions). An empty trigger throws (auto-panics via Register).
+    void NedRegisterSnippet(std::string languageKey, std::string trigger, std::string body) {
+        editor::RegisterSnippet(languageKey, trigger, body);
+    }
+
+    std::vector<std::string> NedSnippetTriggers(std::string languageKey) {
+        return editor::SnippetTriggers(languageKey);
     }
 
     // ACP chat panel: which edge the dock hugs and how much of the screen it
@@ -884,6 +897,18 @@ void InstallEditorBindings(Environment& env) {
         "point lands after capture (omit it to land at the end of the inserted text). headline, if non-empty, files "
         "the capture as the last child of the exactly-titled headline in target-file; empty files at the end of "
         "target-file instead. Re-registering an existing key overwrites it.");
+    env.Register<&NedRegisterSnippet>(
+        "ned", "register-snippet",
+        "Register a snippet: (language-key trigger body), e.g. (ned/register-snippet \"cpp\" \"for\" \"for (int "
+        "${1:i} = 0; $1 < ${2:n}; ++$1) {\\n    $0\\n}\"). Typing the trigger word then TAB (or M-x "
+        "expand-snippet in modes whose keymap claims TAB) expands the body: ${n:placeholder}/$n are tabstop fields "
+        "TAB/S-TAB hop between (a repeated index mirrors typing live), $0 is where point lands at the end, \\$ "
+        "escapes a literal dollar. language-key matches ned/set-lsp-command's (\"cpp\", \"python\", ...); \"\" "
+        "registers for every mode. An empty body clears the trigger; re-registering overwrites it.");
+    env.Register<&NedSnippetTriggers>(
+        "ned", "snippet-triggers",
+        "Return the snippet trigger words visible to a language key -- its own registrations merged with the "
+        "\"\"-global tier, sorted. (ned/snippet-triggers \"cpp\")");
     env.Register<&NedSetAcpAgent>(
         "ned", "set-acp-agent",
         "Set the command used to launch an Agent Client Protocol (ACP) coding agent: (name argv), e.g. "

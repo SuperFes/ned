@@ -2309,6 +2309,9 @@ void BufferView::Paint(Canvas c) {
                 if (InIsearchMatch(offset)) {
                     brush.background = theme_.isearchMatchBackground;
                 }
+                else if (InActiveSnippetField(offset)) {
+                    brush.background = theme_.snippetFieldBackground;
+                }
                 else if (InSelection(offset)) {
                     brush.background = theme_.selectionBackground;
                 }
@@ -3219,6 +3222,14 @@ bool BufferView::OnKeyEvent(const Event& event) {
         HandlePrefixArgumentKey(*chord);
         return true;
     }
+    if (inputMode_ == InputMode::Snippet) {
+        // No ClampPointToNarrowing() here for the same PrefixArgument
+        // reason: consumed chords clamp inside HandleSnippetKey themselves,
+        // and a fall-through chord re-dispatches through
+        // DispatchChordNormally, after which *this* may be destroyed.
+        HandleSnippetKey(*chord);
+        return true;
+    }
 
     // hover/completion follow-up: ghost-text state only ever exists while
     // inputMode_ == Normal (every branch above returns before reaching
@@ -3346,6 +3357,71 @@ void BufferView::HandlePrefixArgumentKey(const editor::KeyChord& chord) {
     DispatchChordNormally(chord);
 }
 
+void BufferView::HandleSnippetKey(const editor::KeyChord& chord) {
+    text::Buffer* buffer = ResolveSnippetBuffer();
+    if (buffer == nullptr) {
+        // Session buffer closed out from under the session (or no session at
+        // all -- shouldn't happen, but never leave the mode wedged).
+        EndSnippetSession();
+        return;
+    }
+
+    const bool plainTab = chord.Special == editor::SpecialKey::Tab && !chord.Control && !chord.Meta;
+    if ((plainTab && !chord.Shift) || (chord.Meta && !chord.Control && chord.Codepoint == U'n')) {
+        if (snippetSession_->NextField(*buffer) == editor::SnippetSession::NavResult::Finished) {
+            EndSnippetSession();
+            statusMessage_.clear();
+        }
+        else {
+            statusMessage_ = snippetSession_->StatusText();
+        }
+        ClampPointToNarrowing();
+        ScrollToShowPoint();
+        return;
+    }
+    // S-TAB's arrival as a shifted Tab chord is terminal-dependent (see
+    // KeyTranslation.cpp's special-key shift handling) -- M-p is the
+    // always-available fallback, M-n its forward twin above.
+    if ((plainTab && chord.Shift) || (chord.Meta && !chord.Control && chord.Codepoint == U'p')) {
+        snippetSession_->PreviousField(*buffer);
+        statusMessage_ = snippetSession_->StatusText();
+        ClampPointToNarrowing();
+        ScrollToShowPoint();
+        return;
+    }
+    if (IsQuit(chord)) {
+        // Done -- the expanded text stays exactly as it is.
+        EndSnippetSession();
+        statusMessage_.clear();
+        return;
+    }
+    if (chord.Special == editor::SpecialKey::Backspace && !chord.Control && !chord.Meta &&
+        snippetSession_->Pristine()) {
+        // Backspace on a pristine placeholder deletes the whole placeholder
+        // and is consumed -- one undo step including the mirror sync.
+        buffer->BeginUndoGroup();
+        snippetSession_->DeleteActiveFieldContent(*buffer);
+        snippetSession_->ClearPristine();
+        snippetSession_->SyncMirrors(*buffer);
+        buffer->EndUndoGroup();
+        ClampPointToNarrowing();
+        ScrollToShowPoint();
+        return;
+    }
+    if (snippetSession_->Pristine()) {
+        if (IsPlainCharacter(chord)) {
+            // First typed character replaces the placeholder: arm the
+            // delete for RunCommandAndHandleOutcome's pre-dispatch hook
+            // (inside the same undo group as the keystroke itself).
+            snippetPendingPristineDelete_ = true;
+        }
+        else {
+            snippetSession_->ClearPristine();
+        }
+    }
+    DispatchChordNormally(chord);
+}
+
 bool BufferView::RunCommandAndHandleOutcome(editor::CommandContext& context, const std::function<bool()>& invoke,
                                             const editor::KeyChord* triggeringChord) {
     const std::size_t generationBefore    = activeBuffer_.Get().ContentGeneration();
@@ -3355,7 +3431,27 @@ bool BufferView::RunCommandAndHandleOutcome(editor::CommandContext& context, con
     // buffers" reasoning MaybeScheduleAutoCompletion's own generationBefore
     // comparison already relies on -- see this method's tail below.
     const bool wasModifiedBefore = activeBuffer_.Get().Modified();
-    bool       ran               = false;
+    // snippet-expansion follow-up (pre-dispatch hook): while a session is
+    // live, every buffer-modifying path funnels through here
+    // (HandleSnippetKey re-dispatches everything it doesn't consume), so
+    // this is the one choke point that can wrap the dispatched command and
+    // its mirror sync (post-dispatch hook below) into one undo group --
+    // kill-line/yank/C-u-repeats inside a field get identical treatment to
+    // plain typing. Buffer re-resolved by name on each side (the command
+    // may close it), never a stored pointer; an armed pristine-placeholder
+    // delete applies here so it shares the keystroke's own undo step.
+    const bool snippetHookArmed = inputMode_ == InputMode::Snippet && snippetSession_.has_value();
+    if (snippetHookArmed) {
+        if (text::Buffer* snippetBuffer = ResolveSnippetBuffer()) {
+            snippetBuffer->BeginUndoGroup();
+            if (snippetPendingPristineDelete_) {
+                snippetSession_->DeleteActiveFieldContent(*snippetBuffer);
+                snippetSession_->ClearPristine();
+            }
+        }
+        snippetPendingPristineDelete_ = false;
+    }
+    bool ran = false;
     try {
         ran = invoke();
     }
@@ -3379,6 +3475,31 @@ bool BufferView::RunCommandAndHandleOutcome(editor::CommandContext& context, con
     // of dozens of existing command implementations.
     if (ran && !statusMessage_.empty() && statusMessage_ == statusMessageBefore) {
         statusMessage_.clear();
+    }
+
+    // snippet-expansion follow-up (post-dispatch hook): sync mirrors and
+    // close the pre-hook's undo group, then decide whether the session
+    // survives this dispatch. Placed above the context.quit early return so
+    // the group balances on every path, and above the interactiveRequest
+    // block so a request that destroys this pane (delete-window) never
+    // leaves orphaned ranges behind -- *this* is still alive here
+    // regardless of what the command asked for (destruction only happens
+    // inside StartInteractiveSession below).
+    if (snippetHookArmed && snippetSession_) {
+        text::Buffer* snippetBuffer = ResolveSnippetBuffer();
+        if (snippetBuffer != nullptr) {
+            snippetSession_->SyncMirrors(*snippetBuffer);
+            snippetBuffer->EndUndoGroup();
+        }
+        if (snippetBuffer == nullptr                                             // buffer closed
+            || !snippetSession_->RangesValid(*snippetBuffer)                     // undo/redo cleared the ranges
+            || &activeBuffer_.Get() != snippetBuffer                             // command switched buffers
+            || context.interactiveRequest != editor::InteractiveRequest::None) { // another session starting
+            EndSnippetSession();
+        }
+        else if (statusMessage_.empty()) {
+            statusMessage_ = snippetSession_->StatusText();
+        }
     }
 
     if (context.quit) {
@@ -3435,6 +3556,13 @@ bool BufferView::RunCommandAndHandleOutcome(editor::CommandContext& context, con
         // sees a meaningful lastCommand of its own) needs it.
         if (context.interactiveRequest == editor::InteractiveRequest::ZapToChar) {
             pendingZapToCharAppend_ = context.zapToCharAppend;
+        }
+        // snippet-expansion follow-up: same stash shape as zapToCharAppend
+        // just above -- the requesting command's context is a caller local,
+        // so what to expand has to ride a member into
+        // StartInteractiveSession's own SnippetExpand case.
+        if (context.interactiveRequest == editor::InteractiveRequest::SnippetExpand) {
+            pendingSnippetExpansion_ = context.snippetExpansion;
         }
         StartInteractiveSession(context.interactiveRequest);
         if (!destroysThisPane) {
@@ -3541,6 +3669,17 @@ void BufferView::EnsureStatusMessageFreshness() {
 }
 
 void BufferView::RequestCompletionAtPoint() {
+    // Ghost text is a Normal-mode-only construct (see OnKeyEvent's
+    // ghostCompletion_ block): a debounce timer armed by Normal-mode typing
+    // can fire after an interactive session has since started -- found live
+    // with the snippet session, where typing a trigger word armed the timer
+    // and TAB's expansion won the race, leaving a ghost popped over the
+    // active field that the session's own TAB could then never accept.
+    // MaybeScheduleAutoCompletion's scheduling-side gate can't cover an
+    // already-armed timer, so the fire path bails here too.
+    if (inputMode_ != InputMode::Normal) {
+        return;
+    }
     text::Buffer&     buffer = activeBuffer_.Get();
     const std::size_t point  = buffer.Point();
 
@@ -3691,6 +3830,15 @@ bool BufferView::ShouldSuppressAutoCompletion() const {
 
 void BufferView::MaybeScheduleAutoCompletion(const editor::KeyChord& chord, std::size_t generationBefore) {
     ghostCompletion_.reset(); // typing invalidates any currently-shown suggestion
+    // snippet-expansion follow-up: ghost text is a Normal-mode-only
+    // construct (see OnKeyEvent's ghostCompletion_ block), but typing
+    // inside a snippet field reaches here through HandleSnippetKey's
+    // re-dispatch -- without this gate the debounce timer could pop a
+    // suggestion mid-session that TAB (consumed by the session) could then
+    // never accept.
+    if (inputMode_ == InputMode::Snippet) {
+        return;
+    }
     // dabbrev-fallback follow-up: no longer gated on lspManager_ being set at
     // all -- RequestCompletionAtPoint (fired once this debounce elapses)
     // itself decides between an LSP request and the buffer-word fallback.
@@ -3728,8 +3876,19 @@ void BufferView::AcceptGhostCompletion() {
     if (!ghostCompletion_) {
         return;
     }
-    text::Buffer&     buffer = activeBuffer_.Get();
-    const std::string suffix = GhostSuffixFor(ghostCompletion_->items[ghostCompletion_->selectedIndex]);
+    text::Buffer&                     buffer = activeBuffer_.Get();
+    const editor::lsp::CompletionItem item   = ghostCompletion_->items[ghostCompletion_->selectedIndex];
+    if (item.isSnippet) {
+        // snippet-expansion follow-up: a snippet-format item's insertText
+        // is TextMate syntax, never literal text -- replace the typed
+        // prefix with the parsed expansion and start a tabstop session,
+        // the exact InteractiveRequest::SnippetExpand path.
+        const std::size_t prefixStart = ghostCompletion_->prefixStart;
+        ghostCompletion_.reset();
+        BeginSnippetExpansion(prefixStart, buffer.Point(), item.insertText);
+        return;
+    }
+    const std::string suffix = GhostSuffixFor(item);
     ghostCompletion_.reset();
     if (!suffix.empty()) {
         buffer.InsertAtPoint(suffix);
@@ -3759,13 +3918,19 @@ std::string BufferView::GhostSuffixFor(const editor::lsp::CompletionItem& item) 
     const std::size_t   prefixStart = ghostCompletion_->prefixStart;
     const std::string   prefix      = content.Substring(prefixStart, point - prefixStart);
 
-    if (item.insertText.size() > prefix.size() && item.insertText.compare(0, prefix.size(), prefix) == 0) {
-        return item.insertText.substr(prefix.size());
+    // snippet-expansion follow-up: a snippet-format item's raw insertText
+    // carries ${1:...} markers -- preview against the parsed plain text
+    // instead (AcceptGhostCompletion expands it for real; this path only
+    // renders the ghost and serves the non-snippet insert).
+    const std::string effectiveText =
+        item.isSnippet ? editor::ParseSnippet(item.insertText).text : item.insertText;
+    if (effectiveText.size() > prefix.size() && effectiveText.compare(0, prefix.size(), prefix) == 0) {
+        return effectiveText.substr(prefix.size());
     }
     // The server's insertText doesn't share our naively-computed word
     // prefix (e.g. it used a textEdit range instead) -- shown in full
     // rather than guessed at; a documented v1 limitation, not a crash risk.
-    return item.insertText;
+    return effectiveText;
 }
 
 void BufferView::RequestCodeActionsAtPoint() {
@@ -4399,6 +4564,13 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             inputMode_ = InputMode::PrefixArgument;
             prefixArgReader_.emplace();
             statusMessage_ = prefixArgReader_->StatusText();
+            return;
+        case editor::InteractiveRequest::SnippetExpand:
+            if (pendingSnippetExpansion_) {
+                const auto request = std::move(*pendingSnippetExpansion_);
+                pendingSnippetExpansion_.reset();
+                BeginSnippetExpansion(request.replaceStart, request.replaceEnd, request.body);
+            }
             return;
         case editor::InteractiveRequest::ConfirmQuit: {
             inputMode_ = InputMode::ConfirmQuit;
@@ -5250,8 +5422,56 @@ std::string BufferView::SearchStatusText() const {
     return text;
 }
 
+void BufferView::BeginSnippetExpansion(std::size_t replaceStart, std::size_t replaceEnd, const std::string& body) {
+    // Any prior session's ranges must never leak into a fresh expansion
+    // (unreachable through TAB, which a live session consumes, but the LSP
+    // accept path and M-x expand-snippet land here too).
+    EndSnippetSession();
+    text::Buffer& buffer  = activeBuffer_.Get();
+    auto          session = editor::SnippetSession::Start(buffer, buffer.Name(), replaceStart, replaceEnd,
+                                                          editor::ParseSnippet(body));
+    if (session) {
+        snippetSession_.emplace(std::move(*session));
+        inputMode_     = InputMode::Snippet;
+        statusMessage_ = snippetSession_->StatusText();
+    }
+    ClampPointToNarrowing();
+    ScrollToShowPoint();
+}
+
+text::Buffer* BufferView::ResolveSnippetBuffer() {
+    if (!snippetSession_) {
+        return nullptr;
+    }
+    if (text::Buffer* buffer = bufferList_.Find(snippetSession_->BufferName())) {
+        return buffer;
+    }
+    if (activeBuffer_.Get().Name() == snippetSession_->BufferName()) {
+        return &activeBuffer_.Get();
+    }
+    return nullptr;
+}
+
+void BufferView::EndSnippetSession() {
+    if (snippetSession_) {
+        if (text::Buffer* buffer = ResolveSnippetBuffer()) {
+            buffer->ClearSnippetRanges();
+        }
+        snippetSession_.reset();
+    }
+    pendingSnippetExpansion_.reset();
+    snippetPendingPristineDelete_ = false;
+    if (inputMode_ == InputMode::Snippet) {
+        inputMode_ = InputMode::Normal;
+    }
+}
+
 void BufferView::EndInteractiveSession() {
     inputMode_ = InputMode::Normal;
+    // snippet-expansion follow-up: a snippet session ending through this
+    // shared reset (any other session's own end path) clears its
+    // buffer-side ranges too, not just the members.
+    EndSnippetSession();
     search_.reset();
     queryReplace_.reset();
     prompt_.reset();
@@ -8906,6 +9126,17 @@ Brush BufferView::ResolvedBrush(editor::SyntaxClass cls, editor::CaptureId captu
     const Brush brush = theme_.BrushFor(cls, captureId);
     brushCache_.emplace(key, brush);
     return brush;
+}
+
+bool BufferView::InActiveSnippetField(std::size_t byteOffset) const {
+    if (inputMode_ != InputMode::Snippet || !snippetSession_) {
+        return false;
+    }
+    // Reads the *active* buffer's ranges -- if it isn't the session buffer
+    // (a transient mid-frame mismatch; the session ends on a real switch)
+    // its range set is empty and this simply reports false.
+    const auto range = snippetSession_->ActiveFieldRange(activeBuffer_.Get());
+    return range && byteOffset >= range->first && byteOffset < range->second;
 }
 
 bool BufferView::InIsearchMatch(std::size_t byteOffset) const {

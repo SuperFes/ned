@@ -120,7 +120,12 @@ std::vector<CompletionItem> ExtractCompletionItems(const Json& result) {
         }
         std::string label      = item.value("label", std::string());
         std::string insertText = item.value("insertText", label);
-        items.push_back(CompletionItem{.label = std::move(label), .insertText = std::move(insertText)});
+        // Item-level insertTextFormat only (1 = PlainText is the spec's own
+        // default); a completion list's itemDefaults.insertTextFormat is a
+        // documented v1 cut.
+        const bool isSnippet = item.value("insertTextFormat", 1) == 2;
+        items.push_back(
+            CompletionItem{.label = std::move(label), .insertText = std::move(insertText), .isSnippet = isSnippet});
     }
     return items;
 }

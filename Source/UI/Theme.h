@@ -138,6 +138,10 @@ struct Theme {
     // stays visible underneath a selection or a search match.
     Color selectionBackground;
     Color isearchMatchBackground;
+    // snippet-expansion follow-up: the live snippet session's *active*
+    // tabstop field (mirrors deliberately unhighlighted in v1) -- same
+    // keep-the-glyph-foreground overlay contract as the two above.
+    Color snippetFieldBackground;
 
     // Tab bar (tab-bar follow-up): tabBar is the brush for inactive tabs and
     // the row's own fill; activeTab is the visually distinct brush for

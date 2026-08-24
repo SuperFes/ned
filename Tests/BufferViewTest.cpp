@@ -31,6 +31,7 @@
 #include "Editor/Register.h"
 #include "Editor/ScratchPad.h"
 #include "Editor/Session.h"
+#include "Editor/SnippetRegistry.h"
 #include "Editor/TabWidth.h"
 #include "Editor/Variables.h"
 #include "Editor/WrapOverrides.h"
@@ -7729,4 +7730,253 @@ TEST_CASE("C-x C-s on a buffer with unresolved conflict markers asks before writ
     }
 
     std::filesystem::remove(path);
+}
+
+// --- Snippet expansion sessions (snippet-expansion follow-up) -------------
+
+namespace {
+
+// The snippet registry is process-wide state (see Editor/SnippetRegistry.h).
+struct SnippetRegistryTestGuard {
+    SnippetRegistryTestGuard() {
+        ned::editor::ClearAllSnippets();
+    }
+    ~SnippetRegistryTestGuard() {
+        ned::editor::ClearAllSnippets();
+    }
+};
+
+} // namespace
+
+TEST_CASE("Tab expands a registered snippet and mirrors track typing", "[BufferView]") {
+    const SnippetRegistryTestGuard guard;
+    ned::editor::RegisterSnippet("", "for", "for (${1:i}; $1 < n; ++$1)");
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+
+    TypeText(view, "for");
+    view.OnEvent(ned::ui::test::Tab());
+    REQUIRE(fixture.buffer.Text() == "for (i; i < n; ++i)");
+    REQUIRE(fixture.buffer.Point() == 6);
+    REQUIRE(fixture.buffer.SnippetRanges().size() == 4);
+    REQUIRE(fixture.statusMessage == "Snippet field 1/1 (TAB next, S-TAB previous, ESC done)");
+
+    // Pristine placeholder: the first character replaces "i", mirrors follow.
+    TypeText(view, "idx");
+    REQUIRE(fixture.buffer.Text() == "for (idx; idx < n; ++idx)");
+    REQUIRE(fixture.buffer.Point() == 8);
+
+    // Tab past the last field lands on the (implicit) final stop and ends
+    // the session.
+    view.OnEvent(ned::ui::test::Tab());
+    REQUIRE(fixture.buffer.SnippetRanges().empty());
+    REQUIRE(fixture.buffer.Point() == 25);
+
+    // Tab is back to its ordinary literal-tab self afterward.
+    view.OnEvent(ned::ui::test::Tab());
+    REQUIRE(fixture.buffer.Text() == "for (idx; idx < n; ++idx)\t");
+}
+
+TEST_CASE("Backspace on a pristine placeholder deletes it whole and stays in session", "[BufferView]") {
+    const SnippetRegistryTestGuard guard;
+    ned::editor::RegisterSnippet("", "greet", "hello ${1:world}!");
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+
+    TypeText(view, "greet");
+    view.OnEvent(ned::ui::test::Tab());
+    REQUIRE(fixture.buffer.Text() == "hello world!");
+
+    view.OnEvent(ned::ui::test::Backspace());
+    REQUIRE(fixture.buffer.Text() == "hello !");
+    REQUIRE_FALSE(fixture.buffer.SnippetRanges().empty());
+
+    TypeText(view, "there");
+    REQUIRE(fixture.buffer.Text() == "hello there!");
+}
+
+TEST_CASE("Escape ends a snippet session keeping the expanded text", "[BufferView]") {
+    const SnippetRegistryTestGuard guard;
+    ned::editor::RegisterSnippet("", "t", "a ${1:x} b");
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+
+    TypeText(view, "t");
+    view.OnEvent(ned::ui::test::Tab());
+    REQUIRE(fixture.buffer.Text() == "a x b");
+
+    view.OnEvent(ned::ui::test::Escape());
+    REQUIRE(fixture.buffer.SnippetRanges().empty());
+    REQUIRE(fixture.buffer.Text() == "a x b");
+
+    // Typing is plain self-insert again -- no pristine replacement.
+    TypeText(view, "y");
+    REQUIRE(fixture.buffer.Text() == "a xy b");
+}
+
+TEST_CASE("Snippet fields navigate with Tab and M-p/M-n", "[BufferView]") {
+    const SnippetRegistryTestGuard guard;
+    ned::editor::RegisterSnippet("", "pair", "(${1:a}, ${2:b})");
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+
+    TypeText(view, "pair");
+    view.OnEvent(ned::ui::test::Tab());
+    REQUIRE(fixture.buffer.Text() == "(a, b)");
+    REQUIRE(fixture.buffer.Point() == 2);
+    REQUIRE(fixture.statusMessage == "Snippet field 1/2 (TAB next, S-TAB previous, ESC done)");
+
+    view.OnEvent(ned::ui::test::Tab());
+    REQUIRE(fixture.buffer.Point() == 5);
+    REQUIRE(fixture.statusMessage == "Snippet field 2/2 (TAB next, S-TAB previous, ESC done)");
+
+    view.OnEvent(ned::ui::test::Alt('p'));
+    REQUIRE(fixture.buffer.Point() == 2);
+    view.OnEvent(ned::ui::test::Alt('n'));
+    REQUIRE(fixture.buffer.Point() == 5);
+
+    // Revisiting re-arms pristine: typing replaces the whole placeholder.
+    TypeText(view, "zz");
+    REQUIRE(fixture.buffer.Text() == "(a, zz)");
+
+    view.OnEvent(ned::ui::test::Tab());
+    REQUIRE(fixture.buffer.SnippetRanges().empty());
+    REQUIRE(fixture.buffer.Point() == 7); // the implicit final stop
+}
+
+TEST_CASE("A command-driven delete inside a field syncs mirrors too", "[BufferView]") {
+    const SnippetRegistryTestGuard guard;
+    ned::editor::RegisterSnippet("", "v", "${1:val} = $1");
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+
+    TypeText(view, "v");
+    view.OnEvent(ned::ui::test::Tab());
+    REQUIRE(fixture.buffer.Text() == "val = val");
+
+    TypeText(view, "ab");
+    REQUIRE(fixture.buffer.Text() == "ab = ab");
+
+    // Not pristine anymore -- Backspace dispatches normally
+    // (delete-backward-char) and the post-dispatch hook syncs the mirror.
+    view.OnEvent(ned::ui::test::Backspace());
+    REQUIRE(fixture.buffer.Text() == "a = a");
+    REQUIRE_FALSE(fixture.buffer.SnippetRanges().empty());
+}
+
+TEST_CASE("Undo mid-session reverts coherently and ends the session", "[BufferView]") {
+    const SnippetRegistryTestGuard guard;
+    ned::editor::RegisterSnippet("", "for", "for (${1:i}; $1)");
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+
+    TypeText(view, "for");
+    view.OnEvent(ned::ui::test::Tab());
+    TypeText(view, "x");
+    REQUIRE(fixture.buffer.Text() == "for (x; x)");
+
+    // C-/ dispatches undo through the session's own re-dispatch path; the
+    // keystroke and its mirror sync revert as one step, Buffer::Undo clears
+    // the ranges, and the post-dispatch hook ends the session.
+    view.OnEvent(ned::ui::test::Ctrl('/'));
+    REQUIRE(fixture.buffer.Text() == "for (i; i)");
+    REQUIRE(fixture.buffer.SnippetRanges().empty());
+}
+
+TEST_CASE("Entering another interactive session ends the snippet session", "[BufferView]") {
+    const SnippetRegistryTestGuard guard;
+    ned::editor::RegisterSnippet("", "t", "x ${1:y} z");
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+
+    TypeText(view, "t");
+    view.OnEvent(ned::ui::test::Tab());
+    REQUIRE_FALSE(fixture.buffer.SnippetRanges().empty());
+
+    view.OnEvent(ned::ui::test::Alt('x')); // M-x opens its own session
+    REQUIRE(fixture.buffer.SnippetRanges().empty());
+    REQUIRE(fixture.statusMessage.substr(0, 4) == "M-x ");
+}
+
+TEST_CASE("The active snippet field paints with its own background wash", "[BufferView]") {
+    const SnippetRegistryTestGuard guard;
+    ned::editor::RegisterSnippet("", "greet", "hi ${1:name}!");
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
+
+    TypeText(view, "greet");
+    view.OnEvent(ned::ui::test::Tab());
+    REQUIRE(fixture.buffer.Text() == "hi name!");
+
+    ned::ui::Screen screen = ned::ui::Screen(40, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
+    view.Paint(canvas);
+
+    const int gutter = GutterWidth(1);
+    REQUIRE(screen.PixelAt(gutter + 3, 0).background_color == fixture.theme.snippetFieldBackground); // 'n'
+    REQUIRE(screen.PixelAt(gutter + 6, 0).background_color == fixture.theme.snippetFieldBackground); // 'e'
+    REQUIRE(screen.PixelAt(gutter + 2, 0).background_color == fixture.theme.background);             // ' ' before the field
+    REQUIRE(screen.PixelAt(gutter + 7, 0).background_color == fixture.theme.background);             // '!' after it
+
+    // Ending the session drops the wash.
+    view.OnEvent(ned::ui::test::Escape());
+    ned::ui::Screen after = ned::ui::Screen(40, 1);
+    ned::ui::Canvas afterCanvas(after, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
+    view.Paint(afterCanvas);
+    REQUIRE(after.PixelAt(gutter + 3, 0).background_color == fixture.theme.background);
+}
+
+TEST_CASE("Accepting a snippet-format LSP completion starts a tabstop session", "[BufferView]") {
+    Fixture                     fixture;
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_bufferview_lsp_snippet_test.txt";
+    ned::text::Buffer&          buffer = fixture.bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("fo");
+    fixture.activeBuffer.Set(buffer);
+
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::LspClient* client = nullptr;
+    FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
+    ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    view.Paint(canvas); // triggers SyncBuffer -> didOpen
+    (void)ReadRawLspFrame(server.serverStdinRead);
+
+    view.OnEvent(ManualCompleteEvent()); // C-M-i -- lsp-complete
+    const std::string raw = ReadRawLspFrame(server.serverStdinRead);
+
+    const auto response = ned::editor::lsp::Json{
+        {"jsonrpc", "2.0"},
+        {"id", LspRequestIdFromFrame(raw)},
+        {"result",
+         {{"isIncomplete", false},
+          {"items", ned::editor::lsp::Json::array({{{"label", "foobar"},
+                                                    {"insertText", "foobar(${1:arg})"},
+                                                    {"insertTextFormat", 2}}})}}},
+    };
+    client->DispatchFrame(response.dump());
+
+    // The ghost renders the *parsed* text's suffix -- no raw ${1:...} markers.
+    view.Paint(canvas);
+    REQUIRE(ContentRowText(screenBuf, 0, 11, 1) == "foobar(arg)");
+
+    // Tab accepts: the typed prefix is replaced by the parsed expansion and
+    // a tabstop session opens on the placeholder field.
+    view.OnEvent(ned::ui::test::Tab());
+    REQUIRE(buffer.Text() == "foobar(arg)");
+    REQUIRE_FALSE(buffer.SnippetRanges().empty());
+    REQUIRE(buffer.Point() == 10); // end of the "arg" field
+
+    TypeText(view, "42");
+    REQUIRE(buffer.Text() == "foobar(42)");
+
+    view.OnEvent(ned::ui::test::Tab()); // to the final stop -- session ends
+    REQUIRE(buffer.SnippetRanges().empty());
+    REQUIRE(buffer.Point() == 10); // implicit $0 at the expansion's end
 }
