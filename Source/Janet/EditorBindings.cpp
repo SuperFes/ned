@@ -41,6 +41,7 @@
 #include "Editor/Terminal/Config.h"
 #include "Editor/ThemeSetting.h"
 #include "Editor/ToolchainIncludePaths.h"
+#include "Editor/TrimOnSave.h"
 #include "Editor/Vcs/VcsProviderRegistry.h"
 #include "Editor/WhitespaceSettings.h"
 #include "Editor/WrapOverrides.h"
@@ -295,6 +296,10 @@ namespace {
 
     void NedSetEnsureFinalNewline(bool enabled) {
         editor::SetEnsureFinalNewline(enabled);
+    }
+
+    void NedSetTrimTrailingWhitespaceOnSave(bool enabled) {
+        editor::SetTrimTrailingWhitespaceOnSave(enabled);
     }
 
     void NedSetCodeFoldingEnabled(bool enabled) {
@@ -747,6 +752,11 @@ void InstallEditorBindings(Environment& env) {
         "ned", "set-ensure-final-newline",
         "Enable/disable appending a trailing newline to a file's written content on save if it's missing one "
         "(default true).");
+    env.Register<&NedSetTrimTrailingWhitespaceOnSave>(
+        "ned", "set-trim-trailing-whitespace-on-save",
+        "Enable/disable stripping trailing spaces/tabs from every line and collapsing trailing blank lines at "
+        "end-of-file, applied to a file's written content on save (default true). Disk-only, same as "
+        "set-ensure-final-newline -- the buffer's own live content is never touched.");
     env.Register<&NedSetCodeFoldingEnabled>(
         "ned", "set-code-folding-enabled",
         "Enable/disable the gutter code-folding affordance for modes with a fold query (default true).");

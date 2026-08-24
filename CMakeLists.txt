@@ -484,6 +484,7 @@ add_library(ned_lib STATIC
         Source/Editor/Link.cpp
         Source/Editor/HeaderSource.cpp
         Source/Editor/FinalNewline.cpp
+        Source/Editor/TrimOnSave.cpp
         Source/Editor/FormatOnSave.cpp
         Source/Editor/Clipboard.cpp
         Source/Editor/TabWidth.cpp
@@ -759,6 +760,7 @@ if (NED_BUILD_TESTS)
             Tests/TabBarTest.cpp
             Tests/ScrollArrowButtonTest.cpp
             Tests/FinalNewlineTest.cpp
+            Tests/TrimOnSaveTest.cpp
             Tests/FormatOnSaveTest.cpp
             Tests/ClipboardTest.cpp
             Tests/ClipboardTestGuard.cpp
