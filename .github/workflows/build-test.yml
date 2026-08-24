@@ -62,5 +62,16 @@ jobs:
       - name: Build
         run: cmake --build ${{ matrix.binary_dir }} -j"$(nproc)"
 
+      # $TERM is unset on the runner (no controlling terminal at all), and
+      # notcurses_core_init (Source/UI/EventLoop.cpp) hard-fails without a
+      # resolvable terminfo entry -- every test that constructs a real
+      # ui::EventLoop (BufferViewTest.cpp and friends) throws "EventLoop:
+      # notcurses_core_init failed" as a result. Confirmed live: unsetting
+      # TERM locally reproduces the exact failure, and setting it (even with
+      # no real pty at all, stdin/stdout fully redirected) is sufficient to
+      # fix it -- notcurses only needs a valid terminfo lookup at init, not
+      # an actual interactive terminal device.
       - name: Test
         run: ctest --test-dir ${{ matrix.binary_dir }} --output-on-failure
+        env:
+          TERM: xterm-256color
