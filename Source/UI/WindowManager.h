@@ -37,6 +37,7 @@
 #include "BufferView.h"
 #include "Editor/Command.h"
 #include "Editor/Dispatcher.h"
+#include "Editor/FileWatch.h"
 #include "Editor/Keymap.h"
 #include "Editor/Lsp/LspManager.h"
 #include "Editor/Mode.h"
@@ -421,6 +422,22 @@ class WindowManager {
     // once, for the real running editor only.
     void StartAutoSaveTimer(EventLoop& eventLoop);
 
+    // file-watcher follow-up: constructs fileWatcher_ (Editor/FileWatch.h,
+    // inotify-backed) so an external write underneath an open buffer fires
+    // SweepExternalChanges near-instantly instead of waiting for the tick
+    // above -- which keeps running unchanged as the safety net for anything
+    // inotify can't see (NFS, watch-budget exhaustion). Constructed even
+    // when ned/set-file-watch is currently off (init.janet runs before this
+    // is called, and gating construction on the toggle would make a later
+    // re-enable dead) -- ResyncFileWatcher just keeps the watch set empty
+    // while disabled. Not called from the constructor, for the same "don't
+    // spin up a real thread in every test" reason StartAutoSaveTimer isn't;
+    // main.cpp calls this once, alongside it, for the real running editor.
+    // Note ned's own saves fire the watcher too -- harmless: the save
+    // already advanced the buffer's stored disk timestamp, so the resulting
+    // sweep is a cheap no-op.
+    void StartFileWatcher(EventLoop& eventLoop);
+
     // vcs-diff-gutter-staleness follow-up: refreshes every live pane's own
     // diff gutter (BufferView::RefreshVcsDiff, silently no-op with no
     // VcsRunner wired) -- the gutter's freshness is otherwise purely
@@ -504,6 +521,26 @@ class WindowManager {
     // as there are large files currently being opened at once, so an
     // unbounded-until-next-open backlog is not a real concern.
     void PurgeFinishedAsyncLoaders();
+
+    // file-watcher follow-up: the external-change portion of the auto-save
+    // tick (AutoRevertBuffers + AutoMergeBuffers + their status-line
+    // messages, then RefreshVcsDiffGutters -- a disk change stales the diff
+    // gutter too), factored out verbatim so the inotify watcher's Posted
+    // callback and the periodic tick run the exact same sweep. Always runs
+    // on the main thread (called from Posted lambdas only). Idempotent:
+    // both triggers re-check Buffer::ExternallyModified per buffer, so a
+    // watcher-fired sweep racing the tick's own is just a cheap no-op.
+    void SweepExternalChanges();
+
+    // file-watcher follow-up: re-derives fileWatcher_'s watch set from
+    // bufferList_.Buffers() (every path-backed buffer), or clears it when
+    // ned/set-file-watch is off. Called from StartFileWatcher, from each
+    // auto-save tick (so a newly opened buffer is watched within <=5s --
+    // deliberately no buffer-open hook: BufferList::SetOnFileOpened is
+    // single-slot and already claimed, and the poll sweep covers the gap),
+    // and after each watcher-fired sweep (a sweep can revert a buffer whose
+    // file was replaced, and buffers close). No-op before StartFileWatcher.
+    void ResyncFileWatcher();
 
     [[nodiscard]] std::unique_ptr<Pane> MakePane(text::Buffer& buffer, editor::Mode mode);
 
@@ -613,6 +650,13 @@ class WindowManager {
 
     // See EnableAsyncFileLoading's own comment above.
     std::vector<std::unique_ptr<AsyncFileLoader>> asyncFileLoaders_;
+
+    // See StartFileWatcher's own comment above. Shares autoSaveThread_'s
+    // accepted latent shutdown ordering: main.cpp declares eventLoop after
+    // windowManager, so ~EventLoop (which discards queued posts) runs
+    // before this watcher is destroyed -- a post landing in that window is
+    // dropped, never dispatched against dead state.
+    std::unique_ptr<editor::FileWatcher> fileWatcher_;
 };
 
 } // namespace ned::ui

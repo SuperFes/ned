@@ -528,6 +528,7 @@ add_library(ned_lib STATIC
         Source/Editor/ProjectFileOps.cpp
         Source/Editor/AutoRevert.cpp
         Source/Editor/AutoMerge.cpp
+        Source/Editor/FileWatch.cpp
         Source/Editor/BackgroundActivity.cpp
         Source/Editor/InlineDiagnostics.cpp
         Source/Editor/ScratchPad.cpp
@@ -736,6 +737,7 @@ if (NED_BUILD_TESTS)
             Tests/JanetSymbolCompleteTest.cpp
             Tests/AutoRevertTest.cpp
             Tests/AutoMergeTest.cpp
+            Tests/FileWatchTest.cpp
             Tests/ThreeWayMergeTest.cpp
             Tests/BufferTest.cpp
             Tests/MultiCursorTest.cpp

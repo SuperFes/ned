@@ -702,59 +702,22 @@ void WindowManager::StartAutoSaveTimer(EventLoop& eventLoop) {
                 // posture as MaybePruneBackups above.
                 editor::MaybePruneLogFiles();
                 // external-modification-safety follow-up: piggybacked on
-                // this same tick -- reload any open, *unmodified* buffer
-                // whose file changed on disk (default on; see
-                // AutoRevert.h). Surfaced via the shared status line so a
-                // buffer changing underneath the user is never silent.
-                if (const std::vector<std::string> reverted = editor::AutoRevertBuffers(bufferList_); !reverted.empty()) {
-                    std::string names;
-                    for (const std::string& name : reverted) {
-                        names += names.empty() ? name : ", " + name;
-                    }
-                    statusMessage_ = "Reverted (changed on disk): " + names;
-                }
-                // external-modification-round-2 follow-up: the conflicting
-                // half AutoRevertBuffers deliberately skips (a buffer with
-                // local edits AND a file that also changed) -- a three-way
-                // merge (default on; see AutoMerge.h) instead of a discard.
-                // Clean and conflicted merges get distinct status text so a
-                // conflict (unresolved "<<<<<<<" markers now sitting in the
-                // buffer) is never mistaken for a silent, fully-automatic
-                // one.
-                if (const std::vector<editor::AutoMergeResult> merged = editor::AutoMergeBuffers(bufferList_);
-                    !merged.empty()) {
-                    std::string clean;
-                    std::string conflicted;
-                    for (const editor::AutoMergeResult& result : merged) {
-                        if (result.conflictCount == 0) {
-                            clean += clean.empty() ? result.name : ", " + result.name;
-                        }
-                        else {
-                            conflicted += (conflicted.empty() ? "" : ", ") + result.name + " (" +
-                                          std::to_string(result.conflictCount) + ")";
-                        }
-                    }
-                    std::string message;
-                    if (!clean.empty()) {
-                        message = "Merged external changes: " + clean;
-                    }
-                    if (!conflicted.empty()) {
-                        message += (message.empty() ? "" : "; ") + std::string("conflict(s) in ") + conflicted +
-                                   " -- resolve <<<<<<< markers";
-                    }
-                    statusMessage_ = message;
-                }
+                // this same tick -- revert/merge any open buffer whose file
+                // changed on disk (see SweepExternalChanges; also fired
+                // instantly by the inotify watcher, this tick is the
+                // safety-net path).
+                SweepExternalChanges();
+                // file-watcher follow-up: also the periodic watch-set
+                // resync point -- a buffer opened since the last tick is
+                // watched from here on (see ResyncFileWatcher's own doc
+                // comment for why there's no buffer-open hook).
+                ResyncFileWatcher();
                 // session-persistence slices 1+2: piggybacked on this
                 // existing tick rather than a second timer thread -- both
                 // saves skip the disk write entirely when nothing changed.
                 RecordSessionPlaces();
                 editor::SaveFilePlaces();
                 SaveProjectSessionNow();
-                // vcs-diff-gutter-staleness follow-up: same tick, same
-                // "unattended sweep, cheap when nothing changed" posture as
-                // AutoRevertBuffers/AutoMergeBuffers above -- see
-                // RefreshVcsDiffGutters' own doc comment in the header.
-                RefreshVcsDiffGutters();
                 // subprocess-hang-protection follow-up: same tick, same
                 // "unattended sweep" posture -- resolves any LSP/DAP/ACP
                 // request that's been waiting past kDefaultRequestTimeout
@@ -773,6 +736,78 @@ void WindowManager::StartAutoSaveTimer(EventLoop& eventLoop) {
             });
         }
     });
+}
+
+void WindowManager::StartFileWatcher(EventLoop& eventLoop) {
+    fileWatcher_ = std::make_unique<editor::FileWatcher>([this, &eventLoop] {
+        eventLoop.Post([this] {
+            SweepExternalChanges();
+            ResyncFileWatcher();
+        });
+    });
+    ResyncFileWatcher();
+}
+
+void WindowManager::ResyncFileWatcher() {
+    if (!fileWatcher_) {
+        return;
+    }
+    std::vector<std::filesystem::path> files;
+    if (editor::FileWatchEnabled()) {
+        for (const auto& buffer : bufferList_.Buffers()) {
+            if (buffer->Path().has_value()) {
+                files.push_back(*buffer->Path());
+            }
+        }
+    }
+    fileWatcher_->SetWatchedFiles(files);
+}
+
+void WindowManager::SweepExternalChanges() {
+    // Reload any open, *unmodified* buffer whose file changed on disk
+    // (default on; see AutoRevert.h). Surfaced via the shared status line
+    // so a buffer changing underneath the user is never silent.
+    if (const std::vector<std::string> reverted = editor::AutoRevertBuffers(bufferList_); !reverted.empty()) {
+        std::string names;
+        for (const std::string& name : reverted) {
+            names += names.empty() ? name : ", " + name;
+        }
+        statusMessage_ = "Reverted (changed on disk): " + names;
+    }
+    // external-modification-round-2 follow-up: the conflicting half
+    // AutoRevertBuffers deliberately skips (a buffer with local edits AND a
+    // file that also changed) -- a three-way merge (default on; see
+    // AutoMerge.h) instead of a discard. Clean and conflicted merges get
+    // distinct status text so a conflict (unresolved "<<<<<<<" markers now
+    // sitting in the buffer) is never mistaken for a silent, fully-
+    // automatic one.
+    if (const std::vector<editor::AutoMergeResult> merged = editor::AutoMergeBuffers(bufferList_); !merged.empty()) {
+        std::string clean;
+        std::string conflicted;
+        for (const editor::AutoMergeResult& result : merged) {
+            if (result.conflictCount == 0) {
+                clean += clean.empty() ? result.name : ", " + result.name;
+            }
+            else {
+                conflicted +=
+                    (conflicted.empty() ? "" : ", ") + result.name + " (" + std::to_string(result.conflictCount) + ")";
+            }
+        }
+        std::string message;
+        if (!clean.empty()) {
+            message = "Merged external changes: " + clean;
+        }
+        if (!conflicted.empty()) {
+            message += (message.empty() ? "" : "; ") + std::string("conflict(s) in ") + conflicted +
+                       " -- resolve <<<<<<< markers";
+        }
+        statusMessage_ = message;
+    }
+    // vcs-diff-gutter-staleness follow-up: same "unattended sweep, cheap
+    // when nothing changed" posture as the two calls above -- an external
+    // change stales the diff gutter too. See RefreshVcsDiffGutters' own doc
+    // comment in the header.
+    RefreshVcsDiffGutters();
 }
 
 void WindowManager::RefreshVcsDiffGutters() {
