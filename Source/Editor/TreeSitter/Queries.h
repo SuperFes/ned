@@ -105,6 +105,24 @@ extern const char* const kJavaScriptTags;
 extern const char* const kTypeScriptTags;
 extern const char* const kPythonTags;
 
+// test-runner integration: repo-local test-discovery queries
+// (Source/Editor/TreeSitter/queries/*-tests.scm) using the ned-local
+// "@test.definition"/"@test.name" capture convention -- see
+// Mode::testDiscovery's doc comment in Mode.h and cpp-tests.scm's own
+// header comment (no upstream tests.scm convention exists to vendor).
+// Only languages with a bundled mode *and* a mainstream test framework
+// whose definitions are query-recognizable get one: C++ (Catch2/gtest),
+// Python (pytest/unittest), JavaScript/TypeScript (jest/vitest/mocha --
+// kTypeScriptTests shared by TsxMode, the standing sharing convention),
+// PHP (PHPUnit). Go/Rust have no bundled mode at all (their test *output*
+// still parses -- see Editor/TestRun/TestOutputParser.h -- only discovery
+// is absent); C has no dominant query-recognizable framework convention.
+extern const char* const kCppTests;
+extern const char* const kPhpTests;
+extern const char* const kJavaScriptTests;
+extern const char* const kTypeScriptTests;
+extern const char* const kPythonTests;
+
 } // namespace ned::editor::treesitter::queries
 
 #endif // NED_EDITOR_TREESITTER_QUERIES_H

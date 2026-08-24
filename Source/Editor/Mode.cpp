@@ -500,7 +500,7 @@ std::optional<SymbolKind> SymbolKindFromCaptureName(std::string_view captureName
 
 Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& language, std::string_view querySource,
                                 std::string_view foldQuerySource, std::string_view importQuerySource,
-                                std::string_view symbolKindQuerySource) {
+                                std::string_view symbolKindQuerySource, std::string_view testQuerySource) {
     const auto parser = std::make_shared<treesitter::Parser>(language);
 
     // Shared between highlight and fold below (generic-code-folding
@@ -803,6 +803,88 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
         };
     }
 
+    // test-runner integration: a seventh closure sharing the same
+    // parser/sharedParse. Captures pair a "@test.definition" (the whole
+    // definition node) with a "@test.name" nested inside it -- paired here
+    // by smallest-enclosing-definition rather than by match grouping, since
+    // Captures() returns a flat, tree-ordered list (and nesting is real:
+    // a describe() block contains its it() blocks, a PHPUnit class its
+    // methods -- each name must land on its own innermost definition).
+    TestDiscoveryFunction testDiscovery;
+    if (!testQuerySource.empty()) {
+        const auto testQuery = std::make_shared<treesitter::Query>(language, testQuerySource);
+        testDiscovery        = [parser, testQuery, sharedParse](std::string_view bufferText) -> std::vector<TestMarker> {
+            const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
+            if (tree.IsNull()) {
+                return {};
+            }
+
+            struct Definition {
+                std::size_t start, end;
+                std::string name;
+            };
+            std::vector<Definition>                          definitions;
+            std::vector<std::pair<std::size_t, std::size_t>> names;
+            for (const treesitter::QueryCapture& capture : testQuery->Captures(tree.RootNode(), bufferText)) {
+                if (capture.name == "test.definition") {
+                    definitions.push_back({capture.startByte, capture.endByte, {}});
+                }
+                else if (capture.name == "test.name") {
+                    names.emplace_back(capture.startByte, capture.endByte);
+                }
+            }
+
+            for (const auto& [nameStart, nameEnd] : names) {
+                Definition* best = nullptr;
+                for (Definition& definition : definitions) {
+                    if (definition.start <= nameStart && nameEnd <= definition.end &&
+                        (best == nullptr || (definition.end - definition.start) < (best->end - best->start))) {
+                        best = &definition;
+                    }
+                }
+                // A definition matched by several patterns (a PHPUnit method
+                // both test*-named and #[Test]-attributed) appears once per
+                // pattern with an identical range -- only the first gets the
+                // name, so the duplicates below fall away nameless.
+                if (best != nullptr && best->name.empty()) {
+                    const std::string raw(bufferText.substr(nameStart, nameEnd - nameStart));
+                    best->name = std::string(link::StripDelimiters(raw));
+                }
+            }
+
+            std::vector<TestMarker> markers;
+            for (Definition& definition : definitions) {
+                if (definition.name.empty()) {
+                    continue; // nameless duplicate (see above) or a pattern that matched without its name
+                }
+                // tree-sitter-cpp parses an unexpanded TEST_CASE("x") { ... }
+                // as a call_expression statement with the body left as a
+                // *sibling* compound_statement (the macro isn't valid C++
+                // unexpanded) -- extend the marker over an immediately
+                // adjacent compound_statement sibling so point-inside-the-
+                // body still resolves to this test for run-test-at-point.
+                std::size_t      endByte = definition.end;
+                treesitter::Node node    = tree.RootNode().NamedDescendantForByteRange(
+                    definition.start, definition.end > definition.start ? definition.end - 1 : definition.start);
+                while (!node.IsNull() && node.StartByte() >= definition.start) {
+                    const treesitter::Node sibling = node.NextNamedSibling();
+                    if (!sibling.IsNull()) {
+                        if (sibling.Type() == "compound_statement" && sibling.StartByte() >= endByte &&
+                            sibling.StartByte() <= endByte + 2) {
+                            endByte = sibling.EndByte();
+                        }
+                        break;
+                    }
+                    node = node.Parent();
+                }
+                markers.push_back({.startByte = definition.start, .endByte = endByte, .name = std::move(definition.name)});
+            }
+            std::sort(markers.begin(), markers.end(),
+                      [](const TestMarker& a, const TestMarker& b) { return a.startByte < b.startByte; });
+            return markers;
+        };
+    }
+
     return Mode{.name            = std::move(name),
                 .keymap          = Keymap(),
                 .highlight       = std::move(highlight),
@@ -811,11 +893,13 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
                 .sexpMotion      = std::move(sexpMotion),
                 .autoPairs       = DefaultAutoPairs(),
                 .symbolKind      = std::move(symbolKind),
-                .importTarget    = std::move(importTarget)};
+                .importTarget    = std::move(importTarget),
+                .testDiscovery   = std::move(testDiscovery)};
 }
 
 Mode TreeSitterMode(std::string name, std::string_view languageName, const char* querySource,
-                    const char* foldQuerySource, const char* importQuerySource, const char* symbolKindQuerySource) {
+                    const char* foldQuerySource, const char* importQuerySource, const char* symbolKindQuerySource,
+                    const char* testQuerySource) {
     const auto language = treesitter::LanguageByName(languageName);
     // Every languageName this is called with (below) names a grammar
     // Languages.cpp always bundles -- if this ever fires it's a build-time
@@ -825,7 +909,8 @@ Mode TreeSitterMode(std::string name, std::string_view languageName, const char*
     return TreeSitterModeFromLanguage(std::move(name), *language, querySource,
                                       foldQuerySource != nullptr ? std::string_view(foldQuerySource) : std::string_view(),
                                       importQuerySource != nullptr ? std::string_view(importQuerySource) : std::string_view(),
-                                      symbolKindQuerySource != nullptr ? std::string_view(symbolKindQuerySource) : std::string_view());
+                                      symbolKindQuerySource != nullptr ? std::string_view(symbolKindQuerySource) : std::string_view(),
+                                      testQuerySource != nullptr ? std::string_view(testQuerySource) : std::string_view());
 }
 
 Mode JanetMode() {
@@ -851,14 +936,15 @@ Mode CMode() {
 
 Mode CppMode() {
     Mode mode              = TreeSitterMode("cpp-mode", "cpp", treesitter::queries::kCpp, treesitter::queries::kCppFolds,
-                                            treesitter::queries::kCImports, treesitter::queries::kCppTags);
+                                            treesitter::queries::kCImports, treesitter::queries::kCppTags,
+                                            treesitter::queries::kCppTests);
     mode.lineCommentPrefix = "//";
     return mode;
 }
 
 Mode PhpMode() {
     Mode mode              = TreeSitterMode("php-mode", "php", treesitter::queries::kPhp, nullptr, treesitter::queries::kPhpImports,
-                                            treesitter::queries::kPhpTags);
+                                            treesitter::queries::kPhpTags, treesitter::queries::kPhpTests);
     mode.lineCommentPrefix = "//";
     return mode;
 }
@@ -866,7 +952,7 @@ Mode PhpMode() {
 Mode JavaScriptMode() {
     Mode mode              = TreeSitterMode("javascript-mode", "javascript", treesitter::queries::kJavaScript,
                                             treesitter::queries::kJavaScriptFolds, treesitter::queries::kJavaScriptImports,
-                                            treesitter::queries::kJavaScriptTags);
+                                            treesitter::queries::kJavaScriptTags, treesitter::queries::kJavaScriptTests);
     mode.lineCommentPrefix = "//";
     return mode;
 }
@@ -874,14 +960,15 @@ Mode JavaScriptMode() {
 Mode TypeScriptMode() {
     Mode mode              = TreeSitterMode("typescript-mode", "typescript", treesitter::queries::kTypeScript,
                                             treesitter::queries::kTypeScriptFolds, treesitter::queries::kTypeScriptImports,
-                                            treesitter::queries::kTypeScriptTags);
+                                            treesitter::queries::kTypeScriptTags, treesitter::queries::kTypeScriptTests);
     mode.lineCommentPrefix = "//";
     return mode;
 }
 
 Mode TsxMode() {
     Mode mode              = TreeSitterMode("tsx-mode", "tsx", treesitter::queries::kTypeScript, treesitter::queries::kTypeScriptFolds,
-                                            treesitter::queries::kTypeScriptImports, treesitter::queries::kTypeScriptTags);
+                                            treesitter::queries::kTypeScriptImports, treesitter::queries::kTypeScriptTags,
+                                            treesitter::queries::kTypeScriptTests);
     mode.lineCommentPrefix = "//";
     return mode;
 }
@@ -900,7 +987,8 @@ Mode CssMode() {
 
 Mode PythonMode() {
     Mode mode              = TreeSitterMode("python-mode", "python", treesitter::queries::kPython, treesitter::queries::kPythonFolds,
-                                            treesitter::queries::kPythonImports, treesitter::queries::kPythonTags);
+                                            treesitter::queries::kPythonImports, treesitter::queries::kPythonTags,
+                                            treesitter::queries::kPythonTests);
     mode.lineCommentPrefix = "#";
     return mode;
 }

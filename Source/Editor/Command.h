@@ -33,6 +33,10 @@ namespace ned::editor::tasks {
 class TaskRunner;
 } // namespace ned::editor::tasks
 
+namespace ned::editor::testrun {
+class TestRunner;
+} // namespace ned::editor::testrun
+
 namespace ned::editor {
 
 struct Mode;
@@ -496,7 +500,23 @@ enum class InteractiveRequest { None,
                                 // Editor/Snippet.h) since a live session is driven key-by-key
                                 // through its InputMode machinery, the same seam every other
                                 // session-shaped request here uses.
-                                SnippetExpand };
+                                SnippetExpand,
+                                // test-runner integration: one-shot direct actions (no prompt --
+                                // there's one project-wide test command, nothing to ask, unlike
+                                // RunTask's name prompt above). RunTests spawns
+                                // TestRunner::RunAll and switches to "*test output*";
+                                // CancelTests kills the in-flight run; ShowTestResults builds/
+                                // refreshes and switches to the parsed "*test results*" failures
+                                // buffer; RunTestAtPoint resolves the innermost discovered test
+                                // definition containing point (Mode::testDiscovery) and runs it
+                                // through the configured filter template; RerunFailedTests
+                                // re-runs every currently-failed result the same filtered way.
+                                // See Editor/TestRun/TestRunner.h.
+                                RunTests,
+                                CancelTests,
+                                ShowTestResults,
+                                RunTestAtPoint,
+                                RerunFailedTests };
 
 // Everything a command implementation might need. Built fresh per invocation
 // from live references -- never stored, so there's no lifetime concern beyond
@@ -591,6 +611,11 @@ struct CommandContext {
         std::string body;
     };
     std::optional<SnippetExpansionRequest> snippetExpansion;
+    // test-runner integration: the editor-wide TestRunner, set by the host
+    // UI before each dispatch (nullptr if unset, e.g. headless tests) --
+    // taskRunner's exact shape. Only the run-tests family reads this.
+    // Appended at the end per this struct's positional-aggregate-init rule.
+    testrun::TestRunner* testRunner = nullptr;
 };
 
 using CommandFunction = std::function<void(CommandContext&)>;

@@ -40,6 +40,8 @@
 #include "Editor/TabWidth.h"
 #include "Editor/Tasks/TaskRunner.h"
 #include "Editor/Terminal/Config.h"
+#include "Editor/TestRun/TestResultsBuffer.h"
+#include "Editor/TestRun/TestRunner.h"
 #include "Editor/ThemeSetting.h"
 #include "Editor/Variables.h"
 #include "Editor/Vcs/VcsRunner.h"
@@ -897,6 +899,18 @@ auto main(int argc, char** argv) -> int {
     // connect after construction" convention.
     ned::editor::tasks::TaskRunner taskRunner(bufferList, eventLoop);
     windowManager->SetTaskRunner(&taskRunner);
+
+    // test-runner integration: same shape as taskRunner just above. The
+    // outcome hook keeps an already-open "*test results*" buffer live --
+    // rebuilt in place on every parse, never created unprompted (the user
+    // opens it via show-test-results, C-c T r).
+    ned::editor::testrun::TestRunner testRunner(bufferList, eventLoop);
+    windowManager->SetTestRunner(&testRunner);
+    testRunner.SetOnOutcomeChanged([&bufferList, &testRunner] {
+        if (bufferList.Find(ned::editor::testrun::TestResultsBufferName()) && testRunner.LatestOutcome()) {
+            ned::editor::testrun::RebuildTestResultsBuffer(bufferList, *testRunner.LatestOutcome());
+        }
+    });
 
     // VCS blame gutter follow-up: same "constructed here, needs a real
     // EventLoop&" shape as taskRunner just above, and the same "wired into

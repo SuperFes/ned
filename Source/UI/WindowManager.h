@@ -45,6 +45,7 @@
 #include "Editor/PromptHistory.h"
 #include "Editor/Register.h"
 #include "Editor/Tasks/TaskRunner.h"
+#include "Editor/TestRun/TestRunner.h"
 #include "Editor/Vcs/VcsRunner.h"
 #include "EventLoop.h"
 #include "Layout.h"
@@ -94,9 +95,9 @@ class Pane {
          const editor::Keymap& janetKeymap, const editor::Keymap& globalKeymap, editor::Mode mode,
          std::string& statusMessage, const Theme& theme,
          ProjectSidebar* projectSidebar, editor::lsp::LspManager* lspManager, editor::tasks::TaskRunner* taskRunner,
-         editor::vcs::VcsRunner* vcsRunner, editor::dap::DapManager* dapManager, editor::acp::AcpManager* acpManager,
-         const janet::Environment* janetEnv, std::function<void(editor::InteractiveRequest)> onWindowRequest,
-         std::function<void(text::Buffer&)> onBufferClosed);
+         editor::testrun::TestRunner* testRunner, editor::vcs::VcsRunner* vcsRunner, editor::dap::DapManager* dapManager,
+         editor::acp::AcpManager* acpManager, const janet::Environment* janetEnv,
+         std::function<void(editor::InteractiveRequest)> onWindowRequest, std::function<void(text::Buffer&)> onBufferClosed);
 
     Pane(const Pane&)            = delete;
     Pane& operator=(const Pane&) = delete;
@@ -274,6 +275,9 @@ class WindowManager {
     // task-runner follow-up: same "forwarded to every pane, present and
     // future" shape as SetProjectSidebar/SetLspManager above.
     void SetTaskRunner(editor::tasks::TaskRunner* taskRunner);
+
+    // test-runner integration: same forwarded-to-every-pane shape.
+    void SetTestRunner(editor::testrun::TestRunner* testRunner);
 
     // Minimap widget follow-up: test-only introspection point, same
     // "expose a small, honest introspection point" precedent as
@@ -616,6 +620,7 @@ class WindowManager {
     ProjectSidebar*                   projectSidebar_ = nullptr;
     editor::lsp::LspManager*          lspManager_     = nullptr;
     editor::tasks::TaskRunner*        taskRunner_     = nullptr;
+    editor::testrun::TestRunner*      testRunner_     = nullptr; // see SetTestRunner
     editor::vcs::VcsRunner*           vcsRunner_      = nullptr;
     editor::dap::DapManager*          dapManager_     = nullptr; // see SetDapManager
     editor::acp::AcpManager*          acpManager_     = nullptr; // see SetAcpManager
