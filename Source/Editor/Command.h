@@ -100,6 +100,15 @@ enum class InteractiveRequest { None,
                                 // org-cycle-priority do, so this needs a real prompt. See
                                 // Editor/Org.h's SetHeadlineTags for the actual rewrite.
                                 SetHeadlineTags,
+                                // property-drawers follow-up: org-set-property (real
+                                // Org's own C-c C-x p) needs two prompts in sequence
+                                // (property name, then its value) -- a dedicated
+                                // handler/InputMode, not this shared prompt-shaped
+                                // enum (see BufferView::HandleSetPropertyKey).
+                                // org-delete-property (one prompt, the property name)
+                                // does fit here.
+                                SetProperty,
+                                DeleteProperty,
                                 // execute-extended-command follow-up: another prompt-shaped
                                 // one-shot request, not a structural window-management one --
                                 // placed here rather than after the window-management block

@@ -150,7 +150,16 @@ Notcurses.
       items, overdue deadlines) — no structured timestamp parsing exists yet at all, so this
       folds into the date/recurrence item below rather than being separate work.
 - [ ] Scheduling/deadlines with real date/recurrence logic.
-- [ ] Property drawers.
+- [x] ~~Property drawers.~~ Shipped: `Org.h`'s `ParsePropertyDrawer`/`GetProperty`/
+      `SetProperty`/`DeleteProperty` (plus `*AtPoint` wrappers), real Org's
+      `:PROPERTIES: ... :END:` block immediately following a headline's own line.
+      `org-set-property`/`org-delete-property` (`C-c C-x p`/`C-c C-x d`) are the
+      command surface — set-property is a two-stage prompt (name, then value,
+      pre-filled if the property already has one), the one `BufferView` session in
+      this codebase besides `RenameFile` shaped that way. `FindHeadlineByCustomId`
+      closes the gap `FindHeadlineByTitle`'s own doc comment used to name explicitly
+      — `[[#custom-id]]` links now resolve via `OpenLinkAtPoint` alongside the
+      existing `[[*Headline Title]]` form.
 - [ ] Capture templates (quick-add an entry from anywhere).
 - [ ] Clocking/time tracking.
 - [ ] Markdown (GFM) table editing surface — Org's table ops didn't carry over because

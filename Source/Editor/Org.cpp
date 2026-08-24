@@ -160,6 +160,63 @@ namespace {
         return box;
     }
 
+    bool CaseInsensitiveEquals(std::string_view a, std::string_view b) {
+        if (a.size() != b.size())
+            return false;
+        for (std::size_t i = 0; i < a.size(); ++i) {
+            if (std::tolower(static_cast<unsigned char>(a[i])) != std::tolower(static_cast<unsigned char>(b[i])))
+                return false;
+        }
+        return true;
+    }
+
+    // Matches line (trimmed of surrounding whitespace) case-insensitively
+    // against marker -- e.g. ":PROPERTIES:"/":END:", real Org's own
+    // caseInsensitive() grammar rule for these two drawer delimiters
+    // specifically.
+    bool IsDrawerMarker(std::string_view line, std::string_view marker) {
+        return CaseInsensitiveEquals(TrimWhitespace(line), marker);
+    }
+
+    struct ParsedPropertyLine {
+        std::string key;
+        std::string value;
+        std::size_t valueStartInLine;
+    };
+
+    // Matches ":KEY:value" / ":KEY: value" -- a leading ':', a key with no
+    // internal ':'/whitespace (real Org's own token.immediate(':') rule),
+    // a closing ':', then the rest of the line as the value (leading
+    // whitespace trimmed off, kept in valueStartInLine so callers can
+    // rewrite just the value in place). Also matches ":PROPERTIES:"/":END:"
+    // themselves (key "PROPERTIES"/"END", empty value) -- harmless, since
+    // ParsePropertyDrawer's own loop checks for ":END:" before ever calling
+    // this on a line, and never calls it on the ":PROPERTIES:" line either.
+    std::optional<ParsedPropertyLine> ParsePropertyLine(std::string_view line) {
+        std::size_t pos = 0;
+        while (pos < line.size() && (line[pos] == ' ' || line[pos] == '\t'))
+            ++pos;
+        if (pos >= line.size() || line[pos] != ':')
+            return std::nullopt;
+        ++pos;
+
+        const std::size_t keyStart = pos;
+        while (pos < line.size() && line[pos] != ':' && line[pos] != ' ' && line[pos] != '\t')
+            ++pos;
+        if (pos == keyStart || pos >= line.size() || line[pos] != ':')
+            return std::nullopt; // empty key, or no closing ':' on this line at all
+        ParsedPropertyLine result;
+        result.key = std::string(line.substr(keyStart, pos - keyStart));
+        ++pos; // past the closing ':'
+
+        std::size_t valueStart = pos;
+        while (valueStart < line.size() && (line[valueStart] == ' ' || line[valueStart] == '\t'))
+            ++valueStart;
+        result.valueStartInLine = valueStart;
+        result.value            = TrimWhitespace(line.substr(valueStart));
+        return result;
+    }
+
     std::mutex& TodoKeywordsMutex() {
         static std::mutex mutex;
         return mutex;
@@ -1115,6 +1172,161 @@ std::optional<std::size_t> FindHeadlineByTitle(std::string_view bufferText, std:
     const std::string trimmedTitle = TrimWhitespace(title);
     for (const Headline& headline : ParseOutline(bufferText)) {
         if (headline.title == trimmedTitle) {
+            return headline.lineStartByte;
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<PropertyDrawer> ParsePropertyDrawer(std::string_view bufferText, const Headline& headline) {
+    std::size_t lineStart = headline.lineEndByte;
+    if (lineStart >= bufferText.size() || bufferText[lineStart] != '\n')
+        return std::nullopt; // the headline is the buffer's own last line -- no body at all
+    ++lineStart;             // past the headline's own newline, onto the very next line
+
+    std::size_t newlinePos = bufferText.find('\n', lineStart);
+    std::size_t lineEnd    = (newlinePos == std::string_view::npos) ? bufferText.size() : newlinePos;
+    if (!IsDrawerMarker(bufferText.substr(lineStart, lineEnd - lineStart), ":PROPERTIES:"))
+        return std::nullopt;
+    if (newlinePos == std::string_view::npos)
+        return std::nullopt; // ":PROPERTIES:" with nothing after it -- no ":END:" can follow
+
+    PropertyDrawer drawer;
+    drawer.startByte = lineStart;
+    lineStart        = newlinePos + 1;
+
+    while (lineStart <= bufferText.size()) {
+        newlinePos                  = bufferText.find('\n', lineStart);
+        lineEnd                     = (newlinePos == std::string_view::npos) ? bufferText.size() : newlinePos;
+        const std::string_view line = bufferText.substr(lineStart, lineEnd - lineStart);
+
+        if (IsDrawerMarker(line, ":END:")) {
+            drawer.endLineStartByte = lineStart;
+            drawer.endByte          = (newlinePos == std::string_view::npos) ? bufferText.size() : newlinePos + 1;
+            return drawer;
+        }
+
+        if (const auto parsed = ParsePropertyLine(line)) {
+            Property property;
+            property.key            = parsed->key;
+            property.value          = parsed->value;
+            property.lineStartByte  = lineStart;
+            property.lineEndByte    = lineEnd;
+            property.valueStartByte = lineStart + parsed->valueStartInLine;
+            drawer.properties.push_back(std::move(property));
+        }
+        // A line inside the drawer that's neither a property nor ":END:" is
+        // simply skipped -- same "tolerate the unexpected rather than throw"
+        // precedent this file's own FoldedLineRanges doc comment states for
+        // a stale fold marker.
+
+        if (newlinePos == std::string_view::npos)
+            return std::nullopt; // ran off the buffer with no ":END:" -- not a real drawer
+        lineStart = newlinePos + 1;
+    }
+    return std::nullopt;
+}
+
+std::optional<std::string> GetProperty(std::string_view bufferText, const Headline& headline, std::string_view key) {
+    const auto drawer = ParsePropertyDrawer(bufferText, headline);
+    if (!drawer)
+        return std::nullopt;
+    for (const Property& property : drawer->properties) {
+        if (CaseInsensitiveEquals(property.key, key))
+            return property.value;
+    }
+    return std::nullopt;
+}
+
+void SetProperty(text::Buffer& buffer, const Headline& headline, const std::string& key, const std::string& value) {
+    if (const auto drawer = ParsePropertyDrawer(buffer.Text(), headline)) {
+        for (const Property& property : drawer->properties) {
+            if (!CaseInsensitiveEquals(property.key, key))
+                continue;
+            // Rewrite just the value in place -- valueStartByte already
+            // covers whatever separating whitespace the user originally
+            // typed between the second ':' and the old value, so that
+            // whitespace survives the rewrite unchanged (see Property's own
+            // doc comment).
+            if (property.valueStartByte < property.lineEndByte)
+                buffer.DeleteRange(property.valueStartByte, property.lineEndByte - property.valueStartByte);
+            if (!value.empty())
+                buffer.InsertAt(property.valueStartByte, value);
+            return;
+        }
+
+        // No existing property by this name -- append a fresh line
+        // immediately above ":END:", so it lands after every other
+        // property, before the drawer's own close.
+        const std::string newLine = value.empty() ? (":" + key + ":\n") : (":" + key + ": " + value + "\n");
+        buffer.InsertAt(drawer->endLineStartByte, newLine);
+        return;
+    }
+
+    // No drawer at all yet -- create one immediately after the headline's
+    // own line, real Org's own behavior the first time a property is set on
+    // a headline that's never had one.
+    const std::string propertyLine = value.empty() ? (":" + key + ":\n") : (":" + key + ": " + value + "\n");
+    const std::string newDrawer    = ":PROPERTIES:\n" + propertyLine + ":END:\n";
+    if (headline.lineEndByte < buffer.Text().size()) {
+        // A following line already exists (blank, body text, a subtree, ...)
+        // -- insert right after the headline's own trailing newline.
+        buffer.InsertAt(headline.lineEndByte + 1, newDrawer);
+    }
+    else {
+        // The headline is the buffer's very last line, with no trailing
+        // newline yet -- add one first so the drawer starts a genuinely new
+        // line rather than running onto the headline's own.
+        buffer.InsertAt(headline.lineEndByte, "\n" + newDrawer);
+    }
+}
+
+void DeleteProperty(text::Buffer& buffer, const Headline& headline, const std::string& key) {
+    const auto drawer = ParsePropertyDrawer(buffer.Text(), headline);
+    if (!drawer)
+        return;
+
+    for (const Property& property : drawer->properties) {
+        if (!CaseInsensitiveEquals(property.key, key))
+            continue;
+
+        if (drawer->properties.size() == 1) {
+            // The only property in the drawer -- remove the whole block;
+            // real Org never leaves an empty ":PROPERTIES:"/":END:" pair
+            // behind.
+            buffer.DeleteRange(drawer->startByte, drawer->endByte - drawer->startByte);
+        }
+        else {
+            // property.lineEndByte + 1 is always in-bounds: a property line
+            // is never the buffer's own last line -- ":END:" always follows.
+            buffer.DeleteRange(property.lineStartByte, property.lineEndByte + 1 - property.lineStartByte);
+        }
+        return;
+    }
+}
+
+bool SetPropertyAtPoint(text::Buffer& buffer, const std::string& key, const std::string& value,
+                        const std::vector<std::string>& todoKeywords) {
+    const auto headline = HeadlineAtPoint(buffer, todoKeywords);
+    if (!headline)
+        return false;
+    SetProperty(buffer, *headline, key, value);
+    return true;
+}
+
+bool DeletePropertyAtPoint(text::Buffer& buffer, const std::string& key, const std::vector<std::string>& todoKeywords) {
+    const auto headline = HeadlineAtPoint(buffer, todoKeywords);
+    if (!headline)
+        return false;
+    if (!GetProperty(buffer.Text(), *headline, key))
+        return false; // nothing to delete
+    DeleteProperty(buffer, *headline, key);
+    return true;
+}
+
+std::optional<std::size_t> FindHeadlineByCustomId(std::string_view bufferText, std::string_view customId) {
+    for (const Headline& headline : ParseOutline(bufferText)) {
+        if (const auto value = GetProperty(bufferText, headline, "CUSTOM_ID"); value && *value == customId) {
             return headline.lineStartByte;
         }
     }
