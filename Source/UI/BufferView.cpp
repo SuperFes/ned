@@ -5734,27 +5734,7 @@ void BufferView::CompletePrompt() {
 }
 
 void BufferView::VisitSearchResult() {
-    const text::Buffer& buffer    = activeBuffer_.Get();
-    const text::Rope&   content   = buffer.Content();
-    const std::size_t   point     = buffer.Point();
-    const std::size_t   line      = content.ByteOffsetToLine(point);
-    const std::size_t   lineStart = content.LineToByteOffset(line);
-    const std::size_t   lineEnd =
-        (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
-    const std::string lineText = content.Substring(lineStart, lineEnd - lineStart);
-
-    // Matches exactly what HandlePromptKey's ProjectSearch branch writes:
-    // "<absolute path>:<1-indexed line>: <line text>". Greedy .* correctly
-    // handles the rare case of a ':' inside the path itself, by backing off
-    // to find the *last* plausible ":<digits>:" split.
-    static const std::regex resultLinePattern(R"(^(.*):(\d+):)");
-
-    std::smatch match;
-    if (!std::regex_search(lineText, match, resultLinePattern)) {
-        return; // not a search-result line -- silent no-op, see the header comment
-    }
-
-    JumpToPathLine(match[1].str(), std::stoul(match[2].str()));
+    VisitResultUnderPoint();
 }
 
 void BufferView::JumpToPathLine(const std::filesystem::path& path, std::size_t line) {
@@ -5771,14 +5751,19 @@ void BufferView::JumpToPathLine(const std::filesystem::path& path, std::size_t l
 }
 
 void BufferView::VisitVcsResult() {
+    VisitResultUnderPoint();
+}
+
+void BufferView::VisitResultUnderPoint() {
     const text::Buffer& buffer = activeBuffer_.Get();
 
-    // Multibuffers follow-up: a *vcs diff* buffer carries a MultibufferIndex
-    // mapping the whole composite byte space back to (source path, source
-    // line) -- this works from any line inside an excerpt's body, not just
-    // a single "path:line:" index line the regex-based fallback below
-    // requires, so it takes over entirely once a buffer is one of these
-    // (never falls through to the regex path for the same buffer).
+    // Multibuffers follow-up: a *vcs diff*/*diagnostics*/*references* buffer
+    // carries a MultibufferIndex mapping the whole composite byte space back
+    // to (source path, source line) -- this works from any line inside an
+    // excerpt's body, not just a single "path:line:" index line the
+    // regex-based fallback below requires, so it takes over entirely once a
+    // buffer is one of these (never falls through to the regex path for the
+    // same buffer).
     if (editor::multibuffer::MultibufferIndex* index = editor::multibuffer::MultibufferIndexFor(buffer)) {
         if (const editor::multibuffer::ExcerptSpan* span = index->SpanAtOffset(buffer.Point());
             span && span->sourceStartLine > 0) {
@@ -5795,16 +5780,18 @@ void BufferView::VisitVcsResult() {
         (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
     const std::string lineText = content.Substring(lineStart, lineEnd - lineStart);
 
-    // Matches BuildVcsBlameBuffer's own "<path>:<line>: ..." format --
-    // deliberately the same shape VisitSearchResult's own pattern parses,
-    // so this is a straight copy of that regex, not a coincidence. A *vcs
-    // log* buffer's lines never match this (no per-line source location),
-    // so this is correctly a silent no-op there.
+    // Matches every flat "path:line:" results-buffer format written here --
+    // project-search/project-replace/agenda's HandlePromptKey/BuildResultsBuffer
+    // path and BuildVcsBlameBuffer's own format both write this shape.
+    // Greedy .* correctly handles the rare case of a ':' inside the path
+    // itself, by backing off to find the *last* plausible ":<digits>:" split.
+    // A *vcs log* buffer's lines never match this (no per-line source
+    // location), so this is correctly a silent no-op there too.
     static const std::regex resultLinePattern(R"(^(.*):(\d+):)");
 
     std::smatch match;
     if (!std::regex_search(lineText, match, resultLinePattern)) {
-        return; // not a blame-result line -- silent no-op, see this method's own header comment
+        return; // not a results-shaped line -- silent no-op, see this method's own header comment
     }
 
     JumpToPathLine(match[1].str(), std::stoul(match[2].str()));

@@ -19,14 +19,29 @@
 #include "UI/BufferView.h"
 #include "UI/Theme.h"
 
+using ned::editor::multibuffer::ClearRegistryForTesting;
 using ned::editor::multibuffer::MultibufferIndexFor;
 using ned::text::Buffer;
 using ned::ui::BufferView;
 
 namespace {
 
+// Mirrors MultibufferTest.cpp's own RegistryResetGuard -- without this, a
+// Buffer destroyed at the end of one TEST_CASE can leave a stale registry
+// entry a later TEST_CASE's freshly allocated Buffer spuriously "inherits"
+// if the allocator reuses the same address.
+struct RegistryResetGuard {
+    RegistryResetGuard() {
+        ClearRegistryForTesting();
+    }
+    ~RegistryResetGuard() {
+        ClearRegistryForTesting();
+    }
+};
+
 // Mirrors BufferViewDiagnosticsBufferTest.cpp's own Fixture exactly.
 struct Fixture {
+    RegistryResetGuard         registryResetGuard;
     ned::text::Buffer          buffer{"scratch"};
     ned::text::KillRing        killRing;
     ned::editor::RegisterTable registers;
