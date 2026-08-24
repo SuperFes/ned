@@ -2401,6 +2401,29 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                               *context.message = "Not on a headline.";
                           }
                       });
+    // Scheduling/recurrence follow-up: real Org's own C-c C-s
+    // ("org-schedule")/C-c C-d ("org-deadline") -- same "check the
+    // precondition, hand off to a real prompt" shape as org-set-tags/
+    // org-set-property above. See BufferView::StartInteractiveSession's
+    // OrgSchedule/OrgDeadline cases for the prompt's own pre-fill.
+    registry.Register("org-schedule", "Set the SCHEDULED: timestamp of the headline at point.",
+                      [](CommandContext& context) {
+                          if (org::HeadlineAtPoint(context.buffer)) {
+                              context.interactiveRequest = InteractiveRequest::OrgSchedule;
+                          }
+                          else if (context.message) {
+                              *context.message = "Not on a headline.";
+                          }
+                      });
+    registry.Register("org-deadline", "Set the DEADLINE: timestamp of the headline at point.",
+                      [](CommandContext& context) {
+                          if (org::HeadlineAtPoint(context.buffer)) {
+                              context.interactiveRequest = InteractiveRequest::OrgDeadline;
+                          }
+                          else if (context.message) {
+                              *context.message = "Not on a headline.";
+                          }
+                      });
     // Capture-templates follow-up: real Org's own org-capture, minus its
     // precondition -- unlike every other org-* command above, this must work
     // from any buffer, not just when point is on a headline (you capture

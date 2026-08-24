@@ -1053,6 +1053,11 @@ Mode OrgMode() {
     // "C-c a" briefly had for the ACP commands.
     keymap.Bind(ParseKeySequence("C-c C-x p"), "org-set-property");
     keymap.Bind(ParseKeySequence("C-c C-x d"), "org-delete-property");
+    // Scheduling/recurrence follow-up: real Org's own bindings -- both
+    // deliberately shadow a global command (project-search/create-directory)
+    // the same way C-c C-p already does; see Mode.h's own doc comment.
+    keymap.Bind(ParseKeySequence("C-c C-s"), "org-schedule");
+    keymap.Bind(ParseKeySequence("C-c C-d"), "org-deadline");
     // Links follow-up: real Org's own org-open-at-point binding --
     // deliberately shadows the global find-scratch binding while an
     // org-mode buffer is active, see this function's own doc comment in

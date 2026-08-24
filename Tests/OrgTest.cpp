@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <chrono>
 #include <string>
 #include <vector>
 
@@ -7,6 +8,7 @@
 #include "Text/Buffer.h"
 #include "Text/Rope.h"
 
+using ned::editor::org::AdvanceTimestamp;
 using ned::editor::org::AlignOrgTableAtPoint;
 using ned::editor::org::BuildHeadlineTree;
 using ned::editor::org::Checkbox;
@@ -21,6 +23,7 @@ using ned::editor::org::FindHeadlineByCustomId;
 using ned::editor::org::FindHeadlineByTitle;
 using ned::editor::org::FindOrgTableAtPoint;
 using ned::editor::org::FoldedLineRanges;
+using ned::editor::org::FormatTimestamp;
 using ned::editor::org::GetProperty;
 using ned::editor::org::Headline;
 using ned::editor::org::HeadlineAtPoint;
@@ -38,14 +41,20 @@ using ned::editor::org::MoveOrgTableRowUpAtPoint;
 using ned::editor::org::MoveToPreviousOrgTableCellAtPoint;
 using ned::editor::org::NextPriority;
 using ned::editor::org::NextTodoKeyword;
+using ned::editor::org::OrgTimestamp;
 using ned::editor::org::ParseCheckboxes;
 using ned::editor::org::ParseLinks;
 using ned::editor::org::ParseOutline;
+using ned::editor::org::ParsePlanning;
 using ned::editor::org::ParsePropertyDrawer;
+using ned::editor::org::ParseTimestamp;
+using ned::editor::org::ParseTimestampInput;
+using ned::editor::org::Planning;
 using ned::editor::org::ReflectParentCheckboxStates;
 using ned::editor::org::SetHeadlinePriority;
 using ned::editor::org::SetHeadlineTags;
 using ned::editor::org::SetHeadlineTodoKeyword;
+using ned::editor::org::SetPlanning;
 using ned::editor::org::SetProperty;
 using ned::editor::org::SetPropertyAtPoint;
 using ned::editor::org::SubtreeEndLine;
@@ -1001,4 +1010,294 @@ TEST_CASE("FindHeadlineByCustomId finds a headline by its :CUSTOM_ID: property",
 TEST_CASE("FindHeadlineByCustomId returns nullopt when nothing matches", "[Org]") {
     const std::string text = "* First\n:PROPERTIES:\n:CUSTOM_ID: first-id\n:END:\n";
     REQUIRE_FALSE(FindHeadlineByCustomId(text, "nonexistent").has_value());
+}
+
+// --- Timestamps / planning / recurrence (scheduling/recurrence follow-up) ---
+
+TEST_CASE("ParseTimestamp parses a bare active date", "[Org]") {
+    const auto ts = ParseTimestamp("<2026-08-25 Tue>");
+    REQUIRE(ts.has_value());
+    CHECK(ts->date == std::chrono::year{2026} / std::chrono::August / std::chrono::day{25});
+    CHECK(ts->active);
+    CHECK_FALSE(ts->hour.has_value());
+    CHECK(ts->repeaterKind == OrgTimestamp::RepeaterKind::None);
+}
+
+TEST_CASE("ParseTimestamp parses an inactive timestamp", "[Org]") {
+    const auto ts = ParseTimestamp("[2026-08-25 Tue]");
+    REQUIRE(ts.has_value());
+    CHECK_FALSE(ts->active);
+}
+
+TEST_CASE("ParseTimestamp parses a time of day", "[Org]") {
+    const auto ts = ParseTimestamp("<2026-08-25 Tue 14:30>");
+    REQUIRE(ts.has_value());
+    REQUIRE(ts->hour.has_value());
+    CHECK(*ts->hour == 14);
+    CHECK(*ts->minute == 30);
+    CHECK_FALSE(ts->endHour.has_value());
+}
+
+TEST_CASE("ParseTimestamp parses a time range", "[Org]") {
+    const auto ts = ParseTimestamp("<2026-08-25 Tue 14:00-15:30>");
+    REQUIRE(ts.has_value());
+    REQUIRE(ts->endHour.has_value());
+    CHECK(*ts->endHour == 15);
+    CHECK(*ts->endMinute == 30);
+}
+
+TEST_CASE("ParseTimestamp parses each repeater kind", "[Org]") {
+    const auto cumulative = ParseTimestamp("<2026-08-25 Tue +1w>");
+    REQUIRE(cumulative.has_value());
+    CHECK(cumulative->repeaterKind == OrgTimestamp::RepeaterKind::Cumulative);
+    CHECK(cumulative->repeaterCount == 1);
+    CHECK(cumulative->repeaterUnit == 'w');
+
+    const auto catchUp = ParseTimestamp("<2026-08-25 Tue ++2d>");
+    REQUIRE(catchUp.has_value());
+    CHECK(catchUp->repeaterKind == OrgTimestamp::RepeaterKind::CatchUp);
+    CHECK(catchUp->repeaterCount == 2);
+    CHECK(catchUp->repeaterUnit == 'd');
+
+    const auto restart = ParseTimestamp("<2026-08-25 Tue .+1m>");
+    REQUIRE(restart.has_value());
+    CHECK(restart->repeaterKind == OrgTimestamp::RepeaterKind::Restart);
+    CHECK(restart->repeaterUnit == 'm');
+}
+
+TEST_CASE("ParseTimestamp parses a timestamp with both a time and a repeater", "[Org]") {
+    const auto ts = ParseTimestamp("<2026-08-25 Tue 09:00 +1w>");
+    REQUIRE(ts.has_value());
+    CHECK(*ts->hour == 9);
+    CHECK(ts->repeaterKind == OrgTimestamp::RepeaterKind::Cumulative);
+}
+
+TEST_CASE("ParseTimestamp rejects a calendar-invalid date", "[Org]") {
+    REQUIRE_FALSE(ParseTimestamp("<2026-02-30 Mon>").has_value());
+}
+
+TEST_CASE("ParseTimestamp rejects a mismatched bracket kind", "[Org]") {
+    REQUIRE_FALSE(ParseTimestamp("<2026-08-25 Tue]").has_value());
+}
+
+TEST_CASE("ParseTimestamp rejects garbage", "[Org]") {
+    REQUIRE_FALSE(ParseTimestamp("not a timestamp").has_value());
+}
+
+TEST_CASE("FormatTimestamp round-trips and always computes its own weekday", "[Org]") {
+    OrgTimestamp ts;
+    ts.date = std::chrono::year{2026} / std::chrono::August / std::chrono::day{25}; // a real Tuesday
+    CHECK(FormatTimestamp(ts) == "<2026-08-25 Tue>");
+
+    ts.hour   = 9;
+    ts.minute = 5;
+    CHECK(FormatTimestamp(ts) == "<2026-08-25 Tue 09:05>");
+
+    ts.active = false;
+    CHECK(FormatTimestamp(ts) == "[2026-08-25 Tue 09:05]");
+}
+
+TEST_CASE("FormatTimestamp writes back a repeater cookie", "[Org]") {
+    OrgTimestamp ts;
+    ts.date          = std::chrono::year{2026} / std::chrono::August / std::chrono::day{25};
+    ts.repeaterKind  = OrgTimestamp::RepeaterKind::CatchUp;
+    ts.repeaterCount = 2;
+    ts.repeaterUnit  = 'w';
+    CHECK(FormatTimestamp(ts) == "<2026-08-25 Tue ++2w>");
+}
+
+TEST_CASE("ParsePlanning parses a single SCHEDULED: entry immediately after the headline", "[Org]") {
+    const std::string text      = "* Buy milk\nSCHEDULED: <2026-08-25 Tue>\n";
+    const auto        headlines = ParseOutline(text);
+    const auto        planning  = ParsePlanning(text, headlines[0]);
+    REQUIRE(planning.has_value());
+    REQUIRE(planning->scheduled.has_value());
+    CHECK(planning->scheduled->date == std::chrono::year{2026} / std::chrono::August / std::chrono::day{25});
+    CHECK_FALSE(planning->deadline.has_value());
+}
+
+TEST_CASE("ParsePlanning parses SCHEDULED: and DEADLINE: together, in either order", "[Org]") {
+    const std::string text      = "* Buy milk\nDEADLINE: <2026-08-30 Sun> SCHEDULED: <2026-08-25 Tue>\n";
+    const auto        headlines = ParseOutline(text);
+    const auto        planning  = ParsePlanning(text, headlines[0]);
+    REQUIRE(planning.has_value());
+    REQUIRE(planning->scheduled.has_value());
+    REQUIRE(planning->deadline.has_value());
+    CHECK(planning->scheduled->date == std::chrono::year{2026} / std::chrono::August / std::chrono::day{25});
+    CHECK(planning->deadline->date == std::chrono::year{2026} / std::chrono::August / std::chrono::day{30});
+}
+
+TEST_CASE("ParsePlanning returns nullopt when the headline has no plan line", "[Org]") {
+    const std::string text      = "* Buy milk\nSome body text\n";
+    const auto        headlines = ParseOutline(text);
+    REQUIRE_FALSE(ParsePlanning(text, headlines[0]).has_value());
+}
+
+TEST_CASE("ParsePlanning doesn't misread prose merely containing \"SCHEDULED:\"", "[Org]") {
+    const std::string text      = "* Buy milk\nSCHEDULED: whenever, not a real timestamp\n";
+    const auto        headlines = ParseOutline(text);
+    REQUIRE_FALSE(ParsePlanning(text, headlines[0]).has_value());
+}
+
+TEST_CASE("SetPlanning creates a fresh plan line when none exists", "[Org]") {
+    Buffer     buffer("test", Rope("* Buy milk\n"));
+    const auto headlines = ParseOutline(buffer.Text());
+    Planning   planning;
+    planning.scheduled = ParseTimestamp("<2026-08-25 Tue>");
+    SetPlanning(buffer, headlines[0], planning);
+    CHECK(buffer.Text() == "* Buy milk\nSCHEDULED: <2026-08-25 Tue>\n");
+}
+
+TEST_CASE("SetPlanning rewrites an existing plan line wholesale", "[Org]") {
+    Buffer     buffer("test", Rope("* Buy milk\nSCHEDULED: <2026-08-25 Tue>\n"));
+    const auto headlines = ParseOutline(buffer.Text());
+    Planning   planning;
+    planning.deadline = ParseTimestamp("<2026-08-30 Sun>");
+    SetPlanning(buffer, headlines[0], planning);
+    CHECK(buffer.Text() == "* Buy milk\nDEADLINE: <2026-08-30 Sun>\n");
+}
+
+TEST_CASE("SetPlanning with an all-nullopt Planning removes the plan line entirely", "[Org]") {
+    Buffer     buffer("test", Rope("* Buy milk\nSCHEDULED: <2026-08-25 Tue>\nBody text\n"));
+    const auto headlines = ParseOutline(buffer.Text());
+    SetPlanning(buffer, headlines[0], Planning{});
+    CHECK(buffer.Text() == "* Buy milk\nBody text\n");
+}
+
+TEST_CASE("ParsePropertyDrawer finds a drawer that sits after a planning line", "[Org]") {
+    const std::string text      = "* Buy milk\nSCHEDULED: <2026-08-25 Tue>\n:PROPERTIES:\n:CUSTOM_ID: milk\n:END:\n";
+    const auto        headlines = ParseOutline(text);
+    const auto        drawer    = ParsePropertyDrawer(text, headlines[0]);
+    REQUIRE(drawer.has_value());
+    REQUIRE(drawer->properties.size() == 1);
+    CHECK(drawer->properties[0].value == "milk");
+}
+
+TEST_CASE("SetProperty creates a drawer after an existing planning line, not before it", "[Org]") {
+    Buffer     buffer("test", Rope("* Buy milk\nSCHEDULED: <2026-08-25 Tue>\n"));
+    const auto headlines = ParseOutline(buffer.Text());
+    SetProperty(buffer, headlines[0], "CUSTOM_ID", "milk");
+    CHECK(buffer.Text() == "* Buy milk\nSCHEDULED: <2026-08-25 Tue>\n:PROPERTIES:\n:CUSTOM_ID: milk\n:END:\n");
+}
+
+TEST_CASE("ParseTimestampInput accepts \"today\"/\"tomorrow\"/\"+N\" shorthand", "[Org]") {
+    const std::chrono::year_month_day today = std::chrono::year{2026} / std::chrono::August / std::chrono::day{23};
+
+    const auto todayTs = ParseTimestampInput("today", today);
+    REQUIRE(todayTs.has_value());
+    CHECK(todayTs->date == today);
+
+    const auto tomorrowTs = ParseTimestampInput("tomorrow", today);
+    REQUIRE(tomorrowTs.has_value());
+    CHECK(tomorrowTs->date == std::chrono::year{2026} / std::chrono::August / std::chrono::day{24});
+
+    const auto plusN = ParseTimestampInput("+7", today);
+    REQUIRE(plusN.has_value());
+    CHECK(plusN->date == std::chrono::year{2026} / std::chrono::August / std::chrono::day{30});
+}
+
+TEST_CASE("ParseTimestampInput accepts an absolute date typed without brackets or a weekday", "[Org]") {
+    const std::chrono::year_month_day today = std::chrono::year{2026} / std::chrono::August / std::chrono::day{23};
+
+    const auto dateOnly = ParseTimestampInput("2026-08-25", today);
+    REQUIRE(dateOnly.has_value());
+    CHECK(dateOnly->date == std::chrono::year{2026} / std::chrono::August / std::chrono::day{25});
+    CHECK(dateOnly->active); // always active, regardless of what the user typed
+
+    const auto withTime = ParseTimestampInput("2026-08-25 14:00", today);
+    REQUIRE(withTime.has_value());
+    CHECK(*withTime->hour == 14);
+
+    const auto withRepeater = ParseTimestampInput("2026-08-25 +1w", today);
+    REQUIRE(withRepeater.has_value());
+    CHECK(withRepeater->repeaterKind == OrgTimestamp::RepeaterKind::Cumulative);
+}
+
+TEST_CASE("ParseTimestampInput rejects unrecognized input", "[Org]") {
+    const std::chrono::year_month_day today = std::chrono::year{2026} / std::chrono::August / std::chrono::day{23};
+    REQUIRE_FALSE(ParseTimestampInput("whenever", today).has_value());
+    REQUIRE_FALSE(ParseTimestampInput("", today).has_value());
+}
+
+TEST_CASE("AdvanceTimestamp with a Cumulative (+) repeater always adds one interval from the original date", "[Org]") {
+    OrgTimestamp ts;
+    ts.date          = std::chrono::year{2026} / std::chrono::August / std::chrono::day{1};
+    ts.repeaterKind  = OrgTimestamp::RepeaterKind::Cumulative;
+    ts.repeaterCount = 1;
+    ts.repeaterUnit  = 'w';
+
+    // Completed long after the original date -- Cumulative doesn't catch up,
+    // it always adds exactly one interval from the timestamp's OWN date.
+    const auto completedOn = std::chrono::year{2026} / std::chrono::September / std::chrono::day{15};
+    const auto advanced    = AdvanceTimestamp(ts, completedOn);
+    CHECK(advanced.date == std::chrono::year{2026} / std::chrono::August / std::chrono::day{8});
+}
+
+TEST_CASE("AdvanceTimestamp with a CatchUp (++) repeater skips forward past the completion date", "[Org]") {
+    OrgTimestamp ts;
+    ts.date          = std::chrono::year{2026} / std::chrono::August / std::chrono::day{1};
+    ts.repeaterKind  = OrgTimestamp::RepeaterKind::CatchUp;
+    ts.repeaterCount = 1;
+    ts.repeaterUnit  = 'w';
+
+    // A task sitting untouched for weeks -- CatchUp must not pile up every
+    // missed occurrence, it lands on the first one strictly after completedOn.
+    const auto completedOn = std::chrono::year{2026} / std::chrono::August / std::chrono::day{20};
+    const auto advanced    = AdvanceTimestamp(ts, completedOn);
+    CHECK(std::chrono::sys_days{advanced.date} > std::chrono::sys_days{completedOn});
+    CHECK(advanced.date == std::chrono::year{2026} / std::chrono::August / std::chrono::day{22});
+}
+
+TEST_CASE("AdvanceTimestamp with a Restart (.+) repeater adds one interval from the completion date", "[Org]") {
+    OrgTimestamp ts;
+    ts.date          = std::chrono::year{2026} / std::chrono::August / std::chrono::day{1};
+    ts.repeaterKind  = OrgTimestamp::RepeaterKind::Restart;
+    ts.repeaterCount = 1;
+    ts.repeaterUnit  = 'w';
+
+    const auto completedOn = std::chrono::year{2026} / std::chrono::August / std::chrono::day{20};
+    const auto advanced    = AdvanceTimestamp(ts, completedOn);
+    CHECK(advanced.date == std::chrono::year{2026} / std::chrono::August / std::chrono::day{27});
+}
+
+TEST_CASE("AdvanceTimestamp clamps a month-end repeater to the target month's own last day", "[Org]") {
+    OrgTimestamp ts;
+    ts.date          = std::chrono::year{2026} / std::chrono::January / std::chrono::day{31};
+    ts.repeaterKind  = OrgTimestamp::RepeaterKind::Cumulative;
+    ts.repeaterCount = 1;
+    ts.repeaterUnit  = 'm';
+
+    const auto advanced = AdvanceTimestamp(ts, ts.date);
+    CHECK(advanced.date == std::chrono::year{2026} / std::chrono::February / std::chrono::day{28}); // 2026 isn't a leap year
+}
+
+TEST_CASE("AdvanceTimestamp is a no-op for a non-repeating timestamp", "[Org]") {
+    OrgTimestamp ts;
+    ts.date = std::chrono::year{2026} / std::chrono::August / std::chrono::day{1};
+    CHECK(AdvanceTimestamp(ts, ts.date).date == ts.date);
+}
+
+TEST_CASE("CycleTodoKeywordAtPoint advances a repeating SCHEDULED: instead of finishing the task", "[Org]") {
+    Buffer buffer("test", Rope("* TODO Water the plants\nSCHEDULED: <2026-08-01 Sat +1w>\n"));
+    buffer.SetPoint(2);
+    REQUIRE(CycleTodoKeywordAtPoint(buffer));
+
+    const auto headlines = ParseOutline(buffer.Text());
+    REQUIRE(headlines[0].todoKeyword == "TODO"); // reset to the first keyword, never lands on DONE
+    const auto planning = ParsePlanning(buffer.Text(), headlines[0]);
+    REQUIRE(planning.has_value());
+    REQUIRE(planning->scheduled.has_value());
+    CHECK(planning->scheduled->date == std::chrono::year{2026} / std::chrono::August / std::chrono::day{8});
+}
+
+TEST_CASE("CycleTodoKeywordAtPoint finishes a non-repeating task normally", "[Org]") {
+    Buffer buffer("test", Rope("* TODO Buy milk\nSCHEDULED: <2026-08-01 Sat>\n"));
+    buffer.SetPoint(2);
+    REQUIRE(CycleTodoKeywordAtPoint(buffer));
+
+    const auto headlines = ParseOutline(buffer.Text());
+    REQUIRE(headlines[0].todoKeyword == "DONE"); // no repeater -- finishes normally
+    const auto planning = ParsePlanning(buffer.Text(), headlines[0]);
+    REQUIRE(planning.has_value());
+    CHECK(planning->scheduled->date == std::chrono::year{2026} / std::chrono::August / std::chrono::day{1}); // unchanged
 }

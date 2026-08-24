@@ -2525,7 +2525,7 @@ TEST_CASE("C-c C-s prompts for a pattern, then project-search opens a results bu
     std::filesystem::remove_all(dir);
 }
 
-TEST_CASE("C-c a builds an *agenda* buffer, and C-c C-v on one of its lines jumps to the real headline",
+TEST_CASE("C-c a builds a sectioned *agenda* multibuffer, and C-c C-v on one of its excerpts jumps to the real headline",
           "[BufferView]") {
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_bufferview_test_org_agenda";
     std::filesystem::remove_all(dir);
@@ -2544,13 +2544,19 @@ TEST_CASE("C-c a builds an *agenda* buffer, and C-c C-v on one of its lines jump
 
     REQUIRE(&fixture.activeBuffer.Get() != &fixture.buffer);
     REQUIRE(fixture.activeBuffer.Get().Name().find("*agenda*") == 0);
-    REQUIRE(fixture.activeBuffer.Get().Text().find((dir / "tasks.org").string() + ":2: TODO Buy milk") !=
+    // No SCHEDULED:/DEADLINE: on "Buy milk" -- it's Undated, sole section.
+    REQUIRE(fixture.activeBuffer.Get().Text().find("▸ [Undated] " + (dir / "tasks.org").string() + ":2") !=
             std::string::npos);
+    REQUIRE(fixture.activeBuffer.Get().Text().find("TODO Buy milk") != std::string::npos);
     REQUIRE(fixture.activeBuffer.Get().Text().find("Already done") == std::string::npos); // DONE excluded
 
-    // Reuses project-search-visit-result (C-c C-v) unchanged -- proving the
-    // shared SearchMatch/BuildResultsBuffer pipeline actually works end to
-    // end here, not just that it compiles.
+    // Point on the excerpt's own body line, not its header -- proves the
+    // jump comes from MultibufferIndex::SpanAtOffset (see the *diagnostics*
+    // multibuffer's own analogous test), not a lucky regex match.
+    const std::size_t bodyOffset = fixture.activeBuffer.Get().Text().find("TODO Buy milk");
+    REQUIRE(bodyOffset != std::string::npos);
+    fixture.activeBuffer.Get().SetPoint(bodyOffset);
+
     view.OnEvent(ned::ui::test::Ctrl('c'));
     view.OnEvent(ned::ui::test::Ctrl('v'));
 

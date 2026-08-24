@@ -496,6 +496,13 @@ class BufferView : public Widget {
                            // through that shared chain.
                            SetProperty,
                            DeleteProperty,
+                           // scheduling/recurrence follow-up: org-schedule/org-deadline --
+                           // single prompt each, same shared HandlePromptKey else-chain
+                           // SetHeadlineTags/DeleteProperty already use, pre-filled with
+                           // the headline's current SCHEDULED:/DEADLINE: timestamp if it
+                           // has one (see StartInteractiveSession's own cases).
+                           OrgSchedule,
+                           OrgDeadline,
                            // org-capture follow-up: single-stage, same "read exactly
                            // one further character, no MinibufferPrompt" shape as
                            // PointToRegister/etc. -- see HandleOrgCaptureKey.
@@ -1122,6 +1129,15 @@ class BufferView : public Widget {
     // every other diagnostic view already draws light up unmodified, no new
     // rendering path or hardcoded color needed.
     void RequestDiagnosticsBuffer();
+
+    // scheduling/recurrence follow-up: org-agenda's own entry point -- a
+    // sectioned Editor/Multibuffer.h view (one excerpt per
+    // editor::AgendaItem, grouped Overdue/Today/Upcoming/Undated per
+    // editor::CollectAgendaItems' own sort order) rather than the flat
+    // BuildResultsBuffer list this used to build before real SCHEDULED:/
+    // DEADLINE: timestamp parsing existed. Same "no source, no jump" no-op
+    // posture every other multibuffer consumer here already has.
+    void BuildAgendaMultibuffer();
 
     // find-all-references follow-up: project-find-references's entry point
     // -- synchronous, same shape as RequestDiagnosticsBuffer (SearchDirectory

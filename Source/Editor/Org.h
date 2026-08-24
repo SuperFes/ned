@@ -57,10 +57,10 @@
 //    lives entirely in Source/UI/BufferView.cpp -- this file only parses.
 //
 // 6. Property drawers: real Org's ":PROPERTIES: ... :END:" block, immediately
-//    following a headline's own line (Org's grammar also allows a "plan"
-//    line -- SCHEDULED:/DEADLINE: -- in between; this codebase doesn't parse
-//    those yet, so in practice the drawer must sit right after the headline
-//    line). ParsePropertyDrawer/GetProperty are the pure-parse/read half
+//    following a headline's own line, or its planning line if it has one
+//    (Org's grammar also allows a "plan" line -- SCHEDULED:/DEADLINE: -- in
+//    between; see item 7 below for that). ParsePropertyDrawer/GetProperty
+//    are the pure-parse/read half
 //    (same PascalCase-suffix-free "just look at the text" shape ParseLinks/
 //    FindOrgTableAtPoint already establish); SetProperty/DeleteProperty are
 //    the Buffer-mutating half, creating or removing the whole drawer as
@@ -71,6 +71,25 @@
 //    own doc comment below, which used to call this out of scope before
 //    property drawers existed at all).
 //
+// 7. Planning: real Org's own SCHEDULED:/DEADLINE:/CLOSED: timestamps, on a
+//    "plan" line immediately following a headline's own line (and, per the
+//    property-drawers comment above, immediately BEFORE its property
+//    drawer if it has one -- ParsePropertyDrawer/SetProperty's drawer-
+//    creation fallback both now skip past a planning line via
+//    HeadlineBodyStart, the same file-local helper, before doing their own
+//    work). OrgTimestamp/ParseTimestamp/FormatTimestamp are pure structural
+//    parsing/serialization, same shape as everything else in this file;
+//    ParseTimestampInput is a distinct, separate parser for what a user
+//    actually types into the org-schedule/org-deadline prompt (relative
+//    shorthand like "today"/"+7", or an absolute date/time typed without
+//    the bracket/weekday decoration FormatTimestamp itself adds back) --
+//    mirrors real Org's own org-read-date minibuffer accepting free-form
+//    relative input, not an invented grammar. AdvanceTimestamp implements
+//    all three repeater-cookie kinds ("+"/"++"/".+") via std::chrono date
+//    arithmetic, hooked into CycleTodoKeywordAtPoint (see that function's
+//    own doc comment for the exact, deliberately simplified recurrence
+//    behavior against real Org's CLOSED:-logging).
+//
 // Real tree-sitter-org highlighting shipped as its own follow-up (see
 // Mode.cpp's OrgMode(), built on Ned's own forked "org" grammar in
 // TreeSitter/Languages.cpp) -- it lives there, not here; this file stays
@@ -80,6 +99,7 @@
 #ifndef NED_EDITOR_ORG_H
 #define NED_EDITOR_ORG_H
 
+#include <chrono>
 #include <cstddef>
 #include <optional>
 #include <string>
@@ -225,6 +245,15 @@ void SetHeadlineTags(text::Buffer& buffer, const Headline& headline, std::vector
 // untouched) if point isn't on a headline line -- callers report e.g. "Not
 // on a headline." the same way rectangle commands report "No rectangle
 // region selected." for their own missing-precondition case.
+//
+// CycleTodoKeywordAtPoint recurrence: a headline whose SCHEDULED:/
+// DEADLINE: carries a repeater cookie never actually lands on
+// todoKeywords.back() (the done state) -- real Org logs a CLOSED: note and
+// briefly passes through DONE before rescheduling; this v1 nets out the
+// same practical outcome without the log note: it advances the repeating
+// timestamp(s) via AdvanceTimestamp and resets the keyword to
+// todoKeywords.front() instead, so completing a repeating task always
+// leaves it looking "still open, just rescheduled" rather than "done."
 bool CycleTodoKeywordAtPoint(text::Buffer& buffer, const std::vector<std::string>& todoKeywords = TodoKeywords());
 bool CyclePriorityAtPoint(text::Buffer& buffer, const std::vector<std::string>& todoKeywords = TodoKeywords());
 
@@ -422,6 +451,104 @@ struct Link {
 // FindHeadlineByCustomId below, the analogous resolver for that form.
 [[nodiscard]] std::optional<std::size_t> FindHeadlineByTitle(std::string_view bufferText, std::string_view title);
 
+// One Org timestamp -- "<2026-08-25 Tue>", "<2026-08-25 Tue 14:00>",
+// "<2026-08-25 Tue 14:00-15:30>", or any of those forms with a trailing
+// repeater cookie ("+1w"/"++1w"/".+1w") -- real Org's own SCHEDULED:/
+// DEADLINE:/CLOSED: planning-line syntax. The weekday abbreviation ("Tue")
+// is parsed but never stored here -- it's always DERIVED from `date`
+// (FormatTimestamp recomputes it), never authoritative, the same way real
+// Org silently corrects a stale weekday on save rather than trusting it.
+struct OrgTimestamp {
+    std::chrono::year_month_day date;
+    std::optional<int>          hour;          // 0-23; nullopt means no time-of-day at all
+    std::optional<int>          minute;        // always set together with hour
+    std::optional<int>          endHour;       // a "14:00-15:30" range's own end; nullopt means no range
+    std::optional<int>          endMinute;     // always set together with endHour
+    bool                        active = true; // true: "<...>" (agenda-visible); false: "[...]" (inactive)
+
+    // "+" (Cumulative): always advances by exactly one interval from the
+    // timestamp's own original date. "++" (CatchUp): advances by whole
+    // intervals repeatedly until strictly past the completion date --
+    // avoids a pileup of stale reminders after a repeating task sat
+    // untouched. ".+" (Restart): advances by one interval from the
+    // COMPLETION date instead of the original one. See AdvanceTimestamp.
+    enum class RepeaterKind { None,
+                              Cumulative,
+                              CatchUp,
+                              Restart };
+    RepeaterKind repeaterKind  = RepeaterKind::None;
+    int          repeaterCount = 0;
+    char         repeaterUnit  = '\0'; // 'h'/'d'/'w'/'m'/'y' -- meaningful only when repeaterKind != None
+};
+
+// Parses one real Org bracket timestamp exactly as it appears in file
+// text -- token must be the WHOLE bracketed span ("<...>"/"[...]"), same
+// "caller already isolated the span" contract ParseLinks/LinkAtPoint
+// establish for [[...]] spans. nullopt on any malformed token, including a
+// bracket-kind mismatch ("<...]") or a calendar-invalid date (e.g.
+// "2026-02-30") -- same "not a real construct" tolerance every other parser
+// in this file gives malformed input.
+[[nodiscard]] std::optional<OrgTimestamp> ParseTimestamp(std::string_view token);
+
+// Serializes back to bracket syntax, computing the weekday abbreviation
+// fresh from `timestamp.date` (never trusts a stale one, since none is
+// stored -- see OrgTimestamp's own doc comment).
+[[nodiscard]] std::string FormatTimestamp(const OrgTimestamp& timestamp);
+
+// Real Org's own "plan" line: up to one SCHEDULED:/DEADLINE:/CLOSED: entry
+// each, in any order, on the single line immediately following a
+// headline's own line (and immediately before its property drawer, if it
+// has one -- see this file's own top comment).
+struct Planning {
+    std::optional<OrgTimestamp> scheduled;
+    std::optional<OrgTimestamp> deadline;
+    std::optional<OrgTimestamp> closed;
+};
+
+// nullopt if headline has no next line, or that next line doesn't parse as
+// a real plan line (every non-whitespace token on it must be a recognized
+// SCHEDULED:/DEADLINE:/CLOSED: entry with a well-formed timestamp -- a line
+// that merely happens to contain "SCHEDULED:" as prose is not a plan line,
+// same "tolerate but don't misread" posture ParsePropertyDrawer's own
+// malformed-drawer handling takes).
+[[nodiscard]] std::optional<Planning> ParsePlanning(std::string_view bufferText, const Headline& headline);
+
+// Rewrites headline's own plan line wholesale from `planning` (SCHEDULED:
+// then DEADLINE: then CLOSED:, in that fixed order, whichever are
+// present) -- creating a fresh line immediately after the headline's own
+// line if none exists yet, or removing the line entirely (including its
+// own trailing newline) if every field in `planning` is nullopt. Unlike
+// SetProperty's single-entry in-place rewrite, a plan line's few short
+// entries make a wholesale rewrite simpler than patching individual
+// entries in place, and matches what real Org's own org-schedule/
+// org-deadline commands do. headline's byte offsets must describe buffer's
+// *current* content, the same precondition SetHeadlineTodoKeyword/
+// SetProperty already state.
+void SetPlanning(text::Buffer& buffer, const Headline& headline, const Planning& planning);
+
+// A separate, distinct parser from ParseTimestamp -- ParseTimestamp reads
+// real Org's own canonical bracket syntax; this reads what a user actually
+// types into the org-schedule/org-deadline prompt: "today", "tomorrow",
+// "+N" (N days from `today`, real Org's own org-read-date shorthand), or an
+// absolute "YYYY-MM-DD[ HH:MM[-HH:MM]][ repeater]" typed WITHOUT brackets
+// or a weekday (both are ned's own display decoration, added back by
+// FormatTimestamp) -- always produces an `active` (non-bracketed-as-
+// inactive) timestamp. nullopt on unrecognized input.
+[[nodiscard]] std::optional<OrgTimestamp> ParseTimestampInput(std::string_view            input,
+                                                              std::chrono::year_month_day today);
+
+// Computes a repeating timestamp's next occurrence per its own
+// repeaterKind (see OrgTimestamp's own doc comment for what each of the
+// three kinds means) relative to completedOn (the date the repeating
+// headline was just marked done on) -- a no-op (returns timestamp
+// unchanged) if repeaterKind is None. A repeater landing on a
+// calendar-invalid day (e.g. "Jan 31" + one month) clamps to that target
+// month's own last real day rather than carrying an invalid date forward.
+// An 'h'-unit repeater is a deliberate v1 no-op on the date itself (hour-
+// granularity repeaters on a SCHEDULED:/DEADLINE: are vanishingly rare
+// next to d/w/m/y) -- a conscious cut, not an oversight.
+[[nodiscard]] OrgTimestamp AdvanceTimestamp(const OrgTimestamp& timestamp, std::chrono::year_month_day completedOn);
+
 // One "KEY: value" line inside a property drawer -- e.g. ":CUSTOM_ID: foo"
 // or ":Effort: 1:00" (a value may itself contain ':', unlike a property
 // name -- see ParsePropertyDrawer's own doc comment). An empty value means
@@ -451,8 +578,9 @@ struct PropertyDrawer {
 };
 
 // headline's own drawer, if it has one -- the drawer must be the buffer's
-// very next line after headline.lineEndByte (see this file's top comment on
-// why "immediately follows the headline line" is this v1's rule), a
+// very next line after headline.lineEndByte, or after its planning line if
+// it has one (HeadlineBodyStart, this file's own internal helper, is what
+// skips past a planning line -- see item 7 of this file's top comment), a
 // case-insensitive ":PROPERTIES:"/":END:" pair (matching real Org's own
 // caseInsensitive() grammar rule for these two markers specifically -- unlike
 // a property's own name, which is NOT case-folded here, matching the
