@@ -82,17 +82,15 @@ Notcurses.
       project; a fast textual approximation, not real semantic LSP references, which
       still don't exist as a client capability -- see the `.gitignore` item below for
       where the RE2 engine it's built on came from). Every consumer shares the same
-      jump-to-source path: `vcs-visit-result` (`C-c v v`) is generic over
-      `MultibufferIndex`, not actually VCS-specific despite the name inherited from
-      its first consumer -- worth a rename/rebind to something like
-      `multibuffer-visit-result` once a fourth consumer makes the misnomer harder to
-      justify. Plain `*project-search*` results are a separate command entirely
-      (`project-search-visit-result`, `C-c C-v`) with its own regex-based `path:line:`
-      parse, not the `MultibufferIndex` one -- confirmed confusing in practice (two
-      different chords depending on which results buffer you're in). Worth unifying
-      the two into one command/binding that tries `MultibufferIndexFor` first and
-      falls back to the `path:line:` regex, so every results-style buffer (plain
-      search, diff, references, diagnostics) answers to the same "visit" chord.
+      jump-to-source path: `vcs-visit-result` (`C-c v v`) and
+      `project-search-visit-result` (`C-c C-v`) stayed as separate commands/bindings
+      (existing keybinding/Janet-name compatibility) but now both delegate to one shared
+      `BufferView::VisitResultUnderPoint` -- the "confirmed confusing in practice" gap
+      (either chord silently doing nothing depending on which results buffer you were in)
+      is closed: `MultibufferIndexFor` is tried first, falling back to the `path:line:`
+      regex, so both chords -- and Enter/click on any read-only results buffer, which
+      already funneled through `VisitSearchResult` -- now behave identically in every
+      results-style buffer (plain search, diff, references, diagnostics).
       Still open: fuller VCS history views (e.g. a full commit's diff from
       `*vcs log*`, not just the working tree), making a multibuffer genuinely editable
       (each excerpt writing back to its real source buffer) rather than read-only, and

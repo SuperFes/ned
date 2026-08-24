@@ -12,18 +12,35 @@
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
 #include "Text/KillRing.h"
+#include "TestEvents.h"
 #include "UI/ActiveBuffer.h"
 #include "UI/BufferView.h"
 #include "UI/Theme.h"
 
+using ned::editor::multibuffer::ClearRegistryForTesting;
 using ned::editor::multibuffer::MultibufferIndexFor;
 using ned::text::Buffer;
 using ned::ui::BufferView;
 
 namespace {
 
+// Mirrors MultibufferTest.cpp's own RegistryResetGuard -- without this, a
+// Buffer destroyed at the end of one TEST_CASE can leave a stale registry
+// entry a later TEST_CASE's freshly allocated Buffer spuriously "inherits"
+// if the allocator reuses the same address (confirmed live: made this
+// file's own diagnostics-multibuffer tests order-dependent).
+struct RegistryResetGuard {
+    RegistryResetGuard() {
+        ClearRegistryForTesting();
+    }
+    ~RegistryResetGuard() {
+        ClearRegistryForTesting();
+    }
+};
+
 // Mirrors BufferViewDiffGutterTest.cpp's own Fixture exactly.
 struct Fixture {
+    RegistryResetGuard         registryResetGuard;
     ned::text::Buffer          buffer{"scratch"};
     ned::text::KillRing        killRing;
     ned::editor::RegisterTable registers;
@@ -132,4 +149,47 @@ TEST_CASE("RequestDiagnosticsBuffer ignores prose-origin diagnostics and buffers
     REQUIRE(results != nullptr);
     REQUIRE(results->Diagnostics().empty());
     REQUIRE(fixture.statusMessage == "No diagnostics.");
+}
+
+// multibuffer-visit-unification follow-up: project-search-visit-result
+// (C-c C-v) used to be a straight-regex "path:line:" parse with no
+// MultibufferIndexFor check at all, so it was a silent no-op on a
+// *diagnostics* excerpt -- neither the "▸ a.cpp:2" header line (no
+// trailing colon after the line number) nor the bare source-line body
+// ("    return bogus;", no path prefix) matches that regex. Both
+// project-search-visit-result and vcs-visit-result now delegate to the same
+// BufferView::VisitResultUnderPoint, so either chord works here.
+TEST_CASE("C-c C-v jumps to source from a *diagnostics* multibuffer excerpt", "[BufferView][Diagnostics]") {
+    Fixture fixture;
+
+    Buffer& a = fixture.bufferList.CreateBuffer("a.cpp");
+    a.SetPath("/repo/a.cpp");
+    a.InsertAtPoint("int main() {\n    return bogus;\n}\n");
+    const std::size_t bogusStart = a.Text().find("bogus");
+    a.SetDiagnostics({
+        Buffer::Diagnostic{.startByte = bogusStart,
+                           .endByte   = bogusStart + 5,
+                           .severity  = Buffer::Diagnostic::Severity::Error,
+                           .message   = "use of undeclared identifier 'bogus'"},
+    });
+
+    BufferView view = fixture.View();
+    view.RequestDiagnosticsBufferForTesting();
+
+    Buffer* results = fixture.bufferList.Find("*diagnostics*");
+    REQUIRE(results != nullptr);
+
+    // Point on the excerpt's body line, not its header -- proves the jump
+    // comes from MultibufferIndex::SpanAtOffset, not a lucky regex match.
+    const std::size_t bodyOffset = results->Text().find("return bogus");
+    REQUIRE(bodyOffset != std::string::npos);
+    results->SetPoint(bodyOffset);
+    fixture.activeBuffer.Set(*results);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Ctrl('c'));
+    view.OnEvent(ned::ui::test::Ctrl('v'));
+
+    REQUIRE(&fixture.activeBuffer.Get() == &a);
+    REQUIRE(a.Content().ByteOffsetToLine(a.Point()) == 1); // 0-indexed line 1 == source line 2
 }

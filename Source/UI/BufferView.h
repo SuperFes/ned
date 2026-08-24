@@ -972,26 +972,28 @@ class BufferView : public Widget {
     void BuildResultsBuffer(const std::vector<editor::SearchMatch>& matches, const std::string& name);
 
     // VisitSearchResult (project-search follow-up): a one-shot direct action,
-    // not a prompt session -- doesn't touch inputMode_. Parses the current
-    // line for a "path:line:" prefix (the exact format project-search writes
-    // into its results buffer) and, if it matches, opens that file and jumps
-    // to the target line. A silent no-op on any line that doesn't match,
-    // which is what makes it safe to bind globally rather than gating it on
-    // which buffer happens to be active.
+    // not a prompt session -- doesn't touch inputMode_. Both this and
+    // VisitVcsResult below now delegate to the shared VisitResultUnderPoint,
+    // so either command/chord behaves identically in any results-style
+    // buffer -- multibuffer-visit-unification follow-up: C-c C-v used to be a
+    // silent no-op in a *vcs diff*/*diagnostics*/*references* buffer since it
+    // never checked MultibufferIndexFor, only the "path:line:" regex.
     void VisitSearchResult();
 
-    // Shared by VisitSearchResult and VisitVcsResult below -- declared in
-    // the public section instead (see its own comment there); kept
-    // referenced here so the two Visit* methods' doc comments still point
-    // somewhere true.
-
-    // VCS blame gutter follow-up: same "path:line:" prefix VisitSearchResult
-    // parses (see BuildVcsBlameBuffer's own doc comment for why the format
-    // is deliberately kept byte-compatible), via the shared JumpToPathLine
-    // above. A silent no-op on a non-matching line -- e.g. every line of a
-    // *vcs log* buffer, which has no per-line source location -- same
-    // convention VisitSearchResult already established.
+    // VCS blame gutter follow-up: same delegation as VisitSearchResult above
+    // -- kept as a separate method/command (vcs-visit-result, C-c v v) for
+    // existing keybinding/Janet-name compatibility, not because the logic
+    // differs anymore.
     void VisitVcsResult();
+
+    // The actual shared logic both Visit* methods above (and Enter/click on
+    // a read-only buffer) delegate to: try MultibufferIndexFor first (works
+    // from anywhere inside an excerpt's header/body, not just an index
+    // line), falling back to the "path:line:" regex JumpToPathLine's callers
+    // all write. A silent no-op if neither matches -- what makes it safe to
+    // invoke unconditionally regardless of which buffer happens to be
+    // active.
+    void VisitResultUnderPoint();
 
     // vcs-blame-buffer/vcs-show-log's actual entry points (see
     // StartInteractiveSession's VcsBlameBuffer/VcsShowLog cases) -- resolve
