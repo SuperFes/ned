@@ -101,8 +101,9 @@ class Environment {
     // Throws std::runtime_error on a Janet-level evaluation error --
     // diagnostics-log follow-up: the thrown message, and the
     // ned/*-diagnostics-log entry logged alongside it, now carry Janet's own
-    // real captured stacktrace text (see DoStringCapturingStacktrace below)
-    // rather than a generic "see stderr for details" placeholder.
+    // real captured stacktrace text, including its "path:line:col:" location
+    // (raw-stderr-fd-redirect follow-up -- see DoStringCapturingStacktrace
+    // below), rather than a generic "see stderr for details" placeholder.
     Janet DoString(const std::string& code, const std::string& sourcePath = "eval");
     Janet DoFile(const std::filesystem::path& path);
 
@@ -127,26 +128,24 @@ class Environment {
 };
 
 // diagnostics-log follow-up: runs janet_dostring and, on a nonzero return
-// signal, stringifies the real error value janet_dostring's own contract
-// already leaves in *out (via janet_to_string) into *capturedError, rather
-// than the generic "see stderr for details" placeholder every caller used
-// to throw instead. Free function, not an Environment method, because
+// signal, fills *capturedError with Janet's real error text, rather than the
+// generic "see stderr for details" placeholder every caller used to throw
+// instead. Free function, not an Environment method, because
 // EditorBindings.cpp's command-invocation path (NedRegisterCommand's
 // invocation lambda) only ever holds a raw JanetTable*, not an Environment&
-// -- both callers share this rather than each hand-rolling the same
-// *out-stringification.
+// -- both callers share this rather than each hand-rolling the same logic.
 //
-// No location (path/line) is ever extractable from the captured text --
-// tmux/unit-verified against both a runtime panic and a compile error: Janet
-// really does print a real stacktrace/"path:line:col:"-prefixed message
-// straight to the process's raw stderr on failure (confirming the original
-// "see stderr for details" comment this replaced was accurate), but that
-// text is neither reachable through Janet's ":err" dynamic binding (tried
-// first; came back empty) nor present in *out, which only ever holds the
-// bare message with any location prefix already stripped. A real fix would
-// need the raw stderr fd redirected around this call -- out of scope here,
-// noted on this feature's own ROADMAP.md entry rather than attempted with
-// string-parsing that provably can't work.
+// Janet prints its own real stacktrace -- including a "path:line:col:"
+// location neither *out nor Janet's ":err" dynamic binding ever carries --
+// straight to the process's raw stderr on failure, unbuffered, which would
+// otherwise corrupt the live Notcurses-rendered terminal (confirmed
+// tmux/unit-verified against both a runtime panic and a compile error).
+// raw-stderr-fd-redirect follow-up: this now redirects that print into a
+// pipe for the call's duration (see StderrCapture in Environment.cpp) and
+// prefers the captured text for *capturedError -- it carries the location
+// *out's bare, prefix-stripped message never could. Falls back to
+// janet_to_string(*out) only if nothing was captured (e.g. a panic with no
+// default stacktrace print at all).
 int DoStringCapturingStacktrace(JanetTable* env, const std::string& code, const std::string& sourcePath, Janet* out,
                                  std::string* capturedError);
 
