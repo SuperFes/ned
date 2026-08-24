@@ -88,18 +88,25 @@ Theme ThemeFromPalette(std::string name, const ThemePalette& p) {
         // executionLineBackground above, tinted by green/red instead of
         // yellow -- the *vcs diff* multibuffer's added/removed line
         // backgrounds.
-        .diffAddedBackground      = Color::Interpolate(0.82F, p.green, p.background),
-        .diffRemovedBackground    = Color::Interpolate(0.82F, p.red, p.background),
-        .headlineLevel1Foreground = p.blue,
-        .headlineLevel2Foreground = p.cyan,
-        .headlineLevel3Foreground = p.green,
-        .todoKeywordForeground    = p.red,
-        .doneKeywordForeground    = p.green,
-        .checkboxForeground       = p.yellow,
-        .underlineForeground      = p.foreground,
-        .strikethroughForeground  = p.subtleForeground,
-        .border                   = Brush{.background = p.background, .foreground = p.border},
-        .borderAccent             = Brush{.background = p.background, .foreground = p.accent, .bold = true},
+        .diffAddedBackground   = Color::Interpolate(0.82F, p.green, p.background),
+        .diffRemovedBackground = Color::Interpolate(0.82F, p.red, p.background),
+        // Whitespace-visualization follow-up: same mostly-background-wash
+        // technique, tinted by magenta (distinct from diff's green/red pair)
+        // for trailing whitespace; the indent guide is a faint line-toward-
+        // background blend of subtleForeground, the same relationship
+        // scrollBarDisabled above already uses for "visible but recessive."
+        .trailingWhitespaceBackground = Color::Interpolate(0.82F, p.magenta, p.background),
+        .indentGuideForeground        = Color::Interpolate(0.5F, p.subtleForeground, p.background),
+        .headlineLevel1Foreground     = p.blue,
+        .headlineLevel2Foreground     = p.cyan,
+        .headlineLevel3Foreground     = p.green,
+        .todoKeywordForeground        = p.red,
+        .doneKeywordForeground        = p.green,
+        .checkboxForeground           = p.yellow,
+        .underlineForeground          = p.foreground,
+        .strikethroughForeground      = p.subtleForeground,
+        .border                       = Brush{.background = p.background, .foreground = p.border},
+        .borderAccent                 = Brush{.background = p.background, .foreground = p.accent, .bold = true},
         // The base gradient pulled 60% toward the accent -- the exact blend
         // DarkTheme's own focused-gradient comment documents as hand-derived
         // literals there, computed here instead.

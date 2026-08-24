@@ -42,6 +42,7 @@
 #include "Editor/ThemeSetting.h"
 #include "Editor/ToolchainIncludePaths.h"
 #include "Editor/Vcs/VcsProviderRegistry.h"
+#include "Editor/WhitespaceSettings.h"
 #include "Editor/WrapOverrides.h"
 #include "JanetVcsProvider.h"
 #include "Text/BufferList.h"
@@ -199,6 +200,14 @@ namespace {
 
     void NedSetMinimapCharsPerDot(std::int64_t columns) {
         editor::SetMinimapCharsPerDot(static_cast<int>(columns));
+    }
+
+    void NedSetTrailingWhitespaceHighlightEnabled(bool enabled) {
+        editor::SetTrailingWhitespaceHighlightEnabled(enabled);
+    }
+
+    void NedSetIndentGuidesEnabled(bool enabled) {
+        editor::SetIndentGuidesEnabled(enabled);
     }
 
     void NedSetAutoDetectProjectRoot(bool enabled) {
@@ -656,6 +665,15 @@ void InstallEditorBindings(Environment& env) {
         "ned", "set-minimap-chars-per-dot",
         "Set how many real buffer columns one minimap braille sub-dot represents (default 8). A line longer than "
         "minimap-width * chars-per-dot * 2 columns simply isn't rendered past that point -- not compressed.");
+    env.Register<&NedSetTrailingWhitespaceHighlightEnabled>(
+        "ned", "set-trailing-whitespace-highlight-enabled",
+        "Enable/disable a subtle background highlight on trailing whitespace (spaces/tabs after the last "
+        "non-whitespace character on a line). Default false, matching Emacs' own opt-in "
+        "show-trailing-whitespace precedent rather than VSCode/Sublime's forced-on default.");
+    env.Register<&NedSetIndentGuidesEnabled>(
+        "ned", "set-indent-guides-enabled",
+        "Enable/disable vertical indentation guide glyphs at each indent-width column within a line's own "
+        "leading whitespace. Default false, same opt-in reasoning as set-trailing-whitespace-highlight-enabled.");
     env.Register<&NedSetAutoDetectProjectRoot>(
         "ned", "set-auto-detect-project-root",
         "Enable/disable walking upward from an opened file for a VCS marker directory to find the project root "
