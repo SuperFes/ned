@@ -25,6 +25,7 @@
 #include "Editor/Lsp/LspServerConfig.h"
 #include "Editor/Lsp/Transport.h"
 #include "Editor/Mode.h"
+#include "Editor/Multibuffer.h"
 #include "Editor/ProjectRoot.h"
 #include "Editor/PromptHistory.h"
 #include "Editor/Register.h"
@@ -156,7 +157,33 @@ class EnvVarGuard {
     std::string previous_;
 };
 
+// org-clock-display follow-up: mirrors BufferViewDiagnosticsBufferTest.cpp's/
+// MultibufferTest.cpp's own RegistryResetGuard. Without this, a Buffer
+// destroyed at the end of one TEST_CASE can leave a stale
+// Editor/Multibuffer.h registry entry that a later TEST_CASE's freshly
+// allocated Buffer -- unrelated to any multibuffer itself, e.g. a plain
+// "*search results*" buffer -- spuriously "inherits" if the allocator
+// reuses the same address, making VisitResultUnderPoint consult a stale
+// MultibufferIndex instead of falling back to its own path:line: regex
+// (confirmed live: this file's own multibuffer-building tests -- the
+// org-agenda and org-clock-report ones below -- made the later "visits
+// result under point"/"a mouse click visits the result" tests
+// order-dependent once there were enough of them to collide). This file's
+// shared Fixture below is used by every TEST_CASE in it, unlike those two
+// sibling files' own narrower per-multibuffer-feature fixtures, so the
+// guard lives here once rather than being added to every individual
+// multibuffer-building TEST_CASE.
+struct RegistryResetGuard {
+    RegistryResetGuard() {
+        ned::editor::multibuffer::ClearRegistryForTesting();
+    }
+    ~RegistryResetGuard() {
+        ned::editor::multibuffer::ClearRegistryForTesting();
+    }
+};
+
 struct Fixture {
+    RegistryResetGuard         registryResetGuard;
     ned::text::Buffer          buffer{"scratch"};
     ned::text::KillRing        killRing;
     ned::editor::RegisterTable registers;
@@ -2564,6 +2591,35 @@ TEST_CASE("C-c a builds a sectioned *agenda* multibuffer, and C-c C-v on one of 
     REQUIRE(fixture.activeBuffer.Get().Content().ByteOffsetToLine(fixture.activeBuffer.Get().Point()) == 1);
 
     std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("M-x org-clock-report builds a *clock report* multibuffer scoped to the current buffer, with subtree rollups",
+          "[BufferView]") {
+    // Org's own keymap (C-c C-x r) is mode-local -- Fixture's Dispatcher only
+    // carries the global keymap layer (see Fixture's own doc comment above),
+    // so this drives the command by name through M-x instead, the same
+    // mode-independent path org-set-tags's own tests above use.
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("* Parent\n:LOGBOOK:\nCLOCK: [2026-08-23 Sun 09:00]--[2026-08-23 Sun 09:30] =>  0:30\n:END:\n"
+                                 "** Child\n:LOGBOOK:\nCLOCK: [2026-08-23 Sun 10:00]--[2026-08-23 Sun 11:00] =>  1:00\n:END:\n"
+                                 "* Untouched\n");
+    fixture.buffer.SetPoint(0);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "org-clock-report");
+    view.OnEvent(ned::ui::test::Return());
+
+    REQUIRE(&fixture.activeBuffer.Get() != &fixture.buffer);
+    REQUIRE(fixture.activeBuffer.Get().Name().find("*clock report*") == 0);
+    const std::string text = fixture.activeBuffer.Get().Text();
+    REQUIRE(text.find("Parent") != std::string::npos);
+    REQUIRE(text.find("own 0:30   subtree 1:30") != std::string::npos); // parent's own 0:30 + child's 1:00
+    REQUIRE(text.find("Child") != std::string::npos);
+    REQUIRE(text.find("own 1:00   subtree 1:00") != std::string::npos);
+    REQUIRE(text.find("Untouched") == std::string::npos); // no clocked time anywhere in its subtree -- excluded
 }
 
 TEST_CASE("project-search reports no matches without switching buffers", "[BufferView]") {

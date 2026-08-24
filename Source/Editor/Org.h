@@ -712,9 +712,39 @@ ClockOutStatus ClockOut(text::Buffer& buffer, std::chrono::system_clock::time_po
                         const std::vector<std::string>& todoKeywords = TodoKeywords());
 
 // Sums every CLOSED clock entry's duration in headline's own LOGBOOK drawer
-// (a still-running entry doesn't count toward the total). No command/UI
-// surface consumes this yet -- see ROADMAP.md.
+// (a still-running entry doesn't count toward the total).
 [[nodiscard]] std::chrono::minutes TotalClockedMinutes(std::string_view bufferText, const Headline& headline);
+
+// clock-report follow-up: the headline (and the start time of its own
+// single running entry) whose LOGBOOK drawer holds bufferText's (at most
+// one) running clock -- nullopt if nothing is running anywhere. Public
+// counterpart of the internal scan ClockInAtPoint/ClockOut already do;
+// exists so a live display (UI/ModeLine.h's clock indicator) can show
+// "clocked in on X since start" without re-implementing LogbookDrawer
+// scanning.
+struct RunningClock {
+    Headline     headline;
+    OrgTimestamp start;
+};
+[[nodiscard]] std::optional<RunningClock> CurrentlyRunningClock(std::string_view bufferText,
+                                                                 const std::vector<std::string>& todoKeywords = TodoKeywords());
+
+// now - start, the same minute-resolution sys_days+hours+minutes
+// arithmetic ClockOut's own end-of-clock duration uses -- the live
+// "elapsed so far" for a still-running RunningClock::start, recomputed
+// fresh on every call rather than ticked/cached anywhere (a UI caller
+// re-reads this once per repaint, the same direct now()-read ModeLine's
+// own spinner frame already is).
+[[nodiscard]] std::chrono::minutes ElapsedMinutes(const OrgTimestamp& start,
+                                                   std::chrono::system_clock::time_point now = std::chrono::system_clock::now());
+
+// TotalClockedMinutes(*tree.headline) plus the same sum recursively over
+// every node in tree.children -- a parent headline's total includes all
+// its descendants' own clocked time, real Org's own clock-report rollup
+// behavior. tree must come from BuildHeadlineTree(ParseOutline(bufferText,
+// ...)) -- same node/Headline-pointer aliasing contract BuildHeadlineTree
+// itself documents.
+[[nodiscard]] std::chrono::minutes TotalClockedMinutesForSubtree(std::string_view bufferText, const HeadlineNode& tree);
 
 } // namespace ned::editor::org
 

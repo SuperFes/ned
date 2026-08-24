@@ -1474,22 +1474,6 @@ namespace {
         return text;
     }
 
-    // The headline (by value, same "compare by lineStartByte, not by
-    // pointer" precedent this file already establishes) whose LOGBOOK
-    // drawer holds the buffer's (at most one) running clock entry --
-    // nullopt if nothing is running anywhere.
-    std::optional<Headline> HeadlineWithRunningClock(std::string_view bufferText, const std::vector<std::string>& todoKeywords) {
-        for (const Headline& headline : ParseOutline(bufferText, todoKeywords)) {
-            if (const auto drawer = ParseLogbookDrawer(bufferText, headline)) {
-                for (const ClockEntry& entry : drawer->entries) {
-                    if (!entry.end)
-                        return headline;
-                }
-            }
-        }
-        return std::nullopt;
-    }
-
 } // namespace
 
 std::optional<OrgTimestamp> ParseTimestamp(std::string_view token) {
@@ -1881,10 +1865,10 @@ ClockInResult ClockInAtPoint(text::Buffer& buffer, std::chrono::system_clock::ti
     if (!headline)
         return {ClockInStatus::NotOnHeadline, {}};
 
-    if (const auto running = HeadlineWithRunningClock(buffer.Text(), todoKeywords)) {
-        if (running->lineStartByte == headline->lineStartByte)
+    if (const auto running = CurrentlyRunningClock(buffer.Text(), todoKeywords)) {
+        if (running->headline.lineStartByte == headline->lineStartByte)
             return {ClockInStatus::AlreadyRunningHere, {}};
-        return {ClockInStatus::AlreadyRunningElsewhere, running->title};
+        return {ClockInStatus::AlreadyRunningElsewhere, running->headline.title};
     }
 
     const std::string clockLine = FormatClockEntry(TimestampFromTimePoint(now), std::nullopt, std::nullopt) + "\n";
@@ -1912,12 +1896,12 @@ ClockInResult ClockInAtPoint(text::Buffer& buffer, std::chrono::system_clock::ti
 
 ClockOutStatus ClockOut(text::Buffer& buffer, std::chrono::system_clock::time_point now,
                         const std::vector<std::string>& todoKeywords) {
-    const auto headline = HeadlineWithRunningClock(buffer.Text(), todoKeywords);
-    if (!headline)
+    const auto running = CurrentlyRunningClock(buffer.Text(), todoKeywords);
+    if (!running)
         return ClockOutStatus::NoRunningClock;
 
-    const auto drawer = ParseLogbookDrawer(buffer.Text(), *headline);
-    // drawer is guaranteed here -- HeadlineWithRunningClock only returns a
+    const auto drawer = ParseLogbookDrawer(buffer.Text(), running->headline);
+    // drawer is guaranteed here -- CurrentlyRunningClock only returns a
     // headline whose own drawer it just found a running entry in.
     for (const ClockEntry& entry : drawer->entries) {
         if (entry.end)
@@ -1928,7 +1912,7 @@ ClockOutStatus ClockOut(text::Buffer& buffer, std::chrono::system_clock::time_po
         buffer.InsertAt(entry.lineStartByte, FormatClockEntry(entry.start, end, duration));
         return ClockOutStatus::Ok;
     }
-    return ClockOutStatus::NoRunningClock; // unreachable: HeadlineWithRunningClock already found one
+    return ClockOutStatus::NoRunningClock; // unreachable: CurrentlyRunningClock already found one
 }
 
 std::chrono::minutes TotalClockedMinutes(std::string_view bufferText, const Headline& headline) {
@@ -1940,6 +1924,29 @@ std::chrono::minutes TotalClockedMinutes(std::string_view bufferText, const Head
         if (entry.duration)
             total += *entry.duration;
     }
+    return total;
+}
+
+std::optional<RunningClock> CurrentlyRunningClock(std::string_view bufferText, const std::vector<std::string>& todoKeywords) {
+    for (const Headline& headline : ParseOutline(bufferText, todoKeywords)) {
+        if (const auto drawer = ParseLogbookDrawer(bufferText, headline)) {
+            for (const ClockEntry& entry : drawer->entries) {
+                if (!entry.end)
+                    return RunningClock{headline, entry.start};
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+std::chrono::minutes ElapsedMinutes(const OrgTimestamp& start, std::chrono::system_clock::time_point now) {
+    return ClockDuration(start, TimestampFromTimePoint(now));
+}
+
+std::chrono::minutes TotalClockedMinutesForSubtree(std::string_view bufferText, const HeadlineNode& tree) {
+    std::chrono::minutes total = tree.headline ? TotalClockedMinutes(bufferText, *tree.headline) : std::chrono::minutes{0};
+    for (const HeadlineNode& child : tree.children)
+        total += TotalClockedMinutesForSubtree(bufferText, child);
     return total;
 }
 

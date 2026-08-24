@@ -6,10 +6,13 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <iomanip>
+#include <sstream>
 #include <string>
 #include <vector>
 
 #include "Editor/BackgroundActivity.h"
+#include "Editor/Org.h"
 
 namespace ned::ui {
 
@@ -88,6 +91,34 @@ void ModeLine::Paint(Canvas c) {
     for (const char ch : text) {
         columns.emplace_back(1, ch);
     }
+
+    // org-clock-display follow-up: a live "clocked in on X since HH:MM"
+    // indicator, scoped to the active buffer only -- clock state isn't
+    // tracked globally across buffers in this codebase (Editor/Org.h's own
+    // top comment, item 8), so switching away from the clocked-in buffer
+    // simply stops showing it, the same buffer-scoped posture
+    // ClockInAtPoint/ClockOut themselves already have. Recomputed fresh
+    // every Paint() call, same direct now()-read CurrentSpinnerFrame()
+    // above already is -- no timer, no cached elapsed value.
+    if (mode_.name == "org-mode" && !buffer.IsLoading()) {
+        if (const auto running = editor::org::CurrentlyRunningClock(buffer.Text())) {
+            const long long    elapsed = editor::org::ElapsedMinutes(running->start).count();
+            std::ostringstream out;
+            out << (elapsed / 60) << ':' << std::setfill('0') << std::setw(2) << (elapsed % 60);
+            columns.emplace_back(" ");
+            columns.emplace_back(" ");
+            columns.emplace_back("⏱");
+            columns.emplace_back(" ");
+            for (const char ch : running->headline.title) {
+                columns.emplace_back(1, ch);
+            }
+            columns.emplace_back(" ");
+            for (const char ch : out.str()) {
+                columns.emplace_back(1, ch);
+            }
+        }
+    }
+
     // minimum-visible-duration follow-up: fall back to the last non-empty
     // snapshot for a little while after the real list goes empty -- see
     // lastShownActivities_'s own doc comment in ModeLine.h.

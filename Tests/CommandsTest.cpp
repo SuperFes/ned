@@ -1184,6 +1184,26 @@ TEST_CASE("org-agenda sets interactiveRequest and is bound to C-c a", "[Commands
     REQUIRE(fixture.buffer.Text().empty()); // the command itself doesn't touch the buffer
 }
 
+TEST_CASE("org-clock-report sets interactiveRequest and is bound to C-c C-x r in Org's own keymap", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    registry.Invoke("org-clock-report", context);
+    REQUIRE(context.interactiveRequest == InteractiveRequest::OrgClockReport);
+    REQUIRE(fixture.buffer.Text().empty()); // the command itself doesn't touch the buffer
+
+    // org-clock-display follow-up: mode-local (unlike org-agenda above),
+    // same "C-c C-x" prefix org-clock-in/-out/org-set-property/-delete-property
+    // already share -- resolved directly against Org's own keymap rather
+    // than through a Dispatcher, since Org's keymap isn't part of the
+    // global default one.
+    const Keymap org = OrgMode().keymap;
+    REQUIRE(org.Resolve(ParseKeySequence("C-c C-x r")).result == Keymap::LookupResult::Match);
+    REQUIRE(org.Resolve(ParseKeySequence("C-c C-x r")).commandName == "org-clock-report");
+}
+
 // keymap-collision follow-up: guards against reintroducing the class of bug
 // that made "C-c a s"/"C-c a p"/"C-c a k" unreachable by typing once "C-c a"
 // was bound to org-agenda (see Keymap::Resolve's own comment and

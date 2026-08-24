@@ -1061,6 +1061,12 @@ Mode OrgMode() {
     // "C-c C-x" prefix p/d already use safely above.
     keymap.Bind(ParseKeySequence("C-c C-x i"), "org-clock-in");
     keymap.Bind(ParseKeySequence("C-c C-x o"), "org-clock-out");
+    // org-clock-display follow-up: real Org's own binding is "C-c C-x C-r"
+    // (a different feature -- an inserted in-buffer table); this is a
+    // synthesized report buffer instead, so a plain "r" under the same
+    // "C-c C-x" prefix i/o already use, same Ctrl-vs-plain-letter
+    // reasoning as those two.
+    keymap.Bind(ParseKeySequence("C-c C-x r"), "org-clock-report");
     // Scheduling/recurrence follow-up: real Org's own bindings -- both
     // deliberately shadow a global command (project-search/create-directory)
     // the same way C-c C-p already does; see Mode.h's own doc comment.

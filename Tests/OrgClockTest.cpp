@@ -7,14 +7,18 @@
 #include "Text/Buffer.h"
 #include "Text/Rope.h"
 
+using ned::editor::org::BuildHeadlineTree;
 using ned::editor::org::ClockEntry;
 using ned::editor::org::ClockInAtPoint;
 using ned::editor::org::ClockInStatus;
 using ned::editor::org::ClockOut;
 using ned::editor::org::ClockOutStatus;
+using ned::editor::org::CurrentlyRunningClock;
+using ned::editor::org::ElapsedMinutes;
 using ned::editor::org::ParseLogbookDrawer;
 using ned::editor::org::ParseOutline;
 using ned::editor::org::TotalClockedMinutes;
+using ned::editor::org::TotalClockedMinutesForSubtree;
 using ned::text::Buffer;
 using ned::text::Rope;
 
@@ -159,4 +163,45 @@ TEST_CASE("TotalClockedMinutes sums closed entries and ignores a running one", "
     const auto headlines = ParseOutline(text);
     const auto total     = TotalClockedMinutes(text, headlines[0]);
     CHECK(total.count() == 90); // 1:00 + 0:30, the still-running entry doesn't count
+}
+
+TEST_CASE("CurrentlyRunningClock finds the running headline and its start time", "[Org][Clock]") {
+    const std::string text      = "* Buy milk\n* Walk dog\n:LOGBOOK:\nCLOCK: [2026-08-24 Mon 09:15]\n:END:\n";
+    const auto        running   = CurrentlyRunningClock(text);
+    REQUIRE(running.has_value());
+    CHECK(running->headline.title == "Walk dog");
+    CHECK(running->start.hour == 9);
+    CHECK(running->start.minute == 15);
+}
+
+TEST_CASE("CurrentlyRunningClock returns nullopt when nothing is running", "[Org][Clock]") {
+    const std::string text = "* Buy milk\n:LOGBOOK:\nCLOCK: [2026-08-23 Sun 09:00]--[2026-08-23 Sun 10:00] =>  1:00\n:END:\n";
+    CHECK_FALSE(CurrentlyRunningClock(text).has_value());
+}
+
+TEST_CASE("ElapsedMinutes computes now minus start across an hour boundary", "[Org][Clock]") {
+    const std::string text    = "* Buy milk\n:LOGBOOK:\nCLOCK: [2026-08-24 Mon 09:15]\n:END:\n";
+    const auto        running = CurrentlyRunningClock(text);
+    REQUIRE(running.has_value());
+    CHECK(ElapsedMinutes(running->start, TestNow(11, 0)).count() == 105); // 1:45
+}
+
+TEST_CASE("TotalClockedMinutesForSubtree rolls up a parent's own time plus every descendant's", "[Org][Clock]") {
+    const std::string text = "* Parent\n:LOGBOOK:\n"
+                             "CLOCK: [2026-08-23 Sun 09:00]--[2026-08-23 Sun 09:30] =>  0:30\n"
+                             ":END:\n"
+                             "** Child A\n:LOGBOOK:\n"
+                             "CLOCK: [2026-08-23 Sun 10:00]--[2026-08-23 Sun 11:00] =>  1:00\n"
+                             ":END:\n"
+                             "** Child B\n"
+                             "*** Grandchild\n:LOGBOOK:\n"
+                             "CLOCK: [2026-08-23 Sun 12:00]--[2026-08-23 Sun 12:15] =>  0:15\n"
+                             ":END:\n";
+    const auto headlines = ParseOutline(text);
+    const auto tree      = BuildHeadlineTree(headlines);
+    REQUIRE(tree.size() == 1);
+    CHECK(TotalClockedMinutesForSubtree(text, tree[0]).count() == 105); // 0:30 + 1:00 + 0:15
+    REQUIRE(tree[0].children.size() == 2);
+    CHECK(TotalClockedMinutesForSubtree(text, tree[0].children[0]).count() == 60);  // Child A alone
+    CHECK(TotalClockedMinutesForSubtree(text, tree[0].children[1]).count() == 15);  // Child B has none of its own, Grandchild has 0:15
 }

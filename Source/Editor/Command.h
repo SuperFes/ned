@@ -471,7 +471,18 @@ enum class InteractiveRequest { None,
                                 // when the server has none, returns none, or no client is running
                                 // at all -- unlike LspGotoDefinition, LSP absence here is a normal
                                 // fallback path, not an error.
-                                SwitchHeaderSource };
+                                SwitchHeaderSource,
+                                // org-clock-display follow-up: another one-shot direct action,
+                                // same shape as ProjectAgenda -- BufferView builds and switches
+                                // to a synthesized "*clock report*" buffer (a
+                                // Editor/Multibuffer.h view, BuildAgendaMultibuffer's own
+                                // shape) listing every headline in the *current* buffer with a
+                                // nonzero clocked total, own time plus a subtree rollup via
+                                // org::TotalClockedMinutesForSubtree. Scoped to the active
+                                // buffer only, not project-wide -- clocking commands
+                                // (org-clock-in/-out) are themselves buffer-scoped, see
+                                // Editor/Org.h's own top comment, item 8.
+                                OrgClockReport };
 
 // Everything a command implementation might need. Built fresh per invocation
 // from live references -- never stored, so there's no lifetime concern beyond

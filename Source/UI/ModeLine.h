@@ -16,6 +16,7 @@
 #include "Editor/BackgroundActivity.h"
 #include "Editor/Lsp/LspManager.h"
 #include "Editor/Mode.h"
+#include "Editor/Org.h"
 #include "Text/Buffer.h"
 #include "Theme.h"
 #include "Widget.h"

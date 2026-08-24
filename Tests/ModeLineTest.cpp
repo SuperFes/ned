@@ -352,3 +352,49 @@ TEST_CASE("ModeLine shows a distinct glyph for a spawn failure, not the running 
 
     ned::editor::lsp::SetLspServerCommand("modeline-spawn-fail-lang", {}); // clean up global config state for other tests
 }
+
+TEST_CASE("ModeLine shows a live clock indicator in org-mode while a clock is running", "[ModeLine]") {
+    ned::text::Buffer buffer("notes.org", ned::text::Rope("* Buy milk\n:LOGBOOK:\nCLOCK: [2026-08-24 Mon 09:15]\n:END:\n"));
+    ned::ui::ActiveBuffer activeBuffer(buffer);
+    ned::editor::Mode     mode  = ned::editor::OrgMode();
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    ned::ui::ModeLine     modeLine(activeBuffer, mode, theme);
+
+    ned::ui::Screen screen = MakeScreen(60, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 0});
+
+    modeLine.Paint(canvas);
+    // Elapsed time itself is wall-clock-dependent (not asserted here) -- only
+    // that the indicator (headline title + its glyph) shows at all.
+    const std::string row = RowText(screen, 0, 60);
+    REQUIRE(row.find("Buy milk") != std::string::npos);
+    REQUIRE(row.find("⏱") != std::string::npos);
+}
+
+TEST_CASE("ModeLine shows no clock indicator outside org-mode, even with LOGBOOK-shaped text", "[ModeLine]") {
+    ned::text::Buffer buffer("notes.txt", ned::text::Rope("* Buy milk\n:LOGBOOK:\nCLOCK: [2026-08-24 Mon 09:15]\n:END:\n"));
+    ned::ui::ActiveBuffer activeBuffer(buffer);
+    ned::editor::Mode     mode  = ned::editor::FundamentalMode();
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    ned::ui::ModeLine     modeLine(activeBuffer, mode, theme);
+
+    ned::ui::Screen screen = MakeScreen(60, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 0});
+
+    modeLine.Paint(canvas);
+    REQUIRE(RowText(screen, 0, 60).find("⏱") == std::string::npos);
+}
+
+TEST_CASE("ModeLine shows no clock indicator in org-mode when nothing is clocked in", "[ModeLine]") {
+    ned::text::Buffer     buffer("notes.org", ned::text::Rope("* Buy milk\n"));
+    ned::ui::ActiveBuffer activeBuffer(buffer);
+    ned::editor::Mode     mode  = ned::editor::OrgMode();
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    ned::ui::ModeLine     modeLine(activeBuffer, mode, theme);
+
+    ned::ui::Screen screen = MakeScreen(60, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 0});
+
+    modeLine.Paint(canvas);
+    REQUIRE(RowText(screen, 0, 60).find("⏱") == std::string::npos);
+}

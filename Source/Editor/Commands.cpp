@@ -2225,6 +2225,14 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                               *context.message = "No running clock.";
                           }
                       });
+    // org-clock-display follow-up: same "just set interactiveRequest" shape
+    // as org-agenda -- switching this pane's own active buffer needs
+    // activeBuffer_, which only BufferView has (BuildAgendaMultibuffer's own
+    // reasoning).
+    registry.Register("org-clock-report", "List every headline in the current buffer with clocked time, including subtree totals.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::OrgClockReport;
+                      });
     // Real Org's own command name -- same direct "act on context.buffer,
     // report through context.message" shape as the three commands above.
     // Tables follow-up: TAB is a single, context-dispatching command in
