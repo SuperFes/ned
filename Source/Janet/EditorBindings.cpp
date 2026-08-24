@@ -14,11 +14,11 @@
 #include "Editor/AutoPair.h"
 #include "Editor/AutoRevert.h"
 #include "Editor/Backup.h"
+#include "Editor/Clipboard.h"
 #include "Editor/CodeFoldSettings.h"
 #include "Editor/Dap/DapConfig.h"
 #include "Editor/DiffRefreshSettings.h"
 #include "Editor/FinalNewline.h"
-#include "Editor/Clipboard.h"
 #include "Editor/FormatOnSave.h"
 #include "Editor/HighlightSettings.h"
 #include "Editor/InlineDiagnostics.h"
@@ -27,15 +27,16 @@
 #include "Editor/Lsp/ProseChecker.h"
 #include "Editor/MinimapSettings.h"
 #include "Editor/ModeOverrides.h"
+#include "Editor/OrgCapture.h"
 #include "Editor/PageScroll.h"
 #include "Editor/ProjectRoot.h"
 #include "Editor/ProjectSession.h"
 #include "Editor/ProjectTrust.h"
 #include "Editor/ScratchPad.h"
 #include "Editor/ScriptingSession.h"
+#include "Editor/SearchSettings.h"
 #include "Editor/Session.h"
 #include "Editor/SyntaxTheme.h"
-#include "Editor/SearchSettings.h"
 #include "Editor/TabWidth.h"
 #include "Editor/Tasks/TaskConfig.h"
 #include "Editor/Terminal/Config.h"
@@ -367,6 +368,23 @@ namespace {
     // ["claude-code-acp"]).
     void NedSetAcpAgent(std::string name, std::vector<std::string> argv) {
         editor::acp::SetAcpAgentCommand(name, std::move(argv));
+    }
+
+    // capture-templates follow-up: registers a template org-capture (C-c k)
+    // can later expand by key -- headline empty means "file at the end of
+    // targetFile" rather than under a specific headline, mirroring
+    // NedSetTaskCommand's own empty-clears convention for "nothing
+    // configured." key must be exactly one character; Value.h has no
+    // std::optional<std::string> FromJanet specialization yet, so headline
+    // uses the same empty-string-means-absent shape rather than adding one
+    // just for this.
+    void NedOrgCaptureRegisterTemplate(std::string key, std::string name, std::string targetFile,
+                                       std::string templateText, std::string headline) {
+        if (key.size() != 1) {
+            throw std::runtime_error("ned/org-capture-register-template: key must be exactly one character");
+        }
+        editor::org::RegisterCaptureTemplate(editor::org::CaptureTemplate{
+            key[0], std::move(name), std::move(targetFile), std::move(templateText), std::move(headline)});
     }
 
     // ACP chat panel: which edge the dock hugs and how much of the screen it
@@ -818,6 +836,14 @@ void InstallEditorBindings(Environment& env) {
         "Set the command run by run-task for a task name: (name argv), e.g. (ned/set-task-command \"build\" "
         "[\"cmake\" \"--build\" \".\"]). argv is an array or tuple of strings -- argv[0] the executable (resolved "
         "against $PATH), the rest its arguments. An empty argv clears the configured command for name.");
+    env.Register<&NedOrgCaptureRegisterTemplate>(
+        "ned", "org-capture-register-template",
+        "Register an org-capture template: (key name target-file template headline), e.g. "
+        "(ned/org-capture-register-template \"t\" \"Todo\" \"~/org/todo.org\" \"* TODO %?\\n\" \"\"). key is exactly "
+        "one character (org-capture, C-c k, reads it to pick this template); template's first \"%?\" marks where "
+        "point lands after capture (omit it to land at the end of the inserted text). headline, if non-empty, files "
+        "the capture as the last child of the exactly-titled headline in target-file; empty files at the end of "
+        "target-file instead. Re-registering an existing key overwrites it.");
     env.Register<&NedSetAcpAgent>(
         "ned", "set-acp-agent",
         "Set the command used to launch an Agent Client Protocol (ACP) coding agent: (name argv), e.g. "

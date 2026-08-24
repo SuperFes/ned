@@ -30,6 +30,7 @@
 #include "Editor/Multibuffer.h"
 #include "Editor/NodeModules.h"
 #include "Editor/Org.h"
+#include "Editor/OrgCapture.h"
 #include "Editor/ProjectAgenda.h"
 #include "Editor/ProjectFileOps.h"
 #include "Editor/ProjectRoot.h"
@@ -3171,6 +3172,11 @@ bool BufferView::OnKeyEvent(const Event& event) {
         ClampPointToNarrowing();
         return true;
     }
+    if (inputMode_ == InputMode::OrgCaptureSelectTemplate) {
+        HandleOrgCaptureKey(*chord);
+        ClampPointToNarrowing();
+        return true;
+    }
     if (inputMode_ == InputMode::AcpPermissionPrompt) {
         HandleAcpPermissionPromptKey(*chord);
         ClampPointToNarrowing();
@@ -4816,6 +4822,26 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             prompt_.emplace("Delete property: ");
             statusMessage_ = prompt_->StatusText();
             return;
+        // org-capture follow-up: same one-character-read shape as
+        // PointToRegister/etc. above -- no MinibufferPrompt, the status line
+        // itself lists every registered template so the key isn't something
+        // the user has to memorize blind.
+        case editor::InteractiveRequest::OrgCapture: {
+            const std::vector<editor::org::CaptureTemplate> templates = editor::org::CaptureTemplates();
+            if (templates.empty()) {
+                statusMessage_ = "No capture templates configured.";
+                return;
+            }
+            std::string label = "Capture: ";
+            for (const editor::org::CaptureTemplate& tmpl : templates) {
+                label += "[";
+                label += tmpl.key;
+                label += "] " + tmpl.name + "  ";
+            }
+            inputMode_     = InputMode::OrgCaptureSelectTemplate;
+            statusMessage_ = label;
+            return;
+        }
         case editor::InteractiveRequest::ExecuteCommand:
             // Deviates from the other cases' bare-label shape: an
             // immediately-visible, browsable candidate list is central to
@@ -7900,6 +7926,54 @@ void BufferView::HandleZapToCharKey(const editor::KeyChord& chord) {
     }
     else {
         statusMessage_ = "No such character.";
+    }
+    EndInteractiveSession();
+}
+
+void BufferView::HandleOrgCaptureKey(const editor::KeyChord& chord) {
+    if (IsQuit(chord)) {
+        statusMessage_ = "Capture cancelled.";
+        EndInteractiveSession();
+        return;
+    }
+    if (!IsPlainCharacter(chord)) {
+        return; // ignore, keep waiting for a template key
+    }
+
+    // Template keys are always plain ASCII (Janet callers pass a one-char
+    // std::string) -- anything outside that range simply can't match.
+    if (chord.Codepoint > 0x7F) {
+        statusMessage_ = "No such capture template.";
+        EndInteractiveSession();
+        return;
+    }
+
+    const auto tmpl = editor::org::CaptureTemplateForKey(static_cast<char>(chord.Codepoint));
+    if (!tmpl) {
+        statusMessage_ = "No such capture template.";
+        EndInteractiveSession();
+        return;
+    }
+
+    try {
+        const std::filesystem::path targetPath(tmpl->targetFile);
+        if (targetPath.has_parent_path()) {
+            std::filesystem::create_directories(targetPath.parent_path());
+        }
+        text::Buffer&                    target = bufferList_.OpenOrCreateFile(targetPath);
+        const editor::org::CaptureResult result = editor::org::InsertCapture(target, *tmpl);
+        activeBuffer_.Set(target);
+        target.ClearSecondaryCursors();
+        target.SetPoint(result.insertedAt);
+        if (!tmpl->headline.empty() && !result.headlineFound) {
+            statusMessage_ = "Headline \"" + tmpl->headline + "\" not found -- filed at end of " + tmpl->targetFile;
+        }
+        else {
+            statusMessage_ = "Captured: " + tmpl->name;
+        }
+    }
+    catch (const std::exception& e) {
+        statusMessage_ = e.what();
     }
     EndInteractiveSession();
 }

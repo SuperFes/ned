@@ -2401,6 +2401,14 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                               *context.message = "Not on a headline.";
                           }
                       });
+    // Capture-templates follow-up: real Org's own org-capture, minus its
+    // precondition -- unlike every other org-* command above, this must work
+    // from any buffer, not just when point is on a headline (you capture
+    // *into* an org file from wherever you happen to be). See
+    // BufferView::StartInteractiveSession's OrgCapture case for the actual
+    // one-keystroke template-selection session.
+    registry.Register("org-capture", "Capture a note into a registered org-capture template.",
+                      [](CommandContext& context) { context.interactiveRequest = InteractiveRequest::OrgCapture; });
     // Tables follow-up: registered separately from org-cycle's own
     // fallback branch above too -- M-x / explicit binding / Janet
     // scripting reachability, the same "manually invoked, available
@@ -2783,6 +2791,10 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("C-c t"), "toggle-terminal");
     keymap.Bind(ParseKeySequence("C-x k"), "kill-buffer");
     keymap.Bind(ParseKeySequence("C-c a"), "org-agenda"); // real Org's own actual binding
+    // capture-templates follow-up: real Org's own org-capture is "C-c c",
+    // already acp-toggle-panel here -- "C-c k" is the common fallback binding
+    // Emacs users reach for when "c" is taken, and is otherwise unbound.
+    keymap.Bind(ParseKeySequence("C-c k"), "org-capture");
     keymap.Bind(ParseKeySequence("C-c C-d"), "create-directory");
     keymap.Bind(ParseKeySequence("C-c C-k"), "delete-file");
     // Not "C-c C-m": Ctrl+M and Enter are the same byte at the terminal

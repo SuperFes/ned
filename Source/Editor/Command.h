@@ -147,6 +147,12 @@ enum class InteractiveRequest { None,
                                 JumpToRegister,
                                 CopyToRegister,
                                 InsertRegister,
+                                // org-capture follow-up: same "read exactly one further
+                                // character, no MinibufferPrompt" shape as the register
+                                // requests above -- the character picks a registered
+                                // Editor/OrgCapture.h template by key. See
+                                // BufferView::HandleOrgCaptureKey.
+                                OrgCapture,
                                 // kill-rectangle/delete-rectangle/yank-rectangle/
                                 // string-rectangle follow-up: KillRectangle/DeleteRectangle/
                                 // YankRectangle are one-shot direct actions, no further
