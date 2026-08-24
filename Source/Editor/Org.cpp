@@ -1377,6 +1377,119 @@ namespace {
         return afterHeadline;
     }
 
+    // The byte offset where a LOGBOOK drawer should be found/created --
+    // HeadlineBodyStart (skips a planning line), then additionally skips a
+    // property drawer if one starts exactly there. Deliberate ordering
+    // decision: LOGBOOK always sits after PROPERTIES (or after planning if
+    // there's no properties drawer), never between them -- see Org.h's own
+    // top comment, item 8, for the rationale.
+    std::optional<std::size_t> ClockBlockStart(std::string_view bufferText, const Headline& headline) {
+        const auto bodyStart = HeadlineBodyStart(bufferText, headline);
+        if (!bodyStart)
+            return std::nullopt;
+        if (const auto drawer = ParsePropertyDrawer(bufferText, headline)) {
+            if (drawer->endByte >= bufferText.size())
+                return std::nullopt; // the property drawer is the buffer's own last content -- nothing can follow
+            return drawer->endByte;
+        }
+        return bodyStart;
+    }
+
+    // now, as an inactive OrgTimestamp with minute-granularity time-of-day
+    // -- real Org's own CLOCK: entries are always "[...]", never "<...>".
+    // Same std::chrono::floor<days>(system_clock::now()) idiom
+    // CycleTodoKeywordAtPoint's own recurrence hook already uses for
+    // "today," extended with the time-of-day remainder.
+    OrgTimestamp TimestampFromTimePoint(std::chrono::system_clock::time_point now) {
+        using namespace std::chrono;
+        const auto days      = floor<std::chrono::days>(now);
+        const auto timeOfDay = duration_cast<minutes>(now - days);
+
+        OrgTimestamp timestamp;
+        timestamp.date   = year_month_day{days};
+        timestamp.hour   = static_cast<int>(timeOfDay.count() / 60);
+        timestamp.minute = static_cast<int>(timeOfDay.count() % 60);
+        timestamp.active = false;
+        return timestamp;
+    }
+
+    // end - start, both converted to a single minute-resolution time point
+    // first -- mixed sys_days/hours/minutes arithmetic, the same duration-
+    // promotion idiom AddInterval already relies on above.
+    std::chrono::minutes ClockDuration(const OrgTimestamp& start, const OrgTimestamp& end) {
+        using namespace std::chrono;
+        const auto startPoint = sys_days{start.date} + hours{start.hour.value_or(0)} + minutes{start.minute.value_or(0)};
+        const auto endPoint   = sys_days{end.date} + hours{end.hour.value_or(0)} + minutes{end.minute.value_or(0)};
+        return duration_cast<minutes>(endPoint - startPoint);
+    }
+
+    // "  CLOCK: [start]" or "  CLOCK: [start]--[end] =>  H:MM" -- the
+    // trailing "=>  H:MM" (if present) is matched but deliberately
+    // discarded, never parsed into ClockEntry::duration, which is always
+    // recomputed via ClockDuration instead (see ClockEntry's own doc
+    // comment in Org.h).
+    const std::regex& ClockLinePattern() {
+        static const std::regex pattern(R"(^\s*CLOCK:\s*(\[[^\]]*\])(?:--(\[[^\]]*\]))?(?:\s*=>.*)?\s*$)");
+        return pattern;
+    }
+
+    struct ParsedClockLine {
+        OrgTimestamp                 start;
+        std::optional<OrgTimestamp> end;
+    };
+
+    std::optional<ParsedClockLine> ParseClockLine(std::string_view line) {
+        const std::string lineStr(line);
+        std::smatch        match;
+        if (!std::regex_match(lineStr, match, ClockLinePattern()))
+            return std::nullopt;
+
+        const auto start = ParseTimestamp(match[1].str());
+        if (!start)
+            return std::nullopt;
+
+        ParsedClockLine result;
+        result.start = *start;
+        if (match[2].matched) {
+            const auto end = ParseTimestamp(match[2].str());
+            if (!end)
+                return std::nullopt;
+            result.end = end;
+        }
+        return result;
+    }
+
+    // Real Org's own exact clock-line shape: two spaces after "=>", H:MM
+    // (H unpadded, MM always two digits) for the duration.
+    std::string FormatClockEntry(const OrgTimestamp& start, const std::optional<OrgTimestamp>& end,
+                                 std::optional<std::chrono::minutes> duration) {
+        std::string text = "CLOCK: " + FormatTimestamp(start);
+        if (end) {
+            text += "--" + FormatTimestamp(*end);
+            const long long totalMinutes = duration.value_or(std::chrono::minutes{0}).count();
+            std::ostringstream out;
+            out << " =>  " << (totalMinutes / 60) << ':' << std::setfill('0') << std::setw(2) << (totalMinutes % 60);
+            text += out.str();
+        }
+        return text;
+    }
+
+    // The headline (by value, same "compare by lineStartByte, not by
+    // pointer" precedent this file already establishes) whose LOGBOOK
+    // drawer holds the buffer's (at most one) running clock entry --
+    // nullopt if nothing is running anywhere.
+    std::optional<Headline> HeadlineWithRunningClock(std::string_view bufferText, const std::vector<std::string>& todoKeywords) {
+        for (const Headline& headline : ParseOutline(bufferText, todoKeywords)) {
+            if (const auto drawer = ParseLogbookDrawer(bufferText, headline)) {
+                for (const ClockEntry& entry : drawer->entries) {
+                    if (!entry.end)
+                        return headline;
+                }
+            }
+        }
+        return std::nullopt;
+    }
+
 } // namespace
 
 std::optional<OrgTimestamp> ParseTimestamp(std::string_view token) {
@@ -1711,6 +1824,123 @@ std::optional<std::size_t> FindHeadlineByCustomId(std::string_view bufferText, s
         }
     }
     return std::nullopt;
+}
+
+std::optional<LogbookDrawer> ParseLogbookDrawer(std::string_view bufferText, const Headline& headline) {
+    const auto bodyStart = ClockBlockStart(bufferText, headline);
+    if (!bodyStart)
+        return std::nullopt;
+    std::size_t lineStart = *bodyStart;
+
+    std::size_t newlinePos = bufferText.find('\n', lineStart);
+    std::size_t lineEnd    = (newlinePos == std::string_view::npos) ? bufferText.size() : newlinePos;
+    if (!IsDrawerMarker(bufferText.substr(lineStart, lineEnd - lineStart), ":LOGBOOK:"))
+        return std::nullopt;
+    if (newlinePos == std::string_view::npos)
+        return std::nullopt; // ":LOGBOOK:" with nothing after it -- no ":END:" can follow
+
+    LogbookDrawer drawer;
+    drawer.startByte = lineStart;
+    lineStart         = newlinePos + 1;
+
+    while (lineStart <= bufferText.size()) {
+        newlinePos                  = bufferText.find('\n', lineStart);
+        lineEnd                     = (newlinePos == std::string_view::npos) ? bufferText.size() : newlinePos;
+        const std::string_view line = bufferText.substr(lineStart, lineEnd - lineStart);
+
+        if (IsDrawerMarker(line, ":END:")) {
+            drawer.endLineStartByte = lineStart;
+            drawer.endByte          = (newlinePos == std::string_view::npos) ? bufferText.size() : newlinePos + 1;
+            return drawer;
+        }
+
+        if (const auto parsed = ParseClockLine(line)) {
+            ClockEntry entry;
+            entry.start = parsed->start;
+            entry.end   = parsed->end;
+            if (entry.end)
+                entry.duration = ClockDuration(entry.start, *entry.end);
+            entry.lineStartByte = lineStart;
+            entry.lineEndByte   = lineEnd;
+            drawer.entries.push_back(std::move(entry));
+        }
+        // A line inside the drawer that's neither a CLOCK: entry nor
+        // ":END:" is simply skipped -- same tolerance ParsePropertyDrawer
+        // already gives an unrecognized interior line.
+
+        if (newlinePos == std::string_view::npos)
+            return std::nullopt; // ran off the buffer with no ":END:" -- not a real drawer
+        lineStart = newlinePos + 1;
+    }
+    return std::nullopt;
+}
+
+ClockInResult ClockInAtPoint(text::Buffer& buffer, std::chrono::system_clock::time_point now,
+                             const std::vector<std::string>& todoKeywords) {
+    const auto headline = HeadlineAtPoint(buffer, todoKeywords);
+    if (!headline)
+        return {ClockInStatus::NotOnHeadline, {}};
+
+    if (const auto running = HeadlineWithRunningClock(buffer.Text(), todoKeywords)) {
+        if (running->lineStartByte == headline->lineStartByte)
+            return {ClockInStatus::AlreadyRunningHere, {}};
+        return {ClockInStatus::AlreadyRunningElsewhere, running->title};
+    }
+
+    const std::string clockLine = FormatClockEntry(TimestampFromTimePoint(now), std::nullopt, std::nullopt) + "\n";
+
+    if (const auto drawer = ParseLogbookDrawer(buffer.Text(), *headline)) {
+        // Append immediately above ":END:" -- same insert-above-close
+        // pattern SetProperty already establishes.
+        buffer.InsertAt(drawer->endLineStartByte, clockLine);
+    }
+    else {
+        const std::string newDrawer = ":LOGBOOK:\n" + clockLine + ":END:\n";
+        if (const auto bodyStart = ClockBlockStart(buffer.Text(), *headline)) {
+            buffer.InsertAt(*bodyStart, newDrawer);
+        }
+        else {
+            // The headline (or its planning/property block) is the
+            // buffer's very last line with no trailing newline yet -- add
+            // one first, same fallback SetProperty's own drawer-creation
+            // path takes.
+            buffer.InsertAt(headline->lineEndByte, "\n" + newDrawer);
+        }
+    }
+    return {ClockInStatus::Ok, {}};
+}
+
+ClockOutStatus ClockOut(text::Buffer& buffer, std::chrono::system_clock::time_point now,
+                        const std::vector<std::string>& todoKeywords) {
+    const auto headline = HeadlineWithRunningClock(buffer.Text(), todoKeywords);
+    if (!headline)
+        return ClockOutStatus::NoRunningClock;
+
+    const auto drawer = ParseLogbookDrawer(buffer.Text(), *headline);
+    // drawer is guaranteed here -- HeadlineWithRunningClock only returns a
+    // headline whose own drawer it just found a running entry in.
+    for (const ClockEntry& entry : drawer->entries) {
+        if (entry.end)
+            continue;
+        const OrgTimestamp        end      = TimestampFromTimePoint(now);
+        const std::chrono::minutes duration = ClockDuration(entry.start, end);
+        buffer.DeleteRange(entry.lineStartByte, entry.lineEndByte - entry.lineStartByte);
+        buffer.InsertAt(entry.lineStartByte, FormatClockEntry(entry.start, end, duration));
+        return ClockOutStatus::Ok;
+    }
+    return ClockOutStatus::NoRunningClock; // unreachable: HeadlineWithRunningClock already found one
+}
+
+std::chrono::minutes TotalClockedMinutes(std::string_view bufferText, const Headline& headline) {
+    const auto drawer = ParseLogbookDrawer(bufferText, headline);
+    if (!drawer)
+        return std::chrono::minutes{0};
+    std::chrono::minutes total{0};
+    for (const ClockEntry& entry : drawer->entries) {
+        if (entry.duration)
+            total += *entry.duration;
+    }
+    return total;
 }
 
 } // namespace ned::editor::org

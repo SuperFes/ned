@@ -90,6 +90,27 @@
 //    own doc comment for the exact, deliberately simplified recurrence
 //    behavior against real Org's CLOSED:-logging).
 //
+// 8. Clocking: real Org's own ":LOGBOOK:" / ":END:" drawer holding "CLOCK:"
+//    in/out records, same drawer-scan shape ParsePropertyDrawer already
+//    establishes but with its own CLOCK: line grammar (start/end timestamp
+//    pair plus a "=>  H:MM" duration, always recomputed from the two
+//    timestamps rather than trusted from stale buffer text). Deliberate
+//    placement simplification: a LOGBOOK drawer always sits AFTER a
+//    headline's property drawer if it has one (or after planning if it
+//    doesn't), never between planning and PROPERTIES the way real Org's
+//    org-clock-into-drawer more commonly places it -- this keeps
+//    HeadlineBodyStart/ParsePropertyDrawer completely untouched, at the
+//    cost of that one ordering difference. ClockInAtPoint enforces "at
+//    most one running clock in the whole buffer" itself (scanning every
+//    headline's own drawer) rather than tracking separate state -- same
+//    "derive it from content, don't track a redundant bit" precedent
+//    Buffer::Modified() already establishes -- and refuses (rather than
+//    auto-closing the other one) when a different headline already has one
+//    running, a deliberate v1 cut against real Org's own auto-switch
+//    default. ClockOut is deliberately NOT "AtPoint": real Org's own
+//    clock-out always closes whichever single clock is running, wherever
+//    that is, not whatever's at point.
+//
 // Real tree-sitter-org highlighting shipped as its own follow-up (see
 // Mode.cpp's OrgMode(), built on Ned's own forked "org" grammar in
 // TreeSitter/Languages.cpp) -- it lives there, not here; this file stays
@@ -627,6 +648,73 @@ bool DeletePropertyAtPoint(text::Buffer& buffer, const std::string& key,
 // order. Returns the matching headline's own lineStartByte, or nullopt if
 // nothing matches -- same contract as FindHeadlineByTitle.
 [[nodiscard]] std::optional<std::size_t> FindHeadlineByCustomId(std::string_view bufferText, std::string_view customId);
+
+// One "CLOCK: [start]" (still running) or "CLOCK: [start]--[end] =>  H:MM"
+// (closed) line inside a headline's :LOGBOOK: drawer -- real Org's own
+// clock-in/clock-out record. `duration` is nullopt while running; when set,
+// it's always freshly recomputed from start/end at parse time, never
+// trusted from the buffer's own "=>  H:MM" text (which a hand-edited
+// timestamp could leave stale).
+struct ClockEntry {
+    OrgTimestamp                        start;
+    std::optional<OrgTimestamp>         end; // nullopt means still running
+    std::optional<std::chrono::minutes> duration;
+    std::size_t                         lineStartByte;
+    std::size_t                         lineEndByte; // exclusive, before the line's own trailing '\n'
+};
+
+// A ":LOGBOOK:" / ":END:" block holding zero or more ClockEntry lines --
+// same shape as PropertyDrawer, see that struct's own doc comment for what
+// each byte field is for. entries is in file order.
+struct LogbookDrawer {
+    std::vector<ClockEntry> entries;
+    std::size_t              startByte;
+    std::size_t              endLineStartByte; // where a new CLOCK: line is inserted
+    std::size_t              endByte;
+};
+
+// headline's own LOGBOOK drawer, if it has one -- the drawer must be the
+// buffer's very next line after headline's property drawer (or after its
+// planning line, if it has no property drawer), a case-insensitive
+// ":LOGBOOK:"/":END:" pair, same malformed-drawer/unrecognized-interior-line
+// tolerance ParsePropertyDrawer already establishes. See this file's own
+// top comment (item 8) for the placement-ordering rationale.
+[[nodiscard]] std::optional<LogbookDrawer> ParseLogbookDrawer(std::string_view bufferText, const Headline& headline);
+
+enum class ClockInStatus { Ok,
+                           NotOnHeadline,
+                           AlreadyRunningHere,
+                           AlreadyRunningElsewhere };
+
+struct ClockInResult {
+    ClockInStatus status;
+    std::string   otherHeadlineTitle; // set only when status == AlreadyRunningElsewhere
+};
+
+// Clocks in to the headline at point: appends a running "CLOCK: [now]" line
+// to its LOGBOOK drawer, creating the drawer if it doesn't exist yet (same
+// find-or-create shape SetProperty already establishes). Refuses (buffer
+// untouched) if point isn't on a headline, if this headline already has a
+// running clock, or if a DIFFERENT headline anywhere in the buffer does --
+// see this file's own top comment (item 8) for why this doesn't auto-close
+// the other one.
+[[nodiscard]] ClockInResult ClockInAtPoint(text::Buffer& buffer, std::chrono::system_clock::time_point now = std::chrono::system_clock::now(),
+                                           const std::vector<std::string>& todoKeywords = TodoKeywords());
+
+enum class ClockOutStatus { Ok,
+                            NoRunningClock };
+
+// Closes whichever single CLOCK: entry is currently running, wherever in
+// the buffer it is (deliberately not point-relative -- see this file's own
+// top comment, item 8), rewriting that one line in place with "--[now]
+// =>  H:MM".
+ClockOutStatus ClockOut(text::Buffer& buffer, std::chrono::system_clock::time_point now = std::chrono::system_clock::now(),
+                        const std::vector<std::string>& todoKeywords = TodoKeywords());
+
+// Sums every CLOSED clock entry's duration in headline's own LOGBOOK drawer
+// (a still-running entry doesn't count toward the total). No command/UI
+// surface consumes this yet -- see ROADMAP.md.
+[[nodiscard]] std::chrono::minutes TotalClockedMinutes(std::string_view bufferText, const Headline& headline);
 
 } // namespace ned::editor::org
 

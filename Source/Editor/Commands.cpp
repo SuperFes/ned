@@ -2197,6 +2197,34 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                               *context.message = "Not on a checkbox.";
                           }
                       });
+    // Clocking follow-up: same direct "act on context.buffer, report
+    // through context.message" shape as the three commands above -- neither
+    // needs a prompt (clock-in/out take no free-form input, matching real
+    // Org's own org-clock-in/org-clock-out).
+    registry.Register("org-clock-in", "Clock in to the Org headline at point.", [](CommandContext& context) {
+        const auto result = org::ClockInAtPoint(context.buffer);
+        if (!context.message)
+            return;
+        switch (result.status) {
+            case org::ClockInStatus::Ok:
+                break;
+            case org::ClockInStatus::NotOnHeadline:
+                *context.message = "Not on a headline.";
+                break;
+            case org::ClockInStatus::AlreadyRunningHere:
+                *context.message = "Already clocked in here.";
+                break;
+            case org::ClockInStatus::AlreadyRunningElsewhere:
+                *context.message = "Already clocked in on \"" + result.otherHeadlineTitle + "\"; clock out first.";
+                break;
+        }
+    });
+    registry.Register("org-clock-out", "Clock out of whichever headline currently has a running clock.",
+                      [](CommandContext& context) {
+                          if (org::ClockOut(context.buffer) == org::ClockOutStatus::NoRunningClock && context.message) {
+                              *context.message = "No running clock.";
+                          }
+                      });
     // Real Org's own command name -- same direct "act on context.buffer,
     // report through context.message" shape as the three commands above.
     // Tables follow-up: TAB is a single, context-dispatching command in

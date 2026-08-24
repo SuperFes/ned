@@ -196,7 +196,29 @@ Notcurses.
       `SubtreeEndLine`, falling back to end-of-file — and reporting which — if the
       title isn't found or none was configured), no bundled default templates, and
       no "silent"/no-buffer-switch capture variant.
-- [ ] Clocking/time tracking.
+- [x] ~~Clocking/time tracking.~~ Shipped: `Org.h`'s `ParseLogbookDrawer` →
+      `LogbookDrawer`/`ClockEntry`, real Org's own `:LOGBOOK: ... :END:` drawer of
+      `CLOCK: [start]--[end] =>  H:MM` lines (a still-running entry is just
+      `CLOCK: [start]`), mirroring `ParsePropertyDrawer`'s scan-until-`:END:` shape with
+      its own line grammar — `ClockEntry::duration` is always recomputed from
+      start/end at parse time, never trusted from the buffer's own `=>  H:MM` text.
+      `org-clock-in`/`org-clock-out` (`C-c C-x i`/`C-c C-x o`) are no-prompt direct
+      commands, same shape `org-cycle-todo` already established. Deliberate placement
+      simplification: LOGBOOK always sits after a headline's property drawer if it has
+      one (or after planning if it doesn't), never between them the way real Org's
+      `org-clock-into-drawer` more commonly places it — keeps `HeadlineBodyStart`/
+      `ParsePropertyDrawer` completely untouched. Deliberate keychord deviation: real
+      Org's own `C-c C-x C-i`/`C-c C-x C-o` aren't used — Ctrl-I is byte-identical to Tab
+      over a raw terminal with no Kitty keyboard protocol assumed, so this binds a plain
+      `i`/`o` instead, following the same prefix's own `p`/`d` precedent (property
+      set/delete). Two things confirmed out of scope for v1: `ClockInAtPoint` enforces
+      "at most one running clock in the whole buffer" by refusing (reporting which other
+      headline is running) rather than auto-clocking it out the way real Org's default
+      does — no command silently edits a headline other than the one at point. And
+      `TotalClockedMinutes` (sums closed entries, ignores a running one) exists and is
+      tested but has no display surface yet — still open, along with a subtree rollup
+      (via `SubtreeEndLine`/`BuildHeadlineTree`) and any real clock-report/agenda-column
+      view.
 - [ ] Markdown (GFM) table editing surface — Org's table ops didn't carry over because
       GFM's delimiter row holds per-column alignment state a column op must rewrite.
 
