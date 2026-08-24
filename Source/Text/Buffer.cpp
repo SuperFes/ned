@@ -181,7 +181,7 @@ Buffer Buffer::NewFile(std::filesystem::path path) {
     return buffer;
 }
 
-void Buffer::SaveToFile(const std::filesystem::path& path, bool ensureFinalNewline) {
+void Buffer::SaveToFile(const std::filesystem::path& path, bool ensureFinalNewline, bool trimTrailingWhitespace) {
     // Write to a sibling temp file and rename over the target so a failure
     // partway through (e.g. disk full) can't leave the original truncated or
     // corrupted -- std::filesystem::rename is atomic on POSIX when both
@@ -195,6 +195,34 @@ void Buffer::SaveToFile(const std::filesystem::path& path, bool ensureFinalNewli
         }
 
         std::string content = Rope_.ToString();
+        // trim-on-save follow-up: strips trailing spaces/tabs from every
+        // line, then collapses any run of trailing blank lines down to
+        // nothing -- ensureFinalNewline below is what puts exactly one '\n'
+        // back if the caller still wants one. Disk-only, same reasoning as
+        // ensureFinalNewline itself: only this local copy is touched, never
+        // Rope_ (see Editor/TrimOnSave.h).
+        if (trimTrailingWhitespace && !content.empty()) {
+            std::string trimmed;
+            trimmed.reserve(content.size());
+            std::size_t lineStart = 0;
+            for (std::size_t i = 0; i <= content.size(); ++i) {
+                if (i == content.size() || content[i] == '\n') {
+                    std::size_t lineEnd = i;
+                    while (lineEnd > lineStart && (content[lineEnd - 1] == ' ' || content[lineEnd - 1] == '\t')) {
+                        --lineEnd;
+                    }
+                    trimmed.append(content, lineStart, lineEnd - lineStart);
+                    if (i < content.size()) {
+                        trimmed.push_back('\n');
+                    }
+                    lineStart = i + 1;
+                }
+            }
+            while (!trimmed.empty() && trimmed.back() == '\n') {
+                trimmed.pop_back();
+            }
+            content = std::move(trimmed);
+        }
         // An empty buffer stays empty (not turned into a bare "\n") -- and
         // Rope_ itself is never touched, only this local copy that's about
         // to be written; see the ensureFinalNewline doc comment on the
@@ -225,11 +253,11 @@ void Buffer::SaveToFile(const std::filesystem::path& path, bool ensureFinalNewli
     CaptureDiskTimestamp();
 }
 
-void Buffer::Save(bool ensureFinalNewline) {
+void Buffer::Save(bool ensureFinalNewline, bool trimTrailingWhitespace) {
     if (!Path_) {
         throw std::runtime_error("ned: buffer \"" + Name_ + "\" has no associated file path");
     }
-    SaveToFile(*Path_, ensureFinalNewline);
+    SaveToFile(*Path_, ensureFinalNewline, trimTrailingWhitespace);
 }
 
 const std::string& Buffer::Name() const {

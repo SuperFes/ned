@@ -67,15 +67,19 @@ class Buffer {
     // WRITTEN, if the content is non-empty and doesn't already end with
     // one -- deliberately disk-only, this buffer's own live content
     // (Text()/Point()/Modified()/undo history) is never touched by it; see
-    // Editor/FinalNewline.h's own header comment for why. Buffer itself
-    // stays unaware of the real, configured, Janet-settable default the way
-    // it already does for tabWidth elsewhere -- callers that want that pass
-    // editor::EnsureFinalNewline() in explicitly (Commands.cpp's
-    // save-buffer does).
-    void SaveToFile(const std::filesystem::path& path, bool ensureFinalNewline = true);
+    // Editor/FinalNewline.h's own header comment for why. trimTrailingWhitespace
+    // (default true) strips trailing spaces/tabs from every line and
+    // collapses trailing blank lines at end-of-file, applied before
+    // ensureFinalNewline's own append -- same disk-only reasoning, see
+    // Editor/TrimOnSave.h. Buffer itself stays unaware of the real,
+    // configured, Janet-settable defaults the way it already does for
+    // tabWidth elsewhere -- callers that want those pass
+    // editor::EnsureFinalNewline()/editor::TrimTrailingWhitespaceOnSave() in
+    // explicitly (Commands.cpp's save-buffer does).
+    void SaveToFile(const std::filesystem::path& path, bool ensureFinalNewline = true, bool trimTrailingWhitespace = true);
     // Writes to the buffer's associated file. Throws std::runtime_error if
     // the buffer has none (i.e. FromFile/SaveToFile were never called).
-    void Save(bool ensureFinalNewline = true);
+    void Save(bool ensureFinalNewline = true, bool trimTrailingWhitespace = true);
 
     [[nodiscard]] const std::string&                          Name() const;
     void                                                      Rename(std::string name);

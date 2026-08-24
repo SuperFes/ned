@@ -243,6 +243,51 @@ TEST_CASE("SaveToFile doesn't turn an empty buffer into a bare newline", "[Buffe
     std::filesystem::remove(path);
 }
 
+TEST_CASE("SaveToFile trims trailing whitespace from every line by default", "[Buffer]") {
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_buffer_test_trim_trailing_ws.txt";
+
+    Buffer buffer("scratch", ned::text::Rope("line one   \nline two\t\t\nline three"));
+    buffer.SaveToFile(path, /*ensureFinalNewline=*/false);
+
+    std::ifstream     file(path, std::ios::binary);
+    const std::string written((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    REQUIRE(written == "line one\nline two\nline three");
+
+    // Disk-only: the buffer's own live content is untouched.
+    REQUIRE(buffer.Text() == "line one   \nline two\t\t\nline three");
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("SaveToFile collapses trailing blank lines by default", "[Buffer]") {
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_buffer_test_trim_trailing_blank.txt";
+
+    Buffer buffer("scratch", ned::text::Rope("content\n\n\n   \n"));
+    buffer.SaveToFile(path);
+
+    std::ifstream     file(path, std::ios::binary);
+    const std::string written((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    // Trimmed down to zero trailing newlines, then ensureFinalNewline (also
+    // default true) puts exactly one back.
+    REQUIRE(written == "content\n");
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("SaveToFile(path, ensureFinalNewline, false) leaves trailing whitespace and blank lines as-is", "[Buffer]") {
+    const std::filesystem::path path =
+        std::filesystem::temp_directory_path() / "ned_buffer_test_trim_trailing_off.txt";
+
+    Buffer buffer("scratch", ned::text::Rope("line one   \n\n\n"));
+    buffer.SaveToFile(path, /*ensureFinalNewline=*/false, /*trimTrailingWhitespace=*/false);
+
+    std::ifstream     file(path, std::ios::binary);
+    const std::string written((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    REQUIRE(written == "line one   \n\n\n");
+
+    std::filesystem::remove(path);
+}
+
 TEST_CASE("SaveToFile leaves no leftover temp file after a successful save", "[Buffer]") {
     const std::filesystem::path path     = std::filesystem::temp_directory_path() / "ned_buffer_test_no_leftover.txt";
     const std::filesystem::path tempPath = path.string() + ".ned-tmp";

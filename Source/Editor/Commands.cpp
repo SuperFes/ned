@@ -29,6 +29,7 @@
 #include "Text/ThreeWayMerge.h"
 #include "Text/Utf8.h"
 #include "ToolchainIncludePaths.h"
+#include "TrimOnSave.h"
 #include "Vcs/VcsRunner.h"
 
 namespace ned::editor {
@@ -1369,7 +1370,7 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
             if (context.buffer.Path()) {
                 BackupFileBeforeSave(*context.buffer.Path());
             }
-            context.buffer.Save(EnsureFinalNewline());
+            context.buffer.Save(EnsureFinalNewline(), TrimTrailingWhitespaceOnSave());
             if (context.buffer.Path()) {
                 RemoveAutoSave(*context.buffer.Path());
             }
