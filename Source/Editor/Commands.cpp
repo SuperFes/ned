@@ -2577,6 +2577,74 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                               *context.message = "Not in a table.";
                           }
                       });
+    // Markdown table editing surface follow-up: the rest of GFM's own
+    // table-editing ops, same "context.message on failure" shape as
+    // markdown-table-align above; each op realigns the whole table as a
+    // side effect (see Markdown.cpp's own RewriteTable).
+    registry.Register("markdown-table-previous-cell", "Realign the table at point and move to the previous cell.",
+                      [](CommandContext& context) {
+                          if (!markdown::MoveToPreviousTableCellAtPoint(context.buffer) && context.message) {
+                              *context.message = "Not in a table.";
+                          }
+                      });
+    registry.Register("markdown-table-insert-row", "Insert an empty table row above the current one.",
+                      [](CommandContext& context) {
+                          if (!markdown::InsertTableRowAtPoint(context.buffer) && context.message) {
+                              *context.message = "Not in a table.";
+                          }
+                      });
+    registry.Register("markdown-table-kill-row", "Remove the current table row.", [](CommandContext& context) {
+        if (!markdown::KillTableRowAtPoint(context.buffer) && context.message) {
+            *context.message = "Not in a table, or on the header row.";
+        }
+    });
+    registry.Register("markdown-table-insert-column", "Insert an empty table column to the right of the current one.",
+                      [](CommandContext& context) {
+                          if (!markdown::InsertTableColumnAtPoint(context.buffer) && context.message) {
+                              *context.message = "Not in a table.";
+                          }
+                      });
+    registry.Register("markdown-table-delete-column", "Delete the current table column.", [](CommandContext& context) {
+        if (!markdown::DeleteTableColumnAtPoint(context.buffer) && context.message) {
+            *context.message = "Not in a table, or it has only one column.";
+        }
+    });
+    registry.Register("markdown-table-move-column-left", "Swap the current table column with the one to its left.",
+                      [](CommandContext& context) {
+                          if (!markdown::MoveTableColumnLeftAtPoint(context.buffer) && context.message) {
+                              *context.message = "Already the table's first column.";
+                          }
+                      });
+    registry.Register("markdown-table-move-column-right", "Swap the current table column with the one to its right.",
+                      [](CommandContext& context) {
+                          if (!markdown::MoveTableColumnRightAtPoint(context.buffer) && context.message) {
+                              *context.message = "Already the table's last column.";
+                          }
+                      });
+    // markdown-metaup/markdown-metadown: real Org's own org-metaup/
+    // org-metadown context dispatch (see that pair's own comment above).
+    // Same FindTableAtPoint gate for the same reason: MoveTableRowUp/
+    // DownAtPoint returning false is ambiguous between "not in a table"
+    // and "already at the header/data-row edge," and only the former
+    // should fall through to a plain line move.
+    registry.Register("markdown-metaup", "Move the table row at point up, or the current line otherwise.",
+                      [](CommandContext& context) {
+                          if (!markdown::FindTableAtPoint(context.buffer)) {
+                              MoveLineUp(context.buffer);
+                          }
+                          else if (!markdown::MoveTableRowUpAtPoint(context.buffer) && context.message) {
+                              *context.message = "Already the table's first row.";
+                          }
+                      });
+    registry.Register("markdown-metadown", "Move the table row at point down, or the current line otherwise.",
+                      [](CommandContext& context) {
+                          if (!markdown::FindTableAtPoint(context.buffer)) {
+                              MoveLineDown(context.buffer);
+                          }
+                          else if (!markdown::MoveTableRowDownAtPoint(context.buffer) && context.message) {
+                              *context.message = "Already the table's last row.";
+                          }
+                      });
 
     // Links follow-up: a no-op-everywhere-until-acted-on signal, the same
     // "just set interactiveRequest" shape project-search-visit-result/
