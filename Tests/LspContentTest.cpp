@@ -296,7 +296,7 @@ TEST_CASE("ExtractDefinitionLocations parses a bare Location object", "[Lsp]") {
     REQUIRE(locations[0].position == LspPosition{.line = 4, .character = 2});
 }
 
-TEST_CASE("ExtractDefinitionLocations parses a Location[] array", "[Lsp]") {
+TEST_CASE("ExtractDefinitionLocations parses a Location-array response", "[Lsp]") {
     const Json                            result    = Json::array({
         {{"uri", "file:///a.c"}, {"range", MakeRange(1, 0, 1, 1)}},
         {{"uri", "file:///b.c"}, {"range", MakeRange(2, 0, 2, 1)}},
@@ -308,7 +308,7 @@ TEST_CASE("ExtractDefinitionLocations parses a Location[] array", "[Lsp]") {
     REQUIRE(locations[1].position == LspPosition{.line = 2, .character = 0});
 }
 
-TEST_CASE("ExtractDefinitionLocations parses a LocationLink[] array via targetUri/targetSelectionRange", "[Lsp]") {
+TEST_CASE("ExtractDefinitionLocations parses a LocationLink-array response via targetUri/targetSelectionRange", "[Lsp]") {
     const Json                            result    = Json::array({
         {{"targetUri", "file:///impl.c"},
          {"targetRange", MakeRange(0, 0, 10, 0)},

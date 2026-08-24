@@ -31,7 +31,7 @@ TEST_CASE("SetPageScrollFraction/PageScrollFraction round-trip", "[PageScroll]")
     REQUIRE(PageScrollFraction() == 0.9);
 }
 
-TEST_CASE("SetPageScrollFraction clamps to (0, 1]", "[PageScroll]") {
+TEST_CASE("SetPageScrollFraction clamps to more than 0 and at most 1", "[PageScroll]") {
     const PageScrollFractionGuard guard;
     SetPageScrollFraction(0.0);
     REQUIRE(PageScrollFraction() == 0.01);
