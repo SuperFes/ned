@@ -82,9 +82,9 @@ class Pane {
     // decision -- see WindowManager.cpp's own comment on WHERE that copy is
     // taken from). killRing/registers/promptHistory/bufferList/registry/janetKeymap/
     // globalKeymap/statusMessage/theme are shared app-wide and must outlive
-    // every Pane; projectSidebar/lspManager may be nullptr (not yet wired up
-    // when the first Pane is constructed, see
-    // WindowManager::SetProjectSidebar/SetLspManager).
+    // every Pane; projectSidebar/lspManager/janetEnv may be nullptr (not yet
+    // wired up when the first Pane is constructed, see
+    // WindowManager::SetProjectSidebar/SetLspManager/SetJanetEnvironment).
     // onWindowRequest/onBufferClosed mirror
     // BufferView::SetOnWindowRequest/SetOnBufferClosed exactly -- forwarded
     // straight through to the BufferView this Pane owns.
@@ -94,8 +94,8 @@ class Pane {
          std::string& statusMessage, const Theme& theme,
          ProjectSidebar* projectSidebar, editor::lsp::LspManager* lspManager, editor::tasks::TaskRunner* taskRunner,
          editor::vcs::VcsRunner* vcsRunner, editor::dap::DapManager* dapManager, editor::acp::AcpManager* acpManager,
-         std::function<void(editor::InteractiveRequest)> onWindowRequest,
-         std::function<void(text::Buffer&)>              onBufferClosed);
+         const janet::Environment* janetEnv, std::function<void(editor::InteractiveRequest)> onWindowRequest,
+         std::function<void(text::Buffer&)> onBufferClosed);
 
     Pane(const Pane&)            = delete;
     Pane& operator=(const Pane&) = delete;
@@ -308,6 +308,11 @@ class WindowManager {
     // capturing some pane that may have been closed by then (identical
     // reasoning to SetDapManager's own SetOnStopped wiring).
     void SetAcpManager(editor::acp::AcpManager* acpManager);
+
+    // Self-hosting-completion follow-up: same "forwarded to every pane,
+    // present and future" shape as SetLspManager above -- see
+    // BufferView::SetJanetEnvironment's own doc comment.
+    void SetJanetEnvironment(const janet::Environment* janetEnv);
 
     // FTXUI -> Notcurses migration: forwarded to every pane, present and
     // future, same shape as SetProjectSidebar/SetLspManager above -- see
@@ -577,6 +582,7 @@ class WindowManager {
     editor::vcs::VcsRunner*           vcsRunner_      = nullptr;
     editor::dap::DapManager*          dapManager_     = nullptr; // see SetDapManager
     editor::acp::AcpManager*          acpManager_     = nullptr; // see SetAcpManager
+    const janet::Environment*         janetEnv_       = nullptr; // see SetJanetEnvironment
     EventLoop*                        eventLoop_      = nullptr; // see SetEventLoop
     std::function<void(const Theme&)> themeApplier_;             // see SetThemeApplier
     std::function<void()>             onTerminalToggle_;         // see SetOnTerminalToggle

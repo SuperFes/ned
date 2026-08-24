@@ -22,6 +22,7 @@
 #include "Editor/HighlightSettings.h"
 #include "Editor/ImportResolutionConfig.h"
 #include "Editor/InlineDiagnostics.h"
+#include "Editor/JanetSymbolComplete.h"
 #include "Editor/Link.h"
 #include "Editor/Lsp/LspManager.h"
 #include "Editor/Lsp/LspServerConfig.h"
@@ -45,6 +46,7 @@
 #include "Editor/Vcs/DiffPatch.h"
 #include "Editor/WhitespaceSettings.h"
 #include "Editor/WrapOverrides.h"
+#include "Janet/Environment.h"
 #include "KeyTranslation.h"
 #include "Text/BinaryDetect.h"
 #include "Text/Utf8.h"
@@ -3535,15 +3537,23 @@ void BufferView::RequestCompletionAtPoint() {
     const bool        hasRunningLsp =
         lspManager_ && lspManager_->StatusForLanguage(languageKey) == editor::lsp::LspManager::LspStatus::Running;
     if (!hasRunningLsp) {
+        // Self-hosting-completion follow-up: tried ahead of plain
+        // dabbrev-expand for a Janet-mode buffer, falling through to it when
+        // there's no janetEnv_ wired or nothing fuzzy-matches (e.g. a local
+        // variable name rather than a "ned/*" binding).
+        if (languageKey == "janet" && ApplyJanetBindingCompletion(buffer, point)) {
+            return;
+        }
         ApplyDabbrevCompletion(buffer, point);
         return;
     }
 
-    text::Buffer* const bufferPtr  = &buffer;
-    const std::size_t   generation = ++completionRequestGeneration_;
+    text::Buffer* const bufferPtr   = &buffer;
+    const std::size_t   generation  = ++completionRequestGeneration_;
+    const std::size_t   prefixStart = WordPrefixStart(buffer.Content(), point);
 
     lspManager_->RequestCompletion(
-        buffer, point, [this, bufferPtr, point, generation](std::vector<editor::lsp::CompletionItem> items) {
+        buffer, point, [this, bufferPtr, point, prefixStart, generation](std::vector<editor::lsp::CompletionItem> items) {
             if (generation != completionRequestGeneration_) {
                 return; // superseded by a newer request
             }
@@ -3559,7 +3569,8 @@ void BufferView::RequestCompletionAtPoint() {
                 ghostCompletion_.reset();
                 return;
             }
-            ghostCompletion_ = GhostCompletion{.requestPoint = point, .items = std::move(items), .selectedIndex = 0};
+            ghostCompletion_ = GhostCompletion{
+                .requestPoint = point, .items = std::move(items), .selectedIndex = 0, .prefixStart = prefixStart};
         });
 }
 
@@ -3578,7 +3589,47 @@ void BufferView::ApplyDabbrevCompletion(text::Buffer& buffer, std::size_t point)
     for (std::string& word : words) {
         items.push_back(editor::lsp::CompletionItem{.label = word, .insertText = word});
     }
-    ghostCompletion_ = GhostCompletion{.requestPoint = point, .items = std::move(items), .selectedIndex = 0};
+    ghostCompletion_ =
+        GhostCompletion{.requestPoint = point, .items = std::move(items), .selectedIndex = 0, .prefixStart = prefixStart};
+}
+
+bool BufferView::ApplyJanetBindingCompletion(text::Buffer& buffer, std::size_t point) {
+    if (!janetEnv_) {
+        return false;
+    }
+
+    const std::string text        = buffer.Text();
+    const std::size_t prefixStart = editor::JanetSymbolPrefixStart(text, point);
+    const std::string prefix      = text.substr(prefixStart, point - prefixStart);
+    if (prefix.empty()) {
+        return false;
+    }
+
+    const std::vector<std::string> names  = janetEnv_->BindingNamesWithPrefix("ned/");
+    const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(names, prefix);
+
+    std::vector<editor::lsp::CompletionItem> items;
+    items.reserve(ranked.size());
+    for (const std::string& name : ranked) {
+        // A subsequence match can never be shorter than the query it matched
+        // against, so name.size() == prefix.size() here only when name IS
+        // prefix verbatim -- point already sits right after a complete
+        // binding name, nothing left to suggest (DabbrevComplete.h's own
+        // "exact-length matches excluded" rule, applied here for the same
+        // reason: GhostSuffixFor's insertText-doesn't-share-prefix fallback
+        // would otherwise show the whole name again as a bogus duplicate
+        // suffix).
+        if (name.size() == prefix.size()) {
+            continue;
+        }
+        items.push_back(editor::lsp::CompletionItem{.label = name, .insertText = name});
+    }
+    if (items.empty()) {
+        return false;
+    }
+    ghostCompletion_ =
+        GhostCompletion{.requestPoint = point, .items = std::move(items), .selectedIndex = 0, .prefixStart = prefixStart};
+    return true;
 }
 
 bool BufferView::ShouldSuppressAutoCompletion() const {
@@ -3680,10 +3731,17 @@ void BufferView::CycleGhostCompletion(int direction) {
 }
 
 std::string BufferView::GhostSuffixFor(const editor::lsp::CompletionItem& item) const {
+    // ghostCompletion_ is guaranteed set by both call sites (AcceptGhostCompletion,
+    // the ghost-text render path) -- this method only ever runs against one
+    // of its own items. Uses the prefixStart captured when the suggestion
+    // was populated (see GhostCompletion's own doc comment) rather than
+    // recomputing it here: WordPrefixStart's ASCII alnum/'_' rule is wrong
+    // for a "ned/*" binding item, which was ranked against
+    // JanetSymbolPrefixStart's wider rule instead.
     const text::Buffer& buffer      = activeBuffer_.Get();
     const text::Rope&   content     = buffer.Content();
     const std::size_t   point       = buffer.Point();
-    const std::size_t   prefixStart = WordPrefixStart(content, point);
+    const std::size_t   prefixStart = ghostCompletion_->prefixStart;
     const std::string   prefix      = content.Substring(prefixStart, point - prefixStart);
 
     if (item.insertText.size() > prefix.size() && item.insertText.compare(0, prefix.size(), prefix) == 0) {
@@ -8366,6 +8424,10 @@ void BufferView::SetDapManager(editor::dap::DapManager* dapManager) {
 
 void BufferView::SetAcpManager(editor::acp::AcpManager* acpManager) {
     acpManager_ = acpManager;
+}
+
+void BufferView::SetJanetEnvironment(const janet::Environment* janetEnv) {
+    janetEnv_ = janetEnv;
 }
 
 void BufferView::ShowAcpPermissionPrompt(const editor::acp::AcpManager::PermissionPrompt& prompt) {
