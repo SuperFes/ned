@@ -160,7 +160,21 @@ Notcurses.
       closes the gap `FindHeadlineByTitle`'s own doc comment used to name explicitly
       — `[[#custom-id]]` links now resolve via `OpenLinkAtPoint` alongside the
       existing `[[*Headline Title]]` form.
-- [ ] Capture templates (quick-add an entry from anywhere).
+- [x] ~~Capture templates.~~ Shipped: `Editor/OrgCapture.h`, a process-wide,
+      mutex-guarded, Janet-only registry (`ned/org-capture-register-template`) of
+      named templates keyed by a single character; `org-capture` (`C-c k` — real
+      Org's own `C-c c` is already `acp-toggle-panel` here) reads that one further
+      character (`BufferView::HandleOrgCaptureKey`, same "no `MinibufferPrompt`"
+      shape `HandleRegisterKey`/`HandleZapToCharKey` already establish) and expands
+      the matched template straight into its target file/buffer, switching the
+      active pane to it — no separate finalize (`C-c C-c`) step, because unlike real
+      Org's temporary indirect capture buffer, this inserts directly into the real
+      target file the user is then just editing normally. Deliberate v1 cuts: `%?`
+      is the only escape (marks where point lands; no `%U`/`%a`/`%i`/timestamps),
+      headline targeting is an exact-title match only (`ParseOutline` +
+      `SubtreeEndLine`, falling back to end-of-file — and reporting which — if the
+      title isn't found or none was configured), no bundled default templates, and
+      no "silent"/no-buffer-switch capture variant.
 - [ ] Clocking/time tracking.
 - [ ] Markdown (GFM) table editing surface — Org's table ops didn't carry over because
       GFM's delimiter row holds per-column alignment state a column op must rewrite.

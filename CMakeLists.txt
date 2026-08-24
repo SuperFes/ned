@@ -497,6 +497,7 @@ add_library(ned_lib STATIC
         Source/Editor/CodeFold.cpp
         Source/Editor/CodeFoldSettings.cpp
         Source/Editor/Org.cpp
+        Source/Editor/OrgCapture.cpp
         Source/Editor/Table.cpp
         Source/Editor/Markdown.cpp
         Source/Editor/Link.cpp
@@ -771,6 +772,7 @@ if (NED_BUILD_TESTS)
             Tests/ModeTest.cpp
             Tests/CodeFoldTest.cpp
             Tests/OrgTest.cpp
+            Tests/OrgCaptureTest.cpp
             Tests/TableTest.cpp
             Tests/MarkdownTest.cpp
             Tests/MarkdownHighlightTest.cpp

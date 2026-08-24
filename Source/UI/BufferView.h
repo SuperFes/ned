@@ -496,6 +496,10 @@ class BufferView : public Widget {
                            // through that shared chain.
                            SetProperty,
                            DeleteProperty,
+                           // org-capture follow-up: single-stage, same "read exactly
+                           // one further character, no MinibufferPrompt" shape as
+                           // PointToRegister/etc. -- see HandleOrgCaptureKey.
+                           OrgCaptureSelectTemplate,
                            // code-actions follow-up: entered only once RequestCodeActionsAtPoint's
                            // async response actually arrives (never eagerly, while the request is
                            // still in flight -- see that method's own doc comment) -- Select when
@@ -850,6 +854,13 @@ class BufferView : public Widget {
     // pendingZapToCharAppend_'s own doc comment for the kill-append hint
     // this reads.
     void HandleZapToCharKey(const editor::KeyChord& chord);
+
+    // org-capture follow-up: same one-character-read shape as
+    // HandleRegisterKey above -- the character picks a registered
+    // Editor/OrgCapture.h template by key, which is then expanded straight
+    // into its target file/buffer (switching the active pane to it) rather
+    // than prompting further.
+    void HandleOrgCaptureKey(const editor::KeyChord& chord);
 
     // execute-extended-command follow-up (M-x): given its own dedicated
     // method rather than folded into HandlePromptKey, since HandlePromptKey's
