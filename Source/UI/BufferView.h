@@ -1139,6 +1139,13 @@ class BufferView : public Widget {
     // posture every other multibuffer consumer here already has.
     void BuildAgendaMultibuffer();
 
+    // org-clock-display follow-up: org-clock-report's own entry point --
+    // same Editor/Multibuffer.h shape as BuildAgendaMultibuffer, but scoped
+    // to the active buffer only (one excerpt per headline with a nonzero
+    // own-or-subtree clocked total, in file order), not project-wide --
+    // matches org-clock-in/-out's own buffer-scoped posture.
+    void BuildClockReportMultibuffer();
+
     // find-all-references follow-up: project-find-references's entry point
     // -- synchronous, same shape as RequestDiagnosticsBuffer (SearchDirectory
     // is now an in-process RE2 scan, no subprocess round trip). Finds the

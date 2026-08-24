@@ -7,6 +7,7 @@
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <limits>
 #include <regex>
 #include <sstream>
@@ -4486,6 +4487,9 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         case editor::InteractiveRequest::ProjectAgenda:
             BuildAgendaMultibuffer();
             return;
+        case editor::InteractiveRequest::OrgClockReport:
+            BuildClockReportMultibuffer();
+            return;
         case editor::InteractiveRequest::LspGotoDefinition:
             RequestDefinitionAtPoint();
             return;
@@ -6309,6 +6313,68 @@ void BufferView::BuildAgendaMultibuffer() {
     text::Buffer& results = editor::multibuffer::BuildMultibuffer(bufferList_, "*agenda*", excerpts);
     activeBuffer_.Set(results);
     statusMessage_ = excerpts.empty() ? "No active TODOs." : std::to_string(excerpts.size()) + " agenda item" + (excerpts.size() == 1 ? "" : "s");
+}
+
+namespace {
+
+    // org-clock-display follow-up: "H:MM", same unpadded-hour/zero-padded-
+    // minute shape Org.cpp's own (file-local) FormatClockEntry uses for a
+    // closed clock line's own "=>  H:MM" -- kept as a small local copy here
+    // rather than exposed from Org.h, since nothing outside that one clock-
+    // line-formatting call and this multibuffer excerpt formatting needs it.
+    std::string FormatClockMinutes(std::chrono::minutes minutes) {
+        const long long    count = minutes.count();
+        std::ostringstream out;
+        out << (count / 60) << ':' << std::setfill('0') << std::setw(2) << (count % 60);
+        return out.str();
+    }
+
+    // Recursively walks tree (BuildHeadlineTree's own shape), appending one
+    // excerpt per headline whose own-or-subtree clocked total is nonzero --
+    // a headline with no clocked time of its own and no clocked descendant
+    // contributes nothing, keeping the report to only what's actually
+    // relevant. File order (BuildHeadlineTree's own child order, which is
+    // ParseOutline's file order) rather than sorted by duration -- matches
+    // the buffer's own outline structure, which a duration sort would
+    // scramble.
+    void CollectClockedHeadlines(std::string_view bufferText, const editor::org::HeadlineNode& node,
+                                 const std::filesystem::path& sourcePath, std::vector<editor::multibuffer::ExcerptSource>& excerpts) {
+        if (node.headline) {
+            const std::chrono::minutes own     = editor::org::TotalClockedMinutes(bufferText, *node.headline);
+            const std::chrono::minutes subtree = editor::org::TotalClockedMinutesForSubtree(bufferText, node);
+            if (own.count() > 0 || subtree.count() > 0) {
+                const std::size_t line = node.headline->lineNumber + 1; // 1-indexed, matching every other multibuffer consumer
+                std::string       header = "▸ " + node.headline->title + "  " + sourcePath.string() + ":" + std::to_string(line);
+                std::string       body   = "own " + FormatClockMinutes(own) + "   subtree " + FormatClockMinutes(subtree);
+                excerpts.push_back(editor::multibuffer::ExcerptSource{sourcePath, line, line, std::move(header), std::move(body), {}});
+            }
+        }
+        for (const editor::org::HeadlineNode& child : node.children) {
+            CollectClockedHeadlines(bufferText, child, sourcePath, excerpts);
+        }
+    }
+
+} // namespace
+
+void BufferView::BuildClockReportMultibuffer() {
+    text::Buffer&      buffer     = activeBuffer_.Get();
+    const std::string  bufferText = buffer.Text();
+    const std::vector<editor::org::Headline>     headlines = editor::org::ParseOutline(bufferText, editor::org::TodoKeywords());
+    const std::vector<editor::org::HeadlineNode> tree      = editor::org::BuildHeadlineTree(headlines);
+    // sourcePath is empty for a not-yet-saved buffer -- jump-to-source is
+    // then a silent no-op on any excerpt, the same "no source, no jump"
+    // posture every other multibuffer consumer here already has.
+    const std::filesystem::path sourcePath = buffer.Path().value_or(std::filesystem::path{});
+
+    std::vector<editor::multibuffer::ExcerptSource> excerpts;
+    for (const editor::org::HeadlineNode& root : tree) {
+        CollectClockedHeadlines(bufferText, root, sourcePath, excerpts);
+    }
+
+    text::Buffer& results = editor::multibuffer::BuildMultibuffer(bufferList_, "*clock report*", excerpts);
+    activeBuffer_.Set(results);
+    statusMessage_ = excerpts.empty() ? "No clocked time in this buffer."
+                                      : std::to_string(excerpts.size()) + " clocked headline" + (excerpts.size() == 1 ? "" : "s");
 }
 
 namespace {

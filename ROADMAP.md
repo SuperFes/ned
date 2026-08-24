@@ -214,11 +214,38 @@ Notcurses.
       set/delete). Two things confirmed out of scope for v1: `ClockInAtPoint` enforces
       "at most one running clock in the whole buffer" by refusing (reporting which other
       headline is running) rather than auto-clocking it out the way real Org's default
-      does — no command silently edits a headline other than the one at point. And
-      `TotalClockedMinutes` (sums closed entries, ignores a running one) exists and is
-      tested but has no display surface yet — still open, along with a subtree rollup
-      (via `SubtreeEndLine`/`BuildHeadlineTree`) and any real clock-report/agenda-column
-      view.
+      does — no command silently edits a headline other than the one at point.
+- [x] ~~Clock display: live modeline indicator, subtree rollup, and a clock-report
+      view.~~ Shipped, 2026-08-24: `Org.h`'s `CurrentlyRunningClock` (public
+      counterpart of `ClockInAtPoint`/`ClockOut`'s own internal scan, returning the
+      running headline plus its entry's start time) and `ElapsedMinutes` (`now -
+      start`, the same `ClockDuration` arithmetic `ClockOut` itself uses) back
+      `ModeLine`'s new live `⏱ <title> H:MM` segment — shown only in org-mode,
+      recomputed fresh every `Paint()` call like the existing spinner frame, no timer.
+      Deliberately buffer-scoped, not global: clock state was never tracked across
+      buffers in this codebase (see this file's own item 8 above), so the indicator
+      only shows while the clocked-in buffer is the active one, matching
+      `ClockInAtPoint`/`ClockOut`'s own existing scope. `TotalClockedMinutesForSubtree`
+      (recursive sum over a `BuildHeadlineTree` node, real Org's own clock-report
+      rollup) backs the new `org-clock-report` command (`C-c C-x r`, the same prefix
+      `i`/`o`/`p`/`d` already share) — a `*clock report*` `Editor/Multibuffer.h` view
+      (`BufferView::BuildClockReportMultibuffer`, `BuildAgendaMultibuffer`'s own shape)
+      listing every headline in the *current* buffer with a nonzero own-or-subtree
+      total, each showing "own H:MM / subtree H:MM"; jump-to-source (`C-c C-v`) works
+      for free via the shared `MultibufferIndexFor` path every other multibuffer
+      consumer uses. Scoped to the active buffer, not project-wide like `org-agenda` —
+      clocking commands are themselves buffer-scoped, and a real project-wide clock
+      report would need per-file scanning `CollectAgendaItems` already does but this
+      didn't need to add. Testing note: this work also fixed a pre-existing
+      `Tests/BufferViewTest.cpp` bug — its shared `Fixture` never called
+      `Editor/Multibuffer.h`'s `ClearRegistryForTesting()` between tests (unlike three
+      sibling test files that already do), so a `Buffer` destroyed at one multibuffer
+      test's end could leave a stale registry entry a later, unrelated test's freshly
+      allocated `Buffer` spuriously "inherited" at a reused address — confirmed live,
+      surfaced by this follow-up's own new multibuffer-building test tipping the file
+      over into visibly order-dependent failures; fixed by adding the same
+      `RegistryResetGuard` pattern to `BufferViewTest.cpp`'s shared `Fixture` the three
+      other files already use.
 - [ ] Markdown (GFM) table editing surface — Org's table ops didn't carry over because
       GFM's delimiter row holds per-column alignment state a column op must rewrite.
 
