@@ -1,6 +1,9 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <stdexcept>
+#include <string>
+#include <vector>
 
 #include "Janet/Environment.h"
 #include "Janet/Value.h"
@@ -59,4 +62,31 @@ TEST_CASE("Register-wrapped function converts a type-mismatch throw into a Janet
     env.Register<&AddOne>("envtest", "add-one-type", "");
 
     REQUIRE_THROWS_AS(env.DoString("(envtest/add-one-type \"not a number\")"), std::runtime_error);
+}
+
+TEST_CASE("BindingNamesWithPrefix finds a Register-wrapped function by its full prefixed name", "[Environment]") {
+    Environment& env = ned_tests::TestEnvironment();
+    env.Register<&AddOne>("envtest", "add-one-prefix-scan", "");
+
+    const std::vector<std::string> names = env.BindingNamesWithPrefix("envtest/add-one-prefix");
+    REQUIRE(std::find(names.begin(), names.end(), "envtest/add-one-prefix-scan") != names.end());
+}
+
+TEST_CASE("BindingNamesWithPrefix excludes symbols not sharing the prefix", "[Environment]") {
+    Environment& env = ned_tests::TestEnvironment();
+    env.Register<&AddOne>("envtest", "unrelated-symbol", "");
+
+    const std::vector<std::string> names = env.BindingNamesWithPrefix("envtest/add-one-prefix");
+    REQUIRE(std::find(names.begin(), names.end(), "envtest/unrelated-symbol") == names.end());
+}
+
+TEST_CASE("BindingNamesWithPrefix returns names sorted", "[Environment]") {
+    Environment& env = ned_tests::TestEnvironment();
+    env.Register<&AddOne>("envtest", "sort-check-b", "");
+    env.Register<&AddOne>("envtest", "sort-check-a", "");
+
+    const std::vector<std::string> names = env.BindingNamesWithPrefix("envtest/sort-check-");
+    REQUIRE(names.size() == 2);
+    CHECK(names[0] == "envtest/sort-check-a");
+    CHECK(names[1] == "envtest/sort-check-b");
 }

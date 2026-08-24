@@ -20,9 +20,11 @@
 #include <filesystem>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 #include "Value.h"
 
@@ -30,52 +32,54 @@ namespace ned::janet {
 
 namespace detail {
 
-template <typename T>
-struct FunctionTraits;
+    template <typename T>
+    struct FunctionTraits;
 
-template <typename R, typename... Args>
-struct FunctionTraits<R (*)(Args...)> {
-    using ReturnType                    = R;
-    using ArgsTuple                     = std::tuple<Args...>;
-    static constexpr std::size_t Arity = sizeof...(Args);
-};
+    template <typename R, typename... Args>
+    struct FunctionTraits<R (*)(Args...)> {
+        using ReturnType                   = R;
+        using ArgsTuple                    = std::tuple<Args...>;
+        static constexpr std::size_t Arity = sizeof...(Args);
+    };
 
-template <auto Fn, typename Traits, std::size_t... I>
-Janet InvokeAndConvert(Janet* argv, std::index_sequence<I...>) {
-    // FromJanet may throw (a type mismatch) -- that has to happen in here,
-    // inside the caller's try block, so normal C++ unwinding runs before any
-    // janet_panicf conversion. See NativeShim below for the full reasoning.
-    if constexpr (std::is_void_v<typename Traits::ReturnType>) {
-        Fn(FromJanet<std::tuple_element_t<I, typename Traits::ArgsTuple>>(argv[I])...);
-        return janet_wrap_nil();
-    } else {
-        return ToJanet(Fn(FromJanet<std::tuple_element_t<I, typename Traits::ArgsTuple>>(argv[I])...));
+    template <auto Fn, typename Traits, std::size_t... I>
+    Janet InvokeAndConvert(Janet* argv, std::index_sequence<I...>) {
+        // FromJanet may throw (a type mismatch) -- that has to happen in here,
+        // inside the caller's try block, so normal C++ unwinding runs before any
+        // janet_panicf conversion. See NativeShim below for the full reasoning.
+        if constexpr (std::is_void_v<typename Traits::ReturnType>) {
+            Fn(FromJanet<std::tuple_element_t<I, typename Traits::ArgsTuple>>(argv[I])...);
+            return janet_wrap_nil();
+        }
+        else {
+            return ToJanet(Fn(FromJanet<std::tuple_element_t<I, typename Traits::ArgsTuple>>(argv[I])...));
+        }
     }
-}
 
-// Adapts a plain C++ free function into a JanetCFunction. Fn must be a
-// non-capturing free function pointer (or equivalent), with each parameter
-// type having a FromJanet<T> specialization and the return type (or void)
-// having a ToJanet overload.
-template <auto Fn>
-Janet NativeShim(int32_t argc, Janet* argv) {
-    using Traits = FunctionTraits<decltype(Fn)>;
+    // Adapts a plain C++ free function into a JanetCFunction. Fn must be a
+    // non-capturing free function pointer (or equivalent), with each parameter
+    // type having a FromJanet<T> specialization and the return type (or void)
+    // having a ToJanet overload.
+    template <auto Fn>
+    Janet NativeShim(int32_t argc, Janet* argv) {
+        using Traits = FunctionTraits<decltype(Fn)>;
 
-    // Safe to call directly (may janet_panic/longjmp) precisely because
-    // nothing with a non-trivial destructor exists on this stack yet.
-    janet_fixarity(argc, static_cast<int32_t>(Traits::Arity));
+        // Safe to call directly (may janet_panic/longjmp) precisely because
+        // nothing with a non-trivial destructor exists on this stack yet.
+        janet_fixarity(argc, static_cast<int32_t>(Traits::Arity));
 
-    try {
-        return InvokeAndConvert<Fn, Traits>(argv, std::make_index_sequence<Traits::Arity>{});
-    } catch (const std::exception& e) {
-        // Safe here too: the try block's locals have already unwound
-        // normally by the time we reach this catch, so nothing but this
-        // stack frame itself (no non-trivial destructors) sits between here
-        // and Janet's own protection boundary when this longjmps.
-        janet_panicf("%s", e.what());
+        try {
+            return InvokeAndConvert<Fn, Traits>(argv, std::make_index_sequence<Traits::Arity>{});
+        }
+        catch (const std::exception& e) {
+            // Safe here too: the try block's locals have already unwound
+            // normally by the time we reach this catch, so nothing but this
+            // stack frame itself (no non-trivial destructors) sits between here
+            // and Janet's own protection boundary when this longjmps.
+            janet_panicf("%s", e.what());
+        }
+        return janet_wrap_nil(); // unreachable
     }
-    return janet_wrap_nil(); // unreachable
-}
 
 } // namespace detail
 
@@ -103,6 +107,18 @@ class Environment {
     Janet DoFile(const std::filesystem::path& path);
 
     [[nodiscard]] JanetTable* Env() const;
+
+    // Self-hosting-completion follow-up. Every symbol name directly def'd in
+    // this environment's own table (not walking a proto chain -- every
+    // Register<Fn> call lands here via janet_cfuns_prefix, and so does an
+    // ordinary top-level (def ...) from loaded Janet source) whose name
+    // begins with prefix, sorted. Introspects the live JanetTable via
+    // janet_dictionary_next rather than keeping a shadow list of every
+    // Register<Fn> call, so it can never drift from what's actually bound --
+    // and, called fresh per completion request rather than snapshotted once,
+    // stays correct across a hot-reloaded init.janet or a project's own
+    // .ned/init.janet trusted after startup.
+    [[nodiscard]] std::vector<std::string> BindingNamesWithPrefix(std::string_view prefix) const;
 
   private:
     void RegisterRaw(const char* prefix, const char* name, const char* docstring, JanetCFunction fn);

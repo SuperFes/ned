@@ -272,11 +272,6 @@ Notcurses.
       setting variables, a REPL console.
 - [ ] VCS: "Generalize the two-callback plugin shape past version control" (cloud
       CLIs, Terraform, Docker) remains a framing, not a plan.
-- [ ] Self-hosting: no special-casing yet for editing ned's own config in ned
-      itself — `ned/*` function/macro names and Janet-mode completion don't know
-      about each other, so editing `init.janet`/`.ned/init.janet` gets no
-      tab-completion against the real `ned/*` API surface. From `Stuff.md`
-      (folded in and removed as a standalone file).
 - [ ] A friendlier, possibly visual surface for browsing/editing ned's own
       settings beyond hand-writing `init.janet` — real live-editing already
       exists for themes specifically (`save-theme`/`ned/theme-set`, see

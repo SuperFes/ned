@@ -884,6 +884,14 @@ auto main(int argc, char** argv) -> int {
     ned::editor::lsp::LspManager lspManager(bufferList, eventLoop);
     windowManager->SetLspManager(&lspManager);
 
+    // Self-hosting-completion follow-up: same "connect after construction,
+    // unset is a safe no-op" wiring as SetLspManager just above -- janetEnv
+    // outlives windowManager (declared well before it, so destroyed after
+    // it in reverse order), so this raw pointer is safe for the whole run,
+    // including every "ned/*" completion request Janet-mode ghost-text
+    // completion issues against it later.
+    windowManager->SetJanetEnvironment(&janetEnv);
+
     // task-runner follow-up: same "constructed here, needs a real EventLoop&"
     // shape as lspManager just above, and the same "wired into windowManager,
     // connect after construction" convention.

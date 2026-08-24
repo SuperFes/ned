@@ -59,6 +59,10 @@
 #include "Text/KillRing.h"
 #include "Theme.h"
 
+namespace ned::janet {
+class Environment; // Self-hosting-completion follow-up: see SetJanetEnvironment below -- only ever held as a raw pointer here, so a forward declaration is enough.
+} // namespace ned::janet
+
 namespace ned::ui {
 
 class BufferView : public Widget {
@@ -210,6 +214,16 @@ class BufferView : public Widget {
     // "No ACP manager available." via statusMessage_ if this was never
     // called).
     void SetAcpManager(editor::acp::AcpManager* acpManager);
+
+    // Self-hosting-completion follow-up: registers the process-wide
+    // janet::Environment so ghost-text completion in a Janet-mode buffer can
+    // fuzzy-complete against every live "ned/*" binding name -- same "unset
+    // is a safe no-op" convention as SetLspManager (no completion source
+    // besides plain dabbrev-expand if this was never called). Queried fresh
+    // on every completion request rather than snapshotted, so it reflects
+    // whatever's actually bound right now (see Environment::
+    // BindingNamesWithPrefix's own doc comment).
+    void SetJanetEnvironment(const janet::Environment* janetEnv);
 
     // ACP client slice 2: entered directly by WindowManager's AcpManager
     // wiring the moment a session/request_permission request arrives (an
@@ -1530,6 +1544,7 @@ class BufferView : public Widget {
     editor::vcs::VcsRunner*    vcsRunner_           = nullptr; // see SetVcsRunner
     editor::dap::DapManager*   dapManager_          = nullptr; // see SetDapManager
     editor::acp::AcpManager*   acpManager_          = nullptr; // see SetAcpManager
+    const janet::Environment*  janetEnv_            = nullptr; // see SetJanetEnvironment
 
     // ACP client slice 2: valid only while inputMode_ ==
     // InputMode::AcpPermissionPrompt (populated by ShowAcpPermissionPrompt,
@@ -2118,6 +2133,14 @@ class BufferView : public Widget {
         std::size_t                              requestPoint = 0; // buffer.Point() when this was requested/received -- stale if point has since moved
         std::vector<editor::lsp::CompletionItem> items;
         std::size_t                              selectedIndex = 0;
+        // Self-hosting-completion follow-up: the word-boundary start each
+        // item's insertText was ranked/computed against (WordPrefixStart's
+        // ASCII alnum/'_' rule for LSP/dabbrev items, JanetSymbolPrefixStart's
+        // wider '-'/'/' -inclusive rule for ned/* binding items) -- stored
+        // once at request time rather than recomputed by GhostSuffixFor from
+        // whichever rule happens to be lexically closest, since the two
+        // rules disagree on where a name like "ned/register-command" starts.
+        std::size_t prefixStart = 0;
     };
     std::optional<GhostCompletion> ghostCompletion_;
 
@@ -2152,7 +2175,17 @@ class BufferView : public Widget {
     // buffer itself (Editor/DabbrevComplete.h) for candidates instead of
     // asking a server, populating ghostCompletion_ synchronously (no
     // generation/staleness bookkeeping needed, unlike the async LSP path).
-    void                      ApplyDabbrevCompletion(text::Buffer& buffer, std::size_t point);
+    void ApplyDabbrevCompletion(text::Buffer& buffer, std::size_t point);
+    // Self-hosting-completion follow-up: the "Janet-mode buffer" half of
+    // RequestCompletionAtPoint, tried ahead of ApplyDabbrevCompletion --
+    // fuzzy-ranks every live "ned/*" binding name (Janet/Environment.h's
+    // BindingNamesWithPrefix) against the Janet-symbol-aware prefix at point
+    // (JanetSymbolPrefixStart, not WordPrefixStart -- see GhostCompletion's
+    // own prefixStart doc comment). Returns false (ghostCompletion_ left
+    // untouched) when there's no janetEnv_ wired, the prefix is empty, or
+    // nothing fuzzy-matches, so the caller falls through to plain
+    // dabbrev-expand instead of showing an empty suggestion.
+    [[nodiscard]] bool        ApplyJanetBindingCompletion(text::Buffer& buffer, std::size_t point);
     [[nodiscard]] bool        ShouldSuppressAutoCompletion() const;
     void                      MaybeScheduleAutoCompletion(const editor::KeyChord& chord, std::size_t generationBefore);
     void                      AcceptGhostCompletion();

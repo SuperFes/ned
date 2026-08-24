@@ -1,5 +1,6 @@
 #include "Environment.h"
 
+#include <algorithm>
 #include <fstream>
 #include <iterator>
 #include <stdexcept>
@@ -44,6 +45,23 @@ Janet Environment::DoFile(const std::filesystem::path& path) {
 
 JanetTable* Environment::Env() const {
     return env_;
+}
+
+std::vector<std::string> Environment::BindingNamesWithPrefix(std::string_view prefix) const {
+    std::vector<std::string> names;
+    const JanetKV*           kv = nullptr;
+    while ((kv = janet_dictionary_next(env_->data, env_->capacity, kv)) != nullptr) {
+        if (!janet_checktype(kv->key, JANET_SYMBOL)) {
+            continue;
+        }
+        const JanetSymbol      symbol = janet_unwrap_symbol(kv->key);
+        const std::string_view name(reinterpret_cast<const char*>(symbol), janet_string_length(symbol));
+        if (name.substr(0, prefix.size()) == prefix) {
+            names.emplace_back(name);
+        }
+    }
+    std::sort(names.begin(), names.end());
+    return names;
 }
 
 } // namespace ned::janet

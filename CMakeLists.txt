@@ -485,6 +485,7 @@ add_library(ned_lib STATIC
         Source/Editor/Rectangle.cpp
         Source/Editor/AutoPair.cpp
         Source/Editor/DabbrevComplete.cpp
+        Source/Editor/JanetSymbolComplete.cpp
         Source/Editor/MinibufferPrompt.cpp
         Source/Editor/PromptHistory.cpp
         Source/Editor/Mode.cpp
@@ -730,6 +731,7 @@ if (NED_BUILD_TESTS)
             Tests/RectangleTest.cpp
             Tests/AutoPairTest.cpp
             Tests/DabbrevCompleteTest.cpp
+            Tests/JanetSymbolCompleteTest.cpp
             Tests/AutoRevertTest.cpp
             Tests/AutoMergeTest.cpp
             Tests/ThreeWayMergeTest.cpp

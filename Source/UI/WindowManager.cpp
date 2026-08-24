@@ -179,8 +179,8 @@ Pane::Pane(text::Buffer& buffer, text::KillRing& killRing, editor::RegisterTable
            std::string& statusMessage, const Theme& theme, ProjectSidebar* projectSidebar,
            editor::lsp::LspManager* lspManager, editor::tasks::TaskRunner* taskRunner,
            editor::vcs::VcsRunner* vcsRunner, editor::dap::DapManager* dapManager, editor::acp::AcpManager* acpManager,
-           std::function<void(editor::InteractiveRequest)> onWindowRequest,
-           std::function<void(text::Buffer&)>              onBufferClosed) : activeBuffer_(buffer), mode_(std::move(mode)),
+           const janet::Environment* janetEnv, std::function<void(editor::InteractiveRequest)> onWindowRequest,
+           std::function<void(text::Buffer&)> onBufferClosed) : activeBuffer_(buffer), mode_(std::move(mode)),
                                                                 dispatcher_(registry, editor::KeymapStack({&janetKeymap, &mode_.keymap, &globalKeymap})),
                                                                 bufferView_(std::make_shared<BufferView>(activeBuffer_, killRing, registers, promptHistory, bufferList, dispatcher_,
                                                                                                          statusMessage, mode_, theme)),
@@ -234,6 +234,7 @@ Pane::Pane(text::Buffer& buffer, text::KillRing& killRing, editor::RegisterTable
     bufferView_->SetVcsRunner(vcsRunner);
     bufferView_->SetDapManager(dapManager);
     bufferView_->SetAcpManager(acpManager);
+    bufferView_->SetJanetEnvironment(janetEnv);
     bufferView_->SetOnWindowRequest(std::move(onWindowRequest));
     bufferView_->SetOnBufferClosed(std::move(onBufferClosed));
     // per-buffer-mode follow-up: Mode is a property of the buffer being
@@ -487,7 +488,7 @@ WindowManager::WindowManager(text::Buffer& initialBuffer, text::KillRing& killRi
 std::unique_ptr<Pane> WindowManager::MakePane(text::Buffer& buffer, editor::Mode mode) {
     auto pane = std::make_unique<Pane>(
         buffer, killRing_, registers_, promptHistory_, bufferList_, registry_, janetKeymap_, globalKeymap_, std::move(mode),
-        statusMessage_, theme_, projectSidebar_, lspManager_, taskRunner_, vcsRunner_, dapManager_, acpManager_,
+        statusMessage_, theme_, projectSidebar_, lspManager_, taskRunner_, vcsRunner_, dapManager_, acpManager_, janetEnv_,
         [this](editor::InteractiveRequest request) { HandleWindowRequest(request); },
         [this](text::Buffer& closedBuffer) { HandleBufferClosed(closedBuffer); });
     pane->SetEventLoop(eventLoop_);
@@ -609,6 +610,13 @@ void WindowManager::SetAcpManager(editor::acp::AcpManager* acpManager) {
         }
     });
     acpManager->SetOnSessionEnded([this](std::string reason) { statusMessage_ = std::move(reason); });
+}
+
+void WindowManager::SetJanetEnvironment(const janet::Environment* janetEnv) {
+    janetEnv_ = janetEnv;
+    for (Pane* pane : Leaves()) {
+        pane->Buffer().SetJanetEnvironment(janetEnv);
+    }
 }
 
 void WindowManager::SetEventLoop(EventLoop* eventLoop) {
