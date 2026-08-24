@@ -296,31 +296,31 @@ Notcurses.
       error text via `janet_dostring`'s `*out`, replacing the old generic "see stderr
       for details" throw) and into `LspClient`/`DapClient`/`AcpClient`'s previously
       fully-silent malformed-JSON `DispatchFrame` catch plus their `onDisconnected_`
-      sites. Confirmed dead end, tmux/unit-verified rather than assumed: no path/line is
-      extractable for a Janet error from anything reachable in C++ — `*out` never
-      carries a location for either a runtime panic or a compile error (its
-      `"path:line:col:"` prefix is stripped before reaching `*out`), and Janet's real
-      stacktrace/compile-error text only ever reaches the process's raw stderr, not
-      Janet's `":err"` dynamic binding (tried) or anything else capturable short of
-      redirecting the real stderr fd around the call. Still open: that fd-redirect (the
-      only route to a real location for a Janet error); LSP stderr capture and the
-      `ChildProcess` timeout gap above are prerequisites for logging *those* failures
-      instead of just disconnecting silently; the ~20 other `BufferView.cpp`
-      `statusMessage_`-only catches, `VcsRunner.cpp`'s one orphaned catch, and folding
-      `TaskRunner` exit-code failures in, are all still un-wired (the umbrella
-      `RunCommandAndHandleOutcome` catch already benefits from the Janet fix above with
-      no changes of its own needed).
-- [ ] **Janet's raw stacktrace/compile-error print corrupts the live TUI** — found
-      chasing the item above: `janet_dostring` writes a real, unbuffered stacktrace
-      straight to the process's raw stderr on every Janet-level error (confirmed via a
-      direct `ned_tests` run showing the print land *before* Catch2's own banner in
-      combined output), bypassing Notcurses' `Screen`/`Cell`-diffing render pipeline
-      entirely — the same class of bug `BufferView`'s tab-expansion and C0/DEL-rendering
-      fixes exist to prevent for buffer *content*, but here the source is Janet's own C
-      library, not anything ned constructs. Only ever seen as a transient flash (the
-      next `EventLoop::Run` repaint overwrites it), not persistent corruption, so likely
-      low-severity in practice — not confirmed against every terminal. Fixing it for
-      real needs the same raw-stderr-fd redirect noted above.
+      sites. Still open: LSP stderr capture and the `ChildProcess` timeout gap above are
+      prerequisites for logging *those* failures instead of just disconnecting silently;
+      the ~20 other `BufferView.cpp` `statusMessage_`-only catches, `VcsRunner.cpp`'s one
+      orphaned catch, and folding `TaskRunner` exit-code failures in, are all still
+      un-wired (the umbrella `RunCommandAndHandleOutcome` catch already benefits from the
+      Janet fix above with no changes of its own needed).
+- [x] **Janet's raw stacktrace/compile-error print corrupts the live TUI** (shipped
+      2026-08-24, raw-stderr-fd-redirect follow-up) — `Janet/Environment.cpp`'s
+      `StderrCapture` (RAII) redirects the process's own fd 2 into a pipe for the
+      duration of every `janet_dostring` call, restoring the real fd and draining the
+      pipe right after, so Janet's unbuffered raw stacktrace print (confirmed via a
+      standalone probe: it happens synchronously inside `janet_dostring` itself, not the
+      CLI's own wrapper) never reaches the live Notcurses-rendered terminal. Also closed
+      the "no path/line" gap noted above as a byproduct: `DoStringCapturingStacktrace`
+      now prefers the captured stderr text (which does carry Janet's real
+      `"path:line:col:"` location, for both a compile error and a runtime panic) over
+      `*out`'s bare, location-stripped message, tmux/unit-verified against both shapes.
+      `JanetVcsProvider.cpp`'s two direct `janet_dostring` call sites (VCS plugin
+      callbacks) were routed through the same shared function, replacing their old "see
+      stderr for details" placeholder with the real captured error text too. Degrades to
+      a no-op (stderr wired to the real fd, pre-fix behavior) if the pipe/dup setup
+      itself fails. Known limitation, not hit in practice: output written during the call
+      beyond a pipe's default 64KB buffer would block on the full pipe since nothing
+      drains it until the call returns — fine for Janet's own stacktrace prints, which
+      are always far smaller.
 - [ ] DAP deliberate cuts: attach mode, thread picker, watch expressions,
       conditional/logpoint breakpoints, adapter-verified breakpoint positions,
       setting variables, a REPL console.

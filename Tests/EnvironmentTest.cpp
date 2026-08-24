@@ -37,17 +37,21 @@ TEST_CASE("Environment DoString throws on a Janet-level error", "[Environment]")
 }
 
 TEST_CASE("Environment DoString captures Janet's real error message, not a generic placeholder", "[Environment]") {
-    // diagnostics-log follow-up: verifies the *out-stringification fix
-    // directly, distinct from just "throws a std::runtime_error" above --
-    // tmux/unit-verified that janet_dostring's *out already holds the real
-    // panic message on failure (a runtime panic's own text, or a compile
-    // error's message with its "path:line:col:" prefix already stripped --
-    // see Environment.h's own doc comment on DoStringCapturingStacktrace for
-    // why no path/line is extracted from this text: empirically, neither
-    // shape ever carries a location in *out, only in Janet's own
-    // unrelated, uncapturable-via-*out raw stderr print).
     Environment& env = ned_tests::TestEnvironment();
     REQUIRE_THROWS_WITH(env.DoString("(this-is-not-defined)"), Catch::Matchers::ContainsSubstring("this-is-not-defined"));
+}
+
+TEST_CASE("Environment DoString captures a real path:line location, not just the bare message",
+          "[Environment]") {
+    // raw-stderr-fd-redirect follow-up: DoStringCapturingStacktrace now
+    // redirects janet_dostring's own raw stderr stacktrace print into a pipe
+    // and prefers that captured text over *out's location-stripped message
+    // -- verifies the location (absent from *out alone, per the test above's
+    // sibling coverage of the message itself) actually comes through.
+    Environment& env = ned_tests::TestEnvironment();
+    REQUIRE_THROWS_WITH(env.DoString("\n(this-is-not-defined)", "envtest-location.janet"),
+                         Catch::Matchers::ContainsSubstring("envtest-location.janet") &&
+                             Catch::Matchers::ContainsSubstring("2"));
 }
 
 TEST_CASE("Register wires a free function into the environment", "[Environment]") {

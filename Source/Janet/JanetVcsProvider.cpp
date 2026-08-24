@@ -1,5 +1,6 @@
 #include "JanetVcsProvider.h"
 
+#include "Environment.h"
 #include "Value.h"
 
 namespace ned::janet {
@@ -191,9 +192,10 @@ Janet JanetVcsProvider::CallWithString(const std::string& fnInternalName, const 
 
     const std::string invokeExpr = "(" + fnInternalName + " " + argName + ")";
     Janet             out;
-    const int         signal = janet_dostring(env_, invokeExpr.c_str(), "ned-vcs", &out);
+    std::string       capturedError;
+    const int         signal = DoStringCapturingStacktrace(env_, invokeExpr, "ned-vcs", &out, &capturedError);
     if (signal != 0) {
-        throw std::runtime_error("ned: error running vcs plugin callback '" + fnInternalName + "' (see stderr for details)");
+        throw std::runtime_error("ned: error running vcs plugin callback '" + fnInternalName + "': " + capturedError);
     }
     return out;
 }
@@ -211,9 +213,10 @@ Janet JanetVcsProvider::CallWithStrings(const std::string& fnInternalName, const
 
     const std::string invokeExpr = "(" + fnInternalName + " " + firstName + " " + secondName + ")";
     Janet             out;
-    const int         signal = janet_dostring(env_, invokeExpr.c_str(), "ned-vcs", &out);
+    std::string       capturedError;
+    const int         signal = DoStringCapturingStacktrace(env_, invokeExpr, "ned-vcs", &out, &capturedError);
     if (signal != 0) {
-        throw std::runtime_error("ned: error running vcs plugin callback '" + fnInternalName + "' (see stderr for details)");
+        throw std::runtime_error("ned: error running vcs plugin callback '" + fnInternalName + "': " + capturedError);
     }
     return out;
 }

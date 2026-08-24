@@ -134,10 +134,6 @@ namespace {
         session.registry.Register(name, docstring, [env, invokeExpr, name](editor::CommandContext& context) {
             editor::CommandContextScope contextScope(context);
 
-            // diagnostics-log follow-up: no path/line here either -- see
-            // DoStringCapturingStacktrace's own doc comment in Environment.h
-            // for why the captured text never carries a location, "ned-command"
-            // synthetic sourcePath or not.
             Janet       out;
             std::string capturedError;
             const int   signal = DoStringCapturingStacktrace(env, invokeExpr, "ned-command", &out, &capturedError);
