@@ -2,9 +2,9 @@
 
 #include <algorithm>
 #include <fstream>
-#include <regex>
 #include <sstream>
 
+#include "RegexPattern.h"
 #include "Text/Utf8.h"
 
 namespace ned::editor {
@@ -48,7 +48,7 @@ void ProjectReplace::ConfirmPattern() {
     if (stage_ != Stage::EnteringPattern || patternText_.empty()) {
         return;
     }
-    matches_ = SearchDirectory(root_, patternText_); // throws std::regex_error on invalid syntax
+    matches_ = SearchDirectory(root_, patternText_); // throws SearchPatternError on invalid syntax
     stage_   = Stage::EnteringReplacement;
 }
 
@@ -99,7 +99,7 @@ const std::vector<SearchMatch>& ProjectReplace::Matches() const {
 
 ReplaceSummary ReplaceMatches(const std::vector<SearchMatch>& matches, const std::string& pattern,
                               const std::string& replacement) {
-    const std::regex regex(pattern); // throws std::regex_error on invalid syntax
+    const RegexPattern regex(pattern); // throws RegexPatternError on invalid syntax
 
     std::vector<std::filesystem::path> files;
     for (const SearchMatch& match : matches) {
@@ -119,13 +119,11 @@ ReplaceSummary ReplaceMatches(const std::vector<SearchMatch>& matches, const std
         input.close();
         const std::string content = buffer.str();
 
-        const auto occurrences =
-            std::distance(std::sregex_iterator(content.begin(), content.end(), regex), std::sregex_iterator());
-        if (occurrences == 0) {
+        const RegexPattern::ReplaceAllResult replaceResult = regex.ReplaceAll(content, replacement);
+        if (replaceResult.count == 0) {
             continue;
         }
-
-        const std::string replaced = std::regex_replace(content, regex, replacement);
+        const std::string& replaced = replaceResult.text;
 
         std::filesystem::path tempPath = file;
         tempPath += ".ned-tmp";
@@ -147,7 +145,7 @@ ReplaceSummary ReplaceMatches(const std::vector<SearchMatch>& matches, const std
         }
 
         summary.filesChanged += 1;
-        summary.replacementCount += static_cast<std::size_t>(occurrences);
+        summary.replacementCount += replaceResult.count;
     }
 
     return summary;

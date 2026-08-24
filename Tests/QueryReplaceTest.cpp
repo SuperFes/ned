@@ -1,9 +1,9 @@
 #include <catch2/catch_test_macros.hpp>
 
-#include <regex>
 #include <string_view>
 
 #include "Editor/QueryReplace.h"
+#include "Editor/RegexPattern.h"
 #include "Text/Buffer.h"
 
 using ned::editor::QueryReplace;
@@ -19,8 +19,8 @@ void Type(QueryReplace& qr, std::string_view text) {
 } // namespace
 
 TEST_CASE("Full flow: pattern, replacement, confirm each match in turn", "[QueryReplace]") {
-    Buffer        buffer("scratch", Rope("cat sat on the cat mat"));
-    QueryReplace  qr(buffer);
+    Buffer       buffer("scratch", Rope("cat sat on the cat mat"));
+    QueryReplace qr(buffer);
 
     REQUIRE(qr.CurrentStage() == QueryReplace::Stage::EnteringPattern);
     Type(qr, "cat");
@@ -91,7 +91,7 @@ TEST_CASE("ConfirmPattern throws on invalid regex and doesn't advance the stage"
     QueryReplace qr(buffer);
     Type(qr, "(unclosed");
 
-    REQUIRE_THROWS_AS(qr.ConfirmPattern(), std::regex_error);
+    REQUIRE_THROWS_AS(qr.ConfirmPattern(), ned::editor::RegexPatternError);
     REQUIRE(qr.CurrentStage() == QueryReplace::Stage::EnteringPattern);
 }
 
@@ -144,6 +144,58 @@ TEST_CASE("ReplaceAll makes forward progress against a zero-width match with an 
 
     qr.ReplaceAll(); // must terminate, not hang
     REQUIRE(buffer.Text() == "bbb");
+    REQUIRE(qr.CurrentStage() == QueryReplace::Stage::Done);
+}
+
+TEST_CASE("^ anchors at real line starts, including for matches after the first", "[QueryReplace]") {
+    // in-file-regex follow-up: the old std::regex engine searched trimmed
+    // subranges, so ^ was subject-start-only and blind to line structure --
+    // a documented limitation, now real multiline behavior.
+    Buffer       buffer("scratch", Rope("cat\ncatnip\ncat\n"));
+    QueryReplace qr(buffer);
+    Type(qr, "^cat$");
+    qr.ConfirmPattern();
+    Type(qr, "dog");
+    qr.ConfirmReplacement();
+
+    qr.ReplaceAll();
+    REQUIRE(buffer.Text() == "dog\ncatnip\ndog\n");
+    REQUIRE(qr.ReplacementCount() == 2);
+}
+
+TEST_CASE("Lookbehind patterns work and see context before the search cursor", "[QueryReplace]") {
+    Buffer       buffer("scratch", Rope("blue sky, gray sky"));
+    QueryReplace qr(buffer);
+    Type(qr, "(?<=blue )sky");
+    qr.ConfirmPattern();
+    Type(qr, "sea");
+    qr.ConfirmReplacement();
+
+    qr.ReplaceAll();
+    REQUIRE(buffer.Text() == "blue sea, gray sky");
+}
+
+TEST_CASE("Named groups can be referenced in the replacement", "[QueryReplace]") {
+    Buffer       buffer("scratch", Rope("alice@example"));
+    QueryReplace qr(buffer);
+    Type(qr, "(?<user>\\w+)@(?<host>\\w+)");
+    qr.ConfirmPattern();
+    Type(qr, "${host}@${user}");
+    qr.ConfirmReplacement();
+
+    qr.ReplaceAndNext();
+    REQUIRE(buffer.Text() == "example@alice");
+}
+
+TEST_CASE("ReplaceAll terminates on zero-width matches over multibyte content", "[QueryReplace]") {
+    Buffer       buffer("scratch", Rope("héé"));
+    QueryReplace qr(buffer);
+    Type(qr, "x*"); // empty match at every codepoint position
+    qr.ConfirmPattern();
+    qr.ConfirmReplacement(); // empty replacement
+
+    qr.ReplaceAll(); // must terminate and never split an é
+    REQUIRE(buffer.Text() == "héé");
     REQUIRE(qr.CurrentStage() == QueryReplace::Stage::Done);
 }
 

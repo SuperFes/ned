@@ -2,32 +2,34 @@
 // Emacs query-replace-regexp, simplified to a single always-regex mode
 // (Emacs distinguishes plain query-replace from query-replace-regexp; a
 // literal string is a valid regex too, so skipping that distinction loses
-// nothing). Uses std::regex (ECMAScript syntax): replacement text supports
-// $1/$2/$&-style backreferences via std::smatch::format, NOT Emacs' \1/\2 --
-// a real, minor syntax difference, not a bug.
-//
-// Known limitation: matches are found via std::regex_search over successive
-// subranges of the buffer text starting at the search cursor, without
-// match_prev_avail/match_not_bol flags -- a pattern anchored with ^ may
-// incorrectly match at the search cursor itself rather than only at real
-// line starts, for any match after the first. Narrow, documented, not fixed
-// here (would need careful flag handling per Stage::Confirming resume).
+// nothing). Runs on PCRE2 via RegexPattern.h (in-file-regex follow-up --
+// formerly std::regex, which had no lookaround, no named groups, and a
+// documented ^-anchoring bug from searching trimmed subranges; RegexPattern
+// searches the whole text from an offset, so ^/\b/lookbehind see preceding
+// context correctly, and ^/$ anchor at line boundaries as an editor user
+// expects). Replacement text supports $1/$2/$&/${name}-style references
+// (RegexPattern::FormatReplacement's full set), NOT Emacs' \1/\2 -- a real,
+// minor syntax difference kept from the std::regex era, not a bug.
 //
 
 #ifndef NED_EDITOR_QUERYREPLACE_H
 #define NED_EDITOR_QUERYREPLACE_H
 
 #include <cstddef>
-#include <regex>
+#include <optional>
 #include <string>
 
+#include "RegexPattern.h"
 #include "Text/Buffer.h"
 
 namespace ned::editor {
 
 class QueryReplace {
   public:
-    enum class Stage { EnteringPattern, EnteringReplacement, Confirming, Done };
+    enum class Stage { EnteringPattern,
+                       EnteringReplacement,
+                       Confirming,
+                       Done };
 
     explicit QueryReplace(text::Buffer& buffer);
 
@@ -35,9 +37,9 @@ class QueryReplace {
     void AppendChar(char32_t codepoint);
     void DeleteChar();
 
-    // EnteringPattern -> EnteringReplacement. Throws std::regex_error if the
-    // pattern is invalid; the stage does not advance in that case. A no-op
-    // if the pattern is empty or the stage isn't EnteringPattern.
+    // EnteringPattern -> EnteringReplacement. Throws RegexPatternError if
+    // the pattern is invalid; the stage does not advance in that case. A
+    // no-op if the pattern is empty or the stage isn't EnteringPattern.
     void ConfirmPattern();
 
     // EnteringReplacement -> Confirming (or straight to Done if there's no
@@ -64,16 +66,16 @@ class QueryReplace {
   private:
     void FindNextMatch();
 
-    text::Buffer& buffer_;
-    Stage         stage_ = Stage::EnteringPattern;
-    std::string   patternText_;
-    std::string   replacementText_;
-    std::regex    pattern_;
-    std::string   content_; // kept in sync with the buffer as replacements happen
-    std::size_t   searchCursor_      = 0;
-    std::size_t   replacementCount_ = 0;
+    text::Buffer&               buffer_;
+    Stage                       stage_ = Stage::EnteringPattern;
+    std::string                 patternText_;
+    std::string                 replacementText_;
+    std::optional<RegexPattern> pattern_; // set by ConfirmPattern
+    std::string                 content_; // kept in sync with the buffer as replacements happen
+    std::size_t                 searchCursor_     = 0;
+    std::size_t                 replacementCount_ = 0;
 
-    bool        hasMatch_ = false;
+    bool        hasMatch_   = false;
     std::size_t matchStart_ = 0;
     std::size_t matchEnd_   = 0;
     std::string matchFormattedReplacement_; // this match's $1-expanded replacement text

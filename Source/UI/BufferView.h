@@ -676,6 +676,7 @@ class BufferView : public Widget {
     // doc comment.
     [[nodiscard]] std::string SearchStatusText() const;
     void                      HandleQueryReplaceKey(const editor::KeyChord& chord);
+    void                      HandleQueryReplaceKeyInner(const editor::KeyChord& chord); // the match-limit-catch split's body half
     void                      HandleConfirmQuitKey(const editor::KeyChord& chord);
     void                      HandlePromptKey(
         const editor::KeyChord&

@@ -128,6 +128,26 @@ set(RE2_BUILD_TESTING OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(re2)
 #------------------------------------------------------------------------------
 
+#--- Fetch PCRE2 (in-file-regex follow-up) -------------------------------------
+# The regex engine behind the two user-facing "type your own regex" surfaces
+# that edit buffer/file content: query-replace-regexp (Editor/QueryReplace.cpp)
+# and project-replace's rewrite step (Editor/ProjectReplace.cpp), both through
+# Editor/RegexPattern.h. Deliberately a second engine alongside RE2: RE2's
+# linear-time model is right for project *search* (untrusted-ish patterns fanned
+# out across every file) but can't do lookaround or backreferences at all --
+# PCRE2 provides those plus named groups and real Unicode classes, with JIT for
+# speed and a match limit as the backtracking safety net (see RegexPattern.cpp).
+FetchContent_Declare(pcre2
+        GIT_REPOSITORY https://github.com/PCRE2Project/pcre2.git
+        GIT_TAG pcre2-10.45
+        GIT_SHALLOW TRUE
+        EXCLUDE_FROM_ALL)
+set(PCRE2_BUILD_PCRE2GREP OFF CACHE BOOL "" FORCE)
+set(PCRE2_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(PCRE2_SUPPORT_JIT ON CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(pcre2)
+#------------------------------------------------------------------------------
+
 #--- Fetch tree-sitter (core) --------------------------------------------------
 FetchContent_Declare(tree-sitter
         GIT_REPOSITORY https://github.com/tree-sitter/tree-sitter.git
@@ -481,6 +501,7 @@ add_library(ned_lib STATIC
         Source/Editor/IncrementalSearch.cpp
         Source/Editor/PrefixArgument.cpp
         Source/Editor/QueryReplace.cpp
+        Source/Editor/RegexPattern.cpp
         Source/Editor/Register.cpp
         Source/Editor/Rectangle.cpp
         Source/Editor/AutoPair.cpp
@@ -658,7 +679,11 @@ target_link_libraries(ned_lib
         # internal-project-search follow-up: only ProjectSearch.cpp's own
         # implementation includes RE2 headers, so this stays off the public
         # link interface.
-        PRIVATE re2::re2)
+        PRIVATE re2::re2
+        # in-file-regex follow-up: same treatment for PCRE2 -- only
+        # RegexPattern.cpp's implementation includes pcre2.h (the header is
+        # pimpl'd specifically so this dependency stays private).
+        PRIVATE pcre2-8-static)
 
 if (NED_ENABLE_SANITIZERS)
     target_compile_options(ned_lib PUBLIC -fsanitize=address,undefined -fno-omit-frame-pointer)
@@ -776,6 +801,7 @@ if (NED_BUILD_TESTS)
             Tests/IncrementalSearchTest.cpp
             Tests/PrefixArgumentTest.cpp
             Tests/QueryReplaceTest.cpp
+            Tests/RegexPatternTest.cpp
             Tests/ModeTest.cpp
             Tests/CodeFoldTest.cpp
             Tests/OrgTest.cpp

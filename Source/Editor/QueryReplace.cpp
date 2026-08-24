@@ -4,12 +4,14 @@
 
 namespace ned::editor {
 
-QueryReplace::QueryReplace(text::Buffer& buffer) : buffer_(buffer) {}
+QueryReplace::QueryReplace(text::Buffer& buffer) : buffer_(buffer) {
+}
 
 void QueryReplace::AppendChar(char32_t codepoint) {
     if (stage_ == Stage::EnteringPattern) {
         patternText_ += text::EncodeCodepointUtf8(codepoint);
-    } else if (stage_ == Stage::EnteringReplacement) {
+    }
+    else if (stage_ == Stage::EnteringReplacement) {
         replacementText_ += text::EncodeCodepointUtf8(codepoint);
     }
 }
@@ -17,7 +19,8 @@ void QueryReplace::AppendChar(char32_t codepoint) {
 void QueryReplace::DeleteChar() {
     if (stage_ == Stage::EnteringPattern) {
         text::RemoveLastCodepoint(patternText_);
-    } else if (stage_ == Stage::EnteringReplacement) {
+    }
+    else if (stage_ == Stage::EnteringReplacement) {
         text::RemoveLastCodepoint(replacementText_);
     }
 }
@@ -26,8 +29,8 @@ void QueryReplace::ConfirmPattern() {
     if (stage_ != Stage::EnteringPattern || patternText_.empty()) {
         return;
     }
-    pattern_ = std::regex(patternText_); // throws std::regex_error on invalid syntax
-    stage_   = Stage::EnteringReplacement;
+    pattern_.emplace(patternText_); // throws RegexPatternError on invalid syntax, leaving pattern_ empty
+    stage_ = Stage::EnteringReplacement;
 }
 
 void QueryReplace::ConfirmReplacement() {
@@ -41,18 +44,23 @@ void QueryReplace::ConfirmReplacement() {
 }
 
 void QueryReplace::FindNextMatch() {
-    std::smatch match;
-    if (searchCursor_ > content_.size() ||
-        !std::regex_search(content_.cbegin() + static_cast<std::ptrdiff_t>(searchCursor_), content_.cend(), match, pattern_)) {
+    // Searches the whole content from an offset (not a trimmed subrange), so
+    // ^/\b/lookbehind correctly see what precedes the cursor -- see
+    // RegexPattern.h.
+    std::optional<RegexMatch> match;
+    if (searchCursor_ <= content_.size()) {
+        match = pattern_->Search(content_, searchCursor_);
+    }
+    if (!match.has_value()) {
         hasMatch_ = false;
         stage_    = Stage::Done;
         return;
     }
 
     hasMatch_                  = true;
-    matchStart_                = searchCursor_ + static_cast<std::size_t>(match.position(0));
-    matchEnd_                  = matchStart_ + static_cast<std::size_t>(match.length(0));
-    matchFormattedReplacement_ = match.format(replacementText_);
+    matchStart_                = match->start;
+    matchEnd_                  = match->end;
+    matchFormattedReplacement_ = pattern_->FormatReplacement(content_, *match, replacementText_);
 }
 
 void QueryReplace::ReplaceAndNext() {
@@ -69,7 +77,11 @@ void QueryReplace::ReplaceAndNext() {
 
     searchCursor_ = matchStart_ + matchFormattedReplacement_.size();
     if (wasEmptyMatch && matchFormattedReplacement_.empty()) {
-        ++searchCursor_; // guarantee forward progress against a zero-width match with an empty replacement
+        // Guarantee forward progress against a zero-width match with an
+        // empty replacement -- one whole codepoint (the pattern runs in UTF
+        // mode), or past the end to terminate.
+        searchCursor_ = (searchCursor_ >= content_.size()) ? content_.size() + 1
+                                                           : text::NextCodepointBoundary(content_, searchCursor_);
     }
 
     FindNextMatch();
@@ -79,7 +91,13 @@ void QueryReplace::SkipAndNext() {
     if (stage_ != Stage::Confirming || !hasMatch_) {
         return;
     }
-    searchCursor_ = (matchStart_ == matchEnd_) ? matchEnd_ + 1 : matchEnd_;
+    if (matchStart_ == matchEnd_) { // zero-width: step one codepoint, or past the end to terminate
+        searchCursor_ =
+            (matchEnd_ >= content_.size()) ? content_.size() + 1 : text::NextCodepointBoundary(content_, matchEnd_);
+    }
+    else {
+        searchCursor_ = matchEnd_;
+    }
     FindNextMatch();
 }
 
@@ -116,7 +134,7 @@ std::string QueryReplace::StatusText() const {
             return "Query replace " + patternText_ + " with: " + replacementText_;
         case Stage::Confirming:
             return hasMatch_ ? "Query replacing " + patternText_ + " with " + replacementText_ + " (y/n/!/q)?"
-                              : "No more matches.";
+                             : "No more matches.";
         case Stage::Done:
             return "Replaced " + std::to_string(replacementCount_) + " occurrence" +
                    (replacementCount_ == 1 ? "" : "s") + ".";
