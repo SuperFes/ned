@@ -56,6 +56,21 @@
 //    actual visual "hide the brackets, show only the description" rendering
 //    lives entirely in Source/UI/BufferView.cpp -- this file only parses.
 //
+// 6. Property drawers: real Org's ":PROPERTIES: ... :END:" block, immediately
+//    following a headline's own line (Org's grammar also allows a "plan"
+//    line -- SCHEDULED:/DEADLINE: -- in between; this codebase doesn't parse
+//    those yet, so in practice the drawer must sit right after the headline
+//    line). ParsePropertyDrawer/GetProperty are the pure-parse/read half
+//    (same PascalCase-suffix-free "just look at the text" shape ParseLinks/
+//    FindOrgTableAtPoint already establish); SetProperty/DeleteProperty are
+//    the Buffer-mutating half, creating or removing the whole drawer as
+//    needed the same way SetHeadlineTags creates/removes a tags block --
+//    Buffer itself gains no new primitives, same precedent every other
+//    construct in this file follows. FindHeadlineByCustomId resolves real
+//    Org's own "#custom-id" internal-link form (see FindHeadlineByTitle's
+//    own doc comment below, which used to call this out of scope before
+//    property drawers existed at all).
+//
 // Real tree-sitter-org highlighting shipped as its own follow-up (see
 // Mode.cpp's OrgMode(), built on Ned's own forked "org" grammar in
 // TreeSitter/Languages.cpp) -- it lives there, not here; this file stays
@@ -403,10 +418,87 @@ struct Link {
 // calling this) -- an exact match (after trimming) against ParseOutline's
 // own Headline.title, case-sensitive. Returns the matching headline's own
 // lineStartByte, or nullopt if nothing matches. Real Org also supports
-// "#custom-id" against a property drawer's :CUSTOM_ID: -- explicitly out of
-// scope, property drawers don't exist in this codebase yet (see ROADMAP.md's
-// "v2+ maybe" list), not silently dropped.
+// "#custom-id" against a property drawer's :CUSTOM_ID: -- see
+// FindHeadlineByCustomId below, the analogous resolver for that form.
 [[nodiscard]] std::optional<std::size_t> FindHeadlineByTitle(std::string_view bufferText, std::string_view title);
+
+// One "KEY: value" line inside a property drawer -- e.g. ":CUSTOM_ID: foo"
+// or ":Effort: 1:00" (a value may itself contain ':', unlike a property
+// name -- see ParsePropertyDrawer's own doc comment). An empty value means
+// the line was just ":KEY:" with nothing after it, real Org's own shape for
+// a property that's set but deliberately blank.
+struct Property {
+    std::string key;
+    std::string value;
+    std::size_t lineStartByte;
+    std::size_t lineEndByte; // exclusive, before the line's own trailing '\n'
+    // Where `value` begins on the line -- equal to lineEndByte when the
+    // property has no value at all. Kept distinct from a from-scratch
+    // "KEY: " + value reconstruction so SetProperty's in-place rewrite of an
+    // existing property preserves whatever separating whitespace the user
+    // originally typed between the second ':' and the value, the same
+    // "rewrite only the token itself" precedent tagsStartByte establishes
+    // for SetHeadlineTags.
+    std::size_t valueStartByte;
+};
+
+// A ":PROPERTIES:" / ":END:" block. properties is in file order.
+struct PropertyDrawer {
+    std::vector<Property> properties;
+    std::size_t           startByte;        // start of the ":PROPERTIES:" line itself
+    std::size_t           endLineStartByte; // start of the ":END:" line itself -- where SetProperty appends a new property
+    std::size_t           endByte;          // exclusive, one past the ":END:" line's own trailing '\n' (or buffer end)
+};
+
+// headline's own drawer, if it has one -- the drawer must be the buffer's
+// very next line after headline.lineEndByte (see this file's top comment on
+// why "immediately follows the headline line" is this v1's rule), a
+// case-insensitive ":PROPERTIES:"/":END:" pair (matching real Org's own
+// caseInsensitive() grammar rule for these two markers specifically -- unlike
+// a property's own name, which is NOT case-folded here, matching the
+// grammar's plain, uncased `expr` token for it). A malformed drawer (no
+// matching ":END:" before the buffer or headline's own subtree ends) is
+// nullopt, same "not a real drawer" treatment as any other absent construct
+// in this file.
+[[nodiscard]] std::optional<PropertyDrawer> ParsePropertyDrawer(std::string_view bufferText, const Headline& headline);
+
+// key looked up case-insensitively (matching org-entry-get's own real
+// behavior) against headline's drawer -- nullopt if there's no drawer, or no
+// property by that name.
+[[nodiscard]] std::optional<std::string> GetProperty(std::string_view bufferText, const Headline& headline,
+                                                     std::string_view key);
+
+// Sets key to value in headline's property drawer, case-insensitively
+// matching (and rewriting in place, preserving its own original separating
+// whitespace) an existing property by that name, else appending a fresh
+// ":KEY: value" line immediately above ":END:", else creating the whole
+// drawer immediately after the headline's own line if it doesn't exist yet
+// at all. headline's byte offsets must describe buffer's *current* content,
+// the same precondition SetHeadlineTodoKeyword/SetHeadlineTags already
+// state.
+void SetProperty(text::Buffer& buffer, const Headline& headline, const std::string& key, const std::string& value);
+
+// Removes key from headline's drawer (case-insensitive match) if present --
+// a no-op if there's no drawer, or no property by that name. Removing a
+// drawer's last remaining property removes the whole drawer, ":PROPERTIES:"/
+// ":END:" included -- an empty drawer isn't a shape real Org itself ever
+// leaves behind.
+void DeleteProperty(text::Buffer& buffer, const Headline& headline, const std::string& key);
+
+// The two Buffer-mutating commands proper, same "find the headline at
+// point, act, report false if there isn't one" shape
+// CycleTodoKeywordAtPoint/ToggleCheckboxAtPoint already establish.
+bool SetPropertyAtPoint(text::Buffer& buffer, const std::string& key, const std::string& value,
+                        const std::vector<std::string>& todoKeywords = TodoKeywords());
+bool DeletePropertyAtPoint(text::Buffer& buffer, const std::string& key,
+                           const std::vector<std::string>& todoKeywords = TodoKeywords());
+
+// Real Org's own "#custom-id" internal-link form's resolver -- an exact
+// (case-sensitive; ids are conventionally-typed tokens, not prose)
+// match against a headline's own :CUSTOM_ID: property, checked in file
+// order. Returns the matching headline's own lineStartByte, or nullopt if
+// nothing matches -- same contract as FindHeadlineByTitle.
+[[nodiscard]] std::optional<std::size_t> FindHeadlineByCustomId(std::string_view bufferText, std::string_view customId);
 
 } // namespace ned::editor::org
 

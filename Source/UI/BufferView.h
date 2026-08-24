@@ -487,6 +487,15 @@ class BufferView : public Widget {
                            ZapToChar,
                            StringRectangle,
                            SetHeadlineTags,
+                           // property-drawers follow-up: org-set-property's own
+                           // two-stage session (property name, then its value) --
+                           // dedicated HandleSetPropertyKey, RenameFileStage's exact
+                           // shape (see propertyStage_), not routed through the
+                           // shared HandlePromptKey else-chain SetHeadlineTags uses.
+                           // org-delete-property is a single prompt and DOES go
+                           // through that shared chain.
+                           SetProperty,
+                           DeleteProperty,
                            // code-actions follow-up: entered only once RequestCodeActionsAtPoint's
                            // async response actually arrives (never eagerly, while the request is
                            // still in flight -- see that method's own doc comment) -- Select when
@@ -577,6 +586,10 @@ class BufferView : public Widget {
                                  Confirming };
     enum class RenameFileStage { EnteringSource,
                                  EnteringDestination };
+    // property-drawers follow-up: org-set-property's own two linear stages,
+    // RenameFileStage's exact shape.
+    enum class PropertyPromptStage { EnteringName,
+                                     EnteringValue };
     // backup-and-recovery follow-up: recover-file's two linear stages,
     // DeleteFileStage's exact shape (pick, then y/n).
     enum class RecoverFileStage { PickingVersion,
@@ -664,6 +677,16 @@ class BufferView : public Widget {
     // leaving that buffer pointing at a now-nonexistent path.
     void HandleDeleteFileKey(const editor::KeyChord& chord);
     void HandleRenameFileKey(const editor::KeyChord& chord);
+
+    // property-drawers follow-up: org-set-property's own two-stage session,
+    // RenameFileStage/HandleRenameFileKey's exact shape -- propertyStage_ ==
+    // EnteringName collects the property's name into pendingPropertyName_,
+    // re-emplacing prompt_ pre-filled with that property's current value (if
+    // any) for propertyStage_ == EnteringValue; the second Enter calls
+    // org::SetPropertyAtPoint. Re-resolves HeadlineAtPoint fresh at the
+    // final Enter rather than trusting a value captured when the session
+    // opened, same reasoning SetHeadlineTags's own doc comment states.
+    void HandleSetPropertyKey(const editor::KeyChord& chord);
 
     // backup-and-recovery follow-up: recover-file's session, the same
     // linear no-state-machine-class shape as HandleDeleteFileKey just
@@ -1632,6 +1655,8 @@ class BufferView : public Widget {
 
     RenameFileStage       renameStage_ = RenameFileStage::EnteringSource;
     std::filesystem::path renameSource_; // path entered in RenameFileStage::EnteringSource
+    PropertyPromptStage   propertyStage_ = PropertyPromptStage::EnteringName;
+    std::string           pendingPropertyName_; // name entered in PropertyPromptStage::EnteringName
 
     // backup-and-recovery follow-up: the version list captured when the
     // recover-file session opened (stable for the session's short life --

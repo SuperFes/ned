@@ -588,7 +588,7 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
     SymbolKindFunction symbolKind;
     if (!symbolKindQuerySource.empty()) {
         const auto symbolKindQuery = std::make_shared<treesitter::Query>(language, symbolKindQuerySource);
-        symbolKind = [parser, symbolKindQuery, sharedParse](std::string_view bufferText) -> std::vector<SymbolMarker> {
+        symbolKind                 = [parser, symbolKindQuery, sharedParse](std::string_view bufferText) -> std::vector<SymbolMarker> {
             const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
             if (tree.IsNull()) {
                 return {};
@@ -737,8 +737,8 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
     ImportTargetFunction importTarget;
     if (!importQuerySource.empty()) {
         const auto importQuery = std::make_shared<treesitter::Query>(language, importQuerySource);
-        importTarget = [parser, importQuery, sharedParse](std::string_view bufferText,
-                                                           std::size_t      point) -> std::optional<ImportTarget> {
+        importTarget           = [parser, importQuery, sharedParse](std::string_view bufferText,
+                                                                    std::size_t      point) -> std::optional<ImportTarget> {
             const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
             if (tree.IsNull()) {
                 return std::nullopt;
@@ -748,7 +748,7 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
                 std::size_t targetStart, targetEnd;
                 bool        isModule;
             };
-            std::vector<TargetCapture>                        targets;
+            std::vector<TargetCapture>                       targets;
             std::vector<std::pair<std::size_t, std::size_t>> statements;
             for (const treesitter::QueryCapture& capture : importQuery->Captures(tree.RootNode(), bufferText)) {
                 if (capture.name == "import.statement") {
@@ -829,8 +829,8 @@ Mode TreeSitterMode(std::string name, std::string_view languageName, const char*
 }
 
 Mode JanetMode() {
-    Mode mode = TreeSitterMode("janet-mode", "janet", treesitter::queries::kJanet, nullptr, treesitter::queries::kJanetImports);
-    mode.lineCommentPrefix = ";"; // Lisp-family convention
+    Mode mode              = TreeSitterMode("janet-mode", "janet", treesitter::queries::kJanet, nullptr, treesitter::queries::kJanetImports);
+    mode.lineCommentPrefix = ";";             // Lisp-family convention
     mode.autoPairs         = LispAutoPairs(); // '(...) is the reader's quote macro, not a paired delimiter
     return mode;
 }
@@ -843,22 +843,22 @@ Mode JsonMode() {
 }
 
 Mode CMode() {
-    Mode mode = TreeSitterMode("c-mode", "c", treesitter::queries::kC, treesitter::queries::kCFolds,
-                               treesitter::queries::kCImports, treesitter::queries::kCTags);
+    Mode mode              = TreeSitterMode("c-mode", "c", treesitter::queries::kC, treesitter::queries::kCFolds,
+                                            treesitter::queries::kCImports, treesitter::queries::kCTags);
     mode.lineCommentPrefix = "//";
     return mode;
 }
 
 Mode CppMode() {
-    Mode mode = TreeSitterMode("cpp-mode", "cpp", treesitter::queries::kCpp, treesitter::queries::kCppFolds,
-                               treesitter::queries::kCImports, treesitter::queries::kCppTags);
+    Mode mode              = TreeSitterMode("cpp-mode", "cpp", treesitter::queries::kCpp, treesitter::queries::kCppFolds,
+                                            treesitter::queries::kCImports, treesitter::queries::kCppTags);
     mode.lineCommentPrefix = "//";
     return mode;
 }
 
 Mode PhpMode() {
-    Mode mode = TreeSitterMode("php-mode", "php", treesitter::queries::kPhp, nullptr, treesitter::queries::kPhpImports,
-                               treesitter::queries::kPhpTags);
+    Mode mode              = TreeSitterMode("php-mode", "php", treesitter::queries::kPhp, nullptr, treesitter::queries::kPhpImports,
+                                            treesitter::queries::kPhpTags);
     mode.lineCommentPrefix = "//";
     return mode;
 }
@@ -906,13 +906,13 @@ Mode PythonMode() {
 }
 
 Mode BashMode() {
-    Mode mode = TreeSitterMode("bash-mode", "bash", treesitter::queries::kBash, nullptr, treesitter::queries::kBashImports);
+    Mode mode              = TreeSitterMode("bash-mode", "bash", treesitter::queries::kBash, nullptr, treesitter::queries::kBashImports);
     mode.lineCommentPrefix = "#";
     return mode;
 }
 
 Mode FishMode() {
-    Mode mode = TreeSitterMode("fish-mode", "fish", treesitter::queries::kFish);
+    Mode mode              = TreeSitterMode("fish-mode", "fish", treesitter::queries::kFish);
     mode.lineCommentPrefix = "#";
     return mode;
 }
@@ -930,17 +930,17 @@ Mode TomlMode() {
 }
 
 Mode ClojureMode() {
-    Mode mode = TreeSitterMode("clojure-mode", "clojure", treesitter::queries::kClojure, treesitter::queries::kClojureFolds,
-                               treesitter::queries::kClojureImports);
-    mode.lineCommentPrefix = ";"; // Lisp-family convention, same as JanetMode
+    Mode mode              = TreeSitterMode("clojure-mode", "clojure", treesitter::queries::kClojure, treesitter::queries::kClojureFolds,
+                                            treesitter::queries::kClojureImports);
+    mode.lineCommentPrefix = ";";             // Lisp-family convention, same as JanetMode
     mode.autoPairs         = LispAutoPairs(); // same reasoning as JanetMode
     return mode;
 }
 
 Mode JankMode() {
     // Same grammar and query as ClojureMode, distinct name -- see Mode.h.
-    Mode mode = TreeSitterMode("jank-mode", "clojure", treesitter::queries::kClojure, treesitter::queries::kClojureFolds,
-                               treesitter::queries::kClojureImports);
+    Mode mode              = TreeSitterMode("jank-mode", "clojure", treesitter::queries::kClojure, treesitter::queries::kClojureFolds,
+                                            treesitter::queries::kClojureImports);
     mode.lineCommentPrefix = ";";
     mode.autoPairs         = LispAutoPairs(); // same reasoning as JanetMode
     return mode;
@@ -1047,6 +1047,12 @@ Mode OrgMode() {
     // Tab) and here before this, so no shadowing, unlike C-c C-p above.
     keymap.Bind(ParseKeySequence("TAB"), "org-cycle");
     keymap.Bind(ParseKeySequence("C-c C-q"), "org-set-tags"); // real Org's own binding
+    // Property drawers follow-up: real Org's own org-set-property binding.
+    // "C-c C-x" is otherwise unbound in this keymap (a plain prefix, no
+    // command of its own), so no Keymap::AmbiguousBindings() risk the way
+    // "C-c a" briefly had for the ACP commands.
+    keymap.Bind(ParseKeySequence("C-c C-x p"), "org-set-property");
+    keymap.Bind(ParseKeySequence("C-c C-x d"), "org-delete-property");
     // Links follow-up: real Org's own org-open-at-point binding --
     // deliberately shadows the global find-scratch binding while an
     // org-mode buffer is active, see this function's own doc comment in

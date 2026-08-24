@@ -2375,6 +2375,32 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                               *context.message = "Not on a headline.";
                           }
                       });
+    // Property drawers follow-up: real Org's own C-c C-x p
+    // ("org-set-property") -- same "check the precondition, hand off to a
+    // real prompt" shape as org-set-tags above, but a two-stage prompt
+    // (property name, then value) since unlike tags there's no single
+    // colon-separated line to type in one go. See
+    // BufferView::HandleSetPropertyKey for the actual two-stage session.
+    registry.Register("org-set-property", "Set a property of the headline at point (prompts for name, then value).",
+                      [](CommandContext& context) {
+                          if (org::HeadlineAtPoint(context.buffer)) {
+                              context.interactiveRequest = InteractiveRequest::SetProperty;
+                          }
+                          else if (context.message) {
+                              *context.message = "Not on a headline.";
+                          }
+                      });
+    // The delete-property mirror -- one prompt (the property name), so this
+    // fits the shared SetHeadlineTags-shaped prompt flow directly.
+    registry.Register("org-delete-property", "Delete a property from the headline at point.",
+                      [](CommandContext& context) {
+                          if (org::HeadlineAtPoint(context.buffer)) {
+                              context.interactiveRequest = InteractiveRequest::DeleteProperty;
+                          }
+                          else if (context.message) {
+                              *context.message = "Not on a headline.";
+                          }
+                      });
     // Tables follow-up: registered separately from org-cycle's own
     // fallback branch above too -- M-x / explicit binding / Janet
     // scripting reachability, the same "manually invoked, available

@@ -15,9 +15,13 @@ using ned::editor::org::CyclePriorityAtPoint;
 using ned::editor::org::CycleTodoKeywordAtPoint;
 using ned::editor::org::DefaultTodoKeywords;
 using ned::editor::org::DeleteOrgTableColumnAtPoint;
+using ned::editor::org::DeleteProperty;
+using ned::editor::org::DeletePropertyAtPoint;
+using ned::editor::org::FindHeadlineByCustomId;
 using ned::editor::org::FindHeadlineByTitle;
 using ned::editor::org::FindOrgTableAtPoint;
 using ned::editor::org::FoldedLineRanges;
+using ned::editor::org::GetProperty;
 using ned::editor::org::Headline;
 using ned::editor::org::HeadlineAtPoint;
 using ned::editor::org::InsertOrgTableColumnAtPoint;
@@ -37,10 +41,13 @@ using ned::editor::org::NextTodoKeyword;
 using ned::editor::org::ParseCheckboxes;
 using ned::editor::org::ParseLinks;
 using ned::editor::org::ParseOutline;
+using ned::editor::org::ParsePropertyDrawer;
 using ned::editor::org::ReflectParentCheckboxStates;
 using ned::editor::org::SetHeadlinePriority;
 using ned::editor::org::SetHeadlineTags;
 using ned::editor::org::SetHeadlineTodoKeyword;
+using ned::editor::org::SetProperty;
+using ned::editor::org::SetPropertyAtPoint;
 using ned::editor::org::SubtreeEndLine;
 using ned::editor::org::ToggleCheckboxAtPoint;
 using ned::editor::org::ToggleCheckboxState;
@@ -856,4 +863,142 @@ TEST_CASE("FindHeadlineByTitle finds an exact-match headline", "[Org]") {
 
 TEST_CASE("FindHeadlineByTitle returns nullopt when nothing matches", "[Org]") {
     REQUIRE_FALSE(FindHeadlineByTitle("* First\n* Second\n", "Nonexistent").has_value());
+}
+
+TEST_CASE("ParsePropertyDrawer returns nullopt when the headline has no drawer", "[Org]") {
+    const std::string text      = "* Buy milk\nSome body text\n";
+    const auto        headlines = ParseOutline(text);
+    REQUIRE_FALSE(ParsePropertyDrawer(text, headlines[0]).has_value());
+}
+
+TEST_CASE("ParsePropertyDrawer returns nullopt for a headline with no body at all", "[Org]") {
+    const std::string text      = "* Buy milk";
+    const auto        headlines = ParseOutline(text);
+    REQUIRE_FALSE(ParsePropertyDrawer(text, headlines[0]).has_value());
+}
+
+TEST_CASE("ParsePropertyDrawer parses properties in file order", "[Org]") {
+    const std::string text      = "* Buy milk\n:PROPERTIES:\n:CUSTOM_ID: milk\n:Effort: 1:00\n:END:\nBody\n";
+    const auto        headlines = ParseOutline(text);
+    const auto        drawer    = ParsePropertyDrawer(text, headlines[0]);
+    REQUIRE(drawer.has_value());
+    REQUIRE(drawer->properties.size() == 2);
+    CHECK(drawer->properties[0].key == "CUSTOM_ID");
+    CHECK(drawer->properties[0].value == "milk");
+    CHECK(drawer->properties[1].key == "Effort");
+    CHECK(drawer->properties[1].value == "1:00"); // a value may itself contain ':'
+}
+
+TEST_CASE("ParsePropertyDrawer matches PROPERTIES/END case-insensitively", "[Org]") {
+    const std::string text      = "* Buy milk\n:Properties:\n:key: value\n:End:\n";
+    const auto        headlines = ParseOutline(text);
+    REQUIRE(ParsePropertyDrawer(text, headlines[0]).has_value());
+}
+
+TEST_CASE("ParsePropertyDrawer requires the drawer to immediately follow the headline", "[Org]") {
+    const std::string text      = "* Buy milk\n\n:PROPERTIES:\n:key: value\n:END:\n";
+    const auto        headlines = ParseOutline(text);
+    REQUIRE_FALSE(ParsePropertyDrawer(text, headlines[0]).has_value());
+}
+
+TEST_CASE("ParsePropertyDrawer returns nullopt when :END: is missing", "[Org]") {
+    const std::string text      = "* Buy milk\n:PROPERTIES:\n:key: value\n";
+    const auto        headlines = ParseOutline(text);
+    REQUIRE_FALSE(ParsePropertyDrawer(text, headlines[0]).has_value());
+}
+
+TEST_CASE("GetProperty matches keys case-insensitively", "[Org]") {
+    const std::string text      = "* Buy milk\n:PROPERTIES:\n:CUSTOM_ID: milk\n:END:\n";
+    const auto        headlines = ParseOutline(text);
+    CHECK(GetProperty(text, headlines[0], "custom_id") == "milk");
+    CHECK(GetProperty(text, headlines[0], "CUSTOM_ID") == "milk");
+    REQUIRE_FALSE(GetProperty(text, headlines[0], "nope").has_value());
+}
+
+TEST_CASE("SetProperty creates a whole drawer when the headline has none", "[Org]") {
+    Buffer     buffer("test", Rope("* Buy milk\n"));
+    const auto headlines = ParseOutline(buffer.Text());
+    SetProperty(buffer, headlines[0], "CUSTOM_ID", "milk");
+    REQUIRE(buffer.Text() == "* Buy milk\n:PROPERTIES:\n:CUSTOM_ID: milk\n:END:\n");
+}
+
+TEST_CASE("SetProperty creates a drawer for a headline that's the buffer's very last line", "[Org]") {
+    Buffer     buffer("test", Rope("* Buy milk"));
+    const auto headlines = ParseOutline(buffer.Text());
+    SetProperty(buffer, headlines[0], "CUSTOM_ID", "milk");
+    REQUIRE(buffer.Text() == "* Buy milk\n:PROPERTIES:\n:CUSTOM_ID: milk\n:END:\n");
+}
+
+TEST_CASE("SetProperty creates a drawer for a headline immediately followed by another headline", "[Org]") {
+    Buffer     buffer("test", Rope("* Buy milk\n* Buy eggs\n"));
+    const auto headlines = ParseOutline(buffer.Text());
+    SetProperty(buffer, headlines[0], "CUSTOM_ID", "milk");
+    REQUIRE(buffer.Text() == "* Buy milk\n:PROPERTIES:\n:CUSTOM_ID: milk\n:END:\n* Buy eggs\n");
+}
+
+TEST_CASE("SetProperty appends a new property to an existing drawer", "[Org]") {
+    Buffer     buffer("test", Rope("* Buy milk\n:PROPERTIES:\n:CUSTOM_ID: milk\n:END:\n"));
+    const auto headlines = ParseOutline(buffer.Text());
+    SetProperty(buffer, headlines[0], "Effort", "1:00");
+    REQUIRE(buffer.Text() == "* Buy milk\n:PROPERTIES:\n:CUSTOM_ID: milk\n:Effort: 1:00\n:END:\n");
+}
+
+TEST_CASE("SetProperty rewrites an existing property's value in place, matching case-insensitively", "[Org]") {
+    Buffer     buffer("test", Rope("* Buy milk\n:PROPERTIES:\n:CUSTOM_ID: milk\n:END:\n"));
+    const auto headlines = ParseOutline(buffer.Text());
+    SetProperty(buffer, headlines[0], "custom_id", "2percent");
+    REQUIRE(buffer.Text() == "* Buy milk\n:PROPERTIES:\n:CUSTOM_ID: 2percent\n:END:\n");
+}
+
+TEST_CASE("DeleteProperty removes one property, leaving the rest of the drawer intact", "[Org]") {
+    Buffer     buffer("test", Rope("* Buy milk\n:PROPERTIES:\n:CUSTOM_ID: milk\n:Effort: 1:00\n:END:\n"));
+    const auto headlines = ParseOutline(buffer.Text());
+    DeleteProperty(buffer, headlines[0], "CUSTOM_ID");
+    REQUIRE(buffer.Text() == "* Buy milk\n:PROPERTIES:\n:Effort: 1:00\n:END:\n");
+}
+
+TEST_CASE("DeleteProperty removes the whole drawer once its last property is gone", "[Org]") {
+    Buffer     buffer("test", Rope("* Buy milk\n:PROPERTIES:\n:CUSTOM_ID: milk\n:END:\nBody\n"));
+    const auto headlines = ParseOutline(buffer.Text());
+    DeleteProperty(buffer, headlines[0], "CUSTOM_ID");
+    REQUIRE(buffer.Text() == "* Buy milk\nBody\n");
+}
+
+TEST_CASE("DeleteProperty is a no-op when the key doesn't exist", "[Org]") {
+    Buffer     buffer("test", Rope("* Buy milk\n:PROPERTIES:\n:CUSTOM_ID: milk\n:END:\n"));
+    const auto headlines = ParseOutline(buffer.Text());
+    DeleteProperty(buffer, headlines[0], "nope");
+    REQUIRE(buffer.Text() == "* Buy milk\n:PROPERTIES:\n:CUSTOM_ID: milk\n:END:\n");
+}
+
+TEST_CASE("SetPropertyAtPoint/DeletePropertyAtPoint report failure off a headline", "[Org]") {
+    Buffer buffer("test", Rope("Just text\n"));
+    buffer.SetPoint(0);
+    REQUIRE_FALSE(SetPropertyAtPoint(buffer, "CUSTOM_ID", "milk"));
+    REQUIRE_FALSE(DeletePropertyAtPoint(buffer, "CUSTOM_ID"));
+}
+
+TEST_CASE("SetPropertyAtPoint sets a property on the headline at point", "[Org]") {
+    Buffer buffer("test", Rope("* Buy milk\n"));
+    buffer.SetPoint(2);
+    REQUIRE(SetPropertyAtPoint(buffer, "CUSTOM_ID", "milk"));
+    REQUIRE(buffer.Text() == "* Buy milk\n:PROPERTIES:\n:CUSTOM_ID: milk\n:END:\n");
+}
+
+TEST_CASE("DeletePropertyAtPoint reports failure when the property doesn't exist", "[Org]") {
+    Buffer buffer("test", Rope("* Buy milk\n:PROPERTIES:\n:CUSTOM_ID: milk\n:END:\n"));
+    buffer.SetPoint(2);
+    REQUIRE_FALSE(DeletePropertyAtPoint(buffer, "nope"));
+}
+
+TEST_CASE("FindHeadlineByCustomId finds a headline by its :CUSTOM_ID: property", "[Org]") {
+    const std::string text  = "* First\n:PROPERTIES:\n:CUSTOM_ID: first-id\n:END:\n** Second\n:PROPERTIES:\n:CUSTOM_ID: second-id\n:END:\n";
+    const auto        found = FindHeadlineByCustomId(text, "second-id");
+    REQUIRE(found.has_value());
+    CHECK(*found == text.find("** Second"));
+}
+
+TEST_CASE("FindHeadlineByCustomId returns nullopt when nothing matches", "[Org]") {
+    const std::string text = "* First\n:PROPERTIES:\n:CUSTOM_ID: first-id\n:END:\n";
+    REQUIRE_FALSE(FindHeadlineByCustomId(text, "nonexistent").has_value());
 }

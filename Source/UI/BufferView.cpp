@@ -3111,7 +3111,7 @@ bool BufferView::OnKeyEvent(const Event& event) {
         // real keystroke -- missing here, so input silently fell through to
         // ordinary self-insert-command instead of the prompt.
         inputMode_ == InputMode::DapEvaluate || inputMode_ == InputMode::VcsSwitchBranch ||
-        inputMode_ == InputMode::VcsCreateBranch) {
+        inputMode_ == InputMode::VcsCreateBranch || inputMode_ == InputMode::DeleteProperty) {
         HandlePromptKey(*chord);
         ClampPointToNarrowing();
         return true;
@@ -3123,6 +3123,11 @@ bool BufferView::OnKeyEvent(const Event& event) {
     }
     if (inputMode_ == InputMode::RenameFile) {
         HandleRenameFileKey(*chord);
+        ClampPointToNarrowing();
+        return true;
+    }
+    if (inputMode_ == InputMode::SetProperty) {
+        HandleSetPropertyKey(*chord);
         ClampPointToNarrowing();
         return true;
     }
@@ -4795,6 +4800,22 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             statusMessage_ = prompt_->StatusText();
             return;
         }
+        // property-drawers follow-up: the first stage of org-set-property's
+        // two-stage session -- see HandleSetPropertyKey for the second.
+        case editor::InteractiveRequest::SetProperty:
+            inputMode_     = InputMode::SetProperty;
+            propertyStage_ = PropertyPromptStage::EnteringName;
+            prompt_.emplace("Property name: ");
+            statusMessage_ = prompt_->StatusText();
+            return;
+        // org-delete-property already checked HeadlineAtPoint before setting
+        // this request (org-set-tags's own precedent) -- one prompt, fits
+        // the shared HandlePromptKey else-chain directly.
+        case editor::InteractiveRequest::DeleteProperty:
+            inputMode_ = InputMode::DeleteProperty;
+            prompt_.emplace("Delete property: ");
+            statusMessage_ = prompt_->StatusText();
+            return;
         case editor::InteractiveRequest::ExecuteCommand:
             // Deviates from the other cases' bare-label shape: an
             // immediately-visible, browsable candidate list is central to
@@ -5187,6 +5208,8 @@ void BufferView::EndInteractiveSession() {
     deleteTarget_.clear();
     renameStage_ = RenameFileStage::EnteringSource;
     renameSource_.clear();
+    propertyStage_ = PropertyPromptStage::EnteringName;
+    pendingPropertyName_.clear();
     executeCommandSelection_  = 0;
     projectFindFileSelection_ = 0;
     projectFindFileCandidates_.clear(); // cached only for the duration of one session -- see its own doc comment in BufferView.h
@@ -5343,6 +5366,8 @@ std::string_view BufferView::HistoryKeyForInputMode(InputMode mode) {
             return "string-rectangle";
         case InputMode::SetHeadlineTags:
             return "set-headline-tags";
+        case InputMode::DeleteProperty:
+            return "delete-property";
         case InputMode::LspRenameNewName:
             return "lsp-rename";
         case InputMode::TaskName:
@@ -5519,6 +5544,14 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
             }
             statusMessage_.clear();
         }
+        else if (inputMode_ == InputMode::DeleteProperty) {
+            if (editor::org::DeletePropertyAtPoint(activeBuffer_.Get(), input)) {
+                statusMessage_.clear();
+            }
+            else {
+                statusMessage_ = "No such property.";
+            }
+        }
         else if (inputMode_ == InputMode::LspRenameNewName) {
             // Fire-and-forget, same async shape as RequestCodeActionsAtPoint:
             // EndInteractiveSession() below runs immediately, the actual
@@ -5692,6 +5725,9 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
             case InputMode::SetHeadlineTags:
                 label = "Set headline tags";
                 break;
+            case InputMode::DeleteProperty:
+                label = "Delete property";
+                break;
             case InputMode::LspRenameNewName:
                 label = "Rename";
                 break;
@@ -5726,7 +5762,7 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
         inputMode_ != InputMode::SetHeadlineTags && inputMode_ != InputMode::LspRenameNewName &&
         inputMode_ != InputMode::TaskName && inputMode_ != InputMode::DapEvaluate &&
         inputMode_ != InputMode::VcsCreateBranch && inputMode_ != InputMode::AcpAgentName &&
-        inputMode_ != InputMode::AcpPromptText &&
+        inputMode_ != InputMode::AcpPromptText && inputMode_ != InputMode::DeleteProperty &&
         inputMode_ != InputMode::GotoLine) { // completing a line number is meaningless
         // DapEvaluate excluded too: completing a debuggee expression
         // against buffer names would be meaningless, same reasoning as
@@ -5735,7 +5771,8 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
         // CompletePrompt completes it against the fetched branch list.
         // AcpAgentName/AcpPromptText: same free-text reasoning as
         // VcsCreateBranch -- no established candidate list to complete
-        // against.
+        // against. DeleteProperty likewise -- completing a property name
+        // against file/buffer names would be meaningless.
         CompletePrompt();
         return;
     }
@@ -6530,19 +6567,24 @@ void BufferView::OpenLinkAtPoint() {
 
     if (mode_.name == "org-mode") {
         if (const auto orgLink = editor::org::LinkAtPoint(buffer)) {
-            if (!orgLink->target.empty() && orgLink->target.front() == '*') {
-                // Real Org's own internal-link form: "[[*Some Headline]]".
-                // "#custom-id" targets are explicitly out of scope -- see
-                // Org.h's own FindHeadlineByTitle doc comment.
-                const std::string title = orgLink->target.substr(1);
-                if (const auto lineStartByte = editor::org::FindHeadlineByTitle(buffer.Text(), title)) {
+            if (!orgLink->target.empty() && (orgLink->target.front() == '*' || orgLink->target.front() == '#')) {
+                // Real Org's own internal-link forms: "[[*Some Headline]]"
+                // (matched against a headline's title) and "[[#custom-id]]"
+                // (matched against a headline's own :CUSTOM_ID: property,
+                // property-drawers follow-up).
+                const bool        isCustomId = orgLink->target.front() == '#';
+                const std::string ref        = orgLink->target.substr(1);
+                const auto        lineStartByte =
+                    isCustomId ? editor::org::FindHeadlineByCustomId(buffer.Text(), ref)
+                               : editor::org::FindHeadlineByTitle(buffer.Text(), ref);
+                if (lineStartByte) {
                     buffer.ClearMark();
                     buffer.SetPoint(*lineStartByte);
                     statusMessage_.clear();
                     ScrollToShowPoint();
                 }
                 else {
-                    statusMessage_ = "Link target not found: " + title;
+                    statusMessage_ = "Link target not found: " + ref;
                 }
                 return;
             }
@@ -7538,6 +7580,59 @@ void BufferView::HandleRenameFileKey(const editor::KeyChord& chord) {
     }
     if (IsQuit(chord)) {
         statusMessage_ = "Rename cancelled.";
+        EndInteractiveSession();
+        return;
+    }
+    if (chord.Special == editor::SpecialKey::Backspace) {
+        prompt_->DeleteChar();
+    }
+    else if (IsPlainCharacter(chord)) {
+        prompt_->AppendChar(chord.Codepoint);
+    }
+    statusMessage_ = prompt_->StatusText();
+}
+
+void BufferView::HandleSetPropertyKey(const editor::KeyChord& chord) {
+    if (chord.Special == editor::SpecialKey::Enter) {
+        const std::string input = prompt_->Text();
+
+        if (propertyStage_ == PropertyPromptStage::EnteringName) {
+            if (input.empty()) {
+                statusMessage_ = "Property name cannot be empty.";
+                EndInteractiveSession();
+                return;
+            }
+            pendingPropertyName_ = input;
+            propertyStage_       = PropertyPromptStage::EnteringValue;
+            prompt_.emplace("Value for :" + pendingPropertyName_ + ": ");
+            // Pre-fill with the property's current value, if it already has
+            // one -- same "prompt opens pre-filled with what's already
+            // there" precedent SetHeadlineTags's own StartInteractiveSession
+            // case establishes.
+            if (const auto headline = editor::org::HeadlineAtPoint(activeBuffer_.Get())) {
+                if (const auto current = editor::org::GetProperty(activeBuffer_.Get().Text(), *headline, pendingPropertyName_)) {
+                    prompt_->SetText(*current);
+                }
+            }
+            statusMessage_ = prompt_->StatusText();
+            return;
+        }
+
+        // EnteringValue -- re-resolves HeadlineAtPoint fresh rather than
+        // trusting anything captured when the session opened, same
+        // reasoning SetHeadlineTags's own doc comment states (point can't
+        // have moved since org-set-property's own precondition check).
+        if (editor::org::SetPropertyAtPoint(activeBuffer_.Get(), pendingPropertyName_, input)) {
+            statusMessage_.clear();
+        }
+        else {
+            statusMessage_ = "Not on a headline.";
+        }
+        EndInteractiveSession();
+        return;
+    }
+    if (IsQuit(chord)) {
+        statusMessage_ = "Set property cancelled.";
         EndInteractiveSession();
         return;
     }
