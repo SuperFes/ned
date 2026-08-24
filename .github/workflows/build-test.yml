@@ -29,7 +29,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang lld pkg-config libunistring-dev
+          sudo apt-get install -y clang lld pkg-config libunistring-dev libdeflate-dev
 
       # CMAKE_LINKER_TYPE (CMakePresets.json's "default" preset) needs CMake
       # >= 3.29; ubuntu-latest's preinstalled cmake isn't reliably that new.
