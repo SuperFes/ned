@@ -7,6 +7,7 @@
 
 #include "Editor/ProjectSearch.h"
 #include "Editor/SearchSettings.h"
+#include "EnvOverride.h"
 
 using ned::editor::SearchDirectory;
 using ned::editor::SearchMatch;
@@ -27,6 +28,24 @@ struct ProjectSearchThreadsGuard {
     }
     ~ProjectSearchThreadsGuard() {
         ned::editor::SetProjectSearchThreads(4);
+    }
+};
+
+// gitignore-correctness follow-up: a fixture carrying a .git entry makes
+// GitIgnoreMatcher consult the machine's real global git configuration --
+// pin it to a disposable location (see EnvOverride.h / GitIgnoreTest.cpp's
+// own HermeticGitEnv).
+struct HermeticGitEnv {
+    std::filesystem::path         homeDir;
+    ned::tests::ScopedEnvOverride home;
+    ned::tests::ScopedEnvOverride xdg;
+    ned::tests::ScopedEnvOverride gitConfigGlobal;
+
+    explicit HermeticGitEnv(const std::filesystem::path& base) : homeDir(base / "fake-home"),
+                                                                 home("HOME", (base / "fake-home").c_str()),
+                                                                 xdg("XDG_CONFIG_HOME", (base / "fake-home" / ".config").c_str()),
+                                                                 gitConfigGlobal("GIT_CONFIG_GLOBAL", nullptr) {
+        std::filesystem::create_directories(homeDir / ".config");
     }
 };
 
@@ -162,9 +181,9 @@ TEST_CASE("SearchDirectory skips a directory excluded by .gitignore, without des
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_search_test_gitignore";
     std::filesystem::remove_all(dir);
     std::filesystem::create_directories(dir / "build" / "nested");
-    // GitIgnoreMatcher itself doesn't require a real .git marker -- it just
-    // reads root/.gitignore unconditionally (GitIgnore.cpp's own
-    // constructor) -- but a bare .gitignore with no .git at all is the
+    const HermeticGitEnv env(dir);
+    // GitIgnoreMatcher doesn't require a real .git marker for .gitignore
+    // files themselves -- but a bare .gitignore with no .git at all is the
     // rarer real-world shape, so this fixture includes one anyway to mirror
     // an actual project.
     std::filesystem::create_directory(dir / ".git");
@@ -190,6 +209,7 @@ TEST_CASE("SearchDirectory honors a .gitignore glob pattern and a negation", "[P
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_search_test_gitignore_glob";
     std::filesystem::remove_all(dir);
     std::filesystem::create_directory(dir);
+    const HermeticGitEnv env(dir);
     std::filesystem::create_directory(dir / ".git"); // see the sibling .gitignore test's own comment for why
     {
         std::ofstream(dir / ".gitignore") << "*.log\n!keep.log\n";
@@ -205,6 +225,30 @@ TEST_CASE("SearchDirectory honors a .gitignore glob pattern and a negation", "[P
 
     REQUIRE(matches.size() == 1);
     REQUIRE(matches.front().file.filename() == "keep.log");
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("SearchDirectory honors a nested .gitignore, relative to its own directory", "[ProjectSearch]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_search_test_gitignore_nested";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir / "sub");
+    const HermeticGitEnv env(dir);
+    std::filesystem::create_directory(dir / ".git");
+    {
+        std::ofstream(dir / "sub" / ".gitignore") << "*.gen\n";
+    }
+    {
+        std::ofstream(dir / "sub" / "skipped.gen") << "needle\n";
+    }
+    {
+        std::ofstream(dir / "root-level.gen") << "needle\n"; // the nested rule doesn't reach the root
+    }
+
+    const std::vector<SearchMatch> matches = SearchDirectory(dir, "needle");
+
+    REQUIRE(matches.size() == 1);
+    REQUIRE(matches.front().file.filename() == "root-level.gen");
 
     std::filesystem::remove_all(dir);
 }

@@ -15,7 +15,7 @@
 // SearchSettings.h's ProjectSearchThreads -- default 4; this is I/O-bound,
 // not CPU-bound, so more threads than that mostly just contends on the same
 // disk/page cache). Directory walking (dot-directories, GitIgnore.h's
-// root-.gitignore matcher, and Text/BinaryDetect.h's binary-file sniff) stays
+// .gitignore matcher, and Text/BinaryDetect.h's binary-file sniff) stays
 // single-threaded -- only the per-file line scan is parallelized -- with
 // results reassembled back into the original file-visitation order
 // regardless of which worker actually processed a given file, so this
