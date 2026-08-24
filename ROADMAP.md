@@ -143,13 +143,34 @@ Notcurses.
 
 ### Org & structured editing (v1 shipped; this is v2+)
 
-- [ ] Agenda view: date/deadline-driven scheduling. `ProjectAgenda.h` already ships a
-      cross-file active-TODO *list* (every non-DONE headline under the project root, reusing
-      `ProjectSearch`'s results-buffer/visit machinery); what's still missing is real
-      SCHEDULED:/DEADLINE: timestamp parsing and a genuine date-driven agenda view (today's
-      items, overdue deadlines) — no structured timestamp parsing exists yet at all, so this
-      folds into the date/recurrence item below rather than being separate work.
-- [ ] Scheduling/deadlines with real date/recurrence logic.
+- [x] ~~Agenda view: date/deadline-driven scheduling.~~ ~~Scheduling/deadlines with real
+      date/recurrence logic.~~ Shipped together (the agenda always needed real timestamp
+      parsing first): `Org.h`'s `OrgTimestamp`/`ParseTimestamp`/`FormatTimestamp` (real
+      Org's own bracket syntax, weekday always derived/recomputed, never trusted from the
+      buffer) and `Planning`/`ParsePlanning`/`SetPlanning` (the SCHEDULED:/DEADLINE:/CLOSED:
+      plan line immediately after a headline, ahead of its property drawer if it has one —
+      `ParsePropertyDrawer`/`SetProperty` both gained a small `HeadlineBodyStart` fix to skip
+      past it). `org-schedule`/`org-deadline` (`C-c C-s`/`C-c C-d`, deliberately shadowing
+      the global project-search/create-directory bindings the same way `C-c C-p` already
+      does) prompt for a date accepting `today`/`tomorrow`/`+N` shorthand or an absolute
+      `YYYY-MM-DD[ HH:MM[-HH:MM]][ repeater]` (`ParseTimestampInput`, real Org's own
+      `org-read-date`-style free typing, distinct from `ParseTimestamp`'s canonical-syntax
+      reader). Recurrence: `AdvanceTimestamp` implements all three repeater-cookie kinds
+      (`+`/`++`/`.+`) via `std::chrono` date arithmetic (a month/year repeater landing on a
+      calendar-invalid day clamps to that month's own last real day); `CycleTodoKeywordAtPoint`
+      hooks this in directly — completing a repeating headline advances its timestamp(s) and
+      resets to the first configured keyword rather than ever landing on the done state (a
+      deliberate simplification against real Org's `CLOSED:`-logging, netting out the same
+      practical outcome). The agenda itself (`org-agenda`, `C-c a`) is `ProjectAgenda.h`'s
+      `CollectAgendaItems`, bucketing every active headline into Overdue/Today/Upcoming/Undated
+      (a DEADLINE: preferred over a SCHEDULED: when both are set) and rendering as a genuinely
+      sectioned `Editor/Multibuffer.h` view (`BufferView::BuildAgendaMultibuffer`, one excerpt
+      per item, modeled directly on `RequestDiagnosticsBuffer`'s own shape) rather than the
+      flat `SearchMatch` list `CollectProjectTodos` used to build — jump-to-source works for
+      free via the existing `MultibufferIndexFor` path every other multibuffer consumer
+      already shares. Same disk-only-scan posture `ProjectSearch`/`ProjectReplace` already
+      have (an open buffer's live unsaved edits don't show until saved) — a pre-existing,
+      codebase-wide convention for every project-wide scan, not something new here.
 - [x] ~~Property drawers.~~ Shipped: `Org.h`'s `ParsePropertyDrawer`/`GetProperty`/
       `SetProperty`/`DeleteProperty` (plus `*AtPoint` wrappers), real Org's
       `:PROPERTIES: ... :END:` block immediately following a headline's own line.

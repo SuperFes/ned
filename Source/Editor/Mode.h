@@ -399,7 +399,7 @@ struct Mode {
 // see TreeSitterMode's own doc comment above.
 [[nodiscard]] Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& language,
                                               std::string_view querySource = {}, std::string_view foldQuerySource = {},
-                                              std::string_view importQuerySource = {},
+                                              std::string_view importQuerySource     = {},
                                               std::string_view symbolKindQuerySource = {});
 
 // A real tree-sitter-backed Janet mode (bundle-remaining-grammars
@@ -500,6 +500,11 @@ struct Mode {
 // shadow C-c C-p already established above (open-link-at-point is also
 // reachable everywhere, Org included, via the global C-c C-l binding --
 // C-c C-o is an additional, not exclusive, path to it in Org buffers).
+// Scheduling/recurrence follow-up: also binds org-schedule/org-deadline to
+// real Org's own C-c C-s/C-c C-d -- another deliberate mode-over-global
+// shadow (project-search/create-directory, respectively, same precedent
+// C-c C-p/C-c C-o already established), not reachable by any other global
+// binding while an Org buffer is focused.
 [[nodiscard]] Mode OrgMode();
 
 } // namespace ned::editor

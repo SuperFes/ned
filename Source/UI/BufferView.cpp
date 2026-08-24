@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
@@ -3112,7 +3113,8 @@ bool BufferView::OnKeyEvent(const Event& event) {
         // real keystroke -- missing here, so input silently fell through to
         // ordinary self-insert-command instead of the prompt.
         inputMode_ == InputMode::DapEvaluate || inputMode_ == InputMode::VcsSwitchBranch ||
-        inputMode_ == InputMode::VcsCreateBranch || inputMode_ == InputMode::DeleteProperty) {
+        inputMode_ == InputMode::VcsCreateBranch || inputMode_ == InputMode::DeleteProperty ||
+        inputMode_ == InputMode::OrgSchedule || inputMode_ == InputMode::OrgDeadline) {
         HandlePromptKey(*chord);
         ClampPointToNarrowing();
         return true;
@@ -4482,7 +4484,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             }
             return;
         case editor::InteractiveRequest::ProjectAgenda:
-            BuildResultsBuffer(editor::CollectProjectTodos(editor::ProjectRoot()), "*agenda*");
+            BuildAgendaMultibuffer();
             return;
         case editor::InteractiveRequest::LspGotoDefinition:
             RequestDefinitionAtPoint();
@@ -4822,6 +4824,29 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             prompt_.emplace("Delete property: ");
             statusMessage_ = prompt_->StatusText();
             return;
+        // scheduling/recurrence follow-up: org-schedule/org-deadline already
+        // checked HeadlineAtPoint before setting this request (org-set-tags's
+        // own precedent) -- resolving it again here (point can't have moved
+        // since dispatch, same reasoning SetHeadlineTags's own case above
+        // states) is what lets the prompt pre-fill with the headline's
+        // *current* SCHEDULED:/DEADLINE: timestamp, if it has one.
+        case editor::InteractiveRequest::OrgSchedule:
+        case editor::InteractiveRequest::OrgDeadline: {
+            const bool isDeadline = (request == editor::InteractiveRequest::OrgDeadline);
+            inputMode_            = isDeadline ? InputMode::OrgDeadline : InputMode::OrgSchedule;
+            prompt_.emplace(isDeadline ? "Deadline: " : "Schedule: ");
+            const auto headline = editor::org::HeadlineAtPoint(activeBuffer_.Get());
+            if (headline) {
+                const auto  planning = editor::org::ParsePlanning(activeBuffer_.Get().Text(), *headline);
+                const auto& existing = isDeadline ? (planning ? planning->deadline : std::nullopt)
+                                                  : (planning ? planning->scheduled : std::nullopt);
+                if (existing) {
+                    prompt_->SetText(editor::org::FormatTimestamp(*existing));
+                }
+            }
+            statusMessage_ = prompt_->StatusText();
+            return;
+        }
         // org-capture follow-up: same one-character-read shape as
         // PointToRegister/etc. above -- no MinibufferPrompt, the status line
         // itself lists every registered template so the key isn't something
@@ -5394,6 +5419,10 @@ std::string_view BufferView::HistoryKeyForInputMode(InputMode mode) {
             return "set-headline-tags";
         case InputMode::DeleteProperty:
             return "delete-property";
+        case InputMode::OrgSchedule:
+            return "org-schedule";
+        case InputMode::OrgDeadline:
+            return "org-deadline";
         case InputMode::LspRenameNewName:
             return "lsp-rename";
         case InputMode::TaskName:
@@ -5578,6 +5607,35 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
                 statusMessage_ = "No such property.";
             }
         }
+        else if (inputMode_ == InputMode::OrgSchedule || inputMode_ == InputMode::OrgDeadline) {
+            // Re-resolved fresh, same reasoning SetHeadlineTags's own branch
+            // above states.
+            const bool isDeadline = (inputMode_ == InputMode::OrgDeadline);
+            if (const auto headline = editor::org::HeadlineAtPoint(activeBuffer_.Get())) {
+                editor::org::Planning planning =
+                    editor::org::ParsePlanning(activeBuffer_.Get().Text(), *headline).value_or(editor::org::Planning{});
+                if (input.empty()) {
+                    // Empty input clears this slot -- same "empty removes
+                    // it" precedent SetHeadlineTags's own empty-tags case
+                    // and SetProperty's own empty-value case establish.
+                    (isDeadline ? planning.deadline : planning.scheduled) = std::nullopt;
+                    editor::org::SetPlanning(activeBuffer_.Get(), *headline, planning);
+                    statusMessage_.clear();
+                }
+                else {
+                    const auto today = std::chrono::year_month_day{
+                        std::chrono::floor<std::chrono::days>(std::chrono::system_clock::now())};
+                    if (const auto parsed = editor::org::ParseTimestampInput(input, today)) {
+                        (isDeadline ? planning.deadline : planning.scheduled) = parsed;
+                        editor::org::SetPlanning(activeBuffer_.Get(), *headline, planning);
+                        statusMessage_.clear();
+                    }
+                    else {
+                        statusMessage_ = "Unrecognized date -- try \"today\", \"+N\", or \"YYYY-MM-DD[ HH:MM]\".";
+                    }
+                }
+            }
+        }
         else if (inputMode_ == InputMode::LspRenameNewName) {
             // Fire-and-forget, same async shape as RequestCodeActionsAtPoint:
             // EndInteractiveSession() below runs immediately, the actual
@@ -5754,6 +5812,12 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
             case InputMode::DeleteProperty:
                 label = "Delete property";
                 break;
+            case InputMode::OrgSchedule:
+                label = "Schedule";
+                break;
+            case InputMode::OrgDeadline:
+                label = "Deadline";
+                break;
             case InputMode::LspRenameNewName:
                 label = "Rename";
                 break;
@@ -5789,6 +5853,7 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
         inputMode_ != InputMode::TaskName && inputMode_ != InputMode::DapEvaluate &&
         inputMode_ != InputMode::VcsCreateBranch && inputMode_ != InputMode::AcpAgentName &&
         inputMode_ != InputMode::AcpPromptText && inputMode_ != InputMode::DeleteProperty &&
+        inputMode_ != InputMode::OrgSchedule && inputMode_ != InputMode::OrgDeadline &&
         inputMode_ != InputMode::GotoLine) { // completing a line number is meaningless
         // DapEvaluate excluded too: completing a debuggee expression
         // against buffer names would be meaningless, same reasoning as
@@ -5797,6 +5862,8 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
         // CompletePrompt completes it against the fetched branch list.
         // AcpAgentName/AcpPromptText: same free-text reasoning as
         // VcsCreateBranch -- no established candidate list to complete
+        // against. OrgSchedule/OrgDeadline: a typed date/relative-shorthand
+        // has no candidate list either.
         // against. DeleteProperty likewise -- completing a property name
         // against file/buffer names would be meaningless.
         CompletePrompt();
@@ -6203,6 +6270,45 @@ void BufferView::RequestDiagnosticsBuffer() {
         }
         results.SetDiagnostics(std::move(composited));
     }
+}
+
+void BufferView::BuildAgendaMultibuffer() {
+    const std::vector<editor::AgendaItem> items = editor::CollectAgendaItems(editor::ProjectRoot());
+
+    auto sectionLabel = [](editor::AgendaSection section) -> const char* {
+        switch (section) {
+            case editor::AgendaSection::Overdue:
+                return "Overdue";
+            case editor::AgendaSection::Today:
+                return "Today";
+            case editor::AgendaSection::Upcoming:
+                return "Upcoming";
+            case editor::AgendaSection::Undated:
+                return "Undated";
+        }
+        return "";
+    };
+
+    // One excerpt per agenda item, its own single (synthesized) body line --
+    // same "header names the file/line, body is the content" shape
+    // RequestDiagnosticsBuffer's own excerpts use just above. The section
+    // label lives in the header text itself (items already arrive grouped
+    // by section, CollectAgendaItems' own sort order) rather than a
+    // separate divider excerpt -- BuildMultibuffer's own rule line between
+    // excerpts already gives every entry a visible top edge.
+    std::vector<editor::multibuffer::ExcerptSource> excerpts;
+    excerpts.reserve(items.size());
+    for (const editor::AgendaItem& item : items) {
+        const std::size_t line = item.headline.lineNumber + 1; // 1-indexed, matching every other multibuffer consumer
+        std::string       header =
+            "▸ [" + std::string(sectionLabel(item.section)) + "] " + item.file.string() + ":" + std::to_string(line);
+        std::string body = editor::FormatAgendaItemSummary(item);
+        excerpts.push_back(editor::multibuffer::ExcerptSource{item.file, line, line, std::move(header), std::move(body), {}});
+    }
+
+    text::Buffer& results = editor::multibuffer::BuildMultibuffer(bufferList_, "*agenda*", excerpts);
+    activeBuffer_.Set(results);
+    statusMessage_ = excerpts.empty() ? "No active TODOs." : std::to_string(excerpts.size()) + " agenda item" + (excerpts.size() == 1 ? "" : "s");
 }
 
 namespace {

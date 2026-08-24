@@ -81,10 +81,11 @@ enum class InteractiveRequest { None,
                                 FocusProjectSidebar,
                                 // org-agenda follow-up: another one-shot direct action, same
                                 // shape as ToggleProjectSidebar -- BufferView builds and
-                                // switches to a synthesized "*agenda*" buffer via
-                                // editor::CollectProjectTodos + its own existing
-                                // BuildResultsBuffer helper (already shared with
-                                // project-search/project-replace).
+                                // switches to a synthesized "*agenda*" buffer.
+                                // scheduling/recurrence follow-up: now a real date-driven
+                                // agenda via editor::CollectAgendaItems + BufferView's own
+                                // BuildAgendaMultibuffer (a sectioned Editor/Multibuffer.h
+                                // view, not the flat BuildResultsBuffer this used to build).
                                 ProjectAgenda,
                                 CreateDirectory,
                                 DeleteFile,
@@ -109,6 +110,13 @@ enum class InteractiveRequest { None,
                                 // does fit here.
                                 SetProperty,
                                 DeleteProperty,
+                                // scheduling/recurrence follow-up: org-schedule/org-deadline
+                                // (real Org's own C-c C-s/C-c C-d) -- same one-prompt shape
+                                // as SetHeadlineTags, pre-filled with the headline's current
+                                // SCHEDULED:/DEADLINE: timestamp if it has one. See
+                                // Editor/Org.h's SetPlanning for the actual rewrite.
+                                OrgSchedule,
+                                OrgDeadline,
                                 // execute-extended-command follow-up: another prompt-shaped
                                 // one-shot request, not a structural window-management one --
                                 // placed here rather than after the window-management block

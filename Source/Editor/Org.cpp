@@ -2,8 +2,11 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
+#include <iomanip>
 #include <mutex>
 #include <regex>
+#include <sstream>
 #include <utility>
 
 #include "Editor/Table.h"
@@ -546,7 +549,35 @@ bool CycleTodoKeywordAtPoint(text::Buffer& buffer, const std::vector<std::string
     const auto headline = HeadlineAtPoint(buffer, todoKeywords);
     if (!headline)
         return false;
-    SetHeadlineTodoKeyword(buffer, *headline, NextTodoKeyword(headline->todoKeyword, todoKeywords));
+
+    const std::string nextKeyword = NextTodoKeyword(headline->todoKeyword, todoKeywords);
+
+    // Recurrence hook: a repeating task (SCHEDULED:/DEADLINE: with a
+    // repeater cookie) never actually lands on the done keyword -- see this
+    // function's own doc comment in Org.h for the exact behavior and why.
+    if (!todoKeywords.empty() && nextKeyword == todoKeywords.back()) {
+        if (const auto planning = ParsePlanning(buffer.Text(), *headline)) {
+            const bool scheduledRepeats = planning->scheduled && planning->scheduled->repeaterKind != OrgTimestamp::RepeaterKind::None;
+            const bool deadlineRepeats  = planning->deadline && planning->deadline->repeaterKind != OrgTimestamp::RepeaterKind::None;
+            if (scheduledRepeats || deadlineRepeats) {
+                const auto today =
+                    std::chrono::year_month_day{std::chrono::floor<std::chrono::days>(std::chrono::system_clock::now())};
+                Planning advanced = *planning;
+                if (scheduledRepeats)
+                    advanced.scheduled = AdvanceTimestamp(*advanced.scheduled, today);
+                if (deadlineRepeats)
+                    advanced.deadline = AdvanceTimestamp(*advanced.deadline, today);
+                // SetPlanning only ever rewrites the line AFTER headline's
+                // own line, so headline's byte offsets are still valid for
+                // the SetHeadlineTodoKeyword call right after it.
+                SetPlanning(buffer, *headline, advanced);
+                SetHeadlineTodoKeyword(buffer, *headline, todoKeywords.front());
+                return true;
+            }
+        }
+    }
+
+    SetHeadlineTodoKeyword(buffer, *headline, nextKeyword);
     return true;
 }
 
@@ -1178,11 +1209,360 @@ std::optional<std::size_t> FindHeadlineByTitle(std::string_view bufferText, std:
     return std::nullopt;
 }
 
+namespace {
+
+    const std::regex& TimestampPattern() {
+        static const std::regex pattern(
+            R"(^([<\[])(\d{4})-(\d{2})-(\d{2})(?:\s+[A-Za-z]+)?(?:\s+(\d{1,2}):(\d{2})(?:-(\d{1,2}):(\d{2}))?)?(?:\s+(\.?\+\+?)(\d+)([hdwmy]))?\s*([>\]])$)");
+        return pattern;
+    }
+
+    std::optional<OrgTimestamp::RepeaterKind> ParseRepeaterMarker(const std::string& marker) {
+        if (marker == "+")
+            return OrgTimestamp::RepeaterKind::Cumulative;
+        if (marker == "++")
+            return OrgTimestamp::RepeaterKind::CatchUp;
+        if (marker == ".+")
+            return OrgTimestamp::RepeaterKind::Restart;
+        return std::nullopt;
+    }
+
+    std::string RepeaterMarkerText(OrgTimestamp::RepeaterKind kind) {
+        switch (kind) {
+            case OrgTimestamp::RepeaterKind::Cumulative:
+                return "+";
+            case OrgTimestamp::RepeaterKind::CatchUp:
+                return "++";
+            case OrgTimestamp::RepeaterKind::Restart:
+                return ".+";
+            case OrgTimestamp::RepeaterKind::None:
+                return "";
+        }
+        return "";
+    }
+
+    std::string WeekdayAbbrev(std::chrono::year_month_day date) {
+        static constexpr const char* kNames[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+        const std::chrono::weekday   weekday{std::chrono::sys_days{date}};
+        return kNames[weekday.c_encoding()];
+    }
+
+    // Adds count intervals of unit to date -- 'd'/'w' are plain day
+    // arithmetic (via sys_days, so no calendar-month knowledge needed);
+    // 'm'/'y' use std::chrono's own year_month_day + months/years, which
+    // can land on a day that doesn't exist in the target month (e.g. "Jan
+    // 31" + 1 month -> "Feb 31") -- clamped to that month's own last real
+    // day rather than carrying an invalid date forward (see
+    // AdvanceTimestamp's own doc comment in Org.h). 'h' is a deliberate
+    // v1 no-op on the date (see the same doc comment).
+    std::chrono::year_month_day AddInterval(std::chrono::year_month_day date, int count, char unit) {
+        using namespace std::chrono;
+        switch (unit) {
+            case 'd':
+                return year_month_day{sys_days{date} + days{count}};
+            case 'w':
+                return year_month_day{sys_days{date} + days{count * 7}};
+            case 'm': {
+                const year_month_day result = date + months{count};
+                if (result.ok())
+                    return result;
+                return year_month_day{result.year() / result.month() / last};
+            }
+            case 'y': {
+                const year_month_day result = date + years{count};
+                if (result.ok())
+                    return result;
+                return year_month_day{result.year() / result.month() / last};
+            }
+            default:
+                return date; // 'h', or anything unrecognized -- no date change
+        }
+    }
+
+    // Matches line (already isolated by FindPlanningLineSpan below) against
+    // real Org's own "plan" grammar: one or more SCHEDULED:/DEADLINE:/
+    // CLOSED: entries, whitespace-separated, and NOTHING else -- a line
+    // that merely contains "SCHEDULED:" as prose (with other text around
+    // it) is deliberately rejected, not misread.
+    const std::regex& PlanEntryPattern() {
+        static const std::regex pattern(R"((?:^|\s)(SCHEDULED|DEADLINE|CLOSED):\s*([<\[][^>\]]*[>\]]))");
+        return pattern;
+    }
+
+    std::optional<Planning> ParsePlanningLineText(std::string_view line) {
+        Planning          result;
+        bool              foundAny = false;
+        const std::string lineStr(line);
+        std::size_t       consumedUpTo = 0;
+
+        for (auto it = std::sregex_iterator(lineStr.begin(), lineStr.end(), PlanEntryPattern()), end = std::sregex_iterator();
+             it != end; ++it) {
+            const std::smatch& match      = *it;
+            const auto         matchStart = static_cast<std::size_t>(match.position(0));
+
+            // Anything between the previous entry's end and this one's
+            // start must be pure whitespace (the pattern's own leading
+            // `(?:^|\s)` only ever consumes a single separator char) -- a
+            // stray non-whitespace token there means this isn't a real
+            // plan line.
+            for (std::size_t i = consumedUpTo; i < matchStart; ++i) {
+                if (!std::isspace(static_cast<unsigned char>(line[i])))
+                    return std::nullopt;
+            }
+
+            const auto timestamp = ParseTimestamp(match[2].str());
+            if (!timestamp)
+                return std::nullopt;
+
+            const std::string key = match[1].str();
+            if (key == "SCHEDULED")
+                result.scheduled = timestamp;
+            else if (key == "DEADLINE")
+                result.deadline = timestamp;
+            else
+                result.closed = timestamp;
+
+            foundAny     = true;
+            consumedUpTo = matchStart + static_cast<std::size_t>(match.length(0));
+        }
+
+        for (std::size_t i = consumedUpTo; i < line.size(); ++i) {
+            if (!std::isspace(static_cast<unsigned char>(line[i])))
+                return std::nullopt;
+        }
+        return foundAny ? std::optional(result) : std::nullopt;
+    }
+
+    struct PlanningLineSpan {
+        std::size_t startByte;
+        std::size_t endByte; // exclusive, before the line's own trailing '\n' -- matches Headline::lineEndByte's convention
+        Planning    planning;
+    };
+
+    // The raw line immediately after headline's own line, if it parses as a
+    // real planning line -- shared by ParsePlanning (just wants the parsed
+    // Planning), SetPlanning (needs the byte span to rewrite/remove it),
+    // and HeadlineBodyStart below (needs to know whether to skip it).
+    std::optional<PlanningLineSpan> FindPlanningLineSpan(std::string_view bufferText, const Headline& headline) {
+        std::size_t lineStart = headline.lineEndByte;
+        if (lineStart >= bufferText.size() || bufferText[lineStart] != '\n')
+            return std::nullopt;
+        ++lineStart;
+
+        const std::size_t newlinePos = bufferText.find('\n', lineStart);
+        const std::size_t lineEnd    = (newlinePos == std::string_view::npos) ? bufferText.size() : newlinePos;
+        auto              planning   = ParsePlanningLineText(bufferText.substr(lineStart, lineEnd - lineStart));
+        if (!planning)
+            return std::nullopt;
+        return PlanningLineSpan{lineStart, lineEnd, std::move(*planning)};
+    }
+
+    // The byte offset where a headline's own "body" begins for structural-
+    // insertion purposes -- right after the headline's own line, or after
+    // its planning line if it has one. Shared by ParsePropertyDrawer (skip
+    // past a planning line before checking for ":PROPERTIES:") and
+    // SetProperty (anchor a freshly-created drawer after it, not before
+    // it). nullopt means "no body at all" -- headline is the buffer's own
+    // last line (with no planning line, since a planning line implies a
+    // following line already exists in Buffer's own line-oriented model).
+    std::optional<std::size_t> HeadlineBodyStart(std::string_view bufferText, const Headline& headline) {
+        if (headline.lineEndByte >= bufferText.size() || bufferText[headline.lineEndByte] != '\n')
+            return std::nullopt;
+        const std::size_t afterHeadline = headline.lineEndByte + 1;
+        if (const auto planLine = FindPlanningLineSpan(bufferText, headline)) {
+            if (planLine->endByte >= bufferText.size() || bufferText[planLine->endByte] != '\n')
+                return std::nullopt; // the planning line is the buffer's own last line -- nothing can follow
+            return planLine->endByte + 1;
+        }
+        return afterHeadline;
+    }
+
+} // namespace
+
+std::optional<OrgTimestamp> ParseTimestamp(std::string_view token) {
+    const std::string tokenStr(token);
+    std::smatch       match;
+    if (!std::regex_match(tokenStr, match, TimestampPattern()))
+        return std::nullopt;
+
+    const char openBracket  = match[1].str()[0];
+    const char closeBracket = match[12].str()[0];
+    if ((openBracket == '<') != (closeBracket == '>'))
+        return std::nullopt; // "<...]" / "[...>" -- mismatched bracket kind
+
+    OrgTimestamp timestamp;
+    timestamp.active = (openBracket == '<');
+
+    const int year  = std::stoi(match[2].str());
+    const int month = std::stoi(match[3].str());
+    const int day   = std::stoi(match[4].str());
+    timestamp.date  = std::chrono::year{year} / std::chrono::month{static_cast<unsigned>(month)} /
+                      std::chrono::day{static_cast<unsigned>(day)};
+    if (!timestamp.date.ok())
+        return std::nullopt; // e.g. "2026-02-30" -- not a real calendar date
+
+    if (match[5].matched) {
+        timestamp.hour   = std::stoi(match[5].str());
+        timestamp.minute = std::stoi(match[6].str());
+        if (*timestamp.hour > 23 || *timestamp.minute > 59)
+            return std::nullopt;
+        if (match[7].matched) {
+            timestamp.endHour   = std::stoi(match[7].str());
+            timestamp.endMinute = std::stoi(match[8].str());
+            if (*timestamp.endHour > 23 || *timestamp.endMinute > 59)
+                return std::nullopt;
+        }
+    }
+
+    if (match[9].matched) {
+        const auto kind = ParseRepeaterMarker(match[9].str());
+        if (!kind)
+            return std::nullopt;
+        timestamp.repeaterKind  = *kind;
+        timestamp.repeaterCount = std::stoi(match[10].str());
+        timestamp.repeaterUnit  = match[11].str()[0];
+        if (timestamp.repeaterCount <= 0)
+            return std::nullopt;
+    }
+
+    return timestamp;
+}
+
+std::string FormatTimestamp(const OrgTimestamp& timestamp) {
+    std::ostringstream out;
+    out << (timestamp.active ? '<' : '[');
+    out << std::setfill('0') << std::setw(4) << static_cast<int>(timestamp.date.year()) << '-' << std::setw(2)
+        << static_cast<unsigned>(timestamp.date.month()) << '-' << std::setw(2) << static_cast<unsigned>(timestamp.date.day());
+    out << ' ' << WeekdayAbbrev(timestamp.date);
+    if (timestamp.hour) {
+        out << ' ' << std::setw(2) << *timestamp.hour << ':' << std::setw(2) << *timestamp.minute;
+        if (timestamp.endHour) {
+            out << '-' << std::setw(2) << *timestamp.endHour << ':' << std::setw(2) << *timestamp.endMinute;
+        }
+    }
+    if (timestamp.repeaterKind != OrgTimestamp::RepeaterKind::None) {
+        out << ' ' << RepeaterMarkerText(timestamp.repeaterKind) << timestamp.repeaterCount << timestamp.repeaterUnit;
+    }
+    out << (timestamp.active ? '>' : ']');
+    return out.str();
+}
+
+std::optional<Planning> ParsePlanning(std::string_view bufferText, const Headline& headline) {
+    if (const auto span = FindPlanningLineSpan(bufferText, headline))
+        return span->planning;
+    return std::nullopt;
+}
+
+void SetPlanning(text::Buffer& buffer, const Headline& headline, const Planning& planning) {
+    std::string newLine;
+    if (planning.scheduled)
+        newLine += "SCHEDULED: " + FormatTimestamp(*planning.scheduled);
+    if (planning.deadline) {
+        if (!newLine.empty())
+            newLine += ' ';
+        newLine += "DEADLINE: " + FormatTimestamp(*planning.deadline);
+    }
+    if (planning.closed) {
+        if (!newLine.empty())
+            newLine += ' ';
+        newLine += "CLOSED: " + FormatTimestamp(*planning.closed);
+    }
+
+    if (const auto existing = FindPlanningLineSpan(buffer.Text(), headline)) {
+        if (newLine.empty()) {
+            // Remove the whole planning line, including its own trailing
+            // newline if it has one -- same "don't leave a blank line
+            // behind" posture DeleteProperty's whole-drawer removal takes.
+            std::size_t deleteEnd = existing->endByte;
+            if (deleteEnd < buffer.Text().size() && buffer.Text()[deleteEnd] == '\n')
+                ++deleteEnd;
+            buffer.DeleteRange(existing->startByte, deleteEnd - existing->startByte);
+        }
+        else {
+            buffer.DeleteRange(existing->startByte, existing->endByte - existing->startByte);
+            buffer.InsertAt(existing->startByte, newLine);
+        }
+        return;
+    }
+
+    if (newLine.empty())
+        return; // nothing to remove, nothing to add
+
+    // No planning line yet -- create one immediately after the headline's
+    // own line, real Org's own position for it (before any property
+    // drawer -- see HeadlineBodyStart's own doc comment for why that
+    // ordering matters).
+    if (headline.lineEndByte < buffer.Text().size()) {
+        buffer.InsertAt(headline.lineEndByte + 1, newLine + "\n");
+    }
+    else {
+        buffer.InsertAt(headline.lineEndByte, "\n" + newLine + "\n");
+    }
+}
+
+std::optional<OrgTimestamp> ParseTimestampInput(std::string_view input, std::chrono::year_month_day today) {
+    const std::string trimmed = TrimWhitespace(input);
+    if (trimmed.empty())
+        return std::nullopt;
+
+    if (CaseInsensitiveEquals(trimmed, "today")) {
+        OrgTimestamp timestamp;
+        timestamp.date = today;
+        return timestamp;
+    }
+    if (CaseInsensitiveEquals(trimmed, "tomorrow")) {
+        OrgTimestamp timestamp;
+        timestamp.date = std::chrono::year_month_day{std::chrono::sys_days{today} + std::chrono::days{1}};
+        return timestamp;
+    }
+
+    // "+N" -- N days from today, real Org's own org-read-date shorthand.
+    static const std::regex relativePattern(R"(^\+(\d+)$)");
+    std::smatch             relativeMatch;
+    if (std::regex_match(trimmed, relativeMatch, relativePattern)) {
+        OrgTimestamp timestamp;
+        const int    offsetDays = std::stoi(relativeMatch[1].str());
+        timestamp.date          = std::chrono::year_month_day{std::chrono::sys_days{today} + std::chrono::days{offsetDays}};
+        return timestamp;
+    }
+
+    // Otherwise expect the absolute form typed without brackets or a
+    // weekday (both are ned's own display-only decoration, computed by
+    // FormatTimestamp) -- wrap it as an active "<...>" timestamp and reuse
+    // ParseTimestamp's own grammar/validation rather than duplicating it.
+    return ParseTimestamp("<" + trimmed + ">");
+}
+
+OrgTimestamp AdvanceTimestamp(const OrgTimestamp& timestamp, std::chrono::year_month_day completedOn) {
+    if (timestamp.repeaterKind == OrgTimestamp::RepeaterKind::None)
+        return timestamp;
+
+    OrgTimestamp result = timestamp;
+    const int    count  = timestamp.repeaterCount;
+    const char   unit   = timestamp.repeaterUnit;
+
+    if (timestamp.repeaterKind == OrgTimestamp::RepeaterKind::Restart) {
+        result.date = AddInterval(completedOn, count, unit);
+        return result;
+    }
+
+    std::chrono::year_month_day next = AddInterval(timestamp.date, count, unit);
+    if (timestamp.repeaterKind == OrgTimestamp::RepeaterKind::CatchUp) {
+        int guard = 0;
+        while (std::chrono::sys_days{next} <= std::chrono::sys_days{completedOn} && guard < 10000) {
+            next = AddInterval(next, count, unit);
+            ++guard;
+        }
+    }
+    result.date = next;
+    return result;
+}
+
 std::optional<PropertyDrawer> ParsePropertyDrawer(std::string_view bufferText, const Headline& headline) {
-    std::size_t lineStart = headline.lineEndByte;
-    if (lineStart >= bufferText.size() || bufferText[lineStart] != '\n')
+    const auto bodyStart = HeadlineBodyStart(bufferText, headline);
+    if (!bodyStart)
         return std::nullopt; // the headline is the buffer's own last line -- no body at all
-    ++lineStart;             // past the headline's own newline, onto the very next line
+    std::size_t lineStart = *bodyStart;
 
     std::size_t newlinePos = bufferText.find('\n', lineStart);
     std::size_t lineEnd    = (newlinePos == std::string_view::npos) ? bufferText.size() : newlinePos;
@@ -1264,14 +1644,14 @@ void SetProperty(text::Buffer& buffer, const Headline& headline, const std::stri
     }
 
     // No drawer at all yet -- create one immediately after the headline's
-    // own line, real Org's own behavior the first time a property is set on
-    // a headline that's never had one.
+    // own line, or its planning line if it has one (HeadlineBodyStart
+    // accounts for that -- see its own doc comment), real Org's own
+    // behavior the first time a property is set on a headline that's never
+    // had one.
     const std::string propertyLine = value.empty() ? (":" + key + ":\n") : (":" + key + ": " + value + "\n");
     const std::string newDrawer    = ":PROPERTIES:\n" + propertyLine + ":END:\n";
-    if (headline.lineEndByte < buffer.Text().size()) {
-        // A following line already exists (blank, body text, a subtree, ...)
-        // -- insert right after the headline's own trailing newline.
-        buffer.InsertAt(headline.lineEndByte + 1, newDrawer);
+    if (const auto bodyStart = HeadlineBodyStart(buffer.Text(), headline)) {
+        buffer.InsertAt(*bodyStart, newDrawer);
     }
     else {
         // The headline is the buffer's very last line, with no trailing
