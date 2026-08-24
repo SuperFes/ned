@@ -28,6 +28,7 @@ const TSLanguage* tree_sitter_org(void);
 const TSLanguage* tree_sitter_yaml(void);
 const TSLanguage* tree_sitter_toml(void);
 const TSLanguage* tree_sitter_clojure(void);
+const TSLanguage* tree_sitter_fish(void);
 }
 
 namespace ned::editor::treesitter {
@@ -106,6 +107,11 @@ std::optional<Language> LanguageByName(std::string_view name) {
     // the jank-lang GitHub org and a repo-wide search directly, not assumed).
     if (name == "clojure") {
         return Language(tree_sitter_clojure());
+    }
+    // ram02z/tree-sitter-fish -- the grammar every real consumer
+    // (nvim-treesitter) builds on.
+    if (name == "fish") {
+        return Language(tree_sitter_fish());
     }
     return std::nullopt;
 }

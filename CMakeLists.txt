@@ -319,25 +319,34 @@ ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter
 # import-target-tree-sitter follow-up: shared by CMode and CppMode below --
 # both grammars define preproc_include identically.
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/c-imports.scm" CImports)
-# gutter-symbol-kind follow-up: the grammar's own real queries/tags.scm
-# (ctags/nvim-treesitter's own "@definition.*"/"@reference.*" convention),
-# consumed unmodified -- same "use the real upstream file directly" approach
-# highlights.scm/folds.scm already establish for grammars without local
-# customization.
-ned_embed_treesitter_query("${tree-sitter-c_SOURCE_DIR}/queries/tags.scm" CTags)
+# gutter-symbol-kind follow-up: a repo-local vendored file, not the grammar's
+# own real queries/tags.scm -- upstream's @definition.function pattern
+# matches any function_declarator regardless of context, which is ambiguous
+# with C's "most vexing parse" (a local variable declared with
+# constructor-call-style syntax parses identically to a function
+# prototype/definition); c-tags.scm's own header comment has the full story,
+# confirmed against a real false positive (see BufferViewSymbolGutterTest.cpp).
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/c-tags.scm" CTags)
 
 ned_add_treesitter_grammar(tree-sitter-cpp https://github.com/tree-sitter/tree-sitter-cpp.git v0.23.4)
 
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/cpp.scm" Cpp)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/cpp-folds.scm" CppFolds)
-ned_embed_treesitter_query("${tree-sitter-cpp_SOURCE_DIR}/queries/tags.scm" CppTags)
+# Same vendored-not-upstream reasoning as CTags above -- see cpp-tags.scm's
+# own header comment.
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/cpp-tags.scm" CppTags)
 
 ned_add_treesitter_grammar(tree-sitter-php https://github.com/tree-sitter/tree-sitter-php.git v0.24.2 php)
 
 ned_embed_treesitter_query("${tree-sitter-php_SOURCE_DIR}/queries/highlights.scm" Php)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/php-imports.scm" PhpImports)
-# gutter-symbol-kind follow-up: see CTags' own comment above (Source/Editor/
-# TreeSitter/Queries.h).
+# gutter-symbol-kind follow-up: the grammar's own real queries/tags.scm
+# (ctags/nvim-treesitter's own "@definition.*"/"@reference.*" convention),
+# consumed unmodified -- same "use the real upstream file directly" approach
+# highlights.scm/folds.scm already establish for grammars without local
+# customization (Source/Editor/TreeSitter/Queries.h). Unlike CTags/CppTags
+# above, PHP's own tags.scm has no "most vexing parse"-style ambiguity to fix
+# -- see c-tags.scm's own header comment for why those two needed vendoring.
 ned_embed_treesitter_query("${tree-sitter-php_SOURCE_DIR}/queries/tags.scm" PhpTags)
 
 ned_add_treesitter_grammar(tree-sitter-javascript https://github.com/tree-sitter/tree-sitter-javascript.git v0.25.0)
@@ -345,8 +354,9 @@ ned_add_treesitter_grammar(tree-sitter-javascript https://github.com/tree-sitter
 ned_embed_treesitter_query("${tree-sitter-javascript_SOURCE_DIR}/queries/highlights.scm" JavaScript)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/javascript-folds.scm" JavaScriptFolds)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/javascript-imports.scm" JavaScriptImports)
-# gutter-symbol-kind follow-up: see CTags' own comment above for why this is
-# the grammar's real, unmodified queries/tags.scm.
+# gutter-symbol-kind follow-up: see PhpTags' own comment above -- the
+# grammar's real, unmodified queries/tags.scm; no vendoring needed here
+# either.
 ned_embed_treesitter_query("${tree-sitter-javascript_SOURCE_DIR}/queries/tags.scm" JavaScriptTags)
 
 ned_fetch_treesitter_source(tree-sitter-typescript-src https://github.com/tree-sitter/tree-sitter-typescript.git v0.23.2)
@@ -359,7 +369,7 @@ ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter
 # import-target-tree-sitter follow-up: shared by TypeScriptMode and TsxMode,
 # same sharing as the highlight/fold queries above.
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/typescript-imports.scm" TypeScriptImports)
-# gutter-symbol-kind follow-up: see CTags' own comment above; shared by
+# gutter-symbol-kind follow-up: see PhpTags' own comment above; shared by
 # TypeScriptMode and TsxMode, same sharing as the highlight/fold/imports
 # queries above.
 ned_embed_treesitter_query("${tree-sitter-typescript-src_SOURCE_DIR}/queries/tags.scm" TypeScriptTags)
@@ -378,7 +388,7 @@ ned_add_treesitter_grammar(tree-sitter-python https://github.com/tree-sitter/tre
 ned_embed_treesitter_query("${tree-sitter-python_SOURCE_DIR}/queries/highlights.scm" Python)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/python-folds.scm" PythonFolds)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/python-imports.scm" PythonImports)
-# gutter-symbol-kind follow-up: see CTags' own comment above.
+# gutter-symbol-kind follow-up: see PhpTags' own comment above.
 ned_embed_treesitter_query("${tree-sitter-python_SOURCE_DIR}/queries/tags.scm" PythonTags)
 
 ned_add_treesitter_grammar(tree-sitter-bash https://github.com/tree-sitter/tree-sitter-bash.git v0.25.1)
@@ -423,6 +433,13 @@ ned_add_treesitter_grammar(tree-sitter-clojure https://github.com/sogaiu/tree-si
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/clojure.scm" Clojure)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/clojure-folds.scm" ClojureFolds)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/clojure-imports.scm" ClojureImports)
+
+# ram02z/tree-sitter-fish -- the grammar every real consumer (nvim-treesitter)
+# builds on, ships a pre-generated src/parser.c+scanner.c and a real
+# queries/highlights.scm, the same bar every other bundled grammar here meets.
+ned_add_treesitter_grammar(tree-sitter-fish https://github.com/ram02z/tree-sitter-fish.git 3.7.0)
+
+ned_embed_treesitter_query("${tree-sitter-fish_SOURCE_DIR}/queries/highlights.scm" Fish)
 #------------------------------------------------------------------------------
 
 #--- Fetch Catch2 --------------------------------------------------------------
@@ -584,6 +601,17 @@ target_include_directories(ned_lib
         PUBLIC Source
         PUBLIC ${Janet_INCLUDE_DIRS})
 
+# Janet_LIBRARIES is just the bare library name ("janet"), not a full path --
+# pkg_check_modules doesn't add -L for it, so linking relies on the bare
+# "-ljanet" resolving via the linker's own implicit default search path.
+# That's true often enough to go unnoticed (works with GNU ld's Debian/Ubuntu
+# default search list, or when Janet happens to already be installed
+# somewhere already on the default path), but broke under lld on a fresh CI
+# runner where /usr/local/lib (where CI's own `make install` puts it) isn't
+# implicitly searched -- ld.lld: unable to find library -ljanet. Explicit
+# target_link_directories is what actually fixes it, not luck.
+target_link_directories(ned_lib PUBLIC ${Janet_LIBRARY_DIRS})
+
 target_link_libraries(ned_lib
         PUBLIC ${Janet_LIBRARIES}
         # Every widget (Widget/KeyTranslation/Theme/EventLoop/Layout and every
@@ -619,6 +647,7 @@ target_link_libraries(ned_lib
         PUBLIC tree-sitter-yaml
         PUBLIC tree-sitter-toml
         PUBLIC tree-sitter-clojure
+        PUBLIC tree-sitter-fish
         PRIVATE ${CMAKE_DL_LIBS}
         # internal-project-search follow-up: only ProjectSearch.cpp's own
         # implementation includes RE2 headers, so this stays off the public
