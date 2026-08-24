@@ -29,6 +29,7 @@ Notcurses.
 ## Open Items
 
 ### Embedded Language
+
 - [ ] **Jank replaces Janet** - Once I'm able to do so, I'd love to replace our
       internal scripting representation to move to [jank](https://github.com/jank-lang/jank)
 
@@ -53,8 +54,7 @@ Notcurses.
       `<lang>/<name>` tier would prepend to later, and markdown's hardcoded
       `punctuation.special` special case in `Mode.cpp` is the first candidate to
       migrate onto it), per-capture styling in the Minimap (class-level only
-      there), and theme-file serialization of capture overrides (overlaps the
-      bold/italic round-trip loose end below).
+      there), and theme-file serialization of capture overrides.
 - [ ] Go-to-file-at-point for import/include directives (v1 shipped:
       `Mode::importTarget`, a tree-sitter-query-driven capability mirroring
       `Mode::fold`/`expandSelection`'s "one function pointer per capability"
@@ -141,111 +141,6 @@ Notcurses.
       hook is wired, so a huge file inside a restored session still loads
       synchronously at startup.
 
-### Org & structured editing (v1 shipped; this is v2+)
-
-- [x] ~~Agenda view: date/deadline-driven scheduling.~~ ~~Scheduling/deadlines with real
-      date/recurrence logic.~~ Shipped together (the agenda always needed real timestamp
-      parsing first): `Org.h`'s `OrgTimestamp`/`ParseTimestamp`/`FormatTimestamp` (real
-      Org's own bracket syntax, weekday always derived/recomputed, never trusted from the
-      buffer) and `Planning`/`ParsePlanning`/`SetPlanning` (the SCHEDULED:/DEADLINE:/CLOSED:
-      plan line immediately after a headline, ahead of its property drawer if it has one —
-      `ParsePropertyDrawer`/`SetProperty` both gained a small `HeadlineBodyStart` fix to skip
-      past it). `org-schedule`/`org-deadline` (`C-c C-s`/`C-c C-d`, deliberately shadowing
-      the global project-search/create-directory bindings the same way `C-c C-p` already
-      does) prompt for a date accepting `today`/`tomorrow`/`+N` shorthand or an absolute
-      `YYYY-MM-DD[ HH:MM[-HH:MM]][ repeater]` (`ParseTimestampInput`, real Org's own
-      `org-read-date`-style free typing, distinct from `ParseTimestamp`'s canonical-syntax
-      reader). Recurrence: `AdvanceTimestamp` implements all three repeater-cookie kinds
-      (`+`/`++`/`.+`) via `std::chrono` date arithmetic (a month/year repeater landing on a
-      calendar-invalid day clamps to that month's own last real day); `CycleTodoKeywordAtPoint`
-      hooks this in directly — completing a repeating headline advances its timestamp(s) and
-      resets to the first configured keyword rather than ever landing on the done state (a
-      deliberate simplification against real Org's `CLOSED:`-logging, netting out the same
-      practical outcome). The agenda itself (`org-agenda`, `C-c a`) is `ProjectAgenda.h`'s
-      `CollectAgendaItems`, bucketing every active headline into Overdue/Today/Upcoming/Undated
-      (a DEADLINE: preferred over a SCHEDULED: when both are set) and rendering as a genuinely
-      sectioned `Editor/Multibuffer.h` view (`BufferView::BuildAgendaMultibuffer`, one excerpt
-      per item, modeled directly on `RequestDiagnosticsBuffer`'s own shape) rather than the
-      flat `SearchMatch` list `CollectProjectTodos` used to build — jump-to-source works for
-      free via the existing `MultibufferIndexFor` path every other multibuffer consumer
-      already shares. Same disk-only-scan posture `ProjectSearch`/`ProjectReplace` already
-      have (an open buffer's live unsaved edits don't show until saved) — a pre-existing,
-      codebase-wide convention for every project-wide scan, not something new here.
-- [x] ~~Property drawers.~~ Shipped: `Org.h`'s `ParsePropertyDrawer`/`GetProperty`/
-      `SetProperty`/`DeleteProperty` (plus `*AtPoint` wrappers), real Org's
-      `:PROPERTIES: ... :END:` block immediately following a headline's own line.
-      `org-set-property`/`org-delete-property` (`C-c C-x p`/`C-c C-x d`) are the
-      command surface — set-property is a two-stage prompt (name, then value,
-      pre-filled if the property already has one), the one `BufferView` session in
-      this codebase besides `RenameFile` shaped that way. `FindHeadlineByCustomId`
-      closes the gap `FindHeadlineByTitle`'s own doc comment used to name explicitly
-      — `[[#custom-id]]` links now resolve via `OpenLinkAtPoint` alongside the
-      existing `[[*Headline Title]]` form.
-- [x] ~~Capture templates.~~ Shipped: `Editor/OrgCapture.h`, a process-wide,
-      mutex-guarded, Janet-only registry (`ned/org-capture-register-template`) of
-      named templates keyed by a single character; `org-capture` (`C-c k` — real
-      Org's own `C-c c` is already `acp-toggle-panel` here) reads that one further
-      character (`BufferView::HandleOrgCaptureKey`, same "no `MinibufferPrompt`"
-      shape `HandleRegisterKey`/`HandleZapToCharKey` already establish) and expands
-      the matched template straight into its target file/buffer, switching the
-      active pane to it — no separate finalize (`C-c C-c`) step, because unlike real
-      Org's temporary indirect capture buffer, this inserts directly into the real
-      target file the user is then just editing normally. Deliberate v1 cuts: `%?`
-      is the only escape (marks where point lands; no `%U`/`%a`/`%i`/timestamps),
-      headline targeting is an exact-title match only (`ParseOutline` +
-      `SubtreeEndLine`, falling back to end-of-file — and reporting which — if the
-      title isn't found or none was configured), no bundled default templates, and
-      no "silent"/no-buffer-switch capture variant.
-- [x] ~~Clocking/time tracking.~~ Shipped: `Org.h`'s `ParseLogbookDrawer` →
-      `LogbookDrawer`/`ClockEntry`, real Org's own `:LOGBOOK: ... :END:` drawer of
-      `CLOCK: [start]--[end] =>  H:MM` lines (a still-running entry is just
-      `CLOCK: [start]`), mirroring `ParsePropertyDrawer`'s scan-until-`:END:` shape with
-      its own line grammar — `ClockEntry::duration` is always recomputed from
-      start/end at parse time, never trusted from the buffer's own `=>  H:MM` text.
-      `org-clock-in`/`org-clock-out` (`C-c C-x i`/`C-c C-x o`) are no-prompt direct
-      commands, same shape `org-cycle-todo` already established. Deliberate placement
-      simplification: LOGBOOK always sits after a headline's property drawer if it has
-      one (or after planning if it doesn't), never between them the way real Org's
-      `org-clock-into-drawer` more commonly places it — keeps `HeadlineBodyStart`/
-      `ParsePropertyDrawer` completely untouched. Deliberate keychord deviation: real
-      Org's own `C-c C-x C-i`/`C-c C-x C-o` aren't used — Ctrl-I is byte-identical to Tab
-      over a raw terminal with no Kitty keyboard protocol assumed, so this binds a plain
-      `i`/`o` instead, following the same prefix's own `p`/`d` precedent (property
-      set/delete). Two things confirmed out of scope for v1: `ClockInAtPoint` enforces
-      "at most one running clock in the whole buffer" by refusing (reporting which other
-      headline is running) rather than auto-clocking it out the way real Org's default
-      does — no command silently edits a headline other than the one at point.
-- [x] ~~Clock display: live modeline indicator, subtree rollup, and a clock-report
-      view.~~ Shipped, 2026-08-24: `Org.h`'s `CurrentlyRunningClock` (public
-      counterpart of `ClockInAtPoint`/`ClockOut`'s own internal scan, returning the
-      running headline plus its entry's start time) and `ElapsedMinutes` (`now -
-      start`, the same `ClockDuration` arithmetic `ClockOut` itself uses) back
-      `ModeLine`'s new live `⏱ <title> H:MM` segment — shown only in org-mode,
-      recomputed fresh every `Paint()` call like the existing spinner frame, no timer.
-      Deliberately buffer-scoped, not global: clock state was never tracked across
-      buffers in this codebase (see this file's own item 8 above), so the indicator
-      only shows while the clocked-in buffer is the active one, matching
-      `ClockInAtPoint`/`ClockOut`'s own existing scope. `TotalClockedMinutesForSubtree`
-      (recursive sum over a `BuildHeadlineTree` node, real Org's own clock-report
-      rollup) backs the new `org-clock-report` command (`C-c C-x r`, the same prefix
-      `i`/`o`/`p`/`d` already share) — a `*clock report*` `Editor/Multibuffer.h` view
-      (`BufferView::BuildClockReportMultibuffer`, `BuildAgendaMultibuffer`'s own shape)
-      listing every headline in the *current* buffer with a nonzero own-or-subtree
-      total, each showing "own H:MM / subtree H:MM"; jump-to-source (`C-c C-v`) works
-      for free via the shared `MultibufferIndexFor` path every other multibuffer
-      consumer uses. Scoped to the active buffer, not project-wide like `org-agenda` —
-      clocking commands are themselves buffer-scoped, and a real project-wide clock
-      report would need per-file scanning `CollectAgendaItems` already does but this
-      didn't need to add. Testing note: this work also fixed a pre-existing
-      `Tests/BufferViewTest.cpp` bug — its shared `Fixture` never called
-      `Editor/Multibuffer.h`'s `ClearRegistryForTesting()` between tests (unlike three
-      sibling test files that already do), so a `Buffer` destroyed at one multibuffer
-      test's end could leave a stale registry entry a later, unrelated test's freshly
-      allocated `Buffer` spuriously "inherited" at a reused address — confirmed live,
-      surfaced by this follow-up's own new multibuffer-building test tipping the file
-      over into visibly order-dependent failures; fixed by adding the same
-      `RegistryResetGuard` pattern to `BufferViewTest.cpp`'s shared `Fixture` the three
-      other files already use.
 ### Editor ergonomics
 
 - [ ] Terminal panel round 2 (v1 shipped: libvterm-backed drawer over the
@@ -349,8 +244,7 @@ Notcurses.
       already does that job. Worth revisiting only if a second real consumer shows up
       (an embedding use case, a separate CLI tool, ...) — would need symbol-visibility
       curation (everything's exported by default today) and SONAME/ABI-versioning
-      discipline, neither of which pays for itself with zero external consumers. Raised
-      during the Gentoo packaging follow-up below.
+      discipline, neither of which pays for itself with zero external consumers.
 - [ ] Hunk unstage matches point against the *cached* staged diff, which drifts when
       unstaged edits exist earlier in the file — exact in the common
       stage-then-undo flow; revisit only if it bites.
