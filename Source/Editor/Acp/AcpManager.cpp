@@ -316,6 +316,12 @@ std::string AcpManager::StopSession() {
     return "ACP session stopped.";
 }
 
+void AcpManager::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
+    if (client_) {
+        client_->ExpireStaleRequests(maxAge);
+    }
+}
+
 void AcpManager::WireClient(AcpClient& client) {
     client.SetNotificationHandler("session/update", [this](const Json& params) { HandleSessionUpdate(params); });
 

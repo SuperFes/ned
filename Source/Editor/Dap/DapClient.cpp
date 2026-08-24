@@ -24,11 +24,13 @@ void DapClient::StartReadLoop() {
             try {
                 frame = transport_.ReadFrame(); // blocks
             }
-            catch (const std::exception&) {
-                eventLoop_.Post([this] {
-                    LogMessage(LogCategory::Dap, LogSeverity::Warning, "malformed frame from adapter");
+            catch (const std::exception& e) {
+                // Malformed frame, or (subprocess-hang-protection follow-up)
+                // a mid-frame stall -- see LspClient.cpp's identical comment.
+                eventLoop_.Post([this, reason = std::string(e.what())] {
+                    LogMessage(LogCategory::Dap, LogSeverity::Warning, reason);
                     if (onDisconnected_) {
-                        onDisconnected_("malformed frame from adapter");
+                        onDisconnected_(reason);
                     }
                 });
                 return;
@@ -69,7 +71,7 @@ void DapClient::DispatchFrame(const std::string& frameText) {
         if (it == pending_.end()) {
             return; // unknown/already-handled request_seq — ignore
         }
-        ResponseCallback callback = std::move(it->second);
+        ResponseCallback callback = std::move(it->second.callback);
         pending_.erase(it);
         if (callback) {
             const bool success = message.value("success", false);
@@ -97,7 +99,7 @@ void DapClient::DispatchFrame(const std::string& frameText) {
 
 void DapClient::SendRequest(const std::string& command, Json arguments, ResponseCallback callback) {
     const int seq      = nextSeq_++;
-    pending_[seq]      = std::move(callback);
+    pending_[seq]      = PendingRequest{std::move(callback), std::chrono::steady_clock::now()};
     const Json message = {
         {"seq", seq},
         {"type", "request"},
@@ -105,6 +107,28 @@ void DapClient::SendRequest(const std::string& command, Json arguments, Response
         {"arguments", std::move(arguments)},
     };
     transport_.WriteFrame(message.dump());
+}
+
+void DapClient::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
+    // subprocess-hang-protection follow-up -- see LspClient::ExpireStaleRequests's
+    // identical reasoning/collect-then-invoke shape.
+    const std::chrono::steady_clock::time_point   now = std::chrono::steady_clock::now();
+    std::vector<std::pair<int, ResponseCallback>> expired;
+    for (auto it = pending_.begin(); it != pending_.end();) {
+        if (now - it->second.sentAt >= maxAge) {
+            expired.emplace_back(it->first, std::move(it->second.callback));
+            it = pending_.erase(it);
+        }
+        else {
+            ++it;
+        }
+    }
+    for (auto& [seq, callback] : expired) {
+        LogMessage(LogCategory::Dap, LogSeverity::Warning, "request " + std::to_string(seq) + " timed out waiting for a response");
+        if (callback) {
+            callback(false, Json::object(), "ned: request timed out waiting for a response");
+        }
+    }
 }
 
 void DapClient::SetEventHandler(std::string event, EventHandler handler) {

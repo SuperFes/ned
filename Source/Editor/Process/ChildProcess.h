@@ -17,6 +17,7 @@
 #ifndef NED_EDITOR_PROCESS_CHILDPROCESS_H
 #define NED_EDITOR_PROCESS_CHILDPROCESS_H
 
+#include <chrono>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -76,6 +77,18 @@ class ChildProcess {
     // an empty string on EOF (the child exited and closed its end). Throws
     // std::runtime_error on a genuine read error.
     [[nodiscard]] std::string ReadSome() const;
+
+    // subprocess-hang-protection follow-up. True if the read end has data
+    // (or EOF) ready within timeout; false if it timed out with nothing
+    // ready. poll()-based -- the shared primitive every byte-level framing
+    // reader (Lsp/Acp Transport) and ReadSome(timeout) below build on. Throws
+    // std::runtime_error on a genuine poll() error.
+    [[nodiscard]] bool WaitReadable(std::chrono::milliseconds timeout) const;
+
+    // Same contract as ReadSome() above, except returns std::nullopt instead
+    // of blocking indefinitely when nothing arrives within timeout. Empty
+    // string still means EOF; a non-empty string is real data.
+    [[nodiscard]] std::optional<std::string> ReadSome(std::chrono::milliseconds timeout) const;
 
     // Raw fd accessors -- Transport's own byte-at-a-time frame parsing
     // (ReadLine/ReadExact) needs direct fd access rather than ReadSome's

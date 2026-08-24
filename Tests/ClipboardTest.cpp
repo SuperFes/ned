@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <chrono>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -18,20 +19,20 @@ using ned::editor::SetClipboardPasteCommand;
 
 namespace {
 
-    // ClipboardTestGuard.cpp forces ClipboardEnabled() false for the whole
-    // ned_tests binary (so a kill-ring/yank command test elsewhere never
-    // accidentally shells out to whatever clipboard tooling happens to be
-    // installed, or hangs waiting on a display server that doesn't exist in
-    // CI) -- every test here that flips it back on must restore that
-    // steady state before returning, even on an assertion failure. Mirrors
-    // Tests/ProseCheckerTest.cpp's RestoreProseCheckingDisabled exactly.
-    struct RestoreClipboardDisabled {
-        ~RestoreClipboardDisabled() {
-            SetClipboardCopyCommand({});
-            SetClipboardPasteCommand({});
-            SetClipboardEnabled(false);
-        }
-    };
+// ClipboardTestGuard.cpp forces ClipboardEnabled() false for the whole
+// ned_tests binary (so a kill-ring/yank command test elsewhere never
+// accidentally shells out to whatever clipboard tooling happens to be
+// installed, or hangs waiting on a display server that doesn't exist in
+// CI) -- every test here that flips it back on must restore that
+// steady state before returning, even on an assertion failure. Mirrors
+// Tests/ProseCheckerTest.cpp's RestoreProseCheckingDisabled exactly.
+struct RestoreClipboardDisabled {
+    ~RestoreClipboardDisabled() {
+        SetClipboardCopyCommand({});
+        SetClipboardPasteCommand({});
+        SetClipboardEnabled(false);
+    }
+};
 
 } // namespace
 
@@ -128,4 +129,14 @@ TEST_CASE("PasteFromSystemClipboard returns nullopt when the resolved command ex
     SetClipboardPasteCommand({"sh", "-c", "exit 1"});
 
     REQUIRE_FALSE(PasteFromSystemClipboard().has_value());
+}
+
+TEST_CASE("PasteFromSystemClipboard kills and returns nullopt when the tool hangs past readTimeout", "[Clipboard]") {
+    // subprocess-hang-protection follow-up.
+    const RestoreClipboardDisabled restore;
+
+    SetClipboardEnabled(true);
+    SetClipboardPasteCommand({"sh", "-c", "sleep 100"});
+
+    REQUIRE_FALSE(PasteFromSystemClipboard(std::chrono::milliseconds(100)).has_value());
 }

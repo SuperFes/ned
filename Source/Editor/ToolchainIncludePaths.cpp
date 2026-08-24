@@ -9,6 +9,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "DiagnosticsLog.h"
 #include "Process/ChildProcess.h"
 
 namespace ned::editor {
@@ -40,7 +41,7 @@ namespace {
         std::vector<std::filesystem::path> paths;
         std::istringstream                 stream(probeOutput);
         std::string                        line;
-        bool                                inList = false;
+        bool                               inList = false;
         while (std::getline(stream, line)) {
             if (!inList) {
                 if (line.find("#include <...> search starts here:") != std::string::npos) {
@@ -94,7 +95,8 @@ namespace {
 
 } // namespace
 
-std::optional<std::vector<std::filesystem::path>> QueryToolchainIncludePaths(const std::string& language) {
+std::optional<std::vector<std::filesystem::path>> QueryToolchainIncludePaths(const std::string&        language,
+                                                                             std::chrono::milliseconds readTimeout) {
     const auto compilerAndFlag = CompilerAndLanguageFlagFor(language);
     if (!compilerAndFlag) {
         return std::nullopt;
@@ -107,13 +109,21 @@ std::optional<std::vector<std::filesystem::path>> QueryToolchainIncludePaths(con
 
     try {
         process::ChildProcess proc({compiler, "-E", "-v", languageFlag, "/dev/null"}, process::StderrMode::MergeWithStdout);
-        std::string            output;
+        std::string           output;
         for (;;) {
-            const std::string chunk = proc.ReadSome();
-            if (chunk.empty()) {
+            const std::optional<std::string> chunk = proc.ReadSome(readTimeout);
+            if (!chunk) {
+                // subprocess-hang-protection follow-up: killed rather than
+                // hanging the main thread -- see this function's own header
+                // comment.
+                proc.Kill();
+                LogMessage(LogCategory::Subprocess, LogSeverity::Warning, compiler + " -E -v timed out, killed");
+                return std::nullopt;
+            }
+            if (chunk->empty()) {
                 break; // EOF
             }
-            output += chunk;
+            output += *chunk;
         }
         proc.WaitForExit();
 
@@ -131,7 +141,7 @@ std::vector<std::filesystem::path> ToolchainIncludePathsForLanguage(const std::s
 
     std::filesystem::path cachePath;
     bool                  haveCachePath = false;
-    nlohmann::json         cache         = nlohmann::json::object();
+    nlohmann::json        cache         = nlohmann::json::object();
     try {
         cachePath     = ToolchainIncludePathsCachePath();
         haveCachePath = true;

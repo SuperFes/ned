@@ -1,6 +1,7 @@
 #include "Transport.h"
 
 #include <cerrno>
+#include <chrono>
 #include <cstring>
 #include <stdexcept>
 
@@ -16,12 +17,22 @@ namespace {
     // never to over-read past the header/body boundary, which byte-at-a-time
     // reading sidesteps for free. Returns false on EOF before any byte of a
     // new line was read (a clean "the server exited" signal); throws on a
-    // genuine read error.
-    bool ReadLine(int fd, std::string& line) {
+    // genuine read error. waitFirstByteUnbounded must be true only for the
+    // very first line of a fresh frame -- an idle connection between
+    // messages is normal and must never be mistaken for a stall; every other
+    // byte (including this call's own 2nd+ byte, when false) is bounded by
+    // stallTimeout.
+    bool ReadLine(const process::ChildProcess& child, std::string& line, bool waitFirstByteUnbounded,
+                  std::chrono::milliseconds stallTimeout) {
         line.clear();
+        bool first = true;
         while (true) {
+            if (!(first && waitFirstByteUnbounded) && !child.WaitReadable(stallTimeout)) {
+                throw std::runtime_error("ned: LSP transport stalled mid-frame");
+            }
+            first                = false;
             char          ch     = 0;
-            const ssize_t result = ::read(fd, &ch, 1);
+            const ssize_t result = ::read(child.ReadFd(), &ch, 1);
             if (result < 0) {
                 if (errno == EINTR) {
                     continue;
@@ -42,11 +53,17 @@ namespace {
     }
 
     // Reads exactly n bytes into buffer, looping over ::read() for partial
-    // reads/EINTR. Returns false on EOF before n bytes were read.
-    bool ReadExact(int fd, char* buffer, std::size_t n) {
+    // reads/EINTR. Returns false on EOF before n bytes were read. Always
+    // called for a frame's body, i.e. always after headers have already
+    // started arriving -- every byte is bounded by stallTimeout, no
+    // unbounded-first-byte exception the way ReadLine has.
+    bool ReadExact(const process::ChildProcess& child, char* buffer, std::size_t n, std::chrono::milliseconds stallTimeout) {
         std::size_t got = 0;
         while (got < n) {
-            const ssize_t result = ::read(fd, buffer + got, n - got);
+            if (!child.WaitReadable(stallTimeout)) {
+                throw std::runtime_error("ned: LSP transport stalled mid-frame");
+            }
+            const ssize_t result = ::read(child.ReadFd(), buffer + got, n - got);
             if (result < 0) {
                 if (errno == EINTR) {
                     continue;
@@ -75,16 +92,17 @@ void Transport::WriteFrame(std::string_view jsonPayload) const {
     child_.WriteAll(jsonPayload);
 }
 
-std::optional<std::string> Transport::ReadFrame() const {
+std::optional<std::string> Transport::ReadFrame(std::chrono::milliseconds stallTimeout) const {
     std::size_t contentLength    = 0;
     bool        sawContentLength = false;
-    const int   fd               = child_.ReadFd();
+    bool        firstLine        = true; // only this call gets an unbounded wait for its first byte -- see ReadLine's own doc comment
 
     while (true) {
         std::string line;
-        if (!ReadLine(fd, line)) {
+        if (!ReadLine(child_, line, firstLine, stallTimeout)) {
             return std::nullopt; // EOF before any header -- clean "server exited" between frames
         }
+        firstLine = false;
         if (line.empty()) {
             break; // blank line terminates the header block
         }
@@ -106,7 +124,7 @@ std::optional<std::string> Transport::ReadFrame() const {
     }
 
     std::string body(contentLength, '\0');
-    if (!ReadExact(fd, body.data(), contentLength)) {
+    if (!ReadExact(child_, body.data(), contentLength, stallTimeout)) {
         return std::nullopt; // EOF mid-body -- server exited mid-message
     }
     return body;

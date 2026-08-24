@@ -1,6 +1,7 @@
 #include "Transport.h"
 
 #include <cerrno>
+#include <chrono>
 #include <cstring>
 #include <stdexcept>
 
@@ -20,11 +21,19 @@ namespace {
     // genuine read error. EOF *mid*-line (some bytes read, then EOF with no
     // terminating '\n') is treated as a malformed final message, not a clean
     // disconnect -- matches Transport::ReadFrame's own "EOF mid-body" case.
-    bool ReadLine(int fd, std::string& line) {
+    // The first byte of a message waits unbounded (idle between messages is
+    // normal); every byte after that is bounded by stallTimeout -- once a
+    // message has started arriving, further silence is anomalous.
+    bool ReadLine(const process::ChildProcess& child, std::string& line, std::chrono::milliseconds stallTimeout) {
         line.clear();
+        bool first = true;
         while (true) {
+            if (!first && !child.WaitReadable(stallTimeout)) {
+                throw std::runtime_error("ned: ACP transport stalled mid-message");
+            }
+            first                = false;
             char          ch     = 0;
-            const ssize_t result = ::read(fd, &ch, 1);
+            const ssize_t result = ::read(child.ReadFd(), &ch, 1);
             if (result < 0) {
                 if (errno == EINTR) {
                     continue;
@@ -57,9 +66,9 @@ void Transport::WriteMessage(std::string_view jsonPayload) const {
     child_.WriteAll("\n");
 }
 
-std::optional<std::string> Transport::ReadMessage() const {
+std::optional<std::string> Transport::ReadMessage(std::chrono::milliseconds stallTimeout) const {
     std::string line;
-    if (!ReadLine(child_.ReadFd(), line)) {
+    if (!ReadLine(child_, line, stallTimeout)) {
         return std::nullopt;
     }
     return line;

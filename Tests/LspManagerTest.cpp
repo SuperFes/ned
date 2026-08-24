@@ -55,7 +55,7 @@ struct FakeServer {
     FakeServer(FakeServer&&)                 = default;
 
     static FakeServer Create(LspManager& manager, const std::string& language, ned::ui::EventLoop& eventLoop, LspClient*& outClient,
-                            const Json& workspaceConfiguration = Json::object()) {
+                             const Json& workspaceConfiguration = Json::object()) {
         int clientWritesHere[2]; // client's write end -> test's read end
         int clientReadsHere[2];  // test's write end -> client's read end
         REQUIRE(::pipe(clientWritesHere) == 0);
@@ -239,6 +239,36 @@ TEST_CASE("LspManager::RequestHover round-trips a real request/response through 
     REQUIRE(invoked);
     REQUIRE(gotText.has_value());
     REQUIRE(*gotText == "it's an int");
+}
+
+TEST_CASE("LspManager::ExpireStaleRequests reaches an injected client's own pending request", "[Lsp]") {
+    // subprocess-hang-protection follow-up: confirms the manager-level sweep
+    // actually forwards to a real running client, not just LspClient's own
+    // already-covered unit behavior.
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    Buffer&            buffer = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-lsp-manager-expire-test.txt");
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead);
+
+    bool                       invoked = false;
+    std::optional<std::string> gotText;
+    manager.RequestHover(buffer, 0, [&](std::optional<std::string> text) {
+        invoked = true;
+        gotText = text;
+    });
+    (void)ReadRawFrame(server.serverStdinRead); // drain the hover request itself
+    REQUIRE_FALSE(invoked);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    manager.ExpireStaleRequests(std::chrono::milliseconds(1));
+
+    REQUIRE(invoked);
+    REQUIRE_FALSE(gotText.has_value()); // synthetic timeout resolves like any other error response
 }
 
 TEST_CASE("LspManager::RequestHover resolves to nullopt on a JSON-RPC error response", "[Lsp]") {
@@ -436,7 +466,7 @@ TEST_CASE("A rapid burst of publishes collapses into a single application using 
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
     LspManager                  manager(bufferList, eventLoop);
-    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned-lsp-manager-diagnostics-burst-test.txt";
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-diagnostics-burst-test.txt";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
     buffer.InsertAtPoint("bad code bad code bad code");
 
@@ -705,8 +735,8 @@ TEST_CASE("LspManager::ExecuteCommand reports failure on a JSON-RPC error respon
     bool gotOk = true;
     manager.ExecuteCommand(buffer, {}, "unknown.command", Json::array(), [&](bool ok) { gotOk = ok; });
 
-    const std::string raw = ReadRawFrame(server.serverStdinRead);
-    const Json response    = {{"jsonrpc", "2.0"}, {"id", RequestIdFromFrame(raw)}, {"error", {{"code", -32601}, {"message", "unknown command"}}}};
+    const std::string raw      = ReadRawFrame(server.serverStdinRead);
+    const Json        response = {{"jsonrpc", "2.0"}, {"id", RequestIdFromFrame(raw)}, {"error", {{"code", -32601}, {"message", "unknown command"}}}};
     client->DispatchFrame(response.dump());
 
     REQUIRE_FALSE(gotOk);
@@ -1245,7 +1275,7 @@ TEST_CASE("A second publish from one source replaces only that source's own diag
     // new message's content instead.
     WaitUntil(eventLoop, [&] {
         return std::any_of(buffer.Diagnostics().begin(), buffer.Diagnostics().end(),
-                            [](const Buffer::Diagnostic& d) { return d.message == "second error"; });
+                           [](const Buffer::Diagnostic& d) { return d.message == "second error"; });
     });
 
     REQUIRE(buffer.Diagnostics().size() == 2);

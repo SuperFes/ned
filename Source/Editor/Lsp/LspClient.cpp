@@ -21,13 +21,11 @@ LspClient::~LspClient() {
     }
 }
 
-LspClient::LspClient(std::vector<std::string> argv, ned::ui::EventLoop& eventLoop)
-    : transport_(std::move(argv)), eventLoop_(eventLoop), handshakeComplete_(false) {
+LspClient::LspClient(std::vector<std::string> argv, ned::ui::EventLoop& eventLoop) : transport_(std::move(argv)), eventLoop_(eventLoop), handshakeComplete_(false) {
     StartReadLoop();
 }
 
-LspClient::LspClient(Transport transport, ned::ui::EventLoop& eventLoop, bool startHandshakeComplete)
-    : transport_(std::move(transport)), eventLoop_(eventLoop), handshakeComplete_(startHandshakeComplete) {
+LspClient::LspClient(Transport transport, ned::ui::EventLoop& eventLoop, bool startHandshakeComplete) : transport_(std::move(transport)), eventLoop_(eventLoop), handshakeComplete_(startHandshakeComplete) {
     StartReadLoop();
 }
 
@@ -43,16 +41,21 @@ void LspClient::StartReadLoop() {
             try {
                 frame = transport_.ReadFrame(); // blocks
             }
-            catch (const std::exception&) {
-                // malformed frame -- stop this connection's read loop
-                // rather than looping on a corrupt stream. error-visibility
-                // follow-up: previously a silent return; now reported via
+            catch (const std::exception& e) {
+                // malformed frame, or (subprocess-hang-protection follow-up)
+                // a mid-frame stall Transport::ReadFrame detected -- stop
+                // this connection's read loop rather than looping on a
+                // corrupt/stuck stream. error-visibility follow-up:
+                // previously a silent return; now reported via
                 // onDisconnected_, same Post-marshaling reasoning as the
-                // real-frame case below.
-                eventLoop_.Post([this] {
-                    LogMessage(LogCategory::Lsp, LogSeverity::Warning, "malformed frame from server");
+                // real-frame case below. The exception's own message (not a
+                // fixed string) is what's reported, so a stall and a
+                // genuinely malformed frame are distinguishable in
+                // *Messages*.
+                eventLoop_.Post([this, reason = std::string(e.what())] {
+                    LogMessage(LogCategory::Lsp, LogSeverity::Warning, reason);
                     if (onDisconnected_) {
-                        onDisconnected_("malformed frame from server");
+                        onDisconnected_(reason);
                     }
                 });
                 return;
@@ -114,7 +117,7 @@ void LspClient::DispatchFrame(const std::string& frameText) {
         if (it == pending_.end()) {
             return; // unknown/already-handled id -- ignore
         }
-        ResponseCallback callback = std::move(it->second);
+        ResponseCallback callback = std::move(it->second.callback);
         pending_.erase(it);
         EndBackgroundActivity(kLspActivity); // pairs with SendRequest's Begin
         if (callback) {
@@ -171,7 +174,7 @@ void LspClient::SendRequest(const std::string& method, Json params, ResponseCall
     }
 
     const int id = nextRequestId_++;
-    pending_[id] = std::move(callback);
+    pending_[id] = PendingRequest{std::move(callback), std::chrono::steady_clock::now()};
     BeginBackgroundActivity(kLspActivity); // ended when the response dispatches, or by ~LspClient for a request never answered
     const Json message = {
         {"jsonrpc", "2.0"},
@@ -180,6 +183,31 @@ void LspClient::SendRequest(const std::string& method, Json params, ResponseCall
         {"params", std::move(params)},
     };
     transport_.WriteFrame(message.dump());
+}
+
+void LspClient::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
+    // subprocess-hang-protection follow-up. Collect first, then erase+invoke
+    // -- a callback could in principle call back into this LspClient
+    // (SendRequest again, say), which must not happen while iterating
+    // pending_ itself.
+    const std::chrono::steady_clock::time_point   now = std::chrono::steady_clock::now();
+    std::vector<std::pair<int, ResponseCallback>> expired;
+    for (auto it = pending_.begin(); it != pending_.end();) {
+        if (now - it->second.sentAt >= maxAge) {
+            expired.emplace_back(it->first, std::move(it->second.callback));
+            it = pending_.erase(it);
+        }
+        else {
+            ++it;
+        }
+    }
+    for (auto& [id, callback] : expired) {
+        EndBackgroundActivity(kLspActivity); // pairs with SendRequest's Begin
+        LogMessage(LogCategory::Lsp, LogSeverity::Warning, "request " + std::to_string(id) + " timed out waiting for a response");
+        if (callback) {
+            callback(std::nullopt, Json{{"code", -32001}, {"message", "ned: request timed out waiting for a response"}});
+        }
+    }
 }
 
 void LspClient::SendNotification(const std::string& method, Json params) {

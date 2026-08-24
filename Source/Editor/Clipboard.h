@@ -36,6 +36,7 @@
 #ifndef NED_EDITOR_CLIPBOARD_H
 #define NED_EDITOR_CLIPBOARD_H
 
+#include <chrono>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -83,9 +84,14 @@ void CopyToSystemClipboard(std::string_view text);
 
 // Reads the system clipboard via ResolvedClipboardPasteCommand(), if one is
 // resolved -- std::nullopt otherwise, including when ClipboardEnabled() is
-// false or the resolved command exits non-zero. See this file's own header
-// comment for why there is no OSC 52 fallback here.
-[[nodiscard]] std::optional<std::string> PasteFromSystemClipboard();
+// false, the resolved command exits non-zero, or it fails to produce any
+// output within readTimeout (subprocess-hang-protection follow-up -- this
+// runs synchronously on the main thread, e.g. from a paste keystroke, so an
+// unresponsive clipboard tool -- a real Wayland clipboard-manager failure
+// mode -- is killed rather than freezing the editor; readTimeout is a
+// parameter, not a hardcoded sleep, purely so tests can shorten it). See
+// this file's own header comment for why there is no OSC 52 fallback here.
+[[nodiscard]] std::optional<std::string> PasteFromSystemClipboard(std::chrono::milliseconds readTimeout = std::chrono::milliseconds(5000));
 
 // Exposed for testing (mirrors UI/TerminalColorProbe.h's own BuildColorQuery
 // split): the pure OSC 52 escape-sequence construction, no I/O. wrapForTmux

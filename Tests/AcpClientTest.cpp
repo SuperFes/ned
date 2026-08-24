@@ -1,7 +1,9 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <chrono>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 #include <unistd.h>
@@ -145,6 +147,41 @@ TEST_CASE("AcpClient::DispatchFrame invokes the callback with the error, not the
     REQUIRE_FALSE(gotResult.has_value());
     REQUIRE(gotError.has_value());
     REQUIRE((*gotError)["message"] == "method not found");
+}
+
+TEST_CASE("AcpClient::ExpireStaleRequests resolves a stuck request with a synthetic timeout error", "[Acp]") {
+    // subprocess-hang-protection follow-up.
+    ClientFixture fixture = ClientFixture::Create();
+
+    bool                invoked = false;
+    std::optional<Json> gotResult;
+    std::optional<Json> gotError;
+    fixture.client.SendRequest("session/prompt", Json::object(), [&](std::optional<Json> result, std::optional<Json> error) {
+        invoked   = true;
+        gotResult = result;
+        gotError  = error;
+    });
+    REQUIRE_FALSE(invoked);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    fixture.client.ExpireStaleRequests(std::chrono::milliseconds(1));
+
+    REQUIRE(invoked);
+    REQUIRE_FALSE(gotResult.has_value());
+    REQUIRE(gotError.has_value());
+    REQUIRE((*gotError)["code"] == -32001);
+}
+
+TEST_CASE("AcpClient::ExpireStaleRequests leaves a request younger than maxAge untouched", "[Acp]") {
+    // subprocess-hang-protection follow-up.
+    ClientFixture fixture = ClientFixture::Create();
+
+    bool invoked = false;
+    fixture.client.SendRequest("session/prompt", Json::object(), [&](std::optional<Json>, std::optional<Json>) { invoked = true; });
+
+    fixture.client.ExpireStaleRequests(std::chrono::milliseconds(60000));
+
+    REQUIRE_FALSE(invoked);
 }
 
 TEST_CASE("AcpClient::DispatchFrame with an unknown id is silently ignored, not a crash", "[Acp]") {

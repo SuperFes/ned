@@ -12,6 +12,7 @@
 #include <utility>
 
 #include <fcntl.h>
+#include <poll.h>
 #include <spawn.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -204,6 +205,27 @@ std::string ChildProcess::ReadSome() const {
         }
         return std::string(buffer, static_cast<std::size_t>(result));
     }
+}
+
+bool ChildProcess::WaitReadable(std::chrono::milliseconds timeout) const {
+    pollfd pfd{readFd_, POLLIN, 0};
+    while (true) {
+        const int result = ::poll(&pfd, 1, static_cast<int>(timeout.count()));
+        if (result < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            throw std::runtime_error(std::string("ned: ChildProcess poll failed: ") + std::strerror(errno));
+        }
+        return result > 0; // 0 == timed out, nothing ready
+    }
+}
+
+std::optional<std::string> ChildProcess::ReadSome(std::chrono::milliseconds timeout) const {
+    if (!WaitReadable(timeout)) {
+        return std::nullopt;
+    }
+    return ReadSome();
 }
 
 int ChildProcess::ReadFd() const noexcept {

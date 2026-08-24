@@ -41,6 +41,7 @@
 #ifndef NED_EDITOR_LSP_LSPCLIENT_H
 #define NED_EDITOR_LSP_LSPCLIENT_H
 
+#include <chrono>
 #include <functional>
 #include <optional>
 #include <string>
@@ -64,6 +65,18 @@ using Json = nlohmann::json;
 // LspManager's $/progress handling, which is why it lives here (LspManager.h
 // already includes this header, not the other way around).
 inline constexpr std::string_view kLspActivityName = "LSP";
+
+// subprocess-hang-protection follow-up. A server that simply never answers a
+// request (as opposed to a stalled/malformed connection, which
+// Transport::ReadFrame's own kFrameStallTimeout already catches) previously
+// left that request pending_ forever -- no error, no timeout, a
+// permanently-spinning hover/completion/code-action with nothing to show for
+// it. Generous on purpose: a slow rename/format-on-save on a huge file
+// should never hit this; it exists only to eventually resolve a request that
+// will truly never answer. ExpireStaleRequests takes this as a parameter
+// (not baked in) so LspManager's real sweep and this file's own tests can
+// use different values.
+inline constexpr std::chrono::milliseconds kDefaultRequestTimeout{30000};
 
 // Exactly one of result/error is engaged, matching JSON-RPC 2.0's own
 // response shape.
@@ -182,6 +195,17 @@ class LspClient {
     // that.
     void DispatchFrame(const std::string& frameText);
 
+    // subprocess-hang-protection follow-up. Erases every pending_ entry
+    // older than maxAge, invoking its callback with a synthetic JSON-RPC
+    // timeout error (matching the real error shape a server's own response
+    // would use, so no existing caller needs new handling) and pairing
+    // EndBackgroundActivity the same way DispatchFrame's own response path
+    // already does. Public (not driven internally by a timer -- this class
+    // has no timer of its own) so LspManager's sweep, wired into
+    // WindowManager's existing background tick, can call it, and so tests
+    // can pass a much shorter maxAge than the real kDefaultRequestTimeout.
+    void ExpireStaleRequests(std::chrono::milliseconds maxAge = kDefaultRequestTimeout);
+
   private:
     void StartReadLoop();
 
@@ -190,8 +214,13 @@ class LspClient {
 
     ned::ui::EventLoop& eventLoop_;
 
+    struct PendingRequest {
+        ResponseCallback                      callback;
+        std::chrono::steady_clock::time_point sentAt;
+    };
+
     int                                                  nextRequestId_ = 1;
-    std::unordered_map<int, ResponseCallback>            pending_;
+    std::unordered_map<int, PendingRequest>              pending_;
     std::unordered_map<std::string, NotificationHandler> notificationHandlers_;
     std::unordered_map<std::string, RequestHandler>      requestHandlers_;
     std::function<void(std::string reason)>              onDisconnected_; // see SetOnDisconnected
@@ -201,8 +230,8 @@ class LspClient {
     // false only for the real-subprocess constructor; pendingUntilHandshake_
     // holds every SendRequest/SendNotification call made before the gate
     // opens, replayed in order once it does.
-    bool                                  handshakeComplete_ = true;
-    std::vector<std::function<void()>>    pendingUntilHandshake_;
+    bool                               handshakeComplete_ = true;
+    std::vector<std::function<void()>> pendingUntilHandshake_;
 };
 
 } // namespace ned::editor::lsp
