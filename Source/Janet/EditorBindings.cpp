@@ -19,6 +19,7 @@
 #include "Editor/Dap/DapConfig.h"
 #include "Editor/DiagnosticsLog.h"
 #include "Editor/DiffRefreshSettings.h"
+#include "Editor/FileWatch.h"
 #include "Editor/FinalNewline.h"
 #include "Editor/FormatOnSave.h"
 #include "Editor/HighlightSettings.h"
@@ -139,7 +140,7 @@ namespace {
             const int   signal = DoStringCapturingStacktrace(env, invokeExpr, "ned-command", &out, &capturedError);
             if (signal != 0) {
                 editor::LogMessage(editor::LogCategory::Janet, editor::LogSeverity::Error,
-                                    "command \"" + name + "\": " + capturedError);
+                                   "command \"" + name + "\": " + capturedError);
                 throw std::runtime_error(capturedError);
             }
         });
@@ -295,6 +296,10 @@ namespace {
 
     void NedSetAutoMerge(bool enabled) {
         editor::SetAutoMergeEnabled(enabled);
+    }
+
+    void NedSetFileWatch(bool enabled) {
+        editor::SetFileWatchEnabled(enabled);
     }
 
     void NedSetSavePlace(bool enabled) {
@@ -773,6 +778,12 @@ void InstallEditorBindings(Environment& env) {
         "Enable/disable automatically three-way merging a buffer's local edits with a file that also changed on "
         "disk (default true). A clean merge applies silently; a genuine conflict inserts <<<<<<< markers instead "
         "of guessing. Always one undoable step. A separate toggle from ned/set-auto-revert.");
+    env.Register<&NedSetFileWatch>(
+        "ned", "set-file-watch",
+        "Enable/disable the inotify file watcher that triggers auto-revert/auto-merge near-instantly when an open "
+        "buffer's file changes on disk (default true). The periodic 5s sweep keeps running either way (the safety "
+        "net for filesystems inotify can't see, e.g. NFS); disabling this just falls back to that sweep alone. A "
+        "flip takes effect at the next sweep tick (within ~5s).");
     env.Register<&NedSetSavePlace>(
         "ned", "set-save-place",
         "Enable/disable remembering each file's last point and scroll position across editor runs (default true). "

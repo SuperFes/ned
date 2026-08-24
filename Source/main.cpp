@@ -943,6 +943,13 @@ auto main(int argc, char** argv) -> int {
     // semantically needs (see WindowManager.h's own header comment).
     windowManager->StartAutoSaveTimer(eventLoop);
 
+    // file-watcher follow-up: same "only the real, running editor opts in,
+    // needs the owning EventLoop" reasoning as StartAutoSaveTimer just
+    // above -- an inotify trigger so external file changes start the
+    // revert/merge sweep near-instantly; the timer tick above keeps
+    // running as the safety net (see WindowManager::StartFileWatcher).
+    windowManager->StartFileWatcher(eventLoop);
+
     // large-file-async-load follow-up: same "only the real, running editor
     // opts in, needs the owning EventLoop" reasoning as StartAutoSaveTimer
     // just above. Only takes effect for files opened from here on --

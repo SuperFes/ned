@@ -375,13 +375,27 @@ Real, fairly uncontroversial gaps:
       purpose-built commands with their own bindings — consistent with this project's
       stated Emacs-class-parity vision, so this reads as a different, already-chosen
       philosophy rather than an obvious gap.
-- [ ] **Auto-revert/auto-merge are pure polling, not file-watcher-driven** —
-      `AutoRevert.h`/`AutoMerge.h` run entirely off the shared background timer tick
-      (`WindowManager::StartAutoSaveTimer`); nothing in the tree uses inotify/kqueue/
-      FSEvents. External-change detection latency is bounded by the timer interval
-      rather than immediate, unlike VSCode/Sublime's watcher-driven revert. The real
-      merge logic (`Text/ThreeWayMerge.h`) already exists — a watcher would mostly
-      just lower trigger latency, not add new logic.
+- [x] **Auto-revert/auto-merge are pure polling, not file-watcher-driven** (shipped
+      2026-08-24) — `Editor/FileWatch.h`'s `FileWatcher`, an inotify-backed trigger:
+      watches each open buffer's *parent directory* (write-sibling-then-rename saves —
+      including ned's own `ProjectReplace` — invalidate a file-level watch), filters
+      events to watched basenames, debounces a burst (~100ms quiet, ~500ms cap) into
+      one callback, and fires `WindowManager::SweepExternalChanges` (the tick's
+      AutoRevert/AutoMerge/diff-gutter portion, factored out so both triggers run
+      identical code) via `EventLoop::Post`. The 5s poll tick keeps running unchanged
+      as the safety net (NFS, watch-budget exhaustion, a dropped event) — the watcher
+      only lowers latency and both paths are idempotent (each re-checks
+      `ExternallyModified()` per buffer). Watch set re-derived from
+      `BufferList::Buffers()` per tick and per watcher-fired sweep — deliberately no
+      buffer-open hook (`BufferList::SetOnFileOpened` is single-slot and already
+      claimed twice over in `main.cpp`; a newly opened buffer is watched within ≤5s
+      with the poll sweep covering the gap). `ned/set-file-watch` (default true)
+      empties/restores the watch set at the next resync. Deliberate cuts: Linux-only
+      inotify with a fully-inert fallback (no kqueue/FSEvents — no non-Linux port
+      exists to serve); no per-event granularity (any relevant event triggers the
+      existing whole-list sweep rather than a targeted single-buffer check);
+      `IN_IGNORED` heals a deleted-and-recreated directory only at the next resync,
+      not instantly.
 
 ### Input model: optional Vim/vi keybinding emulation (idea, unstarted — design sketch only)
 
