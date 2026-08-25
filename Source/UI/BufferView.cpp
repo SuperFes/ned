@@ -3471,7 +3471,14 @@ bool BufferView::HandleVimKey(const editor::KeyChord& chord) {
         }
         else {
             vimEngine_.RecordInsertKey(chord);
-            DispatchChordNormally(chord);
+            // Vim's own Insert-mode Ctrl-chords (C-w/C-u/C-t/C-d/C-r) get first look --
+            // otherwise they'd fall through to ned's ordinary Emacs bindings for the same
+            // chords (kill-region, universal-argument, isearch-backward, ...), which is
+            // not what a vim user typing C-w expects. See VimEngine::HandleInsertModeChord's
+            // own doc comment for why this isn't just another KeymapStack layer.
+            if (!vimEngine_.HandleInsertModeChord(activeBuffer_.Get(), chord)) {
+                DispatchChordNormally(chord);
+            }
         }
     }
     else {

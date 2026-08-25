@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cstring>
 
+#include "Editor/Keymap.h"
 #include "Editor/RegexPattern.h"
 #include "Editor/TabWidth.h"
 #include "Text/Grapheme.h"
@@ -23,6 +24,11 @@ namespace {
     constexpr char32_t kOpLowercase  = 0xE001;
     constexpr char32_t kOpUppercase  = 0xE002;
     constexpr char32_t kOpToggleCase = 0xE003;
+
+    // marks_ storage key for the `` / '' jump-back position -- 0xE004 rather than a real
+    // mark letter for the same reason as the operator codes above (never producible by a
+    // real 'm'-prefixed keystroke, so it can't collide with a user-set mark).
+    constexpr char32_t kJumpMark = 0xE004;
 
     bool IsPlainCharChord(const KeyChord& chord) {
         return !chord.Control && !chord.Meta && chord.Special == SpecialKey::None && chord.Codepoint != 0;
@@ -54,6 +60,28 @@ namespace {
             lines.emplace_back();
         }
         return lines;
+    }
+
+    // Insert-mode's own small set of Ctrl-chord bindings -- real vim's C-w/C-u/C-t/C-d/
+    // C-r, none of which are ordinary self-insert-command typing. Deliberately NOT
+    // spliced into the pane's shared KeymapStack (WindowManager.cpp's
+    // {janetKeymap, mode_.keymap, globalKeymap}) -- that stack is also what plain
+    // Emacs-style editing dispatches through when vim mode is off (or always, for every
+    // mode besides this one), so a permanent extra layer there would steal these chords
+    // from non-vim users too. Consulted directly by HandleInsertModeChord instead, only
+    // while Mode::Insert is live, via the same Keymap::Resolve machinery every other
+    // keymap in this codebase uses -- just not the shared stack.
+    const Keymap& InsertModeKeymap() {
+        static const Keymap keymap = [] {
+            Keymap km;
+            km.Bind(ParseKeySequence("C-w"), "delete-word-back");
+            km.Bind(ParseKeySequence("C-u"), "delete-to-line-start");
+            km.Bind(ParseKeySequence("C-t"), "indent-line");
+            km.Bind(ParseKeySequence("C-d"), "outdent-line");
+            km.Bind(ParseKeySequence("C-r"), "insert-register");
+            return km;
+        }();
+        return keymap;
     }
 
 } // namespace
@@ -212,9 +240,100 @@ void VimEngine::HandleInsertKeyDirectly(text::Buffer& buffer, const KeyChord& ch
         buffer.InsertAtPoint("\t");
         return;
     }
+    if (HandleInsertModeChord(buffer, chord)) {
+        return;
+    }
     if (IsPlainCharChord(chord)) {
         buffer.InsertAtPoint(text::EncodeCodepointUtf8(chord.Codepoint));
     }
+}
+
+bool VimEngine::HandleInsertModeChord(text::Buffer& buffer, const KeyChord& chord) {
+    if (awaitingInsertRegisterName_) {
+        awaitingInsertRegisterName_ = false;
+        if (IsPlainCharChord(chord)) {
+            InsertRegisterAtPoint(buffer, chord.Codepoint);
+        }
+        return true;
+    }
+    if (!chord.Control || chord.Meta || chord.Special != SpecialKey::None) {
+        return false;
+    }
+    const Keymap::Lookup lookup = InsertModeKeymap().Resolve({chord});
+    if (lookup.result != Keymap::LookupResult::Match) {
+        return false;
+    }
+    if (lookup.commandName == "delete-word-back") {
+        DeleteWordBackInInsert(buffer);
+    }
+    else if (lookup.commandName == "delete-to-line-start") {
+        DeleteToLineStartInInsert(buffer);
+    }
+    else if (lookup.commandName == "indent-line") {
+        ShiftInsertLine(buffer, true);
+    }
+    else if (lookup.commandName == "outdent-line") {
+        ShiftInsertLine(buffer, false);
+    }
+    else if (lookup.commandName == "insert-register") {
+        awaitingInsertRegisterName_ = true;
+    }
+    return true;
+}
+
+void VimEngine::DeleteWordBackInInsert(text::Buffer& buffer) {
+    const std::size_t  point = buffer.Point();
+    const MotionResult m     = WordBackward(buffer, point, 1, false);
+    if (m.target < point) {
+        buffer.DeleteRange(m.target, point - m.target);
+        buffer.SetPoint(m.target);
+    }
+}
+
+void VimEngine::DeleteToLineStartInInsert(text::Buffer& buffer) {
+    const std::size_t point = buffer.Point();
+    const std::size_t ls    = LineStart(buffer, LineOf(buffer, point));
+    if (point > ls) {
+        buffer.DeleteRange(ls, point - ls);
+        buffer.SetPoint(ls);
+    }
+}
+
+void VimEngine::ShiftInsertLine(text::Buffer& buffer, bool more) {
+    const std::size_t point = buffer.Point();
+    const std::size_t line  = LineOf(buffer, point);
+    const std::size_t ls    = LineStart(buffer, line);
+    const std::size_t width = static_cast<std::size_t>(std::max(1, TabWidth()));
+    if (more) {
+        buffer.InsertAt(ls, std::string(width, ' '));
+        buffer.SetPoint(point + width);
+        return;
+    }
+    const std::size_t contentEnd  = LineContentEnd(buffer, line);
+    std::size_t       removeCount = 0;
+    while (removeCount < width && ls + removeCount < contentEnd) {
+        const char32_t cp = buffer.Content().CodepointAt(ls + removeCount).codepoint;
+        if (cp != U' ' && cp != U'\t') {
+            break;
+        }
+        ++removeCount;
+    }
+    if (removeCount == 0) {
+        return;
+    }
+    buffer.DeleteRange(ls, removeCount);
+    buffer.SetPoint(point > ls + removeCount ? point - removeCount : ls);
+}
+
+void VimEngine::InsertRegisterAtPoint(text::Buffer& buffer, char32_t name) {
+    const std::optional<RegisterEntry> entry = registers_.Get(name);
+    if (!entry) {
+        return;
+    }
+    const std::string text  = entry->Joined();
+    const std::size_t point = buffer.Point();
+    buffer.InsertAt(point, text);
+    buffer.SetPoint(point + text.size());
 }
 
 void VimEngine::HandleReplaceKey(text::Buffer& buffer, const KeyChord& chord) {
@@ -486,6 +605,7 @@ std::optional<MotionResult> VimEngine::TryImmediateMotion(const text::Buffer& bu
             }
             return std::nullopt; // count% (goto file-percentage) -- deliberate v1 cut
         case U'G':
+            marks_[kJumpMark] = buffer.Point();
             return GotoLastLine(buffer, hasCount_ ? countBuffer_ : 0);
         case U'H':
             return ScreenTop(buffer, topLine_, viewportHeight_);
@@ -657,8 +777,26 @@ void VimEngine::HandleGPrefixed(text::Buffer& buffer, const KeyChord& chord) {
         return;
     }
     if (chord.Codepoint == U'g') {
+        marks_[kJumpMark]    = buffer.Point();
         const MotionResult m = GotoFirstLine(buffer, hasCount_ ? countBuffer_ : 0);
         ResolveMotionAndAct(buffer, m, true);
+        return;
+    }
+    if (chord.Codepoint == U'e' || chord.Codepoint == U'E') {
+        const MotionResult m = WordEndBackward(buffer, buffer.Point(), EffectiveCount(), chord.Codepoint == U'E');
+        ResolveMotionAndAct(buffer, m, true);
+        return;
+    }
+    if (chord.Codepoint == U'v' && mode_ == Mode::Normal) {
+        if (hasLastVisual_) {
+            const std::size_t clampedAnchor = std::min(lastVisualAnchor_, buffer.Content().ByteLength());
+            const std::size_t clampedPoint  = std::min(lastVisualPoint_, buffer.Content().ByteLength());
+            mode_                           = lastVisualKind_;
+            visualAnchor_                   = clampedAnchor;
+            buffer.SetPoint(clampedPoint);
+            UpdateGoalColumn(buffer);
+        }
+        FinishCommand(buffer);
         return;
     }
     if (chord.Codepoint == U'u' || chord.Codepoint == U'U' || chord.Codepoint == U'~') {
@@ -758,7 +896,8 @@ void VimEngine::ApplyVisualOperator(text::Buffer& buffer, char32_t op) {
 }
 
 void VimEngine::ApplyVisualBlockOperator(text::Buffer& buffer, char32_t op, std::size_t anchor, std::size_t point) {
-    if (op != U'd' && op != U'y') {
+    const bool isCaseOp = op == kOpLowercase || op == kOpUppercase || op == kOpToggleCase;
+    if (op != U'd' && op != U'y' && op != U'>' && op != U'<' && !isCaseOp) {
         statusText_ = "Visual block: operator not supported";
         return;
     }
@@ -766,10 +905,35 @@ void VimEngine::ApplyVisualBlockOperator(text::Buffer& buffer, char32_t op, std:
     const std::size_t lineB     = LineOf(buffer, point);
     const std::size_t startLine = std::min(lineA, lineB);
     const std::size_t endLine   = std::max(lineA, lineB);
-    const std::size_t colA      = buffer.VisualColumnForByteOffset(LineStart(buffer, lineA), anchor, TabWidth());
-    const std::size_t colB      = buffer.VisualColumnForByteOffset(LineStart(buffer, lineB), point, TabWidth());
-    const std::size_t colStart  = std::min(colA, colB);
-    const std::size_t colEnd    = std::max(colA, colB);
+
+    // >/< shift whole lines, same as any other visual-mode indent/outdent -- matches real
+    // vim, which ignores the block's column extent for this pair of operators.
+    if (op == U'>' || op == U'<') {
+        const std::size_t start = LineStart(buffer, startLine);
+        const std::size_t end   = (endLine < EffectiveLastLine(buffer)) ? LineStart(buffer, endLine + 1) : buffer.Content().ByteLength();
+        ShiftLines(buffer, start, end, op == U'>');
+        return;
+    }
+
+    const std::size_t colA     = buffer.VisualColumnForByteOffset(LineStart(buffer, lineA), anchor, TabWidth());
+    const std::size_t colB     = buffer.VisualColumnForByteOffset(LineStart(buffer, lineB), point, TabWidth());
+    const std::size_t colStart = std::min(colA, colB);
+    const std::size_t colEnd   = std::max(colA, colB);
+
+    if (isCaseOp) {
+        buffer.BeginUndoGroup();
+        for (std::size_t line = startLine; line <= endLine; ++line) {
+            const std::size_t contentEnd = LineContentEnd(buffer, line);
+            const std::size_t from       = std::min(buffer.ByteOffsetForLineAndColumn(line, colStart, TabWidth()), contentEnd);
+            const std::size_t to         = std::min(buffer.ByteOffsetForLineAndColumn(line, colEnd + 1, TabWidth()), contentEnd);
+            if (to > from) {
+                ToggleCaseRange(buffer, from, to, op);
+            }
+        }
+        buffer.SetPoint(std::min(buffer.ByteOffsetForLineAndColumn(startLine, colStart, TabWidth()), LineContentEnd(buffer, startLine)));
+        buffer.EndUndoGroup();
+        return;
+    }
 
     const char32_t regName = pendingRegisterName_;
     pendingRegisterName_   = 0;
@@ -916,6 +1080,33 @@ void VimEngine::HandleAction(text::Buffer& buffer, const KeyChord& chord, long c
             FinishCommand(buffer);
             return;
         }
+        case U'~': {
+            const std::size_t p          = buffer.Point();
+            const std::size_t line       = LineOf(buffer, p);
+            const std::size_t contentEnd = LineContentEnd(buffer, line);
+            std::size_t       target     = p;
+            for (long i = 0; i < count && target < contentEnd; ++i) {
+                target = text::NextGraphemeBoundary(buffer.Content(), target);
+            }
+            if (target > p) {
+                ToggleCaseRange(buffer, p, target, kOpToggleCase);
+                // ToggleCaseRange itself lands point at the range's start (the operator
+                // convention g~/gu/gU share) -- bare ~ instead advances past what it
+                // toggled, clamped the same way CharRight clamps l: never past the last
+                // character of the line.
+                const std::size_t lineStartOff = LineStart(buffer, line);
+                const std::size_t rightmost =
+                    contentEnd > lineStartOff ? text::PreviousGraphemeBoundary(buffer.Content(), contentEnd) : lineStartOff;
+                buffer.SetPoint(std::min(target, rightmost));
+            }
+            FinishCommand(buffer);
+            return;
+        }
+        case U'R':
+            buffer.BeginUndoGroup();
+            BeginReplaceSession(buffer);
+            FinishCommand(buffer);
+            return;
         case U's': {
             const std::size_t p          = buffer.Point();
             const std::size_t contentEnd = LineContentEnd(buffer, LineOf(buffer, p));
@@ -1137,6 +1328,10 @@ void VimEngine::BeginInsertSession(text::Buffer& /*buffer*/) {
     mode_ = Mode::Insert;
 }
 
+void VimEngine::BeginReplaceSession(text::Buffer& /*buffer*/) {
+    mode_ = Mode::Replace;
+}
+
 void VimEngine::EnterVisual(text::Buffer& buffer, Mode kind) {
     mode_         = kind;
     visualAnchor_ = buffer.Point();
@@ -1146,6 +1341,13 @@ void VimEngine::RememberVisualRange(text::Buffer& buffer) {
     const std::size_t l1 = LineOf(buffer, visualAnchor_);
     const std::size_t l2 = LineOf(buffer, buffer.Point());
     lastVisualRange_     = ExRange{true, std::min(l1, l2), std::max(l1, l2)};
+
+    // Every call site here runs while mode_ still holds the active Visual/VisualLine/
+    // VisualBlock kind (each caller reassigns mode_ to Normal only after this returns).
+    lastVisualAnchor_ = visualAnchor_;
+    lastVisualPoint_  = buffer.Point();
+    lastVisualKind_   = mode_;
+    hasLastVisual_    = true;
 }
 
 void VimEngine::PasteRegister(text::Buffer& buffer, bool before, long count) {
@@ -1347,7 +1549,11 @@ void VimEngine::GotoMark(text::Buffer& buffer, char32_t name, bool linewise) {
         target = LineStart(buffer, name == U'<' ? lastVisualRange_->startLine : lastVisualRange_->endLine);
     }
     else {
-        const auto it = marks_.find(name);
+        // `` and '' (a repeated backtick/quote) jump to the position before the last
+        // jump -- stored under kJumpMark rather than a real mark letter, since it's never
+        // set via 'm'.
+        const char32_t lookupName = (name == U'`' || name == U'\'') ? kJumpMark : name;
+        const auto     it         = marks_.find(lookupName);
         if (it == marks_.end()) {
             statusText_ = "E20: Mark not set";
             FinishCommand(buffer);
@@ -1355,6 +1561,9 @@ void VimEngine::GotoMark(text::Buffer& buffer, char32_t name, bool linewise) {
         }
         target = std::min(it->second, buffer.Content().ByteLength());
     }
+    // Every successful jump -- including through kJumpMark itself -- overwrites kJumpMark
+    // with the position being left, so `` / '' toggles between the last two positions.
+    marks_[kJumpMark] = buffer.Point();
     if (linewise) {
         target = FirstNonBlankOffset(buffer, LineOf(buffer, target));
     }
@@ -1419,6 +1628,7 @@ void VimEngine::PlayMacro(text::Buffer& buffer, char32_t name, long count) {
 }
 
 void VimEngine::RunSearch(text::Buffer& buffer, bool forward, const std::string& pattern) {
+    marks_[kJumpMark] = buffer.Point(); // /, ?, n, N, *, # all funnel through here
     try {
         const RegexPattern        re(pattern);
         const std::string         text = buffer.Text();
@@ -1568,6 +1778,11 @@ void VimEngine::ExecuteExCommand(text::Buffer& buffer, const std::string& text) 
         FinishCommand(buffer);
         return;
     }
+    if (cmd->name == "g" || cmd->name == "global") {
+        ExecuteGlobal(buffer, *cmd);
+        FinishCommand(buffer);
+        return;
+    }
     if (cmd->name == "normal" || cmd->name == "norm") {
         std::string keys = cmd->rest;
         if (!keys.empty() && keys.front() == ' ') {
@@ -1628,6 +1843,52 @@ void VimEngine::ExecuteSubstitute(text::Buffer& buffer, const ExCommand& cmd) {
         buffer.EndUndoGroup();
         buffer.SetPoint(LineStart(buffer, startLine));
         statusText_ = count > 0 ? (std::to_string(count) + " substitution" + (count == 1 ? "" : "s")) : "E486: Pattern not found";
+    }
+    catch (const RegexPatternError& e) {
+        statusText_ = e.what();
+    }
+}
+
+void VimEngine::ExecuteGlobal(text::Buffer& buffer, const ExCommand& cmd) {
+    const auto args = ParseGlobalArgs(cmd.rest);
+    if (!args || args->pattern.empty()) {
+        statusText_ = "E471: Argument required";
+        return;
+    }
+
+    const std::size_t startLine = cmd.range.present ? cmd.range.startLine : 0;
+    const std::size_t endLine   = cmd.range.present ? cmd.range.endLine : EffectiveLastLine(buffer);
+
+    try {
+        const RegexPattern       re(args->pattern);
+        std::vector<std::size_t> matchingLines;
+        for (std::size_t line = startLine; line <= endLine && line <= EffectiveLastLine(buffer); ++line) {
+            const std::size_t ls  = LineStart(buffer, line);
+            const std::size_t ce  = LineContentEnd(buffer, line);
+            const bool        hit = re.Search(buffer.Content().Substring(ls, ce - ls), 0).has_value();
+            if (hit != cmd.bang) { // cmd.bang (:g!/:v) inverts the match
+                matchingLines.push_back(line);
+            }
+        }
+        if (matchingLines.empty()) {
+            statusText_ = "E486: Pattern not found: " + args->pattern;
+            return;
+        }
+
+        // Process bottom-to-top so a sub-command that deletes/inserts lines (":g/pat/d",
+        // ":g/pat/normal ...") never invalidates a not-yet-processed line number -- edits
+        // at or below a given line can't shift the numbering of lines strictly above it.
+        buffer.BeginUndoGroup();
+        for (auto it = matchingLines.rbegin(); it != matchingLines.rend(); ++it) {
+            if (*it > EffectiveLastLine(buffer)) {
+                continue; // an earlier iteration's edit shrank the buffer past this line
+            }
+            buffer.SetPoint(LineStart(buffer, *it));
+            if (!args->command.empty()) {
+                ExecuteExCommand(buffer, args->command);
+            }
+        }
+        buffer.EndUndoGroup();
     }
     catch (const RegexPatternError& e) {
         statusText_ = e.what();

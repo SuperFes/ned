@@ -5,9 +5,10 @@
 // it stays exactly as UI-free as the rest of Editor/.
 //
 // Deliberate v1 cuts, documented here once rather than scattered across every method
-// that would otherwise need its own caveat: no jumplist/changelist (C-o/C-i), no :g
-// global command, no ge/gE (backward word-end), no mark letters beyond a-z and '</'>
-// (the visual-selection marks), no gv (reselect last visual), macros are recorded as raw
+// that would otherwise need its own caveat: no jumplist/changelist (C-o/C-i) beyond the
+// single toggle `` / '' provides, no mark letters beyond a-z/A-Z and '</'> (the
+// visual-selection marks) -- A-Z are buffer-local here, not real vim's cross-file global
+// marks, since this engine has no notion of "other buffers", macros are recorded as raw
 // keystrokes (not vim's own editable-register-text form), "." replays verbatim (a count
 // typed before "." is accepted but does not override the recorded one), search/:s use
 // PCRE2 syntax passed straight through (Editor/RegexPattern.h) rather than translating
@@ -55,10 +56,19 @@ class VimEngine {
     // BufferView calls this whenever CurrentMode() != Mode::Insert.
     void HandleKey(text::Buffer& buffer, const KeyChord& chord);
 
-    // BufferView calls this instead, for every chord it forwards to its own ordinary
-    // Dispatcher path, while CurrentMode() == Mode::Insert -- dot-repeat bookkeeping
-    // only, the buffer mutation already happened via the Dispatcher path.
+    // BufferView calls this for every non-Escape chord while CurrentMode() ==
+    // Mode::Insert, before deciding how to actually apply it -- dot-repeat/macro
+    // bookkeeping only, independent of whichever of the two paths below ends up
+    // mutating the buffer.
     void RecordInsertKey(const KeyChord& chord);
+
+    // BufferView calls this right after RecordInsertKey, before falling through to its
+    // own ordinary Dispatcher path -- vim's own small set of Insert-mode Ctrl-chords
+    // (C-w/C-u/C-t/C-d/C-r; see InsertModeKeymap in the .cpp) that aren't ordinary
+    // self-insert-command typing and would otherwise fire ned's Emacs bindings for the
+    // same chords instead. Returns true if the chord was handled here (BufferView must
+    // NOT also dispatch it normally); false means "not one of these, dispatch as usual."
+    [[nodiscard]] bool HandleInsertModeChord(text::Buffer& buffer, const KeyChord& chord);
 
     // Escape from Insert back to Normal: closes the undo group insert-entry opened,
     // finalizes "." dot-repeat, and moves point back one grapheme (vim's own rule --
@@ -84,6 +94,12 @@ class VimEngine {
     void HandleCommandLineKey(text::Buffer& buffer, const KeyChord& chord);
     void HandleInsertKeyDirectly(text::Buffer& buffer, const KeyChord& chord); // replay-only; live typing bypasses this
 
+    // ---- Insert-mode Ctrl-chords (InsertModeKeymap's action tags) ----
+    void DeleteWordBackInInsert(text::Buffer& buffer);
+    void DeleteToLineStartInInsert(text::Buffer& buffer);
+    void ShiftInsertLine(text::Buffer& buffer, bool more);
+    void InsertRegisterAtPoint(text::Buffer& buffer, char32_t name);
+
     // ---- Normal/Visual grammar helpers ----
     [[nodiscard]] long                        EffectiveCount() const;
     [[nodiscard]] std::optional<char32_t>     ResolveOperatorChord(const KeyChord& chord) const;
@@ -107,12 +123,14 @@ class VimEngine {
     void JoinLines(text::Buffer& buffer, long count);
 
     void BeginInsertSession(text::Buffer& buffer);
+    void BeginReplaceSession(text::Buffer& buffer);
     void EnterVisual(text::Buffer& buffer, Mode visualKind);
     void RememberVisualRange(text::Buffer& buffer);
     void PasteRegister(text::Buffer& buffer, bool before, long count);
 
     void ExecuteExCommand(text::Buffer& buffer, const std::string& text);
     void ExecuteSubstitute(text::Buffer& buffer, const ExCommand& cmd);
+    void ExecuteGlobal(text::Buffer& buffer, const ExCommand& cmd);
 
     void RunSearch(text::Buffer& buffer, bool forward, const std::string& pattern);
     void PerformSearch(text::Buffer& buffer, bool forward, const std::string& pattern);
@@ -144,6 +162,11 @@ class VimEngine {
 
     CharHandler pendingCharHandler_;
 
+    // C-r in Insert mode is a two-step read (the chord itself, then the register name
+    // typed right after) but Insert-mode typing has no pendingCharHandler_-style
+    // mechanism of its own -- HandleInsertModeChord checks this flag itself instead.
+    bool awaitingInsertRegisterName_ = false;
+
     char32_t lastFindChar_    = 0;
     bool     lastFindForward_ = true;
     bool     lastFindTill_    = false;
@@ -158,6 +181,14 @@ class VimEngine {
     std::size_t            visualAnchor_ = 0;
     std::optional<ExRange> lastVisualRange_; // '< / '>, remembered when leaving Visual mode
     bool                   blockInsertSession_ = false;
+
+    // gv's own memory -- exact byte offsets and the visual kind, distinct from
+    // lastVisualRange_'s line-only shape (which only needs to serve ':<,'>'-style ranges
+    // and the linewise '< / '> marks).
+    std::size_t lastVisualAnchor_ = 0;
+    std::size_t lastVisualPoint_  = 0;
+    Mode        lastVisualKind_   = Mode::Visual;
+    bool        hasLastVisual_    = false;
 
     std::map<char32_t, std::size_t> marks_;
 

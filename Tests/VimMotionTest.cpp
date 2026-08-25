@@ -17,6 +17,7 @@ using ned::editor::vim::MatchPair;
 using ned::editor::vim::ParagraphBackward;
 using ned::editor::vim::ParagraphForward;
 using ned::editor::vim::WordBackward;
+using ned::editor::vim::WordEndBackward;
 using ned::editor::vim::WordEndForward;
 using ned::editor::vim::WordForward;
 using ned::text::Buffer;
@@ -94,6 +95,29 @@ TEST_CASE("w/b/e word motion over word/punctuation/blank runs", "[VimMotion]") {
     const auto e1 = WordEndForward(buffer, 0, 1, false);
     REQUIRE(e1.target == 2); // end of "foo"
     REQUIRE(e1.inclusive);
+}
+
+TEST_CASE("ge moves backward to the end of the previous word/punctuation run", "[VimMotion]") {
+    Buffer buffer = MakeBuffer("foo.bar  baz");
+
+    const auto g1 = WordEndBackward(buffer, 11, 1, false); // from 'z' of baz
+    REQUIRE(g1.target == 6);                               // end of "bar"
+    REQUIRE(g1.inclusive);
+
+    const auto g2 = WordEndBackward(buffer, g1.target, 1, false); // from end of "bar"
+    REQUIRE(g2.target == 3);                                      // '.'
+
+    const auto g3 = WordEndBackward(buffer, g2.target, 1, false); // from '.'
+    REQUIRE(g3.target == 2);                                      // end of "foo"
+
+    REQUIRE(WordEndBackward(buffer, 0, 1, false).target == 0); // no previous word: clamps
+}
+
+TEST_CASE("gE treats punctuation as part of the WORD", "[VimMotion]") {
+    Buffer buffer = MakeBuffer("foo.bar  baz");
+
+    const auto g = WordEndBackward(buffer, 11, 1, true); // from 'z' of baz
+    REQUIRE(g.target == 6);                              // end of the whole "foo.bar" WORD
 }
 
 TEST_CASE("W/B/E treat punctuation as part of the WORD", "[VimMotion]") {

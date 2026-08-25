@@ -43,6 +43,22 @@ namespace {
         return LineStart(buffer, line) == offset && IsBlankLine(buffer, line);
     }
 
+    // True when offset is the last grapheme of a maximal same-class run -- i.e. a "word
+    // end" in vim's sense (the grapheme after it is absent, a newline, or a different
+    // class).
+    bool IsWordEndPosition(const text::Buffer& buffer, std::size_t offset, std::size_t end, bool bigWord) {
+        const char32_t cp = CodepointAt(buffer, offset);
+        if (cp == U'\n' || IsBlankChar(cp)) {
+            return false;
+        }
+        const std::size_t next = Next(buffer, offset);
+        if (next >= end) {
+            return true;
+        }
+        const char32_t cpNext = CodepointAt(buffer, next);
+        return cpNext == U'\n' || ClassOf(cpNext, bigWord) != ClassOf(cp, bigWord);
+    }
+
 } // namespace
 
 MotionResult CharLeft(const text::Buffer& buffer, std::size_t point, long count) {
@@ -213,6 +229,21 @@ MotionResult WordEndForward(const text::Buffer& buffer, std::size_t point, long 
                 break;
             }
             p = peek;
+        }
+    }
+    return MotionResult{p, false, true, true};
+}
+
+MotionResult WordEndBackward(const text::Buffer& buffer, std::size_t point, long count, bool bigWord) {
+    const std::size_t end = buffer.Content().ByteLength();
+    std::size_t       p   = point;
+    for (long i = 0; i < count; ++i) {
+        if (p == 0) {
+            break;
+        }
+        p = Prev(buffer, p);
+        while (p > 0 && !IsWordEndPosition(buffer, p, end, bigWord) && !IsEmptyLineStart(buffer, p)) {
+            p = Prev(buffer, p);
         }
     }
     return MotionResult{p, false, true, true};
