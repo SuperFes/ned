@@ -1,5 +1,7 @@
 #include "EventLoop.h"
 
+#include <cstdio>
+#include <cstdlib>
 #include <stdexcept>
 
 #include <fcntl.h>
@@ -9,9 +11,36 @@
 
 #include <notcurses/notcurses.h>
 
+#include "Editor/Key.h"
 #include "UI/KeyTranslation.h"
 
 namespace ned::ui {
+
+namespace {
+
+    // NED_DEBUG_KEYS=<path>: append one line per non-mouse input event with
+    // the raw ncinput fields and the KeyChord it translates to (or the reason
+    // it doesn't) -- NED_DEBUG_MOUSE's keyboard sibling, for diagnosing
+    // terminal-specific key encodings (kitty protocol, modifyOtherKeys, ...)
+    // that can't be reproduced outside the terminal in question.
+    void LogKeyEvent(const ncinput& input) {
+        static FILE* log = []() -> FILE* {
+            const char* path = std::getenv("NED_DEBUG_KEYS");
+            return (path && *path) ? std::fopen(path, "a") : nullptr;
+        }();
+        if (log == nullptr) {
+            return;
+        }
+        const std::optional<editor::KeyChord> chord = TranslateKey(Event(input));
+        std::fprintf(log,
+                     "id=0x%08x(%u) evtype=%d modifiers=0x%x shift=%d alt=%d ctrl=%d eff=[%x,%x,%x,%x] -> %s\n",
+                     input.id, input.id, static_cast<int>(input.evtype), input.modifiers, input.shift ? 1 : 0,
+                     input.alt ? 1 : 0, input.ctrl ? 1 : 0, input.eff_text[0], input.eff_text[1], input.eff_text[2],
+                     input.eff_text[3], chord ? editor::FormatKeyChord(*chord).c_str() : "(filtered)");
+        std::fflush(log);
+    }
+
+} // namespace
 
 EventLoop::EventLoop() {
     // NCOPTION_NO_QUIT_SIGHANDLERS: Notcurses otherwise installs its own
@@ -224,6 +253,9 @@ void EventLoop::Run(const EventLoopCallbacks& callbacks) {
             }
             if (id == NCKEY_SIGNAL || id == NCKEY_EOF) {
                 continue;
+            }
+            if (!nckey_mouse_p(input.id)) {
+                LogKeyEvent(input);
             }
             // See heldMouseButtonId_'s own doc comment (EventLoop.h) for the
             // real, confirmed root cause this reclassification fixes: a
