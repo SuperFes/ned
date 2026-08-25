@@ -465,6 +465,20 @@ ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter
 ned_add_treesitter_grammar(tree-sitter-fish https://github.com/ram02z/tree-sitter-fish.git 3.7.0)
 
 ned_embed_treesitter_query("${tree-sitter-fish_SOURCE_DIR}/queries/highlights.scm" Fish)
+
+# tree-sitter-grammars/tree-sitter-xml -- the community-maintained XML+DTD
+# grammar (same org as yaml/toml above), ships a real, well-authored
+# queries/xml/highlights.scm covering elements/attributes/entities/CDATA/
+# DOCTYPE/processing instructions, not just tags -- unlike tree-sitter-html's
+# grammar, which is HTML-tag-specific (a fixed void-element list, embedded
+# <script>/<style> injection) and can't parse arbitrary/namespaced XML
+# correctly. The repo hosts two grammars (xml/ and dtd/) in one clone, same
+# multi-grammar-repo shape as tree-sitter-typescript's typescript/tsx split --
+# only the xml/ subdirectory is built, DTD content inside an XML document is
+# parsed by the xml grammar's own embedded DTD rules.
+ned_add_treesitter_grammar(tree-sitter-xml https://github.com/tree-sitter-grammars/tree-sitter-xml.git v0.7.0 xml)
+
+ned_embed_treesitter_query("${tree-sitter-xml_SOURCE_DIR}/queries/xml/highlights.scm" Xml)
 #------------------------------------------------------------------------------
 
 #--- Fetch Catch2 --------------------------------------------------------------
@@ -686,6 +700,7 @@ target_link_libraries(ned_lib
         PUBLIC tree-sitter-toml
         PUBLIC tree-sitter-clojure
         PUBLIC tree-sitter-fish
+        PUBLIC tree-sitter-xml
         PRIVATE ${CMAKE_DL_LIBS}
         # internal-project-search follow-up: only ProjectSearch.cpp's own
         # implementation includes RE2 headers, so this stays off the public

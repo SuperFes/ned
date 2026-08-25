@@ -200,6 +200,18 @@ namespace {
             // capture it; MarkdownMode() appends a small supplemental
             // pattern of its own using this capture name (see Mode.cpp).
             {"text.strikethrough", SyntaxClass::Strikethrough},
+
+            // tree-sitter-xml's own queries/xml/highlights.scm uses the
+            // newer nvim-treesitter "markup.*" naming (this grammar's only
+            // bundled query to do so -- every other one above still uses the
+            // older "text.*" spelling markdown's own query predates). Bare
+            // "markup" (plain character data) and "markup.heading" (CDATA's
+            // "<![CDATA["/"]]>" delimiters) both fall through the
+            // ancestor-stripping walk to Default correctly on their own, no
+            // entry needed; only these two want a distinct class instead of
+            // that fallthrough, mirroring "text.uri"/"text.literal" above.
+            {"markup.link", SyntaxClass::Link},
+            {"markup.raw", SyntaxClass::String},
         };
         return table;
     }
@@ -1003,6 +1015,12 @@ Mode FishMode() {
     Mode mode              = TreeSitterMode("fish-mode", "fish", treesitter::queries::kFish);
     mode.lineCommentPrefix = "#";
     return mode;
+}
+
+Mode XmlMode() {
+    // No lineCommentPrefix -- XML only has block comments (<!-- -->), same
+    // reasoning as HtmlMode/CssMode above.
+    return TreeSitterMode("xml-mode", "xml", treesitter::queries::kXml);
 }
 
 Mode YamlMode() {
