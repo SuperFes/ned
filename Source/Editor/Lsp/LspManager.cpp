@@ -33,8 +33,14 @@ namespace {
         // and "file://demo.cpp" is unresolvable to a server -- clangd
         // rejected every request for such a buffer ("failed to decode ...
         // unresolvable URI"), found live while verifying the
-        // codeActionLiteralSupport fix, not in review.
-        return "file://" + std::filesystem::absolute(path).lexically_normal().string();
+        // codeActionLiteralSupport fix, not in review. The error_code
+        // overload, not the throwing one: this runs under Paint() with no
+        // catch anywhere above it, and absolute() throws for an empty path
+        // (and when the cwd is gone) -- a degraded URI beats aborting the
+        // whole editor (a real SIGABRT from a core dump, not hypothetical).
+        std::error_code             ec;
+        const std::filesystem::path absolute = std::filesystem::absolute(path, ec);
+        return "file://" + (ec ? path : absolute).lexically_normal().string();
     }
 
     std::optional<std::filesystem::path> UriToPath(const std::string& uri) {
@@ -160,9 +166,14 @@ Json BuildInitializeParams(const std::filesystem::path& projectRoot, const Json&
     // window.workDoneProgress (workDoneProgress-support follow-up) invites
     // "$/progress" reporting -- server-side busy state (clangd's background
     // indexing) for the mode-line spinner; see HandleProgress.
+    // An empty root becomes rootUri: null (explicitly allowed by the LSP
+    // spec -- "rootUri: DocumentUri | null") rather than a nonsense
+    // "file://" URI: ProjectRoot() should never be empty anymore
+    // (DetectProjectRoot absolutizes now), but this handshake runs under
+    // Paint() with no catch above it, so it must stay total regardless.
     Json params = Json{
         {"processId", static_cast<std::int64_t>(::getpid())},
-        {"rootUri", PathToUri(projectRoot)},
+        {"rootUri", projectRoot.empty() ? Json(nullptr) : Json(PathToUri(projectRoot))},
         {"capabilities",
          {{"textDocument",
            // completionItem.snippetSupport (snippet-expansion follow-up) is

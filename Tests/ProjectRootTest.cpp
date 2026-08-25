@@ -177,3 +177,27 @@ TEST_CASE("DetectProjectRoot treats a nonexistent path as a file, not a director
 
     std::filesystem::remove_all(dir);
 }
+
+TEST_CASE("DetectProjectRoot absolutizes a bare nonexistent relative filename", "[ProjectRoot]") {
+    // A real crash from a core dump: `cd build && ./ned ROADMAP.md` where
+    // build/ has no ROADMAP.md. libstdc++'s weakly_canonical returns a
+    // fully-nonexistent *relative* path unchanged -- still relative -- so
+    // parent_path() was empty, the marker walk terminated immediately, and
+    // the detected "root" was the empty path, which the first LSP handshake
+    // then aborted the whole process on (absolute("") throws under Paint()).
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_root_test_bare_relative";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir / ".git");
+    std::filesystem::create_directories(dir / "build");
+    std::filesystem::path detected;
+    {
+        const CurrentPathGuard cwdGuard(dir / "build");
+        detected = DetectProjectRoot("ROADMAP.md");
+    }
+
+    REQUIRE(!detected.empty());
+    REQUIRE(detected.is_absolute());
+    REQUIRE(detected == std::filesystem::canonical(dir));
+
+    std::filesystem::remove_all(dir);
+}
