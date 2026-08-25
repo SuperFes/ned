@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -35,6 +36,7 @@
 #include "Editor/SnippetRegistry.h"
 #include "Editor/TabWidth.h"
 #include "Editor/Variables.h"
+#include "Editor/WhichKeySettings.h"
 #include "Editor/WrapOverrides.h"
 #include "TestEvents.h"
 #include "Text/Buffer.h"
@@ -1100,6 +1102,56 @@ TEST_CASE("mouse_press then mouse_move selects a region from the press position"
     // Dragging further extends the same selection, anchored at the press position.
     view.OnEvent(MouseMove(gutter + 16, 0, ned::ui::MouseEvent::Button::Left));
     REQUIRE(fixture.buffer.Region() == std::pair<std::size_t, std::size_t>{4, 16});
+}
+
+TEST_CASE("Double-clicking a word selects it", "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("the quick brown fox");
+    fixture.buffer.SetPoint(0);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    const int gutter = GutterWidth(1);
+    view.OnEvent(MousePress(gutter + 4, 0)); // first click: "quick"'s 'q'
+    view.OnEvent(MousePress(gutter + 4, 0)); // second click at the same spot: word select
+
+    REQUIRE(fixture.buffer.HasMark());
+    REQUIRE(fixture.buffer.Region() == std::pair<std::size_t, std::size_t>{4, 9});
+}
+
+TEST_CASE("Triple-clicking selects the whole line", "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("the quick brown fox");
+    fixture.buffer.SetPoint(0);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    const int gutter = GutterWidth(1);
+    view.OnEvent(MousePress(gutter + 4, 0));
+    view.OnEvent(MousePress(gutter + 4, 0));
+    view.OnEvent(MousePress(gutter + 4, 0));
+
+    REQUIRE(fixture.buffer.HasMark());
+    REQUIRE(fixture.buffer.Region() == std::pair<std::size_t, std::size_t>{0, 19});
+}
+
+TEST_CASE("A second click at a different position resets the click count instead of selecting a word",
+          "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("the quick brown fox");
+    fixture.buffer.SetPoint(0);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    const int gutter = GutterWidth(1);
+    view.OnEvent(MousePress(gutter + 4, 0));
+    view.OnEvent(MousePress(gutter + 10, 0));
+
+    REQUIRE(fixture.buffer.Point() == 10);
+    REQUIRE_FALSE(fixture.buffer.HasMark());
 }
 
 TEST_CASE("mouse_move with no button held is ignored", "[BufferView]") {
@@ -7000,6 +7052,73 @@ TEST_CASE("Completing an unbound sequence reports it as undefined", "[BufferView
     view.OnEvent(ned::ui::test::Ctrl('x'));
     view.OnEvent(ned::ui::test::Ctrl('z')); // C-x C-z is not bound to anything
     REQUIRE(fixture.statusMessage == "C-x C-z is undefined");
+}
+
+TEST_CASE("A pending prefix chord fires the which-key hint callback with the possible next chords",
+          "[BufferView]") {
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+
+    std::optional<ned::ui::WhichKeyHint> lastHint;
+    bool                                 called = false;
+    view.SetOnPrefixHintChanged([&](std::optional<ned::ui::WhichKeyHint> hint) {
+        called   = true;
+        lastHint = std::move(hint);
+    });
+
+    view.OnEvent(ned::ui::test::Ctrl('x')); // first half of C-x C-f -- a real, valid prefix
+    REQUIRE(called);
+    REQUIRE(lastHint.has_value());
+    REQUIRE(lastHint->prefixLabel == "C-x-");
+
+    const auto find = [&](const std::string& chord) {
+        return std::find_if(lastHint->bindings.begin(), lastHint->bindings.end(),
+                             [&](const auto& binding) { return binding.first == chord; });
+    };
+    const auto it = find("C-f");
+    REQUIRE(it != lastHint->bindings.end());
+    REQUIRE(it->second == "find-file");
+}
+
+TEST_CASE("Completing a sequence (bound or not) clears the which-key hint", "[BufferView]") {
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+
+    std::vector<bool> hintPresentHistory;
+    view.SetOnPrefixHintChanged(
+        [&](std::optional<ned::ui::WhichKeyHint> hint) { hintPresentHistory.push_back(hint.has_value()); });
+
+    view.OnEvent(ned::ui::test::Ctrl('x'));
+    view.OnEvent(ned::ui::test::Ctrl('z')); // C-x C-z is unbound -- resolves the pending sequence
+
+    REQUIRE(hintPresentHistory.size() == 2);
+    REQUIRE(hintPresentHistory[0]);        // shown after C-x
+    REQUIRE_FALSE(hintPresentHistory[1]);  // cleared once C-x C-z resolves as Unbound
+}
+
+TEST_CASE("Disabling which-key suppresses the hint callback's populated case, without touching the status line",
+          "[BufferView]") {
+    const struct Guard {
+        ~Guard() {
+            ned::editor::SetWhichKeyEnabled(true);
+        }
+    } guard;
+    ned::editor::SetWhichKeyEnabled(false);
+
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+
+    std::optional<ned::ui::WhichKeyHint> lastHint;
+    bool                                 called = false;
+    view.SetOnPrefixHintChanged([&](std::optional<ned::ui::WhichKeyHint> hint) {
+        called   = true;
+        lastHint = std::move(hint);
+    });
+
+    view.OnEvent(ned::ui::test::Ctrl('x'));
+    REQUIRE(called);
+    REQUIRE_FALSE(lastHint.has_value());
+    REQUIRE(fixture.statusMessage == "C-x-"); // status line's own pending text is unaffected by the setting
 }
 
 TEST_CASE("A stale status message clears on the next real command that doesn't set its own", "[BufferView]") {

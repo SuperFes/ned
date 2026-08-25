@@ -36,6 +36,7 @@
 #include "Editor/ProjectRoot.h"
 #include "Editor/ProjectSession.h"
 #include "Editor/ProjectTrust.h"
+#include "Editor/RelativeLineNumberSettings.h"
 #include "Editor/ScratchPad.h"
 #include "Editor/ScriptingSession.h"
 #include "Editor/SearchSettings.h"
@@ -52,6 +53,7 @@
 #include "Editor/TrimOnSave.h"
 #include "Editor/Vcs/VcsProviderRegistry.h"
 #include "Editor/Vim/VimSettings.h"
+#include "Editor/WhichKeySettings.h"
 #include "Editor/WhitespaceSettings.h"
 #include "Editor/WrapOverrides.h"
 #include "JanetVcsProvider.h"
@@ -361,6 +363,14 @@ namespace {
 
     void NedSetCodeFoldingEnabled(bool enabled) {
         editor::SetCodeFoldingEnabled(enabled);
+    }
+
+    void NedSetRelativeLineNumbers(bool enabled) {
+        editor::SetRelativeLineNumbersEnabled(enabled);
+    }
+
+    void NedSetWhichKeyEnabled(bool enabled) {
+        editor::SetWhichKeyEnabled(enabled);
     }
 
     void NedSetInlineDiagnostics(bool enabled) {
@@ -1033,6 +1043,14 @@ void InstallEditorBindings(Environment& env) {
     env.Register<&NedSetCodeFoldingEnabled>(
         "ned", "set-code-folding-enabled",
         "Enable/disable the gutter code-folding affordance for modes with a fold query (default true).");
+    env.Register<&NedSetRelativeLineNumbers>(
+        "ned", "set-relative-line-numbers",
+        "Enable/disable relative line numbers in the gutter (default false): the current line keeps its real "
+        "number, every other visible line shows its distance from it, Vim's 'relativenumber' convention.");
+    env.Register<&NedSetWhichKeyEnabled>(
+        "ned", "set-which-key-enabled",
+        "Enable/disable the which-key popup listing possible next chords while a prefix key (C-x, C-c, ...) is "
+        "pending (default true). The echo area's own \"C-x-\" pending-sequence text is unaffected either way.");
     env.Register<&NedSetInlineDiagnostics>(
         "ned", "set-inline-diagnostics",
         "Enable/disable inline diagnostic annotation rows (carets + message under a line with an LSP diagnostic; "

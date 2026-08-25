@@ -1,5 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
+
 #include "Editor/Key.h"
 #include "Editor/Keymap.h"
 
@@ -113,4 +115,58 @@ TEST_CASE("AmbiguousBindings reports a sequence bound to a command that is also 
     const auto ambiguous = keymap.AmbiguousBindings();
     REQUIRE(ambiguous.size() == 1);
     REQUIRE(ambiguous.front() == FormatKeySequence(ParseKeySequence("C-c a")));
+}
+
+TEST_CASE("ChildrenAt lists the next chord of every sequence bound under a prefix", "[Keymap]") {
+    Keymap keymap;
+    keymap.Bind(ParseKeySequence("C-x C-s"), "save-buffer");
+    keymap.Bind(ParseKeySequence("C-x C-f"), "find-file");
+    keymap.Bind(ParseKeySequence("C-x 2"), "split-below");
+
+    const auto children = keymap.ChildrenAt(ParseKeySequence("C-x"));
+    REQUIRE(children.size() == 3);
+
+    const auto find = [&](const ned::editor::KeyChord& chord) {
+        return std::find_if(children.begin(), children.end(),
+                             [&](const Keymap::ChildBinding& binding) { return binding.chord == chord; });
+    };
+    const auto saveChord = ParseKeySequence("C-s").front();
+    const auto it        = find(saveChord);
+    REQUIRE(it != children.end());
+    REQUIRE(it->commandName == "save-buffer");
+}
+
+TEST_CASE("ChildrenAt reports a deeper, still-unbound chord with no commandName", "[Keymap]") {
+    Keymap keymap;
+    keymap.Bind(ParseKeySequence("C-x C-s"), "save-buffer");
+
+    const auto children = keymap.ChildrenAt({});
+    REQUIRE(children.size() == 1);
+    REQUIRE_FALSE(children.front().commandName.has_value());
+}
+
+TEST_CASE("ChildrenAt is empty for a prefix that isn't bound as a prefix at all", "[Keymap]") {
+    Keymap keymap;
+    keymap.Bind(ParseKeySequence("C-n"), "next-line");
+
+    REQUIRE(keymap.ChildrenAt(ParseKeySequence("C-x")).empty());
+}
+
+TEST_CASE("KeymapStack::ChildrenAt merges layers, first layer wins on overlap", "[Keymap]") {
+    Keymap minor;
+    Keymap global;
+    minor.Bind(ParseKeySequence("C-c a"), "minor-command");
+    global.Bind(ParseKeySequence("C-c a"), "org-agenda");
+    global.Bind(ParseKeySequence("C-c b"), "global-only");
+
+    const KeymapStack stack({&minor, &global});
+    const auto        children = stack.ChildrenAt(ParseKeySequence("C-c"));
+    REQUIRE(children.size() == 2);
+
+    const auto find = [&](const ned::editor::KeyChord& chord) {
+        return std::find_if(children.begin(), children.end(),
+                             [&](const Keymap::ChildBinding& binding) { return binding.chord == chord; });
+    };
+    REQUIRE(find(ParseKeySequence("a").front())->commandName == "minor-command");
+    REQUIRE(find(ParseKeySequence("b").front())->commandName == "global-only");
 }

@@ -46,6 +46,13 @@ class Dispatcher {
 
     [[nodiscard]] const std::vector<KeyChord>& Pending() const;
 
+    // which-key follow-up: read-only access to the same KeymapStack Feed
+    // resolves against, so a caller can enumerate what a pending prefix's
+    // next chords are (KeymapStack::ChildrenAt(Pending())) to show a hint
+    // popup -- mirrors Registry()'s own "read-only access to the thing Feed
+    // already uses" shape below.
+    [[nodiscard]] const KeymapStack& Keymaps() const;
+
     // execute-extended-command follow-up: read-only access to the same
     // registry Feed already invokes commands through, so BufferView's M-x
     // session can invoke a fuzzy-matched command by name directly (skipping

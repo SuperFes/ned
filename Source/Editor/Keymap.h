@@ -52,6 +52,17 @@ class Keymap {
     // checks the shipped default keymap against.
     [[nodiscard]] std::vector<std::string> AmbiguousBindings() const;
 
+    // which-key follow-up: the direct children of the node reached by
+    // `prefix` -- one entry per next possible chord, with commandName set
+    // when that chord is itself bound (nullopt means it's a deeper prefix,
+    // not yet a command). Empty if `prefix` isn't a valid prefix in this
+    // layer at all (NoMatch or Match, not Prefix).
+    struct ChildBinding {
+        KeyChord                   chord;
+        std::optional<std::string> commandName;
+    };
+    [[nodiscard]] std::vector<ChildBinding> ChildrenAt(const std::vector<KeyChord>& prefix) const;
+
   private:
     // Every existing Mode factory constructs an empty Keymap() and nothing
     // pre-existing ever copy-constructs a Mode (always moved/RVO'd), so this
@@ -99,6 +110,10 @@ class KeymapStack {
     explicit KeymapStack(std::vector<const Keymap*> layers);
 
     [[nodiscard]] Keymap::Lookup Resolve(const std::vector<KeyChord>& sequence) const;
+
+    // Merges ChildrenAt across every layer -- first layer to bind a given
+    // chord wins, mirroring Resolve's own "first Match wins" layer priority.
+    [[nodiscard]] std::vector<Keymap::ChildBinding> ChildrenAt(const std::vector<KeyChord>& prefix) const;
 
   private:
     std::vector<const Keymap*> layers_;

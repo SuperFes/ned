@@ -552,6 +552,8 @@ add_library(ned_lib STATIC
         Source/Editor/WrapOverrides.cpp
         Source/Editor/CodeFold.cpp
         Source/Editor/CodeFoldSettings.cpp
+        Source/Editor/RelativeLineNumberSettings.cpp
+        Source/Editor/WhichKeySettings.cpp
         Source/Editor/Org.cpp
         Source/Editor/OrgCapture.cpp
         Source/Editor/Snippet.cpp
@@ -660,6 +662,7 @@ add_library(ned_lib STATIC
         Source/UI/TerminalPanel.cpp
         Source/UI/AcpPanel.cpp
         Source/UI/DebugConsolePanel.cpp
+        Source/UI/WhichKeyPopup.cpp
         Source/UI/BufferView.cpp
         Source/UI/WindowManager.cpp
         Source/UI/AsyncFileLoader.cpp
@@ -894,6 +897,8 @@ if (NED_BUILD_TESTS)
             Tests/HighlightSettingsTest.cpp
             Tests/MinimapSettingsTest.cpp
             Tests/WhitespaceSettingsTest.cpp
+            Tests/RelativeLineNumberSettingsTest.cpp
+            Tests/WhichKeySettingsTest.cpp
             Tests/MinimapTest.cpp
             Tests/OverlayTest.cpp
             Tests/GitIgnoreTest.cpp

@@ -1,5 +1,6 @@
 #include "Keymap.h"
 
+#include <algorithm>
 #include <utility>
 
 namespace ned::editor {
@@ -70,6 +71,25 @@ std::vector<std::string> Keymap::AmbiguousBindings() const {
     return out;
 }
 
+std::vector<Keymap::ChildBinding> Keymap::ChildrenAt(const std::vector<KeyChord>& prefix) const {
+    const Node* node = &root_;
+
+    for (const auto& chord : prefix) {
+        const auto it = node->children.find(chord);
+        if (it == node->children.end()) {
+            return {};
+        }
+        node = it->second.get();
+    }
+
+    std::vector<ChildBinding> out;
+    out.reserve(node->children.size());
+    for (const auto& [chord, child] : node->children) {
+        out.push_back({chord, child->command});
+    }
+    return out;
+}
+
 KeymapStack::KeymapStack(std::vector<const Keymap*> layers) : layers_(std::move(layers)) {}
 
 Keymap::Lookup KeymapStack::Resolve(const std::vector<KeyChord>& sequence) const {
@@ -86,6 +106,22 @@ Keymap::Lookup KeymapStack::Resolve(const std::vector<KeyChord>& sequence) const
     }
 
     return anyPrefix ? Keymap::Lookup{Keymap::LookupResult::Prefix, {}} : Keymap::Lookup{Keymap::LookupResult::NoMatch, {}};
+}
+
+std::vector<Keymap::ChildBinding> KeymapStack::ChildrenAt(const std::vector<KeyChord>& prefix) const {
+    std::vector<Keymap::ChildBinding> merged;
+
+    for (const Keymap* layer : layers_) {
+        for (const auto& binding : layer->ChildrenAt(prefix)) {
+            const bool alreadyPresent =
+                std::any_of(merged.begin(), merged.end(), [&](const Keymap::ChildBinding& existing) { return existing.chord == binding.chord; });
+            if (!alreadyPresent) {
+                merged.push_back(binding);
+            }
+        }
+    }
+
+    return merged;
 }
 
 } // namespace ned::editor

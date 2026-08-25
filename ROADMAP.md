@@ -130,9 +130,6 @@ Notcurses.
 - [ ] **No buffer-list/ibuffer-style management** — `switch-to-buffer` is a
       name-completion prompt only; no dedicated buffer-list buffer with mark/save/kill
       batch operations.
-- [ ] **No which-key-style prefix-key hints** — a pending `C-x`/`C-c` chord shows
-      nothing; a user has to already know the binding.
-- [ ] **No relative line numbers.**
 - [ ] **No persistent/cross-session undo** — `Text/UndoTree.h` has no serialize/save/
       load; history is memory-only per process, gone on restart.
 - [ ] **CRLF line endings aren't handled at all** (2026-08-25 audit, a real correctness
@@ -145,9 +142,8 @@ Notcurses.
       attach a new terminal client to it.
 - [ ] **Mouse gaps** (2026-08-25 audit): no middle-click paste (X11 primary selection —
       `Widget.h`'s `Button` enum has `Middle` but `BufferView` never handles it); no
-      double/triple-click word/line selection (click-drag is the only mouse selection
-      method); no horizontal wheel scroll (`Button` has no `WheelLeft`/`WheelRight`, so a
-      long unwrapped line has no wheel/trackpad horizontal-scroll path).
+      horizontal wheel scroll (`Button` has no `WheelLeft`/`WheelRight`, so a long
+      unwrapped line has no wheel/trackpad horizontal-scroll path).
 - [ ] **Project root is fixed at startup** — `ProjectRoot.h` exposes `SetProjectRoot` as
       a primitive but nothing wires an `M-x`-reachable command to it; switching projects
       means restarting the process.
