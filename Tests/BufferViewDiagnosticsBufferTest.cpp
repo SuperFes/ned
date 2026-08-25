@@ -96,7 +96,14 @@ TEST_CASE("RequestDiagnosticsBuffer stitches every open buffer's Code diagnostic
 
     Buffer* results = fixture.bufferList.Find("*diagnostics*");
     REQUIRE(results != nullptr);
-    REQUIRE(results->ReadOnly());
+    // Editable-multibuffer follow-up: diagnostics excerpts are editable, so
+    // the composite is no longer whole-buffer read-only -- chrome (headers/
+    // rules) stays protected via ExcerptRanges()' own point-level
+    // enforcement instead.
+    REQUIRE_FALSE(results->ReadOnly());
+    REQUIRE(results->ExcerptRanges().size() == 2);
+    REQUIRE(results->ExcerptRanges()[0].editable);
+    REQUIRE(results->ExcerptRanges()[1].editable);
 
     auto* index = MultibufferIndexFor(*results);
     REQUIRE(index != nullptr);

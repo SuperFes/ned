@@ -20,6 +20,7 @@
 #include "Markdown.h"
 #include "Mode.h"
 #include "ModeOverrides.h"
+#include "Multibuffer.h"
 #include "Org.h"
 #include "PageScroll.h"
 #include "ProjectRoot.h"
@@ -1584,6 +1585,37 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
             context.interactiveRequest = InteractiveRequest::ProjectFindReferences;
         });
 
+    // Editable-multibuffer follow-up (wgrep-style commit): a no-op
+    // everywhere except a multibuffer carrying at least one editable
+    // excerpt (e.g. *diagnostics*, *references: ...*) -- safe to bind
+    // globally, the same "just signal intent, real behavior is buffer-
+    // shape-gated" posture project-search-visit-result/vcs-visit-result
+    // already use, except this one needs no InteractiveRequest round-trip
+    // through BufferView: CommitExcerptChanges only needs context.buffer/
+    // context.bufferList, both already on CommandContext.
+    registry.Register(
+        "multibuffer-commit-changes",
+        "Write every edited excerpt in the current multibuffer (e.g. *diagnostics*, *references: ...*) back to "
+        "its real source buffer. Does not save to disk.",
+        [](CommandContext& context) {
+            if (context.buffer.ExcerptRanges().empty()) {
+                return;
+            }
+            const multibuffer::CommitResult result = multibuffer::CommitExcerptChanges(context.bufferList, context.buffer);
+            if (!context.message) {
+                return;
+            }
+            if (result.committedExcerpts == 0 && result.skipped.empty()) {
+                *context.message = "No changes to commit.";
+                return;
+            }
+            *context.message =
+                "Committed " + std::to_string(result.committedExcerpts) + " excerpt" + (result.committedExcerpts == 1 ? "" : "s");
+            if (!result.skipped.empty()) {
+                *context.message += " (" + std::to_string(result.skipped.size()) + " skipped: " + result.skipped.front().second + ")";
+            }
+        });
+
     registry.Register("toggle-project-sidebar", "Show or hide the left-side project tree.",
                       [](CommandContext& context) {
                           context.interactiveRequest = InteractiveRequest::ToggleProjectSidebar;
@@ -2961,6 +2993,13 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("C-c T ."), "run-test-at-point"); // "." for at-point
     keymap.Bind(ParseKeySequence("C-c T f"), "rerun-failed-tests");
     keymap.Bind(ParseKeySequence("C-c C-v"), "project-search-visit-result");
+    // Editable-multibuffer follow-up: wgrep's own real Emacs binding is
+    // "C-c C-e", already taken here by lsp-show-diagnostic -- "C-c C-c" is
+    // the closest fidelity available (also a real wgrep convention in some
+    // configs), and is otherwise unbound globally (only a *local* leaf
+    // inside vcs-commit-message-mode's own keymap, see vcs-commit-finish
+    // below -- no collision, KeymapStack layers are independent).
+    keymap.Bind(ParseKeySequence("C-c C-c"), "multibuffer-commit-changes");
     // VCS blame gutter follow-up: "C-c v" prefix, mirroring "C-c C-b"/
     // "C-c C-M-b" run-task/cancel-task's own choice of an otherwise-unused
     // letter+prefix combination.

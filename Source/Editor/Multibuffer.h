@@ -1,20 +1,33 @@
 //
-// Multibuffers (ROADMAP.md): a read-only Buffer stitching together excerpts
-// from multiple files/locations into one scrollable view, plus an index
-// mapping each stitched byte range back to where it came from -- what lets
+// Multibuffers (ROADMAP.md): a Buffer stitching together excerpts from
+// multiple files/locations into one scrollable view, plus an index mapping
+// each stitched byte range back to where it came from -- what lets
 // jump-to-source work from anywhere inside an excerpt's body, not just a
 // single "path:line:" index line the way BuildResultsBuffer's flat
 // per-match summary buffers require (see Source/UI/BufferView.cpp's
 // BuildResultsBuffer/VisitSearchResult, which this deliberately doesn't
 // replace -- existing "*search results*"/"*vcs status*"-style flat buffers
-// are untouched).
+// are untouched). Read-only unless at least one excerpt opts into editing
+// -- see the editable-multibuffer paragraph below.
 //
-// v1 scope: read-only. An excerpt's body text is supplied verbatim by the
-// caller (e.g. a VCS diff hunk's own +/-/context lines) rather than always
-// derived from a line-range read here -- ReadExcerptText is offered as a
-// convenience for a caller that *does* want "N lines of a real file's own
-// current content" (a future LSP references/diagnostics consumer), not
-// something BuildMultibuffer itself calls.
+// An excerpt's body text is supplied verbatim by the caller (e.g. a VCS diff
+// hunk's own +/-/context lines) rather than always derived from a line-range
+// read here -- ReadExcerptText is offered as a convenience for a caller that
+// *does* want "N lines of a real file's own current content" (the
+// diagnostics/find-references consumers), not something BuildMultibuffer
+// itself calls.
+//
+// Editable-multibuffer follow-up: an excerpt marked ExcerptSource::editable
+// becomes a genuinely typable region of the composite buffer, writable back
+// to its real source buffer via CommitExcerptChanges -- the wgrep-style
+// (Emacs' editable-grep-results package) "edit here, commit there" flow.
+// Every excerpt's own header line and the rule/separator lines between
+// excerpts stay protected chrome regardless -- only the body text itself is
+// ever editable. lsp-diagnostics-buffer/project-find-references mark their
+// excerpts editable; vcs-full-diff-buffer (mixed +/-/context lines, real
+// patch-apply semantics) and the agenda/clock-report multibuffers
+// (synthetic summary text with no 1:1 source-byte mapping) deliberately
+// don't, and stay exactly as read-only as before.
 //
 
 #ifndef NED_EDITOR_MULTIBUFFER_H
@@ -67,6 +80,14 @@ struct ExcerptSource {
     // the same degrade-don't-crash posture the rest of this subsystem takes
     // toward malformed/unexpected input.
     std::vector<LineTint> lineTints;
+    // Editable-multibuffer follow-up: see this header's own doc comment.
+    // Default false -- every existing caller stays exactly as read-only as
+    // before with no call-site change. Only takes effect when
+    // sourceStartLine is nonzero (no source line means nowhere to write a
+    // commit back to); BuildMultibuffer silently treats editable as false
+    // otherwise rather than erroring, the same degrade-don't-crash posture
+    // malformed input gets elsewhere in this subsystem.
+    bool editable = false;
 };
 
 // One stitched excerpt, located within the composite buffer's own byte
@@ -147,6 +168,28 @@ void ClearRegistryForTesting();
 // callers don't need to build one by hand.
 text::Buffer& BuildMultibuffer(text::BufferList& bufferList, const std::string& name,
                                const std::vector<ExcerptSource>& excerpts);
+
+// Editable-multibuffer follow-up (wgrep-style commit): writes every changed
+// editable excerpt in composite's own ExcerptRanges() back to its real
+// source Buffer (opened/found via bufferList.OpenOrCreateFile, so it always
+// lands on the live, in-memory buffer -- unsaved changes in the source stay
+// unsaved, participate in that buffer's own undo tree, LSP sync, etc.).
+// "Changed" means the excerpt's current composite text differs from the
+// ExcerptRange::originalText snapshot captured at build/last-commit time --
+// an untouched excerpt is left alone. Does not write to disk: leaves that
+// to the user's normal save-buffer on whichever source buffers came out
+// modified, the same scope wgrep itself keeps (commits to buffers, not
+// files).
+struct CommitResult {
+    std::size_t committedExcerpts = 0; // ranges actually written
+    // One entry per skipped range -- its source path plus why (currently
+    // always "externally modified since this multibuffer was built,"
+    // ExternallyModified()/ContentGeneration() checked per source buffer --
+    // see CommitExcerptChanges' own doc comment). A skip never aborts the
+    // rest of the commit.
+    std::vector<std::pair<std::filesystem::path, std::string>> skipped;
+};
+CommitResult CommitExcerptChanges(text::BufferList& bufferList, text::Buffer& composite);
 
 } // namespace ned::editor::multibuffer
 
