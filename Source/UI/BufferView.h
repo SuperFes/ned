@@ -424,6 +424,13 @@ class BufferView : public Widget {
     // a safe no-op.
     void SetOnAcpPanelToggle(std::function<void()> handler);
 
+    // DAP round 2: dap-toggle-console's forwarding hook, same shape and
+    // reasoning as SetOnAcpPanelToggle immediately above -- the debug
+    // console is another OverlayHost overlay owned by main.cpp's
+    // composition, wired via WindowManager::SetOnDapConsoleToggle fanning
+    // out to every pane. Unset is a safe no-op.
+    void SetOnDapConsoleToggle(std::function<void()> handler);
+
     // per-buffer-mode follow-up: called at the top of Paint() whenever the
     // active buffer's identity has changed since the last Paint() call --
     // the same "recompute, don't cache, detect via pointer identity" idiom
@@ -611,7 +618,20 @@ class BufferView : public Widget {
                            // non-Normal mode, macro replay stops at an
                            // expansion (ReplayMacro's existing rule) -- an
                            // inherited, deliberate limitation.
-                           Snippet };
+                           Snippet,
+                           // DAP round 2: DapBreakpointCondition/DapBreakpointLogMessage/
+                           // DapAddWatch/DapSetVariableValue are HandlePromptKey-routed
+                           // plain-text prompts, same shape as DapEvaluate above.
+                           // DapThreadSelect is different in kind, same way
+                           // AcpPermissionPrompt is -- entered directly from
+                           // RequestThreads' async callback, driven by its own
+                           // HandleDapThreadSelectKey (LspCodeActionSelect's numbered-list
+                           // shape).
+                           DapBreakpointCondition,
+                           DapBreakpointLogMessage,
+                           DapAddWatch,
+                           DapSetVariableValue,
+                           DapThreadSelect };
 
     enum class DeleteFileStage { EnteringPath,
                                  Confirming };
@@ -1466,6 +1486,29 @@ class BufferView : public Widget {
     // it.
     void BuildDebugBuffer(const std::vector<std::string>& lines);
 
+    // DAP round 2: dap-remove-watch's body -- parses a "[watch:N]" trailing
+    // marker off point's own "*debug*" buffer line (ExpandVariableAtPoint's
+    // "[ref:N]" convention, applied to watch lines), removes that watch,
+    // and re-runs ShowDebugInfo() to refresh.
+    void RemoveWatchAtPoint();
+
+    // DAP round 2: dap-set-variable's body -- parses point's own "*debug*"
+    // buffer line for its "[owner:M]" container-reference marker (see
+    // FormatDebugVariableLine) and variable name, prompts for a new value
+    // (InputMode::DapSetVariableValue), and on Enter sends the DAP
+    // setVariable request, splicing the result back into the exact line
+    // via the same staleness-guarded DeleteRange+InsertAt ExpandVariableAtPoint
+    // uses.
+    void SetVariableAtPoint();
+
+    // DAP round 2: dap-select-thread's entry point -- fetches the current
+    // thread list (RequestThreads) and, when non-empty, enters
+    // InputMode::DapThreadSelect (LspCodeActionSelect's numbered-choice
+    // shape, driven by pendingDapThreads_/dapThreadSelection_).
+    void BeginDapThreadSelect();
+    void RefreshDapThreadSelectStatus();
+    void HandleDapThreadSelectKey(const editor::KeyChord& chord);
+
     // Diagnostic aid, opt-in via $NED_DEBUG_MOUSE (a file path to append
     // to): logs the raw event plus current point/mark/topLine_/size at the
     // top of every mouse handler call, before any of it can be mutated by
@@ -1691,7 +1734,39 @@ class BufferView : public Widget {
     mutable const text::Buffer*                  dapPathKeyBuffer_ = nullptr;
     mutable std::optional<std::filesystem::path> dapPathKeyRawPath_;
     mutable std::string                          dapPathKey_;
-    EventLoop*                                   eventLoop_ = nullptr; // see SetEventLoop
+
+    // DAP round 2: valid only while inputMode_ == InputMode::DapThreadSelect
+    // -- same "populated by the entry point, consumed by
+    // Refresh*/Handle*Key" convention pendingAcpPermissionOptions_ above
+    // establishes.
+    std::vector<editor::dap::DapManager::Thread> pendingDapThreads_;
+    std::size_t                                  dapThreadSelection_ = 0;
+
+    // DAP round 2: the path:line a dap-set-breakpoint-condition/
+    // dap-set-breakpoint-log-message prompt targets -- captured when the
+    // command runs (point's own line, mirroring dap-toggle-breakpoint),
+    // consumed on Enter inside HandlePromptKey. Valid only while inputMode_
+    // is DapBreakpointCondition/DapBreakpointLogMessage.
+    struct PendingDapBreakpointTarget {
+        std::filesystem::path path;
+        std::size_t            line = 0;
+    };
+    std::optional<PendingDapBreakpointTarget> pendingDapBreakpointTarget_;
+
+    // DAP round 2: dap-set-variable's captured target -- buffer/line
+    // identity plus the exact line text (ExpandVariableAtPoint's own
+    // staleness-guard convention) and the parsed owner reference/variable
+    // name. Valid only while inputMode_ == DapSetVariableValue.
+    struct PendingDapSetVariable {
+        text::Buffer* buffer = nullptr;
+        std::size_t    line  = 0;
+        std::string    lineText;
+        int            ownerRef = 0;
+        std::string    name;
+    };
+    std::optional<PendingDapSetVariable> pendingDapSetVariable_;
+
+    EventLoop* eventLoop_ = nullptr; // see SetEventLoop
 
     InputMode                                inputMode_ = InputMode::Normal;
     std::optional<editor::IncrementalSearch> search_;
@@ -1826,6 +1901,7 @@ class BufferView : public Widget {
     std::function<void(text::Buffer&)>              onBufferClosed_;
     std::function<void()>                           onTerminalToggle_;      // see SetOnTerminalToggle
     std::function<void()>                           onAcpPanelToggle_;      // see SetOnAcpPanelToggle
+    std::function<void()>                           onDapConsoleToggle_;    // see SetOnDapConsoleToggle
     std::function<void(text::Buffer&)>              onActiveBufferChanged_; // see SetOnActiveBufferChanged
 
     // Caches mode_.highlight's result across Paint() calls (tree-sitter

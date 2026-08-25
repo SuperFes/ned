@@ -499,6 +499,7 @@ std::unique_ptr<Pane> WindowManager::MakePane(text::Buffer& buffer, editor::Mode
     pane->Buffer().SetThemeApplier(themeApplier_);
     pane->Buffer().SetOnTerminalToggle(onTerminalToggle_);
     pane->Buffer().SetOnAcpPanelToggle(onAcpPanelToggle_);
+    pane->Buffer().SetOnDapConsoleToggle(onDapConsoleToggle_);
     // Split-resize follow-up: see WindowManager.h's own resizingSplit_
     // comment and BufferView::SetSplitResizeQuery's own doc comment.
     pane->Buffer().SetSplitResizeQuery([this] { return resizingSplit_; });
@@ -538,6 +539,13 @@ void WindowManager::SetOnAcpPanelToggle(std::function<void()> onToggle) {
     onAcpPanelToggle_ = std::move(onToggle);
     for (Pane* pane : Leaves()) {
         pane->Buffer().SetOnAcpPanelToggle(onAcpPanelToggle_);
+    }
+}
+
+void WindowManager::SetOnDapConsoleToggle(std::function<void()> onToggle) {
+    onDapConsoleToggle_ = std::move(onToggle);
+    for (Pane* pane : Leaves()) {
+        pane->Buffer().SetOnDapConsoleToggle(onDapConsoleToggle_);
     }
 }
 

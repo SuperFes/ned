@@ -679,6 +679,10 @@ void BufferView::SetOnAcpPanelToggle(std::function<void()> handler) {
     onAcpPanelToggle_ = std::move(handler);
 }
 
+void BufferView::SetOnDapConsoleToggle(std::function<void()> handler) {
+    onDapConsoleToggle_ = std::move(handler);
+}
+
 void BufferView::SetOnActiveBufferChanged(std::function<void(text::Buffer&)> handler) {
     onActiveBufferChanged_ = std::move(handler);
 }
@@ -1649,15 +1653,17 @@ void BufferView::Paint(Canvas c) {
     const std::size_t statusStart     = diffStart + diffColumnWidth;
     const std::size_t diagnosticStart = statusStart + kStatusWidth;
 
-    // Fetched once per Paint(), not once per row -- BreakpointLinesForKey
+    // Fetched once per Paint(), not once per row -- BreakpointsForKey
     // returns a copy, and the stop location never changes mid-frame.
     // dapPathKey_ is current here: DapGutterActive() just above ran
-    // EnsureDapPathKey().
-    std::vector<std::size_t>                           dapBreakpointLines;
+    // EnsureDapPathKey(). Slice 4: the richer per-line Breakpoint (kind +
+    // verified) rather than bare line numbers, for the gutter's
+    // glyph-by-kind/color-by-verified rendering below.
+    std::vector<editor::dap::DapManager::Breakpoint>   dapBreakpoints;
     std::optional<std::pair<std::string, std::size_t>> dapStop;
     if (dapColumnWidth > 0) {
-        dapBreakpointLines = dapManager_->BreakpointLinesForKey(dapPathKey_);
-        dapStop            = dapManager_->CurrentStopKeyAndLine();
+        dapBreakpoints = dapManager_->BreakpointsForKey(dapPathKey_);
+        dapStop        = dapManager_->CurrentStopKeyAndLine();
         if (dapStop && dapStop->first != dapPathKey_) {
             dapStop.reset(); // stopped in some other file -- nothing to mark here
         }
@@ -2047,23 +2053,30 @@ void BufferView::Paint(Canvas c) {
                     .background = (gutterSelection != GutterSelection::None) ? theme_.selectionBackground : theme_.background,
                     .foreground = gutterForeground,
                 };
-                // DAP client slice 2: the debug-marker column -- an
+                // DAP client slice 2/4: the debug-marker column -- an
                 // execution arrow where the debuggee is stopped (winning
-                // over a breakpoint dot on the same line: "you are here"
-                // beats "you asked to stop here"), a dot on any breakpoint
-                // line. Same plain-single-width-Unicode discipline as the
-                // diagnostic glyphs (▸ is the sidebar's own proven
-                // disclosure triangle; ● is from the same geometric-shapes
-                // range as the scroll arrows).
+                // over a breakpoint marker on the same line: "you are
+                // here" beats "you asked to stop here"), else a glyph by
+                // breakpoint kind (plain/conditional/logpoint) colored by
+                // verified state. Same plain-single-width-Unicode
+                // discipline as the diagnostic glyphs (▸ is the sidebar's
+                // own proven disclosure triangle; ●/◆/○ are from the same
+                // geometric-shapes range as the scroll arrows).
                 if (dapColumnWidth > 0) {
                     Cell& cell = c[{.x = 0, .y = row}];
                     if (currentLineIsExecutionLine) {
                         cell.character = "▸";
                         Brush{.background = theme_.background, .foreground = theme_.executionMarker, .bold = true}.ApplyTo(cell);
                     }
-                    else if (std::binary_search(dapBreakpointLines.begin(), dapBreakpointLines.end(), line + 1)) {
-                        cell.character = "●";
-                        Brush{.background = theme_.background, .foreground = theme_.breakpointMarker}.ApplyTo(cell);
+                    else {
+                        const auto bpIt = std::lower_bound(
+                            dapBreakpoints.begin(), dapBreakpoints.end(), line + 1,
+                            [](const editor::dap::DapManager::Breakpoint& bp, std::size_t targetLine) { return bp.line < targetLine; });
+                        if (bpIt != dapBreakpoints.end() && bpIt->line == line + 1) {
+                            cell.character   = !bpIt->logMessage.empty() ? "○" : (!bpIt->condition.empty() ? "◆" : "●");
+                            const Color color = bpIt->verified ? theme_.breakpointMarker : theme_.unverifiedBreakpointMarker;
+                            Brush{.background = theme_.background, .foreground = color}.ApplyTo(cell);
+                        }
                     }
                 }
 
@@ -3267,7 +3280,11 @@ bool BufferView::OnKeyEvent(const Event& event) {
         // ordinary self-insert-command instead of the prompt.
         inputMode_ == InputMode::DapEvaluate || inputMode_ == InputMode::VcsSwitchBranch ||
         inputMode_ == InputMode::VcsCreateBranch || inputMode_ == InputMode::DeleteProperty ||
-        inputMode_ == InputMode::OrgSchedule || inputMode_ == InputMode::OrgDeadline) {
+        inputMode_ == InputMode::OrgSchedule || inputMode_ == InputMode::OrgDeadline ||
+        // DAP round 2: same dispatch-gap fix as DapEvaluate above -- these
+        // four are HandlePromptKey-routed plain-text prompts too.
+        inputMode_ == InputMode::DapBreakpointCondition || inputMode_ == InputMode::DapBreakpointLogMessage ||
+        inputMode_ == InputMode::DapAddWatch || inputMode_ == InputMode::DapSetVariableValue) {
         HandlePromptKey(*chord);
         ClampPointToNarrowing();
         return true;
@@ -3334,6 +3351,11 @@ bool BufferView::OnKeyEvent(const Event& event) {
     }
     if (inputMode_ == InputMode::AcpPermissionPrompt) {
         HandleAcpPermissionPromptKey(*chord);
+        ClampPointToNarrowing();
+        return true;
+    }
+    if (inputMode_ == InputMode::DapThreadSelect) {
+        HandleDapThreadSelectKey(*chord);
         ClampPointToNarrowing();
         return true;
     }
@@ -5125,6 +5147,71 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             prompt_.emplace("Evaluate: ");
             statusMessage_ = prompt_->StatusText();
             return;
+        // DAP round 2: SetBreakpointCondition/LogMessage capture point's own
+        // line (dap-toggle-breakpoint's own convention) into
+        // pendingDapBreakpointTarget_ before entering their prompt --
+        // HandlePromptKey's DapBreakpointCondition/DapBreakpointLogMessage
+        // branches consume it on Enter.
+        case editor::InteractiveRequest::DapSetBreakpointCondition:
+        case editor::InteractiveRequest::DapSetBreakpointLogMessage: {
+            if (!dapManager_) {
+                statusMessage_ = "No debugger available.";
+                return;
+            }
+            text::Buffer& buffer = activeBuffer_.Get();
+            if (!buffer.Path()) {
+                statusMessage_ = "Buffer has no file to set a breakpoint in.";
+                return;
+            }
+            const std::size_t line = buffer.Content().ByteOffsetToLine(buffer.Point()) + 1;
+            pendingDapBreakpointTarget_ = PendingDapBreakpointTarget{.path = *buffer.Path(), .line = line};
+            const bool isCondition      = request == editor::InteractiveRequest::DapSetBreakpointCondition;
+            inputMode_                  = isCondition ? InputMode::DapBreakpointCondition : InputMode::DapBreakpointLogMessage;
+            prompt_.emplace(isCondition ? "Condition (empty to clear): " : "Log message (empty to clear): ");
+            statusMessage_ = prompt_->StatusText();
+            return;
+        }
+        case editor::InteractiveRequest::DapAddWatch:
+            if (!dapManager_) {
+                statusMessage_ = "No debugger available.";
+                return;
+            }
+            inputMode_ = InputMode::DapAddWatch;
+            prompt_.emplace("Add watch: ");
+            statusMessage_ = prompt_->StatusText();
+            return;
+        case editor::InteractiveRequest::DapRemoveWatch:
+            if (!dapManager_) {
+                statusMessage_ = "No debugger available.";
+            }
+            else {
+                RemoveWatchAtPoint();
+            }
+            return;
+        case editor::InteractiveRequest::DapSelectThread:
+            if (!dapManager_) {
+                statusMessage_ = "No debugger available.";
+            }
+            else {
+                BeginDapThreadSelect();
+            }
+            return;
+        case editor::InteractiveRequest::DapSetVariable:
+            if (!dapManager_) {
+                statusMessage_ = "No debugger available.";
+            }
+            else {
+                SetVariableAtPoint();
+            }
+            return;
+        case editor::InteractiveRequest::DapToggleConsole:
+            // The debug console is an OverlayHost overlay above even
+            // WindowManager's level, same shape as ToggleTerminal/
+            // AcpTogglePanel above -- only forward.
+            if (onDapConsoleToggle_) {
+                onDapConsoleToggle_();
+            }
+            return;
         // ACP client slice 2: AcpStartSession/AcpSendPrompt are prompt-shaped
         // (HandlePromptKey), same "just enter the mode and prime the
         // prompt" shape as DapEvaluate above; AcpStopSession is a one-shot
@@ -5940,6 +6027,14 @@ std::string_view BufferView::HistoryKeyForInputMode(InputMode mode) {
             return "task-name";
         case InputMode::DapEvaluate:
             return "dap-evaluate";
+        case InputMode::DapBreakpointCondition:
+            return "dap-breakpoint-condition";
+        case InputMode::DapBreakpointLogMessage:
+            return "dap-breakpoint-log-message";
+        case InputMode::DapAddWatch:
+            return "dap-add-watch";
+        case InputMode::DapSetVariableValue:
+            return "dap-set-variable";
         case InputMode::VcsSwitchBranch:
             return "vcs-switch-branch";
         case InputMode::VcsCreateBranch:
@@ -6003,6 +6098,14 @@ bool BufferView::TryNavigatePromptHistory(const editor::KeyChord& chord, std::st
     }
     return true;
 }
+
+namespace {
+    // Forward-declared here (defined below, near ShowDebugInfo) so
+    // HandlePromptKey's DapSetVariableValue branch -- which runs earlier in
+    // this file -- can reuse it rather than duplicating the "[ref:N]"/
+    // "[owner:M]"-marker line format.
+    std::string FormatDebugVariableLine(const ned::editor::dap::DapManager::Variable& variable, std::size_t indent, int ownerRef = 0);
+} // namespace
 
 void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
     if (chord.Special == editor::SpecialKey::Enter) {
@@ -6214,6 +6317,95 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
                 });
             }
         }
+        else if (inputMode_ == InputMode::DapBreakpointCondition || inputMode_ == InputMode::DapBreakpointLogMessage) {
+            // Empty input is meaningful here (clears the field), unlike
+            // DapEvaluate above -- no early-return on it.
+            if (!dapManager_ || !pendingDapBreakpointTarget_) {
+                statusMessage_ = "No debugger available.";
+            }
+            else if (inputMode_ == InputMode::DapBreakpointCondition) {
+                statusMessage_ = dapManager_->SetBreakpointCondition(pendingDapBreakpointTarget_->path, pendingDapBreakpointTarget_->line, input);
+            }
+            else {
+                statusMessage_ = dapManager_->SetBreakpointLogMessage(pendingDapBreakpointTarget_->path, pendingDapBreakpointTarget_->line, input);
+            }
+            pendingDapBreakpointTarget_.reset();
+        }
+        else if (inputMode_ == InputMode::DapAddWatch) {
+            if (input.empty()) {
+                statusMessage_ = "No expression given.";
+            }
+            else if (!dapManager_) {
+                statusMessage_ = "No debugger available.";
+            }
+            else {
+                dapManager_->AddWatch(input);
+                statusMessage_ = "Watch added: " + input;
+            }
+        }
+        else if (inputMode_ == InputMode::DapSetVariableValue) {
+            if (!dapManager_ || !pendingDapSetVariable_) {
+                statusMessage_ = "No debugger available.";
+            }
+            else {
+                text::Buffer* const bufferPtr = pendingDapSetVariable_->buffer;
+                const std::size_t   line      = pendingDapSetVariable_->line;
+                const std::string   lineText  = pendingDapSetVariable_->lineText;
+                const int           ownerRef  = pendingDapSetVariable_->ownerRef;
+                const std::string   name      = pendingDapSetVariable_->name;
+                statusMessage_                = "Setting " + name + "...";
+                dapManager_->SetVariable(
+                    ownerRef, name, input,
+                    [this, bufferPtr, line, lineText, name](editor::dap::DapManager::SetVariableResult result) {
+                        if (bufferPtr != &activeBuffer_.Get()) {
+                            return; // switched away while the request was in flight
+                        }
+                        if (!result.success) {
+                            statusMessage_ = "Set variable failed: " + result.errorMessage;
+                            return;
+                        }
+                        text::Buffer&     target        = *bufferPtr;
+                        const text::Rope& targetContent = target.Content();
+                        if (line >= targetContent.LineCount()) {
+                            return;
+                        }
+                        const std::size_t targetLineStart = targetContent.LineToByteOffset(line);
+                        const std::size_t targetLineEnd    = (line + 1 < targetContent.LineCount())
+                                                                 ? targetContent.LineToByteOffset(line + 1) - 1
+                                                                 : targetContent.ByteLength();
+                        if (targetContent.Substring(targetLineStart, targetLineEnd - targetLineStart) != lineText) {
+                            statusMessage_ = "Debug line changed -- variable set on the adapter, but not re-displayed.";
+                            return;
+                        }
+                        // Rebuild this single line the same way FormatDebugVariableLine
+                        // would, preserving indent and the owner marker (whose ref
+                        // hasn't changed) but reflecting the possibly-new value/type/
+                        // ref -- same programmatic-splice-under-a-lifted-read-only-flag
+                        // pattern ExpandVariableAtPoint uses.
+                        std::size_t indent = 0;
+                        while (indent < lineText.size() && lineText[indent] == ' ') {
+                            ++indent;
+                        }
+                        editor::dap::DapManager::Variable variable;
+                        variable.name               = name;
+                        variable.value               = result.value;
+                        variable.type                = result.type;
+                        variable.variablesReference = result.variablesReference;
+                        std::string replacement      = FormatDebugVariableLine(variable, indent);
+                        const std::size_t ownerMarker = lineText.rfind("[owner:");
+                        if (ownerMarker != std::string::npos) {
+                            replacement += "  " + lineText.substr(ownerMarker);
+                        }
+                        const bool wasReadOnly = target.ReadOnly();
+                        target.SetReadOnly(false);
+                        target.DeleteRange(targetLineStart, targetLineEnd - targetLineStart);
+                        target.InsertAt(targetLineStart, replacement);
+                        target.SetReadOnly(wasReadOnly);
+                        statusMessage_.clear();
+                    });
+            }
+            pendingDapSetVariable_.reset();
+        }
         else if (inputMode_ == InputMode::VcsSwitchBranch || inputMode_ == InputMode::VcsCreateBranch) {
             if (input.empty()) {
                 statusMessage_ = "No branch name given.";
@@ -6338,6 +6530,21 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
             case InputMode::DapEvaluate:
                 label = "Evaluate";
                 break;
+            case InputMode::DapBreakpointCondition:
+                label = "Breakpoint condition";
+                pendingDapBreakpointTarget_.reset();
+                break;
+            case InputMode::DapBreakpointLogMessage:
+                label = "Breakpoint log message";
+                pendingDapBreakpointTarget_.reset();
+                break;
+            case InputMode::DapAddWatch:
+                label = "Add watch";
+                break;
+            case InputMode::DapSetVariableValue:
+                label = "Set variable";
+                pendingDapSetVariable_.reset();
+                break;
             case InputMode::VcsSwitchBranch:
                 label = "Switch branch";
                 break;
@@ -6365,6 +6572,8 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
         inputMode_ != InputMode::VcsCreateBranch && inputMode_ != InputMode::AcpAgentName &&
         inputMode_ != InputMode::AcpPromptText && inputMode_ != InputMode::DeleteProperty &&
         inputMode_ != InputMode::OrgSchedule && inputMode_ != InputMode::OrgDeadline &&
+        inputMode_ != InputMode::DapBreakpointCondition && inputMode_ != InputMode::DapBreakpointLogMessage &&
+        inputMode_ != InputMode::DapAddWatch && inputMode_ != InputMode::DapSetVariableValue &&
         inputMode_ != InputMode::GotoLine) { // completing a line number is meaningless
         // DapEvaluate excluded too: completing a debuggee expression
         // against buffer names would be meaningless, same reasoning as
@@ -6376,7 +6585,9 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
         // against. OrgSchedule/OrgDeadline: a typed date/relative-shorthand
         // has no candidate list either.
         // against. DeleteProperty likewise -- completing a property name
-        // against file/buffer names would be meaningless.
+        // against file/buffer names would be meaningless. The four new DAP
+        // round-2 prompts (condition/log-message/watch expression/variable
+        // value) are all free-text against debuggee state, same reasoning.
         CompletePrompt();
         return;
     }
@@ -7432,11 +7643,15 @@ void BufferView::BuildResultsBuffer(const std::vector<editor::SearchMatch>& matc
 
 namespace {
 
-    // One *debug* buffer variable line: "  name: type = value  [ref:N]" --
-    // the "[ref:N]" marker only when the variable is composite (children
-    // fetchable via a variables request); ExpandVariableAtPoint parses
-    // exactly this trailing shape back out.
-    std::string FormatDebugVariableLine(const ned::editor::dap::DapManager::Variable& variable, std::size_t indent) {
+    // One *debug* buffer variable line: "  name: type = value  [ref:N] [owner:M]"
+    // -- "[ref:N]" only when the variable is composite (children fetchable
+    // via a variables request, ExpandVariableAtPoint's own marker), "[owner:M]"
+    // (round 2) whenever ownerRef is given: M is the variablesReference of the
+    // *container* (scope or parent composite) the variables request that
+    // produced this line was made against -- what SetVariableAtPoint's
+    // setVariable request needs, independent of and always present alongside
+    // an optional [ref:N].
+    std::string FormatDebugVariableLine(const ned::editor::dap::DapManager::Variable& variable, std::size_t indent, int ownerRef) {
         std::string line(indent, ' ');
         line += variable.name;
         if (!variable.type.empty()) {
@@ -7445,6 +7660,9 @@ namespace {
         line += " = " + variable.value;
         if (variable.variablesReference > 0) {
             line += "  [ref:" + std::to_string(variable.variablesReference) + "]";
+        }
+        if (ownerRef > 0) {
+            line += "  [owner:" + std::to_string(ownerRef) + "]";
         }
         return line;
     }
@@ -7474,30 +7692,55 @@ void BufferView::ShowDebugInfo() {
             }
         }
         dapManager_->RequestScopes(frames[0].id, [this, lines](std::vector<editor::dap::DapManager::Scope> scopes) {
-            if (scopes.empty()) {
+            const std::vector<std::string>& watches = dapManager_->Watches();
+            if (scopes.empty() && watches.empty()) {
                 BuildDebugBuffer(*lines);
                 return;
             }
-            // One variables request per scope, all in flight at once --
-            // chunks keep each scope's own output in scope order however
-            // the responses interleave, and every callback runs on the
-            // main thread (see DapClient.h), so a plain shared counter is
-            // race-free.
-            auto remaining   = std::make_shared<std::size_t>(scopes.size());
-            auto scopeChunks = std::make_shared<std::vector<std::vector<std::string>>>(scopes.size());
+            // One variables request per scope plus one evaluate per watch,
+            // all in flight at once -- chunks keep each section's own
+            // output in a fixed slot regardless of response interleaving,
+            // and every callback runs on the main thread (see DapClient.h),
+            // so a plain shared counter covering both fan-outs is
+            // race-free. Slot 0 is reserved for watches (built even when
+            // empty -- skipped below), slots [1, 1+scopes.size()) for scopes.
+            auto remaining = std::make_shared<std::size_t>(scopes.size() + watches.size());
+            auto chunks    = std::make_shared<std::vector<std::vector<std::string>>>(1 + scopes.size());
+            if (!watches.empty()) {
+                std::vector<std::string>& watchChunk = (*chunks)[0];
+                watchChunk.push_back("== Watches ==");
+                watchChunk.resize(1 + watches.size()); // one line per watch, filled in place by index below
+                for (std::size_t w = 0; w < watches.size(); ++w) {
+                    dapManager_->Evaluate(
+                        watches[w],
+                        [this, lines, remaining, chunks, w, expression = watches[w]](bool success, std::string text) {
+                            (*chunks)[0][1 + w] = "  " + expression + " = " + (success ? text : ("<" + text + ">")) + "  [watch:" +
+                                                   std::to_string(w) + "]";
+                            if (--*remaining == 0) {
+                                for (const std::vector<std::string>& finishedChunk : *chunks) {
+                                    lines->insert(lines->end(), finishedChunk.begin(), finishedChunk.end());
+                                }
+                                BuildDebugBuffer(*lines);
+                            }
+                        },
+                        "watch");
+                }
+            }
+            // scopes.size() == 0 here just means the loop below never runs
+            // and *remaining reaches 0 from the watch fan-out above alone.
             for (std::size_t s = 0; s < scopes.size(); ++s) {
                 dapManager_->RequestVariables(
                     scopes[s].variablesReference,
-                    [this, lines, remaining, scopeChunks, s,
+                    [this, lines, remaining, chunks, s, scopeVariablesReference = scopes[s].variablesReference,
                      scopeName = scopes[s].name](std::vector<editor::dap::DapManager::Variable> variables) {
-                        std::vector<std::string>& chunk = (*scopeChunks)[s];
+                        std::vector<std::string>& chunk = (*chunks)[1 + s];
                         chunk.push_back("");
                         chunk.push_back("== " + scopeName + " ==");
                         for (const editor::dap::DapManager::Variable& variable : variables) {
-                            chunk.push_back(FormatDebugVariableLine(variable, 2));
+                            chunk.push_back(FormatDebugVariableLine(variable, 2, scopeVariablesReference));
                         }
                         if (--*remaining == 0) {
-                            for (const std::vector<std::string>& finishedChunk : *scopeChunks) {
+                            for (const std::vector<std::string>& finishedChunk : *chunks) {
                                 lines->insert(lines->end(), finishedChunk.begin(), finishedChunk.end());
                             }
                             BuildDebugBuffer(*lines);
@@ -7518,7 +7761,7 @@ void BufferView::BuildDebugBuffer(const std::vector<std::string>& lines) {
     debug.SetPoint(0);
     debug.SetReadOnly(true); // same tossable-read-only reasoning as BuildResultsBuffer
     activeBuffer_.Set(debug);
-    statusMessage_ = "C-c C-v visits a frame; M-x dap-expand-variable expands a [ref:N] line.";
+    statusMessage_ = "C-c C-v visits a frame; dap-expand-variable/dap-set-variable/dap-remove-watch act on point's own line.";
 }
 
 void BufferView::ExpandVariableAtPoint() {
@@ -7553,7 +7796,8 @@ void BufferView::ExpandVariableAtPoint() {
     text::Buffer* const bufferPtr = &buffer;
     statusMessage_                = "Expanding...";
     dapManager_->RequestVariables(
-        reference, [this, bufferPtr, line, lineText, markerPos, indent](std::vector<editor::dap::DapManager::Variable> variables) {
+        reference,
+        [this, bufferPtr, line, lineText, markerPos, indent, reference](std::vector<editor::dap::DapManager::Variable> variables) {
             if (bufferPtr != &activeBuffer_.Get()) {
                 return; // switched away while the request was in flight
             }
@@ -7578,13 +7822,19 @@ void BufferView::ExpandVariableAtPoint() {
             }
 
             // Consume the "[ref:N]" marker (and its separating spaces) so a
-            // second expand on the same line can't splice duplicates in.
-            std::string replacement = lineText.substr(0, markerPos);
+            // second expand on the same line can't splice duplicates in --
+            // but keep a trailing "[owner:M]" (round 2), if this line had
+            // one, so the parent variable itself stays editable via
+            // dap-set-variable even after being expanded.
+            const std::size_t ownerMarkerPos = lineText.rfind("[owner:");
+            const std::string ownerSuffix    = ownerMarkerPos != std::string::npos ? "  " + lineText.substr(ownerMarkerPos) : "";
+            std::string       replacement    = lineText.substr(0, markerPos);
             while (!replacement.empty() && replacement.back() == ' ') {
                 replacement.pop_back();
             }
+            replacement += ownerSuffix;
             for (const editor::dap::DapManager::Variable& variable : variables) {
-                replacement += "\n" + FormatDebugVariableLine(variable, indent + 2);
+                replacement += "\n" + FormatDebugVariableLine(variable, indent + 2, reference);
             }
 
             // The *debug* buffer is read-only against user edits; this is a
@@ -7598,6 +7848,147 @@ void BufferView::ExpandVariableAtPoint() {
             target.SetReadOnly(wasReadOnly);
             statusMessage_.clear();
         });
+}
+
+void BufferView::RemoveWatchAtPoint() {
+    text::Buffer&      buffer    = activeBuffer_.Get();
+    const text::Rope&  content   = buffer.Content();
+    const std::size_t  line      = content.ByteOffsetToLine(buffer.Point());
+    const std::size_t  lineStart = content.LineToByteOffset(line);
+    const std::size_t  lineEnd =
+        (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
+    const std::string lineText = content.Substring(lineStart, lineEnd - lineStart);
+
+    const std::size_t markerPos = lineText.rfind("[watch:");
+    if (markerPos == std::string::npos) {
+        statusMessage_ = "No watch on this line.";
+        return;
+    }
+    std::size_t index = 0;
+    try {
+        index = static_cast<std::size_t>(std::stoul(lineText.substr(markerPos + 7))); // stoul stops at the closing ']'
+    }
+    catch (const std::exception&) {
+        statusMessage_ = "No watch on this line.";
+        return;
+    }
+    dapManager_->RemoveWatchAt(index);
+    ShowDebugInfo();
+}
+
+void BufferView::SetVariableAtPoint() {
+    text::Buffer&      buffer    = activeBuffer_.Get();
+    const text::Rope&  content   = buffer.Content();
+    const std::size_t  line      = content.ByteOffsetToLine(buffer.Point());
+    const std::size_t  lineStart = content.LineToByteOffset(line);
+    const std::size_t  lineEnd =
+        (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
+    const std::string lineText = content.Substring(lineStart, lineEnd - lineStart);
+
+    const std::size_t ownerMarkerPos = lineText.rfind("[owner:");
+    int                ownerRef      = 0;
+    if (ownerMarkerPos != std::string::npos) {
+        try {
+            ownerRef = std::stoi(lineText.substr(ownerMarkerPos + 7)); // stoi stops at the closing ']'
+        }
+        catch (const std::exception&) {
+            ownerRef = 0;
+        }
+    }
+    if (ownerRef <= 0) {
+        statusMessage_ = "Not an editable variable line.";
+        return;
+    }
+
+    std::size_t indent = 0;
+    while (indent < lineText.size() && lineText[indent] == ' ') {
+        ++indent;
+    }
+    const std::size_t colonPos = lineText.find(": ", indent);
+    const std::size_t eqPos    = lineText.find(" = ", indent);
+    std::size_t       nameEnd  = std::string::npos;
+    if (colonPos != std::string::npos && (eqPos == std::string::npos || colonPos < eqPos)) {
+        nameEnd = colonPos;
+    }
+    else {
+        nameEnd = eqPos;
+    }
+    if (nameEnd == std::string::npos || nameEnd <= indent) {
+        statusMessage_ = "Not an editable variable line.";
+        return;
+    }
+    const std::string name = lineText.substr(indent, nameEnd - indent);
+
+    pendingDapSetVariable_ = PendingDapSetVariable{
+        .buffer = &buffer, .line = line, .lineText = lineText, .ownerRef = ownerRef, .name = name};
+    inputMode_ = InputMode::DapSetVariableValue;
+    prompt_.emplace("New value for " + name + ": ");
+    statusMessage_ = prompt_->StatusText();
+}
+
+void BufferView::BeginDapThreadSelect() {
+    if (dapManager_->State() != editor::dap::DapManager::SessionState::Stopped) {
+        statusMessage_ = "Not stopped (nothing to pick a thread in).";
+        return;
+    }
+    statusMessage_ = "Fetching threads...";
+    dapManager_->RequestThreads([this](std::vector<editor::dap::DapManager::Thread> threads) {
+        if (threads.empty()) {
+            statusMessage_ = "No threads reported (or the session already resumed).";
+            return;
+        }
+        pendingDapThreads_  = std::move(threads);
+        dapThreadSelection_ = 0;
+        inputMode_          = InputMode::DapThreadSelect;
+        RefreshDapThreadSelectStatus();
+    });
+}
+
+void BufferView::RefreshDapThreadSelectStatus() {
+    std::string status = "Select thread: ";
+    for (std::size_t i = 0; i < pendingDapThreads_.size(); ++i) {
+        if (i > 0) {
+            status += "  ";
+        }
+        const bool selected = (i == dapThreadSelection_);
+        status += (selected ? "[" : "") + std::to_string(i + 1) + ") " + pendingDapThreads_[i].name + (selected ? "]" : "");
+    }
+    statusMessage_ = status;
+}
+
+void BufferView::HandleDapThreadSelectKey(const editor::KeyChord& chord) {
+    if (IsQuit(chord)) {
+        statusMessage_ = "Thread selection cancelled.";
+        EndInteractiveSession();
+        return;
+    }
+    if (chord.Special == editor::SpecialKey::Down) {
+        dapThreadSelection_ = (dapThreadSelection_ + 1) % pendingDapThreads_.size();
+        RefreshDapThreadSelectStatus();
+        return;
+    }
+    if (chord.Special == editor::SpecialKey::Up) {
+        dapThreadSelection_ = (dapThreadSelection_ + pendingDapThreads_.size() - 1) % pendingDapThreads_.size();
+        RefreshDapThreadSelectStatus();
+        return;
+    }
+    std::size_t chosen = dapThreadSelection_;
+    if (IsPlainCharacter(chord) && chord.Codepoint >= U'1' && chord.Codepoint <= U'9') {
+        const std::size_t index = static_cast<std::size_t>(chord.Codepoint - U'1');
+        if (index >= pendingDapThreads_.size()) {
+            return; // out of range -- stay in the selection list
+        }
+        chosen = index;
+    }
+    else if (chord.Special != editor::SpecialKey::Enter) {
+        return; // anything else is ignored -- stay in the selection list
+    }
+
+    const editor::dap::DapManager::Thread thread = pendingDapThreads_[chosen];
+    dapManager_->SelectThread(thread.id, [this, name = thread.name](bool success) {
+        statusMessage_ = success ? ("Selected thread: " + name) : "Failed to select thread.";
+    });
+    EndInteractiveSession();
 }
 
 void BufferView::HandleProjectReplaceKey(const editor::KeyChord& chord) {

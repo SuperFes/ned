@@ -1521,6 +1521,318 @@ TEST_CASE("dap-evaluate's prompt captures keystrokes instead of falling through 
     REQUIRE(fixture.buffer.Text().empty()); // must NOT have landed as a self-inserted character
 }
 
+// DAP round 2 below.
+
+TEST_CASE("The debug gutter distinguishes conditional and logpoint breakpoints by glyph", "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("one\ntwo\nthree\nfour");
+    fixture.buffer.SetPath("/tmp/ned-dap-kind-test.c");
+    fixture.buffer.SetPoint(0);
+
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::dap::DapManager manager(eventLoop);
+    manager.ToggleBreakpoint("/tmp/ned-dap-kind-test.c", 2);                    // plain
+    manager.SetBreakpointCondition("/tmp/ned-dap-kind-test.c", 3, "x > 1");     // conditional
+    manager.SetBreakpointLogMessage("/tmp/ned-dap-kind-test.c", 4, "hit: {x}"); // logpoint
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetDapManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 4});
+
+    ned::ui::Screen screen = ned::ui::Screen(20, 5);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 4});
+    view.Paint(canvas);
+
+    REQUIRE(screen.PixelAt(0, 1).character == "●"); // line 2
+    REQUIRE(screen.PixelAt(0, 1).foreground_color == fixture.theme.breakpointMarker);
+    REQUIRE(screen.PixelAt(0, 2).character == "◆"); // line 3, conditional
+    REQUIRE(screen.PixelAt(0, 2).foreground_color == fixture.theme.breakpointMarker);
+    REQUIRE(screen.PixelAt(0, 3).character == "○"); // line 4, logpoint
+    REQUIRE(screen.PixelAt(0, 3).foreground_color == fixture.theme.breakpointMarker);
+}
+
+TEST_CASE("An unverified breakpoint renders in the dimmed marker color", "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("one\ntwo\nthree");
+    fixture.buffer.SetPath("/tmp/ned-dap-unverified-test.c");
+    fixture.buffer.SetPoint(0);
+
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::dap::DapManager manager(eventLoop);
+    ned::editor::dap::DapClient* client  = nullptr;
+    FakeDapAdapter               adapter = FakeDapAdapter::Create(manager, eventLoop, client);
+
+    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-unverified", "{}");
+    manager.StartOrContinue("bufferview-dap-unverified");
+    const auto initialize = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(initialize["seq"].get<int>(), "initialize", ned::editor::dap::Json::object()));
+    const auto launch = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(launch["seq"].get<int>(), "launch", ned::editor::dap::Json::object()));
+    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-unverified", "");
+
+    // Toggled mid-session (not via the "initialized" event, which would
+    // also fire a configurationDone request right behind setBreakpoints --
+    // two frames FakeDapAdapter::NextRequest isn't built to split apart,
+    // see its own header comment) -- sends exactly one setBreakpoints
+    // request, mirroring DapManagerTest's own "mid-session toggle" test.
+    manager.ToggleBreakpoint("/tmp/ned-dap-unverified-test.c", 2);
+    const auto setBreakpoints = adapter.NextRequest();
+    REQUIRE(setBreakpoints["command"] == "setBreakpoints");
+    client->DispatchFrame(DapResponseFrame(setBreakpoints["seq"].get<int>(), "setBreakpoints",
+                                           {{"breakpoints", ned::editor::dap::Json::array({{{"verified", false}}})}}));
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetDapManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 2});
+
+    ned::ui::Screen screen = ned::ui::Screen(20, 3);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+
+    REQUIRE(screen.PixelAt(0, 1).character == "●");
+    REQUIRE(screen.PixelAt(0, 1).foreground_color == fixture.theme.unverifiedBreakpointMarker);
+}
+
+TEST_CASE("dap-set-breakpoint-condition's prompt sets a condition on point's own line", "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("one\ntwo\nthree");
+    fixture.buffer.SetPath("/tmp/ned-dap-condition-test.c");
+    fixture.buffer.SetPoint(fixture.buffer.Content().LineToByteOffset(1)); // line 2
+
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::dap::DapManager manager(eventLoop);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetDapManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "dap-set-breakpoint-condition");
+    view.OnEvent(ned::ui::test::Return());
+    REQUIRE(fixture.statusMessage == "Condition (empty to clear): ");
+
+    TypeText(view, "x > 1");
+    view.OnEvent(ned::ui::test::Return());
+
+    const auto breakpoints = manager.BreakpointsForKey(ned::editor::dap::DapManager::NormalizePathKey("/tmp/ned-dap-condition-test.c"));
+    REQUIRE(breakpoints.size() == 1);
+    REQUIRE(breakpoints[0].line == 2);
+    REQUIRE(breakpoints[0].condition == "x > 1");
+}
+
+TEST_CASE("dap-add-watch and dap-remove-watch round-trip through the *debug* buffer", "[BufferView]") {
+    Fixture                      fixture;
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::dap::DapManager manager(eventLoop);
+    ned::editor::dap::DapClient* client  = nullptr;
+    FakeDapAdapter               adapter = FakeDapAdapter::Create(manager, eventLoop, client);
+
+    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-watch", "{}");
+    manager.StartOrContinue("bufferview-dap-watch");
+    const auto initialize = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(initialize["seq"].get<int>(), "initialize", ned::editor::dap::Json::object()));
+    const auto launch = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(launch["seq"].get<int>(), "launch", ned::editor::dap::Json::object()));
+
+    client->DispatchFrame(DapEventFrame("stopped", {{"reason", "breakpoint"}, {"threadId", 1}}));
+    const auto autoStackTrace = adapter.NextRequest(); // HandleStoppedEvent's own internal fetch
+    client->DispatchFrame(
+        DapResponseFrame(autoStackTrace["seq"].get<int>(), "stackTrace", {{"stackFrames", ned::editor::dap::Json::array()}}));
+    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-watch", "");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetDapManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 20});
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "dap-add-watch");
+    view.OnEvent(ned::ui::test::Return());
+    REQUIRE(fixture.statusMessage == "Add watch: ");
+    TypeText(view, "1 + 1");
+    view.OnEvent(ned::ui::test::Return());
+    REQUIRE(manager.Watches() == std::vector<std::string>{"1 + 1"});
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "dap-show-debug");
+    view.OnEvent(ned::ui::test::Return());
+
+    const auto showDebugStackTrace = adapter.NextRequest();
+    REQUIRE(showDebugStackTrace["command"] == "stackTrace");
+    client->DispatchFrame(DapResponseFrame(
+        showDebugStackTrace["seq"].get<int>(), "stackTrace",
+        {{"stackFrames", ned::editor::dap::Json::array({{{"id", 1}, {"name", "main"}}})}}));
+
+    const auto scopesRequest = adapter.NextRequest();
+    REQUIRE(scopesRequest["command"] == "scopes");
+    client->DispatchFrame(DapResponseFrame(scopesRequest["seq"].get<int>(), "scopes", {{"scopes", ned::editor::dap::Json::array()}}));
+
+    const auto evaluateRequest = adapter.NextRequest();
+    REQUIRE(evaluateRequest["command"] == "evaluate");
+    REQUIRE(evaluateRequest["arguments"]["expression"] == "1 + 1");
+    REQUIRE(evaluateRequest["arguments"]["context"] == "watch");
+    client->DispatchFrame(DapResponseFrame(evaluateRequest["seq"].get<int>(), "evaluate", {{"result", "2"}}));
+
+    // BufferList::CreateBuffer always uniquifies -- a second dap-show-debug
+    // run below creates "*debug*<2>", not a reused "*debug*" -- so this
+    // reads back through the view's own active buffer rather than
+    // re-Find()-ing the original name.
+    ned::text::Buffer& debugBuffer = fixture.activeBuffer.Get();
+    REQUIRE(debugBuffer.Text().find("== Watches ==") != std::string::npos);
+    REQUIRE(debugBuffer.Text().find("1 + 1 = 2") != std::string::npos);
+    REQUIRE(debugBuffer.Text().find("[watch:0]") != std::string::npos);
+
+    // Point the *debug* buffer's own view at the watch line and remove it.
+    const std::size_t watchLineByte = debugBuffer.Text().find("1 + 1 = 2");
+    REQUIRE(watchLineByte != std::string::npos);
+    debugBuffer.SetPoint(watchLineByte);
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "dap-remove-watch");
+    view.OnEvent(ned::ui::test::Return());
+    REQUIRE(manager.Watches().empty());
+
+    // dap-remove-watch re-runs ShowDebugInfo -- drain its (now watch-less,
+    // scope-less) stackTrace/scopes round trip so the buffer settles.
+    const auto refreshStackTrace = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(
+        refreshStackTrace["seq"].get<int>(), "stackTrace",
+        {{"stackFrames", ned::editor::dap::Json::array({{{"id", 1}, {"name", "main"}}})}}));
+    const auto refreshScopes = adapter.NextRequest();
+    client->DispatchFrame(
+        DapResponseFrame(refreshScopes["seq"].get<int>(), "scopes", {{"scopes", ned::editor::dap::Json::array()}}));
+
+    REQUIRE(fixture.activeBuffer.Get().Text().find("== Watches ==") == std::string::npos);
+}
+
+TEST_CASE("dap-select-thread's numbered prompt refocuses subsequent stack-trace requests", "[BufferView]") {
+    Fixture                      fixture;
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::dap::DapManager manager(eventLoop);
+    ned::editor::dap::DapClient* client  = nullptr;
+    FakeDapAdapter               adapter = FakeDapAdapter::Create(manager, eventLoop, client);
+
+    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-threads", "{}");
+    manager.StartOrContinue("bufferview-dap-threads");
+    const auto initialize = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(initialize["seq"].get<int>(), "initialize", ned::editor::dap::Json::object()));
+    const auto launch = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(launch["seq"].get<int>(), "launch", ned::editor::dap::Json::object()));
+
+    client->DispatchFrame(DapEventFrame("stopped", {{"reason", "breakpoint"}, {"threadId", 1}}));
+    const auto autoStackTrace = adapter.NextRequest();
+    client->DispatchFrame(
+        DapResponseFrame(autoStackTrace["seq"].get<int>(), "stackTrace", {{"stackFrames", ned::editor::dap::Json::array()}}));
+    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-threads", "");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetDapManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "dap-select-thread");
+    view.OnEvent(ned::ui::test::Return());
+
+    const auto threadsRequest = adapter.NextRequest();
+    REQUIRE(threadsRequest["command"] == "threads");
+    client->DispatchFrame(DapResponseFrame(
+        threadsRequest["seq"].get<int>(), "threads",
+        {{"threads", ned::editor::dap::Json::array({{{"id", 1}, {"name", "main"}}, {{"id", 2}, {"name", "worker"}}})}}));
+    REQUIRE(fixture.statusMessage.find("1) main") != std::string::npos);
+    REQUIRE(fixture.statusMessage.find("worker") != std::string::npos);
+
+    view.OnEvent(ned::ui::test::Character("2")); // pick the second thread and commit
+    const auto refreshStackTrace = adapter.NextRequest();
+    REQUIRE(refreshStackTrace["command"] == "stackTrace");
+    REQUIRE(refreshStackTrace["arguments"]["threadId"] == 2);
+    client->DispatchFrame(DapResponseFrame(
+        refreshStackTrace["seq"].get<int>(), "stackTrace",
+        {{"stackFrames", ned::editor::dap::Json::array({{{"id", 5}, {"name", "worker"}}})}}));
+    REQUIRE(fixture.statusMessage.find("Selected thread: worker") != std::string::npos);
+
+    manager.RequestStackTrace([](std::vector<ned::editor::dap::DapManager::StackFrame>) {});
+    REQUIRE(adapter.NextRequest()["arguments"]["threadId"] == 2);
+}
+
+TEST_CASE("dap-set-variable edits a *debug* buffer variable line via the right owner reference", "[BufferView]") {
+    Fixture                      fixture;
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::dap::DapManager manager(eventLoop);
+    ned::editor::dap::DapClient* client  = nullptr;
+    FakeDapAdapter               adapter = FakeDapAdapter::Create(manager, eventLoop, client);
+
+    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-set-var", "{}");
+    manager.StartOrContinue("bufferview-dap-set-var");
+    const auto initialize = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(initialize["seq"].get<int>(), "initialize", ned::editor::dap::Json::object()));
+    const auto launch = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(launch["seq"].get<int>(), "launch", ned::editor::dap::Json::object()));
+
+    client->DispatchFrame(DapEventFrame("stopped", {{"reason", "breakpoint"}, {"threadId", 1}}));
+    const auto autoStackTrace = adapter.NextRequest();
+    client->DispatchFrame(
+        DapResponseFrame(autoStackTrace["seq"].get<int>(), "stackTrace", {{"stackFrames", ned::editor::dap::Json::array()}}));
+    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-set-var", "");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetDapManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 20});
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "dap-show-debug");
+    view.OnEvent(ned::ui::test::Return());
+
+    const auto showDebugStackTrace = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(
+        showDebugStackTrace["seq"].get<int>(), "stackTrace",
+        {{"stackFrames", ned::editor::dap::Json::array({{{"id", 1}, {"name", "main"}}})}}));
+    const auto scopesRequest = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(
+        scopesRequest["seq"].get<int>(), "scopes",
+        {{"scopes", ned::editor::dap::Json::array({{{"name", "Locals"}, {"variablesReference", 100}}})}}));
+    const auto variablesRequest = adapter.NextRequest();
+    REQUIRE(variablesRequest["arguments"]["variablesReference"] == 100);
+    client->DispatchFrame(DapResponseFrame(
+        variablesRequest["seq"].get<int>(), "variables",
+        {{"variables", ned::editor::dap::Json::array({{{"name", "x"}, {"value", "1"}, {"type", "int"}, {"variablesReference", 0}}})}}));
+
+    ned::text::Buffer* debugBuffer = fixture.bufferList.Find("*debug*");
+    REQUIRE(debugBuffer != nullptr);
+    const std::size_t variableLineByte = debugBuffer->Text().find("x: int = 1");
+    REQUIRE(variableLineByte != std::string::npos);
+    REQUIRE(debugBuffer->Text().find("[owner:100]") != std::string::npos);
+    debugBuffer->SetPoint(variableLineByte);
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "dap-set-variable");
+    view.OnEvent(ned::ui::test::Return());
+    REQUIRE(fixture.statusMessage == "New value for x: ");
+    TypeText(view, "42");
+    view.OnEvent(ned::ui::test::Return());
+
+    const auto setVariableRequest = adapter.NextRequest();
+    REQUIRE(setVariableRequest["command"] == "setVariable");
+    REQUIRE(setVariableRequest["arguments"]["variablesReference"] == 100);
+    REQUIRE(setVariableRequest["arguments"]["name"] == "x");
+    REQUIRE(setVariableRequest["arguments"]["value"] == "42");
+    client->DispatchFrame(DapResponseFrame(setVariableRequest["seq"].get<int>(), "setVariable",
+                                           {{"value", "42"}, {"type", "int"}, {"variablesReference", 0}}));
+
+    REQUIRE(fixture.bufferList.Find("*debug*")->Text().find("x: int = 42") != std::string::npos);
+}
+
+TEST_CASE("dap-toggle-console reaches the registered callback", "[BufferView]") {
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
+
+    int toggles = 0;
+    view.SetOnDapConsoleToggle([&toggles] { ++toggles; });
+
+    view.OnEvent(ned::ui::test::Ctrl('c'));
+    view.OnEvent(ned::ui::test::Character('D'));
+    REQUIRE(toggles == 1);
+}
+
 TEST_CASE("The diagnostics gutter uses a distinct glyph per severity", "[BufferView]") {
     Fixture fixture;
     fixture.buffer.InsertAtPoint("one\ntwo\nthree\nfour");
@@ -3902,7 +4214,14 @@ TEST_CASE("Typing in M-x narrows candidates and marks the top-ranked one selecte
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
 
     view.OnEvent(ned::ui::test::Alt('x'));
-    TypeText(view, "stb");
+    // DAP round 2 follow-up: "stb" alone now also fuzzy-matches
+    // dap-set-breakpoint-condition/dap-set-breakpoint-log-message with a
+    // higher score than switch-to-buffer (both "s" and "b" land on a
+    // word-boundary right after "dap-set-" / "-breakpoint-"), so the query
+    // widened to "swbuf" -- still short, still uniquely resolves to
+    // switch-to-buffer (no other registered command name contains a 'w' at
+    // all), and stays robust to future command names the same way.
+    TypeText(view, "swbuf");
 
     REQUIRE(fixture.statusMessage.find("[switch-to-buffer]") != std::string::npos);
     REQUIRE(fixture.statusMessage.find("quit") == std::string::npos);

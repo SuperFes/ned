@@ -307,6 +307,7 @@ Theme DarkTheme() {
         .breakpointMarker              = Color::RGB(0xe06c75), // same red family as diagnosticError -- both mean "attention here"
         .executionMarker               = Color::RGB(0xe5c07b), // the conventional debugger yellow
         .executionLineBackground       = Color::RGB(0x3a3a28), // a dim warm wash the yellow arrow reads against
+        .unverifiedBreakpointMarker    = Color::RGB(0x5c6370), // same dim gray as diagnosticHint
         .diffAddedBackground           = Color::RGB(0x2a3a2a), // dim green wash, dark enough to keep default-foreground text legible
         .diffRemovedBackground         = Color::RGB(0x3a2a2a), // dim red wash, same lightness as diffAddedBackground
         .trailingWhitespaceBackground  = Color::RGB(0x40282f), // dim maroon wash, distinct from diffRemovedBackground's red
@@ -397,6 +398,7 @@ Theme LightTheme() {
         .breakpointMarker              = Color::RGB(0xc0392b),
         .executionMarker               = Color::RGB(0xb58900),
         .executionLineBackground       = Color::RGB(0xf4ecd0),
+        .unverifiedBreakpointMarker    = Color::RGB(0x95a5a6), // same muted gray-blue as diagnosticHint
         .diffAddedBackground           = Color::RGB(0xe0f0d8), // light green wash, dark text stays legible
         .diffRemovedBackground         = Color::RGB(0xf5dcdc), // light red wash, same lightness as diffAddedBackground
         .trailingWhitespaceBackground  = Color::RGB(0xf0dde8), // light pink wash, distinct from diffRemovedBackground's red
@@ -489,6 +491,7 @@ Theme AnsiDarkTheme() {
         .breakpointMarker              = Color::Red,
         .executionMarker               = Color::Yellow,
         .executionLineBackground       = Color::Blue,
+        .unverifiedBreakpointMarker    = Color::Cyan, // same as diagnosticHint -- ANSI fallback restricted to palette 0-7, no Bright range
         .diffAddedBackground           = Color::Green,
         .diffRemovedBackground         = Color::Red,
         .trailingWhitespaceBackground  = Color::Yellow,
@@ -570,6 +573,7 @@ Theme AnsiLightTheme() {
         .breakpointMarker              = Color::Red,
         .executionMarker               = Color::Yellow,
         .executionLineBackground       = Color::Cyan,
+        .unverifiedBreakpointMarker    = Color::Cyan, // same as diagnosticHint -- ANSI fallback restricted to palette 0-7, no Bright range
         .diffAddedBackground           = Color::Green,
         .diffRemovedBackground         = Color::Red,
         .trailingWhitespaceBackground  = Color::Yellow,

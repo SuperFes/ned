@@ -619,6 +619,7 @@ add_library(ned_lib STATIC
         Source/UI/Overlay.cpp
         Source/UI/TerminalPanel.cpp
         Source/UI/AcpPanel.cpp
+        Source/UI/DebugConsolePanel.cpp
         Source/UI/BufferView.cpp
         Source/UI/WindowManager.cpp
         Source/UI/AsyncFileLoader.cpp
@@ -889,6 +890,7 @@ if (NED_BUILD_TESTS)
             Tests/DapConfigTest.cpp
             Tests/DapClientTest.cpp
             Tests/DapManagerTest.cpp
+            Tests/DebugConsolePanelTest.cpp
             Tests/ChildProcessTest.cpp
             Tests/TaskConfigTest.cpp
             Tests/TaskProcessTest.cpp

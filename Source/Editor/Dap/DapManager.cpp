@@ -29,14 +29,14 @@ std::string DapManager::NormalizePathKey(const std::filesystem::path& path) {
 }
 
 bool DapManager::ToggleBreakpoint(const std::filesystem::path& path, std::size_t line) {
-    const std::string         key   = NormalizePathKey(path);
-    std::vector<std::size_t>& lines = breakpoints_[key];
-    const auto                it    = std::find(lines.begin(), lines.end(), line);
-    bool                      nowSet;
-    if (it != lines.end()) {
-        lines.erase(it);
+    const std::string          key         = NormalizePathKey(path);
+    std::vector<Breakpoint>&   breakpoints = breakpoints_[key];
+    const auto it = std::find_if(breakpoints.begin(), breakpoints.end(), [line](const Breakpoint& bp) { return bp.line == line; });
+    bool        nowSet;
+    if (it != breakpoints.end()) {
+        breakpoints.erase(it);
         nowSet = false;
-        if (lines.empty()) {
+        if (breakpoints.empty()) {
             // Keep the map free of empty entries so BreakpointsForFile and
             // HandleInitializedEvent's per-file loop never see ghosts —
             // but push the now-empty list to a live adapter FIRST, or the
@@ -49,8 +49,8 @@ bool DapManager::ToggleBreakpoint(const std::filesystem::path& path, std::size_t
         }
     }
     else {
-        lines.push_back(line);
-        std::sort(lines.begin(), lines.end());
+        breakpoints.push_back(Breakpoint{.line = line});
+        std::sort(breakpoints.begin(), breakpoints.end(), [](const Breakpoint& a, const Breakpoint& b) { return a.line < b.line; });
         nowSet = true;
     }
     if (client_ && state_ != SessionState::Inactive) {
@@ -59,13 +59,68 @@ bool DapManager::ToggleBreakpoint(const std::filesystem::path& path, std::size_t
     return nowSet;
 }
 
-std::vector<std::size_t> DapManager::BreakpointsForFile(const std::filesystem::path& path) const {
-    const auto it = breakpoints_.find(NormalizePathKey(path));
-    return it != breakpoints_.end() ? it->second : std::vector<std::size_t>{};
+std::string DapManager::SetBreakpointCondition(const std::filesystem::path& path, std::size_t line, std::string condition) {
+    const std::string        key   = NormalizePathKey(path);
+    std::vector<Breakpoint>& lines = breakpoints_[key];
+    auto it = std::find_if(lines.begin(), lines.end(), [line](const Breakpoint& bp) { return bp.line == line; });
+    if (it == lines.end()) {
+        lines.push_back(Breakpoint{.line = line});
+        std::sort(lines.begin(), lines.end(), [](const Breakpoint& a, const Breakpoint& b) { return a.line < b.line; });
+        it = std::find_if(lines.begin(), lines.end(), [line](const Breakpoint& bp) { return bp.line == line; });
+    }
+    it->condition = condition;
+    if (client_ && state_ != SessionState::Inactive) {
+        SendBreakpointsForFile(key);
+    }
+    std::string status = (condition.empty() ? "Condition cleared at " : "Condition set at ") + path.filename().string() + ":" +
+                          std::to_string(line);
+    if (!condition.empty() && client_ && state_ != SessionState::Inactive && !capabilities_.conditionalBreakpoints) {
+        status += " (adapter did not advertise conditional-breakpoint support -- may be ignored)";
+    }
+    return status;
 }
 
-const std::map<std::string, std::vector<std::size_t>>& DapManager::AllBreakpoints() const {
-    return breakpoints_;
+std::string DapManager::SetBreakpointLogMessage(const std::filesystem::path& path, std::size_t line, std::string logMessage) {
+    const std::string        key   = NormalizePathKey(path);
+    std::vector<Breakpoint>& lines = breakpoints_[key];
+    auto it = std::find_if(lines.begin(), lines.end(), [line](const Breakpoint& bp) { return bp.line == line; });
+    if (it == lines.end()) {
+        lines.push_back(Breakpoint{.line = line});
+        std::sort(lines.begin(), lines.end(), [](const Breakpoint& a, const Breakpoint& b) { return a.line < b.line; });
+        it = std::find_if(lines.begin(), lines.end(), [line](const Breakpoint& bp) { return bp.line == line; });
+    }
+    it->logMessage = logMessage;
+    if (client_ && state_ != SessionState::Inactive) {
+        SendBreakpointsForFile(key);
+    }
+    std::string status = (logMessage.empty() ? "Log message cleared at " : "Log message set at ") + path.filename().string() + ":" +
+                          std::to_string(line);
+    if (!logMessage.empty() && client_ && state_ != SessionState::Inactive && !capabilities_.logPoints) {
+        status += " (adapter did not advertise logpoint support -- may be ignored)";
+    }
+    return status;
+}
+
+std::vector<std::size_t> DapManager::BreakpointsForFile(const std::filesystem::path& path) const {
+    const auto                it = breakpoints_.find(NormalizePathKey(path));
+    std::vector<std::size_t>  lines;
+    if (it != breakpoints_.end()) {
+        for (const Breakpoint& bp : it->second) {
+            lines.push_back(bp.line);
+        }
+    }
+    return lines;
+}
+
+std::map<std::string, std::vector<std::size_t>> DapManager::AllBreakpoints() const {
+    std::map<std::string, std::vector<std::size_t>> lineOnly;
+    for (const auto& [key, breakpoints] : breakpoints_) {
+        std::vector<std::size_t>& lines = lineOnly[key];
+        for (const Breakpoint& bp : breakpoints) {
+            lines.push_back(bp.line);
+        }
+    }
+    return lineOnly;
 }
 
 void DapManager::RestoreBreakpoints(std::map<std::string, std::vector<std::size_t>> breakpoints) {
@@ -82,12 +137,20 @@ void DapManager::RestoreBreakpoints(std::map<std::string, std::vector<std::size_
 
     // Sorted, deduplicated, and empty-entry-free -- the exact invariants
     // ToggleBreakpoint maintains, enforced here because these lines came
-    // from a session file rather than through it.
-    breakpoints_ = std::move(breakpoints);
-    for (auto it = breakpoints_.begin(); it != breakpoints_.end();) {
-        std::sort(it->second.begin(), it->second.end());
-        it->second.erase(std::unique(it->second.begin(), it->second.end()), it->second.end());
-        it = it->second.empty() ? breakpoints_.erase(it) : std::next(it);
+    // from a session file rather than through it. condition/logMessage
+    // aren't part of the on-disk shape (see ROADMAP.md) -- every restored
+    // entry starts as a plain breakpoint.
+    breakpoints_.clear();
+    for (auto& [key, lines] : breakpoints) {
+        std::sort(lines.begin(), lines.end());
+        lines.erase(std::unique(lines.begin(), lines.end()), lines.end());
+        if (lines.empty()) {
+            continue;
+        }
+        std::vector<Breakpoint>& converted = breakpoints_[key];
+        for (const std::size_t line : lines) {
+            converted.push_back(Breakpoint{.line = line});
+        }
     }
 
     if (client_ && state_ != SessionState::Inactive) {
@@ -107,7 +170,7 @@ void DapManager::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
 
 std::string DapManager::StartOrContinue(const std::string& language) {
     if (state_ == SessionState::Stopped) {
-        client_->SendRequest("continue", Json{{"threadId", stoppedThreadId_}},
+        client_->SendRequest("continue", Json{{"threadId", CurrentThreadId()}},
                              [this](bool success, const Json&, const std::string& message) {
                                  if (success) {
                                      MarkResumed();
@@ -128,6 +191,7 @@ std::string DapManager::StartOrContinue(const std::string& language) {
     }
 
     retired_.clear(); // safe here: nothing of a previous session is on the stack during a key-driven start
+    capabilities_ = Capabilities{}; // fresh adapter, fresh capabilities -- see the header's own doc comment
 
     if (!client_) {
         const auto argv = DapAdapterCommand(language);
@@ -159,10 +223,19 @@ std::string DapManager::StartOrContinue(const std::string& language) {
                              {"pathFormat", "path"},
                              {"supportsRunInTerminalRequest", false},
                          },
-                         [this](bool success, const Json&, const std::string& message) {
+                         [this](bool success, const Json& body, const std::string& message) {
                              if (!success) {
                                  EndSession("initialize failed: " + message);
                                  return;
+                             }
+                             if (body.contains("supportsConditionalBreakpoints") && body["supportsConditionalBreakpoints"].is_boolean()) {
+                                 capabilities_.conditionalBreakpoints = body["supportsConditionalBreakpoints"].get<bool>();
+                             }
+                             if (body.contains("supportsLogPoints") && body["supportsLogPoints"].is_boolean()) {
+                                 capabilities_.logPoints = body["supportsLogPoints"].get<bool>();
+                             }
+                             if (body.contains("supportsSetVariable") && body["supportsSetVariable"].is_boolean()) {
+                                 capabilities_.setVariable = body["supportsSetVariable"].get<bool>();
                              }
                              SendLaunch();
                          });
@@ -217,8 +290,15 @@ void DapManager::HandleInitializedEvent() {
 void DapManager::SendBreakpointsForFile(const std::string& pathKey) {
     Json breakpointsJson = Json::array();
     if (const auto it = breakpoints_.find(pathKey); it != breakpoints_.end()) {
-        for (const std::size_t line : it->second) {
-            breakpointsJson.push_back(Json{{"line", line}});
+        for (const Breakpoint& bp : it->second) {
+            Json entry = Json{{"line", bp.line}};
+            if (!bp.condition.empty()) {
+                entry["condition"] = bp.condition;
+            }
+            if (!bp.logMessage.empty()) {
+                entry["logMessage"] = bp.logMessage;
+            }
+            breakpointsJson.push_back(std::move(entry));
         }
     }
     client_->SendRequest("setBreakpoints",
@@ -226,17 +306,34 @@ void DapManager::SendBreakpointsForFile(const std::string& pathKey) {
                              {"source", Json{{"path", pathKey}}},
                              {"breakpoints", std::move(breakpointsJson)},
                          },
-                         [](bool, const Json&, const std::string&) {
-                             // Verified/adjusted breakpoint positions in the response are
-                             // ignored in this slice — the gutter shows where the user
-                             // toggled, not where the adapter snapped to. A slice 2
-                             // refinement alongside the gutter markers themselves.
+                         [this, pathKey](bool success, const Json& body, const std::string&) {
+                             // Adjusted (snapped) positions in the response are still
+                             // ignored -- the gutter shows where the user toggled, not
+                             // where the adapter moved it to (documented cut, ROADMAP.md).
+                             // "verified" IS tracked now, matched back by index (the
+                             // response array is the same order as the request, per
+                             // spec) -- it dims the gutter glyph rather than being
+                             // dropped on the floor.
+                             if (!success || !body.contains("breakpoints") || !body["breakpoints"].is_array()) {
+                                 return;
+                             }
+                             const auto it = breakpoints_.find(pathKey);
+                             if (it == breakpoints_.end()) {
+                                 return; // toggled off again before the response landed
+                             }
+                             const Json& results = body["breakpoints"];
+                             for (std::size_t i = 0; i < it->second.size() && i < results.size(); ++i) {
+                                 if (results[i].contains("verified") && results[i]["verified"].is_boolean()) {
+                                     it->second[i].verified = results[i]["verified"].get<bool>();
+                                 }
+                             }
                          });
 }
 
 void DapManager::HandleStoppedEvent(const Json& body) {
     state_                   = SessionState::Stopped;
     stoppedThreadId_         = body.value("threadId", 1);
+    focusedThreadId_.reset(); // re-seeded from stoppedThreadId_ via CurrentThreadId() until SelectThread overrides it
     const std::string reason = body.value("reason", "stopped");
 
     client_->SendRequest("stackTrace",
@@ -277,7 +374,7 @@ std::string DapManager::Pause() {
     if (state_ == SessionState::Stopped) {
         return "Already stopped.";
     }
-    client_->SendRequest("pause", Json{{"threadId", stoppedThreadId_ > 0 ? stoppedThreadId_ : 1}},
+    client_->SendRequest("pause", Json{{"threadId", CurrentThreadId() > 0 ? CurrentThreadId() : 1}},
                          [](bool, const Json&, const std::string&) {
                              // The actual stop arrives as a `stopped` event.
                          });
@@ -304,13 +401,14 @@ void DapManager::MarkResumed() {
     state_ = SessionState::Running;
     currentStop_.reset();
     stoppedFrameId_.reset();
+    focusedThreadId_.reset();
 }
 
 std::string DapManager::SendStep(const std::string& command, const std::string& label) {
     if (state_ != SessionState::Stopped) {
         return "Not stopped (nothing to step).";
     }
-    client_->SendRequest(command, Json{{"threadId", stoppedThreadId_}},
+    client_->SendRequest(command, Json{{"threadId", CurrentThreadId()}},
                          [this, command](bool success, const Json&, const std::string& message) {
                              if (success) {
                                  MarkResumed(); // the landing spot arrives as the next `stopped` event
@@ -339,8 +437,23 @@ std::optional<std::pair<std::string, std::size_t>> DapManager::CurrentStopKeyAnd
 }
 
 std::vector<std::size_t> DapManager::BreakpointLinesForKey(const std::string& key) const {
+    std::vector<std::size_t> lines;
+    const auto                it = breakpoints_.find(key);
+    if (it != breakpoints_.end()) {
+        for (const Breakpoint& bp : it->second) {
+            lines.push_back(bp.line);
+        }
+    }
+    return lines;
+}
+
+std::vector<DapManager::Breakpoint> DapManager::BreakpointsForKey(const std::string& key) const {
     const auto it = breakpoints_.find(key);
-    return it != breakpoints_.end() ? it->second : std::vector<std::size_t>{};
+    return it != breakpoints_.end() ? it->second : std::vector<Breakpoint>{};
+}
+
+int DapManager::CurrentThreadId() const {
+    return focusedThreadId_.value_or(stoppedThreadId_);
 }
 
 void DapManager::RequestStackTrace(std::function<void(std::vector<StackFrame>)> callback) {
@@ -348,7 +461,7 @@ void DapManager::RequestStackTrace(std::function<void(std::vector<StackFrame>)> 
         callback({});
         return;
     }
-    client_->SendRequest("stackTrace", Json{{"threadId", stoppedThreadId_}, {"startFrame", 0}, {"levels", 20}},
+    client_->SendRequest("stackTrace", Json{{"threadId", CurrentThreadId()}, {"startFrame", 0}, {"levels", 20}},
                          [callback = std::move(callback)](bool success, const Json& body, const std::string&) {
                              std::vector<StackFrame> frames;
                              if (success && body.contains("stackFrames") && body["stackFrames"].is_array()) {
@@ -411,12 +524,12 @@ void DapManager::RequestVariables(int variablesReference, std::function<void(std
                          });
 }
 
-void DapManager::Evaluate(const std::string& expression, std::function<void(bool, std::string)> callback) {
+void DapManager::Evaluate(const std::string& expression, std::function<void(bool, std::string)> callback, std::string context) {
     if (!client_ || state_ == SessionState::Inactive || state_ == SessionState::Starting) {
         callback(false, "No debug session.");
         return;
     }
-    Json arguments = {{"expression", expression}, {"context", "repl"}};
+    Json arguments = {{"expression", expression}, {"context", std::move(context)}};
     if (stoppedFrameId_) {
         arguments["frameId"] = *stoppedFrameId_;
     }
@@ -431,6 +544,79 @@ void DapManager::Evaluate(const std::string& expression, std::function<void(bool
                          });
 }
 
+void DapManager::AddWatch(std::string expression) {
+    watches_.push_back(std::move(expression));
+}
+
+void DapManager::RemoveWatchAt(std::size_t index) {
+    if (index < watches_.size()) {
+        watches_.erase(watches_.begin() + static_cast<std::ptrdiff_t>(index));
+    }
+}
+
+const std::vector<std::string>& DapManager::Watches() const {
+    return watches_;
+}
+
+void DapManager::RequestThreads(std::function<void(std::vector<Thread>)> callback) {
+    if (!client_ || state_ == SessionState::Inactive || state_ == SessionState::Starting) {
+        callback({});
+        return;
+    }
+    client_->SendRequest("threads", Json::object(),
+                         [callback = std::move(callback)](bool success, const Json& body, const std::string&) {
+                             std::vector<Thread> threads;
+                             if (success && body.contains("threads") && body["threads"].is_array()) {
+                                 for (const Json& threadJson : body["threads"]) {
+                                     threads.push_back(Thread{
+                                         .id   = threadJson.value("id", 0),
+                                         .name = threadJson.value("name", ""),
+                                     });
+                                 }
+                             }
+                             callback(std::move(threads));
+                         });
+}
+
+void DapManager::SelectThread(int threadId, std::function<void(bool)> callback) {
+    if (!client_ || state_ != SessionState::Stopped) {
+        callback(false);
+        return;
+    }
+    focusedThreadId_ = threadId;
+    client_->SendRequest("stackTrace", Json{{"threadId", threadId}, {"startFrame", 0}, {"levels", 1}},
+                         [this, callback = std::move(callback)](bool success, const Json& body, const std::string&) {
+                             if (success && body.contains("stackFrames") && body["stackFrames"].is_array() &&
+                                 !body["stackFrames"].empty() && body["stackFrames"][0].contains("id") &&
+                                 body["stackFrames"][0]["id"].is_number_integer()) {
+                                 stoppedFrameId_ = body["stackFrames"][0]["id"].get<int>();
+                             }
+                             callback(success);
+                         });
+}
+
+void DapManager::SetVariable(int variablesReference, const std::string& name, const std::string& value,
+                              std::function<void(SetVariableResult)> callback) {
+    if (!client_ || state_ != SessionState::Stopped) {
+        callback(SetVariableResult{.success = false, .errorMessage = "No debug session."});
+        return;
+    }
+    client_->SendRequest("setVariable", Json{{"variablesReference", variablesReference}, {"name", name}, {"value", value}},
+                         [callback = std::move(callback)](bool success, const Json& body, const std::string& message) {
+                             SetVariableResult result;
+                             result.success = success;
+                             if (success) {
+                                 result.value              = body.value("value", "");
+                                 result.type                = body.value("type", "");
+                                 result.variablesReference = body.value("variablesReference", 0);
+                             }
+                             else {
+                                 result.errorMessage = message;
+                             }
+                             callback(std::move(result));
+                         });
+}
+
 void DapManager::EndSession(std::string reason) {
     if (state_ == SessionState::Inactive) {
         return; // e.g. disconnect EOF arriving after an explicit StopSession already tore down
@@ -439,6 +625,8 @@ void DapManager::EndSession(std::string reason) {
     stoppedThreadId_ = 0;
     currentStop_.reset();
     stoppedFrameId_.reset();
+    focusedThreadId_.reset();
+    capabilities_ = Capabilities{};
     if (client_) {
         retired_.push_back(std::move(client_)); // see header comment — never destroyed mid-callback
     }

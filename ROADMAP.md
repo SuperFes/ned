@@ -378,9 +378,87 @@ Notcurses.
       beyond a pipe's default 64KB buffer would block on the full pipe since nothing
       drains it until the call returns — fine for Janet's own stacktrace prints, which
       are always far smaller.
-- [ ] DAP deliberate cuts: attach mode, thread picker, watch expressions,
-      conditional/logpoint breakpoints, adapter-verified breakpoint positions,
-      setting variables, a REPL console.
+- [x] **DAP round 2 / slice 4** (shipped 2026-08-24) — closed all of slice
+      1-3's deliberate cuts except attach mode (a different launch-config
+      shape, not a debugging-workflow gap — left open, its own slice).
+      Conditional breakpoints and logpoints: `DapManager::Breakpoint` (line +
+      `condition`/`logMessage`/`verified`) replaces the old bare-line store;
+      `SetBreakpointCondition`/`SetBreakpointLogMessage` find-or-create a
+      breakpoint at point's own line (`dap-set-breakpoint-condition`/
+      `dap-set-breakpoint-log-message`, M-x only) and push it immediately via
+      the existing `SendBreakpointsForFile`, which now also matches the
+      `setBreakpoints` response's `verified` array back onto each breakpoint
+      by index (still doesn't remap to the adapter's *snapped* line, only
+      tracks verified/unverified — that remains open, see below). The gutter
+      (`BufferView.cpp`'s debug-marker column) reads the richer
+      `BreakpointsForKey` now: glyph by kind (`●`/`◆`/`○` for plain/
+      conditional/logpoint — shape) crossed with color by verified state
+      (`theme_.breakpointMarker`/new `theme_.unverifiedBreakpointMarker` —
+      color), so all four combinations need only one new theme field, added
+      through the same four-variant + `ThemePalette.cpp` + `ThemeFile.cpp`
+      mechanical path `breakpointMarker`/`executionMarker` themselves went
+      through. A small `Capabilities` struct parsed from the `initialize`
+      response (`supportsConditionalBreakpoints`/`supportsLogPoints`/
+      `supportsSetVariable`) appends a soft, informational warning to the
+      status string when the active adapter said it lacks a feature —
+      the field is still sent regardless (adapters routinely under-advertise
+      but honor it anyway). Watch expressions: `DapManager::watches_` (plain
+      ordered `vector<string>`, session-lifetime only) plus `AddWatch`/
+      `RemoveWatchAt`/`Watches()`; `Evaluate` gained a `context` parameter
+      (default `"repl"`, watches pass DAP's own `"watch"` tag) so the debug
+      console below and watch re-evaluation are distinguishable to an
+      adapter that treats them differently. `BufferView::ShowDebugInfo`
+      fans out one `Evaluate(..., "watch")` per watch alongside its existing
+      per-scope `variables` fan-out (one shared `remaining` counter now
+      covers both), assembling a `"== Watches =="` section with each line
+      carrying its own `[watch:N]` marker (`ExpandVariableAtPoint`'s
+      `[ref:N]` convention, reused) that `dap-remove-watch` parses off
+      point's own `*debug*` buffer line before re-running `ShowDebugInfo()`
+      to refresh; `dap-add-watch` is a plain prompt. Thread picker:
+      `RequestThreads` (the `threads` request) plus `SelectThread(id,
+      callback)`, which sets a new `focusedThreadId_` and refreshes
+      `stoppedFrameId_` via a 1-level `stackTrace` for it — a private
+      `CurrentThreadId()` (`focusedThreadId_.value_or(stoppedThreadId_)`)
+      is now what every inspection/step/continue request actually targets,
+      so picking a thread steers stepping too, not just display.
+      `dap-select-thread` copies `HandleAcpPermissionPromptKey`'s numbered-
+      choice shape verbatim (new `InputMode::DapThreadSelect`,
+      `pendingDapThreads_`/`dapThreadSelection_`). Editable `*debug*` buffer
+      variables: `FormatDebugVariableLine` now always appends a second,
+      independent `[owner:M]` marker (`M` = the *container's* own
+      variablesReference the line's `variables` request was made against —
+      distinct from the existing `[ref:N]`, present only when the variable
+      itself is composite) so `dap-set-variable` can send DAP's own
+      `setVariable` request without restructuring how `*debug*` buffer state
+      is tracked (still nothing but the buffer's own line text — no side
+      table); `ExpandVariableAtPoint` preserves a parent's `[owner:M]`
+      across its own splice so an expanded composite variable stays
+      editable too. Debug console (REPL): new `UI/DebugConsolePanel.h/.cpp`,
+      structurally identical to `AcpPanel` (title/state row + content rows +
+      one input row, an `OverlayHost` overlay hardcoded bottom-dock like
+      `TerminalPanel` — no dock-side config was asked for), its own small
+      input-echo/result/error transcript (`DapManager` has no transcript
+      concept of its own the way `AcpManager` does), Enter calling
+      `Evaluate` with the default `"repl"` context — the actual manual-
+      evaluation console `dap-evaluate`'s one-shot echo-area prompt was
+      always a smaller stand-in for. `dap-toggle-console` on `C-c D`
+      (shifted "d", distinct chord from `duplicate-line`'s own plain
+      `C-c d` — the `C-c A`/`C-c T` precedent) is the only round-2 command
+      besides the existing F-keys to get a real binding; every other new
+      command (`dap-set-breakpoint-condition`/`-log-message`,
+      `dap-add-watch`/`dap-remove-watch`, `dap-select-thread`,
+      `dap-set-variable`) stays M-x only, matching the documented F-key-
+      quartet-only policy. Deliberate cuts, still open: attach mode;
+      remapping a breakpoint to the adapter's snapped line (only
+      `verified`/dimming is tracked); hit-count/`hitCondition` breakpoints;
+      cross-restart persistence of conditions/logMessage/watches/thread
+      focus — `ProjectSessionData::breakpoints` deliberately stays the old
+      line-only `map<string, vector<size_t>>` on-disk shape,
+      `DapManager::AllBreakpoints()` now a fresh line-only projection off
+      the richer internal store rather than a direct reference, so this was
+      a zero-touch cut rather than an on-disk format migration; the debug
+      console has no scrollback/search/history-recall, same v1 cut
+      `TerminalPanel`/`AcpPanel` both carry.
 - [ ] VCS: "Generalize the two-callback plugin shape past version control" (cloud
       CLIs, Terraform, Docker) remains a framing, not a plan.
 - [ ] A friendlier, possibly visual surface for browsing/editing ned's own

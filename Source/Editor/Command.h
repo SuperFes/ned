@@ -330,6 +330,25 @@ enum class InteractiveRequest { None,
                                 DapShowDebug,
                                 DapExpandVariable,
                                 DapEvaluate,
+                                // DAP round 2: conditional/logpoint breakpoints
+                                // (DapSetBreakpointCondition/DapSetBreakpointLogMessage,
+                                // prompt-shaped like DapEvaluate, operating on point's
+                                // own line like DapToggleBreakpoint), watch expressions
+                                // (DapAddWatch prompts; DapRemoveWatch operates on
+                                // point's own *debug* buffer line), the thread picker
+                                // (DapSelectThread, numbered-choice like
+                                // LspCodeActionSelect), editable *debug* buffer
+                                // variables (DapSetVariable, prompt-shaped, operating on
+                                // point's own *debug* buffer line), and the debug
+                                // console panel toggle (DapToggleConsole, one-shot
+                                // forward like AcpTogglePanel/ToggleTerminal).
+                                DapSetBreakpointCondition,
+                                DapSetBreakpointLogMessage,
+                                DapAddWatch,
+                                DapRemoveWatch,
+                                DapSelectThread,
+                                DapSetVariable,
+                                DapToggleConsole,
                                 // VCS blame gutter follow-up: one-shot direct actions, same
                                 // shape as ProjectAgenda/LspShowLog. VcsShowBlame is the
                                 // primary, inline-in-place one: populates the gutter for the

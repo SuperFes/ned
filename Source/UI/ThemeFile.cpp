@@ -85,6 +85,7 @@ namespace {
         {"diagnostic_hint", &Theme::diagnosticHint},
         {"breakpoint_marker", &Theme::breakpointMarker},
         {"execution_marker", &Theme::executionMarker},
+        {"unverified_breakpoint_marker", &Theme::unverifiedBreakpointMarker},
         {"execution_line_background", &Theme::executionLineBackground},
         {"diff_added_background", &Theme::diffAddedBackground},
         {"diff_removed_background", &Theme::diffRemovedBackground},
