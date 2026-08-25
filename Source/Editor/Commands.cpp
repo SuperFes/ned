@@ -13,6 +13,7 @@
 #include "Backup.h"
 #include "Clipboard.h"
 #include "CodeFold.h"
+#include "EmbeddedDocuments.h"
 #include "FinalNewline.h"
 #include "FormatOnSave.h"
 #include "InlineDiagnostics.h"
@@ -1978,12 +1979,23 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                               return;
                           }
                           std::string* message = context.message;
-                          context.lspManager->RequestHover(context.buffer, context.buffer.Point(),
-                                                           [message](std::optional<std::string> text) {
-                                                               if (message) {
-                                                                   *message = text.value_or("No hover information available.");
-                                                               }
-                                                           });
+                          // embedded-language-documents follow-up: routes to
+                          // point's own embedded server (e.g. "javascript"
+                          // inside an HTML <script> block) via the uncached
+                          // free-function resolver -- this command has no
+                          // BufferView&/per-Paint() cache to reuse, unlike
+                          // BufferView's own Request*AtPoint methods.
+                          const std::string serverKey =
+                              context.mode ? ResolveLspServerKey(*context.mode, context.buffer.Text(), context.buffer.Point())
+                                           : std::string{};
+                          context.lspManager->RequestHover(
+                              context.buffer, context.buffer.Point(),
+                              [message](std::optional<std::string> text) {
+                                  if (message) {
+                                      *message = text.value_or("No hover information available.");
+                                  }
+                              },
+                              serverKey);
                       });
 
     // hover/completion follow-up: a one-shot direct action (see

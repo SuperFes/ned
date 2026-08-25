@@ -60,6 +60,21 @@ void CollectInjectedHighlightSpans(const treesitter::Node& root, std::string_vie
                                    const treesitter::Query& injectionQuery, EmbeddedLanguageCache& cache,
                                    std::vector<HighlightSpan>& spans);
 
+// embedded-language-documents follow-up: the same match-walk/resolution
+// CollectInjectedHighlightSpans does, but returning the raw (host-buffer
+// byte range, canonical language) pairs instead of running each region
+// through a HighlightFunction -- what Editor/EmbeddedDocuments.h's
+// BuildEmbeddedDocuments needs to sync an embedded region to its own real LSP
+// server, as opposed to just coloring it. A match with no resolvable
+// language or no injection.content capture contributes nothing, same as
+// CollectInjectedHighlightSpans -- unlike that function, there's no
+// HighlightFunction resolution step here at all (ResolveEmbeddedLanguageHighlight/
+// EmbeddedLanguageCache is a highlighting-only concept, not a language-identity
+// one), so this never fails to report a region just because no bundled Mode
+// exists for its language.
+[[nodiscard]] std::vector<InjectionRegion> CollectInjectionRegions(const treesitter::Node& root, std::string_view bufferText,
+                                                                   const treesitter::Query& injectionQuery);
+
 } // namespace ned::editor
 
 #endif // NED_EDITOR_INJECTION_H

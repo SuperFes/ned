@@ -34,6 +34,7 @@
 #include "Editor/Dap/DapManager.h"
 #include "Editor/DiffRefreshSettings.h"
 #include "Editor/Dispatcher.h"
+#include "Editor/EmbeddedDocuments.h"
 #include "Editor/IncrementalSearch.h"
 #include "Editor/Link.h"
 #include "Editor/Lsp/LspManager.h"
@@ -178,6 +179,27 @@ class BufferView : public Widget {
     // specifically wants to exercise LSP sync, so ordinary tests never touch
     // Lsp/ at all.
     void SetLspManager(editor::lsp::LspManager* lspManager);
+
+    // embedded-language-documents follow-up: the embedded language governing
+    // point right now (e.g. "javascript" while point sits inside an HTML
+    // <script> block), or nullopt for the ordinary case -- point outside any
+    // embedded region, or mode_.embeddedRegions unset entirely. Reuses this
+    // frame's already-cached embedded-document set (EnsureEmbeddedDocumentCache),
+    // recomputing it first if this is called before the current Paint() has.
+    // Shared by ModeLine's "language at point" display (via
+    // SetLanguageAtPointProvider) and, at an arbitrary offset rather than
+    // point, LSP request routing below.
+    [[nodiscard]] std::optional<std::string> EmbeddedLanguageAtPoint();
+
+    // embedded-language-documents follow-up: EmbeddedLanguageAtPoint's
+    // sibling for an arbitrary byte offset rather than point -- what
+    // RequestCompletionAtPoint/RequestDefinitionAtPoint/RequestRenameAtPoint
+    // resolve before calling into LspManager, so a request issued inside an
+    // embedded region routes to that language's own server instead of the
+    // host's. Returns "" (meaning "use the primary/host server," matching
+    // LspManager::ResolveSyncState's own empty-serverKey convention) when
+    // byteOffset isn't inside any embedded region.
+    [[nodiscard]] std::string ResolvedLspServerKey(std::size_t byteOffset);
 
     // task-runner follow-up: registers the shared TaskRunner, forwarded to
     // CommandContext::taskRunner before each dispatch so run-task/
@@ -1983,6 +2005,23 @@ class BufferView : public Widget {
         std::vector<editor::HighlightSpan> spans;
     };
     std::unordered_map<text::Buffer*, HighlightCacheEntry> highlightCacheByBuffer_;
+
+    // embedded-language-documents follow-up: caches mode_.embeddedRegions'
+    // resolved documents per buffer, same staleness check/eviction shape as
+    // HighlightCacheEntry above -- what EnsureEmbeddedDocumentCache
+    // populates once per actually-changed Paint() call, consumed both by
+    // Paint()'s own LspManager::SyncEmbeddedDocuments call and by
+    // EmbeddedLanguageAtPoint()/ResolvedLspServerKey() below (a cheap lookup
+    // into this cache, not a fresh tree-sitter walk per request/keystroke).
+    // Empty (erased) whenever mode_.embeddedRegions itself is unset -- every
+    // bundled mode but html-mode.
+    struct EmbeddedDocumentCacheEntry {
+        std::size_t                           contentGeneration = 0;
+        std::string                           modeName;
+        std::vector<editor::EmbeddedDocument> documents;
+    };
+    std::unordered_map<text::Buffer*, EmbeddedDocumentCacheEntry> embeddedDocumentCacheByBuffer_;
+    void                                                          EnsureEmbeddedDocumentCache();
 
     // exhaustive-highlighting follow-up: Theme::BrushFor(cls, captureId)
     // resolved once per distinct (class, capture) pair per style

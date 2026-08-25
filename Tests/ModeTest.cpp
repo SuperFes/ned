@@ -464,6 +464,44 @@ TEST_CASE("Out-of-scope and non-tree-sitter modes have no fold hook", "[Mode]") 
     REQUIRE_FALSE(static_cast<bool>(ned::editor::TomlMode().fold));
 }
 
+TEST_CASE("Only HtmlMode has an embeddedRegions hook installed", "[Mode]") {
+    REQUIRE(static_cast<bool>(HtmlMode().embeddedRegions));
+
+    REQUIRE_FALSE(static_cast<bool>(FundamentalMode().embeddedRegions));
+    REQUIRE_FALSE(static_cast<bool>(CMode().embeddedRegions));
+    REQUIRE_FALSE(static_cast<bool>(CppMode().embeddedRegions));
+    REQUIRE_FALSE(static_cast<bool>(JsonMode().embeddedRegions));
+    REQUIRE_FALSE(static_cast<bool>(CssMode().embeddedRegions));
+    REQUIRE_FALSE(static_cast<bool>(PythonMode().embeddedRegions));
+    REQUIRE_FALSE(static_cast<bool>(JavaScriptMode().embeddedRegions));
+    REQUIRE_FALSE(static_cast<bool>(MarkdownMode().embeddedRegions));
+    REQUIRE_FALSE(static_cast<bool>(OrgMode().embeddedRegions));
+}
+
+TEST_CASE("HtmlMode's embeddedRegions finds <script> and <style> content with canonical language names", "[Mode]") {
+    const auto        mode = HtmlMode();
+    const std::string text = "<html><script>let x = 1;</script><style>body { color: red; }</style></html>";
+
+    const auto regions = mode.embeddedRegions(text);
+    REQUIRE(regions.size() == 2);
+
+    bool sawJs  = false;
+    bool sawCss = false;
+    for (const auto& region : regions) {
+        const std::string content = text.substr(region.startByte, region.endByte - region.startByte);
+        if (region.language == "javascript") {
+            sawJs = true;
+            REQUIRE(content == "let x = 1;");
+        }
+        else if (region.language == "css") {
+            sawCss = true;
+            REQUIRE(content == "body { color: red; }");
+        }
+    }
+    REQUIRE(sawJs);
+    REQUIRE(sawCss);
+}
+
 TEST_CASE("CMode's fold query finds a function body", "[Mode]") {
     const auto mode   = CMode();
     const auto blocks = mode.fold("int main(void) {\n    return 0;\n}\n");

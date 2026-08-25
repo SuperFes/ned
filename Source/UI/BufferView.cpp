@@ -690,6 +690,7 @@ void BufferView::SetOnActiveBufferChanged(std::function<void(text::Buffer&)> han
 
 void BufferView::ClearBufferCaches(text::Buffer& buffer) {
     highlightCacheByBuffer_.erase(&buffer);
+    embeddedDocumentCacheByBuffer_.erase(&buffer);
     foldableBlocksCacheByBuffer_.erase(&buffer);
     if (highlightCacheBuffer_ == &buffer) {
         highlightCacheBuffer_ = nullptr;
@@ -734,6 +735,50 @@ void BufferView::EnsureFoldableBlocksCache() const {
     }
     foldableBlocksCacheBuffer_     = &buffer;
     foldableBlocksCacheGeneration_ = buffer.ContentGeneration();
+}
+
+void BufferView::EnsureEmbeddedDocumentCache() {
+    text::Buffer& buffer = activeBuffer_.Get();
+
+    if (!mode_.embeddedRegions) {
+        embeddedDocumentCacheByBuffer_.erase(&buffer); // nothing to cache -- mode has no embedded regions at all
+        return;
+    }
+
+    const auto it = embeddedDocumentCacheByBuffer_.find(&buffer);
+    if (it != embeddedDocumentCacheByBuffer_.end() && it->second.contentGeneration == buffer.ContentGeneration() &&
+        it->second.modeName == mode_.name) {
+        return; // already current
+    }
+
+    EmbeddedDocumentCacheEntry entry;
+    entry.documents         = editor::BuildEmbeddedDocuments(mode_, buffer.Text());
+    entry.contentGeneration = buffer.ContentGeneration();
+    entry.modeName          = mode_.name;
+    embeddedDocumentCacheByBuffer_.insert_or_assign(&buffer, std::move(entry));
+}
+
+std::optional<std::string> BufferView::EmbeddedLanguageAtPoint() {
+    EnsureEmbeddedDocumentCache();
+    text::Buffer& buffer = activeBuffer_.Get();
+    const auto    it     = embeddedDocumentCacheByBuffer_.find(&buffer);
+    if (it == embeddedDocumentCacheByBuffer_.end()) {
+        return std::nullopt;
+    }
+    return editor::EmbeddedLanguageAtByteOffset(it->second.documents, buffer.Point());
+}
+
+std::string BufferView::ResolvedLspServerKey(std::size_t byteOffset) {
+    EnsureEmbeddedDocumentCache();
+    text::Buffer& buffer = activeBuffer_.Get();
+    const auto    it     = embeddedDocumentCacheByBuffer_.find(&buffer);
+    if (it == embeddedDocumentCacheByBuffer_.end()) {
+        return {};
+    }
+    if (const std::optional<std::string> language = editor::EmbeddedLanguageAtByteOffset(it->second.documents, byteOffset)) {
+        return *language;
+    }
+    return {};
 }
 
 void BufferView::EnsureFoldGutterCache() const {
@@ -1704,6 +1749,26 @@ void BufferView::Paint(Canvas c) {
     // itself).
     if (lspManager_) {
         lspManager_->SyncBuffer(buffer, editor::LanguageKeyForMode(mode_));
+
+        // embedded-language-documents follow-up: computes/caches this
+        // buffer's embedded documents (currently just html-mode's
+        // <script>/<style> content) once per actually-changed Paint() call
+        // -- see EnsureEmbeddedDocumentCache -- then syncs each to its own
+        // real LSP server. Called unconditionally, same as SyncBuffer just
+        // above: cheap when nothing changed, gated internally by each
+        // server's own lastSyncedGeneration, and also what tears down a
+        // server whose only region was just edited away (an empty list here
+        // when mode_.embeddedRegions is unset or reports nothing).
+        std::vector<editor::lsp::LspManager::EmbeddedDocumentSync> embeddedSync;
+        EnsureEmbeddedDocumentCache();
+        if (const auto cacheIt = embeddedDocumentCacheByBuffer_.find(&buffer); cacheIt != embeddedDocumentCacheByBuffer_.end()) {
+            embeddedSync.reserve(cacheIt->second.documents.size());
+            for (const editor::EmbeddedDocument& document : cacheIt->second.documents) {
+                embeddedSync.push_back(editor::lsp::LspManager::EmbeddedDocumentSync{
+                    .language = document.language, .documentText = document.documentText, .ownedRanges = document.ownedRanges});
+            }
+        }
+        lspManager_->SyncEmbeddedDocuments(buffer, embeddedSync);
     }
 
     // error-visibility follow-up: a cheap once-per-frame poll, the same
@@ -3941,12 +4006,19 @@ void BufferView::RequestCompletionAtPoint() {
     text::Buffer&     buffer = activeBuffer_.Get();
     const std::size_t point  = buffer.Point();
 
+    // embedded-language-documents follow-up: an empty serverKey means point
+    // isn't inside an embedded region -- use the host language's own key,
+    // same as before this feature existed. A non-empty one routes to that
+    // language's own server (e.g. "javascript" inside an HTML <script>
+    // block) for both the status check below and the request itself.
+    const std::string serverKey   = ResolvedLspServerKey(point);
+    const std::string languageKey = serverKey.empty() ? editor::LanguageKeyForMode(mode_) : serverKey;
+
     // dabbrev-fallback follow-up: StatusForLanguage never spawns a client,
     // so this is a pure "is one currently usable" check -- NotConfigured/
     // SpawnFailed/Disconnected all fall back to scanning the buffer itself
     // rather than asking a server that isn't there.
-    const std::string languageKey = editor::LanguageKeyForMode(mode_);
-    const bool        hasRunningLsp =
+    const bool hasRunningLsp =
         lspManager_ && lspManager_->StatusForLanguage(languageKey) == editor::lsp::LspManager::LspStatus::Running;
     if (!hasRunningLsp) {
         // Self-hosting-completion follow-up: tried ahead of plain
@@ -3965,7 +4037,8 @@ void BufferView::RequestCompletionAtPoint() {
     const std::size_t   prefixStart = WordPrefixStart(buffer.Content(), point);
 
     lspManager_->RequestCompletion(
-        buffer, point, [this, bufferPtr, point, prefixStart, generation](std::vector<editor::lsp::CompletionItem> items) {
+        buffer, point,
+        [this, bufferPtr, point, prefixStart, generation](std::vector<editor::lsp::CompletionItem> items) {
             if (generation != completionRequestGeneration_) {
                 return; // superseded by a newer request
             }
@@ -3983,7 +4056,8 @@ void BufferView::RequestCompletionAtPoint() {
             }
             ghostCompletion_ = GhostCompletion{
                 .requestPoint = point, .items = std::move(items), .selectedIndex = 0, .prefixStart = prefixStart};
-        });
+        },
+        serverKey);
 }
 
 void BufferView::ApplyDabbrevCompletion(text::Buffer& buffer, std::size_t point) {
@@ -4209,7 +4283,12 @@ void BufferView::RequestCodeActionsAtPoint() {
     // harper-ls-flagged word, only harper-ls's own connection does.
     std::size_t rangeStart = point;
     std::size_t rangeEnd   = point;
-    std::string serverKey; // empty -- primary language server, RequestCodeActions's own default
+    // embedded-language-documents follow-up: defaults to point's own
+    // embedded server (e.g. "javascript" inside an HTML <script> block), ""
+    // meaning the host language -- RequestCodeActions's own default -- when
+    // point isn't inside one. A Prose-origin diagnostic at point still wins
+    // below, unchanged priority.
+    std::string serverKey = ResolvedLspServerKey(point);
     for (const text::Buffer::Diagnostic& diagnostic : buffer.Diagnostics()) {
         const bool atPoint = (diagnostic.startByte == diagnostic.endByte) ? (point == diagnostic.startByte)
                                                                           : (diagnostic.startByte <= point && point < diagnostic.endByte);
@@ -4265,7 +4344,9 @@ void BufferView::RequestQuickFixAtPoint() {
     // RequestCodeActionsAtPoint -- see that method's own doc comment.
     std::size_t rangeStart = point;
     std::size_t rangeEnd   = point;
-    std::string serverKey;
+    // embedded-language-documents follow-up: see RequestCodeActionsAtPoint's
+    // identical comment above.
+    std::string serverKey = ResolvedLspServerKey(point);
     for (const text::Buffer::Diagnostic& diagnostic : buffer.Diagnostics()) {
         const bool atPoint = (diagnostic.startByte == diagnostic.endByte) ? (point == diagnostic.startByte)
                                                                           : (diagnostic.startByte <= point && point < diagnostic.endByte);
@@ -4509,10 +4590,15 @@ void BufferView::RequestDefinitionAtPoint() {
     text::Buffer* const bufferPtr  = &buffer;
     const std::size_t   point      = buffer.Point();
     const std::size_t   generation = ++definitionRequestGeneration_;
+    // embedded-language-documents follow-up: routes to point's own embedded
+    // server when it's inside one (e.g. an HTML <script> block), else "" ->
+    // the host language, unchanged from before this feature existed.
+    const std::string serverKey = ResolvedLspServerKey(point);
 
     statusMessage_ = "Requesting definition...";
     lspManager_->RequestDefinition(
-        buffer, point, [this, bufferPtr, point, generation](std::vector<editor::lsp::LspManager::ResolvedLocation> locations) {
+        buffer, point,
+        [this, bufferPtr, point, generation](std::vector<editor::lsp::LspManager::ResolvedLocation> locations) {
             if (generation != definitionRequestGeneration_) {
                 return; // superseded by a newer request
             }
@@ -4534,7 +4620,8 @@ void BufferView::RequestDefinitionAtPoint() {
             definitionSelection_ = 0;
             inputMode_           = InputMode::LspGotoDefinitionSelect;
             RefreshDefinitionSelectStatus();
-        });
+        },
+        serverKey);
 }
 
 void BufferView::RefreshDefinitionSelectStatus() {
@@ -4657,6 +4744,9 @@ void BufferView::RequestRenameAtPoint(const std::string& newName) {
     text::Buffer* const bufferPtr  = &buffer;
     const std::size_t   point      = buffer.Point();
     const std::size_t   generation = ++renameRequestGeneration_;
+    // embedded-language-documents follow-up: see RequestDefinitionAtPoint's
+    // identical comment above.
+    const std::string serverKey = ResolvedLspServerKey(point);
 
     statusMessage_ = "Requesting rename...";
     lspManager_->RequestRename(
@@ -4692,7 +4782,8 @@ void BufferView::RequestRenameAtPoint(const std::string& newName) {
 
             inputMode_ = InputMode::LspRenameConfirm;
             RefreshRenameConfirmStatus();
-        });
+        },
+        serverKey);
 }
 
 void BufferView::RefreshRenameConfirmStatus() {

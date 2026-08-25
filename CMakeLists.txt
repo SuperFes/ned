@@ -544,6 +544,7 @@ add_library(ned_lib STATIC
         Source/Editor/PromptHistory.cpp
         Source/Editor/Mode.cpp
         Source/Editor/Injection.cpp
+        Source/Editor/EmbeddedDocuments.cpp
         Source/Editor/SyntaxTheme.cpp
         Source/Editor/ModeOverrides.cpp
         Source/Editor/ModePrewarm.cpp
@@ -860,6 +861,7 @@ if (NED_BUILD_TESTS)
             Tests/MarkdownTest.cpp
             Tests/MarkdownHighlightTest.cpp
             Tests/InjectionTest.cpp
+            Tests/EmbeddedDocumentsTest.cpp
             Tests/HtmlHighlightTest.cpp
             Tests/LinkTest.cpp
             Tests/HeaderSourceTest.cpp
@@ -952,6 +954,7 @@ if (NED_BUILD_TESTS)
             Tests/ModePrewarmTest.cpp
             Tests/MultibufferTest.cpp
             Tests/BufferViewDiagnosticsBufferTest.cpp
+            Tests/BufferViewEmbeddedLspTest.cpp
             Tests/BufferViewProjectFindReferencesTest.cpp
             Tests/WrapOverridesTest.cpp
             Tests/BorderTest.cpp

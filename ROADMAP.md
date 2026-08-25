@@ -35,14 +35,62 @@ Notcurses.
 
 ### Language Intelligence
 
-- [ ] **Embedded-language documents** (HTML with inline `<script>`/`<style>`,
-      Vue/Svelte-style SFCs) — segment the buffer into per-language virtual documents
-      (tree-sitter injection queries find the boundaries), sync each to its own
-      server, remap positions back. `LspManager` gained real multi-server-per-buffer
-      diagnostics merging with the prose-checking feature (harper-ls as a second,
-      independent diagnostics channel alongside the primary language server) — that
-      two-server shape is a fixed pair keyed by a reserved language key, not yet a
-      general N-server-per-buffer mechanism this would need.
+- [x] **Embedded-language documents** (shipped 2026-08-25, HTML `<script>`/`<style>`
+      only) — `Editor/Injection.h` gained `CollectInjectionRegions` (data, not
+      `HighlightSpan`s) alongside the existing `CollectInjectedHighlightSpans`, sharing
+      the same match-walk; `Mode` gained an `embeddedRegions` field (only `HtmlMode()`
+      sets it, reusing its `.highlight` closure's own parser/query/`IncrementalParseCache`
+      — a second cheap query-match walk over the same already-parsed tree, not a second
+      parse). New `Editor/EmbeddedDocuments.h/.cpp`: `BuildEmbeddedDocuments` merges every
+      same-language region into one virtual document per language (two `<script>` blocks
+      share one JS document, matching a real server's own shared-global-scope treatment),
+      built via **width-preserving padding** — every codepoint outside that language's own
+      regions is replaced with a same-byte-length, same-UTF-16-width Unicode whitespace
+      filler (a 4-byte original codepoint becomes two 2-byte NBSPs, not an invented single
+      astral filler — there's no official whitespace codepoint above the Basic Multilingual
+      Plane). This is the load-bearing design decision: it makes the padded document agree
+      with the real host buffer on every line boundary and every codepoint's UTF-16 width,
+      so `Lsp/LspPosition.h`'s existing `BytePositionToLsp`/`LspPositionToByte` need zero
+      changes and no offset-remapping layer exists anywhere in this feature — a byte offset
+      valid against the host buffer is valid against the padded virtual document and vice
+      versa, in both directions (outbound requests and inbound diagnostics/responses).
+      `LspManager` gained `SyncEmbeddedDocuments` (syncs each virtual document to its own
+      server via a refactored `SyncTextToServer`, tearing down — `didClose` plus dropping
+      its diagnostics slice — any previously-synced embedded key whose region disappeared)
+      and a real bug fix this feature required: `PrimarySyncState` used to guess "whichever
+      `bufferState_` entry isn't `kProseLanguageKey`," correct only while at most one
+      non-prose entry existed; a new `primaryServerKey_` map (stamped by `SyncBuffer`, which
+      already knows the true host language) replaces the guess with a direct lookup, now
+      that an embedded key can occupy the same map. `RequestHover`/`RequestCompletion`/
+      `RequestDefinition`/`RequestRename` gained the same `serverKey` parameter
+      `RequestCodeActions` already had, so a request issued inside an embedded region routes
+      to that language's own server — full hover/completion/go-to-definition/rename/
+      diagnostics, not diagnostics-only. Diagnostics from an embedded server are filtered to
+      their own owned ranges (defensive — a padded region should tokenize as inert
+      whitespace, but a diagnostic starting outside every owned range is dropped rather than
+      surfaced against the wrong language's chrome). `BufferView` caches
+      `BuildEmbeddedDocuments`' result per (buffer, `ContentGeneration()`, mode name) the
+      same way its highlight-span cache works, exposing `EmbeddedLanguageAtPoint()`/
+      `ResolvedLspServerKey(offset)` — consumed both by the four `Request*AtPoint` call
+      sites and by two new UI pieces: `ModeLine` now iterates every server key
+      `LspManager::ActiveServerKeysForBuffer` reports (one glyph per server when more than
+      one is active — host language first, then sorted — falling back to the exact original
+      single-glyph rendering when there's at most one, so an ordinary buffer sees zero visual
+      change) and shows the embedded language governing point in brackets next to the mode
+      name (e.g. `(html-mode [javascript])`) via a new `SetLanguageAtPointProvider` hook,
+      nothing shown for the ordinary case. `Commands.cpp`'s `lsp-hover` (no `BufferView&` in
+      its `CommandContext`) resolves its server key through a free-function equivalent,
+      `EmbeddedDocuments.h`'s `ResolveLspServerKey`. Scope, deliberately: **HTML only** —
+      Vue/Svelte SFCs need grammars this project doesn't bundle, out of scope entirely.
+      Whether Markdown fenced code blocks or Org `#+BEGIN_SRC` blocks (both highlighting-only
+      today, unchanged) should ever get the same real-LSP-sync treatment is a genuinely open
+      question, not decided either way — spawning a live language server per code fence in an
+      ordinary notes/README file could be noisy/surprising for content that's often
+      illustrative or intentionally incomplete; revisit if it turns out to matter in practice.
+      `LspManager` gained real multi-server-per-buffer diagnostics merging with the
+      prose-checking feature (harper-ls as a second, independent diagnostics channel
+      alongside the primary language server) — that two-server shape was the fixed-pair
+      precedent this feature generalized to arbitrary embedded keys.
 - [ ] Per-capture highlighting round 2 (v1 shipped, exhaustive-highlighting
       follow-up: enumeration of all 17 bundled queries' 87 capture names, defaults
       closing every gap found, `HighlightSpan` carrying an interned capture id, a

@@ -27,6 +27,7 @@
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -126,6 +127,44 @@ class LspManager {
     // of this same mechanism, not a design change.
     void SyncBuffer(text::Buffer& buffer, const std::string& language);
 
+    // embedded-language-documents follow-up. One embedded language's
+    // synthesized virtual document, ready to sync -- Editor/EmbeddedDocuments.h's
+    // EmbeddedDocument, translated at the one BufferView.cpp call site into
+    // this small, Mode-agnostic struct so LspManager keeps its existing
+    // "plain language-key strings only" character rather than gaining a
+    // dependency on Mode.h/tree-sitter. documentText is what actually gets
+    // sent as didOpen/didChange's own "text" -- see EmbeddedDocument's own
+    // doc comment for why its byte length and per-line UTF-16 widths are
+    // guaranteed identical to the host buffer's real text, which is what
+    // lets every position computed elsewhere in this file
+    // (BytePositionToLsp(buffer.Content(), ...)) stay correct against this
+    // server with zero remapping. ownedRanges (host-buffer byte coordinates)
+    // is used only for dropping a diagnostic whose start falls in a padded,
+    // non-owned region -- see HandlePublishDiagnostics.
+    struct EmbeddedDocumentSync {
+        std::string                                      language;
+        std::string                                      documentText;
+        std::vector<std::pair<std::size_t, std::size_t>> ownedRanges;
+    };
+
+    // Syncs each entry of documents to its own server (didOpen/didChange,
+    // same generation-gated logic SyncBuffer's primary/prose sync already
+    // uses -- see SyncTextToServer), keyed by its own language. Any server
+    // key this method previously synced for buffer but that documents no
+    // longer contains (e.g. buffer's only <script> block was deleted) is
+    // torn down: textDocument/didClose sent, its sync state and owned-range
+    // record erased, and its diagnostics slice dropped (re-pushing merged
+    // diagnostics so they don't linger). A no-op if buffer has no associated
+    // path, same guard as SyncBuffer.
+    void SyncEmbeddedDocuments(text::Buffer& buffer, const std::vector<EmbeddedDocumentSync>& documents);
+
+    // embedded-language-documents follow-up. Every server key currently
+    // synced for buffer -- its primary language, kProseLanguageKey if that's
+    // synced too, and any embedded keys from SyncEmbeddedDocuments above.
+    // Unordered; ModeLine sorts/labels as it renders. Empty if buffer has
+    // never been synced at all.
+    [[nodiscard]] std::vector<std::string> ActiveServerKeysForBuffer(const text::Buffer& buffer) const;
+
     // Called just before buffer is actually closed (BufferView's existing
     // SetOnBufferClosed hook, already wired for window-splitting's own
     // per-pane retargeting -- reused here rather than adding new
@@ -153,14 +192,23 @@ class LspManager {
     // through -- is destroyed with the request still in flight, matching
     // LspClient::SendRequest's own documented "abandoned at shutdown"
     // convention.
+    //
+    // embedded-language-documents follow-up: serverKey routes to a specific
+    // connection (bufferState_'s own per-server key), same meaning as
+    // RequestCodeActions' own serverKey -- empty (the default) keeps the
+    // original PrimarySyncState-only behavior. BufferView passes an embedded
+    // language key here when point sits inside that language's region (e.g.
+    // an HTML <script> block), so hover/completion inside it hits the real
+    // javascript server, not html's.
     using HoverCallback = std::function<void(std::optional<std::string> text)>;
-    void RequestHover(text::Buffer& buffer, std::size_t byteOffset, HoverCallback callback);
+    void RequestHover(text::Buffer& buffer, std::size_t byteOffset, HoverCallback callback, const std::string& serverKey = {});
 
     // CompletionItem itself lives in LspContent.h, not nested here, so its
     // parsing (ExtractCompletionItems) can be unit-tested directly against
     // crafted JSON without needing an LspManager/live client at all.
+    // serverKey: see RequestHover's own doc comment above.
     using CompletionCallback = std::function<void(std::vector<CompletionItem> items)>;
-    void RequestCompletion(text::Buffer& buffer, std::size_t byteOffset, CompletionCallback callback);
+    void RequestCompletion(text::Buffer& buffer, std::size_t byteOffset, CompletionCallback callback, const std::string& serverKey = {});
 
     // code-actions follow-up. Same "resolve purely from bufferState_" shape
     // as RequestHover/RequestCompletion. rangeStartByte/rangeEndByte become
@@ -224,8 +272,9 @@ class LspManager {
     };
     using DefinitionCallback = std::function<void(std::vector<ResolvedLocation> locations)>;
     // Sent for lsp-goto-definition. Same "resolve purely from bufferState_"
-    // shape as RequestHover/RequestCompletion/RequestCodeActions.
-    void RequestDefinition(text::Buffer& buffer, std::size_t byteOffset, DefinitionCallback callback);
+    // shape as RequestHover/RequestCompletion/RequestCodeActions. serverKey:
+    // see RequestHover's own doc comment above.
+    void RequestDefinition(text::Buffer& buffer, std::size_t byteOffset, DefinitionCallback callback, const std::string& serverKey = {});
 
     // header-source-switching follow-up. clangd's own custom LSP extension
     // (not in the base spec -- no textDocument/definition-style position
@@ -265,8 +314,10 @@ class LspManager {
     using RenameCallback = std::function<void(std::optional<ResolvedRename> result)>;
     // Sent for lsp-rename. nullopt on any failure (buffer never synced, no
     // running client, or an error response) -- mirrors ResolveCallback's
-    // own nullopt-on-failure convention.
-    void RequestRename(text::Buffer& buffer, std::size_t byteOffset, const std::string& newName, RenameCallback callback);
+    // own nullopt-on-failure convention. serverKey: see RequestHover's own
+    // doc comment above.
+    void RequestRename(text::Buffer& buffer, std::size_t byteOffset, const std::string& newName, RenameCallback callback,
+                       const std::string& serverKey = {});
 
     // Public primarily for tests -- mirrors LspClient::DispatchFrame's own
     // "public primarily for tests" precedent (see that method's doc comment
@@ -370,13 +421,30 @@ class LspManager {
     // language, sent as textDocument/didOpen's own "languageId" regardless
     // of which server this call is talking to -- harper-ls needs the real
     // language to know how to extract comments/strings from the document.
+    // A thin wrapper around SyncTextToServer passing buffer.Text() --
+    // embedded-language-documents follow-up: SyncEmbeddedDocuments calls
+    // SyncTextToServer directly with a virtual document's own padded text
+    // instead.
     void SyncToServer(text::Buffer& buffer, const std::string& serverKey, const std::string& languageId);
 
+    // embedded-language-documents follow-up: SyncToServer's actual body,
+    // generalized so the text synced isn't always buffer.Text() -- an
+    // embedded virtual document has its own padded text, same byte length
+    // and line/UTF-16 structure as the host buffer (see EmbeddedDocumentSync's
+    // own doc comment) but not the same content.
+    void SyncTextToServer(text::Buffer& buffer, const std::string& serverKey, const std::string& languageId,
+                          const std::string& documentText);
+
     // hover/completion/code-actions/definition/rename follow-up: resolves
-    // the *primary* language's BufferSyncState for buffer -- i.e. whichever
-    // entry in bufferState_[&buffer] isn't kProseLanguageKey -- since those
-    // requests are never routed to the prose checker. nullptr if buffer has
-    // no primary sync state at all (never synced, or synced only to prose).
+    // the *primary* language's BufferSyncState for buffer via
+    // primaryServerKey_ (stamped by SyncBuffer, which already knows
+    // buffer's true host language) -- a direct lookup, not a guess. Before
+    // embedded-language-documents this scanned bufferState_[&buffer] for
+    // "whichever entry isn't kProseLanguageKey," which was only ever
+    // correct while at most one non-prose entry existed; once an embedded
+    // key (e.g. "javascript") joins the same map alongside the host
+    // language (e.g. "html"), that guess becomes ambiguous. nullptr if
+    // buffer has never been synced via SyncBuffer at all.
     [[nodiscard]] BufferSyncState* PrimarySyncState(text::Buffer& buffer);
 
     // executeCommand follow-up. Generalizes PrimarySyncState for a caller
@@ -452,6 +520,31 @@ class LspManager {
     // reported. PushMergedDiagnostics flattens this into the vector that
     // actually reaches buffer.SetDiagnostics.
     std::unordered_map<text::Buffer*, std::unordered_map<std::string, std::vector<text::Buffer::Diagnostic>>> diagnosticsBySource_;
+
+    // embedded-language-documents follow-up: buffer's own true host
+    // language, stamped by SyncBuffer -- what PrimarySyncState looks up
+    // directly instead of guessing "whichever bufferState_ entry isn't
+    // kProseLanguageKey," which stopped being unambiguous the moment an
+    // embedded key could also live in that same map. Erased in
+    // NotifyBufferClosed.
+    std::unordered_map<text::Buffer*, std::string> primaryServerKey_;
+
+    // embedded-language-documents follow-up: every server key
+    // SyncEmbeddedDocuments currently manages for buffer -- what lets a
+    // later call notice a key has disappeared (its only region was deleted)
+    // and tear it down, rather than leaving a phantom document and stale
+    // diagnostics behind forever. Erased in NotifyBufferClosed.
+    std::unordered_map<text::Buffer*, std::unordered_set<std::string>> embeddedServerKeys_;
+
+    // embedded-language-documents follow-up: per-buffer, per-embedded-key
+    // owned byte ranges (host-buffer coordinates) -- consulted by
+    // HandlePublishDiagnostics to drop a diagnostic whose start falls
+    // outside every owned range for that key (a padded/blanked region
+    // shouldn't be surfacing real diagnostics). Absent for the primary
+    // language and kProseLanguageKey, which own the whole buffer. Erased in
+    // NotifyBufferClosed.
+    std::unordered_map<text::Buffer*, std::unordered_map<std::string, std::vector<std::pair<std::size_t, std::size_t>>>>
+        embeddedOwnedRanges_;
 
     // diagnostics-debounce follow-up: one debounce timer per buffer with a
     // pending publish -- HandlePublishDiagnostics (re)arms the buffer's

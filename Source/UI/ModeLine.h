@@ -10,6 +10,8 @@
 
 #include <chrono>
 #include <functional>
+#include <optional>
+#include <string>
 #include <vector>
 
 #include "ActiveBuffer.h"
@@ -50,12 +52,22 @@ class ModeLine : public Widget {
     // copy of the same pointer.
     void SetLspManager(editor::lsp::LspManager* lspManager);
 
+    // embedded-language-documents follow-up: unset (the default, every
+    // pre-existing construction site and test) means never show a
+    // language-at-point suffix -- same "safe no-op until wired" convention
+    // as every other Set* hook here. Wired by Pane to
+    // BufferView::EmbeddedLanguageAtPoint, so this reads whichever embedded
+    // language governs the active buffer's current point (nullopt for the
+    // ordinary single-language case).
+    void SetLanguageAtPointProvider(std::function<std::optional<std::string>()> provider);
+
   private:
-    const ActiveBuffer&      activeBuffer_;
-    const editor::Mode&      mode_;
-    const Theme&             theme_;
-    std::function<bool()>    focusProvider_;
-    editor::lsp::LspManager* lspManager_ = nullptr;
+    const ActiveBuffer&                         activeBuffer_;
+    const editor::Mode&                         mode_;
+    const Theme&                                theme_;
+    std::function<bool()>                       focusProvider_;
+    editor::lsp::LspManager*                    lspManager_ = nullptr;
+    std::function<std::optional<std::string>()> languageAtPointProvider_;
 
     // minimum-visible-duration follow-up: the last non-empty
     // ActiveBackgroundActivities() snapshot, held and re-shown for
