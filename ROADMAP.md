@@ -387,16 +387,25 @@ Notcurses.
 - [ ] Hunk unstage matches point against the *cached* staged diff, which drifts when
       unstaged edits exist earlier in the file — exact in the common
       stage-then-undo flow; revisit only if it bites.
-- [ ] **Multi-cursor: no way to drop a single unwanted cursor.** `Buffer`'s secondary-
-      cursor API (`Source/Text/Buffer.h`'s `AddCursorAt`/`SecondaryCursors`/
-      `ClearSecondaryCursors`) is add-or-clear-all only — no `RemoveCursorAt`/skip
-      primitive, so once `add-cursor-below`/`-above`/`select-next-occurrence`/
-      `select-all-occurrences` has built up a set including one you didn't want (e.g. an
-      empty line `C-DOWN` stepped over, or an occurrence `select-next-occurrence` matched
-      that shouldn't be edited), the only recourse is `C-g`-style clear-all and rebuild
-      from scratch. VS Code's `Ctrl+K Ctrl+D`-style "skip this occurrence, keep the rest"
-      is the natural precedent. Needs a `Buffer::RemoveCursorAt`/`RemoveMostRecentCursor`
-      counterpart plus a bound command.
+- [x] **Multi-cursor: no way to drop a single unwanted cursor** (shipped 2026-08-25) —
+      `Buffer::RemoveLastAddedCursor()` is the "undo the last add" counterpart to a bare
+      `AddCursorAt` call: a new `AddedCursorOrder_` field is a LIFO stack of every point
+      successfully added (relocated across edits the same way `SecondaryCursors_` itself
+      is, cleared on `ClearSecondaryCursors()`/`Revert()`/`MergeExternalChanges()`/
+      `RestoreContent()`), so repeated presses walk back through additions one at a time
+      rather than only undoing the single most recent one — pressing it N times after
+      adding N cursors returns to the single-cursor state. A popped entry whose cursor
+      already went away (explicit removal, or `NormalizeSecondaryCursors` merging it into
+      another) is skipped rather than treated as a failure. `remove-last-cursor`
+      (`Commands.cpp`) is bound to both `C-S-DOWN`/`C-S-UP` — direction-agnostic, since it
+      always undoes the most recent add regardless of which arrow key added it — mirroring
+      `add-cursor-below`/`-above`'s own `C-DOWN`/`C-UP`; tmux-verified live (Ctrl+Shift+Arrow
+      modifier decoding, the one real risk, works through Notcurses' bit-based modifier
+      reporting). Also cleans up an unwanted `select-next-occurrence` match, since that
+      command only ever adds forward, making its newest cursor the same one this removes.
+      `select-all-occurrences`' batch-added cursors aren't individually addressable this
+      way (deliberately out of scope — no single natural "last" one), so a bad match in the
+      middle of a `select-all-occurrences` set still needs `keyboard-quit`'s clear-all.
 - [x] **Subprocess hang/timeout protection** (2026-08-24 audit, shipped 2026-08-24;
       Janet-configurable timeouts + user-facing hang affordance shipped 2026-08-25) —
       `Editor/Process/ChildProcess.h` gained `WaitReadable`/`ReadSome(timeout)`

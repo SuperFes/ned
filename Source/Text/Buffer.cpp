@@ -369,6 +369,7 @@ void Buffer::Revert() {
     Point_ = SnapToGraphemeBoundary(Rope_, std::min(Point_, Rope_.ByteLength()));
     Mark_.reset();
     SecondaryCursors_.clear();
+    AddedCursorOrder_.clear();
     NarrowedRange_.reset();
     FoldMarkers_.clear();
     ++FoldGeneration_;
@@ -399,6 +400,7 @@ std::size_t Buffer::MergeExternalChanges() {
     Point_ = SnapToGraphemeBoundary(Rope_, std::min(result.firstConflictOffset.value_or(Point_), Rope_.ByteLength()));
     Mark_.reset();
     SecondaryCursors_.clear();
+    AddedCursorOrder_.clear();
     NarrowedRange_.reset();
     FoldMarkers_.clear();
     ++FoldGeneration_;
@@ -431,6 +433,7 @@ void Buffer::RestoreContent(std::string_view content) {
     Point_ = SnapToGraphemeBoundary(Rope_, std::min(Point_, Rope_.ByteLength()));
     Mark_.reset();
     SecondaryCursors_.clear();
+    AddedCursorOrder_.clear();
     NarrowedRange_.reset();
     FoldMarkers_.clear();
     ++FoldGeneration_;
@@ -516,6 +519,7 @@ void Buffer::AddCursorAt(std::size_t point, std::optional<std::size_t> mark) {
     }
 
     SecondaryCursors_.push_back(cursor);
+    AddedCursorOrder_.push_back(cursor.point);
     NormalizeSecondaryCursors();
 }
 
@@ -529,6 +533,22 @@ bool Buffer::HasSecondaryCursors() const {
 
 void Buffer::ClearSecondaryCursors() {
     SecondaryCursors_.clear();
+    AddedCursorOrder_.clear();
+}
+
+bool Buffer::RemoveLastAddedCursor() {
+    while (!AddedCursorOrder_.empty()) {
+        const std::size_t target = AddedCursorOrder_.back();
+        AddedCursorOrder_.pop_back();
+        const std::size_t before = SecondaryCursors_.size();
+        std::erase_if(SecondaryCursors_, [target](const Cursor& cursor) { return cursor.point == target; });
+        if (SecondaryCursors_.size() != before) {
+            return true;
+        }
+        // Stale entry (already removed, or NormalizeSecondaryCursors merged
+        // it away) -- keep walking back through older additions.
+    }
+    return false;
 }
 
 void Buffer::ForEachCursor(const std::function<void()>& operation) {
@@ -623,6 +643,9 @@ void Buffer::RelocateSecondaryCursorsForInsert(std::size_t insertOffset, std::si
             *cursor.mark = RelocateForInsert(*cursor.mark, insertOffset, length);
         }
     }
+    for (std::size_t& point : AddedCursorOrder_) {
+        point = RelocateForInsert(point, insertOffset, length);
+    }
 }
 
 void Buffer::RelocateSecondaryCursorsForDelete(std::size_t rangeStart, std::size_t rangeEnd) {
@@ -631,6 +654,9 @@ void Buffer::RelocateSecondaryCursorsForDelete(std::size_t rangeStart, std::size
         if (cursor.mark) {
             *cursor.mark = RelocateForDelete(*cursor.mark, rangeStart, rangeEnd);
         }
+    }
+    for (std::size_t& point : AddedCursorOrder_) {
+        point = RelocateForDelete(point, rangeStart, rangeEnd);
     }
     // A delete can collapse two cursors onto one surviving position --
     // merge immediately, EXCEPT while ForEachCursor is mid-iteration:

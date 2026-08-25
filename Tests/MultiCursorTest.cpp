@@ -85,6 +85,31 @@ TEST_CASE("AddCursorAt snaps into the buffer and onto grapheme boundaries", "[Mu
     REQUIRE(buffer.SecondaryCursors().back().point == buffer.Content().ByteLength());
 }
 
+TEST_CASE("RemoveLastAddedCursor walks back through additions in LIFO order", "[MultiCursor]") {
+    Buffer buffer("test", Rope("alpha\nbravo\ncharlie\n"));
+    buffer.SetPoint(0);
+
+    REQUIRE_FALSE(buffer.RemoveLastAddedCursor()); // nothing added yet -- no-op
+
+    buffer.AddCursorAt(6);
+    buffer.AddCursorAt(12);
+    REQUIRE(buffer.SecondaryCursors().size() == 2);
+
+    REQUIRE(buffer.RemoveLastAddedCursor()); // removes 12, the more recent add
+    REQUIRE(buffer.SecondaryCursors().size() == 1);
+    REQUIRE(buffer.SecondaryCursors()[0].point == 6);
+
+    REQUIRE(buffer.RemoveLastAddedCursor()); // walks back further and removes 6 too
+    REQUIRE_FALSE(buffer.HasSecondaryCursors());
+
+    REQUIRE_FALSE(buffer.RemoveLastAddedCursor()); // history exhausted -- no-op
+
+    buffer.AddCursorAt(6);
+    buffer.InsertAtPoint("xy"); // primary inserts at 0 -- the tracked point relocates too
+    REQUIRE(buffer.RemoveLastAddedCursor());
+    REQUIRE_FALSE(buffer.HasSecondaryCursors());
+}
+
 TEST_CASE("Secondary cursors relocate across ordinary single-cursor edits", "[MultiCursor]") {
     Buffer buffer("test", Rope("alpha\nbravo\n"));
     buffer.SetPoint(0);
@@ -217,6 +242,28 @@ TEST_CASE("add-cursor-below/above grow a column of cursors at the same visual co
     // line clamps to its (column-0) start; one more is a no-op at the end.
     fixture.Invoke("add-cursor-above"); // top-most is the primary at line 0 -- no line above
     REQUIRE(fixture.buffer.SecondaryCursors().size() == 2);
+}
+
+TEST_CASE("remove-last-cursor walks back through additions one at a time", "[MultiCursor]") {
+    CommandFixture fixture;
+    fixture.buffer.InsertAtPoint("alpha\nbravo\ncharlie\n");
+    fixture.buffer.SetPoint(2); // line 0, column 2
+
+    fixture.Invoke("add-cursor-below"); // -> point 8
+    fixture.Invoke("add-cursor-below"); // -> point 14
+    REQUIRE(fixture.buffer.SecondaryCursors().size() == 2);
+
+    fixture.Invoke("remove-last-cursor"); // undoes the second add
+    REQUIRE(fixture.buffer.SecondaryCursors().size() == 1);
+    REQUIRE(fixture.buffer.SecondaryCursors()[0].point == 8);
+
+    fixture.Invoke("remove-last-cursor"); // undoes the first add too
+    REQUIRE_FALSE(fixture.buffer.HasSecondaryCursors());
+
+    fixture.message.clear();
+    fixture.Invoke("remove-last-cursor"); // history exhausted
+    REQUIRE_FALSE(fixture.buffer.HasSecondaryCursors());
+    REQUIRE(fixture.message == "No cursor to remove");
 }
 
 TEST_CASE("Typing with multiple cursors edits every line and undoes as one step", "[MultiCursor]") {
