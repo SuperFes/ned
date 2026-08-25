@@ -91,18 +91,53 @@ Notcurses.
       prose-checking feature (harper-ls as a second, independent diagnostics channel
       alongside the primary language server) — that two-server shape was the fixed-pair
       precedent this feature generalized to arbitrary embedded keys.
-- [ ] Per-capture highlighting round 2 (v1 shipped, exhaustive-highlighting
+- [x] Per-capture highlighting round 2 (v1 shipped, exhaustive-highlighting
       follow-up: enumeration of all 17 bundled queries' 87 capture names, defaults
       closing every gap found, `HighlightSpan` carrying an interned capture id, a
       dotted-name-inheritance override store — capture chain beats `SyntaxClass`
       override beats built-in theme, field by field — capture→class remapping, and
-      the `ned/set-capture-*`/`ned/capture-names` Janet surface). Deliberate cuts:
-      **language-scoped rules** (an explicit decision — one rule set for all
-      languages; the resolution walk in `SyntaxTheme.h` is the seam a
-      `<lang>/<name>` tier would prepend to later, and markdown's hardcoded
-      `punctuation.special` special case in `Mode.cpp` is the first candidate to
-      migrate onto it), per-capture styling in the Minimap (class-level only
-      there), and theme-file serialization of capture overrides.
+      the `ned/set-capture-*`/`ned/capture-names` Janet surface). **Round 2**
+      (shipped 2026-08-25) closed all three named cuts:
+      **language-scoped class-remap rules** — `Mode.cpp`'s `SyntaxClassForCapture`
+      now takes an optional `language` key (the same string
+      `LanguageKeyForMode`'s "-mode"-suffix strip resolves to, computed once at
+      Mode-construction time and passed by every bundled Mode's own highlight
+      closure, which already knows its own language), consulted at every dotted
+      specificity level ahead of the unscoped built-in `CaptureTable` — both a
+      new user-remap overload (`SyntaxTheme.h`'s `SyntaxClassOverrideForCapture(name,
+      language)`, trying `"<language>/<name>"` before the unscoped name — storage
+      is untouched, a scoped override is just a literal string key like any
+      other) and a new built-in `LanguageCaptureTable`, seeded with markdown's own
+      `"punctuation.special"` → `MarkupMarker` default. This is what let
+      `MarkdownMode()`'s highlight closure drop the ternary special-case that used
+      to bypass `SyntaxClassForCapture` (and any user remap) entirely for that one
+      capture name — it's a real, user-remappable default now, scoped so no other
+      language's own `"punctuation.special"` use is affected, while an *unscoped*
+      `ned/set-capture-class` still wins over every language's built-in default
+      including markdown's, unchanged precedent. Per-capture *style* overrides
+      (foreground/background/traits) deliberately stay unscoped, a narrower,
+      documented cut of their own (`SyntaxTheme.h`'s own updated header comment) —
+      a `HighlightSpan` carries a `CaptureId`, not a language, so scoping the
+      style tier the same way would need that struct (and the render-time brush
+      cache) widened, a bigger, separate change than the concrete problem
+      (markdown's hardcode) actually needed. **Per-capture styling in the
+      Minimap** — `Minimap.cpp`'s `IndexedSpan`/`ClassAt` now carry/return a
+      `CaptureId` alongside the `SyntaxClass` they already had, so the minimap's
+      own color lookup calls `Theme::BrushFor(cls, captureId)` instead of the
+      class-only overload, matching the real buffer's own per-capture-aware
+      rendering instead of falling back to the coarser class-level color.
+      **Theme-file serialization of capture overrides** — `ThemeFile.cpp`'s
+      `SerializeThemeJanet` (the `save-theme` command's output) previously walked
+      only the `Theme` struct's own fields, silently dropping every
+      `ned/set-syntax-*`/`ned/set-capture-*`/`ned/set-capture-class` override
+      (a separate, process-wide overlay store layered on top of `Theme` at
+      `BrushFor()` render time, confirmed via reading `ThemeFile.cpp`, not
+      assumed); a new `SerializeSyntaxThemeOverrides` walks
+      `SyntaxClassNames()`/`KnownCaptureNames()` and emits the matching
+      `ned/set-*` call for every field actually configured, so loading a saved
+      theme.janet back reproduces the full override set, not just the base
+      palette. All three closed with unit tests
+      (`Tests/ModeTest.cpp`/`Tests/ThemeFileTest.cpp`).
 - [ ] Go-to-file-at-point for import/include directives (v1 shipped:
       `Mode::importTarget`, a tree-sitter-query-driven capability mirroring
       `Mode::fold`/`expandSelection`'s "one function pointer per capability"

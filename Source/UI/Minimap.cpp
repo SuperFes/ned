@@ -25,7 +25,17 @@ namespace {
         std::size_t         startByte;
         std::size_t         endByte;
         editor::SyntaxClass syntaxClass;
+        editor::CaptureId   captureId;
         std::size_t         originalIndex;
+    };
+
+    // per-capture-styling-in-minimap follow-up: the winning span's class AND
+    // capture id, so the caller can resolve a per-capture-name color override
+    // (theme_.BrushFor(cls, captureId)) the same way BufferView's own
+    // real-buffer rendering does, not just the coarser per-SyntaxClass one.
+    struct ClassAtResult {
+        editor::SyntaxClass syntaxClass = editor::SyntaxClass::Default;
+        editor::CaptureId   captureId   = editor::kNoCapture;
     };
 
     // Best-effort syntax class at offset: binary-searches sortedSpans (by
@@ -37,22 +47,23 @@ namespace {
     // resolution -- real overlap depth at any single point is small in
     // practice (a handful of nested captures at most), and this is a
     // cosmetic minimap, not the real highlighter.
-    editor::SyntaxClass ClassAt(const std::vector<IndexedSpan>& sortedSpans, std::size_t offset) {
+    ClassAtResult ClassAt(const std::vector<IndexedSpan>& sortedSpans, std::size_t offset) {
         constexpr std::size_t kMaxBackwardScan = 64;
         auto                  it               = std::upper_bound(sortedSpans.begin(), sortedSpans.end(), offset,
                                                                   [](std::size_t value, const IndexedSpan& span) { return value < span.startByte; });
         std::size_t           scanned          = 0;
         std::size_t           bestIndex        = 0;
         bool                  found            = false;
-        editor::SyntaxClass   best             = editor::SyntaxClass::Default;
+        ClassAtResult         best;
         while (it != sortedSpans.begin() && scanned < kMaxBackwardScan) {
             --it;
             ++scanned;
             if (it->startByte <= offset && offset < it->endByte) {
                 if (!found || it->originalIndex > bestIndex) {
-                    best      = it->syntaxClass;
-                    bestIndex = it->originalIndex;
-                    found     = true;
+                    best.syntaxClass = it->syntaxClass;
+                    best.captureId   = it->captureId;
+                    bestIndex        = it->originalIndex;
+                    found            = true;
                 }
             }
         }
@@ -404,7 +415,7 @@ void Minimap::EnsurePlane() const {
         }
         sortedSpans.reserve(spans->size());
         for (std::size_t i = 0; i < spans->size(); ++i) {
-            sortedSpans.push_back(IndexedSpan{(*spans)[i].startByte, (*spans)[i].endByte, (*spans)[i].syntaxClass, i});
+            sortedSpans.push_back(IndexedSpan{(*spans)[i].startByte, (*spans)[i].endByte, (*spans)[i].syntaxClass, (*spans)[i].captureId, i});
         }
         std::sort(sortedSpans.begin(), sortedSpans.end(),
                   [](const IndexedSpan& a, const IndexedSpan& b) { return a.startByte < b.startByte; });
@@ -442,9 +453,9 @@ void Minimap::EnsurePlane() const {
                           // gray instead of matching how the real buffer looks.
                           Color fg = theme_.defaultForeground;
                           if (!sortedSpans.empty()) {
-                              const editor::SyntaxClass cls = ClassAt(sortedSpans, offset);
-                              if (cls != editor::SyntaxClass::Default) {
-                                  fg = theme_.BrushFor(cls).foreground;
+                              const ClassAtResult at = ClassAt(sortedSpans, offset);
+                              if (at.syntaxClass != editor::SyntaxClass::Default) {
+                                  fg = theme_.BrushFor(at.syntaxClass, at.captureId).foreground;
                               }
                           }
                           const std::size_t idx = static_cast<std::size_t>(subRow) * static_cast<std::size_t>(contentCols) +

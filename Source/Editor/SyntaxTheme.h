@@ -75,12 +75,20 @@ void SetSyntaxStrikethrough(SyntaxClass cls, std::optional<bool> value);
 // "function"), each field taken from the most specific level that sets it,
 // before falling through to the per-SyntaxClass override above and finally
 // the built-in theme -- JetBrains' base-attributes-with-inheritance model,
-// with SyntaxClass playing the base-attributes role. Deliberately NOT
-// language-scoped (a text-first editor's one rule set covers big and small
-// languages alike -- an explicit user decision, not an oversight); the walk
-// below is the seam a language-scoped tier would prepend to later (try
-// "<lang>/<name>" chain first, then this unscoped chain) without reshaping
-// storage or API.
+// with SyntaxClass playing the base-attributes role. This per-*style* tier
+// stays deliberately unscoped (a text-first editor's one foreground/
+// background/trait rule set covers big and small languages alike -- an
+// explicit user decision, not an oversight): a HighlightSpan carries a
+// CaptureId, not a language, so there's no per-render-time hook to key a
+// scoped lookup off without widening that struct. The class-remap tier
+// below (SyntaxClassOverrideForCapture's language-taking overload) is
+// different: it resolves at *parse* time, inside each Mode's own
+// language-specific highlight closure, which already knows its own
+// language for free -- see Mode.cpp's SyntaxClassForCapture, the seam a
+// "<lang>/<name>" tier prepends to (storage is untouched: a caller can
+// already configure a scoped override today via e.g.
+// (ned/set-capture-class "markdown/punctuation.special" ...), this file
+// only had to teach the *resolution* walk to try it).
 //
 // Capture names here are the same trust boundary SyntaxClass names cross:
 // a malformed name (empty, leading '@', whitespace, or a leading/trailing/
@@ -130,6 +138,15 @@ void SetCaptureStrikethrough(const std::string& name, std::optional<bool> value)
 // flush).
 void                                     SetSyntaxClassForCapture(const std::string& name, std::optional<SyntaxClass> cls);
 [[nodiscard]] std::optional<SyntaxClass> SyntaxClassOverrideForCapture(std::string_view name);
+
+// language-scoped-capture-rules follow-up: tries "<language>/<name>" first
+// (language empty behaves exactly like the single-argument overload above),
+// falling back to the plain unscoped lookup -- Mode.cpp's SyntaxClassForCapture
+// is the sole caller, one per dotted specificity level it walks, so a
+// language-scoped remap re-bases only that one grammar's use of a shared
+// capture name (e.g. markdown's own "punctuation.special") without touching
+// what every other bundled grammar's use of the same name resolves to.
+[[nodiscard]] std::optional<SyntaxClass> SyntaxClassOverrideForCapture(std::string_view name, std::string_view language);
 [[nodiscard]] std::size_t                CaptureClassGeneration();
 
 // Every capture name this store has seen (interned, styled, or remapped),

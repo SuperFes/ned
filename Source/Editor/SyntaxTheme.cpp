@@ -335,6 +335,20 @@ std::optional<SyntaxClass> SyntaxClassOverrideForCapture(std::string_view name) 
     return it != overrides.end() ? std::optional(it->second) : std::nullopt;
 }
 
+std::optional<SyntaxClass> SyntaxClassOverrideForCapture(std::string_view name, std::string_view language) {
+    if (!language.empty()) {
+        std::string scoped;
+        scoped.reserve(language.size() + 1 + name.size());
+        scoped.append(language);
+        scoped.push_back('/');
+        scoped.append(name);
+        if (const auto scopedOverride = SyntaxClassOverrideForCapture(std::string_view(scoped))) {
+            return scopedOverride;
+        }
+    }
+    return SyntaxClassOverrideForCapture(name);
+}
+
 std::size_t CaptureClassGeneration() {
     const std::lock_guard<std::mutex> lock(OverridesMutex());
     return ClassGeneration();

@@ -7,6 +7,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <unordered_map>
 #include <utility>
 
@@ -189,14 +190,15 @@ namespace {
             {"text.reference", SyntaxClass::Link},
             // Deliberately NOT a "punctuation.special" entry here -- that
             // capture name is already shared by other bundled grammars
-            // above (line 104, mapped to the generic Punctuation class),
-            // and markdown's own use of it (list markers/thematic
+            // above (mapped to the generic Punctuation class), and
+            // markdown's own use of it (list markers/thematic
             // break/heading markers/blockquote marker) wants the distinct,
-            // dimmed MarkupMarker treatment instead -- CaptureTable has no
-            // per-language scoping, so MarkdownMode()'s own highlight
-            // closure special-cases this one capture name directly rather
-            // than repointing it here and silently changing every other
-            // language's punctuation.special color too.
+            // dimmed MarkupMarker treatment instead. Repointing it here
+            // would silently change every other language's punctuation.special
+            // color too -- markdown's own default lives in this file's
+            // LanguageCaptureTable instead (language-scoped-capture-rules
+            // follow-up), consulted only when SyntaxClassForCapture is
+            // called with language == "markdown".
             //
             // Ned's own addition -- the grammar has a real "strikethrough"
             // node (GFM extension) but the vendored inline query doesn't
@@ -219,6 +221,45 @@ namespace {
         return table;
     }
 
+    // language-scoped-capture-rules follow-up: built-in defaults for a
+    // capture name that means something different in one specific bundled
+    // grammar than CaptureTable()'s one shared mapping gives it -- keyed by
+    // (language key, capture name), the language key being the same string
+    // TreeSitterMode()'s own "-mode"-suffixed convention resolves to
+    // (LanguageKeyForMode's exact logic; SyntaxClassForCapture's own callers
+    // below pass it explicitly, since each already knows its own language
+    // at closure-construction time). Consulted only for the grammar(s) each
+    // entry names -- adding an entry here has zero effect on how any other
+    // language's use of the same capture name renders, unlike a change to
+    // CaptureTable() itself.
+    const std::vector<std::tuple<std::string_view, std::string_view, SyntaxClass>>& LanguageCaptureTable() {
+        static const std::vector<std::tuple<std::string_view, std::string_view, SyntaxClass>> table = {
+            // Markdown's own use of "punctuation.special" (list markers,
+            // thematic breaks, heading markers, the blockquote marker) wants
+            // the distinct, dimmed MarkupMarker treatment -- every other
+            // bundled grammar using the same capture name for ordinary
+            // punctuation keeps CaptureTable()'s shared Punctuation mapping
+            // above untouched. Used to be a ternary special-case directly in
+            // MarkdownMode()'s own highlight closure, bypassing
+            // SyntaxClassForCapture (and any user remap) entirely; now a
+            // real, user-remappable default like everything else.
+            {"markdown", "punctuation.special", SyntaxClass::MarkupMarker},
+        };
+        return table;
+    }
+
+    std::optional<SyntaxClass> BuiltinLanguageClassForCapture(std::string_view language, std::string_view captureName) {
+        if (language.empty()) {
+            return std::nullopt;
+        }
+        for (const auto& [tableLanguage, tableCapture, cls] : LanguageCaptureTable()) {
+            if (tableLanguage == language && tableCapture == captureName) {
+                return cls;
+            }
+        }
+        return std::nullopt;
+    }
+
     // Maps a tree-sitter query capture name (e.g. "string.special.key",
     // without the leading '@') to a SyntaxClass. A name not found in
     // CaptureTable() verbatim is resolved by repeatedly stripping the last
@@ -228,18 +269,29 @@ namespace {
     // is a kind of "string"), so an unrecognized specific name should
     // resolve to its nearest recognized ancestor, not straight to Default
     // the way a totally unrelated/unknown name correctly does.
-    SyntaxClass SyntaxClassForCapture(std::string_view captureName) {
+    //
+    // language-scoped-capture-rules follow-up: `language` (empty for a
+    // caller that doesn't have one, e.g. tests constructing a bare Query
+    // directly) is consulted at every dotted level, ahead of the unscoped
+    // built-in table -- both the user-remap tier (SyntaxTheme.h's own
+    // "<language>/<name>" overload) and the built-in tier
+    // (LanguageCaptureTable above) -- so a language-scoped remap re-bases
+    // only that one grammar's use of a shared capture name.
+    SyntaxClass SyntaxClassForCapture(std::string_view captureName, std::string_view language = {}) {
         const auto& table = CaptureTable();
 
         while (true) {
             // A user remap (ned/set-capture-class, SyntaxTheme.h) wins over
-            // the built-in table at every dotted level, so remapping a broad
+            // the built-in tables at every dotted level, so remapping a broad
             // name ("keyword") also re-bases every unlisted specific name
             // that would have fallen back to it. Parse-time path (per
             // capture per reparse), not the per-codepoint render path, so
             // the store's mutex lookup per level is fine here.
-            if (const auto remapped = SyntaxClassOverrideForCapture(captureName)) {
+            if (const auto remapped = SyntaxClassOverrideForCapture(captureName, language)) {
                 return *remapped;
+            }
+            if (const auto builtinLanguageClass = BuiltinLanguageClassForCapture(language, captureName)) {
+                return *builtinLanguageClass;
             }
             if (const auto it = table.find(captureName); it != table.end()) {
                 return it->second;
@@ -478,6 +530,17 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
                                 std::string_view symbolKindQuerySource, std::string_view testQuerySource) {
     const auto parser = std::make_shared<treesitter::Parser>(language);
 
+    // language-scoped-capture-rules follow-up: LanguageKeyForMode's own
+    // "-mode"-suffix strip, computed here (rather than after the fact via
+    // LanguageKeyForMode(mode)) since `name` is moved into the returned Mode
+    // further down -- this is what lets the highlight closure below pass a
+    // real language key to SyntaxClassForCapture.
+    std::string                languageKey = name;
+    constexpr std::string_view kModeSuffix = "-mode";
+    if (languageKey.size() > kModeSuffix.size() && languageKey.ends_with(kModeSuffix)) {
+        languageKey.resize(languageKey.size() - kModeSuffix.size());
+    }
+
     // Shared between highlight and fold below (generic-code-folding
     // follow-up) so that a single Paint() cycle calling both against the
     // exact same buffer text -- the common case, since BufferView recomputes
@@ -509,7 +572,7 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
     HighlightFunction highlight;
     if (!querySource.empty()) {
         const auto query = std::make_shared<treesitter::Query>(language, querySource);
-        highlight        = [parser, query, sharedParse](std::string_view bufferText) -> std::vector<HighlightSpan> {
+        highlight        = [parser, query, sharedParse, languageKey](std::string_view bufferText) -> std::vector<HighlightSpan> {
             const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
             if (tree.IsNull()) {
                 return {};
@@ -520,7 +583,7 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
                 if (!IsHighlightableCapture(capture.name)) {
                     continue;
                 }
-                collector.Add(capture.name, capture.startByte, capture.endByte, SyntaxClassForCapture(capture.name));
+                collector.Add(capture.name, capture.startByte, capture.endByte, SyntaxClassForCapture(capture.name, languageKey));
             }
             return collector.Take();
         };
@@ -980,7 +1043,7 @@ Mode HtmlMode() {
             if (!IsHighlightableCapture(capture.name)) {
                 continue;
             }
-            collector.Add(capture.name, capture.startByte, capture.endByte, SyntaxClassForCapture(capture.name));
+            collector.Add(capture.name, capture.startByte, capture.endByte, SyntaxClassForCapture(capture.name, "html"));
         }
         std::vector<HighlightSpan> spans = collector.Take();
 
@@ -1154,20 +1217,20 @@ Mode MarkdownMode() {
         // heading, or a checkbox inside a list item.
         std::vector<HighlightSpan> spans;
 
-        // Pass 1: block-level query captures through the shared
-        // CaptureTable, except "punctuation.special" -- see CaptureTable()'s
-        // own doc comment for why that one capture name is special-cased
-        // directly to MarkupMarker here instead of through the shared table
-        // (it's shared with other bundled grammars, where it means
-        // something else).
+        // Pass 1: block-level query captures through the shared CaptureTable
+        // -- "markdown" as the language means "punctuation.special" (list
+        // markers/thematic break/heading markers/blockquote marker) resolves
+        // through LanguageCaptureTable's own MarkupMarker default instead of
+        // CaptureTable's shared Punctuation one, without a special case here
+        // (language-scoped-capture-rules follow-up; see Mode.cpp's own
+        // SyntaxClassForCapture doc comment).
         SpanCollector blockCollector;
         for (const treesitter::QueryCapture& capture : blockQuery->Captures(root, bufferText)) {
             if (!IsHighlightableCapture(capture.name)) {
                 continue;
             }
-            const SyntaxClass syntaxClass =
-                (capture.name == "punctuation.special") ? SyntaxClass::MarkupMarker : SyntaxClassForCapture(capture.name);
-            blockCollector.Add(capture.name, capture.startByte, capture.endByte, syntaxClass);
+            blockCollector.Add(capture.name, capture.startByte, capture.endByte,
+                               SyntaxClassForCapture(capture.name, "markdown"));
         }
         spans = blockCollector.Take();
 
@@ -1349,7 +1412,7 @@ Mode OrgMode() {
             if (capture.name == "org.headline.stars" || capture.name == "org.keyword.candidate") {
                 continue;
             }
-            genericCollector.Add(capture.name, capture.startByte, capture.endByte, SyntaxClassForCapture(capture.name));
+            genericCollector.Add(capture.name, capture.startByte, capture.endByte, SyntaxClassForCapture(capture.name, "org"));
         }
         for (const HighlightSpan& span : genericCollector.Take()) {
             spans.push_back(span);
