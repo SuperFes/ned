@@ -272,6 +272,13 @@ class WindowManager {
     // over the OverlayHost-owned AcpPanel) lives above this class entirely.
     void SetOnAcpPanelToggle(std::function<void()> onToggle);
 
+    // DAP round 2: same "forwarded to every pane, present and future" shape
+    // as SetOnAcpPanelToggle immediately above -- dap-toggle-console can
+    // fire from whichever pane has focus, and the handler (main.cpp's
+    // toggle over the OverlayHost-owned DebugConsolePanel) lives above this
+    // class entirely.
+    void SetOnDapConsoleToggle(std::function<void()> onToggle);
+
     // task-runner follow-up: same "forwarded to every pane, present and
     // future" shape as SetProjectSidebar/SetLspManager above.
     void SetTaskRunner(editor::tasks::TaskRunner* taskRunner);
@@ -629,6 +636,7 @@ class WindowManager {
     std::function<void(const Theme&)> themeApplier_;             // see SetThemeApplier
     std::function<void()>             onTerminalToggle_;         // see SetOnTerminalToggle
     std::function<void()>             onAcpPanelToggle_;         // see SetOnAcpPanelToggle
+    std::function<void()>             onDapConsoleToggle_;       // see SetOnDapConsoleToggle
 
     std::unique_ptr<WindowNode> root_;
     Container                   rootComponent_{Axis::Vertical, {}};

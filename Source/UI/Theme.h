@@ -212,6 +212,12 @@ struct Theme {
     Color breakpointMarker;
     Color executionMarker;
     Color executionLineBackground;
+    // DAP round 2: a dimmer variant of breakpointMarker for a breakpoint
+    // the adapter's own setBreakpoints response marked unverified (bad
+    // condition syntax, an unreachable line, ...) -- shape (glyph) still
+    // communicates plain/conditional/logpoint, this communicates verified
+    // state, orthogonally.
+    Color unverifiedBreakpointMarker;
 
     // Multibuffers follow-up: whole-line content backgrounds for the *vcs
     // diff* multibuffer's own added/removed lines -- deliberately a real

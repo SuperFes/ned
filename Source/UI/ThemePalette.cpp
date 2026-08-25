@@ -84,7 +84,8 @@ Theme ThemeFromPalette(std::string name, const ThemePalette& p) {
         .executionMarker               = p.yellow,
         // A faint warm wash the yellow execution arrow reads against --
         // mostly background, same intent as DarkTheme's own 0x3a3a28.
-        .executionLineBackground = Color::Interpolate(0.85F, p.yellow, p.background),
+        .executionLineBackground    = Color::Interpolate(0.85F, p.yellow, p.background),
+        .unverifiedBreakpointMarker = p.subtleForeground,
         // Multibuffers follow-up: same mostly-background wash technique as
         // executionLineBackground above, tinted by green/red instead of
         // yellow -- the *vcs diff* multibuffer's added/removed line

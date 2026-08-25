@@ -2132,6 +2132,40 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           context.interactiveRequest = InteractiveRequest::DapEvaluate;
                       });
 
+    // DAP round 2: conditional/logpoint breakpoints, watch expressions, the
+    // thread picker, editable *debug* buffer variables, and the debug
+    // console panel toggle -- M-x only (matching the F-key-quartet-only
+    // policy above), except dap-toggle-console (bound to C-c D below, a
+    // frequently-toggled panel getting a real binding the same way
+    // toggle-terminal/acp-toggle-panel did).
+    registry.Register("dap-set-breakpoint-condition", "Set or clear a condition on the breakpoint at the current line.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::DapSetBreakpointCondition;
+                      });
+    registry.Register("dap-set-breakpoint-log-message",
+                      "Set or clear a log message on the breakpoint at the current line (a logpoint never halts the debuggee).",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::DapSetBreakpointLogMessage;
+                      });
+    registry.Register("dap-add-watch", "Add a watch expression, re-evaluated every time the *debug* buffer is rebuilt.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::DapAddWatch;
+                      });
+    registry.Register("dap-remove-watch", "Remove the watch expression on the current *debug* buffer line.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::DapRemoveWatch;
+                      });
+    registry.Register("dap-select-thread", "Pick which thread inspection/stepping/continue target in the stopped debug session.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::DapSelectThread;
+                      });
+    registry.Register("dap-set-variable", "Edit the variable's value on the current *debug* buffer line.", [](CommandContext& context) {
+        context.interactiveRequest = InteractiveRequest::DapSetVariable;
+    });
+    registry.Register("dap-toggle-console", "Show or hide the debug console (REPL) panel.", [](CommandContext& context) {
+        context.interactiveRequest = InteractiveRequest::DapToggleConsole;
+    });
+
     // ACP client slice 2: same "just set interactiveRequest" shape as
     // run-task/dap-continue above -- BufferView holds the shared AcpManager
     // and does the actual work (see Editor/Acp/AcpManager.h). Agent and
@@ -3099,6 +3133,10 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("M-n"), "select-next-occurrence");
     keymap.Bind(ParseKeySequence("ESC n"), "select-next-occurrence");
     keymap.Bind(ParseKeySequence("C-c d"), "duplicate-line");
+    // DAP round 2: "C-c D" (shifted "d", distinct chord from its lowercase
+    // twin "C-c d" above) -- the same trick "C-c A"/"C-c T" already use
+    // beside their own lowercase twins.
+    keymap.Bind(ParseKeySequence("C-c D"), "dap-toggle-console");
     // toggle-line-comment follow-up: real Emacs' own actual binding for
     // comment-dwim/comment-line is M-;, not C-/ (which is a non-Emacs
     // convention this codebase never adopted anyway) -- chosen over C-/

@@ -57,6 +57,7 @@
 
 #include "UI/AcpPanel.h"
 #include "UI/ActiveBuffer.h"
+#include "UI/DebugConsolePanel.h"
 #include "UI/DesktopThemeProbe.h"
 #include "UI/EchoArea.h"
 #include "UI/EventLoop.h"
@@ -1113,6 +1114,30 @@ auto main(int argc, char** argv) -> int {
     };
     windowManager->SetOnAcpPanelToggle(toggleAcpPanel);
     acpPanel.SetOnToggleRequest(toggleAcpPanel);
+
+    // DAP round 2: the debug console (REPL) panel -- same OverlayHost-overlay
+    // shape as terminalPanel/acpPanel above, hardcoded bottom-dock like
+    // terminalPanel (a REPL is naturally bottom-docked; no dock-side config
+    // was asked for, unlike the ACP chat panel's left/right choice).
+    ned::ui::DebugConsolePanel dapConsolePanel(theme);
+    dapConsolePanel.SetDapManager(&dapManager);
+    overlays.Add(dapConsolePanel, [](Size size) {
+        const int yMax    = std::max(1, size.height - 2); // above the echo area row
+        const int height  = std::max(4, size.height * 30 / 100);
+        return Box{.x_min = 0, .x_max = size.width - 1, .y_min = std::max(1, yMax - height + 1), .y_max = yMax};
+    });
+    overlays.SetFocusReturn(dapConsolePanel, [wm = windowManager.get()] { wm->TakeFocus(); });
+    auto toggleDapConsole = [&overlays, panel = &dapConsolePanel] {
+        if (!overlays.IsVisible(*panel)) {
+            overlays.Show(*panel);
+            panel->TakeFocus();
+        }
+        else {
+            overlays.Hide(*panel);
+        }
+    };
+    windowManager->SetOnDapConsoleToggle(toggleDapConsole);
+    dapConsolePanel.SetOnToggleRequest(toggleDapConsole);
 
     EventLoopCallbacks callbacks;
 
