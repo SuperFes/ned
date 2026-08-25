@@ -3743,6 +3743,23 @@ bool BufferView::RunCommandAndHandleOutcome(editor::CommandContext& context, con
         ScheduleDiffRefresh();
     }
 
+    // Editable-multibuffer follow-up: an edit inside the *diagnostics*
+    // multibuffer leaves its Diagnostic entries pointing at stale composite
+    // bytes -- Diagnostic is deliberately not relocated (a real LSP server
+    // re-publishes its full set after every change; a synthetic multibuffer
+    // has no server to do that for it). Clearing loses the severity
+    // coloring after the first edit, but never shows a diagnostic
+    // underline pointing at the wrong bytes. Gated on ExcerptRanges() being
+    // non-empty, so this is a no-op for every ordinary buffer -- and it's
+    // deliberately not gated on any "this is specifically the diagnostics
+    // buffer" marker: any multibuffer with both excerpt ranges and
+    // diagnostics set is, today, only ever the one RequestDiagnosticsBuffer
+    // builds.
+    if (activeBuffer_.Get().ContentGeneration() != generationBefore && !activeBuffer_.Get().ExcerptRanges().empty() &&
+        !activeBuffer_.Get().Diagnostics().empty()) {
+        activeBuffer_.Get().SetDiagnostics({});
+    }
+
     ClampPointToNarrowing();
     // multi-cursor-round-2 follow-up: a command that just added a secondary
     // cursor (add-cursor-above/-below, select-next-occurrence) reports its
@@ -6718,7 +6735,7 @@ void BufferView::RequestDiagnosticsBuffer() {
         std::string header = "▸ " + item.source->Path()->string() + ":" + std::to_string(line + 1);
         std::string body   = content.Substring(item.sourceLineStart, lineEnd - item.sourceLineStart);
         excerpts.push_back(editor::multibuffer::ExcerptSource{
-            *item.source->Path(), line + 1, line + 1, std::move(header), std::move(body), {}});
+            *item.source->Path(), line + 1, line + 1, std::move(header), std::move(body), {}, /*editable=*/true});
     }
 
     text::Buffer& results = editor::multibuffer::BuildMultibuffer(bufferList_, "*diagnostics*", excerpts);
@@ -6956,7 +6973,8 @@ void BufferView::RequestProjectFindReferences() {
             match.file, match.lineNumber, match.lineNumber,
             "▸ " + displayPath + ":" + std::to_string(match.lineNumber), // U+25B8, same disclosure triangle vcs-full-diff-buffer's headers use
             match.lineText,
-            {}});
+            {},
+            /*editable=*/true});
     }
 
     text::Buffer& results = editor::multibuffer::BuildMultibuffer(bufferList_, "*references: " + word + "*", excerpts);

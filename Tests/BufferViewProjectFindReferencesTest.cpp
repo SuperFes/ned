@@ -104,7 +104,12 @@ TEST_CASE("RequestProjectFindReferences finds every whole-word match across the 
 
     Buffer* results = fixture.bufferList.Find("*references: widget*");
     REQUIRE(results != nullptr);
-    REQUIRE(results->ReadOnly());
+    // Editable-multibuffer follow-up: find-references excerpts are
+    // editable, so the composite is no longer whole-buffer read-only --
+    // chrome (headers/rules) stays protected via ExcerptRanges()' own
+    // point-level enforcement instead.
+    REQUIRE_FALSE(results->ReadOnly());
+    REQUIRE(results->ExcerptRanges().size() == 3);
 
     auto* index = MultibufferIndexFor(*results);
     REQUIRE(index != nullptr);

@@ -71,18 +71,17 @@ Notcurses.
 
 ### Navigation & search
 
-- [ ] **Multibuffers** — `Editor/Multibuffer.h`'s stitching primitive shipped, read-only
-      v1 scope (see its own header comment). Three consumers so far:
-      `vcs-full-diff-buffer` (every changed file's real diff hunks),
-      `lsp-diagnostics-buffer` (every open buffer's Code-origin LSP diagnostics, one
-      excerpt per diagnostic, reusing the ordinary diagnostic gutter/underline/
-      severity-color pipeline via real composite-space `Buffer::Diagnostic` entries
-      rather than a new tint), and `project-find-references` (`M-?`/`ESC ?` -- one
-      excerpt per whole-word RE2 match for the identifier at point, across the
-      project; a fast textual approximation, not real semantic LSP references, which
-      still don't exist as a client capability -- see the `.gitignore` item below for
-      where the RE2 engine it's built on came from). Every consumer shares the same
-      jump-to-source path: `vcs-visit-result` (`C-c v v`) and
+- [ ] **Multibuffers** — `Editor/Multibuffer.h`'s stitching primitive shipped. Three
+      consumers so far: `vcs-full-diff-buffer` (every changed file's real diff hunks,
+      stays read-only -- see below), `lsp-diagnostics-buffer` (every open buffer's
+      Code-origin LSP diagnostics, one excerpt per diagnostic, reusing the ordinary
+      diagnostic gutter/underline/severity-color pipeline via real composite-space
+      `Buffer::Diagnostic` entries rather than a new tint), and `project-find-references`
+      (`M-?`/`ESC ?` -- one excerpt per whole-word RE2 match for the identifier at point,
+      across the project; a fast textual approximation, not real semantic LSP
+      references, which still don't exist as a client capability -- see the
+      `.gitignore` item below for where the RE2 engine it's built on came from). Every
+      consumer shares the same jump-to-source path: `vcs-visit-result` (`C-c v v`) and
       `project-search-visit-result` (`C-c C-v`) stayed as separate commands/bindings
       (existing keybinding/Janet-name compatibility) but now both delegate to one shared
       `BufferView::VisitResultUnderPoint` -- the "confirmed confusing in practice" gap
@@ -91,12 +90,46 @@ Notcurses.
       regex, so both chords -- and Enter/click on any read-only results buffer, which
       already funneled through `VisitSearchResult` -- now behave identically in every
       results-style buffer (plain search, diff, references, diagnostics).
-      Still open: fuller VCS history views (e.g. a full commit's diff from
-      `*vcs log*`, not just the working tree), making a multibuffer genuinely editable
-      (each excerpt writing back to its real source buffer) rather than read-only, and
-      a result cap/warning for `project-find-references` on a very common short
-      identifier (no limit today -- thousands of matches would build a proportionally
-      huge composite buffer).
+      **Editable excerpts** (shipped 2026-08-24, wgrep-style writeback, closing the
+      "making a multibuffer genuinely editable" line this entry used to carry) --
+      `lsp-diagnostics-buffer`/`project-find-references` excerpts are now genuinely
+      typable and commit back to their real source buffer via `C-c C-c`
+      (`multibuffer-commit-changes`); `vcs-full-diff-buffer` and the agenda/clock-report
+      multibuffers stay read-only, a deliberate cut (diff hunks mix +/-/context lines --
+      real patch-apply semantics, a differently-shaped problem; agenda/clock-report
+      excerpts are synthetic summary text with no 1:1 source-byte mapping). Built on a
+      new `Buffer`-owned relocated tracked field, `Buffer::ExcerptRange` (the sixth
+      sibling to `SnippetRange`, same "Buffer has no idea what this means" split as
+      `FoldMarker`/`SnippetRange` have with their own owning subsystems) -- point-level
+      editability enforcement lives inside `Buffer`'s five content-mutation entry points
+      themselves (a silent no-op outside an editable range, not a thrown error --
+      `ForEachCursor` has no per-cursor failure protocol, so a multi-cursor edit with
+      some cursors in chrome just produces no change for those), and `Undo()`/`Redo()`
+      deliberately do NOT clear `ExcerptRanges_` the way `SnippetRanges_`/
+      `SecondaryCursors_` do -- an emptied set would silently drop chrome protection on a
+      buffer whose text is still sitting there mid-edit, so it's relocated instead, the
+      same `ChangedByteRange`-diff-composed-onto-relocation shape
+      `UpdateUnsavedRangesForRestore` already uses for `UnsavedChangeRanges_`.
+      `CommitExcerptChanges` (`Editor/Multibuffer.h`, a free function, not a `Buffer`
+      method -- keeps `Text/Buffer` unaware of multibuffer semantics) diffs each
+      editable excerpt's current text against a snapshot captured at build time,
+      batches changed excerpts per source file in descending-source-byte order
+      (`BufferView.cpp`'s existing `ApplyWorkspaceTextEdits`, LSP code-actions/rename's
+      own precedent, for the same "don't invalidate a not-yet-applied edit's stored
+      offset" reason), wraps each source file's writes in one undo group, and skips
+      (with a per-file reason, never aborting the rest of the commit) a source whose
+      `ExternallyModified()` trips or whose live bytes at the excerpt's own source range
+      no longer match the snapshot -- deliberately a direct byte-range comparison rather
+      than a whole-buffer `ContentGeneration()` snapshot, so an unrelated edit elsewhere
+      in the same source buffer never false-positives. Never writes to disk -- leaves
+      that to the user's own `save-buffer` on whichever source buffers came out
+      modified, matching wgrep's own scope. Still open: fuller VCS history views (e.g. a
+      full commit's diff from `*vcs log*`, not just the working tree), a result
+      cap/warning for `project-find-references` on a very common short identifier (no
+      limit today -- thousands of matches would build a proportionally huge composite
+      buffer), and `VisitResultUnderPoint`'s jump-to-source staying line-granularity
+      (column 0 only) even though `ExcerptRange` now carries the byte-exact source range
+      that would let it preserve the intra-line column.
 - [x] **`.gitignore` correctness gap left by dropping `rg`** (shipped 2026-08-24) --
       `GitIgnore.h`'s `GitIgnoreMatcher` (the shared walk filter behind
       `ProjectSearch`/`ProjectReplace`/`ProjectTree` and the find-all-references

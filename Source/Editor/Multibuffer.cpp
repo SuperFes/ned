@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <fstream>
+#include <map>
 #include <sstream>
+#include <stdexcept>
 #include <unordered_map>
 
 #include "Text/Buffer.h"
@@ -70,40 +72,63 @@ void ClearRegistryForTesting() {
     Registry().clear();
 }
 
-std::string ReadExcerptText(text::BufferList& bufferList, const std::filesystem::path& path, std::size_t startLine,
-                            std::size_t endLine) {
-    std::string fullText;
-    if (text::Buffer* open = bufferList.FindByPath(path)) {
-        fullText = open->Text();
-    }
-    else {
+namespace {
+
+    // Prefers a live, already-open Buffer's own content (unsaved edits show
+    // up), else a raw file read -- shared by ReadExcerptText and
+    // BuildMultibuffer's own editable-excerpt byte-range resolution below.
+    // A plain lookup (FindByPath, not OpenOrCreateFile): resolving a byte
+    // range for an editable excerpt must not have the side effect of
+    // opening a new buffer for every excerpt's source file just to build a
+    // display buffer (project-find-references can span dozens of files).
+    // Returns "" on any read failure, the same degrade-don't-crash posture
+    // as everywhere else in this subsystem.
+    std::string ReadFullSourceText(text::BufferList& bufferList, const std::filesystem::path& path) {
+        if (text::Buffer* open = bufferList.FindByPath(path)) {
+            return open->Text();
+        }
         std::ifstream input(path, std::ios::binary);
         if (!input) {
             return {};
         }
         std::ostringstream contents;
         contents << input.rdbuf();
-        fullText = contents.str();
+        return contents.str();
     }
 
-    // Slice [startLine, endLine] (1-indexed, inclusive) out of fullText by
-    // scanning newlines -- a plain linear scan, not Rope-backed, since this
-    // runs once per excerpt at build time, not per frame.
-    std::size_t line       = 1;
-    std::size_t pos        = 0;
-    std::size_t sliceStart = std::string::npos;
-    while (pos <= fullText.size()) {
-        if (line == startLine) {
-            sliceStart = pos;
+    // [startLine, endLine] (1-indexed, inclusive) as a byte range into
+    // fullText, scanning newlines -- a plain linear scan, not Rope-backed,
+    // since every caller runs this once per excerpt at build time, not per
+    // frame. nullopt if startLine is past fullText's own last line.
+    std::optional<std::pair<std::size_t, std::size_t>> LineRangeToByteRange(const std::string& fullText,
+                                                                            std::size_t startLine, std::size_t endLine) {
+        std::size_t line       = 1;
+        std::size_t pos        = 0;
+        std::size_t sliceStart = std::string::npos;
+        while (pos <= fullText.size()) {
+            if (line == startLine) {
+                sliceStart = pos;
+            }
+            if (line == endLine + 1 || pos == fullText.size()) {
+                if (sliceStart == std::string::npos) {
+                    return std::nullopt;
+                }
+                return std::make_pair(sliceStart, pos);
+            }
+            const std::size_t next = fullText.find('\n', pos);
+            pos                    = (next == std::string::npos) ? fullText.size() : next + 1;
+            ++line;
         }
-        if (line == endLine + 1 || pos == fullText.size()) {
-            return sliceStart == std::string::npos ? std::string() : fullText.substr(sliceStart, pos - sliceStart);
-        }
-        const std::size_t next = fullText.find('\n', pos);
-        pos                    = (next == std::string::npos) ? fullText.size() : next + 1;
-        ++line;
+        return std::nullopt;
     }
-    return {};
+
+} // namespace
+
+std::string ReadExcerptText(text::BufferList& bufferList, const std::filesystem::path& path, std::size_t startLine,
+                            std::size_t endLine) {
+    const std::string fullText = ReadFullSourceText(bufferList, path);
+    const auto         range    = LineRangeToByteRange(fullText, startLine, endLine);
+    return range ? fullText.substr(range->first, range->second - range->first) : std::string();
 }
 
 namespace {
@@ -133,6 +158,7 @@ text::Buffer& BuildMultibuffer(text::BufferList& bufferList, const std::string& 
     std::string                                   composite;
     std::vector<ExcerptSpan>                      spans;
     std::vector<std::pair<std::size_t, LineTint>> lineTints;
+    std::vector<text::Buffer::ExcerptRange>       excerptRanges; // editable-multibuffer follow-up
     spans.reserve(excerpts.size());
 
     // 0-indexed, matching Rope::ByteOffsetToLine's own convention -- the
@@ -159,6 +185,12 @@ text::Buffer& BuildMultibuffer(text::BufferList& bufferList, const std::string& 
             lineTints.emplace_back(compositeLine, LineTint::Header);
             ++compositeLine;
         }
+        // Editable-multibuffer follow-up: only the body is ever typable --
+        // captured here, before the body-lines loop below appends anything,
+        // so it excludes this excerpt's own header line the same way
+        // RequestDiagnosticsBuffer's own composite-offset translation
+        // already does ("span start + header length + its newline").
+        const std::size_t bodyStart = composite.size();
 
         // Body lines are appended one at a time (rather than the whole
         // string in one shot) specifically to pair each with its own
@@ -185,6 +217,23 @@ text::Buffer& BuildMultibuffer(text::BufferList& bufferList, const std::string& 
         const std::size_t spanEnd = composite.size();
         spans.push_back(ExcerptSpan{excerpt.sourcePath, excerpt.sourceStartLine, excerpt.sourceEndLine, spanStart, spanEnd});
 
+        // Editable-multibuffer follow-up: resolve this excerpt's byte-exact
+        // source range and register it as an ExcerptRange, so a later edit
+        // in [bodyStart, spanEnd) has somewhere real to commit back to.
+        // sourceStartLine == 0 ("no source line applies," e.g. a pure-
+        // deletion diff hunk) or a failed line lookup (source vanished/
+        // shrank since the caller counted lines) both silently fall back to
+        // non-editable -- the same degrade-don't-crash posture
+        // ReadExcerptText already takes toward a missing/changed source.
+        if (excerpt.editable && excerpt.sourceStartLine > 0) {
+            const std::string fullText = ReadFullSourceText(bufferList, excerpt.sourcePath);
+            if (const auto range = LineRangeToByteRange(fullText, excerpt.sourceStartLine, excerpt.sourceEndLine)) {
+                excerptRanges.push_back(text::Buffer::ExcerptRange{
+                    bodyStart, spanEnd, excerpt.sourcePath, range->first, range->second,
+                    /*editable=*/true, composite.substr(bodyStart, spanEnd - bodyStart)});
+            }
+        }
+
         // A blank line of breathing room between this excerpt's own body
         // and the next rule (or the closing rule after the last excerpt) --
         // outside the span, same as the rule line itself, so it's a no-op
@@ -205,9 +254,20 @@ text::Buffer& BuildMultibuffer(text::BufferList& bufferList, const std::string& 
     text::Buffer& results = bufferList.CreateBuffer(name);
     results.InsertAtPoint(composite);
     results.SetPoint(0);
-    // read-only-buffers follow-up: same reasoning as BuildResultsBuffer's
-    // own doc comment -- a synthesized, no-file-to-save-to buffer.
-    results.SetReadOnly(true);
+    if (excerptRanges.empty()) {
+        // read-only-buffers follow-up: same reasoning as BuildResultsBuffer's
+        // own doc comment -- a synthesized, no-file-to-save-to buffer.
+        results.SetReadOnly(true);
+    }
+    else {
+        // Editable-multibuffer follow-up: chrome (headers/rules/blank
+        // separators) stays protected via Buffer's own point-level
+        // enforcement (CanInsertAtExcerpt/CanDeleteExcerptRange) now that
+        // ExcerptRanges_ is non-empty -- ReadOnly() itself only needs to
+        // gate "can this buffer be edited at all," not the chrome/body
+        // split.
+        results.SetExcerptRanges(std::move(excerptRanges));
+    }
 
     MultibufferIndex index;
     index.SetSpans(std::move(spans));
@@ -215,6 +275,98 @@ text::Buffer& BuildMultibuffer(text::BufferList& bufferList, const std::string& 
     SetMultibufferIndexFor(results, std::move(index));
 
     return results;
+}
+
+CommitResult CommitExcerptChanges(text::BufferList& bufferList, text::Buffer& composite) {
+    CommitResult result;
+
+    // Grouped by source path -- ranges belonging to a different source file
+    // don't interact, and within one file's own group they're applied in
+    // descending source-byte order below (ApplyWorkspaceTextEdits's own
+    // precedent in BufferView.cpp: keeps a not-yet-applied edit's stored
+    // offset valid as an earlier, lower-offset edit shifts nothing above
+    // it). Only ranges whose current composite text actually differs from
+    // their originalText snapshot are collected -- an untouched excerpt is
+    // left alone, not rewritten with identical content.
+    std::map<std::filesystem::path, std::vector<std::size_t>> changedByPath;
+    const std::vector<text::Buffer::ExcerptRange>&             ranges = composite.ExcerptRanges();
+    for (std::size_t i = 0; i < ranges.size(); ++i) {
+        const text::Buffer::ExcerptRange& range = ranges[i];
+        if (!range.editable) {
+            continue;
+        }
+        const std::string currentText = composite.Content().Substring(range.start, range.end - range.start);
+        if (currentText != range.originalText) {
+            changedByPath[range.sourcePath].push_back(i);
+        }
+    }
+
+    for (auto& [path, indices] : changedByPath) {
+        text::Buffer* source = nullptr;
+        try {
+            source = &bufferList.OpenOrCreateFile(path);
+        }
+        catch (const std::runtime_error& e) {
+            result.skipped.emplace_back(path, e.what());
+            continue;
+        }
+
+        // Disk-level conflict guard -- same posture save-buffer's own
+        // ConfirmOverwriteSave check takes toward a file that changed out
+        // from under an open buffer, except a commit has no interactive
+        // prompt to fall back to, so it just skips this file's whole batch
+        // with a warning rather than risking a silent overwrite.
+        if (source->ExternallyModified()) {
+            result.skipped.emplace_back(path, "source file changed on disk since this multibuffer was built");
+            continue;
+        }
+
+        // In-memory conflict guard -- catches a change to this exact byte
+        // range since the excerpt was snapshotted that never touched disk
+        // (another edit to the same open buffer, an AutoMerge resolution,
+        // ...), which ExternallyModified() alone can't see. Deliberately a
+        // direct comparison against the live range's own bytes rather than
+        // a whole-buffer ContentGeneration() snapshot: a generation counter
+        // would trip on any unrelated edit anywhere else in the same
+        // source buffer, over-conservative for excerpts that never
+        // overlap.
+        std::sort(indices.begin(), indices.end(),
+                 [&ranges](std::size_t a, std::size_t b) { return ranges[a].sourceStartByte > ranges[b].sourceStartByte; });
+
+        const std::size_t sourceLength = source->Content().ByteLength();
+        bool               conflicted  = false;
+        for (std::size_t i : indices) {
+            const text::Buffer::ExcerptRange& range = ranges[i];
+            if (range.sourceEndByte > sourceLength) {
+                conflicted = true;
+                break;
+            }
+            const std::string liveSourceText =
+                source->Content().Substring(range.sourceStartByte, range.sourceEndByte - range.sourceStartByte);
+            if (liveSourceText != range.originalText) {
+                conflicted = true;
+                break;
+            }
+        }
+        if (conflicted) {
+            result.skipped.emplace_back(path, "source buffer changed since this multibuffer was built");
+            continue;
+        }
+
+        source->BeginUndoGroup();
+        for (std::size_t i : indices) {
+            const text::Buffer::ExcerptRange& range   = ranges[i];
+            const std::string                 newText = composite.Content().Substring(range.start, range.end - range.start);
+            source->DeleteRange(range.sourceStartByte, range.sourceEndByte - range.sourceStartByte);
+            source->InsertAt(range.sourceStartByte, newText);
+            composite.MarkExcerptRangeCommitted(range.start, range.end, newText, range.sourceStartByte,
+                                                range.sourceStartByte + newText.size());
+            ++result.committedExcerpts;
+        }
+        source->EndUndoGroup();
+    }
+
+    return result;
 }
 
 } // namespace ned::editor::multibuffer

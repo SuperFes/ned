@@ -517,6 +517,57 @@ class Buffer {
     // Unknown id is a no-op.
     void UpdateSnippetRange(std::size_t id, std::size_t start, std::size_t end);
 
+    // Editable-multibuffer follow-up: a multibuffer excerpt's own byte range
+    // within the *composite* buffer, relocated across every content-
+    // mutating edit the same way SnippetRange is. Buffer has no idea these
+    // represent stitched-in excerpts -- that's Editor/Multibuffer.h's job,
+    // the same split FoldMarker/SnippetRange have with their own owning
+    // subsystems. Unlike SnippetRange there's no "active" field: excerpts
+    // are always separated by protected chrome (headers/rule lines), so
+    // there's no adjacent-field seam to disambiguate -- every range simply
+    // grows when text lands at either of its own edges. sourcePath/
+    // sourceStartByte/sourceEndByte name where a commit should write this
+    // excerpt's current text back to; originalText is the snapshot a commit
+    // diffs the current composite text against, captured once at build time
+    // (single-source-of-truth, not a merge -- this isn't ThreeWayMerge's
+    // problem shape). A range emptied by a full delete becomes degenerate
+    // (start == end) and is kept, not dropped -- the correct wgrep
+    // semantic: committing a degenerate range writes an empty replacement,
+    // i.e. a real deletion in the source. editable false marks an excerpt
+    // present for navigation only (jump-to-source) but never edit-accepting;
+    // most multibuffers today set every range's editable the same way, but
+    // it's per-range rather than buffer-wide since nothing about relocation
+    // needs it to be uniform.
+    //
+    // Undo()/Redo() do NOT clear this set the way SnippetRanges_/
+    // SecondaryCursors_ are cleared -- see UpdateExcerptRangesForRestore's
+    // own doc comment for why that would be actively wrong here (it would
+    // silently drop chrome-protection editability on a buffer whose text is
+    // still sitting there mid-edit), not just a missed simplification.
+    struct ExcerptRange {
+        std::size_t            start; // invariant: start <= end
+        std::size_t            end;
+        std::filesystem::path  sourcePath;
+        std::size_t            sourceStartByte = 0;
+        std::size_t            sourceEndByte   = 0;
+        bool                   editable        = false;
+        std::string            originalText; // commit-time diff baseline, see doc comment above
+
+        bool operator==(const ExcerptRange&) const = default;
+    };
+    void                                            SetExcerptRanges(std::vector<ExcerptRange> ranges);
+    [[nodiscard]] const std::vector<ExcerptRange>&  ExcerptRanges() const;
+    void                                            ClearExcerptRanges();
+    // Repoints one range's originalText to its current committed text and
+    // resets sourceStartByte/sourceEndByte to newSourceStart/newSourceEnd --
+    // the commit path's own "this excerpt is now in sync" step, so a
+    // re-commit with no further edits is a no-op. Matched by start/end
+    // (a range's own composite position, still meaningful immediately after
+    // a commit since committing doesn't touch the composite buffer's own
+    // text). Unknown start/end is a no-op.
+    void MarkExcerptRangeCommitted(std::size_t start, std::size_t end, std::string newOriginalText,
+                                    std::size_t newSourceStart, std::size_t newSourceEnd);
+
     // status-gutter unsaved-change-indicator follow-up: byte ranges touched
     // by an edit since this buffer was last loaded/saved -- sorted, merged,
     // non-overlapping. Relocated across every content-mutating edit the
@@ -647,6 +698,25 @@ class Buffer {
     // endpoints through RelocateForDelete unchanged.
     void RelocateSnippetRangesForInsert(std::size_t insertOffset, std::size_t length);
     void RelocateSnippetRangesForDelete(std::size_t rangeStart, std::size_t rangeEnd);
+    // Editable-multibuffer follow-up: ExcerptRanges_' own leg of the same
+    // per-field relocation, called beside RelocateSnippetRangesForInsert/
+    // Delete at each of the five content-mutation sites. Every range (not
+    // just an "active" one -- there's no such concept here, see
+    // ExcerptRange's own doc comment) grows on an insert at either of its
+    // own edges; the delete half is both endpoints through
+    // RelocateForDelete unchanged, kept degenerate rather than dropped.
+    void RelocateExcerptRangesForInsert(std::size_t insertOffset, std::size_t length);
+    void RelocateExcerptRangesForDelete(std::size_t rangeStart, std::size_t rangeEnd);
+    // Editable-multibuffer follow-up: whether offset is a legal insertion
+    // point (inside some editable ExcerptRange, edge-inclusive) or
+    // [rangeStart, rangeEnd) is a legal deletion span (fully inside one
+    // editable ExcerptRange). An empty ExcerptRanges_ always answers true --
+    // a buffer that was never marked up with excerpt ranges edits exactly
+    // as before, at no cost. See the enforcement call sites' own doc
+    // comment (InsertAtPoint et al.) for why an illegal edit is a silent
+    // no-op rather than a thrown error.
+    [[nodiscard]] bool CanInsertAtExcerpt(std::size_t offset) const;
+    [[nodiscard]] bool CanDeleteExcerptRange(std::size_t rangeStart, std::size_t rangeEnd) const;
     // Re-sorts by point and drops duplicates (of each other or of the
     // primary) -- edits can collapse two cursors onto one position, the
     // same "collapses toward one surviving position" behavior Mark_ has.
@@ -662,6 +732,22 @@ class Buffer {
     // SavedSnapshot_'s own doc comment for why this checks against it
     // first rather than only ever diffing oldText/Rope_.
     void UpdateUnsavedRangesForRestore(const std::string& oldText);
+
+    // Editable-multibuffer follow-up: Undo()/Redo()'s ExcerptRanges_
+    // counterpart to UpdateUnsavedRangesForRestore, called the same way
+    // (oldText is Rope_'s content just before the restore that already
+    // happened). Deliberately NOT a blanket clear the way ClearSnippetRanges/
+    // ClearSecondaryCursors handle Undo()/Redo() -- a snippet session ending
+    // is harmless (the buffer's content is correct either way), but an
+    // ExcerptRange also gates point-level editability (CanInsertAtExcerpt/
+    // CanDeleteExcerptRange): dropping it out from under a buffer whose text
+    // is still sitting there mid-edit would either lock the whole composite
+    // buffer or, worse, silently open its header/rule chrome to editing.
+    // Reuses ChangedByteRange the exact way UpdateUnsavedRangesForRestore
+    // does, composing the result onto RelocateExcerptRangesForDelete/Insert
+    // instead of MarkUnsavedRangeDeleted/Inserted -- same diff, different
+    // tracked field.
+    void UpdateExcerptRangesForRestore(const std::string& oldText);
 
     // Re-stats Path_ and records its current timestamp (or clears the
     // record if the file is missing/unstatable) -- called wherever content
@@ -694,6 +780,7 @@ class Buffer {
     std::map<std::size_t, FoldMarker> FoldMarkers_;           // see FoldMarker's own doc comment above
     std::size_t                       FoldGeneration_ = 0;    // see FoldGeneration()
     std::vector<SnippetRange>         SnippetRanges_;         // see SnippetRange's own doc comment above
+    std::vector<ExcerptRange>         ExcerptRanges_;         // see ExcerptRange's own doc comment above
 
     std::vector<Diagnostic> Diagnostics_;               // see Diagnostics()'s own doc comment
     std::size_t             DiagnosticsGeneration_ = 0; // see DiagnosticsGeneration()

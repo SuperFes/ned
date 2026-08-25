@@ -879,11 +879,94 @@ void Buffer::RelocateSnippetRangesForDelete(std::size_t rangeStart, std::size_t 
     }
 }
 
+void Buffer::SetExcerptRanges(std::vector<ExcerptRange> ranges) {
+    ExcerptRanges_ = std::move(ranges);
+}
+
+const std::vector<Buffer::ExcerptRange>& Buffer::ExcerptRanges() const {
+    return ExcerptRanges_;
+}
+
+void Buffer::ClearExcerptRanges() {
+    ExcerptRanges_.clear();
+}
+
+void Buffer::MarkExcerptRangeCommitted(std::size_t start, std::size_t end, std::string newOriginalText,
+                                       std::size_t newSourceStart, std::size_t newSourceEnd) {
+    for (ExcerptRange& range : ExcerptRanges_) {
+        if (range.start == start && range.end == end) {
+            range.originalText   = std::move(newOriginalText);
+            range.sourceStartByte = newSourceStart;
+            range.sourceEndByte   = newSourceEnd;
+            return;
+        }
+    }
+}
+
+void Buffer::RelocateExcerptRangesForInsert(std::size_t insertOffset, std::size_t length) {
+    for (ExcerptRange& range : ExcerptRanges_) {
+        // Every range grows when text lands at either of its own edges --
+        // no active/inactive distinction (see the header's own doc
+        // comment): excerpts are always separated by protected chrome, so
+        // there's no adjacent-field seam to disambiguate the way
+        // SnippetRange's gravity needs to.
+        if (insertOffset < range.start) {
+            range.start += length;
+        }
+        if (insertOffset <= range.end) {
+            range.end += length;
+        }
+        range.end = std::max(range.start, range.end);
+    }
+}
+
+void Buffer::RelocateExcerptRangesForDelete(std::size_t rangeStart, std::size_t rangeEnd) {
+    for (ExcerptRange& range : ExcerptRanges_) {
+        range.start = RelocateForDelete(range.start, rangeStart, rangeEnd);
+        range.end   = RelocateForDelete(range.end, rangeStart, rangeEnd);
+        // A range fully inside the deletion becomes degenerate and is kept
+        // -- see ExcerptRange's own doc comment on why that's meaningful
+        // here (a real deletion to commit), not just tolerated.
+    }
+}
+
+bool Buffer::CanInsertAtExcerpt(std::size_t offset) const {
+    if (ExcerptRanges_.empty()) {
+        return true;
+    }
+    for (const ExcerptRange& range : ExcerptRanges_) {
+        if (range.editable && offset >= range.start && offset <= range.end) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool Buffer::CanDeleteExcerptRange(std::size_t rangeStart, std::size_t rangeEnd) const {
+    if (ExcerptRanges_.empty()) {
+        return true;
+    }
+    for (const ExcerptRange& range : ExcerptRanges_) {
+        if (range.editable && rangeStart >= range.start && rangeEnd <= range.end) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void Buffer::InsertAtPoint(std::string_view text) {
     if (ReadOnly_ || Loading_) {
         throw std::runtime_error("Buffer is read-only.");
     }
     if (text.empty()) {
+        return;
+    }
+    // Editable-multibuffer follow-up: a silent no-op, not a thrown error --
+    // see CanInsertAtExcerpt's own doc comment for why (multi-cursor edits
+    // have no per-cursor failure protocol today; a typing attempt inside an
+    // excerpt's protected header/rule chrome just produces nothing, the
+    // same posture ReadOnly() gives the whole-buffer case one level up).
+    if (!CanInsertAtExcerpt(Point_)) {
         return;
     }
 
@@ -902,6 +985,7 @@ void Buffer::InsertAtPoint(std::string_view text) {
     RelocateFoldMarkersForInsert(insertOffset, text.size());
     RelocateSecondaryCursorsForInsert(insertOffset, text.size());
     RelocateSnippetRangesForInsert(insertOffset, text.size());
+    RelocateExcerptRangesForInsert(insertOffset, text.size());
     MarkUnsavedRangeInserted(insertOffset, text.size());
 
     RecordOrAmendUndo(/*canAmend=*/true);
@@ -919,7 +1003,10 @@ void Buffer::DeleteBackwardAtPoint() {
 
     const std::size_t start = PreviousGraphemeBoundary(Rope_, Point_);
     const std::size_t end   = Point_;
-    Rope_                   = Rope_.Erased(start, end - start);
+    if (!CanDeleteExcerptRange(start, end)) { // see InsertAtPoint's own comment on this posture
+        return;
+    }
+    Rope_ = Rope_.Erased(start, end - start);
 
     Point_ = RelocateForDelete(Point_, start, end);
     if (Mark_) {
@@ -936,6 +1023,7 @@ void Buffer::DeleteBackwardAtPoint() {
     RelocateFoldMarkersForDelete(start, end);
     RelocateSecondaryCursorsForDelete(start, end);
     RelocateSnippetRangesForDelete(start, end);
+    RelocateExcerptRangesForDelete(start, end);
     MarkUnsavedRangeDeleted(start, end);
 
     RecordOrAmendUndo(/*canAmend=*/false);
@@ -953,7 +1041,10 @@ void Buffer::DeleteForwardAtPoint() {
 
     const std::size_t start = Point_;
     const std::size_t end   = NextGraphemeBoundary(Rope_, Point_);
-    Rope_                   = Rope_.Erased(start, end - start);
+    if (!CanDeleteExcerptRange(start, end)) { // see InsertAtPoint's own comment on this posture
+        return;
+    }
+    Rope_ = Rope_.Erased(start, end - start);
 
     Point_ = RelocateForDelete(Point_, start, end);
     if (Mark_) {
@@ -970,6 +1061,7 @@ void Buffer::DeleteForwardAtPoint() {
     RelocateFoldMarkersForDelete(start, end);
     RelocateSecondaryCursorsForDelete(start, end);
     RelocateSnippetRangesForDelete(start, end);
+    RelocateExcerptRangesForDelete(start, end);
     MarkUnsavedRangeDeleted(start, end);
 
     RecordOrAmendUndo(/*canAmend=*/false);
@@ -989,8 +1081,11 @@ std::string Buffer::DeleteRange(std::size_t byteOffset, std::size_t byteLength) 
     }
 
     const std::size_t rangeEnd = byteOffset + byteLength;
-    std::string       deleted  = Rope_.Substring(byteOffset, byteLength);
-    Rope_                      = Rope_.Erased(byteOffset, byteLength);
+    if (!CanDeleteExcerptRange(byteOffset, rangeEnd)) { // see InsertAtPoint's own comment on this posture
+        return {};
+    }
+    std::string deleted = Rope_.Substring(byteOffset, byteLength);
+    Rope_                = Rope_.Erased(byteOffset, byteLength);
 
     Point_ = RelocateForDelete(Point_, byteOffset, rangeEnd);
     if (Mark_) {
@@ -1012,6 +1107,7 @@ std::string Buffer::DeleteRange(std::size_t byteOffset, std::size_t byteLength) 
     RelocateFoldMarkersForDelete(byteOffset, rangeEnd);
     RelocateSecondaryCursorsForDelete(byteOffset, rangeEnd);
     RelocateSnippetRangesForDelete(byteOffset, rangeEnd);
+    RelocateExcerptRangesForDelete(byteOffset, rangeEnd);
     MarkUnsavedRangeDeleted(byteOffset, rangeEnd);
 
     RecordOrAmendUndo(/*canAmend=*/false);
@@ -1040,6 +1136,9 @@ void Buffer::InsertAtImpl(std::size_t byteOffset, std::string_view text) {
     if (text.empty()) {
         return;
     }
+    if (!CanInsertAtExcerpt(byteOffset)) { // see InsertAtPoint's own comment on this posture
+        return;
+    }
 
     Rope_ = Rope_.Inserted(byteOffset, text);
 
@@ -1055,6 +1154,7 @@ void Buffer::InsertAtImpl(std::size_t byteOffset, std::string_view text) {
     RelocateFoldMarkersForInsert(byteOffset, text.size());
     RelocateSecondaryCursorsForInsert(byteOffset, text.size());
     RelocateSnippetRangesForInsert(byteOffset, text.size());
+    RelocateExcerptRangesForInsert(byteOffset, text.size());
     MarkUnsavedRangeInserted(byteOffset, text.size());
 
     RecordOrAmendUndo(/*canAmend=*/false);
@@ -1342,6 +1442,7 @@ void Buffer::Undo() {
     GoalColumn_.reset();
     ++ContentGeneration_;
     UpdateUnsavedRangesForRestore(oldText);
+    UpdateExcerptRangesForRestore(oldText); // NOT cleared -- see ExcerptRange's own doc comment
 }
 
 void Buffer::Redo() {
@@ -1358,6 +1459,7 @@ void Buffer::Redo() {
     GoalColumn_.reset();
     ++ContentGeneration_;
     UpdateUnsavedRangesForRestore(oldText);
+    UpdateExcerptRangesForRestore(oldText); // NOT cleared -- see ExcerptRange's own doc comment
 }
 
 void Buffer::UpdateUnsavedRangesForRestore(const std::string& oldText) {
@@ -1406,6 +1508,32 @@ void Buffer::UpdateUnsavedRangesForRestore(const std::string& oldText) {
         }
         if (span->newEnd > span->newStart) {
             MarkUnsavedRangeInserted(span->newStart, span->newEnd - span->newStart);
+        }
+    }
+}
+
+void Buffer::UpdateExcerptRangesForRestore(const std::string& oldText) {
+    // The empty check isn't just a fast path -- Rope_.ToString() below is a
+    // second full-content stringify on top of UpdateUnsavedRangesForRestore's
+    // own (that one can't be reused directly: it early-returns whenever the
+    // restored content matches SavedSnapshot_, a check with no ExcerptRanges_
+    // analog), so skip it entirely for the overwhelming majority of buffers
+    // that never carry excerpt ranges at all.
+    if (ExcerptRanges_.empty()) {
+        return;
+    }
+    const std::string newText = Rope_.ToString();
+    // Same delete-half-then-insert-half composition UpdateUnsavedRangesForRestore
+    // uses, over the same ChangedByteRange diff, onto
+    // RelocateExcerptRangesForDelete/Insert instead of
+    // MarkUnsavedRangeDeleted/Inserted -- see this method's own doc comment
+    // in Buffer.h for why relocating (not clearing) is the right call here.
+    if (const auto span = ChangedByteRange(oldText, newText)) {
+        if (span->oldEnd > span->oldStart) {
+            RelocateExcerptRangesForDelete(span->oldStart, span->oldEnd);
+        }
+        if (span->newEnd > span->newStart) {
+            RelocateExcerptRangesForInsert(span->newStart, span->newEnd - span->newStart);
         }
     }
 }

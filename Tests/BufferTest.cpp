@@ -1270,3 +1270,153 @@ TEST_CASE("SetActiveSnippetRange and UpdateSnippetRange adjust the set in place"
     buffer.ClearSnippetRanges();
     REQUIRE(buffer.SnippetRanges().empty());
 }
+
+// --- Excerpt ranges (editable-multibuffer follow-up) ----------------------
+
+namespace {
+
+Buffer::ExcerptRange ExcRange(std::size_t start, std::size_t end, bool editable = true,
+                              std::string sourcePath = "src.cpp") {
+    return Buffer::ExcerptRange{start, end, sourcePath, 0, 0, editable, ""};
+}
+
+} // namespace
+
+TEST_CASE("Excerpt ranges relocate when an insert lands inside a different, earlier or later excerpt", "[Buffer]") {
+    // Every insert below targets an existing range's own edge (the only
+    // positions InsertAt is allowed to land on -- see CanInsertAtExcerpt),
+    // rather than the "entirely before/after every range" positions
+    // SnippetRange's own analogous test uses, which would all be rejected
+    // as edits into protected chrome here.
+    Buffer buffer("scratch", ned::text::Rope("for (i; i < n; ++i)"));
+    buffer.SetExcerptRanges({ExcRange(5, 6), ExcRange(8, 9), ExcRange(17, 18)});
+
+    buffer.InsertAt(5, "XX"); // at the first range's own start -- grows it
+    REQUIRE(buffer.ExcerptRanges()[0] == ExcRange(5, 8));   // grew by 2
+    REQUIRE(buffer.ExcerptRanges()[1] == ExcRange(10, 11)); // shifted by 2, entirely after
+    REQUIRE(buffer.ExcerptRanges()[2] == ExcRange(19, 20)); // shifted by 2, entirely after
+
+    buffer.InsertAt(20, "YY"); // at the last range's own end -- grows it
+    REQUIRE(buffer.ExcerptRanges()[0] == ExcRange(5, 8));   // untouched, entirely before
+    REQUIRE(buffer.ExcerptRanges()[1] == ExcRange(10, 11)); // untouched, entirely before
+    REQUIRE(buffer.ExcerptRanges()[2] == ExcRange(19, 22)); // grew by 2
+}
+
+TEST_CASE("An excerpt range grows on an insert at either of its own edges", "[Buffer]") {
+    Buffer buffer("scratch", ned::text::Rope("0123456789"));
+    buffer.SetExcerptRanges({ExcRange(2, 3)});
+
+    buffer.InsertAt(2, "A"); // at start
+    REQUIRE(buffer.ExcerptRanges()[0] == ExcRange(2, 4));
+
+    buffer.InsertAt(4, "B"); // at end
+    REQUIRE(buffer.ExcerptRanges()[0] == ExcRange(2, 5));
+}
+
+TEST_CASE("Excerpt ranges relocate through a delete inside an earlier excerpt, keeping an emptied range", "[Buffer]") {
+    Buffer buffer("scratch", ned::text::Rope("0123456789012345"));
+    buffer.SetExcerptRanges({ExcRange(5, 8), ExcRange(10, 13)});
+
+    buffer.DeleteRange(5, 2); // deletes [5,7), fully inside the first range -- shrinks it, shifts the second back
+    REQUIRE(buffer.ExcerptRanges()[0] == ExcRange(5, 6));
+    REQUIRE(buffer.ExcerptRanges()[1] == ExcRange(8, 11));
+
+    buffer.DeleteRange(5, 1); // deletes the first range's one remaining byte -- becomes degenerate, kept
+    REQUIRE(buffer.ExcerptRanges()[0] == ExcRange(5, 5));
+    REQUIRE(buffer.ExcerptRanges()[1] == ExcRange(7, 10));
+}
+
+TEST_CASE("Undo and redo relocate excerpt ranges against the restored content rather than clearing them",
+         "[Buffer]") {
+    Buffer buffer("scratch", ned::text::Rope("0123456789"));
+    buffer.SetExcerptRanges({ExcRange(2, 5)});
+
+    buffer.InsertAt(2, "XX"); // at the range's own start -- one undo step, grows it to [2, 7)
+    REQUIRE(buffer.ExcerptRanges().size() == 1);
+    REQUIRE(buffer.ExcerptRanges()[0] == ExcRange(2, 7));
+
+    buffer.Undo();
+    // The set survives Undo() (unlike SnippetRanges_/SecondaryCursors_,
+    // which clear wholesale) and is relocated back to reflect the reverted
+    // insert.
+    REQUIRE(buffer.ExcerptRanges().size() == 1);
+    REQUIRE(buffer.ExcerptRanges()[0] == ExcRange(2, 5));
+
+    buffer.Redo();
+    REQUIRE(buffer.ExcerptRanges().size() == 1);
+    REQUIRE(buffer.ExcerptRanges()[0] == ExcRange(2, 7));
+}
+
+TEST_CASE("MarkExcerptRangeCommitted repoints one range's snapshot and source bytes by position", "[Buffer]") {
+    Buffer buffer("scratch", ned::text::Rope("0123456789"));
+    buffer.SetExcerptRanges({ExcRange(2, 5), ExcRange(6, 8)});
+
+    buffer.MarkExcerptRangeCommitted(2, 5, "new text", 100, 108);
+    REQUIRE(buffer.ExcerptRanges()[0].originalText == "new text");
+    REQUIRE(buffer.ExcerptRanges()[0].sourceStartByte == 100);
+    REQUIRE(buffer.ExcerptRanges()[0].sourceEndByte == 108);
+    // The other range, and every other field of the updated one, are untouched.
+    REQUIRE(buffer.ExcerptRanges()[1].originalText.empty());
+
+    buffer.MarkExcerptRangeCommitted(99, 100, "no such range", 0, 0); // unknown position -- no-op
+    REQUIRE(buffer.ExcerptRanges()[0].originalText == "new text");
+}
+
+TEST_CASE("InsertAtPoint/DeleteRange inside an editable excerpt range succeed normally", "[Buffer]") {
+    Buffer buffer("scratch", ned::text::Rope("0123456789"));
+    buffer.SetExcerptRanges({ExcRange(2, 8)});
+
+    buffer.SetPoint(4);
+    buffer.InsertAtPoint("Z");
+    REQUIRE(buffer.Text() == "0123Z456789");
+
+    buffer.DeleteRange(4, 1); // deletes the 'Z' just inserted, fully inside [2, 9)
+    REQUIRE(buffer.Text() == "0123456789");
+}
+
+TEST_CASE("InsertAtPoint outside every editable excerpt range is a silent no-op", "[Buffer]") {
+    Buffer buffer("scratch", ned::text::Rope("0123456789"));
+    buffer.SetExcerptRanges({ExcRange(2, 8)});
+
+    buffer.SetPoint(0); // before the only editable range -- chrome
+    buffer.InsertAtPoint("Z");
+    REQUIRE(buffer.Text() == "0123456789"); // unchanged
+    REQUIRE_FALSE(buffer.CanUndo());        // no undo entry recorded for a no-op
+
+    buffer.SetPoint(9); // after it -- also chrome
+    buffer.InsertAtPoint("Z");
+    REQUIRE(buffer.Text() == "0123456789");
+}
+
+TEST_CASE("A delete straddling an excerpt boundary into chrome is rejected wholesale", "[Buffer]") {
+    Buffer buffer("scratch", ned::text::Rope("0123456789"));
+    buffer.SetExcerptRanges({ExcRange(2, 8)});
+
+    const std::string deleted = buffer.DeleteRange(6, 4); // [6, 10) -- spills 2 bytes past the range's own end
+    REQUIRE(deleted.empty());
+    REQUIRE(buffer.Text() == "0123456789"); // unchanged, not partially applied
+
+    buffer.SetPoint(2); // DeleteBackwardAtPoint at an editable range's own start would delete chrome
+    buffer.DeleteBackwardAtPoint();
+    REQUIRE(buffer.Text() == "0123456789");
+}
+
+TEST_CASE("A non-editable excerpt range rejects edits even though it covers the position", "[Buffer]") {
+    Buffer buffer("scratch", ned::text::Rope("0123456789"));
+    buffer.SetExcerptRanges({ExcRange(2, 8, /*editable=*/false)});
+
+    buffer.SetPoint(4);
+    buffer.InsertAtPoint("Z");
+    REQUIRE(buffer.Text() == "0123456789");
+}
+
+TEST_CASE("A buffer with no excerpt ranges edits exactly as before", "[Buffer]") {
+    Buffer buffer("scratch", ned::text::Rope("0123456789"));
+    REQUIRE(buffer.ExcerptRanges().empty());
+
+    buffer.SetPoint(0);
+    buffer.InsertAtPoint("Z");
+    REQUIRE(buffer.Text() == "Z0123456789");
+    buffer.DeleteRange(0, 1);
+    REQUIRE(buffer.Text() == "0123456789");
+}
