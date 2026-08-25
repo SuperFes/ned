@@ -38,6 +38,7 @@ extern const char* const kToml;
 // queries/clojure.scm's own header comment.
 extern const char* const kClojure;
 extern const char* const kFish;
+extern const char* const kXml;
 
 // generic-code-folding follow-up: hand-written "@fold" queries, one per
 // in-scope language (Source/Editor/TreeSitter/queries/*-folds.scm) -- no

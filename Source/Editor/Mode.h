@@ -472,6 +472,11 @@ struct Mode {
 // ram02z/tree-sitter-fish -- same "community-maintained, ships a real
 // queries/highlights.scm" bar as yaml/toml below.
 [[nodiscard]] Mode FishMode();
+// tree-sitter-grammars/tree-sitter-xml -- same community-maintained-grammar
+// bar as fish/yaml/toml above; a real generic XML/DTD grammar (elements,
+// attributes, entities, CDATA, DOCTYPE, processing instructions), not a
+// reuse of HtmlMode's HTML-specific one.
+[[nodiscard]] Mode XmlMode();
 // yaml/toml follow-up: tree-sitter-grammars/tree-sitter-yaml and
 // tree-sitter-grammars/tree-sitter-toml, both community-maintained, both
 // ship a pre-generated src/parser.c and a real queries/highlights.scm --

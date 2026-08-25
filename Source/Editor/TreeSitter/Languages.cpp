@@ -29,6 +29,7 @@ const TSLanguage* tree_sitter_yaml(void);
 const TSLanguage* tree_sitter_toml(void);
 const TSLanguage* tree_sitter_clojure(void);
 const TSLanguage* tree_sitter_fish(void);
+const TSLanguage* tree_sitter_xml(void);
 }
 
 namespace ned::editor::treesitter {
@@ -112,6 +113,11 @@ std::optional<Language> LanguageByName(std::string_view name) {
     // (nvim-treesitter) builds on.
     if (name == "fish") {
         return Language(tree_sitter_fish());
+    }
+    // tree-sitter-grammars/tree-sitter-xml -- the xml/ half of a two-grammar
+    // repo (xml/ and dtd/); only xml/ is built, see CMakeLists.txt.
+    if (name == "xml") {
+        return Language(tree_sitter_xml());
     }
     return std::nullopt;
 }
