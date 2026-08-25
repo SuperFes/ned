@@ -53,9 +53,18 @@ namespace {
         }
     }
 
+    // lsp-stderr-capture follow-up (extended to ACP): argv[0]'s basename, for
+    // ProcessLabel() -- mirrors Lsp/Transport.cpp's identical BaseName.
+    std::string BaseName(const std::string& path) {
+        const std::size_t slash = path.find_last_of('/');
+        return slash == std::string::npos ? path : path.substr(slash + 1);
+    }
+
 } // namespace
 
-Transport::Transport(const std::vector<std::string>& argv) : child_(argv, process::StderrMode::Discard) {
+Transport::Transport(const std::vector<std::string>& argv, bool captureStderr)
+    : child_(argv, captureStderr ? process::StderrMode::Capture : process::StderrMode::Discard),
+      processLabel_(argv.empty() ? std::string() : BaseName(argv[0])) {
 }
 
 Transport::Transport(int readFd, int writeFd, pid_t pid) noexcept : child_(readFd, writeFd, pid) {
@@ -76,6 +85,14 @@ std::optional<std::string> Transport::ReadMessage(std::chrono::milliseconds stal
 
 pid_t Transport::Pid() const noexcept {
     return child_.Pid();
+}
+
+int Transport::StderrFd() const noexcept {
+    return child_.StderrFd();
+}
+
+const std::string& Transport::ProcessLabel() const noexcept {
+    return processLabel_;
 }
 
 } // namespace ned::editor::acp

@@ -68,7 +68,9 @@ ChildProcess::ChildProcess(const std::vector<std::string>& argv, StderrMode stde
 
     int stdinPipe[2]  = {-1, -1};
     int stdoutPipe[2] = {-1, -1};
-    if (::pipe(stdinPipe) != 0 || ::pipe(stdoutPipe) != 0) {
+    int stderrPipe[2] = {-1, -1};
+    const bool captureStderr = (stderrMode == StderrMode::Capture);
+    if (::pipe(stdinPipe) != 0 || ::pipe(stdoutPipe) != 0 || (captureStderr && ::pipe(stderrPipe) != 0)) {
         throw std::runtime_error(std::string("ned: ChildProcess: pipe() failed: ") + std::strerror(errno));
     }
 
@@ -85,6 +87,15 @@ ChildProcess::ChildProcess(const std::vector<std::string>& argv, StderrMode stde
         // closed below -- file actions execute in the order added, so
         // dup2'ing an already-closed fd here would fail with EBADF.
         posix_spawn_file_actions_adddup2(&fileActions, stdoutPipe[1], STDERR_FILENO);
+    }
+    else if (captureStderr) {
+        // lsp-stderr-capture follow-up: its own separate pipe, never
+        // interleaved with stdout -- stdout carries a framed protocol
+        // (LSP/DAP's Content-Length messages) that a stray stderr byte would
+        // corrupt.
+        posix_spawn_file_actions_adddup2(&fileActions, stderrPipe[1], STDERR_FILENO);
+        posix_spawn_file_actions_addclose(&fileActions, stderrPipe[0]);
+        posix_spawn_file_actions_addclose(&fileActions, stderrPipe[1]);
     }
     else {
         posix_spawn_file_actions_addopen(&fileActions, STDERR_FILENO, "/dev/null", O_WRONLY, 0);
@@ -108,6 +119,10 @@ ChildProcess::ChildProcess(const std::vector<std::string>& argv, StderrMode stde
         ::close(stdinPipe[1]);
         ::close(stdoutPipe[0]);
         ::close(stdoutPipe[1]);
+        if (captureStderr) {
+            ::close(stderrPipe[0]);
+            ::close(stderrPipe[1]);
+        }
         throw std::runtime_error(std::string("ned: posix_spawn failed for ") + *resolved + ": " + std::strerror(spawnResult));
     }
 
@@ -116,10 +131,14 @@ ChildProcess::ChildProcess(const std::vector<std::string>& argv, StderrMode stde
     // dup2'd into place, closed there by fileActions above).
     ::close(stdinPipe[0]);
     ::close(stdoutPipe[1]);
+    if (captureStderr) {
+        ::close(stderrPipe[1]);
+    }
 
-    writeFd_ = stdinPipe[1];
-    readFd_  = stdoutPipe[0];
-    pid_     = childPid;
+    writeFd_  = stdinPipe[1];
+    readFd_   = stdoutPipe[0];
+    stderrFd_ = captureStderr ? stderrPipe[0] : -1;
+    pid_      = childPid;
 }
 
 ChildProcess::ChildProcess(int readFd, int writeFd, pid_t pid) noexcept : writeFd_(writeFd), readFd_(readFd), pid_(pid) {
@@ -131,6 +150,9 @@ ChildProcess::~ChildProcess() {
     }
     if (readFd_ >= 0) {
         ::close(readFd_);
+    }
+    if (stderrFd_ >= 0) {
+        ::close(stderrFd_); // lsp-stderr-capture follow-up -- unblocks a stderr reader thread's blocking read via EOF, same as readFd_ above
     }
     if (pid_ > 0) {
         int status = 0;
@@ -153,7 +175,8 @@ ChildProcess::~ChildProcess() {
 }
 
 ChildProcess::ChildProcess(ChildProcess&& other) noexcept
-    : writeFd_(std::exchange(other.writeFd_, -1)), readFd_(std::exchange(other.readFd_, -1)), pid_(std::exchange(other.pid_, -1)) {
+    : writeFd_(std::exchange(other.writeFd_, -1)), readFd_(std::exchange(other.readFd_, -1)),
+      stderrFd_(std::exchange(other.stderrFd_, -1)), pid_(std::exchange(other.pid_, -1)) {
 }
 
 ChildProcess& ChildProcess::operator=(ChildProcess&& other) noexcept {
@@ -164,14 +187,18 @@ ChildProcess& ChildProcess::operator=(ChildProcess&& other) noexcept {
         if (readFd_ >= 0) {
             ::close(readFd_);
         }
+        if (stderrFd_ >= 0) {
+            ::close(stderrFd_);
+        }
         if (pid_ > 0) {
             int status = 0;
             ::kill(pid_, SIGKILL);
             ::waitpid(pid_, &status, 0);
         }
-        writeFd_ = std::exchange(other.writeFd_, -1);
-        readFd_  = std::exchange(other.readFd_, -1);
-        pid_     = std::exchange(other.pid_, -1);
+        writeFd_  = std::exchange(other.writeFd_, -1);
+        readFd_   = std::exchange(other.readFd_, -1);
+        stderrFd_ = std::exchange(other.stderrFd_, -1);
+        pid_      = std::exchange(other.pid_, -1);
     }
     return *this;
 }
@@ -234,6 +261,10 @@ int ChildProcess::ReadFd() const noexcept {
 
 int ChildProcess::WriteFd() const noexcept {
     return writeFd_;
+}
+
+int ChildProcess::StderrFd() const noexcept {
+    return stderrFd_;
 }
 
 pid_t ChildProcess::Pid() const noexcept {

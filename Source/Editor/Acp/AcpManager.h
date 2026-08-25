@@ -47,6 +47,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "Editor/ProcessTimeouts.h"
 #include "UI/EventLoop.h"
 
 #include "AcpClient.h"
@@ -135,7 +136,7 @@ class AcpManager {
     // otherwise forwards to the live client_'s own ExpireStaleRequests. See
     // LspManager::ExpireStaleRequests's identical wiring/reasoning -- meant
     // to be called from the same periodic background tick.
-    void ExpireStaleRequests(std::chrono::milliseconds maxAge = kDefaultRequestTimeout);
+    void ExpireStaleRequests(std::chrono::milliseconds maxAge = ProtocolRequestTimeoutMs());
 
     // session/request_permission, exposed for BufferView to render as a
     // numbered-choice prompt (LspCodeActionSelect's own shape) -- Editor/

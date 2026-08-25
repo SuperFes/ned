@@ -21,6 +21,14 @@
 // LspClient.h's own header comment for the full reasoning behind each;
 // none of it is repeated here because none of it differs.
 //
+// lsp-stderr-capture follow-up (extended to DAP): stderrThread_ mirrors
+// LspClient's own stderrThread_ exactly -- a second blocking read loop over
+// lsp::Transport::StderrFd(), declared alongside readThread_ before
+// transport_ for the same destruction-order reason. The real-subprocess
+// constructor passes captureStderr=true; the Transport-taking test
+// constructor never captures (StartStderrReadLoop is a no-op when
+// StderrFd() < 0).
+//
 
 #ifndef NED_EDITOR_DAP_DAPCLIENT_H
 #define NED_EDITOR_DAP_DAPCLIENT_H
@@ -35,6 +43,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "Editor/ProcessTimeouts.h"
 #include "UI/EventLoop.h"
 
 #include "Editor/Lsp/Transport.h"
@@ -50,12 +59,6 @@ using Json = nlohmann::json;
 // object.
 using ResponseCallback = std::function<void(bool success, Json body, std::string message)>;
 using EventHandler     = std::function<void(const Json& body)>;
-
-// subprocess-hang-protection follow-up -- see Lsp/LspClient.h's identical
-// kDefaultRequestTimeout constant/reasoning; DAP requests (evaluate, a
-// stepping command against a busy debuggee, ...) get the same generous
-// margin.
-inline constexpr std::chrono::milliseconds kDefaultRequestTimeout{30000};
 
 class DapClient {
   public:
@@ -100,13 +103,18 @@ class DapClient {
     // identical doc comment; DAP has no BackgroundActivity spinner to pair, so
     // this is otherwise the same shape (synthetic failure via the existing
     // success=false/message callback branch, no new handling needed at any
-    // call site).
-    void ExpireStaleRequests(std::chrono::milliseconds maxAge = kDefaultRequestTimeout);
+    // call site). Real callers take ProcessTimeouts.h's
+    // ProtocolRequestTimeoutMs() as their default -- the same
+    // Janet-configurable setting LSP/ACP requests share (ChildProcess-
+    // hang-protection-round-2 follow-up).
+    void ExpireStaleRequests(std::chrono::milliseconds maxAge = ProtocolRequestTimeoutMs());
 
   private:
     void StartReadLoop();
+    void StartStderrReadLoop(); // lsp-stderr-capture follow-up -- see header comment
 
-    std::jthread   readThread_; // declared before transport_ — see LspClient.h
+    std::jthread   readThread_;   // declared before transport_ — see LspClient.h
+    std::jthread   stderrThread_; // ditto -- lsp-stderr-capture follow-up
     lsp::Transport transport_;
 
     ned::ui::EventLoop& eventLoop_;

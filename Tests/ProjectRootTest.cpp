@@ -23,6 +23,23 @@ struct AutoDetectGuard {
     }
 };
 
+// ProjectRoot() is likewise process-wide state, with no fixed default to
+// reset to the way AutoDetectGuard has -- its own "default" is whatever
+// std::filesystem::current_path() was at first access (see ProjectRoot.cpp's
+// RootStorage), so this captures and restores the *current* value rather
+// than a hardcoded one, the same "capture on construction, restore on
+// destruction" shape CurrentPathGuard below uses for cwd. A real, previously
+// unguarded bug: the round-trip test calling SetProjectRoot("/some/path")
+// with nothing to undo it leaked into "ProjectRoot defaults to the process's
+// current path" whenever that test ran later in the same process -- confirmed
+// live under `ned_tests --order rand`, not hypothetical.
+struct ProjectRootGuard {
+    std::filesystem::path previous = ProjectRoot();
+    ~ProjectRootGuard() {
+        SetProjectRoot(previous);
+    }
+};
+
 // The process's cwd is likewise shared, global state across the whole test
 // binary (every test case runs in the same process; see
 // BufferViewTest.cpp/ProjectSidebarTest.cpp's own identical CurrentPathGuard
@@ -50,6 +67,8 @@ TEST_CASE("ProjectRoot defaults to the process's current path", "[ProjectRoot]")
 }
 
 TEST_CASE("SetProjectRoot/ProjectRoot round-trip", "[ProjectRoot]") {
+    const ProjectRootGuard guard;
+
     SetProjectRoot("/some/path");
     REQUIRE(ProjectRoot() == std::filesystem::path("/some/path"));
 }

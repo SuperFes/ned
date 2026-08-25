@@ -58,6 +58,13 @@ namespace {
         return static_cast<std::size_t>(category);
     }
 
+    // user-facing-hang-affordance follow-up. See HasUnseenDiagnosticsLogEntry's
+    // own doc comment.
+    bool& HasUnseenStorage() {
+        static bool hasUnseen = false;
+        return hasUnseen;
+    }
+
     // Trims EntriesStorage() down to MaxEntriesStorage(), oldest first --
     // callers already hold LogMutex().
     void TrimToCapLocked() {
@@ -132,14 +139,21 @@ namespace {
         return text::Buffer::Diagnostic::Severity::Information; // unreachable
     }
 
+    // diagnostics-log-rollup follow-up: the "(xN)" suffix rendered for a
+    // coalesced entry -- shared between FormatLine and RebuildMessagesBuffer's
+    // synthetic Diagnostic message so both agree on the same rendering.
+    std::string CountSuffix(std::uint32_t count) {
+        return count > 1 ? " (x" + std::to_string(count) + ")" : std::string();
+    }
+
     // One formatted line for a single entry, e.g.
-    // "09:15:03 [ERROR] [lsp] message text (init.janet:12)" -- the
+    // "09:15:03 [ERROR] [lsp] message text (x47) (init.janet:12)" -- the
     // "path:line:" suffix (colon-terminated) is what lets
     // BufferView::VisitResultUnderPoint's existing "^(.*):(\\d+):" regex
     // fallback click/Enter-visit it, with no new command needed.
     std::string FormatLine(const LogEntry& entry) {
         std::string line = LocalTimeLabel(entry.timestamp) + " [" + SeverityLabel(entry.severity) + "] [" +
-                            std::string(LogCategoryToString(entry.category)) + "] " + entry.message;
+                            std::string(LogCategoryToString(entry.category)) + "] " + entry.message + CountSuffix(entry.count);
         if (entry.path && entry.line) {
             line += " (" + *entry.path + ":" + std::to_string(*entry.line) + ":)";
         }
@@ -199,14 +213,47 @@ void LogMessage(LogCategory category, LogSeverity severity, std::string message,
         .line      = line,
     };
 
+    // diagnostics-log-rollup follow-up: coalesced into diskEntry below, which
+    // either is `entry` itself (first/distinct occurrence, always written)
+    // or a copy of the ring's updated last entry (a repeat, written only on
+    // an exponential count milestone -- 1, 2, 4, 8, ... -- so a long
+    // identical-message streak still leaves a bounded, periodically updated
+    // trail on disk instead of either silence or unbounded growth).
+    LogEntry diskEntry         = entry;
+    bool     shouldWriteToDisk = true;
+
     {
         const std::lock_guard<std::mutex> lock(LogMutex());
-        EntriesStorage().push_back(entry);
-        TrimToCapLocked();
+        std::deque<LogEntry>&             entries = EntriesStorage();
+        LogEntry* const                   last     = entries.empty() ? nullptr : &entries.back();
+        const bool repeatsLast = last && last->category == entry.category && last->severity == entry.severity &&
+                                 last->message == entry.message && last->path == entry.path && last->line == entry.line;
+        if (repeatsLast) {
+            ++last->count;
+            last->timestamp   = entry.timestamp;
+            diskEntry         = *last;
+            shouldWriteToDisk = (last->count & (last->count - 1)) == 0; // power-of-two milestone
+        }
+        else {
+            entries.push_back(entry);
+            TrimToCapLocked();
+        }
         ++GenerationStorage();
+
+        // user-facing-hang-affordance follow-up: Info-severity entries never
+        // set this (not actionable enough to interrupt the user for), and
+        // neither does a category the user has hidden -- reads
+        // CategoryVisibleStorage() directly rather than calling the public
+        // LogCategoryVisible(), which would re-lock LogMutex() (not
+        // reentrant) and deadlock.
+        if (severity != LogSeverity::Info && CategoryVisibleStorage()[CategoryIndex(category)]) {
+            HasUnseenStorage() = true;
+        }
     }
 
-    AppendToDiskBestEffort(entry);
+    if (shouldWriteToDisk) {
+        AppendToDiskBestEffort(diskEntry);
+    }
 }
 
 void SetLogCategoryVisible(LogCategory category, bool visible) {
@@ -328,7 +375,7 @@ void RebuildMessagesBuffer(text::BufferList& bufferList) {
             .endByte   = offset > 0 ? offset - 1 : offset,
             .severity  = DiagnosticSeverityFor(entry.severity),
             .origin    = text::Buffer::Diagnostic::Origin::Code,
-            .message   = entry.message,
+            .message   = entry.message + CountSuffix(entry.count),
         });
     }
     buffer->SetPoint(buffer->Size());
@@ -383,6 +430,16 @@ void MaybePruneLogFiles(std::optional<std::int64_t> nowSeconds) {
     }
 }
 
+bool HasUnseenDiagnosticsLogEntry() {
+    const std::lock_guard<std::mutex> lock(LogMutex());
+    return HasUnseenStorage();
+}
+
+void AcknowledgeDiagnosticsLogEntry() {
+    const std::lock_guard<std::mutex> lock(LogMutex());
+    HasUnseenStorage() = false;
+}
+
 void ResetDiagnosticsLogForTesting() {
     const std::lock_guard<std::mutex> lock(LogMutex());
     EntriesStorage().clear();
@@ -393,6 +450,7 @@ void ResetDiagnosticsLogForTesting() {
         true, true, false, true, true, true, true, true,
     };
     LastPruneStorage().reset();
+    HasUnseenStorage() = false;
 }
 
 } // namespace ned::editor

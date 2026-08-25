@@ -42,6 +42,8 @@
 #include <string_view>
 #include <vector>
 
+#include "ProcessTimeouts.h"
+
 namespace ned::editor {
 
 // Default true. The hard kill switch -- both CopyToSystemClipboard and
@@ -89,9 +91,12 @@ void CopyToSystemClipboard(std::string_view text);
 // runs synchronously on the main thread, e.g. from a paste keystroke, so an
 // unresponsive clipboard tool -- a real Wayland clipboard-manager failure
 // mode -- is killed rather than freezing the editor; readTimeout is a
-// parameter, not a hardcoded sleep, purely so tests can shorten it). See
-// this file's own header comment for why there is no OSC 52 fallback here.
-[[nodiscard]] std::optional<std::string> PasteFromSystemClipboard(std::chrono::milliseconds readTimeout = std::chrono::milliseconds(5000));
+// parameter, not a hardcoded sleep, purely so tests can shorten it -- the
+// real, no-argument call site reads ProcessTimeouts.h's Janet-configurable
+// SubprocessReadTimeoutMs() instead of a fixed literal, per the
+// ChildProcess-hang-protection-round-2 follow-up). See this file's own
+// header comment for why there is no OSC 52 fallback here.
+[[nodiscard]] std::optional<std::string> PasteFromSystemClipboard(std::chrono::milliseconds readTimeout = SubprocessReadTimeoutMs());
 
 // Exposed for testing (mirrors UI/TerminalColorProbe.h's own BuildColorQuery
 // split): the pure OSC 52 escape-sequence construction, no I/O. wrapForTmux

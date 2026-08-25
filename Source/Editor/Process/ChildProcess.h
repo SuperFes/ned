@@ -27,13 +27,18 @@
 
 namespace ned::editor::process {
 
-// Discard (the LSP default -- server logs go nowhere, a documented follow-up
-// of the original Transport, not a task-runner concern) or MergeWithStdout
+// Discard (the LSP/DAP default -- server logs go nowhere), MergeWithStdout
 // (dup2'd onto the same fd as stdout, i.e. shell `2>&1` -- what a task
 // runner wants, since a build/test tool's error output belongs in the same
-// stream as its normal output).
+// stream as its normal output), or Capture (lsp-stderr-capture follow-up: a
+// third pipe, kept separate from stdout so it never corrupts a framed
+// protocol's own stream -- StderrFd() exposes the read end for a caller that
+// wants to actually drain and log it; a caller that requests this mode and
+// then never reads StderrFd() risks the child blocking once the pipe's
+// kernel buffer fills, same risk any unread pipe carries).
 enum class StderrMode { Discard,
-                        MergeWithStdout };
+                        MergeWithStdout,
+                        Capture };
 
 // Resolves a command name against $PATH (or validates it directly if it
 // contains a '/', execvp's own convention), returning the runnable path or
@@ -97,6 +102,15 @@ class ChildProcess {
     [[nodiscard]] int ReadFd() const noexcept;
     [[nodiscard]] int WriteFd() const noexcept;
 
+    // lsp-stderr-capture follow-up. The read end of the stderr pipe when
+    // constructed with StderrMode::Capture; -1 otherwise (Discard/
+    // MergeWithStdout, or the raw-fd constructor, which has no stderr
+    // concept at all). A caller reads this directly with its own ::read()
+    // loop, the same convention Transport.cpp's ReadLine/ReadExact already
+    // use against ReadFd() -- no buffered-reader wrapper exists here to
+    // duplicate.
+    [[nodiscard]] int StderrFd() const noexcept;
+
     [[nodiscard]] pid_t Pid() const noexcept;
 
     // Blocks until the child exits and reaps it, returning its exit code --
@@ -123,9 +137,10 @@ class ChildProcess {
     void Kill() noexcept;
 
   private:
-    int   writeFd_ = -1;
-    int   readFd_  = -1;
-    pid_t pid_     = -1;
+    int   writeFd_  = -1;
+    int   readFd_   = -1;
+    int   stderrFd_ = -1; // lsp-stderr-capture follow-up -- see StderrFd()
+    pid_t pid_      = -1;
 };
 
 } // namespace ned::editor::process

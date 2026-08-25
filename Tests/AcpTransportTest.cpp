@@ -158,3 +158,27 @@ TEST_CASE("Transport spawns a real process and exchanges data with it over pipes
     REQUIRE(echoed.has_value());
     REQUIRE(*echoed == "hello from a test");
 }
+
+TEST_CASE("Transport::StderrFd/ProcessLabel are unset unless constructed with captureStderr=true", "[Acp]") {
+    Transport transport({"sh", "-c", "exit 0"});
+    REQUIRE(transport.StderrFd() == -1);
+    REQUIRE(transport.ProcessLabel() == "sh");
+}
+
+// lsp-stderr-capture follow-up (extended to ACP).
+TEST_CASE("Transport captures stderr on its own pipe, separate from stdout, when captureStderr=true", "[Acp]") {
+    Transport transport({"sh", "-c", "printf 'err line 1\\nerr line 2\\n' >&2"}, /*captureStderr=*/true);
+    REQUIRE(transport.StderrFd() >= 0);
+    REQUIRE(transport.ProcessLabel() == "sh");
+
+    std::string collected;
+    char        buffer[256];
+    while (collected.find("err line 2\n") == std::string::npos) {
+        const ssize_t n = ::read(transport.StderrFd(), buffer, sizeof(buffer));
+        REQUIRE(n > 0);
+        collected.append(buffer, static_cast<std::size_t>(n));
+    }
+    REQUIRE(collected == "err line 1\nerr line 2\n");
+
+    REQUIRE_FALSE(transport.ReadMessage().has_value()); // stdout stays a clean channel -- nothing leaked across
+}

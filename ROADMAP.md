@@ -319,7 +319,8 @@ Notcurses.
 - [ ] Hunk unstage matches point against the *cached* staged diff, which drifts when
       unstaged edits exist earlier in the file — exact in the common
       stage-then-undo flow; revisit only if it bites.
-- [x] **Subprocess hang/timeout protection** (2026-08-24 audit, shipped 2026-08-24) —
+- [x] **Subprocess hang/timeout protection** (2026-08-24 audit, shipped 2026-08-24;
+      Janet-configurable timeouts + user-facing hang affordance shipped 2026-08-25) —
       `Editor/Process/ChildProcess.h` gained `WaitReadable`/`ReadSome(timeout)`
       (poll()-based), the shared primitive three independent fixes build on, each
       matched to what it actually protects against rather than one bolted-on read
@@ -345,12 +346,40 @@ Notcurses.
       a hang signal for a legitimately slow build/test, and `Cancel()` (already wired
       to `cancel-task`, `SIGKILL`-based) already provides a working user-triggered
       recovery path that unblocks the blocking read via EOF — audited, not an
-      oversight. Still open: every timeout is a single hardcoded constant per
-      mechanism, not a `ned/set-*` Janet surface; no user-facing "this looks hung"
-      affordance beyond the `*Messages*` log entry a recovered timeout produces.
+      oversight. **Both "still open" follow-ups shipped 2026-08-25**:
+      `Editor/ProcessTimeouts.h` is a new, mutex-guarded (`TabWidth.h`-shaped)
+      settings module holding the three now-configurable timeouts —
+      `SubprocessReadTimeoutMs` (default 5000ms, `Clipboard`/
+      `ToolchainIncludePaths`), `ProtocolStallTimeoutMs` (default 30000ms,
+      `Lsp`/`Acp` `Transport::ReadFrame`/`ReadMessage`'s mid-message stall),
+      `ProtocolRequestTimeoutMs` (default 30000ms, every `*Client`/`*Manager`'s
+      `ExpireStaleRequests`) — each a real getter call now sitting where a
+      `constexpr`/hardcoded-literal default argument used to be (evaluated
+      fresh per call, including from a protocol client's own background read
+      thread — the mutex is what makes that safe), and each exposed to Janet
+      (`ned/set-subprocess-read-timeout-ms`/`ned/set-protocol-stall-timeout-ms`/
+      `ned/set-protocol-request-timeout-ms`). The user-facing affordance:
+      `DiagnosticsLog` gained a process-wide `HasUnseenDiagnosticsLogEntry`/
+      `AcknowledgeDiagnosticsLogEntry` pair (set on any Warning-or-Error entry
+      in a currently-visible category, Info-severity and hidden-category
+      entries excluded) that `BufferView::Paint` polls once per frame — the
+      same idiom `LspManager::HasUnseenLogEntry` already established for its
+      own, older, LSP-only `"*lsp log*"` buffer, generalized to the shared
+      `*Messages*` log every hang/timeout-recovery path (and everything else
+      routed through `LogMessage`) now reaches. Deliberately gated behind a
+      new opt-in `BufferView::SetSurfaceUnseenLogEntries(bool)` (default
+      false, only `WindowManager::Pane`'s constructor turns it on) rather than
+      reading that flag unconditionally: `HasUnseenDiagnosticsLogEntry` is
+      genuinely process-wide state, unlike `LspManager::HasUnseenLogEntry`
+      (an ordinary instance member, naturally test-scoped per fresh
+      `LspManager`) — an unconditional read let one test's own `LogMessage`
+      call intermittently clobber an unrelated `BufferView` test's
+      `statusMessage_` under `ned_tests --order rand`, confirmed live before
+      this gate existed, not a hypothetical.
 - [ ] LSP deliberate cuts, revisit on demand: syncing every open buffer (not just the
-      active one), incremental sync, idle server teardown, multi-root workspaces, raw
-      subprocess stderr capture.
+      active one), incremental sync, idle server teardown, multi-root workspaces (raw
+      subprocess stderr capture shipped 2026-08-25 -- see the diagnostics-log entry
+      below).
 - [ ] **Diagnostics/error log round 2** (v1 shipped 2026-08-24: `Editor/DiagnosticsLog.h`,
       a `"*Messages*"` buffer — plain find-or-create like `TaskRunner`'s own output
       buffers, not a real `Editor/Multibuffer.h` composite — rebuilt from an in-memory,
@@ -367,12 +396,42 @@ Notcurses.
       error text via `janet_dostring`'s `*out`, replacing the old generic "see stderr
       for details" throw) and into `LspClient`/`DapClient`/`AcpClient`'s previously
       fully-silent malformed-JSON `DispatchFrame` catch plus their `onDisconnected_`
-      sites. Still open: LSP stderr capture and the `ChildProcess` timeout gap above are
-      prerequisites for logging *those* failures instead of just disconnecting silently;
-      the ~20 other `BufferView.cpp` `statusMessage_`-only catches, `VcsRunner.cpp`'s one
-      orphaned catch, and folding `TaskRunner` exit-code failures in, are all still
-      un-wired (the umbrella `RunCommandAndHandleOutcome` catch already benefits from the
-      Janet fix above with no changes of its own needed).
+      sites. **LSP stderr capture** (shipped 2026-08-25): `ChildProcess` gained a third
+      `StderrMode`, `Capture` — a dedicated pipe (never merged into stdout, which carries
+      a framed protocol a stray stderr byte would corrupt), exposed via `StderrFd()`.
+      `Lsp/Transport`'s spawning constructor took a new `captureStderr` parameter
+      (default `false`, so `DapClient`'s own reuse of this exact constructor — see its own
+      "reuses `Lsp/Transport.h` unmodified" note above — is untouched, since nothing there
+      drains a captured pipe yet); `LspClient`'s real-subprocess constructor is the one
+      caller that passes `true`, adding a second background thread
+      (`stderrThread_`, declared alongside `readThread_` before `transport_` for the same
+      destruction-order-unblocks-the-blocking-read reason) that line-buffers raw stderr
+      bytes and posts each line to `LogMessage(LogCategory::Lsp, ...)`, tagged with
+      `Transport::ProcessLabel()` (argv[0]'s basename, e.g. `"clangd: ..."`) — resolved at
+      the `Transport`/`LspClient` layer rather than threading a language name down from
+      `LspManager`, so no cross-file signature change was needed. **Diagnostics-log
+      rollup** (shipped alongside, generic — not LSP-specific): `LogMessage` now coalesces
+      a call that exactly repeats the ring's current *last* entry (same
+      category/severity/message/path/line) into it instead of appending a new one —
+      `LogEntry::count` increments and the entry's timestamp refreshes, so a source that
+      logs the same thing every tick (a reconnect-and-fail loop, a repeated server
+      warning) collapses to one updating `"... (xN)"` line in `*Messages*` instead of
+      flooding it. On-disk persistence still writes the first occurrence but throttles a
+      long identical streak to exponential-count milestones (1, 2, 4, 8, ...) rather than
+      one line per repeat or none at all past the first. **DAP/ACP stderr capture**
+      (shipped 2026-08-25, same day as LSP's): `DapClient` (which already reuses
+      `Lsp/Transport.h` unmodified) now passes `captureStderr=true` on its real-subprocess
+      constructor and runs its own `stderrThread_`, an exact copy of `LspClient`'s, logging
+      to `LogCategory::Dap`. `AcpClient`'s own, separate `Acp/Transport.h` (newline-framed,
+      not `Lsp/Transport.h`'s `Content-Length` framing) gained the identical
+      `captureStderr`/`StderrFd()`/`ProcessLabel()` trio, and `AcpClient` gained the same
+      `stderrThread_`, logging to `LogCategory::Acp` — so all three protocol clients now
+      capture and roll up their subprocess's stderr the same way. Still open: the
+      `ChildProcess` hang/timeout gap noted above; the ~20 other `BufferView.cpp`
+      `statusMessage_`-only catches, `VcsRunner.cpp`'s one orphaned catch, and folding
+      `TaskRunner` exit-code failures in, are all still un-wired (the
+      umbrella `RunCommandAndHandleOutcome` catch already benefits from the Janet fix
+      above with no changes of its own needed).
 - [x] **Janet's raw stacktrace/compile-error print corrupts the live TUI** (shipped
       2026-08-24, raw-stderr-fd-redirect follow-up) — `Janet/Environment.cpp`'s
       `StderrCapture` (RAII) redirects the process's own fd 2 into a pipe for the

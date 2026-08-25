@@ -26,14 +26,18 @@
 #include <sys/types.h>
 
 #include "Editor/Process/ChildProcess.h"
+#include "Editor/ProcessTimeouts.h"
 
 namespace ned::editor::acp {
 
 // subprocess-hang-protection follow-up -- see Lsp/Transport.h's identical
-// kFrameStallTimeout constant/reasoning; ACP's messages are single lines, not
-// multi-line frames, but the same "silence is normal between messages, never
-// mid-message" policy applies.
-inline constexpr std::chrono::milliseconds kMessageStallTimeout{30000};
+// stall-timeout reasoning; ACP's messages are single lines, not multi-line
+// frames, but the same "silence is normal between messages, never
+// mid-message" policy applies. ChildProcess-hang-protection-round-2
+// follow-up: the real, no-argument call site below now reads
+// ProcessTimeouts.h's Janet-configurable ProtocolStallTimeoutMs() (the same
+// shared setting LSP's Transport uses) instead of this file's old
+// kMessageStallTimeout compile-time constant.
 
 class Transport {
   public:
@@ -42,7 +46,11 @@ class Transport {
     // Throws std::runtime_error if argv is empty, the executable can't be
     // resolved/isn't executable, pipe creation fails, or posix_spawn itself
     // fails synchronously.
-    explicit Transport(const std::vector<std::string>& argv);
+    //
+    // lsp-stderr-capture follow-up (extended to ACP): captureStderr mirrors
+    // Lsp/Transport.h's identical parameter exactly -- defaults to false so
+    // nothing changes for a caller that doesn't ask.
+    explicit Transport(const std::vector<std::string>& argv, bool captureStderr = false);
 
     // Wraps already-open, already-connected file descriptors directly,
     // taking ownership of both -- for a caller that manages the underlying
@@ -74,13 +82,23 @@ class Transport {
     // std::runtime_error (subprocess-hang-protection follow-up) if a message
     // stalls mid-line for longer than stallTimeout -- a parameter, not a
     // hardcoded sleep, purely so tests can shorten it; real callers always
-    // take the kMessageStallTimeout default.
-    [[nodiscard]] std::optional<std::string> ReadMessage(std::chrono::milliseconds stallTimeout = kMessageStallTimeout) const;
+    // take the ProtocolStallTimeoutMs() default (see this file's own header
+    // comment).
+    [[nodiscard]] std::optional<std::string> ReadMessage(std::chrono::milliseconds stallTimeout = ProtocolStallTimeoutMs()) const;
 
     [[nodiscard]] pid_t Pid() const noexcept;
 
+    // lsp-stderr-capture follow-up (extended to ACP): see Lsp/Transport.h's
+    // identical StderrFd() doc comment.
+    [[nodiscard]] int StderrFd() const noexcept;
+
+    // lsp-stderr-capture follow-up (extended to ACP): see Lsp/Transport.h's
+    // identical ProcessLabel() doc comment.
+    [[nodiscard]] const std::string& ProcessLabel() const noexcept;
+
   private:
     process::ChildProcess child_;
+    std::string           processLabel_;
 };
 
 } // namespace ned::editor::acp

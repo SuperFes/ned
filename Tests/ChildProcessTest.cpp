@@ -126,6 +126,29 @@ TEST_CASE("ChildProcess::ReadSome(timeout) returns data once it arrives within t
     REQUIRE(*chunk == "late data");
 }
 
+TEST_CASE("ChildProcess::StderrFd is -1 unless constructed with StderrMode::Capture", "[Process]") {
+    ChildProcess discard({"sh", "-c", "exit 0"});
+    REQUIRE(discard.StderrFd() == -1);
+
+    ChildProcess merged({"sh", "-c", "exit 0"}, StderrMode::MergeWithStdout);
+    REQUIRE(merged.StderrFd() == -1);
+}
+
+// lsp-stderr-capture follow-up. Confirms Capture wires stderr onto its own
+// pipe, never interleaved with stdout -- the actual risk this mode exists to
+// avoid (a stray stderr byte corrupting a framed protocol's stdout stream).
+TEST_CASE("StderrMode::Capture routes stderr onto its own pipe, separate from stdout", "[Process]") {
+    ChildProcess child({"sh", "-c", "echo out; echo err >&2"}, StderrMode::Capture);
+    REQUIRE(child.StderrFd() >= 0);
+
+    REQUIRE(child.ReadSome() == "out\n");
+
+    char          buffer[64] = {};
+    const ssize_t n          = ::read(child.StderrFd(), buffer, sizeof(buffer));
+    REQUIRE(n > 0);
+    REQUIRE(std::string(buffer, static_cast<std::size_t>(n)) == "err\n");
+}
+
 TEST_CASE("ChildProcess::WaitReadable reports EOF as readable", "[Process]") {
     int toChild[2];
     REQUIRE(::pipe(toChild) == 0);

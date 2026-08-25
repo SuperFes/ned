@@ -1,17 +1,23 @@
 #include "DapClient.h"
 
+#include <cerrno>
 #include <utility>
+
+#include <unistd.h>
 
 #include "Editor/DiagnosticsLog.h"
 
 namespace ned::editor::dap {
 
-DapClient::DapClient(std::vector<std::string> argv, ned::ui::EventLoop& eventLoop) : transport_(std::move(argv)), eventLoop_(eventLoop) {
+DapClient::DapClient(std::vector<std::string> argv, ned::ui::EventLoop& eventLoop)
+    : transport_(std::move(argv), /*captureStderr=*/true), eventLoop_(eventLoop) {
     StartReadLoop();
+    StartStderrReadLoop();
 }
 
 DapClient::DapClient(lsp::Transport transport, ned::ui::EventLoop& eventLoop) : transport_(std::move(transport)), eventLoop_(eventLoop) {
     StartReadLoop();
+    StartStderrReadLoop(); // no-op unless transport_ was itself constructed with captureStderr -- see header comment
 }
 
 void DapClient::StartReadLoop() {
@@ -45,6 +51,49 @@ void DapClient::StartReadLoop() {
                 return;
             }
             eventLoop_.Post([this, frameText = std::move(*frame)]() mutable { DispatchFrame(frameText); });
+        }
+    });
+}
+
+void DapClient::StartStderrReadLoop() {
+    // Identical to LspClient::StartStderrReadLoop -- see that function's own
+    // doc comment for the full reasoning; only the log category differs.
+    const int fd = transport_.StderrFd();
+    if (fd < 0) {
+        return; // not captured -- see header comment
+    }
+    std::string label = transport_.ProcessLabel();
+
+    stderrThread_ = std::jthread([this, fd, label = std::move(label)](std::stop_token) {
+        std::string buffered;
+        char        chunk[4096];
+        while (true) {
+            const ssize_t result = ::read(fd, chunk, sizeof(chunk));
+            if (result < 0) {
+                if (errno == EINTR) {
+                    continue;
+                }
+                return;
+            }
+            if (result == 0) {
+                return; // EOF -- adapter exited, or this DapClient is being destroyed
+            }
+            buffered.append(chunk, static_cast<std::size_t>(result));
+
+            std::size_t newline;
+            while ((newline = buffered.find('\n')) != std::string::npos) {
+                std::string line = buffered.substr(0, newline);
+                buffered.erase(0, newline + 1);
+                if (!line.empty() && line.back() == '\r') {
+                    line.pop_back();
+                }
+                if (line.empty()) {
+                    continue;
+                }
+                eventLoop_.Post([this, label, line = std::move(line)] {
+                    LogMessage(LogCategory::Dap, LogSeverity::Warning, label.empty() ? line : label + ": " + line);
+                });
+            }
         }
     });
 }

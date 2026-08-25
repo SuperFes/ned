@@ -34,6 +34,13 @@
 //     later": a `respond` continuation must never be invoked after the
 //     AcpClient that handed it out has been destroyed.
 //
+// lsp-stderr-capture follow-up (extended to ACP): stderrThread_ mirrors
+// LspClient's own stderrThread_ exactly -- a second blocking read loop over
+// Transport::StderrFd(), declared alongside readThread_ before transport_
+// for the same destruction-order reason. The real-subprocess constructor
+// passes captureStderr=true; the Transport-taking test constructor never
+// captures (StartStderrReadLoop is a no-op when StderrFd() < 0).
+//
 
 #ifndef NED_EDITOR_ACP_ACPCLIENT_H
 #define NED_EDITOR_ACP_ACPCLIENT_H
@@ -48,6 +55,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "Editor/ProcessTimeouts.h"
 #include "UI/EventLoop.h"
 
 #include "Transport.h"
@@ -67,10 +75,6 @@ using NotificationHandler = std::function<void(const Json& params)>;
 // comment on why this differs from a plain synchronous return.
 using RespondFn      = std::function<void(std::optional<Json> result, std::optional<Json> error)>;
 using RequestHandler = std::function<void(const Json& params, RespondFn respond)>;
-
-// subprocess-hang-protection follow-up -- see Lsp/LspClient.h's identical
-// kDefaultRequestTimeout constant/reasoning.
-inline constexpr std::chrono::milliseconds kDefaultRequestTimeout{30000};
 
 class AcpClient {
   public:
@@ -131,13 +135,17 @@ class AcpClient {
     void DispatchFrame(const std::string& frameText);
 
     // subprocess-hang-protection follow-up -- see LspClient::ExpireStaleRequests's
-    // identical doc comment.
-    void ExpireStaleRequests(std::chrono::milliseconds maxAge = kDefaultRequestTimeout);
+    // identical doc comment. Real callers take ProcessTimeouts.h's
+    // ProtocolRequestTimeoutMs() as their default (ChildProcess-hang-
+    // protection-round-2 follow-up).
+    void ExpireStaleRequests(std::chrono::milliseconds maxAge = ProtocolRequestTimeoutMs());
 
   private:
     void StartReadLoop();
+    void StartStderrReadLoop(); // lsp-stderr-capture follow-up -- see header comment
 
-    std::jthread readThread_; // declared before transport_ -- see header comment
+    std::jthread readThread_;   // declared before transport_ -- see header comment
+    std::jthread stderrThread_; // ditto -- lsp-stderr-capture follow-up
     Transport    transport_;
 
     ned::ui::EventLoop& eventLoop_;

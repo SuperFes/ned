@@ -9,6 +9,8 @@
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
 
+using ned::editor::AcknowledgeDiagnosticsLogEntry;
+using ned::editor::HasUnseenDiagnosticsLogEntry;
 using ned::editor::LogCategory;
 using ned::editor::LogCategoryFromString;
 using ned::editor::LogCategoryToString;
@@ -147,6 +149,113 @@ TEST_CASE("LogMessage appends, bumps generation, and is visible via LogEntries",
     REQUIRE(entries[0].message == "boom");
     REQUIRE(entries[0].path == "init.janet");
     REQUIRE(entries[0].line == 12);
+}
+
+TEST_CASE("LogMessage coalesces consecutive identical entries into one, incrementing a counter", "[DiagnosticsLog]") {
+    const LogSandbox sandbox("ned_difflog_test_coalesce");
+    const std::size_t before = LogGeneration();
+
+    LogMessage(LogCategory::Lsp, LogSeverity::Warning, "connection refused");
+    LogMessage(LogCategory::Lsp, LogSeverity::Warning, "connection refused");
+    LogMessage(LogCategory::Lsp, LogSeverity::Warning, "connection refused");
+
+    // Still bumps the generation on every call -- a live *Messages* view
+    // updates to show the growing count each time, not just on the first.
+    REQUIRE(LogGeneration() == before + 3);
+
+    const std::vector<ned::editor::LogEntry> entries = LogEntries();
+    REQUIRE(entries.size() == 1);
+    REQUIRE(entries[0].message == "connection refused");
+    REQUIRE(entries[0].count == 3);
+}
+
+TEST_CASE("LogMessage does not coalesce across a distinct message in between", "[DiagnosticsLog]") {
+    const LogSandbox sandbox("ned_difflog_test_coalesce_break");
+
+    LogMessage(LogCategory::General, LogSeverity::Info, "a");
+    LogMessage(LogCategory::General, LogSeverity::Info, "a");
+    LogMessage(LogCategory::General, LogSeverity::Info, "b");
+    LogMessage(LogCategory::General, LogSeverity::Info, "a");
+
+    const std::vector<ned::editor::LogEntry> entries = LogEntries();
+    REQUIRE(entries.size() == 3);
+    REQUIRE(entries[0].message == "a");
+    REQUIRE(entries[0].count == 2);
+    REQUIRE(entries[1].message == "b");
+    REQUIRE(entries[1].count == 1);
+    REQUIRE(entries[2].message == "a");
+    REQUIRE(entries[2].count == 1);
+}
+
+TEST_CASE("A coalesced entry's rendered *Messages* line carries an (xN) suffix", "[DiagnosticsLog]") {
+    const LogSandbox      sandbox("ned_difflog_test_coalesce_render");
+    ned::text::BufferList bufferList;
+
+    LogMessage(LogCategory::General, LogSeverity::Warning, "flaky");
+    LogMessage(LogCategory::General, LogSeverity::Warning, "flaky");
+    LogMessage(LogCategory::General, LogSeverity::Warning, "flaky");
+
+    RebuildMessagesBuffer(bufferList);
+    ned::text::Buffer* messages = bufferList.Find(std::string(MessagesBufferName()));
+    REQUIRE(messages != nullptr);
+    REQUIRE(messages->Text().find("flaky (x3)") != std::string::npos);
+}
+
+TEST_CASE("LogMessage throttles disk writes for a long coalesced streak to exponential-count milestones",
+          "[DiagnosticsLog]") {
+    const LogSandbox sandbox("ned_difflog_test_coalesce_disk");
+
+    for (int i = 0; i < 4; ++i) {
+        LogMessage(LogCategory::Task, LogSeverity::Error, "repeating failure");
+    }
+
+    std::string content;
+    for (const auto& entry : std::filesystem::directory_iterator(LogsDir(sandbox))) {
+        std::ifstream      in(entry.path());
+        content += std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+
+    // Written at count 1 (first occurrence, no suffix), 2, and 4 (both
+    // powers of two) -- skipped at count 3 -- three lines total for four
+    // identical calls, not four.
+    REQUIRE(content.find("(x2)") != std::string::npos);
+    REQUIRE(content.find("(x4)") != std::string::npos);
+    REQUIRE(content.find("(x3)") == std::string::npos);
+    std::size_t occurrences = 0;
+    for (std::size_t pos = content.find("repeating failure"); pos != std::string::npos;
+         pos              = content.find("repeating failure", pos + 1)) {
+        ++occurrences;
+    }
+    REQUIRE(occurrences == 3);
+}
+
+TEST_CASE("HasUnseenDiagnosticsLogEntry is false until a Warning/Error entry is logged, then acknowledges", "[DiagnosticsLog]") {
+    const LogSandbox sandbox("ned_difflog_test_unseen_basic");
+    REQUIRE_FALSE(HasUnseenDiagnosticsLogEntry());
+
+    LogMessage(LogCategory::Task, LogSeverity::Error, "build failed");
+    REQUIRE(HasUnseenDiagnosticsLogEntry());
+
+    AcknowledgeDiagnosticsLogEntry();
+    REQUIRE_FALSE(HasUnseenDiagnosticsLogEntry());
+}
+
+TEST_CASE("HasUnseenDiagnosticsLogEntry ignores Info-severity entries", "[DiagnosticsLog]") {
+    const LogSandbox sandbox("ned_difflog_test_unseen_info");
+    LogMessage(LogCategory::General, LogSeverity::Info, "just fyi");
+    REQUIRE_FALSE(HasUnseenDiagnosticsLogEntry());
+}
+
+TEST_CASE("HasUnseenDiagnosticsLogEntry ignores a Warning/Error entry in a hidden category", "[DiagnosticsLog]") {
+    const LogSandbox sandbox("ned_difflog_test_unseen_hidden");
+    SetLogCategoryVisible(LogCategory::Lsp, false); // default, explicit for clarity
+    LogMessage(LogCategory::Lsp, LogSeverity::Warning, "stalled mid-frame");
+    REQUIRE_FALSE(HasUnseenDiagnosticsLogEntry());
+
+    // The same category, once made visible, does set it going forward.
+    SetLogCategoryVisible(LogCategory::Lsp, true);
+    LogMessage(LogCategory::Lsp, LogSeverity::Warning, "stalled mid-frame again");
+    REQUIRE(HasUnseenDiagnosticsLogEntry());
 }
 
 TEST_CASE("SetLogMaxEntries caps the ring, evicting oldest first, and trims immediately on decrease", "[DiagnosticsLog]") {

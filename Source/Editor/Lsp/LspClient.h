@@ -26,16 +26,23 @@
 // happen).
 //
 // Member declaration order below is load-bearing, not just style: destroying
-// transport_ (which happens before readThread_, since C++ destroys members
-// in reverse declaration order, and transport_ is declared *after*
-// readThread_) is what makes readThread_'s own destructor-driven
-// request_stop()+join() actually terminate promptly -- Transport's own
-// destructor closes this end's fds and kills+reaps the child process, which
-// is what makes the background thread's in-flight, otherwise-unstoppable
-// blocking Transport::ReadFrame() call finally return (EOF, once the child's
-// stdout pipe has no writers left). A stop_token alone cannot interrupt a
-// blocking read() -- this ordering is the actual interruption mechanism, not
-// a defensive extra.
+// transport_ (which happens before readThread_/stderrThread_, since C++
+// destroys members in reverse declaration order, and transport_ is declared
+// *after* both) is what makes their destructor-driven request_stop()+join()
+// actually terminate promptly -- Transport's own destructor closes this
+// end's fds and kills+reaps the child process, which is what makes each
+// thread's in-flight, otherwise-unstoppable blocking read finally return
+// (EOF, once the child's stdout/stderr pipes have no writers left). A
+// stop_token alone cannot interrupt a blocking read() -- this ordering is
+// the actual interruption mechanism, not a defensive extra.
+//
+// lsp-stderr-capture follow-up: stderrThread_ mirrors readThread_'s own
+// shape exactly (a blocking read loop, Post-marshaled onto the main thread)
+// but reads Transport::StderrFd() instead of frame-parsing Transport::
+// ReadFrame() -- raw, unframed server-process stderr output, not JSON-RPC.
+// Only started when StderrFd() >= 0, i.e. only for the real-subprocess
+// constructor (the Transport-taking constructor never captures stderr,
+// matching its own default -- test-injected clients have nothing to drain).
 //
 
 #ifndef NED_EDITOR_LSP_LSPCLIENT_H
@@ -51,6 +58,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "Editor/ProcessTimeouts.h"
 #include "UI/EventLoop.h"
 
 #include "Transport.h"
@@ -68,15 +76,17 @@ inline constexpr std::string_view kLspActivityName = "LSP";
 
 // subprocess-hang-protection follow-up. A server that simply never answers a
 // request (as opposed to a stalled/malformed connection, which
-// Transport::ReadFrame's own kFrameStallTimeout already catches) previously
+// Transport::ReadFrame's own stall timeout already catches) previously
 // left that request pending_ forever -- no error, no timeout, a
 // permanently-spinning hover/completion/code-action with nothing to show for
 // it. Generous on purpose: a slow rename/format-on-save on a huge file
 // should never hit this; it exists only to eventually resolve a request that
 // will truly never answer. ExpireStaleRequests takes this as a parameter
 // (not baked in) so LspManager's real sweep and this file's own tests can
-// use different values.
-inline constexpr std::chrono::milliseconds kDefaultRequestTimeout{30000};
+// use different values; real callers take ProcessTimeouts.h's
+// ProtocolRequestTimeoutMs() as their default below
+// (ChildProcess-hang-protection-round-2 follow-up: Janet-configurable,
+// replacing this file's old kDefaultRequestTimeout compile-time constant).
 
 // Exactly one of result/error is engaged, matching JSON-RPC 2.0's own
 // response shape.
@@ -203,13 +213,15 @@ class LspClient {
     // already does. Public (not driven internally by a timer -- this class
     // has no timer of its own) so LspManager's sweep, wired into
     // WindowManager's existing background tick, can call it, and so tests
-    // can pass a much shorter maxAge than the real kDefaultRequestTimeout.
-    void ExpireStaleRequests(std::chrono::milliseconds maxAge = kDefaultRequestTimeout);
+    // can pass a much shorter maxAge than the real default.
+    void ExpireStaleRequests(std::chrono::milliseconds maxAge = ProtocolRequestTimeoutMs());
 
   private:
     void StartReadLoop();
+    void StartStderrReadLoop(); // lsp-stderr-capture follow-up -- see header comment
 
-    std::jthread readThread_; // declared before transport_ -- see header comment
+    std::jthread readThread_;       // declared before transport_ -- see header comment
+    std::jthread stderrThread_;     // ditto -- lsp-stderr-capture follow-up
     Transport    transport_;
 
     ned::ui::EventLoop& eventLoop_;

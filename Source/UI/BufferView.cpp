@@ -1718,6 +1718,25 @@ void BufferView::Paint(Canvas c) {
         lspManager_->AcknowledgeLogEntry();
     }
 
+    // user-facing-hang-affordance follow-up (ChildProcess-hang-protection-
+    // round-2): same once-per-frame poll idiom as the LSP-log check above,
+    // just against the shared *Messages* log instead of the older, LSP-only
+    // "*lsp log*" one -- a hang/timeout recovery (a killed clipboard-paste
+    // subprocess, an LSP/DAP/ACP stall disconnect, a stale-request timeout)
+    // previously left no trace beyond that log entry itself, with nothing to
+    // draw the user's eye to it. Checked after the LSP-log branch above so
+    // the two never race for the same frame's statusMessage_ (whichever
+    // fires first wins; the other's flag stays set and surfaces next frame
+    // once statusMessage_ is empty again). Gated on surfaceUnseenLogEntries_
+    // (default false, see SetSurfaceUnseenLogEntries's own doc comment) --
+    // unlike lspManager_ above, editor::HasUnseenDiagnosticsLogEntry() reads
+    // genuinely process-wide state, so an unconditional check here would let
+    // any other test's own LogMessage call leak into this one's Paint().
+    if (surfaceUnseenLogEntries_ && editor::HasUnseenDiagnosticsLogEntry() && statusMessage_.empty()) {
+        statusMessage_ = "New warning -- see *Messages* (M-x show-messages)";
+        editor::AcknowledgeDiagnosticsLogEntry();
+    }
+
     // diagnostics-UX follow-up: live echo of the diagnostic on point's own
     // line, updating as point moves, so reading an error never requires a
     // command at all (lsp-show-diagnostic stays for the full/multi-message
@@ -9728,6 +9747,10 @@ void BufferView::SetDapManager(editor::dap::DapManager* dapManager) {
 
 void BufferView::SetAcpManager(editor::acp::AcpManager* acpManager) {
     acpManager_ = acpManager;
+}
+
+void BufferView::SetSurfaceUnseenLogEntries(bool enabled) {
+    surfaceUnseenLogEntries_ = enabled;
 }
 
 void BufferView::SetJanetEnvironment(const janet::Environment* janetEnv) {
