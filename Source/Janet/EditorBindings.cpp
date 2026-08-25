@@ -49,6 +49,7 @@
 #include "Editor/ToolchainIncludePaths.h"
 #include "Editor/TrimOnSave.h"
 #include "Editor/Vcs/VcsProviderRegistry.h"
+#include "Editor/Vim/VimSettings.h"
 #include "Editor/WhitespaceSettings.h"
 #include "Editor/WrapOverrides.h"
 #include "JanetVcsProvider.h"
@@ -167,6 +168,12 @@ namespace {
 
     void NedSetTabWidth(std::int64_t columns) {
         editor::SetTabWidth(static_cast<int>(columns));
+    }
+
+    // Vim-mode follow-up: same process-wide-bool-toggle shape as
+    // NedSetLspAutoComplete -- default false, see Editor/Vim/VimSettings.h.
+    void NedSetVimMode(bool enabled) {
+        editor::vim::SetVimModeEnabled(enabled);
     }
 
     void NedSetProjectSearchThreads(std::int64_t threads) {
@@ -846,6 +853,11 @@ void InstallEditorBindings(Environment& env) {
         "defaults to \"xdg-open\"; empty string clears it entirely, disabling URL-following.");
     env.Register<&NedSetTabWidth>("ned", "set-tab-width",
                                   "Set the display width (in columns) a tab character expands to (default 4).");
+    env.Register<&NedSetVimMode>(
+        "ned", "set-vim-mode",
+        "Enable or disable Vim-style modal editing (Normal/Insert/Visual/Replace/command-line, default false). "
+        "Insert mode still runs through ned's own Emacs-bound keymap underneath (self-insert-command, auto-pair, "
+        "snippets, LSP completion all keep working) -- only Normal/Visual/Replace/command-line dispatch is Vim's own.");
     env.Register<&NedSetLogCategoryVisible>(
         "ned", "set-log-category-visible",
         "Show/hide one category (\"general\"/\"janet\"/\"lsp\"/\"dap\"/\"acp\"/\"vcs\"/\"task\"/\"subprocess\") in the "
