@@ -239,6 +239,66 @@ TEST_CASE("Query::Captures never suppresses a match for a predicate it doesn't r
     REQUIRE(captures.size() == 1);
 }
 
+TEST_CASE("Query::Matches groups captures from the same match together, not scrambled across matches", "[TreeSitter]") {
+    const Language    language = *LanguageByName("json");
+    Parser            parser(language);
+    const std::string text = R"({"a": 1, "b": 2})";
+    Tree              tree = parser.Parse(text);
+    Query             query(language, "(pair key: (string) @key value: (number) @value)");
+
+    const std::vector<QueryMatch> matches = query.Matches(tree.RootNode(), text);
+
+    REQUIRE(matches.size() == 2);
+    REQUIRE(matches[0].captures.size() == 2);
+    REQUIRE(text.substr(matches[0].captures[0].startByte, matches[0].captures[0].endByte - matches[0].captures[0].startByte) ==
+            "\"a\"");
+    REQUIRE(text.substr(matches[0].captures[1].startByte, matches[0].captures[1].endByte - matches[0].captures[1].startByte) == "1");
+    REQUIRE(matches[1].captures.size() == 2);
+    REQUIRE(text.substr(matches[1].captures[0].startByte, matches[1].captures[0].endByte - matches[1].captures[0].startByte) ==
+            "\"b\"");
+    REQUIRE(text.substr(matches[1].captures[1].startByte, matches[1].captures[1].endByte - matches[1].captures[1].startByte) == "2");
+}
+
+TEST_CASE("Query::Matches resolves a #set! string operand into setDirectives", "[TreeSitter]") {
+    const Language    language = *LanguageByName("json");
+    Parser            parser(language);
+    const std::string text = R"({"a": 1})";
+    Tree              tree = parser.Parse(text);
+    Query             query(language, R"(((string) @s (#set! injection.language "javascript")))");
+
+    const std::vector<QueryMatch> matches = query.Matches(tree.RootNode(), text);
+
+    REQUIRE(matches.size() == 1);
+    REQUIRE(matches[0].setDirectives.at("injection.language") == "javascript");
+}
+
+TEST_CASE("Query::Matches stores an empty value for a zero-operand #set! directive", "[TreeSitter]") {
+    const Language    language = *LanguageByName("json");
+    Parser            parser(language);
+    const std::string text = R"({"a": 1})";
+    Tree              tree = parser.Parse(text);
+    Query             query(language, R"(((string) @s (#set! injection.combined)))");
+
+    const std::vector<QueryMatch> matches = query.Matches(tree.RootNode(), text);
+
+    REQUIRE(matches.size() == 1);
+    REQUIRE(matches[0].setDirectives.contains("injection.combined"));
+    REQUIRE(matches[0].setDirectives.at("injection.combined").empty());
+}
+
+TEST_CASE("Query::Matches still respects predicate filtering, e.g. #eq?", "[TreeSitter]") {
+    const Language    language = *LanguageByName("json");
+    Parser            parser(language);
+    const std::string text = R"({"a": "a", "b": "c"})";
+    Tree              tree = parser.Parse(text);
+    Query             query(language, "(pair key: (string) @key value: (string) @value (#eq? @key @value))");
+
+    const std::vector<QueryMatch> matches = query.Matches(tree.RootNode(), text);
+
+    // Only the "a": "a" pair has an equal key/value.
+    REQUIRE(matches.size() == 1);
+}
+
 TEST_CASE("Query constructor throws on a malformed query", "[TreeSitter]") {
     const Language language = *LanguageByName("json");
     REQUIRE_THROWS_AS(Query(language, "(not_a_real_node_type) @foo"), std::runtime_error);

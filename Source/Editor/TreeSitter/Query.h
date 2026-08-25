@@ -50,6 +50,32 @@ struct QueryCapture {
     std::size_t endByte;
 };
 
+// A capture within a QueryMatch -- same shape as QueryCapture, kept as a
+// separate type since it lives inside QueryMatch::captures rather than a
+// flat top-level vector (Captures() intentionally flattens match-grouping
+// away; Matches() below intentionally preserves it).
+struct QueryMatchCapture {
+    std::string name;
+    std::size_t startByte;
+    std::size_t endByte;
+};
+
+// One matched pattern instance, with its captures kept together (unlike
+// Captures()'s flat output) and its #set! directives resolved -- for
+// consumers (language-injection resolution) that need several captures from
+// one pattern instance correlated, e.g. pairing a dynamic
+// "@injection.language" capture with its sibling "@injection.content"
+// capture in the SAME fenced code block, not some other one in the document.
+struct QueryMatch {
+    std::vector<QueryMatchCapture> captures;
+    // Resolved #set! operands for this match's pattern, keyed by the
+    // directive name (e.g. "injection.language" -> "javascript" for
+    // `(#set! injection.language "javascript")`). A zero-operand #set! (e.g.
+    // `(#set! injection.combined)`) is stored with an empty value, so
+    // callers can still test for the key's presence.
+    std::unordered_map<std::string, std::string> setDirectives;
+};
+
 class Query {
   public:
     // Throws std::runtime_error, with the byte offset into source and a
@@ -78,6 +104,13 @@ class Query {
     // actual text out of; every real caller already has this in scope
     // (a Mode's HighlightFunction is itself handed the buffer's full text).
     [[nodiscard]] std::vector<QueryCapture> Captures(const Node& root, std::string_view sourceText) const;
+
+    // Match-grouped view of the same run Captures() does (same predicate
+    // filtering, same "unrecognized predicate never suppresses a match"
+    // default) -- for a consumer that needs several captures from one
+    // pattern instance correlated together, which #eq?/#match?/etc.-only
+    // consumers never needed. See QueryMatch's own doc comment.
+    [[nodiscard]] std::vector<QueryMatch> Matches(const Node& root, std::string_view sourceText) const;
 
   private:
     TSQuery* query_ = nullptr;

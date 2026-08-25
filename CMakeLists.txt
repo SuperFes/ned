@@ -401,6 +401,9 @@ ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter
 ned_add_treesitter_grammar(tree-sitter-html https://github.com/tree-sitter/tree-sitter-html.git v0.23.2)
 
 ned_embed_treesitter_query("${tree-sitter-html_SOURCE_DIR}/queries/highlights.scm" Html)
+# embedded-language-injection follow-up: real injections.scm, driving
+# <script>/<style> highlighting through Injection.h's generic engine.
+ned_embed_treesitter_query("${tree-sitter-html_SOURCE_DIR}/queries/injections.scm" HtmlInjections)
 
 ned_add_treesitter_grammar(tree-sitter-css https://github.com/tree-sitter/tree-sitter-css.git v0.25.0)
 
@@ -429,6 +432,11 @@ ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter
 ned_add_treesitter_grammar(tree-sitter-markdown https://github.com/tree-sitter-grammars/tree-sitter-markdown.git v0.5.3 tree-sitter-markdown)
 
 ned_embed_treesitter_query("${tree-sitter-markdown_SOURCE_DIR}/tree-sitter-markdown/queries/highlights.scm" Markdown)
+# embedded-language-injection follow-up: real injections.scm, driving fenced
+# code blocks + inline formatting + html_block/frontmatter through
+# Injection.h's generic engine, superseding Mode.cpp's own hand-rolled
+# CollectMarkdownFencedCodeSpans/CollectMarkdownInlineSpans.
+ned_embed_treesitter_query("${tree-sitter-markdown_SOURCE_DIR}/tree-sitter-markdown/queries/injections.scm" MarkdownInjections)
 
 ned_add_treesitter_grammar(tree-sitter-markdown-inline https://github.com/tree-sitter-grammars/tree-sitter-markdown.git v0.5.3 tree-sitter-markdown-inline)
 
@@ -529,6 +537,7 @@ add_library(ned_lib STATIC
         Source/Editor/MinibufferPrompt.cpp
         Source/Editor/PromptHistory.cpp
         Source/Editor/Mode.cpp
+        Source/Editor/Injection.cpp
         Source/Editor/SyntaxTheme.cpp
         Source/Editor/ModeOverrides.cpp
         Source/Editor/ModePrewarm.cpp
@@ -843,6 +852,8 @@ if (NED_BUILD_TESTS)
             Tests/TableTest.cpp
             Tests/MarkdownTest.cpp
             Tests/MarkdownHighlightTest.cpp
+            Tests/InjectionTest.cpp
+            Tests/HtmlHighlightTest.cpp
             Tests/LinkTest.cpp
             Tests/HeaderSourceTest.cpp
             Tests/PerformanceTest.cpp

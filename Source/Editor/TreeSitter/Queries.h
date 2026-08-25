@@ -20,12 +20,17 @@ extern const char* const kPhp;
 extern const char* const kJavaScript;
 extern const char* const kTypeScript; // shared by both TypeScriptMode and TsxMode -- see CMakeLists.txt's own note
 extern const char* const kHtml;
+extern const char* const kHtmlInjections; // Injection.h's generic engine -- <script>/<style> -> javascript/css
 extern const char* const kCss;
 extern const char* const kPython;
 extern const char* const kBash;
 extern const char* const kJanet;
 extern const char* const kMarkdown;
-extern const char* const kMarkdownInline; // MarkdownMode()'s own hand-rolled injection pass -- see Mode.cpp
+extern const char* const kMarkdownInline; // Injection.h's tier-2 markdown-inline resolution -- see Injection.cpp
+// Injection.h's generic engine -- fenced code blocks, inline formatting,
+// html_block, and frontmatter, superseding Mode.cpp's own former hand-rolled
+// CollectMarkdownFencedCodeSpans/CollectMarkdownInlineSpans.
+extern const char* const kMarkdownInjections;
 // Org-mode syntax-highlighting follow-up: hand-written against Ned's own
 // forked grammar (Source/Editor/TreeSitter/OrgHighlights.scm), not fetched
 // from any repository -- see that file's own header comment for why.
