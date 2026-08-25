@@ -32,6 +32,7 @@
 #include "Editor/CodeFold.h"
 #include "Editor/Command.h"
 #include "Editor/Dap/DapManager.h"
+#include "Editor/DiagnosticsLog.h"
 #include "Editor/DiffRefreshSettings.h"
 #include "Editor/Dispatcher.h"
 #include "Editor/EmbeddedDocuments.h"
@@ -2566,6 +2567,15 @@ class BufferView : public Widget {
     // (re)arms the idle-clear deadline via statusMessageTimer_, which fires
     // it once the deadline passes with nothing further changing it.
     void EnsureStatusMessageFreshness();
+
+    // diagnostics-log-round-2 follow-up: sets statusMessage_ (the existing
+    // echo-area report, unchanged) and mirrors the same text into the
+    // durable *Messages* log (Editor/DiagnosticsLog.h) as an Error entry, so
+    // a failure that used to only flash through the echo area and vanish
+    // now leaves a record. category defaults to General for command/file-op
+    // failures that aren't tied to one subsystem; call sites that know
+    // better (LSP, VCS, ...) pass their own.
+    void ReportError(std::string message, editor::LogCategory category = editor::LogCategory::General);
 };
 
 } // namespace ned::ui

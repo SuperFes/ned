@@ -634,12 +634,27 @@ Notcurses.
       not `Lsp/Transport.h`'s `Content-Length` framing) gained the identical
       `captureStderr`/`StderrFd()`/`ProcessLabel()` trio, and `AcpClient` gained the same
       `stderrThread_`, logging to `LogCategory::Acp` — so all three protocol clients now
-      capture and roll up their subprocess's stderr the same way. Still open: the
-      `ChildProcess` hang/timeout gap noted above; the ~20 other `BufferView.cpp`
-      `statusMessage_`-only catches, `VcsRunner.cpp`'s one orphaned catch, and folding
-      `TaskRunner` exit-code failures in, are all still un-wired (the
-      umbrella `RunCommandAndHandleOutcome` catch already benefits from the Janet fix
-      above with no changes of its own needed).
+      capture and roll up their subprocess's stderr the same way. **Round 2** (shipped
+      2026-08-25): the remaining un-wired catches are now all wired. New
+      `BufferView::ReportError(message, category = General)` sets `statusMessage_`
+      exactly as before *and* mirrors the same text into `*Messages*` via `LogMessage` —
+      one small helper rather than duplicating both calls at each of the 25 call sites
+      it replaced (every `catch` block in `BufferView.cpp` that derived a real
+      `statusMessage_` from an exception's `e.what()`, umbrella
+      `RunCommandAndHandleOutcome` included; the handful of `catch (const
+      std::exception&)` blocks that only use the catch as a `std::stoul`/parse-fallback
+      with no real error text — `ExpandVariableAtPoint`/`RemoveWatchAtPoint`/
+      `SetVariableAtPoint`/`HandleRecoverFileKey`'s version-number parse — stay
+      untouched, deliberately: there's no `e.what()` worth logging there). `ApplyRename`'s
+      catch passes `LogCategory::Lsp` explicitly; everything else defaults to `General`.
+      `VcsRunner::RunAndCollect`'s spawn-failure catch (couldn't exec the configured VCS
+      executable at all) now logs to `LogCategory::Vcs` with the real `e.what()` — previously
+      fully discarded, since `onDone(std::string, optional<int>)` has no error-text slot to
+      carry it through to any caller. `TaskRunner::RunTask` logs to `LogCategory::Task`
+      both on a nonzero exit code (0 stays silent — success) and on a failed spawn.
+      tmux-verified live (`query-replace-regexp` with an unbalanced-paren pattern shows up
+      in `*Messages*` with its real PCRE2 error text, severity glyph, and diagnostic
+      underline, `M-x show-messages` to view).
 - [x] **Janet's raw stacktrace/compile-error print corrupts the live TUI** (shipped
       2026-08-24, raw-stderr-fd-redirect follow-up) — `Janet/Environment.cpp`'s
       `StderrCapture` (RAII) redirects the process's own fd 2 into a pipe for the
