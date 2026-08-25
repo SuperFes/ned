@@ -279,6 +279,12 @@ class WindowManager {
     // class entirely.
     void SetOnDapConsoleToggle(std::function<void()> onToggle);
 
+    // which-key follow-up: same "forwarded to every pane, present and
+    // future" shape as SetOnDapConsoleToggle above, but a data callback
+    // fired on every Pending/non-Pending transition rather than an explicit
+    // toggle -- see BufferView::SetOnPrefixHintChanged's own doc comment.
+    void SetOnPrefixHintChanged(std::function<void(std::optional<WhichKeyHint>)> onHintChanged);
+
     // task-runner follow-up: same "forwarded to every pane, present and
     // future" shape as SetProjectSidebar/SetLspManager above.
     void SetTaskRunner(editor::tasks::TaskRunner* taskRunner);
@@ -637,6 +643,7 @@ class WindowManager {
     std::function<void()>             onTerminalToggle_;         // see SetOnTerminalToggle
     std::function<void()>             onAcpPanelToggle_;         // see SetOnAcpPanelToggle
     std::function<void()>             onDapConsoleToggle_;       // see SetOnDapConsoleToggle
+    std::function<void(std::optional<WhichKeyHint>)> onPrefixHintChanged_; // see SetOnPrefixHintChanged
 
     std::unique_ptr<WindowNode> root_;
     Container                   rootComponent_{Axis::Vertical, {}};

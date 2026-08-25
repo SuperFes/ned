@@ -131,6 +131,10 @@ const CommandRegistry& Dispatcher::Registry() const {
     return registry_;
 }
 
+const KeymapStack& Dispatcher::Keymaps() const {
+    return keymaps_;
+}
+
 void Dispatcher::StartRecording() {
     recording_ = true;
     currentMacro_.clear();

@@ -63,6 +63,7 @@
 #include "Text/BufferList.h"
 #include "Text/KillRing.h"
 #include "Theme.h"
+#include "WhichKeyHint.h"
 
 namespace ned::janet {
 class Environment; // Self-hosting-completion follow-up: see SetJanetEnvironment below -- only ever held as a raw pointer here, so a forward declaration is enough.
@@ -471,6 +472,17 @@ class BufferView : public Widget {
     // out to every pane. Unset is a safe no-op.
     void SetOnDapConsoleToggle(std::function<void()> handler);
 
+    // which-key follow-up: same OverlayHost-owned-above-this-class shape as
+    // SetOnTerminalToggle/SetOnAcpPanelToggle/SetOnDapConsoleToggle, but
+    // fired on every Pending/non-Pending transition rather than by an
+    // explicit toggle command -- called with a populated WhichKeyHint the
+    // instant a prefix chord (C-x, C-c, ...) becomes pending, and with
+    // std::nullopt the instant it resolves (Invoked) or fails (Unbound).
+    // Wired via WindowManager::SetOnPrefixHintChanged fanning out to every
+    // pane; main.cpp's registrant shows/hides a shared WhichKeyPopup
+    // overlay. Unset is a safe no-op.
+    void SetOnPrefixHintChanged(std::function<void(std::optional<WhichKeyHint>)> handler);
+
     // per-buffer-mode follow-up: called at the top of Paint() whenever the
     // active buffer's identity has changed since the last Paint() call --
     // the same "recompute, don't cache, detect via pointer identity" idiom
@@ -731,6 +743,11 @@ class BufferView : public Widget {
     // HandlePrefixArgumentKey's terminating-key case can re-dispatch that
     // same chord through the identical path once a reading session ends.
     bool DispatchChordNormally(const editor::KeyChord& chord);
+    // which-key follow-up: builds the popup content for the prefix sequence
+    // currently pending in dispatcher_ -- factored out of
+    // DispatchChordNormally since it's only ever needed there, right after
+    // Feed reports Pending.
+    [[nodiscard]] WhichKeyHint BuildWhichKeyHint() const;
     // Vim-mode follow-up: called instead of DispatchChordNormally from the tail of
     // Normal-mode key handling whenever editor::vim::VimModeEnabled() is true.
     // vimEngine_'s own Mode::Insert is the one case that still falls through to
@@ -1789,6 +1806,13 @@ class BufferView : public Widget {
     text::Buffer* diffSyncBuffer_ = nullptr;
 
     std::size_t                  dragAnchor_ = 0;            // point position at the last mouse press, for drag-selection
+    // Double/triple-click word/line selection: mirrors ProjectSidebar's own
+    // lastFileClickPath_/lastFileClickTime_ double-click detection, extended
+    // with a click count so a third click within the window selects the
+    // whole line rather than re-selecting the word.
+    std::optional<std::size_t>   lastClickOffset_;
+    std::chrono::steady_clock::time_point lastClickTime_{};
+    int                           clickCount_ = 0;
     std::optional<std::string>   debugMouseLogPath_;         // see LogMouseEvent
     ScrollBar*                   scrollBar_       = nullptr; // see SetScrollBar
     ScrollArrowButton*           scrollUpArrow_   = nullptr; // see SetScrollArrows
@@ -2009,6 +2033,7 @@ class BufferView : public Widget {
     std::function<void()>                           onAcpPanelToggle_;      // see SetOnAcpPanelToggle
     std::function<void()>                           onDapConsoleToggle_;    // see SetOnDapConsoleToggle
     std::function<void(text::Buffer&)>              onActiveBufferChanged_; // see SetOnActiveBufferChanged
+    std::function<void(std::optional<WhichKeyHint>)> onPrefixHintChanged_;  // see SetOnPrefixHintChanged
 
     // Caches mode_.highlight's result across Paint() calls (tree-sitter
     // foundation follow-up) -- Paint() runs far more often than the buffer's

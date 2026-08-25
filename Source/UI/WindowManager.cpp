@@ -520,6 +520,7 @@ std::unique_ptr<Pane> WindowManager::MakePane(text::Buffer& buffer, editor::Mode
     pane->Buffer().SetOnTerminalToggle(onTerminalToggle_);
     pane->Buffer().SetOnAcpPanelToggle(onAcpPanelToggle_);
     pane->Buffer().SetOnDapConsoleToggle(onDapConsoleToggle_);
+    pane->Buffer().SetOnPrefixHintChanged(onPrefixHintChanged_);
     // Split-resize follow-up: see WindowManager.h's own resizingSplit_
     // comment and BufferView::SetSplitResizeQuery's own doc comment.
     pane->Buffer().SetSplitResizeQuery([this] { return resizingSplit_; });
@@ -566,6 +567,13 @@ void WindowManager::SetOnDapConsoleToggle(std::function<void()> onToggle) {
     onDapConsoleToggle_ = std::move(onToggle);
     for (Pane* pane : Leaves()) {
         pane->Buffer().SetOnDapConsoleToggle(onDapConsoleToggle_);
+    }
+}
+
+void WindowManager::SetOnPrefixHintChanged(std::function<void(std::optional<WhichKeyHint>)> onHintChanged) {
+    onPrefixHintChanged_ = std::move(onHintChanged);
+    for (Pane* pane : Leaves()) {
+        pane->Buffer().SetOnPrefixHintChanged(onPrefixHintChanged_);
     }
 }
 

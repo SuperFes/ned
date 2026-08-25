@@ -43,6 +43,7 @@
 #include "Editor/ProjectTree.h"
 #include "Editor/RecentFiles.h"
 #include "Editor/Rectangle.h"
+#include "Editor/RelativeLineNumberSettings.h"
 #include "Editor/ScratchPad.h"
 #include "Editor/Session.h"
 #include "Editor/SyntaxTheme.h"
@@ -53,6 +54,7 @@
 #include "Editor/Variables.h"
 #include "Editor/Vcs/DiffPatch.h"
 #include "Editor/Vim/VimSettings.h"
+#include "Editor/WhichKeySettings.h"
 #include "Editor/WhitespaceSettings.h"
 #include "Editor/WrapOverrides.h"
 #include "Janet/Environment.h"
@@ -74,6 +76,45 @@ namespace {
 
     bool IsQuit(const editor::KeyChord& chord) {
         return chord.Special == editor::SpecialKey::Escape || (chord.Control && chord.Codepoint == U'g');
+    }
+
+    // Double/triple-click word/line selection: same window ProjectSidebar's
+    // own double-click-to-open uses.
+    constexpr std::chrono::milliseconds kDoubleClickWindow{400};
+
+    // ASCII alphanumeric + underscore, deliberately not Unicode-aware --
+    // mirrors Buffer.cpp's own (private) IsWordCodepoint used by
+    // MoveForwardWord/MoveBackwardWord.
+    bool IsWordCodepointForClick(char32_t codepoint) {
+        return (codepoint >= U'a' && codepoint <= U'z') || (codepoint >= U'A' && codepoint <= U'Z') ||
+               (codepoint >= U'0' && codepoint <= U'9') || codepoint == U'_';
+    }
+
+    // Expands a click offset to the bounds of the contiguous word/non-word
+    // run it falls in -- e.g. double-clicking mid-identifier selects the
+    // whole identifier, double-clicking mid-whitespace selects the whole
+    // run of whitespace.
+    std::pair<std::size_t, std::size_t> WordBoundsAtOffset(const text::Rope& content, std::size_t offset) {
+        const std::size_t total = content.ByteLength();
+        if (total == 0) {
+            return {0, 0};
+        }
+        const std::size_t probe = offset < total ? offset : content.PreviousCodepointBoundary(offset);
+        const bool        isWord = IsWordCodepointForClick(content.CodepointAt(probe).codepoint);
+
+        std::size_t start = probe;
+        while (start > 0) {
+            const std::size_t previous = content.PreviousCodepointBoundary(start);
+            if (IsWordCodepointForClick(content.CodepointAt(previous).codepoint) != isWord) {
+                break;
+            }
+            start = previous;
+        }
+        std::size_t end = probe;
+        while (end < total && IsWordCodepointForClick(content.CodepointAt(end).codepoint) == isWord) {
+            end = content.NextCodepointBoundary(end);
+        }
+        return {start, end};
     }
 
     // Window-splitting requests forward to WindowManager (see
@@ -688,6 +729,10 @@ void BufferView::SetOnDapConsoleToggle(std::function<void()> handler) {
 
 void BufferView::SetOnActiveBufferChanged(std::function<void(text::Buffer&)> handler) {
     onActiveBufferChanged_ = std::move(handler);
+}
+
+void BufferView::SetOnPrefixHintChanged(std::function<void(std::optional<WhichKeyHint>)> handler) {
+    onPrefixHintChanged_ = std::move(handler);
 }
 
 void BufferView::ClearBufferCaches(text::Buffer& buffer) {
@@ -2281,7 +2326,12 @@ void BufferView::Paint(Canvas c) {
                 // the write loop below has to be skipped outright rather
                 // than trusted to naturally emit nothing.
                 if (LineNumberGutterActive()) {
-                    const std::string number  = std::to_string(line + 1); // 1-indexed, matches ModeLine's L/C convention
+                    // Vim's "relativenumber": current line keeps its real
+                    // (1-indexed) number, every other visible line shows its
+                    // distance from it instead.
+                    const std::string number = editor::RelativeLineNumbersEnabled() && line != pointLine
+                                                    ? std::to_string(line > pointLine ? line - pointLine : pointLine - line)
+                                                    : std::to_string(line + 1); // 1-indexed, matches ModeLine's L/C convention
                     const std::size_t padding = gutterDigits > number.size() ? gutterDigits - number.size() : 0;
                     // Leading gap (status/line-number-spacing follow-up -- the
                     // line-number gutter now gets breathing room on BOTH sides,
@@ -3652,12 +3702,30 @@ bool BufferView::DispatchChordNormally(const editor::KeyChord& chord) {
         if (outcome == editor::Dispatcher::Outcome::Pending) {
             pendingPrefixArg_ = context.prefixArg;                                      // Feed leaves it untouched mid-sequence -- keep it alive
             statusMessage_    = editor::FormatKeySequence(dispatcher_.Pending()) + "-"; // matches real Emacs' own "C-x-" while-waiting convention
+            if (onPrefixHintChanged_) {
+                onPrefixHintChanged_(editor::WhichKeyEnabled() ? std::optional(BuildWhichKeyHint()) : std::nullopt);
+            }
         }
         else if (outcome == editor::Dispatcher::Outcome::Unbound) {
             statusMessage_ = editor::FormatKeySequence(attemptedSequence) + " is undefined";
+            if (onPrefixHintChanged_) {
+                onPrefixHintChanged_(std::nullopt);
+            }
         }
     }
+    else if (onPrefixHintChanged_) {
+        onPrefixHintChanged_(std::nullopt);
+    }
     return true;
+}
+
+WhichKeyHint BufferView::BuildWhichKeyHint() const {
+    WhichKeyHint hint;
+    hint.prefixLabel = editor::FormatKeySequence(dispatcher_.Pending()) + "-"; // matches statusMessage_'s own convention above
+    for (const auto& child : dispatcher_.Keymaps().ChildrenAt(dispatcher_.Pending())) {
+        hint.bindings.emplace_back(editor::FormatKeyChord(child.chord), child.commandName.value_or("..."));
+    }
+    return hint;
 }
 
 void BufferView::HandlePrefixArgumentKey(const editor::KeyChord& chord) {
@@ -8591,7 +8659,42 @@ bool BufferView::OnMouseEvent(const Event& event) {
         // click, so it shouldn't silently fall back to a visit when the
         // clicked position isn't on a link.
         if (mouse->control) {
+            clickCount_      = 0;
+            lastClickOffset_ = std::nullopt;
             OpenLinkAtPoint();
+            return true;
+        }
+
+        // Double/triple-click word/line selection -- same repeated-click-at-
+        // the-same-spot detection ProjectSidebar's double-click-to-open uses
+        // (kDoubleClickWindow), extended with a click count so a third click
+        // selects the whole line instead of re-selecting the word. Skipped
+        // on a read-only ("tossable") results buffer, where a click's job is
+        // visiting the result under it, not selecting text.
+        const auto now = std::chrono::steady_clock::now();
+        clickCount_     = (lastClickOffset_.has_value() && *lastClickOffset_ == offset && (now - lastClickTime_) < kDoubleClickWindow)
+                              ? (clickCount_ >= 3 ? 1 : clickCount_ + 1)
+                              : 1;
+        lastClickOffset_ = offset;
+        lastClickTime_   = now;
+
+        if (!buffer.ReadOnly() && clickCount_ >= 2) {
+            const text::Rope& content = buffer.Content();
+            std::size_t       start;
+            std::size_t       end;
+            if (clickCount_ == 2) {
+                const auto [wordStart, wordEnd] = WordBoundsAtOffset(content, offset);
+                start                           = wordStart;
+                end                             = wordEnd;
+            }
+            else {
+                const std::size_t line = content.ByteOffsetToLine(offset);
+                start                  = content.LineToByteOffset(line);
+                end = line + 1 < content.LineCount() ? content.LineToByteOffset(line + 1) : content.ByteLength();
+            }
+            buffer.SetMark(start);
+            buffer.SetPoint(end);
+            dragAnchor_ = start;
             return true;
         }
 

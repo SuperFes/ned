@@ -72,6 +72,7 @@
 #include "UI/Theme.h"
 #include "UI/ThemeFile.h"
 #include "UI/ThemeRegistry.h"
+#include "UI/WhichKeyPopup.h"
 #include "UI/WindowManager.h"
 
 using namespace ned::ui;
@@ -1146,6 +1147,30 @@ auto main(int argc, char** argv) -> int {
     };
     windowManager->SetOnDapConsoleToggle(toggleDapConsole);
     dapConsolePanel.SetOnToggleRequest(toggleDapConsole);
+
+    // which-key follow-up: a small, non-focusable OverlayHost popup shown
+    // the instant a prefix chord (C-x, C-c, ...) becomes pending -- unlike
+    // the panels above, never taken focus (WhichKeyPopup::Focusable() stays
+    // at Widget's own default false), so no SetFocusReturn/toggle wiring is
+    // needed; BufferView keeps receiving every keystroke throughout.
+    // Bottom-anchored, just above the echo area row, sized to the current
+    // hint's own row count (ContentRowCount()) each time it's shown/reflowed.
+    ned::ui::WhichKeyPopup whichKeyPopup(theme);
+    overlays.Add(whichKeyPopup, [panel = &whichKeyPopup](Size size) {
+        const int yMax   = std::max(1, size.height - 2); // above the echo area row
+        const int height = std::clamp(panel->ContentRowCount(), 3, std::min(12, size.height));
+        const int width  = std::min(50, size.width);
+        return Box{.x_min = 0, .x_max = std::max(0, width - 1), .y_min = std::max(0, yMax - height + 1), .y_max = yMax};
+    });
+    windowManager->SetOnPrefixHintChanged([&overlays, panel = &whichKeyPopup](std::optional<ned::ui::WhichKeyHint> hint) {
+        if (hint) {
+            panel->SetHint(std::move(*hint));
+            overlays.Show(*panel);
+        }
+        else {
+            overlays.Hide(*panel);
+        }
+    });
 
     EventLoopCallbacks callbacks;
 
