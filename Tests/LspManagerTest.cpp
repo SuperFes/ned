@@ -13,6 +13,7 @@
 #include <unistd.h>
 
 #include "Editor/BackgroundActivity.h"
+#include "Editor/Lsp/LspBackgroundSync.h"
 #include "Editor/Lsp/LspClient.h"
 #include "Editor/Lsp/LspManager.h"
 #include "Editor/Lsp/LspServerConfig.h"
@@ -1610,4 +1611,81 @@ TEST_CASE("LspManager::RequestDefinition with an explicit serverKey routes to th
     REQUIRE(invoked);
     REQUIRE(got.size() == 1);
     REQUIRE(got[0].path == definitionPath);
+}
+
+// LSP-deliberate-cuts follow-up: LspBackgroundSyncEnabled is process-wide
+// state (see LspBackgroundSync.h) -- every test that flips it must leave it
+// default-on for the next test, AutoRevertTest.cpp's own RAII-guard pattern.
+namespace {
+struct LspBackgroundSyncGuard {
+    ~LspBackgroundSyncGuard() {
+        ned::editor::lsp::SetLspBackgroundSyncEnabled(true);
+    }
+};
+} // namespace
+
+TEST_CASE("SyncBackgroundBuffers syncs every open, path-backed buffer, not just one", "[Lsp]") {
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+
+    const std::filesystem::path cPath  = std::filesystem::temp_directory_path() / "ned-lsp-background-sync-test.c";
+    const std::filesystem::path pyPath = std::filesystem::temp_directory_path() / "ned-lsp-background-sync-test.py";
+    Buffer&                     cBuffer  = bufferList.OpenOrCreateFile(cPath);
+    Buffer&                     pyBuffer = bufferList.OpenOrCreateFile(pyPath);
+
+    LspClient* cClient  = nullptr;
+    LspClient* pyClient = nullptr;
+    FakeServer cServer  = FakeServer::Create(manager, "c", eventLoop, cClient);
+    FakeServer pyServer = FakeServer::Create(manager, "python", eventLoop, pyClient);
+
+    ned::editor::lsp::SyncBackgroundBuffers(bufferList, manager);
+
+    const std::string cRaw  = ReadRawFrame(cServer.serverStdinRead);
+    const Json        cOpen = Json::parse(cRaw.substr(cRaw.find("\r\n\r\n") + 4));
+    REQUIRE(cOpen["method"] == "textDocument/didOpen");
+    REQUIRE(cOpen["params"]["textDocument"]["languageId"] == "c");
+
+    const std::string pyRaw  = ReadRawFrame(pyServer.serverStdinRead);
+    const Json        pyOpen = Json::parse(pyRaw.substr(pyRaw.find("\r\n\r\n") + 4));
+    REQUIRE(pyOpen["method"] == "textDocument/didOpen");
+    REQUIRE(pyOpen["params"]["textDocument"]["languageId"] == "python");
+}
+
+TEST_CASE("SyncBackgroundBuffers skips a buffer with no path and a buffer still loading", "[Lsp]") {
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+
+    Buffer& scratch = bufferList.CreateBuffer("scratch"); // no path
+    (void)scratch;
+
+    const std::filesystem::path loadingPath = std::filesystem::temp_directory_path() / "ned-lsp-background-sync-loading-test.c";
+    Buffer&                     loading     = bufferList.OpenOrCreateFile(loadingPath);
+    loading.MarkLoading();
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "c", eventLoop, client);
+
+    ned::editor::lsp::SyncBackgroundBuffers(bufferList, manager); // must not crash and must not sync either buffer
+
+    REQUIRE(NoFrameArrives(server.serverStdinRead));
+}
+
+TEST_CASE("SyncBackgroundBuffers is a no-op entirely when disabled", "[Lsp]") {
+    LspBackgroundSyncGuard guard;
+    BufferList              bufferList;
+    ned::ui::EventLoop      eventLoop;
+    LspManager              manager(bufferList, eventLoop);
+
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-background-sync-disabled-test.c";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "c", eventLoop, client);
+
+    ned::editor::lsp::SetLspBackgroundSyncEnabled(false);
+    ned::editor::lsp::SyncBackgroundBuffers(bufferList, manager);
+
+    REQUIRE(NoFrameArrives(server.serverStdinRead));
 }
