@@ -334,11 +334,81 @@ void LspManager::SyncBuffer(text::Buffer& buffer, const std::string& language) {
         return; // a scratch buffer has no URI to tell a server about
     }
 
+    primaryServerKey_[&buffer] = language;                          // see PrimarySyncState's own doc comment
     SyncToServer(buffer, language, language);                       // primary language server
     SyncToServer(buffer, std::string(kProseLanguageKey), language); // prose checker, independent of the above
 }
 
+void LspManager::SyncEmbeddedDocuments(text::Buffer& buffer, const std::vector<EmbeddedDocumentSync>& documents) {
+    if (!buffer.Path()) {
+        return; // a scratch buffer has no URI to tell a server about
+    }
+
+    std::unordered_set<std::string> desiredKeys;
+    for (const EmbeddedDocumentSync& document : documents) {
+        desiredKeys.insert(document.language);
+        embeddedOwnedRanges_[&buffer][document.language] = document.ownedRanges;
+        SyncTextToServer(buffer, document.language, document.language, document.documentText);
+    }
+
+    // Tear down any server key this buffer was previously embedded-synced
+    // to but that documents no longer contains -- its only region was
+    // deleted (or the buffer switched to a mode/state with none at all).
+    // Left running, it would keep reporting stale diagnostics for content
+    // that no longer exists in the buffer.
+    bool diagnosticsChanged = false;
+    for (const std::string& key : embeddedServerKeys_[&buffer]) {
+        if (desiredKeys.contains(key)) {
+            continue; // still wanted -- SyncTextToServer above already handled it
+        }
+        if (const auto bufferIt = bufferState_.find(&buffer); bufferIt != bufferState_.end()) {
+            if (const auto stateIt = bufferIt->second.find(key); stateIt != bufferIt->second.end()) {
+                if (stateIt->second.opened) {
+                    if (LspClient* client = ExistingClientForLanguage(key)) {
+                        client->SendNotification("textDocument/didClose", {{"textDocument", {{"uri", stateIt->second.uri}}}});
+                    }
+                }
+                bufferIt->second.erase(stateIt);
+                if (bufferIt->second.empty()) {
+                    bufferState_.erase(bufferIt);
+                }
+            }
+        }
+        if (const auto ownedIt = embeddedOwnedRanges_.find(&buffer); ownedIt != embeddedOwnedRanges_.end()) {
+            ownedIt->second.erase(key);
+        }
+        if (const auto diagIt = diagnosticsBySource_.find(&buffer); diagIt != diagnosticsBySource_.end()) {
+            if (diagIt->second.erase(key) > 0) {
+                diagnosticsChanged = true;
+            }
+        }
+    }
+    embeddedServerKeys_[&buffer] = std::move(desiredKeys);
+
+    if (diagnosticsChanged) {
+        PushMergedDiagnostics(buffer);
+    }
+}
+
+std::vector<std::string> LspManager::ActiveServerKeysForBuffer(const text::Buffer& buffer) const {
+    std::vector<std::string> keys;
+    const auto               it = bufferState_.find(const_cast<text::Buffer*>(&buffer));
+    if (it == bufferState_.end()) {
+        return keys;
+    }
+    keys.reserve(it->second.size());
+    for (const auto& [serverKey, state] : it->second) {
+        keys.push_back(serverKey);
+    }
+    return keys;
+}
+
 void LspManager::SyncToServer(text::Buffer& buffer, const std::string& serverKey, const std::string& languageId) {
+    SyncTextToServer(buffer, serverKey, languageId, buffer.Text());
+}
+
+void LspManager::SyncTextToServer(text::Buffer& buffer, const std::string& serverKey, const std::string& languageId,
+                                  const std::string& documentText) {
     LspClient* client = ClientForLanguage(serverKey);
     if (!client) {
         return; // nothing configured/running for this server
@@ -374,7 +444,7 @@ void LspManager::SyncToServer(text::Buffer& buffer, const std::string& serverKey
                                                                   {"uri", state.uri},
                                                                   {"languageId", languageId},
                                                                   {"version", state.version},
-                                                                  {"text", buffer.Text()},
+                                                                  {"text", documentText},
                                                               }},
                                                          });
         state.opened               = true;
@@ -389,22 +459,22 @@ void LspManager::SyncToServer(text::Buffer& buffer, const std::string& serverKey
     ++state.version;
     client->SendNotification("textDocument/didChange", {
                                                            {"textDocument", {{"uri", state.uri}, {"version", state.version}}},
-                                                           {"contentChanges", Json::array({{{"text", buffer.Text()}}})},
+                                                           {"contentChanges", Json::array({{{"text", documentText}}})},
                                                        });
     state.lastSyncedGeneration = buffer.ContentGeneration();
 }
 
 LspManager::BufferSyncState* LspManager::PrimarySyncState(text::Buffer& buffer) {
-    const auto it = bufferState_.find(&buffer);
-    if (it == bufferState_.end()) {
+    const auto keyIt = primaryServerKey_.find(&buffer);
+    if (keyIt == primaryServerKey_.end()) {
         return nullptr;
     }
-    for (auto& [serverKey, state] : it->second) {
-        if (serverKey != kProseLanguageKey) {
-            return &state;
-        }
+    const auto bufferIt = bufferState_.find(&buffer);
+    if (bufferIt == bufferState_.end()) {
+        return nullptr;
     }
-    return nullptr;
+    const auto stateIt = bufferIt->second.find(keyIt->second);
+    return stateIt != bufferIt->second.end() ? &stateIt->second : nullptr;
 }
 
 LspManager::BufferSyncState* LspManager::ResolveSyncState(text::Buffer& buffer, const std::string& serverKey) {
@@ -546,6 +616,9 @@ void LspManager::NotifyBufferClosed(text::Buffer& buffer) {
     }
     diagnosticsBySource_.erase(&buffer);
     diagnosticsDebounceTimers_.erase(&buffer); // cancels a pending timer before it can fire against a dead buffer
+    primaryServerKey_.erase(&buffer);
+    embeddedServerKeys_.erase(&buffer);
+    embeddedOwnedRanges_.erase(&buffer);
 }
 
 void LspManager::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
@@ -600,6 +673,29 @@ void LspManager::HandlePublishDiagnostics(const Json& params, const std::string&
             });
         }
     }
+    // embedded-language-documents follow-up: an embedded server (one with an
+    // owned-ranges record) only ever legitimately reports within its own
+    // owned regions -- a padded/blanked region should tokenize as inert
+    // whitespace, so a diagnostic starting outside every owned range is
+    // either a rare parser edge case at a padding boundary or a server
+    // ignoring content it wasn't asked about. Dropped defensively rather
+    // than surfaced against the wrong language's chrome. No effect on the
+    // primary language or kProseLanguageKey, neither of which ever has an
+    // owned-ranges entry (they own the whole buffer).
+    if (const auto ownedIt = embeddedOwnedRanges_.find(buffer); ownedIt != embeddedOwnedRanges_.end()) {
+        if (const auto rangeIt = ownedIt->second.find(language); rangeIt != ownedIt->second.end()) {
+            const std::vector<std::pair<std::size_t, std::size_t>>& ranges = rangeIt->second;
+            std::erase_if(diagnostics, [&ranges](const text::Buffer::Diagnostic& diagnostic) {
+                for (const auto& range : ranges) {
+                    if (diagnostic.startByte >= range.first && diagnostic.startByte < range.second) {
+                        return false;
+                    }
+                }
+                return true;
+            });
+        }
+    }
+
     // prose-checking follow-up: this server's own full current diagnostic
     // set for buffer replaces only its own slice -- another server's slice
     // (recorded independently the same way) is untouched. PushMergedDiagnostics
@@ -672,8 +768,8 @@ void LspManager::HandleProgress(const std::string& language, const Json& params)
     SetBackgroundActivityDetail(kLspActivity, std::move(detail));
 }
 
-void LspManager::RequestHover(text::Buffer& buffer, std::size_t byteOffset, HoverCallback callback) {
-    BufferSyncState* state = PrimarySyncState(buffer);
+void LspManager::RequestHover(text::Buffer& buffer, std::size_t byteOffset, HoverCallback callback, const std::string& serverKey) {
+    BufferSyncState* state = ResolveSyncState(buffer, serverKey);
     if (!state || !state->opened) {
         callback(std::nullopt); // never synced to a server -- nothing to ask
         return;
@@ -705,8 +801,8 @@ void LspManager::RequestHover(text::Buffer& buffer, std::size_t byteOffset, Hove
                         });
 }
 
-void LspManager::RequestCompletion(text::Buffer& buffer, std::size_t byteOffset, CompletionCallback callback) {
-    BufferSyncState* state = PrimarySyncState(buffer);
+void LspManager::RequestCompletion(text::Buffer& buffer, std::size_t byteOffset, CompletionCallback callback, const std::string& serverKey) {
+    BufferSyncState* state = ResolveSyncState(buffer, serverKey);
     if (!state || !state->opened) {
         callback({});
         return;
@@ -841,8 +937,8 @@ void LspManager::ExecuteCommand(text::Buffer& buffer, const std::string& serverK
                         });
 }
 
-void LspManager::RequestDefinition(text::Buffer& buffer, std::size_t byteOffset, DefinitionCallback callback) {
-    BufferSyncState* state = PrimarySyncState(buffer);
+void LspManager::RequestDefinition(text::Buffer& buffer, std::size_t byteOffset, DefinitionCallback callback, const std::string& serverKey) {
+    BufferSyncState* state = ResolveSyncState(buffer, serverKey);
     if (!state || !state->opened) {
         callback({});
         return;
@@ -910,8 +1006,9 @@ void LspManager::RequestSwitchSourceHeader(text::Buffer& buffer, SwitchHeaderCal
                         });
 }
 
-void LspManager::RequestRename(text::Buffer& buffer, std::size_t byteOffset, const std::string& newName, RenameCallback callback) {
-    BufferSyncState* state = PrimarySyncState(buffer);
+void LspManager::RequestRename(text::Buffer& buffer, std::size_t byteOffset, const std::string& newName, RenameCallback callback,
+                               const std::string& serverKey) {
+    BufferSyncState* state = ResolveSyncState(buffer, serverKey);
     if (!state || !state->opened) {
         callback(std::nullopt);
         return;

@@ -115,3 +115,42 @@ TEST_CASE("CollectInjectedHighlightSpans resolves a grammar-only sub-language (m
     REQUIRE(boldOffset != std::string::npos);
     REQUIRE(HasSpanContaining(spans, boldOffset, SyntaxClass::Strong));
 }
+
+TEST_CASE("CollectInjectionRegions returns raw byte ranges with canonicalized language names, independent of highlighting",
+          "[Injection]") {
+    const Language    language = *LanguageByName("json");
+    Parser            parser(language);
+    const std::string text = R"({"a": "def f(): pass", "b": "x = 1"})";
+    Tree              tree = parser.Parse(text);
+    Query             injectionQuery(
+        language, R"(((pair value: (string (string_content) @injection.content)) (#set! injection.language "py")))");
+
+    const std::vector<InjectionRegion> regions = CollectInjectionRegions(tree.RootNode(), text, injectionQuery);
+    REQUIRE(regions.size() == 2);
+    for (const InjectionRegion& region : regions) {
+        // "py" canonicalizes to "python" (CanonicalEmbeddedLanguageName's
+        // alias table) -- confirms this function canonicalizes, unlike
+        // ResolveEmbeddedLanguageHighlight's caller-side canonicalization,
+        // which this function has no need of at all (no HighlightFunction
+        // resolution happens here).
+        REQUIRE(region.language == "python");
+        REQUIRE(region.startByte < region.endByte);
+        REQUIRE(region.endByte <= text.size());
+    }
+}
+
+TEST_CASE("CollectInjectionRegions reports a region even for a language with no bundled Mode", "[Injection]") {
+    // Unlike CollectInjectedHighlightSpans (which drops an unresolvable
+    // language since it has no HighlightFunction to run), CollectInjectionRegions
+    // has no such dependency -- it should still report the byte range.
+    const Language    language = *LanguageByName("json");
+    Parser            parser(language);
+    const std::string text = R"({"a": "whatever"})";
+    Tree              tree = parser.Parse(text);
+    Query             injectionQuery(language, R"(((pair value: (string (string_content) @injection.content))
+                                                       (#set! injection.language "notarealthing")))");
+
+    const std::vector<InjectionRegion> regions = CollectInjectionRegions(tree.RootNode(), text, injectionQuery);
+    REQUIRE(regions.size() == 1);
+    REQUIRE(regions[0].language == "notarealthing");
+}

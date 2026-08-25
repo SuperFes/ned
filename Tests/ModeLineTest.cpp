@@ -4,6 +4,7 @@
 #include <chrono>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 #include <thread>
 
@@ -59,6 +60,41 @@ void RegisterFakeRunningClient(ned::editor::lsp::LspManager& manager, const std:
     ::close(clientReadsHere[1]);
     ::close(clientWritesHere[0]);
 }
+
+// embedded-language-documents follow-up: unlike RegisterFakeRunningClient
+// above (whose own doc comment says "nothing read from or written to it
+// here"), a test that calls SyncBuffer/SyncEmbeddedDocuments makes the
+// client send a real textDocument/didOpen notification -- writing into a
+// pipe whose read end RegisterFakeRunningClient already closed raises
+// SIGPIPE and kills the whole test binary (confirmed live: this exact
+// mismatch did precisely that). Mirrors LspManagerTest.cpp's own FakeServer:
+// keeps both fds open (RAII-closed on destruction) so a real didOpen write
+// has somewhere to land.
+struct FakeServer {
+    int serverStdinRead;
+    int serverStdoutWrite;
+
+    FakeServer(int readFd, int writeFd) : serverStdinRead(readFd), serverStdoutWrite(writeFd) {
+    }
+    ~FakeServer() {
+        ::close(serverStdoutWrite);
+        ::close(serverStdinRead);
+    }
+    FakeServer(const FakeServer&)            = delete;
+    FakeServer& operator=(const FakeServer&) = delete;
+    FakeServer(FakeServer&&)                 = default;
+
+    static FakeServer Create(ned::editor::lsp::LspManager& manager, const std::string& language, ned::ui::EventLoop& eventLoop) {
+        int clientWritesHere[2];
+        int clientReadsHere[2];
+        REQUIRE(::pipe(clientWritesHere) == 0);
+        REQUIRE(::pipe(clientReadsHere) == 0);
+        auto client = std::make_unique<ned::editor::lsp::LspClient>(
+            ned::editor::lsp::Transport(clientReadsHere[0], clientWritesHere[1]), eventLoop);
+        manager.SetClientForTesting(language, std::move(client));
+        return FakeServer(clientWritesHere[0], clientReadsHere[1]);
+    }
+};
 
 } // namespace
 
@@ -351,6 +387,99 @@ TEST_CASE("ModeLine shows a distinct glyph for a spawn failure, not the running 
     REQUIRE(row.find("ned-fake-lsp") != std::string::npos);
 
     ned::editor::lsp::SetLspServerCommand("modeline-spawn-fail-lang", {}); // clean up global config state for other tests
+}
+
+TEST_CASE("ModeLine renders the single-glyph indicator unchanged when only one server is active for the buffer",
+          "[ModeLine][EmbeddedDocuments]") {
+    // Regression guard for the embedded-language-documents follow-up:
+    // ActiveServerKeysForBuffer's size must stay <=1 for an ordinary buffer
+    // with no embedded regions, so this renders byte-for-byte identically to
+    // "ModeLine shows a static idle indicator..." above.
+    ned::text::BufferList        bufferList;
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::lsp::LspManager manager(bufferList, eventLoop);
+    FakeServer                   server = FakeServer::Create(manager, "c", eventLoop);
+
+    ned::text::Buffer& buffer = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-modeline-single-server-test.c");
+    manager.SyncBuffer(buffer, "c");
+
+    ned::ui::ActiveBuffer activeBuffer(buffer);
+    ned::editor::Mode     mode  = ned::editor::CMode();
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    ned::ui::ModeLine     modeLine(activeBuffer, mode, theme);
+    modeLine.SetLspManager(&manager);
+
+    // Wide enough for the full temp-directory buffer path (much longer than
+    // the short "main.c" name the pre-existing single-glyph tests use) --
+    // same reasoning as the spawn-failure test above.
+    ned::ui::Screen screen = MakeScreen(200, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 199, .y_min = 0, .y_max = 0});
+    modeLine.Paint(canvas);
+
+    const std::string row = RowText(screen, 0, 200);
+    REQUIRE(row.find("LSP") != std::string::npos);
+    REQUIRE(row.find("●") != std::string::npos);
+    REQUIRE(row.find("c ●") == std::string::npos); // the multi-glyph "<key> <glyph>" shape must not appear here
+}
+
+TEST_CASE("ModeLine shows one glyph per active server when more than one is synced for the buffer",
+          "[ModeLine][EmbeddedDocuments]") {
+    ned::text::BufferList        bufferList;
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::lsp::LspManager manager(bufferList, eventLoop);
+    FakeServer                   htmlServer = FakeServer::Create(manager, "html", eventLoop);
+    FakeServer                   jsServer   = FakeServer::Create(manager, "javascript", eventLoop);
+
+    ned::text::Buffer& buffer =
+        bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-modeline-multi-server-test.html");
+    manager.SyncBuffer(buffer, "html");
+    manager.SyncEmbeddedDocuments(buffer, {ned::editor::lsp::LspManager::EmbeddedDocumentSync{
+                                              .language = "javascript", .documentText = "x", .ownedRanges = {{0, 1}}}});
+
+    ned::ui::ActiveBuffer activeBuffer(buffer);
+    ned::editor::Mode     mode  = ned::editor::HtmlMode();
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    ned::ui::ModeLine     modeLine(activeBuffer, mode, theme);
+    modeLine.SetLspManager(&manager);
+
+    ned::ui::Screen screen = MakeScreen(200, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 199, .y_min = 0, .y_max = 0});
+    modeLine.Paint(canvas);
+
+    const std::string row = RowText(screen, 0, 200);
+    REQUIRE(row.find("html") != std::string::npos);
+    REQUIRE(row.find("javascript") != std::string::npos);
+
+    std::size_t dotCount = 0;
+    for (std::size_t pos = row.find("\xE2\x97\x8F"); pos != std::string::npos; pos = row.find("\xE2\x97\x8F", pos + 1)) {
+        ++dotCount;
+    }
+    REQUIRE(dotCount == 2); // one running-dot glyph per active server
+}
+
+TEST_CASE("ModeLine shows the embedded language at point only while SetLanguageAtPointProvider reports one",
+          "[ModeLine][EmbeddedDocuments]") {
+    ned::text::Buffer     buffer("index.html", ned::text::Rope("<script></script>"));
+    ned::ui::ActiveBuffer activeBuffer(buffer);
+    ned::editor::Mode     mode  = ned::editor::HtmlMode();
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    ned::ui::ModeLine     modeLine(activeBuffer, mode, theme);
+
+    ned::ui::Screen screen = MakeScreen(60, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 0});
+
+    // No provider wired yet -- same "safe no-op until wired" default every
+    // other Set* hook in this codebase has.
+    modeLine.Paint(canvas);
+    REQUIRE(RowText(screen, 0, 60).find("[javascript]") == std::string::npos);
+
+    modeLine.SetLanguageAtPointProvider([] { return std::optional<std::string>("javascript"); });
+    modeLine.Paint(canvas);
+    REQUIRE(RowText(screen, 0, 60).find("[javascript]") != std::string::npos);
+
+    modeLine.SetLanguageAtPointProvider([] { return std::optional<std::string>(); });
+    modeLine.Paint(canvas);
+    REQUIRE(RowText(screen, 0, 60).find("[javascript]") == std::string::npos); // back to nothing extra
 }
 
 TEST_CASE("ModeLine shows a live clock indicator in org-mode while a clock is running", "[ModeLine]") {

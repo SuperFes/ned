@@ -1359,3 +1359,255 @@ TEST_CASE("SyncBuffer never opens the prose checker for a binary buffer, but the
 
     REQUIRE(NoFrameArrives(proseServer.serverStdinRead));
 }
+
+// embedded-language-documents follow-up: below this point, tests for
+// SyncEmbeddedDocuments, the PrimarySyncState fix it required, diagnostics
+// filtering by owned range, and serverKey routing on the four requests that
+// previously only ever resolved to PrimarySyncState.
+
+TEST_CASE("SyncEmbeddedDocuments opens an embedded server independently of the primary, sending the given text verbatim",
+          "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-embedded-open-test.html";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("<script>let x = 1;</script>");
+
+    LspClient* htmlClient = nullptr;
+    LspClient* jsClient   = nullptr;
+    FakeServer htmlServer = FakeServer::Create(manager, "html", eventLoop, htmlClient);
+    FakeServer jsServer   = FakeServer::Create(manager, "javascript", eventLoop, jsClient);
+
+    manager.SyncBuffer(buffer, "html");
+    (void)ReadRawFrame(htmlServer.serverStdinRead); // drain html's own didOpen
+
+    REQUIRE(NoFrameArrives(jsServer.serverStdinRead)); // not yet embedded-synced
+
+    const std::string paddedText = "        let x = 1;          "; // stands in for real padding -- content unimportant here
+    manager.SyncEmbeddedDocuments(
+        buffer, {LspManager::EmbeddedDocumentSync{.language = "javascript", .documentText = paddedText, .ownedRanges = {{8, 19}}}});
+
+    const std::string raw    = ReadRawFrame(jsServer.serverStdinRead);
+    const Json        opened = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(opened["method"] == "textDocument/didOpen");
+    REQUIRE(opened["params"]["textDocument"]["text"] == paddedText);
+    REQUIRE(opened["params"]["textDocument"]["languageId"] == "javascript");
+
+    const auto activeKeys = manager.ActiveServerKeysForBuffer(buffer);
+    REQUIRE(std::find(activeKeys.begin(), activeKeys.end(), "html") != activeKeys.end());
+    REQUIRE(std::find(activeKeys.begin(), activeKeys.end(), "javascript") != activeKeys.end());
+}
+
+TEST_CASE("SyncEmbeddedDocuments tears down a server key whose region disappeared: didClose sent, its diagnostics dropped",
+          "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-embedded-teardown-test.html";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("<script>let x = 1;</script>");
+
+    LspClient* htmlClient = nullptr;
+    LspClient* jsClient   = nullptr;
+    FakeServer htmlServer = FakeServer::Create(manager, "html", eventLoop, htmlClient);
+    FakeServer jsServer   = FakeServer::Create(manager, "javascript", eventLoop, jsClient);
+
+    manager.SyncBuffer(buffer, "html");
+    (void)ReadRawFrame(htmlServer.serverStdinRead);
+    manager.SyncEmbeddedDocuments(
+        buffer, {LspManager::EmbeddedDocumentSync{.language = "javascript", .documentText = "let x = 1;", .ownedRanges = {{0, 10}}}});
+    (void)ReadRawFrame(jsServer.serverStdinRead); // drain didOpen
+
+    // A javascript diagnostic lands while the region still exists.
+    const Json diagnosticsParams = {
+        {"uri", "file://" + path.string()},
+        {"diagnostics", Json::array({{{"range", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 3}}}}},
+                                      {"severity", 1},
+                                      {"message", "unused variable"}}})},
+    };
+    jsClient->DispatchFrame(Json{{"jsonrpc", "2.0"}, {"method", "textDocument/publishDiagnostics"}, {"params", diagnosticsParams}}.dump());
+    WaitForDiagnosticCount(eventLoop, buffer, 1);
+
+    // The <script> block is gone -- the next sync reports no javascript document at all.
+    manager.SyncEmbeddedDocuments(buffer, {});
+
+    const std::string closeRaw = ReadRawFrame(jsServer.serverStdinRead);
+    const Json        closed   = Json::parse(closeRaw.substr(closeRaw.find("\r\n\r\n") + 4));
+    REQUIRE(closed["method"] == "textDocument/didClose");
+
+    WaitForDiagnosticCount(eventLoop, buffer, 0); // the stale javascript diagnostic must not linger
+
+    const auto activeKeys = manager.ActiveServerKeysForBuffer(buffer);
+    REQUIRE(std::find(activeKeys.begin(), activeKeys.end(), "javascript") == activeKeys.end());
+    REQUIRE(std::find(activeKeys.begin(), activeKeys.end(), "html") != activeKeys.end()); // primary untouched
+}
+
+TEST_CASE(
+    "PrimarySyncState fix regression: with host, prose, and an embedded key all synced, a default-serverKey request still "
+    "resolves to the host server",
+    "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-primary-ambiguity-test.html";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("<script>let x = 1;</script>");
+
+    LspClient* htmlClient  = nullptr;
+    LspClient* proseClient = nullptr;
+    LspClient* jsClient    = nullptr;
+    FakeServer htmlServer  = FakeServer::Create(manager, "html", eventLoop, htmlClient);
+    FakeServer proseServer = FakeServer::Create(manager, std::string(kProseLanguageKey), eventLoop, proseClient);
+    FakeServer jsServer    = FakeServer::Create(manager, "javascript", eventLoop, jsClient);
+
+    manager.SyncBuffer(buffer, "html"); // primary ("html") + prose
+    manager.SyncEmbeddedDocuments(
+        buffer, {LspManager::EmbeddedDocumentSync{.language = "javascript", .documentText = "let x = 1;", .ownedRanges = {{0, 10}}}});
+    (void)ReadRawFrame(htmlServer.serverStdinRead);
+    (void)ReadRawFrame(proseServer.serverStdinRead);
+    (void)ReadRawFrame(jsServer.serverStdinRead);
+
+    // Default (empty) serverKey must resolve to "html" -- with three
+    // simultaneous bufferState_ entries (html, prose, javascript), the old
+    // "whichever entry isn't kProseLanguageKey" scan could just as easily
+    // have picked "javascript" first, silently sending a hover request at
+    // the wrong server.
+    manager.RequestHover(buffer, 0, [](std::optional<std::string>) {});
+    const std::string raw = ReadRawFrame(htmlServer.serverStdinRead);
+    REQUIRE(raw.find("textDocument/hover") != std::string::npos);
+    REQUIRE(NoFrameArrives(proseServer.serverStdinRead));
+    REQUIRE(NoFrameArrives(jsServer.serverStdinRead));
+}
+
+TEST_CASE("HandlePublishDiagnostics drops an embedded server's diagnostic whose start falls outside every owned range",
+          "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-embedded-diag-filter-test.html";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("<div></div><script>let x = 1;</script>");
+
+    LspClient* jsClient = nullptr;
+    FakeServer jsServer = FakeServer::Create(manager, "javascript", eventLoop, jsClient);
+    // Owned range covers only the "let x = 1;" content (offsets 20..30 in
+    // the buffer above); everything else is padding as far as javascript is
+    // concerned.
+    manager.SyncEmbeddedDocuments(
+        buffer, {LspManager::EmbeddedDocumentSync{.language = "javascript", .documentText = buffer.Text(), .ownedRanges = {{20, 30}}}});
+    (void)ReadRawFrame(jsServer.serverStdinRead);
+
+    const Json diagnosticsParams = {
+        {"uri", "file://" + path.string()},
+        {"diagnostics",
+         Json::array({
+             // Inside the owned range -- kept.
+             {{"range", {{"start", {{"line", 0}, {"character", 20}}}, {"end", {{"line", 0}, {"character", 23}}}}},
+              {"severity", 1},
+              {"message", "kept: inside owned range"}},
+             // Outside the owned range (in the padded <div></div> prefix) -- dropped.
+             {{"range", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 5}}}}},
+              {"severity", 1},
+              {"message", "dropped: outside owned range"}},
+         })},
+    };
+    jsClient->DispatchFrame(Json{{"jsonrpc", "2.0"}, {"method", "textDocument/publishDiagnostics"}, {"params", diagnosticsParams}}.dump());
+    WaitForDiagnosticCount(eventLoop, buffer, 1);
+
+    REQUIRE(buffer.Diagnostics()[0].message == "kept: inside owned range");
+}
+
+TEST_CASE("LspManager::RequestHover with an explicit serverKey routes to that connection, not the primary one", "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-hover-serverkey-test.html";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("<script>let x = 1;</script>");
+
+    LspClient* htmlClient = nullptr;
+    LspClient* jsClient   = nullptr;
+    FakeServer htmlServer = FakeServer::Create(manager, "html", eventLoop, htmlClient);
+    FakeServer jsServer   = FakeServer::Create(manager, "javascript", eventLoop, jsClient);
+
+    manager.SyncBuffer(buffer, "html");
+    manager.SyncEmbeddedDocuments(
+        buffer, {LspManager::EmbeddedDocumentSync{.language = "javascript", .documentText = "let x = 1;", .ownedRanges = {{0, 10}}}});
+    (void)ReadRawFrame(htmlServer.serverStdinRead);
+    (void)ReadRawFrame(jsServer.serverStdinRead);
+
+    bool                       invoked = false;
+    std::optional<std::string> gotText;
+    manager.RequestHover(
+        buffer, 0, [&](std::optional<std::string> text) {
+            invoked = true;
+            gotText = std::move(text);
+        },
+        "javascript");
+
+    REQUIRE(NoFrameArrives(htmlServer.serverStdinRead)); // never asked html
+
+    const std::string raw = ReadRawFrame(jsServer.serverStdinRead);
+    REQUIRE(raw.find("textDocument/hover") != std::string::npos);
+    const Json request = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+
+    const Json response = {
+        {"jsonrpc", "2.0"},
+        {"id", request["id"]},
+        {"result", {{"contents", "let x: number"}}},
+    };
+    jsClient->DispatchFrame(response.dump());
+
+    REQUIRE(invoked);
+    REQUIRE(gotText == std::optional<std::string>("let x: number"));
+}
+
+TEST_CASE("LspManager::RequestDefinition with an explicit serverKey routes to that connection, not the primary one", "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-definition-serverkey-test.html";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("<script>call_site();</script>");
+
+    LspClient* htmlClient = nullptr;
+    LspClient* jsClient   = nullptr;
+    FakeServer htmlServer = FakeServer::Create(manager, "html", eventLoop, htmlClient);
+    FakeServer jsServer   = FakeServer::Create(manager, "javascript", eventLoop, jsClient);
+
+    manager.SyncBuffer(buffer, "html");
+    manager.SyncEmbeddedDocuments(
+        buffer, {LspManager::EmbeddedDocumentSync{.language = "javascript", .documentText = "call_site();", .ownedRanges = {{0, 12}}}});
+    (void)ReadRawFrame(htmlServer.serverStdinRead);
+    (void)ReadRawFrame(jsServer.serverStdinRead);
+
+    bool                                      invoked = false;
+    std::vector<LspManager::ResolvedLocation> got;
+    manager.RequestDefinition(
+        buffer, 0,
+        [&](std::vector<LspManager::ResolvedLocation> locations) {
+            invoked = true;
+            got     = std::move(locations);
+        },
+        "javascript");
+
+    REQUIRE(NoFrameArrives(htmlServer.serverStdinRead));
+
+    const std::string raw = ReadRawFrame(jsServer.serverStdinRead);
+    REQUIRE(raw.find("textDocument/definition") != std::string::npos);
+    const Json request = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+
+    const std::filesystem::path definitionPath = std::filesystem::temp_directory_path() / "ned-lsp-manager-definition-serverkey-target.js";
+    const Json                  response       = {
+        {"jsonrpc", "2.0"},
+        {"id", request["id"]},
+        {"result", Json::array({{{"uri", "file://" + definitionPath.string()},
+                                 {"range", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 4}}}}}}})},
+    };
+    jsClient->DispatchFrame(response.dump());
+
+    REQUIRE(invoked);
+    REQUIRE(got.size() == 1);
+    REQUIRE(got[0].path == definitionPath);
+}

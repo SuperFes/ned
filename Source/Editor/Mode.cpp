@@ -991,6 +991,21 @@ Mode HtmlMode() {
         return spans;
     };
 
+    // embedded-language-documents follow-up: reuses the exact same
+    // parser/injectionQuery/sharedParse the highlight closure above already
+    // captures -- a second (cheap) query-match walk over the same
+    // already-parsed tree, not a second parse. This is what
+    // Editor/EmbeddedDocuments.h's BuildEmbeddedDocuments consumes to sync
+    // <script>/<style> content to real javascript/css LSP servers, distinct
+    // from the highlighting-only path above.
+    mode.embeddedRegions = [parser, injectionQuery, sharedParse](std::string_view bufferText) -> std::vector<InjectionRegion> {
+        const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
+        if (tree.IsNull()) {
+            return {};
+        }
+        return CollectInjectionRegions(tree.RootNode(), bufferText, *injectionQuery);
+    };
+
     return mode;
 }
 

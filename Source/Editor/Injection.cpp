@@ -68,6 +68,44 @@ namespace {
         return mode.highlight;
     }
 
+    // Shared by CollectInjectedHighlightSpans and CollectInjectionRegions: one
+    // raw (uncanonicalized) injection-language tag paired with its
+    // injection.content capture's byte range, per matched pattern instance
+    // that has both. A match missing either contributes nothing, same "host's
+    // own span/no region for that range" convention both public functions
+    // document.
+    struct RawInjectionMatch {
+        std::string                   languageTag; // as written in the query/#set!, not yet canonicalized
+        treesitter::QueryMatchCapture content;
+    };
+
+    std::vector<RawInjectionMatch> CollectRawInjectionMatches(const treesitter::Node& root, std::string_view bufferText,
+                                                              const treesitter::Query& injectionQuery) {
+        std::vector<RawInjectionMatch> matches;
+        for (const treesitter::QueryMatch& match : injectionQuery.Matches(root, bufferText)) {
+            std::optional<std::string_view>              language;
+            std::optional<treesitter::QueryMatchCapture> content;
+            for (const treesitter::QueryMatchCapture& capture : match.captures) {
+                if (!language && capture.name == "injection.language") {
+                    language = bufferText.substr(capture.startByte, capture.endByte - capture.startByte);
+                }
+                else if (!content && capture.name == "injection.content") {
+                    content = capture;
+                }
+            }
+            if (!language) {
+                if (const auto it = match.setDirectives.find("injection.language"); it != match.setDirectives.end()) {
+                    language = std::string_view(it->second);
+                }
+            }
+            if (!language || !content) {
+                continue;
+            }
+            matches.push_back(RawInjectionMatch{.languageTag = std::string(*language), .content = *content});
+        }
+        return matches;
+    }
+
 } // namespace
 
 const HighlightFunction* ResolveEmbeddedLanguageHighlight(std::string_view tag, EmbeddedLanguageCache& cache) {
@@ -89,31 +127,13 @@ const HighlightFunction* ResolveEmbeddedLanguageHighlight(std::string_view tag, 
 void CollectInjectedHighlightSpans(const treesitter::Node& root, std::string_view bufferText,
                                    const treesitter::Query& injectionQuery, EmbeddedLanguageCache& cache,
                                    std::vector<HighlightSpan>& spans) {
-    for (const treesitter::QueryMatch& match : injectionQuery.Matches(root, bufferText)) {
-        std::optional<std::string_view>              language;
-        std::optional<treesitter::QueryMatchCapture> content;
-        for (const treesitter::QueryMatchCapture& capture : match.captures) {
-            if (!language && capture.name == "injection.language") {
-                language = bufferText.substr(capture.startByte, capture.endByte - capture.startByte);
-            }
-            else if (!content && capture.name == "injection.content") {
-                content = capture;
-            }
-        }
-        if (!language) {
-            if (const auto it = match.setDirectives.find("injection.language"); it != match.setDirectives.end()) {
-                language = std::string_view(it->second);
-            }
-        }
-        if (!language || !content) {
-            continue;
-        }
-        const HighlightFunction* highlight = ResolveEmbeddedLanguageHighlight(*language, cache);
+    for (const RawInjectionMatch& match : CollectRawInjectionMatches(root, bufferText, injectionQuery)) {
+        const HighlightFunction* highlight = ResolveEmbeddedLanguageHighlight(match.languageTag, cache);
         if (!highlight) {
             continue;
         }
-        const std::size_t      start    = content->startByte;
-        const std::string_view codeText = bufferText.substr(start, content->endByte - start);
+        const std::size_t      start    = match.content.startByte;
+        const std::string_view codeText = bufferText.substr(start, match.content.endByte - start);
         for (const HighlightSpan& span : (*highlight)(codeText)) {
             spans.push_back(HighlightSpan{.startByte   = start + span.startByte,
                                           .endByte     = start + span.endByte,
@@ -121,6 +141,17 @@ void CollectInjectedHighlightSpans(const treesitter::Node& root, std::string_vie
                                           .captureId   = span.captureId});
         }
     }
+}
+
+std::vector<InjectionRegion> CollectInjectionRegions(const treesitter::Node& root, std::string_view bufferText,
+                                                     const treesitter::Query& injectionQuery) {
+    std::vector<InjectionRegion> regions;
+    for (const RawInjectionMatch& match : CollectRawInjectionMatches(root, bufferText, injectionQuery)) {
+        regions.push_back(InjectionRegion{.startByte = match.content.startByte,
+                                          .endByte   = match.content.endByte,
+                                          .language  = CanonicalEmbeddedLanguageName(match.languageTag)});
+    }
+    return regions;
 }
 
 } // namespace ned::editor

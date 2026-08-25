@@ -301,6 +301,32 @@ struct TestMarker {
 // test discovery configured for this mode," the standing convention.
 using TestDiscoveryFunction = std::function<std::vector<TestMarker>(std::string_view bufferText)>;
 
+// embedded-language-documents follow-up: one tree-sitter injection match's
+// resolved (host-buffer byte range, canonical target language) pair --
+// Injection.h's CollectInjectionRegions is what produces these. Lives here
+// (not Injection.h) so Mode::embeddedRegions below can name the type without
+// Mode.h depending on Injection.h -- the same reasoning ImportTarget/
+// SymbolMarker/TestMarker above are defined here rather than in whatever
+// consumes them.
+struct InjectionRegion {
+    std::size_t startByte;
+    std::size_t endByte;
+    std::string language; // canonical name, e.g. "javascript" -- see Injection.cpp's CanonicalEmbeddedLanguageName
+};
+
+// embedded-language-documents follow-up: given a buffer's full text, returns
+// every LSP-syncable embedded-language region in it (an HTML <script>/
+// <style> block's own content range). Distinct from HighlightFunction's own
+// injection handling (Injection.h's CollectInjectedHighlightSpans), which
+// produces colored spans, not byte ranges + language identity -- this is what
+// Editor/EmbeddedDocuments.h's BuildEmbeddedDocuments consumes to sync each
+// embedded language to its own real LSP server. Empty function (the default)
+// means this mode has no LSP-syncable embedded regions at all, same "empty
+// means not configured" convention as fold/importTarget/symbolKind/
+// testDiscovery above -- every bundled mode except html-mode leaves this
+// unset.
+using EmbeddedRegionFunction = std::function<std::vector<InjectionRegion>(std::string_view bufferText)>;
+
 struct Mode {
     std::string       name;
     Keymap            keymap;
@@ -350,6 +376,11 @@ struct Mode {
     // convention as everything above -- run-test-at-point reports it, and
     // BufferView's test gutter simply never activates.
     TestDiscoveryFunction testDiscovery;
+    // embedded-language-documents follow-up: empty function (the default)
+    // means this mode has no LSP-syncable embedded-language regions, same
+    // "empty means not configured" convention as everything above -- only
+    // html-mode sets this (see HtmlMode() in Mode.cpp).
+    EmbeddedRegionFunction embeddedRegions;
     // line-wrap follow-up: this mode's own default for whether BufferView
     // should soft-wrap long lines at word boundaries instead of scrolling
     // horizontally -- false (matching every bundled mode except the two

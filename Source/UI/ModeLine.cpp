@@ -75,9 +75,20 @@ void ModeLine::Paint(Canvas c) {
         }
     }
 
+    // embedded-language-documents follow-up: shown next to the mode name
+    // only while point sits inside an embedded region (e.g. "[javascript]"
+    // inside an HTML <script> block) -- nothing extra for the ordinary
+    // single-language case, no visual noise for the common path.
+    std::string embeddedLanguageSuffix;
+    if (!buffer.IsLoading() && languageAtPointProvider_) {
+        if (const std::optional<std::string> language = languageAtPointProvider_()) {
+            embeddedLanguageSuffix = " [" + *language + "]";
+        }
+    }
+
     const std::string text = buffer.IsLoading() ? "  " + buffer.Name() + loadingText
                                                 : "  " + modifiedMarker + buffer.Name() + "   L" + std::to_string(line + 1) +
-                                                      ":C" + std::to_string(col + 1) + "  (" + mode_.name + ")";
+                                                      ":C" + std::to_string(col + 1) + "  (" + mode_.name + ")" + embeddedLanguageSuffix;
 
     // background-activity-spinner follow-up: one column-per-entry cell list
     // instead of the raw byte string above, so the spinner's multi-byte
@@ -164,38 +175,93 @@ void ModeLine::Paint(Canvas c) {
     // configured" draws nothing, unchanged from before this follow-up.
     if (!lspActivityShown && lspManager_) {
         using Status = editor::lsp::LspManager::LspStatus;
-        const std::string languageKey = editor::LanguageKeyForMode(mode_);
-        std::string_view  glyph;
-        std::string        detail;
-        switch (lspManager_->StatusForLanguage(languageKey)) {
-            case Status::Running:
-                glyph = "●";
-                break;
-            case Status::SpawnFailed:
-                glyph  = "✕";
-                detail = lspManager_->SpawnFailureDetail(languageKey);
-                break;
-            case Status::Disconnected:
-                glyph  = "○";
-                detail = lspManager_->DisconnectReason(languageKey);
-                break;
-            case Status::NotConfigured:
-                break;
-        }
-        if (!glyph.empty()) {
-            columns.emplace_back(" ");
-            columns.emplace_back(" ");
-            columns.emplace_back("L");
-            columns.emplace_back("S");
-            columns.emplace_back("P");
-            columns.emplace_back(" ");
-            columns.emplace_back(glyph);
-            // mode-line-lsp-status-round-3 follow-up: same "detail text after
-            // a space" shape as the busy-activity block above.
-            if (!detail.empty()) {
+        // mode-line-lsp-status-round-3 follow-up: same "detail text after a
+        // space" shape reused by both the single-glyph and multi-glyph
+        // branches below.
+        const auto glyphAndDetailFor = [this](const std::string& key, std::string_view& glyph, std::string& detail) {
+            switch (lspManager_->StatusForLanguage(key)) {
+                case Status::Running:
+                    glyph = "●";
+                    break;
+                case Status::SpawnFailed:
+                    glyph  = "✕";
+                    detail = lspManager_->SpawnFailureDetail(key);
+                    break;
+                case Status::Disconnected:
+                    glyph  = "○";
+                    detail = lspManager_->DisconnectReason(key);
+                    break;
+                case Status::NotConfigured:
+                    break;
+            }
+        };
+
+        // embedded-language-documents follow-up: every server key currently
+        // synced for this buffer (host language, kProseLanguageKey if that's
+        // synced too, any embedded keys) -- iterated only when there's more
+        // than one, so the ordinary single-language case renders byte-for-
+        // byte identically to before this feature existed.
+        const std::vector<std::string> activeKeys = lspManager_->ActiveServerKeysForBuffer(buffer);
+
+        if (activeKeys.size() <= 1) {
+            const std::string languageKey = editor::LanguageKeyForMode(mode_);
+            std::string_view  glyph;
+            std::string       detail;
+            glyphAndDetailFor(languageKey, glyph, detail);
+            if (!glyph.empty()) {
                 columns.emplace_back(" ");
-                for (const char ch : detail) {
+                columns.emplace_back(" ");
+                columns.emplace_back("L");
+                columns.emplace_back("S");
+                columns.emplace_back("P");
+                columns.emplace_back(" ");
+                columns.emplace_back(glyph);
+                if (!detail.empty()) {
+                    columns.emplace_back(" ");
+                    for (const char ch : detail) {
+                        columns.emplace_back(1, ch);
+                    }
+                }
+            }
+        }
+        else {
+            // More than one server is active for this buffer -- one
+            // "<key> <glyph>[ <detail>]" segment per key, host language
+            // first, then every other key (kProseLanguageKey, embedded
+            // languages) sorted for a stable order.
+            const std::string        hostKey = editor::LanguageKeyForMode(mode_);
+            std::vector<std::string> remainder;
+            for (const std::string& key : activeKeys) {
+                if (key != hostKey) {
+                    remainder.push_back(key);
+                }
+            }
+            std::sort(remainder.begin(), remainder.end());
+            std::vector<std::string> ordered;
+            if (std::find(activeKeys.begin(), activeKeys.end(), hostKey) != activeKeys.end()) {
+                ordered.push_back(hostKey);
+            }
+            ordered.insert(ordered.end(), remainder.begin(), remainder.end());
+
+            for (const std::string& key : ordered) {
+                std::string_view glyph;
+                std::string      detail;
+                glyphAndDetailFor(key, glyph, detail);
+                if (glyph.empty()) {
+                    continue;
+                }
+                columns.emplace_back(" ");
+                columns.emplace_back(" ");
+                for (const char ch : key) {
                     columns.emplace_back(1, ch);
+                }
+                columns.emplace_back(" ");
+                columns.emplace_back(glyph);
+                if (!detail.empty()) {
+                    columns.emplace_back(" ");
+                    for (const char ch : detail) {
+                        columns.emplace_back(1, ch);
+                    }
                 }
             }
         }
@@ -227,6 +293,10 @@ void ModeLine::SetFocusProvider(std::function<bool()> provider) {
 
 void ModeLine::SetLspManager(editor::lsp::LspManager* lspManager) {
     lspManager_ = lspManager;
+}
+
+void ModeLine::SetLanguageAtPointProvider(std::function<std::optional<std::string>()> provider) {
+    languageAtPointProvider_ = std::move(provider);
 }
 
 } // namespace ned::ui

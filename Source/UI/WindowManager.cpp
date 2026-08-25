@@ -222,6 +222,10 @@ Pane::Pane(text::Buffer& buffer, text::KillRing& killRing, editor::RegisterTable
     // gradient while this pane's own BufferView holds the keyboard focus --
     // the raw pointer outlives modeLine_ (both are members of this Pane).
     modeLine_->SetFocusProvider([view = bufferView_.get()] { return view->Focused(); });
+    // embedded-language-documents follow-up: same raw-pointer-outlives
+    // reasoning as SetFocusProvider just above -- shows which embedded
+    // language (if any) governs this pane's buffer at its current point.
+    modeLine_->SetLanguageAtPointProvider([view = bufferView_.get()] { return view->EmbeddedLanguageAtPoint(); });
     bufferView_->SetMinimap(minimap_.get(), &scrollColumn_);
     // Minimap widget follow-up: exactly one of the two ever occupies row_'s
     // trailing column -- seeded here from the process-wide setting, kept in
