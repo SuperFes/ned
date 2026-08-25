@@ -6,6 +6,7 @@
 #include <unistd.h>
 
 #include "DiffPatch.h"
+#include "Editor/DiagnosticsLog.h"
 #include "Editor/ProjectRoot.h"
 #include "Editor/Tasks/TaskProcess.h"
 #include "Text/Buffer.h"
@@ -133,8 +134,13 @@ void VcsRunner::RunAndCollect(const std::string& key, const std::vector<std::str
                 running_.erase(key);
             });
     }
-    catch (const std::exception&) {
-        onDone({}, std::nullopt); // couldn't even spawn -- e.g. the configured executable isn't on $PATH
+    catch (const std::exception& e) {
+        // couldn't even spawn -- e.g. the configured executable isn't on
+        // $PATH. onDone's (string, optional<int>) signature has nowhere to
+        // carry e.what() through to the caller, so this is the one place
+        // that text is visible at all -- diagnostics-log-round-2 follow-up.
+        LogMessage(LogCategory::Vcs, LogSeverity::Error, std::string("failed to run VCS command: ") + e.what());
+        onDone({}, std::nullopt);
     }
 }
 

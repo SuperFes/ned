@@ -2,6 +2,7 @@
 
 #include <utility>
 
+#include "Editor/DiagnosticsLog.h"
 #include "TaskConfig.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
@@ -44,6 +45,14 @@ text::Buffer* TaskRunner::RunTask(const std::string& name) {
             [this, name, buffer](std::optional<int> exitCode) {
                 if (exitCode) {
                     buffer->AppendWhileReadOnly("\n[exited " + std::to_string(*exitCode) + "]\n");
+                    // diagnostics-log-round-2 follow-up: a durable record of
+                    // task failures alongside the buffer's own transient
+                    // output -- 0 is success, so only a nonzero exit is
+                    // logged.
+                    if (*exitCode != 0) {
+                        LogMessage(LogCategory::Task, LogSeverity::Error,
+                                   "task \"" + name + "\" exited " + std::to_string(*exitCode));
+                    }
                 }
                 else {
                     buffer->AppendWhileReadOnly("\n[cancelled]\n");
@@ -52,7 +61,9 @@ text::Buffer* TaskRunner::RunTask(const std::string& name) {
             });
     }
     catch (const std::exception& e) {
-        buffer->AppendWhileReadOnly(std::string("Failed to start task \"") + name + "\": " + e.what() + "\n");
+        const std::string message = "Failed to start task \"" + name + "\": " + e.what();
+        LogMessage(LogCategory::Task, LogSeverity::Error, message);
+        buffer->AppendWhileReadOnly(message + "\n");
     }
 
     return buffer;

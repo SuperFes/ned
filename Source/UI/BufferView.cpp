@@ -3768,8 +3768,8 @@ bool BufferView::RunCommandAndHandleOutcome(editor::CommandContext& context, con
         ran = invoke();
     }
     catch (const std::exception& e) {
-        statusMessage_ = e.what();
-        ran            = true; // a command did run, it just threw -- still "something happened"
+        ReportError(e.what());
+        ran = true; // a command did run, it just threw -- still "something happened"
     }
 
     // status-message-lifecycle follow-up: a real, invoked command (ran ==
@@ -3995,6 +3995,11 @@ void BufferView::EnsureStatusMessageFreshness() {
             statusMessageChangedAt_.reset();
         });
     }
+}
+
+void BufferView::ReportError(std::string message, editor::LogCategory category) {
+    editor::LogMessage(category, editor::LogSeverity::Error, message);
+    statusMessage_ = std::move(message);
 }
 
 void BufferView::RequestCompletionAtPoint() {
@@ -4684,7 +4689,7 @@ void BufferView::JumpToDefinition(const editor::lsp::LspManager::ResolvedLocatio
         ScrollToShowPoint();
     }
     catch (const std::exception& e) {
-        statusMessage_ = e.what();
+        ReportError(e.what());
     }
 }
 
@@ -4737,7 +4742,7 @@ void BufferView::OpenHeaderSourceCounterpart(const std::filesystem::path& path) 
         ScrollToShowPoint();
     }
     catch (const std::exception& e) {
-        statusMessage_ = e.what();
+        ReportError(e.what());
     }
 }
 
@@ -4834,7 +4839,7 @@ void BufferView::ApplyRename(const editor::lsp::LspManager::ResolvedRename& resu
         }
     }
     catch (const std::exception& e) {
-        statusMessage_ = std::string("Rename failed: ") + e.what();
+        ReportError(std::string("Rename failed: ") + e.what(), editor::LogCategory::Lsp);
         return;
     }
 
@@ -5649,7 +5654,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
                 statusMessage_ = "Saved theme to " + path.string();
             }
             catch (const std::exception& e) {
-                statusMessage_ = e.what();
+                ReportError(e.what());
             }
             return;
         // kmacro-start-macro/kmacro-end-or-call-macro follow-up: one-shot
@@ -6104,7 +6109,7 @@ void BufferView::HandleQueryReplaceKeyInner(const editor::KeyChord& chord) {
                     queryReplace_->ConfirmPattern();
                 }
                 catch (const editor::RegexPatternError& e) {
-                    statusMessage_ = std::string("Invalid regex: ") + e.what();
+                    ReportError(std::string("Invalid regex: ") + e.what());
                     return; // stays in EnteringPattern; don't overwrite the message below
                 }
             }
@@ -6152,7 +6157,7 @@ void BufferView::HandleQueryReplaceKey(const editor::KeyChord& chord) {
     }
     catch (const editor::RegexPatternError& e) {
         queryReplace_->Cancel();
-        statusMessage_ = std::string("Query replace: ") + e.what();
+        ReportError(std::string("Query replace: ") + e.what());
         EndInteractiveSession();
         return;
     }
@@ -6296,7 +6301,7 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
                 return;
             }
             catch (const std::exception& e) {
-                statusMessage_ = e.what();
+                ReportError(e.what());
             }
         }
         else if (inputMode_ == InputMode::SwitchToBuffer) {
@@ -6317,7 +6322,7 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
                 }
             }
             catch (const std::exception& e) {
-                statusMessage_ = e.what();
+                ReportError(e.what());
             }
         }
         else if (inputMode_ == InputMode::ProjectSearch) {
@@ -6335,7 +6340,7 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
                 }
             }
             catch (const editor::SearchPatternError& e) {
-                statusMessage_ = std::string("Invalid regex: ") + e.what();
+                ReportError(std::string("Invalid regex: ") + e.what());
             }
         }
         else if (inputMode_ == InputMode::StringRectangle) {
@@ -6640,7 +6645,7 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
                     statusMessage_ = "Scratch: " + input;
                 }
                 catch (const std::exception& e) {
-                    statusMessage_ = e.what();
+                    ReportError(e.what());
                 }
             }
         }
@@ -6824,7 +6829,7 @@ void BufferView::JumpToPathLine(const std::filesystem::path& path, std::size_t l
         ScrollToShowPoint();
     }
     catch (const std::exception& e) {
-        statusMessage_ = e.what();
+        ReportError(e.what());
     }
 }
 
@@ -7331,7 +7336,7 @@ void BufferView::RequestProjectFindReferences() {
         matches = editor::SearchDirectory(editor::ProjectRoot(), "\\b" + word + "\\b");
     }
     catch (const editor::SearchPatternError& e) {
-        statusMessage_ = std::string("Invalid regex: ") + e.what();
+        ReportError(std::string("Invalid regex: ") + e.what());
         return;
     }
 
@@ -7786,7 +7791,7 @@ void BufferView::OpenDetectedLink(const editor::link::DetectedLink& detected) {
         statusMessage_.clear();
     }
     catch (const std::exception& e) {
-        statusMessage_ = e.what();
+        ReportError(e.what());
     }
 }
 
@@ -8177,7 +8182,7 @@ void BufferView::HandleProjectReplaceKey(const editor::KeyChord& chord) {
                     projectReplace_->ConfirmPattern();
                 }
                 catch (const editor::SearchPatternError& e) {
-                    statusMessage_ = std::string("Invalid regex: ") + e.what();
+                    ReportError(std::string("Invalid regex: ") + e.what());
                     return; // stays in EnteringPattern; don't overwrite the message below
                 }
                 // Shown as soon as the pattern is confirmed -- while the
@@ -8223,7 +8228,7 @@ void BufferView::HandleProjectReplaceKey(const editor::KeyChord& chord) {
                                                    " file" + (summary.filesChanged == 1 ? "" : "s") + ".";
         }
         catch (const std::exception& e) {
-            statusMessage_ = std::string("Project replace: ") + e.what();
+            ReportError(std::string("Project replace: ") + e.what());
         }
         EndInteractiveSession();
     }
@@ -8620,7 +8625,7 @@ void BufferView::HandleConfirmOverwriteSaveKey(const editor::KeyChord& chord) {
             dispatcher_.Registry().Invoke("save-buffer-force", context);
         }
         catch (const std::exception& e) {
-            statusMessage_ = e.what();
+            ReportError(e.what());
         }
         return;
     }
@@ -8643,7 +8648,7 @@ void BufferView::HandleConfirmSaveWithConflictsKey(const editor::KeyChord& chord
             dispatcher_.Registry().Invoke("save-buffer-force", context);
         }
         catch (const std::exception& e) {
-            statusMessage_ = e.what();
+            ReportError(e.what());
         }
         return;
     }
@@ -8679,7 +8684,7 @@ void BufferView::HandleConfirmOpenBinaryKey(const editor::KeyChord& chord) {
             statusMessage_ = "Opened " + opened.Name();
         }
         catch (const std::exception& e) {
-            statusMessage_ = e.what();
+            ReportError(e.what());
         }
         return;
     }
@@ -8771,7 +8776,7 @@ void BufferView::HandleDeleteFileKey(const editor::KeyChord& chord) {
             }
         }
         catch (const std::exception& e) {
-            statusMessage_ = e.what();
+            ReportError(e.what());
         }
         EndInteractiveSession();
         return;
@@ -8853,7 +8858,7 @@ void BufferView::HandleRenameFileKey(const editor::KeyChord& chord) {
             }
         }
         catch (const std::exception& e) {
-            statusMessage_ = e.what();
+            ReportError(e.what());
         }
         EndInteractiveSession();
         return;
@@ -8972,7 +8977,7 @@ void BufferView::HandleRecoverFileKey(const editor::KeyChord& chord) {
             statusMessage_ = "Recovered " + recoverVersions_[recoverChoice_].label + " -- buffer is modified; save to keep it";
         }
         catch (const std::exception& e) {
-            statusMessage_ = e.what();
+            ReportError(e.what());
         }
         EndInteractiveSession();
         return;
@@ -9227,7 +9232,7 @@ void BufferView::HandleOrgCaptureKey(const editor::KeyChord& chord) {
         }
     }
     catch (const std::exception& e) {
-        statusMessage_ = e.what();
+        ReportError(e.what());
     }
     EndInteractiveSession();
 }
@@ -9365,7 +9370,7 @@ void BufferView::HandleProjectFindFileKey(const editor::KeyChord& chord) {
             statusMessage_ = "Opened " + opened.Name();
         }
         catch (const std::exception& e) {
-            statusMessage_ = e.what();
+            ReportError(e.what());
         }
         return;
     }
