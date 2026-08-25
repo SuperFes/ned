@@ -66,6 +66,17 @@ struct ExGlobalArgs {
 // start with a punctuation delimiter at all.
 [[nodiscard]] std::optional<ExGlobalArgs> ParseGlobalArgs(std::string_view rest);
 
+// Parses :m/:t's own destination-address argument -- the same single-address grammar a
+// range boundary uses ('.', '$', a decimal line number, '</'>), exposed standalone since
+// :m/:t take exactly one trailing address rather than a range. Returns the 0-based
+// *existing* line the address refers to (VimEngine's own execution logic is what turns
+// that into "insert after this line"). A leading "0" resolves the same as "1" (both to
+// line 0) -- real vim's own distinct "insert before the very first line" meaning for a
+// literal 0 is a documented v1 cut, not reproduced here. nullopt if text isn't a
+// well-formed address at all.
+[[nodiscard]] std::optional<std::size_t> ParseExAddress(std::string_view text, std::size_t currentLine, std::size_t lastLine,
+                                                        std::optional<ExRange> visualRange);
+
 } // namespace ned::editor::vim
 
 #endif // NED_EDITOR_VIM_VIMEXCOMMAND_H

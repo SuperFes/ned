@@ -3573,6 +3573,12 @@ bool BufferView::HandleVimKey(const editor::KeyChord& chord) {
         statusMessage_.clear();
     }
     ClampPointToNarrowing();
+    // Applied before ScrollToShowPoint() -- zz/zt/zb/C-e/C-y request an explicit topLine_
+    // independent of point, and ScrollToShowPoint() only nudges topLine_ far enough to
+    // keep point visible, so it leaves an already-visible point's explicit recenter alone.
+    if (const auto pendingTop = vimEngine_.TakePendingTopLine()) {
+        SetTopLine(*pendingTop);
+    }
     ScrollToShowPoint();
     return true;
 }

@@ -1,5 +1,8 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <filesystem>
+#include <fstream>
+
 #include "Editor/TabWidth.h"
 #include "Editor/Vim/VimEngine.h"
 #include "Text/Buffer.h"
@@ -7,6 +10,7 @@
 using ned::editor::KeyChord;
 using ned::editor::SpecialKey;
 using ned::editor::vim::Mode;
+using ned::editor::vim::PendingIntent;
 using ned::editor::vim::VimEngine;
 using ned::text::Buffer;
 
@@ -478,4 +482,437 @@ TEST_CASE("Insert-mode Ctrl-chords don't leak into ordinary typing/replay", "[Vi
     Feed(engine, buffer, "A");
     REQUIRE_FALSE(engine.HandleInsertModeChord(buffer, Ctrl(U'a')));
     REQUIRE(buffer.Text() == "text");
+}
+
+namespace {
+
+Buffer MakeNumberedLineBuffer(std::size_t lineCount) {
+    std::string text;
+    for (std::size_t i = 0; i < lineCount; ++i) {
+        text += "line" + std::to_string(i) + "\n";
+    }
+    return MakeBuffer(text);
+}
+
+std::size_t PointLine(Buffer& buffer) {
+    return buffer.Content().ByteOffsetToLine(buffer.Point());
+}
+
+} // namespace
+
+TEST_CASE("C-d/C-u scroll point by a half page", "[VimEngine]") {
+    Buffer    buffer = MakeNumberedLineBuffer(40);
+    VimEngine engine;
+    engine.SetViewport(0, 10); // half page == 5 lines
+
+    engine.HandleKey(buffer, Ctrl(U'd'));
+    REQUIRE(PointLine(buffer) == 5);
+
+    engine.HandleKey(buffer, Ctrl(U'd'));
+    REQUIRE(PointLine(buffer) == 10);
+
+    engine.HandleKey(buffer, Ctrl(U'u'));
+    REQUIRE(PointLine(buffer) == 5);
+}
+
+TEST_CASE("C-f/C-b scroll point by a full page", "[VimEngine]") {
+    Buffer    buffer = MakeNumberedLineBuffer(40);
+    VimEngine engine;
+    engine.SetViewport(0, 10);
+
+    engine.HandleKey(buffer, Ctrl(U'f'));
+    REQUIRE(PointLine(buffer) == 10);
+
+    engine.HandleKey(buffer, Ctrl(U'b'));
+    REQUIRE(PointLine(buffer) == 0);
+}
+
+TEST_CASE("zz/zt/zb request an explicit topLine_ recenter", "[VimEngine]") {
+    Buffer    buffer = MakeNumberedLineBuffer(40);
+    VimEngine engine;
+    engine.SetViewport(0, 10);
+    buffer.SetPoint(buffer.ByteOffsetForLineAndColumn(20, 0, 1));
+
+    Feed(engine, buffer, "zt");
+    REQUIRE(engine.TakePendingTopLine() == std::optional<std::size_t>(20));
+    REQUIRE(engine.TakePendingTopLine() == std::nullopt); // one-shot, consumed above
+
+    Feed(engine, buffer, "zz");
+    REQUIRE(engine.TakePendingTopLine() == std::optional<std::size_t>(15)); // 20 - height/2
+
+    Feed(engine, buffer, "zb");
+    REQUIRE(engine.TakePendingTopLine() == std::optional<std::size_t>(11)); // 20 - height + 1
+}
+
+TEST_CASE("C-e/C-y scroll the viewport without moving point", "[VimEngine]") {
+    Buffer    buffer = MakeNumberedLineBuffer(40);
+    VimEngine engine;
+    engine.SetViewport(5, 10);
+    buffer.SetPoint(buffer.ByteOffsetForLineAndColumn(7, 0, 1));
+
+    engine.HandleKey(buffer, Ctrl(U'e'));
+    REQUIRE(engine.TakePendingTopLine() == std::optional<std::size_t>(6));
+    REQUIRE(PointLine(buffer) == 7); // point untouched
+
+    engine.SetViewport(5, 10);
+    engine.HandleKey(buffer, Ctrl(U'y'));
+    REQUIRE(engine.TakePendingTopLine() == std::optional<std::size_t>(4));
+    REQUIRE(PointLine(buffer) == 7);
+}
+
+TEST_CASE("ZZ saves and requests CloseBuffer", "[VimEngine]") {
+    Buffer    buffer = MakeBuffer("content\n");
+    VimEngine engine;
+    buffer.SetPath(std::filesystem::temp_directory_path() / "ned_vimengine_test_zz.txt");
+
+    Feed(engine, buffer, "ZZ");
+    REQUIRE(engine.TakePendingIntent() == PendingIntent::CloseBuffer);
+    REQUIRE_FALSE(buffer.Modified());
+    std::filesystem::remove(*buffer.Path());
+}
+
+TEST_CASE("ZQ requests CloseBuffer without saving", "[VimEngine]") {
+    Buffer    buffer = MakeBuffer("content\n");
+    VimEngine engine;
+
+    Feed(engine, buffer, "ZQ");
+    REQUIRE(engine.TakePendingIntent() == PendingIntent::CloseBuffer);
+}
+
+TEST_CASE("gJ joins without inserting a space", "[VimEngine]") {
+    Buffer    buffer = MakeBuffer("foo\nbar\n");
+    VimEngine engine;
+
+    Feed(engine, buffer, "g");
+    engine.HandleKey(buffer, Ch(U'J'));
+    REQUIRE(buffer.Text() == "foobar\n");
+}
+
+TEST_CASE("gi resumes Insert where it was last exited", "[VimEngine]") {
+    Buffer    buffer = MakeBuffer("abcdef");
+    VimEngine engine;
+
+    Feed(engine, buffer, "llli"); // point at 3, enter Insert
+    REQUIRE(engine.CurrentMode() == Mode::Insert);
+    Feed(engine, buffer, "XYZ");
+    Feed(engine, buffer, "\x1b"); // back to Normal, point moves back one grapheme
+    REQUIRE(engine.CurrentMode() == Mode::Normal);
+
+    Feed(engine, buffer, "0"); // move point away
+    Feed(engine, buffer, "g");
+    engine.HandleKey(buffer, Ch(U'i'));
+    REQUIRE(engine.CurrentMode() == Mode::Insert);
+    REQUIRE(buffer.Point() == 6); // right after "XYZ", where Insert was left
+}
+
+TEST_CASE("C-a increments the number under/after point", "[VimEngine]") {
+    Buffer    buffer = MakeBuffer("count: 41");
+    VimEngine engine;
+
+    engine.HandleKey(buffer, Ctrl(U'a'));
+    REQUIRE(buffer.Text() == "count: 42");
+}
+
+TEST_CASE("C-x decrements the number under/after point", "[VimEngine]") {
+    Buffer    buffer = MakeBuffer("count: 41");
+    VimEngine engine;
+
+    engine.HandleKey(buffer, Ctrl(U'x'));
+    REQUIRE(buffer.Text() == "count: 40");
+}
+
+TEST_CASE("C-a/C-x preserve zero-padded width and handle sign crossing", "[VimEngine]") {
+    Buffer    buffer1 = MakeBuffer("id 007");
+    VimEngine engine1;
+    engine1.HandleKey(buffer1, Ctrl(U'a'));
+    REQUIRE(buffer1.Text() == "id 008");
+
+    Buffer    buffer2 = MakeBuffer("x = -3");
+    VimEngine engine2;
+    engine2.HandleKey(buffer2, Ctrl(U'a'));
+    REQUIRE(buffer2.Text() == "x = -2");
+
+    Buffer    buffer3 = MakeBuffer("y = 2");
+    VimEngine engine3;
+    Feed(engine3, buffer3, "5"); // count = 5
+    engine3.HandleKey(buffer3, Ctrl(U'x'));
+    REQUIRE(buffer3.Text() == "y = -3"); // crosses zero, sign gets added
+}
+
+TEST_CASE("count applies to C-a/C-x", "[VimEngine]") {
+    Buffer    buffer = MakeBuffer("n=10");
+    VimEngine engine;
+
+    Feed(engine, buffer, "5");
+    engine.HandleKey(buffer, Ctrl(U'a'));
+    REQUIRE(buffer.Text() == "n=15");
+}
+
+TEST_CASE(":j joins a range of lines", "[VimEngine]") {
+    Buffer    buffer = MakeBuffer("one\ntwo\nthree\n");
+    VimEngine engine;
+
+    Feed(engine, buffer, ":1,2j\n");
+    REQUIRE(buffer.Text() == "one two\nthree\n");
+}
+
+TEST_CASE(":y yanks a range into a named register", "[VimEngine]") {
+    Buffer    buffer = MakeBuffer("foo\nbar\n");
+    VimEngine engine;
+
+    Feed(engine, buffer, ":y a\n");
+    Feed(engine, buffer, "\"ap");
+    REQUIRE(buffer.Text() == "foo\nfoo\nbar\n");
+}
+
+TEST_CASE(":pu pastes the unnamed register as lines after the target", "[VimEngine]") {
+    Buffer    buffer = MakeBuffer("foo\nbar\n");
+    VimEngine engine;
+
+    Feed(engine, buffer, "yy"); // yank "foo" into the unnamed register
+    Feed(engine, buffer, "j");  // move to "bar"
+    Feed(engine, buffer, ":pu\n");
+    REQUIRE(buffer.Text() == "foo\nbar\nfoo\n");
+}
+
+TEST_CASE(":put! pastes before the target line", "[VimEngine]") {
+    Buffer    buffer = MakeBuffer("foo\nbar\n");
+    VimEngine engine;
+
+    Feed(engine, buffer, "yy");
+    Feed(engine, buffer, "j");
+    Feed(engine, buffer, ":put!\n");
+    REQUIRE(buffer.Text() == "foo\nfoo\nbar\n");
+}
+
+TEST_CASE(":> and :< shift a range of lines", "[VimEngine]") {
+    Buffer            buffer = MakeBuffer("a\nb\nc\n");
+    VimEngine         engine;
+    const std::string indent = std::string(static_cast<std::size_t>(ned::editor::TabWidth()), ' ');
+
+    Feed(engine, buffer, ":2>\n");
+    REQUIRE(buffer.Text() == "a\n" + indent + "b\nc\n");
+
+    Feed(engine, buffer, ":2<\n");
+    REQUIRE(buffer.Text() == "a\nb\nc\n");
+}
+
+TEST_CASE(":m moves a line to after the destination address", "[VimEngine]") {
+    Buffer    buffer = MakeBuffer("one\ntwo\nthree\n");
+    VimEngine engine;
+
+    Feed(engine, buffer, ":1m$\n");
+    REQUIRE(buffer.Text() == "two\nthree\none\n");
+}
+
+TEST_CASE(":t/:copy duplicates a line after the destination address", "[VimEngine]") {
+    Buffer    buffer = MakeBuffer("one\ntwo\nthree\n");
+    VimEngine engine;
+
+    Feed(engine, buffer, ":1t$\n");
+    REQUIRE(buffer.Text() == "one\ntwo\nthree\none\n");
+}
+
+TEST_CASE(":sort sorts lines lexicographically, :sort! reverses", "[VimEngine]") {
+    Buffer    buffer = MakeBuffer("banana\napple\ncherry\n");
+    VimEngine engine;
+
+    Feed(engine, buffer, ":sort\n");
+    REQUIRE(buffer.Text() == "apple\nbanana\ncherry\n");
+
+    Feed(engine, buffer, ":sort!\n");
+    REQUIRE(buffer.Text() == "cherry\nbanana\napple\n");
+}
+
+TEST_CASE(":r reads a file's contents in after the target line", "[VimEngine]") {
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_vimengine_test_read.txt";
+    {
+        std::ofstream out(path, std::ios::binary);
+        out << "inserted\n";
+    }
+    Buffer    buffer = MakeBuffer("one\ntwo\n");
+    VimEngine engine;
+
+    Feed(engine, buffer, ":r " + path.string() + "\n");
+    REQUIRE(buffer.Text() == "one\ninserted\ntwo\n");
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("& repeats the last :s on the current line only", "[VimEngine]") {
+    Buffer    buffer = MakeBuffer("foo\nfoo\nfoo\n");
+    VimEngine engine;
+
+    Feed(engine, buffer, ":s/foo/bar/\n");
+    REQUIRE(buffer.Text() == "bar\nfoo\nfoo\n");
+
+    Feed(engine, buffer, "j&");
+    REQUIRE(buffer.Text() == "bar\nbar\nfoo\n");
+
+    Feed(engine, buffer, "j&");
+    REQUIRE(buffer.Text() == "bar\nbar\nbar\n");
+}
+
+TEST_CASE("dis deletes just the sentence, leaving surrounding whitespace intact", "[VimEngine]") {
+    Buffer    buffer = MakeBuffer("One. Two. Three.");
+    VimEngine engine;
+
+    buffer.SetPoint(6); // inside "Two."
+    Feed(engine, buffer, "dis");
+    REQUIRE(buffer.Text() == "One.  Three."); // both the space before and the one after remain
+}
+
+TEST_CASE("das also deletes the sentence's own trailing whitespace", "[VimEngine]") {
+    Buffer    buffer = MakeBuffer("One. Two. Three.");
+    VimEngine engine;
+
+    buffer.SetPoint(6);
+    Feed(engine, buffer, "das");
+    REQUIRE(buffer.Text() == "One. Three.");
+    // "das" additionally removes the space between "One." and "Two." was; disambiguate
+    // from dis by checking there's no leftover double space where "Two. " sat.
+    REQUIRE(buffer.Text().find("  ") == std::string::npos);
+}
+
+TEST_CASE("dit/dat delete tag content, with/without the tags themselves", "[VimEngine]") {
+    Buffer    buffer = MakeBuffer("<div>hello</div>");
+    VimEngine engine;
+
+    buffer.SetPoint(7); // inside "hello"
+    Feed(engine, buffer, "dit");
+    REQUIRE(buffer.Text() == "<div></div>");
+
+    Feed(engine, buffer, "u"); // undo, then try dat
+    REQUIRE(buffer.Text() == "<div>hello</div>");
+    buffer.SetPoint(7);
+    Feed(engine, buffer, "dat");
+    REQUIRE(buffer.Text().empty());
+}
+
+TEST_CASE("2diw deletes two words (a word plus the whitespace/word run after it)", "[VimEngine]") {
+    Buffer    buffer = MakeBuffer("foo bar baz");
+    VimEngine engine;
+
+    Feed(engine, buffer, "2diw");
+    REQUIRE(buffer.Text() == "bar baz");
+}
+
+TEST_CASE("d2iw behaves the same as 2diw", "[VimEngine]") {
+    Buffer    buffer = MakeBuffer("foo bar baz");
+    VimEngine engine;
+
+    Feed(engine, buffer, "d2iw");
+    REQUIRE(buffer.Text() == "bar baz");
+}
+
+TEST_CASE("The / register holds the last search pattern", "[VimEngine]") {
+    Buffer    buffer = MakeBuffer("hello world");
+    VimEngine engine;
+
+    Feed(engine, buffer, "/world\n");
+    Feed(engine, buffer, "0\"/p");
+    REQUIRE(buffer.Text() == "hworldello world");
+}
+
+TEST_CASE("The : register holds the last ex command's raw text", "[VimEngine]") {
+    Buffer    buffer = MakeBuffer("hello");
+    VimEngine engine;
+
+    Feed(engine, buffer, ":s/hello/hi/\n");
+    REQUIRE(buffer.Text() == "hi");
+    Feed(engine, buffer, "\":p");
+    REQUIRE(buffer.Text() == "hs/hello/hi/i");
+}
+
+TEST_CASE("The . register holds the last inserted text", "[VimEngine]") {
+    Buffer    buffer = MakeBuffer("world");
+    VimEngine engine;
+
+    Feed(engine, buffer, "iHello\x1b");
+    REQUIRE(buffer.Text() == "Helloworld");
+    Feed(engine, buffer, "$\".p");
+    REQUIRE(buffer.Text() == "HelloworldHello");
+}
+
+TEST_CASE("The % register holds the buffer's own file path", "[VimEngine]") {
+    Buffer    buffer = MakeBuffer("x");
+    VimEngine engine;
+    buffer.SetPath("/tmp/ned_vimengine_test_percent.txt");
+
+    Feed(engine, buffer, "\"%p");
+    REQUIRE(buffer.Text() == "x/tmp/ned_vimengine_test_percent.txt");
+}
+
+TEST_CASE("Special registers fall through to ordinary named storage for other names", "[VimEngine]") {
+    Buffer    buffer = MakeBuffer("foo bar");
+    VimEngine engine;
+
+    Feed(engine, buffer, "\"ayw"); // yank "foo " into register a
+    Feed(engine, buffer, "$\"ap");
+    REQUIRE(buffer.Text() == "foo barfoo ");
+}
+
+TEST_CASE("Insert-mode C-o executes one Normal command then resumes Insert", "[VimEngine]") {
+    Buffer    buffer = MakeBuffer("abc");
+    VimEngine engine;
+
+    Feed(engine, buffer, "A"); // point at end (3), Insert mode
+    engine.RecordInsertKey(Ctrl(U'o'));
+    REQUIRE(engine.HandleInsertModeChord(buffer, Ctrl(U'o')));
+    REQUIRE(engine.CurrentMode() == Mode::Normal);
+
+    engine.HandleKey(buffer, Ch(U'0')); // the one Normal command: move to line start
+    REQUIRE(engine.CurrentMode() == Mode::Insert);
+    REQUIRE(buffer.Point() == 0);
+}
+
+TEST_CASE("Insert-mode C-o supports a full operator+motion before resuming", "[VimEngine]") {
+    Buffer    buffer = MakeBuffer("foo bar");
+    VimEngine engine;
+
+    Feed(engine, buffer, "i"); // Insert mode at point 0
+    engine.RecordInsertKey(Ctrl(U'o'));
+    REQUIRE(engine.HandleInsertModeChord(buffer, Ctrl(U'o')));
+    REQUIRE(engine.CurrentMode() == Mode::Normal);
+
+    engine.HandleKey(buffer, Ch(U'd'));
+    REQUIRE(engine.CurrentMode() == Mode::Normal); // operator pending, not yet resolved
+    engine.HandleKey(buffer, Ch(U'w'));
+    REQUIRE(engine.CurrentMode() == Mode::Insert); // motion completed the operator, now resumed
+    REQUIRE(buffer.Text() == "bar");
+}
+
+TEST_CASE("Insert-mode C-o followed by a mode-entering command doesn't corrupt later commands", "[VimEngine]") {
+    Buffer    buffer = MakeBuffer("ab\ncd\n");
+    VimEngine engine;
+
+    Feed(engine, buffer, "i"); // Insert at point 0 on line "ab"
+    engine.RecordInsertKey(Ctrl(U'o'));
+    REQUIRE(engine.HandleInsertModeChord(buffer, Ctrl(U'o')));
+    engine.HandleKey(buffer, Ch(U'A')); // one-shot command itself re-enters Insert at EOL
+    REQUIRE(engine.CurrentMode() == Mode::Insert);
+
+    Feed(engine, buffer, "X\x1b"); // finish this insert session normally
+    REQUIRE(buffer.Text() == "abX\ncd\n");
+
+    // A later, unrelated Normal-mode command must behave normally -- not silently jump
+    // back into Insert mode because of a stale oneShotNormalPending_ flag.
+    Feed(engine, buffer, "j");
+    REQUIRE(engine.CurrentMode() == Mode::Normal);
+}
+
+TEST_CASE("Dot-repeat replays an Insert session that used C-o", "[VimEngine]") {
+    Buffer    buffer = MakeBuffer("foo bar\nfoo bar\n");
+    VimEngine engine;
+
+    Feed(engine, buffer, "i");
+    engine.RecordInsertKey(Ctrl(U'o'));
+    REQUIRE(engine.HandleInsertModeChord(buffer, Ctrl(U'o')));
+    engine.HandleKey(buffer, Ch(U'd'));
+    engine.HandleKey(buffer, Ch(U'w')); // deletes "foo " via the one-shot excursion, resumes Insert
+    Feed(engine, buffer, "X\x1b");      // types "X" then exits Insert
+
+    REQUIRE(buffer.Text() == "Xbar\nfoo bar\n");
+
+    Feed(engine, buffer, "j0."); // move to line 2, repeat the whole recorded change
+    REQUIRE(buffer.Text() == "Xbar\nXbar\n");
 }
