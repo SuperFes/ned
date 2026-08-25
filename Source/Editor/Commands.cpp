@@ -1086,6 +1086,20 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           context.newlyAddedCursorPoint = target;
                       });
 
+    // Multi-cursor round-2 follow-up: the "undo the last add" a bare
+    // AddCursorAt call never had -- an unwanted cursor from add-cursor-below/
+    // -above stepping onto an empty/short line, or an unwanted match from
+    // select-next-occurrence, previously meant ClearSecondaryCursors()'s
+    // collapse-everything-and-start-over (keyboard-quit above) was the only
+    // recourse. Repeated presses walk back through additions one at a time
+    // (Buffer::RemoveLastAddedCursor's own LIFO stack), not just the very
+    // last one.
+    registry.Register("remove-last-cursor", "Remove the most recently added secondary cursor.", [](CommandContext& context) {
+        if (!context.buffer.RemoveLastAddedCursor() && context.message) {
+            *context.message = "No cursor to remove";
+        }
+    });
+
     // First press with no selection: select the word at point (mark at its
     // start, point at its end), VS Code Ctrl+D-style. Every later press:
     // add a cursor selecting the next occurrence of the primary selection's
@@ -3130,6 +3144,12 @@ Keymap BuildDefaultGlobalKeymap() {
     // C-> convention itself isn't reliably decodable from a terminal.
     keymap.Bind(ParseKeySequence("C-DOWN"), "add-cursor-below");
     keymap.Bind(ParseKeySequence("C-UP"), "add-cursor-above");
+    // Same Ctrl+Arrow chords with Shift added -- the natural "undo that add"
+    // gesture, bound to both directions since remove-last-cursor is
+    // direction-agnostic (it always removes whichever cursor was added
+    // most recently, regardless of which arrow key added it).
+    keymap.Bind(ParseKeySequence("C-S-DOWN"), "remove-last-cursor");
+    keymap.Bind(ParseKeySequence("C-S-UP"), "remove-last-cursor");
     keymap.Bind(ParseKeySequence("M-n"), "select-next-occurrence");
     keymap.Bind(ParseKeySequence("ESC n"), "select-next-occurrence");
     keymap.Bind(ParseKeySequence("C-c d"), "duplicate-line");

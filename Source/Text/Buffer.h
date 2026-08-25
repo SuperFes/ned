@@ -263,6 +263,18 @@ class Buffer {
     // deliberate v1 simplification: restoring N cursor positions across a
     // snapshot restore has no obviously-right answer, and collapsing is
     // predictable.
+    //
+    // RemoveLastAddedCursor (multi-cursor-round-2 follow-up) is the
+    // "undo the last add" counterpart to a bare AddCursorAt call -- the only
+    // prior recourse for an unwanted cursor was ClearSecondaryCursors()'s
+    // collapse-everything. AddedCursorOrder_ is a LIFO stack of every point
+    // successfully added (cleared on any ClearSecondaryCursors() call, and
+    // relocated across edits the same way SecondaryCursors_ itself is), so
+    // repeated calls walk back through additions one at a time -- pressing
+    // it N times after adding N cursors returns to the single-cursor state,
+    // not just undoing the very last add. A popped entry whose cursor is no
+    // longer present (already removed, or NormalizeSecondaryCursors merged
+    // it into another) is skipped rather than treated as a match failure.
     struct Cursor {
         std::size_t                point = 0;
         std::optional<std::size_t> mark;
@@ -278,6 +290,11 @@ class Buffer {
     [[nodiscard]] const std::vector<Cursor>& SecondaryCursors() const;
     [[nodiscard]] bool                       HasSecondaryCursors() const;
     void                                     ClearSecondaryCursors();
+
+    // Removes the most recently added secondary cursor still present, per
+    // AddedCursorOrder_ above. Returns false, as a no-op, if there is no
+    // tracked addition left to undo.
+    bool RemoveLastAddedCursor();
 
     // Runs operation once per cursor -- first as-is for the primary, then
     // once per secondary with that secondary swapped into Point_/Mark_ (so
@@ -766,6 +783,7 @@ class Buffer {
     std::optional<std::size_t>                         Mark_;
     std::optional<std::pair<std::size_t, std::size_t>> NarrowedRange_;                 // see NarrowToRegion's own doc comment
     std::vector<Cursor>                                SecondaryCursors_;              // see AddCursorAt; sorted, deduplicated
+    std::vector<std::size_t>                           AddedCursorOrder_;              // see RemoveLastAddedCursor
     int                                                UndoGroupDepth_        = 0;     // see BeginUndoGroup
     bool                                               UndoGroupDirty_        = false; // any mutation inside the open group?
     bool                                               CursorIterationActive_ = false; // see ForEachCursor + RelocateSecondaryCursorsForDelete
