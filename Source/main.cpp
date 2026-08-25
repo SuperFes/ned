@@ -21,6 +21,7 @@
 #include "Editor/Acp/AcpPanelConfig.h"
 #include "Editor/BackgroundActivity.h"
 #include "Editor/Backup.h"
+#include "Editor/Bookmark.h"
 #include "Editor/Commands.h"
 #include "Editor/Dap/DapManager.h"
 #include "Editor/Keymap.h"
@@ -34,6 +35,7 @@
 #include "Editor/ProjectSession.h"
 #include "Editor/ProjectTrust.h"
 #include "Editor/PromptHistory.h"
+#include "Editor/RecentFiles.h"
 #include "Editor/Register.h"
 #include "Editor/ScriptingSession.h"
 #include "Editor/Session.h"
@@ -388,6 +390,12 @@ auto main(int argc, char** argv) -> int {
     // loop). Every later open (find-file, sidebar click, LSP jump, ...)
     // funnels through BufferList's own on-file-opened seam instead.
     ned::editor::LoadFilePlaces();
+
+    // editor-ergonomics follow-up: recent-files/bookmarks stores, loaded
+    // the same "after LoadInitFile" way as LoadFilePlaces just above so a
+    // ned/set-recentf-enabled call there is honored from the first record.
+    ned::editor::LoadRecentFiles();
+    ned::editor::LoadBookmarks();
 
     // backup-and-recovery follow-up: startup backup pruning -- after
     // LoadInitFile for the same reason as LoadFilePlaces above, so a
@@ -1226,6 +1234,9 @@ auto main(int argc, char** argv) -> int {
     windowManager->RecordSessionPlaces();
     logShutdown("post-run: saving file places");
     ned::editor::SaveFilePlaces(/*force=*/true);
+    logShutdown("post-run: saving recent files and bookmarks");
+    ned::editor::SaveRecentFiles(/*force=*/true);
+    ned::editor::SaveBookmarks(/*force=*/true);
     logShutdown("post-run: saving project session");
     windowManager->SaveProjectSessionNow();
     logShutdown("post-run: explicit steps done; entering local destruction "

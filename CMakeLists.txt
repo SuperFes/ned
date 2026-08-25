@@ -594,6 +594,8 @@ add_library(ned_lib STATIC
         Source/Editor/Backup.cpp
         Source/Editor/DiagnosticsLog.cpp
         Source/Editor/Session.cpp
+        Source/Editor/RecentFiles.cpp
+        Source/Editor/Bookmark.cpp
         Source/Editor/ProjectSession.cpp
         Source/Editor/ProjectTrust.cpp
         Source/Editor/ProjectPlugins.cpp
@@ -911,6 +913,8 @@ if (NED_BUILD_TESTS)
             Tests/BackupTest.cpp
             Tests/DiagnosticsLogTest.cpp
             Tests/SessionTest.cpp
+            Tests/RecentFilesTest.cpp
+            Tests/BookmarkTest.cpp
             Tests/ProjectSessionTest.cpp
             Tests/ProjectTrustTest.cpp
             Tests/ProjectPluginsTest.cpp

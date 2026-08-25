@@ -1804,6 +1804,40 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           context.interactiveRequest = InteractiveRequest::ProjectFindFile;
                       });
 
+    // editor-ergonomics follow-up: find-recent-file, same "just signal
+    // intent" shape as project-find-file above, over Editor/RecentFiles.h's
+    // cross-session list instead of a fresh directory walk.
+    registry.Register("find-recent-file",
+                      "Open a recently-opened file (any project), narrowed by fuzzy matching as you type.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::FindRecentFile;
+                      });
+
+    // editor-ergonomics follow-up: bookmark-set/-jump/-delete (Emacs
+    // bookmark.el's own core trio). bookmark-set needs an open, file-backed
+    // buffer -- checked here, org-set-tags' own "guard in the command body"
+    // precedent, rather than inside StartInteractiveSession's handler.
+    registry.Register("bookmark-set",
+                      "Save a named bookmark at point in the current file (prompts for a name, pre-filled with the "
+                      "filename).",
+                      [](CommandContext& context) {
+                          if (!context.buffer.Path()) {
+                              if (context.message) {
+                                  *context.message = "Buffer has no file to bookmark";
+                              }
+                              return;
+                          }
+                          context.interactiveRequest = InteractiveRequest::BookmarkSet;
+                      });
+    registry.Register("bookmark-jump", "Jump to a saved bookmark (prompts for its name, narrowed by fuzzy matching).",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::BookmarkJump;
+                      });
+    registry.Register("bookmark-delete", "Delete a saved bookmark (prompts for its name, narrowed by fuzzy matching).",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::BookmarkDelete;
+                      });
+
     // rich-theme-set follow-up (Phase 1): same "just signal intent" shape as
     // project-find-file above. M-x reachable only, no default chord -- theme
     // switching is an occasional act, not an editing motion worth a global
@@ -3102,6 +3136,11 @@ Keymap BuildDefaultGlobalKeymap() {
     // TerminalPanel.h's header comment).
     keymap.Bind(ParseKeySequence("C-`"), "toggle-terminal");
     keymap.Bind(ParseKeySequence("C-c t"), "toggle-terminal");
+    // editor-ergonomics follow-up: no vanilla-Emacs default binding for
+    // recentf-open-files exists to match (menu-only upstream), so this
+    // picks a free "C-c f" prefix ("f" for files) rather than squatting an
+    // established chord.
+    keymap.Bind(ParseKeySequence("C-c f r"), "find-recent-file");
     keymap.Bind(ParseKeySequence("C-x k"), "kill-buffer");
     keymap.Bind(ParseKeySequence("C-c a"), "org-agenda"); // real Org's own actual binding
     // capture-templates follow-up: real Org's own org-capture is "C-c c",
@@ -3231,6 +3270,13 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("C-x r d"), "delete-rectangle");
     keymap.Bind(ParseKeySequence("C-x r y"), "yank-rectangle");
     keymap.Bind(ParseKeySequence("C-x r t"), "string-rectangle");
+    // editor-ergonomics follow-up: real Emacs' own bookmark.el bindings --
+    // "m" for mark/set, "b" for bookmark-jump, both otherwise-free letters
+    // in this C-x r prefix (see the register/rectangle bindings just
+    // above). bookmark-delete is M-x-only, recover-file's own "rare,
+    // deliberate act" precedent.
+    keymap.Bind(ParseKeySequence("C-x r m"), "bookmark-set");
+    keymap.Bind(ParseKeySequence("C-x r b"), "bookmark-jump");
     keymap.Bind(ParseKeySequence("C-x n n"), "narrow-to-region");
     keymap.Bind(ParseKeySequence("C-x n w"), "widen");
 
