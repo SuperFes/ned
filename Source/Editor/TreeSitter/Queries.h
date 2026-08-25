@@ -35,6 +35,11 @@ extern const char* const kMarkdownInjections;
 // forked grammar (Source/Editor/TreeSitter/OrgHighlights.scm), not fetched
 // from any repository -- see that file's own header comment for why.
 extern const char* const kOrg;
+// Injection.h's generic engine -- #+BEGIN_SRC/#+BEGIN_EXPORT block bodies.
+// A real injections.scm in Ned's own tree-sitter-ned-org fork itself
+// (CMakeLists.txt's ned_add_treesitter_grammar(tree-sitter-org ...) pin),
+// not vendored locally -- see that file's own header comment.
+extern const char* const kOrgInjections;
 extern const char* const kYaml;
 extern const char* const kToml;
 // Vendored from nvim-treesitter rather than sogaiu/tree-sitter-clojure's own

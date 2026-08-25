@@ -1251,6 +1251,12 @@ Mode OrgMode() {
     const auto orgLanguage = treesitter::LanguageByName("org");
     const auto parser      = std::make_shared<treesitter::Parser>(*orgLanguage);
     const auto query       = std::make_shared<treesitter::Query>(*orgLanguage, treesitter::queries::kOrg);
+    // embedded-language-injection follow-up: #+BEGIN_SRC/#+BEGIN_EXPORT
+    // block bodies, through the same generic engine Markdown/HTML use --
+    // queries::kOrgInjections is a real injections.scm from Ned's own
+    // tree-sitter-ned-org fork itself (see Queries.h's own comment).
+    const auto injectionQuery        = std::make_shared<treesitter::Query>(*orgLanguage, treesitter::queries::kOrgInjections);
+    const auto embeddedLanguageCache = std::make_shared<EmbeddedLanguageCache>();
     // Incremental-tree-sitter-reparse follow-up: this closure previously
     // parsed unconditionally on every call, unlike every other Mode's own
     // highlight closure -- no earlier "same text as last call" cache existed
@@ -1259,14 +1265,16 @@ Mode OrgMode() {
     // against the previous tree instead of from scratch.
     const auto sharedParse = std::make_shared<treesitter::IncrementalParseCache>();
 
-    HighlightFunction highlight = [parser, query, sharedParse](std::string_view bufferText) -> std::vector<HighlightSpan> {
+    HighlightFunction highlight = [parser, query, injectionQuery, embeddedLanguageCache,
+                                   sharedParse](std::string_view bufferText) -> std::vector<HighlightSpan> {
         const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
         if (tree.IsNull()) {
             return {};
         }
-        const std::vector<treesitter::QueryCapture> captures = query->Captures(tree.RootNode(), bufferText);
+        const treesitter::Node                      root     = tree.RootNode();
+        const std::vector<treesitter::QueryCapture> captures = query->Captures(root, bufferText);
 
-        // Three passes, concatenated in this order so a later, narrower
+        // Four passes, concatenated in this order so a later, narrower
         // span visually wins over an earlier, broader one via
         // HighlightSpan's own documented "later wins" rule -- e.g. a tag or
         // a TODO/DONE keyword sitting inside a HeadlineLevelN span that
@@ -1331,6 +1339,13 @@ Mode OrgMode() {
         for (const HighlightSpan& span : genericCollector.Take()) {
             spans.push_back(span);
         }
+
+        // Pass 4: real per-language highlighting inside #+BEGIN_SRC/
+        // #+BEGIN_EXPORT block bodies, appended last so it wins over
+        // whatever Pass 3's generic capture table resolved the block's
+        // "contents" node to (typically Default -- OrgHighlights.scm has no
+        // pattern for it at all).
+        CollectInjectedHighlightSpans(root, bufferText, *injectionQuery, *embeddedLanguageCache, spans);
 
         return spans;
     };
