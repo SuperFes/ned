@@ -1006,6 +1006,19 @@ TEST_CASE("BuildInitializeParams absolutizes a relative rootUri", "[Lsp]") {
     REQUIRE(rootUri.find("relative/dir") != std::string::npos);
 }
 
+TEST_CASE("BuildInitializeParams sends rootUri null for an empty project root", "[Lsp]") {
+    // A real SIGABRT from a core dump: an empty ProjectRoot() reached
+    // PathToUri, whose absolute("") throws, with no catch anywhere above
+    // the Paint()-driven handshake -- the whole editor aborted on first
+    // paint. The LSP spec explicitly allows "rootUri: DocumentUri | null",
+    // so an empty root degrades to null rather than throwing or emitting a
+    // nonsense "file://" URI.
+    const Json params = ned::editor::lsp::BuildInitializeParams(std::filesystem::path());
+
+    REQUIRE(params.contains("rootUri"));
+    REQUIRE(params["rootUri"].is_null());
+}
+
 TEST_CASE("BuildInitializeParams omits initializationOptions when none is given", "[Lsp]") {
     const Json params = ned::editor::lsp::BuildInitializeParams(std::filesystem::path("/some/project"));
     REQUIRE_FALSE(params.contains("initializationOptions"));

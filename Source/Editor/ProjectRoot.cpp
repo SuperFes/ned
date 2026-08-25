@@ -77,13 +77,21 @@ std::filesystem::path DetectProjectRoot(const std::filesystem::path& openedPath)
     // throw for a not-yet-existing file the way canonical() would, which
     // matters since openedPath may be a new-file path (see
     // BufferList::OpenOrCreateFile) that doesn't exist on disk yet.
+    // Absolutized *before* weakly_canonical, not after: for a relative path
+    // where no leading portion exists at all (`./ned ROADMAP.md` from a
+    // build directory that has no ROADMAP.md), libstdc++'s weakly_canonical
+    // returns the input unchanged -- still relative, ec unset -- so
+    // parent_path() below came out empty and the marker walk returned that
+    // empty path verbatim as the "root", which then crashed the first LSP
+    // handshake (absolute("") throws) on the first paint. Found from a real
+    // core dump, not review.
     std::error_code       ec;
-    std::filesystem::path start = std::filesystem::weakly_canonical(openedPath, ec);
+    std::filesystem::path start = std::filesystem::absolute(openedPath, ec);
     if (ec) {
-        start = std::filesystem::absolute(openedPath, ec);
-        if (ec) {
-            start = openedPath;
-        }
+        start = openedPath;
+    }
+    if (const std::filesystem::path canonical = std::filesystem::weakly_canonical(start, ec); !ec) {
+        start = canonical;
     }
 
     if (std::filesystem::is_directory(start, ec)) {
