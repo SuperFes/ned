@@ -296,6 +296,20 @@ Notcurses.
 
 ### Small loose ends
 
+- [ ] **Vim-mode follow-ups** (shipped 2026-08-25, `Source/Editor/Vim/`, default off via
+      `ned/set-vim-mode`) — Normal/Insert/Replace/Visual(char/line/block)/command-line
+      modes, operator+motion+text-object composition, registers (unnamed/named/numbered
+      ring/blackhole/system-clipboard), `.` dot-repeat, `q`/`@` macros, marks, PCRE2-
+      backed `/`/`?`/`:s`, and ex commands (`:w`/`:q`/`:wq`/`:d`/`:normal`/range syntax)
+      all work end-to-end (tmux-verified live). Deliberate v1 cuts, not oversights: no
+      jumplist/changelist (`C-o`/`C-i`), no `:g` global command, no `ge`/`gE` (backward
+      word-end), no mark letters beyond `a`-`z`/`'<`/`'>`, no `gv`, macros record raw
+      keystrokes rather than vim's own editable-register-text form, `.` replays verbatim
+      (a count typed before it doesn't override the recorded one), `>`/`<`/case operators
+      don't apply to a Visual Block selection (only `d`/`y`/`c`/`x`/`I`/`A` do), and
+      search/`:s` patterns are passed straight to PCRE2 rather than translating vim's own
+      default "magic" escaping convention (closer to vim's `\v` very-magic mode than its
+      default) — revisit any of these if they turn out to matter in practice.
 - [ ] **`libned` as a real shared library** — `ned_lib` (static today) exists solely so
       `ned_tests` can link real editor code without pulling in `main()`; a static lib
       already does that job. Worth revisiting only if a second real consumer shows up
@@ -584,62 +598,6 @@ Real, fairly uncontroversial gaps:
       existing whole-list sweep rather than a targeted single-buffer check);
       `IN_IGNORED` heals a deleted-and-recreated directory only at the next resync,
       not instantly.
-
-### Input model: optional Vim/vi keybinding emulation (idea, unstarted — design sketch only)
-
-Raised as a question: could ned support Vim-style modal keybindings *alongside* its
-existing Emacs-style ones, not as a replacement? Genuinely feasible, and this
-architecture happens to already carry most of the pieces an evil-mode-style emulation
-layer (Vim-inside-Emacs, the proven precedent — also IdeaVim, VSCode Vim) is built
-from, rather than needing a second parallel input stack. Kept on the roadmap on
-adoption grounds specifically, not personal taste — modal editing is not this
-project's own preference, but a huge fraction of the people who'd otherwise try ned
-already have Vim muscle memory, and "you have to give that up" is a real adoption
-tax an opt-in mode removes at no cost to anyone who doesn't touch the setting:
-
-- **Not literally simultaneous.** A key like `d` can't mean both "self-insert" and
-  "delete operator" at the same instant with no disambiguating state — that's a
-  genuine conflict, not a restriction to design around. What *is* feasible, and what
-  every real Vim-emulation-inside-another-editor does, is a mode flag (global setting
-  or per-buffer minor mode, plus a `--vim`-style CLI flag as a third entry point) that
-  selects which top `KeymapStack` layer is live: an Insert state that IS ned's existing
-  default layer (self-insert + every current Emacs binding, unchanged), versus
-  Normal/Visual/Operator-pending states that are new, Vim-specific layers.
-  `Mode`/`KeymapStack` already treat "a minor mode is just another keymap layer, OR'd
-  in by `KeymapStack::Match`" as the standing convention (see `Mode.h`'s own doc
-  comment) — this reuses that unmodified.
-- **Normal-mode keymap**: mechanical but large — bind the full printable-ASCII range to
-  Vim commands (`h`/`j`/`k`/`l` motion, `x`/`dd`/`yy`/`p`, etc.) rather than leaving any
-  of it to fall through to `self-insert-command`, since in Vim's Normal mode almost
-  nothing should insert text. Ordinary `Keymap` work, just wide.
-- **Operator + motion composition** (`d` + `w` deletes a word, `c` + `i` + `"` changes
-  inside quotes) is the one genuinely new mechanism — Vim's operators compose with
-  *any* motion generically, which `KeyChord`'s static pre-declared sequences don't
-  model directly. Needs an explicit operator-pending state machine reading the next
-  fully-resolved motion (itself a normal command, with its own optional count prefix)
-  as a target offset rather than moving point directly, then applying delete/change/
-  yank over `[point, target)` — the same *shape* `Editor/PrefixArgument.h`'s
-  `PrefixArgumentReader` and `Editor/IncrementalSearch.h` already use (a pure,
-  buffer-free state machine `BufferView` drives key-by-key), not a new kind of
-  component for this codebase. Text objects (`di(`, `ci"`) are motions in this same
-  sense and can lean on the tree-sitter infrastructure `sexpMotion`/
-  `expandSelection` already parse for.
-- **Visual mode** maps fairly directly onto region selection and `Rectangle.h` already
-  shipped (char/line/block visual = point+mark region / line-extended region /
-  rectangle selection, respectively) — mostly new bindings over existing primitives.
-- **Macros and registers** need no new mechanism at all: `Dispatcher` already records
-  keyboard macros natively (`q`/`@` would just be new bindings onto it), and
-  `Editor/Register.h`'s single-char-keyed `RegisterTable` is already Vim-register-shaped.
-- **Ex commands** (`:w`, `:%s/foo/bar/g`, `:q`) are a new `BufferView::InputMode` parsing
-  ex-command syntax, mapping onto the existing `CommandRegistry` (`save-buffer`,
-  `project-replace-regexp`, ...) the same way M-x already does — a parser and a mapping
-  table, not new editing primitives.
-
-Net: a genuinely large feature (comparable in scope to the Org-mode work), but not an
-architectural fight — it slots in as "another major-mode-shaped subsystem," which this
-codebase already does repeatedly (Org, VCS, DAP, ACP...), rather than requiring changes
-to `Keymap`/`KeymapStack`/`Dispatcher` themselves. Unscoped beyond this sketch — no
-estimate of which pieces would ship in a first cut.
 
 ### Native Windows port (idea, unstarted — design sketch only)
 

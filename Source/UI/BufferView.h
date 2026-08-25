@@ -51,6 +51,7 @@
 #include "Editor/TestRun/TestRunner.h"
 #include "Editor/Vcs/VcsProvider.h"
 #include "Editor/Vcs/VcsRunner.h"
+#include "Editor/Vim/VimEngine.h"
 #include "EventLoop.h"
 #include "Minimap.h"
 #include "ProjectSidebar.h"
@@ -671,6 +672,17 @@ class BufferView : public Widget {
     // HandlePrefixArgumentKey's terminating-key case can re-dispatch that
     // same chord through the identical path once a reading session ends.
     bool DispatchChordNormally(const editor::KeyChord& chord);
+    // Vim-mode follow-up: called instead of DispatchChordNormally from the tail of
+    // Normal-mode key handling whenever editor::vim::VimModeEnabled() is true.
+    // vimEngine_'s own Mode::Insert is the one case that still falls through to
+    // DispatchChordNormally underneath (self-insert-command, auto-pair, snippets, ghost
+    // completion all keep working unmodified in Insert mode -- see VimEngine.h's own
+    // header comment) -- everything else (Normal/Visual/Replace/CommandLine) is consumed
+    // by vimEngine_ directly, never reaching Dispatcher::Feed at all. May destroy *this*
+    // (a PendingIntent::CloseBuffer forwards to RequestCloseBuffer, same
+    // window-management caution as DispatchChordNormally's own doc comment) -- always
+    // this call's own return, nothing after.
+    bool HandleVimKey(const editor::KeyChord& chord);
     void HandlePrefixArgumentKey(const editor::KeyChord& chord);
     // snippet-expansion follow-up. HandleSnippetKey classifies only: the
     // navigation/end chords it consumes, everything else falls through to
@@ -1784,6 +1796,11 @@ class BufferView : public Widget {
     // exhaustively handled.
     std::optional<editor::PrefixArgumentReader> prefixArgReader_;
     std::optional<long>                         pendingPrefixArg_;
+    // Vim-mode follow-up: one VimEngine per pane, always constructed (cheap) but only
+    // ever driven when editor::vim::VimModeEnabled() is true -- read live each keystroke
+    // rather than cached, matching every other process-wide setting's own convention.
+    // See HandleVimKey's own doc comment for the Normal/Visual/Replace-vs-Insert split.
+    editor::vim::VimEngine vimEngine_;
     // snippet-expansion follow-up: the live tabstop session (see
     // InputMode::Snippet above). pendingSnippetExpansion_ carries a
     // command's CommandContext::snippetExpansion from

@@ -50,6 +50,7 @@
 #include "Editor/ToolchainIncludePaths.h"
 #include "Editor/Variables.h"
 #include "Editor/Vcs/DiffPatch.h"
+#include "Editor/Vim/VimSettings.h"
 #include "Editor/WhitespaceSettings.h"
 #include "Editor/WrapOverrides.h"
 #include "Janet/Environment.h"
@@ -3438,7 +3439,51 @@ bool BufferView::OnKeyEvent(const Event& event) {
         return true;
     }
 
+    if (editor::vim::VimModeEnabled()) {
+        return HandleVimKey(*chord);
+    }
     return DispatchChordNormally(*chord);
+}
+
+bool BufferView::HandleVimKey(const editor::KeyChord& chord) {
+    if (vimEngine_.CurrentMode() == editor::vim::Mode::Insert) {
+        if (IsQuit(chord)) {
+            vimEngine_.ExitInsertToNormal(activeBuffer_.Get());
+        }
+        else {
+            vimEngine_.RecordInsertKey(chord);
+            DispatchChordNormally(chord);
+        }
+    }
+    else {
+        vimEngine_.SetViewport(topLine_, size().height > 0 ? static_cast<std::size_t>(size().height) : 0);
+        vimEngine_.HandleKey(activeBuffer_.Get(), chord);
+    }
+
+    const editor::vim::PendingIntent intent = vimEngine_.TakePendingIntent();
+    if (intent == editor::vim::PendingIntent::Quit) {
+        if (eventLoop_) {
+            eventLoop_->Exit();
+        }
+        return true;
+    }
+    if (intent == editor::vim::PendingIntent::CloseBuffer) {
+        RequestCloseBuffer(activeBuffer_.Get()); // may destroy *this* -- nothing after
+        return true;
+    }
+
+    if (!vimEngine_.StatusText().empty()) {
+        statusMessage_ = vimEngine_.StatusText();
+    }
+    else if (vimEngine_.CurrentMode() != editor::vim::Mode::Normal) {
+        statusMessage_ = "-- " + vimEngine_.ModeIndicator() + " --";
+    }
+    else {
+        statusMessage_.clear();
+    }
+    ClampPointToNarrowing();
+    ScrollToShowPoint();
+    return true;
 }
 
 bool BufferView::DispatchChordNormally(const editor::KeyChord& chord) {

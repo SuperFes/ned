@@ -580,6 +580,12 @@ add_library(ned_lib STATIC
         Source/Editor/ProjectSession.cpp
         Source/Editor/ProjectTrust.cpp
         Source/Editor/ProjectPlugins.cpp
+        Source/Editor/Vim/VimSettings.cpp
+        Source/Editor/Vim/VimMotion.cpp
+        Source/Editor/Vim/VimTextObject.cpp
+        Source/Editor/Vim/VimRegisters.cpp
+        Source/Editor/Vim/VimExCommand.cpp
+        Source/Editor/Vim/VimEngine.cpp
         Source/Editor/Vcs/DiffPatch.cpp
         Source/Editor/Vcs/VcsProviderRegistry.cpp
         Source/Editor/Vcs/VcsRunner.cpp
@@ -930,6 +936,11 @@ if (NED_BUILD_TESTS)
             Tests/WrapOverridesTest.cpp
             Tests/BorderTest.cpp
             Tests/ProjectSidebarTest.cpp
+            Tests/VimMotionTest.cpp
+            Tests/VimTextObjectTest.cpp
+            Tests/VimRegistersTest.cpp
+            Tests/VimExCommandTest.cpp
+            Tests/VimEngineTest.cpp
     )
 
     target_link_libraries(ned_tests PRIVATE ned_lib Catch2::Catch2WithMain)
