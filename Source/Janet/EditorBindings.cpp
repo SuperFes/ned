@@ -25,6 +25,7 @@
 #include "Editor/HighlightSettings.h"
 #include "Editor/InlineDiagnostics.h"
 #include "Editor/Link.h"
+#include "Editor/Lsp/LspBackgroundSync.h"
 #include "Editor/Lsp/LspServerConfig.h"
 #include "Editor/Lsp/ProseChecker.h"
 #include "Editor/MinimapSettings.h"
@@ -320,6 +321,10 @@ namespace {
 
     void NedSetAutoMerge(bool enabled) {
         editor::SetAutoMergeEnabled(enabled);
+    }
+
+    void NedSetLspSyncBackgroundBuffers(bool enabled) {
+        editor::lsp::SetLspBackgroundSyncEnabled(enabled);
     }
 
     void NedSetFileWatch(bool enabled) {
@@ -983,6 +988,11 @@ void InstallEditorBindings(Environment& env) {
         "Enable/disable automatically three-way merging a buffer's local edits with a file that also changed on "
         "disk (default true). A clean merge applies silently; a genuine conflict inserts <<<<<<< markers instead "
         "of guessing. Always one undoable step. A separate toggle from ned/set-auto-revert.");
+    env.Register<&NedSetLspSyncBackgroundBuffers>(
+        "ned", "set-lsp-sync-background-buffers",
+        "Enable/disable syncing every open buffer to its configured LSP server(s), not just the pane-active one "
+        "(default true). Runs on the same periodic background tick as auto-save, not per-frame, so a background "
+        "tab's diagnostics/completions stay current without interrupting the buffer you're actually editing.");
     env.Register<&NedSetFileWatch>(
         "ned", "set-file-watch",
         "Enable/disable the inotify file watcher that triggers auto-revert/auto-merge near-instantly when an open "

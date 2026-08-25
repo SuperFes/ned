@@ -10,9 +10,13 @@
 // reference the same way -- LSP state is shared editor-wide state, not
 // something that belongs to one BufferView/window pane.
 //
-// Only the *active* buffer is synced (see SyncBuffer's own doc comment) --
-// called once per frame from BufferView::Paint(), the same place
-// Buffer::ContentGeneration() is already polled for the highlight cache.
+// The active buffer is synced once per frame from BufferView::Paint(), the
+// same place Buffer::ContentGeneration() is already polled for the
+// highlight cache (see SyncBuffer's own doc comment). LSP-deliberate-cuts
+// follow-up: every *other* open buffer is now also synced, on a periodic
+// background tick instead of per-frame -- see LspBackgroundSync.h's
+// SyncBackgroundBuffers, wired from WindowManager's existing auto-save
+// timer. Both paths funnel through this same SyncBuffer method.
 //
 
 #ifndef NED_EDITOR_LSP_LSPMANAGER_H
@@ -119,12 +123,13 @@ class LspManager {
     // publish diagnostics that get merged, not wholesale-replaced; see
     // HandlePublishDiagnostics/PushMergedDiagnostics.
     //
-    // Deliberately not called for every open buffer, only whichever is
-    // currently active/visible -- a background buffer won't get live
-    // diagnostics until it's viewed again. A real "sync every open buffer"
-    // version would need a BufferList-level hook instead of a
-    // BufferView::Paint()-level one; deferred as a straightforward widening
-    // of this same mechanism, not a design change.
+    // Called per-frame for the pane-active buffer (BufferView::Paint()) and,
+    // separately, per-tick for every other open buffer
+    // (LspBackgroundSync.h's SyncBackgroundBuffers) -- either caller passes
+    // whatever language it already resolved, this method has no opinion
+    // about how that resolution happened. The per-buffer ContentGeneration()
+    // gate above is what makes calling this twice for the same buffer (once
+    // from each path) cheap: the second call is a no-op.
     void SyncBuffer(text::Buffer& buffer, const std::string& language);
 
     // embedded-language-documents follow-up. One embedded language's

@@ -13,6 +13,7 @@
 #include "Editor/Backup.h"
 #include "Editor/Dap/DapManager.h"
 #include "Editor/DiagnosticsLog.h"
+#include "Editor/Lsp/LspBackgroundSync.h"
 #include "Editor/MinimapSettings.h"
 #include "Editor/ModeOverrides.h"
 #include "Editor/Multibuffer.h"
@@ -753,6 +754,16 @@ void WindowManager::StartAutoSaveTimer(EventLoop& eventLoop) {
                 // every ordinary tick (no request outstanding that long).
                 if (lspManager_) {
                     lspManager_->ExpireStaleRequests();
+                    // LSP-deliberate-cuts follow-up: widens SyncBuffer past
+                    // the pane-active buffer BufferView::Paint() already
+                    // syncs every frame -- every other open, loaded,
+                    // path-backed buffer gets synced here instead, so a
+                    // background tab's diagnostics/completions stay current
+                    // without the user ever switching to it. Toggle-gated
+                    // (ned/set-lsp-sync-background-buffers, default on); see
+                    // LspBackgroundSync.h for why this can't just be another
+                    // per-frame BufferView call.
+                    editor::lsp::SyncBackgroundBuffers(bufferList_, *lspManager_);
                 }
                 if (dapManager_) {
                     dapManager_->ExpireStaleRequests();

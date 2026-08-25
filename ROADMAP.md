@@ -584,10 +584,29 @@ Notcurses.
       call intermittently clobber an unrelated `BufferView` test's
       `statusMessage_` under `ned_tests --order rand`, confirmed live before
       this gate existed, not a hypothetical.
-- [ ] LSP deliberate cuts, revisit on demand: syncing every open buffer (not just the
-      active one), incremental sync, idle server teardown, multi-root workspaces (raw
-      subprocess stderr capture shipped 2026-08-25 -- see the diagnostics-log entry
-      below).
+- [x] **Syncing every open buffer** (shipped 2026-08-25) -- previously only the
+      pane-active buffer was ever synced to LSP (`BufferView::Paint()`, once per
+      frame); a background tab's diagnostics/completions went stale until it was
+      viewed again. New `Editor/Lsp/LspBackgroundSync.h/.cpp`: `SyncBackgroundBuffers`
+      walks every buffer in `BufferList` and calls the existing `LspManager::SyncBuffer`
+      for each one that has a path and isn't mid-async-load (`AutoRevertBuffers`'s own
+      two guards) -- a deliberate widening of the existing mechanism, not a new sync
+      path: `SyncBuffer`'s own `ContentGeneration()` gate is what makes a buffer that's
+      *also* the active one (already synced this frame by `Paint()`) a cheap no-op the
+      second time. Language resolution reuses `CachedModeForBuffer` + `LanguageKeyForMode`,
+      the same pair `BufferView.cpp` already resolves inline for the active buffer.
+      Deliberately lives beside `LspManager` rather than inside it, keeping `LspManager`
+      itself Mode/tree-sitter-agnostic (the same split `EmbeddedDocumentSync` already
+      established). Wired into `WindowManager::StartAutoSaveTimer`'s existing 5s tick,
+      right alongside `LspManager::ExpireStaleRequests()` -- runs off the main render
+      path entirely, so it can't interrupt typing; the per-buffer no-op fast path keeps
+      an idle tick cheap regardless of how many buffers are open. Toggle-gated
+      (`ned/set-lsp-sync-background-buffers`, default on, `AutoRevert.h`'s exact
+      mutex-guarded-bool shape) in case a project with many open buffers across many
+      configured languages finds eagerly spawning every one of those servers
+      undesirable. Still open, revisit on demand: incremental sync, idle server
+      teardown, multi-root workspaces (raw subprocess stderr capture shipped
+      2026-08-25 -- see the diagnostics-log entry below).
 - [ ] **Diagnostics/error log round 2** (v1 shipped 2026-08-24: `Editor/DiagnosticsLog.h`,
       a `"*Messages*"` buffer — plain find-or-create like `TaskRunner`'s own output
       buffers, not a real `Editor/Multibuffer.h` composite — rebuilt from an in-memory,
