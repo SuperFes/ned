@@ -138,3 +138,85 @@ TEST_CASE("MarkdownMode a bold word inside a heading keeps its bold weight, over
     REQUIRE(HasSpan(spans, 0, 21, SyntaxClass::HeadlineLevel1)); // whole line
     REQUIRE(HasSpan(spans, 4, 12, SyntaxClass::Strong));         // "**bold**" wins locally, appended later
 }
+
+TEST_CASE("MarkdownMode fenced code block with a recognized language tag gets real sub-language highlighting",
+          "[Markdown]") {
+    const auto        mode  = MarkdownMode();
+    const std::string text  = "```python\ndef f():\n    return \"x\"\n```\n";
+    const auto        spans = mode.highlight(text);
+
+    // "def" -- byte offset 10..13 inside the fence content -- resolves to a
+    // real Python keyword span, not the flat block-wide String span.
+    bool sawKeyword = false;
+    bool sawString  = false;
+    for (const HighlightSpan& span : spans) {
+        if (span.startByte >= 10 && span.endByte <= 34 &&
+            (span.syntaxClass == SyntaxClass::Keyword || span.syntaxClass == SyntaxClass::ControlKeyword)) {
+            sawKeyword = true;
+        }
+        if (span.startByte >= 10 && span.endByte <= 34 && span.syntaxClass == SyntaxClass::String) {
+            sawString = true;
+        }
+    }
+    REQUIRE(sawKeyword);
+    REQUIRE(sawString);
+}
+
+TEST_CASE("MarkdownMode fenced code block language alias resolves to the canonical grammar", "[Markdown]") {
+    const auto        mode  = MarkdownMode();
+    const std::string text  = "```py\ndef f():\n    pass\n```\n";
+    const auto        spans = mode.highlight(text);
+
+    bool sawKeyword = false;
+    for (const HighlightSpan& span : spans) {
+        if (span.syntaxClass == SyntaxClass::Keyword || span.syntaxClass == SyntaxClass::ControlKeyword) {
+            sawKeyword = true;
+        }
+    }
+    REQUIRE(sawKeyword);
+}
+
+TEST_CASE("MarkdownMode fenced code block with an unrecognized language tag falls back to plain String, unchanged",
+          "[Markdown]") {
+    const auto        mode  = MarkdownMode();
+    const std::string text  = "```notalanguage\ncode here\n```\n";
+    const auto        spans = mode.highlight(text);
+
+    REQUIRE(HasSpan(spans, 0, 30, SyntaxClass::String));
+    for (const HighlightSpan& span : spans) {
+        REQUIRE_FALSE(span.syntaxClass == SyntaxClass::Default);
+    }
+}
+
+TEST_CASE("MarkdownMode fenced code sub-language spans are offset-translated into outer buffer coordinates",
+          "[Markdown]") {
+    const auto        mode  = MarkdownMode();
+    const std::string text  = "intro text\n\nmore text\n\n```python\ndef f():\n    pass\n```\n";
+    const auto        spans = mode.highlight(text);
+
+    const std::size_t fenceContentStart = text.find("def f()");
+    REQUIRE(fenceContentStart != std::string::npos);
+
+    bool sawSpanInContent = false;
+    for (const HighlightSpan& span : spans) {
+        if ((span.syntaxClass == SyntaxClass::Keyword || span.syntaxClass == SyntaxClass::ControlKeyword) &&
+            span.startByte >= fenceContentStart) {
+            sawSpanInContent = true;
+        }
+    }
+    REQUIRE(sawSpanInContent);
+}
+
+TEST_CASE("MarkdownMode reuses one sub-language highlight per language across multiple fences", "[Markdown]") {
+    const auto        mode  = MarkdownMode();
+    const std::string text  = "```python\ndef f():\n    pass\n```\n\n```python\ndef g():\n    pass\n```\n";
+    const auto        spans = mode.highlight(text);
+
+    int keywordSpanCount = 0;
+    for (const HighlightSpan& span : spans) {
+        if (span.syntaxClass == SyntaxClass::Keyword || span.syntaxClass == SyntaxClass::ControlKeyword) {
+            ++keywordSpanCount;
+        }
+    }
+    REQUIRE(keywordSpanCount >= 2); // "def" in each of the two fences
+}

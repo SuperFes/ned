@@ -1,6 +1,7 @@
 #include "Mode.h"
 
 #include <algorithm>
+#include <cctype>
 #include <map>
 #include <memory>
 #include <optional>
@@ -10,8 +11,10 @@
 #include <utility>
 
 #include "AutoPair.h"
+#include "Injection.h"
 #include "Key.h"
 #include "Link.h"
+#include "ModeOverrides.h"
 #include "Org.h"
 #include "SyntaxTheme.h"
 #include "TreeSitter/IncrementalParse.h"
@@ -404,46 +407,6 @@ namespace {
 
         for (std::size_t i = 0; i < node.ChildCount(); ++i) {
             CollectMarkdownStructuralSpans(node.Child(i), spans);
-        }
-    }
-
-    // Markdown-highlighting follow-up. The actual hand-rolled "injection":
-    // markdown's own bold/italic/strikethrough/code-span/link formatting
-    // lives entirely in the separate tree-sitter-markdown-inline grammar,
-    // never in the block grammar walked by CollectMarkdownStructuralSpans
-    // above -- real markdown tooling combines the two via tree-sitter
-    // language injection, which Ned's TreeSitter/ wrapper has no generic
-    // support for (see CMakeLists.txt's own tree-sitter-markdown-inline
-    // entry). Every block-grammar "inline" node is raw text meant for this
-    // second grammar; inline nodes don't nest, so finding one ends this
-    // branch of the walk rather than recursing further.
-    void CollectMarkdownInlineSpans(const treesitter::Node& node, std::string_view bufferText, const treesitter::Parser& inlineParser,
-                                    const treesitter::Query& inlineQuery, std::vector<HighlightSpan>& spans) {
-        if (node.Type() == "inline") {
-            const std::size_t      start      = node.StartByte();
-            const std::size_t      end        = node.EndByte();
-            const std::string_view inlineText = bufferText.substr(start, end - start);
-            const treesitter::Tree inlineTree = inlineParser.Parse(inlineText);
-            if (!inlineTree.IsNull()) {
-                // Per-node collector: equal-range double captures can only
-                // come from one query run over one inline node (different
-                // inline nodes never share a byte range).
-                SpanCollector collector;
-                for (const treesitter::QueryCapture& capture : inlineQuery.Captures(inlineTree.RootNode(), inlineText)) {
-                    if (!IsHighlightableCapture(capture.name)) {
-                        continue;
-                    }
-                    collector.Add(capture.name, start + capture.startByte, start + capture.endByte,
-                                  SyntaxClassForCapture(capture.name));
-                }
-                for (const HighlightSpan& span : collector.Take()) {
-                    spans.push_back(span);
-                }
-            }
-            return;
-        }
-        for (std::size_t i = 0; i < node.ChildCount(); ++i) {
-            CollectMarkdownInlineSpans(node.Child(i), bufferText, inlineParser, inlineQuery, spans);
         }
     }
 
@@ -986,9 +949,49 @@ Mode TsxMode() {
 }
 
 Mode HtmlMode() {
+    Mode mode = TreeSitterMode("html-mode", "html", treesitter::queries::kHtml);
     // No lineCommentPrefix -- HTML only has block comments (<!-- -->), no
     // single-line comment token to toggle per line.
-    return TreeSitterMode("html-mode", "html", treesitter::queries::kHtml);
+
+    // embedded-language-injection follow-up: mode.highlight built by
+    // TreeSitterMode() above gets replaced below to also run
+    // <script>/<style> content through the real injections.scm-driven
+    // generic engine (Injection.h) -- javascript/css highlighting inside
+    // them, instead of plain unhighlighted markup text. Everything else
+    // built by TreeSitterMode() (.keymap/.fold/.expandSelection/...) is kept
+    // exactly as-is.
+    const auto language              = treesitter::LanguageByName("html");
+    const auto parser                = std::make_shared<treesitter::Parser>(*language);
+    const auto query                 = std::make_shared<treesitter::Query>(*language, treesitter::queries::kHtml);
+    const auto injectionQuery        = std::make_shared<treesitter::Query>(*language, treesitter::queries::kHtmlInjections);
+    const auto sharedParse           = std::make_shared<treesitter::IncrementalParseCache>();
+    const auto embeddedLanguageCache = std::make_shared<EmbeddedLanguageCache>();
+
+    mode.highlight = [parser, query, injectionQuery, sharedParse,
+                      embeddedLanguageCache](std::string_view bufferText) -> std::vector<HighlightSpan> {
+        const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
+        if (tree.IsNull()) {
+            return {};
+        }
+        const treesitter::Node root = tree.RootNode();
+
+        SpanCollector collector;
+        for (const treesitter::QueryCapture& capture : query->Captures(root, bufferText)) {
+            if (!IsHighlightableCapture(capture.name)) {
+                continue;
+            }
+            collector.Add(capture.name, capture.startByte, capture.endByte, SyntaxClassForCapture(capture.name));
+        }
+        std::vector<HighlightSpan> spans = collector.Take();
+
+        // <script>/<style> content, appended last so it wins over anything
+        // the base query above captured in that range.
+        CollectInjectedHighlightSpans(root, bufferText, *injectionQuery, *embeddedLanguageCache, spans);
+
+        return spans;
+    };
+
+    return mode;
 }
 
 Mode CssMode() {
@@ -1096,33 +1099,34 @@ Mode MarkdownMode() {
     // TreeSitterMode() too) is kept exactly as-is. Own separate
     // parser/query state, own tree walk -- mirrors OrgMode()'s own
     // precedent of bypassing the shared generic highlight path for logic a
-    // plain query can't express, here: heading levels, GFM checkboxes, and
-    // markdown's own inline-grammar "injection" (see
-    // CollectMarkdownInlineSpans's own doc comment for why that's a whole
-    // second grammar, not just more query patterns).
+    // plain query can't express: heading levels and GFM checkboxes (Pass 2
+    // below). Markdown's own inline-grammar formatting and its fenced code
+    // blocks used to be two more hand-rolled passes here
+    // (embedded-language-injection follow-up); both are now the real
+    // upstream injections.scm driving Injection.h's generic engine (Pass 3).
     const auto blockLanguage = treesitter::LanguageByName("markdown");
     const auto blockParser   = std::make_shared<treesitter::Parser>(*blockLanguage);
     const auto blockQuery    = std::make_shared<treesitter::Query>(*blockLanguage, treesitter::queries::kMarkdown);
-
-    const auto inlineLanguage = treesitter::LanguageByName("markdown-inline");
-    const auto inlineParser   = std::make_shared<treesitter::Parser>(*inlineLanguage);
-    // Ned's own addition -- see CaptureTable()'s "text.strikethrough" doc
-    // comment for why this one extra pattern is appended in C++ rather than
-    // through a CMake-embedded query file.
-    const std::string inlineQuerySource = std::string(treesitter::queries::kMarkdownInline) + "\n(strikethrough) @text.strikethrough\n";
-    const auto        inlineQuery       = std::make_shared<treesitter::Query>(*inlineLanguage, inlineQuerySource);
+    const auto injectionQuery =
+        std::make_shared<treesitter::Query>(*blockLanguage, treesitter::queries::kMarkdownInjections);
 
     // Same cached-tree-by-text-equality idiom TreeSitterModeFromLanguage
-    // uses internally (see its own doc comment) -- this closure does its
-    // own full block parse plus one parse per "inline" node, so skipping
-    // all of that when bufferText is unchanged since the last call matters
-    // here too, not just for the generic path. Also what makes this an
-    // incremental reparse rather than a full one (incremental-tree-sitter-
-    // reparse follow-up) -- see IncrementalParseCache's own doc comment.
+    // uses internally (see its own doc comment) -- skipping the full block
+    // parse (and every injected sub-parse) when bufferText is unchanged
+    // since the last call matters here too, not just for the generic path.
+    // Also what makes this an incremental reparse rather than a full one
+    // (incremental-tree-sitter-reparse follow-up) -- see
+    // IncrementalParseCache's own doc comment.
     const auto sharedParse = std::make_shared<treesitter::IncrementalParseCache>();
 
-    mode.highlight = [blockParser, blockQuery, inlineParser, inlineQuery,
-                      sharedParse](std::string_view bufferText) -> std::vector<HighlightSpan> {
+    // One HighlightFunction cache per distinct injected language actually
+    // encountered (fenced-code languages, plus "markdown-inline" itself),
+    // shared across every call to this closure, mirroring sharedParse's own
+    // shared_ptr-captured-by-value idiom.
+    const auto embeddedLanguageCache = std::make_shared<EmbeddedLanguageCache>();
+
+    mode.highlight = [blockParser, blockQuery, injectionQuery, sharedParse,
+                      embeddedLanguageCache](std::string_view bufferText) -> std::vector<HighlightSpan> {
         const treesitter::Tree& tree = sharedParse->Update(*blockParser, bufferText);
         if (tree.IsNull()) {
             return {};
@@ -1156,10 +1160,14 @@ Mode MarkdownMode() {
         // real tree rather than query captures.
         CollectMarkdownStructuralSpans(root, spans);
 
-        // Pass 3: markdown's own inline formatting, re-parsed per "inline"
-        // node with the separate inline grammar. Appended last so it wins
-        // over everything above, including a heading's own whole-line span.
-        CollectMarkdownInlineSpans(root, bufferText, *inlineParser, *inlineQuery, spans);
+        // Pass 3: everything the real injections.scm expresses -- inline
+        // formatting (bold/italic/strikethrough/code-span/links, injected
+        // into "markdown-inline"), fenced code blocks (into whatever
+        // language their info string names), html_block, and frontmatter.
+        // Appended last so it wins over everything above, including a
+        // heading's own whole-line span and Pass 1's whole-fenced-block
+        // "text.literal" (String) span.
+        CollectInjectedHighlightSpans(root, bufferText, *injectionQuery, *embeddedLanguageCache, spans);
 
         return spans;
     };

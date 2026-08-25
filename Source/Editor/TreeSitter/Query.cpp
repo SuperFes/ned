@@ -230,12 +230,12 @@ namespace {
     }
 
     // Splits pattern's flat predicate-step array (Done steps are the
-    // separators between individual "#name? operand..." calls) and
-    // evaluates each one against match, short-circuiting on the first
-    // failure (AND semantics -- tree-sitter's own documented predicate
-    // contract).
-    bool EvaluatePredicates(const TSQuery* query, const TSQueryMatch& match, std::string_view sourceText,
-                            std::unordered_map<std::string, std::regex>& regexCache) {
+    // separators between individual "#name? operand..." calls) and invokes
+    // fn(name, operands) for each -- shared by EvaluatePredicates below and
+    // ExtractSetDirectives (Matches()'s own #set!-reading counterpart),
+    // rather than duplicating this step-splitting walk twice.
+    template <typename Fn>
+    void ForEachPredicate(const TSQuery* query, const TSQueryMatch& match, Fn&& fn) {
         uint32_t                    stepCount = 0;
         const TSQueryPredicateStep* steps     = ts_query_predicates_for_pattern(query, match.pattern_index, &stepCount);
 
@@ -250,13 +250,60 @@ namespace {
                 uint32_t                                nameLength = 0;
                 const char*                             name       = ts_query_string_value_for_id(query, steps[start].value_id, &nameLength);
                 const std::vector<TSQueryPredicateStep> operands(steps + start + 1, steps + i);
-                if (!EvaluateOnePredicate(query, match, std::string_view(name, nameLength), operands, sourceText, regexCache)) {
-                    return false;
-                }
+                fn(std::string_view(name, nameLength), operands);
             }
             start = i + 1;
         }
-        return true;
+    }
+
+    // Evaluates every predicate against match, AND semantics (tree-sitter's
+    // own documented predicate contract). Doesn't short-circuit the
+    // step-array walk itself (ForEachPredicate has no early-exit), but does
+    // skip calling the (comparatively expensive -- regex/ancestor-walk)
+    // EvaluateOnePredicate once a prior predicate has already failed.
+    bool EvaluatePredicates(const TSQuery* query, const TSQueryMatch& match, std::string_view sourceText,
+                            std::unordered_map<std::string, std::regex>& regexCache) {
+        bool passed = true;
+        ForEachPredicate(query, match, [&](std::string_view name, const std::vector<TSQueryPredicateStep>& operands) {
+            if (passed && !EvaluateOnePredicate(query, match, name, operands, sourceText, regexCache)) {
+                passed = false;
+            }
+        });
+        return passed;
+    }
+
+    // Resolves every #set! directive on match's pattern into a
+    // {key -> value} map -- the one place #set!'s operands actually get
+    // read; EvaluateOnePredicate above still treats #set! as inert for
+    // filtering purposes (matches Query.h's documented "unrecognized
+    // predicate never suppresses a match" contract -- #set! genuinely is
+    // non-filtering, this is a separate, additive read of its data, not a
+    // change to whether a match passes). A zero-operand #set! (e.g.
+    // `(#set! injection.combined)`) stores an empty value so callers can
+    // still test for the key's presence.
+    std::unordered_map<std::string, std::string> ExtractSetDirectives(const TSQuery* query, const TSQueryMatch& match,
+                                                                      std::string_view sourceText) {
+        std::unordered_map<std::string, std::string> directives;
+        ForEachPredicate(query, match, [&](std::string_view name, const std::vector<TSQueryPredicateStep>& operands) {
+            if (!name.empty() && name.front() == '#') {
+                name.remove_prefix(1);
+            }
+            if (name != "set!" || operands.empty()) {
+                return;
+            }
+            const auto key = ResolveTextOperand(query, match, operands[0], sourceText);
+            if (!key) {
+                return;
+            }
+            std::string value;
+            if (operands.size() > 1) {
+                if (const auto resolved = ResolveTextOperand(query, match, operands[1], sourceText)) {
+                    value = std::string(*resolved);
+                }
+            }
+            directives[std::string(*key)] = std::move(value);
+        });
+        return directives;
     }
 
 } // namespace
@@ -330,6 +377,44 @@ std::vector<QueryCapture> Query::Captures(const Node& root, std::string_view sou
 
     ts_query_cursor_delete(cursor);
     return captures;
+}
+
+std::vector<QueryMatch> Query::Matches(const Node& root, std::string_view sourceText) const {
+    std::vector<QueryMatch> matches;
+
+    TSQueryCursor* cursor = ts_query_cursor_new();
+    ts_query_cursor_exec(cursor, query_, root.Raw());
+
+    // Match-at-a-time (unlike Captures()'s capture-at-a-time loop) -- this
+    // is the whole point: match.captures[] is available in full for each
+    // match, so captures from one pattern instance can be kept together
+    // instead of flattened.
+    TSQueryMatch match;
+    while (ts_query_cursor_next_match(cursor, &match)) {
+        if (!EvaluatePredicates(query_, match, sourceText, regexCache_)) {
+            continue;
+        }
+
+        QueryMatch out;
+        out.captures.reserve(match.capture_count);
+        for (uint16_t i = 0; i < match.capture_count; ++i) {
+            const TSQueryCapture& capture = match.captures[i];
+
+            uint32_t          nameLength = 0;
+            const char* const name       = ts_query_capture_name_for_id(query_, capture.index, &nameLength);
+
+            out.captures.push_back(QueryMatchCapture{
+                .name      = std::string(name, nameLength),
+                .startByte = ts_node_start_byte(capture.node),
+                .endByte   = ts_node_end_byte(capture.node),
+            });
+        }
+        out.setDirectives = ExtractSetDirectives(query_, match, sourceText);
+        matches.push_back(std::move(out));
+    }
+
+    ts_query_cursor_delete(cursor);
+    return matches;
 }
 
 } // namespace ned::editor::treesitter
