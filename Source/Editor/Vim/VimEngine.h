@@ -85,6 +85,12 @@ class VimEngine {
     // consumes it right after.
     [[nodiscard]] PendingIntent TakePendingIntent();
 
+    // Set by zz/zt/zb/C-e/C-y -- an explicit "scroll the viewport to this line" request
+    // independent of point, which BufferView must apply (SetTopLine) *before* its own
+    // ScrollToShowPoint() call, since that call only nudges topLine_ far enough to keep
+    // point visible and would otherwise silently undo an explicit recenter.
+    [[nodiscard]] std::optional<std::size_t> TakePendingTopLine();
+
   private:
     using CharHandler = std::function<void(text::Buffer&, const KeyChord&)>;
 
@@ -99,6 +105,7 @@ class VimEngine {
     void DeleteToLineStartInInsert(text::Buffer& buffer);
     void ShiftInsertLine(text::Buffer& buffer, bool more);
     void InsertRegisterAtPoint(text::Buffer& buffer, char32_t name);
+    void BeginOneShotNormal(text::Buffer& buffer); // C-o
 
     // ---- Normal/Visual grammar helpers ----
     [[nodiscard]] long                        EffectiveCount() const;
@@ -110,6 +117,8 @@ class VimEngine {
     void                                      ApplyDoubledOperator(text::Buffer& buffer, char32_t op, long count);
     void                                      ApplyTextObject(text::Buffer& buffer, bool inner, const KeyChord& objectChord);
     void                                      HandleGPrefixed(text::Buffer& buffer, const KeyChord& chord);
+    void                                      HandleZPrefixed(text::Buffer& buffer, const KeyChord& chord);
+    void                                      HandleCapitalZPrefixed(text::Buffer& buffer, const KeyChord& chord);
     bool                                      HandleVisualSpecific(text::Buffer& buffer, const KeyChord& chord, long count); // true if the chord was consumed
     void                                      HandleAction(text::Buffer& buffer, const KeyChord& chord, long count);
 
@@ -120,7 +129,15 @@ class VimEngine {
 
     void ShiftLines(text::Buffer& buffer, std::size_t start, std::size_t end, bool more);
     void ToggleCaseRange(text::Buffer& buffer, std::size_t start, std::size_t end, char32_t op);
-    void JoinLines(text::Buffer& buffer, long count);
+    void JoinLines(text::Buffer& buffer, long count, bool insertSpace = true); // gJ passes false
+
+    // The four read-only special registers (., %, :, /) -- intercepted before
+    // VimRegisters is ever consulted, since none of them are ordinary named storage:
+    // '.' and '%' need state VimRegisters has no access to (last-inserted text, the live
+    // Buffer's own path), and while '/' could live in VimRegisters trivially, keeping all
+    // four together in one place is simpler than splitting the interception. Falls
+    // through to registers_.Get(name) for every other register name.
+    [[nodiscard]] std::optional<RegisterEntry> ReadRegister(const text::Buffer& buffer, char32_t name) const;
 
     void BeginInsertSession(text::Buffer& buffer);
     void BeginReplaceSession(text::Buffer& buffer);
@@ -128,9 +145,18 @@ class VimEngine {
     void RememberVisualRange(text::Buffer& buffer);
     void PasteRegister(text::Buffer& buffer, bool before, long count);
 
+    // Shared by PasteRegister's Line-kind branch and :m/:t/:pu's own line insertion --
+    // handles the "buffer ends without a trailing newline" edge case identically either
+    // way. Sets point to the first pasted line's first non-blank column.
+    void InsertLineBlock(text::Buffer& buffer, const std::vector<std::string>& pieces, std::size_t line, bool before);
+
     void ExecuteExCommand(text::Buffer& buffer, const std::string& text);
     void ExecuteSubstitute(text::Buffer& buffer, const ExCommand& cmd);
     void ExecuteGlobal(text::Buffer& buffer, const ExCommand& cmd);
+    void SubstituteLineRange(text::Buffer& buffer, const ExSubstituteArgs& args, std::size_t startLine, std::size_t endLine);
+    void ExecuteMoveOrCopy(text::Buffer& buffer, const ExCommand& cmd, bool isMove);
+    void ExecuteSort(text::Buffer& buffer, const ExCommand& cmd);
+    void ExecuteRead(text::Buffer& buffer, const ExCommand& cmd);
 
     void RunSearch(text::Buffer& buffer, bool forward, const std::string& pattern);
     void PerformSearch(text::Buffer& buffer, bool forward, const std::string& pattern);
@@ -167,6 +193,20 @@ class VimEngine {
     // mechanism of its own -- HandleInsertModeChord checks this flag itself instead.
     bool awaitingInsertRegisterName_ = false;
 
+    // C-o in Insert mode: execute exactly one Normal-mode command (possibly an
+    // operator+motion, not necessarily a single keystroke), then resume Insert. Set by
+    // BeginOneShotNormal, consumed by FinishCommand the moment mode_ genuinely returns to
+    // Normal on its own (an operator left pending, e.g. "C-o d", correctly keeps this set
+    // and mode_ at Normal until the motion completing it arrives). Cleared defensively
+    // (without resuming Insert) by BeginInsertSession/BeginReplaceSession/EnterVisual too,
+    // since a one-shot command that itself starts a new modal session (an unusual thing
+    // to type, e.g. "C-o A" or "C-o v") reaches mode_ != Mode::Normal by a path other than
+    // FinishCommand's own resume branch -- left unguarded, the flag would otherwise stay
+    // stuck true and incorrectly hijack a later, unrelated command's own FinishCommand
+    // call. A documented v1 edge case: such a one-shot command's own dot-repeat/dot
+    // register bookkeeping isn't specially unified with the interrupted Insert session's.
+    bool oneShotNormalPending_ = false;
+
     char32_t lastFindChar_    = 0;
     bool     lastFindForward_ = true;
     bool     lastFindTill_    = false;
@@ -177,6 +217,15 @@ class VimEngine {
 
     std::optional<std::string> lastSearchPattern_;
     bool                       lastSearchForward_ = true;
+
+    // & (repeat last :s, current line only) -- the parsed args, not the raw text, so it
+    // doesn't need to re-run ParseSubstituteArgs itself.
+    std::optional<ExSubstituteArgs> lastSubstitute_;
+
+    // The ":" and "." special registers' own backing state.
+    std::string lastExCommandText_;
+    std::string lastInsertedText_;    // committed at ExitInsertToNormal
+    std::string insertModeTypedText_; // accumulates live during a session, see RecordInsertKey
 
     std::size_t            visualAnchor_ = 0;
     std::optional<ExRange> lastVisualRange_; // '< / '>, remembered when leaving Visual mode
@@ -207,6 +256,13 @@ class VimEngine {
 
     std::size_t topLine_        = 0;
     std::size_t viewportHeight_ = 0;
+
+    std::optional<std::size_t> pendingTopLine_;
+
+    // gi's own memory: where Insert mode was last exited from (before ExitInsertToNormal's
+    // own point-back-one-grapheme adjustment), distinct from wherever point ends up moving
+    // to afterward.
+    std::size_t lastInsertExitPoint_ = 0;
 
     std::string   statusText_;
     PendingIntent pendingIntent_ = PendingIntent::None;

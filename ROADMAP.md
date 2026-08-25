@@ -400,32 +400,105 @@ Notcurses.
       Insert after one Normal action" state thread through `HandleKey` that the other
       five didn't, and is a much rarer command in practice; left as a future follow-up
       rather than folded in here. All six shipped fixes are unit-tested
-      (`Tests/VimEngineTest.cpp`) and tmux-verified live. Everything below remains open:
-      - No half/full-page or line scrolling (`C-d`/`C-u` half-page, `C-f`/`C-b` full
-        page, `C-e`/`C-y` one line) or viewport recentering (`zz`/`zt`/`zb`) — currently
-        silent no-ops in Normal mode, since `VimEngine` claims every key there (so ned's
-        own scroll bindings for these same chords are unreachable too while vim mode is
-        on, not just vim's own version missing).
-      - No `C-a`/`C-x` increment/decrement the number under point.
-      - No `ZZ`/`ZQ` (save-and-close / discard-and-close), `gJ` (join without inserting a
-        space, `J`'s sibling), `gi` (resume Insert at the position Insert was last
-        exited from), `&` (repeat the last `:s` on the current line), or Insert-mode
-        `C-o` (run one Normal-mode command, then return to Insert — deliberately
-        deferred out of the same-day fix above; needs a "resume Insert after one Normal
-        action" state thread through `HandleKey` the other five Ctrl-chords didn't).
-      - Text objects: `it`/`at` (tag) and `is`/`as` (sentence) were never wired in
-        (`VimTextObject.h`'s own header comment already flagged this — it just hadn't
-        surfaced to this file); word/quote/bracket/paragraph objects are the only ones
-        implemented. No count on a text object itself (`2iw`) either, though a count
-        before the operator still repeats the whole combo.
-      - Ex commands: only `:w`/`:q`/`:wq`/`:x`/`:qa`/`:d`/`:s`/`:g`/`:normal` exist —
-        no `:m`/`:move` or `:t`/`:co`/`:copy` (relocate/duplicate a line range), `:>`/`:<`
-        (range indent, distinct from the operator/Visual forms), `:j`/`:join` (range
-        join), `:y`/`:yank` (range to register), `:pu`/`:put` (paste a register as
-        lines), `:r`/`:read` (insert a file's contents), or `:sort`.
-      - No read-only special registers (`.` last-inserted-text, `%` current filename,
-        `:` last ex command, `/` last search pattern) — `VimRegisters` covers
-        unnamed/named/numbered-ring/blackhole/clipboard already, just not these four.
+      (`Tests/VimEngineTest.cpp`) and tmux-verified live. Everything this audit found
+      beyond the six same-day fixes was closed in round 4, below.
+- [x] **Vim-mode round 4** (shipped 2026-08-25, tmux-verified live) — closed every gap the
+      audit above left open:
+      - **Scrolling** (`C-d`/`C-u` half-page, `C-f`/`C-b` full page — `viewportHeight_`
+        itself is the page size, no `scroll-off`/overlap tuning): plain point motions
+        (`VimMotion.h`'s existing `LineDown`/`LineUp`), since `ScrollToShowPoint()`
+        already scrolls the viewport into view afterward — no new plumbing needed.
+        `zz`/`zt`/`zb` and `C-e`/`C-y` do need one: a new `VimEngine::pendingTopLine_`
+        (`TakePendingTopLine()`, `TakePendingIntent()`'s own one-shot shape) that
+        `BufferView::HandleVimKey` applies via `SetTopLine()` *before* its existing
+        `ScrollToShowPoint()` call — that call only nudges `topLine_` far enough to keep
+        point visible, so it leaves an explicit recenter alone whenever point is still
+        on screen afterward. A new `z`-prefix `pendingCharHandler_`, parallel to the
+        existing `g` prefix. Cut: no `z<CR>`/`z.`/`z-` variants, no cursor-nudge-into-view
+        for `C-e`/`C-y` (point is left untouched, unlike real vim).
+      - **`C-a`/`C-x`** (increment/decrement the number under/after point, Normal mode
+        only): a new `FindNumberAtOrAfterPoint` scan (`VimEngine.cpp`'s anonymous
+        namespace) finds the nearest ASCII digit run at-or-after point on the current
+        line, matching real vim's own "leading `-` is a negative sign even if it's
+        really a hyphen separator" quirk intentionally. Preserves zero-padded width on
+        rewrite (`"007"` → `"008"`, not `"8"`). Cut: no hex/octal (`nrformats`).
+      - **`ZZ`/`ZQ`**: a new `Z`-prefix handler reusing `:wq`/`:q`'s own bodies verbatim
+        — `ZQ` still confirm-prompts on a modified buffer, matching this codebase's own
+        `:q` (not real vim's true forced-discard `:q!`), a deliberate simplification for
+        one rarely-typed chord rather than a new `PendingIntent` variant.
+      - **`gJ`** (join without a space) and **`gi`** (resume Insert where it was last
+        exited, via a new `lastInsertExitPoint_` captured in `ExitInsertToNormal` before
+        its own point-back adjustment): both new arms in the existing `HandleGPrefixed`.
+      - **Ex commands** `:j`/`:join`, `:y`/`:yank [reg]`, `:pu`/`:put[!] [reg]`,
+        `:>`/`:<` (single shift only, no `:>>>` repeat-count), `:sort[!]` (plain
+        lexicographic ± reverse, no `u`/`n`/`i`/pattern-key flags), `:r`/`:read {file}`
+        (no `:r !command` shell variant), and `:m`/`:move`/`:t`/`:co`/`:copy
+        {address}` — the last two the one genuinely new piece, needing a destination
+        address parsed via a new public `VimExCommand::ParseExAddress` (exposes the
+        existing internal `ParseAddr` used for ranges). New shared
+        `VimEngine::InsertLineBlock` (extracted from `PasteRegister`'s own Line-kind
+        branch) handles the "buffer ends without a trailing newline" edge case once for
+        `:pu`, `:m`/`:t`, and `:r` alike. `&` (repeat the last `:s` on the current line
+        only) needed `ExecuteSubstitute`'s per-line loop extracted into a shared
+        `SubstituteLineRange` plus one new `lastSubstitute_` cache. Cut: a literal `:m0`/
+        `:t0` doesn't get real vim's distinct "insert before the very first line"
+        meaning — resolves the same as `:m1`/`:t1`, via the existing digit-address
+        `n > 0 ? n - 1 : 0` rule.
+      - **Text objects** `is`/`as` (sentence) and `it`/`at` (tag), plus count support on
+        `iw`/`aw`/`is`/`as` (`2iw` = word + the whitespace/word run(s) after it, real
+        vim's own alternating-run semantics — brackets/quotes/paragraph/tag objects stay
+        count-1-only, a materially different "N levels of nesting" algorithm real vim
+        uses there). Sentence boundaries are a hand-synced copy of
+        `Buffer::MoveForwardSentence`/`MoveBackwardSentence`'s own "`.`/`!`/`?`" rule
+        rather than calling into those methods directly — they're *motions*, and their
+        own real-vim-faithful behavior (landing exactly on a sentence's first character
+        and moving backward again jumps to the *previous* sentence) is the wrong shape
+        for a text object's "the sentence containing point" query, which must still
+        select the current sentence even when point is already at its first character.
+        Tag objects are plain byte-scanning (`VimTextObject.cpp`, no tree-sitter/real
+        XML parser involved, matching every other object in that file) tracking a stack
+        of pending closing-tag names for nesting, the same way `FindEnclosingBracket`
+        tracks depth but keyed by name; self-closing tags (`<br/>`) are skipped
+        entirely. Known limitation: a `'>'` inside a quoted attribute value ends a tag
+        token early (no real attribute-value scanner).
+      - **Read-only special registers** `.` (last-inserted text), `%` (current buffer's
+        path), `:` (last ex command's raw text), `/` (last search pattern) — intercepted
+        in a new `VimEngine::ReadRegister` *before* `VimRegisters` is ever consulted
+        (none of the four fit that type's own named-storage model), falling through to
+        `registers_.Get()` for every other name. `:` is captured at `:`'s true
+        command-line entry point (`HandleCommandLineKey`'s Enter branch), not inside
+        `ExecuteExCommand` itself — that function is also what `:g` calls recursively
+        per matching line, which would otherwise overwrite the register with a
+        sub-command's own text instead of what the user actually typed. Cut: `.` doesn't
+        model Backspace/`C-w`/`C-u` removing already-typed characters, so it may
+        over-capture text later deleted within the same Insert session.
+      - **Insert-mode `C-o`** (execute one Normal-mode command — possibly a full
+        operator+motion, not just a single keystroke — then resume Insert): the one
+        item needing real state threaded through `HandleKey`, deliberately last. A new
+        `oneShotNormalPending_` flag, set by `BeginOneShotNormal` (bound in
+        `InsertModeKeymap` alongside the other five Ctrl-chords) without the full
+        `ExitInsertToNormal` teardown — the Insert session's own undo group stays open,
+        so the one-shot command's edits join it as one nestable group, matching real
+        vim's "the whole Insert session undoes as one step, `C-o` excursions included."
+        `FinishCommand` gained a new branch: when the flag is set and `mode_` genuinely
+        returns to `Mode::Normal` on its own (an operator left pending, e.g. `C-o d`,
+        correctly keeps `mode_` at Normal and the flag set until the motion completing
+        it arrives), it resumes Insert instead of finalizing/clearing the still-open
+        session's own dot-repeat recording — mirroring how a Visual-mode session's
+        chords already keep accumulating across that same early-return. A real bug this
+        needed guarding against, confirmed live: a one-shot command that *itself* starts
+        a new modal session (an unusual thing to type, e.g. `C-o A`) reaches
+        `mode_ != Mode::Normal` by a path other than `FinishCommand`'s own resume branch
+        — left unguarded, the flag stays stuck true and incorrectly hijacks a later,
+        unrelated command's own `FinishCommand` call (silently forcing it back into
+        Insert mode). Fixed by clearing the flag defensively in
+        `BeginInsertSession`/`BeginReplaceSession`/`EnterVisual` too. Documented v1 edge
+        case, not engineered around: such a one-shot command's own dot-repeat/`.`-register
+        bookkeeping isn't specially unified with the interrupted session's own.
+      - All of the above is unit-tested (`Tests/VimEngineTest.cpp`,
+        `Tests/VimTextObjectTest.cpp`) and tmux-verified live, including the `ZQ`
+        confirm-prompt, nested `dit`/`dat`, `:m`/`:t` with `.`/`$` destinations, and
+        `C-o` followed by a full operator+motion.
 - [ ] **`libned` as a real shared library** — `ned_lib` (static today) exists solely so
       `ned_tests` can link real editor code without pulling in `main()`; a static lib
       already does that job. Worth revisiting only if a second real consumer shows up

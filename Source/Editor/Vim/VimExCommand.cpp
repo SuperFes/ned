@@ -100,6 +100,25 @@ std::optional<ExCommand> ParseExCommand(std::string_view text, std::size_t curre
         return cmd;
     }
 
+    // ":>"/":<" (range indent/outdent) -- neither character is alphabetic, so the generic
+    // command-word scan below would never recognize them. Real vim lets the character
+    // repeat (":>>>" shifts three times); this codebase's own VimEngine::ExecuteExCommand
+    // deliberately only ever shifts once regardless of how many were typed (documented v1
+    // cut), but the repeats are still consumed here so trailing input doesn't get
+    // misparsed as something else.
+    if (s.front() == '>' || s.front() == '<') {
+        const char shiftChar = s.front();
+        while (!s.empty() && s.front() == shiftChar) {
+            s.remove_prefix(1);
+        }
+        cmd.name = std::string(1, shiftChar);
+        if (!s.empty() && s.front() == ' ') {
+            s.remove_prefix(1);
+        }
+        cmd.rest = std::string(s);
+        return cmd;
+    }
+
     std::size_t nameLen = 0;
     while (nameLen < s.size() && std::isalpha(static_cast<unsigned char>(s[nameLen]))) {
         ++nameLen;
@@ -158,6 +177,12 @@ std::optional<ExSubstituteArgs> ParseSubstituteArgs(std::string_view rest) {
         flags = std::string(rest);
     }
     return ExSubstituteArgs{pattern, replacement, flags};
+}
+
+std::optional<std::size_t> ParseExAddress(std::string_view text, std::size_t currentLine, std::size_t lastLine,
+                                          std::optional<ExRange> visualRange) {
+    TrimLeadingSpaces(text);
+    return ParseAddr(text, currentLine, lastLine, visualRange, true);
 }
 
 std::optional<ExGlobalArgs> ParseGlobalArgs(std::string_view rest) {
