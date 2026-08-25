@@ -6,10 +6,10 @@
 // matching Rope::ByteOffsetToLine), even though vim's own :42 syntax is 1-based --
 // ParseExCommand does that conversion internally.
 //
-// Deliberate v1 scope: no :g/pattern/cmd global command, no mark-letter addresses beyond
-// '< / '> (the visual-selection marks, supplied by the caller), no address arithmetic
-// (":.+3"). :normal's own key-notation parsing (VimEngine's concern, not this file's) is
-// plain-printable-characters-only -- no <Esc>/<C-x> notation.
+// Deliberate v1 scope: no mark-letter addresses beyond '< / '> (the visual-selection
+// marks, supplied by the caller), no address arithmetic (":.+3"). :normal's own
+// key-notation parsing (VimEngine's concern, not this file's) is plain-printable-
+// characters-only -- no <Esc>/<C-x> notation.
 //
 
 #ifndef NED_EDITOR_VIM_VIMEXCOMMAND_H
@@ -41,6 +41,11 @@ struct ExSubstituteArgs {
     std::string flags;
 };
 
+struct ExGlobalArgs {
+    std::string pattern;
+    std::string command; // sub ex-command text, verbatim; empty means no command was given
+};
+
 // currentLine/lastLine and visualRange (the '< / '> marks, if any) are 0-based, resolved
 // by the caller (VimEngine) from its own live state -- this function is otherwise pure
 // text parsing. Returns nullopt for text that isn't a well-formed ex command at all
@@ -53,6 +58,13 @@ struct ExSubstituteArgs {
 // delimiter and flags are both optional ("/foo/bar" and "/foo/bar/" are equivalent).
 // nullopt if rest doesn't start with a punctuation delimiter at all.
 [[nodiscard]] std::optional<ExSubstituteArgs> ParseSubstituteArgs(std::string_view rest);
+
+// Splits ":g<delim>pattern<delim>command" (rest already has the leading "g"/"global"
+// stripped, delim is the first character of rest). Unlike :s, only the pattern is
+// delimited -- the command portion runs verbatim to the end of the line, since an ex
+// command may itself contain the same punctuation character. nullopt if rest doesn't
+// start with a punctuation delimiter at all.
+[[nodiscard]] std::optional<ExGlobalArgs> ParseGlobalArgs(std::string_view rest);
 
 } // namespace ned::editor::vim
 

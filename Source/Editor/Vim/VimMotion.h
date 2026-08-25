@@ -6,8 +6,7 @@
 // motion rather than Command.h's usual "command directly mutates Buffer" shape.
 //
 // Word/WORD classification and vertical-motion column math are ASCII-only, matching
-// Buffer::MoveForwardWord's own documented word-char scope cut; ge/gE (backward
-// word-end) are a deliberate v1 cut -- rare in practice, not wired into VimEngine yet.
+// Buffer::MoveForwardWord's own documented word-char scope cut.
 //
 
 #ifndef NED_EDITOR_VIM_VIMMOTION_H
@@ -45,6 +44,11 @@ namespace ned::editor::vim {
 [[nodiscard]] MotionResult WordForward(const text::Buffer& buffer, std::size_t point, long count, bool bigWord);    // w / W
 [[nodiscard]] MotionResult WordBackward(const text::Buffer& buffer, std::size_t point, long count, bool bigWord);   // b / B
 [[nodiscard]] MotionResult WordEndForward(const text::Buffer& buffer, std::size_t point, long count, bool bigWord); // e / E
+
+// Backward to the end of the previous word (always strictly before point, never the tail
+// of the word point is currently inside -- mirrors WordEndForward's own "step at least one
+// grapheme before scanning" guarantee, reversed).
+[[nodiscard]] MotionResult WordEndBackward(const text::Buffer& buffer, std::size_t point, long count, bool bigWord); // ge / gE
 
 // till selects t/T (land one grapheme short of target); forward selects f/t vs F/T.
 // found is false (no-op) when the count-th occurrence doesn't exist on the current line

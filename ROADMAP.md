@@ -301,15 +301,83 @@ Notcurses.
       modes, operator+motion+text-object composition, registers (unnamed/named/numbered
       ring/blackhole/system-clipboard), `.` dot-repeat, `q`/`@` macros, marks, PCRE2-
       backed `/`/`?`/`:s`, and ex commands (`:w`/`:q`/`:wq`/`:d`/`:normal`/range syntax)
-      all work end-to-end (tmux-verified live). Deliberate v1 cuts, not oversights: no
-      jumplist/changelist (`C-o`/`C-i`), no `:g` global command, no `ge`/`gE` (backward
-      word-end), no mark letters beyond `a`-`z`/`'<`/`'>`, no `gv`, macros record raw
-      keystrokes rather than vim's own editable-register-text form, `.` replays verbatim
-      (a count typed before it doesn't override the recorded one), `>`/`<`/case operators
-      don't apply to a Visual Block selection (only `d`/`y`/`c`/`x`/`I`/`A` do), and
-      search/`:s` patterns are passed straight to PCRE2 rather than translating vim's own
-      default "magic" escaping convention (closer to vim's `\v` very-magic mode than its
-      default) — revisit any of these if they turn out to matter in practice.
+      all work end-to-end (tmux-verified live). Second round (2026-08-25, tmux-verified
+      live) closed several of the original v1 cuts: `:g`/`:g!`/`:global` (whole-buffer or
+      ranged, any ex command as the sub-command, processed bottom-to-top so line-number
+      shifts from a deleting/inserting sub-command never invalidate a not-yet-processed
+      match), `ge`/`gE` (backward word-end), `gv` (reselect the last Visual/Visual-Line/Visual-Block
+      selection, exact columns not just lines), a one-slot jump-back mark (`` ` `` /
+      `''`, toggling between the last two jump positions — set by `` `x``/`'x``, `G`,
+      `gg`, and every search), and Visual Block `>`/`<` (whole-line shift, matching real
+      vim's own block-indent behavior) plus `g~`/`gu`/`gU` (column-restricted, unlike
+      `>`/`<`). Remaining deliberate v1 cuts: no jumplist/changelist beyond that single
+      `` ` `` / `''` toggle (no `C-o`/`C-i` ring), no mark letters beyond `a`-`z`/`A`-`Z`/
+      `'<`/`'>` (`A`-`Z` are buffer-local here, not real vim's cross-file global marks),
+      macros record raw keystrokes rather than vim's own editable-register-text form, `.`
+      replays verbatim (a count typed before it doesn't override the recorded one), and
+      search/`:s`/`:g` patterns are passed straight to PCRE2 rather than translating
+      vim's own default "magic" escaping convention (closer to vim's `\v` very-magic mode
+      than its default) — revisit any of these if they turn out to matter in practice.
+- [x] **Vim-mode audit (2026-08-25): further gaps beyond the round-2 cuts above** — found
+      by reading `VimEngine.cpp`'s full `case U'...'` switch and `mode_ = Mode::...`
+      assignment list end-to-end, not guessing. Two were outright bugs, not deliberate
+      scope cuts, both fixed same day: `R` (Replace mode) was **dead code** —
+      `Mode::Replace` and a fully-implemented `VimEngine::HandleReplaceKey` already
+      existed, but nothing anywhere set `mode_ = Mode::Replace`; fixed with a
+      `case U'R':` in `HandleAction` calling a new `BeginReplaceSession` (mirrors
+      `BeginInsertSession`). Bare `~` (toggle the case of `[count]` characters under and
+      after point, advancing, clamped the same way `l`/`CharRight` never rests past a
+      line's last character) didn't exist at all — only the `g~`/`g~~` operator form was
+      wired; added alongside `x`/`X` in `HandleAction`.
+      Insert-mode `C-w`/`C-u`/`C-r`/`C-t`/`C-d` weren't doing nothing — they were doing
+      the *wrong* thing: Insert-mode typing bypasses `VimEngine` by design (real typing
+      needs auto-pair/snippets/ghost-completion), so these chords fell through to ned's
+      ordinary global keymap and fired its Emacs bindings instead (`C-r` was the sharpest
+      surprise, dropping into `isearch-backward` mid-typing instead of inserting a
+      register). Fixed via a small `Keymap` owned entirely by `VimEngine.cpp`
+      (`InsertModeKeymap`, `C-w`→delete-word-back/`C-u`→delete-to-line-start/`C-t`/`C-d`→
+      indent-outdent-one-shiftwidth/`C-r`→insert-register, the last needing one extra
+      keystroke read via a small `awaitingInsertRegisterName_` flag since Insert-mode
+      typing has no `pendingCharHandler_`-style mechanism of its own) — deliberately
+      *not* spliced into the pane's shared `KeymapStack` (`WindowManager.cpp`'s
+      `{janetKeymap, mode_.keymap, globalKeymap}`), since that stack is also what plain
+      Emacs-style editing dispatches through whenever vim mode is off; a permanent extra
+      layer there would have stolen these chords from non-vim users too. Consulted only
+      from `HandleInsertModeChord`, itself only called from `BufferView::HandleVimKey`'s
+      existing Insert-mode branch, so the two editing styles' bindings never have to
+      arbitrate over the same chord at all — confirmed via `Keymap::Resolve`, the same
+      matching machinery every other keymap in this codebase already uses, just not
+      the shared stack. `C-o` (execute one Normal-mode command, then return to Insert)
+      was deliberately deferred out of this pass — it needs a more invasive "resume
+      Insert after one Normal action" state thread through `HandleKey` that the other
+      five didn't, and is a much rarer command in practice; left as a future follow-up
+      rather than folded in here. All six shipped fixes are unit-tested
+      (`Tests/VimEngineTest.cpp`) and tmux-verified live. Everything below remains open:
+      - No half/full-page or line scrolling (`C-d`/`C-u` half-page, `C-f`/`C-b` full
+        page, `C-e`/`C-y` one line) or viewport recentering (`zz`/`zt`/`zb`) — currently
+        silent no-ops in Normal mode, since `VimEngine` claims every key there (so ned's
+        own scroll bindings for these same chords are unreachable too while vim mode is
+        on, not just vim's own version missing).
+      - No `C-a`/`C-x` increment/decrement the number under point.
+      - No `ZZ`/`ZQ` (save-and-close / discard-and-close), `gJ` (join without inserting a
+        space, `J`'s sibling), `gi` (resume Insert at the position Insert was last
+        exited from), `&` (repeat the last `:s` on the current line), or Insert-mode
+        `C-o` (run one Normal-mode command, then return to Insert — deliberately
+        deferred out of the same-day fix above; needs a "resume Insert after one Normal
+        action" state thread through `HandleKey` the other five Ctrl-chords didn't).
+      - Text objects: `it`/`at` (tag) and `is`/`as` (sentence) were never wired in
+        (`VimTextObject.h`'s own header comment already flagged this — it just hadn't
+        surfaced to this file); word/quote/bracket/paragraph objects are the only ones
+        implemented. No count on a text object itself (`2iw`) either, though a count
+        before the operator still repeats the whole combo.
+      - Ex commands: only `:w`/`:q`/`:wq`/`:x`/`:qa`/`:d`/`:s`/`:g`/`:normal` exist —
+        no `:m`/`:move` or `:t`/`:co`/`:copy` (relocate/duplicate a line range), `:>`/`:<`
+        (range indent, distinct from the operator/Visual forms), `:j`/`:join` (range
+        join), `:y`/`:yank` (range to register), `:pu`/`:put` (paste a register as
+        lines), `:r`/`:read` (insert a file's contents), or `:sort`.
+      - No read-only special registers (`.` last-inserted-text, `%` current filename,
+        `:` last ex command, `/` last search pattern) — `VimRegisters` covers
+        unnamed/named/numbered-ring/blackhole/clipboard already, just not these four.
 - [ ] **`libned` as a real shared library** — `ned_lib` (static today) exists solely so
       `ned_tests` can link real editor code without pulling in `main()`; a static lib
       already does that job. Worth revisiting only if a second real consumer shows up
@@ -319,6 +387,16 @@ Notcurses.
 - [ ] Hunk unstage matches point against the *cached* staged diff, which drifts when
       unstaged edits exist earlier in the file — exact in the common
       stage-then-undo flow; revisit only if it bites.
+- [ ] **Multi-cursor: no way to drop a single unwanted cursor.** `Buffer`'s secondary-
+      cursor API (`Source/Text/Buffer.h`'s `AddCursorAt`/`SecondaryCursors`/
+      `ClearSecondaryCursors`) is add-or-clear-all only — no `RemoveCursorAt`/skip
+      primitive, so once `add-cursor-below`/`-above`/`select-next-occurrence`/
+      `select-all-occurrences` has built up a set including one you didn't want (e.g. an
+      empty line `C-DOWN` stepped over, or an occurrence `select-next-occurrence` matched
+      that shouldn't be edited), the only recourse is `C-g`-style clear-all and rebuild
+      from scratch. VS Code's `Ctrl+K Ctrl+D`-style "skip this occurrence, keep the rest"
+      is the natural precedent. Needs a `Buffer::RemoveCursorAt`/`RemoveMostRecentCursor`
+      counterpart plus a bound command.
 - [x] **Subprocess hang/timeout protection** (2026-08-24 audit, shipped 2026-08-24;
       Janet-configurable timeouts + user-facing hang affordance shipped 2026-08-25) —
       `Editor/Process/ChildProcess.h` gained `WaitReadable`/`ReadSome(timeout)`

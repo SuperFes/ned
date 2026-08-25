@@ -4,6 +4,7 @@
 
 using ned::editor::vim::ExRange;
 using ned::editor::vim::ParseExCommand;
+using ned::editor::vim::ParseGlobalArgs;
 using ned::editor::vim::ParseSubstituteArgs;
 
 TEST_CASE("A plain command with no range", "[VimExCommand]") {
@@ -91,4 +92,33 @@ TEST_CASE("ParseSubstituteArgs tolerates a missing trailing delimiter", "[VimExC
     REQUIRE(args->pattern == "foo");
     REQUIRE(args->replacement == "bar");
     REQUIRE(args->flags.empty());
+}
+
+TEST_CASE(":g dispatch splits name/bang/rest, leaving :g's own args to ParseGlobalArgs", "[VimExCommand]") {
+    const auto cmd = ParseExCommand("g!/foo bar/normal x", 0, 0, std::nullopt);
+    REQUIRE(cmd.has_value());
+    REQUIRE(cmd->name == "g");
+    REQUIRE(cmd->bang);
+    REQUIRE(cmd->rest == "/foo bar/normal x");
+}
+
+TEST_CASE("ParseGlobalArgs splits pattern from the verbatim command tail", "[VimExCommand]") {
+    const auto args = ParseGlobalArgs("/foo/normal x");
+    REQUIRE(args.has_value());
+    REQUIRE(args->pattern == "foo");
+    REQUIRE(args->command == "normal x");
+}
+
+TEST_CASE("ParseGlobalArgs leaves the command portion unparsed even if it repeats the delimiter", "[VimExCommand]") {
+    const auto args = ParseGlobalArgs("/foo/s/foo/bar/g");
+    REQUIRE(args.has_value());
+    REQUIRE(args->pattern == "foo");
+    REQUIRE(args->command == "s/foo/bar/g");
+}
+
+TEST_CASE("ParseGlobalArgs tolerates a missing command (bare pattern)", "[VimExCommand]") {
+    const auto args = ParseGlobalArgs("/foo/");
+    REQUIRE(args.has_value());
+    REQUIRE(args->pattern == "foo");
+    REQUIRE(args->command.empty());
 }

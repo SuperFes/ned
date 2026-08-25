@@ -160,4 +160,34 @@ std::optional<ExSubstituteArgs> ParseSubstituteArgs(std::string_view rest) {
     return ExSubstituteArgs{pattern, replacement, flags};
 }
 
+std::optional<ExGlobalArgs> ParseGlobalArgs(std::string_view rest) {
+    if (rest.empty()) {
+        return std::nullopt;
+    }
+    const char delim = rest.front();
+    if (std::isalnum(static_cast<unsigned char>(delim)) || delim == ' ') {
+        return std::nullopt;
+    }
+    rest.remove_prefix(1);
+
+    std::size_t p = std::string_view::npos;
+    for (std::size_t i = 0; i < rest.size(); ++i) {
+        if (rest[i] == '\\') {
+            ++i;
+            continue;
+        }
+        if (rest[i] == delim) {
+            p = i;
+            break;
+        }
+    }
+
+    const std::string pattern(rest.substr(0, p == std::string_view::npos ? rest.size() : p));
+    if (p == std::string_view::npos) {
+        return ExGlobalArgs{pattern, ""};
+    }
+    rest.remove_prefix(p + 1);
+    return ExGlobalArgs{pattern, std::string(rest)};
+}
+
 } // namespace ned::editor::vim
