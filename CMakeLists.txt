@@ -442,9 +442,15 @@ ned_add_treesitter_grammar(tree-sitter-markdown-inline https://github.com/tree-s
 
 ned_embed_treesitter_query("${tree-sitter-markdown-inline_SOURCE_DIR}/tree-sitter-markdown-inline/queries/highlights.scm" MarkdownInline)
 
-ned_add_treesitter_grammar(tree-sitter-org https://github.com/SuperFes/tree-sitter-ned-org.git 05b4c7505c452f42330c681a067842d4cb49b174)
+ned_add_treesitter_grammar(tree-sitter-org https://github.com/SuperFes/tree-sitter-ned-org.git 23c476d257db03169831315fdd123fc40278b93c)
 
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/OrgHighlights.scm" Org)
+# embedded-language-injection follow-up: a real injections.scm, added to
+# Ned's own tree-sitter-ned-org fork itself (the commit pin above) rather
+# than vendored locally, matching how every other bundled grammar's
+# injections.scm is consumed -- drives #+BEGIN_SRC/#+BEGIN_EXPORT block
+# highlighting through Injection.h's generic engine.
+ned_embed_treesitter_query("${tree-sitter-org_SOURCE_DIR}/queries/injections.scm" OrgInjections)
 
 ned_add_treesitter_grammar(tree-sitter-yaml https://github.com/tree-sitter-grammars/tree-sitter-yaml.git v0.7.2)
 
@@ -847,6 +853,7 @@ if (NED_BUILD_TESTS)
             Tests/ModeTest.cpp
             Tests/CodeFoldTest.cpp
             Tests/OrgTest.cpp
+            Tests/OrgHighlightTest.cpp
             Tests/OrgCaptureTest.cpp
             Tests/OrgClockTest.cpp
             Tests/TableTest.cpp
