@@ -11,6 +11,7 @@
 #include "Editor/AutoMerge.h"
 #include "Editor/AutoRevert.h"
 #include "Editor/Backup.h"
+#include "Editor/Bookmark.h"
 #include "Editor/Dap/DapManager.h"
 #include "Editor/DiagnosticsLog.h"
 #include "Editor/Lsp/LspBackgroundSync.h"
@@ -18,6 +19,7 @@
 #include "Editor/ModeOverrides.h"
 #include "Editor/Multibuffer.h"
 #include "Editor/ProjectSession.h"
+#include "Editor/RecentFiles.h"
 #include "Editor/ScratchPad.h"
 #include "Editor/Session.h"
 #include "Editor/TabWidth.h"
@@ -217,8 +219,16 @@ Pane::Pane(text::Buffer& buffer, text::KillRing& killRing, editor::RegisterTable
     // land on the most recently left buffer. bufferList outlives every Pane
     // (shared app-wide, per this constructor's own doc comment). The
     // initial buffer is touched directly: Set never fired for it.
-    activeBuffer_.SetOnChange([&bufferList](text::Buffer& current) { bufferList.TouchBuffer(current); });
+    // editor-ergonomics follow-up: piggybacked on this same choke point --
+    // find-recent-file's candidate list is "every path-backed buffer this
+    // pane has ever switched to," not just ones opened via find-file/
+    // project-find-file directly.
+    activeBuffer_.SetOnChange([&bufferList](text::Buffer& current) {
+        bufferList.TouchBuffer(current);
+        editor::RecordRecentFile(current);
+    });
     bufferList.TouchBuffer(buffer);
+    editor::RecordRecentFile(buffer);
     // Chrome-redesign follow-up: this pane's mode line accent-tints its
     // gradient while this pane's own BufferView holds the keyboard focus --
     // the raw pointer outlives modeLine_ (both are members of this Pane).
@@ -745,6 +755,10 @@ void WindowManager::StartAutoSaveTimer(EventLoop& eventLoop) {
                 // saves skip the disk write entirely when nothing changed.
                 RecordSessionPlaces();
                 editor::SaveFilePlaces();
+                // editor-ergonomics follow-up: same "skip the write when
+                // nothing changed" posture as SaveFilePlaces above.
+                editor::SaveRecentFiles();
+                editor::SaveBookmarks();
                 SaveProjectSessionNow();
                 // subprocess-hang-protection follow-up: same tick, same
                 // "unattended sweep" posture -- resolves any LSP/DAP/ACP

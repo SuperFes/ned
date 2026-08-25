@@ -535,7 +535,30 @@ enum class InteractiveRequest { None,
                                 CancelTests,
                                 ShowTestResults,
                                 RunTestAtPoint,
-                                RerunFailedTests };
+                                RerunFailedTests,
+                                // editor-ergonomics follow-up: find-recent-file, same
+                                // "just signal intent" shape as ProjectFindFile -- the
+                                // candidate list (Editor/RecentFiles.h's most-recent-first
+                                // path list) and fuzzy-narrow/open-on-Enter logic both live
+                                // in BufferView.
+                                FindRecentFile,
+                                // editor-ergonomics follow-up: bookmark-set is a single
+                                // plain-text prompt (the bookmark's name, pre-filled with
+                                // the buffer's own filename), fitting the shared
+                                // HandlePromptKey else-chain FindScratch/TaskName use.
+                                // Command.cpp checks the buffer has a path before setting
+                                // this (Buffer::Path()) -- same "guard in the command body,
+                                // not the InteractiveRequest handler" precedent org-set-tags
+                                // established for HeadlineAtPoint.
+                                BookmarkSet,
+                                // BookmarkJump/BookmarkDelete are two distinct
+                                // InteractiveRequests resolving to the *same* InputMode
+                                // (RunTask/CancelTask's own precedent for TaskName) --
+                                // both open the same fuzzy-narrowed bookmark-name picker,
+                                // distinguished by BufferView's own bookmarkPromptAction_,
+                                // set alongside inputMode_ in StartInteractiveSession.
+                                BookmarkJump,
+                                BookmarkDelete };
 
 // Everything a command implementation might need. Built fresh per invocation
 // from live references -- never stored, so there's no lifetime concern beyond

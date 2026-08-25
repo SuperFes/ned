@@ -16,6 +16,7 @@
 
 #include "Border.h"
 #include "EchoArea.h"
+#include "Editor/Bookmark.h"
 #include "Editor/Clipboard.h"
 #include "Editor/CodeFoldSettings.h"
 #include "Editor/DabbrevComplete.h"
@@ -40,6 +41,7 @@
 #include "Editor/ProjectSearch.h"
 #include "Editor/ProjectSettings.h"
 #include "Editor/ProjectTree.h"
+#include "Editor/RecentFiles.h"
 #include "Editor/Rectangle.h"
 #include "Editor/ScratchPad.h"
 #include "Editor/Session.h"
@@ -3369,7 +3371,10 @@ bool BufferView::OnKeyEvent(const Event& event) {
         // DAP round 2: same dispatch-gap fix as DapEvaluate above -- these
         // four are HandlePromptKey-routed plain-text prompts too.
         inputMode_ == InputMode::DapBreakpointCondition || inputMode_ == InputMode::DapBreakpointLogMessage ||
-        inputMode_ == InputMode::DapAddWatch || inputMode_ == InputMode::DapSetVariableValue) {
+        inputMode_ == InputMode::DapAddWatch || inputMode_ == InputMode::DapSetVariableValue ||
+        // editor-ergonomics follow-up: BookmarkSetName is a plain-text
+        // prompt too, TaskName/GotoLine's own shape.
+        inputMode_ == InputMode::BookmarkSetName) {
         HandlePromptKey(*chord);
         ClampPointToNarrowing();
         return true;
@@ -3410,6 +3415,16 @@ bool BufferView::OnKeyEvent(const Event& event) {
         // after-the-fact ClampPointToNarrowing() every other prompt-shaped
         // mode uses is correct here too.
         HandleProjectFindFileKey(*chord);
+        ClampPointToNarrowing();
+        return true;
+    }
+    if (inputMode_ == InputMode::FindRecentFile) {
+        HandleFindRecentFileKey(*chord);
+        ClampPointToNarrowing();
+        return true;
+    }
+    if (inputMode_ == InputMode::BookmarkJump) {
+        HandleBookmarkJumpKey(*chord);
         ClampPointToNarrowing();
         return true;
     }
@@ -5613,6 +5628,52 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             RefreshProjectFindFileStatus();
             return;
         }
+        // editor-ergonomics follow-up: ProjectFindFile's own "populate and
+        // show the full candidate list right away" shape, over
+        // editor::RecentFilePaths() (a cheap in-memory read, not a
+        // directory walk) instead of BuildProjectTree.
+        case editor::InteractiveRequest::FindRecentFile: {
+            recentFileCandidates_ = editor::RecentFilePaths();
+            if (recentFileCandidates_.empty()) {
+                statusMessage_ = "No recently opened files";
+                return;
+            }
+            inputMode_ = InputMode::FindRecentFile;
+            prompt_.emplace("Find recent file (fuzzy): ");
+            recentFileSelection_ = 0;
+            RefreshFindRecentFileStatus();
+            return;
+        }
+        // editor-ergonomics follow-up: bookmark-set already checked
+        // context.buffer.Path() before setting this (Commands.cpp), so
+        // activeBuffer_.Get() is guaranteed file-backed here -- pre-fills
+        // with the buffer's own display name, the common case (one
+        // bookmark per file) needing no typing at all, just Enter.
+        case editor::InteractiveRequest::BookmarkSet:
+            inputMode_ = InputMode::BookmarkSetName;
+            prompt_.emplace("Bookmark name: ");
+            prompt_->SetText(activeBuffer_.Get().Name());
+            statusMessage_ = prompt_->StatusText();
+            return;
+        // editor-ergonomics follow-up: BookmarkJump/BookmarkDelete share
+        // one picker (InputMode::BookmarkJump) over editor::BookmarkNames(),
+        // TaskName's own RunTask/CancelTask precedent for two
+        // InteractiveRequests resolving to the same InputMode.
+        case editor::InteractiveRequest::BookmarkJump:
+        case editor::InteractiveRequest::BookmarkDelete: {
+            const bool isDelete = (request == editor::InteractiveRequest::BookmarkDelete);
+            bookmarkCandidates_ = editor::BookmarkNames();
+            if (bookmarkCandidates_.empty()) {
+                statusMessage_ = "No bookmarks set";
+                return;
+            }
+            bookmarkPromptAction_ = isDelete ? BookmarkPromptAction::Delete : BookmarkPromptAction::Jump;
+            inputMode_            = InputMode::BookmarkJump;
+            prompt_.emplace(isDelete ? "Delete bookmark (fuzzy): " : "Jump to bookmark (fuzzy): ");
+            bookmarkSelection_ = 0;
+            RefreshBookmarkJumpStatus();
+            return;
+        }
         // rich-theme-set follow-up (Phase 1): ProjectFindFile's "populate
         // and show the full candidate list right away" shape over
         // ui::ThemeNames(). No applier wired (headless BufferView tests
@@ -6216,6 +6277,8 @@ std::string_view BufferView::HistoryKeyForInputMode(InputMode mode) {
             return "acp-agent-name";
         case InputMode::AcpPromptText:
             return "acp-prompt-text";
+        case InputMode::BookmarkSetName:
+            return "bookmark-set";
         default:
             return "prompt"; // unreachable from HandlePromptKey's own dispatch guard; a safe shared fallback regardless
     }
@@ -6633,6 +6696,16 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
                 statusMessage_.clear();
             }
         }
+        else if (inputMode_ == InputMode::BookmarkSetName) {
+            if (input.empty()) {
+                statusMessage_ = "Bookmark name cannot be empty";
+            }
+            else {
+                editor::RecordBookmark(input, activeBuffer_.Get(), static_cast<std::size_t>(editor::TabWidth()));
+                editor::SaveBookmarks();
+                statusMessage_ = "Bookmark set: " + input;
+            }
+        }
         else { // FindScratch
             if (!editor::IsValidScratchName(input)) {
                 statusMessage_ = "Invalid scratch name: \"" + input + "\"";
@@ -6729,6 +6802,9 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
                 break;
             case InputMode::AcpPromptText:
                 label = "Send ACP prompt";
+                break;
+            case InputMode::BookmarkSetName:
+                label = "Bookmark name";
                 break;
             default:
                 label = "Prompt";
@@ -9416,6 +9492,194 @@ void BufferView::HandleProjectFindFileKey(const editor::KeyChord& chord) {
         promptHistoryIndex_       = kNoHistoryIndex;
         projectFindFileSelection_ = 0;
         RefreshProjectFindFileStatus();
+        return;
+    }
+    // Anything else is ignored -- stay in the prompt.
+}
+
+// editor-ergonomics follow-up: HandleProjectFindFileKey/
+// RefreshProjectFindFileStatus's own shape, over recentFileCandidates_
+// (already-absolute paths, unlike ProjectFindFile's project-relative ones,
+// so Enter opens the selection directly with no ProjectRoot() join).
+void BufferView::RefreshFindRecentFileStatus() {
+    const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(recentFileCandidates_, prompt_->Text());
+    recentFileSelection_                  = ranked.empty() ? 0 : std::min(recentFileSelection_, ranked.size() - 1);
+
+    if (ranked.empty()) {
+        statusMessage_ = prompt_->StatusText();
+        return;
+    }
+    const std::string prefix  = prompt_->StatusText() + "  {";
+    const std::size_t columns = AvailableCandidateColumns(prefix.size());
+    statusMessage_            = prefix + FormatFuzzyCandidates(ranked, recentFileSelection_, columns) + "}";
+}
+
+void BufferView::HandleFindRecentFileKey(const editor::KeyChord& chord) {
+    if (chord.Special == editor::SpecialKey::Enter) {
+        promptHistory_.Record("find-recent-file", prompt_->Text());
+
+        const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(recentFileCandidates_, prompt_->Text());
+
+        if (ranked.empty()) {
+            statusMessage_ = "No recent file matching \"" + prompt_->Text() + "\"";
+            EndInteractiveSession();
+            return;
+        }
+
+        const std::filesystem::path selected = ranked[std::min(recentFileSelection_, ranked.size() - 1)];
+        EndInteractiveSession();
+
+        try {
+            text::Buffer& opened = bufferList_.OpenOrCreateFile(selected);
+            activeBuffer_.Set(opened);
+            statusMessage_ = "Opened " + opened.Name();
+        }
+        catch (const std::exception& e) {
+            ReportError(e.what());
+        }
+        return;
+    }
+    if (IsQuit(chord)) {
+        statusMessage_ = "Find recent file cancelled.";
+        EndInteractiveSession();
+        return;
+    }
+
+    if (TryNavigatePromptHistory(chord, "find-recent-file")) {
+        recentFileSelection_ = 0;
+        RefreshFindRecentFileStatus();
+        return;
+    }
+
+    if (chord.Special == editor::SpecialKey::Down) {
+        const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(recentFileCandidates_, prompt_->Text());
+        if (!ranked.empty() && recentFileSelection_ + 1 < ranked.size()) {
+            ++recentFileSelection_;
+        }
+        RefreshFindRecentFileStatus();
+        return;
+    }
+    if (chord.Special == editor::SpecialKey::Up) {
+        if (recentFileSelection_ > 0) {
+            --recentFileSelection_;
+        }
+        RefreshFindRecentFileStatus();
+        return;
+    }
+
+    if (chord.Special == editor::SpecialKey::Backspace) {
+        prompt_->DeleteChar();
+        promptHistoryIndex_  = kNoHistoryIndex;
+        recentFileSelection_ = 0;
+        RefreshFindRecentFileStatus();
+        return;
+    }
+    if (IsPlainCharacter(chord)) {
+        prompt_->AppendChar(chord.Codepoint);
+        promptHistoryIndex_  = kNoHistoryIndex;
+        recentFileSelection_ = 0;
+        RefreshFindRecentFileStatus();
+        return;
+    }
+    // Anything else is ignored -- stay in the prompt.
+}
+
+// editor-ergonomics follow-up: same picker shape again, over
+// bookmarkCandidates_ (Editor/Bookmark.h's sorted name list). Enter jumps
+// (bookmarkPromptAction_ == Jump) or deletes (== Delete) the selected name.
+void BufferView::RefreshBookmarkJumpStatus() {
+    const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(bookmarkCandidates_, prompt_->Text());
+    bookmarkSelection_                    = ranked.empty() ? 0 : std::min(bookmarkSelection_, ranked.size() - 1);
+
+    if (ranked.empty()) {
+        statusMessage_ = prompt_->StatusText();
+        return;
+    }
+    const std::string prefix  = prompt_->StatusText() + "  {";
+    const std::size_t columns = AvailableCandidateColumns(prefix.size());
+    statusMessage_            = prefix + FormatFuzzyCandidates(ranked, bookmarkSelection_, columns) + "}";
+}
+
+void BufferView::HandleBookmarkJumpKey(const editor::KeyChord& chord) {
+    const bool isDelete = (bookmarkPromptAction_ == BookmarkPromptAction::Delete);
+
+    if (chord.Special == editor::SpecialKey::Enter) {
+        promptHistory_.Record("bookmark-jump", prompt_->Text());
+
+        const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(bookmarkCandidates_, prompt_->Text());
+
+        if (ranked.empty()) {
+            statusMessage_ = "No bookmark matching \"" + prompt_->Text() + "\"";
+            EndInteractiveSession();
+            return;
+        }
+
+        const std::string selected = ranked[std::min(bookmarkSelection_, ranked.size() - 1)];
+        EndInteractiveSession();
+
+        if (isDelete) {
+            editor::DeleteBookmark(selected);
+            editor::SaveBookmarks();
+            statusMessage_ = "Deleted bookmark: " + selected;
+            return;
+        }
+
+        const std::optional<editor::Bookmark> mark = editor::FindBookmark(selected);
+        if (!mark) {
+            statusMessage_ = "Bookmark \"" + selected + "\" no longer exists";
+            return;
+        }
+        try {
+            text::Buffer& opened = bufferList_.OpenOrCreateFile(mark->path);
+            activeBuffer_.Set(opened);
+            opened.SetPoint(opened.ByteOffsetForLineAndColumn(mark->line, mark->column, static_cast<std::size_t>(editor::TabWidth())));
+            statusMessage_ = "Bookmark: " + selected;
+        }
+        catch (const std::exception& e) {
+            ReportError(e.what());
+        }
+        return;
+    }
+    if (IsQuit(chord)) {
+        statusMessage_ = std::string(isDelete ? "Delete bookmark" : "Jump to bookmark") + " cancelled.";
+        EndInteractiveSession();
+        return;
+    }
+
+    if (TryNavigatePromptHistory(chord, "bookmark-jump")) {
+        bookmarkSelection_ = 0;
+        RefreshBookmarkJumpStatus();
+        return;
+    }
+
+    if (chord.Special == editor::SpecialKey::Down) {
+        const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(bookmarkCandidates_, prompt_->Text());
+        if (!ranked.empty() && bookmarkSelection_ + 1 < ranked.size()) {
+            ++bookmarkSelection_;
+        }
+        RefreshBookmarkJumpStatus();
+        return;
+    }
+    if (chord.Special == editor::SpecialKey::Up) {
+        if (bookmarkSelection_ > 0) {
+            --bookmarkSelection_;
+        }
+        RefreshBookmarkJumpStatus();
+        return;
+    }
+
+    if (chord.Special == editor::SpecialKey::Backspace) {
+        prompt_->DeleteChar();
+        promptHistoryIndex_ = kNoHistoryIndex;
+        bookmarkSelection_  = 0;
+        RefreshBookmarkJumpStatus();
+        return;
+    }
+    if (IsPlainCharacter(chord)) {
+        prompt_->AppendChar(chord.Codepoint);
+        promptHistoryIndex_ = kNoHistoryIndex;
+        bookmarkSelection_  = 0;
+        RefreshBookmarkJumpStatus();
         return;
     }
     // Anything else is ignored -- stay in the prompt.

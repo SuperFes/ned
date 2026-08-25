@@ -127,14 +127,9 @@ Notcurses.
       function or data breakpoints; no `restartFrame`; no disassembly/memory view; every
       stop sends `disconnect`+`terminateDebuggee:true` rather than distinguishing a real
       `terminate` from a detach, which some adapters expect (2026-08-25 audit).
-- [ ] **No bookmarks** (`bookmark-set`/`bookmark-jump` equivalent) — zero support today
-      (2026-08-25 audit).
 - [ ] **No buffer-list/ibuffer-style management** — `switch-to-buffer` is a
       name-completion prompt only; no dedicated buffer-list buffer with mark/save/kill
       batch operations.
-- [ ] **No recent-files list** (`recentf` equivalent) — `Session.h`/`ProjectSession.h`
-      persist per-file point/viewport and per-project state, not a cross-session
-      "recently opened" picker.
 - [ ] **No which-key-style prefix-key hints** — a pending `C-x`/`C-c` chord shows
       nothing; a user has to already know the binding.
 - [ ] **No relative line numbers.**

@@ -671,7 +671,23 @@ class BufferView : public Widget {
                            DapBreakpointLogMessage,
                            DapAddWatch,
                            DapSetVariableValue,
-                           DapThreadSelect };
+                           DapThreadSelect,
+                           // editor-ergonomics follow-up: FindRecentFile is
+                           // ProjectFindFile's own fuzzy-narrowed-picker shape, over
+                           // Editor/RecentFiles.h's candidate list instead of a directory
+                           // walk (see RefreshFindRecentFileStatus/HandleFindRecentFileKey).
+                           FindRecentFile,
+                           // BookmarkSetName is a single plain-text prompt (pre-filled
+                           // with a default name), fitting the shared HandlePromptKey
+                           // else-chain FindScratch/TaskName use -- no dedicated handler.
+                           BookmarkSetName,
+                           // BookmarkJump is ProjectFindFile's own picker shape again,
+                           // over Editor/Bookmark.h's sorted name list -- shared by
+                           // bookmark-jump/bookmark-delete, distinguished by
+                           // bookmarkPromptAction_ (TaskName's own precedent for
+                           // RunTask/CancelTask). See RefreshBookmarkJumpStatus/
+                           // HandleBookmarkJumpKey.
+                           BookmarkJump };
 
     enum class DeleteFileStage { EnteringPath,
                                  Confirming };
@@ -690,6 +706,10 @@ class BufferView : public Widget {
     // buffer), Cancel calls TaskRunner::CancelTask.
     enum class TaskPromptAction { Run,
                                   Cancel };
+    // editor-ergonomics follow-up: which action InputMode::BookmarkJump's
+    // picker performs on Enter -- TaskPromptAction's own shape.
+    enum class BookmarkPromptAction { Jump,
+                                      Delete };
 
     // Builds a fresh CommandContext from current member state -- matches
     // CommandContext's own documented contract ("built fresh per invocation
@@ -1040,6 +1060,22 @@ class BufferView : public Widget {
     // invoking a command by name.
     void HandleProjectFindFileKey(const editor::KeyChord& chord);
     void RefreshProjectFindFileStatus();
+
+    // editor-ergonomics follow-up: HandleProjectFindFileKey/
+    // RefreshProjectFindFileStatus's own shape, over
+    // recentFileCandidates_ (Editor/RecentFiles.h's most-recent-first path
+    // list, cached once per session the same way) instead of a project
+    // directory walk. Opens the selected path directly (it's already
+    // absolute, unlike ProjectFindFile's project-relative candidates).
+    void HandleFindRecentFileKey(const editor::KeyChord& chord);
+    void RefreshFindRecentFileStatus();
+
+    // editor-ergonomics follow-up: same picker shape again, over
+    // bookmarkCandidates_ (Editor/Bookmark.h's sorted name list). Enter
+    // either jumps (opening the bookmark's file if not already open and
+    // moving point) or deletes, per bookmarkPromptAction_.
+    void HandleBookmarkJumpKey(const editor::KeyChord& chord);
+    void RefreshBookmarkJumpStatus();
 
     // rich-theme-set follow-up (Phase 1): same shape as
     // HandleProjectFindFileKey/RefreshProjectFindFileStatus just above but
@@ -1936,6 +1972,19 @@ class BufferView : public Widget {
     // cheap to re-enumerate" framing.
     std::vector<std::string> projectFindFileCandidates_;
     std::size_t              projectFindFileSelection_ = 0;
+
+    // editor-ergonomics follow-up: projectFindFileCandidates_'s own pair,
+    // populated from editor::RecentFilePaths() when the session starts.
+    std::vector<std::string> recentFileCandidates_;
+    std::size_t              recentFileSelection_ = 0;
+
+    // editor-ergonomics follow-up: same pair again, over
+    // editor::BookmarkNames(); bookmarkPromptAction_ distinguishes
+    // bookmark-jump from bookmark-delete on the same InputMode::
+    // BookmarkJump session (TaskPromptAction's own precedent).
+    std::vector<std::string> bookmarkCandidates_;
+    std::size_t              bookmarkSelection_    = 0;
+    BookmarkPromptAction     bookmarkPromptAction_ = BookmarkPromptAction::Jump;
 
     // rich-theme-set follow-up (Phase 1): the select-theme session's own
     // mirror of the projectFindFile pair above, plus the pre-preview Theme
