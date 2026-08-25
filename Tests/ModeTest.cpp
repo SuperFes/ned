@@ -225,6 +225,49 @@ TEST_CASE("A ned/set-capture-class remap re-bases what a capture resolves to at 
     REQUIRE(HasSpan(spans, 1, 2, SyntaxClass::Comment)); // "1" -- remapped away from Number
 }
 
+// language-scoped-capture-rules follow-up: markdown's own "punctuation.special"
+// captures (list markers, thematic breaks, heading markers, the blockquote
+// marker) resolve to the distinct, dimmed MarkupMarker class via a built-in
+// language-scoped default now, rather than a ternary hardcoded directly into
+// MarkdownMode()'s own highlight closure -- these cases exercise the real
+// resolution path (SyntaxClassForCapture's language-taking overload), not
+// just the removed special case's old behavior.
+TEST_CASE("MarkdownMode's list marker capture resolves to MarkupMarker via the language-scoped built-in default",
+          "[Mode]") {
+    const auto spans = MarkdownMode().highlight("- item\n");
+    REQUIRE(HasSpan(spans, 0, 2, SyntaxClass::MarkupMarker)); // "- " -- list_marker_minus
+}
+
+TEST_CASE("A language-scoped ned/set-capture-class remap re-bases only that language's use of a shared capture name",
+          "[Mode]") {
+    struct RemapGuard {
+        ~RemapGuard() {
+            ned::editor::SetSyntaxClassForCapture("markdown/punctuation.special", std::nullopt);
+        }
+    } guard;
+    ned::editor::SetSyntaxClassForCapture("markdown/punctuation.special", SyntaxClass::Comment);
+
+    const auto spans = MarkdownMode().highlight("- item\n");
+    REQUIRE(HasSpan(spans, 0, 2, SyntaxClass::Comment)); // remapped away from MarkupMarker
+}
+
+TEST_CASE("An unscoped ned/set-capture-class remap still wins over a language-scoped built-in default", "[Mode]") {
+    struct RemapGuard {
+        ~RemapGuard() {
+            ned::editor::SetSyntaxClassForCapture("punctuation.special", std::nullopt);
+        }
+    } guard;
+    // Unscoped user overrides are consulted ahead of the built-in
+    // language-scoped table (SyntaxClassForCapture's own resolution order),
+    // so this reaches every language's own use of the name, markdown's
+    // built-in MarkupMarker default included -- the same precedent
+    // ned/set-capture-class already had before language scoping existed.
+    ned::editor::SetSyntaxClassForCapture("punctuation.special", SyntaxClass::Comment);
+
+    const auto spans = MarkdownMode().highlight("- item\n");
+    REQUIRE(HasSpan(spans, 0, 2, SyntaxClass::Comment));
+}
+
 // generic-tree-sitter-highlighting follow-up: CMode/CppMode now use a real,
 // rich query (Source/Editor/TreeSitter/queries/c.scm, cpp.scm) vendored
 // from nvim-treesitter -- these cases exercise the specific distinctions

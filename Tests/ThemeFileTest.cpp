@@ -8,6 +8,7 @@
 #include <stdexcept>
 #include <string>
 
+#include "Editor/SyntaxTheme.h"
 #include "UI/ThemeFile.h"
 
 using ned::ui::Brush;
@@ -345,6 +346,39 @@ TEST_CASE("SerializeThemeJanet emits one ned/theme-set call per serialized color
                                             line.substr(valStart, valEnd - valStart)));
     }
     REQUIRE(SerializeTheme(rebuilt) == SerializeTheme(original));
+}
+
+// theme-file-capture-serialization follow-up: ned/set-syntax-*/
+// ned/set-capture-*/ned/set-capture-class overrides live in a separate,
+// process-wide store (Editor/SyntaxTheme.h), layered on top of a Theme's own
+// fields at render time rather than part of the struct SerializeThemeJanet
+// otherwise walks -- these two cases are what closes that gap.
+TEST_CASE("SerializeThemeJanet round-trips ned/set-syntax-* and ned/set-capture-* overrides too", "[ThemeFile]") {
+    struct OverrideGuard {
+        ~OverrideGuard() {
+            ned::editor::SetSyntaxForeground(ned::editor::SyntaxClass::Comment, std::nullopt);
+            ned::editor::SetSyntaxBold(ned::editor::SyntaxClass::Comment, std::nullopt);
+            ned::editor::SetCaptureForeground("function.builtin", std::nullopt);
+            ned::editor::SetSyntaxClassForCapture("markdown/punctuation.special", std::nullopt);
+        }
+    } guard;
+    ned::editor::SetSyntaxForeground(ned::editor::SyntaxClass::Comment, std::string("#112233"));
+    ned::editor::SetSyntaxBold(ned::editor::SyntaxClass::Comment, true);
+    ned::editor::SetCaptureForeground("function.builtin", std::string("#445566"));
+    ned::editor::SetSyntaxClassForCapture("markdown/punctuation.special", ned::editor::SyntaxClass::Comment);
+
+    const std::string janet = ned::ui::SerializeThemeJanet(DarkTheme());
+    REQUIRE(janet.find("(ned/set-syntax-foreground \"comment\" \"#112233\")") != std::string::npos);
+    REQUIRE(janet.find("(ned/set-syntax-bold \"comment\" true)") != std::string::npos);
+    REQUIRE(janet.find("(ned/set-capture-foreground \"function.builtin\" \"#445566\")") != std::string::npos);
+    REQUIRE(janet.find("(ned/set-capture-class \"markdown/punctuation.special\" \"comment\")") != std::string::npos);
+}
+
+TEST_CASE("SerializeThemeJanet emits no ned/set-syntax-*/ned/set-capture-* calls with nothing configured",
+          "[ThemeFile]") {
+    const std::string janet = ned::ui::SerializeThemeJanet(DarkTheme());
+    REQUIRE(janet.find("ned/set-syntax-") == std::string::npos);
+    REQUIRE(janet.find("ned/set-capture-") == std::string::npos);
 }
 
 TEST_CASE("ThemeJanetFilePath sits beside the theme.txt path", "[ThemeFile]") {
