@@ -31,6 +31,7 @@
 #include "Editor/ModeOverrides.h"
 #include "Editor/OrgCapture.h"
 #include "Editor/PageScroll.h"
+#include "Editor/ProcessTimeouts.h"
 #include "Editor/ProjectRoot.h"
 #include "Editor/ProjectSession.h"
 #include "Editor/ProjectTrust.h"
@@ -204,6 +205,19 @@ namespace {
 
     void NedSetPageScrollFraction(double fraction) {
         editor::SetPageScrollFraction(fraction);
+    }
+
+    // ChildProcess-hang-protection-round-2 follow-up.
+    void NedSetSubprocessReadTimeoutMs(std::int64_t milliseconds) {
+        editor::SetSubprocessReadTimeoutMs(static_cast<int>(milliseconds));
+    }
+
+    void NedSetProtocolStallTimeoutMs(std::int64_t milliseconds) {
+        editor::SetProtocolStallTimeoutMs(static_cast<int>(milliseconds));
+    }
+
+    void NedSetProtocolRequestTimeoutMs(std::int64_t milliseconds) {
+        editor::SetProtocolRequestTimeoutMs(static_cast<int>(milliseconds));
     }
 
     void NedSetDiffRefreshDebounceMs(std::int64_t milliseconds) {
@@ -878,6 +892,20 @@ void InstallEditorBindings(Environment& env) {
         "ned", "set-diff-refresh-debounce-ms",
         "Set how long, in milliseconds, the VCS diff gutter waits after the last edit before refreshing (default "
         "1200; non-positive values are clamped to 1).");
+    env.Register<&NedSetSubprocessReadTimeoutMs>(
+        "ned", "set-subprocess-read-timeout-ms",
+        "Set how long, in milliseconds, a main-thread blocking subprocess read (system-clipboard paste, first "
+        "toolchain-include-path query for a language) waits before killing the child and failing gracefully "
+        "(default 5000; non-positive values are clamped to 1).");
+    env.Register<&NedSetProtocolStallTimeoutMs>(
+        "ned", "set-protocol-stall-timeout-ms",
+        "Set how long, in milliseconds, silence after an LSP/DAP/ACP frame or message has started arriving is "
+        "tolerated before the connection is treated as stalled and disconnected -- idle time between messages "
+        "stays unbounded regardless (default 30000; non-positive values are clamped to 1).");
+    env.Register<&NedSetProtocolRequestTimeoutMs>(
+        "ned", "set-protocol-request-timeout-ms",
+        "Set how long, in milliseconds, a sent LSP/DAP/ACP request is kept pending before it's resolved with a "
+        "synthetic timeout failure (default 30000; non-positive values are clamped to 1).");
     env.Register<&NedSetTheme>(
         "ned", "set-theme",
         "Select the startup theme by name (e.g. \"dark\", \"light\", \"ansi-dark\"). Overrides a saved --detect-theme "

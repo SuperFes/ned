@@ -551,6 +551,7 @@ add_library(ned_lib STATIC
         Source/Editor/TabWidth.cpp
         Source/Editor/PageScroll.cpp
         Source/Editor/DiffRefreshSettings.cpp
+        Source/Editor/ProcessTimeouts.cpp
         Source/Editor/ThemeSetting.cpp
         Source/Editor/Variables.cpp
         Source/Editor/HighlightSettings.cpp
@@ -866,6 +867,7 @@ if (NED_BUILD_TESTS)
             Tests/TabWidthTest.cpp
             Tests/PageScrollTest.cpp
             Tests/DiffRefreshSettingsTest.cpp
+            Tests/ProcessTimeoutsTest.cpp
             Tests/HighlightSettingsTest.cpp
             Tests/MinimapSettingsTest.cpp
             Tests/WhitespaceSettingsTest.cpp

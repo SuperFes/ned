@@ -1,6 +1,9 @@
 #include "LspClient.h"
 
+#include <cerrno>
 #include <utility>
+
+#include <unistd.h>
 
 #include "Editor/BackgroundActivity.h"
 #include "Editor/DiagnosticsLog.h"
@@ -21,12 +24,15 @@ LspClient::~LspClient() {
     }
 }
 
-LspClient::LspClient(std::vector<std::string> argv, ned::ui::EventLoop& eventLoop) : transport_(std::move(argv)), eventLoop_(eventLoop), handshakeComplete_(false) {
+LspClient::LspClient(std::vector<std::string> argv, ned::ui::EventLoop& eventLoop)
+    : transport_(std::move(argv), /*captureStderr=*/true), eventLoop_(eventLoop), handshakeComplete_(false) {
     StartReadLoop();
+    StartStderrReadLoop();
 }
 
 LspClient::LspClient(Transport transport, ned::ui::EventLoop& eventLoop, bool startHandshakeComplete) : transport_(std::move(transport)), eventLoop_(eventLoop), handshakeComplete_(startHandshakeComplete) {
     StartReadLoop();
+    StartStderrReadLoop(); // no-op unless transport_ was itself constructed with captureStderr -- see header comment
 }
 
 void LspClient::StartReadLoop() {
@@ -96,6 +102,57 @@ void LspClient::StartReadLoop() {
             // EventLoop.cpp's own comment on needsRepaint), so no
             // equivalent "force a frame" call is needed here anymore.
             eventLoop_.Post([this, frameText = std::move(*frame)]() mutable { DispatchFrame(frameText); });
+        }
+    });
+}
+
+void LspClient::StartStderrReadLoop() {
+    const int fd = transport_.StderrFd();
+    if (fd < 0) {
+        return; // not captured -- see header comment
+    }
+
+    // Captured by value below rather than read from transport_ inside the
+    // background thread's own lambda -- transport_'s public methods are
+    // main-thread-only by this class's own threading contract (see header
+    // comment); a raw fd and a plain string carry no such restriction.
+    std::string label = transport_.ProcessLabel();
+
+    stderrThread_ = std::jthread([this, fd, label = std::move(label)](std::stop_token) {
+        std::string buffered;
+        char        chunk[4096];
+        while (true) {
+            const ssize_t result = ::read(fd, chunk, sizeof(chunk));
+            if (result < 0) {
+                if (errno == EINTR) {
+                    continue;
+                }
+                return; // a genuine read error here is rare and non-actionable -- the stdout loop's own EOF/malformed-frame path is what reports the real disconnect
+            }
+            if (result == 0) {
+                return; // EOF -- server exited, or this LspClient is being destroyed (see header comment)
+            }
+            buffered.append(chunk, static_cast<std::size_t>(result));
+
+            std::size_t newline;
+            while ((newline = buffered.find('\n')) != std::string::npos) {
+                std::string line = buffered.substr(0, newline);
+                buffered.erase(0, newline + 1);
+                if (!line.empty() && line.back() == '\r') {
+                    line.pop_back();
+                }
+                if (line.empty()) {
+                    continue; // a blank line between real diagnostic output isn't worth a log entry
+                }
+                eventLoop_.Post([this, label, line = std::move(line)] {
+                    // diagnostics-log-rollup follow-up: LogMessage itself
+                    // coalesces this against the immediately preceding entry
+                    // when it repeats verbatim (a server that logs the same
+                    // warning on every request, say) rather than flooding
+                    // *Messages* with one line per occurrence.
+                    LogMessage(LogCategory::Lsp, LogSeverity::Warning, label.empty() ? line : label + ": " + line);
+                });
+            }
         }
     });
 }

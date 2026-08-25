@@ -30,6 +30,7 @@
 #include <vector>
 
 #include <nlohmann/json.hpp>
+#include "Editor/ProcessTimeouts.h"
 #include "UI/EventLoop.h"
 
 #include "LspClient.h"
@@ -140,7 +141,7 @@ class LspManager {
     // per-frame. See LspClient::ExpireStaleRequests's own doc comment for
     // what "stale" means and why. maxAge is forwarded as-is, defaulted the
     // same way, purely so tests can shorten it.
-    void ExpireStaleRequests(std::chrono::milliseconds maxAge = kDefaultRequestTimeout);
+    void ExpireStaleRequests(std::chrono::milliseconds maxAge = ProtocolRequestTimeoutMs());
 
     // hover/completion follow-up. Both resolve buffer's server/URI purely
     // from bufferState_ (populated by SyncBuffer's prior didOpen) rather

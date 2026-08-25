@@ -23,6 +23,7 @@
 #include <sys/types.h>
 
 #include "Editor/Process/ChildProcess.h"
+#include "Editor/ProcessTimeouts.h"
 
 namespace ned::editor::lsp {
 
@@ -32,10 +33,15 @@ namespace ned::editor::lsp {
 // frame's first byte by this, so a server that starts sending and then
 // wedges mid-message eventually surfaces as a reported disconnect instead of
 // leaking the read loop forever. Generous on purpose: never meant to fire
-// against a real, working server, only a genuinely stuck one. A named
-// constant (not buried in Transport.cpp) so ReadFrame's test-only override
-// parameter below has something to default to.
-inline constexpr std::chrono::milliseconds kFrameStallTimeout{30000};
+// against a real, working server, only a genuinely stuck one.
+//
+// ChildProcess-hang-protection-round-2 follow-up: the real, no-argument call
+// site now reads ProcessTimeouts.h's Janet-configurable
+// ProtocolStallTimeoutMs() (default 30000ms, same value the old
+// kFrameStallTimeout constant this replaced always had) instead of a fixed
+// compile-time constant -- ReadFrame's test-only override parameter below
+// still lets a test pass its own short value directly, bypassing this
+// default entirely.
 
 class Transport {
   public:
@@ -44,7 +50,14 @@ class Transport {
     // Throws std::runtime_error if argv is empty, the executable can't be
     // resolved/isn't executable, pipe creation fails, or posix_spawn itself
     // fails synchronously.
-    explicit Transport(const std::vector<std::string>& argv);
+    //
+    // lsp-stderr-capture follow-up: captureStderr defaults to false,
+    // preserving every existing caller's behavior unchanged (most notably
+    // DapClient, which reuses this exact constructor and has no reader for
+    // a captured stderr pipe -- see StderrFd()'s own doc comment on what an
+    // undrained Capture pipe risks). LspClient's real-subprocess constructor
+    // is the one caller that passes true.
+    explicit Transport(const std::vector<std::string>& argv, bool captureStderr = false);
 
     // Wraps already-open, already-connected file descriptors directly,
     // taking ownership of both -- for a caller that manages the underlying
@@ -74,14 +87,30 @@ class Transport {
     // if a frame is malformed (missing/unparseable Content-Length) or
     // (subprocess-hang-protection follow-up) if it stalls mid-frame for
     // longer than stallTimeout -- a parameter, not a hardcoded sleep, purely
-    // so tests can shorten it; real callers always take the kFrameStallTimeout
-    // default.
-    [[nodiscard]] std::optional<std::string> ReadFrame(std::chrono::milliseconds stallTimeout = kFrameStallTimeout) const;
+    // so tests can shorten it; real callers always take the
+    // ProtocolStallTimeoutMs() default (see this file's own header comment).
+    [[nodiscard]] std::optional<std::string> ReadFrame(std::chrono::milliseconds stallTimeout = ProtocolStallTimeoutMs()) const;
 
     [[nodiscard]] pid_t Pid() const noexcept;
 
+    // lsp-stderr-capture follow-up. The read end of the child's stderr pipe
+    // when this Transport was constructed with captureStderr = true; -1
+    // otherwise (the default, or the raw-fd constructor, which has no
+    // subprocess of its own to capture from). A caller reads this directly
+    // with its own ::read() loop -- see ChildProcess::StderrFd()'s own doc
+    // comment for why no buffered-reader wrapper exists here either.
+    [[nodiscard]] int StderrFd() const noexcept;
+
+    // lsp-stderr-capture follow-up. argv[0]'s basename, captured at
+    // construction -- lets a stderr line be tagged with which server
+    // process produced it (e.g. "clangd: ...") without LspClient/LspManager
+    // needing to thread a language name down into this layer. Empty for the
+    // raw-fd constructor (no argv was ever given).
+    [[nodiscard]] const std::string& ProcessLabel() const noexcept;
+
   private:
     process::ChildProcess child_;
+    std::string           processLabel_;
 };
 
 } // namespace ned::editor::lsp

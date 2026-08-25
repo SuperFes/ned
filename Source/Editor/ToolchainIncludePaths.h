@@ -39,6 +39,8 @@
 #include <string>
 #include <vector>
 
+#include "ProcessTimeouts.h"
+
 namespace ned::editor {
 
 // Runs the compiler for language (currently just "c"/"cpp") and parses its
@@ -48,9 +50,12 @@ namespace ned::editor {
 // (subprocess-hang-protection follow-up -- this runs synchronously on the
 // main thread on first resolve for a language, so a hung compiler is killed
 // rather than freezing the editor; readTimeout is a parameter, not a
-// hardcoded sleep, purely so tests can shorten it). Never throws.
+// hardcoded sleep, purely so tests can shorten it -- the real, no-argument
+// call site reads ProcessTimeouts.h's Janet-configurable
+// SubprocessReadTimeoutMs() instead of a fixed literal, per the
+// ChildProcess-hang-protection-round-2 follow-up). Never throws.
 [[nodiscard]] std::optional<std::vector<std::filesystem::path>> QueryToolchainIncludePaths(
-    const std::string& language, std::chrono::milliseconds readTimeout = std::chrono::milliseconds(5000));
+    const std::string& language, std::chrono::milliseconds readTimeout = SubprocessReadTimeoutMs());
 
 // Cached wrapper around QueryToolchainIncludePaths: serves a cached,
 // not-yet-expired result from $XDG_CACHE_HOME/ned/toolchain-include-paths.json

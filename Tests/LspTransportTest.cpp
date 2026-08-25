@@ -181,3 +181,47 @@ TEST_CASE("Transport spawns a real process and exchanges data with it over pipes
     REQUIRE(echoed.has_value());
     REQUIRE(*echoed == "hello from a test");
 }
+
+TEST_CASE("Transport::StderrFd/ProcessLabel are unset unless constructed with captureStderr=true", "[Lsp]") {
+    Transport transport({"sh", "-c", "exit 0"});
+    REQUIRE(transport.StderrFd() == -1);
+    REQUIRE(transport.ProcessLabel() == "sh");
+}
+
+TEST_CASE("Transport's raw-fd constructor captures no stderr and has no process label", "[Lsp]") {
+    int toB[2];
+    int toA[2];
+    REQUIRE(::pipe(toB) == 0);
+    REQUIRE(::pipe(toA) == 0);
+    Transport transport(toA[0], toB[1]);
+    ::close(toB[0]);
+    ::close(toA[1]);
+
+    REQUIRE(transport.StderrFd() == -1);
+    REQUIRE(transport.ProcessLabel().empty());
+}
+
+// lsp-stderr-capture follow-up. Stdout stays a clean framing channel and
+// stderr is a fully separate pipe when captureStderr=true -- previously
+// stderr was simply discarded (StderrMode::Discard), so this proves the
+// new pipe wiring, not just that ChildProcess's own Capture mode works in
+// isolation (see ChildProcessTest.cpp for that).
+TEST_CASE("Transport captures stderr on its own pipe, separate from stdout, when captureStderr=true", "[Lsp]") {
+    Transport transport({"sh", "-c", "printf 'err line 1\\nerr line 2\\n' >&2"}, /*captureStderr=*/true);
+    REQUIRE(transport.StderrFd() >= 0);
+    REQUIRE(transport.ProcessLabel() == "sh");
+
+    std::string collected;
+    char        buffer[256];
+    while (collected.find("err line 2\n") == std::string::npos) {
+        const ssize_t n = ::read(transport.StderrFd(), buffer, sizeof(buffer));
+        REQUIRE(n > 0);
+        collected.append(buffer, static_cast<std::size_t>(n));
+    }
+    REQUIRE(collected == "err line 1\nerr line 2\n");
+
+    // Nothing was ever written to stdout -- ReadFrame should see a clean
+    // EOF once the process exits, not any of the stderr content above
+    // leaking across.
+    REQUIRE_FALSE(transport.ReadFrame().has_value());
+}

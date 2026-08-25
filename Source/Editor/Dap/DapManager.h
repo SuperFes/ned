@@ -45,6 +45,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "Editor/ProcessTimeouts.h"
 #include "UI/EventLoop.h"
 
 #include "DapClient.h"
@@ -177,7 +178,7 @@ class DapManager {
     // otherwise forwards to the live client_'s own ExpireStaleRequests. See
     // LspManager::ExpireStaleRequests's identical wiring/reasoning -- meant
     // to be called from the same periodic background tick.
-    void ExpireStaleRequests(std::chrono::milliseconds maxAge = kDefaultRequestTimeout);
+    void ExpireStaleRequests(std::chrono::milliseconds maxAge = ProtocolRequestTimeoutMs());
 
     // Slice 3: the inspection requests backing the *debug* buffer. Each
     // callback runs on the main thread with parsed results ([] on any

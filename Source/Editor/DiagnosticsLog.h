@@ -68,10 +68,25 @@ struct LogEntry {
     std::optional<std::string> path;
     std::optional<std::size_t> line; // 1-indexed, paired with path
 
+    // diagnostics-log-rollup follow-up. How many consecutive LogMessage
+    // calls this entry represents -- a call whose category/severity/
+    // message/path/line all match the ring's current last entry increments
+    // that entry's count and refreshes its timestamp instead of appending a
+    // new one, so a source that logs the same thing on every tick (a
+    // reconnect-and-fail loop, a repeated LSP stderr warning) collapses to
+    // one updating line rather than flooding *Messages*. Always 1 for a
+    // freshly appended, not-yet-repeated entry.
+    std::uint32_t count = 1;
+
     [[nodiscard]] bool operator==(const LogEntry&) const = default;
 };
 
 // Main entry point. Main-thread-only -- see this header's own doc comment.
+//
+// diagnostics-log-rollup follow-up: a call that exactly repeats the ring's
+// current last entry (same category/severity/message/path/line) coalesces
+// into it -- see LogEntry::count's own doc comment -- rather than appending
+// a distinct entry every time.
 void LogMessage(LogCategory category, LogSeverity severity, std::string message, std::optional<std::string> path = std::nullopt,
                  std::optional<std::size_t> line = std::nullopt);
 
@@ -124,6 +139,26 @@ void MaybePruneLogFiles(std::optional<std::int64_t> nowSeconds = std::nullopt);
 
 void              SetLogMaxAgeDays(int days);
 [[nodiscard]] int LogMaxAgeDays();
+
+// user-facing-hang-affordance follow-up (ChildProcess-hang-protection-round-2
+// -- see ROADMAP.md). True once a Warning-or-Error entry has been recorded in
+// a currently-visible category (SetLogCategoryVisible) and no caller has yet
+// acknowledged it -- a single, process-wide "something happened" flag, not a
+// per-entry/per-pane unread count, mirroring LspManager::HasUnseenLogEntry/
+// AcknowledgeLogEntry's exact shape. That older mechanism is narrower (LSP
+// request-level errors only, its own separate "*lsp log*" buffer); this one
+// covers everything that reaches the shared *Messages* log, including every
+// hang/timeout-recovery path this module's own header comment describes
+// (Clipboard/ToolchainIncludePaths' read-timeout kill, an LSP/DAP/ACP stall
+// disconnect, ExpireStaleRequests' synthetic timeout). An Info-severity entry
+// never sets this (not actionable enough to interrupt the user for), and
+// neither does an entry in a currently-hidden category (Lsp, by default) --
+// a category the user chose to hide shouldn't flash a live status message
+// either. Intended consumer: BufferView::Paint(), the same
+// poll-once-per-frame-when-statusMessage_-is-empty idiom the LSP precedent
+// already uses.
+[[nodiscard]] bool HasUnseenDiagnosticsLogEntry();
+void               AcknowledgeDiagnosticsLogEntry();
 
 // Resets every mutex-guarded static (entries, category visibility, max
 // entries, max age, the prune rate-limit memo) back to its default --

@@ -237,6 +237,11 @@ Pane::Pane(text::Buffer& buffer, text::KillRing& killRing, editor::RegisterTable
     bufferView_->SetVcsRunner(vcsRunner);
     bufferView_->SetDapManager(dapManager);
     bufferView_->SetAcpManager(acpManager);
+    // user-facing-hang-affordance follow-up: every real, composed pane opts
+    // into the live *Messages* alert -- see BufferView::
+    // SetSurfaceUnseenLogEntries's own doc comment for why this is opt-in
+    // rather than always-on.
+    bufferView_->SetSurfaceUnseenLogEntries(true);
     bufferView_->SetJanetEnvironment(janetEnv);
     bufferView_->SetOnWindowRequest(std::move(onWindowRequest));
     bufferView_->SetOnBufferClosed(std::move(onBufferClosed));
@@ -738,10 +743,10 @@ void WindowManager::StartAutoSaveTimer(EventLoop& eventLoop) {
                 SaveProjectSessionNow();
                 // subprocess-hang-protection follow-up: same tick, same
                 // "unattended sweep" posture -- resolves any LSP/DAP/ACP
-                // request that's been waiting past kDefaultRequestTimeout
-                // with a synthetic timeout failure instead of leaving it
-                // permanently pending. A no-op on every ordinary tick (no
-                // request outstanding that long).
+                // request that's been waiting past ProcessTimeouts.h's
+                // ProtocolRequestTimeoutMs() with a synthetic timeout failure
+                // instead of leaving it permanently pending. A no-op on
+                // every ordinary tick (no request outstanding that long).
                 if (lspManager_) {
                     lspManager_->ExpireStaleRequests();
                 }

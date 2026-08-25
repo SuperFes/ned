@@ -224,6 +224,22 @@ class BufferView : public Widget {
     // called).
     void SetAcpManager(editor::acp::AcpManager* acpManager);
 
+    // user-facing-hang-affordance follow-up (ChildProcess-hang-protection-
+    // round-2 -- see ROADMAP.md). Whether this pane's Paint() polls
+    // editor::HasUnseenDiagnosticsLogEntry() and surfaces a live
+    // "New warning -- see *Messages*" statusMessage_ the first time it sees
+    // one -- default false, same "unset is a safe no-op" convention as every
+    // other Set* hook here. Deliberately opt-in rather than always-on: that
+    // flag is process-wide state (Editor/DiagnosticsLog.h), not a per-pane
+    // resource the way LspManager/TaskRunner/etc. are, so a bare
+    // test-constructed BufferView must not read it by default -- doing so
+    // unconditionally let an unrelated test's own LogMessage call leak into
+    // any other test's Paint()-time statusMessage_ assertion, confirmed live
+    // via a real intermittent Catch2 --order rand failure before this guard
+    // existed. WindowManager::Pane's constructor is the one real caller,
+    // enabling it for every actually-composed editor pane.
+    void SetSurfaceUnseenLogEntries(bool enabled);
+
     // Self-hosting-completion follow-up: registers the process-wide
     // janet::Environment so ghost-text completion in a Janet-mode buffer can
     // fuzzy-complete against every live "ned/*" binding name -- same "unset
@@ -1729,6 +1745,7 @@ class BufferView : public Widget {
     editor::dap::DapManager*     dapManager_          = nullptr; // see SetDapManager
     editor::acp::AcpManager*     acpManager_          = nullptr; // see SetAcpManager
     const janet::Environment*    janetEnv_            = nullptr; // see SetJanetEnvironment
+    bool                         surfaceUnseenLogEntries_ = false; // see SetSurfaceUnseenLogEntries
 
     // ACP client slice 2: valid only while inputMode_ ==
     // InputMode::AcpPermissionPrompt (populated by ShowAcpPermissionPrompt,

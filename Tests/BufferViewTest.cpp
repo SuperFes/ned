@@ -17,6 +17,7 @@
 #include "Editor/Dap/DapClient.h"
 #include "Editor/Dap/DapConfig.h"
 #include "Editor/Dap/DapManager.h"
+#include "Editor/DiagnosticsLog.h"
 #include "Editor/Dispatcher.h"
 #include "Editor/InlineDiagnostics.h"
 #include "Editor/Link.h"
@@ -1424,6 +1425,49 @@ TEST_CASE("Paint echoes the diagnostic on point's line and clears it after leavi
     fixture.buffer.SetPoint(fixture.buffer.Content().LineToByteOffset(1));
     view.Paint(canvas);
     REQUIRE(fixture.statusMessage == "important result");
+}
+
+// user-facing-hang-affordance follow-up (ChildProcess-hang-protection-round-2).
+// ned::editor::DiagnosticsLog's unseen flag is process-wide state, not
+// per-view -- ResetDiagnosticsLogForTesting on the way in and out keeps this
+// test from depending on, or leaking into, any other test's own LogMessage
+// calls (confirmed live: an earlier, unguarded version of this feature let a
+// completely unrelated test's LogMessage call intermittently clobber the
+// diagnostic-echo test just above under `ned_tests --order rand`).
+TEST_CASE("Paint never surfaces an unseen DiagnosticsLog entry unless SetSurfaceUnseenLogEntries(true) was called",
+          "[BufferView]") {
+    ned::editor::ResetDiagnosticsLogForTesting();
+    Fixture fixture;
+    ned::editor::LogMessage(ned::editor::LogCategory::Task, ned::editor::LogSeverity::Error, "build failed");
+    REQUIRE(ned::editor::HasUnseenDiagnosticsLogEntry());
+
+    ned::ui::BufferView view = fixture.View(); // SetSurfaceUnseenLogEntries never called -- default off
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 2});
+    ned::ui::Screen screen = ned::ui::Screen(20, 3);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+
+    REQUIRE(fixture.statusMessage.empty());
+    REQUIRE(ned::editor::HasUnseenDiagnosticsLogEntry()); // never acknowledged -- this pane never opted in
+    ned::editor::ResetDiagnosticsLogForTesting();
+}
+
+TEST_CASE("Paint surfaces an unseen DiagnosticsLog entry once SetSurfaceUnseenLogEntries(true) was called",
+          "[BufferView]") {
+    ned::editor::ResetDiagnosticsLogForTesting();
+    Fixture fixture;
+    ned::editor::LogMessage(ned::editor::LogCategory::Task, ned::editor::LogSeverity::Error, "build failed");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetSurfaceUnseenLogEntries(true);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 2});
+    ned::ui::Screen screen = ned::ui::Screen(20, 3);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+
+    REQUIRE(fixture.statusMessage == "New warning -- see *Messages* (M-x show-messages)");
+    REQUIRE_FALSE(ned::editor::HasUnseenDiagnosticsLogEntry());
+    ned::editor::ResetDiagnosticsLogForTesting();
 }
 
 TEST_CASE("The debug gutter column shows a breakpoint dot and widens the gutter", "[BufferView]") {
