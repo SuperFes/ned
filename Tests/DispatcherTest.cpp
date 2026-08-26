@@ -5,6 +5,7 @@
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
 #include "Text/KillRing.h"
+#include "Text/Utf8.h"
 
 using ned::editor::CommandContext;
 using ned::editor::CommandRegistry;
@@ -325,4 +326,126 @@ TEST_CASE("An unbound key cancels a pending prefix arg", "[Dispatcher]") {
     REQUIRE(dispatcher.Feed(ParseKeyChord("C-x"), context) == Dispatcher::Outcome::Pending);
     REQUIRE(dispatcher.Feed(ParseKeyChord("C-z"), context) == Dispatcher::Outcome::Unbound);
     REQUIRE_FALSE(context.prefixArg.has_value());
+}
+
+// self-insert-fallback follow-up: the default global keymap only gives
+// printable ASCII (0x20-0x7E) its own real self-insert-command entry (see
+// BuildDefaultGlobalKeymap's own comment in Commands.cpp) -- everything
+// else (accented Latin, CJK, emoji, ...) used to report Unbound and never
+// reach the buffer at all, confirmed live via a real paste/keystroke of an
+// emoji. These tests exercise Dispatcher::Feed's own fallback directly
+// against a minimal stand-in self-insert-command (mirroring this file's
+// own "insert-x"/"save-buffer" stand-ins elsewhere, not the real
+// Commands.cpp registration with its auto-pair logic).
+namespace {
+
+CommandRegistry RegistryWithSelfInsertStandIn() {
+    CommandRegistry registry;
+    registry.Register("self-insert-command", "", [](CommandContext& context) {
+        context.buffer.InsertAtPoint(ned::text::EncodeCodepointUtf8(context.triggeringKey.Codepoint));
+    });
+    return registry;
+}
+
+} // namespace
+
+TEST_CASE("An otherwise-unbound plain non-ASCII codepoint falls through to self-insert-command", "[Dispatcher]") {
+    using ned::editor::KeyChord;
+
+    CommandRegistry registry = RegistryWithSelfInsertStandIn();
+    Keymap          keymap; // nothing bound at all -- every chord below is a real NoMatch
+    Dispatcher      dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    KeyChord accented{};
+    accented.Codepoint = U'é'; // 'é', a 2-byte UTF-8 codepoint
+
+    REQUIRE(dispatcher.Feed(accented, context) == Dispatcher::Outcome::Invoked);
+    REQUIRE(fixture.buffer.Text() == ned::text::EncodeCodepointUtf8(U'é'));
+
+    KeyChord emoji{};
+    emoji.Codepoint = U'\U0001F635'; // outside the BMP -- a 4-byte UTF-8 codepoint
+    REQUIRE(dispatcher.Feed(emoji, context) == Dispatcher::Outcome::Invoked);
+    REQUIRE(fixture.buffer.Text() == ned::text::EncodeCodepointUtf8(U'é') + ned::text::EncodeCodepointUtf8(U'\U0001F635'));
+}
+
+TEST_CASE("The self-insert fallback is a no-op (stays Unbound) when self-insert-command isn't registered",
+          "[Dispatcher]") {
+    using ned::editor::KeyChord;
+
+    CommandRegistry registry; // deliberately no self-insert-command entry
+    Keymap          keymap;
+    Dispatcher      dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    KeyChord accented{};
+    accented.Codepoint = U'é';
+    REQUIRE(dispatcher.Feed(accented, context) == Dispatcher::Outcome::Unbound);
+    REQUIRE(fixture.buffer.Text().empty());
+}
+
+TEST_CASE("A Control- or Meta-modified non-ASCII chord does not fall through to self-insert", "[Dispatcher]") {
+    using ned::editor::KeyChord;
+
+    CommandRegistry registry = RegistryWithSelfInsertStandIn();
+    Keymap          keymap;
+    Dispatcher      dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    KeyChord controlAccented{};
+    controlAccented.Codepoint = U'é';
+    controlAccented.Control   = true;
+    REQUIRE(dispatcher.Feed(controlAccented, context) == Dispatcher::Outcome::Unbound);
+
+    KeyChord metaAccented{};
+    metaAccented.Codepoint = U'é';
+    metaAccented.Meta      = true;
+    REQUIRE(dispatcher.Feed(metaAccented, context) == Dispatcher::Outcome::Unbound);
+
+    REQUIRE(fixture.buffer.Text().empty());
+}
+
+TEST_CASE("A control-range codepoint (C0/DEL/C1) does not fall through to self-insert", "[Dispatcher]") {
+    using ned::editor::KeyChord;
+
+    CommandRegistry registry = RegistryWithSelfInsertStandIn();
+    Keymap          keymap;
+    Dispatcher      dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    for (const char32_t codepoint : {char32_t{0x01}, char32_t{0x7F}, char32_t{0x85}}) {
+        KeyChord chord{};
+        chord.Codepoint = codepoint;
+        REQUIRE(dispatcher.Feed(chord, context) == Dispatcher::Outcome::Unbound);
+    }
+    REQUIRE(fixture.buffer.Text().empty());
+}
+
+TEST_CASE("An unbound non-ASCII chord after a prefix sequence stays Unbound, not self-inserted", "[Dispatcher]") {
+    using ned::editor::KeyChord;
+
+    CommandRegistry registry = RegistryWithSelfInsertStandIn();
+    Keymap          keymap;
+    keymap.Bind(ParseKeySequence("C-c C-c"), "self-insert-command"); // gives "C-c" a real Prefix node
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    REQUIRE(dispatcher.Feed(ParseKeyChord("C-c"), context) == Dispatcher::Outcome::Pending);
+
+    KeyChord accented{};
+    accented.Codepoint = U'é';
+    // "C-c é" isn't bound to anything -- must report Unbound, not silently
+    // insert 'é' as if the prefix never happened.
+    REQUIRE(dispatcher.Feed(accented, context) == Dispatcher::Outcome::Unbound);
+    REQUIRE(fixture.buffer.Text().empty());
 }

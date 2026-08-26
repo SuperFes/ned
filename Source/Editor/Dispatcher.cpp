@@ -26,6 +26,27 @@ namespace {
         return pairs;
     }
 
+    // self-insert-fallback follow-up: whether an otherwise-unbound chord
+    // should still self-insert -- true for a plain (no Control/Meta,
+    // Special == None) printable codepoint. Printable ASCII (0x20-0x7E)
+    // never reaches this check at all (BuildDefaultGlobalKeymap gives each
+    // one its own real self-insert-command entry, so those Match before
+    // Dispatcher::Feed's NoMatch branch is ever reached); this is what
+    // makes *every other* printable Unicode codepoint -- accented Latin,
+    // CJK, emoji, ... -- self-insert too, without enumerating over a
+    // million keymap entries for them. C0 controls (0x00-0x1F), DEL
+    // (0x7F), and the C1 control range (0x80-0x9F) are excluded -- real
+    // control characters, not text a keystroke should ever insert literally.
+    bool IsSelfInsertableFallback(const KeyChord& chord) {
+        if (chord.Control || chord.Meta || chord.Special != SpecialKey::None || chord.Codepoint == 0) {
+            return false;
+        }
+        if (chord.Codepoint < 0x20 || chord.Codepoint == 0x7F) {
+            return false;
+        }
+        return chord.Codepoint < 0x80 || chord.Codepoint > 0x9F;
+    }
+
     struct PrefixArgResolution {
         std::string commandName;
         long        repeatCount;
@@ -109,10 +130,31 @@ Dispatcher::Outcome Dispatcher::Feed(const KeyChord& chord, CommandContext& cont
         }
         case Keymap::LookupResult::Prefix:
             return Outcome::Pending;
-        case Keymap::LookupResult::NoMatch:
+        case Keymap::LookupResult::NoMatch: {
+            // self-insert-fallback follow-up: only a *bare* unbound chord
+            // (not the tail of an unresolved multi-chord prefix, e.g. an
+            // unbound key after "C-c") falls through to self-insert-command
+            // -- pending_ still holds the full attempted sequence at this
+            // point (Feed pushed chord onto it up top), so size() == 1 means
+            // this NoMatch fired on the very first chord, no prefix in
+            // progress.
+            const bool bareChord = pending_.size() == 1;
             pending_.clear();
             context.prefixArg.reset(); // an unbound key cancels a pending argument, matching Emacs
+            if (bareChord && IsSelfInsertableFallback(chord)) {
+                if (const Command* selfInsert = registry_.Find("self-insert-command")) {
+                    if (recording_) {
+                        currentMacro_.push_back(chord);
+                        lastRecordedChordCount_ = 1;
+                    }
+                    context.lastCommand = lastInvokedCommand_;
+                    selfInsert->Invoke(context);
+                    lastInvokedCommand_ = "self-insert-command";
+                    return Outcome::Invoked;
+                }
+            }
             return Outcome::Unbound;
+        }
     }
 
     pending_.clear();
