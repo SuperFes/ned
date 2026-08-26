@@ -23,6 +23,34 @@ namespace {
 
     using Json = nlohmann::json;
 
+    // NED_DEBUG_UNDO=<path>: heap-corruption-hunt follow-up. A real,
+    // coredump-confirmed SIGABRT ("corrupted size vs. prev_size while
+    // consolidating" -- glibc's malloc detecting a heap overflow, noticed
+    // asynchronously by an unrelated later free()) landed with the reported
+    // repro "edit, save, undo, save again, exit" -- exactly the shape of
+    // this file's own save path, which also runs unattended on every
+    // periodic autosave tick (WindowManager.cpp), not just at exit
+    // (main.cpp's quit path), so the actual corrupting write could predate
+    // the crash by an arbitrary amount of session time. Brackets every
+    // risky step (buffer snapshot size, JSON serialization, disk write) so
+    // the log's last lines at the moment of a future crash pinpoint which
+    // buffer/size was mid-flight, same NED_DEBUG_MOUSE/NED_DEBUG_KEYS
+    // env-var-to-file idiom as elsewhere in this codebase. Meant to be left
+    // on across many real sessions until it happens again -- deliberately
+    // verbose (one line per save attempt, not per keystroke) rather than
+    // silent between crashes.
+    void DebugLog(const std::string& line) {
+        static FILE* log = []() -> FILE* {
+            const char* path = std::getenv("NED_DEBUG_UNDO");
+            return (path != nullptr && *path != '\0') ? std::fopen(path, "a") : nullptr;
+        }();
+        if (log == nullptr) {
+            return;
+        }
+        std::fprintf(log, "%s\n", line.c_str());
+        std::fflush(log);
+    }
+
     // Duplicated from Backup.cpp/ProjectSession.cpp/ProjectTrust.cpp's own
     // private copies -- the same "not worth a shared dependency for
     // something this small" call each of those already made.
@@ -177,10 +205,17 @@ void SaveUndoHistory(const text::Buffer& buffer) {
         return; // nothing beyond a fresh load already gives
     }
 
+    DebugLog("SaveUndoHistory: begin path=" + buffer.Path()->string() +
+             " bufferBytes=" + std::to_string(buffer.Content().ByteLength()) + " nodeCount=" + std::to_string(nodes.size()) +
+             " currentId=" + std::to_string(buffer.CurrentUndoNodeId()));
     try {
-        AtomicWrite(UndoFileForPath(*buffer.Path()), SerializeToJson(nodes, buffer.CurrentUndoNodeId(), *buffer.Path()));
+        const std::string json = SerializeToJson(nodes, buffer.CurrentUndoNodeId(), *buffer.Path());
+        DebugLog("SaveUndoHistory: serialized jsonBytes=" + std::to_string(json.size()));
+        AtomicWrite(UndoFileForPath(*buffer.Path()), json);
+        DebugLog("SaveUndoHistory: wrote OK path=" + buffer.Path()->string());
     }
-    catch (const std::exception&) {
+    catch (const std::exception& e) {
+        DebugLog(std::string("SaveUndoHistory: EXCEPTION (swallowed) ") + e.what());
         // Swallowed -- see this function's own doc comment.
     }
 }
@@ -196,24 +231,31 @@ void TryRestoreUndoHistory(text::Buffer& buffer) {
             return; // nothing persisted for this path
         }
         const std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        DebugLog("TryRestoreUndoHistory: path=" + buffer.Path()->string() + " fileBytes=" + std::to_string(content.size()));
 
         const auto parsed = ParseNodes(content);
         if (!parsed || parsed->empty()) {
+            DebugLog("TryRestoreUndoHistory: no usable nodes parsed, leaving fresh tree");
             return;
         }
+        DebugLog("TryRestoreUndoHistory: parsed nodeCount=" + std::to_string(parsed->size()));
 
         const std::string bufferText = buffer.Text();
         for (const auto& node : *parsed) {
             if (node.content == bufferText) {
+                DebugLog("TryRestoreUndoHistory: restoring at node id=" + std::to_string(node.id));
                 buffer.RestoreUndoTree(*parsed, node.id);
+                DebugLog("TryRestoreUndoHistory: restored OK");
                 return;
             }
         }
         // No node matches -- the file diverged from every known history
         // point since this was last persisted; leave the buffer's fresh
         // single-node tree alone, per this header's own doc comment.
+        DebugLog("TryRestoreUndoHistory: no node matched current content, leaving fresh tree");
     }
-    catch (const std::exception&) {
+    catch (const std::exception& e) {
+        DebugLog(std::string("TryRestoreUndoHistory: EXCEPTION (swallowed) ") + e.what());
         // Swallowed -- a corrupt undo file must never block opening a file.
     }
 }
@@ -223,6 +265,7 @@ void SaveUndoHistoryForOpenBuffers(text::BufferList& bufferList) {
         return;
     }
 
+    DebugLog("SaveUndoHistoryForOpenBuffers: sweep start, bufferCount=" + std::to_string(bufferList.Buffers().size()));
     for (const auto& buffer : bufferList.Buffers()) {
         if (!Eligible(*buffer)) {
             continue;
@@ -243,6 +286,7 @@ void SaveUndoHistoryForOpenBuffers(text::BufferList& bufferList) {
         const std::lock_guard<std::mutex> lock(UndoMutex());
         GenerationStorage()[key] = generation;
     }
+    DebugLog("SaveUndoHistoryForOpenBuffers: sweep end");
 }
 
 void SetPersistentUndoEnabled(bool enabled) {
