@@ -425,6 +425,22 @@ inconsistent. `lsp-signature-help`'s active-parameter marker still uses ASCII `*
 rather than switching back to guillemets — a cosmetic choice either way now that the
 underlying bug is gone.
 
+Normal-mode self-insert silently dropping every non-ASCII keystroke (found 2026-08-26,
+reported live as "pasting an emoji does nothing" — any terminal paste/keystroke of a
+character outside 0x20-0x7E, not just emoji: accented Latin, CJK, ...) was fixed
+2026-08-26. `BuildDefaultGlobalKeymap` only ever gave printable ASCII its own real
+self-insert-command keymap entry (deliberately, per its own comment — enumerating a
+literal entry per Unicode codepoint isn't feasible), and `Dispatcher::Feed` had no
+fallback at all for a `NoMatch` on anything else, so it reported "<char> is undefined"
+and dropped the keystroke instead of inserting it. `Dispatcher::Feed`'s `NoMatch` case now
+falls through to `self-insert-command` for a *bare* (not mid-prefix-sequence) plain chord
+(no Control/Meta/Special) whose codepoint isn't a C0/DEL/C1 control character — a real
+rebind of any individual character, ASCII or not, still wins via `Match` before ever
+reaching this fallback. `C-y`/`PasteFromSystemClipboard` was never affected (it inserts
+the whole pasted string directly via `Buffer::InsertAtPoint`, bypassing per-character
+dispatch) — only a terminal-native paste or direct keystroke of a non-ASCII character hit
+this.
+
 ### Named non-goals (leaning "won't do", kept visible so it's a conscious call)
 
 - [ ] A plugin marketplace/package registry (VSCode extensions, MELPA/straight.el).
