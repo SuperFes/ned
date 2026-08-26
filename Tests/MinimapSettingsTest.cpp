@@ -59,3 +59,11 @@ TEST_CASE("SetMinimapCharsPerDot/MinimapCharsPerDot round-trip and clamp", "[Min
     SetMinimapCharsPerDot(-1);
     REQUIRE(MinimapCharsPerDot() == 1);
 }
+
+TEST_CASE("SetMinimapCharsPerDot accepts a fractional value", "[MinimapSettings]") {
+    const MinimapSettingsGuard guard;
+    SetMinimapCharsPerDot(8.5);
+    REQUIRE(MinimapCharsPerDot() == 8.5);
+    SetMinimapCharsPerDot(0.5); // below the 1.0 floor -- clamps up, same as any sub-1 value always has
+    REQUIRE(MinimapCharsPerDot() == 1.0);
+}

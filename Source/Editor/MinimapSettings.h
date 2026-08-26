@@ -33,9 +33,13 @@ void              SetMinimapWidth(int columns);
 // reading as visually "overly filled" rather than showing genuine
 // per-line shape; 8 leaves the right side of the bar mostly empty for
 // typical line lengths, closer to how a real minimap should read at a
-// glance. Non-positive values clamped to 1.
-void              SetMinimapCharsPerDot(int columns);
-[[nodiscard]] int MinimapCharsPerDot();
+// glance. A floating-point value (minimap-fractional-chars-per-dot
+// follow-up) so a value between two whole-number steps (e.g. 8.5) is
+// reachable too, not just the coarser integer jumps -- real-pixel mode in
+// particular has enough columns of headroom for the difference to actually
+// show. Values <= 0 clamped to 1.
+void                 SetMinimapCharsPerDot(double columns);
+[[nodiscard]] double MinimapCharsPerDot();
 
 } // namespace ned::editor
 

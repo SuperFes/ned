@@ -118,7 +118,7 @@ void Minimap::ClearBufferCache(text::Buffer& buffer) {
 }
 
 void Minimap::ForEachDensityDot(
-    int subRows, int subCols, int charsPerDot,
+    int subRows, int subCols, double charsPerDot,
     const std::function<void(int subRow, int subCol, std::size_t offset, std::size_t linesInRow)>& visit) const {
     text::Buffer&     buffer     = activeBuffer_.Get();
     const text::Rope& content    = buffer.Content();
@@ -127,10 +127,12 @@ void Minimap::ForEachDensityDot(
         return;
     }
 
+    const double effectiveCharsPerDot = std::max(charsPerDot, 1.0);
+
     // "Only go as deep to the right as 1-2 chars per pixel" -- the user's
     // own framing, not a compression ratio: a line longer than this simply
     // isn't rendered past this column, no attempt to squeeze it in.
-    const int maxColumn = subCols * std::max(charsPerDot, 1);
+    const int maxColumn = static_cast<int>(static_cast<double>(subCols) * effectiveCharsPerDot);
 
     for (int subRow = 0; subRow < subRows; ++subRow) {
         const std::size_t lineStart =
@@ -154,7 +156,7 @@ void Minimap::ForEachDensityDot(
             while (offset < lineEndByte && column < maxColumn) {
                 const auto decoded = content.CodepointAt(offset);
                 if (!IsBlank(decoded.codepoint)) {
-                    const int subCol = column / std::max(charsPerDot, 1);
+                    const int subCol = static_cast<int>(static_cast<double>(column) / effectiveCharsPerDot);
                     // At most one visit() per (subRow, subCol) per real
                     // line, not one per character -- a caller weighting
                     // hits by linesInRow (a density: "how many of the
@@ -233,12 +235,12 @@ void Minimap::EnsurePlane() const {
 
     // Source-image resolution: exactly celldim x cells for the real-pixel
     // path (NCSCALE_NONE needs an exact match, see above); a fixed,
-    // generous 8 sub-rows/4 sub-cols per cell otherwise (twice the density
+    // generous 8 sub-rows/8 sub-cols per cell otherwise (twice the density
     // this feature's braille-era renderer ever used -- NCSCALE_STRETCH
     // resamples it to fit regardless, so this only needs to be "detailed
     // enough," not exact).
     const int dotRows = usePixel && celldimy > 0 ? height * static_cast<int>(celldimy) : height * 8;
-    const int dotCols = usePixel && celldimx > 0 ? width * static_cast<int>(celldimx) : width * 4;
+    const int dotCols = usePixel && celldimx > 0 ? width * static_cast<int>(celldimx) : width * 8;
 
     // Reserve a thin strip at the right edge for the scroll-position band
     // alone -- content dots never get placed there (see the
@@ -421,12 +423,16 @@ void Minimap::EnsurePlane() const {
                   [](const IndexedSpan& a, const IndexedSpan& b) { return a.startByte < b.startByte; });
     }
 
-    // Real-pixel mode has enough columns to give each source character its
-    // own pixel column (charsPerDot=1) instead of the horizontal
-    // compression the glyph path still needs (a braille/quadrant/octant
-    // cell only has 2-4 sub-columns to represent a line in at all) -- see
-    // ForEachDensityDot's own doc comment.
-    const int effectiveCharsPerDot = usePixel ? 1 : editor::MinimapCharsPerDot();
+    // minimap-chars-per-dot-pixel-mode follow-up: this used to hardcode 1 in
+    // real-pixel mode ("enough columns to give each source character its own
+    // pixel column, no need for the horizontal compression the glyph path
+    // needs") -- true as far as it went, but it also silently ignored
+    // ned/set-minimap-chars-per-dot entirely for anyone actually running in
+    // pixel mode (confirmed live: changing the setting had zero visible
+    // effect). The setting is about how *compressed* the reader wants the
+    // minimap to look, independent of which blitter is drawing it -- honor
+    // it uniformly in both modes instead.
+    const double effectiveCharsPerDot = editor::MinimapCharsPerDot();
 
     // weighted-minimap-density follow-up: accumulate, per (subRow, subCol),
     // how many of the real lines compressed into that row actually had ink
