@@ -38,10 +38,8 @@ TEST_CASE("TranslateKey maps named special keys", "[KeyTranslation]") {
     REQUIRE(TranslateKey(ned::ui::test::F(12))->Special == SpecialKey::F12);
 }
 
-// Ctrl+Arrow is a real, additive upgrade over the pre-FTXUI translator
-// (TermOx/escape had no equivalent esc::Key cases for it at all) -- both
-// FTXUI and now Notcurses hand these to us already decoded (a real
-// modifier bit alongside a synthesized arrow key), effectively for free.
+// Notcurses hands Ctrl+Arrow to us already decoded -- a real modifier bit
+// alongside a synthesized arrow key.
 TEST_CASE("TranslateKey maps Ctrl+Arrow keys", "[KeyTranslation]") {
     const auto up = TranslateKey(ned::ui::test::ArrowUpCtrl());
     REQUIRE(up.has_value());
@@ -54,11 +52,9 @@ TEST_CASE("TranslateKey maps Ctrl+Arrow keys", "[KeyTranslation]") {
     REQUIRE(right->Special == SpecialKey::Right);
 }
 
-// FTXUI -> Notcurses migration: was a hand-built raw CSI byte sequence
-// ("\x1B[1;2A") -- Notcurses decodes that upstream too, the same as every
-// other modifier combination; this now just asserts against an
-// already-decoded Shift+Arrow ncinput, same shape as the Ctrl+Arrow case
-// above.
+// Notcurses decodes Shift+Arrow upstream too, the same as every other
+// modifier combination; this asserts against an already-decoded Shift+Arrow
+// ncinput, same shape as the Ctrl+Arrow case above.
 TEST_CASE("TranslateKey maps Shift+Arrow keys", "[KeyTranslation]") {
     const auto up = TranslateKey(ned::ui::test::ArrowUpShift());
     REQUIRE(up.has_value());
@@ -100,12 +96,9 @@ TEST_CASE("TranslateKey maps graphic characters to literal codepoints", "[KeyTra
     REQUIRE(space->Codepoint == U' ');
 }
 
-// FTXUI -> Notcurses migration: was "arrives as one Event whose input() is
-// ESC followed by the key's own bytes" (a real upgrade, at the time, over
-// the pre-FTXUI translator's own Escape-then-key fallback). This modifier-
-// bit shape is what kitty-keyboard-protocol terminals actually produce; a
-// legacy terminal's fast ESC-prefixed press arrives differently -- see the
-// LegacyAlt case just below.
+// This modifier-bit shape is what kitty-keyboard-protocol terminals actually
+// produce; a legacy terminal's fast ESC-prefixed press arrives differently --
+// see the LegacyAlt case just below.
 TEST_CASE("TranslateKey maps Alt/Meta+letter to Meta chords", "[KeyTranslation]") {
     const auto altA = TranslateKey(ned::ui::test::Alt('a'));
     REQUIRE(altA.has_value());
@@ -129,9 +122,8 @@ TEST_CASE("TranslateKey maps a legacy ESC-prefixed Alt+letter to a Meta chord", 
     REQUIRE(altX->Codepoint == U'x');
 }
 
-// FTXUI -> Notcurses migration: was a hand-built raw ESC + C0-control-byte
-// sequence -- Notcurses decodes Ctrl+Alt+<letter> as two real modifier bits
-// on one ncinput directly, same as every other combination.
+// Notcurses decodes Ctrl+Alt+<letter> as two real modifier bits on one
+// ncinput directly, same as every other combination.
 TEST_CASE("TranslateKey maps Ctrl+Alt+letter", "[KeyTranslation]") {
     const auto chord = TranslateKey(ned::ui::test::CtrlAlt('a'));
     REQUIRE(chord.has_value());
@@ -182,12 +174,6 @@ TEST_CASE("TranslateKey returns nullopt for mouse events", "[KeyTranslation]") {
         TranslateKey(ned::ui::test::Mouse(0, 0, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Pressed))
             .has_value());
 }
-
-// FTXUI -> Notcurses migration: the old raw-byte translator's own
-// malformed-UTF-8-sequence test has no equivalent left to test at all --
-// Notcurses decodes UTF-8 upstream, before TranslateKey ever sees an
-// ncinput, so there is no "malformed multi-byte sequence" concept left in
-// this layer to return nullopt for.
 
 TEST_CASE("TranslateKey returns nullopt for an empty (all-zero) event", "[KeyTranslation]") {
     REQUIRE_FALSE(TranslateKey(ned::ui::Event(ncinput{})).has_value());

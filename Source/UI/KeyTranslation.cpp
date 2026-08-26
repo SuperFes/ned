@@ -11,15 +11,11 @@ namespace {
 
     // Named synthesized keys -- arrows, navigation, function keys -- matched
     // directly against Notcurses' own NCKEY_* constants rather than
-    // hand-decoding CSI/SS3 escape sequences ourselves, the same "let the
-    // library's own input parser do this" approach the FTXUI-era translator
-    // already used against FTXUI's pre-parsed Event constants. Modifiers
+    // hand-decoding CSI/SS3 escape sequences ourselves. Modifiers
     // (Ctrl/Shift/Alt) are read once, uniformly, off ncinput::modifiers for
-    // every one of these -- a real simplification over FTXUI, which had no
-    // pre-built Shift+Arrow constants and needed a hand-built raw-CSI
-    // comparison for that case specifically (see this file's old history);
-    // Notcurses reports Shift+Arrow the same modifier-bit way it reports
-    // everything else, no special case needed.
+    // every one of these, including Shift+Arrow -- Notcurses reports it the
+    // same modifier-bit way it reports everything else, no special case
+    // needed.
     std::optional<SpecialKey> SpecialKeyFor(std::uint32_t id) {
         switch (id) {
             case NCKEY_UP:
@@ -93,10 +89,9 @@ namespace {
     // ncinput::modifiers wherever a real terminal populates it, with a
     // defensive fallback (id in the raw C0 control-byte range, no modifier
     // bit set) for terminals that only ever send the bare control byte and
-    // never set NCKEY_MOD_CTRL at all -- the legacy path every terminal the
-    // FTXUI-era translator supported still uses. Ned's own KeyChord doesn't
-    // track Shift separately for printable characters (a capital letter's
-    // codepoint already encodes it), matching that translator's behavior.
+    // never set NCKEY_MOD_CTRL at all. Ned's own KeyChord doesn't track
+    // Shift separately for printable characters -- a capital letter's
+    // codepoint already encodes it.
     std::optional<KeyChord> DecodeBaseKey(const ncinput& input) {
         const std::uint32_t id = input.id;
 
@@ -154,8 +149,7 @@ std::optional<KeyChord> TranslateKey(const Event& event) {
     const ncinput& input = event.raw();
 
     // Only fire on press/repeat -- a held key's repeat should behave like a
-    // fresh press (matches every terminal's/FTXUI's own pre-Notcurses
-    // behavior), but a release carries no KeyChord meaning of its own; only
+    // fresh press, but a release carries no KeyChord meaning of its own; only
     // reported at all under the Kitty keyboard protocol, so most terminals
     // never produce this case, but it's real input Notcurses can hand us.
     if (input.evtype == NCTYPE_RELEASE) {
@@ -177,8 +171,7 @@ std::optional<KeyChord> TranslateKey(const Event& event) {
     if (result) {
         // Shift on a plain codepoint is already encoded in the codepoint
         // itself (e.g. 'A' vs 'a') -- only worth flagging separately when
-        // paired with a Special key (Shift+Arrow etc.), matching the
-        // FTXUI-era translator's own behavior.
+        // paired with a Special key (Shift+Arrow etc.).
         if (ncinput_shift_p(&input) && result->Special != SpecialKey::None) {
             result->Shift = true;
         }

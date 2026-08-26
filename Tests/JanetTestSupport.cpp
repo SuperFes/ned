@@ -4,7 +4,7 @@
 // Repeated janet_init()/janet_deinit() cycles (one per TEST_CASE, or one per
 // Environment instance if each test constructed its own) corrupt global
 // state in this Janet build in a way that only surfaces later as a segfault
-// inside janet_pcall -- reproduced independently of Catch2/TermOx, so it's a
+// inside janet_pcall -- reproduced independently of Catch2, so it's a
 // real constraint of the C API/this Janet version, not a project bug. Real
 // application usage only ever constructs one Environment for the process
 // lifetime anyway, so every Janet-related test file should share this one

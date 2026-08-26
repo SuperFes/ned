@@ -11,12 +11,9 @@
 // keybindings; see Editor/Commands.cpp.
 //
 // No hand-rolled "current window" pointer anywhere in here -- focus is
-// derived on demand from FTXUI's own real ComponentBase::Focused()/
-// TakeFocus() machinery (confirmed, not assumed, that BufferView::OnKeyEvent
-// unconditionally returns true for any translatable key chord, so FTXUI's
-// own container-level Tab/arrow-key focus-stealing can never fire underneath
-// a focused BufferView), the same "recompute, don't cache" convention every
-// other per-frame sync in this codebase already uses.
+// derived on demand from Widget.h's own flat focus registry (Focused()/
+// TakeFocus()/FocusedWidget()), the same "recompute, don't cache" convention
+// every other per-frame sync in this codebase already uses.
 //
 // Fixed 50/50 splits only in this version -- no drag-to-resize yet, mirroring
 // this project's own precedent (ProjectSidebar's drag-resize divider was
@@ -109,10 +106,8 @@ class Pane {
     [[nodiscard]] ModeLine&           ModeLineRef();
     [[nodiscard]] const editor::Mode& ModeRef() const;
 
-    // FTXUI -> Notcurses migration: was Component() returning a shared,
-    // reference-counted ftxui::Component -- Layout.h's own Container is a
-    // plain Widget owned directly by this Pane instead (see component_
-    // below), so this just hands back a reference to it. Callers
+    // Hands back a reference to this Pane's Layout.h Container (see
+    // component_ below), owned directly by the Pane. Callers
     // (WindowManager::BuildComponent) hold this only as long as the owning
     // Pane does, the same lifetime contract every other Widget& in this
     // codebase already has.
@@ -201,13 +196,8 @@ struct WindowNode {
     // frame with no rebuild. Unused for Kind::Leaf.
     float ratio = 0.5f;
 
-    // FTXUI -> Notcurses migration: FTXUI's own Container::Horizontal/
-    // Vertical calls used to be built fresh, ephemerally, inside
-    // BuildComponent every single RebuildComponentTree() call (cheap
-    // shared_ptr churn under FTXUI's own reference-counted Component
-    // model). Layout.h's Container is a plain owned Widget instead, so a
-    // SplitBelow/SplitRight node needs somewhere stable to actually keep
-    // one across rebuilds -- this is that slot, (re)built by
+    // A SplitBelow/SplitRight node needs somewhere stable to keep its
+    // Layout.h Container across rebuilds -- this is that slot, (re)built by
     // WindowManager::BuildComponent every RebuildComponentTree() call
     // (SetChildren, not a fresh Container, so its own identity -- and thus
     // its Box_() -- survives a rebuild that doesn't touch this particular
@@ -344,46 +334,25 @@ class WindowManager {
     // BufferView::SetJanetEnvironment's own doc comment.
     void SetJanetEnvironment(const janet::Environment* janetEnv);
 
-    // FTXUI -> Notcurses migration: forwarded to every pane, present and
-    // future, same shape as SetProjectSidebar/SetLspManager above -- see
-    // Pane::SetEventLoop's own doc comment.
+    // Forwarded to every pane, present and future, same shape as
+    // SetProjectSidebar/SetLspManager above -- see Pane::SetEventLoop's own
+    // doc comment.
     void SetEventLoop(EventLoop* eventLoop);
 
     // One stable Widget& main.cpp embeds exactly once into its own
     // composition root and never needs to re-fetch -- its own children get
-    // swapped out on every split/close (Container::SetChildren, was FTXUI's
-    // DetachAllChildren + Add), but its own identity never changes, the
-    // same "long-lived mutable slot" role main.cpp's own active-flagged
-    // ProjectSidebar already plays for a different reason (conditional
-    // visibility rather than structural rebuilds).
+    // swapped out on every split/close (Container::SetChildren), but its own
+    // identity never changes, the same "long-lived mutable slot" role
+    // main.cpp's own active-flagged ProjectSidebar already plays for a
+    // different reason (conditional visibility rather than structural
+    // rebuilds).
     [[nodiscard]] Widget& RootComponent();
 
     // Re-establishes keyboard focus on whichever pane currently has it
     // (the initial one, unless something else has already changed focus
-    // before this is called). Must be called by main.cpp once, after
-    // RootComponent() has actually been embedded into the app's full
-    // composition tree -- NOT relied upon from this class's own
-    // constructor, even though the initial pane's own TakeFocus() is
-    // called there too. Real, confirmed reason (found via manual pty
-    // testing, not guessed): ComponentBase::TakeFocus() walks UP through
-    // real parent pointers, calling SetActiveChild() at every ancestor
-    // along the way -- but at WindowManager-construction time,
-    // rootComponent_ has no parent yet (main.cpp hasn't built bufferRow/
-    // head around it yet), so that walk terminates immediately at
-    // rootComponent_ itself instead of reaching all the way up through
-    // bufferRow and head. Every *ancestor* container's own focus-selector
-    // (bufferRow's, head's) is left at its untouched default (child 0) as
-    // a result, meaning keyboard events sent to head never actually reach
-    // any BufferView at all -- confirmed as the root cause of split/close/
-    // other-window keybindings silently doing nothing in the real running
-    // app despite passing every headless WindowManagerTest.cpp case (which
-    // feeds events directly to RootComponent(), never embedding it in a
-    // larger tree, so this exact ordering bug had no way to surface
-    // there). Calling this again, once, after head is fully assembled --
-    // the same call site the pre-window-splitting code's own
-    // bufferView->TakeFocus() used to occupy -- fixes it: by then every
-    // ancestor genuinely exists, and TakeFocus()'s walk reaches all the
-    // way up.
+    // before this is called), falling back to the first leaf if no pane
+    // reports Focused() yet. main.cpp calls this once, after RootComponent()
+    // has been embedded into the app's full composition tree.
     void TakeFocus();
 
     // How many panes currently exist -- mainly for tests (asserting on tree
@@ -607,15 +576,10 @@ class WindowManager {
     // Rebuilds rootComponent_'s children from the current root_ tree shape
     // -- called after every structural mutation (split/close). Does NOT by
     // itself restore focus -- callers must explicitly TakeFocus()
-    // afterward. FTXUI -> Notcurses migration: the "every freshly-built
-    // intermediate Container's own focus-selector defaults to its first
-    // child" reasoning this comment used to cite doesn't even apply
-    // anymore -- Layout.h's Container has no focus-selector concept at all
-    // (see Widget.h's own focus-registry comment), but a fresh TakeFocus()
-    // is still required regardless, since RebuildComponentTree can
-    // reparent/replace Containers without touching which Widget the global
-    // focus registry (Widget.cpp) currently points at, which could easily
-    // no longer be part of the tree at all after a DeleteWindow.
+    // afterward, since RebuildComponentTree can reparent/replace Containers
+    // without touching which Widget the global focus registry (Widget.cpp)
+    // currently points at, which could easily no longer be part of the tree
+    // at all after a DeleteWindow.
     void RebuildComponentTree();
 
     // (Re)builds/updates node's own Widget subtree in place, recursing into

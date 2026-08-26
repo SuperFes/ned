@@ -46,20 +46,17 @@
 //
 // The width is drag-resizable by the divider column (round-2 follow-up):
 // pressing on it starts a resize session (IsResizing()/UpdateResize()/
-// EndResize()), which BufferView cooperates in -- FTXUI has no
-// mouse-capture concept either (every mouse event is delivered to every
-// leaf widget regardless of position; see Widget.h's own header comment),
-// so once a growing drag crosses out of this widget's own bounds the move
+// EndResize()), which BufferView cooperates in -- there's no
+// mouse-capture concept (every mouse event is delivered to every leaf
+// widget regardless of position; see Widget.h's own header comment), so
+// once a growing drag crosses out of this widget's own bounds the move
 // events land on BufferView too. BufferView checks IsResizing() in its own
 // OnEvent and, if set, drives the resize instead of its usual selection/
 // no-op handling. See UpdateResize's own comment for why the math is
 // anchored to the drag's start rather than applied as a per-event delta.
-// Width() is read by main.cpp's own composition-root Renderer every frame
-// to decide this widget's actual layout width (TermOx -> FTXUI migration:
-// there's no equivalent of directly mutating a stored `size_policy` field
-// here anymore, since FTXUI rebuilds its whole Element tree -- including
-// every size()/flex() decorator -- fresh every frame from whatever the
-// composition root's own render function returns).
+// Width() is read by main.cpp's own composition root every frame to decide
+// this widget's actual layout width, since layout is recomputed fresh each
+// frame rather than cached.
 //
 
 #ifndef NED_UI_PROJECTSIDEBAR_H
@@ -173,12 +170,11 @@ class ProjectSidebar : public Widget {
 
     // Called by BufferView's own OnEvent while IsResizing() -- see this
     // header's comment above for why BufferView needs to be involved at
-    // all. globalMouseX is the raw, absolute (screen-space) mouse x
-    // FTXUI's own Mouse::x already is -- unlike the pre-migration version,
-    // no translation from a caller-local coordinate is needed (FTXUI never
-    // translates mouse coordinates to begin with; see Widget.h's own header
-    // comment), so this is just whichever widget's OnEvent received the
-    // event passing its raw event.mouse().x straight through.
+    // all. globalMouseX is the raw, absolute (screen-space) mouse x -- no
+    // translation from a caller-local coordinate is needed, since mouse
+    // coordinates are never translated to begin with (see Widget.h's own
+    // header comment), so this is just whichever widget's OnEvent received
+    // the event passing its raw event.mouse().x straight through.
     void UpdateResize(int globalMouseX);
 
     // Called by whichever widget's OnEvent sees the matching mouse-release
@@ -314,11 +310,11 @@ class ProjectSidebar : public Widget {
     // BuildProjectTree does a full recursive directory walk -- cheap for a
     // small project, genuinely expensive (tens of milliseconds, measured)
     // for a large one, and this widget's Paint()/OnEvent() used to call it
-    // unconditionally on every single call. Under FTXUI that means every
-    // single frame -- i.e. every keystroke, even ones with nothing to do
-    // with the sidebar at all, since FTXUI repaints the whole component
-    // tree fresh each frame -- a real, reported, felt typing/cursor lag,
-    // not a hypothetical one. CachedTree() rebuilds at most once per
+    // unconditionally on every single call. Every widget repaints fresh
+    // every frame, i.e. every keystroke, even ones with nothing to do with
+    // the sidebar at all -- calling it unconditionally was a real, reported,
+    // felt typing/cursor lag, not a hypothetical one. CachedTree() rebuilds
+    // at most once per
     // kTreeCacheThrottle, or immediately if ProjectRoot() changed or
     // InvalidateTree() was called since the last build; every other frame
     // reuses the cached result. A bounded, deliberately simple fix (no file-

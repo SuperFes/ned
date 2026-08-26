@@ -64,9 +64,7 @@ bool operator==(const Point& a, const Point& b) {
 namespace {
 
 // Types out a whole path/name into a find-file/switch-to-buffer prompt one
-// OnEvent at a time, the same way a real keyboard would feed it -- was a
-// per-esc::Key loop, now a plain single-UTF-8-byte-per-character loop through
-// ftxui::Event::Character.
+// OnEvent at a time, the same way a real keyboard would feed it.
 void TypeText(ned::ui::BufferView& view, std::string_view text) {
     for (const char ch : text) {
         view.OnEvent(ned::ui::test::Character(std::string(1, ch)));
@@ -746,19 +744,11 @@ TEST_CASE("An exception from a command is caught and reported via the status mes
 }
 
 TEST_CASE("C-x C-c (quit) does not crash key_press", "[BufferView]") {
-    // FTXUI -> Notcurses migration: under FTXUI, BufferView::OnKeyEvent's
-    // context.quit branch called ftxui::ScreenInteractive::Active()->Exit()
-    // unconditionally -- Active() is nullptr outside a live Loop(), which no
-    // headless test ever runs inside, so this was a real, confirmed
-    // null-pointer SIGSEGV every time this exact test tried to exercise the
-    // full C-x C-c chord (worked around, at the time, by only sending the
-    // harmless C-x prefix alone). BufferView::SetEventLoop's own null check
-    // (eventLoop_, defaulting to nullptr, matching
-    // ftxui::ScreenInteractive::Active()'s original null-safety intent
-    // exactly) fixes this at the source: a BufferView with no EventLoop
-    // registered -- every test-constructed one, including this fixture's
-    // own View() -- now takes the quit branch as a real, safe no-op instead
-    // of dereferencing anything. The full chord is exercised below now.
+    // BufferView::SetEventLoop's own null check (eventLoop_, defaulting to
+    // nullptr) is what keeps this safe: a BufferView with no EventLoop
+    // registered -- every test-constructed one, including this fixture's own
+    // View() -- takes the quit branch as a real, safe no-op instead of
+    // dereferencing anything.
     Fixture             fixture;
     ned::ui::BufferView view = fixture.View();
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 9, .y_min = 0, .y_max = 2});
@@ -2185,12 +2175,11 @@ TEST_CASE("'n' cancels the quit-confirmation prompt and returns to normal editin
 }
 
 TEST_CASE("'y' at the quit-confirmation prompt does not crash key_press", "[BufferView]") {
-    // FTXUI -> Notcurses migration: same fix as the "C-x C-c (quit) does not
-    // crash key_press" test above, hit via HandleConfirmQuitKey's 'y'/'Y'
-    // branch instead -- also now guarded by eventLoop_'s own null check
-    // (BufferView::SetEventLoop), so a no-EventLoop-registered BufferView
-    // (every test-constructed one) takes this branch as a safe no-op. The
-    // full flow, including the actual 'y' press, is exercised below now.
+    // Same guard as the "C-x C-c (quit) does not crash key_press" test
+    // above, hit via HandleConfirmQuitKey's 'y'/'Y' branch instead:
+    // eventLoop_'s own null check (BufferView::SetEventLoop) means a
+    // no-EventLoop-registered BufferView (every test-constructed one) takes
+    // this branch as a safe no-op.
     Fixture            fixture;
     ned::text::Buffer& buffer = fixture.bufferList.CreateBuffer("scratch");
     buffer.InsertAtPoint("edit");
@@ -3773,21 +3762,6 @@ TEST_CASE("C-c p expands the sidebar if needed and hands it the keyboard focus",
     REQUIRE(sidebar.Focused());
 }
 
-// The pre-migration "reflows widths immediately" test doesn't have an
-// equivalent anymore: it existed specifically to verify SetSidebarRow's own
-// forced-reflow workaround, which TermOx needed (mutating a stored
-// size_policy field never triggered a relayout on its own) but FTXUI
-// doesn't -- confirmed empirically during the migration (a real spike:
-// toggling a child's inclusion in an hbox and letting the very next frame
-// render naturally was enough for siblings to reclaim/cede the space).
-// SetSidebarRow itself was removed from both ProjectSidebar and BufferView
-// along with the workaround it existed for (see ProjectSidebar.h's own
-// header comment and BufferView::SetProjectSidebar's doc comment); the
-// underlying behavior -- a hidden sidebar's space actually getting
-// reclaimed -- is exercised at the composition level once main.cpp's real
-// widget tree is wired up, not as a BufferView-level unit test. Mirrors the
-// same drop already made in SidebarToggleTest.cpp/ProjectSidebarTest.cpp.
-
 TEST_CASE("A growing sidebar resize drag hands off to BufferView's mouse_move/mouse_release", "[BufferView]") {
     Fixture fixture;
 
@@ -3797,12 +3771,11 @@ TEST_CASE("A growing sidebar resize drag hands off to BufferView's mouse_move/mo
     ned::ui::BufferView view = fixture.View();
 
     // Placed directly via SetBox_ side by side, mirroring what main.cpp's own
-    // Row{ProjectSidebar, BufferView, ...} composition achieves every frame
-    // -- no SetSidebarRow/ox::Row equivalent needed (removed; see the dropped
-    // reflow test above). The sidebar's box width matches its own starting
-    // Width() so the divider column (derived from the box) and the resize
-    // anchor (BeginResize captures the internal width_ field) agree, the
-    // same invariant main.cpp's real per-frame relayout maintains.
+    // Row{ProjectSidebar, BufferView, ...} composition achieves every frame.
+    // The sidebar's box width matches its own starting Width() so the
+    // divider column (derived from the box) and the resize anchor
+    // (BeginResize captures the internal width_ field) agree, the same
+    // invariant main.cpp's real per-frame relayout maintains.
     const int startWidth = sidebar.Width();
     sidebar.SetBox_(ned::ui::Box{.x_min = 0, .x_max = startWidth - 1, .y_min = 0, .y_max = 2});
     view.SetBox_(ned::ui::Box{.x_min = startWidth, .x_max = startWidth + 39, .y_min = 0, .y_max = 2});
@@ -3813,10 +3786,10 @@ TEST_CASE("A growing sidebar resize drag hands off to BufferView's mouse_move/mo
     REQUIRE(sidebar.IsResizing());
 
     // The cursor has moved 5 columns into BufferView's own territory -- with
-    // no mouse-capture in FTXUI either (every mouse event is delivered to
-    // every leaf widget regardless of position; see Widget.h's own header
-    // comment), this event is hit-tested to BufferView, not ProjectSidebar,
-    // purely because view's own box starts where sidebar's box ends.
+    // no mouse-capture (every mouse event is delivered to every leaf widget
+    // regardless of position; see Widget.h's own header comment), this event
+    // is hit-tested to BufferView, not ProjectSidebar, purely because view's
+    // own box starts where sidebar's box ends.
     view.OnEvent(MouseMove(startWidth + 5, 0));
 
     REQUIRE(sidebar.Width() == startWidth + 6); // grew by (startWidth + 5) - (startWidth - 1) == 6

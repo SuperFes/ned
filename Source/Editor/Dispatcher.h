@@ -1,8 +1,7 @@
 //
 // Accumulates fed key chords against a KeymapStack and invokes the matched
-// command via a CommandRegistry. This is the piece Phase 4 feeds real
-// terminal key events into; it has no TermOx/UI dependency of its own, which
-// is what makes it testable without a running terminal.
+// command via a CommandRegistry. Has no UI dependency of its own, which is
+// what makes it testable without a running terminal.
 //
 
 #ifndef NED_EDITOR_DISPATCHER_H

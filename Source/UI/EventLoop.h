@@ -1,12 +1,10 @@
 //
-// The Notcurses-backed replacement for ftxui::ScreenInteractive's own
-// Loop()/Post() (FTXUI -> Notcurses migration, Phase 2). Deliberately kept
-// decoupled from any concept of a Widget tree or Layout -- this owns
-// Notcurses' own process lifecycle (init/teardown, raw input polling,
+// Owns Notcurses' own process lifecycle (init/teardown, raw input polling,
 // terminal-signal suppression, cursor placement, resize detection, and
-// thread-safe cross-thread posting) and nothing about *how* a frame gets
-// composed. Source/UI/Layout.h and the composition root (Source/main.cpp),
-// both Phase 3, are what turn "an Event arrived" / "repaint now" into an
+// thread-safe cross-thread posting). Deliberately kept decoupled from any
+// concept of a Widget tree or Layout -- it knows nothing about *how* a frame
+// gets composed. Source/UI/Layout.h and the composition root
+// (Source/main.cpp) are what turn "an Event arrived" / "repaint now" into an
 // actual Widget tree walk; this file doesn't know Widget trees exist.
 //
 
@@ -30,12 +28,9 @@ struct ncplane;
 namespace ned::ui {
 
 // Everything the loop needs from its caller to actually do anything --
-// mirrors the shape of the handful of things main.cpp used to hand
-// ScreenInteractive (a root Component via Loop(head), implicitly
-// screen.Post() for background threads) plus the two things FTXUI used to
-// do for us that Notcurses doesn't (recomputing layout on resize, deciding
-// where the cursor goes), made explicit here since nothing else owns them
-// now.
+// Notcurses itself has no concept of layout recomputation or cursor
+// placement, so those decisions are made explicit here since nothing else
+// owns them.
 struct EventLoopCallbacks {
     // Called once at startup and again after every terminal resize, with
     // the new terminal Size -- the composition root's cue to recompute
@@ -103,9 +98,7 @@ class EventLoop {
     [[nodiscard]] notcurses* NotcursesContext() const;
 
     // Blocks until Exit() is called (from anywhere -- typically a Post()ed
-    // callback reacting to CommandContext::quit, mirroring how the
-    // FTXUI-era BufferView::OnKeyEvent used to call
-    // ftxui::ScreenInteractive::Active()->Exit() directly). Drives
+    // callback reacting to CommandContext::quit). Drives
     // callbacks.onResize once immediately (the initial layout pass, no
     // resize needed to justify it) and callbacks.render once immediately
     // afterward, then services input/posted-work/resize events until told
@@ -116,12 +109,10 @@ class EventLoop {
 
     // Thread-safe: queues fn to run on the loop's own thread at the next
     // opportunity, then wakes the loop if it's currently blocked waiting
-    // for input -- the direct replacement for
-    // ftxui::ScreenInteractive::Post, used the exact same way (BufferView's
-    // scratch-auto-save background thread, LspManager's background
-    // read-loop threads both need to marshal work back onto the thread
-    // that owns every Widget's state, never touching it directly from a
-    // second thread).
+    // for input (BufferView's scratch-auto-save background thread,
+    // LspManager's background read-loop threads both need to marshal work
+    // back onto the thread that owns every Widget's state, never touching
+    // it directly from a second thread).
     void Post(std::function<void()> fn);
 
     // Runs every currently-queued Post()ed callback and returns whether any
@@ -171,15 +162,10 @@ class EventLoop {
 };
 
 // A one-shot "call this once, after this much wall-clock time, on the loop
-// thread" primitive -- the direct replacement for the FTXUI-era
-// ftxui::animation::RequestAnimationFrame()/Widget::OnAnimation pattern
-// (BufferView's completion-debounce and status-message-idle-timeout
-// deadlines both used it). FTXUI's mechanism was tied to the render loop
-// itself (it only ever got a chance to check "has the deadline passed yet"
-// on a real repaint, so it had to keep requesting another frame purely to
-// keep polling); Notcurses' own EventLoop has no equivalent per-frame tick
-// at all (see EventLoop's own header comment), so this goes back to the
-// pre-FTXUI shape instead: a real background std::jthread that sleeps
+// thread" primitive (BufferView's completion-debounce and
+// status-message-idle-timeout deadlines both use it). Notcurses' own
+// EventLoop has no per-frame tick to poll against (see EventLoop's own
+// header comment), so this is a real background std::jthread that sleeps
 // exactly the requested delay and Post()s the callback back onto the loop
 // thread when it elapses, the same "own background thread, marshal back via
 // Post" idiom BufferView's scratch-auto-save timer and

@@ -3230,15 +3230,10 @@ void BufferView::PaintProseDiagnosticCallouts(Canvas& c, const std::vector<std::
 
 std::optional<Point> BufferView::CursorPosition() const {
     // A pure, independently-callable query, deliberately NOT a value cached
-    // as a Paint() side effect (a real, reported bug fixed here: FTXUI's
-    // Node lifecycle always calls ComputeRequirement/SetBox -- which is what
-    // reads this -- *before* Render (which calls Paint()) on every single
-    // frame, so a Paint()-time cache would always be exactly one frame
-    // stale, showing where point was during the *previous* frame's Paint()
-    // call rather than where it is now; felt live as "press Right and
-    // nothing happens, press it again and the cursor jumps to where the
-    // first press should have gone"). Cheap enough to recompute on every
-    // call -- buffer/content access, one GutterWidth() call, one
+    // as a Paint() side effect -- main.cpp's render() calls this once,
+    // separately, after the whole widget tree's Paint() pass has already
+    // completed for the frame. Cheap enough to recompute on every call --
+    // buffer/content access, one GutterWidth() call, one
     // ByteOffsetToLine/LineToByteOffset pair, one bounded VisualColumn scan
     // -- nowhere near Paint()'s own per-visible-row cost.
     const text::Buffer& buffer      = activeBuffer_.Get();
@@ -3256,24 +3251,12 @@ std::optional<Point> BufferView::CursorPosition() const {
         return std::nullopt;
     }
 
-    // size() -- inherited from Widget, persisted on this long-lived object
-    // rather than the transient per-frame PaintNode -- is still its
-    // default-constructed {0,0} the very first time this is ever called:
-    // FTXUI always calls ComputeRequirement (which is what reads
-    // CursorPosition) before SetBox has run even once, on every frame, and
-    // for every frame after the first, size() happens to already hold the
-    // *previous* frame's real value (close enough in practice -- viewport
-    // dimensions essentially never change mid-session outside a terminal
-    // resize). Frame one has no previous frame to fall back on, so treating
-    // an unknown ({0,0}) size as "don't bound at all" rather than "assume
-    // everything is off-screen" is what makes the cursor visible starting
-    // on the very first rendered frame, not only once some later event
-    // triggers a second Draw() call -- a real, reported bug (no terminal
-    // ever sent a "show cursor" escape sequence in its very first frame,
-    // confirmed via a raw pty capture, not assumed) that otherwise made the
-    // cursor (and, per Focused()'s own aggregation depending on this same
-    // enabled flag, arguably the sense that the editor was "ready" at all)
-    // appear to not exist until the user did something.
+    // size() is still its default-constructed {0,0} if this is called
+    // before SetBox_ has ever run on this widget (e.g. a headless caller
+    // querying CursorPosition() before any Paint() pass) -- treating an
+    // unknown ({0,0}) size as "don't bound at all" rather than "assume
+    // everything is off-screen" is what keeps the cursor visible in that
+    // case instead of appearing to not exist.
     const Size sizeNow     = size();
     const bool sizeIsKnown = sizeNow.height > 0 && sizeNow.width > 0;
 
@@ -3911,11 +3894,9 @@ bool BufferView::RunCommandAndHandleOutcome(editor::CommandContext& context, con
         // call -- every unit test, and any other headless use of
         // BufferView. It is never null during real, running-editor usage
         // (main.cpp is what constructs the EventLoop and wires it in), but
-        // skipping the null check entirely crashed the whole process the
-        // instant a test exercised `quit` under the FTXUI-era equivalent of
-        // this same check (ftxui::ScreenInteractive::Active(), confirmed
-        // via a real SIGSEGV then) -- kept just as strict here, not
-        // reintroduced as a hypothetical risk.
+        // the null check stays strict rather than being dropped as a
+        // hypothetical risk -- skipping it crashed the whole process the
+        // instant a test exercised `quit`, confirmed via a real SIGSEGV.
         // Shown by the final frame EventLoop::Run renders after Exit():
         // teardown (LSP child grace waits, session saves) runs after Run
         // returns but before the terminal is restored, and without this the
@@ -4063,21 +4044,15 @@ void BufferView::EnsureStatusMessageFreshness() {
     }
     statusMessageChangedAt_ = std::chrono::steady_clock::now();
 
-    // FTXUI -> Notcurses migration: was ftxui::animation::RequestAnimationFrame(),
-    // which guaranteed OnAnimation got called again purely so idle time
-    // could actually elapse even with no further input; DeadlineTimer::Arm
-    // is the direct replacement -- a real background thread wakes exactly
+    // DeadlineTimer::Arm starts a real background thread that wakes exactly
     // once, kStatusMessageTimeout from now, and Posts the clear back onto
-    // the loop thread, no polling needed. Guarded by statusMessageSnapshot_
+    // the loop thread -- no polling needed. Guarded by statusMessageSnapshot_
     // still matching statusMessage_ at fire time: if something else wrote a
     // new message before this deadline elapsed, this fire must not clear
     // text it didn't set (a fresh deadline for that newer text was armed
     // by this same method's own next call, which re-armed
-    // statusMessageTimer_, superseding this one outright -- Arm() cancels
-    // any not-yet-fired previous callback the same way OnAnimation's own
-    // "only the latest deadline matters" comment used to describe, just via
-    // real cancellation now instead of a stale-check that never actually
-    // needed to run).
+    // statusMessageTimer_; Arm() cancels any not-yet-fired previous callback,
+    // so only the latest deadline ever actually fires).
     if (eventLoop_) {
         statusMessageTimer_.Arm(*eventLoop_, kStatusMessageTimeout, [this] {
             if (statusMessage_ == statusMessageSnapshot_) {
@@ -4292,13 +4267,10 @@ void BufferView::MaybeScheduleAutoCompletion(const editor::KeyChord& chord, std:
     }
     const std::chrono::milliseconds delay(editor::lsp::LspCompletionDebounceMs());
     completionDebounceDeadline_ = std::chrono::steady_clock::now() + delay;
-    // FTXUI -> Notcurses migration: was ftxui::animation::RequestAnimationFrame()
-    // (OnAnimation polled completionDebounceDeadline_ every frame until it
-    // elapsed); DeadlineTimer::Arm fires exactly once, for real, delay from
-    // now -- re-typing before it fires re-arms it via this same call site on
-    // the very next qualifying keystroke, cancelling the stale one outright,
-    // which is what makes this a debounce rather than a fixed-interval
-    // repeat (same behavior the old overwritten-deadline approach had).
+    // DeadlineTimer::Arm fires exactly once, delay from now -- re-typing
+    // before it fires re-arms it via this same call site on the very next
+    // qualifying keystroke, cancelling the stale one outright, which is what
+    // makes this a debounce rather than a fixed-interval repeat.
     if (eventLoop_) {
         completionDebounceTimer_.Arm(*eventLoop_, delay, [this] {
             completionDebounceDeadline_.reset();
@@ -8579,8 +8551,8 @@ bool BufferView::OnMouseEvent(const Event& event) {
     // A growing sidebar-resize drag (round-2 sidebar follow-up) can deliver
     // move/release events while the cursor is over BufferView, not
     // ProjectSidebar itself -- checked first, regardless of position (every
-    // leaf widget receives every mouse event in FTXUI; see Widget.h's own
-    // header comment), taking priority over BufferView's own handling.
+    // leaf widget receives every mouse event; see Widget.h's own header
+    // comment), taking priority over BufferView's own handling.
     if (projectSidebar_ != nullptr && projectSidebar_->IsResizing()) {
         if (rawMouse.motion == MouseEvent::Motion::Moved) {
             projectSidebar_->UpdateResize(rawMouse.at.x);
@@ -8769,11 +8741,10 @@ void BufferView::LogMouseEvent(std::string_view event, const MouseEvent& mouse) 
     }
 
     const text::Buffer& buffer = activeBuffer_.Get();
-    // mouse.x/y are absolute (screen-space) coordinates here, unlike the
-    // pre-migration version's already-widget-local ox::Mouse::at -- FTXUI
-    // doesn't translate mouse coordinates before delivery (see Widget.h's
-    // own header comment), and this logs the raw event as received, before
-    // LocalMouseEvent's own translation.
+    // mouse.x/y are absolute (screen-space) coordinates here -- coordinates
+    // aren't translated before delivery (see Widget.h's own header comment),
+    // and this logs the raw event as received, before LocalMouseEvent's own
+    // translation.
     log << event << " at=(" << mouse.at.x << ',' << mouse.at.y << ')' << " button=" << static_cast<int>(mouse.button)
         << " inputMode=" << static_cast<int>(inputMode_) << " point=" << buffer.Point()
         << " mark=" << (buffer.HasMark() ? static_cast<long long>(buffer.Mark()) : -1LL) << " topLine=" << topLine_

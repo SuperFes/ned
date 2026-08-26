@@ -5,9 +5,9 @@
 // idiomatic C++ layer" approach Source/Janet/ already established for Janet
 // (see Value.h/Environment.h). Deliberately hand-rolled rather than adopting
 // one of the small existing community C++ wrappers (cpp-tree-sitter and
-// similar) -- none are mature/maintained enough to build a core subsystem on,
-// the same judgment call already made for TermOx over notcurses/FTXUI's own
-// C++ bindings.
+// similar) -- none are mature/maintained enough to build a core subsystem on
+// (the same judgment call `Source/UI/` makes about Notcurses' own C++
+// bindings).
 //
 // TSNode itself is a small POD struct (not a pointer), safe to copy freely --
 // but it holds a non-owning pointer back into the TSTree it came from, so a

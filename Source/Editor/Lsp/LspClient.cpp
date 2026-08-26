@@ -88,19 +88,12 @@ void LspClient::StartReadLoop() {
                 });
                 return;
             }
-            // repaint-on-background-update follow-up: under FTXUI,
-            // ScreenInteractive::Post's own Closure task type never marked
-            // the frame dirty by itself, so a diagnostic/hover/completion/
-            // code-action response arriving here updated real state (e.g.
-            // Buffer::SetDiagnostics) with no repaint to actually show it
-            // until the next real keystroke or mouse event happened to
-            // repaint anyway -- fixed there with an explicit
-            // RequestAnimationFrame() after every such Post. FTXUI ->
-            // Notcurses migration: ned::ui::EventLoop::Run's own loop
-            // doesn't have this gap at all -- draining any Post()ed work
-            // unconditionally earns the next iteration a repaint (see
-            // EventLoop.cpp's own comment on needsRepaint), so no
-            // equivalent "force a frame" call is needed here anymore.
+            // ned::ui::EventLoop::Run's own loop drains any Post()ed work
+            // unconditionally and that alone earns the next iteration a
+            // repaint (see EventLoop.cpp's own comment on needsRepaint), so
+            // a diagnostic/hover/completion/code-action response arriving
+            // here and updating real state (e.g. Buffer::SetDiagnostics) is
+            // shown without needing an explicit "force a frame" call.
             eventLoop_.Post([this, frameText = std::move(*frame)]() mutable { DispatchFrame(frameText); });
         }
     });
