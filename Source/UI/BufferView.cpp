@@ -4669,7 +4669,7 @@ void BufferView::ApplyCodeAction(const editor::lsp::CodeAction& action) {
                                 });
 }
 
-void BufferView::RequestDefinitionAtPoint() {
+void BufferView::RequestDefinitionAtPoint(LspLocationKind kind) {
     if (!lspManager_) {
         statusMessage_ = "No LSP manager available.";
         return;
@@ -4682,38 +4682,72 @@ void BufferView::RequestDefinitionAtPoint() {
     // server when it's inside one (e.g. an HTML <script> block), else "" ->
     // the host language, unchanged from before this feature existed.
     const std::string serverKey = ResolvedLspServerKey(point);
+    // declaration/typeDefinition/implementation follow-up: the lowercase
+    // word this request's status wording and pendingLocationLabel_ use.
+    std::string label;
+    switch (kind) {
+        case LspLocationKind::Definition:
+            label = "definition";
+            break;
+        case LspLocationKind::Declaration:
+            label = "declaration";
+            break;
+        case LspLocationKind::TypeDefinition:
+            label = "type definition";
+            break;
+        case LspLocationKind::Implementation:
+            label = "implementation";
+            break;
+    }
 
-    statusMessage_ = "Requesting definition...";
-    lspManager_->RequestDefinition(
-        buffer, point,
-        [this, bufferPtr, point, generation](std::vector<editor::lsp::LspManager::ResolvedLocation> locations) {
-            if (generation != definitionRequestGeneration_) {
-                return; // superseded by a newer request
-            }
-            if (bufferPtr != &activeBuffer_.Get() || activeBuffer_.Get().Point() != point) {
-                return; // buffer/point changed since the request was sent -- see RequestCodeActionsAtPoint's own identical guard
-            }
-            pendingDefinitions_ = std::move(locations);
-            if (pendingDefinitions_.empty()) {
-                statusMessage_ = "No definition found.";
-                return;
-            }
-            if (pendingDefinitions_.size() == 1) {
-                // No confirmation needed, unlike a code action -- opening a
-                // file and moving point is trivially undoable/re-navigable,
-                // nothing destructive to confirm.
-                JumpToDefinition(pendingDefinitions_[0]);
-                return;
-            }
-            definitionSelection_ = 0;
-            inputMode_           = InputMode::LspGotoDefinitionSelect;
-            RefreshDefinitionSelectStatus();
-        },
-        serverKey);
+    statusMessage_ = "Requesting " + label + "...";
+    auto callback  = [this, bufferPtr, point, generation, label](std::vector<editor::lsp::LspManager::ResolvedLocation> locations) {
+        if (generation != definitionRequestGeneration_) {
+            return; // superseded by a newer request
+        }
+        if (bufferPtr != &activeBuffer_.Get() || activeBuffer_.Get().Point() != point) {
+            return; // buffer/point changed since the request was sent -- see RequestCodeActionsAtPoint's own identical guard
+        }
+        pendingDefinitions_   = std::move(locations);
+        pendingLocationLabel_ = label;
+        if (pendingDefinitions_.empty()) {
+            statusMessage_ = "No " + label + " found.";
+            return;
+        }
+        if (pendingDefinitions_.size() == 1) {
+            // No confirmation needed, unlike a code action -- opening a
+            // file and moving point is trivially undoable/re-navigable,
+            // nothing destructive to confirm.
+            JumpToDefinition(pendingDefinitions_[0]);
+            return;
+        }
+        definitionSelection_ = 0;
+        inputMode_           = InputMode::LspGotoDefinitionSelect;
+        RefreshDefinitionSelectStatus();
+    };
+
+    switch (kind) {
+        case LspLocationKind::Definition:
+            lspManager_->RequestDefinition(buffer, point, std::move(callback), serverKey);
+            break;
+        case LspLocationKind::Declaration:
+            lspManager_->RequestDeclaration(buffer, point, std::move(callback), serverKey);
+            break;
+        case LspLocationKind::TypeDefinition:
+            lspManager_->RequestTypeDefinition(buffer, point, std::move(callback), serverKey);
+            break;
+        case LspLocationKind::Implementation:
+            lspManager_->RequestImplementation(buffer, point, std::move(callback), serverKey);
+            break;
+    }
 }
 
 void BufferView::RefreshDefinitionSelectStatus() {
-    std::string status = "Definition: ";
+    std::string label = pendingLocationLabel_;
+    if (!label.empty()) {
+        label[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(label[0])));
+    }
+    std::string status = label + ": ";
     for (std::size_t i = 0; i < pendingDefinitions_.size(); ++i) {
         if (i > 0) {
             status += "  ";
@@ -5112,7 +5146,16 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             BuildClockReportMultibuffer();
             return;
         case editor::InteractiveRequest::LspGotoDefinition:
-            RequestDefinitionAtPoint();
+            RequestDefinitionAtPoint(LspLocationKind::Definition);
+            return;
+        case editor::InteractiveRequest::LspGotoDeclaration:
+            RequestDefinitionAtPoint(LspLocationKind::Declaration);
+            return;
+        case editor::InteractiveRequest::LspGotoTypeDefinition:
+            RequestDefinitionAtPoint(LspLocationKind::TypeDefinition);
+            return;
+        case editor::InteractiveRequest::LspGotoImplementation:
+            RequestDefinitionAtPoint(LspLocationKind::Implementation);
             return;
         case editor::InteractiveRequest::SwitchHeaderSource:
             SwitchHeaderSource();

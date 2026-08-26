@@ -189,6 +189,29 @@ struct RenameResult {
 // entry.
 [[nodiscard]] RenameResult ExtractRenameEdits(const Json& result);
 
+// signature-help follow-up. Reduces a textDocument/signatureHelp response
+// straight to the single status-line-ready string BufferView/Commands.cpp
+// show verbatim -- mirrors ExtractHoverText's own "already plain, already
+// the caller's whole answer" contract, so LspManager::RequestSignatureHelp
+// can reuse HoverCallback's exact shape instead of a new one. Picks
+// signatures[activeSignature] (default index 0), then wraps the active
+// parameter's own slice of that signature's label in "**...**" -- plain
+// ASCII (EchoArea::Paint renders the status line byte-by-byte, not
+// UTF-8-aware, so a multi-byte marker like guillemets would come out as
+// blank padding instead of a visible glyph) and terminal-safe either way,
+// needing no dependency on Source/UI/'s EchoArea sentinel scheme, which
+// this file (Editor/) must never depend on. The active parameter is
+// read from the signature's own "activeParameter" first, falling back to
+// the response's top-level one per spec; a parameter's "label" may be
+// either a substring of the signature label (first occurrence used) or a
+// [start, end) pair of UTF-16 code-unit offsets into it, both handled. No
+// active parameter resolvable (missing, out of range, or a substring/range
+// that doesn't actually land in the label) leaves the label unwrapped
+// rather than treated as a parse failure. nullopt only when there is no
+// usable signature at all (null result, empty/missing "signatures", or a
+// signature missing "label").
+[[nodiscard]] std::optional<std::string> ExtractSignatureHelp(const Json& result);
+
 } // namespace ned::editor::lsp
 
 #endif // NED_EDITOR_LSP_LSPCONTENT_H

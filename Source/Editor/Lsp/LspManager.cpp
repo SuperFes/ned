@@ -1038,7 +1038,8 @@ void LspManager::ExecuteCommand(text::Buffer& buffer, const std::string& serverK
                         });
 }
 
-void LspManager::RequestDefinition(text::Buffer& buffer, std::size_t byteOffset, DefinitionCallback callback, const std::string& serverKey) {
+void LspManager::SendLocationRequest(const std::string& method, text::Buffer& buffer, std::size_t byteOffset,
+                                     DefinitionCallback callback, const std::string& serverKey) {
     BufferSyncState* state = ResolveSyncState(buffer, serverKey);
     if (!state || !state->opened) {
         callback({});
@@ -1056,7 +1057,7 @@ void LspManager::RequestDefinition(text::Buffer& buffer, std::size_t byteOffset,
         {"textDocument", {{"uri", state->uri}}},
         {"position", {{"line", position.line}, {"character", position.character}}},
     };
-    client->SendRequest("textDocument/definition", params,
+    client->SendRequest(method, params,
                         [this, language, callback = std::move(callback)](std::optional<Json> result, std::optional<Json> error) {
                             if (error) {
                                 LogError(language, ExtractErrorMessage(*error));
@@ -1075,6 +1076,58 @@ void LspManager::RequestDefinition(text::Buffer& buffer, std::size_t byteOffset,
                                 // an unresolvable uri is dropped -- see ResolvedLocation's own doc comment
                             }
                             callback(std::move(resolved));
+                        });
+}
+
+void LspManager::RequestDefinition(text::Buffer& buffer, std::size_t byteOffset, DefinitionCallback callback, const std::string& serverKey) {
+    SendLocationRequest("textDocument/definition", buffer, byteOffset, std::move(callback), serverKey);
+}
+
+void LspManager::RequestDeclaration(text::Buffer& buffer, std::size_t byteOffset, DefinitionCallback callback,
+                                    const std::string& serverKey) {
+    SendLocationRequest("textDocument/declaration", buffer, byteOffset, std::move(callback), serverKey);
+}
+
+void LspManager::RequestTypeDefinition(text::Buffer& buffer, std::size_t byteOffset, DefinitionCallback callback,
+                                       const std::string& serverKey) {
+    SendLocationRequest("textDocument/typeDefinition", buffer, byteOffset, std::move(callback), serverKey);
+}
+
+void LspManager::RequestImplementation(text::Buffer& buffer, std::size_t byteOffset, DefinitionCallback callback,
+                                       const std::string& serverKey) {
+    SendLocationRequest("textDocument/implementation", buffer, byteOffset, std::move(callback), serverKey);
+}
+
+void LspManager::RequestSignatureHelp(text::Buffer& buffer, std::size_t byteOffset, HoverCallback callback, const std::string& serverKey) {
+    BufferSyncState* state = ResolveSyncState(buffer, serverKey);
+    if (!state || !state->opened) {
+        callback(std::nullopt);
+        return;
+    }
+    LspClient* client = ExistingClientForLanguage(state->language);
+    if (!client) {
+        callback(std::nullopt);
+        return;
+    }
+
+    const std::string language = state->language;
+    const LspPosition position = BytePositionToLsp(buffer.Content(), byteOffset);
+    const Json        params   = {
+        {"textDocument", {{"uri", state->uri}}},
+        {"position", {{"line", position.line}, {"character", position.character}}},
+    };
+    client->SendRequest("textDocument/signatureHelp", params,
+                        [this, language, callback = std::move(callback)](std::optional<Json> result, std::optional<Json> error) {
+                            if (error) {
+                                LogError(language, ExtractErrorMessage(*error));
+                                callback(std::nullopt);
+                                return;
+                            }
+                            if (!result) {
+                                callback(std::nullopt);
+                                return;
+                            }
+                            callback(ExtractSignatureHelp(*result));
                         });
 }
 

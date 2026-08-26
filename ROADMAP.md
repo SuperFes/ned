@@ -49,20 +49,28 @@ Notcurses.
       real-LSP-sync treatment HTML `<script>`/`<style>` embedded documents already have
       is an open question — spawning a live language server per code fence in an
       ordinary notes file could be noisy for illustrative/incomplete snippets.
-- [ ] **LSP request coverage is narrow** (2026-08-25 audit) — only hover/completion/
-      codeAction(+resolve)/definition/rename/switchSourceHeader/executeCommand are ever
-      sent. Missing entirely: `signatureHelp` (no parameter-hint popup while typing a
-      call); `semanticTokens` full/delta/range (highlighting stays tree-sitter-only,
-      never server-informed — matters where tree-sitter can't disambiguate, e.g. C++
-      template vs. less-than); `inlayHint`; `codeLens`; `documentHighlight` (no
-      "highlight all refs to symbol under point" in the current buffer); `workspace/symbol`
-      (project-wide go-to-symbol is text-search only); `declaration`/`typeDefinition`/
-      `implementation` (despite `LspContent.h`'s `DefinitionLocation` parser explicitly
-      being written to be reused for all three, nothing ever calls them); `callHierarchy`/
-      `typeHierarchy`; and `documentFormatting`/`rangeFormatting`/`onTypeFormatting`
-      (`save-buffer` formatting only shells out to an external formatter binary via
-      `FormatOnSave.h`, never asks a server with formatting built in — gopls/
-      rust-analyzer/tsserver users need redundant external-tool config). Pull diagnostics
+- [ ] **LSP request coverage is narrow** (2026-08-25 audit; `declaration`/`typeDefinition`/
+      `implementation`/`signatureHelp` closed 2026-08-26 — see below). Only hover/
+      completion/codeAction(+resolve)/definition/declaration/typeDefinition/implementation/
+      rename/switchSourceHeader/executeCommand/signatureHelp are ever sent. Still missing:
+      `semanticTokens` full/delta/range (highlighting stays tree-sitter-only, never
+      server-informed — matters where tree-sitter can't disambiguate, e.g. C++ template
+      vs. less-than); `inlayHint`; `codeLens`; `documentHighlight` (no "highlight all refs
+      to symbol under point" in the current buffer); `workspace/symbol` (project-wide
+      go-to-symbol is text-search only); `callHierarchy`/`typeHierarchy`; and
+      `documentFormatting`/`rangeFormatting`/`onTypeFormatting` (`save-buffer` formatting
+      only shells out to an external formatter binary via `FormatOnSave.h`, never asks a
+      server with formatting built in — gopls/rust-analyzer/tsserver users need redundant
+      external-tool config). `signatureHelp`'s v1 is manual-invoke only (`M-x
+      lsp-signature-help`, no default binding — writes into the status line via
+      `ExtractSignatureHelp`, same "already plain, no BufferView session" shape as
+      `lsp-hover`); auto-triggering it after typing `(`/`,` inside a call, the way
+      completion's own ghost text auto-triggers off `completionDebounceTimer_`, is a
+      documented follow-up, not done here.
+      `lsp-goto-declaration`/`lsp-goto-type-definition`/`lsp-goto-implementation` are
+      likewise M-x-only (no default binding to borrow the way `M-.` covers
+      goto-definition), sharing `BufferView::RequestDefinitionAtPoint`'s request/select/
+      jump machinery via its new `LspLocationKind` parameter. Pull diagnostics
       (`textDocument/diagnostic`) also unsupported — harmless while every configured
       server pushes, a real gap only if one doesn't.
 - [ ] **LSP edit-application gaps** (2026-08-25 audit) — `ApplyCodeAction`

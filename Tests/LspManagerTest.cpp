@@ -884,6 +884,143 @@ TEST_CASE("LspManager::RequestDefinition resolves to an empty list when the buff
     REQUIRE(got.empty());
 }
 
+// declaration/typeDefinition/implementation follow-up: one representative
+// test per sibling request, confirming each sends its own distinct wire
+// method and still resolves a response through the shared
+// ExtractDefinitionLocations/uri-to-path path RequestDefinition's own test
+// above already covers in full -- no need to re-test empty-result/unsynced
+// cases three more times, that logic is shared (SendLocationRequest), not
+// duplicated per method.
+TEST_CASE("LspManager::RequestDeclaration sends textDocument/declaration and resolves a response", "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-declaration-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("call_site();");
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    bool                                      invoked = false;
+    std::vector<LspManager::ResolvedLocation> got;
+    manager.RequestDeclaration(buffer, 0, [&](std::vector<LspManager::ResolvedLocation> locations) {
+        invoked = true;
+        got     = std::move(locations);
+    });
+
+    const std::string raw     = ReadRawFrame(server.serverStdinRead);
+    const Json        request = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(request["method"] == "textDocument/declaration");
+
+    const std::filesystem::path targetPath = std::filesystem::temp_directory_path() / "ned-lsp-manager-declaration-target.txt";
+    const Json                  response   = {
+        {"jsonrpc", "2.0"},
+        {"id", RequestIdFromFrame(raw)},
+        {"result", {{"uri", "file://" + targetPath.string()}, {"range", {{"start", {{"line", 1}, {"character", 0}}}, {"end", {{"line", 1}, {"character", 4}}}}}}},
+    };
+    client->DispatchFrame(response.dump());
+
+    REQUIRE(invoked);
+    REQUIRE(got.size() == 1);
+    REQUIRE(got[0].path == targetPath);
+}
+
+TEST_CASE("LspManager::RequestTypeDefinition sends textDocument/typeDefinition", "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-typedefinition-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("call_site();");
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead);
+
+    manager.RequestTypeDefinition(buffer, 0, [](std::vector<LspManager::ResolvedLocation>) {});
+
+    const std::string raw     = ReadRawFrame(server.serverStdinRead);
+    const Json        request = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(request["method"] == "textDocument/typeDefinition");
+}
+
+TEST_CASE("LspManager::RequestImplementation sends textDocument/implementation", "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-implementation-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("call_site();");
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead);
+
+    manager.RequestImplementation(buffer, 0, [](std::vector<LspManager::ResolvedLocation>) {});
+
+    const std::string raw     = ReadRawFrame(server.serverStdinRead);
+    const Json        request = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(request["method"] == "textDocument/implementation");
+}
+
+TEST_CASE("LspManager::RequestSignatureHelp sends textDocument/signatureHelp and resolves the formatted text", "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-signature-help-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("foo(");
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    bool                       invoked = false;
+    std::optional<std::string> got;
+    manager.RequestSignatureHelp(buffer, buffer.Point(), [&](std::optional<std::string> text) {
+        invoked = true;
+        got     = std::move(text);
+    });
+
+    const std::string raw     = ReadRawFrame(server.serverStdinRead);
+    const Json        request = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(request["method"] == "textDocument/signatureHelp");
+
+    const Json response = {
+        {"jsonrpc", "2.0"},
+        {"id", RequestIdFromFrame(raw)},
+        {"result", {{"signatures", Json::array({{{"label", "foo(a: int)"}, {"parameters", Json::array({{{"label", "a: int"}}})}}})}, {"activeParameter", 0}}},
+    };
+    client->DispatchFrame(response.dump());
+
+    REQUIRE(invoked);
+    REQUIRE(got.has_value());
+    REQUIRE(*got == "foo(**a: int**)");
+}
+
+TEST_CASE("LspManager::RequestSignatureHelp resolves nullopt when the buffer was never synced", "[Lsp]") {
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    Buffer&            buffer = bufferList.CreateBuffer("scratch");
+
+    bool                       invoked = false;
+    std::optional<std::string> got;
+    manager.RequestSignatureHelp(buffer, 0, [&](std::optional<std::string> text) {
+        invoked = true;
+        got     = std::move(text);
+    });
+
+    REQUIRE(invoked);
+    REQUIRE_FALSE(got.has_value());
+}
+
 TEST_CASE("LspManager::RequestSwitchSourceHeader sends a bare TextDocumentIdentifier and resolves a string uri response",
           "[Lsp]") {
     BufferList                  bufferList;

@@ -281,6 +281,29 @@ class LspManager {
     // see RequestHover's own doc comment above.
     void RequestDefinition(text::Buffer& buffer, std::size_t byteOffset, DefinitionCallback callback, const std::string& serverKey = {});
 
+    // declaration/typeDefinition/implementation follow-up: three more
+    // location-shaped requests, identical in every respect to
+    // RequestDefinition above except the wire method -- the LSP spec gives
+    // textDocument/declaration, /typeDefinition, and /implementation the
+    // exact same Location | Location[] | LocationLink[] response shape as
+    // /definition, which is why DefinitionLocation/ExtractDefinitionLocations
+    // were already written to be reused here (see DefinitionLocation's own
+    // doc comment in LspContent.h). All three share RequestDefinition's
+    // private SendLocationRequest body.
+    void RequestDeclaration(text::Buffer& buffer, std::size_t byteOffset, DefinitionCallback callback, const std::string& serverKey = {});
+    void RequestTypeDefinition(text::Buffer& buffer, std::size_t byteOffset, DefinitionCallback callback,
+                               const std::string& serverKey = {});
+    void RequestImplementation(text::Buffer& buffer, std::size_t byteOffset, DefinitionCallback callback,
+                               const std::string& serverKey = {});
+
+    // signature-help follow-up. Same "resolve purely from bufferState_"
+    // shape as RequestHover, and the exact same callback shape too --
+    // ExtractSignatureHelp (LspContent.h) already reduces the response to
+    // one status-line-ready string, the same "already the caller's whole
+    // answer" contract ExtractHoverText follows. serverKey: see
+    // RequestHover's own doc comment above.
+    void RequestSignatureHelp(text::Buffer& buffer, std::size_t byteOffset, HoverCallback callback, const std::string& serverKey = {});
+
     // header-source-switching follow-up. clangd's own custom LSP extension
     // (not in the base spec -- no textDocument/definition-style position
     // needed, just the document itself) for jumping between a C/C++ header
@@ -474,6 +497,16 @@ class LspManager {
     // ExecuteCommand all resolve through this rather than PrimarySyncState
     // directly, so any of them can be routed to the prose connection.
     [[nodiscard]] BufferSyncState* ResolveSyncState(text::Buffer& buffer, const std::string& serverKey);
+
+    // declaration/typeDefinition/implementation follow-up: RequestDefinition's
+    // actual body, generalized over the wire method so
+    // RequestDeclaration/RequestTypeDefinition/RequestImplementation can
+    // share it verbatim -- every other aspect (sync-state resolution,
+    // position encoding, response parsing via ExtractDefinitionLocations,
+    // uri-to-path resolution) is identical across all four requests per the
+    // LSP spec.
+    void SendLocationRequest(const std::string& method, text::Buffer& buffer, std::size_t byteOffset, DefinitionCallback callback,
+                             const std::string& serverKey);
 
     // prose-checking follow-up: flattens every source language's current
     // diagnostics slice for buffer (diagnosticsBySource_[&buffer]) into one

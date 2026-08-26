@@ -296,6 +296,14 @@ enum class InteractiveRequest { None,
                                 // LspRenameNewName case) -- the request itself isn't sent until
                                 // that's confirmed with Enter.
                                 LspGotoDefinition,
+                                // declaration/typeDefinition/implementation follow-up: three
+                                // more one-shot direct actions, identical in shape to
+                                // LspGotoDefinition -- BufferView::RequestDefinitionAtPoint
+                                // takes an LspLocationKind parameter and drives all four
+                                // through the same request/select/jump machinery.
+                                LspGotoDeclaration,
+                                LspGotoTypeDefinition,
+                                LspGotoImplementation,
                                 LspRename,
                                 // task-runner follow-up: prompt-shaped requests, same "New
                                 // name" -> HandlePromptKey shape LspRename established above --

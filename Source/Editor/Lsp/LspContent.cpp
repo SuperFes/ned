@@ -1,8 +1,62 @@
 #include "LspContent.h"
 
+#include "Text/Utf8.h"
+
 namespace ned::editor::lsp {
 
 namespace {
+
+    // signature-help follow-up. Converts a UTF-16 code-unit offset into a
+    // plain string (an LSP ParameterInformation.label's own [start, end)
+    // tuple form) to a byte offset -- the same tolerant per-codepoint walk
+    // LspPosition.cpp's BytePositionToLsp/LspPositionToByte do against a
+    // Rope, just against a bare string here. A codepoint needs two UTF-16
+    // units exactly when its UTF-8 encoding is 4 bytes long (every
+    // codepoint above U+FFFF is encoded that way and no other codepoint
+    // is), so NextCodepointBoundary's step size alone is enough -- no need
+    // to actually decode the codepoint's value. Clamps to text.size() the
+    // same way LspPositionToByte clamps to its line's end.
+    std::size_t Utf16OffsetToByte(std::string_view text, std::size_t utf16Offset) {
+        std::size_t byteOffset = 0;
+        std::size_t utf16Count = 0;
+        while (byteOffset < text.size() && utf16Count < utf16Offset) {
+            const std::size_t next = text::NextCodepointBoundary(text, byteOffset);
+            utf16Count += (next - byteOffset == 4) ? 2 : 1;
+            byteOffset = next;
+        }
+        return byteOffset;
+    }
+
+    // signature-help follow-up. Resolves a ParameterInformation's own
+    // "label" (either a substring of signatureLabel, or a [start, end)
+    // UTF-16-offset pair into it) to a byte range within signatureLabel.
+    // nullopt for a missing/malformed label, a substring that isn't
+    // actually found, or a range that doesn't land inside the label.
+    std::optional<std::pair<std::size_t, std::size_t>> ParameterLabelRange(const Json& parameter, std::string_view signatureLabel) {
+        const auto labelIt = parameter.find("label");
+        if (labelIt == parameter.end()) {
+            return std::nullopt;
+        }
+        if (labelIt->is_string()) {
+            const std::string needle = labelIt->get<std::string>();
+            if (needle.empty()) {
+                return std::nullopt;
+            }
+            const std::size_t pos = signatureLabel.find(needle);
+            if (pos == std::string_view::npos) {
+                return std::nullopt;
+            }
+            return std::make_pair(pos, pos + needle.size());
+        }
+        if (labelIt->is_array() && labelIt->size() == 2 && (*labelIt)[0].is_number() && (*labelIt)[1].is_number()) {
+            const std::size_t start = Utf16OffsetToByte(signatureLabel, (*labelIt)[0].get<std::size_t>());
+            const std::size_t end   = Utf16OffsetToByte(signatureLabel, (*labelIt)[1].get<std::size_t>());
+            if (start <= end && end <= signatureLabel.size()) {
+                return std::make_pair(start, end);
+            }
+        }
+        return std::nullopt;
+    }
 
     std::string TextFromHoverContentsEntry(const Json& entry) {
         if (entry.is_string()) {
@@ -285,6 +339,51 @@ RenameResult ExtractRenameEdits(const Json& result) {
     }
     renameResult.hasEdit = !renameResult.edits.empty();
     return renameResult;
+}
+
+std::optional<std::string> ExtractSignatureHelp(const Json& result) {
+    if (!result.is_object()) {
+        return std::nullopt;
+    }
+    const auto signaturesIt = result.find("signatures");
+    if (signaturesIt == result.end() || !signaturesIt->is_array() || signaturesIt->empty()) {
+        return std::nullopt;
+    }
+    const Json& signatures = *signaturesIt;
+
+    std::size_t activeSignature = 0;
+    if (const auto it = result.find("activeSignature"); it != result.end() && it->is_number()) {
+        const std::size_t index = it->get<std::size_t>();
+        if (index < signatures.size()) {
+            activeSignature = index;
+        }
+    }
+
+    const Json& signature = signatures[activeSignature];
+    const auto  labelIt   = signature.find("label");
+    if (labelIt == signature.end() || !labelIt->is_string()) {
+        return std::nullopt;
+    }
+    std::string label = labelIt->get<std::string>();
+
+    std::optional<std::size_t> activeParameter;
+    if (const auto it = signature.find("activeParameter"); it != signature.end() && it->is_number()) {
+        activeParameter = it->get<std::size_t>();
+    }
+    else if (const auto topIt = result.find("activeParameter"); topIt != result.end() && topIt->is_number()) {
+        activeParameter = topIt->get<std::size_t>();
+    }
+
+    if (activeParameter) {
+        const auto parametersIt = signature.find("parameters");
+        if (parametersIt != signature.end() && parametersIt->is_array() && *activeParameter < parametersIt->size()) {
+            if (const auto range = ParameterLabelRange((*parametersIt)[*activeParameter], label)) {
+                label = label.substr(0, range->first) + "**" + label.substr(range->first, range->second - range->first) + "**" +
+                        label.substr(range->second);
+            }
+        }
+    }
+    return label;
 }
 
 } // namespace ned::editor::lsp

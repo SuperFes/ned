@@ -6741,6 +6741,104 @@ TEST_CASE("M-. with multiple definitions: digit-select jumps to the chosen one",
     std::filesystem::remove(secondPath);
 }
 
+// declaration/typeDefinition/implementation follow-up: none of the three has
+// an established default binding to borrow (unlike M-. for goto-definition),
+// so lsp-goto-declaration/-type-definition/-implementation are M-x-only --
+// driven the same way org-clock-report's own test above drives a
+// mode-independent command. One request/jump round trip per command is
+// enough: RequestDefinitionAtPoint's shared body (staleness guard, empty/
+// single/multiple-result handling) is already covered in full by the M-.
+// tests above.
+TEST_CASE("M-x lsp-goto-declaration sends textDocument/declaration and jumps on a single result", "[BufferView]") {
+    Fixture                     fixture;
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_bufferview_declaration_test.txt";
+    ned::text::Buffer&          buffer = fixture.bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("extern_symbol");
+    fixture.activeBuffer.Set(buffer);
+
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::LspClient* client = nullptr;
+    FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
+    ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+    (void)ReadRawLspFrame(server.serverStdinRead); // drain didOpen
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "lsp-goto-declaration");
+    view.OnEvent(ned::ui::test::Return());
+
+    const std::string raw     = ReadRawLspFrame(server.serverStdinRead);
+    const auto        request = ned::editor::lsp::Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(request["method"] == "textDocument/declaration");
+
+    const std::filesystem::path targetPath = std::filesystem::temp_directory_path() / "ned_bufferview_declaration_target_test.txt";
+    std::filesystem::remove(targetPath);
+    {
+        std::ofstream(targetPath) << "declared here\n";
+    }
+    const auto response = ned::editor::lsp::Json{
+        {"jsonrpc", "2.0"},
+        {"id", LspRequestIdFromFrame(raw)},
+        {"result", {{"uri", "file://" + targetPath.string()}, {"range", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 1}}}}}}},
+    };
+    client->DispatchFrame(response.dump());
+
+    REQUIRE(fixture.activeBuffer.Get().Path() == targetPath);
+    REQUIRE(fixture.statusMessage.empty());
+
+    std::filesystem::remove(targetPath);
+}
+
+// signature-help follow-up: same async-write-into-statusMessage shape as
+// lsp-hover's own tests (not shown here -- see LspManagerTest.cpp for the
+// ExtractSignatureHelp/RequestSignatureHelp coverage this leans on), driven
+// through M-x since lsp-signature-help has no default keybinding.
+TEST_CASE("M-x lsp-signature-help shows the active parameter emphasized in the status line", "[BufferView]") {
+    Fixture                     fixture;
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_bufferview_signature_help_test.txt";
+    ned::text::Buffer&          buffer = fixture.bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("foo(");
+    fixture.activeBuffer.Set(buffer);
+
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::LspClient* client = nullptr;
+    FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
+    ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+    (void)ReadRawLspFrame(server.serverStdinRead); // drain didOpen
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "lsp-signature-help");
+    view.OnEvent(ned::ui::test::Return());
+
+    const std::string raw     = ReadRawLspFrame(server.serverStdinRead);
+    const auto        request = ned::editor::lsp::Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(request["method"] == "textDocument/signatureHelp");
+
+    const auto response = ned::editor::lsp::Json{
+        {"jsonrpc", "2.0"},
+        {"id", LspRequestIdFromFrame(raw)},
+        {"result", {{"signatures", ned::editor::lsp::Json::array({{{"label", "foo(a: int)"}, {"parameters", ned::editor::lsp::Json::array({{{"label", "a: int"}}})}}})}, {"activeParameter", 0}}},
+    };
+    client->DispatchFrame(response.dump());
+
+    REQUIRE(fixture.statusMessage == "foo(**a: int**)");
+}
+
 // header-source-switching follow-up: M-o as a raw byte sequence, same
 // reasoning ManualGotoDefinitionEvent's own header comment gives.
 ned::ui::Event ManualSwitchHeaderSourceEvent() {
@@ -7314,7 +7412,7 @@ TEST_CASE("A clipped (non-wrap) too-long line shows a truncation indicator at it
     view.Paint(canvas);
 
     const ned::ui::Cell& lastCell = screen.PixelAt(19, 0);
-    REQUIRE(lastCell.character == "»"); // »
+    REQUIRE(lastCell.character == "\xc2\xbb"); // »
     REQUIRE(lastCell.foreground_color == fixture.theme.truncationIndicatorForeground);
 }
 
@@ -7327,7 +7425,7 @@ TEST_CASE("A line that fits exactly within the viewport shows no truncation indi
     ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 2});
     view.Paint(canvas);
 
-    REQUIRE(RowText(screen, 0, 20).find("»") == std::string::npos);
+    REQUIRE(RowText(screen, 0, 20).find("\xc2\xbb") == std::string::npos);
 }
 
 TEST_CASE("A wrap-enabled buffer never shows a truncation indicator -- a wrapped segment never clips",
@@ -7342,7 +7440,7 @@ TEST_CASE("A wrap-enabled buffer never shows a truncation indicator -- a wrapped
     view.Paint(canvas);
 
     for (int row = 0; row < 5; ++row) {
-        REQUIRE(RowText(screen, row, 20).find("»") == std::string::npos);
+        REQUIRE(RowText(screen, row, 20).find("\xc2\xbb") == std::string::npos);
     }
 }
 
