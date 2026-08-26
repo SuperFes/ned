@@ -81,8 +81,8 @@ TEST_CASE("DrawBorderTitle embeds a padded title into the top edge", "[Border]")
 }
 
 TEST_CASE("DrawBorderTitle truncates rather than overwriting the top-right corner", "[Border]") {
-    ned::ui::Screen screen(8, 3);
-    ned::ui::Canvas canvas = CanvasFor(screen);
+    ned::ui::Screen      screen(8, 3);
+    ned::ui::Canvas      canvas = CanvasFor(screen);
     const ned::ui::Brush border{};
     const ned::ui::Brush title{};
 
@@ -95,6 +95,33 @@ TEST_CASE("DrawBorderTitle truncates rather than overwriting the top-right corne
     REQUIRE(screen.PixelAt(5, 0).character == "n");
     REQUIRE(screen.PixelAt(6, 0).character == "─");
     REQUIRE(screen.PixelAt(7, 0).character == "╮");
+}
+
+TEST_CASE("DrawBorderTitle renders a multi-byte codepoint as one intact cell and truncates by column, not byte",
+          "[Border]") {
+    // chrome-widget-utf8 follow-up regression: the old byte-indexed
+    // implementation would resize() mid-codepoint here, corrupting "é"
+    // (0xC3 0xA9) into a lone, invalid lead byte. Width 9 -> maxTextColumns
+    // = 5; padded " Café " is 6 codepoints, so the title itself (5
+    // codepoints: space/C/a/f/é) fits exactly and the trailing padding
+    // space is what gets dropped -- proving truncation counts columns, not
+    // bytes (the old code would have cut a byte into "Caf" plus a stray
+    // 0xC3, not stopped cleanly after a whole "é").
+    ned::ui::Screen screen(9, 3);
+    ned::ui::Canvas canvas = CanvasFor(screen);
+    const ned::ui::Brush border{};
+    const ned::ui::Brush title{};
+
+    ned::ui::DrawBorder(canvas, border);
+    ned::ui::DrawBorderTitle(canvas, "Café", title);
+
+    REQUIRE(screen.PixelAt(2, 0).character == " ");
+    REQUIRE(screen.PixelAt(3, 0).character == "C");
+    REQUIRE(screen.PixelAt(4, 0).character == "a");
+    REQUIRE(screen.PixelAt(5, 0).character == "f");
+    REQUIRE(screen.PixelAt(6, 0).character == "é"); // one whole 2-byte codepoint in one Cell
+    REQUIRE(screen.PixelAt(7, 0).character == "─");  // border untouched -- stopped at 5 columns, not 5 bytes
+    REQUIRE(screen.PixelAt(8, 0).character == "╮");
 }
 
 TEST_CASE("DrawBorderTitle on a too-narrow canvas is a no-op", "[Border]") {

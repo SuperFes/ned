@@ -77,6 +77,26 @@ Notcurses.
       `prepareRename`, `linkedEditingRange`, or `workspace/willRenameFiles`/
       `didRenameFiles`) — import paths elsewhere go stale until the server notices on
       its own.
+- [ ] **Reproducible crash opening a file under a non-ASCII project path** (found
+      2026-08-26, live, while verifying the chrome-widget UTF-8 fix below — confirmed
+      unrelated to that fix, reproduces identically on the commit before it too).
+      Opening any file under a project root containing non-ASCII bytes (e.g.
+      `café-projet/note.txt`) reliably SIGSEGVs, specifically through the reserved
+      prose-checker sync path (`kProseLanguageKey`/harper-ls via the LSP broker
+      daemon) — the broker's own connection log shows a rapid attach/disconnect churn
+      (6+ cycles within the same second) immediately before the crash. Backtrace:
+      SIGSEGV in `LspClient::DispatchFrame` (`Lsp/LspClient.cpp:166`) inside
+      `pending_`'s hashtable lookup, called from `EventLoop::DrainPosted_` handling
+      posted background work — a corrupted/stale request-id map, not a null-path
+      crash. Reproduces against a freshly spawned, current-build broker (not only a
+      stale cross-version one); does not reproduce with an ASCII-only project path.
+      Root cause not yet isolated — a path/URI-to-`Content-Length` byte-count bug
+      (computing frame length in codepoints instead of bytes for a non-ASCII root,
+      corrupting the JSON-RPC stream) is the leading hypothesis given the shape, but
+      unconfirmed; next step is instrumented reproduction against the broker
+      specifically. Likely the same root cause behind the known-flaky
+      `LspManagerTest.cpp` broker-interference tests below, now confirmed to
+      manifest as a real crash, not just a test assertion mismatch.
 
 ### Navigation & Search
 
@@ -130,23 +150,6 @@ Notcurses.
 - [ ] **No buffer-list/ibuffer-style management** — `switch-to-buffer` is a
       name-completion prompt only; no dedicated buffer-list buffer with mark/save/kill
       batch operations.
-- [ ] **Chrome-widget UTF-8 gap** (found 2026-08-26 during ACP work, next up for fixing):
-      `Border.cpp`'s `DrawBorderTitle` indexes its title string by raw byte
-      (`std::string(1, padded[i])` per `Cell`) and its length clamp (`.resize()`) cuts at
-      a byte offset that can split a multi-byte UTF-8 sequence in half — corrupts any
-      non-ASCII title (a project directory name, an agent name, ...) for every one of its
-      call sites (`AcpPanel`, `DebugConsolePanel`, `ListPopup`, `TerminalPanel`,
-      `ProjectSidebar`'s project-name label). `AcpPanel.cpp`'s transcript content rows and
-      its own prompt input row, and `DebugConsolePanel.cpp`'s equivalent content/input
-      rows, have the identical byte-indexed pattern — any non-ASCII character typed into
-      an agent prompt or appearing in a tool-call/transcript line renders as mojibake, not
-      the real character. Contrast: `Border.cpp`'s own frame-glyph drawing (`DrawBorder`,
-      not `DrawBorderTitle`) and `TabBar.cpp`'s tab labels already do this right —
-      codepoint-encoded one full glyph per `Cell` via `Text/Utf8.h`'s
-      `EncodeCodepointUtf8` — that's the existing in-codebase pattern to follow, not a new
-      design. The real editing surface (`BufferView`, via `Text/Grapheme.h`) is
-      unaffected; this is confined to these newer add-on panels' own title/content/input
-      rendering.
 - [ ] **No server/daemon mode** — no `emacsclient`-equivalent; one process per terminal,
       no way to keep a warm process (buffers, LSP connections, undo history) alive and
       attach a new terminal client to it.

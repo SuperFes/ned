@@ -181,6 +181,24 @@ TEST_CASE("AcpPanel's input row shows typed text and a caret", "[AcpPanel]") {
     REQUIRE(fixture.screen.PixelAt(static_cast<int>(std::string("Prompt: hi").size()), kHeight - 1).inverted);
 }
 
+TEST_CASE("AcpPanel's input row places the caret by column, not byte, once multi-byte text is typed", "[AcpPanel]") {
+    // chrome-widget-utf8 follow-up regression: the old byte-indexed caret
+    // (caretCol = text.size(), a byte count) and content-row painting would
+    // have split "é" (0xC3 0xA9) across two Cells and put the caret one
+    // column too far right. PaintUtf8Row fixes both.
+    Fixture fixture;
+
+    fixture.panel.OnEvent(ned::ui::test::Character('h'));
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Character(U'é')));
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Character('i')));
+    fixture.Paint();
+
+    const std::string prefix = "Prompt: h"; // one column per codepoint up to here
+    REQUIRE(fixture.screen.PixelAt(static_cast<int>(prefix.size()), kHeight - 1).character == "é");
+    REQUIRE(fixture.screen.PixelAt(static_cast<int>(prefix.size()) + 1, kHeight - 1).character == "i");
+    REQUIRE(fixture.screen.PixelAt(static_cast<int>(prefix.size()) + 2, kHeight - 1).inverted);
+}
+
 TEST_CASE("AcpPanel's Backspace deletes the last typed character", "[AcpPanel]") {
     Fixture fixture;
     fixture.panel.OnEvent(ned::ui::test::Character('h'));

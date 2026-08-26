@@ -12,6 +12,7 @@
 #define NED_UI_BORDER_H
 
 #include <string>
+#include <string_view>
 
 #include "Theme.h"
 #include "Widget.h"
@@ -38,10 +39,24 @@ void DrawBorder(Canvas& c, const Brush& brush, const BorderGlyphs& glyphs = Roun
 
 // Embeds `─ Title ─`-style text into an already-drawn top border edge,
 // starting at column 2, truncated so the top-right corner cell is never
-// overwritten. The title is treated as single-column-per-byte ASCII (the
-// same assumption ProjectSidebar's own label painting makes); a canvas too
-// narrow for any text is a no-op.
+// overwritten. Codepoint-safe (chrome-widget-utf8 follow-up) via
+// PaintUtf8Row below; a canvas too narrow for any text is a no-op.
 void DrawBorderTitle(Canvas& c, const std::string& title, const Brush& titleBrush);
+
+// chrome-widget-utf8 follow-up: paints text left-to-right starting at
+// (x, y), one whole UTF-8 codepoint per Cell (via Text/Utf8.h's
+// NextCodepointBoundary), stopping after maxColumns cells or when text is
+// exhausted, whichever comes first. Returns the number of columns actually
+// painted -- callers that need to know where the text ended (e.g. placing a
+// caret right after typed text) use this instead of text.size(), which
+// counts bytes, not columns, once text contains anything outside ASCII.
+// Shared by DrawBorderTitle and any widget's own content/input row painting
+// (AcpPanel, DebugConsolePanel) that used to index by raw byte instead.
+// Not grapheme-cluster- or East-Asian-width-aware -- one codepoint per
+// column, same simplification TabBar.cpp's own label painting already made;
+// a wider fix is a separate, bigger scope than the mojibake/corruption bug
+// this exists to close.
+int PaintUtf8Row(Canvas& c, int x, int y, std::string_view text, const Brush& brush, int maxColumns);
 
 } // namespace ned::ui
 

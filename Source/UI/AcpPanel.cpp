@@ -231,23 +231,14 @@ void AcpPanel::Paint(Canvas canvas) {
             }
             const DisplayLine& line  = lines[lineIndex];
             const Brush        brush = BrushForStyle(line.style);
-            for (int col = 0; col < width && col < static_cast<int>(line.text.size()); ++col) {
-                Cell& cell     = canvas[{.x = col, .y = row + 1}];
-                cell.character = std::string(1, line.text[static_cast<std::size_t>(col)]);
-                brush.ApplyTo(cell);
-            }
+            PaintUtf8Row(canvas, 0, row + 1, line.text, brush, width);
         }
     }
 
     // Input row.
     const int         inputRow = height - 1;
     const std::string text     = prompt_.StatusText();
-    for (int col = 0; col < width && col < static_cast<int>(text.size()); ++col) {
-        Cell& cell     = canvas[{.x = col, .y = inputRow}];
-        cell.character = std::string(1, text[static_cast<std::size_t>(col)]);
-        plainBrush.ApplyTo(cell);
-    }
-    const int caretCol = static_cast<int>(text.size());
+    const int         caretCol = PaintUtf8Row(canvas, 0, inputRow, text, plainBrush, width);
     if (caretCol < width) {
         Cell& cell     = canvas[{.x = caretCol, .y = inputRow}];
         cell.character = " ";
