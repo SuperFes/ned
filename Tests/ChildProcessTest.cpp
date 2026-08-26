@@ -78,6 +78,44 @@ TEST_CASE("ChildProcess::Kill terminates a real running process promptly", "[Pro
     REQUIRE(::kill(pid, 0) != 0);
 }
 
+TEST_CASE("ChildProcess::Kill also terminates a grandchild the direct child forked without exec-replacing itself",
+          "[Process]") {
+    // process-group-kill follow-up: a wrapper command (npx, sh -c, ...) that
+    // forks a real child rather than exec-replacing itself used to survive
+    // Kill() -- confirmed live against `npx claude-code-acp` forking a
+    // `node` process that outlived the killed npx, leaving a reader thread
+    // blocked forever on the still-open stdout pipe (the grandchild kept
+    // its own inherited copy open). Reproduced here with a minimal sh
+    // wrapper that backgrounds a real grandchild and prints its pid.
+    ChildProcess child({"sh", "-c", "sleep 100 & echo $!; wait"});
+
+    std::string output;
+    while (output.find('\n') == std::string::npos) {
+        output += child.ReadSome();
+    }
+    const pid_t grandchildPid = std::stoi(output);
+    REQUIRE(grandchildPid > 0);
+    REQUIRE(::kill(grandchildPid, 0) == 0); // alive before Kill()
+
+    child.Kill();
+
+    // kill(pid, 0) can still report success against a zombie -- SIGKILLed
+    // but not yet reaped by its new parent after reparenting off the just-
+    // killed sh -- so poll briefly rather than asserting instantaneously.
+    bool gone = false;
+    for (int attempt = 0; attempt < 100 && !gone; ++attempt) {
+        if (::kill(grandchildPid, 0) != 0) {
+            gone = true;
+        }
+        else {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+    }
+    REQUIRE(gone); // the actual regression check -- previously never became true
+
+    REQUIRE(::kill(grandchildPid, 0) != 0); // gone after Kill() -- the actual regression check
+}
+
 TEST_CASE("ChildProcess::WaitForExit reports a real exit code", "[Process]") {
     ChildProcess child({"sh", "-c", "exit 7"});
 

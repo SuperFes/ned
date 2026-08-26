@@ -136,8 +136,24 @@ ChildProcess::ChildProcess(const std::vector<std::string>& argv, StderrMode stde
     }
     childArgv.push_back(nullptr);
 
+    // process-group-kill follow-up: puts the child in a brand-new process
+    // group (pgid == its own pid) rather than inheriting ned's own group.
+    // A command that's itself a wrapper -- npx, sh -c, ... -- commonly forks
+    // a real grandchild without exec-replacing itself; SIGKILLing only the
+    // single pid posix_spawn hands back then leaves that grandchild alive,
+    // still holding the stdout pipe open, so a reader thread blocked on it
+    // never sees EOF and Kill()/~ChildProcess() hangs forever waiting to
+    // join. Confirmed live: `npx claude-code-acp` forks a real `node`
+    // process this way. Kill()/~ChildProcess()'s kill(-pid_, ...) below
+    // targets the whole group instead of just this one pid.
+    posix_spawnattr_t attr;
+    posix_spawnattr_init(&attr);
+    posix_spawnattr_setpgroup(&attr, 0);
+    posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETPGROUP);
+
     pid_t     childPid    = -1;
-    const int spawnResult = posix_spawn(&childPid, resolved->c_str(), &fileActions, nullptr, childArgv.data(), environ);
+    const int spawnResult = posix_spawn(&childPid, resolved->c_str(), &fileActions, &attr, childArgv.data(), environ);
+    posix_spawnattr_destroy(&attr);
     posix_spawn_file_actions_destroy(&fileActions);
 
     if (spawnResult != 0) {
@@ -213,7 +229,7 @@ ChildProcess::~ChildProcess() {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
         if (!reaped) {
-            ::kill(pid_, SIGKILL);
+            ::kill(-pid_, SIGKILL); // whole process group -- see the spawn site's own comment
             ::waitpid(pid_, &status, 0);
         }
     }
@@ -241,7 +257,7 @@ ChildProcess& ChildProcess::operator=(ChildProcess&& other) noexcept {
         }
         if (pid_ > 0) {
             int status = 0;
-            ::kill(pid_, SIGKILL);
+            ::kill(-pid_, SIGKILL); // whole process group -- see the spawn site's own comment
             ::waitpid(pid_, &status, 0);
         }
         writeFd_  = std::exchange(other.writeFd_, -1);
@@ -365,7 +381,7 @@ std::optional<int> ChildProcess::WaitForExit() noexcept {
 void ChildProcess::Kill() noexcept {
     if (pid_ > 0) {
         int status = 0;
-        ::kill(pid_, SIGKILL);
+        ::kill(-pid_, SIGKILL); // whole process group -- see the spawn site's own comment
         ::waitpid(pid_, &status, 0);
         pid_ = -1; // reaped -- destructor must not try again
     }
