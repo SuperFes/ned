@@ -1535,6 +1535,11 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
         context.interactiveRequest = InteractiveRequest::SwitchToBuffer;
     });
 
+    registry.Register("list-buffers", "Open a keyboard-navigable buffer list panel (mark/kill, switch).",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::ListBuffers;
+                      });
+
     // Tab-reorder follow-up: direct BufferList mutations, not
     // interactiveRequests -- nothing to prompt for, and CommandContext
     // already carries the (mutable) bufferList. Buffers() order is what
@@ -3043,6 +3048,7 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("ESC %"), "query-replace-regexp");
     keymap.Bind(ParseKeySequence("C-x C-f"), "find-file");
     keymap.Bind(ParseKeySequence("C-x b"), "switch-to-buffer");
+    keymap.Bind(ParseKeySequence("C-x C-b"), "list-buffers");
     keymap.Bind(ParseKeySequence("C-c C-s"), "project-search");
     keymap.Bind(ParseKeySequence("C-c C-f"), "project-find-file");
     keymap.Bind(ParseKeySequence("C-c C-e"), "lsp-show-diagnostic");

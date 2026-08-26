@@ -1,10 +1,11 @@
 //
-// which-key follow-up: the pure data WhichKeyPopup renders, computed by
-// BufferView from Dispatcher::Pending()/Keymaps() and handed up to
-// main.cpp's shared OverlayHost via BufferView::SetOnPrefixHintChanged --
-// kept in its own tiny header (no Editor/ dependency) so main.cpp can wire
-// BufferView to WhichKeyPopup without either one needing to know about the
-// other's own header.
+// which-key follow-up: the pure data a ListPopup renders (generic-popup
+// follow-up; was a dedicated WhichKeyPopup), computed by BufferView from
+// Dispatcher::Pending()/Keymaps() and handed up to main.cpp's shared
+// OverlayHost via BufferView::SetOnPrefixHintChanged -- kept in its own
+// tiny header (no Editor/ dependency) so main.cpp can wire BufferView to
+// the popup without either one needing to know about the other's own
+// header.
 //
 
 #ifndef NED_UI_WHICHKEYHINT_H

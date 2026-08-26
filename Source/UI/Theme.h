@@ -296,6 +296,14 @@ struct Theme {
     // uncached.
     [[nodiscard]] Brush BrushFor(editor::SyntaxClass cls, editor::CaptureId captureId) const;
 
+    // generic-popup follow-up (Phase 3) theme-preview-bug follow-up:
+    // plain field-by-field value equality -- lets a cache that holds a
+    // Theme reference (rather than a value) detect an in-place theme
+    // change the way it already detects everything else it keys on
+    // (buffer identity, content generation, ...). Minimap's own raster
+    // cache is the first real consumer; see its own doc comment.
+    [[nodiscard]] bool operator==(const Theme&) const = default;
+
   private:
     // The switch of built-in Dark/Light values BrushFor() used to
     // (and still does) compute directly -- split out so BrushFor() can

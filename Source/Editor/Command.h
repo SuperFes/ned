@@ -77,6 +77,12 @@ enum class InteractiveRequest { None,
                                 // since the panel is an OverlayHost overlay owned above the
                                 // window/pane level, not per-pane state.
                                 ToggleTerminal,
+                                // generic-popup follow-up: one-shot direct action, same shape
+                                // as ToggleTerminal -- BufferView forwards to the registered
+                                // callback (SetOnBufferListToggle), since the buffer-list panel
+                                // is an OverlayHost overlay owned above the window/pane level,
+                                // not per-pane state.
+                                ListBuffers,
                                 // sidebar-keyboard-focus follow-up: one-shot direct action,
                                 // same shape as ToggleProjectSidebar -- BufferView expands
                                 // the registered sidebar if collapsed and hands it the

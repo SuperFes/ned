@@ -82,9 +82,17 @@ void TabBar::Paint(Canvas c) {
     // (the original fill made tabs visually indistinguishable, a real
     // user report).
     for (int x = 0; x < c.size().width; ++x) {
-        Cell& cell            = c[{.x = x, .y = 0}];
-        cell.character        = " ";
-        cell.background_color = theme_.background;
+        // generic-popup follow-up (Phase 3): a full reset, not just
+        // character + background_color -- same reasoning as the end-cap
+        // cell further down (see that one's own comment): the Screen
+        // buffer is reused across frames, so a stale foreground_color/
+        // bold/etc. from a prior frame's cell here would otherwise linger
+        // once whatever painted it (an overlay reaching this far up, or a
+        // theme-preview session) stops.
+        Cell& cell             = c[{.x = x, .y = 0}];
+        cell                   = Cell{};
+        cell.character         = " ";
+        cell.background_color  = theme_.background;
     }
 
     const text::Buffer*          active  = &activeBufferProvider_().Get();

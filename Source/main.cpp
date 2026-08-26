@@ -69,11 +69,13 @@
 
 #include "UI/AcpPanel.h"
 #include "UI/ActiveBuffer.h"
+#include "UI/BufferListPanel.h"
 #include "UI/DebugConsolePanel.h"
 #include "UI/DesktopThemeProbe.h"
 #include "UI/EchoArea.h"
 #include "UI/EventLoop.h"
 #include "UI/Layout.h"
+#include "UI/ListPopup.h"
 #include "UI/Overlay.h"
 #include "UI/ProjectSidebar.h"
 #include "UI/TabBar.h"
@@ -82,7 +84,6 @@
 #include "UI/Theme.h"
 #include "UI/ThemeFile.h"
 #include "UI/ThemeRegistry.h"
-#include "UI/WhichKeyPopup.h"
 #include "UI/WindowManager.h"
 
 using namespace ned::ui;
@@ -97,29 +98,14 @@ namespace {
 // "before any ftxui::ScreenInteractive is constructed" -- same constraint,
 // EventLoop's constructor is what calls notcurses_core_init, which is what
 // starts reading stdin now).
-int RunDetectTheme(int argc, char** argv) {
-    // CLI11 parses argv[0] as the program name and everything from argv[1]
-    // on as real arguments -- argv[1] here is literally the string
-    // "--detect-theme" (that's how main() decided to call this function in
-    // the first place), so it's handed to CLI11 as the (discarded) program
-    // name by starting the parse one element past it, at argv[2].
-    CLI::App app{"Probe the terminal's actual configured colors and write a Theme file, then exit."};
-
-    bool        transparent = false;
-    std::string outputPathArg;
-    app.add_flag("--transparent", transparent,
-                 "Treat the detected background as transparent instead of an opaque color");
-    app.add_option("output-path", outputPathArg, "Where to write the theme file (default: the XDG theme file path)");
-
-    try {
-        app.parse(argc - 1, argv + 1);
-    }
-    catch (const CLI::ParseError& e) {
-        return app.exit(e);
-    }
-
-    const std::optional<std::string> outputPath = outputPathArg.empty() ? std::nullopt : std::optional(outputPathArg);
-
+//
+// startup-mode-unification follow-up: transparent/outputPath are already
+// parsed by main()'s own single CLI::App (see main() below) -- this used to
+// construct and re-parse argv through a second, private CLI::App (shifting
+// past the "--detect-theme" argument main() had already consumed to decide
+// to call this function at all), which is what kept this mode's own
+// --transparent/output-path options invisible to `ned --help`.
+int RunDetectTheme(bool transparent, const std::optional<std::string>& outputPath) {
     const ned::ui::DetectedColors detected = ned::ui::ProbeTerminalColors();
     ned::ui::Theme                theme    = ned::ui::BuildDetectedTheme(detected, ned::ui::DarkTheme());
 
@@ -196,20 +182,87 @@ int RunLspBrokerStop() {
 } // namespace
 
 auto main(int argc, char** argv) -> int {
-    if (argc > 1 && std::string_view(argv[1]) == "--detect-theme") {
-        return RunDetectTheme(argc, argv);
+    // startup-mode-unification follow-up: one CLI::App now owns every
+    // top-level flag ned recognizes, --detect-theme/--lsp-broker/
+    // --lsp-broker-stop included -- previously each was a hand-rolled
+    // `argv[1] == "..."` check run *before* any real parsing, so `ned
+    // --help` never documented them (and --detect-theme's own
+    // --transparent/output-path options, parsed by a second private
+    // CLI::App re-fed a shifted argv, weren't even reachable from here).
+    // They stay plain flags on this one App rather than becoming CLI11
+    // subcommands specifically to keep the exact existing invocations
+    // (`ned --lsp-broker`, notably self-exec'd by
+    // Lsp/LspBrokerConnect.cpp, and documented as a systemd ExecStart
+    // line) working unchanged -- a subcommand would mean `ned lsp-broker`
+    // instead, a real breaking syntax change for no behavioral gain here.
+    // ->excludes() catches the nonsensical case of passing more than one
+    // of the three as a real CLI11 error instead of silently letting
+    // whichever this code happened to check first win.
+    CLI::App app{"Ned -- a terminal-based, Janet-scriptable text editor.", "ned"};
+
+    bool detectTheme  = false;
+    bool transparent  = false;
+    bool lspBroker    = false;
+    bool lspBrokerStop = false;
+    bool forceBinary  = false;
+    bool noRestore    = false;
+    std::vector<std::string> paths;
+
+    CLI::Option* detectThemeOpt = app.add_flag(
+        "--detect-theme", detectTheme,
+        "Probe the terminal's actual configured colors, write a Theme file, and exit")
+        ->group("Startup modes");
+    app.add_flag("--transparent", transparent,
+                 "With --detect-theme: treat the detected background as transparent instead of an opaque color")
+        ->needs(detectThemeOpt)
+        ->group("Startup modes");
+    CLI::Option* lspBrokerOpt =
+        app.add_flag("--lsp-broker", lspBroker, "Run the headless LSP broker daemon and exit")
+            ->excludes(detectThemeOpt)
+            ->group("Startup modes");
+    app.add_flag("--lsp-broker-stop", lspBrokerStop, "Stop a running LSP broker daemon and exit")
+        ->excludes(detectThemeOpt)
+        ->excludes(lspBrokerOpt)
+        ->group("Startup modes");
+    // command-line-parameter-handling follow-up: --force-binary is the
+    // CLI-argument-time escape hatch for BufferList::OpenOrCreateFile's
+    // binary refusal (there's no interactive session to ask a y/n
+    // confirmation through at this point in startup, no EventLoop, no
+    // BufferView yet), and `paths` accepts any number of file/directory
+    // arguments -- `ned a.txt b.txt c.txt` opens all three as buffers
+    // (see the extra-paths loop below), not just the first. With
+    // --detect-theme, this same `paths` slot instead means a single
+    // optional theme-file output path -- the two modes' positionals never
+    // apply at once, so sharing one CLI11 positional needs no special
+    // handling here.
+    app.add_flag("--force-binary", forceBinary,
+                 "Open files that look binary anyway, without an interactive confirmation");
+    app.add_flag("--no-restore", noRestore,
+                 "Don't restore the project's saved session (open buffers, breakpoints, sidebar state)");
+    app.add_option("paths", paths,
+                   "Files or directories to open (or, with --detect-theme, an optional single output path)");
+
+    try {
+        app.parse(argc, argv);
+    }
+    catch (const CLI::ParseError& e) {
+        return app.exit(e);
+    }
+
+    if (detectTheme) {
+        return RunDetectTheme(transparent, paths.empty() ? std::nullopt : std::optional(paths.front()));
     }
     // `ned --lsp-broker`: runs the headless LSP broker daemon itself (see
     // Editor/Lsp/LspBrokerMain.h) instead of the interactive editor --
     // dispatched here, strictly before EventLoop/Notcurses construct, same
-    // reasoning as RunDetectTheme above. This is what a `ned` process
+    // reasoning as --detect-theme above. This is what a `ned` process
     // auto-forks-and-execve's into when no daemon is already reachable, and
     // is equally the right ExecStart line for a `systemd --user` unit that
     // starts it explicitly at login instead.
-    if (argc > 1 && std::string_view(argv[1]) == "--lsp-broker") {
+    if (lspBroker) {
         return ned::editor::lsp::RunLspBrokerDaemon();
     }
-    if (argc > 1 && std::string_view(argv[1]) == "--lsp-broker-stop") {
+    if (lspBrokerStop) {
         return RunLspBrokerStop();
     }
 
@@ -219,33 +272,6 @@ auto main(int argc, char** argv) -> int {
 
     ned::text::BufferList bufferList;
     std::string           statusMessage;
-
-    // command-line-parameter-handling follow-up: CLI11 (header-only,
-    // FetchContent'd in CMakeLists.txt) replaces the old hand-rolled
-    // argv loop -- --force-binary is still the CLI-argument-time escape
-    // hatch for BufferList::OpenOrCreateFile's binary refusal (there's no
-    // interactive session to ask a y/n confirmation through at this point
-    // in startup, no EventLoop, no BufferView yet), and `paths` now accepts
-    // any number of file/directory arguments instead of silently keeping
-    // only the first one -- `ned a.txt b.txt c.txt` opens all three as
-    // buffers (see the extra-paths loop below) instead of just `a.txt`.
-    CLI::App app{"Ned -- a terminal-based, Janet-scriptable text editor.", "ned"};
-
-    bool                     forceBinary = false;
-    bool                     noRestore   = false;
-    std::vector<std::string> paths;
-    app.add_flag("--force-binary", forceBinary,
-                 "Open files that look binary anyway, without an interactive confirmation");
-    app.add_flag("--no-restore", noRestore,
-                 "Don't restore the project's saved session (open buffers, breakpoints, sidebar state)");
-    app.add_option("paths", paths, "Files or directories to open");
-
-    try {
-        app.parse(argc, argv);
-    }
-    catch (const CLI::ParseError& e) {
-        return app.exit(e);
-    }
 
     const char* pathArg = paths.empty() ? nullptr : paths.front().c_str();
 
@@ -1227,14 +1253,48 @@ auto main(int argc, char** argv) -> int {
     windowManager->SetOnDapConsoleToggle(toggleDapConsole);
     dapConsolePanel.SetOnToggleRequest(toggleDapConsole);
 
-    // which-key follow-up: a small, non-focusable OverlayHost popup shown
-    // the instant a prefix chord (C-x, C-c, ...) becomes pending -- unlike
-    // the panels above, never taken focus (WhichKeyPopup::Focusable() stays
-    // at Widget's own default false), so no SetFocusReturn/toggle wiring is
-    // needed; BufferView keeps receiving every keystroke throughout.
-    // Bottom-anchored, just above the echo area row, sized to the current
-    // hint's own row count (ContentRowCount()) each time it's shown/reflowed.
-    ned::ui::WhichKeyPopup whichKeyPopup(theme);
+    // generic-popup follow-up: list-buffers (C-x C-b), the focus-mode
+    // ListPopup's first real consumer -- same OverlayHost-overlay shape as
+    // the panels above, but roughly centered and most-of-screen (a real
+    // working list, not a small hint/drawer) rather than docked to an edge.
+    ned::ui::BufferListPanel bufferListPanel(theme, bufferList);
+    overlays.Add(bufferListPanel.Popup(), [](Size size) {
+        const int width  = std::clamp(size.width - 8, 20, 80);
+        const int height = std::clamp(size.height - 6, 6, 24);
+        const int xMin   = std::max(0, (size.width - width) / 2);
+        const int yMin   = std::max(0, (size.height - height) / 2);
+        return Box{.x_min = xMin, .x_max = xMin + width - 1, .y_min = yMin, .y_max = yMin + height - 1};
+    });
+    overlays.SetFocusReturn(bufferListPanel.Popup(), [wm = windowManager.get()] { wm->TakeFocus(); });
+    bufferListPanel.SetOnRequestSwitchToBuffer(
+        [&overlays, panel = &bufferListPanel, wm = windowManager.get()](ned::text::Buffer& buffer) {
+            wm->FocusedActiveBuffer().Set(buffer);
+            overlays.Hide(panel->Popup());
+        });
+    bufferListPanel.SetOnCancel(
+        [&overlays, panel = &bufferListPanel] { overlays.Hide(panel->Popup()); });
+    bufferListPanel.SetOnBufferClosing(
+        [wm = windowManager.get()](ned::text::Buffer& buffer) { wm->NotifyBufferClosing(buffer); });
+    windowManager->SetOnBufferListToggle([&overlays, panel = &bufferListPanel] {
+        if (!overlays.IsVisible(panel->Popup())) {
+            panel->Show();
+            overlays.Show(panel->Popup());
+            panel->Popup().TakeFocus();
+        }
+        else {
+            overlays.Hide(panel->Popup());
+        }
+    });
+
+    // which-key follow-up (generic-popup follow-up: now a ListPopup in its
+    // non-focusable mode): a small popup shown the instant a prefix chord
+    // (C-x, C-c, ...) becomes pending -- unlike the panels above, never
+    // taken focus (SetFocusable() is left at its default false), so no
+    // SetFocusReturn/toggle wiring is needed; BufferView keeps receiving
+    // every keystroke throughout. Bottom-anchored, just above the echo area
+    // row, sized to the current hint's own row count (ContentRowCount())
+    // each time it's shown/reflowed.
+    ned::ui::ListPopup whichKeyPopup(theme);
     overlays.Add(whichKeyPopup, [panel = &whichKeyPopup](Size size) {
         const int yMax   = std::max(1, size.height - 2); // above the echo area row
         const int height = std::clamp(panel->ContentRowCount(), 3, std::min(12, size.height));
@@ -1243,13 +1303,44 @@ auto main(int argc, char** argv) -> int {
     });
     windowManager->SetOnPrefixHintChanged([&overlays, panel = &whichKeyPopup](std::optional<ned::ui::WhichKeyHint> hint) {
         if (hint) {
-            panel->SetHint(std::move(*hint));
+            ned::ui::ListPopupModel model;
+            model.title = hint->prefixLabel;
+            model.rows.reserve(hint->bindings.size());
+            for (const auto& [chord, label] : hint->bindings) {
+                model.rows.push_back({.left = chord, .main = label, .accented = true});
+            }
+            panel->SetModel(std::move(model));
             overlays.Show(*panel);
         }
         else {
             overlays.Hide(*panel);
         }
     });
+
+    // generic-popup follow-up (Phase 3): the shared candidate popup behind
+    // M-x/project-find-file/find-recent-file/bookmark-jump/select-theme/LSP
+    // code-action-select -- same non-focusable, BufferView-keeps-focus
+    // shape as whichKeyPopup just above (only one of these sessions, or
+    // which-key's own hint, is ever live at a time, so one shared instance
+    // is enough), just taller/wider since a candidate list routinely has
+    // more rows and longer entries (file paths) than a key-binding hint.
+    ned::ui::ListPopup candidatePopup(theme);
+    overlays.Add(candidatePopup, [panel = &candidatePopup](Size size) {
+        const int yMax   = std::max(1, size.height - 2); // above the echo area row
+        const int height = std::clamp(panel->ContentRowCount(), 3, std::min(14, size.height));
+        const int width  = std::min(90, size.width);
+        return Box{.x_min = 0, .x_max = std::max(0, width - 1), .y_min = std::max(0, yMax - height + 1), .y_max = yMax};
+    });
+    windowManager->SetOnCandidatesChanged(
+        [&overlays, panel = &candidatePopup](std::optional<ned::ui::ListPopupModel> model) {
+            if (model) {
+                panel->SetModel(std::move(*model));
+                overlays.Show(*panel);
+            }
+            else {
+                overlays.Hide(*panel);
+            }
+        });
 
     EventLoopCallbacks callbacks;
 
