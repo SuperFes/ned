@@ -22,8 +22,8 @@ namespace {
         return width;
     }
 
-    int& CharsPerDotStorage() {
-        static int charsPerDot = 8;
+    double& CharsPerDotStorage() {
+        static double charsPerDot = 8.0;
         return charsPerDot;
     }
 
@@ -49,12 +49,12 @@ int MinimapWidth() {
     return WidthStorage();
 }
 
-void SetMinimapCharsPerDot(int columns) {
+void SetMinimapCharsPerDot(double columns) {
     const std::lock_guard<std::mutex> lock(SettingsMutex());
-    CharsPerDotStorage() = std::max(1, columns);
+    CharsPerDotStorage() = std::max(1.0, columns);
 }
 
-int MinimapCharsPerDot() {
+double MinimapCharsPerDot() {
     const std::lock_guard<std::mutex> lock(SettingsMutex());
     return CharsPerDotStorage();
 }

@@ -252,8 +252,8 @@ namespace {
         editor::SetMinimapWidth(static_cast<int>(columns));
     }
 
-    void NedSetMinimapCharsPerDot(std::int64_t columns) {
-        editor::SetMinimapCharsPerDot(static_cast<int>(columns));
+    void NedSetMinimapCharsPerDot(double columns) {
+        editor::SetMinimapCharsPerDot(columns);
     }
 
     void NedSetTrailingWhitespaceHighlightEnabled(bool enabled) {
@@ -959,8 +959,10 @@ void InstallEditorBindings(Environment& env) {
         "Set the minimap's width in columns (default 5). Each column packs 2 braille sub-columns of resolution.");
     env.Register<&NedSetMinimapCharsPerDot>(
         "ned", "set-minimap-chars-per-dot",
-        "Set how many real buffer columns one minimap braille sub-dot represents (default 8). A line longer than "
-        "minimap-width * chars-per-dot * 2 columns simply isn't rendered past that point -- not compressed.");
+        "Set how many real buffer columns one minimap dot represents (default 8, applies uniformly in both glyph "
+        "and real-pixel rendering). Fractional values (e.g. 8.5) are accepted for finer-grained tuning. A line "
+        "longer than minimap-width * chars-per-dot * 2 columns simply isn't rendered past that point -- not "
+        "compressed.");
     env.Register<&NedSetTrailingWhitespaceHighlightEnabled>(
         "ned", "set-trailing-whitespace-highlight-enabled",
         "Enable/disable a subtle background highlight on trailing whitespace (spaces/tabs after the last "

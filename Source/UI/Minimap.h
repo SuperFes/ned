@@ -141,27 +141,26 @@ class Minimap : public Widget {
     // subCol) per real line, not once per character (see below for why) --
     // offset is that character's buffer byte offset, for a syntax-class
     // color lookup the caller does itself. charsPerDot is an explicit
-    // parameter, not read from
-    // editor::MinimapCharsPerDot() internally, because the two renderers now
-    // want genuinely different values: the glyph path still needs real
-    // horizontal compression (a braille/quadrant/octant cell only has 2-4
-    // sub-columns to represent a line in at all), but the real-pixel path
-    // has enough columns to give each source character its own pixel column
-    // outright -- charsPerDot=1, a real line simply truncates past subCols
-    // characters rather than being squeezed to fit. Vertical compression
-    // (many source lines into one subRow) is unavoidable either way once a
-    // file has more lines than subRows, so that part of this walk is
-    // identical for both callers -- linesInRow (the same value for every
-    // visit() call within one subRow: how many real lines got compressed
-    // into it) is what lets a caller weight each hit's contribution rather
-    // than one line's ink flatly overwriting every other line compressed
-    // into the same row (weighted-minimap-density follow-up: a *references*
+    // parameter (rather than reading editor::MinimapCharsPerDot()
+    // internally) purely so a test can pass its own value directly --
+    // minimap-chars-per-dot-pixel-mode follow-up: both real callers (glyph
+    // and real-pixel) now pass the same editor::MinimapCharsPerDot() value
+    // uniformly; an earlier version of this class hardcoded 1 for the
+    // real-pixel path specifically, which silently defeated the setting for
+    // anyone actually running in pixel mode. Vertical compression (many
+    // source lines into one subRow) is unavoidable either way once a file
+    // has more lines than subRows, so that part of this walk is identical
+    // for both callers -- linesInRow (the same value for every visit() call
+    // within one subRow: how many real lines got compressed into it) is
+    // what lets a caller weight each hit's contribution rather than one
+    // line's ink flatly overwriting every other line compressed into the
+    // same row (weighted-minimap-density follow-up: a *references*
     // multibuffer's own repeated separator/rule lines used to dominate every
     // row they shared with the real matched-line content, since a rule
     // line's near-full-width ink was whichever line happened to be walked
     // last for that row).
     void ForEachDensityDot(
-        int subRows, int subCols, int charsPerDot,
+        int subRows, int subCols, double charsPerDot,
         const std::function<void(int subRow, int subCol, std::size_t offset, std::size_t linesInRow)>& visit) const;
 
     // (Re)blits plane_ from the active buffer's content, gated on (buffer
@@ -230,7 +229,7 @@ class Minimap : public Widget {
     mutable std::size_t   cacheContentGeneration_   = 0;
     mutable int           cacheHeight_               = -1;
     mutable int           cacheWidth_                = -1;
-    mutable int           cacheCharsPerDot_          = -1;
+    mutable double        cacheCharsPerDot_          = -1.0;
     mutable int           cacheScrollableLength_     = -1;
     mutable int           cachePosition_             = -1;
     mutable int           cacheItemVisualLength_     = -1;
