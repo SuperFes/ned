@@ -323,7 +323,8 @@ LspClient* LspManager::ClientForLanguage(const std::string& language) {
     // genuinely performs the real initialize/initialized handshake below,
     // just over a socket to the broker instead of a pipe to a directly-
     // spawned process.
-    std::unique_ptr<LspClient> client = TryConnectToBroker(editor::ProjectRoot(), language, *command, eventLoop_);
+    std::unique_ptr<LspClient> client =
+        TryConnectToBroker(editor::ProjectRoot(), language, *command, eventLoop_, brokerSocketPathOverrideForTesting_);
     if (!client) {
         try {
             client = std::make_unique<LspClient>(*command, eventLoop_);

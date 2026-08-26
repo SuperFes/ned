@@ -349,22 +349,14 @@ Real, reproduced, non-urgent — each is safe to leave as-is for now, but worth 
 opportunistically rather than re-discovering from scratch. Add to this list instead of
 just fixing-and-forgetting or letting it fade from memory between sessions.
 
-- [ ] **`LspManagerTest.cpp` isn't hermetic against a real LSP broker daemon** (found
-      2026-08-26 while chasing an unrelated hang) — `SyncBuffer reports a spawn failure`
-      and `StatusForLanguage reports NotConfigured, Running, and SpawnFailed` both
-      configure a nonexistent LSP command and assert the failure surfaces synchronously.
-      But `LspManager::ClientForLanguage` tries the shared broker socket
-      (`/run/user/1000/ned/broker.sock`) first, and if any broker daemon is already
-      listening — including one a *previous test run* left behind via
-      `TryBecomeBrokerSpawner`'s own fire-and-forget spawn — the connection itself
-      succeeds immediately, and the real spawn failure only surfaces later, async, on
-      the broker's own side, after the test's synchronous `REQUIRE` has already run and
-      failed. Flaky specifically on a dev machine that's been running `ned`/the test
-      suite recently, not in a fresh CI sandbox. Fix is presumably some form of
-      test-only broker isolation -- `TryConnectToBroker`/`TryBecomeBrokerSpawner`
-      (`LspBrokerConnect.h`) already take an injected `socketPathOverride`
-      (`BrokerSocketPathTest.cpp`'s own seam), but `LspManager`'s real spawn path
-      (`ClientForLanguage`) doesn't thread one through for these two tests to use.
+(Empty right now — the LSP-broker-hermeticity flake, 2026-08-26 (`LspManagerTest.cpp`'s
+two spawn-failure tests, plus the same shape in `ModeLineTest.cpp`'s spawn-failure-glyph
+test — the latter caught by re-running the full suite against a real broker daemon left
+warm from a live tmux session, exactly the scenario this flake needed to reproduce), was
+fixed 2026-08-26 by adding `LspManager::SetBrokerSocketPathOverrideForTesting` and
+threading it into `ClientForLanguage`'s `TryConnectToBroker` call; all three affected
+tests now point at a guaranteed-nonexistent socket path instead of the real broker
+socket.)
 
 ### Named non-goals (leaning "won't do", kept visible so it's a conscious call)
 

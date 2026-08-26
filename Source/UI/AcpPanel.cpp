@@ -235,10 +235,24 @@ void AcpPanel::Paint(Canvas canvas) {
         }
     }
 
-    // Input row.
-    const int         inputRow = height - 1;
-    const std::string text     = prompt_.StatusText();
-    const int         caretCol = PaintUtf8Row(canvas, 0, inputRow, text, plainBrush, width);
+    // Input row. Painted with theme_.echoArea rather than plainBrush -- the
+    // same "you're being prompted, type here" brush every other prompt in
+    // the editor (find-file, M-x, goto-line, ...) already uses via EchoArea,
+    // so the composer row reads as a distinct input field instead of
+    // blending into the transcript above it (reported live as barely
+    // visible/unreadable when painted the same as the rest of the panel --
+    // see this panel's own ROADMAP.md entry; the underlying cursor-position
+    // editing gap that entry also describes is unaffected by this, only the
+    // row's legibility).
+    const int         inputRow   = height - 1;
+    const std::string text       = prompt_.StatusText();
+    const Brush       inputBrush = theme_.echoArea;
+    for (int x = 0; x < width; ++x) {
+        Cell& cell     = canvas[{.x = x, .y = inputRow}];
+        cell.character = " ";
+        inputBrush.ApplyTo(cell);
+    }
+    const int caretCol = PaintUtf8Row(canvas, 0, inputRow, text, inputBrush, width);
     if (caretCol < width) {
         Cell& cell     = canvas[{.x = caretCol, .y = inputRow}];
         cell.character = " ";

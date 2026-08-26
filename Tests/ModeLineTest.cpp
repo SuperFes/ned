@@ -355,6 +355,12 @@ TEST_CASE("ModeLine shows a distinct glyph for a spawn failure, not the running 
     ned::text::BufferList        bufferList;
     ned::ui::EventLoop           eventLoop;
     ned::editor::lsp::LspManager manager(bufferList, eventLoop);
+    // LspManagerTest-broker-hermeticity follow-up: without this, ClientForLanguage's
+    // real spawn path tries the real broker socket first, and a broker daemon left
+    // running from an earlier `ned`/test run makes the expected synchronous spawn
+    // failure below flaky -- see LspManagerTest.cpp's matching tests for the full
+    // explanation.
+    manager.SetBrokerSocketPathOverrideForTesting(std::filesystem::temp_directory_path() / "ned-modeline-test-no-broker.sock");
     ned::editor::lsp::SetLspServerCommand("modeline-spawn-fail-lang", {"/definitely/does/not/exist/ned-fake-lsp"});
     ned::text::Buffer& buffer = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-modeline-spawn-fail-test.txt");
     manager.SyncBuffer(buffer, "modeline-spawn-fail-lang"); // must not throw; latches the failure
