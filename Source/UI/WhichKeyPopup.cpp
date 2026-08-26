@@ -24,11 +24,26 @@ void WhichKeyPopup::Paint(Canvas c) {
         return;
     }
 
-    DrawBorder(c, theme_.border);
-    DrawBorderTitle(c, hint_.prefixLabel, theme_.borderAccent);
-
     const Brush chordBrush{.background = theme_.background, .foreground = theme_.borderAccent.foreground, .bold = true};
     const Brush labelBrush{.background = theme_.background, .foreground = theme_.defaultForeground};
+
+    // Fill the interior with the popup's own background before drawing
+    // anything else -- otherwise only the specific cells a chord/label
+    // character lands on ever get written, and every other cell (gaps,
+    // short labels, empty rows below the last binding) keeps showing
+    // whatever the pane underneath painted on a prior frame instead of a
+    // solid box (confirmed live: a confusing screenshot with buffer text
+    // bleeding through the popup's own "empty" cells).
+    for (int y = 1; y < height - 1; ++y) {
+        for (int x = 1; x < width - 1; ++x) {
+            Cell& cell     = c[{.x = x, .y = y}];
+            cell.character = " ";
+            labelBrush.ApplyTo(cell);
+        }
+    }
+
+    DrawBorder(c, theme_.border);
+    DrawBorderTitle(c, hint_.prefixLabel, theme_.borderAccent);
 
     int row = 1;
     for (const auto& [chord, label] : hint_.bindings) {

@@ -908,6 +908,7 @@ if (NED_BUILD_TESTS)
             Tests/WhitespaceSettingsTest.cpp
             Tests/RelativeLineNumberSettingsTest.cpp
             Tests/WhichKeySettingsTest.cpp
+            Tests/WhichKeyPopupTest.cpp
             Tests/MinimapTest.cpp
             Tests/OverlayTest.cpp
             Tests/GitIgnoreTest.cpp
