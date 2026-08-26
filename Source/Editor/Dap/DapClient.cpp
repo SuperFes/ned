@@ -9,6 +9,12 @@
 
 namespace ned::editor::dap {
 
+DapClient::~DapClient() {
+    // lsp-use-after-free follow-up: must be the first statement -- see
+    // LspClient.h's own header comment on alive_.
+    *alive_ = false;
+}
+
 DapClient::DapClient(std::vector<std::string> argv, ned::ui::EventLoop& eventLoop)
     : transport_(std::move(argv), /*captureStderr=*/true), eventLoop_(eventLoop) {
     StartReadLoop();
@@ -33,7 +39,10 @@ void DapClient::StartReadLoop() {
             catch (const std::exception& e) {
                 // Malformed frame, or (subprocess-hang-protection follow-up)
                 // a mid-frame stall -- see LspClient.cpp's identical comment.
-                eventLoop_.Post([this, reason = std::string(e.what())] {
+                eventLoop_.Post([this, alive = alive_, reason = std::string(e.what())] {
+                    if (!*alive) {
+                        return; // lsp-use-after-free follow-up -- this DapClient is gone
+                    }
                     LogMessage(LogCategory::Dap, LogSeverity::Warning, reason);
                     if (onDisconnected_) {
                         onDisconnected_(reason);
@@ -42,7 +51,10 @@ void DapClient::StartReadLoop() {
                 return;
             }
             if (!frame) {
-                eventLoop_.Post([this] {
+                eventLoop_.Post([this, alive = alive_] {
+                    if (!*alive) {
+                        return; // lsp-use-after-free follow-up -- this DapClient is gone
+                    }
                     LogMessage(LogCategory::Dap, LogSeverity::Warning, "adapter exited (EOF)");
                     if (onDisconnected_) {
                         onDisconnected_("adapter exited (EOF)");
@@ -50,7 +62,12 @@ void DapClient::StartReadLoop() {
                 });
                 return;
             }
-            eventLoop_.Post([this, frameText = std::move(*frame)]() mutable { DispatchFrame(frameText); });
+            eventLoop_.Post([this, alive = alive_, frameText = std::move(*frame)]() mutable {
+                if (!*alive) {
+                    return; // lsp-use-after-free follow-up -- this DapClient is gone
+                }
+                DispatchFrame(frameText);
+            });
         }
     });
 }
@@ -90,7 +107,7 @@ void DapClient::StartStderrReadLoop() {
                 if (line.empty()) {
                     continue;
                 }
-                eventLoop_.Post([this, label, line = std::move(line)] {
+                eventLoop_.Post([label, line = std::move(line)] {
                     LogMessage(LogCategory::Dap, LogSeverity::Warning, label.empty() ? line : label + ": " + line);
                 });
             }

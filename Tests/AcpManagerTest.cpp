@@ -267,6 +267,19 @@ TEST_CASE("AcpManager::StopSession sends session/close and reaches Inactive", "[
     fixture.InjectClient();
     fixture.StartActiveSession("test-agent");
 
+    // lsp-use-after-free follow-up: StopSession -> EndSession now destroys
+    // the AcpClient directly (immediate destruction is safe now that
+    // AcpClient itself guards against a stray Post()ed callback -- see
+    // LspClient.h's own header comment on alive_), which joins its
+    // background read thread as part of destruction. That thread is
+    // deliberately still blocked in a real blocking read on this fixture's
+    // fake pipe (nothing ever sent it real EOF) -- fine for the rest of this
+    // fixture's life since nothing destroys the client early, but it would
+    // hang forever here otherwise. Closing the fixture's own write end first
+    // gives it real EOF, matching a real agent process actually exiting.
+    ::close(fixture.agentStdoutWrite);
+    fixture.agentStdoutWrite = -1; // fixture's own destructor must not double-close
+
     REQUIRE(fixture.manager.StopSession() == "ACP session stopped.");
     REQUIRE(fixture.manager.State() == AcpManager::SessionState::Inactive);
 

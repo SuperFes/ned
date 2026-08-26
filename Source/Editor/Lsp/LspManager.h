@@ -511,23 +511,6 @@ class LspManager {
 
     std::unordered_map<std::string, std::unique_ptr<LspClient>> clients_; // keyed by language
 
-    // lsp-use-after-free follow-up: confirmed live (SIGSEGV inside
-    // LspClient's own pending_ hashtable, main thread, EventLoop::DrainPosted_)
-    // -- ClientDisconnected used to clients_.erase(language) directly, but
-    // it's reached from inside the very client's own Post-marshaled
-    // SetOnDisconnected callback, and StartReadLoop's read thread can have
-    // already Post()ed a second callback (a stray DispatchFrame for a frame
-    // read moments before EOF) that hasn't drained yet -- destroying the
-    // LspClient immediately turns that queued callback's captured `this`
-    // into a dangling pointer. Mirrors DapManager::EndSession's/
-    // AcpManager::EndSession's identical retired_ vectors exactly: move into
-    // here instead of destroying, drained (actually freed) by
-    // ExpireStaleRequests's own periodic tick, which is always at least one
-    // full EventLoop::Run iteration after the retirement -- long enough for
-    // any straggler callback to have already run against the still-valid
-    // object.
-    std::vector<std::unique_ptr<LspClient>> retired_;
-
     // prose-checking follow-up: outer key is the buffer, inner key is the
     // server ("cpp", kProseLanguageKey, ...) -- a buffer now has up to two
     // concurrent sync states (its primary language server and the prose

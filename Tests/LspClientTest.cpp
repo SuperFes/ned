@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <chrono>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -393,6 +394,45 @@ TEST_CASE("SetOnDisconnected replaces a previous handler, and unset is a safe no
     fixture.client.SetOnDisconnected([](std::string) { FAIL("should have been replaced"); });
     fixture.client.SetOnDisconnected([](std::string) {});
     SUCCEED(); // no crash from setting/replacing -- the callback itself is never invoked directly here
+}
+
+// lsp-use-after-free follow-up. Confirmed live via ASan: a real SIGSEGV/
+// heap-use-after-free with LspManager destroying an LspClient (on a
+// respawn-after-disconnect) while the background read thread's own already-
+// Post()ed disconnect notification for that exact instance was still
+// sitting in EventLoop's queue -- two independent background threads (this
+// one, and LspManager's periodic maintenance tick) Post() with no ordering
+// guarantee between them, so "destroy it a little later" is not actually
+// safe at any delay. The fix lives in LspClient itself (alive_, see its own
+// header comment) rather than in whoever owns it. This is the one test in
+// this file that runs a real background-read-loop -> Post() -> drain cycle
+// (see "SetOnDisconnected replaces a previous handler..." above for why
+// every other test here avoids it) -- specifically to prove this fix, not
+// just that the hook is replaceable.
+TEST_CASE("A stray Post()ed callback safely no-ops instead of touching an already-destroyed LspClient", "[Lsp]") {
+    ned::ui::EventLoop eventLoop;
+    int                 clientWritesHere[2]; // client's write end -> test's read end
+    int                 clientReadsHere[2];  // test's write end -> client's read end
+    REQUIRE(::pipe(clientWritesHere) == 0);
+    REQUIRE(::pipe(clientReadsHere) == 0);
+    const int serverStdinRead   = clientWritesHere[0];
+    const int serverStdoutWrite = clientReadsHere[1];
+
+    std::optional<LspClient> client;
+    client.emplace(Transport(clientReadsHere[0], clientWritesHere[1]), eventLoop, /*startHandshakeComplete=*/true);
+    client->SetOnDisconnected([](std::string) {}); // present and callable, matching a real wired client
+
+    ::close(serverStdoutWrite); // EOF -- the read thread Post()s its disconnect notification, then exits
+    std::this_thread::sleep_for(std::chrono::milliseconds(50)); // let the background thread actually post before destroying
+
+    client.reset(); // ~LspClient() flips alive_ to false as its first statement
+
+    // The disconnect notification posted above is still queued. Draining it
+    // must not crash or touch freed memory -- that's the entire point.
+    eventLoop.DrainPosted_();
+    SUCCEED();
+
+    ::close(serverStdinRead);
 }
 
 TEST_CASE("LspClient counts an in-flight request as LSP background activity until its response dispatches", "[Lsp]") {

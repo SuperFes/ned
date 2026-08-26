@@ -16,14 +16,25 @@
 // ever calls Transport::ReadFrame (which shares no mutable state with these
 // maps) and hands the *result* across via Post, never touching them itself.
 //
-// Lifetime: LspClient (and whatever owns it, e.g. LspManager) must only be
-// destroyed after ned::ui::EventLoop::Run() has returned -- same
-// requirement WindowManager's own Post-based timer already has. A frame
-// posted but not yet processed when destruction begins is simply abandoned,
-// same as any other leftover Post callback at shutdown; this is only safe
-// because destruction never races the main thread actually processing that
-// queue (Loop() has already stopped doing so by the time destruction can
-// happen).
+// Lifetime (lsp-use-after-free follow-up, corrected 2026-08-26): the
+// paragraph this replaced claimed LspClient is only ever destroyed after
+// EventLoop::Run() has returned. That is false for LspManager's own
+// mid-session respawn path -- confirmed live via ASan (heap-use-after-free,
+// LspClient.cpp's own StartReadLoop lambda, one background thread's already-
+// Post()ed callback still pending when a *different* Post()ed callback --
+// LspManager::ExpireStaleRequests's periodic retired_.clear() -- freed this
+// same object first). Two independent background threads (or a background
+// thread and a periodic timer) Post() against EventLoop with no ordering
+// guarantee between them, so "wait one more tick before freeing" is not
+// actually safe. alive_ is what makes this safe regardless of timing: a
+// std::shared_ptr<bool>, flipped to false as literally the first statement
+// in ~LspClient(), captured *by value* (a second owning reference, so its
+// storage itself never dangles) alongside `this` in every eventLoop_.Post
+// lambda below. Each posted lambda checks `*alive` before touching `this`
+// at all -- false means the object is gone or going, and the lambda safely
+// no-ops instead of reading freed memory. This is the standard fix for
+// "background thread posts a callback that outlives the object it
+// captured," not a timing workaround.
 //
 // Member declaration order below is load-bearing, not just style: destroying
 // transport_ (which happens before readThread_/stderrThread_, since C++
@@ -50,6 +61,7 @@
 
 #include <chrono>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <thread>
@@ -219,6 +231,13 @@ class LspClient {
   private:
     void StartReadLoop();
     void StartStderrReadLoop(); // lsp-stderr-capture follow-up -- see header comment
+
+    // lsp-use-after-free follow-up: see this file's own header comment.
+    // Declaration position doesn't matter for correctness (a shared_ptr's
+    // pointee lifetime is independent of where the shared_ptr variable
+    // itself lives), but it's declared first for visibility -- this is the
+    // actual safety mechanism every Post() lambda below relies on.
+    std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
 
     std::jthread readThread_;       // declared before transport_ -- see header comment
     std::jthread stderrThread_;     // ditto -- lsp-stderr-capture follow-up

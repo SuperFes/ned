@@ -289,11 +289,11 @@ class DapManager {
     // Marks the session running again: state, stop location, and frame id
     // all cleared together (continue and every step share this).
     void MarkResumed();
-    // Tears down the session and reports reason via onSessionEnded_. The
-    // client is moved into retired_, not destroyed in place — EndSession is
-    // reached from inside the client's own Post-marshaled callbacks, and
-    // destroying the object whose callback is still on the stack would be
-    // use-after-free; retired_ drains at the next session start instead.
+    // Tears down the session and reports reason via onSessionEnded_.
+    // lsp-use-after-free follow-up: destroys client_ directly now -- see
+    // this method's own .cpp comment for why an earlier "move into a
+    // retired_ vector instead, drain later" version of this comment no
+    // longer applies (the real fix lives in DapClient itself now).
     void EndSession(std::string reason);
     void WireClient(DapClient& client);
     // Slice 4: the thread every inspection/step/continue request targets --
@@ -303,9 +303,8 @@ class DapManager {
 
     ned::ui::EventLoop& eventLoop_;
 
-    std::unique_ptr<DapClient>              client_;
-    std::vector<std::unique_ptr<DapClient>> retired_; // see EndSession
-    std::string                             language_;
+    std::unique_ptr<DapClient> client_;
+    std::string                language_;
     SessionState                            state_           = SessionState::Inactive;
     int                                     stoppedThreadId_ = 0;
     // Where the debuggee is stopped (slice 2) -- see CurrentStopKeyAndLine.

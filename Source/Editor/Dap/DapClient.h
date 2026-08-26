@@ -15,11 +15,19 @@
 //
 // Threading, lifetime, and member-declaration order all mirror LspClient
 // exactly (background jthread read loop marshaling onto the main thread via
-// ned::ui::EventLoop::Post; destroy only after EventLoop::Run() has
-// returned; transport_ declared after readThread_ so its destructor closes
-// the fds that unblock the read thread's blocking ReadFrame) — see
-// LspClient.h's own header comment for the full reasoning behind each;
-// none of it is repeated here because none of it differs.
+// ned::ui::EventLoop::Post; transport_ declared after readThread_ so its
+// destructor closes the fds that unblock the read thread's blocking
+// ReadFrame) — see LspClient.h's own header comment for the full reasoning
+// behind each; none of it is repeated here because none of it differs.
+//
+// lsp-use-after-free follow-up: that includes alive_ (see LspClient.h's own
+// header comment, corrected 2026-08-26) -- the earlier claim that this class
+// is "only ever destroyed after EventLoop::Run() has returned" was false for
+// LspClient's mid-session respawn path, confirmed live via ASan, and nothing
+// about DapManager's own single-session model makes DapClient immune to the
+// same hazard (a Post()ed callback from readThread_/stderrThread_ that
+// outlives the object, freed by DapManager::EndSession, whether immediately
+// or after some delay -- no delay is actually safe, only alive_ is).
 //
 // lsp-stderr-capture follow-up (extended to DAP): stderrThread_ mirrors
 // LspClient's own stderrThread_ exactly -- a second blocking read loop over
@@ -35,6 +43,7 @@
 
 #include <chrono>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <thread>
@@ -71,7 +80,11 @@ class DapClient {
     // LspClient's own test constructor.
     DapClient(lsp::Transport transport, ned::ui::EventLoop& eventLoop);
 
-    ~DapClient() = default; // member destruction order does the real work — see LspClient.h
+    // lsp-use-after-free follow-up: no longer = default -- the body flips
+    // alive_ to false as its first statement (see LspClient.h's own header
+    // comment); member destruction order still does the rest of the real
+    // teardown work, same as before -- see LspClient.h.
+    ~DapClient();
 
     DapClient(const DapClient&)            = delete;
     DapClient& operator=(const DapClient&) = delete;
@@ -112,6 +125,10 @@ class DapClient {
   private:
     void StartReadLoop();
     void StartStderrReadLoop(); // lsp-stderr-capture follow-up -- see header comment
+
+    // lsp-use-after-free follow-up: see LspClient.h's own header comment on
+    // alive_ and this file's header comment above.
+    std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
 
     std::jthread   readThread_;   // declared before transport_ — see LspClient.h
     std::jthread   stderrThread_; // ditto -- lsp-stderr-capture follow-up
