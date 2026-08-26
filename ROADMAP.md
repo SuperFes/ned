@@ -78,7 +78,7 @@ Notcurses.
       `didRenameFiles`) — import paths elsewhere go stale until the server notices on
       its own.
 
-### Navigation & search
+### Navigation & Search
 
 - [ ] **Multibuffer gaps**: no full-commit diff view (browsing one commit's whole diff
       from `*vcs log*`, not just the working tree); no result cap/warning on
