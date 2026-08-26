@@ -78,15 +78,22 @@ void DrawBorderTitle(Canvas& c, const std::string& title, const Brush& titleBrus
     if (maxTextColumns <= 0) {
         return;
     }
-    std::string padded = " " + title + " ";
-    if (static_cast<int>(padded.size()) > maxTextColumns) {
-        padded.resize(static_cast<std::size_t>(maxTextColumns));
+    const std::string padded = " " + title + " ";
+    PaintUtf8Row(c, 2, 0, padded, titleBrush, maxTextColumns);
+}
+
+int PaintUtf8Row(Canvas& c, int x, int y, std::string_view text, const Brush& brush, int maxColumns) {
+    int         column = 0;
+    std::size_t pos    = 0;
+    while (pos < text.size() && column < maxColumns) {
+        const std::size_t next = text::NextCodepointBoundary(text, pos);
+        Cell&              cell = c[{.x = x + column, .y = y}];
+        cell.character          = std::string(text.substr(pos, next - pos));
+        brush.ApplyTo(cell);
+        pos = next;
+        ++column;
     }
-    for (int i = 0; i < static_cast<int>(padded.size()); ++i) {
-        Cell& cell     = c[{.x = 2 + i, .y = 0}];
-        cell.character = std::string(1, padded[static_cast<std::size_t>(i)]);
-        titleBrush.ApplyTo(cell);
-    }
+    return column;
 }
 
 } // namespace ned::ui
