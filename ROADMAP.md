@@ -90,13 +90,25 @@ Notcurses.
       posted background work — a corrupted/stale request-id map, not a null-path
       crash. Reproduces against a freshly spawned, current-build broker (not only a
       stale cross-version one); does not reproduce with an ASCII-only project path.
-      Root cause not yet isolated — a path/URI-to-`Content-Length` byte-count bug
-      (computing frame length in codepoints instead of bytes for a non-ASCII root,
-      corrupting the JSON-RPC stream) is the leading hypothesis given the shape, but
-      unconfirmed; next step is instrumented reproduction against the broker
-      specifically. Likely the same root cause behind the known-flaky
-      `LspManagerTest.cpp` broker-interference tests below, now confirmed to
-      manifest as a real crash, not just a test assertion mismatch.
+      Root cause of the SIGSEGV itself not yet isolated — a path/URI-to-
+      `Content-Length` byte-count bug (computing frame length in codepoints instead
+      of bytes for a non-ASCII root, corrupting the JSON-RPC stream) is the leading
+      hypothesis given the shape, but unconfirmed. **Update 2026-08-26, same day**:
+      the *rapid respawn storm* itself — confirmed as its own, more general bug the
+      same day, live against a real project (`phpantom_lsp` disconnecting instantly
+      on every launch produced thousands of "server disconnected: server exited
+      (EOF)" lines within about a second, no non-ASCII path involved that time) —
+      is now fixed: `LspManager::ClientDisconnected` had no rate limit at all
+      between one disconnect and the very next `SyncBuffer`'s respawn attempt: see
+      `disconnectBurst_`'s doc comment in `LspManager.h`. A burst of
+      `kCrashLoopThreshold` (3) disconnects within `kCrashLoopWindow` (3s) now
+      latches `failedCommands_` itself, the same "stop retrying until reconfigured"
+      outcome a hard spawn failure already got. This closes the *trigger* that made
+      the SIGSEGV above easy to hit (thousands of rapid reconnects per second, now
+      capped at 3), but does not by itself confirm or rule out whether the
+      underlying `DispatchFrame` hashtable corruption is a genuine, separate bug —
+      worth re-attempting the non-ASCII-path repro against the throttled retry
+      behavior to see whether it still reproduces at only 3 rapid attempts.
 
 ### Navigation & Search
 
