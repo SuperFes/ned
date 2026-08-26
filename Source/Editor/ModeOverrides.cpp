@@ -14,8 +14,38 @@ namespace ned::editor {
 
 namespace {
 
+    // dynamic-mode-thread-safety fix (found live via a SIGSEGV coredump): a
+    // dynamically-registered mode used to be built *once* here and handed
+    // out by ModeByName as copies of that single
+    // Mode -- but Mode's closures capture their tree-sitter Parser/
+    // IncrementalParseCache by shared_ptr (see TreeSitterModeFromLanguage's
+    // own comment), so every copy aliased the exact same non-thread-safe
+    // TSParser. ModePrewarmer's background thread and BufferView::Paint's
+    // main-thread highlight both resolve the same dynamic mode name and
+    // both call into it concurrently -- confirmed via gdb against a real
+    // coredump: two threads inside ts_parser_parse on the identical Parser
+    // object, corrupting tree-sitter's internal stack. Bundled modes never
+    // had this bug because BundledModeFactories() below calls its factory
+    // function fresh on every lookup, building a brand-new Parser each
+    // time. Storing ingredients instead of a built Mode and rebuilding via
+    // TreeSitterModeFromLanguage on every ModeByName call restores that
+    // same "fresh Parser per call" contract for the dynamic case too.
+    struct DynamicModeEntry {
+        treesitter::Language language;
+        std::string          querySource;
+        std::string          foldQuerySource;
+        std::string          importQuerySource;
+    };
     std::mutex                                        g_mutex;
-    std::unordered_map<std::string, Mode>             g_dynamicModes;
+    std::unordered_map<std::string, DynamicModeEntry> g_dynamicModes;
+    // RegisterMode's own registry -- a caller there hands over an already-
+    // built, arbitrary Mode (not necessarily tree-sitter-backed at all;
+    // Commands.cpp's "vcs-commit-message-mode" is its only caller today), so
+    // there are no ingredients to rebuild from the way g_dynamicModes now
+    // does. Kept as a separate map (rather than reusing g_dynamicModes'
+    // now-different value type) since the two registration APIs have
+    // genuinely different contracts.
+    std::unordered_map<std::string, Mode>             g_registeredModes;
     std::unordered_map<std::string, std::string>      g_extensionOverrides;
     std::unordered_map<std::string, std::string>      g_filenameOverrides;
     // per-buffer-mode-cache follow-up: see CachedModeForBuffer's own doc
@@ -117,13 +147,15 @@ void RegisterDynamicMode(const std::string& name, const std::filesystem::path& l
                          const std::filesystem::path& queryPath, const std::filesystem::path& foldQueryPath,
                          const std::filesystem::path& importQueryPath) {
     const treesitter::Language language          = treesitter::LoadDynamicLanguage(libraryPath, name);
-    const std::string          querySource       = queryPath.empty() ? std::string() : ReadFileOrThrow(queryPath);
-    const std::string          foldQuerySource   = foldQueryPath.empty() ? std::string() : ReadFileOrThrow(foldQueryPath);
-    const std::string          importQuerySource = importQueryPath.empty() ? std::string() : ReadFileOrThrow(importQueryPath);
-    Mode mode = TreeSitterModeFromLanguage(name, language, querySource, foldQuerySource, importQuerySource);
+    std::string                querySource       = queryPath.empty() ? std::string() : ReadFileOrThrow(queryPath);
+    std::string                foldQuerySource   = foldQueryPath.empty() ? std::string() : ReadFileOrThrow(foldQueryPath);
+    std::string                importQuerySource = importQueryPath.empty() ? std::string() : ReadFileOrThrow(importQueryPath);
 
     const std::lock_guard lock(g_mutex);
-    g_dynamicModes.insert_or_assign(name, std::move(mode));
+    g_dynamicModes.insert_or_assign(name, DynamicModeEntry{.language          = language,
+                                                            .querySource       = std::move(querySource),
+                                                            .foldQuerySource   = std::move(foldQuerySource),
+                                                            .importQuerySource = std::move(importQuerySource)});
     // A re-registration under a name some already-cached buffer resolved to
     // would otherwise never take effect for it -- see g_modeCache's own
     // comment. Registration is rare (init.janet load time, or an
@@ -134,16 +166,33 @@ void RegisterDynamicMode(const std::string& name, const std::filesystem::path& l
 
 void RegisterMode(const std::string& name, Mode mode) {
     const std::lock_guard lock(g_mutex);
-    g_dynamicModes.insert_or_assign(name, std::move(mode));
+    g_registeredModes.insert_or_assign(name, std::move(mode));
     g_modeCache.clear();
 }
 
 std::optional<Mode> ModeByName(const std::string& name) {
+    // Copied out under g_mutex, then built/returned with it released --
+    // TreeSitterModeFromLanguage compiles tree-sitter queries, real work
+    // that shouldn't happen while holding a mutex every other mode
+    // lookup/registration also takes (the same reason the bundled-factory
+    // branch below already runs outside the lock).
+    std::optional<DynamicModeEntry> dynamicEntry;
     {
         const std::lock_guard lock(g_mutex);
+        // Rebuilt fresh on every lookup -- see DynamicModeEntry's own
+        // comment on why a cached, pre-built Mode isn't safe to hand out as
+        // copies here (a real, coredump-confirmed SIGSEGV: two threads
+        // sharing one non-thread-safe tree-sitter Parser).
         if (const auto it = g_dynamicModes.find(name); it != g_dynamicModes.end()) {
-            return it->second;
+            dynamicEntry = it->second;
         }
+        else if (const auto regIt = g_registeredModes.find(name); regIt != g_registeredModes.end()) {
+            return regIt->second;
+        }
+    }
+    if (dynamicEntry) {
+        return TreeSitterModeFromLanguage(name, dynamicEntry->language, dynamicEntry->querySource, dynamicEntry->foldQuerySource,
+                                          dynamicEntry->importQuerySource);
     }
     const auto& factories = BundledModeFactories();
     if (const auto it = factories.find(name); it != factories.end()) {
