@@ -327,7 +327,18 @@ LSP-against-the-wrong-toolchain prove it's needed in practice, not speculatively
       color, distinguishing `agent_thought_chunk` from `agent_message_chunk`) — v1 only
       widened `AcpPanel`'s own `DisplayStyle` (agent text/plan steps no longer share
       the exact same style as a plain user-message echo), deliberately not a full
-      theming pass. Separately: `Keymap::AmbiguousBindings()` is diagnostic-only (a
+      theming pass. **Composer input field is barely usable** (found 2026-08-26,
+      live, real-account testing): `Editor/MinibufferPrompt.h` — shared by every
+      echo-area prompt in the editor, not just this panel — is append/
+      remove-from-the-end only (`AppendChar`/`DeleteChar`, no cursor position, no
+      forward-delete, no arrow-key movement, no insert-in-the-middle); reported live
+      as effectively unreadable (very low contrast against the panel background) and
+      Backspace/Delete "not working" from the user's perspective. Needs a real
+      cursor-position-aware text-entry primitive (position index, insert-at-cursor,
+      forward/backward delete, Left/Right/Home/End) — a bigger change than this
+      panel alone, since every other prompt (find-file, M-x, goto-line, ...) shares
+      the same primitive and would need re-validating against a real cursor rather
+      than assuming end-of-text editing. Separately: `Keymap::AmbiguousBindings()` is diagnostic-only (a
       `CommandsTest.cpp` regression test), not enforcement — `Keymap::Bind` still lets a
       caller construct an unreachable-by-typing binding; a real structural fix (Emacs'
       own `define-key` semantics: reject/restructure a bind that would shadow an
