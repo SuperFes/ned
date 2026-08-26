@@ -5,12 +5,20 @@
 //
 // Threading, lifetime, and member-declaration order all mirror
 // Lsp/LspClient.h exactly (background jthread read loop marshaling onto the
-// main thread via ned::ui::EventLoop::Post; destroy only after
-// EventLoop::Run() has returned; transport_ declared after readThread_ so
-// its destructor's fd close is what unblocks the background thread's
-// in-flight blocking Transport::ReadMessage()) -- see that file's own header
-// comment for the full reasoning, none of which differs here and none of
-// which is repeated.
+// main thread via ned::ui::EventLoop::Post; transport_ declared after
+// readThread_ so its destructor's fd close is what unblocks the background
+// thread's in-flight blocking Transport::ReadMessage()) -- see that file's
+// own header comment for the full reasoning, none of which differs here and
+// none of which is repeated.
+//
+// lsp-use-after-free follow-up: that includes alive_ (see LspClient.h's own
+// header comment, corrected 2026-08-26) -- the earlier claim that this class
+// is "only ever destroyed after EventLoop::Run() has returned" was false for
+// LspClient's mid-session respawn path, confirmed live via ASan, and nothing
+// about AcpManager's own single-session model makes AcpClient immune to the
+// same hazard (a Post()ed callback from readThread_/stderrThread_ that
+// outlives the object, freed by AcpManager::EndSession, whether immediately
+// or after some delay -- no delay is actually safe, only alive_ is).
 //
 // Two real differences from LspClient:
 //
@@ -47,6 +55,7 @@
 
 #include <chrono>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <thread>
@@ -87,7 +96,11 @@ class AcpClient {
     // LspClient's own test constructor.
     AcpClient(Transport transport, ned::ui::EventLoop& eventLoop);
 
-    ~AcpClient() = default; // member destruction order does the real work -- see header comment
+    // lsp-use-after-free follow-up: no longer = default -- the body flips
+    // alive_ to false as its first statement (see LspClient.h's own header
+    // comment); member destruction order still does the rest of the real
+    // teardown work, same as before.
+    ~AcpClient();
 
     AcpClient(const AcpClient&)            = delete;
     AcpClient& operator=(const AcpClient&) = delete;
@@ -151,6 +164,10 @@ class AcpClient {
   private:
     void StartReadLoop();
     void StartStderrReadLoop(); // lsp-stderr-capture follow-up -- see header comment
+
+    // lsp-use-after-free follow-up: see LspClient.h's own header comment on
+    // alive_ and this file's header comment above.
+    std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
 
     std::jthread readThread_;   // declared before transport_ -- see header comment
     std::jthread stderrThread_; // ditto -- lsp-stderr-capture follow-up

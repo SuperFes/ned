@@ -392,6 +392,17 @@ TEST_CASE("A terminated event ends the session and reports it", "[Dap]") {
     std::string endedReason;
     fixture.manager.SetOnSessionEnded([&](std::string reason) { endedReason = std::move(reason); });
 
+    // lsp-use-after-free follow-up: EndSession now destroys the DapClient
+    // directly (immediate destruction is safe now that DapClient itself
+    // guards against a stray Post()ed callback -- see LspClient.h's own
+    // header comment on alive_), which joins its background read thread as
+    // part of destruction. That thread is deliberately still blocked in a
+    // real blocking read on this fixture's fake pipe (nothing ever sent it
+    // real EOF) -- closing the fixture's own write end first gives it real
+    // EOF, matching a real debug adapter process actually exiting.
+    ::close(fixture.adapterStdoutWrite);
+    fixture.adapterStdoutWrite = -1; // fixture's own destructor must not double-close
+
     fixture.client->DispatchFrame(EventFrame("terminated"));
     REQUIRE(fixture.manager.State() == DapManager::SessionState::Inactive);
     REQUIRE(endedReason == "Debug session terminated.");
@@ -405,6 +416,13 @@ TEST_CASE("StopSession sends a disconnect and tears down immediately", "[Dap]") 
 
     std::string endedReason;
     fixture.manager.SetOnSessionEnded([&](std::string reason) { endedReason = std::move(reason); });
+
+    // lsp-use-after-free follow-up: see "A terminated event ends the
+    // session and reports it"'s identical comment just above -- StopSession
+    // -> EndSession destroying the DapClient directly would otherwise join
+    // this fixture's deliberately-still-blocked read thread and hang.
+    ::close(fixture.adapterStdoutWrite);
+    fixture.adapterStdoutWrite = -1; // fixture's own destructor must not double-close
 
     REQUIRE(fixture.manager.StopSession() == "Debug session stopped.");
     REQUIRE(fixture.manager.State() == DapManager::SessionState::Inactive);

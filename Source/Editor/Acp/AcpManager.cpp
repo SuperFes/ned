@@ -243,8 +243,6 @@ text::Buffer* AcpManager::StartSession(const std::string& agentName) {
         buffer.AppendWhileReadOnly("\n--- new session ---\n");
     }
 
-    retired_.clear(); // safe here: nothing of a previous session is on the stack during a key-driven start
-
     if (!client_) {
         const auto argv = AcpAgentCommand(agentName);
         if (!argv) {
@@ -498,9 +496,15 @@ void AcpManager::EndSession(std::string reason) {
     pendingPermissionPrompt_.reset();
     pendingPermissionRespond_ = nullptr;
     livePlanEntryIndex_.reset();
-    if (client_) {
-        retired_.push_back(std::move(client_)); // never destroyed mid-callback -- see header comment
-    }
+    // lsp-use-after-free follow-up: client_ used to move into retired_ here
+    // instead of destroying in place, deferring to the next StartSession.
+    // Confirmed live elsewhere in this codebase that deferring isn't what
+    // actually makes this safe (LspClient's own identical pattern still
+    // raced a periodic tick against a background thread's own Post()ed
+    // callback for the same object) -- the real fix now lives in AcpClient
+    // itself (alive_, see LspClient.h's header comment), so plain immediate
+    // destruction is safe regardless of timing.
+    client_.reset();
     AppendToOutputBuffer("\n[" + reason + "]\n");
     PushSessionEvent(reason);
     if (onSessionEnded_) {

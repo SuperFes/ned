@@ -559,18 +559,23 @@ LspClient& LspManager::SetClientForTesting(std::string language, std::unique_ptr
 
 void LspManager::ClientDisconnected(const std::string& language) {
     // language may be a reference into the very LspClient (and its
-    // OnDisconnected closure) this function retires below -- copy it first
+    // OnDisconnected closure) this function destroys below -- copy it first
     // so the rest of this function isn't reading freed memory.
     const std::string languageCopy = language;
-    // lsp-use-after-free follow-up: retire, don't destroy in place -- see
-    // retired_'s own doc comment in LspManager.h for why an immediate
-    // clients_.erase() here was a real, confirmed use-after-free (this
-    // function runs from inside the client's own Post-marshaled
-    // SetOnDisconnected callback, and a second callback for the same
-    // instance -- a stray DispatchFrame -- can already be queued behind it).
-    if (auto node = clients_.extract(languageCopy); node) {
-        retired_.push_back(std::move(node.mapped()));
-    }
+    // lsp-use-after-free follow-up: this used to retire into a retired_
+    // vector instead of erasing immediately, on the theory that "wait for
+    // the next periodic tick before actually freeing" gave any in-flight
+    // Post()ed callback time to drain first. Confirmed live via ASan that
+    // this isn't actually safe -- LspClient::ExpireStaleRequests's own
+    // periodic tick and a client's background thread both Post() against
+    // EventLoop independently, with no ordering guarantee between them, so
+    // the tick can free a just-retired client while another callback for
+    // that exact object is still queued. The real fix now lives in
+    // LspClient itself (see its header comment on alive_) -- a stray
+    // Post()ed callback safely no-ops instead of touching freed memory
+    // regardless of when this destroys the object, so plain immediate
+    // erase() is safe again and retired_ is gone.
+    clients_.erase(languageCopy);
     // mode-line-lsp-status-round-2 follow-up: latch the disconnect so
     // StatusForLanguage can report it, distinct from "never configured" --
     // cleared the moment a fresh spawn succeeds (ClientForLanguage) or the
@@ -720,12 +725,6 @@ void LspManager::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
     for (const auto& entry : clients_) {
         entry.second->ExpireStaleRequests(maxAge);
     }
-    // lsp-use-after-free follow-up: actually free anything ClientDisconnected
-    // retired -- see retired_'s own doc comment in LspManager.h. This tick
-    // is always at least one full EventLoop::Run iteration after the
-    // retirement, long enough for any straggler Post()ed callback to have
-    // already run against the still-valid object.
-    retired_.clear();
 }
 
 void LspManager::HandlePublishDiagnostics(const Json& params, const std::string& language) {

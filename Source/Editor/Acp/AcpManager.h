@@ -226,11 +226,10 @@ class AcpManager {
     text::BufferList&   bufferList_;
     ned::ui::EventLoop& eventLoop_;
 
-    std::unique_ptr<AcpClient>              client_;
-    std::vector<std::unique_ptr<AcpClient>> retired_; // see DapManager::EndSession's identical reasoning -- never destroyed mid-callback
-    std::string                             agentName_;
-    std::string                             sessionId_;
-    SessionState                            state_ = SessionState::Inactive;
+    std::unique_ptr<AcpClient> client_;
+    std::string                agentName_;
+    std::string                sessionId_;
+    SessionState               state_ = SessionState::Inactive;
 
     std::optional<PermissionPrompt> pendingPermissionPrompt_;
     RespondFn                       pendingPermissionRespond_;

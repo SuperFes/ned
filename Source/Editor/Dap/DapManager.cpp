@@ -190,7 +190,6 @@ std::string DapManager::StartOrContinue(const std::string& language) {
         return "No launch configuration for " + language + " (ned/set-dap-launch).";
     }
 
-    retired_.clear(); // safe here: nothing of a previous session is on the stack during a key-driven start
     capabilities_ = Capabilities{}; // fresh adapter, fresh capabilities -- see the header's own doc comment
 
     if (!client_) {
@@ -627,9 +626,17 @@ void DapManager::EndSession(std::string reason) {
     stoppedFrameId_.reset();
     focusedThreadId_.reset();
     capabilities_ = Capabilities{};
-    if (client_) {
-        retired_.push_back(std::move(client_)); // see header comment — never destroyed mid-callback
-    }
+    // lsp-use-after-free follow-up: client_ used to move into retired_ here
+    // instead of destroying in place, deferring to the next StartOrContinue
+    // ("safe here: nothing of a previous session is on the stack" -- true,
+    // but confirmed live elsewhere in this codebase that deferring isn't
+    // actually what makes this safe: LspClient's own identical pattern still
+    // raced a periodic tick against a background thread's own Post()ed
+    // callback for the same object). The real fix now lives in DapClient
+    // itself (alive_, see LspClient.h's header comment) -- a stray Post()ed
+    // callback safely no-ops instead of touching freed memory regardless of
+    // when this destroys the object, so plain immediate destruction is safe.
+    client_.reset();
     if (onSessionEnded_) {
         onSessionEnded_(std::move(reason));
     }

@@ -9,6 +9,12 @@
 
 namespace ned::editor::acp {
 
+AcpClient::~AcpClient() {
+    // lsp-use-after-free follow-up: must be the first statement -- see
+    // LspClient.h's own header comment on alive_.
+    *alive_ = false;
+}
+
 AcpClient::AcpClient(std::vector<std::string> argv, ned::ui::EventLoop& eventLoop)
     : transport_(std::move(argv), /*captureStderr=*/true), eventLoop_(eventLoop) {
     StartReadLoop();
@@ -35,7 +41,10 @@ void AcpClient::StartReadLoop() {
                 // Malformed message, or (subprocess-hang-protection
                 // follow-up) a mid-message stall -- see LspClient.cpp's
                 // identical comment.
-                eventLoop_.Post([this, reason = std::string(e.what())] {
+                eventLoop_.Post([this, alive = alive_, reason = std::string(e.what())] {
+                    if (!*alive) {
+                        return; // lsp-use-after-free follow-up -- this AcpClient is gone
+                    }
                     LogMessage(LogCategory::Acp, LogSeverity::Warning, reason);
                     if (onDisconnected_) {
                         onDisconnected_(reason);
@@ -47,12 +56,13 @@ void AcpClient::StartReadLoop() {
                 // EOF -- agent exited (or this AcpClient is being destroyed,
                 // see header comment: Transport's destructor closing this
                 // end's fds is exactly what makes the blocking ReadMessage()
-                // call above finally return). Safe the same way LspClient's
-                // own equivalent Post is: this AcpClient is never destroyed
-                // while EventLoop::Run() might still process a pending Post,
-                // so this callback either runs before destruction starts or
-                // never runs at all.
-                eventLoop_.Post([this] {
+                // call above finally return). alive_ (see header comment) is
+                // what makes that safe, not an assumption about when this
+                // callback runs relative to destruction.
+                eventLoop_.Post([this, alive = alive_] {
+                    if (!*alive) {
+                        return; // lsp-use-after-free follow-up -- this AcpClient is gone
+                    }
                     LogMessage(LogCategory::Acp, LogSeverity::Warning, "agent exited (EOF)");
                     if (onDisconnected_) {
                         onDisconnected_("agent exited (EOF)");
@@ -63,7 +73,12 @@ void AcpClient::StartReadLoop() {
             if (message->empty()) {
                 continue; // a bare blank line -- see Transport::ReadMessage's own doc comment
             }
-            eventLoop_.Post([this, frameText = std::move(*message)]() mutable { DispatchFrame(frameText); });
+            eventLoop_.Post([this, alive = alive_, frameText = std::move(*message)]() mutable {
+                if (!*alive) {
+                    return; // lsp-use-after-free follow-up -- this AcpClient is gone
+                }
+                DispatchFrame(frameText);
+            });
         }
     });
 }
@@ -103,7 +118,7 @@ void AcpClient::StartStderrReadLoop() {
                 if (line.empty()) {
                     continue;
                 }
-                eventLoop_.Post([this, label, line = std::move(line)] {
+                eventLoop_.Post([label, line = std::move(line)] {
                     LogMessage(LogCategory::Acp, LogSeverity::Warning, label.empty() ? line : label + ": " + line);
                 });
             }

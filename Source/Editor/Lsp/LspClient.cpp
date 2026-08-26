@@ -19,6 +19,11 @@ namespace {
 } // namespace
 
 LspClient::~LspClient() {
+    // lsp-use-after-free follow-up: must be the first statement -- see this
+    // file's own header comment on alive_. Every already-posted callback
+    // capturing `this` also holds its own reference to this same bool, so
+    // this flip is visible to them regardless of when they actually run.
+    *alive_ = false;
     for (std::size_t i = 0; i < pending_.size(); ++i) {
         EndBackgroundActivity(kLspActivity); // see the header's destructor comment
     }
@@ -58,7 +63,10 @@ void LspClient::StartReadLoop() {
                 // fixed string) is what's reported, so a stall and a
                 // genuinely malformed frame are distinguishable in
                 // *Messages*.
-                eventLoop_.Post([this, reason = std::string(e.what())] {
+                eventLoop_.Post([this, alive = alive_, reason = std::string(e.what())] {
+                    if (!*alive) {
+                        return; // lsp-use-after-free follow-up -- this LspClient is gone
+                    }
                     LogMessage(LogCategory::Lsp, LogSeverity::Warning, reason);
                     if (onDisconnected_) {
                         onDisconnected_(reason);
@@ -74,13 +82,13 @@ void LspClient::StartReadLoop() {
                 // this LspClient's own destruction is a real possibility
                 // (Transport's destructor closing this end's fds is exactly
                 // what makes the blocking ReadFrame() call above finally
-                // return -- see header comment); that's safe here for the
-                // same reason DispatchFrame's own Post callback already is:
-                // this LspClient (and thus onDisconnected_) is never
-                // destroyed while EventLoop::Run() might still process a
-                // pending Post, so this callback either runs before
-                // destruction starts or never runs at all.
-                eventLoop_.Post([this] {
+                // return -- see header comment); alive_ (see header comment)
+                // is what makes that safe, not an assumption about when this
+                // callback runs relative to destruction.
+                eventLoop_.Post([this, alive = alive_] {
+                    if (!*alive) {
+                        return; // lsp-use-after-free follow-up -- this LspClient is gone
+                    }
                     LogMessage(LogCategory::Lsp, LogSeverity::Warning, "server exited (EOF)");
                     if (onDisconnected_) {
                         onDisconnected_("server exited (EOF)");
@@ -94,7 +102,12 @@ void LspClient::StartReadLoop() {
             // a diagnostic/hover/completion/code-action response arriving
             // here and updating real state (e.g. Buffer::SetDiagnostics) is
             // shown without needing an explicit "force a frame" call.
-            eventLoop_.Post([this, frameText = std::move(*frame)]() mutable { DispatchFrame(frameText); });
+            eventLoop_.Post([this, alive = alive_, frameText = std::move(*frame)]() mutable {
+                if (!*alive) {
+                    return; // lsp-use-after-free follow-up -- this LspClient is gone
+                }
+                DispatchFrame(frameText);
+            });
         }
     });
 }
@@ -137,7 +150,7 @@ void LspClient::StartStderrReadLoop() {
                 if (line.empty()) {
                     continue; // a blank line between real diagnostic output isn't worth a log entry
                 }
-                eventLoop_.Post([this, label, line = std::move(line)] {
+                eventLoop_.Post([label, line = std::move(line)] {
                     // diagnostics-log-rollup follow-up: LogMessage itself
                     // coalesces this against the immediately preceding entry
                     // when it repeats verbatim (a server that logs the same
