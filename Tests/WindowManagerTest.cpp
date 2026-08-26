@@ -63,10 +63,8 @@ struct Fixture {
 // own EventLoopCallbacks::onEvent comment): a keyboard Event goes straight
 // to FocusedWidget(), never broadcast through the Container tree the way a
 // mouse Event is, since every pane's BufferView would otherwise react to
-// the same keystroke regardless of which one is actually focused (unlike
-// FTXUI, which limited keyboard delivery to the focus-chain branch itself;
-// see Widget.h's own header comment on why Notcurses' flat focus registry
-// replaces that mechanism directly instead of replicating it in Container).
+// the same keystroke regardless of which one is actually focused (see
+// Widget.h's own header comment on Notcurses' flat focus registry).
 void FeedSequence(ned::ui::Widget& /*root*/, std::initializer_list<ned::ui::Event> events) {
     for (const ned::ui::Event& event : events) {
         if (ned::ui::Widget* focused = ned::ui::FocusedWidget()) {
@@ -86,12 +84,11 @@ std::string RowText(ned::ui::Screen& screen, int row, int width) {
     return out;
 }
 
-// FTXUI -> Notcurses migration: was ftxui::Render(screen, root->Render())
-// -- Layout.h's own Container needs its Box_() actually set before Paint()
-// can lay out its children at all (production code does this via
-// EventLoop's own onResize callback; nothing here ever calls that), so this
-// helper does both steps together: size a fresh Screen to widthxheight,
-// give root that same rectangle as its Box_(), and paint.
+// Layout.h's own Container needs its Box_() actually set before Paint() can
+// lay out its children at all (production code does this via EventLoop's own
+// onResize callback; nothing here ever calls that), so this helper does both
+// steps together: size a fresh Screen to widthxheight, give root that same
+// rectangle as its Box_(), and paint.
 void RenderFullScreen(ned::ui::Widget& root, ned::ui::Screen& screen) {
     root.SetBox_(ned::ui::Box{.x_min = 0, .x_max = screen.Width() - 1, .y_min = 0, .y_max = screen.Height() - 1});
     root.Paint(ned::ui::Canvas(screen, root.Box_()));
@@ -126,7 +123,7 @@ class CountingDiffProvider : public ned::editor::vcs::VcsProvider {
 TEST_CASE("A freshly constructed WindowManager has exactly one window", "[WindowManager]") {
     Fixture                fixture;
     ned::ui::WindowManager manager = fixture.Manager();
-    manager.TakeFocus(); // FTXUI -> Notcurses migration: see Fixture::Manager()'s own doc comment
+    manager.TakeFocus(); // see Fixture::Manager()'s own doc comment
 
     REQUIRE(manager.WindowCount() == 1);
 }
@@ -134,7 +131,7 @@ TEST_CASE("A freshly constructed WindowManager has exactly one window", "[Window
 TEST_CASE("SplitBelow creates a second window and keeps focus on the original", "[WindowManager]") {
     Fixture                fixture;
     ned::ui::WindowManager manager = fixture.Manager();
-    manager.TakeFocus(); // FTXUI -> Notcurses migration: see Fixture::Manager()'s own doc comment
+    manager.TakeFocus(); // see Fixture::Manager()'s own doc comment
 
     ned::ui::ActiveBuffer* originalActiveBuffer = &manager.FocusedActiveBuffer();
 
@@ -155,7 +152,7 @@ TEST_CASE("SplitBelow creates a second window and keeps focus on the original", 
 TEST_CASE("SplitRight creates a second window and keeps focus on the original", "[WindowManager]") {
     Fixture                fixture;
     ned::ui::WindowManager manager = fixture.Manager();
-    manager.TakeFocus(); // FTXUI -> Notcurses migration: see Fixture::Manager()'s own doc comment
+    manager.TakeFocus(); // see Fixture::Manager()'s own doc comment
 
     ned::ui::ActiveBuffer* originalActiveBuffer = &manager.FocusedActiveBuffer();
 
@@ -169,7 +166,7 @@ TEST_CASE("SplitRight creates a second window and keeps focus on the original", 
 TEST_CASE("Recursive splits produce three windows", "[WindowManager]") {
     Fixture                fixture;
     ned::ui::WindowManager manager = fixture.Manager();
-    manager.TakeFocus(); // FTXUI -> Notcurses migration: see Fixture::Manager()'s own doc comment
+    manager.TakeFocus(); // see Fixture::Manager()'s own doc comment
 
     ned::ui::Widget& root = manager.RootComponent();
     FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Character("2")}); // 2 windows
@@ -191,7 +188,7 @@ TEST_CASE("Splitting a pane that isn't first in tree order doesn't drop the new 
     // before splitting again is what actually reproduces it.
     Fixture                fixture;
     ned::ui::WindowManager manager = fixture.Manager();
-    manager.TakeFocus(); // FTXUI -> Notcurses migration: see Fixture::Manager()'s own doc comment
+    manager.TakeFocus(); // see Fixture::Manager()'s own doc comment
 
     ned::ui::Widget& root = manager.RootComponent();
     FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Character("2")}); // 2 panes
@@ -208,7 +205,7 @@ TEST_CASE("Splitting a pane that isn't first in tree order doesn't drop the new 
 TEST_CASE("other-window cycles focus between windows", "[WindowManager]") {
     Fixture                fixture;
     ned::ui::WindowManager manager = fixture.Manager();
-    manager.TakeFocus(); // FTXUI -> Notcurses migration: see Fixture::Manager()'s own doc comment
+    manager.TakeFocus(); // see Fixture::Manager()'s own doc comment
 
     ned::ui::ActiveBuffer* originalActiveBuffer = &manager.FocusedActiveBuffer();
 
@@ -226,7 +223,7 @@ TEST_CASE("other-window cycles focus between windows", "[WindowManager]") {
 TEST_CASE("delete-window on the focused pane in a 2-window split focuses the survivor", "[WindowManager]") {
     Fixture                fixture;
     ned::ui::WindowManager manager = fixture.Manager();
-    manager.TakeFocus(); // FTXUI -> Notcurses migration: see Fixture::Manager()'s own doc comment
+    manager.TakeFocus(); // see Fixture::Manager()'s own doc comment
 
     ned::ui::Widget& root = manager.RootComponent();
     FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Character("2")});
@@ -247,7 +244,7 @@ TEST_CASE("delete-window on the focused pane in a 2-window split focuses the sur
 TEST_CASE("delete-window on the sole window is a no-op reporting via statusMessage", "[WindowManager]") {
     Fixture                fixture;
     ned::ui::WindowManager manager = fixture.Manager();
-    manager.TakeFocus(); // FTXUI -> Notcurses migration: see Fixture::Manager()'s own doc comment
+    manager.TakeFocus(); // see Fixture::Manager()'s own doc comment
 
     ned::ui::Widget& root = manager.RootComponent();
     FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Character("0")});
@@ -259,7 +256,7 @@ TEST_CASE("delete-window on the sole window is a no-op reporting via statusMessa
 TEST_CASE("delete-other-windows collapses back to a single window", "[WindowManager]") {
     Fixture                fixture;
     ned::ui::WindowManager manager = fixture.Manager();
-    manager.TakeFocus(); // FTXUI -> Notcurses migration: see Fixture::Manager()'s own doc comment
+    manager.TakeFocus(); // see Fixture::Manager()'s own doc comment
 
     ned::ui::Widget& root = manager.RootComponent();
     FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Character("2")});
@@ -276,7 +273,7 @@ TEST_CASE("delete-other-windows collapses back to a single window", "[WindowMana
 TEST_CASE("delete-other-windows on the sole window is a safe no-op", "[WindowManager]") {
     Fixture                fixture;
     ned::ui::WindowManager manager = fixture.Manager();
-    manager.TakeFocus(); // FTXUI -> Notcurses migration: see Fixture::Manager()'s own doc comment
+    manager.TakeFocus(); // see Fixture::Manager()'s own doc comment
 
     ned::ui::Widget& root = manager.RootComponent();
     FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Character("1")});
@@ -289,7 +286,7 @@ TEST_CASE("Closing a buffer shown in a different, unfocused pane retargets that 
     Fixture                fixture;
     ned::text::Buffer&     other   = fixture.bufferList.CreateBuffer("other");
     ned::ui::WindowManager manager = fixture.Manager();
-    manager.TakeFocus(); // FTXUI -> Notcurses migration: see Fixture::Manager()'s own doc comment
+    manager.TakeFocus(); // see Fixture::Manager()'s own doc comment
 
     ned::ui::Widget& root = manager.RootComponent();
     FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Character("2")}); // 2 panes, both on "scratch"
@@ -316,7 +313,7 @@ TEST_CASE("Closing a buffer shown in an unfocused pane retargets it onto the mos
     ned::text::Buffer&     b       = fixture.bufferList.CreateBuffer("b");
     ned::text::Buffer&     closing = fixture.bufferList.CreateBuffer("closing");
     ned::ui::WindowManager manager = fixture.Manager();
-    manager.TakeFocus(); // FTXUI -> Notcurses migration: see Fixture::Manager()'s own doc comment
+    manager.TakeFocus(); // see Fixture::Manager()'s own doc comment
 
     ned::ui::Widget& root = manager.RootComponent();
     FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Character("2")}); // 2 panes, both on "scratch"
@@ -348,7 +345,7 @@ TEST_CASE("NotifyBufferClosing retargets every pane showing the closing buffer, 
     Fixture                fixture;
     ned::text::Buffer&     other   = fixture.bufferList.CreateBuffer("other");
     ned::ui::WindowManager manager = fixture.Manager();
-    manager.TakeFocus(); // FTXUI -> Notcurses migration: see Fixture::Manager()'s own doc comment
+    manager.TakeFocus(); // see Fixture::Manager()'s own doc comment
 
     ned::ui::Widget& root = manager.RootComponent();
     FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Character("2")}); // 2 panes
@@ -370,7 +367,7 @@ TEST_CASE("NotifyBufferClosing retargets every pane showing the closing buffer, 
 TEST_CASE("RootComponent renders both panes after a split without crashing", "[WindowManager]") {
     Fixture                fixture;
     ned::ui::WindowManager manager = fixture.Manager();
-    manager.TakeFocus(); // FTXUI -> Notcurses migration: see Fixture::Manager()'s own doc comment
+    manager.TakeFocus(); // see Fixture::Manager()'s own doc comment
 
     ned::ui::Widget& root = manager.RootComponent();
     FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Character("2")});
@@ -396,7 +393,7 @@ TEST_CASE("split-window-below is a safe no-op reachable through the real Dispatc
     // name that coverage explicitly and pin the exact keybindings.
     Fixture                fixture;
     ned::ui::WindowManager manager = fixture.Manager();
-    manager.TakeFocus(); // FTXUI -> Notcurses migration: see Fixture::Manager()'s own doc comment
+    manager.TakeFocus(); // see Fixture::Manager()'s own doc comment
     ned::ui::Widget& root = manager.RootComponent();
 
     FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Character("2")});
@@ -407,7 +404,7 @@ TEST_CASE("Switching a pane's active buffer resolves a fresh Mode for the new bu
           "[WindowManager]") {
     Fixture                fixture;
     ned::ui::WindowManager manager = fixture.Manager();
-    manager.TakeFocus(); // FTXUI -> Notcurses migration: see Fixture::Manager()'s own doc comment
+    manager.TakeFocus(); // see Fixture::Manager()'s own doc comment
 
     // fixture.buffer has no path, so ModeForBuffer resolves it to
     // fundamental-mode -- ModeLine renders "(fundamental-mode)" somewhere on
@@ -486,7 +483,7 @@ TEST_CASE("toggle-minimap flips Minimap/ScrollColumn active flags in lockstep op
 
     Fixture                fixture;
     ned::ui::WindowManager manager = fixture.Manager();
-    manager.TakeFocus(); // FTXUI -> Notcurses migration: see Fixture::Manager()'s own doc comment
+    manager.TakeFocus(); // see Fixture::Manager()'s own doc comment
 
     ned::ui::Widget& root = manager.RootComponent();
 

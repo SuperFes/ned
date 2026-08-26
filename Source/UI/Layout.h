@@ -1,13 +1,9 @@
 //
-// Hand-rolled box layout (FTXUI -> Notcurses migration, Phase 3) --
-// replaces ftxui::Container::Horizontal/Vertical plus the size()/flex()/
-// Maybe() decorators main.cpp's and WindowManager's own composition used to
-// layer on top of each child individually. Notcurses has no layout system
-// of its own at all (see Widget.h's own header comment), so this project
-// owns the box math now instead of getting it for free from the TUI
-// library, the same "own it directly" shape this migration already took
-// for the event loop (EventLoop.h) and terminal-cell painting (Widget.h's
-// own Screen/Canvas).
+// Hand-rolled box layout for main.cpp's and WindowManager's own
+// composition. Notcurses has no layout system of its own at all (see
+// Widget.h's own header comment), so this project owns the box math
+// directly, the same way it owns the event loop (EventLoop.h) and
+// terminal-cell painting (Widget.h's own Screen/Canvas).
 //
 
 #ifndef NED_UI_LAYOUT_H
@@ -23,11 +19,10 @@ namespace ned::ui {
 enum class Axis { Horizontal,
                   Vertical };
 
-// How much space one child reserves along a Container's main axis --
-// mirrors size(WIDTH/HEIGHT, EQUAL, n) (Fixed), flex() (Flex), and the
-// per-frame ElementDecorator lambda main.cpp's own ProjectSidebar sizing
-// used (DynamicFixed) -- all three real call sites this codebase's
-// composition roots actually needed, nothing more speculative.
+// How much space one child reserves along a Container's main axis -- Fixed,
+// DynamicFixed (main.cpp's own ProjectSidebar sizing reads its width fresh
+// every Layout() call), and Flex are the three shapes this codebase's
+// composition roots actually need, nothing more speculative.
 struct SizeSpec {
     enum class Kind { Fixed,
                       DynamicFixed,
@@ -48,26 +43,17 @@ struct SizeSpec {
 };
 
 // A container Widget: lays out child widgets along one axis, recomputing
-// every child's Box fresh on every Paint() call -- mirrors FTXUI's own
-// "rebuild the whole Element tree, including every size()/flex()
-// decorator, fresh every single frame" contract (confirmed during the
-// original TermOx -> FTXUI migration, see ROADMAP.md), just implemented
-// directly here instead of implicitly via a parallel Element tree. A child
-// widget with `widget->active == false` (Widget.h's own field, was FTXUI's
-// Maybe(component, bool*) target) is skipped entirely -- zero space
-// reserved for it, and neither Paint nor OnEvent ever reaches it while
-// inactive -- which is what makes a separate Maybe-equivalent type
-// unnecessary here: every real use of Maybe in this codebase (just
-// ProjectSidebar) already toggles its own `active` field directly.
+// every child's Box fresh on every Paint() call. A child widget with
+// `widget->active == false` (Widget.h's own field) is skipped entirely --
+// zero space reserved for it, and neither Paint nor OnEvent ever reaches it
+// while inactive -- which is what makes a separate "conditionally present
+// child" type unnecessary here: every real case of that in this codebase
+// (just ProjectSidebar) already toggles its own `active` field directly.
 //
 // OnEvent forwards to every child unconditionally (the same "every leaf
 // gets every event, hit-test yourself" contract Widget.h's own header
 // comment documents) -- a Container is not itself a hit-testing dispatcher,
-// it only decides *whether* a child exists in the tree this frame, exactly
-// mirroring what Maybe's own active-flag check already did and what a
-// FTXUI Container's own OnEvent already did (broadcast to every child,
-// first non-consuming return continuing to the next -- confirmed by
-// reading ContainerBase::OnEvent during the original migration).
+// it only decides *whether* a child exists in the tree this frame.
 class Container : public Widget {
   public:
     struct Child {

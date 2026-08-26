@@ -1353,12 +1353,9 @@ void WindowManager::ResizeFocusedWindow(WindowNode::Kind axis, bool grow) {
 }
 
 void WindowManager::RebuildComponentTree() {
-    // FTXUI -> Notcurses migration: was DetachAllChildren()+Add(... |
-    // ApplyFlex) against a Vertical Container -- Layout.h's own Container
-    // has no separate "flex the one child to fill the container" concept
-    // to apply after the fact; SizeSpec::Flex() on the child itself (below)
-    // is what does that directly, the same way BuildComponent's own
-    // Split cases already give each of their two children a Flex weight.
+    // SizeSpec::Flex() on the child itself is what flexes it to fill
+    // rootComponent_, the same way BuildComponent's own Split cases already
+    // give each of their two children a Flex weight.
     rootComponent_.SetChildren({
         {&BuildComponent(root_.get()), SizeSpec::Flex()},
     });

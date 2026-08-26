@@ -35,11 +35,10 @@ Widget* FocusedWidget() {
 namespace {
     // Standard-ish ANSI 16-color RGB approximations, in Palette16 index
     // order (0=Black ... 15=BrightWhite) -- xterm's own default palette
-    // values, the same table every terminal-agnostic tool (including
-    // FTXUI's own Color::Interpolate) has to fall back on since there's no
-    // way to query a terminal's actually-configured palette RGB values
-    // in-band. Only used by Color::Interpolate below; Screen::Flush never
-    // needs this; it hands Palette16 indices straight to Notcurses.
+    // values, needed because there's no way to query a terminal's
+    // actually-configured palette RGB values in-band. Only used by
+    // Color::Interpolate below; Screen::Flush never needs this; it hands
+    // Palette16 indices straight to Notcurses.
     constexpr std::uint8_t kPalette16Rgb[16][3] = {
         {0x00, 0x00, 0x00},
         {0x80, 0x00, 0x00},
@@ -149,8 +148,8 @@ MouseEvent Event::mouse() const {
 namespace {
     // Turns a Color into real Notcurses plane state -- the one place a
     // Color's kind/RGB bytes actually become ncplane_set_fg_*/set_bg_*
-    // calls, mirroring where Color::ToFtxui() used to live under FTXUI. No
-    // public accessor needed elsewhere: Screen::Flush is the only caller.
+    // calls. No public accessor needed elsewhere: Screen::Flush is the only
+    // caller.
     void ApplyForeground(ncplane* plane, const Color& color) {
         switch (color.kind) {
             case Color::Kind::Default:
@@ -186,14 +185,11 @@ void Screen::Flush(ncplane* plane) {
             const Cell& cell = cells_[static_cast<std::size_t>(y) * static_cast<std::size_t>(width_) + static_cast<std::size_t>(x)];
 
             // `inverted` swaps which Color goes to which Notcurses channel
-            // rather than relying on NCSTYLE_ITALIC-style style bit --
-            // Notcurses does have NCSTYLE_ITALIC/NCSTYLE_BOLD/
-            // NCSTYLE_UNDERLINE/NCSTYLE_STRUCK, but no "reverse video" style
-            // bit is applied here since a manual swap composes correctly
-            // with true-color foregrounds/backgrounds the same way
-            // ftxui::Cell's own .inverted field used to (FTXUI applied it
-            // as a post-hoc color swap at its own Screen::ToString() time,
-            // not a terminal-level SGR reverse code either).
+            // rather than relying on a style bit -- Notcurses does have
+            // NCSTYLE_ITALIC/NCSTYLE_BOLD/NCSTYLE_UNDERLINE/NCSTYLE_STRUCK,
+            // but no "reverse video" style bit, and a manual swap composes
+            // correctly with true-color foregrounds/backgrounds where a
+            // terminal-level SGR reverse code wouldn't.
             const Color& fg = cell.inverted ? cell.background_color : cell.foreground_color;
             const Color& bg = cell.inverted ? cell.foreground_color : cell.background_color;
             ApplyForeground(plane, fg);

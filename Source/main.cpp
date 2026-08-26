@@ -94,10 +94,8 @@ namespace {
 // actual configured colors (see UI/TerminalColorProbe.h for why this can't
 // just happen on every launch) and writes a Theme file, then exits without
 // starting the editor UI at all -- this must run and finish strictly before
-// any ned::ui::EventLoop is constructed (FTXUI -> Notcurses migration: was
-// "before any ftxui::ScreenInteractive is constructed" -- same constraint,
-// EventLoop's constructor is what calls notcurses_core_init, which is what
-// starts reading stdin now).
+// any ned::ui::EventLoop is constructed, since EventLoop's constructor is
+// what calls notcurses_core_init, which is what starts reading stdin.
 //
 // startup-mode-unification follow-up: transparent/outputPath are already
 // parsed by main()'s own single CLI::App (see main() below) -- this used to
@@ -224,17 +222,6 @@ auto main(int argc, char** argv) -> int {
         ->excludes(detectThemeOpt)
         ->excludes(lspBrokerOpt)
         ->group("Startup modes");
-    // command-line-parameter-handling follow-up: --force-binary is the
-    // CLI-argument-time escape hatch for BufferList::OpenOrCreateFile's
-    // binary refusal (there's no interactive session to ask a y/n
-    // confirmation through at this point in startup, no EventLoop, no
-    // BufferView yet), and `paths` accepts any number of file/directory
-    // arguments -- `ned a.txt b.txt c.txt` opens all three as buffers
-    // (see the extra-paths loop below), not just the first. With
-    // --detect-theme, this same `paths` slot instead means a single
-    // optional theme-file output path -- the two modes' positionals never
-    // apply at once, so sharing one CLI11 positional needs no special
-    // handling here.
     app.add_flag("--force-binary", forceBinary,
                  "Open files that look binary anyway, without an interactive confirmation");
     app.add_flag("--no-restore", noRestore,
@@ -252,6 +239,7 @@ auto main(int argc, char** argv) -> int {
     if (detectTheme) {
         return RunDetectTheme(transparent, paths.empty() ? std::nullopt : std::optional(paths.front()));
     }
+
     // `ned --lsp-broker`: runs the headless LSP broker daemon itself (see
     // Editor/Lsp/LspBrokerMain.h) instead of the interactive editor --
     // dispatched here, strictly before EventLoop/Notcurses construct, same
@@ -262,6 +250,7 @@ auto main(int argc, char** argv) -> int {
     if (lspBroker) {
         return ned::editor::lsp::RunLspBrokerDaemon();
     }
+
     if (lspBrokerStop) {
         return RunLspBrokerStop();
     }
@@ -664,13 +653,11 @@ auto main(int argc, char** argv) -> int {
         }
     }
 
-    // FTXUI -> Notcurses migration: every widget is still heap-allocated
-    // via shared_ptr, but no longer because anything requires it the way
-    // ftxui::ComponentBase did -- ned::ui::Widget has no such ownership
-    // contract at all (see Widget.h's own header comment). Kept anyway,
-    // unchanged, purely so widget-specific methods (SetScrollBar,
-    // RevealPath, etc.) can still be called directly by typed pointer, the
-    // same cross-widget wiring this composition root already established.
+    // Heap-allocated via shared_ptr -- ned::ui::Widget itself has no
+    // ownership contract requiring this (see Widget.h's own header comment)
+    // -- purely so widget-specific methods (SetScrollBar, RevealPath, etc.)
+    // can still be called directly by typed pointer, the same cross-widget
+    // wiring this composition root already established.
     //
     // Window-splitting follow-up: WindowManager now owns everything that
     // used to be a single BufferView/ModeLine/ScrollBar/pair-of-
@@ -810,11 +797,9 @@ auto main(int argc, char** argv) -> int {
     // -- see ProjectSidebar::UpdateResize), so it can't be a fixed value
     // computed once at composition time the way every other widget's is --
     // SizeSpec::DynamicFixed (Layout.h) is read fresh every single
-    // Container::Paint() call (the direct replacement for FTXUI's own
-    // per-frame ElementDecorator lambda, confirmed during the original
-    // TermOx -> FTXUI migration to be re-invoked every Render() call), so
-    // it always reflects whatever ProjectSidebar::Width() currently is --
-    // including the 1-column strip Width() reports while collapsed
+    // Container::Paint() call, so it always reflects whatever
+    // ProjectSidebar::Width() currently is -- including the 1-column strip
+    // Width() reports while collapsed
     // (chrome-redesign follow-up: hiding the sidebar is a collapse now,
     // never an active-flag flip, so its double-click-to-expand border strip
     // always stays laid out and clickable).
@@ -842,18 +827,12 @@ auto main(int argc, char** argv) -> int {
                                        {echoArea.get(), SizeSpec::Fixed(1)},
                                    });
 
-    // FTXUI -> Notcurses migration: WindowManager::TakeFocus's own doc
-    // comment used to explain why this had to run here, after head was
-    // fully assembled, rather than from WindowManager's own constructor --
-    // ftxui::ComponentBase::TakeFocus() walked up through real *parent*
-    // pointers that didn't exist yet at construction time. Widget::TakeFocus
-    // (Widget.h) has no such dependency at all anymore -- it's a flat,
-    // direct write to a process-wide registry, indifferent to whatever tree
-    // shape does or doesn't exist around the target widget -- so this call
-    // would now work identically from inside WindowManager's own
-    // constructor too. Left at this exact call site anyway: moving it would
-    // be a pure refactor with no behavior change, and keeping it here needs
-    // no new reasoning to justify.
+    // Widget::TakeFocus (Widget.h) is a flat, direct write to a
+    // process-wide registry, indifferent to whatever tree shape does or
+    // doesn't exist around the target widget, so this call would work
+    // identically from inside WindowManager's own constructor too. Left at
+    // this exact call site anyway: moving it would be a pure refactor with
+    // no behavior change.
     windowManager->TakeFocus();
 
     // open-binary-anyway follow-up: deferred from the initial CLI-argument
@@ -915,23 +894,10 @@ auto main(int argc, char** argv) -> int {
         (*promptNext)();
     }
 
-    // FTXUI -> Notcurses migration: the Konsole-specific workaround that
-    // used to live here (entering the alternate screen buffer and homing
-    // the cursor manually, before FTXUI's own ScreenInteractive::Fullscreen()
-    // did, to sidestep a real FTXUI Screen::ToString()-specific first-frame
-    // cursor-position bug -- see this file's own git history for the full
-    // root-cause account) doesn't carry over: it was a workaround for a bug
-    // in FTXUI's own frame-0 rendering logic specifically, and Notcurses
-    // has an entirely different rendering pipeline (EventLoop's constructor
-    // -- notcurses_core_init -- already owns entering the alternate screen
-    // buffer and placing the cursor itself). Flagged here as a known Phase
-    // 4 item: if a similar first-launch rendering glitch resurfaces on
-    // Konsole under Notcurses, it needs fresh root-causing against
-    // Notcurses' own renderer, not a blind reapplication of this exact fix.
-
-    // FTXUI -> Notcurses migration: EventLoop's constructor is what starts
-    // reading stdin now (see the --detect-theme branch's own comment above
-    // for why RunDetectTheme must finish strictly before this point).
+    // EventLoop's constructor (notcurses_core_init) is what enters the
+    // alternate screen buffer, places the cursor, and starts reading stdin
+    // (see the --detect-theme branch's own comment above for why
+    // RunDetectTheme must finish strictly before this point).
     EventLoop eventLoop;
 
     // background-mode-prewarm follow-up: builds every already-open buffer's
@@ -1053,12 +1019,11 @@ auto main(int argc, char** argv) -> int {
     ned::editor::acp::AcpManager acpManager(bufferList, eventLoop);
     windowManager->SetAcpManager(&acpManager);
 
-    // FTXUI -> Notcurses migration: BufferView's completion-debounce/
-    // status-message-idle-timeout DeadlineTimers and ScrollArrowButton's
-    // press-and-hold repeat both need a real EventLoop& too (see their own
-    // SetEventLoop doc comments) -- forwarded to every pane, present and
-    // future, the same "connect after construction" shape SetProjectSidebar/
-    // SetLspManager already establish.
+    // BufferView's completion-debounce/status-message-idle-timeout
+    // DeadlineTimers and ScrollArrowButton's press-and-hold repeat both need
+    // a real EventLoop& too (see their own SetEventLoop doc comments) --
+    // forwarded to every pane, present and future, the same "connect after
+    // construction" shape SetProjectSidebar/SetLspManager already establish.
     windowManager->SetEventLoop(&eventLoop);
 
     // Auto-saved-scratch-pads follow-up: not started by BufferView's own
@@ -1113,12 +1078,11 @@ auto main(int argc, char** argv) -> int {
         }
     }
 
-    // EventLoop's constructor too, via notcurses_mice_enable(NCMICE_ALL_EVENTS)
-    // -- there's nothing left to set explicitly here for either concern.
+    // Mouse events are enabled by EventLoop's constructor too, via
+    // notcurses_mice_enable(NCMICE_ALL_EVENTS) -- nothing left to set
+    // explicitly here for that.
     // A single Screen (Widget.h) reused across every frame, resized to
-    // match the terminal on every onResize callback -- this composition
-    // root's own direct replacement for what used to be an implicit
-    // ftxui::Screen FTXUI itself owned and rebuilt every Render() call.
+    // match the terminal on every onResize callback.
     Screen screenBuffer(0, 0);
 
     // background-activity-spinner follow-up: while any BackgroundActivity is

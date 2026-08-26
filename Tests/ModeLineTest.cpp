@@ -157,7 +157,7 @@ TEST_CASE("ModeLine shows the buffer name and 1-indexed line:column", "[ModeLine
     // colors bit-for-bit: Interpolate gamma-corrects (pow(x, 2.2) then
     // pow(_, 1/2.2), truncated back to uint8_t), which doesn't always
     // round-trip losslessly at the endpoints for an arbitrary starting RGB
-    // value (confirmed against FTXUI's own real color.cpp, not assumed).
+    // value.
     REQUIRE(screen.PixelAt(0, 0).background_color ==
             ned::ui::Color::Interpolate(0.0F, theme.modeLineGradientStart, theme.modeLineGradientEnd));
     REQUIRE(screen.PixelAt(39, 0).background_color ==

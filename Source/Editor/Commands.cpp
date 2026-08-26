@@ -3010,11 +3010,9 @@ Keymap BuildDefaultGlobalKeymap() {
     // wiring an already-decodable chord to a command, not new decoding work.
     keymap.Bind(ParseKeySequence("C-LEFT"), "backward-word");
     keymap.Bind(ParseKeySequence("C-RIGHT"), "forward-word");
-    // Shift+Arrow follow-up: KeyTranslation.cpp now decodes these (built
-    // directly from the raw xterm CSI sequence -- see its own comment,
-    // FTXUI has no pre-built Shift+Arrow constant the way it does for
-    // Ctrl+Arrow); ParseKeyChord resolves "S-LEFT" etc the same way it
-    // already resolves "C-LEFT".
+    // KeyTranslation.cpp decodes Shift+Arrow off ncinput::modifiers the
+    // same uniform way it decodes every other modifier; ParseKeyChord
+    // resolves "S-LEFT" etc the same way it already resolves "C-LEFT".
     keymap.Bind(ParseKeySequence("S-LEFT"), "shift-select-backward-char");
     keymap.Bind(ParseKeySequence("S-RIGHT"), "shift-select-forward-char");
     keymap.Bind(ParseKeySequence("S-UP"), "shift-select-previous-line");
@@ -3039,11 +3037,7 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("C-r"), "isearch-backward");
     // Emacs binds these to M-%/M-f/M-b. Both real Meta chords and the
     // ESC-prefix fallback are bound (same "cover both real input shapes"
-    // reasoning as M-x/M-w/M-/ elsewhere in this function) -- the comment
-    // this replaces called Alt-detection unreliable, which was stale even
-    // when written (KeyTranslation.h's own header comment already
-    // documents real, reliable Meta detection post-FTXUI-migration); only
-    // M-x had actually gotten the dual-binding treatment until now.
+    // reasoning as M-x/M-w/M-/ elsewhere in this function).
     keymap.Bind(ParseKeySequence("M-%"), "query-replace-regexp");
     keymap.Bind(ParseKeySequence("ESC %"), "query-replace-regexp");
     keymap.Bind(ParseKeySequence("C-x C-f"), "find-file");
@@ -3216,9 +3210,8 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("ESC UP"), "move-line-up");
     keymap.Bind(ParseKeySequence("M-DOWN"), "move-line-down");
     keymap.Bind(ParseKeySequence("ESC DOWN"), "move-line-down");
-    // Multi-cursor phase. C-UP/C-DOWN were free (KeyTranslation has
-    // delivered Ctrl+Arrow since the FTXUI migration; nothing ever bound
-    // them) and terminal-reliable, unlike the cross-editor Ctrl+Alt+Arrow
+    // C-UP/C-DOWN were free (nothing ever bound them) and terminal-reliable,
+    // unlike the cross-editor Ctrl+Alt+Arrow
     // or Ctrl+D conventions (C-d is delete-char here, per the keybinding
     // audit's own note that no standard chord was free). M-n mirrors
     // Emacs' multiple-cursors ecosystem living on M-prefixed keys; its
@@ -3271,10 +3264,7 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("C-M-b"), "backward-sexp");
     keymap.Bind(ParseKeySequence("M-z"), "zap-to-char");
     keymap.Bind(ParseKeySequence("ESC z"), "zap-to-char");
-    // Unlike the ESC-only bindings above (whose own comment is stale --
-    // real Alt/Meta detection is reliable post-FTXUI-migration, see
-    // Source/UI/KeyTranslation.h's own header comment -- flagged here, not
-    // fixed, to keep this change focused), M-x is bound both ways
+    // Unlike the ESC-only bindings above, M-x is bound both ways
     // deliberately: a real fast Alt+x press arrives as a single Meta-chord
     // ("M-x"), while a genuinely separate Escape-then-x press arrives as two
     // chords ("ESC x") -- Keymap/KeymapStack::Resolve do pure exact-chord

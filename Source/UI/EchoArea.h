@@ -30,8 +30,8 @@ namespace ned::ui {
 // span between them. Every other caller of statusMessage_ keeps writing
 // plain text and is completely unaffected. EmphasizeForEchoArea marks the
 // selected candidate (bold); DimForEchoArea marks the rest (foreground
-// blended halfway toward the background, the same
-// ftxui::Color::Interpolate mechanism ModeLine's gradient already uses).
+// blended halfway toward the background, the same Color::Interpolate
+// mechanism ModeLine's gradient already uses).
 [[nodiscard]] std::string EmphasizeForEchoArea(std::string_view text);
 [[nodiscard]] std::string DimForEchoArea(std::string_view text);
 

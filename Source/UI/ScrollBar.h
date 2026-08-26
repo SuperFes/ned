@@ -1,10 +1,6 @@
 //
 // A vertical scroll bar: a proportional thumb over a track, click-to-jump
-// and drag-to-scroll (scroll-bar follow-up). TermOx -> FTXUI migration: this
-// is a genuinely new file, not a port -- ox::ScrollBar was a vendored
-// TermOx widget with no FTXUI equivalent, so this rebuilds the same feature
-// from scratch rather than dropping it (an explicit hard requirement of the
-// migration plan).
+// and drag-to-scroll.
 //
 
 #ifndef NED_UI_SCROLLBAR_H

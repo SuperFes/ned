@@ -27,27 +27,24 @@
 
 namespace ned::ui {
 
-// Color has moved to Widget.h (FTXUI -> Notcurses migration): Cell (also
-// Widget.h) needs to store one directly, so Widget.h can no longer depend
-// on Theme.h the way it would if Color stayed here. Still the same
-// Default/Palette16/TrueColor shape, same rationale (ThemeFile.cpp's own
-// round-trip text serialization needs the kind/RGB bytes back out, unlike
-// an opaque library color type) -- see Widget.h's own comment on Color.
+// Color lives in Widget.h, since Cell (also Widget.h) needs to store one
+// directly -- see Widget.h's own comment on Color for the
+// Default/Palette16/TrueColor shape and why it isn't an opaque library
+// color type (ThemeFile.cpp's own round-trip text serialization needs the
+// kind/RGB bytes back out).
 
-// A pared-down replacement for esc::Brush -- background/foreground plus
-// individual bool trait fields rather than a combinable Trait bitmask, since
-// this codebase only ever used Bold and Italic (checked directly, not
-// assumed) and Cell (Widget.h) already stores traits as individual bools,
-// making "apply a Brush to a Cell" a direct field-by-field copy with no
-// bitmask testing needed.
+// background/foreground plus individual bool trait fields (this codebase
+// only ever uses Bold and Italic) rather than a combinable trait bitmask,
+// since Cell (Widget.h) already stores traits as individual bools, making
+// "apply a Brush to a Cell" a direct field-by-field copy with no bitmask
+// testing needed.
 struct Brush {
     Color background = Color::Default;
     Color foreground = Color::Default;
     bool  bold       = false;
     bool  italic     = false;
     // Org-mode syntax-highlighting follow-up: back Org's own _underline_/
-    // +strikethrough+ inline markup -- confirmed real ftxui::Cell fields
-    // (not assumed) by reading cell.hpp directly before relying on them.
+    // +strikethrough+ inline markup.
     bool underlined    = false;
     bool strikethrough = false;
 
@@ -55,12 +52,10 @@ struct Brush {
 
     // Paints this Brush onto a real Cell -- the one place background/
     // foreground/bold/italic/underlined/strikethrough actually become a
-    // Cell's own fields, used by every widget's Paint() the same way old
-    // widgets wrote ox::Glyph{.symbol = ..., .brush = someBrush} directly.
-    // A plain field-by-field copy now (FTXUI -> Notcurses migration) --
-    // Cell's foreground_color/background_color are this file's own Color
-    // type directly, so there's no per-cell ToFtxui()-style conversion left
-    // to do here at all; Screen::Flush (Widget.cpp) is the only place a
+    // Cell's own fields, used by every widget's Paint(). A plain
+    // field-by-field copy: Cell's foreground_color/background_color are
+    // this file's own Color type directly, so there's no per-cell
+    // conversion to do here; Screen::Flush (Widget.cpp) is the only place a
     // Color still becomes a real terminal color.
     void ApplyTo(Cell& cell) const {
         cell.background_color = background;

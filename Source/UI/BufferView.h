@@ -92,20 +92,12 @@ class BufferView : public Widget {
 
     void Paint(Canvas c) override;
     bool OnEvent(const Event& event) override;
-    bool Focusable() const override; // was FocusPolicy::Strong
+    bool Focusable() const override;
 
-    // FTXUI -> Notcurses migration: there is no more per-frame OnAnimation
-    // hook to override here (Notcurses' own EventLoop has no free-running
-    // render-loop tick at all) -- the automatic-completion debounce and
-    // status-message idle-timeout deadlines this used to drive both fire
-    // via DeadlineTimer (EventLoop.h) instead now; see
-    // completionDebounceDeadline_/statusMessageChangedAt_'s own doc
-    // comments.
-
-    // Local cursor position for the real terminal caret -- was ox::Widget's
-    // own `cursor` field. A pure, independent computation, deliberately NOT
-    // cached from Paint() -- see the .cpp definition's own comment for why
-    // that caused a real, reported one-frame-stale cursor bug.
+    // Local cursor position for the real terminal caret. A pure, independent
+    // computation, deliberately NOT cached from Paint() -- see the .cpp
+    // definition's own comment for why that caused a real, reported
+    // one-frame-stale cursor bug.
     [[nodiscard]] std::optional<Point> CursorPosition() const override;
 
     // Scroll-bar follow-up: topLine_ read/write for an externally-owned
@@ -154,11 +146,9 @@ class BufferView : public Widget {
 
     // Registers the left-side project tree so toggle-project-sidebar
     // (project-sidebar follow-up) can flip its Widget::active flag; nullptr
-    // (the default) means the toggle command is a no-op. Unlike the
-    // pre-migration version, flipping .active alone is now sufficient --
-    // no SetSidebarRow/forced-reflow equivalent is needed (FTXUI rebuilds
-    // its element tree fresh every frame; confirmed during the TermOx ->
-    // FTXUI migration, see ROADMAP.md).
+    // (the default) means the toggle command is a no-op. Flipping .active
+    // alone is sufficient -- every widget recomputes its own layout/paint
+    // fresh each frame, so no separate forced-reflow step is needed.
     void SetProjectSidebar(ProjectSidebar* sidebar);
 
     // rich-theme-set follow-up (Phase 1): registers the callback the
@@ -372,14 +362,12 @@ class BufferView : public Widget {
     // needed, same reasoning as RequestDiagnosticsBufferForTesting above.
     void RequestProjectFindReferencesForTesting();
 
-    // FTXUI -> Notcurses migration: replaces
-    // ftxui::ScreenInteractive::Active() (used to end the whole app on
-    // `quit`/confirmed ConfirmQuit) and backs completionDebounceDeadline_/
+    // Registers the EventLoop used to end the whole app on `quit`/confirmed
+    // ConfirmQuit, and to back completionDebounceDeadline_/
     // statusMessageChangedAt_'s own DeadlineTimer-based deadlines (see their
     // doc comments below). Unset (the default, nullptr) makes `quit` a
     // no-op instead of a null-deref -- every unit test, and any other
-    // headless use of BufferView, matching the exact null-check contract
-    // ftxui::ScreenInteractive::Active() itself used to require here.
+    // headless use of BufferView, relies on this.
     void SetEventLoop(EventLoop* eventLoop);
 
     // Entry point for TabBar's close-icon click (tab-close follow-up) --
@@ -2517,7 +2505,7 @@ class BufferView : public Widget {
                                                               const std::vector<int>& rowContentEndColumn, std::size_t gutterWidth);
 
     // hover/completion follow-up. See Command.h's InteractiveRequest::
-    // LspComplete doc comment and this class's own OnAnimation for the
+    // LspComplete doc comment and completionDebounceTimer_ above for the
     // request/debounce flow; GhostCompletion itself is transient UI state,
     // not modal -- it coexists with ordinary InputMode::Normal editing
     // rather than replacing it (no dedicated InputMode value), the same way
@@ -2538,18 +2526,17 @@ class BufferView : public Widget {
     std::optional<GhostCompletion> ghostCompletion_;
 
     // Debounce deadline for an automatic completion request -- set by
-    // MaybeScheduleAutoCompletion, consumed by OnAnimation, which fires
-    // RequestCompletionAtPoint() once steady_clock::now() reaches it and
-    // clears it. std::nullopt means no request pending. Overwriting it on
-    // every qualifying keystroke (rather than tracking multiple pending
-    // deadlines) is what makes this act as a debounce, not a fixed-interval
-    // repeat -- more typing keeps pushing the deadline out.
+    // MaybeScheduleAutoCompletion, consumed once completionDebounceTimer_
+    // below fires RequestCompletionAtPoint() and clears it. std::nullopt
+    // means no request pending. Overwriting it on every qualifying keystroke
+    // (rather than tracking multiple pending deadlines) is what makes this
+    // act as a debounce, not a fixed-interval repeat -- more typing keeps
+    // pushing the deadline out.
     std::optional<std::chrono::steady_clock::time_point> completionDebounceDeadline_;
-    // FTXUI -> Notcurses migration: the actual wakeup mechanism now --
-    // MaybeScheduleAutoCompletion arms this (via EventLoop::Post's Arm) for
-    // exactly completionDebounceDeadline_'s own remaining delay each time it
-    // moves the deadline out, replacing OnAnimation's own per-frame polling
-    // loop. completionDebounceDeadline_ itself is kept anyway (rather than
+    // The actual wakeup mechanism -- MaybeScheduleAutoCompletion arms this
+    // (via EventLoop::Post's Arm) for exactly completionDebounceDeadline_'s
+    // own remaining delay each time it moves the deadline out.
+    // completionDebounceDeadline_ itself is kept anyway (rather than
     // dropped) since RequestCompletionAtPoint's own fired callback still
     // wants a captured, precise "what deadline was I even armed for"
     // record for its own logic.
@@ -2641,9 +2628,9 @@ class BufferView : public Widget {
     std::string                                          statusMessageSnapshot_;
     std::optional<std::chrono::steady_clock::time_point> statusMessageChangedAt_;
     static constexpr std::chrono::seconds                kStatusMessageTimeout{4};
-    // See completionDebounceTimer_'s own comment -- same replacement for
-    // OnAnimation's per-frame polling, this time backing
-    // statusMessageChangedAt_'s idle-clear deadline.
+    // See completionDebounceTimer_'s own comment -- same DeadlineTimer-based
+    // wakeup mechanism, this time backing statusMessageChangedAt_'s
+    // idle-clear deadline.
     DeadlineTimer statusMessageTimer_;
 
     // Detects a statusMessage_ change since the last call (from Paint(),

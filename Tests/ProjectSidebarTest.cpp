@@ -611,18 +611,6 @@ TEST_CASE("A move without a resize in progress is a safe no-op", "[ProjectSideba
     REQUIRE(sidebar.Width() == before);
 }
 
-// The pre-migration "reflows widths immediately" test doesn't have an
-// equivalent anymore: it existed specifically to verify SetSidebarRow's own
-// forced-reflow workaround, which TermOx needed (mutating a stored
-// size_policy field never triggered a relayout on its own) but FTXUI
-// doesn't -- confirmed empirically during the migration (a real spike:
-// toggling a child's inclusion in an hbox and letting the very next frame
-// render naturally was enough for siblings to reclaim/cede the space).
-// SetSidebarRow itself was removed along with the workaround it existed
-// for; Width() (tested above) is now simply read by main.cpp's own
-// composition-root Renderer every frame, which needs a live terminal to
-// exercise meaningfully, not a ProjectSidebar-level unit test.
-
 TEST_CASE("RevealPath expands every ancestor directory down to the target file", "[ProjectSidebar]") {
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_sidebar_test_reveal";
     std::filesystem::remove_all(dir);

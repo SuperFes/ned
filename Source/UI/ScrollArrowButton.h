@@ -28,16 +28,14 @@ class ScrollArrowButton : public Widget {
     // on screen) switches to disabledBrush and ignores clicks.
     //
     // Auto-repeats while held, like a key held down: a press fires onClick_
-    // once immediately, then keeps firing it on a fixed interval. FTXUI ->
-    // Notcurses migration: was FTXUI's own animation::RequestAnimationFrame/
-    // OnAnimation render-loop hook; Notcurses' own EventLoop (Widget.h/
-    // EventLoop.h) has no equivalent per-frame tick at all (it only wakes
-    // for real input or Post()ed work, never on a free-running clock), so
-    // this goes back to the pre-FTXUI approach instead: a real background
-    // std::jthread that sleeps the repeat interval and Post()s onClick_
-    // back onto the loop thread each time, the same "own background thread,
-    // marshal back via Post" shape BufferView's scratch-auto-save timer
-    // already uses (see BufferView.h's own StartAutoSaveTimer comment).
+    // once immediately, then keeps firing it on a fixed interval. Notcurses'
+    // own EventLoop (Widget.h/EventLoop.h) has no per-frame tick at all (it
+    // only wakes for real input or Post()ed work, never on a free-running
+    // clock), so this uses a real background std::jthread that sleeps the
+    // repeat interval and Post()s onClick_ back onto the loop thread each
+    // time, the same "own background thread, marshal back via Post" shape
+    // BufferView's scratch-auto-save timer already uses (see BufferView.h's
+    // own StartAutoSaveTimer comment).
     // Requires SetEventLoop to have been called first (main.cpp does this
     // right after construction, same "connect after the widget tree
     // exists" pattern SetOnClick already follows) -- a press is simply

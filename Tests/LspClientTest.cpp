@@ -40,12 +40,9 @@ namespace {
 // background thread's blocked read() (and therefore LspClient's own
 // destructor, which joins that thread) would hang forever -- confirmed via
 // a real hung test run, not a defensive guess.
-// FTXUI -> Notcurses migration: was a real, unstarted ScreenInteractive,
-// threaded through as a separate constructor parameter -- safe under FTXUI
-// since it never touched the terminal until Loop() actually ran. Notcurses'
-// own EventLoop is not that forgiving: its constructor calls
-// notcurses_core_init immediately, entering the alternate screen buffer for
-// real the instant one exists. Owned here, by value, as this fixture's own
+// Notcurses' EventLoop constructor calls notcurses_core_init immediately,
+// entering the alternate screen buffer for real the instant one exists.
+// Owned here, by value, as this fixture's own
 // member instead -- constructed and torn down within one TEST_CASE's own
 // scope, the shortest window that still satisfies LspClient's constructor,
 // rather than shared process-wide (which would hijack the terminal for

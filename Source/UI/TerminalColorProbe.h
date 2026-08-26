@@ -3,13 +3,10 @@
 // the 16-slot ANSI palette) via OSC 10/11/4 queries, for the `--detect-theme`
 // CLI mode (see main.cpp) -- not run on every launch, since it requires
 // putting stdin into raw mode and racing a bounded timeout against a
-// terminal that may not reply at all. FTXUI has no support for this: its
-// terminal input parser doesn't parse OSC replies (it will mangle one into a
-// stream of garbage key events), and its own App/ScreenInteractive starts
-// reading stdin the moment its event loop runs, so this must run and finish
-// *before* that starts -- the same "before the TUI library's own terminal
-// setup" constraint this file has always documented, just against a
-// different library now.
+// terminal that may not reply at all. Notcurses' own input parser doesn't
+// understand OSC replies and will mangle one into garbage key events, and
+// EventLoop's constructor is what starts reading stdin, so this must run
+// and finish strictly *before* an EventLoop is constructed.
 //
 // Split in two deliberately: BuildColorQuery/ParseColorReplies are pure and
 // unit-testable; ProbeTerminalColors is the raw termios/poll/read half that
@@ -53,7 +50,7 @@ struct DetectedColors {
 // with a bounded total timeout, and restores the original terminal mode via
 // RAII regardless of how this returns (including on exception) -- a
 // terminal must never be left in raw mode. POSIX-only. Must be called before
-// FTXUI's own event loop starts reading stdin.
+// EventLoop's Notcurses context is constructed.
 [[nodiscard]] DetectedColors ProbeTerminalColors(std::chrono::milliseconds timeout = std::chrono::milliseconds{300});
 
 // Maps DetectedColors onto a Theme's fields, following the same semantic

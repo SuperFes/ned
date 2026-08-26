@@ -45,26 +45,21 @@ namespace {
 EventLoop::EventLoop() {
     // NCOPTION_NO_QUIT_SIGHANDLERS: Notcurses otherwise installs its own
     // SIGINT/SIGILL/SIGSEGV/SIGABRT/SIGTERM handlers that call
-    // notcurses_stop() and exit -- the same "library unilaterally decides
-    // when we're done" trap ftxui::ScreenInteractive::ForceHandleCtrlC's
-    // default (true) turned out to be (see the FTXUI-era comment this
-    // replaced in main.cpp, and CLAUDE.md's own account of the C-c
-    // C-p-exits-the-whole-process bug that finding prevented from
-    // recurring here). notcurses_linesigs_disable (called right below,
-    // once nc_ exists) is the deeper fix specifically for Ctrl-C/Ctrl-Z/
-    // Ctrl-\\ -- it stops the terminal's own line discipline from raising
-    // SIGINT/SIGTSTP/SIGQUIT at all, so those keys arrive as plain input
-    // bytes through notcurses_get like everything else, the same
-    // "our own key bindings always win" intent ForceHandleCtrlC(false) had,
-    // just resolved one layer lower (no signal is ever raised in the first
-    // place, rather than raised-then-suppressed). NO_QUIT_SIGHANDLERS is
-    // kept anyway as a defensive second layer for the signals
-    // linesigs_disable doesn't cover (SIGSEGV et al. from a real crash
-    // shouldn't silently vanish into Notcurses' own handler either, since
-    // this project has its own top-level exception handling to prefer).
-    // NCOPTION_SUPPRESS_BANNERS matches how Phase 0's own smoke test was
-    // run -- no reason for Notcurses' own startup/perf banner to appear on
-    // top of this editor's UI.
+    // notcurses_stop() and exit -- a library that unilaterally decides when
+    // we're done, which previously caused a real C-c C-p-exits-the-whole-
+    // process bug (CLAUDE.md's own account). notcurses_linesigs_disable
+    // (called right below, once nc_ exists) is the deeper fix specifically
+    // for Ctrl-C/Ctrl-Z/Ctrl-\\ -- it stops the terminal's own line
+    // discipline from raising SIGINT/SIGTSTP/SIGQUIT at all, so those keys
+    // arrive as plain input bytes through notcurses_get like everything
+    // else and our own key bindings always win, resolved by never raising
+    // the signal in the first place rather than raising-then-suppressing
+    // it. NO_QUIT_SIGHANDLERS is kept anyway as a defensive second layer
+    // for the signals linesigs_disable doesn't cover (SIGSEGV et al. from a
+    // real crash shouldn't silently vanish into Notcurses' own handler
+    // either, since this project has its own top-level exception handling
+    // to prefer). NCOPTION_SUPPRESS_BANNERS -- no reason for Notcurses' own
+    // startup/perf banner to appear on top of this editor's UI.
     notcurses_options opts{};
     opts.flags = NCOPTION_NO_QUIT_SIGHANDLERS | NCOPTION_SUPPRESS_BANNERS;
 
@@ -222,8 +217,7 @@ void EventLoop::Run(const EventLoopCallbacks& callbacks) {
         // Posted work (scratch auto-save, LSP background-thread results,
         // ...) may itself have mutated state a repaint should reflect --
         // e.g. new diagnostics arriving -- so running any of it at all
-        // earns this iteration a repaint, the same way FTXUI's own Post()
-        // always triggered its next frame regardless of what the posted
+        // earns this iteration a repaint, regardless of what the posted
         // callback actually did.
         bool needsRepaint = DrainPosted_();
 

@@ -124,11 +124,9 @@ TEST_CASE("A held Left press starts repeating; mouse release stops it", "[Scroll
 }
 
 TEST_CASE("A release anywhere stops the repeat -- there's no mouse-capture to rely on", "[ScrollArrowButton]") {
-    // FTXUI delivers every mouse event to every leaf widget regardless of
-    // position (see Widget.h's own header comment) -- unlike the old
-    // TermOx-backed version, which needed a dedicated mouse_leave override
-    // for exactly this drag-off-the-button-before-releasing scenario, a
-    // release anywhere already reaches this widget's OnEvent.
+    // Every mouse event is delivered to every leaf widget regardless of
+    // position (see Widget.h's own header comment), so a release anywhere
+    // already reaches this widget's OnEvent.
     const Brush       brush{};
     ScrollArrowButton button(U'▲', brush, brush);
     PlaceAtOrigin(button);
@@ -152,20 +150,17 @@ TEST_CASE("A disabled button does not start repeating on press", "[ScrollArrowBu
     REQUIRE_FALSE(button.IsRepeating());
 }
 
-// FTXUI -> Notcurses migration: the old ftxui::animation::Params-driven
-// OnAnimation hook this test exercised no longer exists at all -- repeat is
-// now a real background std::jthread that Post()s onClick_ back onto a real
-// EventLoop (see ScrollArrowButton.h's own header comment), which needs an
-// actual Notcurses context (a real tty) to construct at all, not something
+// Repeat is a real background std::jthread that Post()s onClick_ back onto a
+// real EventLoop (see ScrollArrowButton.h's own header comment), which needs
+// an actual Notcurses context (a real tty) to construct at all, not something
 // a headless unit test can drive deterministically. What's left testable
 // without one: SetEventLoop defaulting to nullptr makes a held press
 // register as repeating (IsRepeating() true, matching a real press) without
 // ever spawning a thread or firing a second click on its own -- covered by
 // the press/release tests above already. The actual repeat-firing and
-// disable-mid-hold behavior is exercised by Phase 4's manual pty smoke
-// testing instead (see ROADMAP.md), the same way this codebase already
-// treats other real-elapsed-time-dependent behavior it can't unit-test
-// headlessly.
+// disable-mid-hold behavior is exercised by manual pty smoke testing instead
+// (see ROADMAP.md), the same way this codebase already treats other
+// real-elapsed-time-dependent behavior it can't unit-test headlessly.
 TEST_CASE("A held press with no EventLoop registered stays 'repeating' but never fires a second click on its own",
           "[ScrollArrowButton]") {
     const Brush       brush{};

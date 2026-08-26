@@ -1,9 +1,6 @@
 //
-// FTXUI -> Notcurses migration: test-only factories for ned::ui::Event,
-// mirroring the small subset of ftxui::Event's own named static factories
-// (Event::Character, Event::CtrlX, Event::Return, ...) every UI test file
-// used to construct fixtures with. Production code never constructs an
-// Event ad hoc -- EventLoop is the only real source of one, built from a
+// Test-only factories for ned::ui::Event. Production code never constructs
+// an Event ad hoc -- EventLoop is the only real source of one, built from a
 // genuine ncinput -- so these factories live here, in Tests/, rather than
 // on ned::ui::Event itself.
 //
@@ -17,30 +14,24 @@
 
 namespace ned::ui::test {
 
-// A plain keypress of one Unicode codepoint, no modifiers -- mirrors
-// ftxui::Event::Character(string), which most call sites used with a
-// single ASCII byte.
+// A plain keypress of one Unicode codepoint, no modifiers.
 [[nodiscard]] Event Character(char32_t codepoint);
 [[nodiscard]] Event Character(char ch);
 // Decodes the leading (and, for a well-formed single-grapheme literal, only)
-// UTF-8 codepoint in utf8 -- covers every ftxui::Event::Character("...")
-// call site that passed a literal wider than one ASCII byte.
+// UTF-8 codepoint in utf8 -- covers a literal wider than one ASCII byte.
 [[nodiscard]] Event Character(std::string_view utf8);
 
-// Ctrl+<letter> -- letter must be lowercase ('a'-'z'); mirrors the whole
-// family of named ftxui::Event::CtrlX/CtrlC/CtrlS/... constants with one
-// parameterized factory instead of one function per letter.
+// Ctrl+<letter> -- letter must be lowercase ('a'-'z').
 [[nodiscard]] Event Ctrl(char letter);
 
-// Alt/Meta+<letter> -- mirrors ftxui::Event::AltX and friends.
+// Alt/Meta+<letter>.
 [[nodiscard]] Event Alt(char letter);
 // The legacy-terminal shape of the same press (fast ESC-prefixed letter):
 // deprecated `alt` bool set, `modifiers` empty -- the shape Notcurses
 // actually delivers outside the kitty keyboard protocol; see
 // TestEvents.cpp's own comment.
 [[nodiscard]] Event LegacyAlt(char letter);
-// Ctrl+Alt+<letter> -- both modifier bits set at once, the decoded-input
-// equivalent of the old raw-byte translator's ESC-then-C0-byte sequence.
+// Ctrl+Alt+<letter> -- both modifier bits set at once.
 [[nodiscard]] Event CtrlAlt(char letter);
 
 [[nodiscard]] Event Return();
@@ -67,10 +58,7 @@ namespace ned::ui::test {
 [[nodiscard]] Event ArrowRightShift();
 [[nodiscard]] Event F(int n); // 1-12
 
-// A mouse event at absolute (screen-space) column/row x/y -- mirrors the
-// shape every ftxui::Event::Mouse(...)-constructing test fixture built by
-// hand via a raw ftxui::Mouse struct (there was no single named factory
-// under FTXUI either).
+// A mouse event at absolute (screen-space) column/row x/y.
 [[nodiscard]] Event Mouse(int x, int y, MouseEvent::Button button, MouseEvent::Motion motion, bool shift = false,
                           bool meta = false, bool control = false);
 
