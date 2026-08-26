@@ -14,6 +14,7 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <spawn.h>
+#include <sys/socket.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -145,13 +146,30 @@ ChildProcess::ChildProcess(int readFd, int writeFd, pid_t pid) noexcept : writeF
 }
 
 ChildProcess::~ChildProcess() {
+    // shutdown() before close() on all three -- for a real spawned child's
+    // pipe fds this is a harmless ENOTSOCK no-op (pipes aren't sockets), but
+    // for the raw-fd constructor's socket case (LSP broker connect/accept:
+    // two independently-closeable dups of one connected AF_UNIX socket, no
+    // separate child process to reap) plain close() is not enough: closing
+    // one dup doesn't touch the shared socket's connection state while
+    // another dup keeps it alive, and even the final close() can't unblock a
+    // different thread already parked in a blocking read() on it, since that
+    // in-flight syscall holds its own reference until it returns -- exactly
+    // the close()-vs-shutdown() gotcha LspBrokerMain.cpp's own
+    // listen-socket/accept() teardown comment documents for the daemon side.
+    // shutdown(SHUT_RDWR) changes the socket's protocol state directly,
+    // unblocking a concurrent reader in any thread regardless of remaining
+    // fd references.
     if (writeFd_ >= 0) {
+        ::shutdown(writeFd_, SHUT_RDWR);
         ::close(writeFd_); // EOF on the child's stdin -- a well-behaved child treats this as a shutdown signal
     }
     if (readFd_ >= 0) {
+        ::shutdown(readFd_, SHUT_RDWR);
         ::close(readFd_);
     }
     if (stderrFd_ >= 0) {
+        ::shutdown(stderrFd_, SHUT_RDWR);
         ::close(stderrFd_); // lsp-stderr-capture follow-up -- unblocks a stderr reader thread's blocking read via EOF, same as readFd_ above
     }
     if (pid_ > 0) {
@@ -181,13 +199,17 @@ ChildProcess::ChildProcess(ChildProcess&& other) noexcept
 
 ChildProcess& ChildProcess::operator=(ChildProcess&& other) noexcept {
     if (this != &other) {
+        // See ~ChildProcess()'s own comment on why shutdown() precedes close() here too.
         if (writeFd_ >= 0) {
+            ::shutdown(writeFd_, SHUT_RDWR);
             ::close(writeFd_);
         }
         if (readFd_ >= 0) {
+            ::shutdown(readFd_, SHUT_RDWR);
             ::close(readFd_);
         }
         if (stderrFd_ >= 0) {
+            ::shutdown(stderrFd_, SHUT_RDWR);
             ::close(stderrFd_);
         }
         if (pid_ > 0) {

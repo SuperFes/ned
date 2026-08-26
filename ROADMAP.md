@@ -347,7 +347,7 @@ call sites, so "port" means replacing the platform layer wholesale:
 Unscoped beyond this sketch — process spawning is the obvious dependency root; nothing
 else works without it.
 
-## Maybelist (speculative — neither committed nor rejected)
+## Maybelist (Speculative — Neither Committed nor Rejected)
 
 Ideas worth remembering but not worth scoping yet — too undecided for "Open Items",
 not disliked enough for "Won't do". Promote or delete on revisit rather than letting
