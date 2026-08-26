@@ -36,7 +36,7 @@ Notcurses.
 - [ ] **Jank replaces Janet** — once possible, replace the internal scripting
       representation with [jank](https://github.com/jank-lang/jank).
 
-### Language intelligence
+### Language Intelligence
 
 - [ ] **Go-to-file-at-point resolver gaps** (`Mode::importTarget`, the hand-rolled
       import/include resolver): LSP should be tried first where a server can answer it
