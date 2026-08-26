@@ -359,6 +359,34 @@ TEST_CASE("LspManager::StatusForLanguage reports NotConfigured, Running, and Spa
     ned::editor::lsp::SetLspServerCommand("status-fail-lang", {}); // clean up global config state for other tests
 }
 
+TEST_CASE("LspManager::ClientDisconnected gives up after a burst of immediate disconnects (crash-loop guard)", "[Lsp]") {
+    // crash-loop-respawn-guard follow-up: confirmed live -- a misconfigured
+    // phpantom_lsp respawned thousands of times within about a second, since
+    // nothing previously stood between one ClientDisconnected and the very
+    // next SyncBuffer's respawn attempt. Simulates the same rapid-disconnect
+    // shape (inject a client, immediately EOF it, repeat) without a real
+    // subprocess at all.
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    ned::editor::lsp::SetLspServerCommand("crashloop-lang", {"/definitely/does/not/exist/ned-crashloop-lsp"});
+
+    for (int i = 0; i < 3; ++i) {
+        LspClient* client = nullptr;
+        {
+            FakeServer server = FakeServer::Create(manager, "crashloop-lang", eventLoop, client);
+            // FakeServer's destructor closes serverStdoutWrite here -- EOF,
+            // which LspClient's own read loop reports as onDisconnected_.
+        }
+        WaitUntil(eventLoop, [&] { return manager.StatusForLanguage("crashloop-lang") != LspManager::LspStatus::Running; });
+    }
+
+    REQUIRE(manager.StatusForLanguage("crashloop-lang") == LspManager::LspStatus::SpawnFailed);
+    REQUIRE(manager.SpawnFailureDetail("crashloop-lang").find("disconnects in a row") != std::string::npos);
+
+    ned::editor::lsp::SetLspServerCommand("crashloop-lang", {}); // clean up global config state for other tests
+}
+
 TEST_CASE("LspManager::RequestCompletion round-trips a real request/response through an injected client", "[Lsp]") {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;

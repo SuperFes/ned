@@ -22,6 +22,13 @@ namespace ned::editor::lsp {
 
 namespace {
 
+    // crash-loop-respawn-guard follow-up: see LspManager.h's disconnectBurst_
+    // doc comment for why this exists at all. Thresholds, not Janet-
+    // configurable -- proportionate to closing a real resource-exhaustion
+    // bug, not a tunable feature.
+    constexpr std::chrono::milliseconds kCrashLoopWindow{3000};
+    constexpr int                       kCrashLoopThreshold = 3;
+
     // v1: no percent-encoding of special characters in the path -- every
     // path this touches (an open Buffer's own Path(), editor::ProjectRoot())
     // is already a real filesystem path this process itself resolved, not
@@ -537,6 +544,34 @@ void LspManager::ClientDisconnected(const std::string& language) {
     // reconfigured command fails outright (StatusForLanguage's SpawnFailed
     // case takes priority over this one regardless).
     disconnectedLanguages_.insert(languageCopy);
+
+    // crash-loop-respawn-guard follow-up: see disconnectBurst_'s own doc
+    // comment in LspManager.h. Must run before this function returns (every
+    // exit path below still respawns on the next SyncBuffer otherwise).
+    const std::chrono::steady_clock::time_point now   = std::chrono::steady_clock::now();
+    auto&                                       burst = disconnectBurst_[languageCopy];
+    if (now - burst.first > kCrashLoopWindow) {
+        burst = {now, 1};
+    }
+    else {
+        ++burst.second;
+    }
+    if (burst.second >= kCrashLoopThreshold) {
+        // Latches failedCommands_ -- ClientForLanguage's own pre-existing
+        // "known-bad command, stop retrying until reconfigured" guard --
+        // rather than returning early here, so the ordinary cleanup below
+        // (bufferState_/diagnosticsBySource_/activeProgress_) still runs
+        // exactly as it would for any other disconnect.
+        const std::optional<std::vector<std::string>> command =
+            (languageCopy == kProseLanguageKey) ? ProseCheckerCommand() : LspServerCommand(languageCopy);
+        if (command) {
+            failedCommands_[languageCopy] = *command;
+        }
+        spawnFailureDetail_[languageCopy] =
+            "gave up after " + std::to_string(burst.second) + " immediate disconnects in a row -- reconfigure the command to retry";
+        disconnectBurst_.erase(languageCopy);
+        LogError(languageCopy, "server crash-looped -- giving up until the command is reconfigured");
+    }
     // prose-checking follow-up: erase just this server's own sub-entry, not
     // the whole buffer -- a buffer's other server (primary or prose,
     // whichever languageCopy isn't) must keep its own sync state and

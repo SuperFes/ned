@@ -578,6 +578,24 @@ class LspManager {
     // apart.
     std::unordered_map<std::string, std::string> spawnFailureDetail_;
 
+    // crash-loop-respawn-guard follow-up: a server that fails immediately on
+    // every launch (confirmed live -- a misconfigured phpantom_lsp produced
+    // thousands of respawn attempts within about one second, since
+    // ClientDisconnected's own "a crash/disconnect is transient, worth
+    // respawning on the next SyncBuffer" policy has no rate limit at all)
+    // used to have nothing standing between one disconnect and the very
+    // next frame's respawn attempt. Keyed by language: the steady-clock time
+    // of the first disconnect in the current rapid-disconnect burst, and how
+    // many disconnects have landed in it so far. ClientDisconnected resets
+    // the burst once kCrashLoopWindow has passed since it started; once
+    // kCrashLoopThreshold disconnects land inside one window, ClientDisconnected
+    // latches failedCommands_ itself (ClientForLanguage's own pre-existing
+    // "known-bad command, stop retrying until reconfigured" guard), the same
+    // outcome a hard spawn failure already gets -- a crash loop is
+    // functionally the same "this command doesn't work" signal, just
+    // discovered one handshake later.
+    std::unordered_map<std::string, std::pair<std::chrono::steady_clock::time_point, int>> disconnectBurst_;
+
     // mode-line-lsp-status-round-2 follow-up: languages whose client most
     // recently ended via ClientDisconnected rather than a spawn failure --
     // what StatusForLanguage's Disconnected case reads. Cleared the moment
