@@ -29,6 +29,14 @@ namespace {
     constexpr std::chrono::milliseconds kCrashLoopWindow{3000};
     constexpr int                       kCrashLoopThreshold = 3;
 
+    // respawn-debounce follow-up: see ClientForLanguage's own doc comment on
+    // lastDisconnectAt_ for why this exists alongside (not instead of) the
+    // crash-loop guard above -- breathing room for each individual retry,
+    // not just a cap on the total. 3 * kRespawnCooldown comfortably fits
+    // inside kCrashLoopWindow, so a real crash-looping server still reaches
+    // the giveup threshold, just no longer within the same video frame.
+    constexpr std::chrono::milliseconds kRespawnCooldown{1000};
+
     // v1: no percent-encoding of special characters in the path -- every
     // path this touches (an open Buffer's own Path(), editor::ProjectRoot())
     // is already a real filesystem path this process itself resolved, not
@@ -292,6 +300,21 @@ LspClient* LspManager::ClientForLanguage(const std::string& language) {
         spawnFailureDetail_.erase(language);
     }
 
+    // respawn-debounce follow-up (requested alongside the crash-loop guard
+    // above): even below kCrashLoopThreshold, a disconnect used to be
+    // followed by a fresh spawn attempt on the very next SyncBuffer call --
+    // the next Paint() frame, tens of milliseconds later, no breathing room
+    // at all. A real server that stumbles once (a slow-starting language
+    // server racing its own config file, a transient resource hiccup) gets
+    // hammered immediately rather than given a moment to actually recover.
+    // Silent no-op while cooling down -- not worth a log line every frame
+    // for what's an ordinary, expected wait.
+    if (const auto lastDisconnect = lastDisconnectAt_.find(language); lastDisconnect != lastDisconnectAt_.end()) {
+        if (std::chrono::steady_clock::now() - lastDisconnect->second < kRespawnCooldown) {
+            return nullptr;
+        }
+    }
+
     // lsp-broker follow-up. Try attaching to an already-running LSP broker
     // daemon before spawning our own subprocess -- see LspBrokerConnect.h's
     // own header comment for exactly why this is always safe to attempt
@@ -359,6 +382,7 @@ LspClient* LspManager::ClientForLanguage(const std::string& language) {
     // Running now, not a stale Disconnected from before this attempt.
     disconnectedLanguages_.erase(language);
     disconnectDetail_.erase(language);
+    lastDisconnectAt_.erase(language); // respawn-debounce follow-up -- a stale cooldown must not outlive a real respawn
     return rawClient;
 }
 
@@ -527,6 +551,7 @@ LspClient& LspManager::SetClientForTesting(std::string language, std::unique_ptr
     WireNotificationHandlers(*client, language, workspaceConfiguration); // same wiring ClientForLanguage's real spawn path applies
     disconnectedLanguages_.erase(language);                              // an injected client is "running," same as a real successful spawn
     disconnectDetail_.erase(language);
+    lastDisconnectAt_.erase(language); // respawn-debounce follow-up -- ditto
     LspClient& ref                = *client;
     clients_[std::move(language)] = std::move(client);
     return ref;
@@ -534,10 +559,18 @@ LspClient& LspManager::SetClientForTesting(std::string language, std::unique_ptr
 
 void LspManager::ClientDisconnected(const std::string& language) {
     // language may be a reference into the very LspClient (and its
-    // OnDisconnected closure) that erase() below destroys -- copy it first
+    // OnDisconnected closure) this function retires below -- copy it first
     // so the rest of this function isn't reading freed memory.
     const std::string languageCopy = language;
-    clients_.erase(languageCopy);
+    // lsp-use-after-free follow-up: retire, don't destroy in place -- see
+    // retired_'s own doc comment in LspManager.h for why an immediate
+    // clients_.erase() here was a real, confirmed use-after-free (this
+    // function runs from inside the client's own Post-marshaled
+    // SetOnDisconnected callback, and a second callback for the same
+    // instance -- a stray DispatchFrame -- can already be queued behind it).
+    if (auto node = clients_.extract(languageCopy); node) {
+        retired_.push_back(std::move(node.mapped()));
+    }
     // mode-line-lsp-status-round-2 follow-up: latch the disconnect so
     // StatusForLanguage can report it, distinct from "never configured" --
     // cleared the moment a fresh spawn succeeds (ClientForLanguage) or the
@@ -548,8 +581,9 @@ void LspManager::ClientDisconnected(const std::string& language) {
     // crash-loop-respawn-guard follow-up: see disconnectBurst_'s own doc
     // comment in LspManager.h. Must run before this function returns (every
     // exit path below still respawns on the next SyncBuffer otherwise).
-    const std::chrono::steady_clock::time_point now   = std::chrono::steady_clock::now();
-    auto&                                       burst = disconnectBurst_[languageCopy];
+    const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+    lastDisconnectAt_[languageCopy]                 = now; // respawn-debounce follow-up
+    auto& burst                                     = disconnectBurst_[languageCopy];
     if (now - burst.first > kCrashLoopWindow) {
         burst = {now, 1};
     }
@@ -686,6 +720,12 @@ void LspManager::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
     for (const auto& entry : clients_) {
         entry.second->ExpireStaleRequests(maxAge);
     }
+    // lsp-use-after-free follow-up: actually free anything ClientDisconnected
+    // retired -- see retired_'s own doc comment in LspManager.h. This tick
+    // is always at least one full EventLoop::Run iteration after the
+    // retirement, long enough for any straggler Post()ed callback to have
+    // already run against the still-valid object.
+    retired_.clear();
 }
 
 void LspManager::HandlePublishDiagnostics(const Json& params, const std::string& language) {
