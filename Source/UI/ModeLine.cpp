@@ -14,6 +14,7 @@
 #include "Editor/BackgroundActivity.h"
 #include "Editor/Org.h"
 #include "Text/LineEnding.h"
+#include "Text/Utf8.h"
 
 namespace ned::ui {
 
@@ -30,6 +31,23 @@ namespace {
     std::string_view CurrentSpinnerFrame() {
         const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch());
         return kSpinnerFrames[static_cast<std::size_t>((elapsed / editor::kBackgroundActivitySpinnerInterval) % kSpinnerFrames.size())];
+    }
+
+    // Appends one `columns` entry per codepoint in text (codepoint-granular,
+    // not full grapheme-cluster-aware, matching BufferView's own
+    // one-codepoint-per-cell content rendering) -- replaces what used to be
+    // a byte-per-column loop repeated at every one of this file's dynamic-
+    // text call sites (buffer name, Org clock headline title, background-
+    // activity name/detail, LSP status detail), which split any multi-byte
+    // UTF-8 character in that text across as many blank-looking cells as it
+    // had bytes (found live via EchoArea's identical bug, see ROADMAP.md).
+    void AppendUtf8Columns(std::vector<std::string>& columns, std::string_view text) {
+        std::size_t i = 0;
+        while (i < text.size()) {
+            const std::size_t next = text::NextCodepointBoundary(text, i);
+            columns.emplace_back(text.substr(i, next - i));
+            i = next;
+        }
     }
 
     // minimum-visible-duration follow-up: see lastShownActivities_' own doc
@@ -49,10 +67,6 @@ void ModeLine::Paint(Canvas c) {
     const std::size_t   lineStart = content.LineToByteOffset(line);
     const std::size_t   col       = content.ByteOffsetToCodepointOffset(point) - content.ByteOffsetToCodepointOffset(lineStart);
 
-    // Assumes an ASCII-ish buffer name for correct column alignment (a
-    // multi-byte-UTF-8 name would render byte-by-byte here) -- a known,
-    // narrow v1 rendering limitation, consistent with BufferView's own
-    // codepoint-granular rendering simplification.
     const std::string modifiedMarker = buffer.Modified() ? "*" : " "; // fixed width -- keeps L/C from jittering
     // large-file-async-load follow-up: while the buffer is still filling in
     // from a background AsyncFileLoader, show that instead of the mode name
@@ -101,16 +115,13 @@ void ModeLine::Paint(Canvas c) {
 
     // background-activity-spinner follow-up: one column-per-entry cell list
     // instead of the raw byte string above, so the spinner's multi-byte
-    // braille glyph occupies exactly one cell (the byte-per-column loop this
-    // replaces would have split it across three). ASCII text still lands one
-    // byte per cell, unchanged; an activity detail with multi-byte UTF-8 in
-    // it renders byte-by-byte, the same known v1 limitation the buffer-name
-    // comment above already documents.
+    // braille glyph occupies exactly one cell, and (AppendUtf8Columns above)
+    // so does every other multi-byte UTF-8 character in the dynamic text
+    // built up below (a non-ASCII buffer name, an Org headline title, an
+    // activity/LSP detail string, ...).
     std::vector<std::string> columns;
     columns.reserve(text.size() + 32);
-    for (const char ch : text) {
-        columns.emplace_back(1, ch);
-    }
+    AppendUtf8Columns(columns, text);
 
     // org-clock-display follow-up: a live "clocked in on X since HH:MM"
     // indicator, scoped to the active buffer only -- clock state isn't
@@ -129,13 +140,9 @@ void ModeLine::Paint(Canvas c) {
             columns.emplace_back(" ");
             columns.emplace_back("⏱");
             columns.emplace_back(" ");
-            for (const char ch : running->headline.title) {
-                columns.emplace_back(1, ch);
-            }
+            AppendUtf8Columns(columns, running->headline.title);
             columns.emplace_back(" ");
-            for (const char ch : out.str()) {
-                columns.emplace_back(1, ch);
-            }
+            AppendUtf8Columns(columns, out.str());
         }
     }
 
@@ -160,16 +167,12 @@ void ModeLine::Paint(Canvas c) {
         for (const editor::BackgroundActivity& activity : activities) {
             columns.emplace_back(" ");
             columns.emplace_back(" ");
-            for (const char ch : activity.name) {
-                columns.emplace_back(1, ch);
-            }
+            AppendUtf8Columns(columns, activity.name);
             columns.emplace_back(" ");
             columns.emplace_back(frame);
             if (!activity.detail.empty()) {
                 columns.emplace_back(" ");
-                for (const char ch : activity.detail) {
-                    columns.emplace_back(1, ch);
-                }
+                AppendUtf8Columns(columns, activity.detail);
             }
             lspActivityShown = lspActivityShown || activity.name == editor::lsp::kLspActivityName;
         }
@@ -227,9 +230,7 @@ void ModeLine::Paint(Canvas c) {
                 columns.emplace_back(glyph);
                 if (!detail.empty()) {
                     columns.emplace_back(" ");
-                    for (const char ch : detail) {
-                        columns.emplace_back(1, ch);
-                    }
+                    AppendUtf8Columns(columns, detail);
                 }
             }
         }
@@ -261,16 +262,12 @@ void ModeLine::Paint(Canvas c) {
                 }
                 columns.emplace_back(" ");
                 columns.emplace_back(" ");
-                for (const char ch : key) {
-                    columns.emplace_back(1, ch);
-                }
+                AppendUtf8Columns(columns, key);
                 columns.emplace_back(" ");
                 columns.emplace_back(glyph);
                 if (!detail.empty()) {
                     columns.emplace_back(" ");
-                    for (const char ch : detail) {
-                        columns.emplace_back(1, ch);
-                    }
+                    AppendUtf8Columns(columns, detail);
                 }
             }
         }
