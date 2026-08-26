@@ -5,6 +5,7 @@
 #include <system_error>
 
 #include "EventLoop.h"
+#include "Text/LineEnding.h"
 #include "Text/Rope.h"
 
 namespace ned::ui {
@@ -82,7 +83,12 @@ void AsyncFileLoader::Run(std::stop_token stopToken, std::filesystem::path path,
         const auto now = std::chrono::steady_clock::now();
         if (now - lastPreview >= kPreviewInterval) {
             lastPreview = now;
-            text::Rope preview(content);
+            // crlf-handling follow-up: normalized for display only -- the
+            // accumulating `content` above stays raw so a '\r'/'\n' pair
+            // split across a chunk boundary is never mis-detected.
+            // detection/LineEndingKind() are only settled once, at
+            // FinishLoad below, against the complete file.
+            text::Rope preview(text::HasCarriageReturn(content) ? text::NormalizeToLf(content) : content);
             eventLoop.Post([this, preview] {
                 if (text::Buffer* buffer = bufferList_.Find(bufferName_)) {
                     buffer->ReplaceContentForLoad(preview);
@@ -99,10 +105,11 @@ void AsyncFileLoader::Run(std::stop_token stopToken, std::filesystem::path path,
         return; // loader destroyed (buffer closed / app exiting) -- nothing left to post
     }
 
-    text::Rope finalContent(content);
-    eventLoop.Post([this, finalContent] {
+    const text::LineEnding detectedEnding = text::DetectLineEnding(content);
+    text::Rope             finalContent(text::HasCarriageReturn(content) ? text::NormalizeToLf(content) : content);
+    eventLoop.Post([this, finalContent, detectedEnding] {
         if (text::Buffer* buffer = bufferList_.Find(bufferName_)) {
-            buffer->FinishLoad(finalContent);
+            buffer->FinishLoad(finalContent, detectedEnding);
         }
         done_ = true;
     });

@@ -9,6 +9,7 @@
 
 #include "BinaryDetect.h"
 #include "Grapheme.h"
+#include "LineEnding.h"
 #include "ThreeWayMerge.h"
 
 namespace ned::text {
@@ -167,8 +168,19 @@ Buffer Buffer::FromFile(const std::filesystem::path& path, bool allowBinary) {
         content.erase(0, kUtf8Bom.size());
     }
 
+    // crlf-handling follow-up: detect before normalizing -- the detected
+    // ending is exactly what SaveToFile later re-expands LF back into, so
+    // opening and immediately saving a CRLF file round-trips byte-for-byte
+    // rather than silently converting it to LF. Rope_ itself only ever
+    // holds the normalized, LF-only form (see Text/LineEnding.h).
+    const LineEnding detectedEnding = DetectLineEnding(content);
+    if (HasCarriageReturn(content)) {
+        content = NormalizeToLf(content);
+    }
+
     Buffer buffer(path.filename().string(), Rope(content));
-    buffer.Path_ = path;
+    buffer.Path_       = path;
+    buffer.LineEnding_ = detectedEnding;
     if (!timestampError) {
         buffer.DiskTimestamp_ = diskTime;
     }
@@ -181,12 +193,14 @@ Buffer Buffer::NewFile(std::filesystem::path path) {
     return buffer;
 }
 
-void Buffer::SaveToFile(const std::filesystem::path& path, bool ensureFinalNewline, bool trimTrailingWhitespace) {
+void Buffer::SaveToFile(const std::filesystem::path& path, bool ensureFinalNewline, bool trimTrailingWhitespace,
+                        std::optional<LineEnding> lineEndingOverride) {
     // Write to a sibling temp file and rename over the target so a failure
     // partway through (e.g. disk full) can't leave the original truncated or
     // corrupted -- std::filesystem::rename is atomic on POSIX when both
     // paths are on the same filesystem, which a sibling file guarantees.
     const std::filesystem::path tempPath = path.string() + ".ned-tmp";
+    const LineEnding            effectiveEnding = lineEndingOverride.value_or(LineEnding_);
 
     {
         std::ofstream file(tempPath, std::ios::binary | std::ios::trunc);
@@ -230,6 +244,18 @@ void Buffer::SaveToFile(const std::filesystem::path& path, bool ensureFinalNewli
         if (ensureFinalNewline && !content.empty() && content.back() != '\n') {
             content.push_back('\n');
         }
+
+        // crlf-handling follow-up: re-expand LF back to whichever ending
+        // this save should use -- lineEndingOverride lets a caller apply
+        // Editor::ResolveLineEndingForSave's policy (Force*) without Text/
+        // depending on Editor/; absent an override, this just keeps writing
+        // whatever LineEnding_ already tracks (the common Preserve case).
+        // Content up to here is always LF-only (Rope_::ToString() never
+        // holds a '\r'), so this is always the last transform before write.
+        if (effectiveEnding != LineEnding::LF) {
+            content = ApplyLineEnding(content, effectiveEnding);
+        }
+
         file.write(content.data(), static_cast<std::streamsize>(content.size()));
 
         if (!file) {
@@ -247,17 +273,26 @@ void Buffer::SaveToFile(const std::filesystem::path& path, bool ensureFinalNewli
     }
 
     Path_          = path;
+    LineEnding_    = effectiveEnding;
     SavedSnapshot_ = Rope_;
     UnsavedChangeRanges_.clear();
     ++UnsavedChangeGeneration_;
     CaptureDiskTimestamp();
 }
 
-void Buffer::Save(bool ensureFinalNewline, bool trimTrailingWhitespace) {
+void Buffer::Save(bool ensureFinalNewline, bool trimTrailingWhitespace, std::optional<LineEnding> lineEndingOverride) {
     if (!Path_) {
         throw std::runtime_error("ned: buffer \"" + Name_ + "\" has no associated file path");
     }
-    SaveToFile(*Path_, ensureFinalNewline, trimTrailingWhitespace);
+    SaveToFile(*Path_, ensureFinalNewline, trimTrailingWhitespace, lineEndingOverride);
+}
+
+LineEnding Buffer::LineEndingKind() const {
+    return LineEnding_;
+}
+
+void Buffer::SetLineEndingOverride(LineEnding ending) {
+    LineEnding_ = ending;
 }
 
 const std::string& Buffer::Name() const {
@@ -317,10 +352,13 @@ void Buffer::ReplaceContentForLoad(Rope content) {
     ++ContentGeneration_;
 }
 
-void Buffer::FinishLoad(Rope content) {
+void Buffer::FinishLoad(Rope content, std::optional<LineEnding> detectedEnding) {
     Rope_          = std::move(content);
     UndoTree_      = UndoTree(Rope_);
     SavedSnapshot_ = Rope_;
+    if (detectedEnding) {
+        LineEnding_ = *detectedEnding;
+    }
     Loading_       = false;
     LoadProgress_.reset();
     ++ContentGeneration_;

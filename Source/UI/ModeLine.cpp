@@ -13,6 +13,7 @@
 
 #include "Editor/BackgroundActivity.h"
 #include "Editor/Org.h"
+#include "Text/LineEnding.h"
 
 namespace ned::ui {
 
@@ -86,9 +87,17 @@ void ModeLine::Paint(Canvas c) {
         }
     }
 
+    // crlf-handling follow-up: always shown (not gated behind a Set*
+    // provider like embeddedLanguageSuffix above) -- ModeLine already has
+    // direct buffer access for everything else on this line, and unlike an
+    // embedded language this is meaningful for every buffer, not just a
+    // rare per-point case.
+    const std::string lineEndingSuffix = std::string("  ") + text::LineEndingName(buffer.LineEndingKind());
+
     const std::string text = buffer.IsLoading() ? "  " + buffer.Name() + loadingText
                                                 : "  " + modifiedMarker + buffer.Name() + "   L" + std::to_string(line + 1) +
-                                                      ":C" + std::to_string(col + 1) + "  (" + mode_.name + ")" + embeddedLanguageSuffix;
+                                                      ":C" + std::to_string(col + 1) + "  (" + mode_.name + ")" + embeddedLanguageSuffix +
+                                                      lineEndingSuffix;
 
     // background-activity-spinner follow-up: one column-per-entry cell list
     // instead of the raw byte string above, so the spinner's multi-byte

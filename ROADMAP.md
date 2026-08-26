@@ -132,11 +132,6 @@ Notcurses.
       batch operations.
 - [ ] **No persistent/cross-session undo** — `Text/UndoTree.h` has no serialize/save/
       load; history is memory-only per process, gone on restart.
-- [ ] **CRLF line endings aren't handled at all** (2026-08-25 audit, a real correctness
-      gap, not a nice-to-have) — `Buffer::FromFile` strips a UTF-8 BOM but does nothing
-      with `\r`; a CRLF file renders a `[0D]` hex-placeholder glyph before every line's
-      newline (the same path DEL/C0 control bytes take), with no detection,
-      preservation, or save-time re-encoding anywhere in the load/save path.
 - [ ] **No server/daemon mode** — no `emacsclient`-equivalent; one process per terminal,
       no way to keep a warm process (buffers, LSP connections, undo history) alive and
       attach a new terminal client to it.

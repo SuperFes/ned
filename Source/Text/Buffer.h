@@ -25,6 +25,7 @@
 #include <utility>
 #include <vector>
 
+#include "LineEnding.h"
 #include "Rope.h"
 #include "UndoTree.h"
 
@@ -75,11 +76,22 @@ class Buffer {
     // configured, Janet-settable defaults the way it already does for
     // tabWidth elsewhere -- callers that want those pass
     // editor::EnsureFinalNewline()/editor::TrimTrailingWhitespaceOnSave() in
-    // explicitly (Commands.cpp's save-buffer does).
-    void SaveToFile(const std::filesystem::path& path, bool ensureFinalNewline = true, bool trimTrailingWhitespace = true);
+    // explicitly (Commands.cpp's save-buffer does). lineEndingOverride
+    // (crlf-handling follow-up) follows the same pattern: nullopt (the
+    // default) writes using this buffer's own tracked LineEndingKind()
+    // unchanged (the Preserve case, needing no caller involvement at all);
+    // a caller wanting Editor/LineEndingPolicy.h's Force* policy applied
+    // resolves it via editor::ResolveLineEndingForSave(buffer.LineEndingKind())
+    // and passes the result in here -- same "Text/ stays Editor/-unaware,
+    // the caller resolves the setting" split. Either way this buffer's
+    // LineEndingKind() is updated to whatever ending actually got written,
+    // once the write+rename below fully succeeds.
+    void SaveToFile(const std::filesystem::path& path, bool ensureFinalNewline = true, bool trimTrailingWhitespace = true,
+                    std::optional<LineEnding> lineEndingOverride = std::nullopt);
     // Writes to the buffer's associated file. Throws std::runtime_error if
     // the buffer has none (i.e. FromFile/SaveToFile were never called).
-    void Save(bool ensureFinalNewline = true, bool trimTrailingWhitespace = true);
+    void Save(bool ensureFinalNewline = true, bool trimTrailingWhitespace = true,
+              std::optional<LineEnding> lineEndingOverride = std::nullopt);
 
     [[nodiscard]] const std::string&                          Name() const;
     void                                                      Rename(std::string name);
@@ -92,6 +104,25 @@ class Buffer {
     // rename anything on disk, and does not change Name() -- callers that
     // want the buffer's name to follow too call Rename() separately.
     void SetPath(std::filesystem::path path);
+
+    // crlf-handling follow-up: the line ending FromFile detected in the
+    // on-disk file (LF for a NewFile()/never-loaded buffer), or whatever
+    // SetLineEndingOverride last set. Purely metadata -- Rope_ itself is
+    // always LF-only, see Text/LineEnding.h's own header comment. This is
+    // what SaveToFile feeds through Editor::ResolveLineEndingForSave to
+    // decide what gets written, and what ModeLine's indicator displays.
+    [[nodiscard]] ned::text::LineEnding LineEndingKind() const;
+
+    // Sets this buffer's tracked line ending, which every subsequent save
+    // feeds through Editor::ResolveLineEndingForSave (still subject to a
+    // Force policy -- see Editor/LineEndingPolicy.h). Two call sites: the
+    // load path (FromFile/FinishLoad) records what was actually detected on
+    // disk, and convert-line-endings-to-lf/-crlf/-cr (Commands.cpp) is the
+    // one user-facing override. Deliberately does not touch
+    // Rope_/UnsavedChangeRanges_/Modified() -- same disk-only-until-saved
+    // reasoning as ensureFinalNewline/trimTrailingWhitespace: nothing on
+    // disk changes until the next explicit save actually writes it out.
+    void SetLineEndingOverride(ned::text::LineEnding ending);
 
     [[nodiscard]] const Rope& Content() const;
     [[nodiscard]] std::string Text() const;
@@ -212,9 +243,14 @@ class Buffer {
     // FromFile's own constructor call does for a normal synchronous load,
     // so Modified() reads false and undo history starts clean at the
     // loaded content, not at every intermediate preview. Clears
-    // IsLoading() (and, with it, the forced ReadOnly() above).
+    // IsLoading() (and, with it, the forced ReadOnly() above). detectedEnding
+    // (crlf-handling follow-up), when given, sets LineEndingKind() the same
+    // way FromFile's own detection does -- AsyncFileLoader normalizes to LF
+    // itself before either call (content here, like everywhere else, must
+    // already be LF-only) and passes its own DetectLineEnding result through
+    // only at FinishLoad, once the whole file has actually been seen.
     void ReplaceContentForLoad(Rope content);
-    void FinishLoad(Rope content);
+    void FinishLoad(Rope content, std::optional<LineEnding> detectedEnding = std::nullopt);
 
     // Called once by BufferList right after constructing a placeholder
     // buffer for an async load -- sets IsLoading() true. Not meant to be
@@ -777,6 +813,9 @@ class Buffer {
     // ExternallyModified() compares against. nullopt for a pathless or
     // NewFile() buffer (no on-disk content has ever been seen).
     std::optional<std::filesystem::file_time_type>     DiskTimestamp_;
+    // See LineEndingKind()/SetLineEndingOverride's own doc comments above.
+    // Defaults to LF, matching a NewFile() buffer's own implicit ending.
+    ned::text::LineEnding                              LineEnding_ = ned::text::LineEnding::LF;
     Rope                                               Rope_;
     UndoTree                                           UndoTree_;
     std::size_t                                        Point_ = 0;

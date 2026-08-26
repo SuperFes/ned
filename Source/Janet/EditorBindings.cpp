@@ -24,6 +24,7 @@
 #include "Editor/FormatOnSave.h"
 #include "Editor/HighlightSettings.h"
 #include "Editor/InlineDiagnostics.h"
+#include "Editor/LineEndingPolicy.h"
 #include "Editor/Link.h"
 #include "Editor/Lsp/LspBackgroundSync.h"
 #include "Editor/Lsp/LspServerConfig.h"
@@ -359,6 +360,14 @@ namespace {
 
     void NedSetTrimTrailingWhitespaceOnSave(bool enabled) {
         editor::SetTrimTrailingWhitespaceOnSave(enabled);
+    }
+
+    // crlf-handling follow-up: "preserve" (default) keeps whatever ending
+    // Buffer::FromFile detected per-buffer; "lf"/"crlf"/"cr" force every
+    // save to that ending regardless of what was detected. See
+    // Editor/LineEndingPolicy.h.
+    void NedSetLineEndingPolicy(std::string policy) {
+        editor::SetLineEndingPolicyFromString(policy);
     }
 
     void NedSetCodeFoldingEnabled(bool enabled) {
@@ -1040,6 +1049,12 @@ void InstallEditorBindings(Environment& env) {
         "Enable/disable stripping trailing spaces/tabs from every line and collapsing trailing blank lines at "
         "end-of-file, applied to a file's written content on save (default true). Disk-only, same as "
         "set-ensure-final-newline -- the buffer's own live content is never touched.");
+    env.Register<&NedSetLineEndingPolicy>(
+        "ned", "set-line-ending-policy",
+        "\"preserve\" (default) keeps each buffer's own detected/converted line ending on save; \"lf\"/\"crlf\"/"
+        "\"cr\" force every save to that ending regardless of what was detected. Per-buffer "
+        "convert-line-endings-to-lf/-crlf/-cr override a single buffer's own ending independent of this "
+        "process-wide policy.");
     env.Register<&NedSetCodeFoldingEnabled>(
         "ned", "set-code-folding-enabled",
         "Enable/disable the gutter code-folding affordance for modes with a fold query (default true).");

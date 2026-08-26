@@ -13,6 +13,7 @@
 #include "Editor/Commands.h"
 #include "Editor/Dispatcher.h"
 #include "Editor/FormatOnSave.h"
+#include "Editor/LineEndingPolicy.h"
 #include "Editor/Mode.h"
 #include "Editor/ProjectRoot.h"
 #include "Editor/ProjectSession.h"
@@ -30,6 +31,14 @@ namespace {
 struct FormatCommandGuard {
     ~FormatCommandGuard() {
         SetFormatCommand(std::nullopt);
+    }
+};
+
+// LineEndingPolicy is process-wide state (see Editor/LineEndingPolicy.h);
+// every test that sets one must restore the default for the next test.
+struct LineEndingPolicyGuard {
+    ~LineEndingPolicyGuard() {
+        SetLineEndingPolicy({LineEndingPolicyMode::Preserve, ned::text::LineEnding::LF});
     }
 };
 
@@ -727,6 +736,63 @@ TEST_CASE("save-buffer reports an error message instead of throwing when there's
     REQUIRE_FALSE(message.empty());
 }
 
+TEST_CASE("save-buffer preserves a CRLF-detected buffer's ending by default", "[Commands][LineEnding]") {
+    const LineEndingPolicyGuard guard;
+
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_commands_test_line_ending_preserve.txt";
+    {
+        std::ofstream file(path, std::ios::binary);
+        file << "one\r\ntwo\r\n";
+    }
+
+    ned::text::Buffer buffer = ned::text::Buffer::FromFile(path);
+    buffer.InsertAtPoint("zero\n");
+
+    ned::text::KillRing   killRing;
+    ned::text::BufferList bufferList;
+    CommandContext        context{buffer, killRing, bufferList};
+
+    registry.Invoke("save-buffer", context);
+
+    std::ifstream     written(path, std::ios::binary);
+    const std::string writtenContent((std::istreambuf_iterator<char>(written)), std::istreambuf_iterator<char>());
+    REQUIRE(writtenContent == "zero\r\none\r\ntwo\r\n");
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("save-buffer forces LF when the process-wide policy is set to Force(LF)", "[Commands][LineEnding]") {
+    const LineEndingPolicyGuard guard;
+    SetLineEndingPolicy({LineEndingPolicyMode::Force, ned::text::LineEnding::LF});
+
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_commands_test_line_ending_force.txt";
+    {
+        std::ofstream file(path, std::ios::binary);
+        file << "one\r\ntwo\r\n";
+    }
+
+    ned::text::Buffer buffer = ned::text::Buffer::FromFile(path);
+    REQUIRE(buffer.LineEndingKind() == ned::text::LineEnding::CRLF);
+
+    ned::text::KillRing   killRing;
+    ned::text::BufferList bufferList;
+    CommandContext        context{buffer, killRing, bufferList};
+
+    registry.Invoke("save-buffer", context);
+
+    std::ifstream     written(path, std::ios::binary);
+    const std::string writtenContent((std::istreambuf_iterator<char>(written)), std::istreambuf_iterator<char>());
+    REQUIRE(writtenContent == "one\ntwo\n");
+
+    std::filesystem::remove(path);
+}
+
 TEST_CASE("save-buffer formats the buffer through the configured command before writing", "[Commands]") {
     const FormatCommandGuard guard;
     SetFormatCommand(std::string("tr 'a-z' 'A-Z'"));
@@ -879,6 +945,40 @@ TEST_CASE("format-buffer reports explicitly when no format command is configured
 
     REQUIRE(fixture.buffer.Text() == "hello");
     REQUIRE(message.find("No format command configured") != std::string::npos);
+}
+
+TEST_CASE("convert-line-endings-to-crlf overrides the buffer's tracked ending without touching live content",
+          "[Commands][LineEnding]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    std::string    message;
+    context.message = &message;
+
+    fixture.buffer.InsertAtPoint("one\ntwo\n");
+    REQUIRE(fixture.buffer.LineEndingKind() == ned::text::LineEnding::LF);
+
+    registry.Invoke("convert-line-endings-to-crlf", context);
+
+    REQUIRE(fixture.buffer.LineEndingKind() == ned::text::LineEnding::CRLF);
+    REQUIRE(fixture.buffer.Text() == "one\ntwo\n"); // live content is never touched -- disk-only until saved
+    REQUIRE(message.find("CRLF") != std::string::npos);
+}
+
+TEST_CASE("convert-line-endings-to-lf/-cr set the expected ending", "[Commands][LineEnding]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    registry.Invoke("convert-line-endings-to-lf", context);
+    REQUIRE(fixture.buffer.LineEndingKind() == ned::text::LineEnding::LF);
+
+    registry.Invoke("convert-line-endings-to-cr", context);
+    REQUIRE(fixture.buffer.LineEndingKind() == ned::text::LineEnding::CR);
 }
 
 TEST_CASE("kill-buffer sets InteractiveRequest::KillBuffer, bound to C-x k", "[Commands]") {
