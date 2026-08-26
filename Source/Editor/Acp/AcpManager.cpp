@@ -329,7 +329,22 @@ std::string AcpManager::SendPrompt(const std::string& text) {
             }
             const std::string stopReason = result ? result->value("stopReason", std::string("end")) : std::string("end");
             AppendToOutputBuffer("\n[" + stopReason + "]\n");
-            PushSessionEvent(stopReason);
+            // chat-feel follow-up (2026-08-26): an ordinary completed turn
+            // ("end_turn", or "end" -- this method's own fallback for a
+            // response with no stopReason at all) used to push a "--
+            // end_turn --" SessionEvent into the *transcript* (AcpPanel's
+            // chat view) on every single prompt, on top of the agent's own
+            // reply -- reported live as feeling like a raw protocol log, not
+            // a conversation (no chat UI announces "the assistant finished
+            // its turn" after every message). The raw *acp: <agent>* output
+            // buffer above still gets every stopReason verbatim -- that's
+            // the deliberate protocol-log surface. An unusual stop reason
+            // (max_tokens, refusal, cancelled, max_turn_requests, ...) still
+            // surfaces in the transcript too, since that genuinely explains
+            // why a reply looks truncated or missing.
+            if (stopReason != "end_turn" && stopReason != "end") {
+                PushSessionEvent(stopReason);
+            }
         });
     return "Sent.";
 }

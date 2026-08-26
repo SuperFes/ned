@@ -306,7 +306,14 @@ TEST_CASE("LspManager::SyncBuffer reports a spawn failure via *lsp log* instead 
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
     LspManager         manager(bufferList, eventLoop);
-    Buffer&            buffer = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-lsp-manager-spawn-fail-test.txt");
+    // LspManagerTest-broker-hermeticity follow-up: without this, ClientForLanguage's
+    // real spawn path tries the *real* broker socket first, and if any broker daemon
+    // (this test's own past run, or another `ned` process) is already listening there,
+    // the connect succeeds and the expected synchronous spawn failure never happens --
+    // it only surfaces later, async, on the broker's own side, after this test's REQUIREs
+    // have already run. Point at a path nothing will ever listen on instead.
+    manager.SetBrokerSocketPathOverrideForTesting(std::filesystem::temp_directory_path() / "ned-lsp-manager-test-no-broker.sock");
+    Buffer& buffer = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-lsp-manager-spawn-fail-test.txt");
 
     ned::editor::lsp::SetLspServerCommand("spawn-fail-lang", {"/definitely/does/not/exist/ned-fake-lsp"});
 
@@ -336,6 +343,8 @@ TEST_CASE("LspManager::StatusForLanguage reports NotConfigured, Running, and Spa
     ned::ui::EventLoop eventLoop;
     LspManager         manager(bufferList, eventLoop);
     using ned::editor::lsp::LspManager;
+    // See the spawn-failure test above for why this is needed for hermeticity.
+    manager.SetBrokerSocketPathOverrideForTesting(std::filesystem::temp_directory_path() / "ned-lsp-manager-test-no-broker.sock");
 
     REQUIRE(manager.StatusForLanguage("status-test-lang") == LspManager::LspStatus::NotConfigured);
     REQUIRE(manager.SpawnFailureDetail("status-test-lang").empty());

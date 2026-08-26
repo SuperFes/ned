@@ -342,6 +342,20 @@ class LspManager {
     LspClient& SetClientForTesting(std::string language, std::unique_ptr<LspClient> client,
                                    const Json& workspaceConfiguration = Json::object());
 
+    // LspManagerTest-broker-hermeticity follow-up: routes ClientForLanguage's
+    // real spawn path's TryConnectToBroker call at a caller-chosen path
+    // instead of the real BrokerSocketPath() -- lets a test that wants a
+    // deterministic, synchronous spawn failure point at a path nothing is
+    // (or ever will be) listening on, immune to a real broker daemon a
+    // previous test run or another `ned` process happened to leave running
+    // on this machine's real BrokerSocketPath(). Passing a nonexistent path
+    // also skips TryBecomeBrokerSpawner (see LspBrokerConnect.cpp), so this
+    // never forks a real daemon process either. Production code
+    // (LspManager's own constructor) never calls this.
+    void SetBrokerSocketPathOverrideForTesting(std::filesystem::path path) {
+        brokerSocketPathOverrideForTesting_ = std::move(path);
+    }
+
     // error-visibility follow-up. Finds (or, on the very first call in this
     // process's lifetime, creates) kLspLogBufferName and appends one
     // timestamped, language-tagged line to its end -- "[HH:MM:SS] language:
@@ -508,6 +522,15 @@ class LspManager {
 
     text::BufferList&   bufferList_;
     ned::ui::EventLoop& eventLoop_;
+
+    // LspManagerTest-broker-hermeticity follow-up: test-only override for
+    // the broker socket path ClientForLanguage's TryConnectToBroker call
+    // resolves against -- nullopt (the real default) resolves the real
+    // BrokerSocketPath(). Without this, a test asserting a spawn failure
+    // surfaces synchronously is at the mercy of whatever broker daemon (if
+    // any) happens to already be listening on the machine running the test
+    // -- see SetBrokerSocketPathOverrideForTesting's own doc comment.
+    std::optional<std::filesystem::path> brokerSocketPathOverrideForTesting_;
 
     std::unordered_map<std::string, std::unique_ptr<LspClient>> clients_; // keyed by language
 
