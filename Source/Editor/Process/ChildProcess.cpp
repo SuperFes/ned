@@ -24,6 +24,31 @@ extern char** environ;
 
 namespace ned::editor::process {
 
+namespace {
+
+    // write-side-hang-protection follow-up. A *blocking* write() to a pipe
+    // does not return early with a partial count once its own free space
+    // runs out -- confirmed live: it keeps waiting internally for the
+    // reader to drain more, for the entire requested length, which defeats
+    // a WaitWritable poll() check that only ever runs once *before* the
+    // call. O_NONBLOCK is what keeps each individual ::write() call inside
+    // WriteAll itself bounded; WaitWritable still does the real waiting, in
+    // a loop, between short, non-blocking writes. Applied once here at
+    // construction (never toggled per-call) since writeFd_ is never shared
+    // with anything that wants blocking semantics -- WriteAll is its only
+    // writer.
+    void SetNonBlocking(int fd) {
+        if (fd < 0) {
+            return;
+        }
+        const int flags = ::fcntl(fd, F_GETFL, 0);
+        if (flags != -1) {
+            ::fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+        }
+    }
+
+} // namespace
+
 // Manual $PATH search -- see this file's own header comment for why this
 // exists instead of just calling posix_spawnp. Hoisted out of the anonymous
 // namespace (terminal-panel follow-up) so PtyProcess's pre-fork resolution
@@ -140,9 +165,11 @@ ChildProcess::ChildProcess(const std::vector<std::string>& argv, StderrMode stde
     readFd_   = stdoutPipe[0];
     stderrFd_ = captureStderr ? stderrPipe[0] : -1;
     pid_      = childPid;
+    SetNonBlocking(writeFd_);
 }
 
 ChildProcess::ChildProcess(int readFd, int writeFd, pid_t pid) noexcept : writeFd_(writeFd), readFd_(readFd), pid_(pid) {
+    SetNonBlocking(writeFd_);
 }
 
 ChildProcess::~ChildProcess() {
@@ -225,13 +252,16 @@ ChildProcess& ChildProcess::operator=(ChildProcess&& other) noexcept {
     return *this;
 }
 
-void ChildProcess::WriteAll(std::string_view data) const {
+void ChildProcess::WriteAll(std::string_view data, std::chrono::milliseconds timeout) const {
     std::size_t written = 0;
     while (written < data.size()) {
+        if (!WaitWritable(timeout)) {
+            throw std::runtime_error("ned: ChildProcess write stalled (child not draining stdin)");
+        }
         const ssize_t result = ::write(writeFd_, data.data() + written, data.size() - written);
         if (result < 0) {
-            if (errno == EINTR) {
-                continue;
+            if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
+                continue; // interrupted, or a spurious/racy post-poll wakeup -- WaitWritable loops back around
             }
             throw std::runtime_error(std::string("ned: ChildProcess write failed: ") + std::strerror(errno));
         }
@@ -247,6 +277,18 @@ std::string ChildProcess::ReadSome() const {
             if (errno == EINTR) {
                 continue;
             }
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                // write-side-hang-protection follow-up: readFd_ may now be
+                // non-blocking (it can share an open file description with
+                // a WriteAll-bearing writeFd_ -- see that method's own doc
+                // comment), which would otherwise turn this method's
+                // documented "blocks until data" contract into a spurious
+                // immediate empty-handed return. WaitReadable's negative-
+                // timeout sentinel restores the real blocking-until-ready
+                // wait.
+                [[maybe_unused]] const bool ready = WaitReadable(std::chrono::milliseconds(-1)); // always true -- a negative timeout never times out
+                continue;
+            }
             throw std::runtime_error(std::string("ned: ChildProcess read failed: ") + std::strerror(errno));
         }
         if (result == 0) {
@@ -258,6 +300,20 @@ std::string ChildProcess::ReadSome() const {
 
 bool ChildProcess::WaitReadable(std::chrono::milliseconds timeout) const {
     pollfd pfd{readFd_, POLLIN, 0};
+    while (true) {
+        const int result = ::poll(&pfd, 1, static_cast<int>(timeout.count()));
+        if (result < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            throw std::runtime_error(std::string("ned: ChildProcess poll failed: ") + std::strerror(errno));
+        }
+        return result > 0; // 0 == timed out, nothing ready
+    }
+}
+
+bool ChildProcess::WaitWritable(std::chrono::milliseconds timeout) const {
+    pollfd pfd{writeFd_, POLLOUT, 0};
     while (true) {
         const int result = ::poll(&pfd, 1, static_cast<int>(timeout.count()));
         if (result < 0) {

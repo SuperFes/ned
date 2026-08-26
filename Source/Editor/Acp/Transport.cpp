@@ -23,19 +23,29 @@ namespace {
     // disconnect -- matches Transport::ReadFrame's own "EOF mid-body" case.
     // The first byte of a message waits unbounded (idle between messages is
     // normal); every byte after that is bounded by stallTimeout -- once a
-    // message has started arriving, further silence is anomalous.
+    // message has started arriving, further silence is anomalous. Always
+    // polls before reading, even for the unbounded case -- see
+    // Lsp/Transport.cpp's own ReadLine doc comment (write-side-hang-
+    // protection follow-up) for why, and for the negative-timeout-means-
+    // "block forever" poll(2) sentinel this relies on.
     bool ReadLine(const process::ChildProcess& child, std::string& line, std::chrono::milliseconds stallTimeout) {
         line.clear();
         bool first = true;
         while (true) {
-            if (!first && !child.WaitReadable(stallTimeout)) {
+            const std::chrono::milliseconds waitTimeout = first ? std::chrono::milliseconds(-1) : stallTimeout;
+            if (!child.WaitReadable(waitTimeout)) {
                 throw std::runtime_error("ned: ACP transport stalled mid-message");
             }
             first                = false;
             char          ch     = 0;
             const ssize_t result = ::read(child.ReadFd(), &ch, 1);
             if (result < 0) {
-                if (errno == EINTR) {
+                // write-side-hang-protection follow-up: ReadFd() is now
+                // non-blocking whenever it shares an open file description
+                // with a WriteAll-bearing WriteFd() -- EAGAIN here just
+                // means the WaitReadable check above raced a spurious
+                // wakeup; loop back around and re-poll.
+                if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
                     continue;
                 }
                 throw std::runtime_error(std::string("ned: ACP transport read failed: ") + std::strerror(errno));
@@ -70,9 +80,9 @@ Transport::Transport(const std::vector<std::string>& argv, bool captureStderr)
 Transport::Transport(int readFd, int writeFd, pid_t pid) noexcept : child_(readFd, writeFd, pid) {
 }
 
-void Transport::WriteMessage(std::string_view jsonPayload) const {
-    child_.WriteAll(jsonPayload);
-    child_.WriteAll("\n");
+void Transport::WriteMessage(std::string_view jsonPayload, std::chrono::milliseconds stallTimeout) const {
+    child_.WriteAll(jsonPayload, stallTimeout);
+    child_.WriteAll("\n", stallTimeout);
 }
 
 std::optional<std::string> Transport::ReadMessage(std::chrono::milliseconds stallTimeout) const {

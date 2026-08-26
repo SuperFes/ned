@@ -192,7 +192,7 @@ void CopyToSystemClipboard(std::string_view text) {
     if (const std::optional<std::vector<std::string>> argv = ResolvedClipboardCopyCommand()) {
         try {
             process::ChildProcess child(*argv);
-            child.WriteAll(text);
+            child.WriteAll(text, SubprocessWriteTimeoutMs());
             // Falls out of scope here -- the destructor closes stdin (EOF,
             // the shutdown signal a well-behaved clipboard tool waits for)
             // then waits briefly before escalating, exactly the sequencing
@@ -201,8 +201,10 @@ void CopyToSystemClipboard(std::string_view text) {
             // which always happens regardless.
         }
         catch (const std::runtime_error&) {
-            // Not found / spawn failure -- treated identically to "no tool
-            // resolved," the OSC 52 write below still happens.
+            // Not found / spawn failure, or (write-side-hang-protection
+            // follow-up) the tool stalled and stopped draining stdin --
+            // treated identically to "no tool resolved," the OSC 52 write
+            // below still happens.
         }
     }
     WriteOsc52(text);

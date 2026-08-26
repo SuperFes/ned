@@ -72,10 +72,15 @@ class ChildProcess {
     ChildProcess(const ChildProcess&)            = delete;
     ChildProcess& operator=(const ChildProcess&) = delete;
 
-    // Loops over ::write() to handle partial writes/EINTR. Throws
-    // std::runtime_error on any other error (most notably EPIPE, the child
-    // having already exited and closed its stdin).
-    void WriteAll(std::string_view data) const;
+    // write-side-hang-protection follow-up. Loops over ::write() to handle
+    // partial writes/EINTR, bounded by timeout: each individual ::write() is
+    // preceded by a WaitWritable check, so a child that stops draining its
+    // stdin (wedged, busy, or its own pipe buffer full) fails this call
+    // after timeout instead of blocking the caller's thread indefinitely --
+    // the write-side twin of ReadSome(timeout)/WaitReadable below. Throws
+    // std::runtime_error on timeout, or on any other write error (most
+    // notably EPIPE, the child having already exited and closed its stdin).
+    void WriteAll(std::string_view data, std::chrono::milliseconds timeout) const;
 
     // One ::read() call's worth of bytes (retrying on EINTR) -- NOT
     // frame-shaped, just whatever the kernel currently has buffered. Returns
@@ -89,6 +94,12 @@ class ChildProcess {
     // reader (Lsp/Acp Transport) and ReadSome(timeout) below build on. Throws
     // std::runtime_error on a genuine poll() error.
     [[nodiscard]] bool WaitReadable(std::chrono::milliseconds timeout) const;
+
+    // write-side-hang-protection follow-up. WaitReadable's write-side twin:
+    // true if the write end can accept data (or has an error condition
+    // ready to report) within timeout; false if it timed out with nothing
+    // ready. WriteAll's own building block.
+    [[nodiscard]] bool WaitWritable(std::chrono::milliseconds timeout) const;
 
     // Same contract as ReadSome() above, except returns std::nullopt instead
     // of blocking indefinitely when nothing arrives within timeout. Empty

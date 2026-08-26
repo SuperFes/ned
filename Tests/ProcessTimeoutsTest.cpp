@@ -9,7 +9,9 @@ using ned::editor::ProtocolStallTimeoutMs;
 using ned::editor::SetProtocolRequestTimeoutMs;
 using ned::editor::SetProtocolStallTimeoutMs;
 using ned::editor::SetSubprocessReadTimeoutMs;
+using ned::editor::SetSubprocessWriteTimeoutMs;
 using ned::editor::SubprocessReadTimeoutMs;
+using ned::editor::SubprocessWriteTimeoutMs;
 
 namespace {
 
@@ -19,6 +21,7 @@ namespace {
 struct ProcessTimeoutsGuard {
     ~ProcessTimeoutsGuard() {
         SetSubprocessReadTimeoutMs(5000);
+        SetSubprocessWriteTimeoutMs(5000);
         SetProtocolStallTimeoutMs(30000);
         SetProtocolRequestTimeoutMs(30000);
     }
@@ -29,6 +32,7 @@ struct ProcessTimeoutsGuard {
 TEST_CASE("Timeouts default to their documented values", "[ProcessTimeouts]") {
     const ProcessTimeoutsGuard guard;
     REQUIRE(SubprocessReadTimeoutMs() == std::chrono::milliseconds(5000));
+    REQUIRE(SubprocessWriteTimeoutMs() == std::chrono::milliseconds(5000));
     REQUIRE(ProtocolStallTimeoutMs() == std::chrono::milliseconds(30000));
     REQUIRE(ProtocolRequestTimeoutMs() == std::chrono::milliseconds(30000));
 }
@@ -37,6 +41,12 @@ TEST_CASE("SetSubprocessReadTimeoutMs/SubprocessReadTimeoutMs round-trip", "[Pro
     const ProcessTimeoutsGuard guard;
     SetSubprocessReadTimeoutMs(1500);
     REQUIRE(SubprocessReadTimeoutMs() == std::chrono::milliseconds(1500));
+}
+
+TEST_CASE("SetSubprocessWriteTimeoutMs/SubprocessWriteTimeoutMs round-trip", "[ProcessTimeouts]") {
+    const ProcessTimeoutsGuard guard;
+    SetSubprocessWriteTimeoutMs(1500);
+    REQUIRE(SubprocessWriteTimeoutMs() == std::chrono::milliseconds(1500));
 }
 
 TEST_CASE("SetProtocolStallTimeoutMs/ProtocolStallTimeoutMs round-trip", "[ProcessTimeouts]") {
@@ -58,6 +68,11 @@ TEST_CASE("Every setter clamps a non-positive value to 1ms", "[ProcessTimeouts]"
     REQUIRE(SubprocessReadTimeoutMs() == std::chrono::milliseconds(1));
     SetSubprocessReadTimeoutMs(-100);
     REQUIRE(SubprocessReadTimeoutMs() == std::chrono::milliseconds(1));
+
+    SetSubprocessWriteTimeoutMs(0);
+    REQUIRE(SubprocessWriteTimeoutMs() == std::chrono::milliseconds(1));
+    SetSubprocessWriteTimeoutMs(-100);
+    REQUIRE(SubprocessWriteTimeoutMs() == std::chrono::milliseconds(1));
 
     SetProtocolStallTimeoutMs(0);
     REQUIRE(ProtocolStallTimeoutMs() == std::chrono::milliseconds(1));

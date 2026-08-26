@@ -11,12 +11,36 @@
 
 #include <notcurses/notcurses.h>
 
+#include "Editor/DiagnosticsLog.h"
 #include "Editor/Key.h"
 #include "UI/KeyTranslation.h"
 
 namespace ned::ui {
 
 namespace {
+
+    // posted-work-exception-boundary follow-up. Every callback this loop
+    // invokes (onResize/onEvent/render, and DrainPosted_'s own queued
+    // background-thread results below) previously ran with no exception
+    // boundary at all -- any std::runtime_error escaping one (a write-side
+    // ChildProcess::WriteAll timeout, say) propagated straight out of Run()
+    // and crashed the whole process instead of failing just the one piece
+    // of work. Logged rather than silently swallowed, and rethrow-free so
+    // one bad callback never takes the rest of this iteration down with it.
+    template <typename F>
+    void SafeInvoke(std::string_view what, F&& fn) {
+        try {
+            fn();
+        }
+        catch (const std::exception& e) {
+            editor::LogMessage(editor::LogCategory::General, editor::LogSeverity::Error,
+                                "ned: uncaught exception in " + std::string(what) + ": " + e.what());
+        }
+        catch (...) {
+            editor::LogMessage(editor::LogCategory::General, editor::LogSeverity::Error,
+                                "ned: uncaught non-std::exception in " + std::string(what));
+        }
+    }
 
     // NED_DEBUG_KEYS=<path>: append one line per non-mouse input event with
     // the raw ncinput fields and the KeyChord it translates to (or the reason
@@ -165,7 +189,7 @@ bool EventLoop::DrainPosted_() {
         work.swap(posted_);
     }
     for (auto& fn : work) {
-        fn();
+        SafeInvoke("posted background work", fn);
     }
     return !work.empty();
 }
@@ -180,10 +204,13 @@ void EventLoop::Run(const EventLoopCallbacks& callbacks) {
 
     Size lastSize = TerminalSize();
     if (callbacks.onResize) {
-        callbacks.onResize(lastSize);
+        SafeInvoke("onResize", [&] { callbacks.onResize(lastSize); });
     }
     auto repaint = [&] {
-        std::optional<Point> cursor = callbacks.render ? callbacks.render() : std::nullopt;
+        std::optional<Point> cursor;
+        if (callbacks.render) {
+            SafeInvoke("render", [&] { cursor = callbacks.render(); });
+        }
         if (cursor) {
             notcurses_cursor_enable(nc_, cursor->y, cursor->x);
         }
@@ -240,7 +267,7 @@ void EventLoop::Run(const EventLoopCallbacks& callbacks) {
                 const Size newSize{static_cast<int>(cols), static_cast<int>(rows)};
                 if ((newSize.width != lastSize.width || newSize.height != lastSize.height) && callbacks.onResize) {
                     lastSize = newSize;
-                    callbacks.onResize(newSize);
+                    SafeInvoke("onResize", [&] { callbacks.onResize(newSize); });
                 }
                 needsRepaint = true;
                 continue;
@@ -270,7 +297,7 @@ void EventLoop::Run(const EventLoopCallbacks& callbacks) {
                 }
             }
             if (callbacks.onEvent) {
-                callbacks.onEvent(Event(input));
+                SafeInvoke("onEvent", [&] { callbacks.onEvent(Event(input)); });
             }
             needsRepaint = true;
         }

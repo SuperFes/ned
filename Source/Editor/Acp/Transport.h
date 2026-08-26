@@ -69,8 +69,11 @@ class Transport {
 
     // Writes one message (jsonPayload + "\n") to the child's stdin. Throws
     // std::runtime_error on a write failure (e.g. the child already exited
-    // and closed its stdin -- EPIPE).
-    void WriteMessage(std::string_view jsonPayload) const;
+    // and closed its stdin -- EPIPE) or (write-side-hang-protection
+    // follow-up) if the child stops draining its stdin for longer than
+    // stallTimeout -- same rationale/default as ReadMessage's own
+    // stallTimeout parameter below.
+    void WriteMessage(std::string_view jsonPayload, std::chrono::milliseconds stallTimeout = ProtocolStallTimeoutMs()) const;
 
     // Blocks until one full line has been read from the child's stdout,
     // returning it with the trailing newline stripped. Returns std::nullopt
