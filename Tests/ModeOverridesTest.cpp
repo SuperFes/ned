@@ -22,8 +22,14 @@ namespace {
 // See DynamicGrammarTest.cpp's own header comment: real, non-bundled,
 // system-installed grammar + query, not FetchContent'd -- tests
 // exercising the real load path SKIP rather than fail if absent.
-const std::filesystem::path kLuaLibrary = "/usr/lib64/libtree-sitter-lua.so";
-const std::filesystem::path kLuaQuery   = "/usr/share/tree-sitter/queries/lua/highlights.scm";
+// register-language-grammar-directory-scan follow-up: kLuaQueriesDir is
+// exactly the shape a real system tree-sitter install already uses
+// (/usr/share/tree-sitter/queries/<lang>/highlights.scm, ...), which is
+// what motivated scanning a directory instead of requiring an explicit
+// per-query-file path in the first place.
+const std::filesystem::path kLuaLibrary    = "/usr/lib64/libtree-sitter-lua.so";
+const std::filesystem::path kLuaQueriesDir = "/usr/share/tree-sitter/queries/lua";
+const std::filesystem::path kLuaQuery      = kLuaQueriesDir / "highlights.scm";
 
 bool HasRealLuaFixture() {
     return std::filesystem::exists(kLuaLibrary) && std::filesystem::exists(kLuaQuery);
@@ -45,16 +51,28 @@ TEST_CASE("ModeByName returns nullopt for a name that is neither bundled nor dyn
 
 TEST_CASE("RegisterDynamicMode throws for a nonexistent library path", "[ModeOverrides]") {
     REQUIRE_THROWS_AS(
-        RegisterDynamicMode("bogus-lang", "/not/a/real/path/libtree-sitter-bogus.so", "/not/a/real/query.scm"),
+        RegisterDynamicMode("bogus-lang", "/not/a/real/path/libtree-sitter-bogus.so", "/not/a/real/queries/dir"),
         std::runtime_error);
 }
 
-TEST_CASE("RegisterDynamicMode throws for a missing query file, even with a real library", "[ModeOverrides]") {
+TEST_CASE("RegisterDynamicMode silently skips a queriesDir with none of the conventional query files",
+          "[ModeOverrides]") {
     if (!std::filesystem::exists(kLuaLibrary)) {
         SKIP("system-wide libtree-sitter-lua.so not found on this machine");
     }
-    REQUIRE_THROWS_AS(RegisterDynamicMode("lua-missing-query", kLuaLibrary, "/not/a/real/query.scm"),
-                      std::runtime_error);
+    // Neither a nonexistent directory nor one missing highlights.scm/
+    // folds.scm/imports.scm is an error -- it just means the grammar gets
+    // no highlighting/fold/import-target support, same outcome "" had
+    // under the old explicit-per-query-file signature. Registered under
+    // "lua" (matching tree_sitter_lua, the real exported symbol) rather
+    // than a made-up name -- LoadDynamicLanguage's dlsym runs before the
+    // directory scan, so an unresolvable symbol would throw first and this
+    // test wouldn't actually be exercising the scan at all.
+    RegisterDynamicMode("lua", kLuaLibrary, "/not/a/real/queries/dir");
+
+    const std::optional<ned::editor::Mode> mode = ModeByName("lua");
+    REQUIRE(mode.has_value());
+    REQUIRE_FALSE(static_cast<bool>(mode->highlight));
 }
 
 TEST_CASE("RegisterDynamicMode + ModeByName round-trip with a real system grammar", "[ModeOverrides]") {
@@ -62,7 +80,7 @@ TEST_CASE("RegisterDynamicMode + ModeByName round-trip with a real system gramma
         SKIP("system-wide lua grammar/query not found on this machine");
     }
 
-    RegisterDynamicMode("lua", kLuaLibrary, kLuaQuery);
+    RegisterDynamicMode("lua", kLuaLibrary, kLuaQueriesDir);
 
     const std::optional<ned::editor::Mode> mode = ModeByName("lua");
     REQUIRE(mode.has_value());
@@ -77,7 +95,7 @@ TEST_CASE("SetModeForExtension + ModeForFileOverride resolves through the extens
         SKIP("system-wide lua grammar/query not found on this machine");
     }
 
-    RegisterDynamicMode("lua", kLuaLibrary, kLuaQuery);
+    RegisterDynamicMode("lua", kLuaLibrary, kLuaQueriesDir);
     SetModeForExtension("lua", "lua"); // extension "lua" (no dot) -> mode name "lua"
 
     const std::optional<ned::editor::Mode> viaDot = ModeForFileOverride("/some/path/script.lua");
@@ -90,7 +108,7 @@ TEST_CASE("SetModeForExtension accepts a leading dot too, resolving the same way
         SKIP("system-wide lua grammar/query not found on this machine");
     }
 
-    RegisterDynamicMode("lua", kLuaLibrary, kLuaQuery);
+    RegisterDynamicMode("lua", kLuaLibrary, kLuaQueriesDir);
     SetModeForExtension(".lua", "lua"); // extension WITH a leading dot this time
 
     REQUIRE(ModeForFileOverride("/some/path/other.lua").has_value());
