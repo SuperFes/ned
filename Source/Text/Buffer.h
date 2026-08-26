@@ -497,6 +497,28 @@ class Buffer {
     void               Undo();
     void               Redo();
 
+    // persistent-undo follow-up: hands the whole UndoTree out as a flat,
+    // JSON-agnostic node list plus which node is current -- Editor/
+    // PersistentUndo.h is what actually serializes this to disk; Buffer/
+    // Text/ stay free of any JSON dependency, the same split
+    // Text/UndoTree.h's own Serialize()/CurrentNodeId() draw.
+    [[nodiscard]] std::vector<UndoTree::SerializedNode> SerializeUndo() const;
+    [[nodiscard]] std::size_t                           CurrentUndoNodeId() const;
+
+    // Replaces UndoTree_ wholesale with a tree reconstructed from a prior
+    // SerializeUndo()/CurrentUndoNodeId() pair, round-tripped through disk
+    // in between -- Editor/PersistentUndo.h's restore path, called
+    // immediately after a fresh load once its own content-hash check has
+    // already confirmed nodes' currentId entry matches this buffer's
+    // just-loaded content. Throws std::runtime_error if it doesn't (a
+    // caller-contract violation, not a normal runtime condition -- that
+    // hash check is supposed to have already ruled this out) or if nodes
+    // itself is malformed (see UndoTree::Deserialize). Point/mark/secondary
+    // cursors/fold markers are left exactly as they are; only UndoTree_ and
+    // CanAmend_ (a freshly restored tree has no in-flight coalescing run)
+    // change.
+    void RestoreUndoTree(std::vector<UndoTree::SerializedNode> nodes, std::size_t currentId);
+
     // A generic, Org-agnostic per-position marker (Org-mode fold/unfold
     // follow-up): Buffer has no idea these represent headline fold state --
     // it just tracks a sparse {byte offset -> one of two marker values}

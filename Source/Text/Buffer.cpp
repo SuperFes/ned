@@ -1526,6 +1526,23 @@ void Buffer::Redo() {
     UpdateExcerptRangesForRestore(oldText); // NOT cleared -- see ExcerptRange's own doc comment
 }
 
+std::vector<UndoTree::SerializedNode> Buffer::SerializeUndo() const {
+    return UndoTree_.Serialize();
+}
+
+std::size_t Buffer::CurrentUndoNodeId() const {
+    return UndoTree_.CurrentNodeId();
+}
+
+void Buffer::RestoreUndoTree(std::vector<UndoTree::SerializedNode> nodes, std::size_t currentId) {
+    UndoTree restored = UndoTree::Deserialize(nodes, currentId);
+    if (restored.Current().ToString() != Rope_.ToString()) {
+        throw std::runtime_error("Buffer::RestoreUndoTree: restored tree's current content doesn't match buffer content");
+    }
+    UndoTree_ = std::move(restored);
+    CanAmend_ = false;
+}
+
 void Buffer::UpdateUnsavedRangesForRestore(const std::string& oldText) {
     const std::string newText = Rope_.ToString();
 

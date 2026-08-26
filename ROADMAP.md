@@ -130,8 +130,6 @@ Notcurses.
 - [ ] **No buffer-list/ibuffer-style management** — `switch-to-buffer` is a
       name-completion prompt only; no dedicated buffer-list buffer with mark/save/kill
       batch operations.
-- [ ] **No persistent/cross-session undo** — `Text/UndoTree.h` has no serialize/save/
-      load; history is memory-only per process, gone on restart.
 - [ ] **No server/daemon mode** — no `emacsclient`-equivalent; one process per terminal,
       no way to keep a warm process (buffers, LSP connections, undo history) alive and
       attach a new terminal client to it.
@@ -348,6 +346,27 @@ call sites, so "port" means replacing the platform layer wholesale:
 
 Unscoped beyond this sketch — process spawning is the obvious dependency root; nothing
 else works without it.
+
+## Maybelist (speculative — neither committed nor rejected)
+
+Ideas worth remembering but not worth scoping yet — too undecided for "Open Items",
+not disliked enough for "Won't do". Promote or delete on revisit rather than letting
+these accumulate detail in place.
+
+- [ ] **Merge-aware cross-session undo** — persistent undo (`Editor/PersistentUndo.h`,
+      shipped 2026-08-25) content-gates: on reopen, restores the full tree only if the
+      file's current on-disk content exactly matches some node already in the persisted
+      tree (any node, not just the tip -- covers "quit without saving" for free); no
+      match at all just discards the persisted history outright and the buffer starts
+      fresh. The fancier version would three-way-merge a genuinely novel external change
+      into the persisted history instead of discarding it (base = last-persisted content,
+      ours = tree tip, theirs = fresh disk content), reusing `Text/ThreeWayMerge.h`/
+      `Editor/AutoMerge.h`'s existing machinery to splice one merge node onto the old tip.
+      Deferred because it means synthesizing an undo node for content the user never
+      actually typed — a real risk of `undo` doing something surprising later — worth it
+      only if the content-gate default proves too lossy in practice (i.e. people
+      habitually edit files outside ned in ways that touch none of a session's own undo
+      states and lose history often enough to complain).
 
 ## Won't do (at least not soon)
 
