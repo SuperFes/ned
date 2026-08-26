@@ -1162,6 +1162,11 @@ auto main(int argc, char** argv) -> int {
     // setting in this file already follows.
     ned::ui::AcpPanel acpPanel(theme);
     acpPanel.SetAcpManager(&acpManager);
+    // ACP round-1-live-validation follow-up: lets a pending permission
+    // request resolve inside this panel instead of the focused pane's echo
+    // area whenever the panel itself has focus -- see
+    // WindowManager::SetAcpPanelFocusChecker's own doc comment.
+    windowManager->SetAcpPanelFocusChecker([&acpPanel] { return acpPanel.Focused(); });
     overlays.Add(acpPanel, [](Size size) {
         const int yMax = std::max(1, size.height - 2); // above the echo area row
         if (ned::editor::acp::GetAcpPanelDock() == ned::editor::acp::AcpPanelDock::Right) {

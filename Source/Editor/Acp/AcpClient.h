@@ -138,6 +138,14 @@ class AcpClient {
     // identical doc comment. Real callers take ProcessTimeouts.h's
     // ProtocolRequestTimeoutMs() as their default (ChildProcess-hang-
     // protection-round-2 follow-up).
+    //
+    // ACP round-1-live-validation follow-up: unlike LSP/DAP's one-shot
+    // request/response calls, a "session/prompt" request can legitimately sit
+    // pending for an entire agent turn -- long tool executions and streaming
+    // session/update chunks are normal, not a hang. A pending request is
+    // therefore only expired if *no* frame at all (of any kind) has arrived
+    // from the agent for maxAge, not merely if the one specific request has
+    // been outstanding that long -- see lastActivityAt_/DispatchFrame.
     void ExpireStaleRequests(std::chrono::milliseconds maxAge = ProtocolRequestTimeoutMs());
 
   private:
@@ -157,6 +165,7 @@ class AcpClient {
 
     int                                                  nextRequestId_ = 1;
     std::unordered_map<int, PendingRequest>              pending_;
+    std::chrono::steady_clock::time_point                lastActivityAt_ = std::chrono::steady_clock::now(); // see ExpireStaleRequests's doc comment
     std::unordered_map<std::string, NotificationHandler> notificationHandlers_;
     std::unordered_map<std::string, RequestHandler>      requestHandlers_;
     std::function<void(std::string reason)>              onDisconnected_; // see SetOnDisconnected

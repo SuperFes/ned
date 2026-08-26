@@ -134,15 +134,52 @@ void AcpManager::PushOrAppendAgentText(std::string_view text) {
 }
 
 void AcpManager::PushOrUpdateToolCall(const Json& update) {
+    // A real agent's tool_call_update frequently omits title/status entirely
+    // (confirmed live against Claude Code's ACP adapter -- a follow-up update
+    // often carries only content/rawOutput for an already-known toolCallId).
+    // Absence must mean "unchanged," not "reset to the generic fallback" --
+    // ROADMAP.md's own prediction that this parsing would need widening once
+    // exercised against a real agent.
+    const bool        hasTitle   = update.contains("title") || update.contains("kind");
     const std::string title      = update.value("title", update.value("kind", std::string("tool call")));
+    const bool        hasStatus  = update.contains("status");
     const std::string status     = update.value("status", std::string());
     const std::string toolCallId = update.value("toolCallId", std::string());
+
+    // A "diff"-typed content item, when present, is the actual before/after
+    // text of a file edit -- confirmed live against Claude Code's Edit tool
+    // (ACP's own {type: "diff", path, oldText, newText} shape). Most tool
+    // calls never carry one, and most updates for one that does only arrive
+    // on the update that actually has it (earlier updates for the same call
+    // have an empty "content": []) -- so, same as title/status, absence here
+    // must mean "no new diff this update," not "clear the one we already have."
+    bool        hasDiff = false;
+    std::string diffOldText;
+    std::string diffNewText;
+    if (update.contains("content") && update["content"].is_array()) {
+        for (const Json& item : update["content"]) {
+            if (item.is_object() && item.value("type", std::string()) == "diff") {
+                hasDiff     = true;
+                diffOldText = item.value("oldText", std::string());
+                diffNewText = item.value("newText", std::string());
+                break;
+            }
+        }
+    }
 
     if (!toolCallId.empty()) {
         for (auto it = transcript_.rbegin(); it != transcript_.rend(); ++it) {
             if (it->kind == TranscriptEntry::Kind::ToolCall && it->toolCallId == toolCallId) {
-                it->text   = title;
-                it->status = status;
+                if (hasTitle) {
+                    it->text = title;
+                }
+                if (hasStatus) {
+                    it->status = status;
+                }
+                if (hasDiff) {
+                    it->diffOldText = diffOldText;
+                    it->diffNewText = diffNewText;
+                }
                 ++transcriptGeneration_;
                 NotifyTranscriptChanged();
                 return;
@@ -150,10 +187,12 @@ void AcpManager::PushOrUpdateToolCall(const Json& update) {
         }
     }
     PushTranscriptEntry(TranscriptEntry{
-        .kind       = TranscriptEntry::Kind::ToolCall,
-        .text       = title,
-        .status     = status,
-        .toolCallId = toolCallId.empty() ? std::nullopt : std::optional<std::string>(toolCallId),
+        .kind        = TranscriptEntry::Kind::ToolCall,
+        .text        = title,
+        .status      = status,
+        .toolCallId  = toolCallId.empty() ? std::nullopt : std::optional<std::string>(toolCallId),
+        .diffOldText = hasDiff ? std::optional<std::string>(diffOldText) : std::nullopt,
+        .diffNewText = hasDiff ? std::optional<std::string>(diffNewText) : std::nullopt,
     });
 }
 
@@ -317,7 +356,7 @@ std::string AcpManager::StopSession() {
 }
 
 void AcpManager::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
-    if (client_) {
+    if (client_ && !pendingPermissionPrompt_) {
         client_->ExpireStaleRequests(maxAge);
     }
 }

@@ -16,6 +16,7 @@
 
 #include "Border.h"
 #include "EchoArea.h"
+#include "Editor/Acp/AcpConfig.h"
 #include "Editor/Bookmark.h"
 #include "Editor/Clipboard.h"
 #include "Editor/CodeFoldSettings.h"
@@ -6896,8 +6897,8 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
         inputMode_ != InputMode::CreateDirectory && inputMode_ != InputMode::StringRectangle &&
         inputMode_ != InputMode::SetHeadlineTags && inputMode_ != InputMode::LspRenameNewName &&
         inputMode_ != InputMode::TaskName && inputMode_ != InputMode::DapEvaluate &&
-        inputMode_ != InputMode::VcsCreateBranch && inputMode_ != InputMode::AcpAgentName &&
-        inputMode_ != InputMode::AcpPromptText && inputMode_ != InputMode::DeleteProperty &&
+        inputMode_ != InputMode::VcsCreateBranch && inputMode_ != InputMode::AcpPromptText &&
+        inputMode_ != InputMode::DeleteProperty &&
         inputMode_ != InputMode::OrgSchedule && inputMode_ != InputMode::OrgDeadline &&
         inputMode_ != InputMode::DapBreakpointCondition && inputMode_ != InputMode::DapBreakpointLogMessage &&
         inputMode_ != InputMode::DapAddWatch && inputMode_ != InputMode::DapSetVariableValue &&
@@ -6907,10 +6908,13 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
         // ProjectSearch's regex pattern. VcsCreateBranch likewise
         // (deliberately *new* free text); VcsSwitchBranch is NOT excluded --
         // CompletePrompt completes it against the fetched branch list.
-        // AcpAgentName/AcpPromptText: same free-text reasoning as
-        // VcsCreateBranch -- no established candidate list to complete
-        // against. OrgSchedule/OrgDeadline: a typed date/relative-shorthand
-        // has no candidate list either.
+        // AcpAgentName is NOT excluded either, same reasoning (ACP round-1-
+        // live-validation follow-up -- registered agent names are a real
+        // candidate list via AcpConfig::AcpAgentNames(), the multi-account
+        // "claude-personal"/"claude-work"/"claude-consulting" case this
+        // makes practical). AcpPromptText stays free-text -- it's a message
+        // to the agent, not a name. OrgSchedule/OrgDeadline: a typed
+        // date/relative-shorthand has no candidate list either.
         // against. DeleteProperty likewise -- completing a property name
         // against file/buffer names would be meaningless. The four new DAP
         // round-2 prompts (condition/log-message/watch expression/variable
@@ -6947,6 +6951,13 @@ void BufferView::CompletePrompt() {
     }
     else if (inputMode_ == InputMode::VcsSwitchBranch) {
         for (const std::string& name : vcsBranchCandidates_) {
+            if (name.starts_with(prompt_->Text())) {
+                candidates.push_back(name);
+            }
+        }
+    }
+    else if (inputMode_ == InputMode::AcpAgentName) {
+        for (const std::string& name : editor::acp::AcpAgentNames()) {
             if (name.starts_with(prompt_->Text())) {
                 candidates.push_back(name);
             }

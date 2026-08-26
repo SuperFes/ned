@@ -30,6 +30,13 @@ void SetAcpAgentCommand(const std::string& name, std::vector<std::string> argv);
 // crashing.
 [[nodiscard]] std::optional<std::vector<std::string>> AcpAgentCommand(const std::string& name);
 
+// Every currently-registered agent name, sorted -- ACP round-1-live-
+// validation follow-up: lets the "ACP agent:" prompt Tab-complete instead of
+// staying pure free text, the same way VcsSwitchBranch completes against a
+// fetched branch list. Cheap enough to call fresh on every keystroke (a
+// mutex-guarded in-memory map lookup, not an async fetch).
+[[nodiscard]] std::vector<std::string> AcpAgentNames();
+
 } // namespace ned::editor::acp
 
 #endif // NED_EDITOR_ACP_ACPCONFIG_H

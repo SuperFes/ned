@@ -98,6 +98,15 @@ class AcpManager {
         std::string                status;     // tool-call or plan status, best-effort, may be empty
         std::vector<std::string>   planSteps;  // Kind::Plan only
         std::optional<std::string> toolCallId; // Kind::ToolCall only, for tool_call_update matching
+        // Kind::ToolCall only -- a "diff"-typed content item (ACP's own
+        // {type: "diff", path, oldText, newText} shape, confirmed live
+        // against Claude Code's adapter for its Edit tool). Absent for any
+        // tool call that never carries one (most don't). AcpPanel renders a
+        // compact line-count summary from these rather than a full diff view
+        // -- see AcpPanel.cpp's own comment on why that's deliberately not
+        // attempted here.
+        std::optional<std::string> diffOldText;
+        std::optional<std::string> diffNewText;
     };
     [[nodiscard]] const std::vector<TranscriptEntry>& Transcript() const;
     // Bumped on every Transcript()-affecting mutation -- cheap change
@@ -136,6 +145,16 @@ class AcpManager {
     // otherwise forwards to the live client_'s own ExpireStaleRequests. See
     // LspManager::ExpireStaleRequests's identical wiring/reasoning -- meant
     // to be called from the same periodic background tick.
+    //
+    // ACP round-1-live-validation follow-up: also a no-op whenever a
+    // permission prompt is currently pending (pendingPermissionPrompt_ has a
+    // value). A pending permission prompt means *we* -- not the agent, not
+    // the transport -- are the reason the outstanding session/prompt hasn't
+    // resolved yet, and a human deciding whether to allow a tool call can
+    // easily take longer than ProtocolRequestTimeoutMs(). Confirmed live:
+    // without this guard, a real permission decision that took a bit over
+    // 30s hard-expired the whole prompt out from under the agent, which was
+    // correctly waiting on us.
     void ExpireStaleRequests(std::chrono::milliseconds maxAge = ProtocolRequestTimeoutMs());
 
     // session/request_permission, exposed for BufferView to render as a
