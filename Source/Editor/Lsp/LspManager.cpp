@@ -200,7 +200,30 @@ Json BuildInitializeParams(const std::filesystem::path& projectRoot, const Json&
            // completions, rust-analyzer, tsserver) never sends the snippet
            // form at all -- the accept path expands them via
            // Editor/Snippet.h into a real tabstop session.
+           //
+           // capabilities-hygiene follow-up: hover/definition/declaration/
+           // typeDefinition/implementation/references/rename/signatureHelp/
+           // publishDiagnostics are all requests or notifications this
+           // client already sends/handles (see LspManager's own Request*
+           // methods and HandlePublishDiagnostics) but never previously
+           // declared -- bare {} advertises plain support with no optional
+           // refinement (no prepareSupport on rename since PrepareRename is
+           // never sent, no tagSupport/relatedInformation on
+           // publishDiagnostics since neither is parsed). Harmless against a
+           // permissive server (confirmed live against clangd either way),
+           // but a capability-strict one is entitled to assume a client that
+           // never declares e.g. "rename" doesn't want rename requests at
+           // all.
            {{"completion", {{"completionItem", {{"snippetSupport", true}}}}},
+            {"hover", Json::object()},
+            {"signatureHelp", Json::object()},
+            {"declaration", Json::object()},
+            {"definition", Json::object()},
+            {"typeDefinition", Json::object()},
+            {"implementation", Json::object()},
+            {"references", Json::object()},
+            {"rename", Json::object()},
+            {"publishDiagnostics", Json::object()},
             {"codeAction",
              {{"codeActionLiteralSupport",
                {{"codeActionKind",
@@ -208,6 +231,12 @@ Json BuildInitializeParams(const std::filesystem::path& projectRoot, const Json&
                                             "source", "source.organizeImports", "source.fixAll"})}}}}},
               {"dataSupport", true},
               {"resolveSupport", {{"properties", Json::array({"edit"})}}}}}}},
+          // capabilities-hygiene follow-up: workspace/configuration and
+          // workspace/executeCommand are both handled/sent (see
+          // WireNotificationHandlers/ExecuteCommand) but this object
+          // previously had no "workspace" key at all -- "configuration" is a
+          // bare boolean per spec, unlike every textDocument.* entry above.
+          {"workspace", {{"configuration", true}, {"didChangeConfiguration", Json::object()}, {"executeCommand", Json::object()}}},
           {"window", {{"workDoneProgress", true}}}}},
     };
     if (!initializationOptions.empty()) {
@@ -325,6 +354,10 @@ LspClient* LspManager::ClientForLanguage(const std::string& language) {
     // spawned process.
     std::unique_ptr<LspClient> client =
         TryConnectToBroker(editor::ProjectRoot(), language, *command, eventLoop_, brokerSocketPathOverrideForTesting_);
+    // graceful-lsp-shutdown follow-up: stamped here, the one place this
+    // distinction is actually made -- see brokerBackedLanguages_'s own doc
+    // comment in LspManager.h.
+    const bool brokerBacked = (client != nullptr);
     if (!client) {
         try {
             client = std::make_unique<LspClient>(*command, eventLoop_);
@@ -378,6 +411,12 @@ LspClient* LspManager::ClientForLanguage(const std::string& language) {
         });
 
     clients_.emplace(language, std::move(client));
+    if (brokerBacked) {
+        brokerBackedLanguages_.insert(language);
+    }
+    else {
+        brokerBackedLanguages_.erase(language); // a stale mark from a prior broker-backed client must not outlive a direct respawn
+    }
     // mode-line-lsp-status-round-2 follow-up: a successful (re)spawn
     // resolves any prior disconnect -- StatusForLanguage should report
     // Running now, not a stale Disconnected from before this attempt.
@@ -548,11 +587,17 @@ LspManager::BufferSyncState* LspManager::ResolveSyncState(text::Buffer& buffer, 
 }
 
 LspClient& LspManager::SetClientForTesting(std::string language, std::unique_ptr<LspClient> client,
-                                           const Json& workspaceConfiguration) {
+                                           const Json& workspaceConfiguration, bool brokerBacked) {
     WireNotificationHandlers(*client, language, workspaceConfiguration); // same wiring ClientForLanguage's real spawn path applies
     disconnectedLanguages_.erase(language);                              // an injected client is "running," same as a real successful spawn
     disconnectDetail_.erase(language);
     lastDisconnectAt_.erase(language); // respawn-debounce follow-up -- ditto
+    if (brokerBacked) {
+        brokerBackedLanguages_.insert(language);
+    }
+    else {
+        brokerBackedLanguages_.erase(language);
+    }
     LspClient& ref                = *client;
     clients_[std::move(language)] = std::move(client);
     return ref;
@@ -577,6 +622,7 @@ void LspManager::ClientDisconnected(const std::string& language) {
     // regardless of when this destroys the object, so plain immediate
     // erase() is safe again and retired_ is gone.
     clients_.erase(languageCopy);
+    brokerBackedLanguages_.erase(languageCopy); // graceful-lsp-shutdown follow-up -- must not outlive the client it described
     // mode-line-lsp-status-round-2 follow-up: latch the disconnect so
     // StatusForLanguage can report it, distinct from "never configured" --
     // cleared the moment a fresh spawn succeeds (ClientForLanguage) or the
@@ -916,9 +962,16 @@ void LspManager::RequestCompletion(text::Buffer& buffer, std::size_t byteOffset,
 
     const std::string language = state->language;
     const LspPosition position = BytePositionToLsp(buffer.Content(), byteOffset);
-    const Json        params   = {
+    // completion-context follow-up: every caller here is a manual/explicit
+    // trigger (M-x lsp-complete, or the debounced auto-trigger timer -- see
+    // BufferView::RequestCompletionAtPoint), never a specific trigger
+    // character this client tracked, so triggerKind is always Invoked (1);
+    // omitting "context" entirely left a strict server with no signal at
+    // all for whether to apply its own trigger-character-narrower behavior.
+    const Json params = {
         {"textDocument", {{"uri", state->uri}}},
         {"position", {{"line", position.line}, {"character", position.character}}},
+        {"context", {{"triggerKind", 1}}},
     };
     client->SendRequest("textDocument/completion", params,
                         [this, language, callback = std::move(callback)](std::optional<Json> result, std::optional<Json> error) {
@@ -1039,7 +1092,7 @@ void LspManager::ExecuteCommand(text::Buffer& buffer, const std::string& serverK
 }
 
 void LspManager::SendLocationRequest(const std::string& method, text::Buffer& buffer, std::size_t byteOffset,
-                                     DefinitionCallback callback, const std::string& serverKey) {
+                                     DefinitionCallback callback, const std::string& serverKey, const Json& extraParams) {
     BufferSyncState* state = ResolveSyncState(buffer, serverKey);
     if (!state || !state->opened) {
         callback({});
@@ -1053,10 +1106,17 @@ void LspManager::SendLocationRequest(const std::string& method, text::Buffer& bu
 
     const std::string language = state->language;
     const LspPosition position = BytePositionToLsp(buffer.Content(), byteOffset);
-    const Json        params   = {
+    Json              params   = {
         {"textDocument", {{"uri", state->uri}}},
         {"position", {{"line", position.line}, {"character", position.character}}},
     };
+    // find-references follow-up: extraParams merges in textDocument/references'
+    // own "context" field ({"includeDeclaration": true}), the one place this
+    // request's shape diverges from definition/declaration/typeDefinition/
+    // implementation -- empty (every other caller) is a no-op merge.
+    if (!extraParams.empty()) {
+        params.merge_patch(extraParams);
+    }
     client->SendRequest(method, params,
                         [this, language, callback = std::move(callback)](std::optional<Json> result, std::optional<Json> error) {
                             if (error) {
@@ -1096,6 +1156,12 @@ void LspManager::RequestTypeDefinition(text::Buffer& buffer, std::size_t byteOff
 void LspManager::RequestImplementation(text::Buffer& buffer, std::size_t byteOffset, DefinitionCallback callback,
                                        const std::string& serverKey) {
     SendLocationRequest("textDocument/implementation", buffer, byteOffset, std::move(callback), serverKey);
+}
+
+void LspManager::RequestReferences(text::Buffer& buffer, std::size_t byteOffset, DefinitionCallback callback,
+                                   const std::string& serverKey) {
+    SendLocationRequest("textDocument/references", buffer, byteOffset, std::move(callback), serverKey,
+                        Json{{"context", {{"includeDeclaration", true}}}});
 }
 
 void LspManager::RequestSignatureHelp(text::Buffer& buffer, std::size_t byteOffset, HoverCallback callback, const std::string& serverKey) {
@@ -1208,6 +1274,101 @@ void LspManager::RequestRename(text::Buffer& buffer, std::size_t byteOffset, con
                             resolved.hasEdit = !resolved.edits.empty();
                             callback(std::move(resolved));
                         });
+}
+
+void LspManager::RequestDocumentSymbols(text::Buffer& buffer, SymbolCallback callback, const std::string& serverKey) {
+    BufferSyncState* state = ResolveSyncState(buffer, serverKey);
+    if (!state || !state->opened) {
+        callback({});
+        return;
+    }
+    LspClient* client = ExistingClientForLanguage(state->language);
+    if (!client) {
+        callback({});
+        return;
+    }
+
+    const std::string language = state->language;
+    const std::string uri      = state->uri;
+    const Json        params   = {{"textDocument", {{"uri", uri}}}};
+    client->SendRequest("textDocument/documentSymbol", params,
+                        [this, language, uri, callback = std::move(callback)](std::optional<Json> result, std::optional<Json> error) {
+                            if (error) {
+                                LogError(language, ExtractErrorMessage(*error));
+                                callback({});
+                                return;
+                            }
+                            if (!result) {
+                                callback({});
+                                return;
+                            }
+                            std::vector<SymbolResult> resolved;
+                            for (const SymbolEntry& entry : ExtractSymbols(*result, uri)) {
+                                if (const std::optional<std::filesystem::path> path = UriToPath(entry.uri)) {
+                                    resolved.push_back(SymbolResult{.name          = entry.name,
+                                                                    .containerName = entry.containerName,
+                                                                    .kind          = entry.kind,
+                                                                    .path          = *path,
+                                                                    .position      = entry.position});
+                                }
+                            }
+                            callback(std::move(resolved));
+                        });
+}
+
+void LspManager::RequestWorkspaceSymbols(text::Buffer& buffer, const std::string& query, SymbolCallback callback,
+                                         const std::string& serverKey) {
+    BufferSyncState* state = ResolveSyncState(buffer, serverKey);
+    if (!state || !state->opened) {
+        callback({});
+        return;
+    }
+    LspClient* client = ExistingClientForLanguage(state->language);
+    if (!client) {
+        callback({});
+        return;
+    }
+
+    const std::string language = state->language;
+    const Json        params   = {{"query", query}};
+    client->SendRequest("workspace/symbol", params,
+                        [this, language, callback = std::move(callback)](std::optional<Json> result, std::optional<Json> error) {
+                            if (error) {
+                                LogError(language, ExtractErrorMessage(*error));
+                                callback({});
+                                return;
+                            }
+                            if (!result) {
+                                callback({});
+                                return;
+                            }
+                            std::vector<SymbolResult> resolved;
+                            for (const SymbolEntry& entry : ExtractSymbols(*result)) {
+                                if (const std::optional<std::filesystem::path> path = UriToPath(entry.uri)) {
+                                    resolved.push_back(SymbolResult{.name          = entry.name,
+                                                                    .containerName = entry.containerName,
+                                                                    .kind          = entry.kind,
+                                                                    .path          = *path,
+                                                                    .position      = entry.position});
+                                }
+                            }
+                            callback(std::move(resolved));
+                        });
+}
+
+void LspManager::Shutdown() {
+    for (const auto& [language, client] : clients_) {
+        if (brokerBackedLanguages_.contains(language)) {
+            continue; // broker-owned -- must outlive this process, see brokerBackedLanguages_'s own doc comment
+        }
+        // Mirrors LspBroker::Shutdown()'s own TearDownEntry pattern exactly
+        // -- fire both frames, don't wait for the shutdown response (no
+        // live EventLoop::Run() left to wait with; see this method's own
+        // doc comment in LspManager.h). The callback is never expected to
+        // run; passed only because SendRequest requires one.
+        client->SendRequest("shutdown", Json::object(), [](std::optional<Json>, std::optional<Json>) {});
+        client->SendNotification("exit", Json::object());
+    }
 }
 
 } // namespace ned::editor::lsp

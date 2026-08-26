@@ -1405,6 +1405,15 @@ auto main(int argc, char** argv) -> int {
     ned::editor::SaveUndoHistoryForOpenBuffers(bufferList);
     logShutdown("post-run: saving project session");
     windowManager->SaveProjectSessionNow();
+    // graceful-lsp-shutdown follow-up: sends "shutdown"+"exit" to every
+    // directly-spawned (non-broker) running LSP client before the local
+    // teardown below destroys lspManager -- see LspManager::Shutdown's own
+    // doc comment for why this doesn't (and can't) wait for the shutdown
+    // response, and why that's fine: ChildProcess::~ChildProcess()'s
+    // existing bounded close-stdin/poll/SIGKILL-escalation sequence is what
+    // actually bounds the wait, unchanged by this call.
+    logShutdown("post-run: sending shutdown/exit to direct-spawn LSP clients");
+    lspManager.Shutdown();
     logShutdown("post-run: explicit steps done; entering local destruction "
                 "(terminal pty, DAP, VCS, task runner, LSP clients, window tree, Janet, EventLoop/terminal restore)");
 

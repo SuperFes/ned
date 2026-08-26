@@ -602,6 +602,18 @@ class BufferView : public Widget {
                            // location (a real, if less common, case -- e.g. a virtual/overridden
                            // method with several implementations).
                            LspGotoDefinitionSelect,
+                           // symbol-search follow-up: LspGotoSymbol is entered only once
+                           // RequestDocumentSymbolsAtPoint's async response arrives (same
+                           // "entered from inside the callback" shape as LspGotoDefinitionSelect
+                           // above), but the session itself is ProjectFindFile's fuzzy-narrowed
+                           // picker shape, not a numbered list -- a buffer's symbol count can be
+                           // large. LspWorkspaceSymbol opens immediately (no request to wait
+                           // for up front, an empty query is itself the first request) and stays
+                           // async for its whole session: every keystroke re-sends
+                           // workspace/symbol (debounced), replacing the candidate list each
+                           // time, rather than fuzzy-filtering one already-fetched list locally.
+                           LspGotoSymbol,
+                           LspWorkspaceSymbol,
                            // rename follow-up: LspRenameNewName is the one synchronous
                            // prompt-shaped stage here (routed through HandlePromptKey, like
                            // FindFile/CreateDirectory/etc.) -- Enter sends the actual
@@ -982,6 +994,36 @@ class BufferView : public Widget {
     // opened buffer's own content.
     void JumpToDefinition(const editor::lsp::LspManager::ResolvedLocation& location);
 
+    // symbol-search follow-up. Bumps documentSymbolRequestGeneration_ and
+    // calls LspManager::RequestDocumentSymbols; discards a stale response
+    // the same way RequestDefinitionAtPoint does. Zero symbols reports "No
+    // symbols found."; any other count (including one) opens the
+    // fuzzy-narrowed InputMode::LspGotoSymbol picker (ProjectFindFile's own
+    // shape) rather than jumping directly the way a single go-to-definition
+    // result does -- browsing a buffer's outline is worth showing even when
+    // there's only one entry, unlike a definition jump.
+    void RequestDocumentSymbolsAtPoint();
+    void RefreshDocumentSymbolStatus();
+    void HandleDocumentSymbolKey(const editor::KeyChord& chord);
+
+    // symbol-search follow-up. Opens InputMode::LspWorkspaceSymbol
+    // immediately (StartInteractiveSession's own case) and fires the first
+    // workspace/symbol request (an empty query) right away, mirroring
+    // ExecuteCommand's "populate right away" precedent. Every subsequent
+    // keystroke re-arms workspaceSymbolDebounceTimer_ (LspCompletionDebounceMs(),
+    // the same Janet-configurable debounce ghost-text completion already
+    // uses -- no new setting for what's the same "don't hammer the server
+    // every keystroke" need) rather than sending immediately; the timer's
+    // own fired callback re-checks inputMode_ == LspWorkspaceSymbol first
+    // (MaybeScheduleAutoCompletion/RequestCompletionAtPoint's own guard
+    // shape), since ending the session doesn't cancel an already-armed
+    // DeadlineTimer. workspaceSymbolRequestGeneration_ discards a response
+    // superseded by a newer request the same way every other async Lsp*
+    // session here does.
+    void RequestWorkspaceSymbolsForCurrentQuery();
+    void RefreshWorkspaceSymbolStatus();
+    void HandleWorkspaceSymbolKey(const editor::KeyChord& chord);
+
     // header-source-switching follow-up. Bumps
     // switchHeaderSourceRequestGeneration_ and calls LspManager::
     // RequestSwitchSourceHeader (clangd's own custom LSP extension) when an
@@ -1336,24 +1378,33 @@ class BufferView : public Widget {
     // use elsewhere.
     void ShowMessagesBuffer();
 
-    // find-all-references follow-up: project-find-references's entry point
-    // -- synchronous, same shape as RequestDiagnosticsBuffer (SearchDirectory
-    // is now an in-process RE2 scan, no subprocess round trip). Finds the
-    // ASCII word/identifier region at point (a local scan, same
+    // find-all-references follow-up: project-find-references's entry point.
+    // Finds the ASCII word/identifier region at point (a local scan, same
     // classification as Commands.cpp's own WordRegionAt -- see that
     // function's doc comment for why this is a small duplicated copy rather
-    // than a new shared seam), builds a whole-word pattern ("\\bword\\b" --
-    // safe to embed unescaped since the word-scan only ever admits
-    // [A-Za-z0-9_], none of them regex metacharacters), and runs it through
-    // SearchDirectory(ProjectRoot(), ...). One excerpt per matching line
-    // (SearchMatch::lineText, no extra context) stitched into
-    // "*references: <word>*" via Editor/Multibuffer.h's BuildMultibuffer --
-    // vcs-visit-result already jumps to source from any excerpt, same as
-    // RequestVcsFullDiffBuffer/RequestDiagnosticsBuffer's own buffers. A
-    // fast textual approximation (matches inside comments/strings too, and
-    // can't tell one same-named symbol from another in a different scope) --
-    // not real semantic LSP references, which don't exist as a client
-    // capability yet at all (see ROADMAP.md).
+    // than a new shared seam), then picks one of two sources for the result
+    // list, stitched into "*references: <word>*" via Editor/Multibuffer.h's
+    // BuildMultibuffer either way -- vcs-visit-result already jumps to
+    // source from any excerpt, same as RequestVcsFullDiffBuffer/
+    // RequestDiagnosticsBuffer's own buffers.
+    //
+    // find-references follow-up: when a language server is actually running
+    // for this buffer (StatusForLanguage == Running, the same "is one
+    // currently usable" check RequestCompletionAtPoint's dabbrev-fallback
+    // uses), sends a real, async textDocument/references and builds one
+    // excerpt per ResolvedLocation (reading the target line straight off
+    // disk -- ReadFileLine -- since a reference's file need not be open).
+    // Otherwise (nothing configured, still spawning, crashed) falls back to
+    // the original synchronous path: a whole-word RE2 pattern
+    // ("\\bword\\b" -- safe to embed unescaped, the word-scan only ever
+    // admits [A-Za-z0-9_], none of them regex metacharacters) through
+    // SearchDirectory(ProjectRoot(), ...), a fast textual approximation
+    // (matches inside comments/strings too, can't tell one same-named
+    // symbol from another in a different scope). Mirrors SwitchHeaderSource's
+    // own "LSP is a nice-to-have accelerant, not the only path" precedent --
+    // unlike lsp-goto-definition/-declaration/etc., which refuse outright
+    // with no running server, this command already has a working universal
+    // fallback worth keeping rather than a hard LSP requirement.
     void RequestProjectFindReferences();
 
     // VCS vocabulary-completion follow-up. vcs-status's entry point --
@@ -2623,6 +2674,42 @@ class BufferView : public Widget {
     // the request that's actually pending rather than always saying
     // "Definition" regardless of kind.
     std::string pendingLocationLabel_ = "definition";
+
+    // find-references follow-up: same staleness-guard shape as
+    // definitionRequestGeneration_, kept separate (rather than sharing that
+    // counter) since RequestProjectFindReferences's LSP path builds its own
+    // multibuffer result directly, never entering LspGotoDefinitionSelect.
+    std::size_t referencesRequestGeneration_ = 0;
+
+    // symbol-search follow-up: documentSymbolCandidates_/documentSymbolLabels_
+    // are parallel vectors (candidates_[i] is what labels_[i] describes) --
+    // FuzzyFilterAndRank only takes/returns display strings, so a ranked
+    // label is mapped back to its SymbolResult by exact string lookup
+    // against documentSymbolLabels_ (BuildSymbolLabel folds in the line
+    // number, which makes a label collision between two real, distinct
+    // symbols vanishingly unlikely; the rare collision just means Enter
+    // picks whichever of them comes first -- a harmless degrade, not a
+    // crash). documentSymbolSelection_/documentSymbolRequestGeneration_
+    // mirror definitionSelection_/definitionRequestGeneration_'s own shape.
+    std::vector<editor::lsp::LspManager::SymbolResult> documentSymbolCandidates_;
+    std::vector<std::string>                           documentSymbolLabels_;
+    std::size_t                                        documentSymbolSelection_         = 0;
+    std::size_t                                        documentSymbolRequestGeneration_ = 0;
+
+    // symbol-search follow-up: workspace/symbol's own live-requery
+    // counterpart -- pendingWorkspaceSymbols_/workspaceSymbolLabels_ hold
+    // only the *current* response (replaced wholesale on every request,
+    // unlike documentSymbolCandidates_'s one-shot fetch), already in
+    // server-ranked order, so no local FuzzyFilterAndRank runs over them at
+    // all -- HandleWorkspaceSymbolKey's Up/Down navigate this list directly.
+    std::vector<editor::lsp::LspManager::SymbolResult> pendingWorkspaceSymbols_;
+    std::vector<std::string>                           workspaceSymbolLabels_;
+    std::size_t                                        workspaceSymbolSelection_         = 0;
+    std::size_t                                        workspaceSymbolRequestGeneration_ = 0;
+    // See completionDebounceTimer_'s own comment -- same DeadlineTimer-based
+    // debounce shape, reusing LspCompletionDebounceMs() rather than adding a
+    // second, parallel Janet setting for what's the same underlying need.
+    DeadlineTimer workspaceSymbolDebounceTimer_;
 
     // header-source-switching follow-up: same staleness-guard shape as
     // definitionRequestGeneration_ above, no selection list needed --

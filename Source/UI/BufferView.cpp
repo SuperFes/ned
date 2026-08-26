@@ -259,6 +259,31 @@ namespace {
         return model;
     }
 
+    // symbol-search follow-up. One display line for a SymbolResult, used as
+    // both the fuzzy-filter candidate string (LspGotoSymbol) and the ranked
+    // row shown as-is (LspWorkspaceSymbol, already server-ranked). The line
+    // number is always folded in -- what keeps two candidates with the same
+    // name/container from producing identical labels (documentSymbolLabels_/
+    // workspaceSymbolLabels_' own doc comments explain why that matters).
+    // includePath is only true for workspace/symbol results, which span
+    // multiple files and need one to disambiguate; a document-symbol result
+    // is always the current buffer, so a repeated path would be noise.
+    std::string BuildSymbolLabel(const editor::lsp::LspManager::SymbolResult& symbol, bool includePath) {
+        std::string label(editor::lsp::SymbolKindLabel(symbol.kind));
+        label += " ";
+        label += symbol.name;
+        if (!symbol.containerName.empty()) {
+            label += "  in " + symbol.containerName;
+        }
+        if (includePath) {
+            std::error_code             ec;
+            const std::filesystem::path relative = std::filesystem::relative(symbol.path, editor::ProjectRoot(), ec);
+            label += "  — " + ((!ec && !relative.empty()) ? relative.string() : symbol.path.string());
+        }
+        label += ":" + std::to_string(symbol.position.line + 1); // LSP is 0-indexed, displayed 1-indexed like every other line reference here
+        return label;
+    }
+
     // Binary-rendering follow-up: a raw control byte (C0 control range, plus
     // DEL) sent straight to a real terminal isn't "print one glyph and
     // advance" -- some of them are actual terminal control codes (cursor
@@ -3507,6 +3532,18 @@ bool BufferView::OnKeyEvent(const Event& event) {
         ClampPointToNarrowing();
         return true;
     }
+    if (inputMode_ == InputMode::LspGotoSymbol) {
+        // Same "Enter jumps directly, no RunCommandAndHandleOutcome routing"
+        // shape as ProjectFindFile above.
+        HandleDocumentSymbolKey(*chord);
+        ClampPointToNarrowing();
+        return true;
+    }
+    if (inputMode_ == InputMode::LspWorkspaceSymbol) {
+        HandleWorkspaceSymbolKey(*chord);
+        ClampPointToNarrowing();
+        return true;
+    }
     if (inputMode_ == InputMode::LspRenameNewName) {
         HandlePromptKey(*chord);
         ClampPointToNarrowing();
@@ -4804,6 +4841,211 @@ void BufferView::JumpToDefinition(const editor::lsp::LspManager::ResolvedLocatio
     }
 }
 
+void BufferView::RequestDocumentSymbolsAtPoint() {
+    if (!lspManager_) {
+        statusMessage_ = "No LSP manager available.";
+        return;
+    }
+    text::Buffer&       buffer     = activeBuffer_.Get();
+    text::Buffer* const bufferPtr  = &buffer;
+    const std::size_t   generation = ++documentSymbolRequestGeneration_;
+    const std::string   serverKey  = ResolvedLspServerKey(buffer.Point());
+
+    statusMessage_ = "Requesting symbols...";
+    lspManager_->RequestDocumentSymbols(
+        buffer,
+        [this, bufferPtr, generation](std::vector<editor::lsp::LspManager::SymbolResult> symbols) {
+            if (generation != documentSymbolRequestGeneration_) {
+                return; // superseded by a newer request
+            }
+            if (bufferPtr != &activeBuffer_.Get()) {
+                return; // buffer switched since the request was sent
+            }
+            if (symbols.empty()) {
+                statusMessage_ = "No symbols found.";
+                return;
+            }
+            documentSymbolCandidates_ = std::move(symbols);
+            documentSymbolLabels_.clear();
+            documentSymbolLabels_.reserve(documentSymbolCandidates_.size());
+            for (const editor::lsp::LspManager::SymbolResult& symbol : documentSymbolCandidates_) {
+                documentSymbolLabels_.push_back(BuildSymbolLabel(symbol, /*includePath=*/false));
+            }
+            documentSymbolSelection_ = 0;
+            inputMode_               = InputMode::LspGotoSymbol;
+            prompt_.emplace("Go to symbol (fuzzy): ");
+            RefreshDocumentSymbolStatus();
+        },
+        serverKey);
+}
+
+void BufferView::RefreshDocumentSymbolStatus() {
+    const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(documentSymbolLabels_, prompt_->Text());
+    documentSymbolSelection_              = ranked.empty() ? 0 : std::min(documentSymbolSelection_, ranked.size() - 1);
+
+    statusMessage_ = prompt_->StatusText();
+    if (onCandidatesChanged_) {
+        onCandidatesChanged_(
+            ranked.empty() ? std::nullopt
+                           : std::optional(BuildFuzzyCandidatePopupModel(prompt_->StatusText(), ranked, documentSymbolSelection_)));
+    }
+}
+
+void BufferView::HandleDocumentSymbolKey(const editor::KeyChord& chord) {
+    if (chord.Special == editor::SpecialKey::Enter) {
+        const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(documentSymbolLabels_, prompt_->Text());
+        if (ranked.empty()) {
+            statusMessage_ = "No symbol matching \"" + prompt_->Text() + "\"";
+            EndInteractiveSession();
+            return;
+        }
+        const std::string& label = ranked[std::min(documentSymbolSelection_, ranked.size() - 1)];
+        // Maps the ranked label back to its SymbolResult -- see
+        // documentSymbolLabels_'s own doc comment for why exact-string
+        // lookup is safe here.
+        const auto it = std::find(documentSymbolLabels_.begin(), documentSymbolLabels_.end(), label);
+        EndInteractiveSession();
+        if (it == documentSymbolLabels_.end()) {
+            return; // unreachable: every ranked label comes from documentSymbolLabels_ itself
+        }
+        const std::size_t                            index  = static_cast<std::size_t>(it - documentSymbolLabels_.begin());
+        const editor::lsp::LspManager::SymbolResult& symbol = documentSymbolCandidates_[index];
+        JumpToDefinition(editor::lsp::LspManager::ResolvedLocation{.path = symbol.path, .position = symbol.position});
+        return;
+    }
+    if (IsQuit(chord)) {
+        statusMessage_ = "Go to symbol cancelled.";
+        EndInteractiveSession();
+        return;
+    }
+
+    if (chord.Special == editor::SpecialKey::Down || chord.Special == editor::SpecialKey::Up) {
+        const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(documentSymbolLabels_, prompt_->Text());
+        if (!ranked.empty()) {
+            documentSymbolSelection_ = chord.Special == editor::SpecialKey::Down
+                                           ? (documentSymbolSelection_ + 1) % ranked.size()
+                                           : (documentSymbolSelection_ + ranked.size() - 1) % ranked.size();
+        }
+        RefreshDocumentSymbolStatus();
+        return;
+    }
+    if (chord.Special == editor::SpecialKey::Backspace) {
+        prompt_->DeleteChar();
+        documentSymbolSelection_ = 0;
+        RefreshDocumentSymbolStatus();
+        return;
+    }
+    if (IsPlainCharacter(chord)) {
+        prompt_->AppendChar(chord.Codepoint);
+        documentSymbolSelection_ = 0;
+        RefreshDocumentSymbolStatus();
+        return;
+    }
+    // Anything else is ignored -- stay in the prompt.
+}
+
+void BufferView::RequestWorkspaceSymbolsForCurrentQuery() {
+    // MaybeScheduleAutoCompletion/RequestCompletionAtPoint's own guard
+    // shape: the debounce timer that leads here doesn't get cancelled when
+    // the session ends, so this re-checks the session is still live first.
+    if (inputMode_ != InputMode::LspWorkspaceSymbol || !lspManager_) {
+        return;
+    }
+    text::Buffer&       buffer     = activeBuffer_.Get();
+    text::Buffer* const bufferPtr  = &buffer;
+    const std::size_t   generation = ++workspaceSymbolRequestGeneration_;
+    const std::string   serverKey  = ResolvedLspServerKey(buffer.Point());
+    const std::string   query      = prompt_->Text();
+
+    lspManager_->RequestWorkspaceSymbols(
+        buffer, query,
+        [this, bufferPtr, generation](std::vector<editor::lsp::LspManager::SymbolResult> symbols) {
+            if (generation != workspaceSymbolRequestGeneration_) {
+                return; // superseded by a newer request
+            }
+            if (inputMode_ != InputMode::LspWorkspaceSymbol || bufferPtr != &activeBuffer_.Get()) {
+                return; // session ended, or buffer switched, while this was in flight
+            }
+            pendingWorkspaceSymbols_ = std::move(symbols);
+            workspaceSymbolLabels_.clear();
+            workspaceSymbolLabels_.reserve(pendingWorkspaceSymbols_.size());
+            for (const editor::lsp::LspManager::SymbolResult& symbol : pendingWorkspaceSymbols_) {
+                workspaceSymbolLabels_.push_back(BuildSymbolLabel(symbol, /*includePath=*/true));
+            }
+            workspaceSymbolSelection_ =
+                pendingWorkspaceSymbols_.empty() ? 0 : std::min(workspaceSymbolSelection_, pendingWorkspaceSymbols_.size() - 1);
+            RefreshWorkspaceSymbolStatus();
+        },
+        serverKey);
+}
+
+void BufferView::RefreshWorkspaceSymbolStatus() {
+    statusMessage_ = prompt_->StatusText();
+    if (onCandidatesChanged_) {
+        onCandidatesChanged_(workspaceSymbolLabels_.empty()
+                                 ? std::nullopt
+                                 : std::optional(BuildFuzzyCandidatePopupModel(prompt_->StatusText(), workspaceSymbolLabels_,
+                                                                               workspaceSymbolSelection_)));
+    }
+}
+
+void BufferView::HandleWorkspaceSymbolKey(const editor::KeyChord& chord) {
+    if (chord.Special == editor::SpecialKey::Enter) {
+        if (pendingWorkspaceSymbols_.empty()) {
+            statusMessage_ = "No symbol matching \"" + prompt_->Text() + "\"";
+            EndInteractiveSession();
+            return;
+        }
+        const editor::lsp::LspManager::SymbolResult symbol =
+            pendingWorkspaceSymbols_[std::min(workspaceSymbolSelection_, pendingWorkspaceSymbols_.size() - 1)];
+        EndInteractiveSession();
+        JumpToDefinition(editor::lsp::LspManager::ResolvedLocation{.path = symbol.path, .position = symbol.position});
+        return;
+    }
+    if (IsQuit(chord)) {
+        statusMessage_ = "Workspace symbol search cancelled.";
+        EndInteractiveSession();
+        return;
+    }
+
+    if (chord.Special == editor::SpecialKey::Down || chord.Special == editor::SpecialKey::Up) {
+        if (!pendingWorkspaceSymbols_.empty()) {
+            workspaceSymbolSelection_ = chord.Special == editor::SpecialKey::Down
+                                            ? (workspaceSymbolSelection_ + 1) % pendingWorkspaceSymbols_.size()
+                                            : (workspaceSymbolSelection_ + pendingWorkspaceSymbols_.size() - 1) %
+                                                  pendingWorkspaceSymbols_.size();
+        }
+        RefreshWorkspaceSymbolStatus();
+        return;
+    }
+    // Typing doesn't re-request immediately -- the server does its own
+    // query-matching, so hammering it on every keystroke is real,
+    // avoidable request volume (unlike the local-list pickers above, where
+    // FuzzyFilterAndRank is nearly free). Echo the prompt text right away
+    // regardless -- only the result list itself waits for the debounce.
+    if (chord.Special == editor::SpecialKey::Backspace) {
+        prompt_->DeleteChar();
+        workspaceSymbolSelection_ = 0;
+        statusMessage_            = prompt_->StatusText();
+        if (eventLoop_) {
+            workspaceSymbolDebounceTimer_.Arm(*eventLoop_, std::chrono::milliseconds(editor::lsp::LspCompletionDebounceMs()),
+                                              [this] { RequestWorkspaceSymbolsForCurrentQuery(); });
+        }
+        return;
+    }
+    if (IsPlainCharacter(chord)) {
+        prompt_->AppendChar(chord.Codepoint);
+        workspaceSymbolSelection_ = 0;
+        statusMessage_            = prompt_->StatusText();
+        if (eventLoop_) {
+            workspaceSymbolDebounceTimer_.Arm(*eventLoop_, std::chrono::milliseconds(editor::lsp::LspCompletionDebounceMs()),
+                                              [this] { RequestWorkspaceSymbolsForCurrentQuery(); });
+        }
+        return;
+    }
+    // Anything else is ignored -- stay in the prompt.
+}
+
 void BufferView::SwitchHeaderSource() {
     text::Buffer& buffer = activeBuffer_.Get();
     if (!buffer.Path()) {
@@ -5156,6 +5398,26 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             return;
         case editor::InteractiveRequest::LspGotoImplementation:
             RequestDefinitionAtPoint(LspLocationKind::Implementation);
+            return;
+        case editor::InteractiveRequest::LspGotoSymbol:
+            RequestDocumentSymbolsAtPoint();
+            return;
+        // symbol-search follow-up: unlike LspGotoSymbol, this session opens
+        // right away (workspace/symbol has no local candidate list to wait
+        // on, only a live server round trip) -- mirrors ExecuteCommand's own
+        // "populate right away" shape, just via an async request instead of
+        // a free in-memory lookup.
+        case editor::InteractiveRequest::LspWorkspaceSymbol:
+            if (!lspManager_) {
+                statusMessage_ = "No LSP manager available.";
+                return;
+            }
+            pendingWorkspaceSymbols_.clear();
+            workspaceSymbolLabels_.clear();
+            inputMode_ = InputMode::LspWorkspaceSymbol;
+            prompt_.emplace("Workspace symbol: ");
+            workspaceSymbolSelection_ = 0;
+            RequestWorkspaceSymbolsForCurrentQuery();
             return;
         case editor::InteractiveRequest::SwitchHeaderSource:
             SwitchHeaderSource();
@@ -7524,11 +7786,34 @@ namespace {
         return std::pair{start, end};
     }
 
+    // find-references follow-up: reads just one 1-indexed line out of path,
+    // for building an excerpt from an LSP ResolvedLocation -- unlike
+    // ProjectSearch's own SearchOneFile, which already has every line in
+    // hand while it's matching, a resolved reference names only a
+    // path+position, and the target file need not be an open Buffer (most
+    // references live in files the user never opened). Empty string on any
+    // failure (unreadable path, line past EOF) rather than throwing --
+    // BuildReferencesMultibuffer degrades to a blank excerpt body instead of
+    // dropping the whole result.
+    std::string ReadFileLine(const std::filesystem::path& path, std::size_t lineNumber) {
+        std::ifstream file(path);
+        if (!file || lineNumber == 0) {
+            return {};
+        }
+        std::string line;
+        for (std::size_t i = 0; i < lineNumber; ++i) {
+            if (!std::getline(file, line)) {
+                return {};
+            }
+        }
+        return line;
+    }
+
 } // namespace
 
 void BufferView::RequestProjectFindReferences() {
-    const text::Buffer& buffer  = activeBuffer_.Get();
-    const text::Rope&   content = buffer.Content();
+    text::Buffer&     buffer  = activeBuffer_.Get();
+    const text::Rope& content = buffer.Content();
 
     const std::optional<std::pair<std::size_t, std::size_t>> wordRegion = WordRegionAtPoint(content, buffer.Point());
     if (!wordRegion) {
@@ -7536,6 +7821,65 @@ void BufferView::RequestProjectFindReferences() {
         return;
     }
     const std::string word = content.Substring(wordRegion->first, wordRegion->second - wordRegion->first);
+
+    // find-references follow-up: prefer a real semantic answer from the
+    // language server when one is actually running for this buffer's
+    // language -- the same "is one currently usable" StatusForLanguage
+    // check RequestCompletionAtPoint's own dabbrev-fallback already uses,
+    // not a guess. Falls through to the plain-text scan below when no
+    // server is running (nothing configured, still spawning, crashed, ...),
+    // the same "LSP is a nice-to-have accelerant, not the only path"
+    // precedent SwitchHeaderSource already established -- unlike
+    // lsp-goto-definition/-declaration/etc., which refuse outright with no
+    // LSP manager, this command already has a working universal fallback
+    // worth keeping.
+    const std::size_t point         = buffer.Point();
+    const std::string serverKey     = ResolvedLspServerKey(point);
+    const std::string languageKey   = serverKey.empty() ? editor::LanguageKeyForMode(mode_) : serverKey;
+    const bool        hasRunningLsp = lspManager_ && lspManager_->StatusForLanguage(languageKey) == editor::lsp::LspManager::LspStatus::Running;
+
+    if (hasRunningLsp) {
+        text::Buffer* const bufferPtr  = &buffer;
+        const std::size_t   generation = ++referencesRequestGeneration_;
+        statusMessage_                 = "Requesting references...";
+        lspManager_->RequestReferences(
+            buffer, point,
+            [this, bufferPtr, point, generation, word](std::vector<editor::lsp::LspManager::ResolvedLocation> locations) {
+                if (generation != referencesRequestGeneration_) {
+                    return; // superseded by a newer request
+                }
+                if (bufferPtr != &activeBuffer_.Get() || activeBuffer_.Get().Point() != point) {
+                    return; // buffer/point changed since the request was sent
+                }
+                if (locations.empty()) {
+                    statusMessage_ = "No references to \"" + word + "\" found.";
+                    return;
+                }
+
+                const std::filesystem::path                     root = editor::ProjectRoot();
+                std::vector<editor::multibuffer::ExcerptSource> excerpts;
+                excerpts.reserve(locations.size());
+                for (const editor::lsp::LspManager::ResolvedLocation& location : locations) {
+                    const std::size_t           lineNumber = location.position.line + 1; // LSP is 0-indexed, excerpts/SearchMatch are 1-indexed
+                    std::error_code             ec;
+                    const std::filesystem::path relative    = std::filesystem::relative(location.path, root, ec);
+                    const std::string           displayPath = (!ec && !relative.empty()) ? relative.string() : location.path.string();
+                    excerpts.push_back(editor::multibuffer::ExcerptSource{
+                        location.path, lineNumber, lineNumber,
+                        "▸ " + displayPath + ":" + std::to_string(lineNumber), // same disclosure-triangle convention as the text-search path below
+                        ReadFileLine(location.path, lineNumber),
+                        {},
+                        /*editable=*/true});
+                }
+
+                text::Buffer& results = editor::multibuffer::BuildMultibuffer(bufferList_, "*references: " + word + "*", excerpts);
+                activeBuffer_.Set(results);
+                statusMessage_ = std::to_string(locations.size()) + " reference" + (locations.size() == 1 ? "" : "s") + " to \"" +
+                                 word + "\" -- C-c v v to visit";
+            },
+            serverKey);
+        return;
+    }
 
     std::vector<editor::SearchMatch> matches;
     try {

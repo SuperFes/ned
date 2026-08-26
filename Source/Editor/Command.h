@@ -304,6 +304,22 @@ enum class InteractiveRequest { None,
                                 LspGotoDeclaration,
                                 LspGotoTypeDefinition,
                                 LspGotoImplementation,
+                                // symbol-search follow-up: LspGotoSymbol is one more async
+                                // request/own-session action, same "async request, own
+                                // response" shape as LspGotoDefinition above --
+                                // BufferView::RequestDocumentSymbolsAtPoint sends
+                                // textDocument/documentSymbol and, once the response arrives,
+                                // opens a fuzzy-filtered picker over the results (mirrors
+                                // ProjectFindFile's own picker shape, not the numbered
+                                // LspGotoDefinitionSelect list -- a buffer can have many
+                                // symbols, fuzzy-narrowing by typing is the better fit).
+                                // LspWorkspaceSymbol differs from every other Lsp* entry here:
+                                // its session is genuinely still async *after* it opens --
+                                // each keystroke re-sends workspace/symbol (debounced) since
+                                // the server does its own query-matching server-side, unlike
+                                // a local fuzzy filter over an already-fetched list.
+                                LspGotoSymbol,
+                                LspWorkspaceSymbol,
                                 LspRename,
                                 // task-runner follow-up: prompt-shaped requests, same "New
                                 // name" -> HandlePromptKey shape LspRename established above --

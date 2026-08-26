@@ -56,13 +56,13 @@ struct FakeServer {
     FakeServer(FakeServer&&)                 = default;
 
     static FakeServer Create(LspManager& manager, const std::string& language, ned::ui::EventLoop& eventLoop, LspClient*& outClient,
-                             const Json& workspaceConfiguration = Json::object()) {
+                             const Json& workspaceConfiguration = Json::object(), bool brokerBacked = false) {
         int clientWritesHere[2]; // client's write end -> test's read end
         int clientReadsHere[2];  // test's write end -> client's read end
         REQUIRE(::pipe(clientWritesHere) == 0);
         REQUIRE(::pipe(clientReadsHere) == 0);
         auto client = std::make_unique<LspClient>(Transport(clientReadsHere[0], clientWritesHere[1]), eventLoop);
-        outClient   = &manager.SetClientForTesting(language, std::move(client), workspaceConfiguration);
+        outClient   = &manager.SetClientForTesting(language, std::move(client), workspaceConfiguration, brokerBacked);
         return FakeServer(clientWritesHere[0], clientReadsHere[1]);
     }
 };
@@ -90,6 +90,56 @@ std::string ReadRawFrame(int fd) {
                     break;
                 }
             }
+        }
+    }
+    return all;
+}
+
+// graceful-lsp-shutdown follow-up: ReadRawFrame above assumes exactly one
+// frame arrives per call, which breaks the moment a caller (Shutdown())
+// writes two frames back-to-back before this test ever reads -- both can
+// land in the same read() (LspManager::Shutdown's own shutdown+exit pair,
+// tiny frames over a fast local pipe), and ReadRawFrame's substr-to-end
+// parse would then choke on the second frame's own headers trailing the
+// first frame's body. Splits every complete frame out of raw by walking
+// Content-Length boundaries instead of assuming there's only one.
+std::vector<Json> ParseAllFrames(const std::string& raw) {
+    std::vector<Json> frames;
+    std::size_t       pos = 0;
+    while (true) {
+        const std::size_t headerEnd = raw.find("\r\n\r\n", pos);
+        if (headerEnd == std::string::npos) {
+            break;
+        }
+        const std::string_view kPrefix   = "Content-Length: ";
+        const std::size_t      prefixPos = raw.find(kPrefix, pos);
+        if (prefixPos == std::string::npos || prefixPos > headerEnd) {
+            break;
+        }
+        const std::size_t contentLength = std::stoul(raw.substr(prefixPos + kPrefix.size()));
+        const std::size_t bodyStart     = headerEnd + 4;
+        if (raw.size() < bodyStart + contentLength) {
+            break; // frame not fully arrived yet
+        }
+        frames.push_back(Json::parse(raw.substr(bodyStart, contentLength)));
+        pos = bodyStart + contentLength;
+    }
+    return frames;
+}
+
+// Reads until at least frameCount complete frames have arrived (per
+// ParseAllFrames above) or the read loop runs dry.
+std::string ReadRawFramesUntil(int fd, std::size_t frameCount) {
+    std::string all;
+    char        buffer[512];
+    for (int i = 0; i < 8; ++i) {
+        const ssize_t n = ::read(fd, buffer, sizeof(buffer));
+        if (n <= 0) {
+            break;
+        }
+        all.append(buffer, static_cast<std::size_t>(n));
+        if (ParseAllFrames(all).size() >= frameCount) {
+            break;
         }
     }
     return all;
@@ -449,6 +499,9 @@ TEST_CASE("LspManager::RequestCompletion round-trips a real request/response thr
     const Json        request = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
     REQUIRE(request["method"] == "textDocument/completion");
     REQUIRE(request["params"]["position"]["character"] == 3);
+    // completion-context follow-up: every caller is a manual/explicit
+    // trigger, never a specific tracked trigger character.
+    REQUIRE(request["params"]["context"]["triggerKind"] == 1);
 
     const Json response = {
         {"jsonrpc", "2.0"},
@@ -968,6 +1021,146 @@ TEST_CASE("LspManager::RequestImplementation sends textDocument/implementation",
     REQUIRE(request["method"] == "textDocument/implementation");
 }
 
+// find-references follow-up: same "sends its own distinct wire method"
+// shape as the three tests above, plus the one thing that's actually unique
+// to this request -- a "context": {"includeDeclaration": true} field none
+// of the other three location requests send.
+TEST_CASE("LspManager::RequestReferences sends textDocument/references with includeDeclaration and resolves a response",
+          "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-references-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("call_site();");
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    bool                                      invoked = false;
+    std::vector<LspManager::ResolvedLocation> got;
+    manager.RequestReferences(buffer, 0, [&](std::vector<LspManager::ResolvedLocation> locations) {
+        invoked = true;
+        got     = std::move(locations);
+    });
+
+    const std::string raw     = ReadRawFrame(server.serverStdinRead);
+    const Json        request = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(request["method"] == "textDocument/references");
+    REQUIRE(request["params"]["context"]["includeDeclaration"] == true);
+
+    const std::filesystem::path targetPath = std::filesystem::temp_directory_path() / "ned-lsp-manager-references-target.txt";
+    const Json                  response   = {
+        {"jsonrpc", "2.0"},
+        {"id", RequestIdFromFrame(raw)},
+        {"result", Json::array({{{"uri", "file://" + targetPath.string()},
+                                 {"range", {{"start", {{"line", 2}, {"character", 3}}}, {"end", {{"line", 2}, {"character", 7}}}}}}})},
+    };
+    client->DispatchFrame(response.dump());
+
+    REQUIRE(invoked);
+    REQUIRE(got.size() == 1);
+    REQUIRE(got[0].path == targetPath);
+    REQUIRE(got[0].position.line == 2);
+}
+
+// symbol-search follow-up.
+TEST_CASE("LspManager::RequestDocumentSymbols sends textDocument/documentSymbol and resolves its own uri to a path",
+          "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-docsymbol-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("struct Widget {};");
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    bool                                  invoked = false;
+    std::vector<LspManager::SymbolResult> got;
+    manager.RequestDocumentSymbols(buffer, [&](std::vector<LspManager::SymbolResult> symbols) {
+        invoked = true;
+        got     = std::move(symbols);
+    });
+
+    const std::string raw     = ReadRawFrame(server.serverStdinRead);
+    const Json        request = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(request["method"] == "textDocument/documentSymbol");
+    REQUIRE(request["params"].contains("textDocument"));
+    REQUIRE_FALSE(request["params"].contains("position")); // no position for this request, unlike hover/definition/etc.
+
+    const Json response = {
+        {"jsonrpc", "2.0"},
+        {"id", RequestIdFromFrame(raw)},
+        {"result", Json::array({{{"name", "Widget"},
+                                 {"kind", 23},
+                                 {"range", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 18}}}}},
+                                 {"selectionRange",
+                                  {{"start", {{"line", 0}, {"character", 7}}}, {"end", {{"line", 0}, {"character", 13}}}}}}})},
+    };
+    client->DispatchFrame(response.dump());
+
+    REQUIRE(invoked);
+    REQUIRE(got.size() == 1);
+    REQUIRE(got[0].name == "Widget");
+    REQUIRE(got[0].kind == 23);
+    REQUIRE(got[0].path == path);
+    REQUIRE(got[0].position.character == 7);
+}
+
+TEST_CASE("LspManager::RequestWorkspaceSymbols sends workspace/symbol with the query and no textDocument field",
+          "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-wssymbol-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("x");
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead);
+
+    bool                                  invoked = false;
+    std::vector<LspManager::SymbolResult> got;
+    manager.RequestWorkspaceSymbols(buffer, "Wid", [&](std::vector<LspManager::SymbolResult> symbols) {
+        invoked = true;
+        got     = std::move(symbols);
+    });
+
+    const std::string raw     = ReadRawFrame(server.serverStdinRead);
+    const Json        request = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(request["method"] == "workspace/symbol");
+    REQUIRE(request["params"]["query"] == "Wid");
+    REQUIRE_FALSE(request["params"].contains("textDocument"));
+
+    const std::filesystem::path resultPath = std::filesystem::temp_directory_path() / "ned-lsp-manager-wssymbol-result-test.cpp";
+    const Json                  response   = {
+        {"jsonrpc", "2.0"},
+        {"id", RequestIdFromFrame(raw)},
+        {"result", Json::array({{{"name", "Widget"},
+                                 {"kind", 5},
+                                 {"containerName", "ui"},
+                                 {"location",
+                                  {{"uri", "file://" + resultPath.string()},
+                                   {"range", {{"start", {{"line", 4}, {"character", 0}}}, {"end", {{"line", 4}, {"character", 6}}}}}}}}})},
+    };
+    client->DispatchFrame(response.dump());
+
+    REQUIRE(invoked);
+    REQUIRE(got.size() == 1);
+    REQUIRE(got[0].name == "Widget");
+    REQUIRE(got[0].containerName == "ui");
+    REQUIRE(got[0].path == resultPath);
+    REQUIRE(got[0].position.line == 4);
+}
+
 TEST_CASE("LspManager::RequestSignatureHelp sends textDocument/signatureHelp and resolves the formatted text", "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
@@ -1196,6 +1389,28 @@ TEST_CASE("BuildInitializeParams advertises codeActionLiteralSupport alongside t
 
     // workDoneProgress-support follow-up: invites $/progress reporting.
     REQUIRE(params.at("capabilities").at("window").at("workDoneProgress") == true);
+}
+
+// capabilities-hygiene follow-up: regression test for the gap the LSP
+// coverage survey found -- this client sends/handles hover, definition,
+// declaration, typeDefinition, implementation, references, rename,
+// signatureHelp, publishDiagnostics, workspace/configuration, and
+// workspace/executeCommand, but previously declared capabilities for none
+// of them (only completion/codeAction/window.workDoneProgress existed).
+TEST_CASE("BuildInitializeParams declares capabilities for every request/notification this client actually sends", "[Lsp]") {
+    const Json params = ned::editor::lsp::BuildInitializeParams(std::filesystem::path("/some/project"));
+
+    const Json& textDocument = params.at("capabilities").at("textDocument");
+    for (const char* key :
+         {"hover", "signatureHelp", "declaration", "definition", "typeDefinition", "implementation", "references", "rename",
+          "publishDiagnostics"}) {
+        REQUIRE(textDocument.contains(key));
+    }
+
+    const Json& workspace = params.at("capabilities").at("workspace");
+    REQUIRE(workspace.at("configuration") == true);
+    REQUIRE(workspace.contains("didChangeConfiguration"));
+    REQUIRE(workspace.contains("executeCommand"));
 }
 
 TEST_CASE("BuildInitializeParams absolutizes a relative rootUri", "[Lsp]") {
@@ -1891,5 +2106,38 @@ TEST_CASE("SyncBackgroundBuffers is a no-op entirely when disabled", "[Lsp]") {
     ned::editor::lsp::SetLspBackgroundSyncEnabled(false);
     ned::editor::lsp::SyncBackgroundBuffers(bufferList, manager);
 
+    REQUIRE(NoFrameArrives(server.serverStdinRead));
+}
+
+// graceful-lsp-shutdown follow-up.
+TEST_CASE("LspManager::Shutdown sends shutdown then exit to a directly-spawned client", "[Lsp]") {
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client); // brokerBacked defaults to false
+
+    manager.Shutdown();
+
+    const std::vector<Json> frames = ParseAllFrames(ReadRawFramesUntil(server.serverStdinRead, 2));
+    REQUIRE(frames.size() == 2);
+    REQUIRE(frames[0]["method"] == "shutdown");
+    REQUIRE(frames[1]["method"] == "exit");
+}
+
+TEST_CASE("LspManager::Shutdown never sends anything to a broker-backed client", "[Lsp]") {
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client, Json::object(), /*brokerBacked=*/true);
+
+    manager.Shutdown();
+
+    // A broker-owned server is shared with other ned processes and the
+    // broker daemon itself -- it must keep running after this process
+    // exits, so it must never receive this process's own shutdown/exit.
     REQUIRE(NoFrameArrives(server.serverStdinRead));
 }

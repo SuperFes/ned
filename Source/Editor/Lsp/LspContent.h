@@ -212,6 +212,49 @@ struct RenameResult {
 // signature missing "label").
 [[nodiscard]] std::optional<std::string> ExtractSignatureHelp(const Json& result);
 
+// symbol-search follow-up. One entry from a textDocument/documentSymbol or
+// workspace/symbol response -- both requests return the same underlying
+// vocabulary (name/kind/location), just at different scopes, so one shape
+// serves both. uri stays a raw string (LspManager resolves it), the same
+// layering ExtractCodeActions/ExtractDefinitionLocations already keep.
+struct SymbolEntry {
+    std::string name;
+    std::string containerName; // immediate parent's name (hierarchical) or the server's own containerName; "" if none
+    int         kind = 0;      // raw LSP SymbolKind (1-26); 0 for a malformed/missing entry, never produced by ExtractSymbols itself
+    std::string uri;
+    LspPosition position; // jump target: a DocumentSymbol's selectionRange.start, or a SymbolInformation/WorkspaceSymbol's range.start
+
+    bool operator==(const SymbolEntry&) const = default;
+};
+
+// Human-readable word for a raw LSP SymbolKind (1-26 per spec) -- covers
+// every value the spec currently defines; out-of-range or absent (0)
+// returns "symbol" rather than being treated as a parse failure, since a
+// future spec revision adding a new kind should still list, not vanish.
+[[nodiscard]] std::string_view SymbolKindLabel(int kind);
+
+// Parses a textDocument/documentSymbol or workspace/symbol response,
+// handling every wire shape the spec allows uniformly:
+//   - hierarchical DocumentSymbol[] ("range"/"selectionRange", no "location"
+//     at all) -- recursed via "children", ownUri applied to every entry
+//     (a DocumentSymbol never carries its own uri, unlike the other two
+//     shapes) and containerName set to each entry's own immediate parent
+//     name, mirroring SymbolInformation.containerName's real-world meaning.
+//   - flat SymbolInformation[] ("location": {uri, range}, optional
+//     top-level "containerName") -- ownUri is ignored, each entry's own
+//     location.uri is used instead.
+//   - 3.17 WorkspaceSymbol[] (same as SymbolInformation, but "location" may
+//     be {uri} alone with no range for a symbol the server hasn't resolved
+//     the precise range for yet) -- treated as position {0, 0} rather than
+//     skipped: the symbol itself is still real and worth listing/jumping to
+//     the top of its file, workspaceSymbol/resolve for the precise range is
+//     a documented v1 cut (this client never sends it).
+// An entry missing "name" is skipped, not a parse error. Returned in
+// response order -- document order for documentSymbol, already
+// server-ranked-against-its-query order for workspace/symbol; no
+// client-side re-sorting either way.
+[[nodiscard]] std::vector<SymbolEntry> ExtractSymbols(const Json& result, const std::string& ownUri = {});
+
 } // namespace ned::editor::lsp
 
 #endif // NED_EDITOR_LSP_LSPCONTENT_H
