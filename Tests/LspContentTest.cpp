@@ -10,6 +10,7 @@ using ned::editor::lsp::ExtractCompletionItems;
 using ned::editor::lsp::ExtractDefinitionLocations;
 using ned::editor::lsp::ExtractHoverText;
 using ned::editor::lsp::ExtractRenameEdits;
+using ned::editor::lsp::ExtractSignatureHelp;
 using ned::editor::lsp::ExtractSingleCodeAction;
 using ned::editor::lsp::Json;
 using ned::editor::lsp::LspPosition;
@@ -377,4 +378,63 @@ TEST_CASE("ExtractCompletionItems reads insertTextFormat's snippet flag", "[Lsp]
     REQUIRE(items[1].isSnippet);
     REQUIRE(items[1].insertText == "snip(${1:x})");
     REQUIRE_FALSE(items[2].isSnippet); // absent defaults to PlainText per the spec
+}
+
+TEST_CASE("ExtractSignatureHelp wraps the active parameter's string label in guillemets", "[Lsp]") {
+    const Json result = {
+        {"signatures", Json::array({{{"label", "foo(a: int, b: string)"},
+                                     {"parameters", Json::array({{{"label", "a: int"}}, {{"label", "b: string"}}})}}})},
+        {"activeParameter", 1},
+    };
+    const auto text = ExtractSignatureHelp(result);
+    REQUIRE(text.has_value());
+    REQUIRE(*text == "foo(a: int, **b: string**)");
+}
+
+TEST_CASE("ExtractSignatureHelp resolves a [start, end) offset-pair parameter label", "[Lsp]") {
+    const Json result = {
+        {"signatures", Json::array({{{"label", "foo(a, b)"}, {"parameters", Json::array({{{"label", Json::array({4, 5})}}, {{"label", Json::array({7, 8})}}})}}})},
+        {"activeParameter", 1},
+    };
+    const auto text = ExtractSignatureHelp(result);
+    REQUIRE(text.has_value());
+    REQUIRE(*text == "foo(a, **b**)");
+}
+
+TEST_CASE("ExtractSignatureHelp falls back to the signature's own activeParameter over the top-level one", "[Lsp]") {
+    const Json result = {
+        {"signatures", Json::array({{{"label", "foo(a, b)"},
+                                     {"activeParameter", 0},
+                                     {"parameters", Json::array({{{"label", "a"}}, {{"label", "b"}}})}}})},
+        {"activeParameter", 1}, // should be shadowed by the signature's own value above
+    };
+    const auto text = ExtractSignatureHelp(result);
+    REQUIRE(text.has_value());
+    REQUIRE(*text == "foo(**a**, b)");
+}
+
+TEST_CASE("ExtractSignatureHelp respects activeSignature when there is more than one overload", "[Lsp]") {
+    const Json result = {
+        {"signatures", Json::array({{{"label", "foo()"}}, {{"label", "foo(a)"}, {"parameters", Json::array({{{"label", "a"}}})}}})},
+        {"activeSignature", 1},
+        {"activeParameter", 0},
+    };
+    const auto text = ExtractSignatureHelp(result);
+    REQUIRE(text.has_value());
+    REQUIRE(*text == "foo(**a**)");
+}
+
+TEST_CASE("ExtractSignatureHelp returns the plain label when no active parameter resolves", "[Lsp]") {
+    const Json result = {{"signatures", Json::array({{{"label", "foo(a, b)"}}})}};
+    const auto text   = ExtractSignatureHelp(result);
+    REQUIRE(text.has_value());
+    REQUIRE(*text == "foo(a, b)");
+}
+
+TEST_CASE("ExtractSignatureHelp returns nullopt for an empty signatures array", "[Lsp]") {
+    REQUIRE_FALSE(ExtractSignatureHelp(Json{{"signatures", Json::array()}}).has_value());
+}
+
+TEST_CASE("ExtractSignatureHelp returns nullopt for a null result", "[Lsp]") {
+    REQUIRE_FALSE(ExtractSignatureHelp(Json(nullptr)).has_value());
 }

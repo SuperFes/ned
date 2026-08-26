@@ -946,6 +946,18 @@ class BufferView : public Widget {
     // only when no selector produces exactly one candidate.
     void RequestQuickFixAtPoint();
 
+    // declaration/typeDefinition/implementation follow-up: which LSP
+    // location-request RequestDefinitionAtPoint sends -- the request/
+    // response/jump/select-list handling below is identical for all four
+    // (LspManager::ResolvedLocation is the exact same shape every one of
+    // RequestDefinition/RequestDeclaration/RequestTypeDefinition/
+    // RequestImplementation returns), only the wire method and the
+    // human-facing "Requesting .../No ... found." wording differ.
+    enum class LspLocationKind { Definition,
+                                 Declaration,
+                                 TypeDefinition,
+                                 Implementation };
+
     // go-to-definition follow-up. Mirrors RequestCodeActionsAtPoint's own
     // shape exactly: bumps definitionRequestGeneration_, calls
     // LspManager::RequestDefinition, and discards a stale response (buffer/
@@ -955,8 +967,13 @@ class BufferView : public Widget {
     // confirmation needed -- unlike a code action, opening a file and
     // moving point is trivially undoable/re-navigable, nothing destructive
     // to confirm); more than one enters LspGotoDefinitionSelect the same
-    // way multiple code actions enter LspCodeActionSelect.
-    void RequestDefinitionAtPoint();
+    // way multiple code actions enter LspCodeActionSelect. kind (declaration/
+    // typeDefinition/implementation follow-up) selects which of the four
+    // LspManager requests above is sent and only changes the wording --
+    // pendingLocationLabel_ carries kind's own label through to the async
+    // callback for that wording, since the request itself may still be in
+    // flight when a *different* kind's request supersedes it.
+    void RequestDefinitionAtPoint(LspLocationKind kind = LspLocationKind::Definition);
     void RefreshDefinitionSelectStatus();
     void HandleDefinitionSelectKey(const editor::KeyChord& chord);
     // Opens location.path (BufferList::OpenOrCreateFile, matching
@@ -2597,6 +2614,15 @@ class BufferView : public Widget {
     std::vector<editor::lsp::LspManager::ResolvedLocation> pendingDefinitions_;
     std::size_t                                            definitionSelection_         = 0;
     std::size_t                                            definitionRequestGeneration_ = 0;
+
+    // declaration/typeDefinition/implementation follow-up: the lowercase
+    // human-facing word for whichever LspLocationKind pendingDefinitions_
+    // was most recently requested for ("definition", "declaration", ...) --
+    // stamped alongside pendingDefinitions_ inside RequestDefinitionAtPoint's
+    // own async callback, so RefreshDefinitionSelectStatus's wording matches
+    // the request that's actually pending rather than always saying
+    // "Definition" regardless of kind.
+    std::string pendingLocationLabel_ = "definition";
 
     // header-source-switching follow-up: same staleness-guard shape as
     // definitionRequestGeneration_ above, no selection list needed --

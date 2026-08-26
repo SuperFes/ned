@@ -2061,6 +2061,33 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                               serverKey);
                       });
 
+    // signature-help follow-up: same async-write-into-context.message shape
+    // as lsp-hover just above, since ExtractSignatureHelp (LspContent.h)
+    // already reduces the response to one plain, already-formatted string --
+    // no BufferView-owned session needed, same reasoning lsp-hover's own
+    // doc comment gives.
+    registry.Register("lsp-signature-help", "Show parameter/signature information from the language server at point.",
+                      [](CommandContext& context) {
+                          if (!context.lspManager) {
+                              if (context.message) {
+                                  *context.message = "No LSP manager available.";
+                              }
+                              return;
+                          }
+                          std::string*      message = context.message;
+                          const std::string serverKey =
+                              context.mode ? ResolveLspServerKey(*context.mode, context.buffer.Text(), context.buffer.Point())
+                                           : std::string{};
+                          context.lspManager->RequestSignatureHelp(
+                              context.buffer, context.buffer.Point(),
+                              [message](std::optional<std::string> text) {
+                                  if (message) {
+                                      *message = text.value_or("No signature help available.");
+                                  }
+                              },
+                              serverKey);
+                      });
+
     // hover/completion follow-up: a one-shot direct action (see
     // InteractiveRequest::LspComplete's own doc comment in Command.h) --
     // BufferView::StartInteractiveSession is what actually sends the
@@ -2118,6 +2145,27 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                       [](CommandContext& context) {
                           context.interactiveRequest = InteractiveRequest::LspGotoDefinition;
                       });
+
+    // declaration/typeDefinition/implementation follow-up: three more
+    // one-shot direct actions, identical in shape to lsp-goto-definition
+    // (see InteractiveRequest::LspGotoDeclaration's own doc comment in
+    // Command.h) -- deliberately unbound in the default keymap, same
+    // "reachable via M-x only" precedent as lsp-show-log/lsp-diagnostics-buffer,
+    // since none of the three has an established default binding to borrow
+    // the way M-. does for goto-definition.
+    registry.Register("lsp-goto-declaration", "Jump to the declaration of the symbol at point, via the language server.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::LspGotoDeclaration;
+                      });
+    registry.Register("lsp-goto-type-definition", "Jump to the type definition of the symbol at point, via the language server.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::LspGotoTypeDefinition;
+                      });
+    registry.Register("lsp-goto-implementation", "Jump to the implementation of the symbol at point, via the language server.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::LspGotoImplementation;
+                      });
+
     registry.Register("lsp-rename", "Rename the symbol at point across every file the language server reports it in.",
                       [](CommandContext& context) {
                           context.interactiveRequest = InteractiveRequest::LspRename;
