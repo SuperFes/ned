@@ -245,6 +245,38 @@ TEST_CASE("ModeLine shows a modified marker only when the buffer has unsaved cha
     REQUIRE(RowText(screen, 0, 40).find("*scratch") != std::string::npos);
 }
 
+// UTF-8-aware-rendering follow-up: a multi-byte codepoint in a buffer name
+// must occupy exactly one cell/column, not one cell per byte -- found live
+// via EchoArea's identical bug (see ROADMAP.md) before ModeLine::Paint's own
+// byte-per-column loops were converted to AppendUtf8Columns.
+TEST_CASE("ModeLine renders a multi-byte UTF-8 buffer name as one cell per codepoint", "[ModeLine]") {
+    ned::text::Buffer     buffer("caf\xc3\xa9.txt", ned::text::Rope("x")); // "café.txt"
+    ned::ui::ActiveBuffer activeBuffer(buffer);
+    ned::editor::Mode     mode  = ned::editor::FundamentalMode();
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    ned::ui::ModeLine     modeLine(activeBuffer, mode, theme);
+
+    ned::ui::Screen screen = MakeScreen(40, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
+
+    modeLine.Paint(canvas);
+
+    // "  " + modifiedMarker(" ") + "café.txt": c=3 a=4 f=5 é=6 .=7 t=8 x=9 t=10
+    REQUIRE(screen.PixelAt(6, 0).character == "\xc3\xa9"); // the whole 'é' in one cell
+    REQUIRE(screen.PixelAt(7, 0).character == ".");        // not pushed one column right by a split 'é'
+    // Text after the name lands at the COLUMN the codepoint-count (not
+    // byte-count) predicts: "  " + " " + "café.txt" (8 codepoints) + "   " = column 14.
+    // (RowText concatenates each cell's own UTF-8 bytes into one std::string,
+    // so a *byte* offset found via std::string::find would land one byte
+    // late here -- checking the actual cell column is what a split 'é' would
+    // really shift.)
+    REQUIRE(screen.PixelAt(14, 0).character == "L");
+    REQUIRE(screen.PixelAt(15, 0).character == "1");
+    REQUIRE(screen.PixelAt(16, 0).character == ":");
+    REQUIRE(screen.PixelAt(17, 0).character == "C");
+    REQUIRE(screen.PixelAt(18, 0).character == "1");
+}
+
 TEST_CASE("ModeLine shows an active background activity with its spinner and detail", "[ModeLine]") {
     ned::text::Buffer     buffer("main.c", ned::text::Rope("int main() {}"));
     ned::ui::ActiveBuffer activeBuffer(buffer);

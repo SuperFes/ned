@@ -401,14 +401,29 @@ Real, reproduced, non-urgent — each is safe to leave as-is for now, but worth 
 opportunistically rather than re-discovering from scratch. Add to this list instead of
 just fixing-and-forgetting or letting it fade from memory between sessions.
 
-(Empty right now — the LSP-broker-hermeticity flake, 2026-08-26 (`LspManagerTest.cpp`'s
+The LSP-broker-hermeticity flake, 2026-08-26 (`LspManagerTest.cpp`'s
 two spawn-failure tests, plus the same shape in `ModeLineTest.cpp`'s spawn-failure-glyph
 test — the latter caught by re-running the full suite against a real broker daemon left
 warm from a live tmux session, exactly the scenario this flake needed to reproduce), was
 fixed 2026-08-26 by adding `LspManager::SetBrokerSocketPathOverrideForTesting` and
 threading it into `ClientForLanguage`'s `TryConnectToBroker` call; all three affected
 tests now point at a guaranteed-nonexistent socket path instead of the real broker
-socket.)
+socket.
+
+`EchoArea::Paint`/`ModeLine::Paint` being byte-by-byte, not UTF-8-aware (found 2026-08-26,
+live tmux+clangd testing `lsp-signature-help` — a multi-byte guillemet marker rendered as
+blank padding, one blank cell per byte, silently wrong despite every unit test passing
+since those compared plain byte strings) was fixed 2026-08-26: both now walk by codepoint
+span (`Text/Utf8.h`'s `NextCodepointBoundary`, matching `BufferView`'s own
+one-codepoint-per-cell content rendering) instead of by raw byte — `EchoArea`'s six
+sentinel bytes (always exactly one byte) are still recognized via a one-byte-span check
+before the general case; `ModeLine` gained a shared `AppendUtf8Columns` helper replacing
+six duplicated byte-loop call sites. Double-width CJK/emoji columns are still one cell
+each, matching `BufferView`'s own accepted limitation there — no `wcwidth`-equivalent
+exists anywhere in this codebase, and fixing that only in these two widgets would be
+inconsistent. `lsp-signature-help`'s active-parameter marker still uses ASCII `**...**`
+rather than switching back to guillemets — a cosmetic choice either way now that the
+underlying bug is gone.
 
 ### Named non-goals (leaning "won't do", kept visible so it's a conscious call)
 

@@ -105,3 +105,39 @@ TEST_CASE("EchoArea::Paint renders a ghosted span italic, more faded than a dimm
     REQUIRE(screen.PixelAt(11, 0).foreground_color != screen.PixelAt(7, 0).foreground_color); // more faded than DIM
     REQUIRE_FALSE(screen.PixelAt(17, 0).italic); // 'a' of "after" -- back to normal
 }
+
+// UTF-8-aware-rendering follow-up: a multi-byte codepoint must occupy
+// exactly one cell/column, not one cell per byte -- found live via
+// lsp-signature-help's active-parameter marker rendering as blank padding
+// (see ROADMAP.md) before EchoArea::Paint was made codepoint-aware.
+TEST_CASE("EchoArea::Paint renders a multi-byte UTF-8 character as one cell, not one per byte", "[EchoArea]") {
+    const std::string message = "caf\xc3\xa9!"; // "café!" -- 'é' is a 2-byte UTF-8 codepoint
+    ned::ui::Theme    theme   = ned::ui::DarkTheme();
+    ned::ui::EchoArea echoArea(message, theme);
+
+    ned::ui::Screen screen(20, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 0});
+    echoArea.Paint(canvas);
+
+    REQUIRE(screen.PixelAt(0, 0).character == "c");
+    REQUIRE(screen.PixelAt(1, 0).character == "a");
+    REQUIRE(screen.PixelAt(2, 0).character == "f");
+    REQUIRE(screen.PixelAt(3, 0).character == "\xc3\xa9"); // the whole 'é' in one cell
+    REQUIRE(screen.PixelAt(4, 0).character == "!");        // not pushed one column right by a split 'é'
+}
+
+TEST_CASE("EchoArea::Paint emphasizes a multi-byte span without corrupting it", "[EchoArea]") {
+    const std::string message = "before " + ned::ui::EmphasizeForEchoArea("caf\xc3\xa9") + " after";
+    ned::ui::Theme    theme   = ned::ui::DarkTheme();
+    ned::ui::EchoArea echoArea(message, theme);
+
+    ned::ui::Screen screen(30, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 29, .y_min = 0, .y_max = 0});
+    echoArea.Paint(canvas);
+
+    REQUIRE(screen.PixelAt(7, 0).character == "c");
+    REQUIRE(screen.PixelAt(10, 0).character == "\xc3\xa9"); // 'é' of "café", still one cell
+    REQUIRE(screen.PixelAt(10, 0).bold);
+    REQUIRE(screen.PixelAt(11, 0).character == " ");
+    REQUIRE_FALSE(screen.PixelAt(11, 0).bold);
+}
