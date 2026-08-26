@@ -359,6 +359,46 @@ TEST_CASE("LspManager::StatusForLanguage reports NotConfigured, Running, and Spa
     ned::editor::lsp::SetLspServerCommand("status-fail-lang", {}); // clean up global config state for other tests
 }
 
+TEST_CASE("LspManager::ClientDisconnected retires a client instead of destroying it immediately (use-after-free guard)",
+          "[Lsp]") {
+    // lsp-use-after-free follow-up: confirmed live -- a real SIGSEGV inside
+    // LspClient's own pending_ hashtable, on the main thread, inside
+    // EventLoop::DrainPosted_ -- ClientDisconnected used to clients_.erase()
+    // the LspClient immediately, but it runs from inside that very client's
+    // own Post-marshaled SetOnDisconnected callback, and a second Post()ed
+    // callback for the same instance (a stray DispatchFrame, or the
+    // stderr-read thread's own line handler -- two independent background
+    // threads racing to Post() against the same object, no ordering
+    // guarantee between them) can already be queued behind it. Rather than
+    // trying to engineer that exact cross-thread race deterministically,
+    // this directly proves the guarantee the fix provides: the raw
+    // LspClient* stays alive and safely callable even after
+    // ClientDisconnected has fully run -- which used to be a genuine
+    // dangling pointer at this exact point.
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+
+    LspClient* client = nullptr;
+    auto       server = std::make_optional<FakeServer>(FakeServer::Create(manager, "retire-test-lang", eventLoop, client));
+    REQUIRE(client != nullptr);
+    REQUIRE(manager.StatusForLanguage("retire-test-lang") == LspManager::LspStatus::Running);
+
+    server.reset(); // closes the fake server's write end -- EOF, the real disconnect path
+    WaitUntil(eventLoop, [&] { return manager.StatusForLanguage("retire-test-lang") != LspManager::LspStatus::Running; });
+    REQUIRE(manager.StatusForLanguage("retire-test-lang") == LspManager::LspStatus::Disconnected);
+
+    // The dangerous moment: ClientDisconnected has fully run (clients_ no
+    // longer has this language), but `client` is still a live object in
+    // retired_, not freed. A real stray Post()ed callback would call
+    // something like this; calling it directly here is the deterministic
+    // stand-in.
+    client->ExpireStaleRequests(std::chrono::milliseconds(0)); // must not crash
+
+    // ExpireStaleRequests's periodic tick is what actually frees it now.
+    manager.ExpireStaleRequests();
+}
+
 TEST_CASE("LspManager::ClientDisconnected gives up after a burst of immediate disconnects (crash-loop guard)", "[Lsp]") {
     // crash-loop-respawn-guard follow-up: confirmed live -- a misconfigured
     // phpantom_lsp respawned thousands of times within about a second, since

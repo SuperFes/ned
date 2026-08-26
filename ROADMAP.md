@@ -77,39 +77,6 @@ Notcurses.
       `prepareRename`, `linkedEditingRange`, or `workspace/willRenameFiles`/
       `didRenameFiles`) — import paths elsewhere go stale until the server notices on
       its own.
-- [ ] **Reproducible crash opening a file under a non-ASCII project path** (found
-      2026-08-26, live, while verifying the chrome-widget UTF-8 fix below — confirmed
-      unrelated to that fix, reproduces identically on the commit before it too).
-      Opening any file under a project root containing non-ASCII bytes (e.g.
-      `café-projet/note.txt`) reliably SIGSEGVs, specifically through the reserved
-      prose-checker sync path (`kProseLanguageKey`/harper-ls via the LSP broker
-      daemon) — the broker's own connection log shows a rapid attach/disconnect churn
-      (6+ cycles within the same second) immediately before the crash. Backtrace:
-      SIGSEGV in `LspClient::DispatchFrame` (`Lsp/LspClient.cpp:166`) inside
-      `pending_`'s hashtable lookup, called from `EventLoop::DrainPosted_` handling
-      posted background work — a corrupted/stale request-id map, not a null-path
-      crash. Reproduces against a freshly spawned, current-build broker (not only a
-      stale cross-version one); does not reproduce with an ASCII-only project path.
-      Root cause of the SIGSEGV itself not yet isolated — a path/URI-to-
-      `Content-Length` byte-count bug (computing frame length in codepoints instead
-      of bytes for a non-ASCII root, corrupting the JSON-RPC stream) is the leading
-      hypothesis given the shape, but unconfirmed. **Update 2026-08-26, same day**:
-      the *rapid respawn storm* itself — confirmed as its own, more general bug the
-      same day, live against a real project (`phpantom_lsp` disconnecting instantly
-      on every launch produced thousands of "server disconnected: server exited
-      (EOF)" lines within about a second, no non-ASCII path involved that time) —
-      is now fixed: `LspManager::ClientDisconnected` had no rate limit at all
-      between one disconnect and the very next `SyncBuffer`'s respawn attempt: see
-      `disconnectBurst_`'s doc comment in `LspManager.h`. A burst of
-      `kCrashLoopThreshold` (3) disconnects within `kCrashLoopWindow` (3s) now
-      latches `failedCommands_` itself, the same "stop retrying until reconfigured"
-      outcome a hard spawn failure already got. This closes the *trigger* that made
-      the SIGSEGV above easy to hit (thousands of rapid reconnects per second, now
-      capped at 3), but does not by itself confirm or rule out whether the
-      underlying `DispatchFrame` hashtable corruption is a genuine, separate bug —
-      worth re-attempting the non-ASCII-path repro against the throttled retry
-      behavior to see whether it still reproduces at only 3 rapid attempts.
-
 ### Navigation & Search
 
 - [ ] **Multibuffer gaps**: no full-commit diff view (browsing one commit's whole diff
