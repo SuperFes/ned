@@ -18,6 +18,7 @@
 #include "Editor/MinimapSettings.h"
 #include "Editor/ModeOverrides.h"
 #include "Editor/Multibuffer.h"
+#include "Editor/PersistentUndo.h"
 #include "Editor/ProjectSession.h"
 #include "Editor/RecentFiles.h"
 #include "Editor/ScratchPad.h"
@@ -767,6 +768,10 @@ void WindowManager::StartAutoSaveTimer(EventLoop& eventLoop) {
                 // nothing changed" posture as SaveFilePlaces above.
                 editor::SaveRecentFiles();
                 editor::SaveBookmarks();
+                // persistent-undo follow-up: same "skip the write when
+                // nothing changed" posture as SaveFilePlaces above (its own
+                // memo is per-buffer, via ContentGeneration()).
+                editor::SaveUndoHistoryForOpenBuffers(bufferList_);
                 SaveProjectSessionNow();
                 // subprocess-hang-protection follow-up: same tick, same
                 // "unattended sweep" posture -- resolves any LSP/DAP/ACP

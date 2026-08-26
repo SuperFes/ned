@@ -30,6 +30,7 @@
 #include "Editor/Mode.h"
 #include "Editor/ModeOverrides.h"
 #include "Editor/ModePrewarm.h"
+#include "Editor/PersistentUndo.h"
 #include "Editor/ProjectPlugins.h"
 #include "Editor/ProjectRoot.h"
 #include "Editor/ProjectSession.h"
@@ -423,8 +424,16 @@ auto main(int argc, char** argv) -> int {
             ned::editor::RestoreFilePlace(*openBuffer, static_cast<std::size_t>(ned::editor::TabWidth()));
         }
     }
+    // persistent-undo follow-up: same "buffers opened before the hook
+    // existed need their own explicit loop" reasoning as the save-place
+    // restore just above -- TryRestoreUndoHistory does its own
+    // PersistentUndoEnabled() check internally, so no outer guard here.
+    for (const auto& openBuffer : bufferList.Buffers()) {
+        ned::editor::TryRestoreUndoHistory(*openBuffer);
+    }
     bufferList.SetOnFileOpened([](ned::text::Buffer& opened) -> void {
         ned::editor::RestoreFilePlace(opened, static_cast<std::size_t>(ned::editor::TabWidth()));
+        ned::editor::TryRestoreUndoHistory(opened);
     });
 
     // session-persistence slice 2, Kate-style per the user's explicit call:
@@ -848,6 +857,7 @@ auto main(int argc, char** argv) -> int {
     }
     bufferList.SetOnFileOpened([&modePrewarmer](ned::text::Buffer& opened) -> void {
         ned::editor::RestoreFilePlace(opened, static_cast<std::size_t>(ned::editor::TabWidth()));
+        ned::editor::TryRestoreUndoHistory(opened);
         modePrewarmer.Prewarm(opened);
     });
 
@@ -1262,6 +1272,8 @@ auto main(int argc, char** argv) -> int {
     logShutdown("post-run: saving recent files and bookmarks");
     ned::editor::SaveRecentFiles(/*force=*/true);
     ned::editor::SaveBookmarks(/*force=*/true);
+    logShutdown("post-run: saving undo history");
+    ned::editor::SaveUndoHistoryForOpenBuffers(bufferList);
     logShutdown("post-run: saving project session");
     windowManager->SaveProjectSessionNow();
     logShutdown("post-run: explicit steps done; entering local destruction "

@@ -1526,3 +1526,37 @@ TEST_CASE("A buffer with no excerpt ranges edits exactly as before", "[Buffer]")
     buffer.DeleteRange(0, 1);
     REQUIRE(buffer.Text() == "0123456789");
 }
+
+TEST_CASE("SerializeUndo/RestoreUndoTree round-trips a buffer's full undo history", "[Buffer]") {
+    Buffer original("scratch", ned::text::Rope("a"));
+    original.SetPoint(1);
+    original.InsertAtPoint("b");
+    original.MoveBackward(); // breaks the coalescing run, see "Moving point between inserts..." above
+    original.MoveForward();
+    original.InsertAtPoint("c");
+
+    const auto        nodes     = original.SerializeUndo();
+    const std::size_t currentId = original.CurrentUndoNodeId();
+    REQUIRE(nodes.size() == 3); // "a", "ab", "abc"
+
+    Buffer restored("scratch", ned::text::Rope("abc")); // a fresh load landing on the same content
+    restored.RestoreUndoTree(nodes, currentId);
+    REQUIRE(restored.Text() == "abc");
+    REQUIRE(restored.CanUndo());
+
+    restored.Undo();
+    REQUIRE(restored.Text() == "ab");
+    restored.Undo();
+    REQUIRE(restored.Text() == "a");
+    REQUIRE_FALSE(restored.CanUndo());
+}
+
+TEST_CASE("RestoreUndoTree rejects a tree whose current node disagrees with buffer content", "[Buffer]") {
+    Buffer source("scratch", ned::text::Rope("a"));
+    source.InsertAtPoint("b");
+    const auto        nodes     = source.SerializeUndo();
+    const std::size_t currentId = source.CurrentUndoNodeId();
+
+    Buffer mismatched("scratch", ned::text::Rope("totally different content"));
+    REQUIRE_THROWS_AS(mismatched.RestoreUndoTree(nodes, currentId), std::runtime_error);
+}

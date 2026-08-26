@@ -33,6 +33,7 @@
 #include "Editor/ModeOverrides.h"
 #include "Editor/OrgCapture.h"
 #include "Editor/PageScroll.h"
+#include "Editor/PersistentUndo.h"
 #include "Editor/ProcessTimeouts.h"
 #include "Editor/ProjectRoot.h"
 #include "Editor/ProjectSession.h"
@@ -286,6 +287,15 @@ namespace {
 
     void NedSetBackupMaxSizeMb(std::int64_t megabytes) {
         editor::SetBackupMaxSizeMb(static_cast<int>(megabytes));
+    }
+
+    // persistent-undo follow-up.
+    void NedSetPersistentUndo(bool enabled) {
+        editor::SetPersistentUndoEnabled(enabled);
+    }
+
+    void NedSetPersistentUndoMaxSizeMb(std::int64_t megabytes) {
+        editor::SetPersistentUndoMaxSizeMb(static_cast<int>(megabytes));
     }
 
     // The version list ned/recover-backup indexes into -- both must agree,
@@ -982,6 +992,17 @@ void InstallEditorBindings(Environment& env) {
     env.Register<&NedSetBackupMaxVersions>(
         "ned", "set-backup-max-versions",
         "Backup versions kept per file, oldest pruned first (default 20; <= 0 keeps unlimited versions).");
+    env.Register<&NedSetPersistentUndo>(
+        "ned", "set-persistent-undo",
+        "Enable/disable persisting each file buffer's full undo tree to $XDG_STATE_HOME/ned/undo/ across editor "
+        "restarts (default true). On reopen, restored only if the file's current content still matches some node "
+        "in the persisted tree (not necessarily its tip -- e.g. quitting without saving); otherwise the persisted "
+        "history is discarded and the buffer starts fresh, same as a normal first-time open. No merging.");
+    env.Register<&NedSetPersistentUndoMaxSizeMb>(
+        "ned", "set-persistent-undo-max-size-mb",
+        "Buffers past this content size, in MiB, are skipped by persistent-undo saving (default 16; non-positive "
+        "values are clamped to 1). A large file's undo tree multiplies this cutoff by however many undo steps it "
+        "has, unlike a single backup version.");
     env.Register<&NedListBackups>(
         "ned", "list-backups",
         "Backup snapshots recoverable for the current buffer, as an array of absolute paths -- the crash-recovery "

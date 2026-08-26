@@ -17,6 +17,8 @@
 
 #include <cstddef>
 #include <memory>
+#include <optional>
+#include <string>
 #include <vector>
 
 #include "Rope.h"
@@ -49,6 +51,34 @@ class UndoTree {
     // activity). Exposed mainly so callers/tests can confirm branching
     // doesn't discard anything.
     [[nodiscard]] std::size_t ChildCount() const;
+
+    // persistent-undo follow-up: a flat, JSON-agnostic view of the whole
+    // tree (not just the current-to-root path) for a caller one layer up
+    // (Editor/PersistentUndo.h) to serialize to disk -- this class stays
+    // free of any JSON/file dependency, matching every other Text/ type.
+    // id is a pre-order-DFS index (deterministic given a fixed tree, so it's
+    // stable across repeated Serialize() calls on the same instance, but not
+    // meant to persist meaning beyond one Serialize()/Deserialize() round
+    // trip). parentId is nullopt only for the root. mostRecentChild mirrors
+    // Node::mostRecentChild -- which of this node's own children Redo()
+    // would follow -- 0 (meaningless) when the node has no children.
+    struct SerializedNode {
+        std::size_t                id;
+        std::optional<std::size_t> parentId;
+        std::string                content;
+        std::size_t                mostRecentChild = 0;
+    };
+    [[nodiscard]] std::vector<SerializedNode> Serialize() const;
+    // The id (per the same Serialize() walk) of the node Current() reflects.
+    [[nodiscard]] std::size_t CurrentNodeId() const;
+    // Reconstructs a tree from a flat node list (order-independent -- each
+    // node is placed by parentId, not by its position in nodes) plus which
+    // node is current. Every node must be reachable from the one root
+    // (parentId == nullopt); throws std::runtime_error on a malformed list
+    // (no root, more than one root, a dangling parentId, an unknown
+    // currentId, or a cycle) -- the caller (a hand-edited or corrupted undo
+    // file) can't be trusted to hand back exactly what Serialize() produced.
+    [[nodiscard]] static UndoTree Deserialize(const std::vector<SerializedNode>& nodes, std::size_t currentId);
 
   private:
     struct Node {

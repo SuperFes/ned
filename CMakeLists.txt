@@ -596,6 +596,7 @@ add_library(ned_lib STATIC
         Source/Editor/InlineDiagnostics.cpp
         Source/Editor/ScratchPad.cpp
         Source/Editor/Backup.cpp
+        Source/Editor/PersistentUndo.cpp
         Source/Editor/DiagnosticsLog.cpp
         Source/Editor/Session.cpp
         Source/Editor/RecentFiles.cpp
@@ -920,6 +921,7 @@ if (NED_BUILD_TESTS)
             Tests/ProjectFileOpsTest.cpp
             Tests/ScratchPadTest.cpp
             Tests/BackupTest.cpp
+            Tests/PersistentUndoTest.cpp
             Tests/DiagnosticsLogTest.cpp
             Tests/SessionTest.cpp
             Tests/RecentFilesTest.cpp
