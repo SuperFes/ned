@@ -17,6 +17,7 @@
 #include "FinalNewline.h"
 #include "FormatOnSave.h"
 #include "InlineDiagnostics.h"
+#include "LineEndingPolicy.h"
 #include "Lsp/LspManager.h"
 #include "Markdown.h"
 #include "Mode.h"
@@ -1425,7 +1426,8 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
             if (context.buffer.Path()) {
                 BackupFileBeforeSave(*context.buffer.Path());
             }
-            context.buffer.Save(EnsureFinalNewline(), TrimTrailingWhitespaceOnSave());
+            context.buffer.Save(EnsureFinalNewline(), TrimTrailingWhitespaceOnSave(),
+                                ResolveLineEndingForSave(context.buffer.LineEndingKind()));
             if (context.buffer.Path()) {
                 RemoveAutoSave(*context.buffer.Path());
             }
@@ -1489,6 +1491,28 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                               *context.message = "Format command failed.";
                           }
                       });
+
+    // crlf-handling follow-up: sets only this buffer's own tracked line
+    // ending (Buffer::SetLineEndingOverride) -- a disk-only-until-saved
+    // preference, exactly like ensureFinalNewline/trimTrailingWhitespace.
+    // Nothing on disk or in the live Rope changes until the next explicit
+    // save; that save is what actually re-encodes the file (still subject
+    // to a Force policy, see Editor/LineEndingPolicy.h -- unusual, but the
+    // same override-vs-global-policy relationship ensureFinalNewline has).
+    const auto convertLineEndings = [](text::LineEnding ending) {
+        return [ending](CommandContext& context) {
+            context.buffer.SetLineEndingOverride(ending);
+            if (context.message) {
+                *context.message = std::string("Buffer will be saved as ") + text::LineEndingName(ending) + " next.";
+            }
+        };
+    };
+    registry.Register("convert-line-endings-to-lf", "Save this buffer with LF (Unix) line endings.",
+                      convertLineEndings(text::LineEnding::LF));
+    registry.Register("convert-line-endings-to-crlf", "Save this buffer with CRLF (Windows) line endings.",
+                      convertLineEndings(text::LineEnding::CRLF));
+    registry.Register("convert-line-endings-to-cr", "Save this buffer with CR (classic Mac) line endings.",
+                      convertLineEndings(text::LineEnding::CR));
 
     registry.Register("isearch-forward", "Incrementally search forward.", [](CommandContext& context) {
         context.interactiveRequest = InteractiveRequest::IsearchForward;

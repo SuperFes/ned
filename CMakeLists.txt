@@ -524,6 +524,7 @@ add_library(ned_lib STATIC
         Source/Text/BinaryDetect.cpp
         Source/Text/ThreeWayMerge.cpp
         Source/Text/Utf8.cpp
+        Source/Text/LineEnding.cpp
         Source/Editor/Key.cpp
         Source/Editor/Command.cpp
         Source/Editor/FuzzyMatch.cpp
@@ -564,6 +565,7 @@ add_library(ned_lib STATIC
         Source/Editor/HeaderSource.cpp
         Source/Editor/FinalNewline.cpp
         Source/Editor/TrimOnSave.cpp
+        Source/Editor/LineEndingPolicy.cpp
         Source/Editor/FormatOnSave.cpp
         Source/Editor/Clipboard.cpp
         Source/Editor/TabWidth.cpp
@@ -827,6 +829,8 @@ if (NED_BUILD_TESTS)
             Tests/MultiCursorTest.cpp
             Tests/BufferListTest.cpp
             Tests/BinaryDetectTest.cpp
+            Tests/LineEndingTest.cpp
+            Tests/LineEndingPolicyTest.cpp
             Tests/KeyTest.cpp
             Tests/CommandTest.cpp
             Tests/FuzzyMatchTest.cpp

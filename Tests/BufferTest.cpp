@@ -186,6 +186,97 @@ TEST_CASE("FromFile reads a file with no BOM unchanged", "[Buffer]") {
     std::filesystem::remove(path);
 }
 
+TEST_CASE("FromFile normalizes CRLF to LF and records the detected ending", "[Buffer][LineEnding]") {
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_buffer_test_crlf.txt";
+    {
+        std::ofstream file(path, std::ios::binary);
+        file << "one\r\ntwo\r\nthree\r\n";
+    }
+
+    const Buffer buffer = Buffer::FromFile(path);
+    REQUIRE(buffer.Text() == "one\ntwo\nthree\n"); // never a raw '\r' in the live content
+    REQUIRE(buffer.LineEndingKind() == ned::text::LineEnding::CRLF);
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("FromFile normalizes lone CR (classic Mac) to LF and records the detected ending", "[Buffer][LineEnding]") {
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_buffer_test_cr.txt";
+    {
+        std::ofstream file(path, std::ios::binary);
+        file << "one\rtwo\rthree";
+    }
+
+    const Buffer buffer = Buffer::FromFile(path);
+    REQUIRE(buffer.Text() == "one\ntwo\nthree");
+    REQUIRE(buffer.LineEndingKind() == ned::text::LineEnding::CR);
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("A freshly constructed buffer defaults to LF", "[Buffer][LineEnding]") {
+    const Buffer buffer("scratch", ned::text::Rope("hello"));
+    REQUIRE(buffer.LineEndingKind() == ned::text::LineEnding::LF);
+}
+
+TEST_CASE("SaveToFile preserves a CRLF-detected buffer's ending by default", "[Buffer][LineEnding]") {
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_buffer_test_crlf_roundtrip.txt";
+    {
+        std::ofstream file(path, std::ios::binary);
+        file << "one\r\ntwo\r\n";
+    }
+
+    Buffer buffer = Buffer::FromFile(path);
+    buffer.InsertAtPoint("zero\n");
+    buffer.SaveToFile(path, /*ensureFinalNewline=*/false, /*trimTrailingWhitespace=*/false);
+
+    std::ifstream     written(path, std::ios::binary);
+    const std::string writtenContent((std::istreambuf_iterator<char>(written)), std::istreambuf_iterator<char>());
+    REQUIRE(writtenContent == "zero\r\none\r\ntwo\r\n");
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("SetLineEndingOverride changes what the next save writes without touching live content", "[Buffer][LineEnding]") {
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_buffer_test_line_ending_override.txt";
+
+    Buffer buffer("scratch", ned::text::Rope("one\ntwo\n"));
+    REQUIRE(buffer.LineEndingKind() == ned::text::LineEnding::LF);
+
+    buffer.SetLineEndingOverride(ned::text::LineEnding::CRLF);
+    REQUIRE(buffer.LineEndingKind() == ned::text::LineEnding::CRLF);
+    REQUIRE(buffer.Text() == "one\ntwo\n"); // override is disk-only until the next save
+
+    buffer.SaveToFile(path, /*ensureFinalNewline=*/false, /*trimTrailingWhitespace=*/false);
+
+    std::ifstream     written(path, std::ios::binary);
+    const std::string writtenContent((std::istreambuf_iterator<char>(written)), std::istreambuf_iterator<char>());
+    REQUIRE(writtenContent == "one\r\ntwo\r\n");
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("SaveToFile's lineEndingOverride parameter forces an ending regardless of the buffer's tracked one",
+          "[Buffer][LineEnding]") {
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_buffer_test_line_ending_force.txt";
+    {
+        std::ofstream file(path, std::ios::binary);
+        file << "one\r\ntwo\r\n";
+    }
+
+    Buffer buffer = Buffer::FromFile(path);
+    REQUIRE(buffer.LineEndingKind() == ned::text::LineEnding::CRLF);
+
+    buffer.SaveToFile(path, /*ensureFinalNewline=*/false, /*trimTrailingWhitespace=*/false, ned::text::LineEnding::LF);
+
+    std::ifstream     written(path, std::ios::binary);
+    const std::string writtenContent((std::istreambuf_iterator<char>(written)), std::istreambuf_iterator<char>());
+    REQUIRE(writtenContent == "one\ntwo\n");
+    REQUIRE(buffer.LineEndingKind() == ned::text::LineEnding::LF); // forced ending is now what's tracked too
+
+    std::filesystem::remove(path);
+}
+
 TEST_CASE("SaveToFile appends a trailing newline by default when the content is missing one", "[Buffer]") {
     const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_buffer_test_final_newline.txt";
 
@@ -1071,6 +1162,21 @@ TEST_CASE("FinishLoad starts undo history clean at the loaded content, not at an
     REQUIRE(buffer.Text() == "final!");
     buffer.Undo();
     REQUIRE(buffer.Text() == "final"); // undoing the one real edit lands exactly on FinishLoad's content
+}
+
+TEST_CASE("FinishLoad's detectedEnding parameter sets LineEndingKind, matching what AsyncFileLoader passes through",
+          "[Buffer][LineEnding]") {
+    Buffer buffer("scratch");
+    buffer.MarkLoading();
+    buffer.FinishLoad(ned::text::Rope("one\ntwo\n"), ned::text::LineEnding::CRLF);
+    REQUIRE(buffer.LineEndingKind() == ned::text::LineEnding::CRLF);
+}
+
+TEST_CASE("FinishLoad without detectedEnding leaves LineEndingKind at its default", "[Buffer][LineEnding]") {
+    Buffer buffer("scratch");
+    buffer.MarkLoading();
+    buffer.FinishLoad(ned::text::Rope("one\ntwo\n"));
+    REQUIRE(buffer.LineEndingKind() == ned::text::LineEnding::LF);
 }
 
 TEST_CASE("RestoreContent replaces content in one undoable step and leaves the buffer Modified", "[Buffer]") {
