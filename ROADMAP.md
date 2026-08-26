@@ -323,6 +323,50 @@ LSP-against-the-wrong-toolchain prove it's needed in practice, not speculatively
       own `define-key` semantics: reject/restructure a bind that would shadow an
       existing command) would change `Bind`'s signature across every call site
       including `ned/define-key`.
+- [ ] **ACP chat-feel UX backlog** (2026-08-26 research pass — surveyed what Claude Code's
+      own CLI and OpenCode's TUI do that users specifically call out as good, cross-checked
+      against what `AcpPanel`/`AcpManager` actually do today; none of this is implemented
+      yet, just scoped). Roughly in order of how much a single session of chatting with an
+      agent would actually feel it:
+      - **Interrupt an in-flight prompt.** Today `Escape` in `AcpPanel::OnEvent` only
+        resolves a *pending permission prompt* or closes the panel — there's no way to stop
+        an agent mid-response short of `acp-stop-session`/closing the whole session. Claude
+        Code's single-Esc-to-interrupt (keeping partial output, not rolling anything back)
+        is the most-used affordance of this shape. ACP has a real `session/cancel`
+        notification for this; `AcpManager` has no `Cancel()`/equivalent today.
+      - **Checkpoint/rewind per turn.** Claude Code's double-Esc `/rewind` (checkpoint
+        auto-created per prompt, restore code/conversation/both) is the single most-cited
+        "saved me" feature in the research above — and this codebase already has the two
+        primitives it needs: `Text::UndoTree` (real tree, cheap `Rope` snapshots) and
+        `Editor/Backup.h`. A per-turn checkpoint could be "snapshot every buffer touched by
+        `fs/write_text_file` since the last user prompt" rather than a new storage format;
+        the open design question is what "restore conversation" even means against ACP's
+        `session/load` (still itself unimplemented — see the gaps entry above) rather than
+        a from-scratch mechanism.
+      - **A visible "agent is working" state between sending a prompt and the first
+        `agent_message_chunk`.** `BackgroundActivity.h` already drives the mode line's LSP
+        spinner from exactly this kind of counted in-flight-work registry; `SendPrompt`
+        doesn't touch it today, so there's a silent gap (`SessionState` stays `Active`,
+        nothing on screen changes) between hitting Enter and the first token, which is
+        exactly the kind of pause that reads as "did this hang?" without one.
+      - **Word-wrap in the transcript.** `AcpPanel::FormatTranscript`'s `Kind::AgentText`
+        case is explicitly "No word-wrap in v1 -- split only on literal newlines the agent
+        itself sent" (its own header comment) — a long unwrapped reply line just runs off
+        the panel's fixed width with no way to read the rest, unlike `BufferView`'s own
+        `Mode::wrapLines`.
+      - **Lightweight Markdown rendering** (bold, inline code, bullet markers) in
+        `AgentText`/`Kind::Plan` lines instead of showing `**`/backtick markup literally —
+        agents write Markdown by default and every popular chat surface (Claude Code
+        included) renders it rather than showing raw asterisks.
+      - **`@`-style file-mention autocomplete in the composer** — reuse
+        `Editor/FuzzyMatch.h` (already backs find-file/M-x/theme-picker) plus
+        `Editor/ProjectTree.h` to fuzzy-complete a project-relative path inline while
+        typing a prompt, the same affordance Claude Code/OpenCode both use so a prompt
+        references an exact file instead of a name the agent has to go search for.
+      - Explicitly *not* pulled from the research: OpenCode's session-sharing (`/share`,
+        needs a hosted backend — out of scope for a local-first editor) and a unified
+        command palette (already a stated non-goal below, for the same
+        keep-purpose-built-commands-separate reasoning).
 - [ ] **Real-time collaborative editing** (CRDT-based) — the biggest lift in this file;
       last.
 - [ ] VCS: "generalize the two-callback plugin shape past version control" (cloud CLIs,
