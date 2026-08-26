@@ -520,11 +520,17 @@ void AcpManager::ResolvePermissionPrompt(const std::string& optionId) {
     if (!pendingPermissionRespond_) {
         return;
     }
-    RespondFn respond = std::move(pendingPermissionRespond_);
+    // acp-panel-permission-resolution follow-up: confirmed live via ASan --
+    // AcpPanel::OnEvent's own caller passes pending.options[index].optionId,
+    // a reference *into* pendingPermissionPrompt_ itself (the very object
+    // .reset() below destroys). Copy first so every use below reads a
+    // stable, independent string instead of freed memory.
+    const std::string optionIdCopy = optionId;
+    RespondFn         respond      = std::move(pendingPermissionRespond_);
     pendingPermissionPrompt_.reset();
-    AppendToOutputBuffer("[selected: " + optionId + "]\n");
-    PushSessionEvent("selected: " + optionId);
-    respond(Json{{"outcome", {{"outcome", "selected"}, {"optionId", optionId}}}}, std::nullopt);
+    AppendToOutputBuffer("[selected: " + optionIdCopy + "]\n");
+    PushSessionEvent("selected: " + optionIdCopy);
+    respond(Json{{"outcome", {{"outcome", "selected"}, {"optionId", optionIdCopy}}}}, std::nullopt);
 }
 
 void AcpManager::CancelPermissionPrompt() {
