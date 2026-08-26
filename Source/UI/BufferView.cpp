@@ -3680,6 +3680,16 @@ bool BufferView::DispatchChordNormally(const editor::KeyChord& chord) {
     // need to.
     context.prefixArg = pendingPrefixArg_;
     pendingPrefixArg_.reset();
+    // UAF follow-up: a copy, not a reference to the member -- the ran==true
+    // branch below fires this *after* RunCommandAndHandleOutcome, and an
+    // Invoked outcome can synchronously destroy *this* (window-management
+    // commands like delete-window closing this very pane's BufferView).
+    // Reading onPrefixHintChanged_ off `this` there was a genuine
+    // heap-use-after-free, confirmed live under ASan
+    // ("delete-window on the focused pane in a 2-window split focuses the
+    // survivor" reproduces it deterministically) -- this local copy is safe
+    // to call regardless of whether *this* still exists by then.
+    const std::function<void(std::optional<WhichKeyHint>)> onPrefixHintChangedCopy = onPrefixHintChanged_;
     const bool ran = RunCommandAndHandleOutcome(
         context,
         [&] {
@@ -3713,8 +3723,8 @@ bool BufferView::DispatchChordNormally(const editor::KeyChord& chord) {
             }
         }
     }
-    else if (onPrefixHintChanged_) {
-        onPrefixHintChanged_(std::nullopt);
+    else if (onPrefixHintChangedCopy) {
+        onPrefixHintChangedCopy(std::nullopt);
     }
     return true;
 }
