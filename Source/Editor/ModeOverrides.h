@@ -33,31 +33,32 @@ class Buffer;
 
 namespace ned::editor {
 
-// Loads name's grammar from libraryPath (see TreeSitter/DynamicGrammar.h)
-// and queryPath's content, builds a Mode from them, and registers it under
-// name -- overwriting any previous registration under the same name, the
-// same "re-registering is expected use, not an error" convention
-// CommandRegistry::Register already established. Throws std::runtime_error
-// (propagated from the grammar load, queryPath's read, or a malformed
-// query) -- a bad Janet call here is expected to surface as a real error to
-// the user, not fail silently.
-// queryPath (highlights) and foldQueryPath (generic-code-folding follow-up)
-// are both optional, same "@fold"-capture query convention
-// TreeSitterModeFromLanguage's own querySource/foldQuerySource parameters
-// use -- an empty path means the dynamically registered grammar gets no
-// highlighting/no fold support respectively, the same outcome any bundled
-// mode missing one of those queries already has. Some real grammars ship
-// only one of the two (e.g. a fold/locals query but no highlights.scm), so
-// requiring both was never a real constraint to begin with.
-// importQueryPath (import-target-tree-sitter follow-up): same optional
-// contract, for an "@import.target"/"@import.module"/"@import.statement"
-// query (Mode::importTarget) -- this is what lets a runtime-dlopen'd grammar
-// participate in go-to-file-at-point exactly like a bundled one, by
-// supplying its own query file the same way it already can for
-// queryPath/foldQueryPath.
+// Loads name's grammar from libraryPath (see TreeSitter/DynamicGrammar.h),
+// builds a Mode from it, and registers it under name -- overwriting any
+// previous registration under the same name, the same "re-registering is
+// expected use, not an error" convention CommandRegistry::Register already
+// established. Throws std::runtime_error (propagated from the grammar
+// load, or a malformed query) -- a bad Janet call here is expected to
+// surface as a real error to the user, not fail silently.
+//
+// queriesDir (register-language-grammar-directory-scan follow-up,
+// replacing three separate query-file params) is scanned for a fixed set
+// of conventional basenames instead of requiring the caller to name each
+// query file explicitly: "highlights.scm" (Mode::highlight),
+// "folds.scm" (generic-code-folding follow-up's "@fold"-capture query,
+// Mode::fold), and "imports.scm" (import-target-tree-sitter follow-up's
+// "@import.target"/"@import.module"/"@import.statement" query,
+// Mode::importTarget). Any file not present is silently skipped -- same
+// outcome an empty path had under the old explicit-paths signature, and
+// the same outcome any bundled mode missing one of those queries already
+// has. This also means a query file dropped into queriesDir later (e.g.
+// by a system package update) takes effect on the *next* registration
+// without init.janet needing to know its filename or even that it now
+// exists. queriesDir itself is optional (a grammar with no queries at
+// all, parser only) and doesn't need to exist -- a missing directory scans
+// as empty, it's not an error.
 void RegisterDynamicMode(const std::string& name, const std::filesystem::path& libraryPath,
-                         const std::filesystem::path& queryPath = {}, const std::filesystem::path& foldQueryPath = {},
-                         const std::filesystem::path& importQueryPath = {});
+                         const std::filesystem::path& queriesDir = {});
 
 // Registers an already-built Mode directly under name, into the same table
 // RegisterDynamicMode populates (ModeByName checks it first) -- for a Mode

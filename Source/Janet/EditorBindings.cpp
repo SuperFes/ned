@@ -396,9 +396,8 @@ namespace {
         editor::SetInlineDiagnosticsEnabled(enabled);
     }
 
-    void NedRegisterLanguageGrammar(std::string name, std::string libraryPath, std::string queryPath,
-                                    std::string foldQueryPath, std::string importQueryPath) {
-        editor::RegisterDynamicMode(name, libraryPath, queryPath, foldQueryPath, importQueryPath);
+    void NedRegisterLanguageGrammar(std::string name, std::string libraryPath, std::string queriesDir) {
+        editor::RegisterDynamicMode(name, libraryPath, queriesDir);
     }
 
     void NedSetModeForExtension(std::string extension, std::string modeName) {
@@ -1095,15 +1094,16 @@ void InstallEditorBindings(Environment& env) {
         "default true).");
     env.Register<&NedRegisterLanguageGrammar>(
         "ned", "register-language-grammar",
-        "Load a tree-sitter grammar at runtime: (name library-path query-path fold-query-path import-query-path). "
-        "library-path is a shared library exporting tree_sitter_<name>; query-path is a highlights.scm-style query "
-        "file, fold-query-path is a \"@fold\"-capture query file, and import-query-path is an "
-        "\"@import.target\"/\"@import.module\"/\"@import.statement\"-capture query file backing "
-        "open-link-at-point's go-to-file-at-point for this grammar's own import/include syntax -- pass \"\" for any "
-        "of the three to skip it (a grammar with no highlights.scm, no fold query, or no import query is fine; \"\" "
-        "for all three just registers the grammar for its parser alone). Re-registering the same name replaces it. "
-        "The registered name can then be used as the mode-name argument to ned/set-mode-for-extension or "
-        "ned/set-mode-for-filename.");
+        "Load a tree-sitter grammar at runtime: (name library-path queries-dir). library-path is a shared library "
+        "exporting tree_sitter_<name>; queries-dir is a directory scanned for conventional query filenames -- "
+        "\"highlights.scm\", \"folds.scm\" (a \"@fold\"-capture query), and \"imports.scm\" (an "
+        "\"@import.target\"/\"@import.module\"/\"@import.statement\"-capture query backing open-link-at-point's "
+        "go-to-file-at-point for this grammar's own import/include syntax) -- whichever of the three aren't present "
+        "in the directory are simply skipped (a grammar with no highlights.scm, no folds.scm, or no imports.scm is "
+        "fine), so a file added to queries-dir later (e.g. by a system package update) takes effect on the next "
+        "registration with no init.janet change needed. Pass \"\" for queries-dir to register the grammar for its "
+        "parser alone. Re-registering the same name replaces it. The registered name can then be used as the "
+        "mode-name argument to ned/set-mode-for-extension or ned/set-mode-for-filename.");
     env.Register<&NedSetModeForExtension>(
         "ned", "set-mode-for-extension",
         "Map a file extension (with or without a leading '.') to a mode name -- either one registered via "

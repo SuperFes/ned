@@ -141,15 +141,28 @@ namespace {
         return contents.str();
     }
 
+    // register-language-grammar-directory-scan follow-up: reads
+    // queriesDir/basename's content if it exists, else "" (no error -- an
+    // absent conventional file just means that capability is unavailable
+    // for this grammar, same as an empty path did under the old explicit
+    // per-query-file signature). A queriesDir that doesn't exist at all
+    // scans every basename as absent, rather than throwing.
+    std::string ReadQueryIfPresent(const std::filesystem::path& queriesDir, const char* basename) {
+        if (queriesDir.empty()) {
+            return {};
+        }
+        const std::filesystem::path path = queriesDir / basename;
+        return std::filesystem::exists(path) ? ReadFileOrThrow(path) : std::string();
+    }
+
 } // namespace
 
 void RegisterDynamicMode(const std::string& name, const std::filesystem::path& libraryPath,
-                         const std::filesystem::path& queryPath, const std::filesystem::path& foldQueryPath,
-                         const std::filesystem::path& importQueryPath) {
+                         const std::filesystem::path& queriesDir) {
     const treesitter::Language language          = treesitter::LoadDynamicLanguage(libraryPath, name);
-    std::string                querySource       = queryPath.empty() ? std::string() : ReadFileOrThrow(queryPath);
-    std::string                foldQuerySource   = foldQueryPath.empty() ? std::string() : ReadFileOrThrow(foldQueryPath);
-    std::string                importQuerySource = importQueryPath.empty() ? std::string() : ReadFileOrThrow(importQueryPath);
+    std::string                querySource       = ReadQueryIfPresent(queriesDir, "highlights.scm");
+    std::string                foldQuerySource   = ReadQueryIfPresent(queriesDir, "folds.scm");
+    std::string                importQuerySource = ReadQueryIfPresent(queriesDir, "imports.scm");
 
     const std::lock_guard lock(g_mutex);
     g_dynamicModes.insert_or_assign(name, DynamicModeEntry{.language          = language,
