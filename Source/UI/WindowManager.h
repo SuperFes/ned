@@ -279,11 +279,23 @@ class WindowManager {
     // class entirely.
     void SetOnDapConsoleToggle(std::function<void()> onToggle);
 
+    // generic-popup follow-up: same "forwarded to every pane, present and
+    // future" shape as SetOnDapConsoleToggle immediately above --
+    // list-buffers can fire from whichever pane has focus, and the handler
+    // (main.cpp's toggle over the OverlayHost-owned BufferListPanel) lives
+    // above this class entirely.
+    void SetOnBufferListToggle(std::function<void()> onToggle);
+
     // which-key follow-up: same "forwarded to every pane, present and
     // future" shape as SetOnDapConsoleToggle above, but a data callback
     // fired on every Pending/non-Pending transition rather than an explicit
     // toggle -- see BufferView::SetOnPrefixHintChanged's own doc comment.
     void SetOnPrefixHintChanged(std::function<void(std::optional<WhichKeyHint>)> onHintChanged);
+
+    // generic-popup follow-up (Phase 3): same "forwarded to every pane,
+    // present and future" shape as SetOnPrefixHintChanged immediately
+    // above -- see BufferView::SetOnCandidatesChanged's own doc comment.
+    void SetOnCandidatesChanged(std::function<void(std::optional<ListPopupModel>)> onCandidatesChanged);
 
     // task-runner follow-up: same "forwarded to every pane, present and
     // future" shape as SetProjectSidebar/SetLspManager above.
@@ -643,7 +655,9 @@ class WindowManager {
     std::function<void()>             onTerminalToggle_;         // see SetOnTerminalToggle
     std::function<void()>             onAcpPanelToggle_;         // see SetOnAcpPanelToggle
     std::function<void()>             onDapConsoleToggle_;       // see SetOnDapConsoleToggle
+    std::function<void()>             onBufferListToggle_;       // see SetOnBufferListToggle
     std::function<void(std::optional<WhichKeyHint>)> onPrefixHintChanged_; // see SetOnPrefixHintChanged
+    std::function<void(std::optional<ListPopupModel>)> onCandidatesChanged_; // see SetOnCandidatesChanged
 
     std::unique_ptr<WindowNode> root_;
     Container                   rootComponent_{Axis::Vertical, {}};

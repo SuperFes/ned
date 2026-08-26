@@ -669,7 +669,8 @@ add_library(ned_lib STATIC
         Source/UI/TerminalPanel.cpp
         Source/UI/AcpPanel.cpp
         Source/UI/DebugConsolePanel.cpp
-        Source/UI/WhichKeyPopup.cpp
+        Source/UI/ListPopup.cpp
+        Source/UI/BufferListPanel.cpp
         Source/UI/BufferView.cpp
         Source/UI/WindowManager.cpp
         Source/UI/AsyncFileLoader.cpp
@@ -908,7 +909,8 @@ if (NED_BUILD_TESTS)
             Tests/WhitespaceSettingsTest.cpp
             Tests/RelativeLineNumberSettingsTest.cpp
             Tests/WhichKeySettingsTest.cpp
-            Tests/WhichKeyPopupTest.cpp
+            Tests/ListPopupTest.cpp
+            Tests/BufferListPanelTest.cpp
             Tests/MinimapTest.cpp
             Tests/OverlayTest.cpp
             Tests/GitIgnoreTest.cpp

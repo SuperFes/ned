@@ -330,11 +330,23 @@ void ProjectSidebar::SetOnCollapseCommitted(std::function<void(bool)> handler) {
 }
 
 void ProjectSidebar::Paint(Canvas c) {
+    // generic-popup follow-up (Phase 3): reset the *whole* Brush here, not
+    // just background_color -- an overlay (ListPopup's candidate/which-key
+    // popups both start at x_min = 0, reaching into this widget's own
+    // canvas) can paint a cell's foreground_color/bold/etc. while visible;
+    // the Screen buffer isn't cleared between frames (only recreated on
+    // resize -- Widget.h's own Screen), so any field this loop doesn't
+    // touch keeps whatever a prior frame's overlay left there even once
+    // it's hidden and this row goes back to being genuinely blank.
+    // Confirmed live: repeated select-theme preview sessions left a
+    // stale, unused foreground color baked into every blank row below the
+    // tree, one popup session's leftover color replacing the last.
+    const Brush blankBrush{.background = theme_.background, .foreground = theme_.defaultForeground};
     for (int row = 0; row < c.size().height; ++row) {
         for (int col = 0; col < c.size().width; ++col) {
-            Cell& cell            = c[{.x = col, .y = row}];
-            cell.character        = " ";
-            cell.background_color = theme_.background;
+            Cell& cell     = c[{.x = col, .y = row}];
+            cell.character = " ";
+            blankBrush.ApplyTo(cell);
         }
     }
 

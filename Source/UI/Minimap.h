@@ -241,6 +241,17 @@ class Minimap : public Widget {
     // field here.
     mutable int cachePixelCellDimY_ = -1;
     mutable int cachePixelCellDimX_ = -1;
+    // theme-preview-bug follow-up: the raster this cache guards has every
+    // syntax color baked into real pixels/glyphs -- unlike every other key
+    // field above, a theme change is invisible to buffer identity/content
+    // generation/dimensions/scroll position, so without this the minimap
+    // kept showing whichever theme was active the last time its cache
+    // actually rebuilt, confirmed live to persist right through a live
+    // select-theme preview session until something *else* invalidated the
+    // cache (switching buffers, most reliably). Compared by value
+    // (Theme::operator==), not identity -- theme_ is the same reference
+    // throughout, mutated in place by the app's themeApplier_.
+    mutable Theme cachedTheme_{};
 
     mutable ncplane* plane_            = nullptr;
     mutable bool     planeUnavailable_ = false;

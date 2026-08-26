@@ -208,7 +208,7 @@ void Minimap::EnsurePlane() const {
         plane_ != nullptr && cacheBuffer_ == &buffer && cacheContentGeneration_ == buffer.ContentGeneration() &&
         cacheHeight_ == height && cacheWidth_ == width && cacheCharsPerDot_ == editor::MinimapCharsPerDot() &&
         cacheScrollableLength_ == scrollable_length && cachePosition_ == position &&
-        cacheItemVisualLength_ == item_visual_length &&
+        cacheItemVisualLength_ == item_visual_length && cachedTheme_ == theme_ &&
         (!usePixel || (cachePixelCellDimY_ == static_cast<int>(celldimy) && cachePixelCellDimX_ == static_cast<int>(celldimx)));
 
     if (sameCache) {
@@ -227,6 +227,7 @@ void Minimap::EnsurePlane() const {
     cacheHeight_            = height;
     cacheWidth_             = width;
     cacheCharsPerDot_       = editor::MinimapCharsPerDot();
+    cachedTheme_            = theme_;
     cacheScrollableLength_  = scrollable_length;
     cachePosition_          = position;
     cacheItemVisualLength_  = item_visual_length;

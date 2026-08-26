@@ -55,6 +55,7 @@
 #include "Editor/Vcs/VcsRunner.h"
 #include "Editor/Vim/VimEngine.h"
 #include "EventLoop.h"
+#include "ListPopup.h"
 #include "Minimap.h"
 #include "ProjectSidebar.h"
 #include "ScrollArrowButton.h"
@@ -472,6 +473,13 @@ class BufferView : public Widget {
     // out to every pane. Unset is a safe no-op.
     void SetOnDapConsoleToggle(std::function<void()> handler);
 
+    // generic-popup follow-up: list-buffers' forwarding hook, same shape and
+    // reasoning as SetOnDapConsoleToggle immediately above -- the buffer-list
+    // panel is another OverlayHost overlay owned by main.cpp's composition,
+    // wired via WindowManager::SetOnBufferListToggle fanning out to every
+    // pane. Unset is a safe no-op.
+    void SetOnBufferListToggle(std::function<void()> handler);
+
     // which-key follow-up: same OverlayHost-owned-above-this-class shape as
     // SetOnTerminalToggle/SetOnAcpPanelToggle/SetOnDapConsoleToggle, but
     // fired on every Pending/non-Pending transition rather than by an
@@ -479,9 +487,28 @@ class BufferView : public Widget {
     // instant a prefix chord (C-x, C-c, ...) becomes pending, and with
     // std::nullopt the instant it resolves (Invoked) or fails (Unbound).
     // Wired via WindowManager::SetOnPrefixHintChanged fanning out to every
-    // pane; main.cpp's registrant shows/hides a shared WhichKeyPopup
-    // overlay. Unset is a safe no-op.
+    // pane; main.cpp's registrant shows/hides a shared ListPopup overlay
+    // (generic-popup follow-up; was a dedicated WhichKeyPopup). Unset is a
+    // safe no-op.
     void SetOnPrefixHintChanged(std::function<void(std::optional<WhichKeyHint>)> handler);
+
+    // generic-popup follow-up (Phase 3): same OverlayHost-owned-above-this-
+    // class shape as SetOnPrefixHintChanged immediately above, for the
+    // candidate lists behind M-x/project-find-file/find-recent-file/
+    // bookmark-jump/select-theme/LSP code-action-select -- called with a
+    // populated ListPopupModel every time one of those sessions' own
+    // Refresh*Status method runs, and with std::nullopt whenever
+    // EndInteractiveSession clears any session (this fires unconditionally
+    // there, whether or not the just-ended session ever used it -- a
+    // std::nullopt callback for an already-hidden popup is a no-op, the
+    // same tolerance SetOnPrefixHintChanged's own std::nullopt case has).
+    // statusMessage_ itself only ever carries the short prompt text now
+    // (e.g. "M-x ") for these sessions -- the candidate list lives in the
+    // popup instead of being squeezed into that one row. Wired via
+    // WindowManager::SetOnCandidatesChanged fanning out to every pane;
+    // main.cpp's registrant shows/hides a shared ListPopup overlay. Unset
+    // is a safe no-op.
+    void SetOnCandidatesChanged(std::function<void(std::optional<ListPopupModel>)> handler);
 
     // per-buffer-mode follow-up: called at the top of Paint() whenever the
     // active buffer's identity has changed since the last Paint() call --
@@ -1045,25 +1072,6 @@ class BufferView : public Widget {
     // ExecuteCommand case and every branch of HandleExecuteCommandKey that
     // changes either one.
     void RefreshExecuteCommandStatus();
-
-    // fuzzy-candidate-list-styling follow-up: how many columns
-    // FormatFuzzyCandidates' candidate list actually has to work with --
-    // this widget's own current width (size().width, the same live value
-    // OnKeyEvent already reads into context.viewportHeight for
-    // scroll-page-up/-down) minus prefixLength (the already-composed
-    // "<label>  {" that precedes the candidate list in statusMessage_) and
-    // one more column for the closing "}". EchoArea itself spans the full
-    // terminal width, not just this BufferView's own (narrower, once a
-    // sidebar/scrollbar/gutter are subtracted) box -- using this widget's
-    // own width anyway is a deliberate, safe approximation: it can only
-    // under-estimate the real budget, which means the candidate list might
-    // occasionally show fewer entries than would actually fit, never more
-    // than actually fit (which is what caused the real overflow this
-    // follow-up fixes). Getting the exact real width would mean new
-    // BufferView<->EchoArea wiring for a one-row status list; not worth it
-    // for a safe-direction approximation that's already correct in the only
-    // direction that matters (never overflowing).
-    [[nodiscard]] std::size_t AvailableCandidateColumns(std::size_t prefixLength) const;
 
     // project-find-file follow-up: same shape as HandleExecuteCommandKey/
     // RefreshExecuteCommandStatus just above, but fuzzy-matching against a
@@ -2032,8 +2040,10 @@ class BufferView : public Widget {
     std::function<void()>                           onTerminalToggle_;      // see SetOnTerminalToggle
     std::function<void()>                           onAcpPanelToggle_;      // see SetOnAcpPanelToggle
     std::function<void()>                           onDapConsoleToggle_;    // see SetOnDapConsoleToggle
+    std::function<void()>                           onBufferListToggle_;    // see SetOnBufferListToggle
     std::function<void(text::Buffer&)>              onActiveBufferChanged_; // see SetOnActiveBufferChanged
     std::function<void(std::optional<WhichKeyHint>)> onPrefixHintChanged_;  // see SetOnPrefixHintChanged
+    std::function<void(std::optional<ListPopupModel>)> onCandidatesChanged_; // see SetOnCandidatesChanged
 
     // Caches mode_.highlight's result across Paint() calls (tree-sitter
     // foundation follow-up) -- Paint() runs far more often than the buffer's

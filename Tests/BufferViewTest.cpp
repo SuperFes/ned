@@ -207,11 +207,64 @@ struct Fixture {
     std::string           statusMessage;
     ned::ui::ActiveBuffer activeBuffer{buffer};
 
+    // generic-popup follow-up (Phase 3): the candidate popup model M-x/
+    // project-find-file/find-recent-file/bookmark-jump/select-theme/LSP
+    // code-action-select now drive instead of squeezing their candidate
+    // list into statusMessage_ -- a test that cares wires it via
+    // CaptureCandidates(view, fixture.candidates) right after View().
+    // Not wired inside View() itself: BufferView's copy/move constructors
+    // are both deleted, so View() must stay a single elided-prvalue return
+    // (a named local BufferView -- even one only mutated before returning
+    // -- isn't legal to return without a callable move constructor).
+    std::optional<ned::ui::ListPopupModel> candidates;
+
     ned::ui::BufferView View() {
         return ned::ui::BufferView(activeBuffer, killRing, registers, promptHistory, bufferList, dispatcher,
                                    statusMessage, mode, theme);
     }
 };
+
+// generic-popup follow-up (Phase 3): wires view's candidate-popup hook to
+// write into out on every change -- see Fixture::candidates' own doc
+// comment for why this can't just live inside Fixture::View().
+void CaptureCandidates(ned::ui::BufferView& view, std::optional<ned::ui::ListPopupModel>& out) {
+    view.SetOnCandidatesChanged([&out](std::optional<ned::ui::ListPopupModel> model) { out = std::move(model); });
+}
+
+bool CandidatesContain(const std::optional<ned::ui::ListPopupModel>& model, const std::string& name) {
+    if (!model) {
+        return false;
+    }
+    return std::any_of(model->rows.begin(), model->rows.end(), [&](const ned::ui::ListPopupRow& row) { return row.main == name; });
+}
+
+bool CandidateSelected(const std::optional<ned::ui::ListPopupModel>& model, const std::string& name) {
+    if (!model || !model->selectedIndex || *model->selectedIndex >= model->rows.size()) {
+        return false;
+    }
+    return model->rows[*model->selectedIndex].main == name;
+}
+
+bool CandidateRowExists(const std::optional<ned::ui::ListPopupModel>& model, const std::string& left, const std::string& main) {
+    if (!model) {
+        return false;
+    }
+    return std::any_of(model->rows.begin(), model->rows.end(),
+                       [&](const ned::ui::ListPopupRow& row) { return row.left == left && row.main == main; });
+}
+
+// scroll-indicator-count follow-up: was a single "+K more" tail row (a
+// fixed total, never changing as the window scrolled) -- now an "above"
+// row and/or a "below" row, each with its own live count, so this checks
+// for either boundary indicator rather than one specific tail string.
+bool CandidatesHaveMoreTail(const std::optional<ned::ui::ListPopupModel>& model) {
+    if (!model) {
+        return false;
+    }
+    return std::any_of(model->rows.begin(), model->rows.end(), [](const ned::ui::ListPopupRow& row) {
+        return row.main.ends_with("more above") || row.main.ends_with("more below");
+    });
+}
 
 // fuzzy-candidate-list-styling follow-up: statusMessage_ can contain
 // EchoArea's invisible EmphasizeForEchoArea/DimForEchoArea sentinel bytes
@@ -4288,26 +4341,27 @@ TEST_CASE("M-x prompts for a command name, listing every command alphabetically 
     Fixture             fixture;
     ned::ui::BufferView view = fixture.View();
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+    CaptureCandidates(view, fixture.candidates);
 
     view.OnEvent(ned::ui::test::Alt('x'));
 
-    REQUIRE(fixture.statusMessage.rfind("M-x ", 0) == 0);
-    // Display is capped to kMaxVisibleCandidates (see FormatFuzzyCandidates)
+    REQUIRE(fixture.statusMessage == "M-x ");
+    // Display is capped to kMaxPopupRows (see BuildFuzzyCandidatePopupModel)
     // -- "acp-send-prompt" is alphabetically first among registered commands
     // (was "add-cursor-above", before that "backward-char" -- the ACP
     // client slice 2 follow-up added three "acp-*" commands sorting ahead
     // of it, the same shift its own comment already anticipated happening
     // again), so it's always within that window regardless of how many
-    // other commands exist. The selected entry is bracketed, not
-    // asterisk-prefixed (fuzzy-candidate-list-styling follow-up).
-    REQUIRE(fixture.statusMessage.find("[acp-send-prompt]") != std::string::npos);
-    REQUIRE(fixture.statusMessage.find("more") != std::string::npos); // more than 6 commands are registered
+    // other commands exist.
+    REQUIRE(CandidateSelected(fixture.candidates, "acp-send-prompt"));
+    REQUIRE(CandidatesHaveMoreTail(fixture.candidates)); // more than kMaxPopupRows commands are registered
 }
 
 TEST_CASE("Typing in M-x narrows candidates and marks the top-ranked one selected", "[BufferView]") {
     Fixture             fixture;
     ned::ui::BufferView view = fixture.View();
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+    CaptureCandidates(view, fixture.candidates);
 
     view.OnEvent(ned::ui::test::Alt('x'));
     // DAP round 2 follow-up: "stb" alone now also fuzzy-matches
@@ -4319,8 +4373,8 @@ TEST_CASE("Typing in M-x narrows candidates and marks the top-ranked one selecte
     // all), and stays robust to future command names the same way.
     TypeText(view, "swbuf");
 
-    REQUIRE(fixture.statusMessage.find("[switch-to-buffer]") != std::string::npos);
-    REQUIRE(fixture.statusMessage.find("quit") == std::string::npos);
+    REQUIRE(CandidateSelected(fixture.candidates, "switch-to-buffer"));
+    REQUIRE_FALSE(CandidatesContain(fixture.candidates, "quit"));
 }
 
 TEST_CASE("Down in M-x moves the selection, and Enter invokes whichever candidate is selected", "[BufferView]") {
@@ -4335,13 +4389,14 @@ TEST_CASE("Down in M-x moves the selection, and Enter invokes whichever candidat
 
     ned::ui::BufferView view = fixture.View();
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+    CaptureCandidates(view, fixture.candidates);
 
     view.OnEvent(ned::ui::test::Alt('x'));
     TypeText(view, "zzz");
-    REQUIRE(fixture.statusMessage.find("[zzz-alpha]") != std::string::npos);
+    REQUIRE(CandidateSelected(fixture.candidates, "zzz-alpha"));
 
     view.OnEvent(ned::ui::test::ArrowDown());
-    REQUIRE(fixture.statusMessage.find("[zzz-beta]") != std::string::npos);
+    REQUIRE(CandidateSelected(fixture.candidates, "zzz-beta"));
 
     view.OnEvent(ned::ui::test::Return());
 
@@ -5890,8 +5945,8 @@ TEST_CASE("Switching the active buffer invalidates a stale expansion history", "
 
 // project-find-file follow-up. Mirrors the M-x tests above closely -- same
 // fuzzy-narrow/arrow-select/Enter-to-act interaction shape, reusing the same
-// FuzzyFilterAndRank/FormatFuzzyCandidates machinery, just over a cached
-// project file list instead of dispatcher_.Registry().Names().
+// FuzzyFilterAndRank/BuildFuzzyCandidatePopupModel machinery, just over a
+// cached project file list instead of dispatcher_.Registry().Names().
 
 TEST_CASE("C-c C-f lists every project file before any input, then narrows as you type", "[BufferView]") {
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_bufferview_test_project_find_file";
@@ -5907,17 +5962,18 @@ TEST_CASE("C-c C-f lists every project file before any input, then narrows as yo
     Fixture             fixture;
     ned::ui::BufferView view = fixture.View();
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+    CaptureCandidates(view, fixture.candidates);
 
     view.OnEvent(ned::ui::test::Ctrl('c'));
     view.OnEvent(ned::ui::test::Ctrl('f'));
 
-    REQUIRE(fixture.statusMessage.rfind("Find file (fuzzy): ", 0) == 0);
-    REQUIRE(fixture.statusMessage.find("README.md") != std::string::npos);
-    REQUIRE(fixture.statusMessage.find("src/main.cpp") != std::string::npos);
+    REQUIRE(fixture.statusMessage == "Find file (fuzzy): ");
+    REQUIRE(CandidatesContain(fixture.candidates, "README.md"));
+    REQUIRE(CandidatesContain(fixture.candidates, "src/main.cpp"));
 
     TypeText(view, "main");
-    REQUIRE(fixture.statusMessage.find("[src/main.cpp]") != std::string::npos);
-    REQUIRE(fixture.statusMessage.find("README.md") == std::string::npos);
+    REQUIRE(CandidateSelected(fixture.candidates, "src/main.cpp"));
+    REQUIRE_FALSE(CandidatesContain(fixture.candidates, "README.md"));
 
     std::filesystem::remove_all(dir);
 }
@@ -5967,14 +6023,15 @@ TEST_CASE("Down in project-find-file moves the selection between two equally-ran
     Fixture             fixture;
     ned::ui::BufferView view = fixture.View();
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+    CaptureCandidates(view, fixture.candidates);
 
     view.OnEvent(ned::ui::test::Ctrl('c'));
     view.OnEvent(ned::ui::test::Ctrl('f'));
     TypeText(view, "zzz");
-    REQUIRE(fixture.statusMessage.find("[zzz-alpha.txt]") != std::string::npos);
+    REQUIRE(CandidateSelected(fixture.candidates, "zzz-alpha.txt"));
 
     view.OnEvent(ned::ui::test::ArrowDown());
-    REQUIRE(fixture.statusMessage.find("[zzz-beta.txt]") != std::string::npos);
+    REQUIRE(CandidateSelected(fixture.candidates, "zzz-beta.txt"));
 
     view.OnEvent(ned::ui::test::Return());
     REQUIRE(fixture.activeBuffer.Get().Name() == "zzz-beta.txt");
@@ -6101,60 +6158,54 @@ struct ThemePickerHarness {
     ThemePickerHarness() {
         view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
         view.SetThemeApplier([this](const ned::ui::Theme& theme) { applied.push_back(theme.name); });
+        CaptureCandidates(view, fixture.candidates);
         view.OnEvent(ned::ui::test::Alt('x'));
         TypeText(view, "select-theme");
         view.OnEvent(ned::ui::test::Return());
     }
 };
 
-// The registry name sorting immediately after "dark" -- what one Down from
-// the session's opening highlight lands on. Computed rather than hardcoded
-// so these tests don't break every time a phase adds themes (which is
-// exactly what happened to their first two hardcoded versions).
-std::string NameAfterDark() {
-    const std::vector<std::string> names = ned::ui::ThemeNames();
-    const auto                     it    = std::find(names.begin(), names.end(), "dark");
-    REQUIRE(it != names.end());
-    REQUIRE(it + 1 != names.end());
-    return *(it + 1);
-}
-
 } // namespace
 
-TEST_CASE("select-theme opens on the active theme's own name, previewing nothing", "[BufferView]") {
+TEST_CASE("select-theme opens on a synthetic \"Current theme\" row at the top, previewing nothing", "[BufferView]") {
     ThemePickerHarness h;
 
-    REQUIRE(h.fixture.statusMessage.rfind("Theme (fuzzy): ", 0) == 0);
-    // The Fixture's active theme is DarkTheme() -- its name is highlighted,
-    // not merely listed, so an immediate Enter is a no-change commit. Its
-    // sorted neighbor is visible beside it (the window centers on the
-    // selection; distant names may be scrolled out of the row).
-    REQUIRE(h.fixture.statusMessage.find("[dark]") != std::string::npos);
-    REQUIRE(h.fixture.statusMessage.find(NameAfterDark()) != std::string::npos);
+    REQUIRE(h.fixture.statusMessage == "Theme (fuzzy): ");
+    // select-theme-current-row follow-up: the session opens on a synthetic
+    // first candidate, not any real registry name's own row -- so opening
+    // the picker never calls the theme applier at all, regardless of
+    // whether the active theme happens to be a registered name (previewing
+    // it via ThemeByName() would strip init.janet's own (ned/theme-set
+    // ...) overrides live the instant the picker opens -- confirmed live
+    // as the "doesn't apply correctly across the entire screen" symptom).
+    REQUIRE(CandidateSelected(h.fixture.candidates, "Current theme"));
     REQUIRE(h.applied.empty());
 }
 
-TEST_CASE("Arrowing through select-theme previews each highlighted theme live", "[BufferView]") {
+TEST_CASE("Arrowing through select-theme previews each highlighted theme live, and back to none", "[BufferView]") {
     ThemePickerHarness h;
 
-    // Candidates are the sorted registry names -- the session opens
-    // highlighting "dark", so Down highlights whichever name sorts next and
-    // Up comes back to "dark", each previewing as it goes.
-    const std::string next = NameAfterDark();
+    // The real registry names sort right after the synthetic "Current
+    // theme" row -- one Down from the opening selection lands on the
+    // alphabetically-first one.
+    const std::string first = ned::ui::ThemeNames().front();
     h.view.OnEvent(ned::ui::test::ArrowDown());
-    REQUIRE(h.fixture.statusMessage.find("[" + next + "]") != std::string::npos);
-    REQUIRE(h.applied == std::vector<std::string>{next});
+    REQUIRE(CandidateSelected(h.fixture.candidates, first));
+    REQUIRE(h.applied == std::vector<std::string>{first});
 
+    // Back to "Current theme" -- resolved against the session's own
+    // snapshot (the Fixture's DarkTheme(), name "dark"), not a registry
+    // lookup by the literal row text.
     h.view.OnEvent(ned::ui::test::ArrowUp());
-    REQUIRE(h.fixture.statusMessage.find("[dark]") != std::string::npos);
-    REQUIRE(h.applied == std::vector<std::string>{next, "dark"});
+    REQUIRE(CandidateSelected(h.fixture.candidates, "Current theme"));
+    REQUIRE(h.applied == std::vector<std::string>{first, "dark"});
 }
 
 TEST_CASE("Enter commits the highlighted theme and typing narrows with live preview", "[BufferView]") {
     ThemePickerHarness h;
 
     TypeText(h.view, "ansi-l");
-    REQUIRE(h.fixture.statusMessage.find("[ansi-light]") != std::string::npos);
+    REQUIRE(CandidateSelected(h.fixture.candidates, "ansi-light"));
     REQUIRE_FALSE(h.applied.empty());
     REQUIRE(h.applied.back() == "ansi-light");
 
@@ -6166,18 +6217,33 @@ TEST_CASE("Enter commits the highlighted theme and typing narrows with live prev
     REQUIRE(h.fixture.buffer.Text() == "z");
 }
 
+TEST_CASE("Enter on \"Current theme\" with no navigation leaves everything unchanged and persists nothing",
+          "[BufferView]") {
+    ThemePickerHarness h;
+
+    h.view.OnEvent(ned::ui::test::Return());
+    REQUIRE(h.fixture.statusMessage == "Theme unchanged.");
+    // No registry lookup (there's no "Current theme" entry to find) and no
+    // SetVariable write -- persisting the synthetic label as the base
+    // theme name would break next launch's own resolution.
+    REQUIRE(h.applied == std::vector<std::string>{"dark"});
+
+    h.view.OnEvent(ned::ui::test::Character("z")); // proves we're back in Normal mode
+    REQUIRE(h.fixture.buffer.Text() == "z");
+}
+
 TEST_CASE("Escape cancels select-theme and restores the pre-session theme exactly", "[BufferView]") {
     ThemePickerHarness h;
 
-    const std::string next = NameAfterDark();
-    h.view.OnEvent(ned::ui::test::ArrowDown()); // preview the name sorting after "dark"
-    REQUIRE(h.applied == std::vector<std::string>{next});
+    const std::string first = ned::ui::ThemeNames().front();
+    h.view.OnEvent(ned::ui::test::ArrowDown()); // preview the alphabetically-first real theme
+    REQUIRE(h.applied == std::vector<std::string>{first});
 
     h.view.OnEvent(ned::ui::test::Escape());
     REQUIRE(h.fixture.statusMessage == "Theme selection cancelled.");
     // The revert re-applies the snapshot taken at session start -- the
     // Fixture's own DarkTheme(), by value, not by registry lookup.
-    REQUIRE(h.applied == std::vector<std::string>{next, "dark"});
+    REQUIRE(h.applied == std::vector<std::string>{first, "dark"});
 }
 
 TEST_CASE("select-theme without a wired applier reports instead of opening a session", "[BufferView]") {
@@ -6194,46 +6260,59 @@ TEST_CASE("select-theme without a wired applier reports instead of opening a ses
     REQUIRE(fixture.buffer.Text() == "z");
 }
 
-TEST_CASE("The visible candidate window is bounded by the real terminal width, not a fixed count", "[BufferView]") {
-    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_bufferview_test_project_find_file_width";
-    std::filesystem::remove_all(dir);
-    std::filesystem::create_directory(dir);
-    {
-        // Ten 10-character candidates: comfortably fits in a wide terminal,
-        // but ~135 columns' worth once the "Find file (fuzzy): " label and
-        // braces are counted -- too wide for a 50-column one, which the old
-        // fixed-count-of-6 window didn't account for at all.
-        for (int i = 0; i < 10; ++i) {
-            std::ofstream(dir / ("file0" + std::to_string(i) + ".txt")) << "x\n";
-        }
+TEST_CASE("The candidate popup caps its row count with a trailing '+K more' row, regardless of terminal width",
+          "[BufferView]") {
+    // generic-popup follow-up (Phase 3): each candidate is its own popup
+    // row now (ListPopup, not one shared terminal-width-bounded line), so
+    // this used to test that FormatFuzzyCandidates' *column*-budget window
+    // never overflowed a narrow terminal -- superseded by
+    // BuildFuzzyCandidatePopupModel's own row-*count* bound, which doesn't
+    // depend on terminal width at all. Deliberately doesn't hardcode
+    // kMaxPopupRows' exact value (a BufferView.cpp implementation detail):
+    // 20 files is comfortably more than any reasonable cap, 2 is
+    // comfortably fewer.
+    const std::filesystem::path manyDir = std::filesystem::temp_directory_path() / "ned_bufferview_test_pff_many";
+    std::filesystem::remove_all(manyDir);
+    std::filesystem::create_directory(manyDir);
+    for (int i = 0; i < 20; ++i) {
+        std::ofstream(manyDir / ("file" + std::to_string(i) + ".txt")) << "x\n";
     }
-    const CurrentPathGuard cwdGuard(dir);
+    {
+        const CurrentPathGuard cwdGuard(manyDir);
+        Fixture                fixture;
+        ned::ui::BufferView    view = fixture.View();
+        view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 199, .y_min = 0, .y_max = 2}); // wide -- width isn't the bound
+        CaptureCandidates(view, fixture.candidates);
 
-    Fixture             fixture;
-    ned::ui::BufferView narrowView = fixture.View();
-    narrowView.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 49, .y_min = 0, .y_max = 2}); // 50 columns
+        view.OnEvent(ned::ui::test::Ctrl('c'));
+        view.OnEvent(ned::ui::test::Ctrl('f'));
 
-    narrowView.OnEvent(ned::ui::test::Ctrl('c'));
-    narrowView.OnEvent(ned::ui::test::Ctrl('f'));
+        REQUIRE(fixture.candidates.has_value());
+        REQUIRE(fixture.candidates->rows.size() < 20); // bounded, not one row per file
+        REQUIRE(CandidatesHaveMoreTail(fixture.candidates));
+    }
+    std::filesystem::remove_all(manyDir);
 
-    // The whole rendered line, including the "Find file (fuzzy): " label,
-    // must fit within the real 50-column width -- this is the actual bug
-    // being fixed: a fixed count-of-6 window could overflow a narrow
-    // terminal well before showing 6 candidates.
-    REQUIRE(StripEchoAreaMarkup(fixture.statusMessage).size() <= 50);
-    REQUIRE(fixture.statusMessage.find("more") != std::string::npos); // all 10 can't fit in 50 columns
+    const std::filesystem::path fewDir = std::filesystem::temp_directory_path() / "ned_bufferview_test_pff_few";
+    std::filesystem::remove_all(fewDir);
+    std::filesystem::create_directory(fewDir);
+    std::ofstream(fewDir / "a.txt") << "x\n";
+    std::ofstream(fewDir / "b.txt") << "x\n";
+    {
+        const CurrentPathGuard cwdGuard(fewDir);
+        Fixture                fixture;
+        ned::ui::BufferView    view = fixture.View();
+        view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 49, .y_min = 0, .y_max = 2}); // narrow -- still no effect
+        CaptureCandidates(view, fixture.candidates);
 
-    Fixture             wideFixture;
-    ned::ui::BufferView wideView = wideFixture.View();
-    wideView.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 199, .y_min = 0, .y_max = 2}); // 200 columns -- fits all 10
+        view.OnEvent(ned::ui::test::Ctrl('c'));
+        view.OnEvent(ned::ui::test::Ctrl('f'));
 
-    wideView.OnEvent(ned::ui::test::Ctrl('c'));
-    wideView.OnEvent(ned::ui::test::Ctrl('f'));
-
-    REQUIRE(StripEchoAreaMarkup(wideFixture.statusMessage).size() <= 200);
-    REQUIRE(wideFixture.statusMessage.find("more") == std::string::npos); // all 10 fit -- nothing hidden
-
-    std::filesystem::remove_all(dir);
+        REQUIRE(fixture.candidates.has_value());
+        REQUIRE(fixture.candidates->rows.size() == 2); // both fit -- nothing hidden
+        REQUIRE_FALSE(CandidatesHaveMoreTail(fixture.candidates));
+    }
+    std::filesystem::remove_all(fewDir);
 }
 
 TEST_CASE("C-M-i (lsp-complete) shows ghost text from a real completion response, and Tab accepts it", "[BufferView]") {
@@ -6450,6 +6529,7 @@ TEST_CASE("C-c C-a with multiple code actions: digit-select then confirm applies
     ned::ui::BufferView view = fixture.View();
     view.SetLspManager(&manager);
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    CaptureCandidates(view, fixture.candidates);
 
     ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
     ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
@@ -6480,8 +6560,8 @@ TEST_CASE("C-c C-a with multiple code actions: digit-select then confirm applies
     };
     client->DispatchFrame(response.dump());
 
-    REQUIRE(fixture.statusMessage.find("1) First fix") != std::string::npos);
-    REQUIRE(fixture.statusMessage.find("2) Second fix") != std::string::npos);
+    REQUIRE(CandidateRowExists(fixture.candidates, "1)", "First fix"));
+    REQUIRE(CandidateRowExists(fixture.candidates, "2)", "Second fix"));
 
     view.OnEvent(ned::ui::test::Character("2")); // jump directly to the second action
     REQUIRE(fixture.statusMessage == "Apply \"Second fix\"? (y/n)");
@@ -7568,17 +7648,18 @@ TEST_CASE("M-p in M-x recalls a previously typed fuzzy query", "[BufferView]") {
 
     ned::ui::BufferView view = fixture.View();
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+    CaptureCandidates(view, fixture.candidates);
 
     view.OnEvent(ned::ui::test::Alt('x'));
     TypeText(view, "zzz-history-sentinel");
     view.OnEvent(ned::ui::test::Return()); // submits, recording "zzz-history-sentinel"
 
     view.OnEvent(ned::ui::test::Alt('x'));
-    REQUIRE(fixture.statusMessage.rfind("M-x ", 0) == 0);
-    REQUIRE(fixture.statusMessage.find("zzz-history-sentinel") == std::string::npos);
+    REQUIRE(fixture.statusMessage == "M-x ");
+    REQUIRE_FALSE(CandidatesContain(fixture.candidates, "zzz-history-sentinel"));
 
     view.OnEvent(ned::ui::test::Alt('p'));
-    REQUIRE(fixture.statusMessage.find("[zzz-history-sentinel]") != std::string::npos);
+    REQUIRE(CandidateSelected(fixture.candidates, "zzz-history-sentinel"));
 
     view.OnEvent(ned::ui::test::Escape());
 }
@@ -7952,6 +8033,7 @@ struct QuickFixHarness {
         fixture.activeBuffer.Set(*buffer);
         view.SetLspManager(&manager);
         view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+        CaptureCandidates(view, fixture.candidates);
         ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
         ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
         view.Paint(canvas);
@@ -8033,8 +8115,8 @@ TEST_CASE("C-c C-q falls back to the selection list when the fix is ambiguous", 
                          {.title = "Second fix", .newText = "second", .kind = "quickfix"}});
 
     REQUIRE(harness.buffer->Text() == "bad_code"); // nothing applied
-    REQUIRE(harness.fixture.statusMessage.find("1) First fix") != std::string::npos);
-    REQUIRE(harness.fixture.statusMessage.find("2) Second fix") != std::string::npos);
+    REQUIRE(CandidateRowExists(harness.fixture.candidates, "1)", "First fix"));
+    REQUIRE(CandidateRowExists(harness.fixture.candidates, "2)", "Second fix"));
 
     harness.view.OnEvent(ned::ui::test::Character("2"));
     harness.view.OnEvent(ned::ui::test::Character("y"));

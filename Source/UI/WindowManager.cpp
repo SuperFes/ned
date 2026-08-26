@@ -521,7 +521,9 @@ std::unique_ptr<Pane> WindowManager::MakePane(text::Buffer& buffer, editor::Mode
     pane->Buffer().SetOnTerminalToggle(onTerminalToggle_);
     pane->Buffer().SetOnAcpPanelToggle(onAcpPanelToggle_);
     pane->Buffer().SetOnDapConsoleToggle(onDapConsoleToggle_);
+    pane->Buffer().SetOnBufferListToggle(onBufferListToggle_);
     pane->Buffer().SetOnPrefixHintChanged(onPrefixHintChanged_);
+    pane->Buffer().SetOnCandidatesChanged(onCandidatesChanged_);
     // Split-resize follow-up: see WindowManager.h's own resizingSplit_
     // comment and BufferView::SetSplitResizeQuery's own doc comment.
     pane->Buffer().SetSplitResizeQuery([this] { return resizingSplit_; });
@@ -571,10 +573,24 @@ void WindowManager::SetOnDapConsoleToggle(std::function<void()> onToggle) {
     }
 }
 
+void WindowManager::SetOnBufferListToggle(std::function<void()> onToggle) {
+    onBufferListToggle_ = std::move(onToggle);
+    for (Pane* pane : Leaves()) {
+        pane->Buffer().SetOnBufferListToggle(onBufferListToggle_);
+    }
+}
+
 void WindowManager::SetOnPrefixHintChanged(std::function<void(std::optional<WhichKeyHint>)> onHintChanged) {
     onPrefixHintChanged_ = std::move(onHintChanged);
     for (Pane* pane : Leaves()) {
         pane->Buffer().SetOnPrefixHintChanged(onPrefixHintChanged_);
+    }
+}
+
+void WindowManager::SetOnCandidatesChanged(std::function<void(std::optional<ListPopupModel>)> onCandidatesChanged) {
+    onCandidatesChanged_ = std::move(onCandidatesChanged);
+    for (Pane* pane : Leaves()) {
+        pane->Buffer().SetOnCandidatesChanged(onCandidatesChanged_);
     }
 }
 

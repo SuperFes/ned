@@ -186,85 +186,76 @@ namespace {
         return joined;
     }
 
-    // execute-extended-command follow-up: M-x's own version of
-    // JoinCandidates -- caps how many of the ranked list are actually shown:
-    // dumping dozens of command names (or, project-find-file follow-up,
-    // project-relative file paths, often much longer) into one
-    // terminal-width line is unreadable, and worse, unbounded, would run
-    // past the edge of the real terminal and get silently clipped mid-word
-    // by EchoArea::Paint. fuzzy-candidate-list-styling follow-up: this used
-    // to cap by a fixed *count* (6 candidates, sized for ~10-25-character
-    // command names) rather than by the real available width -- fine for
-    // M-x, but project-find-file's typically-longer path candidates could
-    // still overflow a real terminal's actual width well before 6 items were
-    // shown, silently truncating mid-filename with no "+K more" even
-    // visible. Caps by *column budget* instead now: grows a window
-    // containing `selected` outward (forward first, matching the old
-    // window's own forward bias) only as long as the next candidate still
-    // fits, reserving kSuffixReserve columns up front for a "+K more" tail
-    // so that reservation itself never causes an overflow. Selection still
-    // "scrolls" the same way it always did -- the window follows `selected`
-    // as arrow keys move it -- just width-aware now instead of count-aware.
-    // The selected entry used to get a leading '*', which read as
-    // confusing/noisy rather than as a clear grouping marker -- wrapped in
-    // real brackets now instead, and bolded (EmphasizeForEchoArea) while
-    // every other visible candidate is dimmed (DimForEchoArea) so the
-    // selection reads at a glance instead of by scanning for a stray
-    // asterisk. See EchoArea.h's own doc comment for how the underlying
-    // markup actually reaches the terminal. Renamed from
-    // FormatExecuteCommandCandidates once project-find-file showed it was
-    // already entirely generic over what's being ranked.
-    constexpr std::size_t kSuffixReserve = 12; // room for " +999 more" plus slack, generous but bounded
+    // generic-popup follow-up (Phase 3): builds one popup row per
+    // candidate, bounded to kMaxPopupRows rows rather than an unbounded
+    // dump -- grows a window containing `selected` outward, forward first,
+    // only as far as kMaxPopupRows allows. scroll-indicator-count follow-up:
+    // an "above"/"below" boundary row appears on whichever side(s) still
+    // have hidden candidates, each with its own live count -- a single
+    // trailing "+K more" (the total hidden count) never changed as the
+    // window scrolled, which read as stuck/broken rather than reflecting
+    // where you actually were in the list. These are extra rows on top of
+    // kMaxPopupRows, not carved out of it, so real candidates never lose a
+    // visible slot to make room for them -- the popup just grows up to two
+    // rows taller when both are showing, still comfortably inside the
+    // placement clamp in main.cpp (kMaxPopupRows + 2 boundary rows + 2
+    // border rows == 14, exactly candidatePopup's own height cap).
+    // Selection still "scrolls" the same way it always did as arrow keys
+    // move it.
+    constexpr std::size_t kMaxPopupRows = 10;
 
-    std::string FormatFuzzyCandidates(const std::vector<std::string>& ranked, std::size_t selected, std::size_t columnBudget) {
+    // select-theme-current-row follow-up: the synthetic first candidate
+    // StartInteractiveSession's SelectTheme case prepends to
+    // selectThemeCandidates_ -- picking it (by opening on it, arrowing back
+    // to it, or committing it) means "leave the live theme exactly as it
+    // is," resolved against themeBeforePreview_ rather than ThemeByName(),
+    // which is what makes it safe: ThemeByName() returns the bare registry
+    // theme with none of init.janet's own (ned/theme-set ...) overrides
+    // reapplied, so treating "the theme already active" as just another
+    // named lookup would strip those overrides the moment it's (re)selected
+    // -- confirmed live as the "doesn't apply correctly across the entire
+    // screen" symptom. See ApplySelectedThemePreview/HandleSelectThemeKey's
+    // own checks against this same constant.
+    constexpr std::string_view kCurrentThemeLabel = "Current theme";
+
+    ListPopupModel BuildFuzzyCandidatePopupModel(const std::string& title, const std::vector<std::string>& ranked,
+                                                 std::size_t selected) {
+        ListPopupModel model;
+        model.title = title;
         if (ranked.empty()) {
-            return {};
+            return model;
         }
         selected = std::min(selected, ranked.size() - 1);
 
-        const std::size_t usableBudget = columnBudget > kSuffixReserve ? columnBudget - kSuffixReserve : columnBudget;
-        auto              displayWidth = [](const std::string& candidate, bool isSelected) {
-            return candidate.size() + (isSelected ? 2 : 0); // +2 for the selected entry's own brackets
-        };
-
-        std::size_t windowStart = selected;
-        std::size_t windowEnd   = selected + 1;
-        std::size_t width       = displayWidth(ranked[selected], true);
-
-        bool grew = true;
-        while (grew) {
-            grew = false;
+        std::size_t       windowStart = selected;
+        std::size_t       windowEnd   = selected + 1;
+        const std::size_t maxRows     = std::min(kMaxPopupRows, ranked.size());
+        while (windowEnd - windowStart < maxRows) {
             if (windowEnd < ranked.size()) {
-                const std::size_t next = width + 1 + displayWidth(ranked[windowEnd], false);
-                if (next <= usableBudget) {
-                    width = next;
-                    ++windowEnd;
-                    grew = true;
-                }
+                ++windowEnd;
             }
-            if (windowStart > 0) {
-                const std::size_t next = width + 1 + displayWidth(ranked[windowStart - 1], false);
-                if (next <= usableBudget) {
-                    width = next;
-                    --windowStart;
-                    grew = true;
-                }
+            else if (windowStart > 0) {
+                --windowStart;
+            }
+            else {
+                break;
             }
         }
 
-        std::string joined;
+        model.rows.reserve(windowEnd - windowStart + 2);
+        if (windowStart > 0) {
+            model.rows.push_back({.main = "↑ " + std::to_string(windowStart) + " more above"});
+        }
         for (std::size_t i = windowStart; i < windowEnd; ++i) {
-            if (i > windowStart) {
-                joined += ' ';
-            }
-            joined += (i == selected) ? EmphasizeForEchoArea("[" + ranked[i] + "]") : DimForEchoArea(ranked[i]);
+            model.rows.push_back({.main = ranked[i]});
         }
+        model.selectedIndex = (selected - windowStart) + (windowStart > 0 ? 1 : 0);
 
-        const std::size_t hidden = ranked.size() - (windowEnd - windowStart);
-        if (hidden > 0) {
-            joined += " +" + std::to_string(hidden) + " more";
+        const std::size_t hiddenBelow = ranked.size() - windowEnd;
+        if (hiddenBelow > 0) {
+            model.rows.push_back({.main = "↓ " + std::to_string(hiddenBelow) + " more below"});
         }
-        return joined;
+        return model;
     }
 
     // Binary-rendering follow-up: a raw control byte (C0 control range, plus
@@ -727,12 +718,20 @@ void BufferView::SetOnDapConsoleToggle(std::function<void()> handler) {
     onDapConsoleToggle_ = std::move(handler);
 }
 
+void BufferView::SetOnBufferListToggle(std::function<void()> handler) {
+    onBufferListToggle_ = std::move(handler);
+}
+
 void BufferView::SetOnActiveBufferChanged(std::function<void(text::Buffer&)> handler) {
     onActiveBufferChanged_ = std::move(handler);
 }
 
 void BufferView::SetOnPrefixHintChanged(std::function<void(std::optional<WhichKeyHint>)> handler) {
     onPrefixHintChanged_ = std::move(handler);
+}
+
+void BufferView::SetOnCandidatesChanged(std::function<void(std::optional<ListPopupModel>)> handler) {
+    onCandidatesChanged_ = std::move(handler);
 }
 
 void BufferView::ClearBufferCaches(text::Buffer& buffer) {
@@ -4520,15 +4519,20 @@ void BufferView::RequestQuickFixAtPoint() {
 }
 
 void BufferView::RefreshCodeActionSelectStatus() {
-    std::string status = "Code action: ";
-    for (std::size_t i = 0; i < pendingCodeActions_.size(); ++i) {
-        if (i > 0) {
-            status += "  ";
-        }
-        const bool selected = (i == codeActionSelection_);
-        status += (selected ? "[" : "") + std::to_string(i + 1) + ") " + pendingCodeActions_[i].title + (selected ? "]" : "");
+    statusMessage_ = "Code action: ";
+    if (!onCandidatesChanged_) {
+        return;
     }
-    statusMessage_ = status;
+    ListPopupModel model;
+    model.title = "Code action";
+    model.rows.reserve(pendingCodeActions_.size());
+    for (std::size_t i = 0; i < pendingCodeActions_.size(); ++i) {
+        model.rows.push_back({.left = std::to_string(i + 1) + ")", .main = pendingCodeActions_[i].title});
+    }
+    if (!pendingCodeActions_.empty()) {
+        model.selectedIndex = codeActionSelection_;
+    }
+    onCandidatesChanged_(std::move(model));
 }
 
 void BufferView::HandleCodeActionSelectKey(const editor::KeyChord& chord) {
@@ -4560,6 +4564,13 @@ void BufferView::HandleCodeActionSelectKey(const editor::KeyChord& chord) {
 
     inputMode_     = InputMode::LspCodeActionConfirm;
     statusMessage_ = "Apply \"" + pendingCodeActions_[codeActionSelection_].title + "\"? (y/n)";
+    // The list popup no longer applies once we've moved to a plain y/n
+    // confirmation -- EndInteractiveSession (further down, on y/n/quit)
+    // would clear it too, but that hasn't run yet and this sub-mode can
+    // sit on screen for a while.
+    if (onCandidatesChanged_) {
+        onCandidatesChanged_(std::nullopt);
+    }
 }
 
 void BufferView::ResolveAndApplyCodeAction(const editor::lsp::CodeAction& action) {
@@ -5077,6 +5088,14 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             // lives above this class, so only forward.
             if (onTerminalToggle_) {
                 onTerminalToggle_();
+            }
+            return;
+        case editor::InteractiveRequest::ListBuffers:
+            // generic-popup follow-up: one-shot direct action, same shape as
+            // ToggleTerminal above -- the buffer-list panel lives above this
+            // class, so only forward.
+            if (onBufferListToggle_) {
+                onBufferListToggle_();
             }
             return;
         case editor::InteractiveRequest::FocusProjectSidebar:
@@ -5757,27 +5776,29 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         // ui::ThemeNames(). No applier wired (headless BufferView tests
         // that never call SetThemeApplier) means there's nothing a picked
         // theme could be applied *to*, so report instead of opening a
-        // session whose Enter would silently do nothing. The initial
-        // selection starts on the currently-active theme's own name when
-        // it's in the list (it isn't for e.g. a --detect-theme file's
-        // "detected") -- so opening the picker previews no change at all
-        // until the user actually moves.
+        // session whose Enter would silently do nothing.
+        //
+        // select-theme-current-row follow-up: selectThemeCandidates_ gets
+        // one synthetic entry (kCurrentThemeLabel) prepended ahead of every
+        // real registry name, and the session opens on it -- so the very
+        // top of the list, always, rather than trying to locate the active
+        // theme's own row among the real ones (which meant either
+        // previewing it immediately on open, a destructive no-op that
+        // strips init.janet's own overrides -- see kCurrentThemeLabel's own
+        // doc comment -- or leaving a highlighted-but-unapplied row that
+        // looked like nothing had happened). Opening the picker now
+        // previews nothing and touches theme_ not at all, full stop.
         case editor::InteractiveRequest::SelectTheme: {
             if (!themeApplier_) {
                 statusMessage_ = "Theme switching is not wired up.";
                 return;
             }
             selectThemeCandidates_ = ThemeNames();
+            selectThemeCandidates_.insert(selectThemeCandidates_.begin(), std::string(kCurrentThemeLabel));
             themeBeforePreview_    = theme_;
             inputMode_             = InputMode::SelectTheme;
             prompt_.emplace("Theme (fuzzy): ");
             selectThemeSelection_ = 0;
-            for (std::size_t i = 0; i < selectThemeCandidates_.size(); ++i) {
-                if (selectThemeCandidates_[i] == theme_.name) {
-                    selectThemeSelection_ = i;
-                    break;
-                }
-            }
             RefreshSelectThemeStatus();
             return;
         }
@@ -6132,6 +6153,13 @@ void BufferView::EndSnippetSession() {
 
 void BufferView::EndInteractiveSession() {
     inputMode_ = InputMode::Normal;
+    // generic-popup follow-up (Phase 3): unconditional -- hides whichever
+    // candidate popup this session may have been driving, a safe no-op if
+    // it wasn't (same tolerance SetOnPrefixHintChanged's own nullopt case
+    // has).
+    if (onCandidatesChanged_) {
+        onCandidatesChanged_(std::nullopt);
+    }
     // snippet-expansion follow-up: a snippet session ending through this
     // shared reset (any other session's own end path) clears its
     // buffer-side ranges too, not just the members.
@@ -9426,24 +9454,17 @@ void BufferView::HandleOrgCaptureKey(const editor::KeyChord& chord) {
     EndInteractiveSession();
 }
 
-std::size_t BufferView::AvailableCandidateColumns(std::size_t prefixLength) const {
-    const std::size_t     totalWidth    = size().width > 0 ? static_cast<std::size_t>(size().width) : 80;
-    constexpr std::size_t kClosingBrace = 1;
-    return totalWidth > prefixLength + kClosingBrace ? totalWidth - prefixLength - kClosingBrace : 1;
-}
-
 void BufferView::RefreshExecuteCommandStatus() {
     const std::vector<std::string> ranked =
         editor::FuzzyFilterAndRank(dispatcher_.Registry().Names(), prompt_->Text());
     executeCommandSelection_ = ranked.empty() ? 0 : std::min(executeCommandSelection_, ranked.size() - 1);
 
-    if (ranked.empty()) {
-        statusMessage_ = prompt_->StatusText();
-        return;
+    statusMessage_ = prompt_->StatusText();
+    if (onCandidatesChanged_) {
+        onCandidatesChanged_(
+            ranked.empty() ? std::nullopt
+                           : std::optional(BuildFuzzyCandidatePopupModel(prompt_->StatusText(), ranked, executeCommandSelection_)));
     }
-    const std::string prefix  = prompt_->StatusText() + "  {";
-    const std::size_t columns = AvailableCandidateColumns(prefix.size());
-    statusMessage_            = prefix + FormatFuzzyCandidates(ranked, executeCommandSelection_, columns) + "}";
 }
 
 void BufferView::HandleExecuteCommandKey(const editor::KeyChord& chord) {
@@ -9482,18 +9503,16 @@ void BufferView::HandleExecuteCommandKey(const editor::KeyChord& chord) {
         return;
     }
 
-    if (chord.Special == editor::SpecialKey::Down) {
+    if (chord.Special == editor::SpecialKey::Down || chord.Special == editor::SpecialKey::Up) {
         const std::vector<std::string> ranked =
             editor::FuzzyFilterAndRank(dispatcher_.Registry().Names(), prompt_->Text());
-        if (!ranked.empty() && executeCommandSelection_ + 1 < ranked.size()) {
-            ++executeCommandSelection_;
-        }
-        RefreshExecuteCommandStatus();
-        return;
-    }
-    if (chord.Special == editor::SpecialKey::Up) {
-        if (executeCommandSelection_ > 0) {
-            --executeCommandSelection_;
+        if (!ranked.empty()) {
+            // Wraps at either end -- the list's own bottom/top -- rather
+            // than sticking there, matching every ListPopup-driven focus
+            // list's own navigation.
+            executeCommandSelection_ = chord.Special == editor::SpecialKey::Down
+                                          ? (executeCommandSelection_ + 1) % ranked.size()
+                                          : (executeCommandSelection_ + ranked.size() - 1) % ranked.size();
         }
         RefreshExecuteCommandStatus();
         return;
@@ -9528,13 +9547,13 @@ void BufferView::RefreshProjectFindFileStatus() {
     const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(projectFindFileCandidates_, prompt_->Text());
     projectFindFileSelection_             = ranked.empty() ? 0 : std::min(projectFindFileSelection_, ranked.size() - 1);
 
-    if (ranked.empty()) {
-        statusMessage_ = prompt_->StatusText();
-        return;
+    statusMessage_ = prompt_->StatusText();
+    if (onCandidatesChanged_) {
+        onCandidatesChanged_(
+            ranked.empty()
+                ? std::nullopt
+                : std::optional(BuildFuzzyCandidatePopupModel(prompt_->StatusText(), ranked, projectFindFileSelection_)));
     }
-    const std::string prefix  = prompt_->StatusText() + "  {";
-    const std::size_t columns = AvailableCandidateColumns(prefix.size());
-    statusMessage_            = prefix + FormatFuzzyCandidates(ranked, projectFindFileSelection_, columns) + "}";
 }
 
 void BufferView::HandleProjectFindFileKey(const editor::KeyChord& chord) {
@@ -9575,17 +9594,12 @@ void BufferView::HandleProjectFindFileKey(const editor::KeyChord& chord) {
         return;
     }
 
-    if (chord.Special == editor::SpecialKey::Down) {
+    if (chord.Special == editor::SpecialKey::Down || chord.Special == editor::SpecialKey::Up) {
         const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(projectFindFileCandidates_, prompt_->Text());
-        if (!ranked.empty() && projectFindFileSelection_ + 1 < ranked.size()) {
-            ++projectFindFileSelection_;
-        }
-        RefreshProjectFindFileStatus();
-        return;
-    }
-    if (chord.Special == editor::SpecialKey::Up) {
-        if (projectFindFileSelection_ > 0) {
-            --projectFindFileSelection_;
+        if (!ranked.empty()) {
+            projectFindFileSelection_ = chord.Special == editor::SpecialKey::Down
+                                           ? (projectFindFileSelection_ + 1) % ranked.size()
+                                           : (projectFindFileSelection_ + ranked.size() - 1) % ranked.size();
         }
         RefreshProjectFindFileStatus();
         return;
@@ -9618,13 +9632,12 @@ void BufferView::RefreshFindRecentFileStatus() {
     const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(recentFileCandidates_, prompt_->Text());
     recentFileSelection_                  = ranked.empty() ? 0 : std::min(recentFileSelection_, ranked.size() - 1);
 
-    if (ranked.empty()) {
-        statusMessage_ = prompt_->StatusText();
-        return;
+    statusMessage_ = prompt_->StatusText();
+    if (onCandidatesChanged_) {
+        onCandidatesChanged_(
+            ranked.empty() ? std::nullopt
+                           : std::optional(BuildFuzzyCandidatePopupModel(prompt_->StatusText(), ranked, recentFileSelection_)));
     }
-    const std::string prefix  = prompt_->StatusText() + "  {";
-    const std::size_t columns = AvailableCandidateColumns(prefix.size());
-    statusMessage_            = prefix + FormatFuzzyCandidates(ranked, recentFileSelection_, columns) + "}";
 }
 
 void BufferView::HandleFindRecentFileKey(const editor::KeyChord& chord) {
@@ -9664,17 +9677,12 @@ void BufferView::HandleFindRecentFileKey(const editor::KeyChord& chord) {
         return;
     }
 
-    if (chord.Special == editor::SpecialKey::Down) {
+    if (chord.Special == editor::SpecialKey::Down || chord.Special == editor::SpecialKey::Up) {
         const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(recentFileCandidates_, prompt_->Text());
-        if (!ranked.empty() && recentFileSelection_ + 1 < ranked.size()) {
-            ++recentFileSelection_;
-        }
-        RefreshFindRecentFileStatus();
-        return;
-    }
-    if (chord.Special == editor::SpecialKey::Up) {
-        if (recentFileSelection_ > 0) {
-            --recentFileSelection_;
+        if (!ranked.empty()) {
+            recentFileSelection_ = chord.Special == editor::SpecialKey::Down
+                                      ? (recentFileSelection_ + 1) % ranked.size()
+                                      : (recentFileSelection_ + ranked.size() - 1) % ranked.size();
         }
         RefreshFindRecentFileStatus();
         return;
@@ -9704,13 +9712,12 @@ void BufferView::RefreshBookmarkJumpStatus() {
     const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(bookmarkCandidates_, prompt_->Text());
     bookmarkSelection_                    = ranked.empty() ? 0 : std::min(bookmarkSelection_, ranked.size() - 1);
 
-    if (ranked.empty()) {
-        statusMessage_ = prompt_->StatusText();
-        return;
+    statusMessage_ = prompt_->StatusText();
+    if (onCandidatesChanged_) {
+        onCandidatesChanged_(
+            ranked.empty() ? std::nullopt
+                           : std::optional(BuildFuzzyCandidatePopupModel(prompt_->StatusText(), ranked, bookmarkSelection_)));
     }
-    const std::string prefix  = prompt_->StatusText() + "  {";
-    const std::size_t columns = AvailableCandidateColumns(prefix.size());
-    statusMessage_            = prefix + FormatFuzzyCandidates(ranked, bookmarkSelection_, columns) + "}";
 }
 
 void BufferView::HandleBookmarkJumpKey(const editor::KeyChord& chord) {
@@ -9765,17 +9772,12 @@ void BufferView::HandleBookmarkJumpKey(const editor::KeyChord& chord) {
         return;
     }
 
-    if (chord.Special == editor::SpecialKey::Down) {
+    if (chord.Special == editor::SpecialKey::Down || chord.Special == editor::SpecialKey::Up) {
         const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(bookmarkCandidates_, prompt_->Text());
-        if (!ranked.empty() && bookmarkSelection_ + 1 < ranked.size()) {
-            ++bookmarkSelection_;
-        }
-        RefreshBookmarkJumpStatus();
-        return;
-    }
-    if (chord.Special == editor::SpecialKey::Up) {
-        if (bookmarkSelection_ > 0) {
-            --bookmarkSelection_;
+        if (!ranked.empty()) {
+            bookmarkSelection_ = chord.Special == editor::SpecialKey::Down
+                                    ? (bookmarkSelection_ + 1) % ranked.size()
+                                    : (bookmarkSelection_ + ranked.size() - 1) % ranked.size();
         }
         RefreshBookmarkJumpStatus();
         return;
@@ -9804,13 +9806,12 @@ void BufferView::RefreshSelectThemeStatus() {
     const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(selectThemeCandidates_, prompt_->Text());
     selectThemeSelection_                 = ranked.empty() ? 0 : std::min(selectThemeSelection_, ranked.size() - 1);
 
-    if (ranked.empty()) {
-        statusMessage_ = prompt_->StatusText();
-        return;
+    statusMessage_ = prompt_->StatusText();
+    if (onCandidatesChanged_) {
+        onCandidatesChanged_(
+            ranked.empty() ? std::nullopt
+                           : std::optional(BuildFuzzyCandidatePopupModel(prompt_->StatusText(), ranked, selectThemeSelection_)));
     }
-    const std::string prefix  = prompt_->StatusText() + "  {";
-    const std::size_t columns = AvailableCandidateColumns(prefix.size());
-    statusMessage_            = prefix + FormatFuzzyCandidates(ranked, selectThemeSelection_, columns) + "}";
 }
 
 void BufferView::ApplySelectedThemePreview() {
@@ -9826,7 +9827,17 @@ void BufferView::ApplySelectedThemePreview() {
         }
         return;
     }
-    if (const auto named = ThemeByName(ranked[std::min(selectThemeSelection_, ranked.size() - 1)])) {
+    const std::string& selected = ranked[std::min(selectThemeSelection_, ranked.size() - 1)];
+    if (selected == kCurrentThemeLabel) {
+        // select-theme-current-row follow-up: resolved against the
+        // snapshot, not ThemeByName() -- see kCurrentThemeLabel's own doc
+        // comment for why a named lookup here would be destructive.
+        if (themeBeforePreview_) {
+            themeApplier_(*themeBeforePreview_);
+        }
+        return;
+    }
+    if (const auto named = ThemeByName(selected)) {
         themeApplier_(*named);
     }
 }
@@ -9846,11 +9857,24 @@ void BufferView::HandleSelectThemeKey(const editor::KeyChord& chord) {
 
         // Usually the highlighted candidate is already applied (every
         // selection/rank change previews), but not always: an immediate
-        // Enter on a fresh session never previewed anything (and when the
-        // active theme isn't in the list at all -- a --detect-theme file --
-        // the initial highlight isn't the active theme either). Applying
-        // explicitly covers both and is a no-op re-apply otherwise.
+        // Enter on a fresh session never previewed anything. Applying
+        // explicitly covers that and is a no-op re-apply otherwise.
         const std::string selected = ranked[std::min(selectThemeSelection_, ranked.size() - 1)];
+        if (selected == kCurrentThemeLabel) {
+            // select-theme-current-row follow-up: committing "Current
+            // theme" leaves everything exactly as it already is -- no
+            // ThemeByName() lookup (there's no registry entry by this
+            // name), and no variables.json write, since the persisted
+            // base theme name (if any) already correctly describes what's
+            // active; overwriting it with this synthetic label would
+            // break next launch's own theme resolution.
+            if (themeBeforePreview_) {
+                themeApplier_(*themeBeforePreview_);
+            }
+            statusMessage_ = "Theme unchanged.";
+            EndInteractiveSession();
+            return;
+        }
         if (const auto named = ThemeByName(selected)) {
             themeApplier_(*named);
         }
@@ -9873,18 +9897,12 @@ void BufferView::HandleSelectThemeKey(const editor::KeyChord& chord) {
         return;
     }
 
-    if (chord.Special == editor::SpecialKey::Down) {
+    if (chord.Special == editor::SpecialKey::Down || chord.Special == editor::SpecialKey::Up) {
         const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(selectThemeCandidates_, prompt_->Text());
-        if (!ranked.empty() && selectThemeSelection_ + 1 < ranked.size()) {
-            ++selectThemeSelection_;
-        }
-        RefreshSelectThemeStatus();
-        ApplySelectedThemePreview();
-        return;
-    }
-    if (chord.Special == editor::SpecialKey::Up) {
-        if (selectThemeSelection_ > 0) {
-            --selectThemeSelection_;
+        if (!ranked.empty()) {
+            selectThemeSelection_ = chord.Special == editor::SpecialKey::Down
+                                       ? (selectThemeSelection_ + 1) % ranked.size()
+                                       : (selectThemeSelection_ + ranked.size() - 1) % ranked.size();
         }
         RefreshSelectThemeStatus();
         ApplySelectedThemePreview();
