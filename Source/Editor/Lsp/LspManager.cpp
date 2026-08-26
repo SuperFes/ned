@@ -10,6 +10,7 @@
 #include "Editor/BackgroundActivity.h"
 #include "Editor/ProjectRoot.h"
 #include "Editor/ProjectSettings.h"
+#include "LspBrokerConnect.h"
 #include "LspPosition.h"
 #include "LspServerConfig.h"
 #include "ProseChecker.h"
@@ -284,21 +285,31 @@ LspClient* LspManager::ClientForLanguage(const std::string& language) {
         spawnFailureDetail_.erase(language);
     }
 
-    std::unique_ptr<LspClient> client;
-    try {
-        client = std::make_unique<LspClient>(*command, eventLoop_);
-    }
-    catch (const std::exception& e) {
-        // Previously uncaught -- Transport's constructor throws
-        // std::runtime_error for a missing executable, a pipe() failure, or
-        // a posix_spawn failure, and this call chain (SyncBuffer <-
-        // BufferView::Paint()) had no catch anywhere above it, crashing the
-        // whole running editor the instant a buffer of a misconfigured-LSP
-        // language was displayed. Report instead of crashing.
-        failedCommands_[language]     = *command;
-        spawnFailureDetail_[language] = e.what();
-        LogError(language, e.what());
-        return nullptr;
+    // lsp-broker follow-up. Try attaching to an already-running LSP broker
+    // daemon before spawning our own subprocess -- see LspBrokerConnect.h's
+    // own header comment for exactly why this is always safe to attempt
+    // (nullptr on any failure, never throws) and why nothing downstream of
+    // this needs to know the difference: the returned LspClient still
+    // genuinely performs the real initialize/initialized handshake below,
+    // just over a socket to the broker instead of a pipe to a directly-
+    // spawned process.
+    std::unique_ptr<LspClient> client = TryConnectToBroker(editor::ProjectRoot(), language, *command, eventLoop_);
+    if (!client) {
+        try {
+            client = std::make_unique<LspClient>(*command, eventLoop_);
+        }
+        catch (const std::exception& e) {
+            // Previously uncaught -- Transport's constructor throws
+            // std::runtime_error for a missing executable, a pipe() failure, or
+            // a posix_spawn failure, and this call chain (SyncBuffer <-
+            // BufferView::Paint()) had no catch anywhere above it, crashing the
+            // whole running editor the instant a buffer of a misconfigured-LSP
+            // language was displayed. Report instead of crashing.
+            failedCommands_[language]     = *command;
+            spawnFailureDetail_[language] = e.what();
+            LogError(language, e.what());
+            return nullptr;
+        }
     }
     const editor::ProjectSettings projectSettings = editor::LoadProjectSettings(editor::ProjectRoot());
     WireNotificationHandlers(*client, language, projectSettings.lspWorkspaceConfiguration);

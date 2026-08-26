@@ -627,6 +627,10 @@ add_library(ned_lib STATIC
         Source/Editor/Lsp/LspContent.cpp
         Source/Editor/Lsp/LspManager.cpp
         Source/Editor/Lsp/LspBackgroundSync.cpp
+        Source/Editor/Lsp/LspBroker.cpp
+        Source/Editor/Lsp/BrokerSocketPath.cpp
+        Source/Editor/Lsp/LspBrokerMain.cpp
+        Source/Editor/Lsp/LspBrokerConnect.cpp
         Source/Editor/Tasks/TaskConfig.cpp
         Source/Editor/Tasks/TaskProcess.cpp
         Source/Editor/Tasks/TaskRunner.cpp
@@ -946,6 +950,8 @@ if (NED_BUILD_TESTS)
             Tests/LspPositionTest.cpp
             Tests/LspContentTest.cpp
             Tests/LspManagerTest.cpp
+            Tests/LspBrokerTest.cpp
+            Tests/LspBrokerConnectTest.cpp
             Tests/DapConfigTest.cpp
             Tests/DapClientTest.cpp
             Tests/DapManagerTest.cpp

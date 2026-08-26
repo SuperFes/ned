@@ -1,5 +1,6 @@
 #include <clocale>
 #include <cstdlib>
+#include <cstring>
 #include <deque>
 #include <exception>
 #include <filesystem>
@@ -13,7 +14,12 @@
 #include <system_error>
 #include <vector>
 
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
+
 #include <CLI/CLI.hpp>
+#include <nlohmann/json.hpp>
 
 #include "Application.h"
 
@@ -25,7 +31,10 @@
 #include "Editor/Commands.h"
 #include "Editor/Dap/DapManager.h"
 #include "Editor/Keymap.h"
+#include "Editor/Lsp/BrokerSocketPath.h"
+#include "Editor/Lsp/LspBrokerMain.h"
 #include "Editor/Lsp/LspManager.h"
+#include "Editor/Lsp/Transport.h"
 #include "Editor/MinimapSettings.h"
 #include "Editor/Mode.h"
 #include "Editor/ModeOverrides.h"
@@ -137,11 +146,71 @@ int RunDetectTheme(int argc, char** argv) {
     return 0;
 }
 
+// `ned --lsp-broker-stop`: connects to the running LSP broker daemon (see
+// Editor/Lsp/LspBrokerMain.h) and sends it the ned/broker-shutdown control
+// message -- every real language-server subprocess gets a genuine LSP
+// shutdown/exit before the daemon exits (Editor/Lsp/LspBroker.h's own
+// Shutdown()), not a bare kill. Same early-return placement as
+// RunDetectTheme/the --lsp-broker dispatch below -- no EventLoop/Notcurses
+// needed for a one-shot control message. Deliberately idempotent: no
+// broker currently running is reported and treated as success (0), not an
+// error, so this is safe to call from a shell script or a systemd unit's
+// ExecStop without checking first.
+int RunLspBrokerStop() {
+    const std::string socketPathStr = ned::editor::lsp::BrokerSocketPath().string();
+
+    const int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) {
+        std::cerr << "ned: lsp-broker-stop: socket() failed: " << std::strerror(errno) << '\n';
+        return 1;
+    }
+
+    sockaddr_un addr{};
+    addr.sun_family = AF_UNIX;
+    if (socketPathStr.size() >= sizeof(addr.sun_path)) {
+        std::cerr << "ned: lsp-broker-stop: socket path too long: " << socketPathStr << '\n';
+        ::close(fd);
+        return 1;
+    }
+    std::strncpy(addr.sun_path, socketPathStr.c_str(), sizeof(addr.sun_path) - 1);
+
+    if (::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
+        std::cout << "ned: no LSP broker is currently running.\n";
+        ::close(fd);
+        return 0;
+    }
+
+    try {
+        const int                   dupFd = ::dup(fd);
+        ned::editor::lsp::Transport transport(fd, dupFd, -1);
+        transport.WriteFrame(nlohmann::json{{"jsonrpc", "2.0"}, {"method", "ned/broker-shutdown"}}.dump());
+        std::cout << "ned: sent shutdown to the LSP broker.\n";
+    }
+    catch (const std::exception& e) {
+        std::cerr << "ned: lsp-broker-stop: " << e.what() << '\n';
+        return 1;
+    }
+    return 0;
+}
+
 } // namespace
 
 auto main(int argc, char** argv) -> int {
     if (argc > 1 && std::string_view(argv[1]) == "--detect-theme") {
         return RunDetectTheme(argc, argv);
+    }
+    // `ned --lsp-broker`: runs the headless LSP broker daemon itself (see
+    // Editor/Lsp/LspBrokerMain.h) instead of the interactive editor --
+    // dispatched here, strictly before EventLoop/Notcurses construct, same
+    // reasoning as RunDetectTheme above. This is what a `ned` process
+    // auto-forks-and-execve's into when no daemon is already reachable, and
+    // is equally the right ExecStart line for a `systemd --user` unit that
+    // starts it explicitly at login instead.
+    if (argc > 1 && std::string_view(argv[1]) == "--lsp-broker") {
+        return ned::editor::lsp::RunLspBrokerDaemon();
+    }
+    if (argc > 1 && std::string_view(argv[1]) == "--lsp-broker-stop") {
+        return RunLspBrokerStop();
     }
 
     std::setlocale(LC_ALL, "");
