@@ -17,6 +17,11 @@ namespace {
         return milliseconds;
     }
 
+    int& SubprocessWriteTimeoutMsStorage() {
+        static int milliseconds = 5000;
+        return milliseconds;
+    }
+
     int& ProtocolStallTimeoutMsStorage() {
         static int milliseconds = 30000;
         return milliseconds;
@@ -37,6 +42,16 @@ void SetSubprocessReadTimeoutMs(int milliseconds) {
 std::chrono::milliseconds SubprocessReadTimeoutMs() {
     const std::lock_guard<std::mutex> lock(TimeoutsMutex());
     return std::chrono::milliseconds(SubprocessReadTimeoutMsStorage());
+}
+
+void SetSubprocessWriteTimeoutMs(int milliseconds) {
+    const std::lock_guard<std::mutex> lock(TimeoutsMutex());
+    SubprocessWriteTimeoutMsStorage() = std::max(1, milliseconds);
+}
+
+std::chrono::milliseconds SubprocessWriteTimeoutMs() {
+    const std::lock_guard<std::mutex> lock(TimeoutsMutex());
+    return std::chrono::milliseconds(SubprocessWriteTimeoutMsStorage());
 }
 
 void SetProtocolStallTimeoutMs(int milliseconds) {

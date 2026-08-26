@@ -34,10 +34,10 @@ TEST_CASE("ChildProcess round-trips data through a real pipe pair with no subpro
     // the "child side," driven directly by the test: reads toChild[0], writes toParent[1]
     ChildProcess childSide(toChild[0], toParent[1]);
 
-    parent.WriteAll("hello");
+    parent.WriteAll("hello", std::chrono::milliseconds(1000));
     REQUIRE(childSide.ReadSome() == "hello");
 
-    childSide.WriteAll("world");
+    childSide.WriteAll("world", std::chrono::milliseconds(1000));
     REQUIRE(parent.ReadSome() == "world");
 }
 
@@ -47,7 +47,7 @@ TEST_CASE("ChildProcess::ReadSome returns an empty string on a clean EOF", "[Pro
     ChildProcess reader(toChild[0], -1);
     {
         ChildProcess writer(-1, toChild[1]);
-        writer.WriteAll("only chunk");
+        writer.WriteAll("only chunk", std::chrono::milliseconds(1000));
         REQUIRE(reader.ReadSome() == "only chunk");
         // writer goes out of scope here -- its destructor closes the write
         // end, which is what should make the next ReadSome see a clean EOF.
@@ -62,7 +62,7 @@ TEST_CASE("ChildProcess spawns a real process and exchanges data with it over pi
     // test would hang waiting for output that's sitting in a buffer.
     ChildProcess child({"stdbuf", "-o0", "/bin/cat"});
 
-    child.WriteAll("hello from a test");
+    child.WriteAll("hello from a test", std::chrono::milliseconds(1000));
     REQUIRE(child.ReadSome() == "hello from a test");
 }
 
@@ -118,7 +118,7 @@ TEST_CASE("ChildProcess::ReadSome(timeout) returns data once it arrives within t
 
     std::jthread delayedWriter([&writer] {
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
-        writer.WriteAll("late data");
+        writer.WriteAll("late data", std::chrono::milliseconds(1000));
     });
 
     const auto chunk = reader.ReadSome(std::chrono::milliseconds(2000));
@@ -147,6 +147,30 @@ TEST_CASE("StderrMode::Capture routes stderr onto its own pipe, separate from st
     const ssize_t n          = ::read(child.StderrFd(), buffer, sizeof(buffer));
     REQUIRE(n > 0);
     REQUIRE(std::string(buffer, static_cast<std::size_t>(n)) == "err\n");
+}
+
+TEST_CASE("ChildProcess::WaitWritable is immediately true for a fresh, empty pipe", "[Process]") {
+    int toChild[2];
+    REQUIRE(::pipe(toChild) == 0);
+    ChildProcess writer(-1, toChild[1]);
+    ChildProcess reader(toChild[0], -1); // kept alive so the write end isn't broken
+
+    REQUIRE(writer.WaitWritable(std::chrono::milliseconds(1000)));
+}
+
+// write-side-hang-protection follow-up. Reproduces the real production
+// lockup this guards against: a reader that stops draining, and a write
+// large enough to fill the kernel pipe buffer (Linux's default is 64KiB)
+// blocks in ::write() with nothing on the other end to unblock it --
+// WriteAll must fail after timeout rather than hang the caller's thread.
+TEST_CASE("ChildProcess::WriteAll throws when the reader stops draining and the pipe fills", "[Process]") {
+    int toChild[2];
+    REQUIRE(::pipe(toChild) == 0);
+    ChildProcess reader(toChild[0], -1); // never reads -- lets the pipe buffer fill
+    ChildProcess writer(-1, toChild[1]);
+
+    const std::string payload(256 * 1024, 'x');
+    REQUIRE_THROWS_AS(writer.WriteAll(payload, std::chrono::milliseconds(200)), std::runtime_error);
 }
 
 TEST_CASE("ChildProcess::WaitReadable reports EOF as readable", "[Process]") {

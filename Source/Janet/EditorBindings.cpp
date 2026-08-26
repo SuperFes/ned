@@ -217,6 +217,11 @@ namespace {
         editor::SetSubprocessReadTimeoutMs(static_cast<int>(milliseconds));
     }
 
+    // write-side-hang-protection follow-up.
+    void NedSetSubprocessWriteTimeoutMs(std::int64_t milliseconds) {
+        editor::SetSubprocessWriteTimeoutMs(static_cast<int>(milliseconds));
+    }
+
     void NedSetProtocolStallTimeoutMs(std::int64_t milliseconds) {
         editor::SetProtocolStallTimeoutMs(static_cast<int>(milliseconds));
     }
@@ -930,6 +935,11 @@ void InstallEditorBindings(Environment& env) {
         "Set how long, in milliseconds, a main-thread blocking subprocess read (system-clipboard paste, first "
         "toolchain-include-path query for a language) waits before killing the child and failing gracefully "
         "(default 5000; non-positive values are clamped to 1).");
+    env.Register<&NedSetSubprocessWriteTimeoutMs>(
+        "ned", "set-subprocess-write-timeout-ms",
+        "Set how long, in milliseconds, a blocking write to a subprocess's stdin (system-clipboard copy, an "
+        "LSP/ACP frame, a terminal keystroke) waits for the child to keep draining before giving up (default 5000; "
+        "non-positive values are clamped to 1).");
     env.Register<&NedSetProtocolStallTimeoutMs>(
         "ned", "set-protocol-stall-timeout-ms",
         "Set how long, in milliseconds, silence after an LSP/DAP/ACP frame or message has started arriving is "

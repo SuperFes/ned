@@ -117,6 +117,20 @@ void PtyProcess::StartReadLoop() {
             if (count < 0 && errno == EINTR) {
                 continue;
             }
+            if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                // write-side-hang-protection follow-up: the master fd is
+                // dup()'d between child_'s read and write halves (see
+                // SpawnPty below), so WriteAll's own O_NONBLOCK (needed to
+                // keep a stalled shell's write from hanging the main
+                // thread) makes this read end non-blocking too. Wait for
+                // real readability before retrying, exactly mirroring the
+                // blocking read this loop was written to expect -- a
+                // negative timeout is WaitReadable's own "block forever"
+                // sentinel (poll(2)'s convention), matching idle-shell
+                // silence being perfectly normal here.
+                [[maybe_unused]] const bool ready = child_.WaitReadable(std::chrono::milliseconds(-1)); // always true -- a negative timeout never times out
+                continue;
+            }
             if (count <= 0) {
                 break; // EOF, EIO (the pty flavor of EOF), or shutdown fd teardown
             }
@@ -135,8 +149,8 @@ void PtyProcess::StartReadLoop() {
     });
 }
 
-void PtyProcess::Write(std::string_view data) const {
-    child_.WriteAll(data);
+void PtyProcess::Write(std::string_view data, std::chrono::milliseconds timeout) const {
+    child_.WriteAll(data, timeout);
 }
 
 void PtyProcess::Resize(int rows, int cols) const noexcept {

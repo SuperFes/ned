@@ -324,7 +324,22 @@ LspClient* LspManager::ClientForLanguage(const std::string& language) {
     rawClient->SendRequest(
         "initialize",
         BuildInitializeParams(editor::ProjectRoot(), editor::LspInitializationOptionsForLanguage(projectSettings, language)),
-        [rawClient, workspaceConfiguration = projectSettings.lspWorkspaceConfiguration](std::optional<Json>, std::optional<Json>) {
+        [this, rawClient, language, workspaceConfiguration = projectSettings.lspWorkspaceConfiguration](
+            std::optional<Json>, std::optional<Json> error) {
+            // hang-on-timed-out-initialize follow-up: ExpireStaleRequests
+            // invokes this with (nullopt, a synthesized timeout error) if
+            // the server never responds -- previously this branch was
+            // unreachable in practice because both parameters were ignored,
+            // so a timed-out handshake still opened the queued-notification
+            // gate and flushed everything queued behind it (including a
+            // full-document textDocument/didChange) into a server that had
+            // already proven unresponsive, wedging the write.
+            if (error) {
+                LogError(language, "initialize failed: " + ExtractErrorMessage(*error));
+                disconnectDetail_[language] = ExtractErrorMessage(*error);
+                ClientDisconnected(language);
+                return;
+            }
             rawClient->SendNotification("initialized", Json::object());
             if (!workspaceConfiguration.empty()) {
                 rawClient->SendNotification("workspace/didChangeConfiguration", Json{{"settings", workspaceConfiguration}});

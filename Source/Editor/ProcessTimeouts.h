@@ -2,16 +2,24 @@
 // ChildProcess-hang-protection round 2 follow-up. The original audit (see
 // ROADMAP.md's "Subprocess hang/timeout protection" entry) hardcoded every
 // timeout it introduced as a single compile-time constant per mechanism --
-// this is the Janet-configurable surface that left open. Three settings,
-// matched to the three distinct mechanisms that audit built (a fourth,
-// TaskProcess's own read loop, deliberately has no timeout at all -- silence
-// isn't a hang signal for a legitimately slow build/test, and Cancel()
-// already provides user-triggered recovery -- unchanged here):
+// this is the Janet-configurable surface that left open. Four settings,
+// matched to the four distinct mechanisms that audit and its own follow-up
+// built (a fifth, TaskProcess's own read loop, deliberately has no timeout
+// at all -- silence isn't a hang signal for a legitimately slow build/test,
+// and Cancel() already provides user-triggered recovery -- unchanged here):
 //
 //  - SubprocessReadTimeoutMs: how long a *main-thread*, blocking subprocess
 //    read (system-clipboard paste, the first toolchain-include-path query
 //    for a language) waits before killing the child and failing gracefully
 //    rather than freezing the whole editor. Default 5000ms.
+//  - SubprocessWriteTimeoutMs (write-side-hang-protection follow-up): the
+//    write-side twin -- how long a blocking write to a subprocess's stdin
+//    (system-clipboard copy, an LSP/ACP frame, a terminal keystroke) waits
+//    for the child to keep draining before giving up, rather than blocking
+//    forever the moment its pipe buffer fills and it stops reading (a real,
+//    reproduced full-editor lockup: a wedged LSP server left a queued
+//    full-document textDocument/didChange write with nothing on the other
+//    end to drain it). Default 5000ms.
 //  - ProtocolStallTimeoutMs: how long silence *after* an LSP/DAP/ACP
 //    frame/message has started arriving is tolerated before the connection
 //    is treated as stalled and disconnected -- idle time *between* messages
@@ -40,6 +48,9 @@ namespace ned::editor {
 // convention as TabWidth::SetTabWidth/DiffRefreshSettings.h.
 void SetSubprocessReadTimeoutMs(int milliseconds);
 [[nodiscard]] std::chrono::milliseconds SubprocessReadTimeoutMs(); // default 5000ms
+
+void SetSubprocessWriteTimeoutMs(int milliseconds);
+[[nodiscard]] std::chrono::milliseconds SubprocessWriteTimeoutMs(); // default 5000ms
 
 void SetProtocolStallTimeoutMs(int milliseconds);
 [[nodiscard]] std::chrono::milliseconds ProtocolStallTimeoutMs(); // default 30000ms

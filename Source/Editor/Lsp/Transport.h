@@ -77,8 +77,11 @@ class Transport {
 
     // Writes one LSP frame ("Content-Length: N\r\n\r\n" + payload) to the
     // child's stdin. Throws std::runtime_error on a write failure (e.g. the
-    // child already exited and closed its stdin -- EPIPE).
-    void WriteFrame(std::string_view jsonPayload) const;
+    // child already exited and closed its stdin -- EPIPE) or
+    // (write-side-hang-protection follow-up) if the child stops draining its
+    // stdin for longer than stallTimeout -- same rationale/default as
+    // ReadFrame's own stallTimeout parameter below.
+    void WriteFrame(std::string_view jsonPayload, std::chrono::milliseconds stallTimeout = ProtocolStallTimeoutMs()) const;
 
     // Blocks until one full LSP frame has been read from the child's
     // stdout. Returns std::nullopt on EOF (the server exited) rather than

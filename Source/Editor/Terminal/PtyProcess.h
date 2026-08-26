@@ -36,6 +36,7 @@
 #include <vector>
 
 #include "Editor/Process/ChildProcess.h"
+#include "Editor/ProcessTimeouts.h"
 #include "UI/EventLoop.h"
 
 namespace ned::editor::terminal {
@@ -70,8 +71,11 @@ class PtyProcess {
     PtyProcess& operator=(PtyProcess&&) = delete;
 
     // Sends bytes to the shell (the master side's write half). Main thread
-    // only, like every other public method here.
-    void Write(std::string_view data) const;
+    // only, like every other public method here. Throws std::runtime_error
+    // (write-side-hang-protection follow-up) if the shell stops draining
+    // its side of the pty for longer than timeout, rather than blocking the
+    // whole editor on a wedged shell.
+    void Write(std::string_view data, std::chrono::milliseconds timeout = SubprocessWriteTimeoutMs()) const;
 
     // Propagates a new terminal size to the pty (TIOCSWINSZ) -- the kernel
     // raises SIGWINCH in the child's foreground process group. The caller

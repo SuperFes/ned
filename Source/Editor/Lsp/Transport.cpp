@@ -27,20 +27,34 @@ namespace {
     // very first line of a fresh frame -- an idle connection between
     // messages is normal and must never be mistaken for a stall; every other
     // byte (including this call's own 2nd+ byte, when false) is bounded by
-    // stallTimeout.
+    // stallTimeout. Always polls before reading, even for the unbounded
+    // case (write-side-hang-protection follow-up: ReadFd() may now be
+    // non-blocking -- see WriteAll's own doc comment -- so a raw ::read()
+    // with no preceding readiness check could return EAGAIN instead of
+    // genuinely blocking); a negative poll timeout (std::chrono::milliseconds(-1))
+    // is poll(2)'s own "block forever" sentinel, which is what makes the
+    // unbounded case still truly unbounded.
     bool ReadLine(const process::ChildProcess& child, std::string& line, bool waitFirstByteUnbounded,
                   std::chrono::milliseconds stallTimeout) {
         line.clear();
         bool first = true;
         while (true) {
-            if (!(first && waitFirstByteUnbounded) && !child.WaitReadable(stallTimeout)) {
+            const bool             unbounded = first && waitFirstByteUnbounded;
+            const std::chrono::milliseconds waitTimeout = unbounded ? std::chrono::milliseconds(-1) : stallTimeout;
+            if (!child.WaitReadable(waitTimeout)) {
                 throw std::runtime_error("ned: LSP transport stalled mid-frame");
             }
             first                = false;
             char          ch     = 0;
             const ssize_t result = ::read(child.ReadFd(), &ch, 1);
             if (result < 0) {
-                if (errno == EINTR) {
+                // write-side-hang-protection follow-up: ReadFd() is now
+                // non-blocking whenever it shares an open file description
+                // with a WriteAll-bearing WriteFd() (a dup()'d broker-socket
+                // connection) -- EAGAIN here just means the WaitReadable
+                // check above raced a spurious wakeup; loop back around and
+                // re-poll rather than treating it as a real error.
+                if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
                     continue;
                 }
                 throw std::runtime_error(std::string("ned: LSP transport read failed: ") + std::strerror(errno));
@@ -71,8 +85,8 @@ namespace {
             }
             const ssize_t result = ::read(child.ReadFd(), buffer + got, n - got);
             if (result < 0) {
-                if (errno == EINTR) {
-                    continue;
+                if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
+                    continue; // see ReadLine's own comment on why EAGAIN can happen here now
                 }
                 throw std::runtime_error(std::string("ned: LSP transport read failed: ") + std::strerror(errno));
             }
@@ -94,10 +108,10 @@ Transport::Transport(const std::vector<std::string>& argv, bool captureStderr)
 Transport::Transport(int readFd, int writeFd, pid_t pid) noexcept : child_(readFd, writeFd, pid) {
 }
 
-void Transport::WriteFrame(std::string_view jsonPayload) const {
+void Transport::WriteFrame(std::string_view jsonPayload, std::chrono::milliseconds stallTimeout) const {
     const std::string header = "Content-Length: " + std::to_string(jsonPayload.size()) + "\r\n\r\n";
-    child_.WriteAll(header);
-    child_.WriteAll(jsonPayload);
+    child_.WriteAll(header, stallTimeout);
+    child_.WriteAll(jsonPayload, stallTimeout);
 }
 
 std::optional<std::string> Transport::ReadFrame(std::chrono::milliseconds stallTimeout) const {
