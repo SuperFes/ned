@@ -12,9 +12,12 @@ using ned::editor::lsp::ExtractHoverText;
 using ned::editor::lsp::ExtractRenameEdits;
 using ned::editor::lsp::ExtractSignatureHelp;
 using ned::editor::lsp::ExtractSingleCodeAction;
+using ned::editor::lsp::ExtractSymbols;
 using ned::editor::lsp::Json;
 using ned::editor::lsp::LspPosition;
 using ned::editor::lsp::RenameResult;
+using ned::editor::lsp::SymbolEntry;
+using ned::editor::lsp::SymbolKindLabel;
 
 TEST_CASE("ExtractHoverText handles a bare string contents field", "[Lsp]") {
     const Json result = {{"contents", "hello world"}};
@@ -437,4 +440,79 @@ TEST_CASE("ExtractSignatureHelp returns nullopt for an empty signatures array", 
 
 TEST_CASE("ExtractSignatureHelp returns nullopt for a null result", "[Lsp]") {
     REQUIRE_FALSE(ExtractSignatureHelp(Json(nullptr)).has_value());
+}
+
+TEST_CASE("SymbolKindLabel maps every defined LSP SymbolKind and falls back to \"symbol\"", "[Lsp]") {
+    REQUIRE(SymbolKindLabel(5) == "class");
+    REQUIRE(SymbolKindLabel(6) == "method");
+    REQUIRE(SymbolKindLabel(12) == "function");
+    REQUIRE(SymbolKindLabel(13) == "variable");
+    REQUIRE(SymbolKindLabel(23) == "struct");
+    REQUIRE(SymbolKindLabel(0) == "symbol");
+    REQUIRE(SymbolKindLabel(999) == "symbol");
+}
+
+TEST_CASE("ExtractSymbols flattens a hierarchical DocumentSymbol[] response with the parent name as containerName",
+          "[Lsp]") {
+    const Json result = Json::array({
+        {{"name", "Widget"},
+         {"kind", 5},
+         {"range", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 10}, {"character", 1}}}}},
+         {"selectionRange", {{"start", {{"line", 0}, {"character", 6}}}, {"end", {{"line", 0}, {"character", 12}}}}},
+         {"children", Json::array({{{"name", "Render"},
+                                    {"kind", 6},
+                                    {"range", {{"start", {{"line", 2}, {"character", 4}}}, {"end", {{"line", 4}, {"character", 5}}}}},
+                                    {"selectionRange",
+                                     {{"start", {{"line", 2}, {"character", 9}}}, {"end", {{"line", 2}, {"character", 15}}}}}}})}},
+    });
+
+    const std::vector<SymbolEntry> entries = ExtractSymbols(result, "file:///widget.cpp");
+    REQUIRE(entries.size() == 2);
+    REQUIRE(entries[0].name == "Widget");
+    REQUIRE(entries[0].containerName.empty());
+    REQUIRE(entries[0].kind == 5);
+    REQUIRE(entries[0].uri == "file:///widget.cpp");
+    REQUIRE(entries[0].position.line == 0);
+    REQUIRE(entries[0].position.character == 6); // selectionRange.start, not range.start
+
+    REQUIRE(entries[1].name == "Render");
+    REQUIRE(entries[1].containerName == "Widget");
+    REQUIRE(entries[1].kind == 6);
+    REQUIRE(entries[1].uri == "file:///widget.cpp"); // ownUri applied uniformly -- a DocumentSymbol carries no uri of its own
+    REQUIRE(entries[1].position.character == 9);
+}
+
+TEST_CASE("ExtractSymbols parses a flat SymbolInformation[] response using each entry's own location.uri", "[Lsp]") {
+    const Json result = Json::array({
+        {{"name", "globalCount"},
+         {"kind", 13},
+         {"containerName", "ns"},
+         {"location",
+          {{"uri", "file:///a.cpp"}, {"range", {{"start", {{"line", 3}, {"character", 4}}}, {"end", {{"line", 3}, {"character", 15}}}}}}}},
+    });
+
+    const std::vector<SymbolEntry> entries = ExtractSymbols(result, "file:///should-be-ignored.cpp");
+    REQUIRE(entries.size() == 1);
+    REQUIRE(entries[0].name == "globalCount");
+    REQUIRE(entries[0].containerName == "ns");
+    REQUIRE(entries[0].uri == "file:///a.cpp"); // ownUri is not used -- SymbolInformation carries its own
+    REQUIRE(entries[0].position.line == 3);
+}
+
+TEST_CASE("ExtractSymbols treats a WorkspaceSymbol with a range-less location as position {0, 0}", "[Lsp]") {
+    const Json result = Json::array({
+        {{"name", "unresolvedSymbol"}, {"kind", 12}, {"location", {{"uri", "file:///b.cpp"}}}},
+    });
+
+    const std::vector<SymbolEntry> entries = ExtractSymbols(result);
+    REQUIRE(entries.size() == 1);
+    REQUIRE(entries[0].uri == "file:///b.cpp");
+    REQUIRE(entries[0].position.line == 0);
+    REQUIRE(entries[0].position.character == 0);
+}
+
+TEST_CASE("ExtractSymbols skips a malformed entry and returns empty for a non-array result", "[Lsp]") {
+    const Json result = Json::array({{{"kind", 5}}}); // missing "name"
+    REQUIRE(ExtractSymbols(result).empty());
+    REQUIRE(ExtractSymbols(Json(nullptr)).empty());
 }

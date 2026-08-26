@@ -6796,6 +6796,118 @@ TEST_CASE("M-x lsp-goto-declaration sends textDocument/declaration and jumps on 
     std::filesystem::remove(targetPath);
 }
 
+// symbol-search follow-up.
+TEST_CASE("M-x lsp-goto-symbol sends textDocument/documentSymbol and jumps to the fuzzy-filtered selection",
+          "[BufferView]") {
+    Fixture                     fixture;
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_bufferview_docsymbol_test.txt";
+    ned::text::Buffer&          buffer = fixture.bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("struct Widget {};\nstruct Other {};");
+    fixture.activeBuffer.Set(buffer);
+
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::LspClient* client = nullptr;
+    FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
+    ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+    (void)ReadRawLspFrame(server.serverStdinRead); // drain didOpen
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "lsp-goto-symbol");
+    view.OnEvent(ned::ui::test::Return());
+
+    const std::string raw     = ReadRawLspFrame(server.serverStdinRead);
+    const auto        request = ned::editor::lsp::Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(request["method"] == "textDocument/documentSymbol");
+
+    const auto response = ned::editor::lsp::Json{
+        {"jsonrpc", "2.0"},
+        {"id", LspRequestIdFromFrame(raw)},
+        {"result",
+         ned::editor::lsp::Json::array(
+             {{{"name", "Widget"},
+               {"kind", 23},
+               {"range", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 18}}}}},
+               {"selectionRange", {{"start", {{"line", 0}, {"character", 7}}}, {"end", {{"line", 0}, {"character", 13}}}}}},
+              {{"name", "Other"},
+               {"kind", 23},
+               {"range", {{"start", {{"line", 1}, {"character", 0}}}, {"end", {{"line", 1}, {"character", 17}}}}},
+               {"selectionRange", {{"start", {{"line", 1}, {"character", 7}}}, {"end", {{"line", 1}, {"character", 12}}}}}}})},
+    };
+    client->DispatchFrame(response.dump());
+
+    TypeText(view, "Wid"); // fuzzy-narrow down to the "Widget" entry
+    view.OnEvent(ned::ui::test::Return());
+
+    REQUIRE(fixture.activeBuffer.Get().Point() == 7);
+}
+
+TEST_CASE("M-x lsp-workspace-symbol sends an immediate workspace/symbol request and jumps to the accepted result",
+          "[BufferView]") {
+    Fixture                     fixture;
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_bufferview_wssymbol_test.txt";
+    ned::text::Buffer&          buffer = fixture.bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("x");
+    fixture.activeBuffer.Set(buffer);
+
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::LspClient* client = nullptr;
+    FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
+    ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+    (void)ReadRawLspFrame(server.serverStdinRead); // drain didOpen
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "lsp-workspace-symbol");
+    view.OnEvent(ned::ui::test::Return());
+
+    // The session opens with an immediate request (empty query) -- no
+    // debounce for the very first request, unlike a re-query from typing.
+    const std::string raw     = ReadRawLspFrame(server.serverStdinRead);
+    const auto        request = ned::editor::lsp::Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(request["method"] == "workspace/symbol");
+    REQUIRE(request["params"]["query"] == "");
+    REQUIRE_FALSE(request["params"].contains("textDocument"));
+
+    const std::filesystem::path targetPath = std::filesystem::temp_directory_path() / "ned_bufferview_wssymbol_target_test.cpp";
+    std::filesystem::remove(targetPath);
+    {
+        std::ofstream(targetPath) << "class Found {};\n";
+    }
+    const auto response = ned::editor::lsp::Json{
+        {"jsonrpc", "2.0"},
+        {"id", LspRequestIdFromFrame(raw)},
+        {"result", ned::editor::lsp::Json::array(
+                       {{{"name", "Found"},
+                         {"kind", 5},
+                         {"location",
+                          {{"uri", "file://" + targetPath.string()},
+                           {"range", {{"start", {{"line", 0}, {"character", 6}}}, {"end", {{"line", 0}, {"character", 11}}}}}}}}})},
+    };
+    client->DispatchFrame(response.dump());
+
+    view.OnEvent(ned::ui::test::Return()); // no typing -- accept the one live result as-is
+
+    REQUIRE(fixture.activeBuffer.Get().Path() == targetPath);
+    REQUIRE(fixture.activeBuffer.Get().Point() == 6);
+
+    std::filesystem::remove(targetPath);
+}
+
 // signature-help follow-up: same async-write-into-statusMessage shape as
 // lsp-hover's own tests (not shown here -- see LspManagerTest.cpp for the
 // ExtractSignatureHelp/RequestSignatureHelp coverage this leans on), driven

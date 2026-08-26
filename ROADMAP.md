@@ -50,14 +50,15 @@ Notcurses.
       is an open question — spawning a live language server per code fence in an
       ordinary notes file could be noisy for illustrative/incomplete snippets.
 - [ ] **LSP request coverage is narrow** (2026-08-25 audit; `declaration`/`typeDefinition`/
-      `implementation`/`signatureHelp` closed 2026-08-26 — see below). Only hover/
-      completion/codeAction(+resolve)/definition/declaration/typeDefinition/implementation/
+      `implementation`/`signatureHelp` closed 2026-08-26; `references`/`documentSymbol`/
+      `workspace/symbol` plus a capabilities-object/completion-context hygiene pass closed
+      2026-08-26 — see below). Only hover/completion/codeAction(+resolve)/definition/
+      declaration/typeDefinition/implementation/references/documentSymbol/workspace-symbol/
       rename/switchSourceHeader/executeCommand/signatureHelp are ever sent. Still missing:
       `semanticTokens` full/delta/range (highlighting stays tree-sitter-only, never
       server-informed — matters where tree-sitter can't disambiguate, e.g. C++ template
       vs. less-than); `inlayHint`; `codeLens`; `documentHighlight` (no "highlight all refs
-      to symbol under point" in the current buffer); `workspace/symbol` (project-wide
-      go-to-symbol is text-search only); `callHierarchy`/`typeHierarchy`; and
+      to symbol under point" in the current buffer); `callHierarchy`/`typeHierarchy`; and
       `documentFormatting`/`rangeFormatting`/`onTypeFormatting` (`save-buffer` formatting
       only shells out to an external formatter binary via `FormatOnSave.h`, never asks a
       server with formatting built in — gopls/rust-analyzer/tsserver users need redundant
@@ -66,13 +67,53 @@ Notcurses.
       `ExtractSignatureHelp`, same "already plain, no BufferView session" shape as
       `lsp-hover`); auto-triggering it after typing `(`/`,` inside a call, the way
       completion's own ghost text auto-triggers off `completionDebounceTimer_`, is a
-      documented follow-up, not done here.
-      `lsp-goto-declaration`/`lsp-goto-type-definition`/`lsp-goto-implementation` are
-      likewise M-x-only (no default binding to borrow the way `M-.` covers
-      goto-definition), sharing `BufferView::RequestDefinitionAtPoint`'s request/select/
-      jump machinery via its new `LspLocationKind` parameter. Pull diagnostics
-      (`textDocument/diagnostic`) also unsupported — harmless while every configured
-      server pushes, a real gap only if one doesn't.
+      documented follow-up, not done here. Pull diagnostics (`textDocument/diagnostic`)
+      also unsupported — harmless while every configured server pushes, a real gap only if
+      one doesn't. 2026-08-26 (closed same day it was flagged): the direct-subprocess
+      `LspClient` path (as opposed to a broker-owned connection) previously had no
+      graceful `shutdown`/`exit` handshake at editor exit at all — it just let the child
+      get killed by `ChildProcess`'s destructor. `LspManager::Shutdown()` (called once from
+      `main.cpp`'s post-`Run()` sequence, before local teardown) now sends real
+      `"shutdown"`+`"exit"` frames to every *directly-spawned* client, mirroring
+      `LspBroker::Shutdown()`'s own fire-both-frames-without-waiting-for-the-response
+      pattern exactly (there is no live `EventLoop::Run()` left at that point to wait
+      with — `Transport::WriteFrame`'s own bounded stall timeout is what keeps this from
+      hanging, and `ChildProcess::~ChildProcess()`'s existing close-stdin/poll/SIGKILL
+      escalation is still what actually bounds the wait for the process to exit, unchanged
+      by this addition). A broker-backed client (`LspManager::brokerBackedLanguages_`,
+      stamped in `ClientForLanguage` at the one call site that already knows the
+      distinction) is correctly *never* sent shutdown/exit — that server is shared with
+      other `ned` processes and the broker daemon itself, and must outlive this one.
+      tmux-verified live both ways: a direct-spawned clangd was confirmed as a real child
+      process (`pstree`) that exits promptly on `C-x C-c` with no hang; a broker-backed
+      clangd (parented to the broker daemon) was confirmed to keep running, untouched,
+      after `ned` exited normally.
+      2026-08-26: `find-references`/`lsp-find-references` — `project-find-references`
+      (`M-?`) now tries a real `textDocument/references` first when a language server is
+      running for the buffer (`LspManager::RequestReferences`), falling back to the
+      original RE2 text scan only when none is (mirrors `SwitchHeaderSource`'s own
+      "LSP is a nice-to-have accelerant, not the only path" precedent — unlike
+      `lsp-goto-definition`/etc., which refuse outright with no server). `lsp-goto-symbol`
+      (`M-g i`, real Emacs' own `imenu` binding) sends `textDocument/documentSymbol` and
+      opens a `project-find-file`-style fuzzy picker over the results.
+      `lsp-workspace-symbol` (`C-c l w`) sends `workspace/symbol`, live-re-querying
+      (debounced via the same `LspCompletionDebounceMs()` ghost-text completion already
+      uses) as the query is typed, since the server does its own matching rather than
+      handing back a full list to filter locally. Both share `LspContent.h`'s
+      `ExtractSymbols`, which parses all three response shapes the spec allows
+      (hierarchical `DocumentSymbol[]`, flat `SymbolInformation[]`, and 3.17's
+      range-optional `WorkspaceSymbol[]`) uniformly.
+      Also 2026-08-26: `lsp-goto-declaration`/`lsp-goto-type-definition`/
+      `lsp-goto-implementation` gained default bindings (`C-c l d`/`C-c l t`/`C-c l i`,
+      previously M-x-only); `BuildInitializeParams`' advertised capabilities object
+      previously declared only `completion`/`codeAction`/`window.workDoneProgress` despite
+      this client sending/handling hover/definition/declaration/typeDefinition/
+      implementation/references/rename/signatureHelp/publishDiagnostics and
+      `workspace/configuration`/`workspace/executeCommand` — all now declared too (harmless
+      against clangd's own permissive handling either way, confirmed before and after, but
+      a capability-strict server is entitled to assume otherwise); `textDocument/completion`
+      requests now carry `context: {triggerKind: 1}` (every call site here is a manual/
+      explicit trigger, never a tracked trigger character).
 - [ ] **LSP edit-application gaps** (2026-08-25 audit) — `ApplyCodeAction`
       (`BufferView.cpp`) outright refuses any code action whose edit touches more than
       one file, unlike rename, which does apply multi-file edits correctly; rename
@@ -90,7 +131,10 @@ Notcurses.
 - [ ] **Multibuffer gaps**: no full-commit diff view (browsing one commit's whole diff
       from `*vcs log*`, not just the working tree); no result cap/warning on
       `project-find-references` for a very common identifier (a huge match set builds a
-      proportionally huge composite buffer); `VisitResultUnderPoint`'s jump-to-source
+      proportionally huge composite buffer) — still true for its RE2 text-scan fallback
+      path (no LSP server running for the buffer); the real `textDocument/references` path
+      added 2026-08-26 has the same gap in principle but is bounded by whatever the server
+      itself returns, not a raw project-wide regex sweep. `VisitResultUnderPoint`'s jump-to-source
       stays line-granularity even though `Buffer::ExcerptRange` already carries the
       exact source byte range that would let it preserve the intra-line column.
 - [ ] A real visual side-by-side 3-way merge/diff view. `AutoMerge` auto-resolves the

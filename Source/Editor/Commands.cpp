@@ -2166,6 +2166,19 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           context.interactiveRequest = InteractiveRequest::LspGotoImplementation;
                       });
 
+    // symbol-search follow-up: two more one-shot direct actions --
+    // BufferView owns the actual request/picker session for both (see
+    // InteractiveRequest::LspGotoSymbol/LspWorkspaceSymbol's own doc
+    // comment in Command.h).
+    registry.Register("lsp-goto-symbol", "Jump to a symbol in the current buffer, via the language server (textDocument/documentSymbol).",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::LspGotoSymbol;
+                      });
+    registry.Register("lsp-workspace-symbol", "Search for a symbol across the whole project, via the language server (workspace/symbol).",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::LspWorkspaceSymbol;
+                      });
+
     registry.Register("lsp-rename", "Rename the symbol at point across every file the language server reports it in.",
                       [](CommandContext& context) {
                           context.interactiveRequest = InteractiveRequest::LspRename;
@@ -3106,6 +3119,24 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("ESC ."), "lsp-goto-definition");
     keymap.Bind(ParseKeySequence("M-?"), "project-find-references"); // real Emacs' own xref-find-references binding
     keymap.Bind(ParseKeySequence("ESC ?"), "project-find-references");
+    // declaration/typeDefinition/implementation-keybindings follow-up: none
+    // of the three has a standard real-Emacs binding to align with (they're
+    // eglot/lsp-mode extensions, not core xref commands) -- "C-c l" as a new
+    // mnemonic prefix ("l" for LSP), matching this codebase's own existing
+    // "C-c v"/"C-c T"/"C-c A" per-subsystem-prefix convention. Confirmed free
+    // (grepped the full bind list in this function): no existing "C-c l"
+    // binding at all, only the unrelated "C-c C-l" chord (open-link-at-point).
+    keymap.Bind(ParseKeySequence("C-c l d"), "lsp-goto-declaration");
+    keymap.Bind(ParseKeySequence("C-c l t"), "lsp-goto-type-definition");
+    keymap.Bind(ParseKeySequence("C-c l i"), "lsp-goto-implementation");
+    // symbol-search follow-up: "M-g i" is real Emacs' own default binding
+    // for `imenu` (goto-map, Emacs 28+) -- lsp-goto-symbol is this
+    // codebase's in-buffer symbol picker, the same role. lsp-workspace-symbol
+    // has no vanilla-Emacs default to align with (imenu has no project-wide
+    // counterpart built in) -- "C-c l w" continues the "C-c l" mnemonic
+    // prefix just established above ("w" for workspace).
+    keymap.Bind(ParseKeySequence("M-g i"), "lsp-goto-symbol");
+    keymap.Bind(ParseKeySequence("C-c l w"), "lsp-workspace-symbol");
     // header-source-switching follow-up: "M-o" is free (grepped the full
     // bind list in this function) and matches the VS Code/CLion C/C++
     // extensions' own Alt+O convention for this exact action -- no

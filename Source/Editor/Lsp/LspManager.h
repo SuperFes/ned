@@ -296,6 +296,16 @@ class LspManager {
     void RequestImplementation(text::Buffer& buffer, std::size_t byteOffset, DefinitionCallback callback,
                                const std::string& serverKey = {});
 
+    // find-references follow-up: same ResolvedLocation/DefinitionCallback
+    // shape as the four above -- textDocument/references returns a bare
+    // Location[] (never LocationLink[]), which ExtractDefinitionLocations
+    // already parses uniformly alongside the other two shapes. Always sends
+    // "context": {"includeDeclaration": true} -- the declaration/definition
+    // site itself is a legitimate "reference" a caller building a full usage
+    // list wants included, matching real Emacs xref-find-references/eglot's
+    // own default.
+    void RequestReferences(text::Buffer& buffer, std::size_t byteOffset, DefinitionCallback callback, const std::string& serverKey = {});
+
     // signature-help follow-up. Same "resolve purely from bufferState_"
     // shape as RequestHover, and the exact same callback shape too --
     // ExtractSignatureHelp (LspContent.h) already reduces the response to
@@ -347,6 +357,65 @@ class LspManager {
     void RequestRename(text::Buffer& buffer, std::size_t byteOffset, const std::string& newName, RenameCallback callback,
                        const std::string& serverKey = {});
 
+    // symbol-search follow-up. A SymbolEntry (LspContent.h) with its own uri
+    // already resolved to a real filesystem path -- mirrors ResolvedLocation's
+    // own reasoning (LspManager owns the uri<->path boundary, callers never
+    // see a raw uri). A result whose uri doesn't resolve is dropped, not
+    // kept with a nonsense path -- matches ResolvedLocation's own "skip a
+    // malformed entry" convention rather than SendLocationRequest's stricter
+    // rename-only "refuse the whole batch" one (a symbol picker losing one
+    // unresolvable entry out of many is a minor degrade, not a correctness
+    // risk the way silently applying half a rename would be).
+    struct SymbolResult {
+        std::string           name;
+        std::string           containerName;
+        int                   kind = 0;
+        std::filesystem::path path;
+        LspPosition           position;
+    };
+    using SymbolCallback = std::function<void(std::vector<SymbolResult> symbols)>;
+
+    // Sent for lsp-goto-symbol. Same "resolve purely from bufferState_"
+    // shape as RequestHover/RequestDefinition -- no position parameter
+    // (textDocument/documentSymbol takes only the document itself).
+    // serverKey: see RequestHover's own doc comment above.
+    void RequestDocumentSymbols(text::Buffer& buffer, SymbolCallback callback, const std::string& serverKey = {});
+
+    // Sent for lsp-workspace-symbol. workspace/symbol has no textDocument/
+    // position of its own at all -- buffer is only used to resolve which
+    // running server to ask (ResolveSyncState, same as every other request
+    // here), matching this client's existing "no multi-root workspace,
+    // one server per language" scope cut: a query is sent to exactly one
+    // server, never fanned out and merged across every language server the
+    // project happens to have running. serverKey: see RequestHover's own
+    // doc comment above.
+    void RequestWorkspaceSymbols(text::Buffer& buffer, const std::string& query, SymbolCallback callback,
+                                 const std::string& serverKey = {});
+
+    // graceful-lsp-shutdown follow-up. Called once, synchronously, from
+    // main.cpp's post-Run() shutdown sequence, before this LspManager (and
+    // every LspClient it owns) is destroyed by ordinary local-variable
+    // teardown. For every *directly-spawned* running client (never a
+    // broker-backed one -- see brokerBackedLanguages_'s own doc comment: a
+    // broker-owned server is shared with other ned processes and the broker
+    // daemon itself, and must outlive this one), sends a real LSP
+    // "shutdown" request immediately followed by "exit", mirroring
+    // LspBroker::Shutdown()'s own TearDownEntry pattern exactly --
+    // including that v1 deliberately does not wait for the shutdown
+    // response before also sending exit (see that method's own doc comment
+    // for why: no live EventLoop::Run() is pumping Post-marshaled callbacks
+    // at this point in shutdown, so there is nothing to wait *with* --
+    // Transport::WriteFrame's own bounded stall timeout is what keeps
+    // sending these two frames from ever hanging). The actual bounded wait
+    // for the server to have genuinely exited comes from the same place it
+    // always has: ChildProcess::~ChildProcess()'s close-stdin/poll/SIGKILL-
+    // escalation sequence, which fires the instant this LspManager's own
+    // clients_ map is destroyed right after this method returns -- this
+    // method only adds the courtesy protocol goodbye in front of that
+    // already-bounded, already-battle-tested teardown, it doesn't replace
+    // or extend it.
+    void Shutdown();
+
     // Public primarily for tests -- mirrors LspClient::DispatchFrame's own
     // "public primarily for tests" precedent (see that method's doc comment
     // in LspClient.h). Registers an already-constructed LspClient for
@@ -361,9 +430,13 @@ class LspManager {
     // already registered for language. workspaceConfiguration mirrors what
     // ClientForLanguage would have loaded from ProjectSettings -- lets a test
     // exercise the workspace/configuration handler's real section-resolution
-    // logic without a real .ned/settings.json on disk.
+    // logic without a real .ned/settings.json on disk. graceful-lsp-shutdown
+    // follow-up: brokerBacked lets a test register a client as broker-owned
+    // (Shutdown()'s own skip case) without needing a real broker connection
+    // -- defaults to false, so every existing call site (an ordinary
+    // direct-spawn stand-in) keeps compiling and behaving unchanged.
     LspClient& SetClientForTesting(std::string language, std::unique_ptr<LspClient> client,
-                                   const Json& workspaceConfiguration = Json::object());
+                                   const Json& workspaceConfiguration = Json::object(), bool brokerBacked = false);
 
     // LspManagerTest-broker-hermeticity follow-up: routes ClientForLanguage's
     // real spawn path's TryConnectToBroker call at a caller-chosen path
@@ -505,8 +578,12 @@ class LspManager {
     // position encoding, response parsing via ExtractDefinitionLocations,
     // uri-to-path resolution) is identical across all four requests per the
     // LSP spec.
+    // find-references follow-up: extraParams (default empty, a no-op merge)
+    // is merge_patch'd into the request's own params object after the shared
+    // textDocument/position pair is built -- lets RequestReferences add its
+    // "context" field without every other caller's params shape changing.
     void SendLocationRequest(const std::string& method, text::Buffer& buffer, std::size_t byteOffset, DefinitionCallback callback,
-                             const std::string& serverKey);
+                             const std::string& serverKey, const Json& extraParams = Json::object());
 
     // prose-checking follow-up: flattens every source language's current
     // diagnostics slice for buffer (diagnosticsBySource_[&buffer]) into one
@@ -566,6 +643,18 @@ class LspManager {
     std::optional<std::filesystem::path> brokerSocketPathOverrideForTesting_;
 
     std::unordered_map<std::string, std::unique_ptr<LspClient>> clients_; // keyed by language
+
+    // graceful-lsp-shutdown follow-up: languages whose current clients_
+    // entry is a connection to an already-running LSP broker daemon rather
+    // than a subprocess this LspManager spawned itself -- Shutdown() must
+    // never send "shutdown"/"exit" to one of these, since the broker (and
+    // whichever other ned processes are also attached to it) still needs
+    // that server running after this process exits. Stamped in
+    // ClientForLanguage right where that distinction is actually known
+    // (TryConnectToBroker succeeding vs. falling through to the direct-spawn
+    // fallback); cleared in ClientDisconnected alongside clients_ itself, so
+    // a stale entry can never outlive the client it described.
+    std::unordered_set<std::string> brokerBackedLanguages_;
 
     // prose-checking follow-up: outer key is the buffer, inner key is the
     // server ("cpp", kProseLanguageKey, ...) -- a buffer now has up to two

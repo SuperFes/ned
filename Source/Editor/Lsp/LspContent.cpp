@@ -125,7 +125,158 @@ namespace {
         return edits;
     }
 
+    // symbol-search follow-up. Recurses a single DocumentSymbol object
+    // (possibly with "children") into out, threading parentName down as
+    // each child's own containerName -- the top-level call passes "" (a
+    // root symbol has no container).
+    void CollectDocumentSymbol(const Json& item, const std::string& ownUri, const std::string& parentName,
+                               std::vector<SymbolEntry>& out) {
+        if (!item.is_object()) {
+            return;
+        }
+        const auto nameIt = item.find("name");
+        if (nameIt == item.end() || !nameIt->is_string()) {
+            return;
+        }
+        const std::string name = nameIt->get<std::string>();
+
+        // selectionRange is the symbol's own identifier -- what a caret
+        // should land on, the same "precise, not the whole enclosing
+        // block" reasoning ExtractDefinitionLocations applies to
+        // targetSelectionRange over targetRange.
+        const Json& selectionRange = item.value("selectionRange", item.value("range", Json::object()));
+        out.push_back(SymbolEntry{
+            .name          = name,
+            .containerName = parentName,
+            .kind          = item.value("kind", 0),
+            .uri           = ownUri,
+            .position      = PositionFromJson(selectionRange.value("start", Json::object())),
+        });
+
+        if (const auto childrenIt = item.find("children"); childrenIt != item.end() && childrenIt->is_array()) {
+            for (const Json& child : *childrenIt) {
+                CollectDocumentSymbol(child, ownUri, name, out);
+            }
+        }
+    }
+
+    // symbol-search follow-up. Parses one SymbolInformation/WorkspaceSymbol
+    // item -- both carry "name"/"kind"/"location"/optional "containerName"
+    // at the top level, differing only in whether "location" is guaranteed
+    // to carry a "range" (SymbolInformation always does; a WorkspaceSymbol
+    // may send {uri} alone). Appends nothing for a malformed entry (missing
+    // "name", or a "location" missing "uri" entirely).
+    void CollectFlatSymbol(const Json& item, std::vector<SymbolEntry>& out) {
+        if (!item.is_object()) {
+            return;
+        }
+        const auto nameIt     = item.find("name");
+        const auto locationIt = item.find("location");
+        if (nameIt == item.end() || !nameIt->is_string() || locationIt == item.end() || !locationIt->is_object()) {
+            return;
+        }
+        const auto uriIt = locationIt->find("uri");
+        if (uriIt == locationIt->end() || !uriIt->is_string()) {
+            return;
+        }
+        LspPosition position{}; // value-initialized to {0, 0} -- see this function's own doc comment on WorkspaceSymbol's optional range
+        if (const auto rangeIt = locationIt->find("range"); rangeIt != locationIt->end() && rangeIt->is_object()) {
+            position = PositionFromJson(rangeIt->value("start", Json::object()));
+        }
+        out.push_back(SymbolEntry{
+            .name          = nameIt->get<std::string>(),
+            .containerName = item.value("containerName", std::string()),
+            .kind          = item.value("kind", 0),
+            .uri           = uriIt->get<std::string>(),
+            .position      = position,
+        });
+    }
+
 } // namespace
+
+std::string_view SymbolKindLabel(int kind) {
+    // LSP SymbolKind, 1-26 per the spec (3.17) -- every currently defined
+    // value gets its own word; nothing else in this codebase needs the
+    // numeric form once a picker has this label, so no reverse mapping.
+    switch (kind) {
+        case 1:
+            return "file";
+        case 2:
+            return "module";
+        case 3:
+            return "namespace";
+        case 4:
+            return "package";
+        case 5:
+            return "class";
+        case 6:
+            return "method";
+        case 7:
+            return "property";
+        case 8:
+            return "field";
+        case 9:
+            return "constructor";
+        case 10:
+            return "enum";
+        case 11:
+            return "interface";
+        case 12:
+            return "function";
+        case 13:
+            return "variable";
+        case 14:
+            return "constant";
+        case 15:
+            return "string";
+        case 16:
+            return "number";
+        case 17:
+            return "boolean";
+        case 18:
+            return "array";
+        case 19:
+            return "object";
+        case 20:
+            return "key";
+        case 21:
+            return "null";
+        case 22:
+            return "enum member";
+        case 23:
+            return "struct";
+        case 24:
+            return "event";
+        case 25:
+            return "operator";
+        case 26:
+            return "type parameter";
+        default:
+            return "symbol";
+    }
+}
+
+std::vector<SymbolEntry> ExtractSymbols(const Json& result, const std::string& ownUri) {
+    std::vector<SymbolEntry> entries;
+    if (!result.is_array()) {
+        return entries;
+    }
+    for (const Json& item : result) {
+        if (!item.is_object()) {
+            continue;
+        }
+        // DocumentSymbol has "selectionRange"; SymbolInformation/WorkspaceSymbol
+        // have "location" instead -- the one field that tells the two wire
+        // shapes apart (both otherwise carry "name"/"kind").
+        if (item.contains("location")) {
+            CollectFlatSymbol(item, entries);
+        }
+        else {
+            CollectDocumentSymbol(item, ownUri, std::string(), entries);
+        }
+    }
+    return entries;
+}
 
 std::optional<std::string> ExtractHoverText(const Json& result) {
     if (result.is_null() || !result.contains("contents")) {
