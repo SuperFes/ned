@@ -51,9 +51,19 @@ class AcpPanel : public Widget {
     }
 
   private:
+    // ACP round-1-live-validation follow-up: Accent/Hint widen this past the
+    // original three buckets so an agent's own words (Accent) and its plan
+    // steps (Hint) read as visually distinct from a plain UserMessage echo,
+    // not flattened into the same Plain style -- a small, low-risk step
+    // toward the transcript reading as less generic/interchangeable across
+    // entry kinds. See ROADMAP.md's "AI-assisted editing (ACP) gaps" for the
+    // bigger, deliberately-not-attempted-yet ideas this doesn't cover
+    // (per-agent theming, distinguishing agent_thought_chunk).
     enum class DisplayStyle { Plain,
                               Dim,
-                              Warning };
+                              Warning,
+                              Accent,
+                              Hint };
     struct DisplayLine {
         std::string  text;
         DisplayStyle style;

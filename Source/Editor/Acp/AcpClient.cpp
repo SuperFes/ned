@@ -123,6 +123,13 @@ void AcpClient::DispatchFrame(const std::string& frameText) {
         return;
     }
 
+    // Any well-formed frame at all -- a response, a notification, an
+    // agent-initiated request -- is proof the agent is alive and working.
+    // See ExpireStaleRequests's doc comment for why this matters: a
+    // long-running tool call that streams tool_call_update chatter must not
+    // trip the same stale-request timeout a genuinely hung connection would.
+    lastActivityAt_ = std::chrono::steady_clock::now();
+
     if (message.contains("id") && (message.contains("result") || message.contains("error"))) {
         const auto it = pending_.find(message["id"].get<int>());
         if (it == pending_.end()) {
@@ -190,10 +197,16 @@ void AcpClient::SendRequest(const std::string& method, Json params, ResponseCall
 void AcpClient::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
     // subprocess-hang-protection follow-up -- see LspClient::ExpireStaleRequests's
     // identical reasoning/collect-then-invoke shape.
-    const std::chrono::steady_clock::time_point   now = std::chrono::steady_clock::now();
+    const std::chrono::steady_clock::time_point now    = std::chrono::steady_clock::now();
+    const std::chrono::steady_clock::time_point cutoff = now - maxAge;
+    // A request is only truly stale if it's old AND nothing at all has been
+    // heard from the agent recently either -- see this method's doc comment.
+    if (lastActivityAt_ > cutoff) {
+        return;
+    }
     std::vector<std::pair<int, ResponseCallback>> expired;
     for (auto it = pending_.begin(); it != pending_.end();) {
-        if (now - it->second.sentAt >= maxAge) {
+        if (it->second.sentAt <= cutoff) {
             expired.emplace_back(it->first, std::move(it->second.callback));
             it = pending_.erase(it);
         }

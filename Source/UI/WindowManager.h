@@ -262,6 +262,17 @@ class WindowManager {
     // over the OverlayHost-owned AcpPanel) lives above this class entirely.
     void SetOnAcpPanelToggle(std::function<void()> onToggle);
 
+    // ACP round-1-live-validation follow-up: lets SetAcpManager's own
+    // SetOnPermissionRequest wiring below know whether the OverlayHost-owned
+    // AcpPanel (main.cpp's, not owned here either) currently has focus --
+    // when it does, AcpPanel::OnEvent resolves the prompt itself (it already
+    // renders it read-only via AcpManager::PendingPermissionPrompt()), so the
+    // existing focused-pane echo-area routing is skipped rather than fighting
+    // over the same request. Unset is a safe no-op (checker treated as
+    // "always false"), same convention as every other Set* hook -- existing
+    // pane-routing behavior is unchanged until main.cpp wires this.
+    void SetAcpPanelFocusChecker(std::function<bool()> checker);
+
     // DAP round 2: same "forwarded to every pane, present and future" shape
     // as SetOnAcpPanelToggle immediately above -- dap-toggle-console can
     // fire from whichever pane has focus, and the handler (main.cpp's
@@ -618,6 +629,7 @@ class WindowManager {
     std::function<void(const Theme&)> themeApplier_;             // see SetThemeApplier
     std::function<void()>             onTerminalToggle_;         // see SetOnTerminalToggle
     std::function<void()>             onAcpPanelToggle_;         // see SetOnAcpPanelToggle
+    std::function<bool()>             acpPanelFocused_;          // see SetAcpPanelFocusChecker
     std::function<void()>             onDapConsoleToggle_;       // see SetOnDapConsoleToggle
     std::function<void()>             onBufferListToggle_;       // see SetOnBufferListToggle
     std::function<void(std::optional<WhichKeyHint>)> onPrefixHintChanged_; // see SetOnPrefixHintChanged

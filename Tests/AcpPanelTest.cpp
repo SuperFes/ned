@@ -253,3 +253,64 @@ TEST_CASE("AcpPanel shows the pending permission prompt's options, display-only"
     REQUIRE(foundDescription);
     REQUIRE(foundOption);
 }
+
+// ACP round-1-live-validation follow-up: OnEvent itself resolving a pending
+// permission (below) is the actual fix for the "deliberate v1 cut" the class
+// header used to document -- WindowManager::SetAcpPanelFocusChecker is what
+// decides whether a keystroke is routed here instead of BufferView's own
+// echo-area flow, a routing concern this panel's own OnEvent doesn't need to
+// know about.
+TEST_CASE("AcpPanel's digit keys resolve a pending permission prompt", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code");
+
+    const Json request = {
+        {"jsonrpc", "2.0"},
+        {"id", 3},
+        {"method", "session/request_permission"},
+        {"params",
+         {{"sessionId", "s1"},
+          {"toolCall", {{"title", "Edit main.cpp"}}},
+          {"options",
+           Json::array({Json{{"optionId", "deny"}, {"name", "Deny"}, {"kind", "reject_once"}},
+                        Json{{"optionId", "allow-once"}, {"name", "Allow once"}, {"kind", "allow_once"}}})}}},
+    };
+    fixture.client->DispatchFrame(request.dump());
+
+    REQUIRE(fixture.manager.PendingPermissionPrompt().has_value());
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Character('2')));
+    REQUIRE_FALSE(fixture.manager.PendingPermissionPrompt().has_value());
+
+    const Json response = fixture.reader.Next();
+    REQUIRE(response["id"] == 3);
+    REQUIRE(response["result"]["outcome"]["outcome"] == "selected");
+    REQUIRE(response["result"]["outcome"]["optionId"] == "allow-once");
+}
+
+TEST_CASE("AcpPanel's Escape cancels a pending permission prompt instead of toggling the panel", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code");
+    int toggles = 0;
+    fixture.panel.SetOnToggleRequest([&toggles] { ++toggles; });
+
+    const Json request = {
+        {"jsonrpc", "2.0"},
+        {"id", 3},
+        {"method", "session/request_permission"},
+        {"params",
+         {{"sessionId", "s1"},
+          {"toolCall", {{"title", "Edit main.cpp"}}},
+          {"options", Json::array({Json{{"optionId", "allow-once"}, {"name", "Allow once"}, {"kind", "allow_once"}}})}}},
+    };
+    fixture.client->DispatchFrame(request.dump());
+
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Escape()));
+    REQUIRE(toggles == 0); // cancelled the permission, did not close the panel
+    REQUIRE_FALSE(fixture.manager.PendingPermissionPrompt().has_value());
+
+    const Json response = fixture.reader.Next();
+    REQUIRE(response["id"] == 3);
+    REQUIRE(response["result"]["outcome"]["outcome"] == "cancelled");
+}

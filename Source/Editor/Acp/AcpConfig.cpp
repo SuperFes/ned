@@ -1,5 +1,6 @@
 #include "AcpConfig.h"
 
+#include <algorithm>
 #include <mutex>
 #include <unordered_map>
 #include <utility>
@@ -30,6 +31,17 @@ std::optional<std::vector<std::string>> AcpAgentCommand(const std::string& name)
         return std::nullopt;
     }
     return it->second;
+}
+
+std::vector<std::string> AcpAgentNames() {
+    const std::lock_guard<std::mutex> lock(g_mutex);
+    std::vector<std::string>          names;
+    names.reserve(g_commands.size());
+    for (const auto& [name, argv] : g_commands) {
+        names.push_back(name);
+    }
+    std::sort(names.begin(), names.end());
+    return names;
 }
 
 } // namespace ned::editor::acp

@@ -566,6 +566,10 @@ void WindowManager::SetOnAcpPanelToggle(std::function<void()> onToggle) {
     }
 }
 
+void WindowManager::SetAcpPanelFocusChecker(std::function<bool()> checker) {
+    acpPanelFocused_ = std::move(checker);
+}
+
 void WindowManager::SetOnDapConsoleToggle(std::function<void()> onToggle) {
     onDapConsoleToggle_ = std::move(onToggle);
     for (Pane* pane : Leaves()) {
@@ -665,6 +669,13 @@ void WindowManager::SetAcpManager(editor::acp::AcpManager* acpManager) {
     // BufferView captured when this was called could be a pane that's
     // since been split away or closed.
     acpManager->SetOnPermissionRequest([this](const editor::acp::AcpManager::PermissionPrompt& prompt) {
+        // ACP round-1-live-validation follow-up: the AcpPanel, when focused,
+        // resolves this itself (AcpPanel::OnEvent) -- see
+        // SetAcpPanelFocusChecker's own doc comment. Routing to the pane's
+        // echo area too would fight over the same single pending request.
+        if (acpPanelFocused_ && acpPanelFocused_()) {
+            return;
+        }
         Pane* pane = FocusedPane();
         if (pane == nullptr && !Leaves().empty()) {
             pane = Leaves().front();

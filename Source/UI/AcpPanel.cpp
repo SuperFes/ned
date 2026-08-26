@@ -17,6 +17,23 @@ namespace {
         return !chord.Control && !chord.Meta && chord.Special == editor::SpecialKey::None && chord.Codepoint != 0;
     }
 
+    // ACP round-1-live-validation follow-up: a bare line count, not a real
+    // diff -- see FormatTranscript's Kind::ToolCall case for why a full
+    // diff view (unified-diff-style +/- lines) is deliberately not attempted
+    // here yet. Empty text counts as zero lines, not one.
+    int CountLines(const std::string& text) {
+        if (text.empty()) {
+            return 0;
+        }
+        int count = 1;
+        for (const char ch : text) {
+            if (ch == '\n') {
+                ++count;
+            }
+        }
+        return count;
+    }
+
     constexpr int      kMinWidthForCloseButton = 8;
     constexpr int      kCloseOffset            = 4;    // column of '[' counted back from width, matches TerminalPanel's own offset
     constexpr char32_t kCloseIcon              = U'×'; // safe: one whole encoded glyph placed in exactly one Cell, not byte-indexed
@@ -52,6 +69,10 @@ Brush AcpPanel::BrushForStyle(DisplayStyle style) const {
             return Brush{.background = theme_.background, .foreground = theme_.commentForeground};
         case DisplayStyle::Warning:
             return Brush{.background = theme_.background, .foreground = theme_.diagnosticWarning};
+        case DisplayStyle::Accent:
+            return Brush{.background = theme_.background, .foreground = theme_.borderAccent.foreground};
+        case DisplayStyle::Hint:
+            return Brush{.background = theme_.background, .foreground = theme_.diagnosticHint};
         case DisplayStyle::Plain:
             break;
     }
@@ -81,7 +102,7 @@ std::vector<AcpPanel::DisplayLine> AcpPanel::FormatTranscript() const {
                     const std::size_t newlinePos = entry.text.find('\n', start);
                     const std::string line =
                         newlinePos == std::string::npos ? entry.text.substr(start) : entry.text.substr(start, newlinePos - start);
-                    lines.push_back({line, DisplayStyle::Plain});
+                    lines.push_back({line, DisplayStyle::Accent});
                     if (newlinePos == std::string::npos) {
                         break;
                     }
@@ -99,11 +120,24 @@ std::vector<AcpPanel::DisplayLine> AcpPanel::FormatTranscript() const {
                     text += " (" + entry.status + ")";
                 }
                 lines.push_back({text, DisplayStyle::Dim});
+                // A real diff view (actual +/- lines) is deliberately not
+                // attempted here -- this codebase has no reusable line-diff
+                // utility yet (ThreeWayMerge.h's LCS diff is a private
+                // implementation detail, not an exposed API), and building
+                // one from scratch is a bigger, separate piece of work. A
+                // line-count delta is still a concrete improvement over a
+                // bare status word -- confirms *something* changed and
+                // roughly how much, without a bare "(completed)".
+                if (entry.diffOldText && entry.diffNewText) {
+                    const int oldLines = CountLines(*entry.diffOldText);
+                    const int newLines = CountLines(*entry.diffNewText);
+                    lines.push_back({"  (" + std::to_string(oldLines) + " -> " + std::to_string(newLines) + " lines)", DisplayStyle::Dim});
+                }
                 break;
             }
             case Kind::Plan: {
                 for (const std::string& step : entry.planSteps) {
-                    lines.push_back({step, DisplayStyle::Plain});
+                    lines.push_back({step, DisplayStyle::Hint});
                 }
                 break;
             }
@@ -244,6 +278,35 @@ bool AcpPanel::OnEvent(const Event& event) {
     if (!chord) {
         return false;
     }
+
+    // ACP round-1-live-validation follow-up: while a permission prompt is
+    // pending, this panel resolves it directly rather than leaving
+    // resolution to BufferView's separate echo-area InputMode::
+    // AcpPermissionPrompt flow -- the "deliberate v1 cut" this class's own
+    // header comment used to document. WindowManager's SetAcpPanelFocusChecker
+    // wiring skips routing a new request to the focused pane's echo area
+    // whenever this panel has focus, so this is the only place such a
+    // keystroke lands in that case. Digit keys only, matching the numbered
+    // list FormatTranscript already renders -- no moving selection cursor
+    // the way BufferView's own flow has, so Enter is deliberately left alone
+    // (no obvious default option to pick without one).
+    if (acpManager_ && acpManager_->PendingPermissionPrompt()) {
+        const editor::acp::AcpManager::PermissionPrompt& pending = *acpManager_->PendingPermissionPrompt();
+        if (chord->Special == editor::SpecialKey::Escape) {
+            acpManager_->CancelPermissionPrompt();
+            return true;
+        }
+        if (IsPlainCharacter(*chord) && chord->Codepoint >= U'1' && chord->Codepoint <= U'9') {
+            const std::size_t index = static_cast<std::size_t>(chord->Codepoint - U'1');
+            if (index < pending.options.size()) {
+                acpManager_->ResolvePermissionPrompt(pending.options[index].optionId);
+            }
+            return true; // out-of-range digit: stay put, same as BufferView's own flow
+        }
+        // Anything else (typing into the composer, non-digit keys) falls
+        // through unhandled by this block.
+    }
+
     if (chord->Special == editor::SpecialKey::Escape) {
         if (onToggleRequest_) {
             onToggleRequest_();

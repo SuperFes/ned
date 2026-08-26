@@ -31,7 +31,7 @@ Notcurses.
 
 ## Open Items
 
-### Embedded language
+### Embedded Language
 
 - [ ] **Jank replaces Janet** — once possible, replace the internal scripting
       representation with [jank](https://github.com/jank-lang/jank).
@@ -130,6 +130,23 @@ Notcurses.
 - [ ] **No buffer-list/ibuffer-style management** — `switch-to-buffer` is a
       name-completion prompt only; no dedicated buffer-list buffer with mark/save/kill
       batch operations.
+- [ ] **Chrome-widget UTF-8 gap** (found 2026-08-26 during ACP work, next up for fixing):
+      `Border.cpp`'s `DrawBorderTitle` indexes its title string by raw byte
+      (`std::string(1, padded[i])` per `Cell`) and its length clamp (`.resize()`) cuts at
+      a byte offset that can split a multi-byte UTF-8 sequence in half — corrupts any
+      non-ASCII title (a project directory name, an agent name, ...) for every one of its
+      call sites (`AcpPanel`, `DebugConsolePanel`, `ListPopup`, `TerminalPanel`,
+      `ProjectSidebar`'s project-name label). `AcpPanel.cpp`'s transcript content rows and
+      its own prompt input row, and `DebugConsolePanel.cpp`'s equivalent content/input
+      rows, have the identical byte-indexed pattern — any non-ASCII character typed into
+      an agent prompt or appearing in a tool-call/transcript line renders as mojibake, not
+      the real character. Contrast: `Border.cpp`'s own frame-glyph drawing (`DrawBorder`,
+      not `DrawBorderTitle`) and `TabBar.cpp`'s tab labels already do this right —
+      codepoint-encoded one full glyph per `Cell` via `Text/Utf8.h`'s
+      `EncodeCodepointUtf8` — that's the existing in-codebase pattern to follow, not a new
+      design. The real editing surface (`BufferView`, via `Text/Grapheme.h`) is
+      unaffected; this is confined to these newer add-on panels' own title/content/input
+      rendering.
 - [ ] **No server/daemon mode** — no `emacsclient`-equivalent; one process per terminal,
       no way to keep a warm process (buffers, LSP connections, undo history) alive and
       attach a new terminal client to it.
@@ -271,18 +288,43 @@ LSP-against-the-wrong-toolchain prove it's needed in practice, not speculatively
 
 ### Collaboration & AI
 
-- [ ] **AI-assisted editing (ACP) gaps**: permission-prompt *resolution* stays in
-      `BufferView`'s echo-area flow (the chat panel only displays the pending prompt);
-      no scrollback in the panel; a completion-popover replacement for ghost text, an
-      M-x dropdown, and code-action lists are all still squeezed into the one-row
+- [ ] **AI-assisted editing (ACP) gaps** (2026-08-26: round 1 validated live against
+      Claude Code's own ACP adapter, `@agentclientprotocol/claude-agent-acp` — first
+      real agent exercised end to end, not just crafted-JSON tests). Fixed this round:
+      `HandleSessionUpdate`/`PushOrUpdateToolCall` no longer clobber a tool call's
+      title/status back to a generic fallback when a later `tool_call_update` omits
+      them (confirmed live — Claude's adapter routinely does); a tool call's `"diff"`
+      content item (`{path, oldText, newText}`) is now captured
+      (`TranscriptEntry::diffOldText`/`diffNewText`) and rendered as a line-count
+      summary in the panel (a real unified-diff view is still a follow-up — see below);
+      permission-prompt *resolution* now happens directly in `AcpPanel` when it has
+      focus (`WindowManager::SetAcpPanelFocusChecker`), not only `BufferView`'s
+      echo-area flow; a pending permission prompt (or any live agent chatter) no longer
+      trips `ExpireStaleRequests`' generic 30s timeout out from under a human still
+      deciding — confirmed live, this previously hard-failed any permission decision
+      that took a bit over 30 seconds; the "ACP agent:" prompt now Tab-completes
+      against `AcpConfig::AcpAgentNames()` instead of being pure free text (useful for
+      registering several accounts, e.g. `claude-personal`/`claude-work`/
+      `claude-consulting` — see below). Still open: no scrollback in the panel; a real
+      diff view (actual +/- lines, not just a line-count delta) has no reusable
+      line-diff utility to build on yet (`ThreeWayMerge.h`'s LCS diff is a private
+      implementation detail); a completion-popover replacement for ghost text, an M-x
+      dropdown, and code-action lists are all still squeezed into the one-row
       `EchoArea`; `terminal/*` tool-call support and `elicitation/create` structured
       forms are undeclared as client capabilities; no multiple concurrent agents/
-      sessions; no `session/load` history replay; `session/set_config_option`/
-      `session/set_mode` aren't surfaced to the user; no MCP server passthrough
-      (`session/new`'s `mcpServers` is always `[]`); the `session/update` sub-schema
-      isn't pinned against the authoritative ACP JSON schema, so `HandleSessionUpdate`'s
-      defensive parsing is expected to need widening once exercised against a real
-      agent. Separately: `Keymap::AmbiguousBindings()` is diagnostic-only (a
+      sessions (still one at a time, `Dap/`'s own precedent — revisit once a second
+      agent, e.g. OpenCode, is wired the same way); no `session/load` history replay;
+      `session/set_config_option`/`session/set_mode` aren't surfaced to the user; no
+      MCP server passthrough (`session/new`'s `mcpServers` is always `[]`); no
+      per-agent environment-variable override — `ChildProcess`'s `posix_spawn` always
+      forwards the parent's global `environ` (`ChildProcess.cpp:140`), so multiple
+      registered agents needing different credentials (e.g. separate Claude accounts)
+      need a shell-wrapper argv (`sh -c '<set the right env> exec ...'`) rather than
+      anything first-class; no per-agent "character" (a per-agent display-name/accent
+      color, distinguishing `agent_thought_chunk` from `agent_message_chunk`) — v1 only
+      widened `AcpPanel`'s own `DisplayStyle` (agent text/plan steps no longer share
+      the exact same style as a plain user-message echo), deliberately not a full
+      theming pass. Separately: `Keymap::AmbiguousBindings()` is diagnostic-only (a
       `CommandsTest.cpp` regression test), not enforcement — `Keymap::Bind` still lets a
       caller construct an unreachable-by-typing binding; a real structural fix (Emacs'
       own `define-key` semantics: reject/restructure a bind that would shadow an
@@ -291,7 +333,7 @@ LSP-against-the-wrong-toolchain prove it's needed in practice, not speculatively
 - [ ] **Real-time collaborative editing** (CRDT-based) — the biggest lift in this file;
       last.
 - [ ] VCS: "generalize the two-callback plugin shape past version control" (cloud CLIs,
-      Terraform, Docker) remains a framing, not a plan.
+      Terraform, Docker) remains an open idea, not a plan.
 
 ### Documentation & companion tooling
 
