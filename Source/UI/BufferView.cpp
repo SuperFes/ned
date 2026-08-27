@@ -9212,6 +9212,48 @@ bool BufferView::OnMouseEvent(const Event& event) {
         return true;
     }
 
+    // horizontal-wheel-scroll follow-up: same unconditional-of-InputMode
+    // shape as the vertical wheel case above. A no-op (but still consumed)
+    // once EffectiveWrapLines() is true -- a wrapped line never extends past
+    // the viewport width, matching ScrollToShowPointHorizontally's own
+    // guard, so leftColumn_ has nothing left to scroll.
+    if (mouse->button == MouseEvent::Button::WheelLeft || mouse->button == MouseEvent::Button::WheelRight) {
+        if (!EffectiveWrapLines()) {
+            constexpr std::size_t kWheelScrollColumns = 3;
+            if (mouse->button == MouseEvent::Button::WheelLeft) {
+                SetLeftColumn((leftColumn_ > kWheelScrollColumns) ? leftColumn_ - kWheelScrollColumns : 0);
+            }
+            else {
+                SetLeftColumn(leftColumn_ + kWheelScrollColumns);
+            }
+        }
+        return true;
+    }
+
+    // Middle-click-paste follow-up: X11/Wayland's own "click to insert the
+    // primary selection" convention, independent of the kill ring/system
+    // clipboard C-y uses. Point still moves to the click (matching plain
+    // left-click's own unconditional SetPoint below, ReadOnly included) even
+    // when there's nothing to paste (no primary-selection tool resolved, or
+    // an empty selection) -- only the insert itself is skipped, and only for
+    // a read-only buffer (InsertAtPoint throws there, with no command-
+    // registry catch net to fall back on at this call site).
+    if (mouse->button == MouseEvent::Button::Middle && mouse->motion == MouseEvent::Motion::Pressed) {
+        if (inputMode_ != InputMode::Normal) {
+            return false;
+        }
+        TakeFocus();
+        text::Buffer& buffer = activeBuffer_.Get();
+        buffer.ClearMark();
+        buffer.SetPoint(ByteOffsetForPoint(mouse->at));
+        if (!buffer.ReadOnly()) {
+            if (const std::optional<std::string> pasted = editor::PasteFromPrimarySelection()) {
+                buffer.InsertAtPoint(*pasted);
+            }
+        }
+        return true;
+    }
+
     if (inputMode_ != InputMode::Normal || mouse->button != MouseEvent::Button::Left) {
         return false;
     }

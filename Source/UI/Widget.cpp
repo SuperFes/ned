@@ -121,9 +121,19 @@ MouseEvent Event::mouse() const {
         case NCKEY_BUTTON5:
             result.button = MouseEvent::Button::WheelDown;
             break;
+        // horizontal-wheel-scroll follow-up: SGR mouse reporting's device
+        // group 4-7 (see notcurses' own in.c mouse_click()) puts tilt-wheel
+        // left/right here, buttons 6/7 -- xterm's own convention, the same
+        // one every mainstream terminal emitting SGR mouse reports follows.
+        case NCKEY_BUTTON6:
+            result.button = MouseEvent::Button::WheelLeft;
+            break;
+        case NCKEY_BUTTON7:
+            result.button = MouseEvent::Button::WheelRight;
+            break;
         default:
             result.button = MouseEvent::Button::None;
-            break; // includes NCKEY_MOTION and buttons 6-11 (unmapped)
+            break; // includes NCKEY_MOTION and buttons 8-11 (unmapped)
     }
 
     switch (input_.evtype) {

@@ -211,6 +211,12 @@ Event Mouse(int x, int y, MouseEvent::Button button, MouseEvent::Motion motion, 
         case MouseEvent::Button::WheelDown:
             input.id = NCKEY_BUTTON5;
             break;
+        case MouseEvent::Button::WheelLeft:
+            input.id = NCKEY_BUTTON6;
+            break;
+        case MouseEvent::Button::WheelRight:
+            input.id = NCKEY_BUTTON7;
+            break;
         case MouseEvent::Button::None:
             input.id = NCKEY_MOTION;
             break;

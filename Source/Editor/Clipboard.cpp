@@ -22,6 +22,9 @@ namespace {
     std::mutex                              g_pasteOverrideMutex;
     std::optional<std::vector<std::string>> g_pasteOverride;
 
+    std::mutex                              g_primaryPasteOverrideMutex;
+    std::optional<std::vector<std::string>> g_primaryPasteOverride;
+
     struct PlatformTools {
         std::vector<std::string> copyArgv;
         std::vector<std::string> pasteArgv;
@@ -78,6 +81,60 @@ namespace {
         }
 
         return g_detected; // nullopt
+    }
+
+    // Memoized separately from DetectPlatformTools -- deliberately narrower
+    // (Wayland-only, see Clipboard.h's own doc comment on
+    // ResolvedPrimarySelectionPasteCommand).
+    std::mutex                              g_primaryDetectMutex;
+    bool                                    g_primaryDetectResolved = false;
+    std::optional<std::vector<std::string>> g_primaryDetected;
+
+    std::optional<std::vector<std::string>> DetectPrimarySelectionTool() {
+        const std::lock_guard<std::mutex> lock(g_primaryDetectMutex);
+        if (g_primaryDetectResolved) {
+            return g_primaryDetected;
+        }
+        g_primaryDetectResolved = true;
+
+        if (EnvIsSet("WAYLAND_DISPLAY") && process::ResolveExecutable("wl-paste")) {
+            g_primaryDetected = std::vector<std::string>{"wl-paste", "--primary", "-n"};
+        }
+        return g_primaryDetected;
+    }
+
+    // Shared by PasteFromSystemClipboard/PasteFromPrimarySelection: spawns
+    // argv, drains it via ReadSome(readTimeout) until EOF (killing and
+    // returning nullopt on an idle timeout -- subprocess-hang-protection
+    // follow-up, see PasteFromSystemClipboard's own doc comment), and
+    // returns the accumulated output only on a clean (exit code 0) exit.
+    std::optional<std::string> RunPasteCommand(const std::vector<std::string>& argv, std::chrono::milliseconds readTimeout,
+                                                std::string_view toolLabel) {
+        try {
+            process::ChildProcess child(argv);
+            std::string           output;
+            while (true) {
+                const std::optional<std::string> chunk = child.ReadSome(readTimeout);
+                if (!chunk) {
+                    child.Kill();
+                    LogMessage(LogCategory::Subprocess, LogSeverity::Warning,
+                               std::string(toolLabel) + " tool timed out, killed: " + argv[0]);
+                    return std::nullopt;
+                }
+                if (chunk->empty()) {
+                    break; // EOF
+                }
+                output += *chunk;
+            }
+            const std::optional<int> exitCode = child.WaitForExit();
+            if (exitCode && *exitCode == 0) {
+                return output;
+            }
+        }
+        catch (const std::runtime_error&) {
+            // Not found / spawn failure.
+        }
+        return std::nullopt;
     }
 
     std::string Base64Encode(std::string_view data) {
@@ -159,6 +216,16 @@ void SetClipboardPasteCommand(std::vector<std::string> argv) {
     }
 }
 
+void SetClipboardPrimaryPasteCommand(std::vector<std::string> argv) {
+    const std::lock_guard<std::mutex> lock(g_primaryPasteOverrideMutex);
+    if (argv.empty()) {
+        g_primaryPasteOverride.reset();
+    }
+    else {
+        g_primaryPasteOverride = std::move(argv);
+    }
+}
+
 std::optional<std::vector<std::string>> ResolvedClipboardCopyCommand() {
     {
         const std::lock_guard<std::mutex> lock(g_copyOverrideMutex);
@@ -183,6 +250,16 @@ std::optional<std::vector<std::string>> ResolvedClipboardPasteCommand() {
         return tools->pasteArgv;
     }
     return std::nullopt;
+}
+
+std::optional<std::vector<std::string>> ResolvedPrimarySelectionPasteCommand() {
+    {
+        const std::lock_guard<std::mutex> lock(g_primaryPasteOverrideMutex);
+        if (g_primaryPasteOverride) {
+            return g_primaryPasteOverride;
+        }
+    }
+    return DetectPrimarySelectionTool();
 }
 
 void CopyToSystemClipboard(std::string_view text) {
@@ -214,39 +291,26 @@ std::optional<std::string> PasteFromSystemClipboard(std::chrono::milliseconds re
     if (!ClipboardEnabled()) {
         return std::nullopt;
     }
+    // subprocess-hang-protection follow-up: RunPasteCommand kills and
+    // returns nullopt on no data within readTimeout -- the tool is
+    // unresponsive (a real Wayland clipboard-manager failure mode) --
+    // rather than let a main-thread paste keystroke hang the whole editor.
     const std::optional<std::vector<std::string>> argv = ResolvedClipboardPasteCommand();
     if (!argv) {
         return std::nullopt;
     }
-    try {
-        process::ChildProcess child(*argv);
-        std::string           output;
-        while (true) {
-            const std::optional<std::string> chunk = child.ReadSome(readTimeout);
-            if (!chunk) {
-                // subprocess-hang-protection follow-up: no data within
-                // readTimeout -- the tool is unresponsive (a real Wayland
-                // clipboard-manager failure mode). Kill it (SIGKILL is
-                // unblockable, so this is bounded) rather than let a
-                // main-thread paste keystroke hang the whole editor.
-                child.Kill();
-                LogMessage(LogCategory::Subprocess, LogSeverity::Warning, "clipboard paste tool timed out, killed: " + (*argv)[0]);
-                return std::nullopt;
-            }
-            if (chunk->empty()) {
-                break; // EOF
-            }
-            output += *chunk;
-        }
-        const std::optional<int> exitCode = child.WaitForExit();
-        if (exitCode && *exitCode == 0) {
-            return output;
-        }
+    return RunPasteCommand(*argv, readTimeout, "clipboard paste");
+}
+
+std::optional<std::string> PasteFromPrimarySelection(std::chrono::milliseconds readTimeout) {
+    if (!ClipboardEnabled()) {
+        return std::nullopt;
     }
-    catch (const std::runtime_error&) {
-        // Not found / spawn failure.
+    const std::optional<std::vector<std::string>> argv = ResolvedPrimarySelectionPasteCommand();
+    if (!argv) {
+        return std::nullopt;
     }
-    return std::nullopt;
+    return RunPasteCommand(*argv, readTimeout, "primary-selection paste");
 }
 
 std::string BuildOsc52CopySequence(std::string_view text, bool wrapForTmux) {

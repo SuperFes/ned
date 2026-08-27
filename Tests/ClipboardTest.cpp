@@ -10,12 +10,15 @@
 using ned::editor::BuildOsc52CopySequence;
 using ned::editor::ClipboardEnabled;
 using ned::editor::CopyToSystemClipboard;
+using ned::editor::PasteFromPrimarySelection;
 using ned::editor::PasteFromSystemClipboard;
 using ned::editor::ResolvedClipboardCopyCommand;
 using ned::editor::ResolvedClipboardPasteCommand;
+using ned::editor::ResolvedPrimarySelectionPasteCommand;
 using ned::editor::SetClipboardCopyCommand;
 using ned::editor::SetClipboardEnabled;
 using ned::editor::SetClipboardPasteCommand;
+using ned::editor::SetClipboardPrimaryPasteCommand;
 
 namespace {
 
@@ -30,6 +33,7 @@ struct RestoreClipboardDisabled {
     ~RestoreClipboardDisabled() {
         SetClipboardCopyCommand({});
         SetClipboardPasteCommand({});
+        SetClipboardPrimaryPasteCommand({});
         SetClipboardEnabled(false);
     }
 };
@@ -139,4 +143,66 @@ TEST_CASE("PasteFromSystemClipboard kills and returns nullopt when the tool hang
     SetClipboardPasteCommand({"sh", "-c", "sleep 100"});
 
     REQUIRE_FALSE(PasteFromSystemClipboard(std::chrono::milliseconds(100)).has_value());
+}
+
+// middle-click-paste follow-up: PasteFromPrimarySelection/
+// SetClipboardPrimaryPasteCommand/ResolvedPrimarySelectionPasteCommand,
+// independent of the clipboard commands above.
+
+TEST_CASE("SetClipboardPrimaryPasteCommand registers an override independent of SetClipboardPasteCommand", "[Clipboard]") {
+    const RestoreClipboardDisabled restore;
+
+    SetClipboardPasteCommand({"my-clipboard-paste-tool"});
+    SetClipboardPrimaryPasteCommand({"my-primary-paste-tool", "-o"});
+
+    REQUIRE(ResolvedClipboardPasteCommand() == std::vector<std::string>{"my-clipboard-paste-tool"});
+    REQUIRE(ResolvedPrimarySelectionPasteCommand() == std::vector<std::string>{"my-primary-paste-tool", "-o"});
+}
+
+TEST_CASE("An empty argv clears the primary-paste override rather than disabling resolution", "[Clipboard]") {
+    const RestoreClipboardDisabled restore;
+
+    SetClipboardPrimaryPasteCommand({"a-made-up-primary-selection-tool-nobody-has-installed"});
+    REQUIRE(ResolvedPrimarySelectionPasteCommand() == std::vector<std::string>{"a-made-up-primary-selection-tool-nobody-has-installed"});
+
+    SetClipboardPrimaryPasteCommand({}); // clears the override -- falls through to auto-detection (Wayland-only), not to nullopt
+    REQUIRE(ResolvedPrimarySelectionPasteCommand() != std::vector<std::string>{"a-made-up-primary-selection-tool-nobody-has-installed"});
+}
+
+TEST_CASE("PasteFromPrimarySelection round-trips through a real subprocess", "[Clipboard]") {
+    const RestoreClipboardDisabled restore;
+
+    SetClipboardEnabled(true);
+    SetClipboardPrimaryPasteCommand({"sh", "-c", "printf %s 'primary selection text'"});
+
+    const std::optional<std::string> pasted = PasteFromPrimarySelection();
+    REQUIRE(pasted.has_value());
+    REQUIRE(*pasted == "primary selection text");
+}
+
+TEST_CASE("PasteFromPrimarySelection returns nullopt when disabled", "[Clipboard]") {
+    const RestoreClipboardDisabled restore;
+
+    SetClipboardEnabled(false);
+    SetClipboardPrimaryPasteCommand({"sh", "-c", "echo should-not-run"});
+
+    REQUIRE_FALSE(PasteFromPrimarySelection().has_value());
+}
+
+TEST_CASE("PasteFromPrimarySelection returns nullopt when the resolved command exits non-zero", "[Clipboard]") {
+    const RestoreClipboardDisabled restore;
+
+    SetClipboardEnabled(true);
+    SetClipboardPrimaryPasteCommand({"sh", "-c", "exit 1"});
+
+    REQUIRE_FALSE(PasteFromPrimarySelection().has_value());
+}
+
+TEST_CASE("PasteFromPrimarySelection kills and returns nullopt when the tool hangs past readTimeout", "[Clipboard]") {
+    const RestoreClipboardDisabled restore;
+
+    SetClipboardEnabled(true);
+    SetClipboardPrimaryPasteCommand({"sh", "-c", "sleep 100"});
+
+    REQUIRE_FALSE(PasteFromPrimarySelection(std::chrono::milliseconds(100)).has_value());
 }

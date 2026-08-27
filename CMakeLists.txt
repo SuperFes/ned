@@ -38,12 +38,16 @@ set(USE_STATIC OFF CACHE BOOL "" FORCE)
 # PATCH_COMMAND: legacy-terminal Ctrl+Space (a raw NUL byte) is otherwise
 # swallowed inside Notcurses itself -- see CMake/PatchNotcursesNulKey.cmake's
 # own header comment for the full story (id 0 collides with notcurses_get's
-# "no input" return value, so no caller-side fix exists).
+# "no input" return value, so no caller-side fix exists). A second, chained
+# patch (horizontal-wheel-scroll follow-up) fixes wheel-right (SGR Cb=67)
+# being swallowed the same way -- see CMake/PatchNotcursesMouseWheel.cmake's
+# own header comment.
 FetchContent_Declare(notcurses
         GIT_REPOSITORY https://github.com/dankamongmen/notcurses.git
         GIT_TAG v3.0.17
         GIT_SHALLOW TRUE
         PATCH_COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/CMake/PatchNotcursesNulKey.cmake
+        COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/CMake/PatchNotcursesMouseWheel.cmake
         EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(notcurses)
 # real-pixel-graphics-investigation follow-up: notcurses' own CMakeLists.txt
