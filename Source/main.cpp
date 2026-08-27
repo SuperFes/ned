@@ -177,6 +177,25 @@ int RunLspBrokerStop() {
     return 0;
 }
 
+// acp-panel-minimap-overlap follow-up: how many columns a full-width,
+// bottom-docked (or right-docked) OverlayHost overlay must stay clear of on
+// the right edge -- confirmed live that an active Minimap owns a real,
+// persistent Notcurses ncplane for its pixel graphics (NCBLIT_PIXEL, see
+// Minimap.h's own header comment), composited by the terminal at a z-order
+// *above* the ordinary Screen/Cell buffer every overlay paints into via
+// Canvas. No amount of correctly painting "on top" in ned's own Cell-based
+// Paint() can occlude that plane, since it isn't part of this Screen at
+// all -- the only fix is to stop short of it. A plain Cell-based ScrollBar
+// has no such plane and needs no reservation, hence the MinimapEnabled()
+// gate. Shared by terminalPanel/acpPanel/dapConsolePanel's placement
+// functions below; doesn't account for a minimap belonging to some *other*
+// pane in a multi-way split (every one of these panels spans the whole
+// width, not one pane) -- a real gap, just a narrower one than before this
+// existed.
+int MinimapOverlayReserve() {
+    return ned::editor::MinimapEnabled() ? ned::editor::MinimapWidth() : 0;
+}
+
 } // namespace
 
 auto main(int argc, char** argv) -> int {
@@ -1117,7 +1136,10 @@ auto main(int argc, char** argv) -> int {
         const int yMax = std::max(1, size.height - 2); // above the echo area row
         const int height =
             panel->Maximized() ? yMax : std::max(4, size.height * ned::editor::terminal::TerminalHeightPercent() / 100);
-        return Box{.x_min = 0, .x_max = size.width - 1, .y_min = std::max(1, yMax - height + 1), .y_max = yMax};
+        return Box{.x_min = 0,
+                   .x_max = std::max(0, size.width - 1 - MinimapOverlayReserve()),
+                   .y_min = std::max(1, yMax - height + 1),
+                   .y_max = yMax};
     });
     // The maximize toggle changes what the placement above computes; Show on
     // an already-visible overlay is exactly a re-box from the current size.
@@ -1168,13 +1190,18 @@ auto main(int argc, char** argv) -> int {
     // WindowManager::SetAcpPanelFocusChecker's own doc comment.
     windowManager->SetAcpPanelFocusChecker([&acpPanel] { return acpPanel.Focused(); });
     overlays.Add(acpPanel, [](Size size) {
-        const int yMax = std::max(1, size.height - 2); // above the echo area row
+        // acp-panel-minimap-overlap follow-up: see MinimapOverlayReserve's
+        // own comment for why this is needed at all.
+        const int minimapReserve = MinimapOverlayReserve();
+        const int yMax           = std::max(1, size.height - 2); // above the echo area row
         if (ned::editor::acp::GetAcpPanelDock() == ned::editor::acp::AcpPanelDock::Right) {
             const int width = std::clamp(size.width * ned::editor::acp::AcpPanelSizePercent() / 100, 20, size.width - 1);
-            return Box{.x_min = size.width - width, .x_max = size.width - 1, .y_min = 1, .y_max = yMax};
+            const int xMin  = size.width - width;
+            return Box{.x_min = xMin, .x_max = std::max(xMin, size.width - 1 - minimapReserve), .y_min = 1, .y_max = yMax};
         }
         const int height = std::max(4, size.height * ned::editor::acp::AcpPanelSizePercent() / 100);
-        return Box{.x_min = 0, .x_max = size.width - 1, .y_min = std::max(1, yMax - height + 1), .y_max = yMax};
+        return Box{
+            .x_min = 0, .x_max = std::max(0, size.width - 1 - minimapReserve), .y_min = std::max(1, yMax - height + 1), .y_max = yMax};
     });
     overlays.SetFocusReturn(acpPanel, [wm = windowManager.get()] { wm->TakeFocus(); });
     // Auto-opens the panel the instant a session actually produces
@@ -1205,9 +1232,12 @@ auto main(int argc, char** argv) -> int {
     ned::ui::DebugConsolePanel dapConsolePanel(theme);
     dapConsolePanel.SetDapManager(&dapManager);
     overlays.Add(dapConsolePanel, [](Size size) {
-        const int yMax    = std::max(1, size.height - 2); // above the echo area row
-        const int height  = std::max(4, size.height * 30 / 100);
-        return Box{.x_min = 0, .x_max = size.width - 1, .y_min = std::max(1, yMax - height + 1), .y_max = yMax};
+        const int yMax   = std::max(1, size.height - 2); // above the echo area row
+        const int height = std::max(4, size.height * 30 / 100);
+        return Box{.x_min = 0,
+                   .x_max = std::max(0, size.width - 1 - MinimapOverlayReserve()),
+                   .y_min = std::max(1, yMax - height + 1),
+                   .y_max = yMax};
     });
     overlays.SetFocusReturn(dapConsolePanel, [wm = windowManager.get()] { wm->TakeFocus(); });
     auto toggleDapConsole = [&overlays, panel = &dapConsolePanel] {
