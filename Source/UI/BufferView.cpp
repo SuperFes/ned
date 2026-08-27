@@ -5142,19 +5142,11 @@ void BufferView::HandleDocumentSymbolKey(const editor::KeyChord& chord) {
         RefreshDocumentSymbolStatus();
         return;
     }
-    if (chord.Special == editor::SpecialKey::Backspace) {
-        prompt_->DeleteChar();
+    if (HandlePromptEditingKey(chord) == PromptEditOutcome::TextEdited) {
         documentSymbolSelection_ = 0;
         RefreshDocumentSymbolStatus();
-        return;
     }
-    if (IsPlainCharacter(chord)) {
-        prompt_->AppendChar(chord.Codepoint);
-        documentSymbolSelection_ = 0;
-        RefreshDocumentSymbolStatus();
-        return;
-    }
-    // Anything else is ignored -- stay in the prompt.
+    // CursorMoved/NotHandled: nothing else consumes a key here -- stay in the prompt.
 }
 
 void BufferView::RequestWorkspaceSymbolsForCurrentQuery() {
@@ -5236,27 +5228,16 @@ void BufferView::HandleWorkspaceSymbolKey(const editor::KeyChord& chord) {
     // avoidable request volume (unlike the local-list pickers above, where
     // FuzzyFilterAndRank is nearly free). Echo the prompt text right away
     // regardless -- only the result list itself waits for the debounce.
-    if (chord.Special == editor::SpecialKey::Backspace) {
-        prompt_->DeleteChar();
+    // Pure cursor movement (CursorMoved) needs neither.
+    if (HandlePromptEditingKey(chord) == PromptEditOutcome::TextEdited) {
         workspaceSymbolSelection_ = 0;
         statusMessage_            = prompt_->StatusText();
         if (eventLoop_) {
             workspaceSymbolDebounceTimer_.Arm(*eventLoop_, std::chrono::milliseconds(editor::lsp::LspCompletionDebounceMs()),
                                               [this] { RequestWorkspaceSymbolsForCurrentQuery(); });
         }
-        return;
     }
-    if (IsPlainCharacter(chord)) {
-        prompt_->AppendChar(chord.Codepoint);
-        workspaceSymbolSelection_ = 0;
-        statusMessage_            = prompt_->StatusText();
-        if (eventLoop_) {
-            workspaceSymbolDebounceTimer_.Arm(*eventLoop_, std::chrono::milliseconds(editor::lsp::LspCompletionDebounceMs()),
-                                              [this] { RequestWorkspaceSymbolsForCurrentQuery(); });
-        }
-        return;
-    }
-    // Anything else is ignored -- stay in the prompt.
+    // CursorMoved/NotHandled: nothing else consumes a key here -- stay in the prompt.
 }
 
 void BufferView::SwitchHeaderSource() {
@@ -7452,17 +7433,44 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
         return;
     }
 
-    if (chord.Special == editor::SpecialKey::Backspace) {
-        prompt_->DeleteChar();
+    if (HandlePromptEditingKey(chord) == PromptEditOutcome::TextEdited) {
         promptHistoryIndex_ = kNoHistoryIndex; // editing exits history browsing -- see TryNavigatePromptHistory's own doc comment
     }
-    else if (IsPlainCharacter(chord)) {
-        prompt_->AppendChar(chord.Codepoint);
-        promptHistoryIndex_ = kNoHistoryIndex;
-    }
-    // Anything else is ignored -- stay in the prompt.
+    // CursorMoved/NotHandled: nothing else consumes a key here -- stay in the prompt.
 
     statusMessage_ = prompt_->StatusText();
+}
+
+BufferView::PromptEditOutcome BufferView::HandlePromptEditingKey(const editor::KeyChord& chord) {
+    if (chord.Special == editor::SpecialKey::Backspace) {
+        prompt_->DeleteBackward();
+        return PromptEditOutcome::TextEdited;
+    }
+    if (chord.Special == editor::SpecialKey::Delete) {
+        prompt_->DeleteForward();
+        return PromptEditOutcome::TextEdited;
+    }
+    if (chord.Special == editor::SpecialKey::Left) {
+        prompt_->MoveCursorLeft();
+        return PromptEditOutcome::CursorMoved;
+    }
+    if (chord.Special == editor::SpecialKey::Right) {
+        prompt_->MoveCursorRight();
+        return PromptEditOutcome::CursorMoved;
+    }
+    if (chord.Special == editor::SpecialKey::Home) {
+        prompt_->MoveCursorToStart();
+        return PromptEditOutcome::CursorMoved;
+    }
+    if (chord.Special == editor::SpecialKey::End) {
+        prompt_->MoveCursorToEnd();
+        return PromptEditOutcome::CursorMoved;
+    }
+    if (IsPlainCharacter(chord)) {
+        prompt_->InsertChar(chord.Codepoint);
+        return PromptEditOutcome::TextEdited;
+    }
+    return PromptEditOutcome::NotHandled;
 }
 
 void BufferView::CompletePrompt() {
@@ -9603,12 +9611,7 @@ void BufferView::HandleDeleteFileKey(const editor::KeyChord& chord) {
             EndInteractiveSession();
             return;
         }
-        if (chord.Special == editor::SpecialKey::Backspace) {
-            prompt_->DeleteChar();
-        }
-        else if (IsPlainCharacter(chord)) {
-            prompt_->AppendChar(chord.Codepoint);
-        }
+        (void)HandlePromptEditingKey(chord); // outcome doesn't matter here -- always just re-echoes the prompt text
         statusMessage_ = prompt_->StatusText();
         return;
     }
@@ -9715,12 +9718,7 @@ void BufferView::HandleRenameFileKey(const editor::KeyChord& chord) {
         EndInteractiveSession();
         return;
     }
-    if (chord.Special == editor::SpecialKey::Backspace) {
-        prompt_->DeleteChar();
-    }
-    else if (IsPlainCharacter(chord)) {
-        prompt_->AppendChar(chord.Codepoint);
-    }
+    (void)HandlePromptEditingKey(chord);
     statusMessage_ = prompt_->StatusText();
 }
 
@@ -9768,12 +9766,7 @@ void BufferView::HandleSetPropertyKey(const editor::KeyChord& chord) {
         EndInteractiveSession();
         return;
     }
-    if (chord.Special == editor::SpecialKey::Backspace) {
-        prompt_->DeleteChar();
-    }
-    else if (IsPlainCharacter(chord)) {
-        prompt_->AppendChar(chord.Codepoint);
-    }
+    (void)HandlePromptEditingKey(chord);
     statusMessage_ = prompt_->StatusText();
 }
 
@@ -9806,11 +9799,30 @@ void BufferView::HandleRecoverFileKey(const editor::KeyChord& chord) {
             EndInteractiveSession();
             return;
         }
+        // Digit-only field -- HandlePromptEditingKey's own plain-character
+        // insert would accept anything, so this stays hand-rolled rather
+        // than delegating InsertChar the way the free-text prompts do;
+        // Backspace/Delete/Left/Right/Home/End all still apply unchanged.
         if (chord.Special == editor::SpecialKey::Backspace) {
-            prompt_->DeleteChar();
+            prompt_->DeleteBackward();
+        }
+        else if (chord.Special == editor::SpecialKey::Delete) {
+            prompt_->DeleteForward();
+        }
+        else if (chord.Special == editor::SpecialKey::Left) {
+            prompt_->MoveCursorLeft();
+        }
+        else if (chord.Special == editor::SpecialKey::Right) {
+            prompt_->MoveCursorRight();
+        }
+        else if (chord.Special == editor::SpecialKey::Home) {
+            prompt_->MoveCursorToStart();
+        }
+        else if (chord.Special == editor::SpecialKey::End) {
+            prompt_->MoveCursorToEnd();
         }
         else if (IsPlainCharacter(chord) && chord.Codepoint >= U'0' && chord.Codepoint <= U'9') {
-            prompt_->AppendChar(chord.Codepoint);
+            prompt_->InsertChar(chord.Codepoint);
         }
         statusMessage_ = prompt_->StatusText();
         return;
@@ -10155,22 +10167,14 @@ void BufferView::HandleExecuteCommandKey(const editor::KeyChord& chord) {
     // match on every keystroke. Tab is deliberately not bound to anything
     // here: since typing already re-snaps to the top match, Enter with no
     // arrow presses already invokes it directly -- a Tab-jumps-to-top-match
-    // affordance would be redundant.
-    if (chord.Special == editor::SpecialKey::Backspace) {
-        prompt_->DeleteChar();
+    // affordance would be redundant. Pure cursor movement (CursorMoved)
+    // re-snaps nothing -- the candidate list doesn't change.
+    if (HandlePromptEditingKey(chord) == PromptEditOutcome::TextEdited) {
         promptHistoryIndex_      = kNoHistoryIndex; // editing exits history browsing -- see TryNavigatePromptHistory's own doc comment
         executeCommandSelection_ = 0;
         RefreshExecuteCommandStatus();
-        return;
     }
-    if (IsPlainCharacter(chord)) {
-        prompt_->AppendChar(chord.Codepoint);
-        promptHistoryIndex_      = kNoHistoryIndex;
-        executeCommandSelection_ = 0;
-        RefreshExecuteCommandStatus();
-        return;
-    }
-    // Anything else is ignored -- stay in the prompt.
+    // CursorMoved/NotHandled: nothing else consumes a key here -- stay in the prompt.
 }
 
 void BufferView::RefreshProjectFindFileStatus() {
@@ -10237,21 +10241,12 @@ void BufferView::HandleProjectFindFileKey(const editor::KeyChord& chord) {
 
     // Same "typing re-snaps to the top match" reasoning as
     // HandleExecuteCommandKey above -- see that method's own comment.
-    if (chord.Special == editor::SpecialKey::Backspace) {
-        prompt_->DeleteChar();
+    if (HandlePromptEditingKey(chord) == PromptEditOutcome::TextEdited) {
         promptHistoryIndex_       = kNoHistoryIndex; // editing exits history browsing -- see TryNavigatePromptHistory's own doc comment
         projectFindFileSelection_ = 0;
         RefreshProjectFindFileStatus();
-        return;
     }
-    if (IsPlainCharacter(chord)) {
-        prompt_->AppendChar(chord.Codepoint);
-        promptHistoryIndex_       = kNoHistoryIndex;
-        projectFindFileSelection_ = 0;
-        RefreshProjectFindFileStatus();
-        return;
-    }
-    // Anything else is ignored -- stay in the prompt.
+    // CursorMoved/NotHandled: nothing else consumes a key here -- stay in the prompt.
 }
 
 // editor-ergonomics follow-up: HandleProjectFindFileKey/
@@ -10318,21 +10313,12 @@ void BufferView::HandleFindRecentFileKey(const editor::KeyChord& chord) {
         return;
     }
 
-    if (chord.Special == editor::SpecialKey::Backspace) {
-        prompt_->DeleteChar();
+    if (HandlePromptEditingKey(chord) == PromptEditOutcome::TextEdited) {
         promptHistoryIndex_  = kNoHistoryIndex;
         recentFileSelection_ = 0;
         RefreshFindRecentFileStatus();
-        return;
     }
-    if (IsPlainCharacter(chord)) {
-        prompt_->AppendChar(chord.Codepoint);
-        promptHistoryIndex_  = kNoHistoryIndex;
-        recentFileSelection_ = 0;
-        RefreshFindRecentFileStatus();
-        return;
-    }
-    // Anything else is ignored -- stay in the prompt.
+    // CursorMoved/NotHandled: nothing else consumes a key here -- stay in the prompt.
 }
 
 // editor-ergonomics follow-up: same picker shape again, over
@@ -10413,21 +10399,12 @@ void BufferView::HandleBookmarkJumpKey(const editor::KeyChord& chord) {
         return;
     }
 
-    if (chord.Special == editor::SpecialKey::Backspace) {
-        prompt_->DeleteChar();
+    if (HandlePromptEditingKey(chord) == PromptEditOutcome::TextEdited) {
         promptHistoryIndex_ = kNoHistoryIndex;
         bookmarkSelection_  = 0;
         RefreshBookmarkJumpStatus();
-        return;
     }
-    if (IsPlainCharacter(chord)) {
-        prompt_->AppendChar(chord.Codepoint);
-        promptHistoryIndex_ = kNoHistoryIndex;
-        bookmarkSelection_  = 0;
-        RefreshBookmarkJumpStatus();
-        return;
-    }
-    // Anything else is ignored -- stay in the prompt.
+    // CursorMoved/NotHandled: nothing else consumes a key here -- stay in the prompt.
 }
 
 // rich-theme-set follow-up (Phase 1) -- see the declarations' own doc
@@ -10541,21 +10518,12 @@ void BufferView::HandleSelectThemeKey(const editor::KeyChord& chord) {
 
     // Same "typing re-snaps to the top match" reasoning as
     // HandleExecuteCommandKey -- see that method's own comment.
-    if (chord.Special == editor::SpecialKey::Backspace) {
-        prompt_->DeleteChar();
+    if (HandlePromptEditingKey(chord) == PromptEditOutcome::TextEdited) {
         selectThemeSelection_ = 0;
         RefreshSelectThemeStatus();
         ApplySelectedThemePreview();
-        return;
     }
-    if (IsPlainCharacter(chord)) {
-        prompt_->AppendChar(chord.Codepoint);
-        selectThemeSelection_ = 0;
-        RefreshSelectThemeStatus();
-        ApplySelectedThemePreview();
-        return;
-    }
-    // Anything else is ignored -- stay in the prompt.
+    // CursorMoved/NotHandled: nothing else consumes a key here -- stay in the prompt.
 }
 
 void BufferView::CloseBufferNow(text::Buffer& buffer) {

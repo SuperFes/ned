@@ -57,6 +57,18 @@ struct Brush {
     // this file's own Color type directly, so there's no per-cell
     // conversion to do here; Screen::Flush (Widget.cpp) is the only place a
     // Color still becomes a real terminal color.
+    //
+    // Also resets Cell::inverted to false -- not a Brush field (it's an
+    // ad-hoc per-cell flag a handful of one-off callers set directly, e.g.
+    // a caret or a secondary-cursor marker), but main.cpp's screenBuffer is
+    // one long-lived Screen repainted in place every frame (freshly
+    // reconstructed only on resize), never reset to a blank state first. A
+    // cell a widget marked inverted in one frame would otherwise stay
+    // inverted forever once whatever set it moves on, since every normal
+    // repaint of that cell only ever went through ApplyTo -- confirmed live
+    // as a permanently-stuck yellow-background caret box in AcpPanel's
+    // composer after typing past the first character. Every caller that
+    // wants inversion sets cell.inverted = true itself, after this call.
     void ApplyTo(Cell& cell) const {
         cell.background_color = background;
         cell.foreground_color = foreground;
@@ -64,6 +76,7 @@ struct Brush {
         cell.italic           = italic;
         cell.underlined       = underlined;
         cell.strikethrough    = strikethrough;
+        cell.inverted         = false;
     }
 };
 

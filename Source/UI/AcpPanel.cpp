@@ -252,11 +252,24 @@ void AcpPanel::Paint(Canvas canvas) {
         cell.character = " ";
         inputBrush.ApplyTo(cell);
     }
-    const int caretCol = PaintUtf8Row(canvas, 0, inputRow, text, inputBrush, width);
+    PaintUtf8Row(canvas, 0, inputRow, text, inputBrush, width);
+    // minibuffer-composer-cursor-editing follow-up: the caret sits at the
+    // prompt's real cursor position now, not always at the end of the typed
+    // text -- CursorDisplayColumn() (one column per codepoint, matching
+    // PaintUtf8Row's own convention) is what stays in sync with
+    // InsertChar/DeleteBackward/DeleteForward/Move* below. A real solid
+    // block cursor, not a video-invert: character is left untouched (so
+    // whatever's already there -- a real typed character, or the row fill's
+    // blank when the cursor sits past the end of the text -- stays visible
+    // through it) and only recolored, explicitly, to a fixed high-contrast
+    // pair rather than swapping whatever foreground happened to be
+    // underneath -- inverting inputBrush's own default-ish foreground left
+    // the character under the caret nearly unreadable against the yellow
+    // block (reported live after moving the cursor back over typed text).
+    const int caretCol = prompt_.CursorDisplayColumn();
     if (caretCol < width) {
-        Cell& cell     = canvas[{.x = caretCol, .y = inputRow}];
-        cell.character = " ";
-        cell.inverted  = true;
+        Cell& cell = canvas[{.x = caretCol, .y = inputRow}];
+        Brush{.background = inputBrush.foreground, .foreground = Color::Black}.ApplyTo(cell);
     }
 }
 
@@ -319,7 +332,27 @@ bool AcpPanel::OnEvent(const Event& event) {
         return true;
     }
     if (chord->Special == editor::SpecialKey::Backspace) {
-        prompt_.DeleteChar();
+        prompt_.DeleteBackward();
+        return true;
+    }
+    if (chord->Special == editor::SpecialKey::Delete) {
+        prompt_.DeleteForward();
+        return true;
+    }
+    if (chord->Special == editor::SpecialKey::Left) {
+        prompt_.MoveCursorLeft();
+        return true;
+    }
+    if (chord->Special == editor::SpecialKey::Right) {
+        prompt_.MoveCursorRight();
+        return true;
+    }
+    if (chord->Special == editor::SpecialKey::Home) {
+        prompt_.MoveCursorToStart();
+        return true;
+    }
+    if (chord->Special == editor::SpecialKey::End) {
+        prompt_.MoveCursorToEnd();
         return true;
     }
     if (chord->Special == editor::SpecialKey::Enter) {
@@ -330,7 +363,7 @@ bool AcpPanel::OnEvent(const Event& event) {
         return true;
     }
     if (IsPlainCharacter(*chord)) {
-        prompt_.AppendChar(chord->Codepoint);
+        prompt_.InsertChar(chord->Codepoint);
         return true;
     }
     return false;

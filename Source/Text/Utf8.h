@@ -28,6 +28,12 @@ void RemoveLastCodepoint(std::string& utf8Text);
 // (in-file regex replace steps over whatever bytes a text-looking file holds).
 [[nodiscard]] std::size_t NextCodepointBoundary(std::string_view utf8Text, std::size_t offset);
 
+// The byte offset of the codepoint immediately before offset: one byte back,
+// then back past any continuation bytes. Clamps to 0; a no-op (returns
+// offset) if offset is already 0. Same malformed-sequence tolerance as
+// NextCodepointBoundary -- never retreats past a lead byte.
+[[nodiscard]] std::size_t PreviousCodepointBoundary(std::string_view utf8Text, std::size_t offset);
+
 } // namespace ned::text
 
 #endif // NED_TEXT_UTF8_H

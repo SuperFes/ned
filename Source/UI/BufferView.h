@@ -824,6 +824,24 @@ class BufferView : public Widget {
         const editor::KeyChord&
             chord);        // shared by FindFile/SwitchToBuffer/ProjectSearch/CreateDirectory/FindScratch/StringRectangle -- see prompt_
     void CompletePrompt(); // Tab in HandlePromptKey -- find-file paths, buffer names, or scratch names, by inputMode_
+    // minibuffer-composer-cursor-editing follow-up: Left/Right/Home/End/
+    // Backspace/Delete/plain-character-insert against prompt_, uniformly,
+    // for every prompt handler in this class (not just HandlePromptKey's own
+    // shared modes -- ExecuteCommand/ProjectFindFile/FindRecentFile/
+    // BookmarkJump/SelectTheme/DocumentSymbol/WorkspaceSymbol/DeleteFile/
+    // RenameFile/SetProperty/RecoverFile all drive their own prompt_ key
+    // handling directly, each with its own per-keystroke side effects --
+    // selection-reset, a fuzzy re-rank, a debounce-armed server re-query --
+    // that this helper can't own itself). TextEdited means the caller should
+    // run its own post-edit side effects (reset any live selection index,
+    // refresh its status/candidate display); CursorMoved means only the
+    // cursor itself changed, nothing to re-filter; NotHandled means the
+    // caller should fall through to its own handling (Enter, Escape, Up/Down
+    // selection, Tab-completion, ...).
+    enum class PromptEditOutcome { NotHandled,
+                                   CursorMoved,
+                                   TextEdited };
+    [[nodiscard]] PromptEditOutcome HandlePromptEditingKey(const editor::KeyChord& chord);
     // minibuffer-history-recall follow-up: the short static key
     // promptHistory_ rings are recorded/recalled under for each of
     // HandlePromptKey's own InputModes -- only covers modes reachable

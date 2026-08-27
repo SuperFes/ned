@@ -178,7 +178,13 @@ TEST_CASE("AcpPanel's input row shows typed text and a caret", "[AcpPanel]") {
 
     const std::string inputRow = fixture.RowText(kHeight - 1);
     REQUIRE(inputRow.find("Prompt: hi") != std::string::npos);
-    REQUIRE(fixture.screen.PixelAt(static_cast<int>(std::string("Prompt: hi").size()), kHeight - 1).inverted);
+    // block-cursor-readability follow-up: a real recolored block, not a
+    // video-invert (which left the character underneath unreadable once the
+    // caret moved back over already-typed text) -- see AcpPanel::Paint's own
+    // comment.
+    const ned::ui::Cell& caretCell = fixture.screen.PixelAt(static_cast<int>(std::string("Prompt: hi").size()), kHeight - 1);
+    REQUIRE(caretCell.background_color == fixture.theme.echoArea.foreground);
+    REQUIRE(caretCell.foreground_color == ned::ui::Color::Black);
 }
 
 TEST_CASE("AcpPanel's input row places the caret by column, not byte, once multi-byte text is typed", "[AcpPanel]") {
@@ -196,7 +202,9 @@ TEST_CASE("AcpPanel's input row places the caret by column, not byte, once multi
     const std::string prefix = "Prompt: h"; // one column per codepoint up to here
     REQUIRE(fixture.screen.PixelAt(static_cast<int>(prefix.size()), kHeight - 1).character == "é");
     REQUIRE(fixture.screen.PixelAt(static_cast<int>(prefix.size()) + 1, kHeight - 1).character == "i");
-    REQUIRE(fixture.screen.PixelAt(static_cast<int>(prefix.size()) + 2, kHeight - 1).inverted);
+    const ned::ui::Cell& caretCell = fixture.screen.PixelAt(static_cast<int>(prefix.size()) + 2, kHeight - 1);
+    REQUIRE(caretCell.background_color == fixture.theme.echoArea.foreground);
+    REQUIRE(caretCell.foreground_color == ned::ui::Color::Black);
 }
 
 TEST_CASE("AcpPanel's Backspace deletes the last typed character", "[AcpPanel]") {
