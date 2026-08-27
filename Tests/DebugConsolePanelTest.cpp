@@ -164,7 +164,11 @@ TEST_CASE("DebugConsolePanel's input row shows typed text and a caret", "[DebugC
 
     const std::string inputRow = fixture.RowText(kHeight - 1);
     REQUIRE(inputRow.find("debug> hi") != std::string::npos);
-    REQUIRE(fixture.screen.PixelAt(static_cast<int>(std::string("debug> hi").size()), kHeight - 1).inverted);
+    // block-cursor-readability follow-up: a real recolored block, not a
+    // video-invert -- see DebugConsolePanel::Paint's own comment.
+    const ned::ui::Cell& caretCell = fixture.screen.PixelAt(static_cast<int>(std::string("debug> hi").size()), kHeight - 1);
+    REQUIRE(caretCell.background_color == fixture.theme.echoArea.foreground);
+    REQUIRE(caretCell.foreground_color == ned::ui::Color::Black);
 }
 
 TEST_CASE("DebugConsolePanel's Backspace deletes the last typed character", "[DebugConsolePanel]") {

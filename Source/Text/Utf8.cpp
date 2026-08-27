@@ -1,5 +1,7 @@
 #include "Utf8.h"
 
+#include <algorithm>
+
 namespace ned::text {
 
 std::string EncodeCodepointUtf8(char32_t codepoint) {
@@ -39,16 +41,24 @@ std::size_t NextCodepointBoundary(std::string_view utf8Text, std::size_t offset)
     return next;
 }
 
+std::size_t PreviousCodepointBoundary(std::string_view utf8Text, std::size_t offset) {
+    if (offset == 0) {
+        return 0;
+    }
+
+    std::size_t prev = std::min(offset, utf8Text.size()) - 1;
+    while (prev > 0 && (static_cast<unsigned char>(utf8Text[prev]) & 0xC0) == 0x80) {
+        --prev;
+    }
+    return prev;
+}
+
 void RemoveLastCodepoint(std::string& utf8Text) {
     if (utf8Text.empty()) {
         return;
     }
 
-    std::size_t end = utf8Text.size() - 1;
-    while (end > 0 && (static_cast<unsigned char>(utf8Text[end]) & 0xC0) == 0x80) {
-        --end;
-    }
-    utf8Text.erase(end);
+    utf8Text.erase(PreviousCodepointBoundary(utf8Text, utf8Text.size()));
 }
 
 } // namespace ned::text

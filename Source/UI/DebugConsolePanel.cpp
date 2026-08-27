@@ -133,11 +133,20 @@ void DebugConsolePanel::Paint(Canvas canvas) {
     // Input row.
     const int         inputRow = height - 1;
     const std::string text     = prompt_.StatusText();
-    const int         caretCol = PaintUtf8Row(canvas, 0, inputRow, text, plainBrush, width);
+    PaintUtf8Row(canvas, 0, inputRow, text, plainBrush, width);
+    // minibuffer-composer-cursor-editing follow-up: the caret sits at the
+    // prompt's real cursor position now, not always at the end of the typed
+    // text -- see AcpPanel::Paint's own comment on CursorDisplayColumn() and
+    // on why this is a real recolored block (character left alone, fixed
+    // background/foreground pair) rather than a video-invert of whatever
+    // was underneath. theme_.echoArea.foreground (not plainBrush's own,
+    // near-black in LightTheme -- unreadable paired with black text) is the
+    // one color in every bundled theme already curated to read well as a
+    // distinct "you're being prompted" accent.
+    const int caretCol = prompt_.CursorDisplayColumn();
     if (caretCol < width) {
-        Cell& cell     = canvas[{.x = caretCol, .y = inputRow}];
-        cell.character = " ";
-        cell.inverted  = true;
+        Cell& cell = canvas[{.x = caretCol, .y = inputRow}];
+        Brush{.background = theme_.echoArea.foreground, .foreground = Color::Black}.ApplyTo(cell);
     }
 }
 
@@ -171,7 +180,27 @@ bool DebugConsolePanel::OnEvent(const Event& event) {
         return true;
     }
     if (chord->Special == editor::SpecialKey::Backspace) {
-        prompt_.DeleteChar();
+        prompt_.DeleteBackward();
+        return true;
+    }
+    if (chord->Special == editor::SpecialKey::Delete) {
+        prompt_.DeleteForward();
+        return true;
+    }
+    if (chord->Special == editor::SpecialKey::Left) {
+        prompt_.MoveCursorLeft();
+        return true;
+    }
+    if (chord->Special == editor::SpecialKey::Right) {
+        prompt_.MoveCursorRight();
+        return true;
+    }
+    if (chord->Special == editor::SpecialKey::Home) {
+        prompt_.MoveCursorToStart();
+        return true;
+    }
+    if (chord->Special == editor::SpecialKey::End) {
+        prompt_.MoveCursorToEnd();
         return true;
     }
     if (chord->Special == editor::SpecialKey::Enter) {
@@ -194,7 +223,7 @@ bool DebugConsolePanel::OnEvent(const Event& event) {
         return true;
     }
     if (IsPlainCharacter(*chord)) {
-        prompt_.AppendChar(chord->Codepoint);
+        prompt_.InsertChar(chord->Codepoint);
         return true;
     }
     return false;
