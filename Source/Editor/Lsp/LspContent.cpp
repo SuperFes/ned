@@ -492,6 +492,47 @@ RenameResult ExtractRenameEdits(const Json& result) {
     return renameResult;
 }
 
+std::vector<WorkspaceTextEdit> ExtractFormattingEdits(const Json& result) {
+    std::vector<WorkspaceTextEdit> edits;
+    if (!result.is_array()) {
+        return edits;
+    }
+    for (const Json& textEdit : result) {
+        if (!textEdit.is_object() || !textEdit.contains("range")) {
+            continue;
+        }
+        const Json& range = textEdit["range"];
+        edits.push_back(WorkspaceTextEdit{
+            .start   = PositionFromJson(range.value("start", Json::object())),
+            .end     = PositionFromJson(range.value("end", Json::object())),
+            .newText = textEdit.value("newText", std::string()),
+        });
+    }
+    return edits;
+}
+
+std::vector<DocumentHighlight> ExtractDocumentHighlights(const Json& result) {
+    std::vector<DocumentHighlight> highlights;
+    if (!result.is_array()) {
+        return highlights;
+    }
+    for (const Json& item : result) {
+        if (!item.is_object() || !item.contains("range")) {
+            continue;
+        }
+        const Json& range = item["range"];
+        if (!range.is_object() || !range.contains("start") || !range.contains("end")) {
+            continue;
+        }
+        highlights.push_back(DocumentHighlight{
+            .start = PositionFromJson(range["start"]),
+            .end   = PositionFromJson(range["end"]),
+            .kind  = item.value("kind", 1),
+        });
+    }
+    return highlights;
+}
+
 std::optional<std::string> ExtractSignatureHelp(const Json& result) {
     if (!result.is_object()) {
         return std::nullopt;

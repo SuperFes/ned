@@ -1214,6 +1214,151 @@ TEST_CASE("LspManager::RequestSignatureHelp resolves nullopt when the buffer was
     REQUIRE_FALSE(got.has_value());
 }
 
+TEST_CASE("LspManager::RequestDocumentHighlight sends textDocument/documentHighlight and resolves the parsed ranges", "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-document-highlight-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("foo = foo + 1");
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    bool                                          invoked = false;
+    std::vector<ned::editor::lsp::DocumentHighlight> got;
+    manager.RequestDocumentHighlight(buffer, buffer.Point(), [&](std::vector<ned::editor::lsp::DocumentHighlight> highlights) {
+        invoked = true;
+        got     = std::move(highlights);
+    });
+
+    const std::string raw     = ReadRawFrame(server.serverStdinRead);
+    const Json        request = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(request["method"] == "textDocument/documentHighlight");
+
+    const Json response = {
+        {"jsonrpc", "2.0"},
+        {"id", RequestIdFromFrame(raw)},
+        {"result", Json::array({{{"range", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 3}}}}}, {"kind", 3}},
+                                {{"range", {{"start", {{"line", 0}, {"character", 7}}}, {"end", {{"line", 0}, {"character", 10}}}}}, {"kind", 2}}})},
+    };
+    client->DispatchFrame(response.dump());
+
+    REQUIRE(invoked);
+    REQUIRE(got.size() == 2);
+    REQUIRE(got[0].kind == 3);
+    REQUIRE(got[1].start.character == 7);
+}
+
+TEST_CASE("LspManager::RequestDocumentHighlight resolves an empty vector when the buffer was never synced", "[Lsp]") {
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    Buffer&            buffer = bufferList.CreateBuffer("scratch");
+
+    bool                                          invoked = false;
+    std::vector<ned::editor::lsp::DocumentHighlight> got;
+    manager.RequestDocumentHighlight(buffer, 0, [&](std::vector<ned::editor::lsp::DocumentHighlight> highlights) {
+        invoked = true;
+        got     = std::move(highlights);
+    });
+
+    REQUIRE(invoked);
+    REQUIRE(got.empty());
+}
+
+TEST_CASE("LspManager::RequestFormatting sends textDocument/formatting with tabSize/insertSpaces and resolves edits", "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-formatting-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("int x=1;");
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    bool                                                        invoked = false;
+    std::optional<std::vector<ned::editor::lsp::WorkspaceTextEdit>> got;
+    manager.RequestFormatting(buffer, [&](std::optional<std::vector<ned::editor::lsp::WorkspaceTextEdit>> edits) {
+        invoked = true;
+        got     = std::move(edits);
+    });
+
+    const std::string raw     = ReadRawFrame(server.serverStdinRead);
+    const Json        request = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(request["method"] == "textDocument/formatting");
+    REQUIRE(request["params"]["options"]["insertSpaces"] == true);
+    REQUIRE(request["params"]["options"].contains("tabSize"));
+
+    const Json response = {
+        {"jsonrpc", "2.0"},
+        {"id", RequestIdFromFrame(raw)},
+        {"result", Json::array({{{"range", {{"start", {{"line", 0}, {"character", 5}}}, {"end", {{"line", 0}, {"character", 6}}}}}, {"newText", " = "}}})},
+    };
+    client->DispatchFrame(response.dump());
+
+    REQUIRE(invoked);
+    REQUIRE(got.has_value());
+    REQUIRE(got->size() == 1);
+    REQUIRE((*got)[0].newText == " = ");
+}
+
+TEST_CASE("LspManager::RequestFormatting resolves nullopt when the buffer was never synced", "[Lsp]") {
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    Buffer&            buffer = bufferList.CreateBuffer("scratch");
+
+    bool                                                        invoked = false;
+    std::optional<std::vector<ned::editor::lsp::WorkspaceTextEdit>> got;
+    manager.RequestFormatting(buffer, [&](std::optional<std::vector<ned::editor::lsp::WorkspaceTextEdit>> edits) {
+        invoked = true;
+        got     = std::move(edits);
+    });
+
+    REQUIRE(invoked);
+    REQUIRE_FALSE(got.has_value());
+}
+
+TEST_CASE("LspManager::RequestRangeFormatting sends textDocument/rangeFormatting with the requested range", "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-range-formatting-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("int x=1;\nint y=2;");
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    bool                                                        invoked = false;
+    std::optional<std::vector<ned::editor::lsp::WorkspaceTextEdit>> got;
+    manager.RequestRangeFormatting(buffer, 0, 8, [&](std::optional<std::vector<ned::editor::lsp::WorkspaceTextEdit>> edits) {
+        invoked = true;
+        got     = std::move(edits);
+    });
+
+    const std::string raw     = ReadRawFrame(server.serverStdinRead);
+    const Json        request = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(request["method"] == "textDocument/rangeFormatting");
+    REQUIRE(request["params"]["range"]["start"]["line"] == 0);
+    REQUIRE(request["params"]["range"]["end"]["line"] == 0);
+
+    const Json response = {{"jsonrpc", "2.0"}, {"id", RequestIdFromFrame(raw)}, {"result", Json::array()}};
+    client->DispatchFrame(response.dump());
+
+    REQUIRE(invoked);
+    REQUIRE(got.has_value());
+    REQUIRE(got->empty());
+}
+
 TEST_CASE("LspManager::RequestSwitchSourceHeader sends a bare TextDocumentIdentifier and resolves a string uri response",
           "[Lsp]") {
     BufferList                  bufferList;

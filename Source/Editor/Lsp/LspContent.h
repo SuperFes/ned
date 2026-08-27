@@ -189,6 +189,36 @@ struct RenameResult {
 // entry.
 [[nodiscard]] RenameResult ExtractRenameEdits(const Json& result);
 
+// formatting follow-up. A textDocument/formatting or /rangeFormatting
+// response is a bare TextEdit[] | null against the single requesting
+// document -- unlike RenameResult's per-URI "changes" map, no URI grouping
+// is needed (formatting only ever targets the document the request was sent
+// for). Reuses WorkspaceTextEdit's own {start,end,newText} shape verbatim.
+// Empty for a null/non-array result; an entry missing "range" is skipped,
+// not treated as a parse error, matching every other ExtractX function here.
+[[nodiscard]] std::vector<WorkspaceTextEdit> ExtractFormattingEdits(const Json& result);
+
+// documentHighlight follow-up. One occurrence of the symbol under point,
+// always within the requesting document itself -- unlike DefinitionLocation/
+// RenameEdit there is no per-item URI at all, so this is the first
+// LspPosition-pair result in this file whose *end* position actually matters
+// to the caller (BufferView needs the whole range to paint, not just a jump
+// target). kind is the LSP DocumentHighlightKind (1=Text, 2=Read, 3=Write);
+// defaults to 1 for a server that omits it, the spec's own stated default.
+struct DocumentHighlight {
+    LspPosition start;
+    LspPosition end;
+    int         kind = 1;
+
+    bool operator==(const DocumentHighlight&) const = default;
+};
+
+// Parses a textDocument/documentHighlight response -- DocumentHighlight[] |
+// null, never wrapped/nested like Location/LocationLink. Empty for a null or
+// non-array result; an entry missing "range"/"start"/"end" is skipped, not
+// treated as a parse error, matching every other ExtractX function here.
+[[nodiscard]] std::vector<DocumentHighlight> ExtractDocumentHighlights(const Json& result);
+
 // signature-help follow-up. Reduces a textDocument/signatureHelp response
 // straight to the single status-line-ready string BufferView/Commands.cpp
 // show verbatim -- mirrors ExtractHoverText's own "already plain, already

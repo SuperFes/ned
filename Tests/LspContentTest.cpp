@@ -5,10 +5,13 @@
 using ned::editor::lsp::CodeAction;
 using ned::editor::lsp::CompletionItem;
 using ned::editor::lsp::DefinitionLocation;
+using ned::editor::lsp::DocumentHighlight;
 using ned::editor::lsp::ExtractCodeActions;
 using ned::editor::lsp::ExtractCompletionItems;
 using ned::editor::lsp::ExtractDefinitionLocations;
+using ned::editor::lsp::ExtractDocumentHighlights;
 using ned::editor::lsp::ExtractHoverText;
+using ned::editor::lsp::ExtractFormattingEdits;
 using ned::editor::lsp::ExtractRenameEdits;
 using ned::editor::lsp::ExtractSignatureHelp;
 using ned::editor::lsp::ExtractSingleCodeAction;
@@ -367,6 +370,64 @@ TEST_CASE("ExtractRenameEdits returns no edits for a result with no \"changes\" 
 
 TEST_CASE("ExtractRenameEdits returns no edits for a non-object result", "[Lsp]") {
     REQUIRE_FALSE(ExtractRenameEdits(Json(nullptr)).hasEdit);
+}
+
+TEST_CASE("ExtractDocumentHighlights parses a well-formed array with an explicit kind", "[Lsp]") {
+    const Json result = Json::array({
+        {{"range", MakeRange(0, 0, 0, 3)}, {"kind", 2}},
+        {{"range", MakeRange(1, 4, 1, 7)}, {"kind", 3}},
+    });
+    const std::vector<DocumentHighlight> highlights = ExtractDocumentHighlights(result);
+    REQUIRE(highlights.size() == 2);
+    REQUIRE(highlights[0].start.line == 0);
+    REQUIRE(highlights[0].end.character == 3);
+    REQUIRE(highlights[0].kind == 2);
+    REQUIRE(highlights[1].kind == 3);
+}
+
+TEST_CASE("ExtractDocumentHighlights defaults a missing kind to 1 (Text)", "[Lsp]") {
+    const Json result = Json::array({{{"range", MakeRange(0, 0, 0, 3)}}});
+    const std::vector<DocumentHighlight> highlights = ExtractDocumentHighlights(result);
+    REQUIRE(highlights.size() == 1);
+    REQUIRE(highlights[0].kind == 1);
+}
+
+TEST_CASE("ExtractDocumentHighlights skips an entry missing \"range\"", "[Lsp]") {
+    const Json result = Json::array({{{"kind", 1}}, {{"range", MakeRange(0, 0, 0, 1)}}});
+    REQUIRE(ExtractDocumentHighlights(result).size() == 1);
+}
+
+TEST_CASE("ExtractDocumentHighlights returns empty for a null result", "[Lsp]") {
+    REQUIRE(ExtractDocumentHighlights(Json(nullptr)).empty());
+}
+
+TEST_CASE("ExtractDocumentHighlights returns empty for a non-array result", "[Lsp]") {
+    REQUIRE(ExtractDocumentHighlights(Json::object()).empty());
+}
+
+TEST_CASE("ExtractFormattingEdits parses a bare TextEdit[] response", "[Lsp]") {
+    const Json result = Json::array({
+        {{"range", MakeRange(0, 0, 0, 3)}, {"newText", "int"}},
+        {{"range", MakeRange(1, 0, 1, 4)}, {"newText", "    "}},
+    });
+    const std::vector<ned::editor::lsp::WorkspaceTextEdit> edits = ExtractFormattingEdits(result);
+    REQUIRE(edits.size() == 2);
+    REQUIRE(edits[0].newText == "int");
+    REQUIRE(edits[1].start.line == 1);
+    REQUIRE(edits[1].newText == "    ");
+}
+
+TEST_CASE("ExtractFormattingEdits skips an entry missing \"range\"", "[Lsp]") {
+    const Json result = Json::array({{{"newText", "x"}}, {{"range", MakeRange(0, 0, 0, 1)}, {"newText", "y"}}});
+    REQUIRE(ExtractFormattingEdits(result).size() == 1);
+}
+
+TEST_CASE("ExtractFormattingEdits returns empty for a null result", "[Lsp]") {
+    REQUIRE(ExtractFormattingEdits(Json(nullptr)).empty());
+}
+
+TEST_CASE("ExtractFormattingEdits returns empty for a non-array result", "[Lsp]") {
+    REQUIRE(ExtractFormattingEdits(Json::object()).empty());
 }
 
 TEST_CASE("ExtractCompletionItems reads insertTextFormat's snippet flag", "[Lsp]") {

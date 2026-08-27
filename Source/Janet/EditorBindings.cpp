@@ -660,6 +660,18 @@ namespace {
         editor::lsp::SetLspCompletionDebounceMs(static_cast<int>(milliseconds));
     }
 
+    // signature-help-auto-trigger follow-up: same "just forward to the
+    // process-wide setter" shape as NedSetLspAutoComplete above.
+    void NedSetLspSignatureHelpAutoTrigger(bool enabled) {
+        editor::lsp::SetLspSignatureHelpAutoTriggerEnabled(enabled);
+    }
+
+    // lsp-format-on-save follow-up: same "just forward to the process-wide
+    // setter" shape as NedSetLspAutoComplete above.
+    void NedSetLspFormatOnSave(bool enabled) {
+        editor::lsp::SetLspFormatOnSaveEnabled(enabled);
+    }
+
     // diagnostics-debounce follow-up: same "just forward to the process-wide
     // setter" shape as NedSetLspCompletionDebounce, for how long a buffer's
     // inline diagnostics wait after the server's most recent publish before
@@ -1229,6 +1241,14 @@ void InstallEditorBindings(Environment& env) {
         "ned", "set-lsp-completion-debounce",
         "Set the delay, in milliseconds, after the last relevant keystroke before an automatic completion request "
         "is sent (default 350). Non-positive values are clamped to 1.");
+    env.Register<&NedSetLspSignatureHelpAutoTrigger>(
+        "ned", "set-lsp-signature-help-auto-trigger",
+        "Enable or disable automatically requesting signature help after typing ( or , inside a call (default "
+        "true). Manual invocation (lsp-signature-help) works regardless of this setting.");
+    env.Register<&NedSetLspFormatOnSave>(
+        "ned", "set-lsp-format-on-save",
+        "Enable or disable formatting the buffer via the language server on save (default false). Ignored "
+        "whenever ned/set-format-command has an external formatter configured -- that always takes precedence.");
     env.Register<&NedSetLspDiagnosticsDebounce>(
         "ned", "set-lsp-diagnostics-debounce",
         "Set the delay, in milliseconds, after the LSP server's most recently received diagnostics publish for a "

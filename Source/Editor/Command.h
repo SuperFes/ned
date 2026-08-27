@@ -265,6 +265,14 @@ enum class InteractiveRequest { None,
                                 // replacing it. lsp-hover has no InteractiveRequest of its own --
                                 // see its Commands.cpp registration for why.
                                 LspComplete,
+                                // documentHighlight follow-up: a one-shot direct action, same
+                                // shape as LspComplete above -- BufferView's manual
+                                // lsp-document-highlight command routes here, but the actual
+                                // live-on-cursor-move behavior is driven directly from
+                                // RunCommandAndHandleOutcome's MaybeScheduleDocumentHighlight
+                                // call, not through this InteractiveRequest at all; this exists
+                                // only for M-x discoverability/explicit invocation.
+                                LspDocumentHighlight,
                                 // code-actions follow-up: a one-shot direct action, same shape
                                 // as LspComplete -- BufferView's RequestCodeActionsAtPoint sends
                                 // the actual textDocument/codeAction request and owns the
@@ -628,6 +636,18 @@ struct CommandContext {
     // once); ordinary motion/editing commands never touch it, so it stays
     // nullopt and BufferView's normal ScrollToShowPoint() runs unchanged.
     std::optional<std::size_t> newlyAddedCursorPoint;
+    // lsp-format-on-save follow-up: set by save-buffer/save-buffer-force
+    // when LSP-format-on-save is enabled, no external FormatCommand() takes
+    // precedence, and a language server is actually running for this
+    // buffer -- an outbound field the same shape as newlyAddedCursorPoint,
+    // signaling BufferView::RunCommandAndHandleOutcome to hand the rest of
+    // this save off to RequestLspFormatThenSaveBuffer(force) asynchronously
+    // instead of running the normal synchronous post-command refresh, since
+    // the actual save hasn't happened yet (an LSP round trip is pending).
+    // The bool value is force, mirroring save-buffer-force's own meaning:
+    // skip the ExternallyModified/conflict-marker guards (already checked,
+    // for save-buffer, before this was set).
+    std::optional<bool> deferSaveForLspFormat;
     // Emacs-keymap-round-2 follow-up (kill-append): set by the zap-to-char
     // command to whether the kill it's about to request (on the character
     // keystroke that follows, once InteractiveRequest::ZapToChar's session

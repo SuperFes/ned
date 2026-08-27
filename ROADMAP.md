@@ -52,24 +52,55 @@ Notcurses.
 - [ ] **LSP request coverage is narrow** (2026-08-25 audit; `declaration`/`typeDefinition`/
       `implementation`/`signatureHelp` closed 2026-08-26; `references`/`documentSymbol`/
       `workspace/symbol` plus a capabilities-object/completion-context hygiene pass closed
-      2026-08-26 — see below). Only hover/completion/codeAction(+resolve)/definition/
-      declaration/typeDefinition/implementation/references/documentSymbol/workspace-symbol/
-      rename/switchSourceHeader/executeCommand/signatureHelp are ever sent. Still missing:
-      `semanticTokens` full/delta/range (highlighting stays tree-sitter-only, never
-      server-informed — matters where tree-sitter can't disambiguate, e.g. C++ template
-      vs. less-than); `inlayHint`; `codeLens`; `documentHighlight` (no "highlight all refs
-      to symbol under point" in the current buffer); `callHierarchy`/`typeHierarchy`; and
-      `documentFormatting`/`rangeFormatting`/`onTypeFormatting` (`save-buffer` formatting
-      only shells out to an external formatter binary via `FormatOnSave.h`, never asks a
-      server with formatting built in — gopls/rust-analyzer/tsserver users need redundant
-      external-tool config). `signatureHelp`'s v1 is manual-invoke only (`M-x
-      lsp-signature-help`, no default binding — writes into the status line via
-      `ExtractSignatureHelp`, same "already plain, no BufferView session" shape as
-      `lsp-hover`); auto-triggering it after typing `(`/`,` inside a call, the way
-      completion's own ghost text auto-triggers off `completionDebounceTimer_`, is a
-      documented follow-up, not done here. Pull diagnostics (`textDocument/diagnostic`)
-      also unsupported — harmless while every configured server pushes, a real gap only if
-      one doesn't. 2026-08-26 (closed same day it was flagged): the direct-subprocess
+      2026-08-26; `documentHighlight`, `signatureHelp` auto-trigger, and
+      `documentFormatting`/`rangeFormatting` closed 2026-08-26 — see below). Only
+      hover/completion/codeAction(+resolve)/definition/declaration/typeDefinition/
+      implementation/references/documentSymbol/workspace-symbol/rename/switchSourceHeader/
+      executeCommand/signatureHelp/documentHighlight/formatting/rangeFormatting are ever
+      sent. Still missing: `semanticTokens` full/delta/range (highlighting stays
+      tree-sitter-only, never server-informed — matters where tree-sitter can't
+      disambiguate, e.g. C++ template vs. less-than); `inlayHint`; `codeLens`;
+      `callHierarchy`/`typeHierarchy`; and `onTypeFormatting`. Pull diagnostics
+      (`textDocument/diagnostic`) also unsupported — harmless while every configured server
+      pushes, a real gap only if one doesn't.
+      2026-08-26 (closed same day it was flagged): `documentHighlight` — live-on-
+      cursor-move (debounced via the same `LspCompletionDebounceMs()` completion already
+      uses) plus a manual `lsp-document-highlight` command (M-x only), both driving
+      `BufferView`'s own ephemeral `documentHighlight_` state (not `Buffer::Diagnostics()`'
+      persistent shape — closer to ghost-text completion's lifecycle) rendered via a new
+      `Theme::documentHighlightBackground` overlay, below selection/isearch/snippet-field
+      in `Paint()`'s brush-priority chain but above the execution-line/multibuffer/
+      trailing-whitespace washes. No on/off toggle — read-only decoration with no editing-
+      flow risk unlike auto-trigger completion/signature-help. `signatureHelp` auto-trigger
+      — fires on typing `(`/`,` (same debounce, gated by a new
+      `LspSignatureHelpAutoTriggerEnabled()` toggle, default true) via
+      `MaybeScheduleSignatureHelp`/`RequestSignatureHelpAtPoint`, writing into the shared
+      `statusMessage_` the same way `lsp-hover`/manual `lsp-signature-help` already do —
+      coexists with ghost-text completion (disjoint UI surfaces, inline vs. echo area), no
+      mutual suppression. `documentFormatting`/`rangeFormatting` — `LspManager::
+      RequestFormatting`/`RequestRangeFormatting` (bare `TextEdit[] | null` response,
+      `ExtractFormattingEdits`; `rangeFormatting` added for API symmetry but not wired into
+      any command yet — `save-buffer`/`format-buffer` are whole-buffer operations already).
+      `save-buffer`/`save-buffer-force` defer to a new async `BufferView::
+      RequestLspFormatThenSaveBuffer` (via `CommandContext::deferSaveForLspFormat`) only
+      when a new opt-in toggle (`ned/set-lsp-format-on-save`, default **false** — silently
+      changing existing installations' save behavior would be a real surprise) is on, no
+      external `FormatCommand()` is configured (that always wins unconditionally — the
+      more specific, deliberately hand-configured choice), and a server is actually running
+      for the buffer's language; `FormattingOptions` is fixed (`tabSize: TabWidth()`,
+      `insertSpaces: true` — this codebase has no per-buffer tabs-vs-spaces concept to
+      source them from yet). Found and fixed in the same pass: `BufferView.cpp`'s
+      anonymous-namespace `ApplyWorkspaceTextEdits` (shared by `ApplyCodeAction`/
+      `ApplyRename`, now also this) never wrapped its apply loop in
+      `Buffer::BeginUndoGroup`/`EndUndoGroup` — invisible for rename/code-actions' usual
+      handful of edits, but would have made undoing a whole-document format take one
+      keypress per edit; now one `Buffer::Undo()` reverts a full format. All three
+      tmux+clangd-verified live (documentHighlight's occurrence tracking across edits/
+      motion; signature-help appearing after `(` with no manual invocation; a real
+      badly-formatted file reformatted on save both on disk and in the buffer, one `C-_`
+      restoring it, and the external-formatter-precedence case confirmed by configuring
+      both and observing the external one win).
+      2026-08-26 (closed same day it was flagged): the direct-subprocess
       `LspClient` path (as opposed to a broker-owned connection) previously had no
       graceful `shutdown`/`exit` handshake at editor exit at all — it just let the child
       get killed by `ChildProcess`'s destructor. `LspManager::Shutdown()` (called once from

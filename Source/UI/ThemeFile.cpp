@@ -76,6 +76,7 @@ namespace {
         {"selection_background", &Theme::selectionBackground},
         {"isearch_match_background", &Theme::isearchMatchBackground},
         {"snippet_field_background", &Theme::snippetFieldBackground},
+        {"document_highlight_background", &Theme::documentHighlightBackground},
         {"binary_foreground", &Theme::binaryForeground},
         {"ghost_text_foreground", &Theme::ghostTextForeground},
         {"link_foreground", &Theme::linkForeground},

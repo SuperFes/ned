@@ -10,6 +10,7 @@
 #include "Editor/BackgroundActivity.h"
 #include "Editor/ProjectRoot.h"
 #include "Editor/ProjectSettings.h"
+#include "Editor/TabWidth.h"
 #include "LspBrokerConnect.h"
 #include "LspPosition.h"
 #include "LspServerConfig.h"
@@ -222,7 +223,10 @@ Json BuildInitializeParams(const std::filesystem::path& projectRoot, const Json&
             {"typeDefinition", Json::object()},
             {"implementation", Json::object()},
             {"references", Json::object()},
+            {"documentHighlight", Json::object()},
             {"rename", Json::object()},
+            {"formatting", Json::object()},
+            {"rangeFormatting", Json::object()},
             {"publishDiagnostics", Json::object()},
             {"codeAction",
              {{"codeActionLiteralSupport",
@@ -1197,6 +1201,40 @@ void LspManager::RequestSignatureHelp(text::Buffer& buffer, std::size_t byteOffs
                         });
 }
 
+void LspManager::RequestDocumentHighlight(text::Buffer& buffer, std::size_t byteOffset, DocumentHighlightCallback callback,
+                                          const std::string& serverKey) {
+    BufferSyncState* state = ResolveSyncState(buffer, serverKey);
+    if (!state || !state->opened) {
+        callback({});
+        return;
+    }
+    LspClient* client = ExistingClientForLanguage(state->language);
+    if (!client) {
+        callback({});
+        return;
+    }
+
+    const std::string language = state->language;
+    const LspPosition position = BytePositionToLsp(buffer.Content(), byteOffset);
+    const Json        params   = {
+        {"textDocument", {{"uri", state->uri}}},
+        {"position", {{"line", position.line}, {"character", position.character}}},
+    };
+    client->SendRequest("textDocument/documentHighlight", params,
+                        [this, language, callback = std::move(callback)](std::optional<Json> result, std::optional<Json> error) {
+                            if (error) {
+                                LogError(language, ExtractErrorMessage(*error));
+                                callback({});
+                                return;
+                            }
+                            if (!result) {
+                                callback({});
+                                return;
+                            }
+                            callback(ExtractDocumentHighlights(*result));
+                        });
+}
+
 void LspManager::RequestSwitchSourceHeader(text::Buffer& buffer, SwitchHeaderCallback callback) {
     BufferSyncState* state = PrimarySyncState(buffer);
     if (!state || !state->opened) {
@@ -1273,6 +1311,86 @@ void LspManager::RequestRename(text::Buffer& buffer, std::size_t byteOffset, con
                             }
                             resolved.hasEdit = !resolved.edits.empty();
                             callback(std::move(resolved));
+                        });
+}
+
+namespace {
+    // formatting follow-up: fixed per plan decision -- this codebase has no
+    // per-buffer tabs-vs-spaces concept yet, so insertSpaces is hardcoded
+    // true; tabSize mirrors the display-only TabWidth() setting (advisory
+    // only anyway -- a server commonly falls back to its own config file,
+    // e.g. .clang-format/rustfmt.toml, when present).
+    Json FormattingOptionsJson() {
+        return Json{{"tabSize", editor::TabWidth()}, {"insertSpaces", true}};
+    }
+} // namespace
+
+void LspManager::RequestFormatting(text::Buffer& buffer, FormattingCallback callback, const std::string& serverKey) {
+    BufferSyncState* state = ResolveSyncState(buffer, serverKey);
+    if (!state || !state->opened) {
+        callback(std::nullopt);
+        return;
+    }
+    LspClient* client = ExistingClientForLanguage(state->language);
+    if (!client) {
+        callback(std::nullopt);
+        return;
+    }
+
+    const std::string language = state->language;
+    const Json        params   = {
+        {"textDocument", {{"uri", state->uri}}},
+        {"options", FormattingOptionsJson()},
+    };
+    client->SendRequest("textDocument/formatting", params,
+                        [this, language, callback = std::move(callback)](std::optional<Json> result, std::optional<Json> error) {
+                            if (error) {
+                                LogError(language, ExtractErrorMessage(*error));
+                                callback(std::nullopt);
+                                return;
+                            }
+                            if (!result) {
+                                callback(std::nullopt);
+                                return;
+                            }
+                            callback(ExtractFormattingEdits(*result));
+                        });
+}
+
+void LspManager::RequestRangeFormatting(text::Buffer& buffer, std::size_t rangeStartByte, std::size_t rangeEndByte,
+                                        FormattingCallback callback, const std::string& serverKey) {
+    BufferSyncState* state = ResolveSyncState(buffer, serverKey);
+    if (!state || !state->opened) {
+        callback(std::nullopt);
+        return;
+    }
+    LspClient* client = ExistingClientForLanguage(state->language);
+    if (!client) {
+        callback(std::nullopt);
+        return;
+    }
+
+    const text::Rope& content  = buffer.Content();
+    const LspPosition start    = BytePositionToLsp(content, rangeStartByte);
+    const LspPosition end      = BytePositionToLsp(content, rangeEndByte);
+    const std::string language = state->language;
+    const Json        params   = {
+        {"textDocument", {{"uri", state->uri}}},
+        {"range", {{"start", {{"line", start.line}, {"character", start.character}}}, {"end", {{"line", end.line}, {"character", end.character}}}}},
+        {"options", FormattingOptionsJson()},
+    };
+    client->SendRequest("textDocument/rangeFormatting", params,
+                        [this, language, callback = std::move(callback)](std::optional<Json> result, std::optional<Json> error) {
+                            if (error) {
+                                LogError(language, ExtractErrorMessage(*error));
+                                callback(std::nullopt);
+                                return;
+                            }
+                            if (!result) {
+                                callback(std::nullopt);
+                                return;
+                            }
+                            callback(ExtractFormattingEdits(*result));
                         });
 }
 

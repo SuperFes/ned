@@ -137,6 +137,11 @@ struct Theme {
     // tabstop field (mirrors deliberately unhighlighted in v1) -- same
     // keep-the-glyph-foreground overlay contract as the two above.
     Color snippetFieldBackground;
+    // documentHighlight follow-up: other occurrences of the symbol under
+    // point in the current buffer (LSP textDocument/documentHighlight) --
+    // same keep-the-glyph-foreground overlay contract as the three above,
+    // meant to read as a subtler cue than an active selection/search match.
+    Color documentHighlightBackground;
 
     // Tab bar (tab-bar follow-up): tabBar is the brush for inactive tabs and
     // the row's own fill; activeTab is the visually distinct brush for
