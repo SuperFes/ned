@@ -6,6 +6,7 @@
 #include <thread>
 
 #include <fcntl.h>
+#include <poll.h>
 #include <sys/file.h>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -24,6 +25,52 @@ namespace ned::editor::lsp {
 
 namespace {
 
+    // editor-side-connect-timeout follow-up: confirmed live -- a plain
+    // blocking ::connect() to the broker's Unix socket froze a real,
+    // interactive `ned` process's *main UI thread* solid (unix_wait_for_peer
+    // in /proc, gdb-inaccessible since it never returns) the moment the
+    // daemon's listen(2) backlog (fixed at 16, LspBrokerMain.cpp) filled up
+    // and its accept loop stalled -- every "attach" call in this codebase
+    // runs synchronously on LspManager::ClientForLanguage <- SyncBuffer <-
+    // BufferView::Paint(), i.e. the main thread, exactly the header
+    // comment above already says. A stalled/overloaded broker used to mean
+    // an unkillable-by-the-user-except-via-kill-9 editor; this makes it
+    // mean "falls back to a direct spawn, like the daemon was never there,"
+    // the exact behavior a plain ECONNREFUSED already gets.
+    constexpr int kConnectTimeoutMs = 300;
+
+    // Non-blocking connect + poll(POLLOUT) + SO_ERROR is the standard
+    // POSIX pattern for a connect() that can never hang past timeoutMs,
+    // for a stream socket of any address family including AF_UNIX. fd is
+    // left blocking again on success (every downstream Transport/ReadFrame
+    // call in this codebase assumes a blocking fd, matching ChildProcess's
+    // own convention) -- on any failure path the caller closes fd itself,
+    // so its blocking-mode isn't restored there.
+    bool ConnectWithTimeout(int fd, const sockaddr* addr, socklen_t addrLen, int timeoutMs) {
+        const int originalFlags = ::fcntl(fd, F_GETFL, 0);
+        if (originalFlags < 0 || ::fcntl(fd, F_SETFL, originalFlags | O_NONBLOCK) < 0) {
+            return false;
+        }
+        if (::connect(fd, addr, addrLen) == 0) {
+            ::fcntl(fd, F_SETFL, originalFlags);
+            return true;
+        }
+        if (errno != EINPROGRESS) {
+            return false;
+        }
+        pollfd pfd{.fd = fd, .events = POLLOUT, .revents = 0};
+        if (::poll(&pfd, 1, timeoutMs) <= 0) {
+            return false; // timed out (backlog full / daemon wedged) or poll() itself failed -- same outcome either way
+        }
+        int       socketError = 0;
+        socklen_t errorLen    = sizeof(socketError);
+        if (::getsockopt(fd, SOL_SOCKET, SO_ERROR, &socketError, &errorLen) != 0 || socketError != 0) {
+            return false;
+        }
+        ::fcntl(fd, F_SETFL, originalFlags);
+        return true;
+    }
+
     // A bare connect-and-close probe -- true if *something* is listening at
     // socketPathStr right now. Shared by TryConnectToBroker's own initial
     // attempt (inlined there, since it also needs the fd for real traffic
@@ -41,7 +88,7 @@ namespace {
             return false;
         }
         std::strncpy(addr.sun_path, socketPathStr.c_str(), sizeof(addr.sun_path) - 1);
-        const bool connected = ::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0;
+        const bool connected = ConnectWithTimeout(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr), kConnectTimeoutMs);
         ::close(fd);
         return connected;
     }
@@ -207,9 +254,10 @@ std::unique_ptr<LspClient> TryConnectToBroker(const std::filesystem::path& proje
     }
     std::strncpy(addr.sun_path, socketPathStr.c_str(), sizeof(addr.sun_path) - 1);
 
-    if (::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
+    if (!ConnectWithTimeout(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr), kConnectTimeoutMs)) {
         ::close(fd);
-        // No broker reachable -- the common, expected outcome, especially
+        // No broker reachable (or it didn't accept within kConnectTimeoutMs
+        // -- see that constant's own comment) -- the common, expected outcome, especially
         // the very first time any project's LSP is used after a fresh
         // boot. Kick off (never wait for) an attempt to spawn one for next
         // time -- see TryBecomeBrokerSpawner's own doc comment for why
