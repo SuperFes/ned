@@ -63,6 +63,12 @@ void               SetClipboardEnabled(bool enabled);
 void SetClipboardCopyCommand(std::vector<std::string> argv);
 void SetClipboardPasteCommand(std::vector<std::string> argv);
 
+// Same override convention, for the primary-selection paste command
+// PasteFromPrimarySelection() below uses (middle-click-paste follow-up) --
+// independent of SetClipboardPasteCommand, since the primary selection is a
+// separate buffer from the clipboard on both X11 and Wayland.
+void SetClipboardPrimaryPasteCommand(std::vector<std::string> argv);
+
 // Resolution order, independently for copy and paste: an explicit override
 // if set, else platform auto-detection (memoized after the first call,
 // mirroring lsp::ProseChecker.h's own AutoDetect -- a $PATH/env scan
@@ -75,6 +81,15 @@ void SetClipboardPasteCommand(std::vector<std::string> argv);
 // Else std::nullopt.
 [[nodiscard]] std::optional<std::vector<std::string>> ResolvedClipboardCopyCommand();
 [[nodiscard]] std::optional<std::vector<std::string>> ResolvedClipboardPasteCommand();
+
+// Middle-click-paste follow-up: the primary selection is Wayland/X11's
+// separate "whatever's currently highlighted anywhere" buffer, not the
+// clipboard -- deliberately Wayland-only (an explicit override still works
+// regardless of platform). An explicit override if set, else
+// $WAYLAND_DISPLAY set and wl-paste resolvable: `wl-paste --primary -n`.
+// Else std::nullopt -- no X11 primary-selection fallback (xclip/xsel's own
+// `-selection primary`), a deliberate scope cut.
+[[nodiscard]] std::optional<std::vector<std::string>> ResolvedPrimarySelectionPasteCommand();
 
 // Copies text to the system clipboard: shells out to
 // ResolvedClipboardCopyCommand() if one is resolved, and always also
@@ -97,6 +112,15 @@ void CopyToSystemClipboard(std::string_view text);
 // ChildProcess-hang-protection-round-2 follow-up). See this file's own
 // header comment for why there is no OSC 52 fallback here.
 [[nodiscard]] std::optional<std::string> PasteFromSystemClipboard(std::chrono::milliseconds readTimeout = SubprocessReadTimeoutMs());
+
+// Reads the primary selection via ResolvedPrimarySelectionPasteCommand(),
+// same shape/hang-protection/no-OSC-52-fallback contract as
+// PasteFromSystemClipboard() above (middle-click-paste follow-up) -- backs
+// BufferView's middle-click paste, run synchronously from the click same as
+// yank's own C-y call; readTimeout is a per-chunk idle timeout, not a
+// total-transfer cap, so a large selection streaming steadily doesn't trip
+// it just for being large.
+[[nodiscard]] std::optional<std::string> PasteFromPrimarySelection(std::chrono::milliseconds readTimeout = SubprocessReadTimeoutMs());
 
 // Exposed for testing (mirrors UI/TerminalColorProbe.h's own BuildColorQuery
 // split): the pure OSC 52 escape-sequence construction, no I/O. wrapForTmux

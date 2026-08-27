@@ -15,6 +15,7 @@
 #include <unistd.h>
 
 #include "Editor/Backup.h"
+#include "Editor/Clipboard.h"
 #include "Editor/Commands.h"
 #include "Editor/Dap/DapClient.h"
 #include "Editor/Dap/DapConfig.h"
@@ -344,6 +345,18 @@ ned::ui::Event MouseMove(int x, int y, ned::ui::MouseEvent::Button button = ned:
 ned::ui::Event MouseWheel(int x, int y, ned::ui::MouseEvent::Button button) {
     return ned::ui::test::Mouse(x, y, button, ned::ui::MouseEvent::Motion::Pressed);
 }
+
+// middle-click-paste follow-up: Tests/ClipboardTestGuard.cpp forces
+// ClipboardEnabled() false for the whole ned_tests binary, so a test
+// exercising middle-click paste must re-enable it locally with an injected
+// fake backend and restore this disabled steady state before returning --
+// mirrors ClipboardTest.cpp's own RestoreClipboardDisabled exactly.
+struct RestorePrimaryPasteDisabled {
+    ~RestorePrimaryPasteDisabled() {
+        ned::editor::SetClipboardPrimaryPasteCommand({});
+        ned::editor::SetClipboardEnabled(false);
+    }
+};
 
 // universal-clickable-affordances follow-up.
 ned::ui::Event MousePressCtrl(int x, int y) {
@@ -1292,6 +1305,70 @@ TEST_CASE("mouse_wheel scrolls the viewport without moving point", "[BufferView]
     view.OnEvent(MouseWheel(0, 0, ned::ui::MouseEvent::Button::WheelUp));
     view.Paint(canvas);
     REQUIRE(ContentRowText(screen, 0, 5, totalLines) == "line0"); // back at the top
+}
+
+TEST_CASE("Middle-click pastes the primary selection at the click point", "[BufferView]") {
+    const RestorePrimaryPasteDisabled restore;
+    ned::editor::SetClipboardEnabled(true);
+    ned::editor::SetClipboardPrimaryPasteCommand({"sh", "-c", "printf %s PASTED"});
+
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("ac");
+    fixture.buffer.SetPoint(0);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    const int gutter = GutterWidth(1);
+    view.OnEvent(MousePress(gutter + 1, 0, ned::ui::MouseEvent::Button::Middle)); // between 'a' and 'c'
+
+    REQUIRE(fixture.buffer.Text() == "aPASTEDc");
+    REQUIRE(fixture.buffer.Point() == 7); // point ends after the pasted text, same as ordinary typed insertion
+
+    ned::editor::SetClipboardEnabled(false);
+}
+
+TEST_CASE("Middle-click paste is a no-op on a read-only buffer, but still moves point", "[BufferView]") {
+    const RestorePrimaryPasteDisabled restore;
+    ned::editor::SetClipboardEnabled(true);
+    ned::editor::SetClipboardPrimaryPasteCommand({"sh", "-c", "printf %s PASTED"});
+
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("ac");
+    fixture.buffer.SetPoint(0);
+    fixture.buffer.SetReadOnly(true);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    const int gutter = GutterWidth(1);
+    view.OnEvent(MousePress(gutter + 1, 0, ned::ui::MouseEvent::Button::Middle));
+
+    REQUIRE(fixture.buffer.Text() == "ac"); // unchanged -- InsertAtPoint would throw on a read-only buffer
+    REQUIRE(fixture.buffer.Point() == 1);
+
+    ned::editor::SetClipboardEnabled(false);
+}
+
+TEST_CASE("Middle-click paste is a no-op when no primary-selection tool is resolved", "[BufferView]") {
+    const RestorePrimaryPasteDisabled restore;
+    ned::editor::SetClipboardEnabled(true);
+    ned::editor::SetClipboardPrimaryPasteCommand({"sh", "-c", "exit 1"}); // resolves, but never succeeds
+
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("ac");
+    fixture.buffer.SetPoint(0);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    const int gutter = GutterWidth(1);
+    view.OnEvent(MousePress(gutter + 1, 0, ned::ui::MouseEvent::Button::Middle));
+
+    REQUIRE(fixture.buffer.Text() == "ac");
+    REQUIRE(fixture.buffer.Point() == 1);
+
+    ned::editor::SetClipboardEnabled(false);
 }
 
 TEST_CASE("Mouse input is ignored while an isearch session is active", "[BufferView]") {
@@ -7665,6 +7742,61 @@ TEST_CASE("Moving point back to the start of a horizontally-scrolled line scroll
     view.Paint(canvas);
     REQUIRE(view.LeftColumn() == 0);
     REQUIRE(view.CursorPosition().has_value());
+}
+
+// horizontal-wheel-scroll follow-up.
+
+TEST_CASE("Horizontal wheel scrolls leftColumn_ without moving point", "[BufferView]") {
+    Fixture fixture; // FundamentalMode -- wrapLines false, the horizontal-scroll path
+    fixture.buffer.InsertAtPoint(std::string(60, 'x'));
+    fixture.buffer.SetPoint(0);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 2});
+    ned::ui::Screen screen = ned::ui::Screen(20, 3);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 2});
+    view.Paint(canvas); // establish size() before the first wheel event
+
+    view.OnEvent(MouseWheel(0, 0, ned::ui::MouseEvent::Button::WheelRight));
+    REQUIRE(view.LeftColumn() == 3);
+    REQUIRE(fixture.buffer.Point() == 0); // wheel never moves point, same as the vertical case
+
+    view.OnEvent(MouseWheel(0, 0, ned::ui::MouseEvent::Button::WheelRight));
+    REQUIRE(view.LeftColumn() == 6);
+
+    view.OnEvent(MouseWheel(0, 0, ned::ui::MouseEvent::Button::WheelLeft));
+    REQUIRE(view.LeftColumn() == 3);
+}
+
+TEST_CASE("Horizontal wheel scroll clamps at 0 rather than underflowing", "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint(std::string(60, 'x'));
+    fixture.buffer.SetPoint(0);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 2});
+    ned::ui::Screen screen = ned::ui::Screen(20, 3);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+
+    view.OnEvent(MouseWheel(0, 0, ned::ui::MouseEvent::Button::WheelLeft));
+    REQUIRE(view.LeftColumn() == 0);
+}
+
+TEST_CASE("Horizontal wheel is a no-op once wrapLines makes the buffer never scroll horizontally", "[BufferView]") {
+    Fixture fixture;
+    fixture.mode.wrapLines = true;
+    fixture.buffer.InsertAtPoint(std::string(60, 'x'));
+    fixture.buffer.SetPoint(0);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 2});
+    ned::ui::Screen screen = ned::ui::Screen(20, 3);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+
+    view.OnEvent(MouseWheel(0, 0, ned::ui::MouseEvent::Button::WheelRight));
+    REQUIRE(view.LeftColumn() == 0);
 }
 
 TEST_CASE("A wrap-enabled buffer breaks a long line at a word boundary, not mid-word", "[BufferView]") {

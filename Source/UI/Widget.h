@@ -234,7 +234,9 @@ struct MouseEvent {
                         Middle,
                         Right,
                         WheelUp,
-                        WheelDown };
+                        WheelDown,
+                        WheelLeft,
+                        WheelRight };
     enum class Motion { Pressed,
                         Released,
                         Moved };

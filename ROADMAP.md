@@ -215,10 +215,6 @@ Notcurses.
 - [ ] **No server/daemon mode** — no `emacsclient`-equivalent; one process per terminal,
       no way to keep a warm process (buffers, LSP connections, undo history) alive and
       attach a new terminal client to it.
-- [ ] **Mouse gaps** (2026-08-25 audit): no middle-click paste (X11 primary selection —
-      `Widget.h`'s `Button` enum has `Middle` but `BufferView` never handles it); no
-      horizontal wheel scroll (`Button` has no `WheelLeft`/`WheelRight`, so a long
-      unwrapped line has no wheel/trackpad horizontal-scroll path).
 - [ ] **Project root is fixed at startup** — `ProjectRoot.h` exposes `SetProjectRoot` as
       a primitive but nothing wires an `M-x`-reachable command to it; switching projects
       means restarting the process.
@@ -584,6 +580,10 @@ these accumulate detail in place.
 - **Org export backends / publishing pipeline** — each a standalone tool-sized effort.
 - **Alt+Click cursor creation** — mouse-dependent in a terminal app where SSH/tmux
   mouse passthrough is unreliable; keyboard multi-cursor commands cover it.
+- **X11 primary-selection support for middle-click paste** — `Editor/Clipboard.h`'s
+  `PasteFromPrimarySelection`/`ResolvedPrimarySelectionPasteCommand` are deliberately
+  Wayland-only (`wl-paste --primary`), a stated user preference given X11's declining
+  share; no xclip/xsel `-selection primary` fallback.
 - **Bundling or requiring a JVM** for anything (heavy checkers like `ltex-ls` stay
   opt-in user configuration).
 - **Accessibility (screen-reader support)** — a Notcurses raw-cell-grid TUI has no
