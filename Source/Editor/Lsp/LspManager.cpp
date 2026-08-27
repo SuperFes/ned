@@ -773,8 +773,33 @@ void LspManager::NotifyBufferClosed(text::Buffer& buffer) {
 }
 
 void LspManager::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
+    // reentrant-expiry-during-iteration follow-up: a stale *initialize*
+    // request's synthesized-timeout callback (SpawnClient's own lambda,
+    // above) calls ClientDisconnected on error, which erases the client
+    // from clients_ immediately (see that function's own comment on why
+    // that's correct) -- and that call can happen synchronously, from
+    // inside entry.second->ExpireStaleRequests(maxAge) below, while this
+    // very range-for loop is iterating clients_. Erasing the element the
+    // loop is currently visiting invalidates its iterator; the loop's own
+    // ++it (or a later entry sharing a since-invalidated bucket) then reads
+    // freed map-node memory -- confirmed live via a real SIGSEGV, and
+    // reproduced deterministically under ASan (heap-use-after-free, this
+    // exact line) once the fix below was reverted. LspClient::
+    // ExpireStaleRequests already guards its own pending_ map this same way
+    // (see its own comment); this is that same fix one level up. Snapshot
+    // the keys first, then re-resolve each via a fresh find() right before
+    // use, so a disconnect cascaded from an earlier language in this same
+    // pass is observed as "already gone" instead of dereferencing a stale
+    // iterator/pointer.
+    std::vector<std::string> languages;
+    languages.reserve(clients_.size());
     for (const auto& entry : clients_) {
-        entry.second->ExpireStaleRequests(maxAge);
+        languages.push_back(entry.first);
+    }
+    for (const std::string& language : languages) {
+        if (const auto it = clients_.find(language); it != clients_.end()) {
+            it->second->ExpireStaleRequests(maxAge);
+        }
     }
 }
 

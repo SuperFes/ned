@@ -322,6 +322,39 @@ TEST_CASE("LspManager::ExpireStaleRequests reaches an injected client's own pend
     REQUIRE_FALSE(gotText.has_value()); // synthetic timeout resolves like any other error response
 }
 
+TEST_CASE("LspManager::ExpireStaleRequests survives a stale initialize request disconnecting its own client mid-sweep", "[Lsp]") {
+    // reentrant-expiry-during-iteration follow-up: confirmed live via a real
+    // SIGSEGV (a unique_ptr<LspClient> read back as garbage, inside
+    // ExpireStaleRequests itself). A timed-out *initialize* request's
+    // synthesized-timeout callback (SpawnClient's own lambda) calls
+    // ClientDisconnected on error, which erases the client from clients_
+    // synchronously -- and that can happen from inside this very client's
+    // own ExpireStaleRequests(maxAge) call, while LspManager::
+    // ExpireStaleRequests's loop is still iterating clients_, invalidating
+    // the loop's own iterator. "cat" echoes the initialize request's raw
+    // bytes straight back -- no "result"/"error" key, so LspClient::
+    // DispatchFrame never treats it as a response (see that function's own
+    // id-plus-result-or-error check) and the request just stays pending
+    // until the timeout below fires.
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    manager.SetBrokerSocketPathOverrideForTesting(std::filesystem::temp_directory_path() / "ned-lsp-manager-test-no-broker.sock");
+    ned::editor::lsp::SetLspServerCommand("hang-init-lang", {"cat"});
+
+    Buffer& buffer = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-lsp-manager-hang-init-test.txt");
+    manager.SyncBuffer(buffer, "hang-init-lang"); // spawns cat, sends "initialize", which never validly answers
+    REQUIRE(manager.StatusForLanguage("hang-init-lang") == LspManager::LspStatus::Running);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    manager.ExpireStaleRequests(std::chrono::milliseconds(1)); // the crash used to happen here
+
+    WaitUntil(eventLoop, [&] { return manager.StatusForLanguage("hang-init-lang") != LspManager::LspStatus::Running; });
+    REQUIRE(manager.StatusForLanguage("hang-init-lang") == LspManager::LspStatus::Disconnected);
+
+    ned::editor::lsp::SetLspServerCommand("hang-init-lang", {}); // clean up global config state for other tests
+}
+
 TEST_CASE("LspManager::RequestHover resolves to nullopt on a JSON-RPC error response", "[Lsp]") {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
