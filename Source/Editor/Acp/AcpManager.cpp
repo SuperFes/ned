@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "AcpConfig.h"
+#include "Editor/BackgroundActivity.h"
 #include "Editor/ProjectRoot.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
@@ -18,6 +19,12 @@ namespace {
     std::string AcpOutputBufferName(std::string_view agentName) {
         return "*acp: " + std::string(agentName) + "*";
     }
+
+    // Mode-line spinner name for a prompt in flight -- see AcpManager::
+    // PromptInFlight's doc comment. String, not string_view, to match
+    // BackgroundActivity's own std::string parameters (LspClient.cpp's
+    // kLspActivity does the same conversion for the same reason).
+    const std::string kAcpActivity{"ACP"};
 
     // Sibling-temp-file + rename, the same atomic-write shape
     // ProjectReplace.cpp's own ReplaceMatches uses.
@@ -68,6 +75,16 @@ namespace {
 } // namespace
 
 AcpManager::AcpManager(text::BufferList& bufferList, ned::ui::EventLoop& eventLoop) : bufferList_(bufferList), eventLoop_(eventLoop) {
+}
+
+AcpManager::~AcpManager() {
+    // See the header's doc comment -- EndSession normally does this, but a
+    // destructor that runs without one first (a session/prompt request
+    // abandoned mid-flight, e.g. an owning panel torn down directly) must
+    // not leak the "ACP" mode-line spinner for the rest of the process.
+    if (promptInFlight_) {
+        editor::EndBackgroundActivity(kAcpActivity);
+    }
 }
 
 AcpManager::SessionState AcpManager::State() const {
@@ -301,7 +318,14 @@ text::Buffer* AcpManager::StartSession(const std::string& agentName) {
                     sessionId_ = (*newResult)["sessionId"].get<std::string>();
                     state_     = SessionState::Active;
                     AppendToOutputBuffer("\n[session ready]\n");
-                    PushSessionEvent("session ready");
+                    // Deliberately not also PushSessionEvent'd into the
+                    // transcript (AcpPanel's chat view) -- the panel's own
+                    // title bar already reads "[Active]" the instant this
+                    // fires (StateLabel), so a second "session ready" line
+                    // in the conversation itself was pure noise, reported
+                    // live the same way the end_turn-suppression follow-up
+                    // below was. The raw *acp: <agent>* protocol-log buffer
+                    // above still gets it verbatim.
                 });
         });
 
@@ -314,6 +338,12 @@ std::string AcpManager::SendPrompt(const std::string& text) {
     }
     AppendToOutputBuffer("\n> " + text + "\n");
     PushTranscriptEntry(TranscriptEntry{.kind = TranscriptEntry::Kind::UserMessage, .text = text});
+    // chat-feel follow-up: the only on-screen change between hitting Enter
+    // and the first agent_message_chunk used to be nothing at all -- reads
+    // as "did this hang?" for however long the agent takes to say anything.
+    // Reuses the same mode-line spinner registry LSP already drives.
+    promptInFlight_ = true;
+    editor::BeginBackgroundActivity(kAcpActivity);
     client_->SendRequest(
         "session/prompt",
         Json{
@@ -321,6 +351,8 @@ std::string AcpManager::SendPrompt(const std::string& text) {
             {"prompt", Json::array({Json{{"type", "text"}, {"text", text}}})},
         },
         [this](std::optional<Json> result, std::optional<Json> error) {
+            promptInFlight_ = false;
+            editor::EndBackgroundActivity(kAcpActivity);
             if (error) {
                 const std::string message = "error: " + error->value("message", std::string("prompt failed"));
                 AppendToOutputBuffer("\n[" + message + "]\n");
@@ -366,6 +398,18 @@ std::string AcpManager::StopSession() {
     }
     EndSession("ACP session stopped.");
     return "ACP session stopped.";
+}
+
+bool AcpManager::CancelPrompt() {
+    if (state_ != SessionState::Active || !promptInFlight_ || !client_) {
+        return false;
+    }
+    client_->SendNotification("session/cancel", Json{{"sessionId", sessionId_}});
+    return true;
+}
+
+bool AcpManager::PromptInFlight() const {
+    return promptInFlight_;
 }
 
 void AcpManager::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
@@ -507,6 +551,15 @@ void AcpManager::EndSession(std::string reason) {
         return; // e.g. disconnect EOF arriving after an explicit StopSession already tore down
     }
     state_ = SessionState::Inactive;
+    if (promptInFlight_) {
+        // A prompt was still outstanding when the session ended out from
+        // under it (StopSession mid-turn, or the agent disconnecting) --
+        // its own SendRequest callback is now abandoned (AcpClient's
+        // documented "dropped, uninvoked" shutdown contract), so nothing
+        // else would ever end this spinner.
+        promptInFlight_ = false;
+        editor::EndBackgroundActivity(kAcpActivity);
+    }
     sessionId_.clear();
     pendingPermissionPrompt_.reset();
     pendingPermissionRespond_ = nullptr;

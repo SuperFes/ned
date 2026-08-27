@@ -326,6 +326,14 @@ bool AcpPanel::OnEvent(const Event& event) {
     }
 
     if (chord->Special == editor::SpecialKey::Escape) {
+        // chat-feel follow-up: interrupt a still-streaming reply first,
+        // keeping whatever partial output already arrived (Claude Code's
+        // own single-Esc-to-interrupt) -- a second Escape once nothing is
+        // in flight falls through to the pre-existing close-panel behavior.
+        if (acpManager_ && acpManager_->PromptInFlight()) {
+            acpManager_->CancelPrompt();
+            return true;
+        }
         if (onToggleRequest_) {
             onToggleRequest_();
         }
