@@ -64,7 +64,12 @@ class AcpManager {
     // bufferList and eventLoop must both outlive this AcpManager -- same
     // requirement every sibling manager in this codebase documents.
     AcpManager(text::BufferList& bufferList, ned::ui::EventLoop& eventLoop);
-    ~AcpManager() = default;
+    // Ends the "ACP" background activity if a prompt is still in flight when
+    // this is destroyed without ever going through EndSession -- mirrors
+    // LspClient::~LspClient's identical cleanup for its own pending_ map
+    // (see that destructor's comment). A real ~AcpManager() rather than
+    // = default because of this.
+    ~AcpManager();
 
     AcpManager(const AcpManager&)            = delete;
     AcpManager& operator=(const AcpManager&) = delete;
@@ -140,6 +145,27 @@ class AcpManager {
     // (DapManager::StopSession's own "must not depend on the agent
     // answering" shape) -- returns a short status string.
     std::string StopSession();
+
+    // ACP chat-feel backlog: sends "session/cancel" for the in-flight
+    // session/prompt request, if any -- Escape's interrupt affordance in
+    // AcpPanel, distinct from StopSession (which tears the whole session
+    // down) and CancelPermissionPrompt (which answers a pending permission
+    // request, not a prompt). A no-op returning false if nothing is
+    // currently in flight or no session is active. This doesn't locally
+    // fabricate a "cancelled" transcript entry -- the agent is expected to
+    // resolve the pending session/prompt request with stopReason
+    // "cancelled" shortly after, which SendPrompt's own response handler
+    // already surfaces (any stopReason other than "end_turn"/"end" becomes
+    // a SessionEvent), keeping whatever partial reply already streamed in.
+    bool CancelPrompt();
+
+    // True from SendPrompt until its session/prompt response arrives (by
+    // completion or cancellation) -- what AcpPanel's Escape handler gates
+    // on to choose interrupt vs. close-panel, and what drives the "ACP"
+    // mode-line spinner (BackgroundActivity.h) between sending a prompt and
+    // the first token, closing the gap where SessionState stays Active with
+    // no other on-screen change.
+    [[nodiscard]] bool PromptInFlight() const;
 
     // subprocess-hang-protection follow-up. A no-op if no session is active;
     // otherwise forwards to the live client_'s own ExpireStaleRequests. See
@@ -229,7 +255,8 @@ class AcpManager {
     std::unique_ptr<AcpClient> client_;
     std::string                agentName_;
     std::string                sessionId_;
-    SessionState               state_ = SessionState::Inactive;
+    SessionState               state_          = SessionState::Inactive;
+    bool                       promptInFlight_ = false;
 
     std::optional<PermissionPrompt> pendingPermissionPrompt_;
     RespondFn                       pendingPermissionRespond_;

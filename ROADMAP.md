@@ -385,18 +385,9 @@ LSP-against-the-wrong-toolchain prove it's needed in practice, not speculatively
       color, distinguishing `agent_thought_chunk` from `agent_message_chunk`) — v1 only
       widened `AcpPanel`'s own `DisplayStyle` (agent text/plan steps no longer share
       the exact same style as a plain user-message echo), deliberately not a full
-      theming pass. **Composer input field is barely usable** (found 2026-08-26,
-      live, real-account testing): `Editor/MinibufferPrompt.h` — shared by every
-      echo-area prompt in the editor, not just this panel — is append/
-      remove-from-the-end only (`AppendChar`/`DeleteChar`, no cursor position, no
-      forward-delete, no arrow-key movement, no insert-in-the-middle); reported live
-      as effectively unreadable (very low contrast against the panel background) and
-      Backspace/Delete "not working" from the user's perspective. Needs a real
-      cursor-position-aware text-entry primitive (position index, insert-at-cursor,
-      forward/backward delete, Left/Right/Home/End) — a bigger change than this
-      panel alone, since every other prompt (find-file, M-x, goto-line, ...) shares
-      the same primitive and would need re-validating against a real cursor rather
-      than assuming end-of-text editing. Separately: `Keymap::AmbiguousBindings()` is diagnostic-only (a
+      theming pass. Composer/echo-area input field's append-only editing (no cursor
+      position, no forward-delete, no arrow-key movement) closed 2026-08-26 — see
+      `git show da0a7c9`. Separately: `Keymap::AmbiguousBindings()` is diagnostic-only (a
       `CommandsTest.cpp` regression test), not enforcement — `Keymap::Bind` still lets a
       caller construct an unreachable-by-typing binding; a real structural fix (Emacs'
       own `define-key` semantics: reject/restructure a bind that would shadow an
@@ -407,12 +398,12 @@ LSP-against-the-wrong-toolchain prove it's needed in practice, not speculatively
       against what `AcpPanel`/`AcpManager` actually do today; none of this is implemented
       yet, just scoped). Roughly in order of how much a single session of chatting with an
       agent would actually feel it:
-      - **Interrupt an in-flight prompt.** Today `Escape` in `AcpPanel::OnEvent` only
-        resolves a *pending permission prompt* or closes the panel — there's no way to stop
-        an agent mid-response short of `acp-stop-session`/closing the whole session. Claude
-        Code's single-Esc-to-interrupt (keeping partial output, not rolling anything back)
-        is the most-used affordance of this shape. ACP has a real `session/cancel`
-        notification for this; `AcpManager` has no `Cancel()`/equivalent today.
+      - Interrupt an in-flight prompt, and a visible "agent is working" spinner between
+        sending a prompt and the first token, both closed 2026-08-26 — see
+        `AcpManager::CancelPrompt`/`PromptInFlight` and `AcpPanel::OnEvent`'s Escape
+        handling. Also fixed same day: a redundant "session ready" line no longer
+        duplicates the panel's own `[Active]` title-bar state in the transcript (the raw
+        `*acp: <agent>*` log buffer still gets it verbatim).
       - **Checkpoint/rewind per turn.** Claude Code's double-Esc `/rewind` (checkpoint
         auto-created per prompt, restore code/conversation/both) is the single most-cited
         "saved me" feature in the research above — and this codebase already has the two
@@ -422,12 +413,6 @@ LSP-against-the-wrong-toolchain prove it's needed in practice, not speculatively
         the open design question is what "restore conversation" even means against ACP's
         `session/load` (still itself unimplemented — see the gaps entry above) rather than
         a from-scratch mechanism.
-      - **A visible "agent is working" state between sending a prompt and the first
-        `agent_message_chunk`.** `BackgroundActivity.h` already drives the mode line's LSP
-        spinner from exactly this kind of counted in-flight-work registry; `SendPrompt`
-        doesn't touch it today, so there's a silent gap (`SessionState` stays `Active`,
-        nothing on screen changes) between hitting Enter and the first token, which is
-        exactly the kind of pause that reads as "did this hang?" without one.
       - **Word-wrap in the transcript.** `AcpPanel::FormatTranscript`'s `Kind::AgentText`
         case is explicitly "No word-wrap in v1 -- split only on literal newlines the agent
         itself sent" (its own header comment) — a long unwrapped reply line just runs off

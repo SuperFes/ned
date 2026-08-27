@@ -148,6 +148,48 @@ TEST_CASE("AcpManager::SendPrompt sends session/prompt and streams the stop reas
     REQUIRE(fixture.outputBuffer->Text().find("[end_turn]") != std::string::npos);
 }
 
+TEST_CASE("AcpManager::PromptInFlight is true only while a session/prompt is outstanding", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+
+    REQUIRE_FALSE(fixture.manager.PromptInFlight());
+
+    REQUIRE(fixture.manager.SendPrompt("what does this do?") == "Sent.");
+    REQUIRE(fixture.manager.PromptInFlight());
+
+    const Json promptRequest = fixture.reader.Next();
+    fixture.client->DispatchFrame(ResultFrame(promptRequest["id"], Json{{"stopReason", "end_turn"}}));
+
+    REQUIRE_FALSE(fixture.manager.PromptInFlight());
+}
+
+TEST_CASE("AcpManager::CancelPrompt sends session/cancel while a prompt is in flight, no-ops otherwise", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+
+    REQUIRE_FALSE(fixture.manager.CancelPrompt()); // nothing in flight yet
+
+    REQUIRE(fixture.manager.SendPrompt("keep going") == "Sent.");
+    const Json promptRequest = fixture.reader.Next();
+
+    REQUIRE(fixture.manager.CancelPrompt());
+    const Json cancelNotification = fixture.reader.Next();
+    REQUIRE(cancelNotification["method"] == "session/cancel");
+    REQUIRE(cancelNotification["params"]["sessionId"] == "s1");
+    REQUIRE_FALSE(cancelNotification.contains("id")); // a notification, not a request
+
+    // The agent is expected to resolve the still-outstanding session/prompt
+    // itself, typically with stopReason "cancelled" -- CancelPrompt doesn't
+    // fabricate that locally.
+    REQUIRE(fixture.manager.PromptInFlight());
+    fixture.client->DispatchFrame(ResultFrame(promptRequest["id"], Json{{"stopReason", "cancelled"}}));
+    REQUIRE_FALSE(fixture.manager.PromptInFlight());
+    REQUIRE(fixture.manager.Transcript().back().kind == AcpManager::TranscriptEntry::Kind::SessionEvent);
+    REQUIRE(fixture.manager.Transcript().back().text == "cancelled");
+}
+
 TEST_CASE("AcpManager streams an agent_message_chunk session/update into the output buffer", "[Acp]") {
     ManagerFixture fixture;
     fixture.InjectClient();
@@ -302,9 +344,9 @@ Json AgentMessageChunkUpdate(const std::string& text) {
 TEST_CASE("AcpManager coalesces consecutive agent_message_chunk updates into one transcript entry", "[Acp]") {
     ManagerFixture fixture;
     fixture.InjectClient();
-    fixture.StartActiveSession("test-agent"); // already pushes one "session ready" SessionEvent entry
-    const std::size_t baseline             = fixture.manager.Transcript().size();
-    const std::size_t generationAfterReady = fixture.manager.TranscriptGeneration();
+    fixture.StartActiveSession("test-agent"); // a successful start pushes no transcript event -- see StartSession
+    const std::size_t baseline           = fixture.manager.Transcript().size();
+    const std::size_t generationAfterStart = fixture.manager.TranscriptGeneration();
 
     fixture.client->DispatchFrame(AgentMessageChunkUpdate("Hello").dump());
     fixture.client->DispatchFrame(AgentMessageChunkUpdate(" there").dump());
@@ -313,7 +355,7 @@ TEST_CASE("AcpManager coalesces consecutive agent_message_chunk updates into one
     REQUIRE(transcript.size() == baseline + 1);
     REQUIRE(transcript.back().kind == AcpManager::TranscriptEntry::Kind::AgentText);
     REQUIRE(transcript.back().text == "Hello there");
-    REQUIRE(fixture.manager.TranscriptGeneration() == generationAfterReady + 2);
+    REQUIRE(fixture.manager.TranscriptGeneration() == generationAfterStart + 2);
 }
 
 TEST_CASE("AcpManager's transcript entry count and text mirror a session/prompt exchange", "[Acp]") {
@@ -417,10 +459,9 @@ TEST_CASE("AcpManager::SetOnTranscriptChanged fires on every transcript-affectin
     int callCount = 0;
     fixture.manager.SetOnTranscriptChanged([&] { ++callCount; });
 
-    fixture.StartActiveSession("test-agent"); // at least the "session ready" event
-    REQUIRE(callCount > 0);
+    fixture.StartActiveSession("test-agent"); // a successful start pushes no transcript event -- see StartSession
+    REQUIRE(callCount == 0);
 
-    const int countBeforeChunk = callCount;
     fixture.client->DispatchFrame(AgentMessageChunkUpdate("hi").dump());
-    REQUIRE(callCount == countBeforeChunk + 1);
+    REQUIRE(callCount == 1);
 }
