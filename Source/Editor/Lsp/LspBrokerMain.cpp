@@ -19,6 +19,7 @@
 #include <unistd.h>
 
 #include "BrokerSocketPath.h"
+#include "Editor/ProcessTimeouts.h"
 #include "LspBroker.h"
 #include "Transport.h"
 
@@ -65,6 +66,23 @@ namespace {
     constexpr auto kPerEntryIdleTimeout    = std::chrono::minutes(30);
     constexpr auto kWholeDaemonIdleTimeout = std::chrono::hours(24);
     constexpr int  kClientSendTimeoutSec   = 3;
+
+    // silent-relay-failure-visibility follow-up: a shutdown's own
+    // "shutdown"/"exit" writes go through the same ApplySendToServer path
+    // as ordinary traffic, so a server that stopped draining its stdin (see
+    // ApplySendToServer's own comment) makes shutdown itself slow -- each
+    // such write stalls for the full ProtocolStallTimeoutMs before failing.
+    // That's a real, bounded wait, not a hang, but with nothing said up
+    // front it reads as one. One line stating the worst case up front.
+    void LogShutdownEta(const std::vector<BrokerAction>& actions) {
+        const std::size_t pending = CountKind(actions, BrokerAction::Kind::SendToServer);
+        if (pending == 0) {
+            return;
+        }
+        const auto stallSeconds = std::chrono::duration_cast<std::chrono::seconds>(editor::ProtocolStallTimeoutMs()).count();
+        Log("shutting down " + std::to_string(pending) + " server message(s) -- up to " + std::to_string(stallSeconds) +
+            "s each if a server has stopped draining its stdin");
+    }
 
     // Owns every live connection (client sockets and real language-server
     // subprocesses) and the one BrokerRouter they're all relayed through.
@@ -244,16 +262,26 @@ namespace {
                 }
             }
             if (target == nullptr) {
+                // silent-relay-failure-visibility follow-up: previously a
+                // bare `return` here -- a request routed to a server entry
+                // whose transport had already vanished from serverTransports_
+                // (while languages_ still thinks it's Ready/attached) used to
+                // disappear with zero trace, surfacing only as the client's
+                // own 30s "request timed out" much later with nothing in this
+                // log to explain why. Logged, not fixed here -- this is a
+                // diagnostic, not a guess at the root cause.
+                Log("SendToServer dropped (no live server transport) root=" + action.root + " language=" + action.language);
                 return;
             }
             try {
                 target->WriteFrame(action.frame.dump());
             }
-            catch (const std::exception&) {
-                // Best-effort -- a write failure here means the process is
-                // already gone or going; its own reader thread's EOF path
-                // (or a CloseServer action already queued alongside this
-                // one) handles the actual cleanup.
+            catch (const std::exception& e) {
+                // silent-relay-failure-visibility follow-up: was a silent
+                // best-effort catch. Still best-effort (the reader
+                // thread's own EOF path still does the actual cleanup), but
+                // now leaves a trace instead of vanishing without one.
+                Log("SendToServer write failed root=" + action.root + " language=" + action.language + " error=" + e.what());
             }
         }
 
@@ -266,15 +294,20 @@ namespace {
                 }
             }
             if (target == nullptr) {
+                // silent-relay-failure-visibility follow-up: see
+                // ApplySendToServer's own comment above -- same gap, same fix.
+                Log("SendToClient dropped (no live client transport) conn=" + std::to_string(action.connection));
                 return;
             }
             try {
                 target->WriteFrame(action.frame.dump());
             }
-            catch (const std::exception&) {
-                // Best-effort, same reasoning as ApplySendToServer above --
-                // SO_SNDTIMEO (set at accept()) bounds how long this can
-                // ever block before throwing.
+            catch (const std::exception& e) {
+                // silent-relay-failure-visibility follow-up: see
+                // ApplySendToServer's own comment above -- same gap, same fix.
+                // SO_SNDTIMEO (set at accept()) bounds how long this can ever
+                // block before throwing.
+                Log("SendToClient write failed conn=" + std::to_string(action.connection) + " error=" + e.what());
             }
         }
 
@@ -308,6 +341,7 @@ namespace {
                     std::lock_guard<std::mutex> lock(mutex_);
                     actions = router_.Shutdown();
                 }
+                LogShutdownEta(actions);
                 ApplyActions(std::move(actions));
                 return; // never attached -- nothing to erase; transport destructs here, closing this control connection's own fds
             }
@@ -471,6 +505,7 @@ namespace {
                         std::lock_guard<std::mutex> lock(mutex_);
                         shutdownActions = router_.Shutdown();
                     }
+                    LogShutdownEta(shutdownActions);
                     ApplyActions(std::move(shutdownActions));
                     break;
                 }
