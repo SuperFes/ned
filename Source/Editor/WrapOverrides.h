@@ -54,6 +54,27 @@ void SetWrapForFilename(const std::string& filename, bool wrap);
 // alone decides.
 [[nodiscard]] bool EffectiveWrapLines(const std::optional<std::filesystem::path>& path, const Mode& mode);
 
+// acp-panel-wrapping follow-up: a second, buffer-Name()-keyed override
+// table, for a path-less synthetic buffer (e.g. "*acp: <agent>*") that
+// wants word-wrap without the VCS commit-message buffer's own workaround
+// of inventing a fake on-disk path just to make the file-based tables
+// above resolvable (see Editor/Vcs/VcsRunner.h's kVcsCommitMessageFilename
+// comment) -- a real path drags in dedupe-by-path/save/AutoRevert/
+// AutoMerge/FileWatch semantics a pure in-memory log buffer has no business
+// picking up. Exact-name match only, no extension-style matching (a
+// synthetic buffer name isn't a filename). Additive to the two tables
+// above, not a replacement -- SetWrapForFilename/SetWrapForExtension still
+// apply to any buffer that does have a real path.
+void SetWrapForBufferName(const std::string& name, bool wrap);
+
+[[nodiscard]] std::optional<bool> WrapLinesForBufferNameOverride(const std::string& name);
+
+// path's own file-based override if path has a value and one is
+// configured; else, for a path-less buffer, bufferName's own override if
+// one is configured; else mode.wrapLines.
+[[nodiscard]] bool EffectiveWrapLines(const std::optional<std::filesystem::path>& path, const std::string& bufferName,
+                                      const Mode& mode);
+
 } // namespace ned::editor
 
 #endif // NED_EDITOR_WRAPOVERRIDES_H

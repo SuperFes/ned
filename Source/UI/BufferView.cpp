@@ -10737,7 +10737,7 @@ void BufferView::SetLeftColumn(std::size_t column) {
 }
 
 bool BufferView::EffectiveWrapLines() const {
-    return editor::EffectiveWrapLines(activeBuffer_.Get().Path(), mode_);
+    return editor::EffectiveWrapLines(activeBuffer_.Get().Path(), activeBuffer_.Get().Name(), mode_);
 }
 
 std::pair<std::size_t, std::size_t> BufferView::NarrowedLineRange() const {
