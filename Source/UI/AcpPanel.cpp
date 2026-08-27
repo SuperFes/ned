@@ -37,6 +37,66 @@ namespace {
     constexpr int      kMinWidthForCloseButton = 8;
     constexpr int      kCloseOffset            = 4;    // column of '[' counted back from width, matches TerminalPanel's own offset
     constexpr char32_t kCloseIcon              = U'×'; // safe: one whole encoded glyph placed in exactly one Cell, not byte-indexed
+    constexpr int       kMaxInputRows          = 6;    // cap how far the composer grows before it starts scrolling internally
+
+    // One physical row produced by wrapping a string to `width` columns.
+    // startColumn/columnCount are codepoint offsets into the *original*
+    // string (PaintUtf8Row's own one-column-per-codepoint convention) --
+    // every codepoint lands in exactly one row and none are dropped, so a
+    // flat cursor column can always be mapped back to (row, columnInRow) by
+    // finding which row's [startColumn, startColumn+columnCount] it falls in.
+    struct WrappedRow {
+        std::string text;
+        int         startColumn;
+        int         columnCount;
+    };
+
+    // Greedy word-wrap: breaks before whichever codepoint would push a row
+    // past `width` columns, preferring to break after the most recent space
+    // in the current row, falling back to a hard mid-word break only when a
+    // single word alone exceeds `width`. Always returns at least one row
+    // (possibly empty), so an empty logical line still occupies one physical
+    // row.
+    std::vector<WrappedRow> WordWrap(std::string_view text, int width) {
+        std::vector<WrappedRow> rows;
+        if (width <= 0) {
+            rows.push_back({std::string(text), 0, 0});
+            return rows;
+        }
+        std::size_t rowStartByte  = 0;
+        int         rowStartCol   = 0;
+        int         col           = 0;
+        std::size_t lastSpaceByte = std::string::npos; // byte just after the last space seen in this row
+        int         lastSpaceCol  = 0;                 // col value at that point
+
+        std::size_t pos = 0;
+        while (pos < text.size()) {
+            if (col >= width) {
+                if (lastSpaceByte != std::string::npos && lastSpaceByte > rowStartByte) {
+                    rows.push_back({std::string(text.substr(rowStartByte, lastSpaceByte - rowStartByte)), rowStartCol, lastSpaceCol});
+                    rowStartCol += lastSpaceCol;
+                    rowStartByte = lastSpaceByte;
+                    col -= lastSpaceCol;
+                }
+                else {
+                    rows.push_back({std::string(text.substr(rowStartByte, pos - rowStartByte)), rowStartCol, col});
+                    rowStartCol += col;
+                    rowStartByte = pos;
+                    col = 0;
+                }
+                lastSpaceByte = std::string::npos;
+            }
+            const std::size_t next = text::NextCodepointBoundary(text, pos);
+            if (text[pos] == ' ') { // safe at byte level: UTF-8 continuation/lead bytes are always >= 0x80
+                lastSpaceByte = next;
+                lastSpaceCol  = col + 1;
+            }
+            ++col;
+            pos = next;
+        }
+        rows.push_back({std::string(text.substr(rowStartByte)), rowStartCol, col});
+        return rows;
+    }
 
     std::string StateLabel(editor::acp::AcpManager::SessionState state) {
         switch (state) {
@@ -217,13 +277,49 @@ void AcpPanel::Paint(Canvas canvas) {
         return;
     }
 
-    // Content rows: the tail of the formatted transcript that fits, top-
-    // aligned within the window (i.e. the window itself is anchored to the
-    // most recent lines) -- no scrollback in v1, see header comment.
-    const int contentRows = height - 2;
+    // The composer grows to however many wrapped rows its text needs (capped
+    // at kMaxInputRows, beyond which it scrolls internally like the content
+    // area does) -- smart-wrapping follow-up: previously a fixed single row,
+    // so a prompt longer than the panel's width just ran off-screen with no
+    // way to see or correct the hidden part.
+    const std::string             statusText = prompt_.StatusText();
+    const std::vector<WrappedRow> inputRows  = WordWrap(statusText, width);
+    const int                     totalInputCols =
+        inputRows.empty() ? 0 : inputRows.back().startColumn + inputRows.back().columnCount;
+    const int caretFlat = std::min(prompt_.CursorDisplayColumn(), totalInputCols);
+    int       caretRow = 0, caretColInRow = 0;
+    for (std::size_t i = 0; i < inputRows.size(); ++i) {
+        const WrappedRow& row = inputRows[i];
+        if (caretFlat <= row.startColumn + row.columnCount) {
+            caretRow      = static_cast<int>(i);
+            caretColInRow = caretFlat - row.startColumn;
+            break;
+        }
+    }
+
+    const int allottedInputRows =
+        std::max(1, std::min({static_cast<int>(inputRows.size()), kMaxInputRows, std::max(1, height - 1)}));
+    int inputWindowStart = 0;
+    if (static_cast<int>(inputRows.size()) > allottedInputRows) {
+        // Scroll the visible window to always include the caret's row --
+        // the only way the cursor can leave the allotted rows is Left/Home
+        // inside a prompt long enough to be capped.
+        inputWindowStart = std::clamp(caretRow - allottedInputRows + 1, 0, static_cast<int>(inputRows.size()) - allottedInputRows);
+    }
+
+    // Content rows: the tail of the formatted, word-wrapped transcript that
+    // fits, top-aligned within the window (i.e. the window itself is
+    // anchored to the most recent lines) -- no scrollback in v1, see header
+    // comment.
+    const int contentRows = std::max(0, height - 1 - allottedInputRows);
     if (contentRows > 0) {
-        const std::vector<DisplayLine> lines = FormatTranscript();
-        const int                      start = std::max(0, static_cast<int>(lines.size()) - contentRows);
+        std::vector<DisplayLine> lines;
+        for (const DisplayLine& logical : FormatTranscript()) {
+            for (const WrappedRow& row : WordWrap(logical.text, width)) {
+                lines.push_back({row.text, logical.style});
+            }
+        }
+        const int start = std::max(0, static_cast<int>(lines.size()) - contentRows);
         for (int row = 0; row < contentRows; ++row) {
             const std::size_t lineIndex = static_cast<std::size_t>(start + row);
             if (lineIndex >= lines.size()) {
@@ -235,40 +331,46 @@ void AcpPanel::Paint(Canvas canvas) {
         }
     }
 
-    // Input row. Painted with theme_.echoArea rather than plainBrush -- the
+    // Input rows. Painted with theme_.echoArea rather than plainBrush -- the
     // same "you're being prompted, type here" brush every other prompt in
     // the editor (find-file, M-x, goto-line, ...) already uses via EchoArea,
-    // so the composer row reads as a distinct input field instead of
-    // blending into the transcript above it (reported live as barely
+    // so the composer reads as a distinct input field instead of blending
+    // into the transcript above it (reported live as barely
     // visible/unreadable when painted the same as the rest of the panel --
     // see this panel's own ROADMAP.md entry; the underlying cursor-position
     // editing gap that entry also describes is unaffected by this, only the
     // row's legibility).
-    const int         inputRow   = height - 1;
-    const std::string text       = prompt_.StatusText();
-    const Brush       inputBrush = theme_.echoArea;
-    for (int x = 0; x < width; ++x) {
-        Cell& cell     = canvas[{.x = x, .y = inputRow}];
-        cell.character = " ";
-        inputBrush.ApplyTo(cell);
+    const Brush inputBrush = theme_.echoArea;
+    for (int j = 0; j < allottedInputRows; ++j) {
+        const int screenRow = height - allottedInputRows + j;
+        for (int x = 0; x < width; ++x) {
+            Cell& cell     = canvas[{.x = x, .y = screenRow}];
+            cell.character = " ";
+            inputBrush.ApplyTo(cell);
+        }
+        const std::size_t rowIndex = static_cast<std::size_t>(inputWindowStart + j);
+        if (rowIndex < inputRows.size()) {
+            PaintUtf8Row(canvas, 0, screenRow, inputRows[rowIndex].text, inputBrush, width);
+        }
     }
-    PaintUtf8Row(canvas, 0, inputRow, text, inputBrush, width);
     // minibuffer-composer-cursor-editing follow-up: the caret sits at the
     // prompt's real cursor position now, not always at the end of the typed
     // text -- CursorDisplayColumn() (one column per codepoint, matching
     // PaintUtf8Row's own convention) is what stays in sync with
-    // InsertChar/DeleteBackward/DeleteForward/Move* below. A real solid
-    // block cursor, not a video-invert: character is left untouched (so
-    // whatever's already there -- a real typed character, or the row fill's
-    // blank when the cursor sits past the end of the text -- stays visible
-    // through it) and only recolored, explicitly, to a fixed high-contrast
-    // pair rather than swapping whatever foreground happened to be
-    // underneath -- inverting inputBrush's own default-ish foreground left
-    // the character under the caret nearly unreadable against the yellow
-    // block (reported live after moving the cursor back over typed text).
-    const int caretCol = prompt_.CursorDisplayColumn();
-    if (caretCol < width) {
-        Cell& cell = canvas[{.x = caretCol, .y = inputRow}];
+    // InsertChar/DeleteBackward/DeleteForward/Move* below, mapped through
+    // the wrap above into (caretRow, caretColInRow) so it still lands on the
+    // right glyph once the composer spans multiple rows. A real solid block
+    // cursor, not a video-invert: character is left untouched (so whatever's
+    // already there -- a real typed character, or the row fill's blank when
+    // the cursor sits past the end of the text -- stays visible through it)
+    // and only recolored, explicitly, to a fixed high-contrast pair rather
+    // than swapping whatever foreground happened to be underneath --
+    // inverting inputBrush's own default-ish foreground left the character
+    // under the caret nearly unreadable against the yellow block (reported
+    // live after moving the cursor back over typed text).
+    if (caretRow >= inputWindowStart && caretRow < inputWindowStart + allottedInputRows && caretColInRow < width) {
+        const int screenRow = height - allottedInputRows + (caretRow - inputWindowStart);
+        Cell&     cell      = canvas[{.x = caretColInRow, .y = screenRow}];
         Brush{.background = inputBrush.foreground, .foreground = Color::Black}.ApplyTo(cell);
     }
 }

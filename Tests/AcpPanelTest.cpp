@@ -314,6 +314,61 @@ TEST_CASE("AcpPanel's digit keys resolve a pending permission prompt", "[AcpPane
     REQUIRE(response["result"]["outcome"]["optionId"] == "allow-once");
 }
 
+TEST_CASE("AcpPanel word-wraps a long agent message instead of truncating it", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code");
+
+    const Json chunk = {
+        {"jsonrpc", "2.0"},
+        {"method", "session/update"},
+        {"params",
+         {{"sessionId", "s1"},
+          {"update",
+           {{"sessionUpdate", "agent_message_chunk"},
+            {"content", {{"type", "text"}, {"text", "one two three four five six seven eight nine ten"}}}}}}},
+    };
+    fixture.client->DispatchFrame(chunk.dump());
+    fixture.Paint();
+
+    std::string joined;
+    for (int y = 1; y < kHeight - 1; ++y) {
+        joined += fixture.RowText(y) + " ";
+    }
+    REQUIRE(joined.find("nine ten") != std::string::npos); // the tail of the message actually made it onto screen
+    for (int y = 1; y < kHeight - 1; ++y) {
+        REQUIRE(static_cast<int>(fixture.RowText(y).size()) <= kWidth); // never spills past the panel's own width
+    }
+}
+
+TEST_CASE("AcpPanel's composer grows past one row once typed text wraps, and keeps the caret visible", "[AcpPanel]") {
+    Fixture fixture;
+
+    // kWidth=40, "Prompt: " is 8 columns -- past ~32 more characters the
+    // composer must wrap to a second row instead of running text off-screen.
+    const std::string typed = "this prompt is long enough to wrap onto a second composer row";
+    for (const char ch : typed) {
+        fixture.panel.OnEvent(ned::ui::test::Character(ch));
+    }
+    fixture.Paint();
+
+    // Every codepoint the user typed appears somewhere in the last two
+    // painted rows -- nothing got silently dropped off the right edge.
+    const std::string tail = fixture.RowText(kHeight - 2) + fixture.RowText(kHeight - 1);
+    REQUIRE(tail.find("second composer row") != std::string::npos);
+
+    bool foundCaret = false;
+    for (int y = 0; y < kHeight; ++y) {
+        for (int x = 0; x < kWidth; ++x) {
+            const ned::ui::Cell& cell = fixture.screen.PixelAt(x, y);
+            if (cell.background_color == fixture.theme.echoArea.foreground && cell.foreground_color == ned::ui::Color::Black) {
+                foundCaret = true;
+            }
+        }
+    }
+    REQUIRE(foundCaret); // caret still rendered somewhere once the composer spans multiple rows
+}
+
 TEST_CASE("AcpPanel's Escape cancels a pending permission prompt instead of toggling the panel", "[AcpPanel]") {
     Fixture fixture;
     fixture.InjectClient();

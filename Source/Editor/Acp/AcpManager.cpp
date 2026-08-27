@@ -9,6 +9,7 @@
 #include "AcpConfig.h"
 #include "Editor/BackgroundActivity.h"
 #include "Editor/ProjectRoot.h"
+#include "Editor/WrapOverrides.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
 
@@ -113,6 +114,13 @@ text::Buffer& AcpManager::OutputBuffer(const std::string& agentName) {
     if (!buffer) {
         buffer = &bufferList_.CreateBuffer(bufferName);
         buffer->SetReadOnly(true); // must be set before the first append -- AppendWhileReadOnly's own precondition
+        // acp-panel-wrapping follow-up: this buffer has no on-disk path (a
+        // pure in-memory log, see the class header comment), so it always
+        // resolves to FundamentalMode()/wrapLines=false unless something
+        // opts it into WrapOverrides' buffer-Name()-keyed table instead --
+        // see that table's own header comment for why a real path isn't
+        // used here the way the VCS commit-message buffer uses one.
+        editor::SetWrapForBufferName(bufferName, true);
     }
     return *buffer;
 }

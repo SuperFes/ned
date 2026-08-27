@@ -12,6 +12,7 @@
 #include "Editor/Acp/AcpClient.h"
 #include "Editor/Acp/AcpManager.h"
 #include "Editor/Acp/Transport.h"
+#include "Editor/WrapOverrides.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
 #include "UI/EventLoop.h"
@@ -146,6 +147,20 @@ TEST_CASE("AcpManager::SendPrompt sends session/prompt and streams the stop reas
 
     REQUIRE(fixture.outputBuffer->Text().find("> what does this do?") != std::string::npos);
     REQUIRE(fixture.outputBuffer->Text().find("[end_turn]") != std::string::npos);
+}
+
+TEST_CASE("AcpManager's output buffer opts into word-wrap despite having no on-disk path", "[Acp]") {
+    // acp-panel-wrapping follow-up: the "*acp: <agent>*" buffer is pure
+    // in-memory (never backed by a real file), so ModeForBuffer always
+    // resolves FundamentalMode()/wrapLines=false for it unless something
+    // registers a buffer-Name()-keyed override -- this is that
+    // registration, done once at buffer creation (see OutputBuffer).
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+
+    REQUIRE(fixture.outputBuffer->Path() == std::nullopt);
+    REQUIRE(ned::editor::WrapLinesForBufferNameOverride(fixture.outputBuffer->Name()) == std::optional<bool>(true));
 }
 
 TEST_CASE("AcpManager::PromptInFlight is true only while a session/prompt is outstanding", "[Acp]") {

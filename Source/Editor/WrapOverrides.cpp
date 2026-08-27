@@ -10,6 +10,7 @@ namespace {
     std::mutex                            g_mutex;
     std::unordered_map<std::string, bool> g_extensionOverrides;
     std::unordered_map<std::string, bool> g_filenameOverrides;
+    std::unordered_map<std::string, bool> g_bufferNameOverrides;
 
     // Duplicated from ModeOverrides.cpp's own StripLeadingDot rather than
     // shared -- not worth a new cross-file dependency for something this
@@ -50,6 +51,31 @@ bool EffectiveWrapLines(const std::optional<std::filesystem::path>& path, const 
         if (const std::optional<bool> override = WrapLinesForFileOverride(*path); override) {
             return *override;
         }
+    }
+    return mode.wrapLines;
+}
+
+void SetWrapForBufferName(const std::string& name, bool wrap) {
+    const std::lock_guard lock(g_mutex);
+    g_bufferNameOverrides.insert_or_assign(name, wrap);
+}
+
+std::optional<bool> WrapLinesForBufferNameOverride(const std::string& name) {
+    const std::lock_guard lock(g_mutex);
+    if (const auto it = g_bufferNameOverrides.find(name); it != g_bufferNameOverrides.end()) {
+        return it->second;
+    }
+    return std::nullopt;
+}
+
+bool EffectiveWrapLines(const std::optional<std::filesystem::path>& path, const std::string& bufferName, const Mode& mode) {
+    if (path) {
+        if (const std::optional<bool> override = WrapLinesForFileOverride(*path); override) {
+            return *override;
+        }
+    }
+    else if (const std::optional<bool> override = WrapLinesForBufferNameOverride(bufferName); override) {
+        return *override;
     }
     return mode.wrapLines;
 }
