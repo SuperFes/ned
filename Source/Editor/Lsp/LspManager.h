@@ -314,6 +314,15 @@ class LspManager {
     // RequestHover's own doc comment above.
     void RequestSignatureHelp(text::Buffer& buffer, std::size_t byteOffset, HoverCallback callback, const std::string& serverKey = {});
 
+    // documentHighlight follow-up. Same "resolve purely from bufferState_,
+    // single buffer, no URI resolution" shape as RequestSignatureHelp above
+    // -- a documentHighlight response is always scoped to the requesting
+    // document, unlike RequestReferences' cross-file Location[]. serverKey:
+    // see RequestHover's own doc comment above.
+    using DocumentHighlightCallback = std::function<void(std::vector<DocumentHighlight> highlights)>;
+    void RequestDocumentHighlight(text::Buffer& buffer, std::size_t byteOffset, DocumentHighlightCallback callback,
+                                  const std::string& serverKey = {});
+
     // header-source-switching follow-up. clangd's own custom LSP extension
     // (not in the base spec -- no textDocument/definition-style position
     // needed, just the document itself) for jumping between a C/C++ header
@@ -356,6 +365,24 @@ class LspManager {
     // doc comment above.
     void RequestRename(text::Buffer& buffer, std::size_t byteOffset, const std::string& newName, RenameCallback callback,
                        const std::string& serverKey = {});
+
+    // formatting follow-up. Same callback shape for both -- nullopt on any
+    // failure (buffer never synced, no running client, or an error
+    // response), a (possibly empty) edit list otherwise. Unlike rename, a
+    // formatting response only ever targets the requesting document itself,
+    // so no per-URI resolution is needed -- structurally closer to
+    // RequestSignatureHelp than to RequestRename. tabSize/insertSpaces are
+    // fixed (TabWidth(), true) rather than caller-supplied: this codebase
+    // has no per-buffer tabs-vs-spaces concept to source them from yet.
+    using FormattingCallback = std::function<void(std::optional<std::vector<WorkspaceTextEdit>> edits)>;
+    void RequestFormatting(text::Buffer& buffer, FormattingCallback callback, const std::string& serverKey = {});
+
+    // rangeFormatting follow-up: same rangeStartByte/rangeEndByte pair as
+    // RequestCodeActions above. Not wired into any command yet (save-buffer/
+    // format-buffer are whole-buffer operations already) -- added for API
+    // symmetry and a future "format region"/"format on paste" command.
+    void RequestRangeFormatting(text::Buffer& buffer, std::size_t rangeStartByte, std::size_t rangeEndByte,
+                                FormattingCallback callback, const std::string& serverKey = {});
 
     // symbol-search follow-up. A SymbolEntry (LspContent.h) with its own uri
     // already resolved to a real filesystem path -- mirrors ResolvedLocation's

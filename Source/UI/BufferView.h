@@ -2617,6 +2617,59 @@ class BufferView : public Widget {
     // re-check RequestCompletionAtPoint's own callback also does.
     std::size_t completionRequestGeneration_ = 0;
 
+    // documentHighlight follow-up. BufferView-owned, ephemeral point-
+    // triggered UI state -- same lifecycle class as GhostCompletion above,
+    // not Buffer-owned server-pushed state like Diagnostics(). buffer/
+    // contentGeneration guard Paint()'s own read (see
+    // currentLineDocumentHighlightSpans) against a stale response landing
+    // after the buffer switched or was edited; ranges are byte [start,end)
+    // resolved against the buffer's content at the moment the response
+    // arrived.
+    struct DocumentHighlightState {
+        text::Buffer* buffer            = nullptr;
+        std::size_t   contentGeneration = 0;
+        std::size_t   requestPoint      = 0;
+        std::vector<std::pair<std::size_t, std::size_t>> ranges;
+    };
+    std::optional<DocumentHighlightState> documentHighlight_;
+    // Same debounce shape as completionDebounceTimer_ above, entirely
+    // independent of it -- armed by MaybeScheduleDocumentHighlight on any
+    // point movement (not just self-insert keystrokes, since motion commands
+    // must also refresh the highlight set).
+    DeadlineTimer documentHighlightDebounceTimer_;
+    // Bumped by RequestDocumentHighlightAtPoint before every request -- same
+    // staleness-guard shape as completionRequestGeneration_.
+    std::size_t documentHighlightRequestGeneration_ = 0;
+
+    void RequestDocumentHighlightAtPoint();
+    void MaybeScheduleDocumentHighlight(std::size_t pointBefore, std::size_t generationBefore);
+
+    // signature-help-auto-trigger follow-up. Same debounce shape as
+    // completionDebounceTimer_ above, entirely independent of it -- both can
+    // be armed simultaneously (ghost-text completion and signature help
+    // render to disjoint UI surfaces, inline vs. echo area, so there's no
+    // reason for one to suppress the other).
+    DeadlineTimer signatureHelpDebounceTimer_;
+    // Bumped by RequestSignatureHelpAtPoint before every request -- same
+    // staleness-guard shape as completionRequestGeneration_.
+    std::size_t signatureHelpRequestGeneration_ = 0;
+
+    void MaybeScheduleSignatureHelp(const editor::KeyChord& chord, std::size_t generationBefore);
+    void RequestSignatureHelpAtPoint();
+
+    // lsp-format-on-save follow-up. Mirrors Commands.cpp's saveBufferBody
+    // shape (format step, backup, Buffer::Save, autosave cleanup, status
+    // message) but deferred behind an LSP round trip -- invoked only when
+    // Commands.cpp's save-buffer/save-buffer-force set
+    // context.deferSaveForLspFormat (see RunCommandAndHandleOutcome's own
+    // early branch for that field). Takes no force parameter: by the time
+    // deferSaveForLspFormat is set, save-buffer's own ExternallyModified/
+    // conflict-marker checks (or save-buffer-force's deliberate absence of
+    // them) already ran in Commands.cpp -- there is nothing left here for
+    // that distinction to gate.
+    void        RequestLspFormatThenSaveBuffer();
+    std::size_t lspFormatOnSaveRequestGeneration_ = 0;
+
     void RequestCompletionAtPoint();
     // dabbrev-fallback follow-up: the "no running LSP client for this
     // buffer's language" half of RequestCompletionAtPoint -- scans the

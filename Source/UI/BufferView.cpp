@@ -17,17 +17,20 @@
 #include "Border.h"
 #include "EchoArea.h"
 #include "Editor/Acp/AcpConfig.h"
+#include "Editor/Backup.h"
 #include "Editor/Bookmark.h"
 #include "Editor/Clipboard.h"
 #include "Editor/CodeFoldSettings.h"
 #include "Editor/DabbrevComplete.h"
 #include "Editor/DiagnosticsLog.h"
+#include "Editor/FinalNewline.h"
 #include "Editor/FuzzyMatch.h"
 #include "Editor/HeaderSource.h"
 #include "Editor/HighlightSettings.h"
 #include "Editor/ImportResolutionConfig.h"
 #include "Editor/InlineDiagnostics.h"
 #include "Editor/JanetSymbolComplete.h"
+#include "Editor/LineEndingPolicy.h"
 #include "Editor/Link.h"
 #include "Editor/Lsp/LspManager.h"
 #include "Editor/Lsp/LspServerConfig.h"
@@ -52,6 +55,7 @@
 #include "Editor/TestRun/TestResultsBuffer.h"
 #include "Editor/TestRun/TestRunConfig.h"
 #include "Editor/ToolchainIncludePaths.h"
+#include "Editor/TrimOnSave.h"
 #include "Editor/Variables.h"
 #include "Editor/Vcs/DiffPatch.h"
 #include "Editor/Vim/VimSettings.h"
@@ -2059,6 +2063,13 @@ void BufferView::Paint(Canvas c) {
     // diagnostic span (some servers report those) is widened to one byte so
     // it still underlines the cell it points at instead of vanishing.
     std::vector<std::pair<std::size_t, std::size_t>> currentLineDiagnosticSpans;
+    // documentHighlight follow-up: the LSP-reported occurrence-of-symbol-at-
+    // point byte spans overlapping the current line -- same "compute once
+    // per line, from BufferView-owned ephemeral state" shape as
+    // currentLineDiagnosticSpans above, but sourced from documentHighlight_
+    // (a point-triggered request/response, not Buffer::Diagnostics()'
+    // server-pushed set).
+    std::vector<std::pair<std::size_t, std::size_t>> currentLineDocumentHighlightSpans;
     // DAP client slice 2: whether the debuggee is stopped exactly on this
     // line -- feeds both the whole-line background wash below and the
     // gutter arrow, so the two can never disagree.
@@ -2143,6 +2154,15 @@ void BufferView::Paint(Canvas c) {
                     const std::size_t spanEnd = std::max(diagnostic.endByte, diagnostic.startByte + 1);
                     if (diagnostic.startByte < lineEnd && spanEnd > lineStart) {
                         currentLineDiagnosticSpans.emplace_back(diagnostic.startByte, spanEnd);
+                    }
+                }
+                currentLineDocumentHighlightSpans.clear();
+                if (documentHighlight_ && documentHighlight_->buffer == &buffer &&
+                    documentHighlight_->contentGeneration == buffer.ContentGeneration()) {
+                    for (const auto& [start, end] : documentHighlight_->ranges) {
+                        if (start < lineEnd && end > lineStart) {
+                            currentLineDocumentHighlightSpans.emplace_back(start, end);
+                        }
                     }
                 }
                 currentLineIsExecutionLine = dapStop && dapStop->second == line + 1; // dapStop already file-filtered above
@@ -2637,6 +2657,17 @@ void BufferView::Paint(Canvas c) {
                 }
                 else if (InSelection(offset)) {
                     brush.background = theme_.selectionBackground;
+                }
+                else if (std::any_of(currentLineDocumentHighlightSpans.begin(), currentLineDocumentHighlightSpans.end(),
+                                     [offset](const auto& span) { return offset >= span.first && offset < span.second; })) {
+                    // documentHighlight follow-up: a read-only cue on the
+                    // symbol under point's other occurrences -- loses to
+                    // isearch/snippet-field/selection above (all explicit
+                    // user actions), but wins over the execution-line/
+                    // multibuffer/trailing-whitespace washes below (this is
+                    // still a direct answer to "what does point currently
+                    // mean", a stronger signal than those cosmetic washes).
+                    brush.background = theme_.documentHighlightBackground;
                 }
                 else if (currentLineIsExecutionLine) {
                     // DAP client slice 2: the stopped line's own wash --
@@ -3850,6 +3881,7 @@ void BufferView::HandleSnippetKey(const editor::KeyChord& chord) {
 bool BufferView::RunCommandAndHandleOutcome(editor::CommandContext& context, const std::function<bool()>& invoke,
                                             const editor::KeyChord* triggeringChord) {
     const std::size_t generationBefore    = activeBuffer_.Get().ContentGeneration();
+    const std::size_t pointBefore         = activeBuffer_.Get().Point(); // documentHighlight follow-up: see MaybeScheduleDocumentHighlight's call site below
     const std::string statusMessageBefore = statusMessage_; // status-message-lifecycle: see the "clear if unchanged" check below
     // Diff gutter markers follow-up: read alongside generationBefore, for
     // the same "safe as long as this dispatch doesn't itself switch active
@@ -3946,6 +3978,16 @@ bool BufferView::RunCommandAndHandleOutcome(editor::CommandContext& context, con
         return ran;
     }
 
+    // lsp-format-on-save follow-up: save-buffer/save-buffer-force set this
+    // instead of running their own saveBufferBody synchronously when an LSP
+    // round trip should format the buffer first -- the actual save hasn't
+    // happened yet, so none of the normal post-command refresh below
+    // applies until RequestLspFormatThenSaveBuffer's own callback runs it.
+    if (context.deferSaveForLspFormat) {
+        RequestLspFormatThenSaveBuffer();
+        return ran;
+    }
+
     // structural-selection-expansion follow-up: any dispatched command other
     // than expand-selection/shrink-selection themselves invalidates the
     // expansion-history stack -- this is the one choke point every dispatch
@@ -4002,6 +4044,7 @@ bool BufferView::RunCommandAndHandleOutcome(editor::CommandContext& context, con
     // never reach this.
     if (triggeringChord) {
         MaybeScheduleAutoCompletion(*triggeringChord, generationBefore);
+        MaybeScheduleSignatureHelp(*triggeringChord, generationBefore);
     }
 
     // Diff gutter markers follow-up: unlike MaybeScheduleAutoCompletion
@@ -4034,6 +4077,12 @@ bool BufferView::RunCommandAndHandleOutcome(editor::CommandContext& context, con
         !activeBuffer_.Get().Diagnostics().empty()) {
         activeBuffer_.Get().SetDiagnostics({});
     }
+
+    // documentHighlight follow-up: not gated on triggeringChord/plain-self-
+    // insert -- arrow motion, search, and any other point-moving command
+    // must refresh the highlighted-occurrences set too, not just organic
+    // typing (the completion ghost-text precedent this otherwise mirrors).
+    MaybeScheduleDocumentHighlight(pointBefore, generationBefore);
 
     ClampPointToNarrowing();
     // multi-cursor-round-2 follow-up: a command that just added a secondary
@@ -4315,6 +4364,124 @@ void BufferView::MaybeScheduleAutoCompletion(const editor::KeyChord& chord, std:
             RequestCompletionAtPoint();
         });
     }
+}
+
+void BufferView::MaybeScheduleDocumentHighlight(std::size_t pointBefore, std::size_t generationBefore) {
+    text::Buffer& buffer = activeBuffer_.Get();
+    if (buffer.Point() == pointBefore && buffer.ContentGeneration() == generationBefore) {
+        return; // nothing moved -- no reason to re-request
+    }
+    if (documentHighlight_ && (documentHighlight_->buffer != &buffer || documentHighlight_->contentGeneration != buffer.ContentGeneration())) {
+        documentHighlight_.reset(); // stale: buffer switched under us, or content changed since the last response
+    }
+    const std::chrono::milliseconds delay(editor::lsp::LspCompletionDebounceMs());
+    if (eventLoop_) {
+        documentHighlightDebounceTimer_.Arm(*eventLoop_, delay, [this] { RequestDocumentHighlightAtPoint(); });
+    }
+}
+
+void BufferView::RequestDocumentHighlightAtPoint() {
+    if (inputMode_ != InputMode::Normal) {
+        documentHighlight_.reset();
+        return;
+    }
+    text::Buffer&     buffer = activeBuffer_.Get();
+    const std::size_t point  = buffer.Point();
+
+    const std::string serverKey   = ResolvedLspServerKey(point);
+    const std::string languageKey = serverKey.empty() ? editor::LanguageKeyForMode(mode_) : serverKey;
+    const bool        hasRunningLsp =
+        lspManager_ && lspManager_->StatusForLanguage(languageKey) == editor::lsp::LspManager::LspStatus::Running;
+    if (!hasRunningLsp) {
+        documentHighlight_.reset();
+        return;
+    }
+
+    text::Buffer* const bufferPtr                = &buffer;
+    const std::size_t   generation               = ++documentHighlightRequestGeneration_;
+    const std::size_t   contentGenerationAtRequest = buffer.ContentGeneration();
+    lspManager_->RequestDocumentHighlight(
+        buffer, point,
+        [this, bufferPtr, point, generation, contentGenerationAtRequest](std::vector<editor::lsp::DocumentHighlight> highlights) {
+            if (generation != documentHighlightRequestGeneration_) {
+                return; // superseded by a newer request
+            }
+            if (bufferPtr != &activeBuffer_.Get() || activeBuffer_.Get().Point() != point ||
+                activeBuffer_.Get().ContentGeneration() != contentGenerationAtRequest) {
+                return; // buffer/point/content changed since the request was sent
+            }
+            if (highlights.empty()) {
+                documentHighlight_.reset();
+                return;
+            }
+            const text::Rope&                                 content = bufferPtr->Content();
+            std::vector<std::pair<std::size_t, std::size_t>> ranges;
+            ranges.reserve(highlights.size());
+            for (const editor::lsp::DocumentHighlight& highlight : highlights) {
+                ranges.emplace_back(editor::lsp::LspPositionToByte(content, highlight.start),
+                                    editor::lsp::LspPositionToByte(content, highlight.end));
+            }
+            documentHighlight_ = DocumentHighlightState{
+                .buffer = bufferPtr, .contentGeneration = contentGenerationAtRequest, .requestPoint = point, .ranges = std::move(ranges)};
+        },
+        serverKey);
+}
+
+void BufferView::MaybeScheduleSignatureHelp(const editor::KeyChord& chord, std::size_t generationBefore) {
+    // Deliberately not gated on InputMode::Snippet the way
+    // MaybeScheduleAutoCompletion is -- typing "(" or "," while filling a
+    // snippet tabstop argument is exactly when signature help is most
+    // useful, and unlike ghost-text completion it never competes with TAB.
+    if (inputMode_ != InputMode::Normal && inputMode_ != InputMode::Snippet) {
+        return;
+    }
+    if (!editor::lsp::LspSignatureHelpAutoTriggerEnabled()) {
+        return;
+    }
+    if (chord.Control || chord.Meta || chord.Special != editor::SpecialKey::None) {
+        return;
+    }
+    if (chord.Codepoint != U'(' && chord.Codepoint != U',') {
+        return; // only these two trigger characters schedule automatic signature help
+    }
+    if (activeBuffer_.Get().ContentGeneration() == generationBefore) {
+        return; // nothing actually changed
+    }
+    const std::chrono::milliseconds delay(editor::lsp::LspCompletionDebounceMs());
+    if (eventLoop_) {
+        signatureHelpDebounceTimer_.Arm(*eventLoop_, delay, [this] { RequestSignatureHelpAtPoint(); });
+    }
+}
+
+void BufferView::RequestSignatureHelpAtPoint() {
+    if (inputMode_ != InputMode::Normal && inputMode_ != InputMode::Snippet) {
+        return;
+    }
+    text::Buffer&     buffer = activeBuffer_.Get();
+    const std::size_t point  = buffer.Point();
+
+    const std::string serverKey   = ResolvedLspServerKey(point);
+    const std::string languageKey = serverKey.empty() ? editor::LanguageKeyForMode(mode_) : serverKey;
+    if (!lspManager_ || lspManager_->StatusForLanguage(languageKey) != editor::lsp::LspManager::LspStatus::Running) {
+        return;
+    }
+
+    text::Buffer* const bufferPtr  = &buffer;
+    const std::size_t   generation = ++signatureHelpRequestGeneration_;
+    lspManager_->RequestSignatureHelp(
+        buffer, point,
+        [this, bufferPtr, point, generation](std::optional<std::string> text) {
+            if (generation != signatureHelpRequestGeneration_) {
+                return; // superseded by a newer request
+            }
+            if (bufferPtr != &activeBuffer_.Get() || activeBuffer_.Get().Point() != point) {
+                return; // buffer/point changed since the request was sent
+            }
+            if (text) {
+                statusMessage_ = *text; // EnsureStatusMessageFreshness() handles the auto-clear/timeout
+            }
+        },
+        serverKey);
 }
 
 void BufferView::AcceptGhostCompletion() {
@@ -4638,12 +4805,16 @@ void BufferView::HandleCodeActionConfirmKey(const editor::KeyChord& chord) {
 
 namespace {
 
-    // Shared by ApplyCodeAction and ApplyRename: resolves each edit's
-    // LspPositions to byte offsets against buffer's CURRENT content, sorts
-    // descending by start byte (keeps an edit not yet applied valid as an
-    // earlier-in-the-buffer one shifts positions -- LSP guarantees edits
-    // within one WorkspaceEdit don't overlap, so a plain sort suffices), and
-    // applies each via Buffer::DeleteRange + Buffer::InsertAt.
+    // Shared by ApplyCodeAction, ApplyRename, and LSP-formatting: resolves
+    // each edit's LspPositions to byte offsets against buffer's CURRENT
+    // content, sorts descending by start byte (keeps an edit not yet applied
+    // valid as an earlier-in-the-buffer one shifts positions -- LSP
+    // guarantees edits within one WorkspaceEdit/formatting response don't
+    // overlap, so a plain sort suffices), and applies each via
+    // Buffer::DeleteRange + Buffer::InsertAt as one undo group -- a
+    // formatting response can carry dozens/hundreds of edits, and without
+    // grouping each pair records its own undo step (undoing would take one
+    // press per edit instead of one for the whole operation).
     void ApplyWorkspaceTextEdits(text::Buffer& buffer, const std::vector<editor::lsp::WorkspaceTextEdit>& edits) {
         const text::Rope& content = buffer.Content();
 
@@ -4663,13 +4834,55 @@ namespace {
         }
         std::sort(resolved.begin(), resolved.end(), [](const ResolvedEdit& a, const ResolvedEdit& b) { return a.startByte > b.startByte; });
 
+        buffer.BeginUndoGroup();
         for (const ResolvedEdit& edit : resolved) {
             buffer.DeleteRange(edit.startByte, edit.endByte - edit.startByte);
             buffer.InsertAt(edit.startByte, edit.newText);
         }
+        buffer.EndUndoGroup();
     }
 
 } // namespace
+
+void BufferView::RequestLspFormatThenSaveBuffer() {
+    text::Buffer&       buffer     = activeBuffer_.Get();
+    text::Buffer* const bufferPtr  = &buffer;
+    const std::size_t   generation = ++lspFormatOnSaveRequestGeneration_;
+    statusMessage_                 = "Formatting...";
+    lspManager_->RequestFormatting(
+        buffer,
+        [this, bufferPtr, generation](std::optional<std::vector<editor::lsp::WorkspaceTextEdit>> edits) {
+            if (generation != lspFormatOnSaveRequestGeneration_ || bufferPtr != &activeBuffer_.Get()) {
+                return; // superseded, or the active buffer changed under us
+            }
+            text::Buffer& buffer       = *bufferPtr;
+            const bool    formatFailed = !edits.has_value();
+            if (edits && !edits->empty()) {
+                ApplyWorkspaceTextEdits(buffer, *edits); // one undo group -- see Step 0's fix
+            }
+            try {
+                if (buffer.Path()) {
+                    editor::BackupFileBeforeSave(*buffer.Path());
+                }
+                buffer.Save(editor::EnsureFinalNewline(), editor::TrimTrailingWhitespaceOnSave(),
+                           editor::ResolveLineEndingForSave(buffer.LineEndingKind()));
+                if (buffer.Path()) {
+                    editor::RemoveAutoSave(*buffer.Path());
+                }
+                statusMessage_ = "Wrote " + buffer.Name() + (formatFailed ? " (LSP format failed)" : "");
+            }
+            catch (const std::exception& e) {
+                statusMessage_ = e.what();
+            }
+            // Mirrors RunCommandAndHandleOutcome's own post-command refresh,
+            // which the synchronous saveBufferBody path gets for free but
+            // this async continuation must do itself, since it returns to
+            // that method well before the save actually happens.
+            RequestDiffForCurrentBuffer();
+            ScrollToShowPoint();
+        },
+        std::string{});
+}
 
 void BufferView::ApplyCodeAction(const editor::lsp::CodeAction& action) {
     if (action.touchesOtherFiles) {
@@ -6358,6 +6571,12 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         // GhostCompletion's own doc comment in BufferView.h).
         case editor::InteractiveRequest::LspComplete:
             RequestCompletionAtPoint();
+            return;
+        // documentHighlight follow-up: manual M-x entry point into the same
+        // RequestDocumentHighlightAtPoint the live-on-cursor-move path (see
+        // MaybeScheduleDocumentHighlight) already drives.
+        case editor::InteractiveRequest::LspDocumentHighlight:
+            RequestDocumentHighlightAtPoint();
             return;
         // code-actions follow-up: also a one-shot direct action -- inputMode_
         // is deliberately left untouched here, only changed later, from

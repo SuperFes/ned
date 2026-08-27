@@ -5,8 +5,12 @@
 
 #include "Editor/Lsp/LspServerConfig.h"
 
+using ned::editor::lsp::LspFormatOnSaveEnabled;
 using ned::editor::lsp::LspServerCommand;
+using ned::editor::lsp::LspSignatureHelpAutoTriggerEnabled;
+using ned::editor::lsp::SetLspFormatOnSaveEnabled;
 using ned::editor::lsp::SetLspServerCommand;
+using ned::editor::lsp::SetLspSignatureHelpAutoTriggerEnabled;
 
 TEST_CASE("LspServerCommand is nullopt for a language nothing was ever configured for", "[Lsp]") {
     REQUIRE_FALSE(LspServerCommand("a-language-nobody-configured").has_value());
@@ -49,4 +53,24 @@ TEST_CASE("An empty argv clears an existing registration", "[Lsp]") {
 
     SetLspServerCommand("lsp-server-config-test-clear", {});
     REQUIRE_FALSE(LspServerCommand("lsp-server-config-test-clear").has_value());
+}
+
+TEST_CASE("LspSignatureHelpAutoTriggerEnabled defaults to true and round-trips through the setter", "[Lsp]") {
+    REQUIRE(LspSignatureHelpAutoTriggerEnabled()); // default, per LspServerConfig.h's own doc comment
+
+    SetLspSignatureHelpAutoTriggerEnabled(false);
+    REQUIRE_FALSE(LspSignatureHelpAutoTriggerEnabled());
+
+    SetLspSignatureHelpAutoTriggerEnabled(true); // restore -- process-wide state
+    REQUIRE(LspSignatureHelpAutoTriggerEnabled());
+}
+
+TEST_CASE("LspFormatOnSaveEnabled defaults to false and round-trips through the setter", "[Lsp]") {
+    REQUIRE_FALSE(LspFormatOnSaveEnabled()); // default, per LspServerConfig.h's own doc comment (opt-in)
+
+    SetLspFormatOnSaveEnabled(true);
+    REQUIRE(LspFormatOnSaveEnabled());
+
+    SetLspFormatOnSaveEnabled(false); // restore -- process-wide state
+    REQUIRE_FALSE(LspFormatOnSaveEnabled());
 }

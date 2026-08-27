@@ -9,6 +9,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 #include <unistd.h>
@@ -20,6 +21,7 @@
 #include "Editor/Dap/DapManager.h"
 #include "Editor/DiagnosticsLog.h"
 #include "Editor/Dispatcher.h"
+#include "Editor/FormatOnSave.h"
 #include "Editor/InlineDiagnostics.h"
 #include "Editor/Link.h"
 #include "Editor/Lsp/LspClient.h"
@@ -416,6 +418,60 @@ std::string ReadRawLspFrame(int fd) {
 
 int LspRequestIdFromFrame(const std::string& raw) {
     return ned::editor::lsp::Json::parse(raw.substr(raw.find("\r\n\r\n") + 4))["id"].get<int>();
+}
+
+// Parses every complete Content-Length-framed message found in raw,
+// starting from byte offset pos -- used by ReadLspFrames below to count/
+// extract frames without discarding trailing bytes the way ReadRawLspFrame's
+// single-frame return does.
+std::vector<ned::editor::lsp::Json> ParseConcatenatedLspFrames(const std::string& raw) {
+    std::vector<ned::editor::lsp::Json> frames;
+    std::size_t                         pos = 0;
+    while (pos < raw.size()) {
+        const auto headerEnd = raw.find("\r\n\r\n", pos);
+        if (headerEnd == std::string::npos) {
+            break;
+        }
+        const std::string_view kPrefix   = "Content-Length: ";
+        const auto             prefixPos = raw.find(kPrefix, pos);
+        if (prefixPos == std::string::npos || prefixPos > headerEnd) {
+            break;
+        }
+        const std::size_t contentLength = std::stoul(raw.substr(prefixPos + kPrefix.size()));
+        const std::size_t bodyStart     = headerEnd + 4;
+        if (bodyStart + contentLength > raw.size()) {
+            break;
+        }
+        frames.push_back(ned::editor::lsp::Json::parse(raw.substr(bodyStart, contentLength)));
+        pos = bodyStart + contentLength;
+    }
+    return frames;
+}
+
+// signature-help-auto-trigger/documentHighlight follow-up: unlike every
+// other ReadRawLspFrame call site (one message in flight at a time), a
+// debounce-timer test can have two independent auto-requests (e.g.
+// documentHighlight and signatureHelp, both triggered by the same typed
+// content-generation change) queued back-to-back by a single
+// DrainPosted_() call, arriving concatenated in one ::read(). Reads until
+// at least frameCount complete frames are present -- safe against blocking
+// forever since, by the time a caller reaches here, DrainPosted_() has
+// already synchronously run every producing callback, so every expected
+// frame's bytes are already fully written to the pipe.
+std::vector<ned::editor::lsp::Json> ReadLspFrames(int fd, std::size_t frameCount) {
+    std::string all;
+    char        buffer[512];
+    for (int i = 0; i < 8; ++i) {
+        if (ParseConcatenatedLspFrames(all).size() >= frameCount) {
+            break;
+        }
+        const ssize_t n = ::read(fd, buffer, sizeof(buffer));
+        if (n <= 0) {
+            break;
+        }
+        all.append(buffer, static_cast<std::size_t>(n));
+    }
+    return ParseConcatenatedLspFrames(all);
 }
 
 // DAP client slice 2: the pipe-backed fake-adapter counterpart of
@@ -6406,6 +6462,54 @@ TEST_CASE("Any other key dismisses ghost text instead of accepting it", "[Buffer
     REQUIRE(buffer.Text() != "foobar");
 }
 
+// documentHighlight follow-up.
+TEST_CASE("M-x lsp-document-highlight paints every reported occurrence with the document-highlight background",
+          "[BufferView]") {
+    Fixture                     fixture;
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_bufferview_document_highlight_test.txt";
+    ned::text::Buffer&          buffer = fixture.bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("foo = foo + 1");
+    buffer.SetPoint(1); // inside the first "foo"
+    fixture.activeBuffer.Set(buffer);
+
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::LspClient* client = nullptr;
+    FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
+    ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+    (void)ReadRawLspFrame(server.serverStdinRead); // drain didOpen
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "lsp-document-highlight");
+    view.OnEvent(ned::ui::test::Return());
+
+    const std::string raw     = ReadRawLspFrame(server.serverStdinRead);
+    const auto        request = ned::editor::lsp::Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(request["method"] == "textDocument/documentHighlight");
+
+    const auto response = ned::editor::lsp::Json{
+        {"jsonrpc", "2.0"},
+        {"id", LspRequestIdFromFrame(raw)},
+        {"result", ned::editor::lsp::Json::array({{{"range", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 3}}}}}},
+                                                   {{"range", {{"start", {{"line", 0}, {"character", 6}}}, {"end", {{"line", 0}, {"character", 9}}}}}}})},
+    };
+    client->DispatchFrame(response.dump());
+
+    view.Paint(canvas);
+    const int gutter = GutterWidth(1);
+    REQUIRE(screenBuf.PixelAt(gutter + 0, 0).background_color == fixture.theme.documentHighlightBackground); // 'f' of the first "foo"
+    REQUIRE(screenBuf.PixelAt(gutter + 2, 0).background_color == fixture.theme.documentHighlightBackground); // 'o'
+    REQUIRE(screenBuf.PixelAt(gutter + 6, 0).background_color == fixture.theme.documentHighlightBackground); // 'f' of the second "foo"
+    REQUIRE(screenBuf.PixelAt(gutter + 4, 0).background_color == fixture.theme.background);                  // '=' -- not part of either occurrence
+}
+
 TEST_CASE("C-c C-a with no code actions reports \"No code actions available.\"", "[BufferView]") {
     Fixture                     fixture;
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_bufferview_code_action_none_test.txt";
@@ -6949,6 +7053,110 @@ TEST_CASE("M-x lsp-signature-help shows the active parameter emphasized in the s
     client->DispatchFrame(response.dump());
 
     REQUIRE(fixture.statusMessage == "foo(**a: int**)");
+}
+
+namespace {
+// signature-help-auto-trigger follow-up: disables ghost-text auto-complete
+// for the duration of the test below so its own debounce timer (armed by
+// the exact same keystrokes) doesn't race the signature-help request onto
+// the fake server's stdin pipe ahead of it -- restores the previous value
+// (LspAutoCompleteEnabled's own default, true) on destruction, the same
+// save/restore shape SnippetRegistryTestGuard uses for a different global.
+struct AutoCompleteDisabledGuard {
+    AutoCompleteDisabledGuard() : previous_(ned::editor::lsp::LspAutoCompleteEnabled()) {
+        ned::editor::lsp::SetLspAutoCompleteEnabled(false);
+    }
+    ~AutoCompleteDisabledGuard() {
+        ned::editor::lsp::SetLspAutoCompleteEnabled(previous_);
+    }
+    bool previous_;
+};
+} // namespace
+
+// signature-help-auto-trigger follow-up.
+TEST_CASE("Typing ( inside a call auto-triggers signature help after the debounce, with no manual invocation",
+          "[BufferView]") {
+    const AutoCompleteDisabledGuard guard;
+    Fixture                         fixture;
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_bufferview_signature_help_auto_test.txt";
+    ned::text::Buffer&          buffer = fixture.bufferList.OpenOrCreateFile(path);
+    fixture.activeBuffer.Set(buffer);
+
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::LspClient* client = nullptr;
+    FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.SetEventLoop(&eventLoop);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
+    ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    view.Paint(canvas); // triggers SyncBuffer -> didOpen
+    (void)ReadRawLspFrame(server.serverStdinRead);
+
+    TypeText(view, "foo("); // the trailing '(' is the trigger character
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(450)); // past LspCompletionDebounceMs()'s default 350ms
+    REQUIRE(eventLoop.DrainPosted_()); // runs both debounce timers' posted callbacks -- signature help AND
+                                       // documentHighlight (which has no toggle to disable, see design decision
+                                       // 2 -- so its own request rides along here too)
+
+    // Both requests were queued back-to-back by the same DrainPosted_() call
+    // -- find the signatureHelp one among them (order between the two isn't
+    // guaranteed) and leave the other unanswered, which is harmless.
+    const std::vector<ned::editor::lsp::Json> requests = ReadLspFrames(server.serverStdinRead, 2);
+    const auto sigHelpRequest = std::find_if(requests.begin(), requests.end(),
+                                             [](const ned::editor::lsp::Json& r) { return r["method"] == "textDocument/signatureHelp"; });
+    REQUIRE(sigHelpRequest != requests.end());
+
+    const auto response = ned::editor::lsp::Json{
+        {"jsonrpc", "2.0"},
+        {"id", (*sigHelpRequest)["id"]},
+        {"result", {{"signatures", ned::editor::lsp::Json::array({{{"label", "foo(a: int)"}, {"parameters", ned::editor::lsp::Json::array({{{"label", "a: int"}}})}}})}, {"activeParameter", 0}}},
+    };
+    client->DispatchFrame(response.dump());
+
+    REQUIRE(fixture.statusMessage == "foo(**a: int**)");
+}
+
+// signature-help-auto-trigger follow-up.
+TEST_CASE("Typing a non-trigger character does not schedule an automatic signature-help request", "[BufferView]") {
+    const AutoCompleteDisabledGuard guard;
+    Fixture                         fixture;
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_bufferview_signature_help_no_trigger_test.txt";
+    ned::text::Buffer&          buffer = fixture.bufferList.OpenOrCreateFile(path);
+    fixture.activeBuffer.Set(buffer);
+
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::LspClient* client = nullptr;
+    FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.SetEventLoop(&eventLoop);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
+    ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+    (void)ReadRawLspFrame(server.serverStdinRead);
+
+    TypeText(view, "foo");
+
+    // documentHighlight's own debounce timer fires here too (it has no
+    // trigger-character gate, see design decision 1 -- typing "foo" moves
+    // point/changes content regardless), so DrainPosted_() itself can't be
+    // used as the signal; assert instead that no signatureHelp request
+    // specifically was ever sent.
+    std::this_thread::sleep_for(std::chrono::milliseconds(450));
+    (void)eventLoop.DrainPosted_();
+    const std::vector<ned::editor::lsp::Json> requests = ReadLspFrames(server.serverStdinRead, 1);
+    REQUIRE(std::none_of(requests.begin(), requests.end(),
+                         [](const ned::editor::lsp::Json& r) { return r["method"] == "textDocument/signatureHelp"; }));
 }
 
 // header-source-switching follow-up: M-o as a raw byte sequence, same
@@ -8274,6 +8482,44 @@ TEST_CASE("C-c C-q applies a lone quick fix immediately, no confirmation", "[Buf
     REQUIRE(harness.fixture.statusMessage == "Applied \"Fix bad_code\".");
 }
 
+// ApplyWorkspaceTextEdits undo-grouping fix: a response with several edits
+// touching one file used to record one undo step per edit (Buffer::Undo()
+// would need to be pressed once per edit to fully revert). Crafted by hand
+// here (QuickFixHarness::RespondWith only builds one edit per action)
+// so the "changes"[ownUri] array carries two non-overlapping edits.
+TEST_CASE("a lone code action with multiple edits in one file applies and undoes as a single step", "[BufferView]") {
+    QuickFixHarness harness("ned_bufferview_quick_fix_multi_edit_test.txt");
+
+    harness.view.OnEvent(ned::ui::test::Ctrl('c'));
+    harness.view.OnEvent(ned::ui::test::Ctrl('q'));
+
+    const std::string raw     = ReadRawLspFrame(harness.server.serverStdinRead);
+    const auto        request = ned::editor::lsp::Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(request["method"] == "textDocument/codeAction");
+    const std::string ownUri = request["params"]["textDocument"]["uri"].get<std::string>();
+
+    const auto action = ned::editor::lsp::Json{
+        {"title", "Fix both halves"},
+        {"kind", "quickfix"},
+        {"edit",
+         {{"changes",
+           {{ownUri, ned::editor::lsp::Json::array({
+                          {{"range", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 3}}}}},
+                           {"newText", "BAD"}},
+                          {{"range", {{"start", {{"line", 0}, {"character", 4}}}, {"end", {{"line", 0}, {"character", 8}}}}},
+                           {"newText", "CODE"}},
+                      })}}}}},
+    };
+    const auto response = ned::editor::lsp::Json{
+        {"jsonrpc", "2.0"}, {"id", LspRequestIdFromFrame(raw)}, {"result", ned::editor::lsp::Json::array({action})}};
+    harness.client->DispatchFrame(response.dump());
+
+    REQUIRE(harness.buffer->Text() == "BAD_CODE");
+    REQUIRE(harness.buffer->CanUndo());
+    harness.buffer->Undo();
+    REQUIRE(harness.buffer->Text() == "bad_code");
+}
+
 TEST_CASE("C-c C-q picks the lone isPreferred action out of several", "[BufferView]") {
     QuickFixHarness harness("ned_bufferview_quick_fix_preferred_test.txt");
     harness.RespondWith({{.title = "Refactor", .newText = "refactored", .kind = "refactor"},
@@ -8474,6 +8720,122 @@ TEST_CASE("C-x C-s on a buffer with unresolved conflict markers asks before writ
         std::ifstream     in(path);
         const std::string onDisk((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
         REQUIRE(onDisk.find("<<<<<<<") != std::string::npos); // saved anyway, markers and all
+    }
+
+    std::filesystem::remove(path);
+}
+
+namespace {
+// lsp-format-on-save follow-up: process-wide state, restored on destruction
+// the same RAII shape CommandsTest.cpp's FormatCommandGuard already uses
+// for the sibling FormatOnSave.h setting.
+struct LspFormatOnSaveGuard {
+    LspFormatOnSaveGuard() {
+        ned::editor::lsp::SetLspFormatOnSaveEnabled(true);
+    }
+    ~LspFormatOnSaveGuard() {
+        ned::editor::lsp::SetLspFormatOnSaveEnabled(false);
+        ned::editor::SetFormatCommand(std::nullopt);
+    }
+};
+} // namespace
+
+TEST_CASE("C-x C-s formats via the language server before saving when lsp-format-on-save is enabled",
+          "[BufferView]") {
+    const LspFormatOnSaveGuard  guard;
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_bufferview_lsp_format_on_save_test.txt";
+    {
+        std::ofstream(path) << "int x=1;";
+    }
+
+    Fixture            fixture;
+    ned::text::Buffer& buffer = fixture.bufferList.OpenOrCreateFile(path);
+    fixture.activeBuffer.Set(buffer);
+
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::LspClient* client = nullptr;
+    FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
+    ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    view.Paint(canvas); // triggers SyncBuffer -> didOpen
+    (void)ReadRawLspFrame(server.serverStdinRead);
+
+    view.OnEvent(ned::ui::test::Ctrl('x'));
+    view.OnEvent(ned::ui::test::Ctrl('s'));
+    REQUIRE(fixture.statusMessage == "Formatting...");
+
+    const std::string raw     = ReadRawLspFrame(server.serverStdinRead);
+    const auto        request = ned::editor::lsp::Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(request["method"] == "textDocument/formatting");
+
+    const auto response = ned::editor::lsp::Json{
+        {"jsonrpc", "2.0"},
+        {"id", LspRequestIdFromFrame(raw)},
+        {"result", ned::editor::lsp::Json::array(
+                       {{{"range", {{"start", {{"line", 0}, {"character", 5}}}, {"end", {{"line", 0}, {"character", 6}}}}}, {"newText", " = "}}})},
+    };
+    client->DispatchFrame(response.dump());
+
+    REQUIRE(buffer.Text() == "int x = 1;");
+    REQUIRE(fixture.statusMessage.find("Wrote") == 0);
+    {
+        std::ifstream     in(path);
+        const std::string onDisk((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        REQUIRE(onDisk == "int x = 1;\n"); // EnsureFinalNewline() default
+    }
+
+    // Step 0's undo-group fix: the format's edit(s) undo as a single step.
+    REQUIRE(buffer.CanUndo());
+    buffer.Undo();
+    REQUIRE(buffer.Text() == "int x=1;");
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("C-x C-s prefers an external format command over lsp-format-on-save when both are configured",
+          "[BufferView]") {
+    const LspFormatOnSaveGuard  guard;
+    ned::editor::SetFormatCommand(std::string("tr 'a-z' 'A-Z'"));
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_bufferview_lsp_format_precedence_test.txt";
+    {
+        std::ofstream(path) << "hello";
+    }
+
+    Fixture            fixture;
+    ned::text::Buffer& buffer = fixture.bufferList.OpenOrCreateFile(path);
+    fixture.activeBuffer.Set(buffer);
+
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::LspClient* client = nullptr;
+    FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
+    ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+    (void)ReadRawLspFrame(server.serverStdinRead); // drain didOpen
+
+    view.OnEvent(ned::ui::test::Ctrl('x'));
+    view.OnEvent(ned::ui::test::Ctrl('s'));
+
+    // The external formatter ran synchronously -- no LSP formatting request
+    // was ever sent, confirmed by the buffer already reflecting its output.
+    REQUIRE(buffer.Text() == "HELLO");
+    REQUIRE(fixture.statusMessage.find("Wrote") == 0);
+    {
+        std::ifstream     in(path);
+        const std::string onDisk((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        REQUIRE(onDisk == "HELLO\n"); // EnsureFinalNewline() default -- disk-only, not applied in-memory
     }
 
     std::filesystem::remove(path);

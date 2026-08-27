@@ -67,6 +67,24 @@ void             SetLspCompletionDebounceMs(int milliseconds); // default 350
 void             SetLspDiagnosticsDebounceMs(int milliseconds); // default 500
 [[nodiscard]] int LspDiagnosticsDebounceMs();
 
+// signature-help-auto-trigger follow-up. Same shape as
+// SetLspAutoCompleteEnabled/LspAutoCompleteEnabled above -- a single
+// editor-wide toggle, not per-language. Reuses LspCompletionDebounceMs()
+// rather than a separate debounce value: both fire off the same
+// "typing/motion just settled" heuristic.
+void              SetLspSignatureHelpAutoTriggerEnabled(bool enabled); // default true
+[[nodiscard]] bool LspSignatureHelpAutoTriggerEnabled();
+
+// lsp-format-on-save follow-up. Opt-in (default false): turning this on
+// silently for every existing installation would be a surprise behavior
+// change, unlike the two toggles above (which only add a passive UI cue).
+// When both this and Editor/FormatOnSave.h's external FormatCommand() are
+// configured, the external command wins unconditionally -- it's the more
+// specific, deliberately hand-configured choice; see save-buffer's own
+// shouldDeferToLspFormat helper in Commands.cpp.
+void              SetLspFormatOnSaveEnabled(bool enabled); // default false
+[[nodiscard]] bool LspFormatOnSaveEnabled();
+
 } // namespace ned::editor::lsp
 
 #endif // NED_EDITOR_LSP_LSPSERVERCONFIG_H

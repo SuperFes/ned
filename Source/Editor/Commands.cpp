@@ -19,6 +19,7 @@
 #include "InlineDiagnostics.h"
 #include "LineEndingPolicy.h"
 #include "Lsp/LspManager.h"
+#include "Lsp/LspServerConfig.h"
 #include "Markdown.h"
 #include "Mode.h"
 #include "ModeOverrides.h"
@@ -1442,26 +1443,55 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
         }
     };
 
-    registry.Register("save-buffer", "Save the current buffer to its associated file.", [saveBufferBody](CommandContext& context) {
-        // Never silently overwrite a file someone else wrote underneath
-        // this buffer (Emacs' supersession check): hand the decision to a
-        // y/n confirmation instead of writing anything.
-        if (context.buffer.ExternallyModified()) {
-            context.interactiveRequest = InteractiveRequest::ConfirmOverwriteSave;
-            return;
+    // lsp-format-on-save follow-up: false whenever an external FormatCommand()
+    // is configured (that always takes precedence -- the more specific,
+    // deliberately hand-configured choice), the toggle is off, or no
+    // language server is actually running for this buffer's language.
+    // Checked by both save-buffer and save-buffer-force, after their own
+    // (save-buffer-only) guards above have already passed -- when true, the
+    // rest of this save is handed off to BufferView's async continuation
+    // (RequestLspFormatThenSaveBuffer) instead of running saveBufferBody
+    // synchronously, since an LSP round trip can't be waited on inline.
+    const auto shouldDeferToLspFormat = [](CommandContext& context) {
+        if (FormatCommand() || !editor::lsp::LspFormatOnSaveEnabled() || !context.lspManager || !context.mode) {
+            return false;
         }
-        // external-modification-round-2 follow-up: never silently write
-        // unresolved "<<<<<<<" conflict markers to disk either -- same
-        // "hand the decision to a y/n confirmation" shape as the
-        // ExternallyModified() check just above.
-        if (text::HasConflictMarkers(context.buffer.Text())) {
-            context.interactiveRequest = InteractiveRequest::ConfirmSaveWithConflicts;
-            return;
-        }
-        saveBufferBody(context);
-    });
+        const std::string languageKey = LanguageKeyForMode(*context.mode);
+        return context.lspManager->StatusForLanguage(languageKey) == lsp::LspManager::LspStatus::Running;
+    };
 
-    registry.Register("save-buffer-force", "Save the current buffer even if its file changed on disk.", saveBufferBody);
+    registry.Register("save-buffer", "Save the current buffer to its associated file.",
+                      [saveBufferBody, shouldDeferToLspFormat](CommandContext& context) {
+                          // Never silently overwrite a file someone else wrote underneath
+                          // this buffer (Emacs' supersession check): hand the decision to a
+                          // y/n confirmation instead of writing anything.
+                          if (context.buffer.ExternallyModified()) {
+                              context.interactiveRequest = InteractiveRequest::ConfirmOverwriteSave;
+                              return;
+                          }
+                          // external-modification-round-2 follow-up: never silently write
+                          // unresolved "<<<<<<<" conflict markers to disk either -- same
+                          // "hand the decision to a y/n confirmation" shape as the
+                          // ExternallyModified() check just above.
+                          if (text::HasConflictMarkers(context.buffer.Text())) {
+                              context.interactiveRequest = InteractiveRequest::ConfirmSaveWithConflicts;
+                              return;
+                          }
+                          if (shouldDeferToLspFormat(context)) {
+                              context.deferSaveForLspFormat = false; // force=false: the guards above already ran
+                              return;
+                          }
+                          saveBufferBody(context);
+                      });
+
+    registry.Register("save-buffer-force", "Save the current buffer even if its file changed on disk.",
+                      [saveBufferBody, shouldDeferToLspFormat](CommandContext& context) {
+                          if (shouldDeferToLspFormat(context)) {
+                              context.deferSaveForLspFormat = true; // force=true: mirrors this command's own "skip the guards" meaning
+                              return;
+                          }
+                          saveBufferBody(context);
+                      });
 
     // format-buffer follow-up: save-buffer's own formatting step, exposed
     // standalone so it can run without also saving -- reuses the exact
@@ -2096,6 +2126,19 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     registry.Register("lsp-complete", "Request completion candidates from the language server at point.",
                       [](CommandContext& context) {
                           context.interactiveRequest = InteractiveRequest::LspComplete;
+                      });
+
+    // documentHighlight follow-up: a one-shot direct action (see
+    // InteractiveRequest::LspDocumentHighlight's own doc comment in
+    // Command.h) -- BufferView::RequestDocumentHighlightAtPoint is what
+    // actually sends the textDocument/documentHighlight request and owns the
+    // resulting highlight state, not this command. No default binding, same
+    // M-x-only precedent as lsp-signature-help above -- the live-on-cursor-
+    // move behavior (MaybeScheduleDocumentHighlight) is what most users will
+    // actually experience.
+    registry.Register("lsp-document-highlight", "Highlight all occurrences of the symbol at point in this buffer.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::LspDocumentHighlight;
                       });
 
     // code-actions follow-up: a one-shot direct action (see

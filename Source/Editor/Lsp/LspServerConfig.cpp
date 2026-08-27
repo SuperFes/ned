@@ -20,6 +20,12 @@ namespace {
     std::mutex g_diagnosticsDebounceMutex;
     int        g_diagnosticsDebounceMs = 500;
 
+    std::mutex g_signatureHelpAutoTriggerMutex;
+    bool       g_signatureHelpAutoTriggerEnabled = true;
+
+    std::mutex g_formatOnSaveMutex;
+    bool       g_formatOnSaveEnabled = false;
+
 } // namespace
 
 void SetLspServerCommand(const std::string& language, std::vector<std::string> argv) {
@@ -69,6 +75,26 @@ void SetLspDiagnosticsDebounceMs(int milliseconds) {
 int LspDiagnosticsDebounceMs() {
     const std::lock_guard<std::mutex> lock(g_diagnosticsDebounceMutex);
     return g_diagnosticsDebounceMs;
+}
+
+void SetLspSignatureHelpAutoTriggerEnabled(bool enabled) {
+    const std::lock_guard<std::mutex> lock(g_signatureHelpAutoTriggerMutex);
+    g_signatureHelpAutoTriggerEnabled = enabled;
+}
+
+bool LspSignatureHelpAutoTriggerEnabled() {
+    const std::lock_guard<std::mutex> lock(g_signatureHelpAutoTriggerMutex);
+    return g_signatureHelpAutoTriggerEnabled;
+}
+
+void SetLspFormatOnSaveEnabled(bool enabled) {
+    const std::lock_guard<std::mutex> lock(g_formatOnSaveMutex);
+    g_formatOnSaveEnabled = enabled;
+}
+
+bool LspFormatOnSaveEnabled() {
+    const std::lock_guard<std::mutex> lock(g_formatOnSaveMutex);
+    return g_formatOnSaveEnabled;
 }
 
 } // namespace ned::editor::lsp
