@@ -238,6 +238,12 @@ Notcurses.
       specifically (`save-theme`/`ned/theme-set`); a general settings surface would
       generalize that. Vague, unscoped.
 
+### Jupyter Notebooks
+
+Maybe it would be really cool to be a complete Jupyter Notebook project tool, could
+handle and be used to interally to handle Jupyter Notebooks automatically.  Python
+installs and everything.
+
 ### Remote development (SSH remote editing)
 
 The goal: edit files on a remote host over SSH without ned itself running remotely —
