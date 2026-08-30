@@ -591,11 +591,10 @@ class BufferView : public Widget {
                            OrgCaptureSelectTemplate,
                            // code-actions follow-up: entered only once RequestCodeActionsAtPoint's
                            // async response actually arrives (never eagerly, while the request is
-                           // still in flight -- see that method's own doc comment) -- Select when
-                           // more than one action came back, Confirm for the (possibly only, or
-                           // just-picked-from-Select) one awaiting a y/n.
+                           // still in flight -- see that method's own doc comment), and only when
+                           // more than one action came back -- a single action, or one picked from
+                           // this list, applies directly with no separate y/n confirmation.
                            LspCodeActionSelect,
-                           LspCodeActionConfirm,
                            // go-to-definition follow-up: same "entered only from inside the
                            // async response callback" shape as LspCodeActionSelect above --
                            // Select when RequestDefinitionAtPoint's response names more than one
@@ -617,11 +616,10 @@ class BufferView : public Widget {
                            // rename follow-up: LspRenameNewName is the one synchronous
                            // prompt-shaped stage here (routed through HandlePromptKey, like
                            // FindFile/CreateDirectory/etc.) -- Enter sends the actual
-                           // textDocument/rename request via RequestRenameAtPoint, which only
-                           // then (from inside its own async callback, once the response
-                           // arrives) enters LspRenameConfirm for the final y/n.
+                           // textDocument/rename request via RequestRenameAtPoint, which
+                           // applies the result directly once the response arrives (from
+                           // inside its own async callback), no separate y/n confirmation.
                            LspRenameNewName,
-                           LspRenameConfirm,
                            // open-binary-anyway follow-up: entered only from
                            // inside HandlePromptKey's FindFile branch, when
                            // BufferList::OpenOrCreateFile throws
@@ -919,10 +917,12 @@ class BufferView : public Widget {
     // response (generation moved, or buffer/point changed since the request
     // was sent) rather than surprising the user with a selection prompt for
     // something they've since moved on from; otherwise sets
-    // pendingCodeActions_ and enters LspCodeActionConfirm directly (exactly
-    // one action) or LspCodeActionSelect (more than one) -- inputMode_ is
-    // therefore only ever touched from inside this async callback, never
-    // eagerly when the request is first sent.
+    // pendingCodeActions_ and applies it directly via ResolveAndApplyCodeAction
+    // (exactly one action) or enters LspCodeActionSelect (more than one) --
+    // inputMode_ is therefore only ever touched from inside this async
+    // callback, never eagerly when the request is first sent. Applying
+    // without a separate y/n confirmation is deliberate: worst case the user
+    // just undoes it, same as any other edit.
     void RequestCodeActionsAtPoint();
     // Renders pendingCodeActions_ as a numbered list into statusMessage_,
     // codeActionSelection_ visually marked -- called after RequestCodeActionsAtPoint
@@ -930,14 +930,11 @@ class BufferView : public Widget {
     // whenever Up/Down changes the selection.
     void RefreshCodeActionSelectStatus();
     // Up/Down move codeActionSelection_ (clamped) and refresh; a digit '1'-'9'
-    // jumps directly to that index (clamped to the available count) and falls
-    // through to the same LspCodeActionConfirm transition Enter performs;
-    // Escape/C-g cancels back to Normal.
+    // or Enter applies pendingCodeActions_[codeActionSelection_] directly via
+    // ResolveAndApplyCodeAction and ends the session (no separate y/n
+    // confirmation -- see RequestCodeActionsAtPoint's doc comment); Escape/C-g
+    // cancels back to Normal.
     void HandleCodeActionSelectKey(const editor::KeyChord& chord);
-    // y/Y applies pendingCodeActions_[codeActionSelection_] via
-    // ApplyCodeAction and ends the session; n/N/Escape/C-g cancels --
-    // mirrors HandleDeleteFileKey's own Confirming-stage shape exactly.
-    void HandleCodeActionConfirmKey(const editor::KeyChord& chord);
     // ACP client slice 2: same numbered-list rendering as
     // RefreshCodeActionSelectStatus, over pendingAcpPermissionOptions_/
     // acpPermissionSelection_ instead -- called by ShowAcpPermissionPrompt
@@ -965,8 +962,8 @@ class BufferView : public Widget {
     // code-actions-resolve follow-up (factored out for quick-fix). Sends
     // codeAction/resolve first when the action arrived without its edit
     // (action.resolvable), applying from inside that async callback;
-    // otherwise applies directly. Shared by HandleCodeActionConfirmKey's y
-    // branch and RequestQuickFixAtPoint.
+    // otherwise applies directly. Shared by RequestCodeActionsAtPoint,
+    // HandleCodeActionSelectKey, and RequestQuickFixAtPoint.
     void ResolveAndApplyCodeAction(const editor::lsp::CodeAction& action);
     // quick-fix follow-up. Same request/staleness-guard shape as
     // RequestCodeActionsAtPoint, but applies the response's single
@@ -1069,8 +1066,6 @@ class BufferView : public Widget {
     // guard shape once again, but resolves to a full ResolvedRename
     // (potentially many files) rather than a single buffer's edits.
     void RequestRenameAtPoint(const std::string& newName);
-    void RefreshRenameConfirmStatus();
-    void HandleRenameConfirmKey(const editor::KeyChord& chord);
     // Refuses (statusMessage_, no mutation anywhere) if
     // result.touchesUnsupportedForm or it has no edit at all. Otherwise
     // opens/finds every touched file first (BufferList::FindByPath, else
@@ -2712,9 +2707,9 @@ class BufferView : public Widget {
     [[nodiscard]] std::string GhostSuffixFor(const editor::lsp::CompletionItem& item) const;
 
     // code-actions follow-up: pendingCodeActions_/codeActionSelection_ are
-    // valid only while inputMode_ is LspCodeActionSelect/LspCodeActionConfirm
-    // (see RequestCodeActionsAtPoint's own doc comment above for why
-    // inputMode_ only ever changes from inside that async callback).
+    // valid only while inputMode_ is LspCodeActionSelect (see
+    // RequestCodeActionsAtPoint's own doc comment above for why inputMode_
+    // only ever changes from inside that async callback).
     // codeActionRequestGeneration_ mirrors completionRequestGeneration_'s
     // exact staleness-guard shape.
     std::vector<editor::lsp::CodeAction> pendingCodeActions_;
@@ -2787,16 +2782,12 @@ class BufferView : public Widget {
     // switchSourceHeader never returns more than one candidate.
     std::size_t switchHeaderSourceRequestGeneration_ = 0;
 
-    // rename follow-up: same staleness-guard shape once more.
-    // pendingRename_/renameTitle_ are valid only while inputMode_ ==
-    // LspRenameConfirm -- renameTitle_ is the human-readable "N edits across
-    // M files" summary RefreshRenameConfirmStatus computes once, up front,
-    // rather than recomputing it on every keypress at the confirmation
-    // (there's nothing to recompute it *for*, unlike RefreshCodeActionSelectStatus's
-    // own per-keystroke Up/Down refresh).
-    std::optional<editor::lsp::LspManager::ResolvedRename> pendingRename_;
-    std::string                                            renameTitle_;
-    std::size_t                                            renameRequestGeneration_ = 0;
+    // rename follow-up: same staleness-guard shape once more. renameTitle_
+    // is the human-readable "N edits across M files" summary shown in the
+    // final "Renamed (...)" status message -- set right before ApplyRename
+    // runs, applied with no separate confirmation step.
+    std::string   renameTitle_;
+    std::size_t   renameRequestGeneration_ = 0;
 
     // status-message-lifecycle follow-up. A uniform rule for statusMessage_,
     // regardless of who wrote it (any command via CommandContext::message,

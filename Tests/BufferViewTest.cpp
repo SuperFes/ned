@@ -6619,7 +6619,7 @@ TEST_CASE("C-c C-a with no code actions reports \"No code actions available.\"",
     REQUIRE(fixture.statusMessage == "No code actions available.");
 }
 
-TEST_CASE("C-c C-a with one code action shows its title and applies it on y", "[BufferView]") {
+TEST_CASE("C-c C-a with one code action applies it directly, no confirmation", "[BufferView]") {
     Fixture                     fixture;
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_bufferview_code_action_one_test.txt";
     ned::text::Buffer&          buffer = fixture.bufferList.OpenOrCreateFile(path);
@@ -6661,14 +6661,11 @@ TEST_CASE("C-c C-a with one code action shows its title and applies it on y", "[
     };
     client->DispatchFrame(response.dump());
 
-    REQUIRE(fixture.statusMessage == "Apply \"Fix bad_code\"? (y/n)");
-
-    view.OnEvent(ned::ui::test::Character("y"));
     REQUIRE(buffer.Text() == "good_code");
     REQUIRE(fixture.statusMessage == "Applied \"Fix bad_code\".");
 }
 
-TEST_CASE("C-c C-a with multiple code actions: digit-select then confirm applies the right one", "[BufferView]") {
+TEST_CASE("C-c C-a with multiple code actions: digit-select applies the right one directly", "[BufferView]") {
     Fixture                     fixture;
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_bufferview_code_action_multi_test.txt";
     ned::text::Buffer&          buffer = fixture.bufferList.OpenOrCreateFile(path);
@@ -6717,14 +6714,11 @@ TEST_CASE("C-c C-a with multiple code actions: digit-select then confirm applies
     REQUIRE(CandidateRowExists(fixture.candidates, "1)", "First fix"));
     REQUIRE(CandidateRowExists(fixture.candidates, "2)", "Second fix"));
 
-    view.OnEvent(ned::ui::test::Character("2")); // jump directly to the second action
-    REQUIRE(fixture.statusMessage == "Apply \"Second fix\"? (y/n)");
-
-    view.OnEvent(ned::ui::test::Character("y"));
+    view.OnEvent(ned::ui::test::Character("2")); // jump directly to the second action, applying it with no confirmation
     REQUIRE(buffer.Text() == "second");
 }
 
-TEST_CASE("n at the code-action confirm stage leaves the buffer untouched", "[BufferView]") {
+TEST_CASE("Escape at the code-action selection list leaves the buffer untouched", "[BufferView]") {
     Fixture                     fixture;
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_bufferview_code_action_decline_test.txt";
     ned::text::Buffer&          buffer = fixture.bufferList.OpenOrCreateFile(path);
@@ -6752,20 +6746,24 @@ TEST_CASE("n at the code-action confirm stage leaves the buffer untouched", "[Bu
     const auto        request = ned::editor::lsp::Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
     const std::string ownUri  = request["params"]["textDocument"]["uri"].get<std::string>();
 
+    auto makeAction = [&](const std::string& title, const std::string& newText) {
+        return ned::editor::lsp::Json{
+            {"title", title},
+            {"edit",
+             {{"changes",
+               {{ownUri, ned::editor::lsp::Json::array(
+                             {{{"range", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 8}}}}},
+                               {"newText", newText}}})}}}}},
+        };
+    };
     const auto response = ned::editor::lsp::Json{
         {"jsonrpc", "2.0"},
         {"id", LspRequestIdFromFrame(raw)},
-        {"result", ned::editor::lsp::Json::array(
-                       {{{"title", "Fix bad_code"},
-                         {"edit",
-                          {{"changes",
-                            {{ownUri, ned::editor::lsp::Json::array(
-                                          {{{"range", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 8}}}}},
-                                            {"newText", "good_code"}}})}}}}}}})},
+        {"result", ned::editor::lsp::Json::array({makeAction("First fix", "first"), makeAction("Second fix", "second")})},
     };
     client->DispatchFrame(response.dump());
 
-    view.OnEvent(ned::ui::test::Character("n"));
+    view.OnEvent(ned::ui::test::Escape());
     REQUIRE(buffer.Text() == "bad_code");
     REQUIRE(fixture.statusMessage == "Code action cancelled.");
 }
@@ -7402,7 +7400,7 @@ TEST_CASE("M-o reports \"Buffer has no associated file.\" for a scratch buffer",
     REQUIRE(fixture.statusMessage == "Buffer has no associated file.");
 }
 
-TEST_CASE("C-c C-M-r prompts for a new name, then applies a multi-file rename across two buffers on y",
+TEST_CASE("C-c C-M-r prompts for a new name, then applies a multi-file rename across two buffers directly",
           "[BufferView]") {
     Fixture                     fixture;
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_bufferview_rename_a_test.txt";
@@ -7460,63 +7458,14 @@ TEST_CASE("C-c C-M-r prompts for a new name, then applies a multi-file rename ac
     };
     client->DispatchFrame(response.dump());
 
-    REQUIRE(fixture.statusMessage.find("2 edits across 2 files") != std::string::npos);
-
-    view.OnEvent(ned::ui::test::Character("y"));
-
     REQUIRE(buffer.Text() == "new_name");
     ned::text::Buffer* other = fixture.bufferList.FindByPath(otherPath);
     REQUIRE(other != nullptr);
     REQUIRE(other->Text() == "use new_name here\n");
     REQUIRE(fixture.statusMessage.find("Renamed") == 0);
+    REQUIRE(fixture.statusMessage.find("2 edits across 2 files") != std::string::npos);
 
     std::filesystem::remove(otherPath);
-}
-
-TEST_CASE("n at the rename confirm stage leaves every buffer untouched", "[BufferView]") {
-    Fixture                     fixture;
-    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_bufferview_rename_decline_test.txt";
-    ned::text::Buffer&          buffer = fixture.bufferList.OpenOrCreateFile(path);
-    buffer.InsertAtPoint("old_name");
-    fixture.activeBuffer.Set(buffer);
-
-    ned::ui::EventLoop           eventLoop;
-    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
-    ned::editor::lsp::LspClient* client = nullptr;
-    FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
-
-    ned::ui::BufferView view = fixture.View();
-    view.SetLspManager(&manager);
-    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
-
-    ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
-    ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
-    view.Paint(canvas);
-    (void)ReadRawLspFrame(server.serverStdinRead);
-
-    view.OnEvent(ned::ui::test::Ctrl('c'));
-    view.OnEvent(ManualRenameEvent());
-    TypeText(view, "new_name");
-    view.OnEvent(ned::ui::test::Return());
-
-    const std::string raw     = ReadRawLspFrame(server.serverStdinRead);
-    const auto        request = ned::editor::lsp::Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
-    const std::string ownUri  = request["params"]["textDocument"]["uri"].get<std::string>();
-
-    const auto response = ned::editor::lsp::Json{
-        {"jsonrpc", "2.0"},
-        {"id", LspRequestIdFromFrame(raw)},
-        {"result",
-         {{"changes",
-           {{ownUri, ned::editor::lsp::Json::array(
-                         {{{"range", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 8}}}}},
-                           {"newText", "new_name"}}})}}}}},
-    };
-    client->DispatchFrame(response.dump());
-
-    view.OnEvent(ned::ui::test::Character("n"));
-    REQUIRE(buffer.Text() == "old_name");
-    REQUIRE(fixture.statusMessage == "Rename cancelled.");
 }
 
 TEST_CASE("Paint() surfaces a status-message hint once an LSP error has been logged", "[BufferView]") {
@@ -8679,8 +8628,7 @@ TEST_CASE("C-c C-q falls back to the selection list when the fix is ambiguous", 
     REQUIRE(CandidateRowExists(harness.fixture.candidates, "1)", "First fix"));
     REQUIRE(CandidateRowExists(harness.fixture.candidates, "2)", "Second fix"));
 
-    harness.view.OnEvent(ned::ui::test::Character("2"));
-    harness.view.OnEvent(ned::ui::test::Character("y"));
+    harness.view.OnEvent(ned::ui::test::Character("2")); // jump directly to the second action, applying it with no confirmation
     REQUIRE(harness.buffer->Text() == "second");
 }
 
