@@ -3553,11 +3553,6 @@ bool BufferView::OnKeyEvent(const Event& event) {
         ClampPointToNarrowing();
         return true;
     }
-    if (inputMode_ == InputMode::LspCodeActionConfirm) {
-        HandleCodeActionConfirmKey(*chord);
-        ClampPointToNarrowing();
-        return true;
-    }
     if (inputMode_ == InputMode::LspGotoDefinitionSelect) {
         HandleDefinitionSelectKey(*chord);
         ClampPointToNarrowing();
@@ -3577,11 +3572,6 @@ bool BufferView::OnKeyEvent(const Event& event) {
     }
     if (inputMode_ == InputMode::LspRenameNewName) {
         HandlePromptKey(*chord);
-        ClampPointToNarrowing();
-        return true;
-    }
-    if (inputMode_ == InputMode::LspRenameConfirm) {
-        HandleRenameConfirmKey(*chord);
         ClampPointToNarrowing();
         return true;
     }
@@ -4600,8 +4590,7 @@ void BufferView::RequestCodeActionsAtPoint() {
             }
             codeActionSelection_ = 0;
             if (pendingCodeActions_.size() == 1) {
-                inputMode_     = InputMode::LspCodeActionConfirm;
-                statusMessage_ = "Apply \"" + pendingCodeActions_[0].title + "\"? (y/n)";
+                ResolveAndApplyCodeAction(pendingCodeActions_[0]);
                 return;
             }
             inputMode_ = InputMode::LspCodeActionSelect;
@@ -4739,15 +4728,9 @@ void BufferView::HandleCodeActionSelectKey(const editor::KeyChord& chord) {
         return; // anything else is ignored -- stay in the selection list
     }
 
-    inputMode_     = InputMode::LspCodeActionConfirm;
-    statusMessage_ = "Apply \"" + pendingCodeActions_[codeActionSelection_].title + "\"? (y/n)";
-    // The list popup no longer applies once we've moved to a plain y/n
-    // confirmation -- EndInteractiveSession (further down, on y/n/quit)
-    // would clear it too, but that hasn't run yet and this sub-mode can
-    // sit on screen for a while.
-    if (onCandidatesChanged_) {
-        onCandidatesChanged_(std::nullopt);
-    }
+    const editor::lsp::CodeAction action = pendingCodeActions_[codeActionSelection_];
+    EndInteractiveSession();
+    ResolveAndApplyCodeAction(action);
 }
 
 void BufferView::ResolveAndApplyCodeAction(const editor::lsp::CodeAction& action) {
@@ -4786,21 +4769,6 @@ void BufferView::ResolveAndApplyCodeAction(const editor::lsp::CodeAction& action
         return;
     }
     ApplyCodeAction(action);
-}
-
-void BufferView::HandleCodeActionConfirmKey(const editor::KeyChord& chord) {
-    if (chord.Codepoint == U'y' || chord.Codepoint == U'Y') {
-        const editor::lsp::CodeAction action = pendingCodeActions_[codeActionSelection_];
-        ResolveAndApplyCodeAction(action);
-        EndInteractiveSession();
-        return;
-    }
-    if (chord.Codepoint == U'n' || chord.Codepoint == U'N' || IsQuit(chord)) {
-        statusMessage_ = "Code action cancelled.";
-        EndInteractiveSession();
-        return;
-    }
-    // Anything else is ignored -- stay at the confirmation.
 }
 
 namespace {
@@ -5328,40 +5296,17 @@ void BufferView::RequestRenameAtPoint(const std::string& newName) {
                 statusMessage_ = "No rename edits available.";
                 return;
             }
-            pendingRename_ = std::move(*result);
-
-            std::size_t fileCount = pendingRename_->edits.size();
+            std::size_t fileCount = result->edits.size();
             std::size_t editCount = 0;
-            for (const auto& edit : pendingRename_->edits) {
+            for (const auto& edit : result->edits) {
                 editCount += edit.edits.size();
             }
             renameTitle_ = std::to_string(editCount) + " edit" + (editCount == 1 ? "" : "s") + " across " +
                            std::to_string(fileCount) + " file" + (fileCount == 1 ? "" : "s");
 
-            inputMode_ = InputMode::LspRenameConfirm;
-            RefreshRenameConfirmStatus();
+            ApplyRename(*result);
         },
         serverKey);
-}
-
-void BufferView::RefreshRenameConfirmStatus() {
-    statusMessage_ = "Rename: " + renameTitle_ + "? (y/n)";
-}
-
-void BufferView::HandleRenameConfirmKey(const editor::KeyChord& chord) {
-    if (chord.Codepoint == U'y' || chord.Codepoint == U'Y') {
-        if (pendingRename_) {
-            ApplyRename(*pendingRename_);
-        }
-        EndInteractiveSession();
-        return;
-    }
-    if (chord.Codepoint == U'n' || chord.Codepoint == U'N' || IsQuit(chord)) {
-        statusMessage_ = "Rename cancelled.";
-        EndInteractiveSession();
-        return;
-    }
-    // Anything else is ignored -- stay at the confirmation.
 }
 
 void BufferView::ApplyRename(const editor::lsp::LspManager::ResolvedRename& result) {
@@ -6671,7 +6616,6 @@ void BufferView::EndInteractiveSession() {
     codeActionSelection_ = 0;
     pendingDefinitions_.clear();
     definitionSelection_ = 0;
-    pendingRename_.reset();
     renameTitle_.clear();
     ScrollToShowPoint();
 }
@@ -7073,9 +7017,9 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
         else if (inputMode_ == InputMode::LspRenameNewName) {
             // Fire-and-forget, same async shape as RequestCodeActionsAtPoint:
             // EndInteractiveSession() below runs immediately, the actual
-            // LspRenameConfirm transition happens later, from inside
-            // RequestRenameAtPoint's own callback, once the response
-            // arrives.
+            // rename applies later, from inside RequestRenameAtPoint's own
+            // callback, once the response arrives -- no separate y/n
+            // confirmation (worst case, undo).
             RequestRenameAtPoint(input);
         }
         else if (inputMode_ == InputMode::TaskName) {
