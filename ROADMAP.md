@@ -173,7 +173,7 @@ Notcurses.
       buffer for a genuine divergence, but a real conflict is still hand-edited text,
       not a visual diff.
 
-### Large files
+### Large Files
 
 - [ ] **Windowed/paged editing for genuinely huge files** (multi-GB). `Rope` and
       everything built on it assumes fully-resident content. Recommended v1 shape: a
@@ -184,7 +184,7 @@ Notcurses.
 - [ ] Buffers restored by a project session open before the async-loader hook is wired,
       so a huge file inside a restored session still loads synchronously at startup.
 
-### Editor ergonomics
+### Editor Ergonomics
 
 - [ ] **Terminal panel gaps**: no drag-resize of the drawer height (needs overlay
       mouse-capture semantics; height is Janet-configurable instead via
@@ -240,11 +240,118 @@ Notcurses.
 
 ### Jupyter Notebooks
 
-Maybe it would be really cool to be a complete Jupyter Notebook project tool, could
-handle and be used to interally to handle Jupyter Notebooks automatically.  Python
-installs and everything.
+Feasible, but subsystem-sized — closer in total scope to the LSP and DAP builds
+combined than to any single feature shipped so far. Three genuinely separable pieces,
+each with its own verdict:
 
-### Remote development (SSH remote editing)
+**The kernel protocol client** (the hard, unavoidable part) — real interactive
+notebooks need the actual Jupyter messaging protocol: 5 ZeroMQ sockets (shell/iopub/
+stdin/control/heartbeat) carrying HMAC-signed multipart JSON, addressed via a
+connection file (ports + key) written after the kernel process is spawned. There's no
+shortcut around this — `jupyter console --simple-prompt`'s text-only REPL loses rich
+output entirely (no `image/png`, no structured tables), and shelling out to `nbconvert
+--execute` per run loses the interactive "run one cell, keep kernel state" loop that's
+the entire point.
+- [ ] ZeroMQ becomes a new dependency (libzmq C library + cppzmq's header-only C++
+      wrapper) — pullable via `FetchContent` like everything else, but a heavier build
+      dependency than anything currently vendored.
+- [ ] HMAC-SHA256 message signing has no existing primitive in this tree. Hand-rolling
+      SHA256+HMAC (~150 lines, a well-specified algorithm, low stakes since it's
+      same-machine IPC integrity rather than a real security boundary) fits this
+      codebase's own precedent (hand-rolled LSP/DAP/ACP framing) better than pulling in
+      a full crypto library for one function.
+- [ ] The client itself is the same shape already proven three times over
+      (`Lsp/LspClient.h`, `Dap/DapClient.h`, `Acp/AcpClient.h`): background `jthread`
+      read loop, `EventLoop::Post` marshaling every frame onto the main thread, a
+      manager above it owning lifecycle/handshake/in-flight-request bookkeeping — the
+      wire format differs (ZMQ multipart + HMAC vs. `Content-Length` or
+      newline-delimited JSON), the architecture doesn't.
+- [ ] Kernel discovery should walk `share/jupyter/kernels/*/kernel.json` directly
+      rather than shelling out to `jupyter kernelspec list --json`, so this doesn't
+      hard-depend on the `jupyter` CLI being on `$PATH` at all.
+
+**Rich output rendering** (two real synergies with existing subsystems, one real gap)
+- [ ] Tables (`text/html` DataFrame reprs) parse into a grid and align via the
+      *existing* `Editor/Table.h` toolkit (`SplitRow`/`ComputeColumnWidths`/`PadCell`
+      are already format-agnostic) — a small `<table>`-extraction layer on top, not a
+      new engine.
+- [ ] Images (`image/png`, the matplotlib case) reuse the *existing* pixel-graphics
+      path already proven live in `Minimap.cpp`: `ncvisual_from_rgba` +
+      `ncvisual_blit(..., NCBLIT_PIXEL)` already renders arbitrary RGBA buffers as real
+      terminal pixels where the terminal supports it, falling back gracefully where it
+      doesn't, exactly as Minimap does today. The one missing piece is a PNG decoder —
+      nothing in this tree parses PNG; a single-header vendor (stb_image-style) is the
+      pragmatic addition, not a hand-rolled zlib+PNG implementation.
+- [ ] `image/svg+xml` (also common from plotting libraries) has no rendering path
+      anywhere in this codebase and no terminal protocol renders vector graphics
+      directly — v1 would skip it, or later shell out to `rsvg-convert`/similar as an
+      optional external tool.
+- [ ] Error tracebacks arrive ANSI-colored — needs stripping or a small ANSI-to-`Cell`
+      translator, not the full `libvterm` emulator `TerminalPanel` uses (that's built
+      for a live interactive shell; this is a static blob of text).
+- [ ] `text/plain` (every rich mimetype's required fallback in nbformat) needs nothing
+      new.
+
+**The editing/UI model** (the real structural departure) — ned's whole editing surface
+is built on `Buffer` = one Rope of text; a notebook's natural unit is a *sequence of
+cells*, each with its own source text, type (code/markdown/raw), and non-text output
+data. Nothing today models "many independently-editable text regions plus non-text
+data, composed as one document." `Editor/EmbeddedDocuments.h` is the nearest existing
+precedent and isn't that close — it builds *virtual, non-editable, width-preserving*
+documents for LSP sync only, not real independently-editable cells.
+- [ ] Two shapes are open: **(a)** a `NotebookView` widget (parallel to `BufferView`)
+      directly composing several real per-cell `Buffer`s + a per-cell `Mode` (a code
+      cell in a Python kernel gets full `PythonMode` highlighting, potentially real LSP
+      sync too) plus non-editable output panels between them; **(b)** something closer
+      to Org's outline-over-flat-text trick — one `Buffer` in a synthetic linear
+      representation with cell boundaries as markers, translating to/from `.ipynb` JSON
+      only at load/save. (a) is more work but composes cleanly with everything
+      `Buffer`/`Mode`/LSP already assume; (b) is a smaller structural add but forces
+      outputs (images, rich tables) into a `Buffer`'s text model, which they
+      fundamentally aren't. (a) is the likely right call precisely because it reuses
+      more of the existing machinery, not less.
+- [ ] File identity gets murkier under (a): does each open notebook register its cell
+      `Buffer`s in `BufferList` (so they'd leak into `switch-to-buffer`/the tab bar), or
+      does `NotebookView` own them privately outside `BufferList` entirely? The latter
+      is probably right but is a real departure from "everything is a buffer."
+
+**Explicit constraint carried over from the Org Babel "won't do" entry below**: a
+`.ipynb` *is* a code-execution artifact by definition — unlike a `.org` file, which is
+ostensibly prose that Babel would silently turn into one — so building this at all is a
+different call than Org Babel was. The same principle still applies inside it, though:
+opening a notebook file must never execute anything; every cell run is one explicit
+user action, mirroring how `Dap/`'s launch step and `Tasks/`'s run command already
+require an explicit trigger rather than firing on buffer-open.
+
+**Suggested phasing** (each phase independently shippable/demoable):
+1. Parse/serialize nbformat v4 JSON into an in-memory `Notebook` struct — pure,
+   unit-testable, no kernel/UI involved; round-trip fidelity is the only bar.
+2. Read-only `NotebookView`: render existing cells (source + already-saved outputs)
+   with the rendering pieces above — proves the rendering story before any protocol
+   work starts.
+3. Kernel protocol client + manager (ZMQ, HMAC, spawn/handshake), no UI — testable
+   headlessly against a real `ipykernel`, the same way `LspClient`'s tests run against
+   real `clangd`.
+4. Wire "run cell" into `NotebookView`, one cell at a time, no kernel-state UI polish.
+5. Everything else (interrupt/restart kernel, kernel-status indicator, variable
+   inspector, notebook-wide "run all") is incremental once 1-4 exist.
+
+Won't do in v1 regardless of the above: ipywidgets (a separate protocol layered on top
+of the base one), collaborative/real-time editing, any kernel-specific special-casing
+beyond whatever `kernel.json` advertises.
+
+**Reuse candidates once this exists**: the rich-output-cell renderer (table via
+`Table.h`, image via the pixel-blit path, ANSI-stripped text) is generic over "a block
+of structured content below some source," not Jupyter-specific — `AcpPanel`'s
+transcript has the same open gap (lightweight markdown rendering, better tool-call/
+table output display, both listed in its own ROADMAP entry above) and is a stronger,
+nearer-term reuse target than Jupyter itself. If Org Babel is ever revisited despite
+the "won't do" below, this same renderer (and possibly `NotebookView`'s cell-execution
+UI) is the natural substrate for displaying a `#+BEGIN_SRC` block's results, rather than
+a third bespoke implementation — worth designing the renderer as its own reusable piece
+rather than embedding it directly in `NotebookView` for exactly this reason.
+
+### Remote Development (SSH Remote Editing)
 
 The goal: edit files on a remote host over SSH without ned itself running remotely —
 comfortable enough that it doesn't feel like a degraded mode. Two shapes are on the
@@ -442,7 +549,7 @@ LSP-against-the-wrong-toolchain prove it's needed in practice, not speculatively
 - [ ] VCS: "generalize the two-callback plugin shape past version control" (cloud CLIs,
       Terraform, Docker) remains an open idea, not a plan.
 
-### Documentation & companion tooling
+### Documentation & Companion Tooling
 
 - [ ] **Documentation framework** — man page(s), PDF, and a web page generated from one
       shared source (pandoc is the direct fit), mining the `ned/*` binding doc strings
@@ -457,7 +564,7 @@ LSP-against-the-wrong-toolchain prove it's needed in practice, not speculatively
       ("a dprint clone that is actually awesome") — a substantial project per language,
       not a utility. Scope it once concrete gaps left by external formatters are known.
 
-### Known test flakiness / non-critical issues (watch list)
+### Known Test Flakiness / Non-Critical Issues (Watch List)
 
 Real, reproduced, non-urgent — each is safe to leave as-is for now, but worth fixing
 opportunistically rather than re-discovering from scratch. Add to this list instead of
@@ -503,7 +610,7 @@ the whole pasted string directly via `Buffer::InsertAtPoint`, bypassing per-char
 dispatch) — only a terminal-native paste or direct keystroke of a non-ASCII character hit
 this.
 
-### Named non-goals (leaning "won't do", kept visible so it's a conscious call)
+### Named Non-Goals (Leaning "Won't Do", Kept Visible So It's a Conscious Call)
 
 - [ ] A plugin marketplace/package registry (VSCode extensions, MELPA/straight.el).
       Ned's model is one Janet-scriptable environment plus opt-in project-local plugins
@@ -514,7 +621,7 @@ this.
       commands with their own bindings — consistent with this project's Emacs-class-
       parity vision, so this reads as a different, already-chosen philosophy.
 
-### Native Windows port (idea, unstarted — design sketch only)
+### Native Windows Port (Idea, Unstarted — Design Sketch Only)
 
 Raised alongside the system-clipboard work (`Editor/Clipboard.h`'s WSL detection covers
 running ned as a Linux binary under WSL today, shelling out to `clip.exe`/
@@ -563,10 +670,13 @@ these accumulate detail in place.
       habitually edit files outside ned in ways that touch none of a session's own undo
       states and lose history often enough to complain).
 
-## Won't do (at least not soon)
+## Won't Do (at Least Not Soon)
 
 - **Org Babel** — subsystem-sized, and arbitrary code execution triggered by opening a
-  text file: a security surface to design around deliberately, not bolt on.
+  text file: a security surface to design around deliberately, not bolt on. If this
+  ever gets revisited, the rich-output-rendering half of "Jupyter Notebooks" above
+  (table/image/text cell rendering) is the natural substrate to reuse rather than a
+  second bespoke renderer — see that section's own note.
 - **Org table formula/spreadsheet engine** — a small programming language of its own.
 - **Org export backends / publishing pipeline** — each a standalone tool-sized effort.
 - **Alt+Click cursor creation** — mouse-dependent in a terminal app where SSH/tmux
@@ -581,7 +691,7 @@ these accumulate detail in place.
   accessibility tree of any kind; not evaluated or pursued. Named here so it's a
   conscious gap rather than an oversight (2026-08-25 audit).
 
-## Notes for whoever builds next
+## Notes for Whoever Builds Next
 
 - Build/test: `cmake --preset default && cmake --build build`, then
   `ctest --test-dir build`. Sanitizer opt-in: `-DNED_ENABLE_SANITIZERS=ON` with
