@@ -6,6 +6,7 @@
 #include <fstream>
 #include <iterator>
 
+#include "Editor/HugeRegexScan.h"
 #include "Editor/Keymap.h"
 #include "Editor/RegexPattern.h"
 #include "Editor/TabWidth.h"
@@ -1914,10 +1915,71 @@ void VimEngine::PlayMacro(text::Buffer& buffer, char32_t name, long count) {
     --replayDepth_;
 }
 
+namespace {
+
+    // huge-file-vim-search follow-up: RunSearch's huge-buffer branch below reads via
+    // this a few bytes at a time (not text::NextCodepointBoundary(buffer.Text(), ...),
+    // which would materialize the whole buffer just to step past one codepoint).
+    std::size_t NextCodepointBoundaryInBuffer(const text::Buffer& buffer, std::size_t offset) {
+        const std::size_t total = buffer.Content().ByteLength();
+        if (offset >= total) {
+            return total;
+        }
+        const std::string window = buffer.Content().Substring(offset, std::min<std::size_t>(4, total - offset));
+        return offset + text::NextCodepointBoundary(window, 0);
+    }
+
+    // huge-file-vim-search follow-up: the huge-buffer branch of RunSearch, windowed via
+    // Editor/HugeRegexScan.h (shared with QueryReplace's own huge-buffer path) instead
+    // of materializing buffer.Text(). Same forward/backward-with-wraparound semantics as
+    // the in-memory path below; returns the match's absolute start offset, or nullopt if
+    // the pattern has no match anywhere in the document even after wrapping.
+    std::optional<std::size_t> RunSearchHuge(const text::Buffer& buffer, const RegexPattern& re, bool forward) {
+        if (forward) {
+            const std::size_t total = buffer.Content().ByteLength();
+            const std::size_t from =
+                buffer.Point() < total ? NextCodepointBoundaryInBuffer(buffer, buffer.Point()) : total;
+            std::optional<HugeRegexMatch> found = FindNextRegexMatchHuge(buffer, re, from);
+            if (!found.has_value()) {
+                found = FindNextRegexMatchHuge(buffer, re, 0); // wrap
+            }
+            if (!found.has_value()) {
+                return std::nullopt;
+            }
+            return found->windowStart + found->match.start;
+        }
+
+        std::optional<HugeRegexMatch> found = FindLastRegexMatchHugeBefore(buffer, re, buffer.Point());
+        if (!found.has_value()) {
+            // wrap: take the very last match anywhere.
+            found = FindLastRegexMatchHugeBefore(buffer, re, buffer.Content().ByteLength());
+        }
+        if (!found.has_value()) {
+            return std::nullopt;
+        }
+        return found->windowStart + found->match.start;
+    }
+
+} // namespace
+
 void VimEngine::RunSearch(text::Buffer& buffer, bool forward, const std::string& pattern) {
     marks_[kJumpMark] = buffer.Point(); // /, ?, n, N, *, # all funnel through here
     try {
-        const RegexPattern        re(pattern);
+        const RegexPattern re(pattern);
+
+        if (buffer.Content().IsHuge()) {
+            const std::optional<std::size_t> found = RunSearchHuge(buffer, re, forward);
+            if (found.has_value()) {
+                buffer.SetPoint(*found);
+                UpdateGoalColumn(buffer);
+            }
+            else {
+                statusText_ = "E486: Pattern not found: " + pattern;
+            }
+            FinishCommand(buffer);
+            return;
+        }
+
         const std::string         text = buffer.Text();
         std::optional<RegexMatch> found;
         if (forward) {

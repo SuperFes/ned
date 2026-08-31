@@ -384,10 +384,20 @@ Notcurses.
          "migrate one subsystem off `Content()` onto this."
       2. Vim mode's bounded motions (character/word/line/paragraph, basic operators) —
          highest-value feature for actually editing a huge file well, and answerable
-         with bounded reads near point.
-      3. Streaming search/replace (see this section's own search follow-up below) — once
-         it lands, Vim's `:s`/`:g`, isearch, and query-replace work on a huge buffer for
-         free, since they'd be built on the streaming engine rather than `Content()`.
+         with bounded reads near point. (Vim's own line-utility layer, `Vim/
+         VimLineUtil.h`'s `LineOf`/`LineStart`/`LineContentEnd`/`EffectiveLastLine`, was
+         already built on `ITextStorage::ByteOffsetToLine`/`LineToByteOffset`/
+         `LineCount` — the piece table's own O(log n) line index, not a linear scan —
+         so this turned out to already be in place by the time it was checked; see the
+         huge-file-vim-search entry below for what genuinely still needed windowing.)
+      3. Streaming search/replace: isearch, query-replace-regexp, and Vim's `/`/`?`/`n`/
+         `N`/`*`/`#` search are now all windowed (huge-file-search-and-save,
+         huge-file-regex-replace, huge-file-vim-search entries below) — not via one
+         shared "streaming engine" the way this bullet originally envisioned, but via
+         `Editor/HugeRegexScan.h`, the two regex-match-window functions shared between
+         `QueryReplace` and Vim search. Vim's `:s`/`:g` needed no work at all — already
+         line-scoped via `Content().Substring` per line, riding the same O(log n) line
+         index as stage 2 above, never materializing more than one line at a time.
       4. Structural/index-driven features (Org outline, code folding, symbol gutter, VCS
          blame/diff) — these need a real index over the whole file, not just a bounded
          read, so this is the biggest remaining lift. Two real techniques apply, neither
@@ -437,7 +447,43 @@ Notcurses.
       possible if single-threaded windowed scanning proves too slow in practice, but wasn't
       needed to make the feature correct or usable — not chased down in this pass.
       `ProjectReplace`/`ProjectSearch` (many normal-sized files on disk, not one open huge
-      buffer) are a different problem and stay out of scope here.
+      buffer) are a different problem and stay out of scope here. The forward-scan half of
+      this (searchFrom/reach) moved into `Editor/HugeRegexScan.h`'s `FindNextRegexMatchHuge`
+      the same day, shared with Vim search below — see that entry.
+- [x] **huge-file-vim-search: Vim mode's `/`/`?`/`n`/`N`/`*`/`#` search no longer
+      materializes a huge buffer either.** `VimEngine::RunSearch` — the single funnel
+      every one of those commands goes through — used to build `buffer.Text()`
+      unconditionally, the exact whole-buffer-materialization problem already fixed
+      elsewhere in this section. Investigating first (before writing any windowing code)
+      found `:s`/`:g` did *not* have this problem at all: `SubstituteLineRange`/
+      `ExecuteGlobal` were already line-scoped via `Content().Substring` per line, riding
+      `Vim/VimLineUtil.h`'s `LineOf`/`LineStart`/etc., which are themselves backed by
+      `ITextStorage::ByteOffsetToLine`/`LineToByteOffset`/`LineCount` — the piece table's
+      own O(log n) line index (`PieceTable::Node`'s aggregate `lineCount`), not a linear
+      scan. Only `RunSearch` itself had the gap. Fixed by extracting `QueryReplace`'s
+      forward windowed-match algorithm into a new shared file, `Editor/HugeRegexScan.h/
+      .cpp` — `FindNextRegexMatchHuge` (the same searchFrom/reach scan, verbatim) and a
+      new sibling, `FindLastRegexMatchHugeBefore`, for Vim's backward (`?`) search, which
+      PCRE2 has no native primitive for at all. The backward function turned out simpler
+      than the forward one: since it scans forward internally (repeatedly, keeping the
+      rightmost qualifying match) rather than growing a window in the direction it
+      reports matches, a match found anywhere in the current window is unconditionally
+      correct — a real match starting even earlier, outside the window, could only be
+      *more* leftward and therefore a worse ("less rightward") candidate, so there's no
+      "near an edge, don't trust it yet" retry needed the way the forward function has;
+      widening (`reach`) is only needed when a window comes up with no candidate at all.
+      Both `QueryReplace` (refactored to call the shared forward function instead of
+      duplicating it) and `VimEngine::RunSearch` (a new `RunSearchHuge` branch, forward
+      and backward-with-wraparound, mirroring the in-memory path's own semantics) now
+      build on this one shared implementation — two consumers with a genuinely subtle,
+      easy-to-get-wrong offset scheme (the query-replace entry above already hit one real
+      bug caught only by a test) were reason enough to share rather than risk a second,
+      divergent copy. `Tests/HugeRegexScanTest.cpp` covers both functions directly
+      (multi-window, boundary-straddling, widen-to-find, zero-width termination, trailing-
+      completion-past-the-offset for the backward function specifically);
+      `[VimEngine][HugeFile]`-tagged tests in `VimEngineTest.cpp` cover the same
+      forward/backward/multi-window/wraparound shapes through the actual `/`/`?`/`n` key
+      commands.
 
 ### Editor Ergonomics
 
