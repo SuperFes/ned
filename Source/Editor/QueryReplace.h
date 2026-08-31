@@ -11,6 +11,14 @@
 // (RegexPattern::FormatReplacement's full set), NOT Emacs' \1/\2 -- a real,
 // minor syntax difference kept from the std::regex era, not a bug.
 //
+// huge-file-regex-replace follow-up: a huge (ITextStorage::IsHuge())
+// buffer's content is never materialized into content_ -- ConfirmReplacement
+// checks Content().IsHuge() once and every stage branches into a windowed
+// path (FindNextMatchHuge and the huge_ branches of ReplaceAndNext/
+// SkipAndNext) that reads bounded windows via Content().Substring instead,
+// same shape as IncrementalSearch's SearchHuge. Forward-only, no wraparound,
+// matching the existing (non-huge) behavior already.
+//
 
 #ifndef NED_EDITOR_QUERYREPLACE_H
 #define NED_EDITOR_QUERYREPLACE_H
@@ -65,13 +73,19 @@ class QueryReplace {
 
   private:
     void FindNextMatch();
+    // huge-file-regex-replace follow-up: FindNextMatchHuge is the huge_
+    // branch of FindNextMatch -- windowed scanning via Content().Substring
+    // instead of content_ (left empty for a huge buffer). See the .cpp for
+    // the window/overlap-margin scheme.
+    void FindNextMatchHuge();
 
     text::Buffer&               buffer_;
     Stage                       stage_ = Stage::EnteringPattern;
     std::string                 patternText_;
     std::string                 replacementText_;
     std::optional<RegexPattern> pattern_; // set by ConfirmPattern
-    std::string                 content_; // kept in sync with the buffer as replacements happen
+    bool                        huge_ = false; // buffer_.Content().IsHuge(), decided in ConfirmReplacement
+    std::string                 content_;      // kept in sync with the buffer as replacements happen; empty when huge_
     std::size_t                 searchCursor_     = 0;
     std::size_t                 replacementCount_ = 0;
 
