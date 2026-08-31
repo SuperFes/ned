@@ -23,6 +23,7 @@
 #include "Editor/FinalNewline.h"
 #include "Editor/FormatOnSave.h"
 #include "Editor/HighlightSettings.h"
+#include "Editor/HugeStructuralWindow.h"
 #include "Editor/InlineDiagnostics.h"
 #include "Editor/LineEndingPolicy.h"
 #include "Editor/Link.h"
@@ -387,6 +388,10 @@ namespace {
 
     void NedSetMaxHighlightBytes(std::int64_t bytes) {
         editor::SetMaxHighlightBytes(bytes > 0 ? static_cast<std::size_t>(bytes) : 0);
+    }
+
+    void NedSetHugeStructuralWindowBytes(std::int64_t bytes) {
+        editor::SetHugeStructuralWindowBytes(bytes > 0 ? static_cast<std::size_t>(bytes) : 0);
     }
 
     void NedSetEnsureFinalNewline(bool enabled) {
@@ -1128,6 +1133,13 @@ void InstallEditorBindings(Environment& env) {
         "ned", "set-max-highlight-bytes",
         "Buffer size in bytes above which syntax highlighting is skipped entirely (default 8 MiB). 0 disables "
         "highlighting for every buffer.");
+    env.Register<&NedSetHugeStructuralWindowBytes>(
+        "ned", "set-huge-structural-window-bytes",
+        "For a huge (piece-table-backed) buffer only, the byte margin the code-folding/symbol-kind/test-discovery "
+        "gutters expand the visible viewport by on each side when deciding how much of the buffer to parse "
+        "(default 4 MiB) -- a fold region, symbol definition, or test whose start/end falls outside that window "
+        "won't show until scrolling brings it closer. No effect on an ordinary (non-huge) buffer, which is never "
+        "windowed.");
     env.Register<&NedSetEnsureFinalNewline>(
         "ned", "set-ensure-final-newline",
         "Enable/disable appending a trailing newline to a file's written content on save if it's missing one "

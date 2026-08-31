@@ -1726,6 +1726,21 @@ class BufferView : public Widget {
     // is false, which is also exactly the "no gutter affordance" condition
     // Paint()/GutterWidth()/OnMouseEvent all check.
     void EnsureFoldableBlocksCache() const;
+    // huge-file-structural-gutters follow-up: [start, end) byte window
+    // EnsureFoldableBlocksCache/EnsureSymbolGutterCache/EnsureTestGutterCache
+    // should actually run mode_.fold/mode_.symbolKind/mode_.testDiscovery
+    // against -- {0, content.ByteLength()} (the whole buffer, unchanged
+    // behavior) for an ordinary buffer, or a bounded region around the
+    // currently-visible viewport (topLine_/size().height, expanded by
+    // editor::HugeStructuralWindowBytes() on each side) for a huge
+    // (ITextStorage::IsHuge()) one, so a multi-GB buffer's structural
+    // gutters never materialize/reparse the whole document. Mirrors
+    // Editor/HugeRegexScan.h's own windowing approach; a fold region/symbol/
+    // test whose start or end lies outside this window on a huge buffer
+    // simply isn't found until scrolling brings it closer -- the same
+    // accepted trade-off huge-file-regex-replace/huge-file-vim-search
+    // already documented for search.
+    [[nodiscard]] std::pair<std::size_t, std::size_t> HugeStructuralWindow(const text::ITextStorage& content) const;
     // depth-aware-fold-gutter follow-up: calls EnsureFoldableBlocksCache()
     // first, then (re)derives foldGutterEntries_/foldGutterLineRangesByColumn_
     // from its result -- gated on the buffer plus BOTH ContentGeneration()
@@ -2224,6 +2239,14 @@ class BufferView : public Widget {
     // a const method, needs a fresh cache too).
     mutable text::Buffer*                                    foldableBlocksCacheBuffer_     = nullptr;
     mutable std::size_t                                      foldableBlocksCacheGeneration_ = 0;
+    // huge-file-structural-gutters follow-up: the [start, end) window the
+    // cached foldableBlocksCache_ was actually computed against -- see
+    // HugeStructuralWindow's own doc comment. Always {0, ByteLength()} for
+    // an ordinary buffer (and so never invalidates anything beyond what
+    // foldableBlocksCacheGeneration_ already would), only meaningfully
+    // narrower for a huge one.
+    mutable std::size_t                                      foldableBlocksCacheWindowStart_ = 0;
+    mutable std::size_t                                      foldableBlocksCacheWindowEnd_   = 0;
     mutable std::vector<std::pair<std::size_t, std::size_t>> foldableBlocksCache_;
     // per-buffer-highlight-cache follow-up: same persistence-across-a-switch
     // fix as highlightCacheByBuffer_ above, for mode_.fold instead of
@@ -2233,6 +2256,13 @@ class BufferView : public Widget {
     struct FoldableBlocksCacheEntry {
         std::size_t                                      contentGeneration = 0;
         std::string                                      modeName;
+        // huge-file-structural-gutters follow-up: see
+        // foldableBlocksCacheWindowStart_/End_ above -- persisted per buffer
+        // too, so switching back to a huge buffer whose viewport (and so
+        // window) has since moved correctly recomputes instead of reusing a
+        // stale-window entry.
+        std::size_t                                       windowStart = 0;
+        std::size_t                                       windowEnd   = 0;
         std::vector<std::pair<std::size_t, std::size_t>> ranges;
     };
     mutable std::unordered_map<text::Buffer*, FoldableBlocksCacheEntry> foldableBlocksCacheByBuffer_;
@@ -2326,6 +2356,16 @@ class BufferView : public Widget {
     mutable text::Buffer*                foldGutterCacheBuffer_            = nullptr;
     mutable std::size_t                  foldGutterCacheContentGeneration_ = 0;
     mutable std::size_t                  foldGutterCacheFoldGeneration_    = 0;
+    // huge-file-structural-gutters follow-up: foldableBlocksCache_ can now
+    // change out from under this cache without either ContentGeneration()
+    // or FoldGeneration() moving at all -- purely from
+    // editor::HugeStructuralWindowBytes()/the viewport moving on a huge
+    // buffer, which EnsureFoldableBlocksCache() (called just above, first
+    // thing) already tracks via its own foldableBlocksCacheWindowStart_/
+    // End_. Mirrored here too, or a window-only change (no content/fold
+    // edit at all) would leave this cache silently stale.
+    mutable std::size_t                  foldGutterCacheWindowStart_       = 0;
+    mutable std::size_t                  foldGutterCacheWindowEnd_         = 0;
     mutable std::vector<FoldGutterEntry> foldGutterEntries_; // sorted by headerLine (free -- blocks arrive startByte-sorted)
     mutable std::array<std::vector<std::pair<std::size_t, std::size_t>>, kMaxFoldDepthColumns>
         foldGutterLineRangesByColumn_; // EXPANDED entries only, [headerLine+1, closerLine+1) per column
@@ -2370,6 +2410,11 @@ class BufferView : public Widget {
     // diagnosticLineSeverities_ just above.
     mutable text::Buffer*                                           symbolGutterCacheBuffer_            = nullptr;
     mutable std::size_t                                             symbolGutterCacheContentGeneration_ = 0;
+    // huge-file-structural-gutters follow-up: see
+    // foldableBlocksCacheWindowStart_/End_'s own doc comment above -- same
+    // shape, for symbolGutterLineKinds_ instead of foldableBlocksCache_.
+    mutable std::size_t                                             symbolGutterCacheWindowStart_       = 0;
+    mutable std::size_t                                             symbolGutterCacheWindowEnd_         = 0;
     mutable std::vector<std::pair<std::size_t, editor::SymbolKind>> symbolGutterLineKinds_;
 
     // test-runner integration: per-line pass/fail/skip marks, the symbol
@@ -2382,6 +2427,11 @@ class BufferView : public Widget {
     mutable text::Buffer*                                                            testGutterCacheBuffer_            = nullptr;
     mutable std::size_t                                                              testGutterCacheContentGeneration_ = 0;
     mutable std::size_t                                                              testGutterCacheOutcomeGeneration_ = 0;
+    // huge-file-structural-gutters follow-up: see
+    // foldableBlocksCacheWindowStart_/End_'s own doc comment above -- same
+    // shape, for testGutterLineStatuses_ instead of foldableBlocksCache_.
+    mutable std::size_t                                                              testGutterCacheWindowStart_       = 0;
+    mutable std::size_t                                                              testGutterCacheWindowEnd_         = 0;
     mutable std::vector<std::pair<std::size_t, editor::testrun::TestResult::Status>> testGutterLineStatuses_;
 
     // inline-diagnostics follow-up: see EnsureInlineDiagnosticCache's own

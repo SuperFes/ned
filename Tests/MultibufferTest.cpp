@@ -204,6 +204,52 @@ TEST_CASE("ReadExcerptText degrades to an empty string rather than throwing on f
     REQUIRE(ReadExcerptText(bufferList, path, 5, 10) == "");
 }
 
+TEST_CASE("ReadExcerptText resolves a live huge Buffer's content via its bounded line index",
+          "[Multibuffer][HugeFile]") {
+    // huge-file-navigation-verification follow-up: ReadExcerptText used to
+    // call buffer.Text() unconditionally on an already-open source buffer --
+    // a real, unguarded full-document materialization found while verifying
+    // this stage, worse for a huge buffer than anything the "already fine"
+    // hypothesis assumed. Fixed to resolve via ITextStorage's own bounded
+    // line index instead (see Multibuffer.cpp's ITextStorage overload of
+    // LineRangeToByteRange). A line deep in a 2000-line file, on a real huge
+    // (piece-table-backed) buffer via a lowered HugeFileThreshold(), is the
+    // point of this test -- proves the round-trip isn't accidentally only
+    // correct for content already near the start.
+    struct ThresholdGuard {
+        ~ThresholdGuard() {
+            ned::text::SetHugeFileThreshold(1024ull * 1024 * 1024);
+        }
+    } guard;
+
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned-multibuffer-test-huge.txt";
+    std::string                 content;
+    for (int i = 0; i < 2000; ++i) {
+        content += "line " + std::to_string(i) + "\n";
+    }
+    {
+        std::ofstream file(path, std::ios::binary);
+        file << content;
+    }
+    struct Cleanup {
+        std::filesystem::path path;
+        ~Cleanup() {
+            std::filesystem::remove(path);
+        }
+    } cleanup{path};
+
+    BufferList bufferList;
+    ned::text::SetHugeFileThreshold(4); // well under this file's real size
+    Buffer& open = bufferList.OpenFile(path);
+    REQUIRE(open.Content().IsHuge());
+
+    REQUIRE(ReadExcerptText(bufferList, path, 1, 1) == "line 0\n");
+    REQUIRE(ReadExcerptText(bufferList, path, 1501, 1501) == "line 1500\n");
+    // Past the end degrades to "", the same contract the disk-fallback path
+    // above already guarantees.
+    REQUIRE(ReadExcerptText(bufferList, path, 5000, 5001) == "");
+}
+
 // --- Editable excerpts (editable-multibuffer follow-up) --------------------
 
 namespace {
@@ -245,6 +291,57 @@ TEST_CASE("BuildMultibuffer resolves a byte-exact ExcerptRange for an editable e
     REQUIRE(multibuffer.Text().substr(range.start, range.end - range.start) == "line2\n");
     const std::size_t headerOffset = multibuffer.Text().find("a.cpp:2");
     REQUIRE(range.start > headerOffset);
+}
+
+TEST_CASE("BuildMultibuffer resolves a byte-exact editable ExcerptRange against a live huge source Buffer",
+          "[Multibuffer][HugeFile]") {
+    // huge-file-navigation-verification follow-up: the editable-excerpt
+    // resolution path shares the exact same previously-unguarded
+    // buffer.Text() bug ReadExcerptText's own huge-file test above found and
+    // fixed -- verified separately here since it's a distinct call site
+    // (BuildMultibuffer's own inline resolution, not a ReadExcerptText
+    // call) with its own byte-range bookkeeping.
+    RegistryResetGuard guard;
+    struct ThresholdGuard {
+        ~ThresholdGuard() {
+            ned::text::SetHugeFileThreshold(1024ull * 1024 * 1024);
+        }
+    } thresholdGuard;
+
+    const std::filesystem::path path =
+        std::filesystem::temp_directory_path() / "ned-multibuffer-test-huge-editable.txt";
+    std::string content;
+    for (int i = 0; i < 2000; ++i) {
+        content += "line " + std::to_string(i) + "\n";
+    }
+    {
+        std::ofstream file(path, std::ios::binary);
+        file << content;
+    }
+    struct Cleanup {
+        std::filesystem::path path;
+        ~Cleanup() {
+            std::filesystem::remove(path);
+        }
+    } cleanup{path};
+
+    BufferList bufferList;
+    ned::text::SetHugeFileThreshold(4); // well under this file's real size
+    Buffer& open = bufferList.OpenFile(path);
+    REQUIRE(open.Content().IsHuge());
+
+    std::vector<ExcerptSource> excerpts;
+    excerpts.push_back(ExcerptSource{path, 1501, 1501, "huge.txt:1501", "line 1500\n", {}, /*editable=*/true});
+
+    Buffer& multibuffer = BuildMultibuffer(bufferList, "*test multibuffer huge*", excerpts);
+
+    REQUIRE_FALSE(multibuffer.ReadOnly());
+    REQUIRE(multibuffer.ExcerptRanges().size() == 1);
+    const Buffer::ExcerptRange& range = multibuffer.ExcerptRanges()[0];
+    REQUIRE(range.editable);
+    REQUIRE(range.originalText == "line 1500\n");
+    REQUIRE(open.Content().Substring(range.sourceStartByte, range.sourceEndByte - range.sourceStartByte) ==
+            "line 1500\n");
 }
 
 TEST_CASE("An editable excerpt with sourceStartLine == 0 is not made editable", "[Multibuffer]") {

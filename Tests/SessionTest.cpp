@@ -246,6 +246,42 @@ TEST_CASE("RecordFilePlace and RestoreFilePlace round-trip through a Buffer", "[
     REQUIRE(restored.Point() == restored.ByteOffsetForLineAndColumn(2, 4));
 }
 
+TEST_CASE("RecordFilePlace and RestoreFilePlace round-trip through a huge Buffer",
+          "[Session][HugeFile]") {
+    // huge-file-navigation-verification follow-up: RecordFilePlace/
+    // RestoreFilePlace never touch buffer.Text() -- both go through
+    // Buffer::ByteOffsetForLineAndColumn/VisualColumnForByteOffset, which
+    // are themselves bounded (Content()'s O(log n) line index plus a
+    // kMaxTabAwareColumnScan-capped per-line scan, see Buffer.cpp) -- so
+    // this is a correctness round-trip, mirroring the FromFile test above
+    // exactly, just against a real huge (piece-table-backed) buffer via
+    // Buffer::FromHugeFile (BufferHugeFileTest.cpp's own precedent: small
+    // content is fine, FromHugeFile doesn't itself check size). A line deep
+    // in the file (not line 0) is the point of the test -- proves the
+    // round-trip isn't accidentally only correct for content already near
+    // the start.
+    SessionStateGuard           guard;
+    const std::filesystem::path dir  = FreshTestDir("ned_session_test_huge_buffer");
+    std::string                 content;
+    for (int i = 0; i < 2000; ++i) {
+        content += "line " + std::to_string(i) + "\n";
+    }
+    const std::filesystem::path file = WriteTestFile(dir / "huge.txt", content);
+
+    ned::text::Buffer recorded = ned::text::Buffer::FromHugeFile(file);
+    REQUIRE(recorded.Content().IsHuge());
+    recorded.SetPoint(recorded.ByteOffsetForLineAndColumn(1500, 3));
+    RecordFilePlace(recorded, /*topLine=*/1490, /*tabWidth=*/4);
+
+    const auto stored = StoredFilePlaceFor(recorded);
+    REQUIRE(stored == FilePlace{.line = 1500, .column = 3, .topLine = 1490});
+
+    ned::text::Buffer restored = ned::text::Buffer::FromHugeFile(file);
+    REQUIRE(restored.Point() == 0);
+    RestoreFilePlace(restored, /*tabWidth=*/4);
+    REQUIRE(restored.Point() == restored.ByteOffsetForLineAndColumn(1500, 3));
+}
+
 TEST_CASE("RestoreFilePlace clamps a place past the file's current end", "[Session]") {
     SessionStateGuard           guard;
     const std::filesystem::path dir  = FreshTestDir("ned_session_test_clamp");
