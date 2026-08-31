@@ -328,6 +328,30 @@ TEST_CASE("OpenFile with allowBinary=true loads a binary file as text anyway", "
     BufferList list;
     Buffer&    buffer = list.OpenFile(path, /*allowBinary=*/true);
     REQUIRE(buffer.Size() == 3);
+    // binary-safety-guardrails follow-up: a confirmed binary open must be
+    // flagged so save-buffer/format-buffer/convert-line-endings-to-* skip
+    // their byte-level, content-changing behavior for it -- see Buffer.h's
+    // own doc comment on LikelyBinary()/BinarySafeguardsActive().
+    REQUIRE(buffer.LikelyBinary());
+    REQUIRE(buffer.BinarySafeguardsActive());
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("OpenFile with allowBinary=true does not flag a genuinely non-binary file as LikelyBinary", "[BufferList]") {
+    // allowBinary is sometimes passed defensively (e.g. --force-binary) even
+    // for a file that was never actually binary-detected -- LikelyBinary()
+    // must stay false in that case, since there's nothing to guard against.
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_bufferlist_binary_allowed_but_text.txt";
+    {
+        std::ofstream file(path, std::ios::binary);
+        file << "perfectly ordinary text\n";
+    }
+
+    BufferList list;
+    Buffer&    buffer = list.OpenFile(path, /*allowBinary=*/true);
+    REQUIRE_FALSE(buffer.LikelyBinary());
+    REQUIRE_FALSE(buffer.BinarySafeguardsActive());
 
     std::filesystem::remove(path);
 }
@@ -433,6 +457,108 @@ TEST_CASE("OpenFile routes a file over HugeFileThreshold through Buffer::FromHug
     REQUIRE_FALSE(buffer.IsLoading()); // no placeholder/background-fill state -- already fully open
     REQUIRE(buffer.Content().IsHuge());
     REQUIRE(buffer.Text() == "small file, but over a tiny huge-file threshold\n");
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("OpenFile hands a huge file to the async huge opener hook instead of loading it synchronously, when set",
+          "[BufferList][HugeFile]") {
+    // progressive-huge-file-load follow-up: the huge-tier counterpart to
+    // "OpenFile hands a large file to the async opener hook" above --
+    // SetAsyncHugeFileOpener, checked ahead of the plain FromHugeFile
+    // fallback, same fake-synchronous-hook precedent (no real thread/
+    // EventLoop needed to test the routing logic itself).
+    struct ThresholdGuard {
+        ~ThresholdGuard() {
+            SetHugeFileThreshold(1024ull * 1024 * 1024);
+        }
+    } guard;
+
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_bufferlist_huge_async.txt";
+    {
+        std::ofstream file(path, std::ios::binary);
+        file << "small file, but over a tiny huge-file threshold\n";
+    }
+
+    BufferList  list;
+    Buffer*     hookedBuffer     = nullptr;
+    std::size_t hookCalls        = 0;
+    bool        hookAllowBinary  = true; // sentinel -- must observe false below
+    std::size_t asyncHookCalls   = 0;
+    list.SetAsyncFileOpener([&](Buffer&, const std::filesystem::path&) { ++asyncHookCalls; });
+    list.SetAsyncHugeFileOpener([&](Buffer& buffer, const std::filesystem::path&, bool allowBinary) {
+        hookedBuffer    = &buffer;
+        hookAllowBinary = allowBinary;
+        ++hookCalls;
+    });
+
+    SetHugeFileThreshold(4); // well under this file's real size
+
+    Buffer& buffer = list.OpenFile(path, /*allowBinary=*/false);
+
+    REQUIRE(hookCalls == 1);
+    REQUIRE(hookedBuffer == &buffer);
+    REQUIRE_FALSE(hookAllowBinary);
+    REQUIRE(asyncHookCalls == 0); // the huge-file branch wins, never even reaches the plain async-opener check
+    REQUIRE(buffer.IsLoading());  // placeholder handed to the hook, not yet filled in
+    REQUIRE_FALSE(buffer.ReadOnly()); // MarkLoading(false) -- editable while loading, unlike the medium-tier placeholder
+    REQUIRE(buffer.Size() == 0);      // OpenFile itself never reads the file on this path either
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("OpenFile's huge-tier placeholder is already flagged LikelyBinary before the hook runs, for a confirmed "
+          "binary open",
+          "[BufferList][HugeFile][BinarySafety]") {
+    struct ThresholdGuard {
+        ~ThresholdGuard() {
+            SetHugeFileThreshold(1024ull * 1024 * 1024);
+        }
+    } guard;
+
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_bufferlist_huge_async_binary.bin";
+    {
+        std::ofstream file(path, std::ios::binary);
+        file.put('a');
+        file.put('\0');
+        file.put('b');
+    }
+
+    BufferList list;
+    bool       hookSawLikelyBinary = false;
+    list.SetAsyncHugeFileOpener([&](Buffer& buffer, const std::filesystem::path&, bool) { hookSawLikelyBinary = buffer.LikelyBinary(); });
+    SetHugeFileThreshold(1); // well under this file's real size
+
+    Buffer& buffer = list.OpenFile(path, /*allowBinary=*/true);
+
+    REQUIRE(hookSawLikelyBinary); // set before the hook is invoked, not just eventually
+    REQUIRE(buffer.LikelyBinary());
+    REQUIRE(buffer.BinarySafeguardsActive());
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("OpenFile's medium-tier placeholder is already flagged LikelyBinary before the hook runs, for a "
+          "confirmed binary open",
+          "[BufferList][BinarySafety]") {
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_bufferlist_async_binary.bin";
+    {
+        std::ofstream file(path, std::ios::binary);
+        file << std::string(17 * 1024 * 1024, 'x');
+        file.put('\0'); // one NUL byte is all LooksBinary needs, anywhere in the first 8 KiB
+        file.seekp(0);
+        file.put('\0');
+    }
+
+    BufferList list;
+    bool       hookSawLikelyBinary = false;
+    list.SetAsyncFileOpener([&](Buffer& buffer, const std::filesystem::path&) { hookSawLikelyBinary = buffer.LikelyBinary(); });
+
+    Buffer& buffer = list.OpenFile(path, /*allowBinary=*/true);
+
+    REQUIRE(hookSawLikelyBinary);
+    REQUIRE(buffer.LikelyBinary());
+    REQUIRE(buffer.BinarySafeguardsActive());
 
     std::filesystem::remove(path);
 }

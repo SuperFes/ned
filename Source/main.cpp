@@ -1073,6 +1073,12 @@ auto main(int argc, char** argv) -> int {
     // sidebar click, LSP jump-to-definition, etc.) happens well after this
     // and gets the async path.
     windowManager->EnableAsyncFileLoading(eventLoop);
+    // progressive-huge-file-load follow-up: same wiring, same CLI-arg gap
+    // (a file over HugeFileThreshold() passed directly on the command line
+    // still opens synchronously via the top-of-main OpenOrCreateFile call
+    // below, before this hook exists) -- every interactive open of a huge
+    // file gets the progressive, editable-while-loading path from here on.
+    windowManager->EnableAsyncHugeFileLoading(eventLoop);
 
     // loose-ends follow-up: the large CLI file deferred at the top of
     // main() (see deferredLargeOpenPath's own comment there) -- now that

@@ -880,6 +880,137 @@ TEST_CASE("save-buffer does not touch the buffer when no format command is confi
     std::filesystem::remove(path);
 }
 
+// binary-safety-guardrails follow-up: save-buffer/format-buffer/
+// convert-line-endings-to-* must all skip/refuse their byte-level,
+// content-changing behavior for a buffer whose Buffer::LikelyBinary() is
+// set, unless toggle-binary-safeguards has overridden it.
+
+TEST_CASE("save-buffer skips format-on-save, ensure-final-newline, and forced line-ending conversion for a "
+          "LikelyBinary buffer",
+          "[Commands][BinarySafety]") {
+    const FormatCommandGuard     guard;
+    SetFormatCommand(std::string("tr 'a-z' 'A-Z'"));
+    const LineEndingPolicyGuard policyGuard;
+    SetLineEndingPolicy({LineEndingPolicyMode::Force, ned::text::LineEnding::CRLF});
+
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_commands_test_binary_save.bin";
+    std::filesystem::remove(path);
+
+    ned::text::Buffer buffer("scratch", ned::text::Rope("hello")); // no trailing newline -- would normally gain one
+    buffer.SetLikelyBinary(true);
+    buffer.SaveToFile(path);
+
+    ned::text::KillRing   killRing;
+    ned::text::BufferList bufferList;
+    std::string           message;
+    CommandContext        context{buffer, killRing, bufferList, KeyChord{}, &message};
+
+    registry.Invoke("save-buffer", context);
+
+    REQUIRE(buffer.Text() == "hello"); // format-on-save never ran -- would have upper-cased it
+    REQUIRE(message.find("(format command failed)") == std::string::npos);
+
+    std::ifstream file(path, std::ios::binary);
+    std::string   written((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    REQUIRE(written == "hello"); // no forced final newline, no CRLF conversion -- exact bytes preserved
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("toggle-binary-safeguards lets save-buffer apply its normal behavior again", "[Commands][BinarySafety]") {
+    const FormatCommandGuard guard;
+    SetFormatCommand(std::string("tr 'a-z' 'A-Z'"));
+
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_commands_test_binary_override.bin";
+    std::filesystem::remove(path);
+
+    ned::text::Buffer buffer("scratch", ned::text::Rope("hello"));
+    buffer.SetLikelyBinary(true);
+    buffer.SaveToFile(path);
+
+    ned::text::KillRing   killRing;
+    ned::text::BufferList bufferList;
+    std::string           message;
+    CommandContext        context{buffer, killRing, bufferList, KeyChord{}, &message};
+
+    registry.Invoke("toggle-binary-safeguards", context);
+    REQUIRE(buffer.BinarySafetyOverride());
+    REQUIRE(message.find("overridden") != std::string::npos);
+
+    registry.Invoke("save-buffer", context);
+    REQUIRE(buffer.Text() == "HELLO"); // format-on-save ran normally now
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("toggle-binary-safeguards is a no-op message for a buffer that was never detected as binary",
+          "[Commands][BinarySafety]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    ned::text::Buffer     buffer("scratch", ned::text::Rope("hello"));
+    ned::text::KillRing   killRing;
+    ned::text::BufferList bufferList;
+    std::string           message;
+    CommandContext        context{buffer, killRing, bufferList, KeyChord{}, &message};
+
+    registry.Invoke("toggle-binary-safeguards", context);
+
+    REQUIRE_FALSE(buffer.BinarySafetyOverride());
+    REQUIRE(message.find("never detected") != std::string::npos);
+}
+
+TEST_CASE("format-buffer refuses a LikelyBinary buffer until overridden", "[Commands][BinarySafety]") {
+    const FormatCommandGuard guard;
+    SetFormatCommand(std::string("tr 'a-z' 'A-Z'"));
+
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    ned::text::Buffer buffer("scratch", ned::text::Rope("hello"));
+    buffer.SetLikelyBinary(true);
+
+    ned::text::KillRing   killRing;
+    ned::text::BufferList bufferList;
+    std::string           message;
+    CommandContext        context{buffer, killRing, bufferList, KeyChord{}, &message};
+
+    registry.Invoke("format-buffer", context);
+    REQUIRE(buffer.Text() == "hello"); // refused, never ran
+    REQUIRE(message.find("refusing to format") != std::string::npos);
+
+    buffer.SetBinarySafetyOverride(true);
+    registry.Invoke("format-buffer", context);
+    REQUIRE(buffer.Text() == "HELLO");
+}
+
+TEST_CASE("convert-line-endings-to-crlf refuses a LikelyBinary buffer until overridden", "[Commands][BinarySafety]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    ned::text::Buffer buffer("scratch", ned::text::Rope("hello\n"));
+    buffer.SetLikelyBinary(true);
+
+    ned::text::KillRing   killRing;
+    ned::text::BufferList bufferList;
+    std::string           message;
+    CommandContext        context{buffer, killRing, bufferList, KeyChord{}, &message};
+
+    registry.Invoke("convert-line-endings-to-crlf", context);
+    REQUIRE(buffer.LineEndingKind() == ned::text::LineEnding::LF); // refused -- unchanged from its constructed default
+    REQUIRE(message.find("refusing to convert") != std::string::npos);
+
+    buffer.SetBinarySafetyOverride(true);
+    registry.Invoke("convert-line-endings-to-crlf", context);
+    REQUIRE(buffer.LineEndingKind() == ned::text::LineEnding::CRLF);
+}
+
 TEST_CASE("format-buffer formats without saving", "[Commands]") {
     const FormatCommandGuard guard;
     SetFormatCommand(std::string("tr 'a-z' 'A-Z'"));

@@ -142,21 +142,50 @@ Buffer& BufferList::OpenFile(const std::filesystem::path& path, bool allowBinary
     // never even gets considered for the async path -- Buffer::FromFile
     // makes this same check for anyone calling it directly, but the async
     // branch below bypasses FromFile entirely, so it needs its own check.
-    if (!allowBinary && LooksBinary(path)) {
+    //
+    // binary-safety-guardrails follow-up: computed unconditionally (not
+    // just when !allowBinary) so a placeholder handed to either async
+    // opener hook below can carry the same LikelyBinary() signal
+    // Buffer::FromFile/FromHugeFile's own synchronous paths already set
+    // internally -- see Buffer::SetLikelyBinary's own doc comment.
+    const bool likelyBinary = LooksBinary(path);
+    if (!allowBinary && likelyBinary) {
         throw BinaryFileError("ned: refusing to open binary file as text: " + path.string());
     }
 
     // huge-file-editing follow-up: checked ahead of the async-loader branch
     // below -- a file clearing both thresholds always takes this one, since
     // Buffer::FromHugeFile never fully materializes the file (the async
-    // loader still does, eventually). No placeholder/IsLoading() state
-    // needed here the way the async path needs one: opening is already
-    // fast (PieceTable::FromFile's own O(file size) scan, not a full read),
-    // so there's nothing to background-load.
+    // loader still does, eventually).
+    //
+    // progressive-huge-file-load follow-up: with asyncHugeFileOpener_ set,
+    // this returns immediately with an empty, IsLoading()-but-editable
+    // placeholder (same shape as the async-loader branch below) that the
+    // hook fills in progressively over time -- see Source/UI/
+    // HugeFileLoader.h. With no hook set (every test that constructs a bare
+    // BufferList), this falls back to the original synchronous
+    // Buffer::FromHugeFile call: opening is already fast on its own
+    // (PieceTable::FromFile's own O(file size) scan, not a full read), so
+    // there's nothing to background-load without a hook to drive it.
     {
         std::error_code      ec;
         const std::uintmax_t size = std::filesystem::file_size(path, ec);
         if (!ec && size > HugeFileThreshold()) {
+            if (asyncHugeFileOpener_) {
+                Buffer placeholder = Buffer::NewFile(path);
+                placeholder.Rename(UniqueName(placeholder.Name()));
+                placeholder.MarkLoading(/*forceReadOnly=*/false);
+                placeholder.SetLikelyBinary(likelyBinary);
+
+                buffers_.push_back(std::make_unique<Buffer>(std::move(placeholder)));
+                Buffer& ref = *buffers_.back();
+                asyncHugeFileOpener_(ref, path, allowBinary);
+                if (onFileOpened_) {
+                    onFileOpened_(ref);
+                }
+                return ref;
+            }
+
             Buffer loaded = Buffer::FromHugeFile(path, allowBinary); // throws on failure
 
             loaded.Rename(UniqueName(loaded.Name()));
@@ -177,6 +206,7 @@ Buffer& BufferList::OpenFile(const std::filesystem::path& path, bool allowBinary
             Buffer placeholder = Buffer::NewFile(path);
             placeholder.Rename(UniqueName(placeholder.Name()));
             placeholder.MarkLoading();
+            placeholder.SetLikelyBinary(likelyBinary);
 
             buffers_.push_back(std::make_unique<Buffer>(std::move(placeholder)));
             Buffer& ref = *buffers_.back();
@@ -201,6 +231,10 @@ Buffer& BufferList::OpenFile(const std::filesystem::path& path, bool allowBinary
 
 void BufferList::SetAsyncFileOpener(std::function<void(Buffer&, const std::filesystem::path&)> hook) {
     asyncFileOpener_ = std::move(hook);
+}
+
+void BufferList::SetAsyncHugeFileOpener(std::function<void(Buffer&, const std::filesystem::path&, bool)> hook) {
+    asyncHugeFileOpener_ = std::move(hook);
 }
 
 void BufferList::SetOnFileOpened(std::function<void(Buffer&)> hook) {
