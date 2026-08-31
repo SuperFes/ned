@@ -520,6 +520,11 @@ add_library(ned_lib STATIC
         ${NED_GENERATED_QUERY_SOURCES}
         Source/Application.cpp
         Source/Text/Rope.cpp
+        Source/Text/RopeStorage.cpp
+        Source/Text/MappedFile.cpp
+        Source/Text/PieceTable.cpp
+        Source/Text/PieceTableStorage.cpp
+        Source/Text/DiskSpace.cpp
         Source/Text/Grapheme.cpp
         Source/Text/UndoTree.cpp
         Source/Text/KillRing.cpp
@@ -821,6 +826,9 @@ if (NED_BUILD_TESTS)
     add_executable(ned_tests
             Tests/ApplicationTest.cpp
             Tests/RopeTest.cpp
+            Tests/MappedFileTest.cpp
+            Tests/PieceTableTest.cpp
+            Tests/PieceTableStorageTest.cpp
             Tests/GraphemeTest.cpp
             Tests/UndoTreeTest.cpp
             Tests/KillRingTest.cpp
@@ -836,6 +844,9 @@ if (NED_BUILD_TESTS)
             Tests/FileWatchTest.cpp
             Tests/ThreeWayMergeTest.cpp
             Tests/BufferTest.cpp
+            Tests/BufferHugeFileTest.cpp
+            Tests/DiskSpaceTest.cpp
+            Tests/BufferSaveEquivalenceTest.cpp
             Tests/MultiCursorTest.cpp
             Tests/BufferListTest.cpp
             Tests/BinaryDetectTest.cpp

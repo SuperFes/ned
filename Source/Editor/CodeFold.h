@@ -23,7 +23,7 @@
 
 #include "Mode.h"
 #include "Text/Buffer.h"
-#include "Text/Rope.h"
+#include "Text/ITextStorage.h"
 
 namespace ned::editor::codefold {
 
@@ -47,7 +47,7 @@ namespace ned::editor::codefold {
 // FoldedLineRanges already extends to a marker that no longer lands on a
 // real headline.
 [[nodiscard]] std::vector<std::pair<std::size_t, std::size_t>>
-FoldedLineRanges(const text::Buffer& buffer, const text::Rope& content,
+FoldedLineRanges(const text::Buffer& buffer, const text::ITextStorage& content,
                  const std::vector<std::pair<std::size_t, std::size_t>>& blocks);
 
 // Toggles the fold marker for whichever block in `blocks` starts on `line`
@@ -61,7 +61,7 @@ FoldedLineRanges(const text::Buffer& buffer, const text::Rope& content,
 // affordance per header line for the same reason -- this keeps the
 // keyboard path folding the exact block the gutter shows. Returns false
 // (a no-op) if no block starts there.
-bool ToggleFoldAtLine(text::Buffer& buffer, const text::Rope& content,
+bool ToggleFoldAtLine(text::Buffer& buffer, const text::ITextStorage& content,
                       const std::vector<std::pair<std::size_t, std::size_t>>& blocks, std::size_t line);
 
 // depth-aware-fold-gutter follow-up: a block's own nesting depth, 0 =

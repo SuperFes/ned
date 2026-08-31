@@ -2,14 +2,16 @@
 
 #include "Editor/Lsp/LspPosition.h"
 #include "Text/Rope.h"
+#include "Text/RopeStorage.h"
 
 using ned::editor::lsp::BytePositionToLsp;
 using ned::editor::lsp::LspPosition;
 using ned::editor::lsp::LspPositionToByte;
 using ned::text::Rope;
+using ned::text::RopeStorage;
 
 TEST_CASE("BytePositionToLsp/LspPositionToByte round-trip over plain ASCII", "[Lsp]") {
-    const Rope content("first line\nsecond line\nthird");
+    const RopeStorage content(Rope("first line\nsecond line\nthird"));
 
     // Byte offset of 's' in "second" -- line 1, column 0.
     const std::size_t byteOffset = content.LineToByteOffset(1);
@@ -28,7 +30,7 @@ TEST_CASE("BytePositionToLsp/LspPositionToByte round-trip over plain ASCII", "[L
 
 TEST_CASE("BytePositionToLsp counts a multi-byte UTF-8 codepoint as one UTF-16 code unit", "[Lsp]") {
     // "café" -- 'é' is U+00E9, 2 bytes in UTF-8, 1 code unit in UTF-16.
-    const Rope content("caf\xc3\xa9!");
+    const RopeStorage content(Rope("caf\xc3\xa9!"));
 
     const std::size_t byteOffsetOfBang = 5; // 'c','a','f','é'(2 bytes) = 5 bytes in
     const LspPosition position         = BytePositionToLsp(content, byteOffsetOfBang);
@@ -39,7 +41,7 @@ TEST_CASE("BytePositionToLsp counts a multi-byte UTF-8 codepoint as one UTF-16 c
 
 TEST_CASE("BytePositionToLsp counts a supplementary-plane codepoint as two UTF-16 code units (a surrogate pair)", "[Lsp]") {
     // U+1F600 (grinning face emoji), 4 bytes in UTF-8, a surrogate pair (2 code units) in UTF-16.
-    const Rope content("\xF0\x9F\x98\x80X");
+    const RopeStorage content(Rope("\xF0\x9F\x98\x80X"));
 
     const std::size_t byteOffsetOfX = 4;
     const LspPosition position      = BytePositionToLsp(content, byteOffsetOfX);
@@ -49,7 +51,7 @@ TEST_CASE("BytePositionToLsp counts a supplementary-plane codepoint as two UTF-1
 }
 
 TEST_CASE("LspPositionToByte is bounded by the line's own byte range for an out-of-range character", "[Lsp]") {
-    const Rope content("ab\ncd");
+    const RopeStorage content(Rope("ab\ncd"));
 
     // Line 0's own byte range is [0, 3) -- "ab" plus its trailing newline
     // (the next line's own start byte is the exclusive bound, not the

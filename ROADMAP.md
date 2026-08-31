@@ -157,6 +157,7 @@ Notcurses.
       `prepareRename`, `linkedEditingRange`, or `workspace/willRenameFiles`/
       `didRenameFiles`) — import paths elsewhere go stale until the server notices on
       its own.
+
 ### Navigation & Search
 
 - [ ] **Multibuffer gaps**: no full-commit diff view (browsing one commit's whole diff
@@ -175,14 +176,94 @@ Notcurses.
 
 ### Large Files
 
-- [ ] **Windowed/paged editing for genuinely huge files** (multi-GB). `Rope` and
-      everything built on it assumes fully-resident content. Recommended v1 shape: a
-      read-only mmap-backed viewer past a size threshold, lazily building a line-offset
-      index only near the viewport, with an explicit "load fully to edit" step reusing
-      the async loader. In-place windowed *editing* needs a disk-backed piece table —
-      most of a new engine, explicitly not v1.
+- [x] **Genuinely huge (multi-GB) file editing via a piece table — v1 floor shipped.**
+      `Rope` (and everything built on it) assumes fully-resident content, which doesn't
+      scale past a full in-memory load; a read-only-until-fully-loaded viewer was
+      considered and rejected — real editing without a blocking full-load step needs a
+      different storage engine, not just a different loading strategy. `Text/PieceTable.h/
+      .cpp` (spans over an mmap'd original file, `Text/MappedFile.h/.cpp`, plus a small
+      append-only insert buffer) is the engine; `Text/ITextStorage.h` (with `RopeStorage`/
+      `PieceTableStorage` implementations) is what lets `Buffer` hold either storage
+      behind one interface, `Buffer::Content()` included — every one of the ~340 existing
+      external call sites across the codebase kept compiling against the interface
+      unchanged, no throw/refusal needed there (a piece-table-backed buffer answers the
+      same calls, just possibly at a different cost — `ITextStorage::IsHuge()` is the
+      opt-in a size-sensitive caller checks first). `Buffer::FromHugeFile` is the
+      construction path (wired into `BufferList::OpenFile` above a configurable
+      `HugeFileThreshold()`, default 1 GiB); open/scroll/seek/point-motion/insert/delete-
+      anywhere/undo/redo/multi-cursor/save all work, streamed and memory-bounded end to
+      end (measured, not assumed: opening a 200 MiB file grows RSS by ~200 KiB, saving a
+      220 MiB file with an edit grows it by ~128 KiB — `[memory]`-tagged tests in
+      `PieceTableTest.cpp`/`BufferHugeFileTest.cpp`). A free-disk-space safety check
+      (`Text/DiskSpace.h`) forces a huge buffer read-only at open time if there isn't
+      comfortably enough free space to save it (COW filesystems like Btrfs/ZFS can need
+      close to double a file's size to safely rewrite it), with `toggle-read-only` as the
+      override and a hard, non-overridable re-check at actual save time.
+
+      Still open: LSP sync for a huge buffer (currently never attempted, no opt-in yet);
+      `Minimap` bails out entirely for a huge buffer rather than the real bounded
+      line-sampling redesign (a stopgap fix for a real hang, see this file's own history
+      for the underlying cause — `PieceTable`'s 256 KiB original-file leaves make any
+      *unbounded* per-line iteration ~500x costlier than `Rope`'s); `BufferView`'s own
+      line-count/scrollbar reads haven't been audited for that same unbounded-iteration
+      risk class; the CLI-arg deferred-open path (`main.cpp`) only checks
+      `AsyncLoadThreshold()`, never `HugeFileThreshold()`, so a file under the async
+      threshold's default skips huge-file handling entirely when opened via CLI argument
+      (doesn't bite the real multi-GB target case, but is a real gap for a
+      lowered-threshold config) — same shape of fix as the session-restore bullet right
+      below. Every feature built on full-document access rather than the storage
+      engine's own bounded reads — Vim motions/search, Org, snippets, multibuffer,
+      bookmarks, session save-place, VCS blame/diff gutters — simply doesn't operate
+      *well* on a huge buffer yet (nothing crashes; `IsHuge()`-unaware code just pays
+      whatever cost full materialization costs). See the staged follow-up plan below for
+      bringing those online incrementally rather than all at once.
 - [ ] Buffers restored by a project session open before the async-loader hook is wired,
-      so a huge file inside a restored session still loads synchronously at startup.
+      so a huge file inside a restored session still loads synchronously at startup —
+      the same fix `main.cpp`'s CLI-arg path already has (`deferredLargeOpenPath`) needs
+      applying to the session-restore loop too, for both the existing async-load
+      threshold and the new huge-file threshold.
+- [ ] **Staged path to full feature parity on a huge buffer**, once the piece-table v1
+      above lands, each stage independently shippable and not blocking the next:
+      1. A bounded-range `Buffer` API (`LineCount()`, `TextInRange(start,end)`,
+         `LineRange(startLine,endLine)` or similar) that never leaks `Rope`/`PieceTable`
+         and is answerable by either storage without materializing the whole document —
+         the actual unlock every later stage depends on; each subsequent stage is
+         "migrate one subsystem off `Content()` onto this."
+      2. Vim mode's bounded motions (character/word/line/paragraph, basic operators) —
+         highest-value feature for actually editing a huge file well, and answerable
+         with bounded reads near point.
+      3. Streaming search/replace (see this section's own search follow-up below) — once
+         it lands, Vim's `:s`/`:g`, isearch, and query-replace work on a huge buffer for
+         free, since they'd be built on the streaming engine rather than `Content()`.
+      4. Structural/index-driven features (Org outline, code folding, symbol gutter, VCS
+         blame/diff) — these need a real index over the whole file, not just a bounded
+         read, so this is the biggest remaining lift. Two real techniques apply, neither
+         designed in detail yet: (a) generalize `PieceTable::Node`'s existing aggregate
+         (`byteLength`/`codepointLength`/`lineCount`, combined left+right at every
+         internal node) from a fixed triple into a pluggable, monoid-combined summary
+         type — the same pattern as Zed's `SumTree` and xi-editor's metric-parameterized
+         rope (formally: a finger-tree/monoid-augmented B-tree, Hinze & Paterson), so a
+         structural index (headline offsets, fold regions, symbol positions) rides the
+         same tree/traversal machinery instead of needing a bespoke index per feature;
+         (b) tree-sitter's own `included_ranges` API (parse only specific byte ranges,
+         stitch partial trees) is what would let that index stay lazy/viewport-driven
+         instead of requiring one big upfront parse of a multi-GB file.
+      5. Multibuffer/bookmarks/session save-place — mostly just track byte
+         ranges/points through `Buffer`'s own relocation logic, which already lives in
+         `Buffer.cpp` and is storage-agnostic — likely cheaper than stage 4 despite
+         listed after it here.
+- [ ] **Streaming/parallel search over a huge buffer** (regex, not just literal isearch).
+      PCRE2 (already `Editor/RegexPattern.h`'s engine) has a partial-match mode
+      (`PCRE2_PARTIAL_SOFT`/`PCRE2_PARTIAL_HARD` + a reusable `pcre2_match_data`) built
+      for exactly this — feeding a pattern successive chunks of a subject too large to
+      hold at once, a natural fit against `PieceTable::ForEachChunk`. Parallelizing
+      across one buffer would reuse `ProjectSearch::SearchDirectory`'s existing
+      work-stealing thread-pool shape (`Editor/ProjectSearch.cpp:95-131`), generalized
+      from "one file per worker" to "one byte range per worker," with an overlap margin
+      at split points sized to bound worst-case lookbehind/backreference width (same
+      class of accepted limit `ProjectSearch`'s RE2 path already has with no lookaround
+      at all). Query-replace over a huge buffer would then just be an ordinary sequence
+      of ranged `Buffer::DeleteRange`/`InsertAt` calls at each match, highest-offset-first.
 
 ### Editor Ergonomics
 
@@ -609,6 +690,19 @@ reaching this fallback. `C-y`/`PasteFromSystemClipboard` was never affected (it 
 the whole pasted string directly via `Buffer::InsertAtPoint`, bypassing per-character
 dispatch) — only a terminal-native paste or direct keystroke of a non-ASCII character hit
 this.
+
+**Open, not yet root-caused:** `VimEngineTest.cpp:903`'s "Dot-repeat replays an Insert
+session that used C-o" — passes cleanly every time run standalone
+(`./ned_tests "Dot-repeat replays an Insert session that used C-o"`), but has failed
+intermittently when the full suite runs (`ctest --test-dir build`), seen at least
+2026-08-30. No obvious static/global mutable state in `VimEngine.h/.cpp` itself on a
+first pass (grepped for `static`/`thread_local`, nothing suspicious) — order-dependence
+likely comes from somewhere else the test touches (a shared `Buffer`/`Dispatcher`
+fixture, register/clipboard global state, or similar to the `DiagnosticsLog`
+global-state leak already fixed once in this codebase, `ChildProcess hang-protection
+round 2`). Not yet worth a deep dive on its own; next time it reproduces, capture which
+other test(s) ran immediately before it in that run — that's the fastest path to an
+actual repro.
 
 ### Named Non-Goals (Leaning "Won't Do", Kept Visible So It's a Conscious Call)
 

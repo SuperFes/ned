@@ -13,6 +13,8 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <string>
 
 
@@ -79,7 +81,7 @@ TEST_CASE("Inserting near the end of a multi-megabyte buffer stays fast", "[Perf
 
 TEST_CASE("Point navigation across a multi-megabyte buffer stays fast", "[Performance]") {
     const ned::text::Buffer buffer("scratch", ned::text::Rope(MakeMultiLineContent(10'000'000)));
-    const ned::text::Rope&  content = buffer.Content();
+    const ned::text::ITextStorage& content = buffer.Content();
 
     const auto start = steady_clock::now();
     for (std::size_t i = 0; i < 3000; ++i) {
@@ -90,6 +92,40 @@ TEST_CASE("Point navigation across a multi-megabyte buffer stays fast", "[Perfor
     const auto elapsed = steady_clock::now() - start;
 
     REQUIRE(duration_cast<milliseconds>(elapsed).count() < 500);
+}
+
+TEST_CASE("Point navigation across a huge (piece-table-backed) buffer stays fast", "[Performance][HugeFile]") {
+    // huge-file-editing follow-up: PieceTableStorage's per-call navigation
+    // cost is inherently higher than RopeStorage's for the same operation
+    // (its original-file leaves are 256 KiB vs. Rope's 512 bytes -- a
+    // deliberate tradeoff to keep tree-node memory overhead low for a
+    // multi-GB file, see PieceTable.cpp's own comment) -- this guards that
+    // a bounded number of navigation calls, the shape any real interactive
+    // use makes, stays fast regardless. It would NOT have caught the real
+    // hang found live (Minimap's ForEachDensityDot calling this once per
+    // buffer line with no bound at all, unrelated to per-call cost) -- see
+    // UI/Minimap.cpp's EnsurePlane for that fix and its own comment on why.
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_perf_huge_navigation.txt";
+    {
+        std::ofstream file(path, std::ios::binary);
+        file << MakeMultiLineContent(10'000'000); // ~10 MB, well past several 256 KiB leaves
+    }
+
+    const ned::text::Buffer        buffer  = ned::text::Buffer::FromHugeFile(path);
+    const ned::text::ITextStorage& content = buffer.Content();
+    REQUIRE(content.IsHuge());
+
+    const auto start = steady_clock::now();
+    for (std::size_t i = 0; i < 3000; ++i) {
+        const std::size_t offset = (i * 104729) % content.ByteLength(); // scattered offsets
+        (void)content.ByteOffsetToLine(offset);
+        (void)content.LineToByteOffset(i % content.LineCount());
+    }
+    const auto elapsed = steady_clock::now() - start;
+
+    REQUIRE(duration_cast<milliseconds>(elapsed).count() < 500);
+
+    std::filesystem::remove(path);
 }
 
 TEST_CASE("Inserting into a pathologically long single line stays fast", "[Performance]") {

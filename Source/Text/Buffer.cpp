@@ -1,6 +1,7 @@
 #include "Buffer.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <fstream>
 #include <iterator>
 #include <stdexcept>
@@ -8,8 +9,13 @@
 #include <system_error>
 
 #include "BinaryDetect.h"
+#include "BufferList.h"
+#include "DiskSpace.h"
 #include "Grapheme.h"
 #include "LineEnding.h"
+#include "PieceTable.h"
+#include "PieceTableStorage.h"
+#include "RopeStorage.h"
 #include "ThreeWayMerge.h"
 
 namespace ned::text {
@@ -23,6 +29,144 @@ namespace {
         return (codepoint >= U'a' && codepoint <= U'z') || (codepoint >= U'A' && codepoint <= U'Z') ||
                (codepoint >= U'0' && codepoint <= U'9') || codepoint == U'_';
     }
+
+    // disk-space-safety follow-up: a plain "N.N GiB"/"N.N MiB" formatter for
+    // ReadOnlyReason()/SaveToFile's disk-space error messages -- no existing
+    // helper for this anywhere in the codebase (grepped first).
+    std::string FormatBytesHuman(std::uintmax_t bytes) {
+        constexpr double kGiB = 1024.0 * 1024.0 * 1024.0;
+        constexpr double kMiB = 1024.0 * 1024.0;
+        char             buffer[32];
+        if (bytes >= static_cast<std::uintmax_t>(kGiB)) {
+            std::snprintf(buffer, sizeof(buffer), "%.1f GiB", static_cast<double>(bytes) / kGiB);
+        } else {
+            std::snprintf(buffer, sizeof(buffer), "%.1f MiB", static_cast<double>(bytes) / kMiB);
+        }
+        return buffer;
+    }
+
+    // huge-file-editing follow-up (streaming save): reproduces SaveToFile's
+    // trim-trailing-whitespace / ensure-final-newline / line-ending-
+    // expansion pipeline as a single forward streaming pass over content
+    // fed in arbitrary-sized chunks (ITextStorage::ForEachChunk's contract
+    // -- a chunk boundary carries no semantic meaning, a line or a run of
+    // trailing whitespace can span one), instead of materializing the whole
+    // document into one string first the way SaveToFile's non-huge path
+    // still does (deliberately left alone -- see SaveToFile's own comment
+    // on why). Byte-identical output to that whole-string algorithm --
+    // verified directly, see BufferSaveEquivalenceTest.cpp, not just
+    // reasoned about.
+    //
+    // Trim, restated as a streaming state machine: a trailing space/tab run
+    // within the CURRENT line is held in pendingWhitespace_ (bounded by
+    // that run's own length, not file size) until either a non-whitespace
+    // byte on the same line arrives (not trailing after all -- flush it) or
+    // the line ends (confirmed trailing -- discard it, matching every line
+    // getting its own trailing whitespace stripped unconditionally). A '\n'
+    // is held as one unit of pendingNewlineCount_ until either more real
+    // (post-trim) content follows later (flush that many '\n's first,
+    // confirmed real separators) or the stream ends with none flushed
+    // (confirmed all trailing -- discard them all), reproducing the
+    // original algorithm's separate "strip every trailing '\n'" pass with
+    // no second pass or full-content buffer needed.
+    class StreamingSaveWriter {
+      public:
+        StreamingSaveWriter(std::ofstream& file, LineEnding ending, bool trim, bool ensureFinalNewline)
+            : file_(file), ending_(ending), trim_(trim), ensureFinalNewline_(ensureFinalNewline) {}
+
+        void operator()(std::string_view chunk) {
+            for (char c : chunk) {
+                Feed(c);
+            }
+        }
+
+        // Call once after every chunk has been fed. Applies
+        // ensureFinalNewline and flushes any buffered output -- does NOT
+        // check the stream for a write failure itself; the caller checks
+        // `file` once after this returns, same as SaveToFile's non-huge
+        // path already does after its own single write.
+        void Finish() {
+            if (ensureFinalNewline_ && wroteAnything_ && !endsWithNewline_) {
+                WriteNewline();
+            }
+            FlushBuffer();
+        }
+
+      private:
+        void Feed(char c) {
+            if (!trim_) {
+                if (c == '\n') {
+                    WriteNewline();
+                } else {
+                    WriteByte(c);
+                }
+                return;
+            }
+
+            if (c == ' ' || c == '\t') {
+                pendingWhitespace_.push_back(c);
+            } else if (c == '\n') {
+                pendingWhitespace_.clear(); // trailing on this line -- discard
+                ++pendingNewlineCount_;
+            } else {
+                for (std::size_t i = 0; i < pendingNewlineCount_; ++i) {
+                    WriteNewline();
+                }
+                pendingNewlineCount_ = 0;
+                for (char w : pendingWhitespace_) {
+                    WriteByte(w);
+                }
+                pendingWhitespace_.clear();
+                WriteByte(c);
+            }
+        }
+
+        void WriteByte(char c) {
+            outBuffer_.push_back(c);
+            wroteAnything_   = true;
+            endsWithNewline_ = false;
+            MaybeFlush();
+        }
+
+        void WriteNewline() {
+            if (ending_ == LineEnding::CRLF) {
+                outBuffer_.append("\r\n");
+            } else if (ending_ == LineEnding::CR) {
+                outBuffer_.push_back('\r');
+            } else {
+                outBuffer_.push_back('\n');
+            }
+            wroteAnything_   = true;
+            endsWithNewline_ = true;
+            MaybeFlush();
+        }
+
+        void MaybeFlush() {
+            if (outBuffer_.size() >= kFlushThreshold) {
+                FlushBuffer();
+            }
+        }
+
+        void FlushBuffer() {
+            if (!outBuffer_.empty()) {
+                file_.write(outBuffer_.data(), static_cast<std::streamsize>(outBuffer_.size()));
+                outBuffer_.clear();
+            }
+        }
+
+        static constexpr std::size_t kFlushThreshold = 256 * 1024;
+
+        std::ofstream& file_;
+        LineEnding     ending_;
+        bool           trim_;
+        bool           ensureFinalNewline_;
+
+        std::string outBuffer_;
+        std::string pendingWhitespace_;
+        std::size_t pendingNewlineCount_ = 0;
+        bool        wroteAnything_       = false;
+        bool        endsWithNewline_     = false;
+    };
 
     // See MoveForwardSentence/MoveBackwardSentence's own doc comment in
     // Buffer.h for why this is a plain ASCII punctuation set.
@@ -114,9 +258,9 @@ namespace {
 } // namespace
 
 Buffer::Buffer(std::string name, Rope initialContent) : Name_(std::move(name)),
-                                                        Rope_(initialContent),
-                                                        UndoTree_(std::move(initialContent)),
-                                                        SavedSnapshot_(Rope_) {
+                                                        Storage_(std::make_unique<RopeStorage>(std::move(initialContent))),
+                                                        UndoTree_(Storage_->Clone()),
+                                                        SavedSnapshot_(Storage_->Clone()) {
 }
 
 Buffer Buffer::FromFile(const std::filesystem::path& path, bool allowBinary) {
@@ -171,7 +315,7 @@ Buffer Buffer::FromFile(const std::filesystem::path& path, bool allowBinary) {
     // crlf-handling follow-up: detect before normalizing -- the detected
     // ending is exactly what SaveToFile later re-expands LF back into, so
     // opening and immediately saving a CRLF file round-trips byte-for-byte
-    // rather than silently converting it to LF. Rope_ itself only ever
+    // rather than silently converting it to LF. Storage_ itself only ever
     // holds the normalized, LF-only form (see Text/LineEnding.h).
     const LineEnding detectedEnding = DetectLineEnding(content);
     if (HasCarriageReturn(content)) {
@@ -184,6 +328,72 @@ Buffer Buffer::FromFile(const std::filesystem::path& path, bool allowBinary) {
     if (!timestampError) {
         buffer.DiskTimestamp_ = diskTime;
     }
+    return buffer;
+}
+
+Buffer Buffer::FromHugeFile(const std::filesystem::path& path, bool allowBinary) {
+    // Same cheap-fail-fast reasoning as FromFile above: LooksBinary only
+    // reads the first 8 KiB, so this stays cheap regardless of the file's
+    // real size.
+    if (!allowBinary && LooksBinary(path)) {
+        throw BinaryFileError("ned: refusing to open binary file as text: " + path.string());
+    }
+
+    std::error_code                       timestampError;
+    const std::filesystem::file_time_type diskTime = std::filesystem::last_write_time(path, timestampError);
+
+    PieceTable table = PieceTable::FromFile(path); // throws MappedFileError on failure
+
+    // huge-file-editing follow-up: Storage_ is always LF-only throughout
+    // this class -- normalizing CRLF here would mean rewriting every line
+    // in the piece table, defeating the entire point of this path (see
+    // FromHugeFile's own doc comment in Buffer.h). Detected via one
+    // streaming pass (ForEachChunk, never materializes the whole document)
+    // -- this does mean the file's pages get faulted back in a second time
+    // after PieceTable::FromFile's own scan already released them
+    // (MappedFile.h's residency model), a known minor follow-up, not a
+    // correctness issue.
+    bool sawCarriageReturn = false;
+    table.ForEachChunk([&](std::string_view chunk) {
+        if (!sawCarriageReturn && HasCarriageReturn(chunk)) {
+            sawCarriageReturn = true;
+        }
+    });
+    if (sawCarriageReturn) {
+        throw std::runtime_error("ned: huge-file opening does not yet support CRLF/CR line endings (" +
+                                 path.string() + ") -- open with the normal loader instead, or convert to LF first");
+    }
+
+    // A leading UTF-8 BOM is stripped the same way FromFile does above --
+    // cheap even here, a fixed 3-byte prefix check plus (if present) one
+    // small Erased() at offset 0, not a full-document scan.
+    if (table.ByteLength() >= kUtf8Bom.size() && table.Substring(0, kUtf8Bom.size()) == kUtf8Bom) {
+        table = table.Erased(0, kUtf8Bom.size());
+    }
+
+    Buffer buffer(path.filename().string());
+    buffer.Storage_       = std::make_unique<PieceTableStorage>(std::move(table));
+    buffer.UndoTree_      = UndoTree(buffer.Storage_->Clone());
+    buffer.SavedSnapshot_ = buffer.Storage_->Clone();
+    buffer.Path_          = path;
+    buffer.LineEnding_    = LineEnding::LF; // always true here -- see the CRLF-refusal comment above
+    if (!timestampError) {
+        buffer.DiskTimestamp_ = diskTime;
+    }
+
+    // disk-space-safety follow-up: a soft, overridable downgrade -- see
+    // FromHugeFile's own doc comment in Buffer.h for the full contract.
+    // The file still opens either way; only editability is at stake here.
+    if (HugeFileDiskSpaceCheckEnabled()) {
+        const DiskSpaceCheck check = CheckFreeSpaceForSave(path, buffer.Storage_->ByteLength(), HugeFileMinFreeSpaceMultiplier());
+        if (!check.sufficient) {
+            buffer.SetReadOnly(true, "not enough free disk space to safely save this file (need ~" +
+                                         FormatBytesHuman(check.requiredBytes) + " free, ~" +
+                                         FormatBytesHuman(check.availableBytes) +
+                                         " available) -- run toggle-read-only to edit anyway");
+        }
+    }
+
     return buffer;
 }
 
@@ -202,66 +412,105 @@ void Buffer::SaveToFile(const std::filesystem::path& path, bool ensureFinalNewli
     const std::filesystem::path tempPath = path.string() + ".ned-tmp";
     const LineEnding            effectiveEnding = lineEndingOverride.value_or(LineEnding_);
 
+    // disk-space-safety follow-up: the hard backstop -- no override, unlike
+    // FromHugeFile's open-time downgrade (see SaveToFile's own doc comment
+    // in Buffer.h). Checked before the temp file is even opened, so an
+    // unsafe save never wastes I/O writing something that would fail
+    // partway through anyway.
+    if (Storage_->IsHuge() && HugeFileDiskSpaceCheckEnabled()) {
+        const DiskSpaceCheck check = CheckFreeSpaceForSave(path, Storage_->ByteLength(), HugeFileMinFreeSpaceMultiplier());
+        if (!check.sufficient) {
+            throw std::runtime_error("ned: not enough free disk space to safely save \"" + path.string() + "\" (need ~" +
+                                     FormatBytesHuman(check.requiredBytes) + " free, ~" + FormatBytesHuman(check.availableBytes) +
+                                     " available)");
+        }
+    }
+
     {
         std::ofstream file(tempPath, std::ios::binary | std::ios::trunc);
         if (!file) {
             throw std::runtime_error("ned: cannot open file for writing: " + tempPath.string());
         }
 
-        std::string content = Rope_.ToString();
-        // trim-on-save follow-up: strips trailing spaces/tabs from every
-        // line, then collapses any run of trailing blank lines down to
-        // nothing -- ensureFinalNewline below is what puts exactly one '\n'
-        // back if the caller still wants one. Disk-only, same reasoning as
-        // ensureFinalNewline itself: only this local copy is touched, never
-        // Rope_ (see Editor/TrimOnSave.h).
-        if (trimTrailingWhitespace && !content.empty()) {
-            std::string trimmed;
-            trimmed.reserve(content.size());
-            std::size_t lineStart = 0;
-            for (std::size_t i = 0; i <= content.size(); ++i) {
-                if (i == content.size() || content[i] == '\n') {
-                    std::size_t lineEnd = i;
-                    while (lineEnd > lineStart && (content[lineEnd - 1] == ' ' || content[lineEnd - 1] == '\t')) {
-                        --lineEnd;
+        if (Storage_->IsHuge()) {
+            // huge-file-editing follow-up: same trim/ensureFinalNewline/
+            // line-ending pipeline as the non-huge path below, but streamed
+            // through StreamingSaveWriter instead of materializing the
+            // whole document into one string first -- the entire point of
+            // this branch. Deliberately kept as a separate code path rather
+            // than routing every buffer through the streaming writer: the
+            // non-huge path below is unchanged, proven, and (for a buffer
+            // that's merely large, not huge, e.g. tens/hundreds of MB via
+            // the async-loader tier) faster than a byte-at-a-time state
+            // machine would be -- no reason to pay that cost when the
+            // simple whole-string approach is already correct and cheap
+            // enough for anything below HugeFileThreshold.
+            StreamingSaveWriter writer(file, effectiveEnding, trimTrailingWhitespace, ensureFinalNewline);
+            Storage_->ForEachChunk([&writer](std::string_view chunk) { writer(chunk); });
+            writer.Finish();
+
+            if (!file) {
+                file.close();
+                std::filesystem::remove(tempPath);
+                throw std::runtime_error("ned: error writing file: " + tempPath.string());
+            }
+        }
+        else {
+            std::string content = Storage_->ToString();
+            // trim-on-save follow-up: strips trailing spaces/tabs from every
+            // line, then collapses any run of trailing blank lines down to
+            // nothing -- ensureFinalNewline below is what puts exactly one '\n'
+            // back if the caller still wants one. Disk-only, same reasoning as
+            // ensureFinalNewline itself: only this local copy is touched, never
+            // Storage_ (see Editor/TrimOnSave.h).
+            if (trimTrailingWhitespace && !content.empty()) {
+                std::string trimmed;
+                trimmed.reserve(content.size());
+                std::size_t lineStart = 0;
+                for (std::size_t i = 0; i <= content.size(); ++i) {
+                    if (i == content.size() || content[i] == '\n') {
+                        std::size_t lineEnd = i;
+                        while (lineEnd > lineStart && (content[lineEnd - 1] == ' ' || content[lineEnd - 1] == '\t')) {
+                            --lineEnd;
+                        }
+                        trimmed.append(content, lineStart, lineEnd - lineStart);
+                        if (i < content.size()) {
+                            trimmed.push_back('\n');
+                        }
+                        lineStart = i + 1;
                     }
-                    trimmed.append(content, lineStart, lineEnd - lineStart);
-                    if (i < content.size()) {
-                        trimmed.push_back('\n');
-                    }
-                    lineStart = i + 1;
                 }
+                while (!trimmed.empty() && trimmed.back() == '\n') {
+                    trimmed.pop_back();
+                }
+                content = std::move(trimmed);
             }
-            while (!trimmed.empty() && trimmed.back() == '\n') {
-                trimmed.pop_back();
+            // An empty buffer stays empty (not turned into a bare "\n") -- and
+            // Storage_ itself is never touched, only this local copy that's about
+            // to be written; see the ensureFinalNewline doc comment on the
+            // header for why that's deliberate.
+            if (ensureFinalNewline && !content.empty() && content.back() != '\n') {
+                content.push_back('\n');
             }
-            content = std::move(trimmed);
-        }
-        // An empty buffer stays empty (not turned into a bare "\n") -- and
-        // Rope_ itself is never touched, only this local copy that's about
-        // to be written; see the ensureFinalNewline doc comment on the
-        // header for why that's deliberate.
-        if (ensureFinalNewline && !content.empty() && content.back() != '\n') {
-            content.push_back('\n');
-        }
 
-        // crlf-handling follow-up: re-expand LF back to whichever ending
-        // this save should use -- lineEndingOverride lets a caller apply
-        // Editor::ResolveLineEndingForSave's policy (Force*) without Text/
-        // depending on Editor/; absent an override, this just keeps writing
-        // whatever LineEnding_ already tracks (the common Preserve case).
-        // Content up to here is always LF-only (Rope_::ToString() never
-        // holds a '\r'), so this is always the last transform before write.
-        if (effectiveEnding != LineEnding::LF) {
-            content = ApplyLineEnding(content, effectiveEnding);
-        }
+            // crlf-handling follow-up: re-expand LF back to whichever ending
+            // this save should use -- lineEndingOverride lets a caller apply
+            // Editor::ResolveLineEndingForSave's policy (Force*) without Text/
+            // depending on Editor/; absent an override, this just keeps writing
+            // whatever LineEnding_ already tracks (the common Preserve case).
+            // Content up to here is always LF-only (Storage_->ToString() never
+            // holds a '\r'), so this is always the last transform before write.
+            if (effectiveEnding != LineEnding::LF) {
+                content = ApplyLineEnding(content, effectiveEnding);
+            }
 
-        file.write(content.data(), static_cast<std::streamsize>(content.size()));
+            file.write(content.data(), static_cast<std::streamsize>(content.size()));
 
-        if (!file) {
-            file.close();
-            std::filesystem::remove(tempPath);
-            throw std::runtime_error("ned: error writing file: " + tempPath.string());
+            if (!file) {
+                file.close();
+                std::filesystem::remove(tempPath);
+                throw std::runtime_error("ned: error writing file: " + tempPath.string());
+            }
         }
     } // closed here, so its contents are flushed before the rename below
 
@@ -274,7 +523,7 @@ void Buffer::SaveToFile(const std::filesystem::path& path, bool ensureFinalNewli
 
     Path_          = path;
     LineEnding_    = effectiveEnding;
-    SavedSnapshot_ = Rope_;
+    SavedSnapshot_ = Storage_->Clone();
     UnsavedChangeRanges_.clear();
     ++UnsavedChangeGeneration_;
     CaptureDiskTimestamp();
@@ -311,24 +560,36 @@ void Buffer::SetPath(std::filesystem::path path) {
     Path_ = std::move(path);
 }
 
-const Rope& Buffer::Content() const {
-    return Rope_;
+const ITextStorage& Buffer::Content() const {
+    return *Storage_;
 }
 
 std::string Buffer::Text() const {
-    return Rope_.ToString();
+    return Storage_->ToString();
 }
 
 std::size_t Buffer::Size() const {
-    return Rope_.ByteLength();
+    return Storage_->ByteLength();
 }
 
 bool Buffer::ReadOnly() const {
     return ReadOnly_ || Loading_;
 }
 
-void Buffer::SetReadOnly(bool readOnly) {
-    ReadOnly_ = readOnly;
+void Buffer::SetReadOnly(bool readOnly, std::optional<std::string> reason) {
+    ReadOnly_       = readOnly;
+    ReadOnlyReason_ = std::move(reason);
+}
+
+const std::optional<std::string>& Buffer::ReadOnlyReason() const {
+    return ReadOnlyReason_;
+}
+
+std::string Buffer::ReadOnlyErrorMessage() const {
+    if (ReadOnlyReason_) {
+        return "Buffer is read-only: " + *ReadOnlyReason_;
+    }
+    return "Buffer is read-only.";
 }
 
 bool Buffer::IsLoading() const {
@@ -348,14 +609,14 @@ const LoadProgress* Buffer::CurrentLoadProgress() const {
 }
 
 void Buffer::ReplaceContentForLoad(Rope content) {
-    Rope_ = std::move(content);
+    Storage_ = std::make_unique<RopeStorage>(std::move(content));
     ++ContentGeneration_;
 }
 
 void Buffer::FinishLoad(Rope content, std::optional<LineEnding> detectedEnding) {
-    Rope_          = std::move(content);
-    UndoTree_      = UndoTree(Rope_);
-    SavedSnapshot_ = Rope_;
+    Storage_       = std::make_unique<RopeStorage>(std::move(content));
+    UndoTree_      = UndoTree(Storage_->Clone());
+    SavedSnapshot_ = Storage_->Clone();
     if (detectedEnding) {
         LineEnding_ = *detectedEnding;
     }
@@ -403,8 +664,8 @@ void Buffer::Revert() {
     }
     Buffer fresh = FromFile(*Path_); // throws on any read failure, leaving this buffer untouched
 
-    Rope_  = std::move(fresh.Rope_);
-    Point_ = SnapToGraphemeBoundary(Rope_, std::min(Point_, Rope_.ByteLength()));
+    Storage_ = std::move(fresh.Storage_);
+    Point_   = SnapToGraphemeBoundary(*Storage_, std::min(Point_, Storage_->ByteLength()));
     Mark_.reset();
     SecondaryCursors_.clear();
     AddedCursorOrder_.clear();
@@ -417,7 +678,7 @@ void Buffer::Revert() {
     ++ContentGeneration_;
 
     // The buffer now matches disk by definition.
-    SavedSnapshot_ = Rope_;
+    SavedSnapshot_ = Storage_->Clone();
     UnsavedChangeRanges_.clear();
     ++UnsavedChangeGeneration_;
     DiskTimestamp_ = fresh.DiskTimestamp_;
@@ -429,13 +690,13 @@ std::size_t Buffer::MergeExternalChanges() {
     }
     Buffer fresh = FromFile(*Path_); // throws on any read failure, leaving this buffer untouched
 
-    const std::string       base   = SavedSnapshot_.ToString();
-    const std::string       ours   = Rope_.ToString();
-    const std::string       theirs = fresh.Rope_.ToString();
+    const std::string       base   = SavedSnapshot_->ToString();
+    const std::string       ours   = Storage_->ToString();
+    const std::string       theirs = fresh.Storage_->ToString();
     const text::MergeResult result = text::ThreeWayMerge(base, ours, theirs);
 
-    Rope_  = Rope(result.mergedText);
-    Point_ = SnapToGraphemeBoundary(Rope_, std::min(result.firstConflictOffset.value_or(Point_), Rope_.ByteLength()));
+    Storage_ = std::make_unique<RopeStorage>(Rope(result.mergedText));
+    Point_ = SnapToGraphemeBoundary(*Storage_, std::min(result.firstConflictOffset.value_or(Point_), Storage_->ByteLength()));
     Mark_.reset();
     SecondaryCursors_.clear();
     AddedCursorOrder_.clear();
@@ -452,23 +713,23 @@ std::size_t Buffer::MergeExternalChanges() {
     // new baseline below (RestoreContent's own "can't precisely attribute
     // a wholesale content replacement" shape).
     UnsavedChangeRanges_.clear();
-    if (Rope_.ByteLength() > 0) {
-        MergeUnsavedRange(UnsavedChangeRanges_, 0, Rope_.ByteLength());
+    if (Storage_->ByteLength() > 0) {
+        MergeUnsavedRange(UnsavedChangeRanges_, 0, Storage_->ByteLength());
     }
     ++UnsavedChangeGeneration_;
 
     // The new "last synced with disk" baseline is the freshly read disk
     // content, NOT the merged result -- see this method's own doc comment
     // in Buffer.h for why.
-    SavedSnapshot_ = std::move(fresh.Rope_);
+    SavedSnapshot_ = std::move(fresh.Storage_);
     DiskTimestamp_ = fresh.DiskTimestamp_;
 
     return result.conflictCount;
 }
 
 void Buffer::RestoreContent(std::string_view content) {
-    Rope_  = Rope(content);
-    Point_ = SnapToGraphemeBoundary(Rope_, std::min(Point_, Rope_.ByteLength()));
+    Storage_ = std::make_unique<RopeStorage>(Rope(content));
+    Point_ = SnapToGraphemeBoundary(*Storage_, std::min(Point_, Storage_->ByteLength()));
     Mark_.reset();
     SecondaryCursors_.clear();
     AddedCursorOrder_.clear();
@@ -485,8 +746,8 @@ void Buffer::RestoreContent(std::string_view content) {
     // nonempty snapshot is already covered by Modified()'s own zero-length
     // fallback, so nothing is marked for it here).
     UnsavedChangeRanges_.clear();
-    if (Rope_.ByteLength() > 0) {
-        MergeUnsavedRange(UnsavedChangeRanges_, 0, Rope_.ByteLength());
+    if (Storage_->ByteLength() > 0) {
+        MergeUnsavedRange(UnsavedChangeRanges_, 0, Storage_->ByteLength());
     }
     ++UnsavedChangeGeneration_;
 }
@@ -502,7 +763,7 @@ bool Buffer::Modified() const {
     // back to). Checked directly against SavedSnapshot_'s length -- still
     // O(1), not a full content comparison -- rather than left
     // unrepresented.
-    return Rope_.ByteLength() == 0 && SavedSnapshot_.ByteLength() != 0;
+    return Storage_->ByteLength() == 0 && SavedSnapshot_->ByteLength() != 0;
 }
 
 std::size_t Buffer::ContentGeneration() const {
@@ -514,13 +775,13 @@ std::size_t Buffer::Point() const {
 }
 
 void Buffer::SetPoint(std::size_t byteOffset) {
-    Point_    = SnapToGraphemeBoundary(Rope_, byteOffset);
+    Point_    = SnapToGraphemeBoundary(*Storage_, byteOffset);
     CanAmend_ = false;
     GoalColumn_.reset();
 }
 
 void Buffer::SetMark(std::size_t byteOffset) {
-    Mark_ = SnapToGraphemeBoundary(Rope_, byteOffset);
+    Mark_ = SnapToGraphemeBoundary(*Storage_, byteOffset);
 }
 
 void Buffer::ClearMark() {
@@ -542,9 +803,9 @@ std::pair<std::size_t, std::size_t> Buffer::Region() const {
 
 void Buffer::AddCursorAt(std::size_t point, std::optional<std::size_t> mark) {
     Cursor cursor;
-    cursor.point = SnapToGraphemeBoundary(Rope_, std::min(point, Rope_.ByteLength()));
+    cursor.point = SnapToGraphemeBoundary(*Storage_, std::min(point, Storage_->ByteLength()));
     if (mark) {
-        cursor.mark = SnapToGraphemeBoundary(Rope_, std::min(*mark, Rope_.ByteLength()));
+        cursor.mark = SnapToGraphemeBoundary(*Storage_, std::min(*mark, Storage_->ByteLength()));
     }
 
     if (cursor.point == Point_) {
@@ -655,7 +916,7 @@ void Buffer::EndUndoGroup() {
         return; // unbalanced call -- tolerated rather than asserted
     }
     if (--UndoGroupDepth_ == 0 && UndoGroupDirty_) {
-        UndoTree_.Record(Rope_);
+        UndoTree_.Record(Storage_->Clone());
         CanAmend_       = false;
         UndoGroupDirty_ = false;
     }
@@ -667,10 +928,10 @@ void Buffer::RecordOrAmendUndo(bool canAmend) {
         return;
     }
     if (canAmend && CanAmend_) {
-        UndoTree_.Amend(Rope_);
+        UndoTree_.Amend(Storage_->Clone());
         return;
     }
-    UndoTree_.Record(Rope_);
+    UndoTree_.Record(Storage_->Clone());
     CanAmend_ = canAmend;
 }
 
@@ -713,16 +974,16 @@ void Buffer::NarrowToRegion(std::size_t start, std::size_t end) {
     if (start > end) {
         std::swap(start, end);
     }
-    start = std::min(start, Rope_.ByteLength());
-    end   = std::min(end, Rope_.ByteLength());
+    start = std::min(start, Storage_->ByteLength());
+    end   = std::min(end, Storage_->ByteLength());
 
-    const std::size_t totalLines   = Rope_.LineCount();
-    const std::size_t startLine    = Rope_.ByteOffsetToLine(start);
-    const std::size_t snappedStart = Rope_.LineToByteOffset(startLine);
+    const std::size_t totalLines   = Storage_->LineCount();
+    const std::size_t startLine    = Storage_->ByteOffsetToLine(start);
+    const std::size_t snappedStart = Storage_->LineToByteOffset(startLine);
 
-    const std::size_t endLine = Rope_.ByteOffsetToLine(end);
+    const std::size_t endLine = Storage_->ByteOffsetToLine(end);
     const std::size_t snappedEnd =
-        (endLine + 1 < totalLines) ? Rope_.LineToByteOffset(endLine + 1) : Rope_.ByteLength();
+        (endLine + 1 < totalLines) ? Storage_->LineToByteOffset(endLine + 1) : Storage_->ByteLength();
 
     NarrowedRange_ = std::pair{snappedStart, snappedEnd};
     // snappedEnd is exclusive (the excluded next line's own start byte, or
@@ -863,7 +1124,7 @@ void Buffer::MarkUnsavedRangeDeleted(std::size_t rangeStart, std::size_t rangeEn
     // anywhere to point a byte range at -- Modified() handles that one
     // remaining case separately, see its own doc comment.
     std::size_t markStart = rangeStart;
-    std::size_t markEnd   = std::min(rangeStart + 1, Rope_.ByteLength());
+    std::size_t markEnd   = std::min(rangeStart + 1, Storage_->ByteLength());
     if (markEnd <= markStart && markStart > 0) {
         markStart = markStart - 1;
         markEnd   = markStart + 1;
@@ -1020,7 +1281,7 @@ bool Buffer::CanDeleteExcerptRange(std::size_t rangeStart, std::size_t rangeEnd)
 
 void Buffer::InsertAtPoint(std::string_view text) {
     if (ReadOnly_ || Loading_) {
-        throw std::runtime_error("Buffer is read-only.");
+        throw std::runtime_error(ReadOnlyErrorMessage());
     }
     if (text.empty()) {
         return;
@@ -1035,7 +1296,7 @@ void Buffer::InsertAtPoint(std::string_view text) {
     }
 
     const std::size_t insertOffset = Point_;
-    Rope_                          = Rope_.Inserted(insertOffset, text);
+    Storage_                       = Storage_->Inserted(insertOffset, text);
     Point_                         = RelocateForInsert(Point_, insertOffset, text.size());
 
     if (Mark_) {
@@ -1059,18 +1320,18 @@ void Buffer::InsertAtPoint(std::string_view text) {
 
 void Buffer::DeleteBackwardAtPoint() {
     if (ReadOnly_ || Loading_) {
-        throw std::runtime_error("Buffer is read-only.");
+        throw std::runtime_error(ReadOnlyErrorMessage());
     }
     if (Point_ == 0) {
         return;
     }
 
-    const std::size_t start = PreviousGraphemeBoundary(Rope_, Point_);
+    const std::size_t start = PreviousGraphemeBoundary(*Storage_, Point_);
     const std::size_t end   = Point_;
     if (!CanDeleteExcerptRange(start, end)) { // see InsertAtPoint's own comment on this posture
         return;
     }
-    Rope_ = Rope_.Erased(start, end - start);
+    Storage_ = Storage_->Erased(start, end - start);
 
     Point_ = RelocateForDelete(Point_, start, end);
     if (Mark_) {
@@ -1097,18 +1358,18 @@ void Buffer::DeleteBackwardAtPoint() {
 
 void Buffer::DeleteForwardAtPoint() {
     if (ReadOnly_ || Loading_) {
-        throw std::runtime_error("Buffer is read-only.");
+        throw std::runtime_error(ReadOnlyErrorMessage());
     }
-    if (Point_ >= Rope_.ByteLength()) {
+    if (Point_ >= Storage_->ByteLength()) {
         return;
     }
 
     const std::size_t start = Point_;
-    const std::size_t end   = NextGraphemeBoundary(Rope_, Point_);
+    const std::size_t end   = NextGraphemeBoundary(*Storage_, Point_);
     if (!CanDeleteExcerptRange(start, end)) { // see InsertAtPoint's own comment on this posture
         return;
     }
-    Rope_ = Rope_.Erased(start, end - start);
+    Storage_ = Storage_->Erased(start, end - start);
 
     Point_ = RelocateForDelete(Point_, start, end);
     if (Mark_) {
@@ -1135,10 +1396,10 @@ void Buffer::DeleteForwardAtPoint() {
 
 std::string Buffer::DeleteRange(std::size_t byteOffset, std::size_t byteLength) {
     if (ReadOnly_ || Loading_) {
-        throw std::runtime_error("Buffer is read-only.");
+        throw std::runtime_error(ReadOnlyErrorMessage());
     }
-    byteOffset = std::min(byteOffset, Rope_.ByteLength());
-    byteLength = std::min(byteLength, Rope_.ByteLength() - byteOffset);
+    byteOffset = std::min(byteOffset, Storage_->ByteLength());
+    byteLength = std::min(byteLength, Storage_->ByteLength() - byteOffset);
 
     if (byteLength == 0) {
         return {};
@@ -1148,8 +1409,8 @@ std::string Buffer::DeleteRange(std::size_t byteOffset, std::size_t byteLength) 
     if (!CanDeleteExcerptRange(byteOffset, rangeEnd)) { // see InsertAtPoint's own comment on this posture
         return {};
     }
-    std::string deleted = Rope_.Substring(byteOffset, byteLength);
-    Rope_                = Rope_.Erased(byteOffset, byteLength);
+    std::string deleted = Storage_->Substring(byteOffset, byteLength);
+    Storage_             = Storage_->Erased(byteOffset, byteLength);
 
     Point_ = RelocateForDelete(Point_, byteOffset, rangeEnd);
     if (Mark_) {
@@ -1182,7 +1443,7 @@ std::string Buffer::DeleteRange(std::size_t byteOffset, std::size_t byteLength) 
 
 void Buffer::InsertAt(std::size_t byteOffset, std::string_view text) {
     if (ReadOnly_ || Loading_) {
-        throw std::runtime_error("Buffer is read-only.");
+        throw std::runtime_error(ReadOnlyErrorMessage());
     }
     InsertAtImpl(byteOffset, text);
 }
@@ -1191,11 +1452,11 @@ void Buffer::AppendWhileReadOnly(std::string_view text) {
     if (!ReadOnly_) {
         throw std::logic_error("AppendWhileReadOnly called on a writable buffer.");
     }
-    InsertAtImpl(Rope_.ByteLength(), text);
+    InsertAtImpl(Storage_->ByteLength(), text);
 }
 
 void Buffer::InsertAtImpl(std::size_t byteOffset, std::string_view text) {
-    byteOffset = std::min(byteOffset, Rope_.ByteLength());
+    byteOffset = std::min(byteOffset, Storage_->ByteLength());
 
     if (text.empty()) {
         return;
@@ -1204,7 +1465,7 @@ void Buffer::InsertAtImpl(std::size_t byteOffset, std::string_view text) {
         return;
     }
 
-    Rope_ = Rope_.Inserted(byteOffset, text);
+    Storage_ = Storage_->Inserted(byteOffset, text);
 
     Point_ = RelocateForInsert(Point_, byteOffset, text.size());
     if (Mark_) {
@@ -1227,29 +1488,29 @@ void Buffer::InsertAtImpl(std::size_t byteOffset, std::string_view text) {
 }
 
 void Buffer::MoveForward() {
-    Point_    = NextGraphemeBoundary(Rope_, Point_);
+    Point_    = NextGraphemeBoundary(*Storage_, Point_);
     CanAmend_ = false;
     GoalColumn_.reset();
 }
 
 void Buffer::MoveBackward() {
-    Point_    = PreviousGraphemeBoundary(Rope_, Point_);
+    Point_    = PreviousGraphemeBoundary(*Storage_, Point_);
     CanAmend_ = false;
     GoalColumn_.reset();
 }
 
 void Buffer::MoveForwardWord() {
-    const std::size_t total  = Rope_.ByteLength();
+    const std::size_t total  = Storage_->ByteLength();
     std::size_t       offset = Point_;
 
-    while (offset < total && !IsWordCodepoint(Rope_.CodepointAt(offset).codepoint)) {
-        offset = Rope_.NextCodepointBoundary(offset);
+    while (offset < total && !IsWordCodepoint(Storage_->CodepointAt(offset).codepoint)) {
+        offset = Storage_->NextCodepointBoundary(offset);
     }
-    while (offset < total && IsWordCodepoint(Rope_.CodepointAt(offset).codepoint)) {
-        offset = Rope_.NextCodepointBoundary(offset);
+    while (offset < total && IsWordCodepoint(Storage_->CodepointAt(offset).codepoint)) {
+        offset = Storage_->NextCodepointBoundary(offset);
     }
 
-    Point_    = SnapToGraphemeBoundary(Rope_, offset);
+    Point_    = SnapToGraphemeBoundary(*Storage_, offset);
     CanAmend_ = false;
     GoalColumn_.reset();
 }
@@ -1258,40 +1519,40 @@ void Buffer::MoveBackwardWord() {
     std::size_t offset = Point_;
 
     while (offset > 0) {
-        const std::size_t previous = Rope_.PreviousCodepointBoundary(offset);
-        if (IsWordCodepoint(Rope_.CodepointAt(previous).codepoint)) {
+        const std::size_t previous = Storage_->PreviousCodepointBoundary(offset);
+        if (IsWordCodepoint(Storage_->CodepointAt(previous).codepoint)) {
             break;
         }
         offset = previous;
     }
     while (offset > 0) {
-        const std::size_t previous = Rope_.PreviousCodepointBoundary(offset);
-        if (!IsWordCodepoint(Rope_.CodepointAt(previous).codepoint)) {
+        const std::size_t previous = Storage_->PreviousCodepointBoundary(offset);
+        if (!IsWordCodepoint(Storage_->CodepointAt(previous).codepoint)) {
             break;
         }
         offset = previous;
     }
 
-    Point_    = SnapToGraphemeBoundary(Rope_, offset);
+    Point_    = SnapToGraphemeBoundary(*Storage_, offset);
     CanAmend_ = false;
     GoalColumn_.reset();
 }
 
 void Buffer::MoveForwardSentence() {
-    const std::size_t total  = Rope_.ByteLength();
+    const std::size_t total  = Storage_->ByteLength();
     std::size_t       offset = Point_;
 
-    while (offset < total && !IsSentenceEndCodepoint(Rope_.CodepointAt(offset).codepoint)) {
-        offset = Rope_.NextCodepointBoundary(offset);
+    while (offset < total && !IsSentenceEndCodepoint(Storage_->CodepointAt(offset).codepoint)) {
+        offset = Storage_->NextCodepointBoundary(offset);
     }
     if (offset < total) {
-        offset = Rope_.NextCodepointBoundary(offset); // past the sentence-ending punctuation itself
-        while (offset < total && IsSpaceOrNewlineCodepoint(Rope_.CodepointAt(offset).codepoint)) {
-            offset = Rope_.NextCodepointBoundary(offset);
+        offset = Storage_->NextCodepointBoundary(offset); // past the sentence-ending punctuation itself
+        while (offset < total && IsSpaceOrNewlineCodepoint(Storage_->CodepointAt(offset).codepoint)) {
+            offset = Storage_->NextCodepointBoundary(offset);
         }
     }
 
-    Point_    = SnapToGraphemeBoundary(Rope_, offset);
+    Point_    = SnapToGraphemeBoundary(*Storage_, offset);
     CanAmend_ = false;
     GoalColumn_.reset();
 }
@@ -1303,8 +1564,8 @@ void Buffer::MoveBackwardSentence() {
     // own post-punctuation whitespace skip, so this can land right back
     // where a preceding MoveForwardSentence call would have stopped.
     while (offset > 0) {
-        const std::size_t previous = Rope_.PreviousCodepointBoundary(offset);
-        if (!IsSpaceOrNewlineCodepoint(Rope_.CodepointAt(previous).codepoint)) {
+        const std::size_t previous = Storage_->PreviousCodepointBoundary(offset);
+        if (!IsSpaceOrNewlineCodepoint(Storage_->CodepointAt(previous).codepoint)) {
             break;
         }
         offset = previous;
@@ -1313,14 +1574,14 @@ void Buffer::MoveBackwardSentence() {
     // after the whitespace skip above): hop back over it too, or the scan
     // below would immediately re-find that same mark and refuse to move.
     if (offset > 0) {
-        const std::size_t previous = Rope_.PreviousCodepointBoundary(offset);
-        if (IsSentenceEndCodepoint(Rope_.CodepointAt(previous).codepoint)) {
+        const std::size_t previous = Storage_->PreviousCodepointBoundary(offset);
+        if (IsSentenceEndCodepoint(Storage_->CodepointAt(previous).codepoint)) {
             offset = previous;
         }
     }
     while (offset > 0) {
-        const std::size_t previous = Rope_.PreviousCodepointBoundary(offset);
-        if (IsSentenceEndCodepoint(Rope_.CodepointAt(previous).codepoint)) {
+        const std::size_t previous = Storage_->PreviousCodepointBoundary(offset);
+        if (IsSentenceEndCodepoint(Storage_->CodepointAt(previous).codepoint)) {
             break;
         }
         offset = previous;
@@ -1328,28 +1589,28 @@ void Buffer::MoveBackwardSentence() {
     // offset now sits right after the previous sentence's own end mark (or
     // 0) -- skip forward over whitespace to land on the first real
     // character, matching MoveForwardSentence's own landing spot.
-    while (offset < Rope_.ByteLength() && IsSpaceOrNewlineCodepoint(Rope_.CodepointAt(offset).codepoint)) {
-        offset = Rope_.NextCodepointBoundary(offset);
+    while (offset < Storage_->ByteLength() && IsSpaceOrNewlineCodepoint(Storage_->CodepointAt(offset).codepoint)) {
+        offset = Storage_->NextCodepointBoundary(offset);
     }
 
-    Point_    = SnapToGraphemeBoundary(Rope_, offset);
+    Point_    = SnapToGraphemeBoundary(*Storage_, offset);
     CanAmend_ = false;
     GoalColumn_.reset();
 }
 
 std::size_t Buffer::ByteOffsetForLineAndColumn(std::size_t line, std::size_t column, std::size_t tabWidth) const {
-    const std::size_t totalLines = Rope_.LineCount();
+    const std::size_t totalLines = Storage_->LineCount();
     line                         = std::min(line, totalLines - 1);
 
-    const std::size_t lineStart = Rope_.LineToByteOffset(line);
-    const std::size_t lineEnd   = (line + 1 < totalLines) ? Rope_.LineToByteOffset(line + 1) - 1 : Rope_.ByteLength();
+    const std::size_t lineStart = Storage_->LineToByteOffset(line);
+    const std::size_t lineEnd   = (line + 1 < totalLines) ? Storage_->LineToByteOffset(line + 1) - 1 : Storage_->ByteLength();
 
     if (tabWidth <= 1) {
-        const std::size_t lineStartCodepoint = Rope_.ByteOffsetToCodepointOffset(lineStart);
-        const std::size_t lineLength         = Rope_.ByteOffsetToCodepointOffset(lineEnd) - lineStartCodepoint;
+        const std::size_t lineStartCodepoint = Storage_->ByteOffsetToCodepointOffset(lineStart);
+        const std::size_t lineLength         = Storage_->ByteOffsetToCodepointOffset(lineEnd) - lineStartCodepoint;
 
         const std::size_t landingCodepoint = lineStartCodepoint + std::min(column, lineLength);
-        return Rope_.CodepointOffsetToByteOffset(landingCodepoint);
+        return Storage_->CodepointOffsetToByteOffset(landingCodepoint);
     }
 
     // In the common case this is bounded by `column` itself -- the walk
@@ -1366,12 +1627,12 @@ std::size_t Buffer::ByteOffsetForLineAndColumn(std::size_t line, std::size_t col
     while (offset < lineEnd && visualColumn < column) {
         if (steps >= kMaxTabAwareColumnScan) {
             const std::size_t remainingColumns = column - visualColumn;
-            const std::size_t lineEndCodepoint = Rope_.ByteOffsetToCodepointOffset(lineEnd);
-            const std::size_t landingCodepoint = std::min(Rope_.ByteOffsetToCodepointOffset(offset) + remainingColumns,
+            const std::size_t lineEndCodepoint = Storage_->ByteOffsetToCodepointOffset(lineEnd);
+            const std::size_t landingCodepoint = std::min(Storage_->ByteOffsetToCodepointOffset(offset) + remainingColumns,
                                                           lineEndCodepoint);
-            return Rope_.CodepointOffsetToByteOffset(landingCodepoint);
+            return Storage_->CodepointOffsetToByteOffset(landingCodepoint);
         }
-        const auto decoded = Rope_.CodepointAt(offset);
+        const auto decoded = Storage_->CodepointAt(offset);
         visualColumn += (decoded.codepoint == U'\t') ? tabWidth : 1;
         offset += decoded.byteLength;
         ++steps;
@@ -1382,7 +1643,7 @@ std::size_t Buffer::ByteOffsetForLineAndColumn(std::size_t line, std::size_t col
 std::size_t Buffer::VisualColumnForByteOffset(std::size_t lineStart, std::size_t byteOffset,
                                               std::size_t tabWidth) const {
     if (tabWidth <= 1) {
-        return Rope_.ByteOffsetToCodepointOffset(byteOffset) - Rope_.ByteOffsetToCodepointOffset(lineStart);
+        return Storage_->ByteOffsetToCodepointOffset(byteOffset) - Storage_->ByteOffsetToCodepointOffset(lineStart);
     }
 
     std::size_t offset = lineStart;
@@ -1392,9 +1653,9 @@ std::size_t Buffer::VisualColumnForByteOffset(std::size_t lineStart, std::size_t
         if (steps >= kMaxTabAwareColumnScan) {
             // Bail out to a plain codepoint-distance approximation for the
             // remainder -- see kMaxTabAwareColumnScan's own comment.
-            return column + (Rope_.ByteOffsetToCodepointOffset(byteOffset) - Rope_.ByteOffsetToCodepointOffset(offset));
+            return column + (Storage_->ByteOffsetToCodepointOffset(byteOffset) - Storage_->ByteOffsetToCodepointOffset(offset));
         }
-        const auto decoded = Rope_.CodepointAt(offset);
+        const auto decoded = Storage_->CodepointAt(offset);
         column += (decoded.codepoint == U'\t') ? tabWidth : 1;
         offset += decoded.byteLength;
         ++steps;
@@ -1403,19 +1664,19 @@ std::size_t Buffer::VisualColumnForByteOffset(std::size_t lineStart, std::size_t
 }
 
 void Buffer::MoveToLine(std::size_t targetLine, std::size_t tabWidth) {
-    const std::size_t currentLineStart = Rope_.LineToByteOffset(Rope_.ByteOffsetToLine(Point_));
+    const std::size_t currentLineStart = Storage_->LineToByteOffset(Storage_->ByteOffsetToLine(Point_));
     const std::size_t desiredColumn    = GoalColumn_.value_or(VisualColumnForByteOffset(currentLineStart, Point_, tabWidth));
 
     const std::size_t landingByte = ByteOffsetForLineAndColumn(targetLine, desiredColumn, tabWidth);
 
-    Point_      = SnapToGraphemeBoundary(Rope_, landingByte);
+    Point_      = SnapToGraphemeBoundary(*Storage_, landingByte);
     GoalColumn_ = desiredColumn; // the un-clamped goal, not necessarily where we landed
     CanAmend_   = false;
 }
 
 void Buffer::MoveDownLines(std::size_t count, std::size_t tabWidth) {
-    const std::size_t currentLine = Rope_.ByteOffsetToLine(Point_);
-    const std::size_t lastLine    = Rope_.LineCount() - 1;
+    const std::size_t currentLine = Storage_->ByteOffsetToLine(Point_);
+    const std::size_t lastLine    = Storage_->LineCount() - 1;
     if (currentLine == lastLine) {
         return; // already on the last line -- true no-op, regardless of any stale goal column
     }
@@ -1426,7 +1687,7 @@ void Buffer::MoveDownLines(std::size_t count, std::size_t tabWidth) {
 }
 
 void Buffer::MoveUpLines(std::size_t count, std::size_t tabWidth) {
-    const std::size_t currentLine = Rope_.ByteOffsetToLine(Point_);
+    const std::size_t currentLine = Storage_->ByteOffsetToLine(Point_);
     if (currentLine == 0) {
         return; // already on the first line -- true no-op
     }
@@ -1450,9 +1711,9 @@ bool Buffer::CanRedo() const {
 }
 
 void Buffer::ClampCursorsToContent() {
-    Point_ = SnapToGraphemeBoundary(Rope_, std::min(Point_, Rope_.ByteLength()));
+    Point_ = SnapToGraphemeBoundary(*Storage_, std::min(Point_, Storage_->ByteLength()));
     if (Mark_) {
-        Mark_ = SnapToGraphemeBoundary(Rope_, std::min(*Mark_, Rope_.ByteLength()));
+        Mark_ = SnapToGraphemeBoundary(*Storage_, std::min(*Mark_, Storage_->ByteLength()));
     }
     if (NarrowedRange_) {
         // Undo/redo can swap in content of a completely different length --
@@ -1461,8 +1722,8 @@ void Buffer::ClampCursorsToContent() {
         // before end), the same rule DeleteRange's own narrowing-tracking
         // uses.
         auto& [narrowStart, narrowEnd] = *NarrowedRange_;
-        narrowStart                    = std::min(narrowStart, Rope_.ByteLength());
-        narrowEnd                      = std::min(narrowEnd, Rope_.ByteLength());
+        narrowStart                    = std::min(narrowStart, Storage_->ByteLength());
+        narrowEnd                      = std::min(narrowEnd, Storage_->ByteLength());
         if (narrowStart >= narrowEnd) {
             NarrowedRange_.reset();
         }
@@ -1473,7 +1734,7 @@ void Buffer::ClampCursorsToContent() {
     // collide arbitrarily with whatever's left), so a marker past the new
     // end is simply dropped rather than clamped.
     if (!FoldMarkers_.empty()) {
-        const std::size_t length = Rope_.ByteLength();
+        const std::size_t length = Storage_->ByteLength();
         std::erase_if(FoldMarkers_, [length](const auto& entry) { return entry.first > length; });
     }
     // Snippet ranges are all-or-nothing: a set with any endpoint past the
@@ -1483,7 +1744,7 @@ void Buffer::ClampCursorsToContent() {
     // treat that as its end-of-session cue. Belt-and-suspenders: the only
     // real path here (Undo/Redo) already cleared them outright.
     if (!SnippetRanges_.empty()) {
-        const std::size_t length     = Rope_.ByteLength();
+        const std::size_t length     = Storage_->ByteLength();
         const bool        anyPastEnd = std::any_of(SnippetRanges_.begin(), SnippetRanges_.end(),
                                                    [length](const SnippetRange& range) { return range.end > length; });
         if (anyPastEnd) {
@@ -1496,9 +1757,9 @@ void Buffer::Undo() {
     if (!UndoTree_.CanUndo()) {
         return;
     }
-    const std::string oldText = Rope_.ToString();
+    const std::string oldText = Storage_->ToString();
     UndoTree_.Undo();
-    Rope_ = UndoTree_.Current();
+    Storage_ = UndoTree_.Current().Clone();
     ClearSecondaryCursors(); // v1 decision -- see AddCursorAt's doc comment
     ClearSnippetRanges();    // same v1 decision -- see SnippetRange's doc comment
     ClampCursorsToContent();
@@ -1513,9 +1774,9 @@ void Buffer::Redo() {
     if (!UndoTree_.CanRedo()) {
         return;
     }
-    const std::string oldText = Rope_.ToString();
+    const std::string oldText = Storage_->ToString();
     UndoTree_.Redo();
-    Rope_ = UndoTree_.Current();
+    Storage_ = UndoTree_.Current().Clone();
     ClearSecondaryCursors(); // v1 decision -- see AddCursorAt's doc comment
     ClearSnippetRanges();    // same v1 decision -- see SnippetRange's doc comment
     ClampCursorsToContent();
@@ -1536,7 +1797,7 @@ std::size_t Buffer::CurrentUndoNodeId() const {
 
 void Buffer::RestoreUndoTree(std::vector<UndoTree::SerializedNode> nodes, std::size_t currentId) {
     UndoTree restored = UndoTree::Deserialize(nodes, currentId);
-    if (restored.Current().ToString() != Rope_.ToString()) {
+    if (restored.Current().ToString() != Storage_->ToString()) {
         throw std::runtime_error("Buffer::RestoreUndoTree: restored tree's current content doesn't match buffer content");
     }
     UndoTree_ = std::move(restored);
@@ -1544,7 +1805,7 @@ void Buffer::RestoreUndoTree(std::vector<UndoTree::SerializedNode> nodes, std::s
 }
 
 void Buffer::UpdateUnsavedRangesForRestore(const std::string& oldText) {
-    const std::string newText = Rope_.ToString();
+    const std::string newText = Storage_->ToString();
 
     // Landed back on exactly the last-saved content, regardless of the
     // path taken to get there (this Undo()/Redo() step, or several
@@ -1556,7 +1817,7 @@ void Buffer::UpdateUnsavedRangesForRestore(const std::string& oldText) {
     // marker at the edit site even once content matched disk again --
     // correct in isolation, misleading in practice (still showed as an
     // unsaved change after undoing the exact edit that caused it).
-    if (newText == SavedSnapshot_.ToString()) {
+    if (newText == SavedSnapshot_->ToString()) {
         if (!UnsavedChangeRanges_.empty()) {
             UnsavedChangeRanges_.clear();
             ++UnsavedChangeGeneration_;
@@ -1594,7 +1855,7 @@ void Buffer::UpdateUnsavedRangesForRestore(const std::string& oldText) {
 }
 
 void Buffer::UpdateExcerptRangesForRestore(const std::string& oldText) {
-    // The empty check isn't just a fast path -- Rope_.ToString() below is a
+    // The empty check isn't just a fast path -- Storage_->ToString() below is a
     // second full-content stringify on top of UpdateUnsavedRangesForRestore's
     // own (that one can't be reused directly: it early-returns whenever the
     // restored content matches SavedSnapshot_, a check with no ExcerptRanges_
@@ -1603,7 +1864,7 @@ void Buffer::UpdateExcerptRangesForRestore(const std::string& oldText) {
     if (ExcerptRanges_.empty()) {
         return;
     }
-    const std::string newText = Rope_.ToString();
+    const std::string newText = Storage_->ToString();
     // Same delete-half-then-insert-half composition UpdateUnsavedRangesForRestore
     // uses, over the same ChangedByteRange diff, onto
     // RelocateExcerptRangesForDelete/Insert instead of

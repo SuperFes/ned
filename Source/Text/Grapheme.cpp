@@ -2,13 +2,13 @@
 
 #include <utf8proc.h>
 
-#include "Rope.h"
+#include "ITextStorage.h"
 
 namespace ned::text {
 
 namespace {
 
-std::size_t BackNCodepoints(const Rope& rope, std::size_t byteOffset, std::size_t n) {
+std::size_t BackNCodepoints(const ITextStorage& rope, std::size_t byteOffset, std::size_t n) {
     std::size_t offset = byteOffset;
     for (std::size_t i = 0; i < n && offset > 0; ++i) {
         offset = rope.PreviousCodepointBoundary(offset);
@@ -18,7 +18,7 @@ std::size_t BackNCodepoints(const Rope& rope, std::size_t byteOffset, std::size_
 
 } // namespace
 
-std::size_t NextGraphemeBoundary(const Rope& rope, std::size_t byteOffset) {
+std::size_t NextGraphemeBoundary(const ITextStorage& rope, std::size_t byteOffset) {
     const std::size_t total = rope.ByteLength();
     if (byteOffset >= total) {
         return total;
@@ -44,7 +44,7 @@ std::size_t NextGraphemeBoundary(const Rope& rope, std::size_t byteOffset) {
     return total;
 }
 
-std::size_t PreviousGraphemeBoundary(const Rope& rope, std::size_t byteOffset) {
+std::size_t PreviousGraphemeBoundary(const ITextStorage& rope, std::size_t byteOffset) {
     if (byteOffset == 0) {
         return 0;
     }
@@ -93,7 +93,7 @@ std::size_t PreviousGraphemeBoundary(const Rope& rope, std::size_t byteOffset) {
     return BackNCodepoints(rope, byteOffset, lookback);
 }
 
-std::size_t SnapToGraphemeBoundary(const Rope& rope, std::size_t byteOffset) {
+std::size_t SnapToGraphemeBoundary(const ITextStorage& rope, std::size_t byteOffset) {
     const std::size_t total = rope.ByteLength();
     byteOffset              = byteOffset > total ? total : byteOffset;
 

@@ -170,6 +170,36 @@ class BufferList {
 void                         SetAsyncLoadThreshold(std::uintmax_t bytes);
 [[nodiscard]] std::uintmax_t AsyncLoadThreshold();
 
+// huge-file-editing follow-up: the file-size threshold (bytes) above which
+// OpenFile opens a file via Buffer::FromHugeFile (a PieceTableStorage,
+// Text/PieceTable.h -- never fully reads the file into memory) instead of
+// the async loader above. Checked *before* AsyncLoadThreshold() in OpenFile
+// -- a file clearing both thresholds always takes this path, since the
+// async loader still fully materializes a Rope by the time it finishes,
+// exactly what this path exists to avoid. Default 1 GiB, mutex-guarded,
+// configured from Janet via ned/set-huge-file-threshold -- same shape as
+// AsyncLoadThreshold() in every respect.
+void                         SetHugeFileThreshold(std::uintmax_t bytes);
+[[nodiscard]] std::uintmax_t HugeFileThreshold();
+
+// disk-space-safety follow-up: the safety margin Buffer::FromHugeFile/
+// SaveToFile require before treating a huge buffer as safe to edit/save --
+// available free space on the file's filesystem must be at least this many
+// times the content's byte length (see Text/DiskSpace.h). Default 2.0;
+// non-positive values clamp to 0.0 (every save "insufficient" -- a
+// deliberate way to force the check to always fail, not a footgun, since
+// HugeFileDiskSpaceCheckEnabled() below is the real off-switch). Configured
+// from Janet via ned/set-huge-file-min-free-space-multiplier.
+void                    SetHugeFileMinFreeSpaceMultiplier(double multiplier);
+[[nodiscard]] double    HugeFileMinFreeSpaceMultiplier();
+
+// Escape hatch: when false, Buffer::FromHugeFile never downgrades to
+// read-only for disk space and Buffer::SaveToFile never refuses a huge
+// save on this basis -- the check simply doesn't run. Default true.
+// Configured from Janet via ned/set-huge-file-disk-space-check-enabled.
+void                    SetHugeFileDiskSpaceCheckEnabled(bool enabled);
+[[nodiscard]] bool      HugeFileDiskSpaceCheckEnabled();
+
 // Tab-completion candidates for find-file's prompt: directory entries under
 // the last '/'-separated path component of prefix, sorted, with a trailing
 // '/' appended to directory candidates (Emacs-style, so completing into a

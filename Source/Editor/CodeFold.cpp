@@ -13,7 +13,7 @@ std::vector<std::pair<std::size_t, std::size_t>> FoldableBlocks(const Mode& mode
 }
 
 std::vector<std::pair<std::size_t, std::size_t>>
-FoldedLineRanges(const text::Buffer& buffer, const text::Rope& content,
+FoldedLineRanges(const text::Buffer& buffer, const text::ITextStorage& content,
                  const std::vector<std::pair<std::size_t, std::size_t>>& blocks) {
     std::vector<std::pair<std::size_t, std::size_t>> ranges;
     if (buffer.FoldMarkers().empty() || blocks.empty()) {
@@ -37,7 +37,7 @@ FoldedLineRanges(const text::Buffer& buffer, const text::Rope& content,
     return ranges;
 }
 
-bool ToggleFoldAtLine(text::Buffer& buffer, const text::Rope& content,
+bool ToggleFoldAtLine(text::Buffer& buffer, const text::ITextStorage& content,
                       const std::vector<std::pair<std::size_t, std::size_t>>& blocks, std::size_t line) {
     const std::pair<std::size_t, std::size_t>* best = nullptr;
     for (const auto& block : blocks) {

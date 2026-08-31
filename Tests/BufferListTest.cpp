@@ -10,7 +10,9 @@ using ned::text::Buffer;
 using ned::text::BufferList;
 using ned::text::CompleteBufferNames;
 using ned::text::CompleteFilePath;
+using ned::text::HugeFileThreshold;
 using ned::text::SetAsyncLoadThreshold;
+using ned::text::SetHugeFileThreshold;
 
 TEST_CASE("Fresh BufferList is empty", "[BufferList]") {
     BufferList list;
@@ -402,6 +404,82 @@ TEST_CASE("SetAsyncLoadThreshold governs which files go to the async opener", "[
     REQUIRE_FALSE(small.IsLoading());
 
     std::filesystem::remove(smallPath);
+}
+
+TEST_CASE("OpenFile routes a file over HugeFileThreshold through Buffer::FromHugeFile, ahead of the async opener",
+          "[BufferList][HugeFile]") {
+    struct ThresholdGuard {
+        ~ThresholdGuard() {
+            SetHugeFileThreshold(1024ull * 1024 * 1024);
+        }
+    } guard;
+
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_bufferlist_huge.txt";
+    {
+        std::ofstream file(path, std::ios::binary);
+        file << "small file, but over a tiny huge-file threshold\n";
+    }
+
+    BufferList  list;
+    std::size_t asyncHookCalls = 0;
+    list.SetAsyncFileOpener([&](Buffer&, const std::filesystem::path&) { ++asyncHookCalls; });
+
+    REQUIRE(HugeFileThreshold() == 1024ull * 1024 * 1024);
+    SetHugeFileThreshold(4); // well under this file's real size
+
+    Buffer& buffer = list.OpenFile(path);
+
+    REQUIRE(asyncHookCalls == 0); // the huge-file branch wins, never even reaches the async check
+    REQUIRE_FALSE(buffer.IsLoading()); // no placeholder/background-fill state -- already fully open
+    REQUIRE(buffer.Content().IsHuge());
+    REQUIRE(buffer.Text() == "small file, but over a tiny huge-file threshold\n");
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("OpenFile stays on the normal/async path under HugeFileThreshold", "[BufferList][HugeFile]") {
+    struct ThresholdGuard {
+        ~ThresholdGuard() {
+            SetHugeFileThreshold(1024ull * 1024 * 1024);
+        }
+    } guard;
+
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_bufferlist_not_huge.txt";
+    {
+        std::ofstream file(path, std::ios::binary);
+        file << "ordinary file\n";
+    }
+
+    BufferList list; // default threshold, 1 GiB -- this file is nowhere near it
+    Buffer&    buffer = list.OpenFile(path);
+
+    REQUIRE_FALSE(buffer.Content().IsHuge());
+    REQUIRE(buffer.Text() == "ordinary file\n");
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("OpenFile still refuses a binary file even when it clears HugeFileThreshold", "[BufferList][HugeFile]") {
+    struct ThresholdGuard {
+        ~ThresholdGuard() {
+            SetHugeFileThreshold(1024ull * 1024 * 1024);
+        }
+    } guard;
+
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_bufferlist_huge_binary.bin";
+    {
+        std::ofstream file(path, std::ios::binary);
+        file.put('a');
+        file.put('\0');
+        file.put('b');
+    }
+
+    BufferList list;
+    SetHugeFileThreshold(1);
+
+    REQUIRE_THROWS_AS(list.OpenFile(path), std::runtime_error);
+
+    std::filesystem::remove(path);
 }
 
 TEST_CASE("OpenFile returns the already-open buffer for a path instead of a duplicate", "[BufferList]") {

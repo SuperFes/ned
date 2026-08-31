@@ -25,6 +25,7 @@
 #include <utility>
 #include <vector>
 
+#include "ITextStorage.h"
 #include "LineEnding.h"
 #include "Rope.h"
 #include "UndoTree.h"
@@ -56,6 +57,39 @@ class Buffer {
     // file content itself).
     [[nodiscard]] static Buffer FromFile(const std::filesystem::path& path, bool allowBinary = false);
 
+    // huge-file-editing follow-up: opens path via a PieceTableStorage
+    // (Text/PieceTable.h) instead of reading the whole file into memory --
+    // BufferList::OpenFile routes here automatically for anything over
+    // HugeFileThreshold(). Throws the same BinaryFileError/allowBinary
+    // contract FromFile does (a huge buffer isn't exempt from "don't open
+    // binary as text" -- LooksBinary only reads the first 8 KiB, so this
+    // stays cheap regardless of file size), MappedFileError
+    // (Text/MappedFile.h) if the file can't be mapped, and a plain
+    // std::runtime_error if the file contains any CRLF/CR line ending --
+    // Storage_ is always LF-only throughout this class, and normalizing
+    // that for a multi-GB file would mean rewriting every line, defeating
+    // the point of this path entirely; a CRLF huge file still opens fine
+    // via the normal FromFile path above, just without this one's
+    // memory/speed benefits. See the huge-file-editing plan for the
+    // follow-up that would lift this restriction.
+    //
+    // disk-space-safety follow-up: never refuses to open on disk-space
+    // grounds (a huge file should always at least be viewable) -- instead,
+    // when HugeFileDiskSpaceCheckEnabled() and available free space on the
+    // file's filesystem doesn't comfortably clear
+    // HugeFileMinFreeSpaceMultiplier() times the file's size (Text/
+    // DiskSpace.h -- the atomic-rename save pattern needs the new content's
+    // full size in free space, and a copy-on-write filesystem can
+    // transiently need close to double that), the returned buffer is
+    // ReadOnly() with a specific ReadOnlyReason() naming the actual
+    // available/required byte counts. This is a soft, overridable
+    // downgrade -- toggle-read-only (or SetReadOnly(false) directly) lets a
+    // user who understands the risk force it editable anyway. SaveToFile
+    // below re-checks unconditionally at save time regardless of that
+    // override -- see its own doc comment for why that check has no
+    // override.
+    [[nodiscard]] static Buffer FromHugeFile(const std::filesystem::path& path, bool allowBinary = false);
+
     // An empty buffer already associated with path (named after path's
     // filename, Path() returns path immediately) without reading or
     // requiring the file to exist yet -- the first Save()/SaveToFile()
@@ -86,6 +120,18 @@ class Buffer {
     // the caller resolves the setting" split. Either way this buffer's
     // LineEndingKind() is updated to whatever ending actually got written,
     // once the write+rename below fully succeeds.
+    //
+    // disk-space-safety follow-up: for a huge (piece-table-backed) buffer
+    // specifically, also throws std::runtime_error (before opening the
+    // .ned-tmp temp file at all, so no I/O is wasted on a write that would
+    // fail partway through) when HugeFileDiskSpaceCheckEnabled() and
+    // available free space doesn't comfortably clear
+    // HugeFileMinFreeSpaceMultiplier() times the content size -- see
+    // Text/DiskSpace.h. Unlike FromHugeFile's own open-time downgrade, this
+    // check has **no override**: even a buffer someone forced back to
+    // ReadOnly(false) still can't complete an unsafe save. That's the
+    // actual hard guarantee this feature exists for; the open-time
+    // downgrade is the soft, overridable layer.
     void SaveToFile(const std::filesystem::path& path, bool ensureFinalNewline = true, bool trimTrailingWhitespace = true,
                     std::optional<LineEnding> lineEndingOverride = std::nullopt);
     // Writes to the buffer's associated file. Throws std::runtime_error if
@@ -124,9 +170,17 @@ class Buffer {
     // disk changes until the next explicit save actually writes it out.
     void SetLineEndingOverride(ned::text::LineEnding ending);
 
-    [[nodiscard]] const Rope& Content() const;
-    [[nodiscard]] std::string Text() const;
-    [[nodiscard]] std::size_t Size() const;
+    // Storage-agnostic: an ordinary buffer is Rope-backed underneath, a huge
+    // (multi-GB) buffer is piece-table-backed (see Text/PieceTable.h,
+    // Text/ITextStorage.h) -- every caller here goes through the exact same
+    // interface either way. Content() itself stays cheap regardless of
+    // which is active; individual ITextStorage methods document which of
+    // them are safe to call unconditionally vs. which (ToString() chief
+    // among them) force a full-document materialize a caller should avoid
+    // for a huge buffer specifically (ITextStorage::IsHuge()).
+    [[nodiscard]] const ITextStorage& Content() const;
+    [[nodiscard]] std::string         Text() const;
+    [[nodiscard]] std::size_t         Size() const;
 
     // True if the buffer has unsaved changes -- a pure derived query, not
     // its own tracked bit: `!UnsavedChangeRanges().empty()`. Was a
@@ -215,7 +269,22 @@ class Buffer {
     // NOT guard Undo()/Redo() -- out of scope, no real risk for a buffer
     // nobody is expected to type into in the first place.
     [[nodiscard]] bool ReadOnly() const;
-    void               SetReadOnly(bool readOnly);
+    // disk-space-safety follow-up: reason, when given, is what a thrown
+    // "read-only" error message names specifically (see ReadOnlyReason()
+    // below) instead of the generic "Buffer is read-only." -- e.g.
+    // Buffer::FromHugeFile's own disk-space downgrade. Every call
+    // (including plain SetReadOnly(true)/SetReadOnly(false) call sites
+    // that predate this) sets ReadOnlyReason_ to exactly what's passed
+    // here, nullopt by default -- so turning read-only off, or on for an
+    // unrelated reason, always clears a stale reason rather than leaving
+    // it to describe a state that's no longer true.
+    void SetReadOnly(bool readOnly, std::optional<std::string> reason = std::nullopt);
+    // The reason last given to SetReadOnly(true, reason), or nullopt if
+    // none was given (including whenever ReadOnly() is false). Exposed so
+    // a caller can surface it proactively (e.g. right after opening a
+    // buffer that came back forced read-only) rather than only on the
+    // first refused edit attempt.
+    [[nodiscard]] const std::optional<std::string>& ReadOnlyReason() const;
 
     // large-file-async-load follow-up: true from the moment BufferList hands
     // out a placeholder for a file being loaded in the background until
@@ -720,6 +789,13 @@ class Buffer {
     // mistake), then forward here.
     void InsertAtImpl(std::size_t byteOffset, std::string_view text);
 
+    // disk-space-safety follow-up: "Buffer is read-only." when
+    // ReadOnlyReason_ is unset, or that reason appended when it is -- every
+    // ReadOnly_ throw site below calls this instead of hardcoding the
+    // generic string, so a disk-space-forced buffer's first refused edit
+    // says why.
+    [[nodiscard]] std::string ReadOnlyErrorMessage() const;
+
     // The one relocation rule every tracked position in this class follows
     // across an edit -- Point_, Mark_, both ends of NarrowedRange_, and
     // FoldMarkers_' keys -- factored out once FoldMarkers_ was about to
@@ -838,7 +914,11 @@ class Buffer {
     // See LineEndingKind()/SetLineEndingOverride's own doc comments above.
     // Defaults to LF, matching a NewFile() buffer's own implicit ending.
     ned::text::LineEnding                              LineEnding_ = ned::text::LineEnding::LF;
-    Rope                                               Rope_;
+    // See Content()'s own doc comment above -- Rope-backed for every
+    // ordinary buffer, piece-table-backed only for a huge one. Every
+    // internal mutator/query below goes through this, never a bare Rope
+    // directly, so the same logic works for either concrete storage.
+    std::unique_ptr<ITextStorage>                      Storage_;
     UndoTree                                           UndoTree_;
     std::size_t                                        Point_ = 0;
     std::optional<std::size_t>                         Mark_;
@@ -850,6 +930,7 @@ class Buffer {
     bool                                               CursorIterationActive_ = false; // see ForEachCursor + RelocateSecondaryCursorsForDelete
     bool                                               CanAmend_              = false;
     bool                                               ReadOnly_              = false; // see ReadOnly()/SetReadOnly()'s own doc comment above
+    std::optional<std::string>                        ReadOnlyReason_;                // see SetReadOnly()/ReadOnlyReason()'s own doc comment above
     bool                                               Loading_               = false; // see IsLoading()'s own doc comment above
     std::shared_ptr<LoadProgress>                      LoadProgress_;                  // see SetLoadProgress
     // Set by MoveToNextLine/MoveToPreviousLine, cleared by every other
@@ -873,7 +954,7 @@ class Buffer {
     // there, clearing UnsavedChangeRanges_ wholesale in that case rather
     // than leaving a technically-correct-but-misleading residual marker at
     // wherever the undone edit happened to sit.
-    Rope SavedSnapshot_;
+    std::unique_ptr<ITextStorage> SavedSnapshot_;
 };
 
 } // namespace ned::text
