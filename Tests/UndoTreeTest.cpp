@@ -1,15 +1,26 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <memory>
 #include <stdexcept>
 
+#include "Text/ITextStorage.h"
 #include "Text/Rope.h"
+#include "Text/RopeStorage.h"
 #include "Text/UndoTree.h"
 
+using ned::text::ITextStorage;
 using ned::text::Rope;
+using ned::text::RopeStorage;
 using ned::text::UndoTree;
 
+namespace {
+std::unique_ptr<ITextStorage> Snapshot(const char* text) {
+    return std::make_unique<RopeStorage>(Rope(text));
+}
+} // namespace
+
 TEST_CASE("Fresh UndoTree has no undo/redo history", "[UndoTree]") {
-    UndoTree tree(Rope("start"));
+    UndoTree tree(Snapshot("start"));
 
     REQUIRE(tree.Current().ToString() == "start");
     REQUIRE_FALSE(tree.CanUndo());
@@ -17,10 +28,10 @@ TEST_CASE("Fresh UndoTree has no undo/redo history", "[UndoTree]") {
 }
 
 TEST_CASE("Linear undo/redo walks recorded states in order", "[UndoTree]") {
-    UndoTree tree(Rope("start"));
+    UndoTree tree(Snapshot("start"));
 
-    tree.Record(Rope("start+1"));
-    tree.Record(Rope("start+2"));
+    tree.Record(Snapshot("start+1"));
+    tree.Record(Snapshot("start+2"));
     REQUIRE(tree.Current().ToString() == "start+2");
 
     tree.Undo();
@@ -39,14 +50,14 @@ TEST_CASE("Linear undo/redo walks recorded states in order", "[UndoTree]") {
 }
 
 TEST_CASE("A new edit after undo branches instead of discarding history", "[UndoTree]") {
-    UndoTree tree(Rope("start"));
+    UndoTree tree(Snapshot("start"));
 
-    tree.Record(Rope("start+1")); // branch A
+    tree.Record(Snapshot("start+1")); // branch A
     tree.Undo();
     REQUIRE(tree.Current().ToString() == "start");
     REQUIRE(tree.ChildCount() == 1);
 
-    tree.Record(Rope("start+A")); // branch B, sibling of branch A
+    tree.Record(Snapshot("start+A")); // branch B, sibling of branch A
     REQUIRE(tree.Current().ToString() == "start+A");
 
     tree.Undo();
@@ -59,11 +70,11 @@ TEST_CASE("A new edit after undo branches instead of discarding history", "[Undo
 }
 
 TEST_CASE("Amend replaces the current step instead of creating a new one", "[UndoTree]") {
-    UndoTree tree(Rope(""));
+    UndoTree tree(Snapshot(""));
 
-    tree.Record(Rope("a"));
-    tree.Amend(Rope("ab"));
-    tree.Amend(Rope("abc"));
+    tree.Record(Snapshot("a"));
+    tree.Amend(Snapshot("ab"));
+    tree.Amend(Snapshot("abc"));
 
     REQUIRE(tree.Current().ToString() == "abc");
 
@@ -73,9 +84,9 @@ TEST_CASE("Amend replaces the current step instead of creating a new one", "[Und
 }
 
 TEST_CASE("Serialize/Deserialize round-trips a linear tree", "[UndoTree]") {
-    UndoTree tree(Rope("start"));
-    tree.Record(Rope("start+1"));
-    tree.Record(Rope("start+2"));
+    UndoTree tree(Snapshot("start"));
+    tree.Record(Snapshot("start+1"));
+    tree.Record(Snapshot("start+2"));
     tree.Undo();
 
     const auto        nodes     = tree.Serialize();
@@ -96,10 +107,10 @@ TEST_CASE("Serialize/Deserialize round-trips a linear tree", "[UndoTree]") {
 }
 
 TEST_CASE("Serialize/Deserialize round-trips branches and redo choice", "[UndoTree]") {
-    UndoTree tree(Rope("start"));
-    tree.Record(Rope("branch-A"));
+    UndoTree tree(Snapshot("start"));
+    tree.Record(Snapshot("branch-A"));
     tree.Undo();
-    tree.Record(Rope("branch-B")); // most-recently-visited child of root
+    tree.Record(Snapshot("branch-B")); // most-recently-visited child of root
 
     const auto        nodes     = tree.Serialize();
     const std::size_t currentId = tree.CurrentNodeId();

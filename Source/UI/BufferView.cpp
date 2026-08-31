@@ -99,7 +99,7 @@ namespace {
     // run it falls in -- e.g. double-clicking mid-identifier selects the
     // whole identifier, double-clicking mid-whitespace selects the whole
     // run of whitespace.
-    std::pair<std::size_t, std::size_t> WordBoundsAtOffset(const text::Rope& content, std::size_t offset) {
+    std::pair<std::size_t, std::size_t> WordBoundsAtOffset(const text::ITextStorage& content, std::size_t offset) {
         const std::size_t total = content.ByteLength();
         if (total == 0) {
             return {0, 0};
@@ -433,7 +433,7 @@ namespace {
     // displayText)" rule Paint()'s own render loop uses, so the two can
     // never disagree about where point's own column actually lands on a
     // line containing a collapsed link.
-    std::optional<int> VisualColumn(const text::Rope& content, std::size_t lineStart, std::size_t byteOffset,
+    std::optional<int> VisualColumn(const text::ITextStorage& content, std::size_t lineStart, std::size_t byteOffset,
                                     int maxColumns, const std::vector<RenderedLink>& lineLinks = {}) {
         int         col    = 0;
         std::size_t offset = lineStart;
@@ -469,7 +469,7 @@ namespace {
     // un-collapses it on the very next render.
     constexpr std::size_t kMaxTabAwareColumnScan = 512;
 
-    std::size_t ByteOffsetForColumnInLine(const text::Rope& content, std::size_t lineStart, std::size_t lineEnd,
+    std::size_t ByteOffsetForColumnInLine(const text::ITextStorage& content, std::size_t lineStart, std::size_t lineEnd,
                                           std::size_t targetColumn, int tabWidth,
                                           const std::vector<RenderedLink>& lineLinks) {
         std::size_t offset       = lineStart;
@@ -539,7 +539,7 @@ namespace {
     // containing point, never for the whole buffer (RowsForLine's own cache
     // in BufferView.h is what avoids re-running this for the entire buffer
     // on every Paint()).
-    std::vector<WrapSegment> ComputeWrapSegments(const text::Rope& content, std::size_t lineStart, std::size_t lineEnd,
+    std::vector<WrapSegment> ComputeWrapSegments(const text::ITextStorage& content, std::size_t lineStart, std::size_t lineEnd,
                                                  int wrapWidth, const std::vector<RenderedLink>& lineLinks) {
         wrapWidth = std::max(wrapWidth, 1);
 
@@ -635,7 +635,7 @@ namespace {
     // insertText). Deliberately ASCII-only (matches Buffer's own word-motion
     // classification), so the returned [start, point) range is guaranteed
     // single-byte-per-codepoint -- safe to treat as raw bytes.
-    std::size_t WordPrefixStart(const text::Rope& content, std::size_t point) {
+    std::size_t WordPrefixStart(const text::ITextStorage& content, std::size_t point) {
         std::size_t start = point;
         while (start > 0) {
             const std::size_t prior      = content.PreviousCodepointBoundary(start);
@@ -872,7 +872,7 @@ void BufferView::EnsureFoldGutterCache() const {
     }
 
     if (!foldableBlocksCache_.empty()) {
-        const text::Rope& content = buffer.Content();
+        const text::ITextStorage& content = buffer.Content();
         const auto        regions = editor::codefold::FoldRegionsWithDepth(foldableBlocksCache_);
 
         foldGutterEntries_.reserve(regions.size());
@@ -953,7 +953,7 @@ void BufferView::EnsureUnsavedChangeCache() const {
     }
 
     unsavedChangeLineRanges_.clear();
-    const text::Rope& content = buffer.Content();
+    const text::ITextStorage& content = buffer.Content();
     for (const auto& [byteStart, byteEnd] : buffer.UnsavedChangeRanges()) {
         const std::size_t startLine = content.ByteOffsetToLine(byteStart);
         // byteEnd is exclusive and may sit exactly on a line boundary (the
@@ -1121,7 +1121,7 @@ void BufferView::EnsureDiagnosticGutterCache() const {
     }
 
     diagnosticLineSeverities_.clear();
-    const text::Rope& content = buffer.Content();
+    const text::ITextStorage& content = buffer.Content();
     // Diagnostics() arrives in whatever order the server reported them, not
     // necessarily sorted by position -- collapse to at most one {line,
     // severity} entry per line (keeping the most severe) via a small local
@@ -1162,7 +1162,7 @@ void BufferView::EnsureSymbolGutterCache() const {
         return;
     }
 
-    const text::Rope& content = buffer.Content();
+    const text::ITextStorage& content = buffer.Content();
     // mode_.symbolKind already returns markers sorted by startByte (Mode.cpp's
     // own closure) -- collapsing to one entry per line via a plain overwrite
     // in that order keeps the LAST (highest-byte-offset) marker on a line
@@ -1204,7 +1204,7 @@ void BufferView::EnsureTestGutterCache() const {
         buffer.Path() ? buffer.Path()->filename().string() : std::string();
 
     testGutterLineStatuses_.clear();
-    const text::Rope& content = buffer.Content();
+    const text::ITextStorage& content = buffer.Content();
     for (const editor::TestMarker& marker : mode_.testDiscovery(buffer.Text())) {
         // Aggregate every matching result (parameterized instances, go
         // subtests): Failed beats Passed beats Skipped. The result's file,
@@ -1277,7 +1277,7 @@ void BufferView::EnsureInlineDiagnosticCache() const {
     }
 
     inlineDiagnosticsByLine_.clear();
-    const text::Rope& content = buffer.Content();
+    const text::ITextStorage& content = buffer.Content();
     for (const text::Buffer::Diagnostic& diagnostic : buffer.Diagnostics()) {
         // prose-diagnostic-callout follow-up: the prose/grammar checker's
         // diagnostics never get this code-style caret+message annotation
@@ -1629,7 +1629,7 @@ std::size_t BufferView::RowsForLine(std::size_t line) const {
         // eagerly for the whole buffer (see EnsureRowCountCache's own doc
         // comment for why that distinction is load-bearing, not cosmetic).
         text::Buffer&     buffer    = activeBuffer_.Get();
-        const text::Rope& content   = buffer.Content();
+        const text::ITextStorage& content   = buffer.Content();
         const std::size_t lineStart = content.LineToByteOffset(line);
         const std::size_t lineEnd =
             (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
@@ -1708,7 +1708,7 @@ void BufferView::Paint(Canvas c) {
         RequestDiffForCurrentBuffer();
     }
 
-    const text::Rope& content    = buffer.Content();
+    const text::ITextStorage& content    = buffer.Content();
     const std::size_t totalLines = content.LineCount();
     const Brush       emptyBrush = theme_.BrushFor(editor::SyntaxClass::Default);
     const std::size_t point      = buffer.Point();
@@ -3039,7 +3039,7 @@ void BufferView::PaintInlineDiagnosticRow(Canvas& c, int row, std::size_t line, 
     // would lie) and the span's start still on-screen horizontally.
     if (!EffectiveWrapLines()) {
         const text::Buffer& buffer    = activeBuffer_.Get();
-        const text::Rope&   content   = buffer.Content();
+        const text::ITextStorage&   content   = buffer.Content();
         const std::size_t   lineStart = content.LineToByteOffset(line);
         const std::size_t   lineEnd =
             (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
@@ -3129,7 +3129,7 @@ void BufferView::PaintProseDiagnosticCallouts(Canvas& c, const std::vector<std::
     }
 
     const text::Buffer& buffer     = activeBuffer_.Get();
-    const text::Rope&   content    = buffer.Content();
+    const text::ITextStorage&   content    = buffer.Content();
     const std::size_t   byteLength = content.ByteLength();
     const auto&         glyphs     = RoundedBorderGlyphs();
 
@@ -3294,7 +3294,7 @@ std::optional<Point> BufferView::CursorPosition() const {
     // ByteOffsetToLine/LineToByteOffset pair, one bounded VisualColumn scan
     // -- nowhere near Paint()'s own per-visible-row cost.
     const text::Buffer& buffer      = activeBuffer_.Get();
-    const text::Rope&   content     = buffer.Content();
+    const text::ITextStorage&   content     = buffer.Content();
     const std::size_t   point       = buffer.Point();
     const std::size_t   pointLine   = content.ByteOffsetToLine(point);
     const std::size_t   gutterWidth = GutterWidth();
@@ -4216,7 +4216,7 @@ void BufferView::RequestCompletionAtPoint() {
 }
 
 void BufferView::ApplyDabbrevCompletion(text::Buffer& buffer, std::size_t point) {
-    const text::Rope& content     = buffer.Content();
+    const text::ITextStorage& content     = buffer.Content();
     const std::size_t prefixStart = WordPrefixStart(content, point);
     const std::string prefix      = content.Substring(prefixStart, point - prefixStart);
 
@@ -4279,7 +4279,7 @@ bool BufferView::ShouldSuppressAutoCompletion() const {
     if (point == 0) {
         return false;
     }
-    const text::Rope& content = buffer.Content();
+    const text::ITextStorage& content = buffer.Content();
 
     if (highlightCacheBuffer_ == &buffer) {
         const std::size_t                        line        = content.ByteOffsetToLine(point);
@@ -4404,7 +4404,7 @@ void BufferView::RequestDocumentHighlightAtPoint() {
                 documentHighlight_.reset();
                 return;
             }
-            const text::Rope&                                 content = bufferPtr->Content();
+            const text::ITextStorage&                                 content = bufferPtr->Content();
             std::vector<std::pair<std::size_t, std::size_t>> ranges;
             ranges.reserve(highlights.size());
             for (const editor::lsp::DocumentHighlight& highlight : highlights) {
@@ -4515,7 +4515,7 @@ std::string BufferView::GhostSuffixFor(const editor::lsp::CompletionItem& item) 
     // for a "ned/*" binding item, which was ranked against
     // JanetSymbolPrefixStart's wider rule instead.
     const text::Buffer& buffer      = activeBuffer_.Get();
-    const text::Rope&   content     = buffer.Content();
+    const text::ITextStorage&   content     = buffer.Content();
     const std::size_t   point       = buffer.Point();
     const std::size_t   prefixStart = ghostCompletion_->prefixStart;
     const std::string   prefix      = content.Substring(prefixStart, point - prefixStart);
@@ -4784,7 +4784,7 @@ namespace {
     // grouping each pair records its own undo step (undoing would take one
     // press per edit instead of one for the whole operation).
     void ApplyWorkspaceTextEdits(text::Buffer& buffer, const std::vector<editor::lsp::WorkspaceTextEdit>& edits) {
-        const text::Rope& content = buffer.Content();
+        const text::ITextStorage& content = buffer.Content();
 
         struct ResolvedEdit {
             std::size_t startByte;
@@ -7129,7 +7129,7 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
                             return;
                         }
                         text::Buffer&     target        = *bufferPtr;
-                        const text::Rope& targetContent = target.Content();
+                        const text::ITextStorage& targetContent = target.Content();
                         if (line >= targetContent.LineCount()) {
                             return;
                         }
@@ -7496,7 +7496,7 @@ void BufferView::VisitResultUnderPoint() {
         return;
     }
 
-    const text::Rope& content   = buffer.Content();
+    const text::ITextStorage& content   = buffer.Content();
     const std::size_t point     = buffer.Point();
     const std::size_t line      = content.ByteOffsetToLine(point);
     const std::size_t lineStart = content.LineToByteOffset(line);
@@ -7724,7 +7724,7 @@ void BufferView::RequestDiagnosticsBuffer() {
         if (!buffer.Path() || buffer.Diagnostics().empty() || editor::multibuffer::MultibufferIndexFor(buffer)) {
             continue;
         }
-        const text::Rope& content = buffer.Content();
+        const text::ITextStorage& content = buffer.Content();
         for (const text::Buffer::Diagnostic& diagnostic : buffer.Diagnostics()) {
             if (diagnostic.origin != text::Buffer::Diagnostic::Origin::Code) {
                 continue;
@@ -7751,7 +7751,7 @@ void BufferView::RequestDiagnosticsBuffer() {
     std::vector<editor::multibuffer::ExcerptSource> excerpts;
     excerpts.reserve(pending.size());
     for (const PendingDiagnostic& item : pending) {
-        const text::Rope& content = item.source->Content();
+        const text::ITextStorage& content = item.source->Content();
         const std::size_t line    = content.ByteOffsetToLine(item.sourceLineStart);
         const std::size_t lineEnd = (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
         // U+25B8, ProjectSidebar's own disclosure triangle -- same header
@@ -7930,7 +7930,7 @@ namespace {
     // that function's own doc comment already makes, and the one
     // WordPrefixStart above makes too (that one only scans backward, for a
     // completion prefix -- this needs the full symmetric span).
-    std::optional<std::pair<std::size_t, std::size_t>> WordRegionAtPoint(const text::Rope& content, std::size_t point) {
+    std::optional<std::pair<std::size_t, std::size_t>> WordRegionAtPoint(const text::ITextStorage& content, std::size_t point) {
         const auto isWordChar = [](char32_t codepoint) {
             return (codepoint < 0x80) && (std::isalnum(static_cast<unsigned char>(codepoint)) != 0 || codepoint == U'_');
         };
@@ -7984,7 +7984,7 @@ namespace {
 
 void BufferView::RequestProjectFindReferences() {
     text::Buffer&     buffer  = activeBuffer_.Get();
-    const text::Rope& content = buffer.Content();
+    const text::ITextStorage& content = buffer.Content();
 
     const std::optional<std::pair<std::size_t, std::size_t>> wordRegion = WordRegionAtPoint(content, buffer.Point());
     if (!wordRegion) {
@@ -8219,7 +8219,7 @@ void BufferView::CloseVcsCommitMessageBuffer(text::Buffer& commitBuffer) {
 std::optional<std::filesystem::path> BufferView::ResolveVcsFileTarget() {
     text::Buffer& buffer = activeBuffer_.Get();
     if (buffer.Name() == kVcsStatusBufferName) {
-        const text::Rope& content   = buffer.Content();
+        const text::ITextStorage& content   = buffer.Content();
         const std::size_t line      = content.ByteOffsetToLine(buffer.Point());
         const std::size_t lineStart = content.LineToByteOffset(line);
         const std::size_t lineEnd =
@@ -8662,7 +8662,7 @@ void BufferView::BuildDebugBuffer(const std::vector<std::string>& lines) {
 
 void BufferView::ExpandVariableAtPoint() {
     text::Buffer&     buffer    = activeBuffer_.Get();
-    const text::Rope& content   = buffer.Content();
+    const text::ITextStorage& content   = buffer.Content();
     const std::size_t line      = content.ByteOffsetToLine(buffer.Point());
     const std::size_t lineStart = content.LineToByteOffset(line);
     const std::size_t lineEnd =
@@ -8698,7 +8698,7 @@ void BufferView::ExpandVariableAtPoint() {
                 return; // switched away while the request was in flight
             }
             text::Buffer&     target        = *bufferPtr;
-            const text::Rope& targetContent = target.Content();
+            const text::ITextStorage& targetContent = target.Content();
             if (line >= targetContent.LineCount()) {
                 return;
             }
@@ -8748,7 +8748,7 @@ void BufferView::ExpandVariableAtPoint() {
 
 void BufferView::RemoveWatchAtPoint() {
     text::Buffer&      buffer    = activeBuffer_.Get();
-    const text::Rope&  content   = buffer.Content();
+    const text::ITextStorage&  content   = buffer.Content();
     const std::size_t  line      = content.ByteOffsetToLine(buffer.Point());
     const std::size_t  lineStart = content.LineToByteOffset(line);
     const std::size_t  lineEnd =
@@ -8774,7 +8774,7 @@ void BufferView::RemoveWatchAtPoint() {
 
 void BufferView::SetVariableAtPoint() {
     text::Buffer&      buffer    = activeBuffer_.Get();
-    const text::Rope&  content   = buffer.Content();
+    const text::ITextStorage&  content   = buffer.Content();
     const std::size_t  line      = content.ByteOffsetToLine(buffer.Point());
     const std::size_t  lineStart = content.LineToByteOffset(line);
     const std::size_t  lineEnd =
@@ -8973,7 +8973,7 @@ std::size_t BufferView::ByteOffsetForPoint(Point at) const {
     // instead, additionally reporting which segment of the landed-on line
     // the target row corresponds to.
     const text::Buffer& buffer     = activeBuffer_.Get();
-    const text::Rope&   content    = buffer.Content();
+    const text::ITextStorage&   content    = buffer.Content();
     const std::size_t   totalLines = content.LineCount();
 
     std::size_t targetRow     = static_cast<std::size_t>(std::max(at.y, 0));
@@ -9244,7 +9244,7 @@ bool BufferView::OnMouseEvent(const Event& event) {
         if (foldColumnWidth > 0 && mouse->at.x >= static_cast<int>(foldStart) &&
             static_cast<std::size_t>(mouse->at.x) < foldStart + foldColumnWidth) {
             text::Buffer&     buffer        = activeBuffer_.Get();
-            const text::Rope& content       = buffer.Content();
+            const text::ITextStorage& content       = buffer.Content();
             const std::size_t totalLines    = content.LineCount();
             const std::size_t line          = std::min(AdvanceVisibleLines(topLine_, static_cast<std::size_t>(std::max(mouse->at.y, 0)), totalLines),
                                                        totalLines - 1);
@@ -9300,7 +9300,7 @@ bool BufferView::OnMouseEvent(const Event& event) {
         lastClickTime_   = now;
 
         if (!buffer.ReadOnly() && clickCount_ >= 2) {
-            const text::Rope& content = buffer.Content();
+            const text::ITextStorage& content = buffer.Content();
             std::size_t       start;
             std::size_t       end;
             if (clickCount_ == 2) {
@@ -9928,7 +9928,7 @@ void BufferView::HandleZapToCharKey(const editor::KeyChord& chord) {
     // or nullopt if there isn't one -- forward scan, codepoint-granular
     // (matches Buffer's own word-motion scanning style).
     const auto findForward = [&](std::size_t from) -> std::optional<std::size_t> {
-        const text::Rope& content = buffer.Content();
+        const text::ITextStorage& content = buffer.Content();
         const std::size_t total   = content.ByteLength();
         std::size_t       offset  = from;
         while (offset < total) {
@@ -10554,7 +10554,7 @@ void BufferView::ScrollToShowPoint() {
 }
 
 void BufferView::ScrollToShowOffset(std::size_t offset) {
-    const text::Rope& content   = activeBuffer_.Get().Content();
+    const text::ITextStorage& content   = activeBuffer_.Get().Content();
     const std::size_t pointLine = content.ByteOffsetToLine(offset);
 
     if (pointLine < topLine_) {
@@ -10622,7 +10622,7 @@ void BufferView::ScrollToShowPointHorizontally() {
     }
 
     const text::Buffer& buffer      = activeBuffer_.Get();
-    const text::Rope&   content     = buffer.Content();
+    const text::ITextStorage&   content     = buffer.Content();
     const std::size_t   point       = buffer.Point();
     const std::size_t   pointLine   = content.ByteOffsetToLine(point);
     const std::size_t   lineStart   = content.LineToByteOffset(pointLine);

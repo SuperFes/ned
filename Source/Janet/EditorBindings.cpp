@@ -365,6 +365,21 @@ namespace {
         text::SetAsyncLoadThreshold(bytes > 0 ? static_cast<std::uintmax_t>(bytes) : 0);
     }
 
+    // huge-file-editing follow-up: same shape as NedSetAsyncLoadThreshold
+    // just above.
+    void NedSetHugeFileThreshold(std::int64_t bytes) {
+        text::SetHugeFileThreshold(bytes > 0 ? static_cast<std::uintmax_t>(bytes) : 0);
+    }
+
+    // disk-space-safety follow-up.
+    void NedSetHugeFileMinFreeSpaceMultiplier(double multiplier) {
+        text::SetHugeFileMinFreeSpaceMultiplier(multiplier);
+    }
+
+    void NedSetHugeFileDiskSpaceCheckEnabled(bool enabled) {
+        text::SetHugeFileDiskSpaceCheckEnabled(enabled);
+    }
+
     void NedSetMaxHighlightBytes(std::int64_t bytes) {
         editor::SetMaxHighlightBytes(bytes > 0 ? static_cast<std::size_t>(bytes) : 0);
     }
@@ -1080,6 +1095,25 @@ void InstallEditorBindings(Environment& env) {
         "ned", "set-async-load-threshold",
         "File size in bytes above which files load asynchronously in the background instead of blocking "
         "(default 16 MiB, i.e. (* 16 1024 1024)). 0 loads every file asynchronously.");
+    env.Register<&NedSetHugeFileThreshold>(
+        "ned", "set-huge-file-threshold",
+        "File size in bytes above which a file opens via the piece-table storage engine -- never fully read into "
+        "memory, edits/undo/save all work, but LSP sync and whole-buffer regex search stay limited for now "
+        "(default 1 GiB, i.e. (* 1024 1024 1024)). Checked ahead of set-async-load-threshold, so a file clearing "
+        "both always takes this path. 0 routes every file through it. Does not yet support CRLF/CR line endings "
+        "(Buffer::FromHugeFile throws) -- such a file still opens fine via the normal loader.");
+    env.Register<&NedSetHugeFileMinFreeSpaceMultiplier>(
+        "ned", "set-huge-file-min-free-space-multiplier",
+        "Safety margin (default 2.0) a huge file's save must clear: available free disk space must be at least "
+        "this many times the content's byte length, since the atomic save pattern needs the new content's full "
+        "size in free space and a copy-on-write filesystem (Btrfs, ZFS) can transiently need close to double that. "
+        "Below this, a newly opened huge buffer downgrades to read-only (toggle-read-only overrides); a save "
+        "attempt on a huge buffer always refuses regardless of that override -- see set-huge-file-disk-space-"
+        "check-enabled to turn the check off entirely instead.");
+    env.Register<&NedSetHugeFileDiskSpaceCheckEnabled>(
+        "ned", "set-huge-file-disk-space-check-enabled",
+        "Enable/disable the free-disk-space safety check for huge (piece-table-backed) buffers entirely (default "
+        "true). Off skips both the open-time read-only downgrade and the save-time refusal.");
     env.Register<&NedSetMaxHighlightBytes>(
         "ned", "set-max-highlight-bytes",
         "Buffer size in bytes above which syntax highlighting is skipped entirely (default 8 MiB). 0 disables "

@@ -7,10 +7,12 @@
 #include "Editor/Lsp/LspPosition.h"
 #include "Editor/Mode.h"
 #include "Text/Rope.h"
+#include "Text/RopeStorage.h"
 
 using namespace ned::editor;
 using ned::editor::lsp::BytePositionToLsp;
 using ned::text::Rope;
+using ned::text::RopeStorage;
 
 namespace {
 
@@ -86,8 +88,8 @@ TEST_CASE("BuildEmbeddedDocuments' width-preserving padding keeps LSP position m
     REQUIRE(documents.size() == 1);
     const auto& js = documents[0];
 
-    const Rope hostRope(text);
-    const Rope virtualRope(js.documentText);
+    const RopeStorage hostRope{Rope(text)};
+    const RopeStorage virtualRope{Rope(js.documentText)};
 
     const std::size_t valueOffset = Find(text, "value");
     REQUIRE(BytePositionToLsp(virtualRope, valueOffset) == BytePositionToLsp(hostRope, valueOffset));
@@ -98,8 +100,8 @@ TEST_CASE("BuildEmbeddedDocuments' width-preserving padding keeps LSP position m
     const std::string text2      = "<!-- " + astral + " -->\n<script>\nlet after = 1;\n</script>\n";
     const auto        documents2 = BuildEmbeddedDocuments(mode, text2);
     REQUIRE(documents2.size() == 1);
-    const Rope        hostRope2(text2);
-    const Rope        virtualRope2(documents2[0].documentText);
+    const RopeStorage hostRope2{Rope(text2)};
+    const RopeStorage virtualRope2{Rope(documents2[0].documentText)};
     const std::size_t afterOffset = Find(text2, "after");
     REQUIRE(documents2[0].documentText.size() == text2.size());
     REQUIRE(BytePositionToLsp(virtualRope2, afterOffset) == BytePositionToLsp(hostRope2, afterOffset));

@@ -4,14 +4,16 @@
 
 #include "Text/Grapheme.h"
 #include "Text/Rope.h"
+#include "Text/RopeStorage.h"
 
 using ned::text::NextGraphemeBoundary;
 using ned::text::PreviousGraphemeBoundary;
 using ned::text::Rope;
+using ned::text::RopeStorage;
 using ned::text::SnapToGraphemeBoundary;
 
 TEST_CASE("Grapheme boundaries for plain ASCII are per-codepoint", "[Grapheme]") {
-    const Rope rope("abc");
+    const RopeStorage rope{Rope("abc")};
 
     REQUIRE(NextGraphemeBoundary(rope, 0) == 1);
     REQUIRE(NextGraphemeBoundary(rope, 1) == 2);
@@ -27,7 +29,7 @@ TEST_CASE("Grapheme boundaries for plain ASCII are per-codepoint", "[Grapheme]")
 TEST_CASE("Combining accent forms a single grapheme cluster with its base character", "[Grapheme]") {
     // "e" (1 byte) + U+0301 COMBINING ACUTE ACCENT (2 bytes) = "é" as two codepoints, one cluster.
     const std::string text = "xe\xCC\x81y"; // x [e + combining acute] y
-    const Rope         rope(text);
+    const RopeStorage  rope{Rope(text)};
 
     REQUIRE(rope.ByteLength() == 5); // 'x' + 'e' + 0xCC 0x81 + 'y'
 
@@ -47,7 +49,7 @@ TEST_CASE("Regional indicator pair (flag emoji) forms a single grapheme cluster"
     // 4 bytes each, 8 bytes total, one grapheme cluster per UAX #29 GB12/GB13.
     const std::string flag = "\xF0\x9F\x87\xBA\xF0\x9F\x87\xB8";
     const std::string text = "a" + flag + "b";
-    const Rope         rope(text);
+    const RopeStorage  rope{Rope(text)};
 
     REQUIRE(rope.ByteLength() == 1 + 8 + 1);
 
@@ -61,7 +63,7 @@ TEST_CASE("Regional indicator pair (flag emoji) forms a single grapheme cluster"
 }
 
 TEST_CASE("SnapToGraphemeBoundary lands on offset itself when it's already a boundary", "[Grapheme]") {
-    const Rope rope("abc");
+    const RopeStorage rope{Rope("abc")};
 
     REQUIRE(SnapToGraphemeBoundary(rope, 0) == 0);
     REQUIRE(SnapToGraphemeBoundary(rope, 1) == 1);
@@ -71,7 +73,7 @@ TEST_CASE("SnapToGraphemeBoundary lands on offset itself when it's already a bou
 
 TEST_CASE("SnapToGraphemeBoundary pulls a mid-cluster offset back to the cluster start", "[Grapheme]") {
     const std::string text = "xe\xCC\x81y"; // x [e + combining acute] y
-    const Rope         rope(text);
+    const RopeStorage  rope{Rope(text)};
 
     // Byte 2 is the first byte of the combining accent, inside the "e + accent"
     // cluster that starts at byte 1. Byte 3 is mid-codepoint (a continuation

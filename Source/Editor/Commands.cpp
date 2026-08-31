@@ -41,7 +41,7 @@ namespace ned::editor {
 
 namespace {
 
-    std::size_t LineContentEnd(const text::Rope& content, std::size_t point) {
+    std::size_t LineContentEnd(const text::ITextStorage& content, std::size_t point) {
         const std::size_t line = content.ByteOffsetToLine(point);
         return (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
     }
@@ -60,7 +60,7 @@ namespace {
         bool        hasTrailingNewline;
     };
 
-    LineSpan GetLineSpan(const text::Rope& content, std::size_t line) {
+    LineSpan GetLineSpan(const text::ITextStorage& content, std::size_t line) {
         const std::size_t start              = content.LineToByteOffset(line);
         const bool        hasTrailingNewline = line + 1 < content.LineCount();
         const std::size_t contentEnd         = hasTrailingNewline ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
@@ -276,7 +276,7 @@ namespace {
     // (deliberately not Unicode-aware, matching that documented cut) --
     // duplicated here rather than exposed from Buffer.cpp, the usual
     // "not worth a new seam for something this small" call.
-    std::optional<std::pair<std::size_t, std::size_t>> WordRegionAt(const text::Rope& rope, std::size_t point) {
+    std::optional<std::pair<std::size_t, std::size_t>> WordRegionAt(const text::ITextStorage& rope, std::size_t point) {
         const auto isWord = [](char32_t codepoint) {
             return (codepoint >= U'a' && codepoint <= U'z') || (codepoint >= U'A' && codepoint <= U'Z') ||
                    (codepoint >= U'0' && codepoint <= U'9') || codepoint == U'_';
@@ -1022,6 +1022,21 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
         }
     });
 
+    // disk-space-safety follow-up: the confirmed, real override path for a
+    // buffer Buffer::FromHugeFile forced read-only over insufficient disk
+    // space -- SetReadOnly(false) already existed as a public method, but
+    // nothing user-facing called it. Generic rather than huge-file-specific
+    // (toggles either direction, clearing any stored ReadOnlyReason() when
+    // turning off), since a manual read-only toggle is a reasonable command
+    // to have regardless of why a buffer ended up read-only.
+    registry.Register("toggle-read-only", "Toggle whether the current buffer accepts edits.", [](CommandContext& context) {
+        const bool wasReadOnly = context.buffer.ReadOnly();
+        context.buffer.SetReadOnly(!wasReadOnly);
+        if (context.message) {
+            *context.message = wasReadOnly ? "Buffer is now editable." : "Buffer is now read-only.";
+        }
+    });
+
     // keyboard-quit follow-up: real Emacs' C-g aborts several things at
     // once (the current command, a pending prefix key, an active
     // minibuffer) -- the prefix-key/minibuffer cases are already handled
@@ -1054,7 +1069,7 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     registry.Register("add-cursor-below", "Add a cursor one line below the bottom-most cursor.",
                       [](CommandContext& context) {
                           text::Buffer&     buffer  = context.buffer;
-                          const text::Rope& content = buffer.Content();
+                          const text::ITextStorage& content = buffer.Content();
                           std::size_t       lowest  = buffer.Point();
                           for (const auto& cursor : buffer.SecondaryCursors()) {
                               lowest = std::max(lowest, cursor.point);
@@ -1073,7 +1088,7 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     registry.Register("add-cursor-above", "Add a cursor one line above the top-most cursor.",
                       [](CommandContext& context) {
                           text::Buffer&     buffer  = context.buffer;
-                          const text::Rope& content = buffer.Content();
+                          const text::ITextStorage& content = buffer.Content();
                           std::size_t       highest = buffer.Point();
                           for (const auto& cursor : buffer.SecondaryCursors()) {
                               highest = std::min(highest, cursor.point);
@@ -2602,7 +2617,7 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                 }
                 return;
             }
-            const text::Rope& content = context.buffer.Content();
+            const text::ITextStorage& content = context.buffer.Content();
             const std::size_t line    = content.ByteOffsetToLine(context.buffer.Point());
             const auto        blocks  = codefold::FoldableBlocks(*context.mode, context.buffer.Text());
             if (!codefold::ToggleFoldAtLine(context.buffer, content, blocks, line) && context.message) {
@@ -2669,7 +2684,7 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           const std::string& prefix = context.mode->lineCommentPrefix;
 
                           text::Buffer&     buffer  = context.buffer;
-                          const text::Rope& content = buffer.Content();
+                          const text::ITextStorage& content = buffer.Content();
                           std::size_t       firstLine, lastLine;
                           if (buffer.HasMark()) {
                               const auto [start, end] = buffer.Region();

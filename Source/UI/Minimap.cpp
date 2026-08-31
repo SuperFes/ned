@@ -121,7 +121,7 @@ void Minimap::ForEachDensityDot(
     int subRows, int subCols, double charsPerDot,
     const std::function<void(int subRow, int subCol, std::size_t offset, std::size_t linesInRow)>& visit) const {
     text::Buffer&     buffer     = activeBuffer_.Get();
-    const text::Rope& content    = buffer.Content();
+    const text::ITextStorage& content    = buffer.Content();
     const std::size_t totalLines = content.LineCount();
     if (totalLines == 0 || subRows <= 0 || subCols <= 0) {
         return;
@@ -204,7 +204,29 @@ void Minimap::EnsurePlane() const {
     }
 
     text::Buffer& buffer = activeBuffer_.Get();
-    const bool    sameCache =
+
+    // huge-file-editing follow-up: a real, live-reproduced hang, not a
+    // theoretical one -- ForEachDensityDot below walks every one of
+    // buffer.Content().LineCount() lines calling LineToByteOffset/
+    // CodepointAt per line, and PieceTableStorage's per-call cost for those
+    // (an O(leaf size) linear scan when a lookup lands inside a leaf, and
+    // PieceTable's original-file leaves are 256 KiB, not Rope's 512 bytes --
+    // see PieceTable.cpp's own comment on that tradeoff) is roughly 500x
+    // Rope's. Measured against a real 1.5M-line/86 MB file: ~32 microseconds
+    // per line, which extrapolates to the ~48-second, CPU-pegged, blank-
+    // screen hang actually observed opening one through the real `ned`
+    // binary. A real line-sampling redesign (bounded cost regardless of
+    // buffer size, working for every buffer including a huge one) is a
+    // separate, already-planned piece of this same effort -- this bail is
+    // the minimal stopgap so opening a huge file doesn't look hung in the
+    // meantime; it renders as a blank strip (PaintPlane's own background-
+    // color backstop), not an error.
+    if (buffer.Content().IsHuge()) {
+        ReleasePlane();
+        return;
+    }
+
+    const bool sameCache =
         plane_ != nullptr && cacheBuffer_ == &buffer && cacheContentGeneration_ == buffer.ContentGeneration() &&
         cacheHeight_ == height && cacheWidth_ == width && cacheCharsPerDot_ == editor::MinimapCharsPerDot() &&
         cacheScrollableLength_ == scrollable_length && cachePosition_ == position &&

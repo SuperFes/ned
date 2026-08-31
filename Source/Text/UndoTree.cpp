@@ -5,19 +5,22 @@
 #include <unordered_map>
 #include <utility>
 
+#include "Rope.h"
+#include "RopeStorage.h"
+
 namespace ned::text {
 
-UndoTree::UndoTree(Rope initialState) {
-    root_         = std::make_unique<Node>();
-    root_->state  = std::move(initialState);
-    current_      = root_.get();
+UndoTree::UndoTree(std::unique_ptr<ITextStorage> initialState) {
+    root_        = std::make_unique<Node>();
+    root_->state = std::move(initialState);
+    current_     = root_.get();
 }
 
-const Rope& UndoTree::Current() const {
-    return current_->state;
+const ITextStorage& UndoTree::Current() const {
+    return *current_->state;
 }
 
-void UndoTree::Record(Rope newState) {
+void UndoTree::Record(std::unique_ptr<ITextStorage> newState) {
     auto child    = std::make_unique<Node>();
     child->state  = std::move(newState);
     child->parent = current_;
@@ -29,7 +32,7 @@ void UndoTree::Record(Rope newState) {
     current_                  = childPtr;
 }
 
-void UndoTree::Amend(Rope newState) {
+void UndoTree::Amend(std::unique_ptr<ITextStorage> newState) {
     current_->state = std::move(newState);
 }
 
@@ -64,7 +67,7 @@ std::vector<UndoTree::SerializedNode> UndoTree::Serialize() const {
 
     std::function<void(const Node*, std::optional<std::size_t>)> walk = [&](const Node* node, std::optional<std::size_t> parentId) {
         const std::size_t id = out.size();
-        out.push_back(SerializedNode{id, parentId, node->state.ToString(), node->mostRecentChild});
+        out.push_back(SerializedNode{id, parentId, node->state->ToString(), node->mostRecentChild});
         for (const auto& child : node->children) {
             walk(child.get(), id);
         }
@@ -153,7 +156,11 @@ UndoTree UndoTree::Deserialize(const std::vector<SerializedNode>& nodes, std::si
     live.reserve(nodes.size());
     for (const auto& node : nodes) {
         auto n             = std::make_unique<Node>();
-        n->state           = Rope(node.content);
+        // Deserialize always reconstructs a Rope-backed snapshot -- see
+        // SerializedNode's own doc comment on why that's always correct
+        // here (a huge/piece-table-backed buffer never reaches this path
+        // in the first place).
+        n->state           = std::make_unique<RopeStorage>(Rope(node.content));
         n->mostRecentChild = node.mostRecentChild;
         live[node.id]      = n.get();
         owned[node.id]     = std::move(n);
@@ -168,7 +175,7 @@ UndoTree UndoTree::Deserialize(const std::vector<SerializedNode>& nodes, std::si
         parent->children.push_back(std::move(owned.at(node.id)));
     }
 
-    UndoTree tree{Rope()};
+    UndoTree tree{std::make_unique<RopeStorage>()};
     tree.root_    = std::move(owned.at(*rootId));
     tree.current_ = live.at(currentId);
     return tree;

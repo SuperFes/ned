@@ -31,6 +31,47 @@ namespace {
         static std::uintmax_t threshold = kDefaultAsyncLoadThreshold;
         return threshold;
     }
+
+    // huge-file-editing follow-up: comfortably above anything the async
+    // loader (still a full in-memory Rope by the time it finishes) should
+    // ever be asked to handle -- see HugeFileThreshold()'s own header
+    // comment.
+    constexpr std::uintmax_t kDefaultHugeFileThreshold = 1024ull * 1024 * 1024;
+
+    std::mutex& HugeThresholdMutex() {
+        static std::mutex mutex;
+        return mutex;
+    }
+
+    std::uintmax_t& HugeThresholdStorage() {
+        static std::uintmax_t threshold = kDefaultHugeFileThreshold;
+        return threshold;
+    }
+
+    // disk-space-safety follow-up: 2x covers the new .ned-tmp file's own
+    // full allocation plus a copy-on-write filesystem's old-blocks-not-
+    // yet-reclaimed behavior -- see Text/DiskSpace.h's own header comment.
+    constexpr double kDefaultHugeFileMinFreeSpaceMultiplier = 2.0;
+
+    std::mutex& SpaceMultiplierMutex() {
+        static std::mutex mutex;
+        return mutex;
+    }
+
+    double& SpaceMultiplierStorage() {
+        static double multiplier = kDefaultHugeFileMinFreeSpaceMultiplier;
+        return multiplier;
+    }
+
+    std::mutex& SpaceCheckEnabledMutex() {
+        static std::mutex mutex;
+        return mutex;
+    }
+
+    bool& SpaceCheckEnabledStorage() {
+        static bool enabled = true;
+        return enabled;
+    }
 } // namespace
 
 void SetAsyncLoadThreshold(std::uintmax_t bytes) {
@@ -41,6 +82,36 @@ void SetAsyncLoadThreshold(std::uintmax_t bytes) {
 std::uintmax_t AsyncLoadThreshold() {
     const std::lock_guard<std::mutex> lock(ThresholdMutex());
     return ThresholdStorage();
+}
+
+void SetHugeFileThreshold(std::uintmax_t bytes) {
+    const std::lock_guard<std::mutex> lock(HugeThresholdMutex());
+    HugeThresholdStorage() = bytes;
+}
+
+std::uintmax_t HugeFileThreshold() {
+    const std::lock_guard<std::mutex> lock(HugeThresholdMutex());
+    return HugeThresholdStorage();
+}
+
+void SetHugeFileMinFreeSpaceMultiplier(double multiplier) {
+    const std::lock_guard<std::mutex> lock(SpaceMultiplierMutex());
+    SpaceMultiplierStorage() = multiplier > 0.0 ? multiplier : 0.0;
+}
+
+double HugeFileMinFreeSpaceMultiplier() {
+    const std::lock_guard<std::mutex> lock(SpaceMultiplierMutex());
+    return SpaceMultiplierStorage();
+}
+
+void SetHugeFileDiskSpaceCheckEnabled(bool enabled) {
+    const std::lock_guard<std::mutex> lock(SpaceCheckEnabledMutex());
+    SpaceCheckEnabledStorage() = enabled;
+}
+
+bool HugeFileDiskSpaceCheckEnabled() {
+    const std::lock_guard<std::mutex> lock(SpaceCheckEnabledMutex());
+    return SpaceCheckEnabledStorage();
 }
 
 std::string BufferList::UniqueName(const std::string& base) const {
@@ -73,6 +144,30 @@ Buffer& BufferList::OpenFile(const std::filesystem::path& path, bool allowBinary
     // branch below bypasses FromFile entirely, so it needs its own check.
     if (!allowBinary && LooksBinary(path)) {
         throw BinaryFileError("ned: refusing to open binary file as text: " + path.string());
+    }
+
+    // huge-file-editing follow-up: checked ahead of the async-loader branch
+    // below -- a file clearing both thresholds always takes this one, since
+    // Buffer::FromHugeFile never fully materializes the file (the async
+    // loader still does, eventually). No placeholder/IsLoading() state
+    // needed here the way the async path needs one: opening is already
+    // fast (PieceTable::FromFile's own O(file size) scan, not a full read),
+    // so there's nothing to background-load.
+    {
+        std::error_code      ec;
+        const std::uintmax_t size = std::filesystem::file_size(path, ec);
+        if (!ec && size > HugeFileThreshold()) {
+            Buffer loaded = Buffer::FromHugeFile(path, allowBinary); // throws on failure
+
+            loaded.Rename(UniqueName(loaded.Name()));
+
+            buffers_.push_back(std::make_unique<Buffer>(std::move(loaded)));
+            Buffer& ref = *buffers_.back();
+            if (onFileOpened_) {
+                onFileOpened_(ref);
+            }
+            return ref;
+        }
     }
 
     if (asyncFileOpener_) {

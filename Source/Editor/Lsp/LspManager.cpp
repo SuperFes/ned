@@ -151,7 +151,7 @@ namespace {
     // of the shared constant LspClient.cpp's own copy makes.
     const std::string kLspActivity{kLspActivityName};
 
-    Json DiagnosticToLsp(const text::Buffer::Diagnostic& diagnostic, const text::Rope& content) {
+    Json DiagnosticToLsp(const text::Buffer::Diagnostic& diagnostic, const text::ITextStorage& content) {
         const LspPosition start = BytePositionToLsp(content, diagnostic.startByte);
         const LspPosition end   = BytePositionToLsp(content, diagnostic.endByte);
         return Json{
@@ -827,7 +827,7 @@ void LspManager::HandlePublishDiagnostics(const Json& params, const std::string&
 
     std::vector<text::Buffer::Diagnostic> diagnostics;
     if (params.contains("diagnostics")) {
-        const text::Rope& content = buffer->Content();
+        const text::ITextStorage& content = buffer->Content();
         for (const Json& item : params["diagnostics"]) {
             const Json& range = item.value("range", Json::object());
             const Json& start = range.value("start", Json::object());
@@ -1030,7 +1030,7 @@ void LspManager::RequestCodeActions(text::Buffer& buffer, std::size_t rangeStart
         return;
     }
 
-    const text::Rope& content = buffer.Content();
+    const text::ITextStorage& content = buffer.Content();
     const LspPosition start   = BytePositionToLsp(content, rangeStartByte);
     const LspPosition end     = BytePositionToLsp(content, rangeEndByte);
 
@@ -1395,7 +1395,7 @@ void LspManager::RequestRangeFormatting(text::Buffer& buffer, std::size_t rangeS
         return;
     }
 
-    const text::Rope& content  = buffer.Content();
+    const text::ITextStorage& content  = buffer.Content();
     const LspPosition start    = BytePositionToLsp(content, rangeStartByte);
     const LspPosition end      = BytePositionToLsp(content, rangeEndByte);
     const std::string language = state->language;

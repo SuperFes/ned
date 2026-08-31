@@ -6,10 +6,11 @@
 // history is ever lost -- Emacs' core guarantee -- without Emacs' "redo by
 // undoing the undo" surprise.
 //
-// Each node stores a full Rope snapshot rather than a diff. That's cheap
-// because Rope is a persistent/structurally-shared data structure: creating a
-// snapshot after a small edit only allocates the O(log n) nodes along the
-// edited path, sharing everything else with the previous snapshot.
+// Each node stores a full storage snapshot (ITextStorage, not a diff).
+// That's cheap because both concrete storage kinds (Rope, PieceTable) are
+// persistent/structurally-shared: creating a snapshot after a small edit
+// only allocates the O(log n) nodes along the edited path, sharing
+// everything else with the previous snapshot.
 //
 
 #ifndef NED_TEXT_UNDOTREE_H
@@ -21,24 +22,24 @@
 #include <string>
 #include <vector>
 
-#include "Rope.h"
+#include "ITextStorage.h"
 
 namespace ned::text {
 
 class UndoTree {
   public:
-    explicit UndoTree(Rope initialState);
+    explicit UndoTree(std::unique_ptr<ITextStorage> initialState);
 
-    [[nodiscard]] const Rope& Current() const;
+    [[nodiscard]] const ITextStorage& Current() const;
 
     // Creates a new undo step as a child of the current node and moves onto it.
-    void Record(Rope newState);
+    void Record(std::unique_ptr<ITextStorage> newState);
 
     // Replaces the current node's state in place instead of creating a new
     // step. Used by callers to coalesce a run of adjacent edits (e.g.
     // consecutive character inserts while typing) into a single undo step;
     // the tree itself has no opinion on when that's appropriate.
-    void Amend(Rope newState);
+    void Amend(std::unique_ptr<ITextStorage> newState);
 
     [[nodiscard]] bool CanUndo() const;
     [[nodiscard]] bool CanRedo() const;
@@ -62,6 +63,14 @@ class UndoTree {
     // trip). parentId is nullopt only for the root. mostRecentChild mirrors
     // Node::mostRecentChild -- which of this node's own children Redo()
     // would follow -- 0 (meaningless) when the node has no children.
+    //
+    // content is always a plain-text snapshot (ITextStorage::ToString()),
+    // regardless of which concrete storage kind produced it -- this is only
+    // ever reachable for a Rope-backed buffer in practice: Editor/
+    // PersistentUndo.h gates on PersistentUndoMaxSizeMb (default 16 MiB)
+    // well below where a huge/piece-table-backed buffer would ever exist,
+    // so Serialize() never actually runs against one, even though it would
+    // compile and technically work (just slowly) if it did.
     struct SerializedNode {
         std::size_t                id;
         std::optional<std::size_t> parentId;
@@ -78,11 +87,13 @@ class UndoTree {
     // (no root, more than one root, a dangling parentId, an unknown
     // currentId, or a cycle) -- the caller (a hand-edited or corrupted undo
     // file) can't be trusted to hand back exactly what Serialize() produced.
+    // Every reconstructed node is Rope-backed (see SerializedNode's own doc
+    // comment above on why that's always correct here).
     [[nodiscard]] static UndoTree Deserialize(const std::vector<SerializedNode>& nodes, std::size_t currentId);
 
   private:
     struct Node {
-        Rope                                state;
+        std::unique_ptr<ITextStorage>       state;
         Node*                                parent = nullptr; // non-owning; root_ keeps the tree alive
         std::vector<std::unique_ptr<Node>>  children;
         std::size_t                          mostRecentChild = 0;
