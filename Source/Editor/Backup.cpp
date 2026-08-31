@@ -69,6 +69,20 @@ namespace {
         return static_cast<std::uintmax_t>(MaxSizeMbStorage()) * 1024 * 1024;
     }
 
+    // huge-file-crash-recovery-backup follow-up: BackupFileBeforeSave's own
+    // cap, deliberately separate from (and far more generous than)
+    // MaxBackupBytes() above -- see BackupVersionMaxSizeMb()'s own doc
+    // comment in Backup.h for why the two costs aren't comparable.
+    int& VersionMaxSizeMbStorage() {
+        static int megabytes = 65536; // 64 GiB
+        return megabytes;
+    }
+
+    std::uintmax_t MaxBackupVersionBytes() {
+        const std::lock_guard<std::mutex> lock(BackupMutex());
+        return static_cast<std::uintmax_t>(VersionMaxSizeMbStorage()) * 1024 * 1024;
+    }
+
     // NormalizePathKey string -> the ContentGeneration() last written as that
     // file's autosave -- the dirty-skip memo AutoSaveFileBuffers compares
     // against. Bounded by files opened per process; entries are erased by
@@ -339,7 +353,7 @@ void BackupFileBeforeSave(const std::filesystem::path& file, std::optional<std::
             return;
         }
         const std::uintmax_t size = std::filesystem::file_size(file, ec);
-        if (ec || size > MaxBackupBytes()) {
+        if (ec || size > MaxBackupVersionBytes()) {
             return;
         }
 
@@ -485,12 +499,23 @@ int BackupMaxSizeMb() {
     return MaxSizeMbStorage();
 }
 
+void SetBackupVersionMaxSizeMb(int megabytes) {
+    const std::lock_guard<std::mutex> lock(BackupMutex());
+    VersionMaxSizeMbStorage() = std::max(1, megabytes);
+}
+
+int BackupVersionMaxSizeMb() {
+    const std::lock_guard<std::mutex> lock(BackupMutex());
+    return VersionMaxSizeMbStorage();
+}
+
 void ResetBackupsForTesting() {
     const std::lock_guard<std::mutex> lock(BackupMutex());
-    AutoSaveEnabledStorage() = true;
-    MaxAgeDaysStorage()      = 14;
-    MaxVersionsStorage()     = 20;
-    MaxSizeMbStorage()       = 64;
+    AutoSaveEnabledStorage()  = true;
+    MaxAgeDaysStorage()       = 14;
+    MaxVersionsStorage()      = 20;
+    MaxSizeMbStorage()        = 64;
+    VersionMaxSizeMbStorage() = 65536;
     AutoSaveGenerationStorage().clear();
     LastPruneStorage().reset();
 }

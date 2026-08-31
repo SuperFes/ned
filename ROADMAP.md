@@ -281,7 +281,11 @@ Notcurses.
         default) — correct/safe (skip, don't materialize), but means an actively-edited
         huge buffer today has *no* crash-recovery autosave and *no* persistent undo
         history across restarts. Was a low-stakes gap while editing a huge buffer was
-        rare/awkward; matters more now that this feature makes it ordinary.
+        rare/awkward; matters more now that this feature makes it ordinary. Half fixed,
+        see huge-file-crash-recovery-backup below — the pre-save version-backup half of
+        this is safe to enable at huge-buffer scale (a cheap disk-to-disk copy); the
+        periodic autosave and persistent-undo halves genuinely aren't (both run on the
+        main thread every 5 seconds) and stay deliberately deferred.
       - `RegexPattern`/`QueryReplace`/`ProjectSearch` treat a `LikelyBinary()` buffer's
         content as ordinary text for search/replace purposes — not a corruption risk the
         way write-time formatting was, but semantically questionable in the same family;
@@ -484,6 +488,34 @@ Notcurses.
       `[VimEngine][HugeFile]`-tagged tests in `VimEngineTest.cpp` cover the same
       forward/backward/multi-window/wraparound shapes through the actual `/`/`?`/`n` key
       commands.
+- [x] **huge-file-crash-recovery-backup: pre-save version backups now work for a huge
+      buffer — the periodic autosave and persistent-undo halves of the same gap stay
+      deliberately deferred, on purpose.** Investigated all three "no crash-recovery
+      safety net for a huge buffer" gaps from the v1-floor entry's own guardrail list
+      before touching any of them, since `AutoSaveFileBuffers`/`SaveUndoHistoryForOpenBuffers`
+      both turned out to run on the *main thread* — `WindowManager::StartAutoSaveTimer`'s
+      background `jthread` only sleeps; the real work is `eventLoop.Post`'d back to the
+      main thread every 5 seconds. Naively raising their size caps for a huge buffer would
+      have reintroduced the exact "periodic full-buffer write stalls the UI" bug class this
+      whole huge-file effort already fixed twice (`huge-file-lsp-gate`, the `Minimap`
+      bailout above) — persistent undo is worse still, since its format stores a *full
+      content snapshot per undo node*, so an actively-edited huge buffer's tree would
+      balloon to many GB of on-disk JSON within minutes on that same tick. Neither is a
+      quick fix (the first needs the write genuinely backgrounded; the second needs a
+      different on-disk format entirely), so both stay deferred, same posture as
+      `AutoMerge`'s three-way merge above.
+
+      `BackupFileBeforeSave` (the pre-save version-backup half) has a completely
+      different cost profile, though: a single `std::filesystem::copy_file` of the
+      *already-on-disk* file, done once per explicit save, not a periodic in-editor
+      write — no UI-stall risk the autosave half has. It was capped by the same shared
+      `BackupMaxSizeMb()` (default 64 MiB) purely by historical accident. Split into two
+      settings (`Backup.h`): `BackupMaxSizeMb()` stays as-is, now documented as governing
+      `AutoSaveFileBuffers` only; new `BackupVersionMaxSizeMb()`/`ned/set-backup-version-max-size-mb`
+      (default 65536, 64 GiB) governs `BackupFileBeforeSave` alone. `[Backup]` tests cover
+      the split (the old shared-cap test now exercises `BackupVersionMaxSizeMb()`
+      specifically) plus a new default-cutoff test proving the version-backup path isn't
+      accidentally still gated by the smaller, autosave-only setting.
 
 ### Editor Ergonomics
 

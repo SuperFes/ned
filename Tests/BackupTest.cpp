@@ -20,6 +20,7 @@ using ned::editor::BackupMaxSizeMb;
 using ned::editor::BackupMaxVersions;
 using ned::editor::BackupsDirectory;
 using ned::editor::BackupVersion;
+using ned::editor::BackupVersionMaxSizeMb;
 using ned::editor::FileAutoSaveEnabled;
 using ned::editor::ListBackupVersions;
 using ned::editor::MaybePruneBackups;
@@ -30,6 +31,7 @@ using ned::editor::ResetBackupsForTesting;
 using ned::editor::SetBackupMaxAgeDays;
 using ned::editor::SetBackupMaxSizeMb;
 using ned::editor::SetBackupMaxVersions;
+using ned::editor::SetBackupVersionMaxSizeMb;
 using ned::editor::SetFileAutoSaveEnabled;
 using ned::editor::WriteAutoSave;
 
@@ -216,9 +218,16 @@ TEST_CASE("BackupFileBeforeSave is a no-op for a file directly inside the scratc
 }
 
 TEST_CASE("BackupFileBeforeSave is a no-op for an oversized file", "[Backup]") {
+    // huge-file-crash-recovery-backup follow-up: BackupVersionMaxSizeMb()'s
+    // own default is deliberately generous (64 GiB, a cheap disk-to-disk
+    // copy, unlike AutoSaveFileBuffers' periodic write) -- exercise the
+    // skip path via an explicit small cutoff rather than an impractically
+    // large sparse file.
+    const BackupSettingsGuard   guard;
     const BackupSandbox         sandbox("ned_backup_test_oversize");
     const std::filesystem::path file = sandbox.WriteWorkFile("huge.bin", "x");
-    std::filesystem::resize_file(file, 65ull * 1024 * 1024); // sparse -- past the default 64 MiB cutoff
+    std::filesystem::resize_file(file, 65ull * 1024 * 1024); // sparse -- past the configured cutoff below
+    SetBackupVersionMaxSizeMb(64);
 
     BackupFileBeforeSave(file, 1755700000);
 
@@ -226,16 +235,33 @@ TEST_CASE("BackupFileBeforeSave is a no-op for an oversized file", "[Backup]") {
 }
 
 TEST_CASE("BackupFileBeforeSave honors a configured max-size cutoff", "[Backup]") {
+    // huge-file-crash-recovery-backup follow-up: BackupFileBeforeSave now
+    // checks BackupVersionMaxSizeMb() specifically, not BackupMaxSizeMb()
+    // (that one governs AutoSaveFileBuffers' periodic write only -- see both
+    // settings' own doc comments in Backup.h for why they're split).
     const BackupSettingsGuard   guard;
     const BackupSandbox         sandbox("ned_backup_test_configured_max_size");
     const std::filesystem::path file = sandbox.WriteWorkFile("small.bin", "x");
     std::filesystem::resize_file(file, 2ull * 1024 * 1024); // 2 MiB -- well under the default cutoff
 
-    SetBackupMaxSizeMb(1); // now past the configured cutoff
+    SetBackupVersionMaxSizeMb(1); // now past the configured cutoff
     BackupFileBeforeSave(file, 1755700000);
     REQUIRE_FALSE(std::filesystem::exists(BackupDirectoryForFile(file)));
 
-    SetBackupMaxSizeMb(4); // back under the cutoff
+    SetBackupVersionMaxSizeMb(4); // back under the cutoff
+    BackupFileBeforeSave(file, 1755700000);
+    REQUIRE(std::filesystem::exists(BackupDirectoryForFile(file)));
+}
+
+TEST_CASE("BackupFileBeforeSave's default cutoff is far more generous than AutoSaveFileBuffers' own", "[Backup]") {
+    const BackupSettingsGuard   guard;
+    const BackupSandbox         sandbox("ned_backup_test_default_version_cutoff");
+    const std::filesystem::path file = sandbox.WriteWorkFile("bigger-than-autosave-cap.bin", "x");
+    // Past the default AutoSaveFileBuffers cap (64 MiB) but nowhere near the
+    // default version-backup cap (64 GiB) -- proves the version-backup path
+    // isn't accidentally still gated by the smaller, autosave-only setting.
+    std::filesystem::resize_file(file, 100ull * 1024 * 1024); // 100 MiB
+
     BackupFileBeforeSave(file, 1755700000);
     REQUIRE(std::filesystem::exists(BackupDirectoryForFile(file)));
 }
@@ -506,22 +532,28 @@ TEST_CASE("Backup settings default and round-trip", "[Backup]") {
     REQUIRE(BackupMaxAgeDays() == 14);
     REQUIRE(BackupMaxVersions() == 20);
     REQUIRE(BackupMaxSizeMb() == 64);
+    REQUIRE(BackupVersionMaxSizeMb() == 65536);
 
     SetFileAutoSaveEnabled(false);
     SetBackupMaxAgeDays(7);
     SetBackupMaxVersions(5);
     SetBackupMaxSizeMb(16);
+    SetBackupVersionMaxSizeMb(1024);
     REQUIRE_FALSE(FileAutoSaveEnabled());
     REQUIRE(BackupMaxAgeDays() == 7);
     REQUIRE(BackupMaxVersions() == 5);
     REQUIRE(BackupMaxSizeMb() == 16);
+    REQUIRE(BackupVersionMaxSizeMb() == 1024);
 
     SetBackupMaxSizeMb(-3); // clamped to 1, same "don't throw, just make it sane" convention as SetTabWidth
     REQUIRE(BackupMaxSizeMb() == 1);
+    SetBackupVersionMaxSizeMb(-3);
+    REQUIRE(BackupVersionMaxSizeMb() == 1);
 
     ResetBackupsForTesting();
     REQUIRE(FileAutoSaveEnabled());
     REQUIRE(BackupMaxAgeDays() == 14);
     REQUIRE(BackupMaxVersions() == 20);
     REQUIRE(BackupMaxSizeMb() == 64);
+    REQUIRE(BackupVersionMaxSizeMb() == 65536);
 }
