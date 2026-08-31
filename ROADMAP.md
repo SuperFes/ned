@@ -200,11 +200,7 @@ Notcurses.
       close to double a file's size to safely rewrite it), with `toggle-read-only` as the
       override and a hard, non-overridable re-check at actual save time.
 
-      Still open: LSP sync for a huge buffer now happens (background-tick sync no longer
-      special-cases `IsHuge()`, and a real fix below stopped it wasting a full-buffer copy
-      when no server is configured) but is otherwise unoptimized — a huge buffer *with* a
-      configured server still sends its whole content on every `didChange`, no incremental
-      sync; `Minimap` bails out entirely for a huge buffer rather than the real bounded
+      Still open: `Minimap` bails out entirely for a huge buffer rather than the real bounded
       line-sampling redesign (a stopgap fix for a real hang, see this file's own history
       for the underlying cause — `PieceTable`'s 256 KiB original-file leaves make any
       *unbounded* per-line iteration ~500x costlier than `Rope`'s); `BufferView`'s own
@@ -274,10 +270,10 @@ Notcurses.
         `TrimTrailingWhitespaceOnSave()` still fully materialize a huge buffer on every
         save regardless of `LikelyBinary()` — real cost for a huge buffer that's
         genuinely text, not guarded by size the way the disk-space check is.
-      - LSP/DAP full-document sync for a huge buffer *with* a real server configured is
-        unaffected by the `SyncToServer` fix above — every `didChange` still sends the
-        whole buffer; there's no incremental-sync path in this client yet (a much bigger
-        lift, protocol-level).
+      - DAP full-document-shaped operations for a huge buffer aren't guarded the way LSP
+        sync now is (see the huge-file-lsp-gate entry below) — not a live-reproduced issue
+        yet, since debugging a multi-GB buffer is a much rarer combination than editing one
+        with a language server attached, but the same shape of fix would apply if it comes up.
       - `Backup::AutoSaveFileBuffers`/`PersistentUndo::SaveUndoHistory` silently skip a
         buffer entirely once it clears `MaxBackupBytes()`/`MaxUndoBytes()` (16 MiB
         default) — correct/safe (skip, don't materialize), but means an actively-edited
@@ -293,6 +289,30 @@ Notcurses.
         scope this pass (diffing for *rarer* sync-to-disk-shaped operations was judged an
         acceptable cost, unlike `Undo`/`Redo`'s hot path) but worth revisiting if
         huge-buffer-plus-externally-changed-file turns out to be a real workflow.
+- [x] **huge-file-lsp-gate: LSP/prose-checker sync no longer touches a huge buffer at
+      all — real, live-reproduced fix, not the "guardrail, not chased down yet" class
+      above.** Live-tested opening a real 3.1 GB file with `harper-ls` on `$PATH` (the
+      prose checker auto-wires against any text file, not an unusual setup): RSS
+      oscillated 6-9 GB continuously, never settling, well after load finished, because
+      `BufferView::Paint()` calls `LspManager::SyncBuffer` every frame for the focused
+      buffer, and `SyncToServer` built `buffer.Text()` (a full `ITextStorage::ToString()`)
+      as an eager function argument *before* the "nothing changed since the last sync"
+      check that would otherwise make it a no-op — so once any server was configured
+      (the whole point of having one), every repaint paid a full multi-GB copy on the
+      main thread, forever, not just at load. Two fixes: (1) that check is now hoisted
+      above the `buffer.Text()` call in `SyncToServer` itself, so an already-synced,
+      unchanged buffer never re-materializes on repaint, for every buffer, not just huge
+      ones; (2) `SyncBuffer` now checks `buffer.Content().IsHuge()` first and skips both
+      the primary language server and the prose checker entirely for a huge buffer — no
+      server has a sane way to consume a multi-GB `didOpen` anyway, and harper-ls
+      spell-checking gigabytes of text was never a meaningful feature. Logged once per
+      buffer via the existing `LogError`/`*lsp log*`/echo-area path (not silent) so
+      missing diagnostics/completion on a huge file has a visible explanation. Re-tested
+      live post-fix against the same 3.1 GB file: RSS flat at ~42 MiB for the buffer's
+      entire lifetime, no LSP error spam. `[Lsp][memory]`-tagged tests in
+      `LspManagerTest.cpp` cover both the huge-buffer skip (with a real server
+      configured, not just the pre-existing no-server-configured case) and the repeated-
+      call no-op for an ordinary buffer.
 - [ ] Buffers restored by a project session open before the async-loader hook is wired,
       so a huge file inside a restored session still loads synchronously at startup —
       the same fix `main.cpp`'s CLI-arg path already has (`deferredLargeOpenPath`) needs
