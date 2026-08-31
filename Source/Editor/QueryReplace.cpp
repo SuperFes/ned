@@ -57,6 +57,18 @@ void QueryReplace::ConfirmReplacement() {
     if (stage_ != Stage::EnteringReplacement) {
         return;
     }
+    // binary-safety-guardrails follow-up: the replace step writes bytes back
+    // into the buffer, same class of "byte-level, content-changing" action
+    // BinarySafeguardsActive()'s other guard sites (format-on-save,
+    // convert-line-endings, ...) already refuse for a confirmed-binary
+    // buffer -- refused outright here too, mirroring their exact wording
+    // convention, rather than silently matching/replacing raw binary bytes
+    // as if they were text.
+    if (buffer_.BinarySafeguardsActive()) {
+        binaryRefused_ = true;
+        stage_         = Stage::Done;
+        return;
+    }
     huge_ = buffer_.Content().IsHuge();
     if (!huge_) {
         content_ = buffer_.Text();
@@ -197,6 +209,11 @@ std::string QueryReplace::StatusText() const {
             return hasMatch_ ? "Query replacing " + patternText_ + " with " + replacementText_ + " (y/n/!/q)?"
                              : "No more matches.";
         case Stage::Done:
+            if (binaryRefused_) {
+                return "\"" + buffer_.Name() +
+                       "\" looks like binary content -- refusing to query-replace it (run "
+                       "toggle-binary-safeguards to override)";
+            }
             return "Replaced " + std::to_string(replacementCount_) + " occurrence" +
                    (replacementCount_ == 1 ? "" : "s") + ".";
     }

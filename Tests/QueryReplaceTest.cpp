@@ -228,6 +228,47 @@ TEST_CASE("DeleteChar edits whichever string is currently being entered", "[Quer
     REQUIRE(buffer.Text() == "dog");
 }
 
+// binary-safety-guardrails follow-up: ConfirmReplacement refuses outright
+// for a buffer whose BinarySafeguardsActive() is true, same posture as
+// save-buffer's format-on-save/line-ending guards (see CommandsTest.cpp's
+// own [BinarySafety]-tagged tests for that precedent).
+
+TEST_CASE("ConfirmReplacement refuses a LikelyBinary buffer without touching its content",
+          "[QueryReplace][BinarySafety]") {
+    Buffer buffer("scratch", Rope("cat sat on the cat mat"));
+    buffer.SetLikelyBinary(true);
+
+    QueryReplace qr(buffer);
+    Type(qr, "cat");
+    qr.ConfirmPattern(); // pattern entry itself is unaffected -- read-only
+    Type(qr, "dog");
+    qr.ConfirmReplacement();
+
+    REQUIRE(qr.CurrentStage() == QueryReplace::Stage::Done);
+    REQUIRE(qr.ReplacementCount() == 0);
+    REQUIRE(buffer.Text() == "cat sat on the cat mat"); // untouched
+    REQUIRE(qr.StatusText().find("binary content") != std::string::npos);
+    REQUIRE(qr.StatusText().find("toggle-binary-safeguards") != std::string::npos);
+}
+
+TEST_CASE("toggle-binary-safeguards' override lets ConfirmReplacement proceed normally",
+          "[QueryReplace][BinarySafety]") {
+    Buffer buffer("scratch", Rope("cat sat on the cat mat"));
+    buffer.SetLikelyBinary(true);
+    buffer.SetBinarySafetyOverride(true);
+
+    QueryReplace qr(buffer);
+    Type(qr, "cat");
+    qr.ConfirmPattern();
+    Type(qr, "dog");
+    qr.ConfirmReplacement();
+
+    REQUIRE(qr.CurrentStage() == QueryReplace::Stage::Confirming);
+    qr.ReplaceAll();
+    REQUIRE(buffer.Text() == "dog sat on the dog mat");
+    REQUIRE(qr.ReplacementCount() == 2);
+}
+
 // huge-file-regex-replace follow-up: FindNextMatchHuge, the windowed branch
 // taken for a huge (ITextStorage::IsHuge()) buffer -- mirrors several of the
 // in-memory tests above (same expected outcomes) to prove the two paths

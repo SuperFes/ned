@@ -19,6 +19,13 @@
 // same shape as IncrementalSearch's SearchHuge. Forward-only, no wraparound,
 // matching the existing (non-huge) behavior already.
 //
+// binary-safety-guardrails follow-up: ConfirmReplacement refuses outright
+// (Stage::Done, a distinct StatusText() message) when
+// buffer_.BinarySafeguardsActive() -- same posture as format-on-save/
+// convert-line-endings' own guard sites (Buffer.h's own doc comment on that
+// predicate), since the replace step writes bytes back into the buffer too.
+// Pattern entry/searching alone is unaffected (harmless, read-only).
+//
 
 #ifndef NED_EDITOR_QUERYREPLACE_H
 #define NED_EDITOR_QUERYREPLACE_H
@@ -93,6 +100,12 @@ class QueryReplace {
     std::size_t matchStart_ = 0;
     std::size_t matchEnd_   = 0;
     std::string matchFormattedReplacement_; // this match's $1-expanded replacement text
+
+    // binary-safety-guardrails follow-up: set by ConfirmReplacement when
+    // buffer_.BinarySafeguardsActive() refuses the session outright; changes
+    // StatusText()'s Stage::Done wording from the ordinary replacement-count
+    // summary to a refusal message.
+    bool binaryRefused_ = false;
 };
 
 } // namespace ned::editor

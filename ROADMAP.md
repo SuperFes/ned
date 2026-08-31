@@ -272,10 +272,9 @@ Notcurses.
         pass never actually had this problem — `SaveToFile`'s huge branch already ran it
         through `StreamingSaveWriter`, not a whole-string copy, from this same commit;
         this bullet mis-stated that half.)
-      - DAP full-document-shaped operations for a huge buffer aren't guarded the way LSP
-        sync now is (see the huge-file-lsp-gate entry below) — not a live-reproduced issue
-        yet, since debugging a multi-GB buffer is a much rarer combination than editing one
-        with a language server attached, but the same shape of fix would apply if it comes up.
+      - ~~DAP full-document-shaped operations for a huge buffer aren't guarded the way LSP
+        sync now is~~ — investigated, nothing to fix; see the small-guardrails-bundle
+        entry below.
       - `Backup::AutoSaveFileBuffers`/`PersistentUndo::SaveUndoHistory` silently skip a
         buffer entirely once it clears `MaxBackupBytes()`/`MaxUndoBytes()` (16 MiB
         default) — correct/safe (skip, don't materialize), but means an actively-edited
@@ -286,10 +285,10 @@ Notcurses.
         this is safe to enable at huge-buffer scale (a cheap disk-to-disk copy); the
         periodic autosave and persistent-undo halves genuinely aren't (both run on the
         main thread every 5 seconds) and stay deliberately deferred.
-      - `RegexPattern`/`QueryReplace`/`ProjectSearch` treat a `LikelyBinary()` buffer's
-        content as ordinary text for search/replace purposes — not a corruption risk the
-        way write-time formatting was, but semantically questionable in the same family;
-        no guard added yet.
+      - ~~`RegexPattern`/`QueryReplace`/`ProjectSearch` treat a `LikelyBinary()` buffer's
+        content as ordinary text for search/replace purposes~~ — fixed for `QueryReplace`
+        (the only one that actually needed it), see the small-guardrails-bundle entry
+        below.
       - `AutoMerge`/`MergeExternalChanges`'s `ThreeWayMerge` still fully materializes both
         sides for external-change reconciliation on a huge buffer — explicitly kept out of
         scope this pass (diffing for *rarer* sync-to-disk-shaped operations was judged an
@@ -516,6 +515,39 @@ Notcurses.
       the split (the old shared-cap test now exercises `BackupVersionMaxSizeMb()`
       specifically) plus a new default-cutoff test proving the version-backup path isn't
       accidentally still gated by the smaller, autosave-only setting.
+- [x] **Three remaining small guardrails from the v1-floor entry's list, resolved one
+      way or another.**
+      - `RegexPattern`/`QueryReplace` treating a `LikelyBinary()` buffer's content as
+        ordinary text: fixed for `QueryReplace` — `ConfirmReplacement` now refuses
+        outright (`Stage::Done`, a distinct `StatusText()` message: `"<name>" looks like
+        binary content -- refusing to query-replace it (run toggle-binary-safeguards to
+        override)`) when `buffer_.BinarySafeguardsActive()`, mirroring the exact wording
+        convention `save-buffer`'s format-on-save/line-ending guards already use for the
+        same predicate. Pattern entry/searching alone is untouched (read-only, harmless).
+        `ProjectSearch` turned out not to need anything: it already skips every
+        `LooksBinary()` file during its own directory walk (`ProjectSearch.cpp:60`),
+        an independent on-disk check unrelated to a specific open buffer's
+        `LikelyBinary()`/override state — the roadmap's original mention of it here was
+        an overstatement, not a real gap.
+      - DAP full-document-shaped operations: investigated, found nothing to fix.
+        `DapManager` operates entirely on file paths, line numbers, and user-typed
+        expression strings (`Evaluate`, `SetBreakpoint*`, ...) — no method anywhere in
+        `Dap/` or its `BufferView` call sites reads `buffer.Text()`/`Content()` at all.
+        The concern this bullet raised was speculative (anticipating some future
+        DAP feature that might materialize a buffer), not a real live code path — closed
+        without a change rather than defending against something that can't happen.
+      - CLI-arg/session-restore deferred-open threshold mismatch: real, fixed.
+        `main.cpp`'s two deferred-open gates (the CLI `pathArg` path and the session-
+        restore loop) both only checked `size > AsyncLoadThreshold()` before deciding
+        whether opening had to wait for the async/huge opener hooks to be wired later in
+        `main()`. `BufferList::OpenFile` itself checks `HugeFileThreshold()` before
+        `AsyncLoadThreshold()`, so with `HugeFileThreshold()` configured below the
+        default `AsyncLoadThreshold()` (16 MiB), a file the user's own config called
+        "huge" could still take the early synchronous `OpenOrCreateFile` branch with
+        neither hook wired yet, opening fully synchronously regardless of the huge-file
+        machinery existing. Both gates now check `size > AsyncLoadThreshold() || size >
+        HugeFileThreshold()`. No live default-config bug (matches every prior framing of
+        this gap) — only reachable with a lowered `HugeFileThreshold()`.
 
 ### Editor Ergonomics
 
