@@ -435,7 +435,21 @@ void LspManager::SyncBuffer(text::Buffer& buffer, const std::string& language) {
         return; // a scratch buffer has no URI to tell a server about
     }
 
-    primaryServerKey_[&buffer] = language;                          // see PrimarySyncState's own doc comment
+    primaryServerKey_[&buffer] = language; // see PrimarySyncState's own doc comment
+
+    // huge-file-lsp-gate follow-up: see this method's own header comment --
+    // a huge buffer gets neither sync, ever, rather than paying a
+    // buffer.Text() materialization just to discover no server can sanely
+    // use the result.
+    if (buffer.Content().IsHuge()) {
+        if (hugeSyncSkipNotified_.insert(&buffer).second) {
+            LogError(language, "\"" + buffer.Name() +
+                                   "\" is too large for LSP/prose-checker sync -- diagnostics, completion, "
+                                   "and spell-checking are unavailable on this buffer");
+        }
+        return;
+    }
+
     SyncToServer(buffer, language, language);                       // primary language server
     SyncToServer(buffer, std::string(kProseLanguageKey), language); // prose checker, independent of the above
 }
@@ -519,6 +533,25 @@ void LspManager::SyncToServer(text::Buffer& buffer, const std::string& serverKey
     if (!ClientForLanguage(serverKey)) {
         return;
     }
+
+    // per-frame-sync-materialize follow-up: SyncTextToServer's own
+    // "nothing changed since the last sync" check happens too late to help
+    // here -- buffer.Text() below is a function argument, evaluated
+    // unconditionally before SyncTextToServer's body ever runs. Called
+    // every Paint() for the focused buffer, that meant a buffer already
+    // synced and unchanged still paid a full ITextStorage::ToString() on
+    // every repaint, forever -- for a several-GB buffer, a reproduced live
+    // hang (see this file's own history). Duplicating the same check here,
+    // ahead of buffer.Text(), is what actually makes the "second call is a
+    // no-op" claim true.
+    if (const auto bufferIt = bufferState_.find(&buffer); bufferIt != bufferState_.end()) {
+        if (const auto stateIt = bufferIt->second.find(serverKey); stateIt != bufferIt->second.end()) {
+            if (stateIt->second.opened && stateIt->second.lastSyncedGeneration == buffer.ContentGeneration()) {
+                return; // nothing changed since the last sync
+            }
+        }
+    }
+
     SyncTextToServer(buffer, serverKey, languageId, buffer.Text());
 }
 
@@ -784,6 +817,7 @@ void LspManager::NotifyBufferClosed(text::Buffer& buffer) {
     primaryServerKey_.erase(&buffer);
     embeddedServerKeys_.erase(&buffer);
     embeddedOwnedRanges_.erase(&buffer);
+    hugeSyncSkipNotified_.erase(&buffer);
 }
 
 void LspManager::ExpireStaleRequests(std::chrono::milliseconds maxAge) {

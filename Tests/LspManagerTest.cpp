@@ -159,6 +159,37 @@ bool NoFrameArrives(int fd) {
     return ::poll(&pfd, 1, 200) == 0; // 0 == timed out, nothing readable
 }
 
+// per-frame-sync-materialize follow-up: reads and discards exactly one
+// frame, size unbounded -- unlike ReadRawFrame above (capped at four
+// 512-byte reads, sized for this file's small fixed JSON payloads), needed
+// to drain a real multi-hundred-MiB didOpen concurrently with the send so
+// ChildProcess::WriteAll's own stall guard never trips.
+void DrainOneFrame(int fd) {
+    std::string headerBuf;
+    char        chunk[64 * 1024];
+    std::size_t headerEnd = std::string::npos;
+    while (headerEnd == std::string::npos) {
+        const ssize_t n = ::read(fd, chunk, sizeof(chunk));
+        if (n <= 0) {
+            return;
+        }
+        headerBuf.append(chunk, static_cast<std::size_t>(n));
+        headerEnd = headerBuf.find("\r\n\r\n");
+    }
+    const std::string_view kPrefix         = "Content-Length: ";
+    const auto             prefixPos       = headerBuf.find(kPrefix);
+    const std::size_t      contentLength   = std::stoul(headerBuf.substr(prefixPos + kPrefix.size()));
+    const std::size_t      bodyAlreadyRead = headerBuf.size() - (headerEnd + 4);
+    std::size_t            remaining       = contentLength > bodyAlreadyRead ? contentLength - bodyAlreadyRead : 0;
+    while (remaining > 0) {
+        const ssize_t n = ::read(fd, chunk, std::min(sizeof(chunk), remaining));
+        if (n <= 0) {
+            return;
+        }
+        remaining -= static_cast<std::size_t>(n);
+    }
+}
+
 // diagnostics-debounce follow-up: HandlePublishDiagnostics no longer applies
 // a publish synchronously -- it (re)arms a per-buffer DeadlineTimer (see
 // LspServerConfig.h's LspDiagnosticsDebounceMs) whose fire is Post()ed onto
@@ -312,6 +343,112 @@ TEST_CASE("LspManager::SyncBuffer does not materialize a huge buffer's content w
 
     const std::size_t growthKb = rssAfterKb > rssBeforeKb ? rssAfterKb - rssBeforeKb : 0;
     REQUIRE(growthKb < kFileSize / 1024 / 4); // < 50 MiB, vs. a 200 MiB file -- a single Text() copy would blow well past this
+
+    std::filesystem::remove(path);
+}
+
+// huge-file-lsp-gate follow-up: sibling of the test above, but with a real
+// server actually configured/spawned for the buffer's language -- the case
+// the earlier ClientForLanguage-ahead-of-buffer.Text() fix did NOT cover,
+// since a configured client makes that check pass and fall straight into
+// materializing+sending a multi-GB didOpen. Proves SyncBuffer's own
+// buffer.Content().IsHuge() gate (checked before ever calling SyncToServer)
+// stops that regardless of what's configured, and that no frame reaches
+// the server either.
+TEST_CASE("LspManager::SyncBuffer does not sync a huge buffer even when a real server is configured",
+          "[Lsp][memory]") {
+    constexpr std::size_t kFileSize = 200 * 1024 * 1024;
+
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_lsp_manager_huge_configured.txt";
+    {
+        std::ofstream     file(path, std::ios::binary);
+        const std::string chunk(1024 * 1024, 'x');
+        for (std::size_t written = 0; written < kFileSize; written += chunk.size()) {
+            file.write(chunk.data(), static_cast<std::streamsize>(chunk.size()));
+        }
+    }
+
+    struct ThresholdGuard {
+        ~ThresholdGuard() {
+            ned::text::SetHugeFileThreshold(1024ull * 1024 * 1024);
+        }
+    } guard;
+    ned::text::SetHugeFileThreshold(4); // well under this file's real size -- forces the huge/PieceTable path
+
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    Buffer&            buffer = bufferList.OpenFile(path);
+    REQUIRE(buffer.Content().IsHuge());
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+
+    const std::size_t rssBeforeKb = CurrentRssKb();
+    for (int i = 0; i < 5; ++i) {
+        manager.SyncBuffer(buffer, "test-lang");
+    }
+    const std::size_t rssAfterKb = CurrentRssKb();
+
+    const std::size_t growthKb = rssAfterKb > rssBeforeKb ? rssAfterKb - rssBeforeKb : 0;
+    REQUIRE(growthKb < kFileSize / 1024 / 4);
+    REQUIRE(NoFrameArrives(server.serverStdinRead)); // a real server was configured, but a huge buffer must never reach it
+
+    std::filesystem::remove(path);
+}
+
+// per-frame-sync-materialize follow-up: real, reproduced live bug -- once a
+// server IS configured (unlike the two tests above), SyncToServer used to
+// build buffer.Text() as an eager function argument on every single call,
+// even though SyncTextToServer's own "nothing changed since the last sync"
+// check would then immediately turn it into a no-op. BufferView::Paint()
+// calls SyncBuffer every frame for the focused buffer, so this ran on every
+// repaint forever, not just once -- live-reproduced against a real
+// multi-GB file with harper-ls configured as the prose checker (RSS
+// oscillating several GB, main thread stalling on every frame). This test
+// proves the fix: repeated SyncBuffer calls against an unchanged,
+// already-opened buffer must not keep re-materializing its content.
+TEST_CASE("LspManager::SyncBuffer does not re-materialize an unchanged buffer's content on repeated calls "
+          "once a server is configured",
+          "[Lsp][memory]") {
+    constexpr std::size_t kFileSize = 200 * 1024 * 1024;
+
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_lsp_manager_repeated_sync.txt";
+    {
+        std::ofstream     file(path, std::ios::binary);
+        const std::string chunk(1024 * 1024, 'x');
+        for (std::size_t written = 0; written < kFileSize; written += chunk.size()) {
+            file.write(chunk.data(), static_cast<std::streamsize>(chunk.size()));
+        }
+    }
+
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    Buffer&            buffer = bufferList.OpenFile(path);
+    REQUIRE_FALSE(buffer.Content().IsHuge()); // ordinary RopeStorage path -- the bug wasn't specific to PieceTableStorage
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+
+    // The didOpen frame below carries the full 200 MiB document -- far past
+    // a pipe's buffer capacity, so it must be drained concurrently with the
+    // send or ChildProcess::WriteAll's own hang-protection guard trips
+    // (unlike every other test in this file, whose small fixed content
+    // always fits in one pipe buffer's worth of slack).
+    std::thread drainThread([&] { DrainOneFrame(server.serverStdinRead); });
+    manager.SyncBuffer(buffer, "test-lang"); // sends the real didOpen -- gets bufferState_ to "opened"
+    drainThread.join();
+
+    const std::size_t rssBeforeKb = CurrentRssKb();
+    for (int i = 0; i < 5; ++i) {
+        manager.SyncBuffer(buffer, "test-lang"); // content unchanged every time -- must be a cheap no-op
+    }
+    const std::size_t rssAfterKb = CurrentRssKb();
+
+    const std::size_t growthKb = rssAfterKb > rssBeforeKb ? rssAfterKb - rssBeforeKb : 0;
+    REQUIRE(growthKb < kFileSize / 1024 / 4);
+    REQUIRE(NoFrameArrives(server.serverStdinRead)); // no didChange should have been sent either
 
     std::filesystem::remove(path);
 }

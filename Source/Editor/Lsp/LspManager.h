@@ -128,8 +128,17 @@ class LspManager {
     // (LspBackgroundSync.h's SyncBackgroundBuffers) -- either caller passes
     // whatever language it already resolved, this method has no opinion
     // about how that resolution happened. The per-buffer ContentGeneration()
-    // gate above is what makes calling this twice for the same buffer (once
-    // from each path) cheap: the second call is a no-op.
+    // gate in SyncToServer is what makes calling this twice for the same
+    // buffer (once from each path) cheap: the second call is a no-op
+    // *before* buffer.Text() is ever built, not after.
+    //
+    // huge-file-lsp-gate follow-up: a buffer.Content().IsHuge() buffer never
+    // reaches SyncToServer at all -- neither the primary language server nor
+    // the prose checker has a sane way to consume a multi-GB didOpen, and
+    // buffer.Text() would fully materialize the document just to build one.
+    // Logged once per buffer (LogError, surfaced the normal *lsp log*/echo-
+    // area way) rather than silently, so missing diagnostics/completion on
+    // a huge file has a visible explanation.
     void SyncBuffer(text::Buffer& buffer, const std::string& language);
 
     // embedded-language-documents follow-up. One embedded language's
@@ -690,6 +699,12 @@ class LspManager {
     // independently. Was a flat unordered_map<Buffer*, BufferSyncState>
     // before this could ever be true.
     std::unordered_map<text::Buffer*, std::unordered_map<std::string, BufferSyncState>> bufferState_;
+
+    // huge-file-lsp-gate follow-up: which huge buffers have already gotten
+    // their one-time "no LSP/prose sync" LogError -- SyncBuffer checks/
+    // inserts into this instead of logging on every skipped call (every
+    // Paint() while the buffer is focused). Erased in NotifyBufferClosed.
+    std::unordered_set<text::Buffer*> hugeSyncSkipNotified_;
 
     // prose-checking follow-up: per-buffer, per-source-language diagnostics
     // -- what makes merging possible instead of each server's own
