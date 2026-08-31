@@ -894,6 +894,46 @@ std::size_t Buffer::MergeExternalChanges() {
     return result.conflictCount;
 }
 
+bool Buffer::HasConflictMarkers() const {
+    static constexpr std::string_view kMarker = "<<<<<<< ";
+
+    const std::size_t total = Storage_->ByteLength();
+    if (total == 0) {
+        return false;
+    }
+
+    // huge-file-search-and-save follow-up: scans in bounded windows via
+    // Substring rather than text::HasConflictMarkers(Storage_->ToString()),
+    // which would materialize the whole buffer just to answer a boolean.
+    // Each window reads one extra byte at its front (when not at the very
+    // start of the document) so `window[pos - 1]` always sees the real
+    // preceding byte, and one marker's worth extra at its back so a marker
+    // starting on the last in-range byte still has room to be read whole --
+    // together that makes every window's line-start/marker check exactly
+    // equivalent to scanning the un-windowed text, just without ever
+    // holding more than kWindow bytes at a time.
+    constexpr std::size_t kWindow = 4 * 1024 * 1024;
+    std::size_t           offset  = 0;
+    while (offset < total) {
+        const std::size_t lookback  = offset == 0 ? 0 : 1;
+        const std::size_t start     = offset - lookback;
+        const std::size_t coreLen   = std::min(kWindow, total - offset);
+        const std::size_t windowLen = std::min(lookback + coreLen + (kMarker.size() - 1), total - start);
+        const std::string window    = Storage_->Substring(start, windowLen);
+
+        const std::size_t scanFrom = lookback;
+        const std::size_t scanTo   = lookback + coreLen;
+        for (std::size_t pos = scanFrom; pos < scanTo; ++pos) {
+            const bool atLineStart = (start + pos == 0) || window[pos - 1] == '\n';
+            if (atLineStart && window.compare(pos, kMarker.size(), kMarker) == 0) {
+                return true;
+            }
+        }
+        offset += kWindow;
+    }
+    return false;
+}
+
 void Buffer::RestoreContent(std::string_view content) {
     Storage_ = std::make_unique<RopeStorage>(Rope(content));
     Point_ = SnapToGraphemeBoundary(*Storage_, std::min(Point_, Storage_->ByteLength()));

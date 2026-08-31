@@ -255,6 +255,15 @@ class Buffer {
     // automatic, silent merge.
     [[nodiscard]] std::size_t MergeExternalChanges();
 
+    // save-buffer's guard against writing unresolved "<<<<<<<" conflict
+    // markers to disk (Text/ThreeWayMerge.h's HasConflictMarkers) --
+    // storage-agnostic, scanning in bounded windows via
+    // ITextStorage::Substring rather than materializing the whole buffer,
+    // so it stays cheap for a huge (IsHuge()) buffer too. Degrades to a
+    // single whole-content check for an ordinary buffer -- same cost as
+    // calling text::HasConflictMarkers(Text()) directly.
+    [[nodiscard]] bool HasConflictMarkers() const;
+
     // Replaces this buffer's content wholesale from a string rather than
     // from disk (backup-and-recovery follow-up: what recover-file /
     // ned/recover-backup restore a snapshot through). Mirrors Revert()'s

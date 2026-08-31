@@ -266,10 +266,12 @@ Notcurses.
       **Guardrails identified but deliberately not chased down in this pass** (each is a
       real cost/risk at multi-GB scale, none is corruption-on-write the way the two fixed
       bugs above were, and none blocks ordinary use):
-      - `save-buffer`'s own `HasConflictMarkers(context.buffer.Text())` check and
-        `TrimTrailingWhitespaceOnSave()` still fully materialize a huge buffer on every
-        save regardless of `LikelyBinary()` — real cost for a huge buffer that's
-        genuinely text, not guarded by size the way the disk-space check is.
+      - ~~`save-buffer`'s own `HasConflictMarkers(context.buffer.Text())` check ...
+        fully materializes a huge buffer on every save~~ — fixed, see
+        huge-file-search-and-save below. (`TrimTrailingWhitespaceOnSave()`'s own trim
+        pass never actually had this problem — `SaveToFile`'s huge branch already ran it
+        through `StreamingSaveWriter`, not a whole-string copy, from this same commit;
+        this bullet mis-stated that half.)
       - DAP full-document-shaped operations for a huge buffer aren't guarded the way LSP
         sync now is (see the huge-file-lsp-gate entry below) — not a live-reproduced issue
         yet, since debugging a multi-GB buffer is a much rarer combination than editing one
@@ -313,6 +315,30 @@ Notcurses.
       `LspManagerTest.cpp` cover both the huge-buffer skip (with a real server
       configured, not just the pre-existing no-server-configured case) and the repeated-
       call no-op for an ordinary buffer.
+- [x] **huge-file-search-and-save: literal isearch and the conflict-marker save guard no
+      longer materialize a huge buffer.** `IncrementalSearch` used to build two full
+      copies of the buffer (`content_` plus an ASCII-lowercased `contentLower_`) at
+      session construction regardless of size; `save-buffer`'s
+      `HasConflictMarkers(context.buffer.Text())` guard did the same on every single
+      save. Both now branch on `ITextStorage::IsHuge()`: `IncrementalSearch::SearchHuge`
+      (and `AppendWordAtPoint`'s huge branch) scan in bounded windows via
+      `ITextStorage::Substring`, overlapping by `needle.size() - 1` bytes so a match
+      straddling a window boundary is never missed, with the same smart-case/wrap-around
+      semantics as the in-memory path; `Buffer::HasConflictMarkers()` does the equivalent
+      windowed line-start scan and replaces the old free-function call site entirely (an
+      ordinary buffer's cost is unchanged — one window covers the whole thing, same as
+      before). Deliberately literal-only: `query-replace-regexp`'s own full
+      materialization (`QueryReplace.cpp`'s `content_ = buffer_.Text()`) is a known,
+      *not* fixed, gap — windowing a real regex engine (PCRE2, via lookaround/variable-
+      length quantifiers) needs the partial-match streaming API described in this
+      section's own "Streaming/parallel search" bullet below, not just an overlap window,
+      and was scoped out on purpose: multi-MiB-plus source files/functions are treated as
+      the pathological case here, not a real one worth the extra design. Both scans are
+      still an O(document size) worst case when a query isn't found anywhere (unavoidable
+      for a genuine whole-document search) but never hold more than one window's worth of
+      the buffer in memory. `[IncrementalSearch][HugeFile]`/`[Buffer][HugeFile]`-tagged
+      tests cover forward/backward/case-insensitive/wraparound/not-found on a huge buffer
+      plus a dedicated window-boundary-straddling case for each of the two new scans.
 - [ ] Buffers restored by a project session open before the async-loader hook is wired,
       so a huge file inside a restored session still loads synchronously at startup —
       the same fix `main.cpp`'s CLI-arg path already has (`deferredLargeOpenPath`) needs
