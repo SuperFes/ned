@@ -1,5 +1,9 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <filesystem>
+#include <fstream>
+#include <string>
+
 #include "Editor/IncrementalSearch.h"
 #include "Text/Buffer.h"
 
@@ -10,6 +14,18 @@ using ned::text::Rope;
 namespace {
 // t0 h1 e2 _3 q4 u5 i6 c7 k8 _9 b10 r11 o12 w13 n14 _15 f16 o17 x18 _19 j20 ...
 const char* kText = "the quick brown fox jumps over the lazy dog";
+
+// huge-file-search-and-save follow-up: same "each test file duplicates its
+// own tiny helper" precedent BufferHugeFileTest.cpp already establishes --
+// builds a real on-disk file so Buffer::FromHugeFile has something to open
+// (it forces IsHuge() regardless of actual file size, same as that file's
+// own first test relies on).
+std::filesystem::path WriteTempFile(const std::string& name, std::string_view content) {
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / name;
+    std::ofstream                file(path, std::ios::binary);
+    file << content;
+    return path;
+}
 }
 
 TEST_CASE("Forward search finds a substring and leaves point after the match", "[IncrementalSearch]") {
@@ -242,4 +258,171 @@ TEST_CASE("StatusText reflects direction and failing state", "[IncrementalSearch
     failing.AppendChar(U'z');
     failing.AppendChar(U'z');
     REQUIRE(failing.StatusText() == "Failing I-search: zz");
+}
+
+// huge-file-search-and-save follow-up: SearchHuge, the windowed branch of
+// Search()/AppendWordAtPoint() taken for a huge (ITextStorage::IsHuge())
+// buffer -- mirrors the in-memory tests above (same expected offsets) to
+// prove the two paths agree, plus two tests specific to the windowing
+// itself (a match past the first window, and one straddling a window
+// boundary) that the in-memory path has no equivalent for.
+
+TEST_CASE("Forward isearch on a huge buffer finds a match and leaves point after it", "[IncrementalSearch][HugeFile]") {
+    const std::filesystem::path path = WriteTempFile("ned_isearch_huge_forward.txt", kText);
+    Buffer                      buffer = Buffer::FromHugeFile(path);
+    REQUIRE(buffer.Content().IsHuge());
+    buffer.SetPoint(0);
+
+    IncrementalSearch search(buffer, IncrementalSearch::Direction::Forward);
+    search.AppendChar(U'f');
+    search.AppendChar(U'o');
+    search.AppendChar(U'x');
+
+    REQUIRE(search.Found());
+    REQUIRE(buffer.Point() == 19);
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("Backward isearch on a huge buffer leaves point at the start of the match", "[IncrementalSearch][HugeFile]") {
+    const std::filesystem::path path = WriteTempFile("ned_isearch_huge_backward.txt", kText);
+    Buffer                      buffer = Buffer::FromHugeFile(path);
+    buffer.SetPoint(buffer.Size());
+
+    IncrementalSearch search(buffer, IncrementalSearch::Direction::Backward);
+    search.AppendChar(U'o');
+    search.AppendChar(U'g');
+
+    REQUIRE(search.Found());
+    const std::size_t dogStart = std::string(kText).rfind("dog");
+    REQUIRE(buffer.Point() == dogStart + 1);
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("isearch on a huge buffer is smart-case, same as the in-memory path", "[IncrementalSearch][HugeFile]") {
+    const std::filesystem::path path = WriteTempFile("ned_isearch_huge_case.txt", "the quick brown FOX jumps over the lazy dog");
+    Buffer                      buffer = Buffer::FromHugeFile(path);
+    buffer.SetPoint(0);
+
+    IncrementalSearch search(buffer, IncrementalSearch::Direction::Forward);
+    search.AppendChar(U'f');
+    search.AppendChar(U'o');
+    search.AppendChar(U'x');
+
+    REQUIRE(search.Found());
+    REQUIRE(buffer.Point() == 19); // matched uppercase "FOX" despite the all-lowercase query
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("A query with no match in a huge buffer reports Found() == false and leaves point unmoved",
+          "[IncrementalSearch][HugeFile]") {
+    const std::filesystem::path path = WriteTempFile("ned_isearch_huge_nomatch.txt", kText);
+    Buffer                      buffer = Buffer::FromHugeFile(path);
+    buffer.SetPoint(0);
+
+    IncrementalSearch search(buffer, IncrementalSearch::Direction::Forward);
+    search.AppendChar(U'9');
+    search.AppendChar(U'9');
+    search.AppendChar(U'9');
+
+    REQUIRE_FALSE(search.Found());
+    REQUIRE(buffer.Point() == 0);
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("RepeatSearch wraps around to the top of a huge document when it runs off the end",
+          "[IncrementalSearch][HugeFile]") {
+    const std::filesystem::path path = WriteTempFile("ned_isearch_huge_wrap_fwd.txt", kText);
+    Buffer                      buffer = Buffer::FromHugeFile(path);
+    buffer.SetPoint(0);
+
+    IncrementalSearch search(buffer, IncrementalSearch::Direction::Forward);
+    search.AppendChar(U'o');
+    REQUIRE(buffer.Point() == 13);
+    search.RepeatSearch();
+    REQUIRE(buffer.Point() == 18);
+    search.RepeatSearch();
+    REQUIRE(buffer.Point() == 27);
+    search.RepeatSearch();
+    REQUIRE(buffer.Point() == 42); // "dog"'s o, the last one
+    search.RepeatSearch();
+    REQUIRE(search.Found());
+    REQUIRE(buffer.Point() == 13); // wrapped back to "brown"'s o
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("Backward isearch on a huge buffer wraps around to the bottom of the document",
+          "[IncrementalSearch][HugeFile]") {
+    const std::filesystem::path path = WriteTempFile("ned_isearch_huge_wrap_back.txt", kText);
+    Buffer                      buffer = Buffer::FromHugeFile(path);
+    buffer.SetPoint(0); // start searching from the very top
+
+    IncrementalSearch search(buffer, IncrementalSearch::Direction::Backward);
+    search.AppendChar(U'o');
+    REQUIRE(search.Found());
+    const std::size_t dogO = std::string(kText).rfind('o');
+    REQUIRE(buffer.Point() == dogO); // wrapped immediately: nothing before point 0
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("AppendWordAtPoint pulls the word at point in a huge buffer", "[IncrementalSearch][HugeFile]") {
+    const std::filesystem::path path = WriteTempFile("ned_isearch_huge_word.txt", kText);
+    Buffer                      buffer = Buffer::FromHugeFile(path);
+    buffer.SetPoint(16); // start of "fox"
+
+    IncrementalSearch search(buffer, IncrementalSearch::Direction::Forward);
+    search.AppendWordAtPoint();
+
+    REQUIRE(search.Query() == "fox");
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("Forward isearch on a huge buffer finds a match past the first internal scan window",
+          "[IncrementalSearch][HugeFile]") {
+    constexpr std::size_t kWindow = 4 * 1024 * 1024; // mirrors SearchHuge's own kWindow constant (IncrementalSearch.cpp)
+    const std::string     needle  = "unique-token-past-first-window";
+    const std::size_t     needleOffset = kWindow + 1000;
+
+    std::string content(kWindow + 4096, 'a');
+    content.replace(needleOffset, needle.size(), needle);
+    const std::filesystem::path path = WriteTempFile("ned_isearch_huge_multiwindow.txt", content);
+
+    Buffer buffer = Buffer::FromHugeFile(path);
+    buffer.SetPoint(0);
+
+    IncrementalSearch search(buffer, IncrementalSearch::Direction::Forward);
+    search.AppendText(needle);
+
+    REQUIRE(search.Found());
+    REQUIRE(buffer.Point() == needleOffset + needle.size());
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("isearch on a huge buffer finds a match straddling an internal scan-window boundary",
+          "[IncrementalSearch][HugeFile]") {
+    constexpr std::size_t kWindow      = 4 * 1024 * 1024;
+    const std::string     needle       = "STRADDLE";
+    const std::size_t     needleOffset = kWindow - 4; // 4 bytes before, 4 after the boundary
+
+    std::string content(kWindow + 4096, 'a');
+    content.replace(needleOffset, needle.size(), needle);
+    const std::filesystem::path path = WriteTempFile("ned_isearch_huge_boundary.txt", content);
+
+    Buffer buffer = Buffer::FromHugeFile(path);
+    buffer.SetPoint(0);
+
+    IncrementalSearch search(buffer, IncrementalSearch::Direction::Forward);
+    search.AppendText(needle);
+
+    REQUIRE(search.Found());
+    REQUIRE(buffer.Point() == needleOffset + needle.size());
+
+    std::filesystem::remove(path);
 }

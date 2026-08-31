@@ -6,7 +6,11 @@
 // potentially rescanning more than strictly necessary.
 //
 // Buffer text is materialized once at construction: isearch never mutates
-// the buffer, so that snapshot can't go stale during a session.
+// the buffer, so that snapshot can't go stale during a session. Exception:
+// a huge (ITextStorage::IsHuge()) buffer is never materialized at all --
+// see SearchHuge()'s own comment -- since even one copy of a multi-GB
+// buffer, let alone the lowercased second copy, is exactly what huge-file
+// editing's whole design otherwise avoids.
 //
 // Matching is smart-case, Emacs-style: case-insensitive unless the query
 // itself contains an uppercase letter, at which point the whole search
@@ -66,11 +70,16 @@ class IncrementalSearch {
 
   private:
     void Search(std::size_t from);
+    // huge-file-search-and-save follow-up: SearchHuge is the huge_ branch
+    // of Search -- windowed scanning via Content().Substring instead of
+    // content_/contentLower_, which are left empty for a huge buffer.
+    void SearchHuge(std::size_t from);
 
     text::Buffer& buffer_;
     Direction     direction_;
-    std::string   content_;      // buffer text, materialized once
-    std::string   contentLower_; // ASCII-lowercased content_, for case-insensitive matching
+    bool          huge_; // buffer_.Content().IsHuge(), cached -- decided once, at construction
+    std::string   content_;      // buffer text, materialized once; empty when huge_
+    std::string   contentLower_; // ASCII-lowercased content_, for case-insensitive matching; empty when huge_
     std::string   query_;
     std::size_t   originalPoint_;
     bool          found_ = true;

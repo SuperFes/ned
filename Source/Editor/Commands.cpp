@@ -1520,13 +1520,10 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
 
     registry.Register("save-buffer", "Save the current buffer to its associated file.",
                       [saveBufferBody, shouldDeferToLspFormat](CommandContext& context) {
-                          // progressive-huge-file-load follow-up: checked first, before
-                          // ExternallyModified()/HasConflictMarkers() below -- Buffer::
+                          // progressive-huge-file-load follow-up: checked first -- Buffer::
                           // SaveToFile itself already refuses a still-loading buffer, but
-                          // HasConflictMarkers(context.buffer.Text()) fully materializes the
-                          // buffer unconditionally, so without this a save attempt on a
-                          // multi-GB still-loading buffer would pay that full-buffer stall
-                          // before ever reaching SaveToFile's own cheap rejection.
+                          // that content is still growing/incomplete, so there's no point
+                          // running the checks below against it at all.
                           if (context.buffer.IsLoading()) {
                               if (context.message) {
                                   *context.message = "Cannot save \"" + context.buffer.Name() + "\" -- still loading in the background";
@@ -1543,8 +1540,10 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           // external-modification-round-2 follow-up: never silently write
                           // unresolved "<<<<<<<" conflict markers to disk either -- same
                           // "hand the decision to a y/n confirmation" shape as the
-                          // ExternallyModified() check just above.
-                          if (text::HasConflictMarkers(context.buffer.Text())) {
+                          // ExternallyModified() check just above. Buffer::HasConflictMarkers
+                          // scans in bounded windows (huge-file-search-and-save follow-up),
+                          // not context.buffer.Text(), so this stays cheap for a huge buffer.
+                          if (context.buffer.HasConflictMarkers()) {
                               context.interactiveRequest = InteractiveRequest::ConfirmSaveWithConflicts;
                               return;
                           }

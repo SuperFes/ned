@@ -499,6 +499,72 @@ TEST_CASE("Buffer progressive huge-load: a real edit between two appends keeps e
     std::filesystem::remove(path);
 }
 
+// huge-file-search-and-save follow-up: Buffer::HasConflictMarkers -- the
+// windowed, bounded-memory streaming scan save-buffer's guard now uses
+// instead of text::HasConflictMarkers(buffer.Text()).
+
+TEST_CASE("Buffer::HasConflictMarkers works on an ordinary (non-huge) buffer", "[Buffer][HasConflictMarkers]") {
+    Buffer clean("scratch", ned::text::Rope("plain text, no markers\n"));
+    REQUIRE_FALSE(clean.HasConflictMarkers());
+
+    Buffer conflicted("scratch", ned::text::Rope("foo\n<<<<<<< buffer\nbar\n=======\nbaz\n>>>>>>> disk\n"));
+    REQUIRE(conflicted.HasConflictMarkers());
+
+    Buffer notAtLineStart("scratch", ned::text::Rope("foo not at line start <<<<<<< buffer\n"));
+    REQUIRE_FALSE(notAtLineStart.HasConflictMarkers());
+}
+
+TEST_CASE("Buffer::HasConflictMarkers scans a huge buffer without a marker and finds none",
+          "[Buffer][HugeFile][HasConflictMarkers]") {
+    constexpr std::size_t kSize = 5 * 1024 * 1024; // past one internal scan window
+    std::string           content(kSize, 'a');
+    for (std::size_t i = 79; i < kSize; i += 80) {
+        content[i] = '\n';
+    }
+    const std::filesystem::path path = WriteTempFile("ned_buffer_huge_conflict_none.txt", content);
+
+    Buffer buffer = Buffer::FromHugeFile(path);
+    REQUIRE(buffer.Content().IsHuge());
+    REQUIRE_FALSE(buffer.HasConflictMarkers());
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("Buffer::HasConflictMarkers finds a marker straddling an internal scan-window boundary",
+          "[Buffer][HugeFile][HasConflictMarkers]") {
+    // Mirrors HasConflictMarkers()'s own kWindow constant (Buffer.cpp) --
+    // placing the marker here, straddling that exact offset, is what
+    // actually exercises the window-boundary stitching logic rather than
+    // just the common single-window case the test above covers.
+    constexpr std::size_t kWindow     = 4 * 1024 * 1024;
+    constexpr std::size_t kSize       = kWindow + 4096;
+    const std::size_t     markerStart = kWindow - 4; // 4 bytes before, 4 after the boundary
+
+    std::string content(kSize, 'a');
+    content[markerStart - 1] = '\n'; // marker must start at a line start
+    content.replace(markerStart, 8, "<<<<<<< ");
+    const std::filesystem::path path = WriteTempFile("ned_buffer_huge_conflict_boundary.txt", content);
+
+    Buffer buffer = Buffer::FromHugeFile(path);
+    REQUIRE(buffer.Content().IsHuge());
+    REQUIRE(buffer.HasConflictMarkers());
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("Buffer::HasConflictMarkers finds a marker at the very start of a huge buffer",
+          "[Buffer][HugeFile][HasConflictMarkers]") {
+    constexpr std::size_t kSize = 5 * 1024 * 1024;
+    std::string           content = "<<<<<<< buffer\n" + std::string(kSize, 'a');
+    const std::filesystem::path path = WriteTempFile("ned_buffer_huge_conflict_start.txt", content);
+
+    Buffer buffer = Buffer::FromHugeFile(path);
+    REQUIRE(buffer.Content().IsHuge());
+    REQUIRE(buffer.HasConflictMarkers());
+
+    std::filesystem::remove(path);
+}
+
 TEST_CASE("Buffer progressive huge-load: SaveToFile refuses while loading and succeeds once FinishHugeLoad runs",
           "[Buffer][HugeFile][ProgressiveLoad]") {
     const std::filesystem::path path       = WriteTempFile("ned_buffer_huge_progressive_save.txt", "AAAABBBB");
