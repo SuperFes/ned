@@ -551,11 +551,27 @@ auto main(int argc, char** argv) -> int {
     // applied later, once dapManager exists, and the sidebar state once
     // projectSidebar does.
     const std::optional<ned::editor::ProjectSessionData> restoredSession = ned::editor::LoadActiveProjectSession();
+    // huge-file-session-restore follow-up: a restored file over
+    // AsyncLoadThreshold() can't go through OpenOrCreateFile here -- the
+    // async/huge opener hooks (SetAsyncFileOpener/SetAsyncHugeFileOpener)
+    // aren't wired until EnableAsyncFileLoading/EnableAsyncHugeFileLoading
+    // run, ~500 lines below, once EventLoop exists -- same ordering
+    // constraint deferredLargeOpenPath exists to work around for the CLI
+    // arg. Deferred here the same way: opened for real right after those
+    // hooks are wired, so a large/huge file inside a restored session
+    // streams in instead of blocking the splash.
+    std::vector<std::filesystem::path> deferredSessionOpenPaths;
     if (restoredSession) {
         for (const auto& file : restoredSession->openFiles) {
             std::error_code existsEc;
             if (!std::filesystem::exists(file, existsEc) || bufferList.FindByPath(file) != nullptr) {
                 continue; // gone since last session, or already opened via the CLI
+            }
+            std::error_code      sizeEc;
+            const std::uintmax_t size = std::filesystem::file_size(file, sizeEc);
+            if (!sizeEc && size > ned::text::AsyncLoadThreshold()) {
+                deferredSessionOpenPaths.push_back(file);
+                continue;
             }
             try {
                 bufferList.OpenOrCreateFile(file, forceBinary);
@@ -584,7 +600,7 @@ auto main(int argc, char** argv) -> int {
     ned::text::Buffer* startupScratch = nullptr;
     if (buffer == nullptr) {
         buffer = &bufferList.CreateBuffer("scratch");
-        if (!deferredLargeOpenPath.empty()) {
+        if (!deferredLargeOpenPath.empty() || !deferredSessionOpenPaths.empty()) {
             startupScratch = buffer;
         }
     }
@@ -693,17 +709,13 @@ auto main(int argc, char** argv) -> int {
         *buffer, killRing, registers, promptHistory, bufferList, registry, janetKeymap, globalKeymap, std::move(mode),
         statusMessage, theme);
 
-    // session-persistence-window-layout follow-up: replaces the single
-    // default pane just constructed above with the restored split tree, if
-    // one was captured -- every file it references was already opened by
-    // the restoredSession->openFiles loop above, so RestoreWindowLayout only
-    // has to resolve buffers, never open any. A no-op (falls through to the
-    // single-pane default) when there's nothing to restore, restore is
-    // disabled, or a referenced file went missing since the session was
-    // captured.
-    if (restoredSession) {
-        windowManager->RestoreWindowLayout(*restoredSession);
-    }
+    // session-persistence-window-layout follow-up: RestoreWindowLayout used
+    // to run right here -- moved below, after EnableAsyncFileLoading/
+    // EnableAsyncHugeFileLoading and the deferred-session-open loop (see
+    // huge-file-session-restore follow-up there), since a leaf referencing a
+    // deferred large/huge file can't resolve yet at this point and
+    // BuildNodeFromLayout would otherwise discard the whole restored split
+    // tree (not just misfocus one pane -- see that follow-up's own comment).
 
     // TabBar/ProjectSidebar are still single, shared-app-wide widgets (real
     // Emacs has no per-window tab strip or file browser either) -- but a
@@ -1080,6 +1092,30 @@ auto main(int argc, char** argv) -> int {
     // file gets the progressive, editable-while-loading path from here on.
     windowManager->EnableAsyncHugeFileLoading(eventLoop);
 
+    // huge-file-session-restore follow-up: the restored-session files
+    // deferred above (see deferredSessionOpenPaths' own comment), opened now
+    // that the async/huge opener hooks exist -- each becomes an ordinary
+    // background buffer (streamed in the same way an interactive open of the
+    // same file would be), same "no per-file interactive confirmation"
+    // contract the rest of session restore already has. RestoreWindowLayout
+    // itself also has to wait until after this loop: it resolves every leaf
+    // by path via a single BuildNodeFromLayout pass with no open of its
+    // own -- called any earlier, a leaf naming one of these still-unopened
+    // deferred paths would fail to resolve, and BuildNodeFromLayout discards
+    // the *entire* restored tree on any single unresolvable leaf, not just
+    // that one pane.
+    for (const auto& file : deferredSessionOpenPaths) {
+        try {
+            bufferList.OpenOrCreateFile(file, forceBinary);
+        }
+        catch (const std::exception&) {
+            // Best-effort, same as the synchronous half of this loop above.
+        }
+    }
+    if (restoredSession) {
+        windowManager->RestoreWindowLayout(*restoredSession);
+    }
+
     // loose-ends follow-up: the large CLI file deferred at the top of
     // main() (see deferredLargeOpenPath's own comment there) -- now that
     // the async opener hook is wired, this open returns immediately with an
@@ -1096,10 +1132,50 @@ auto main(int argc, char** argv) -> int {
             if (startupScratch != nullptr && !startupScratch->Modified()) {
                 windowManager->NotifyBufferClosing(*startupScratch);
                 bufferList.Close(startupScratch->Name());
+                startupScratch = nullptr;
             }
         }
         catch (const std::exception& e) {
             statusMessage = e.what();
+        }
+    }
+
+    // huge-file-session-restore follow-up: a fallback for the rare case
+    // RestoreWindowLayout above couldn't rebuild the pane tree at all (an
+    // old session predating windowLayout, or a referenced file that still
+    // failed to open even after the retry above) -- redone independently of
+    // that method's own focusedPanePath so a plain single-default-pane
+    // startup still lands on the intended activeFile/first-openFiles buffer
+    // rather than whatever was resolvable earliest. A no-op when
+    // RestoreWindowLayout already succeeded: FocusedActiveBuffer() already
+    // names the same buffer this recomputes (both trace back to the same
+    // saved focus), so the .Set() below is a harmless no-op re-application
+    // in that case. pathArg == nullptr guards this the same way as
+    // RestoreWindowLayout implicitly is guarded by deferredLargeOpenPath's
+    // own unconditional focus override just above -- a CLI file, sync or
+    // deferred, always wins outright.
+    if (pathArg == nullptr && restoredSession && !deferredSessionOpenPaths.empty()) {
+        std::optional<std::filesystem::path> focusPath;
+        if (restoredSession->activeFile && bufferList.FindByPath(*restoredSession->activeFile) != nullptr) {
+            focusPath = restoredSession->activeFile;
+        }
+        if (!focusPath) {
+            for (const auto& file : restoredSession->openFiles) {
+                if (bufferList.FindByPath(file) != nullptr) {
+                    focusPath = file;
+                    break;
+                }
+            }
+        }
+        if (focusPath) {
+            ned::text::Buffer* resolved = bufferList.FindByPath(*focusPath);
+            windowManager->FocusedActiveBuffer().Set(*resolved);
+            projectSidebar->RevealPath(*focusPath);
+            if (startupScratch != nullptr && !startupScratch->Modified()) {
+                windowManager->NotifyBufferClosing(*startupScratch);
+                bufferList.Close(startupScratch->Name());
+                startupScratch = nullptr;
+            }
         }
     }
 

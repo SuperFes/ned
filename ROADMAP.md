@@ -339,11 +339,42 @@ Notcurses.
       the buffer in memory. `[IncrementalSearch][HugeFile]`/`[Buffer][HugeFile]`-tagged
       tests cover forward/backward/case-insensitive/wraparound/not-found on a huge buffer
       plus a dedicated window-boundary-straddling case for each of the two new scans.
-- [ ] Buffers restored by a project session open before the async-loader hook is wired,
-      so a huge file inside a restored session still loads synchronously at startup —
-      the same fix `main.cpp`'s CLI-arg path already has (`deferredLargeOpenPath`) needs
-      applying to the session-restore loop too, for both the existing async-load
-      threshold and the new huge-file threshold.
+- [x] **huge-file-session-restore: a restored session's own large/huge files no longer
+      load synchronously at startup.** Same gap `deferredLargeOpenPath` already fixed for
+      the CLI-arg path: the session-restore loop (`Source/main.cpp`, right after
+      `LoadActiveProjectSession`) ran well before `EnableAsyncFileLoading`/
+      `EnableAsyncHugeFileLoading` wire `BufferList`'s async/huge opener hooks (those need
+      a real `EventLoop&`, constructed much later), so every restored file called
+      `BufferList::OpenOrCreateFile` on the fully synchronous fallback path regardless of
+      size — a multi-GB file left open at last quit re-blocked the splash on every
+      subsequent launch. Fixed the same way: a restored file over `AsyncLoadThreshold()`
+      is collected into `deferredSessionOpenPaths` instead of opened inline, then actually
+      opened right after the async/huge hooks are wired (same insertion point
+      `deferredLargeOpenPath` already uses) — it becomes an ordinary streamed-in background
+      buffer, ✕ no per-file interactive confirmation, matching the rest of session
+      restore's existing "best-effort" contract.
+
+      Live-testing this surfaced a second, more serious bug in the process:
+      `WindowManager::RestoreWindowLayout` used to run immediately after session buffers
+      opened (long before the deferral above existed, when that assumption always held).
+      `BuildNodeFromLayout` resolves every leaf by path with no open of its own — a single
+      leaf naming a still-unopened deferred path fails to resolve, and per the function's
+      own existing corruption-defense comment, an unresolvable leaf discards the *entire*
+      restored tree, not just that one pane, silently falling back to the plain
+      single-default-pane startup. Concretely: a session with a huge file as the *focused*
+      buffer (the common case — it was being edited when the editor last quit) would
+      restore focused on some other, arbitrary already-open buffer instead once the huge
+      file was deferred, with no error and no indication anything was wrong — confirmed
+      live (`small.txt` staying focused while a 20 MB `big.txt` streamed in behind it,
+      reachable only via the tab bar). Fixed by moving the `RestoreWindowLayout` call
+      itself to after `deferredSessionOpenPaths` finishes opening, ahead of
+      `deferredLargeOpenPath`'s own CLI-focus override so a CLI-named file still wins
+      outright, matching the pre-existing precedent. A small additional fallback (gated on
+      `pathArg == nullptr`, since RestoreWindowLayout's own focus resolution already covers
+      the common windowLayout-present case) re-derives the intended active buffer from
+      `activeFile`/first-of-`openFiles` for the rare case RestoreWindowLayout still
+      couldn't rebuild the tree at all (a pre-windowLayout-era session, or a file that
+      failed to open even on retry).
 - [ ] **Staged path to full feature parity on a huge buffer**, once the piece-table v1
       above lands, each stage independently shippable and not blocking the next:
       1. A bounded-range `Buffer` API (`LineCount()`, `TextInRange(start,end)`,
