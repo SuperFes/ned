@@ -545,6 +545,7 @@ add_library(ned_lib STATIC
         Source/Editor/PrefixArgument.cpp
         Source/Editor/QueryReplace.cpp
         Source/Editor/RegexPattern.cpp
+        Source/Editor/HugeRegexScan.cpp
         Source/Editor/Register.cpp
         Source/Editor/Rectangle.cpp
         Source/Editor/AutoPair.cpp
@@ -883,6 +884,7 @@ if (NED_BUILD_TESTS)
             Tests/PrefixArgumentTest.cpp
             Tests/QueryReplaceTest.cpp
             Tests/RegexPatternTest.cpp
+            Tests/HugeRegexScanTest.cpp
             Tests/ModeTest.cpp
             Tests/CodeFoldTest.cpp
             Tests/OrgTest.cpp

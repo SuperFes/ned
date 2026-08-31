@@ -23,6 +23,17 @@ Buffer MakeBuffer(const std::string& text) {
     return buffer;
 }
 
+// huge-file-vim-search follow-up: same "each test file duplicates its own tiny
+// helper" precedent QueryReplaceTest.cpp/IncrementalSearchTest.cpp already
+// establish -- builds a real on-disk file so Buffer::FromHugeFile has
+// something to open (it forces IsHuge() regardless of actual file size).
+std::filesystem::path WriteTempFile(const std::string& name, std::string_view content) {
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / name;
+    std::ofstream               file(path, std::ios::binary);
+    file << content;
+    return path;
+}
+
 KeyChord Ch(char32_t c) {
     KeyChord k;
     k.Codepoint = c;
@@ -915,4 +926,82 @@ TEST_CASE("Dot-repeat replays an Insert session that used C-o", "[VimEngine]") {
 
     Feed(engine, buffer, "j0."); // move to line 2, repeat the whole recorded change
     REQUIRE(buffer.Text() == "Xbar\nXbar\n");
+}
+
+// huge-file-vim-search follow-up: RunSearchHuge, the windowed branch / ? n N take for a
+// huge (ITextStorage::IsHuge()) buffer -- mirrors "Search with / finds the next match
+// and n repeats" above (same expected offsets) to prove the two paths agree, plus
+// backward search and multi-window cases the in-memory path has no equivalent for.
+
+TEST_CASE("Search with / finds the next match and n repeats on a huge buffer", "[VimEngine][HugeFile]") {
+    const std::filesystem::path path   = WriteTempFile("ned_vim_huge_search_fwd.txt", "foo bar foo baz foo");
+    Buffer                      buffer = Buffer::FromHugeFile(path);
+    REQUIRE(buffer.Content().IsHuge());
+    VimEngine engine;
+
+    Feed(engine, buffer, "/foo\n");
+    REQUIRE(buffer.Point() == 8);
+    Feed(engine, buffer, "n");
+    REQUIRE(buffer.Point() == 16);
+    Feed(engine, buffer, "n"); // wraps back to the first
+    REQUIRE(buffer.Point() == 0);
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("Backward search with ? finds the previous match on a huge buffer, wrapping past the start",
+          "[VimEngine][HugeFile]") {
+    const std::filesystem::path path   = WriteTempFile("ned_vim_huge_search_back.txt", "foo bar foo baz foo");
+    Buffer                      buffer = Buffer::FromHugeFile(path);
+    buffer.SetPoint(10); // just after the second "foo"
+    VimEngine engine;
+
+    Feed(engine, buffer, "?foo\n");
+    REQUIRE(buffer.Point() == 8); // the second "foo", nearest before point
+
+    Feed(engine, buffer, "?foo\n"); // repeat: nearest before point 8
+    REQUIRE(buffer.Point() == 0);
+
+    Feed(engine, buffer, "?foo\n"); // nothing before point 0 -- wraps to the last "foo"
+    REQUIRE(buffer.Point() == 16);
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("Search with / finds a match past the first internal scan window on a huge buffer",
+          "[VimEngine][HugeFile]") {
+    constexpr std::size_t kWindowBody = 4 * 1024 * 1024; // mirrors HugeRegexScan.cpp's own constant
+    const std::size_t     matchOffset = kWindowBody + 1000;
+
+    std::string content(kWindowBody + 4096, '.');
+    content.replace(matchOffset, 6, "TARGET");
+    const std::filesystem::path path = WriteTempFile("ned_vim_huge_search_multiwindow.txt", content);
+
+    Buffer buffer = Buffer::FromHugeFile(path);
+    buffer.SetPoint(0);
+    VimEngine engine;
+
+    Feed(engine, buffer, "/TARGET\n");
+    REQUIRE(buffer.Point() == matchOffset); // point lands at the start of the match
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("Backward search with ? finds a match by widening the scan window on a huge buffer",
+          "[VimEngine][HugeFile]") {
+    constexpr std::size_t kWindowBody = 4 * 1024 * 1024;
+    const std::size_t     matchOffset = 1000; // near the real document start
+
+    std::string content(2 * kWindowBody, '.');
+    content.replace(matchOffset, 6, "TARGET");
+    const std::filesystem::path path = WriteTempFile("ned_vim_huge_search_back_widen.txt", content);
+
+    Buffer buffer = Buffer::FromHugeFile(path);
+    buffer.SetPoint(2 * kWindowBody - 500); // deep into the document, far from the only match
+    VimEngine engine;
+
+    Feed(engine, buffer, "?TARGET\n");
+    REQUIRE(buffer.Point() == matchOffset);
+
+    std::filesystem::remove(path);
 }

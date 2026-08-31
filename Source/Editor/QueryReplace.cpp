@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include "HugeRegexScan.h"
 #include "Text/Utf8.h"
 
 namespace ned::editor {
@@ -91,86 +92,21 @@ void QueryReplace::FindNextMatch() {
 }
 
 // huge-file-regex-replace follow-up: same forward-only, no-wraparound
-// semantics as FindNextMatch above, but reading the subject in bounded
-// windows via Content().Substring instead of content_ (empty for a huge
-// buffer) -- mirrors IncrementalSearch::SearchHuge's scheme, generalized
-// for a regex match rather than a fixed-length literal needle.
-//
-// Two cursors drive the scan: searchFrom (where the next match is allowed to
-// start -- never regresses) and reach (how far past searchFrom the window
-// currently extends -- grows on retry, resets once searchFrom itself
-// advances). Each window starts kOverlapMargin bytes behind searchFrom, not
-// at searchFrom itself, so a genuine match starting inside that margin still
-// gets full leading context for lookbehind; the window is always searched
-// from searchFrom's own offset within it, so a match can never be reported
-// before searchFrom (no separate "discard matches before the cursor" step
-// needed) and, just as importantly, the window's own synthetic start is
-// never itself a reachable match position -- no ^-at-a-fake-line-start risk
-// the way a naive "search the window from its own offset 0" scheme would
-// have.
-//
-// A match found within kOverlapMargin bytes of the window's own end is not
-// trusted unless the window reached the real end of the document -- it
-// might match differently (or not at all) with more trailing context, a
-// multi-line pattern or a lookahead spanning the boundary being the classic
-// case. Rather than trust it, reach grows and the same searchFrom is
-// retried with a wider window (searchFrom itself must not advance past an
-// unconfirmed candidate, or a match starting inside the old window's tail
-// margin -- now the new window's lead-in -- would be skipped, since a
-// window's own search offset excludes anything before it). Only once a
-// window comes up genuinely empty from searchFrom to its own end does
-// searchFrom jump forward (to that window's end, with reach reset) -- safe,
-// since that range has just been proven to hold no match at all. This
-// bounds correctness to "a single match, or the lookaround/multi-line span
-// it depends on, is at most kOverlapMargin bytes wide" -- an accepted
-// limit, the same class of cut ProjectSearch's line-bounded RE2 path
-// already lives with (no lookaround at all there).
+// semantics as FindNextMatch above, but delegating to the windowed scan
+// shared with Vim mode's search (Editor/HugeRegexScan.h) instead of
+// materializing content_ (empty for a huge buffer).
 void QueryReplace::FindNextMatchHuge() {
-    constexpr std::size_t kWindowBody    = 4 * 1024 * 1024;
-    constexpr std::size_t kOverlapMargin = 64 * 1024;
-
-    const std::size_t total = buffer_.Content().ByteLength();
-    if (searchCursor_ > total) {
+    const std::optional<HugeRegexMatch> found = FindNextRegexMatchHuge(buffer_, *pattern_, searchCursor_);
+    if (!found.has_value()) {
         hasMatch_ = false;
         stage_    = Stage::Done;
         return;
     }
 
-    std::size_t searchFrom = searchCursor_;
-    std::size_t reach      = kWindowBody;
-    for (;;) {
-        const std::size_t windowStart = (searchFrom >= kOverlapMargin) ? searchFrom - kOverlapMargin : 0;
-        const std::size_t windowEnd   = std::min(total, searchFrom + reach);
-        const std::string window      = buffer_.Content().Substring(windowStart, windowEnd - windowStart);
-
-        const bool                      atDocEnd = (windowEnd == total);
-        const std::optional<RegexMatch> match    = pattern_->Search(window, searchFrom - windowStart);
-
-        if (match.has_value()) {
-            const bool nearTail = !atDocEnd && (window.size() - match->end) < kOverlapMargin;
-            if (!nearTail) {
-                hasMatch_                  = true;
-                matchStart_                = windowStart + match->start;
-                matchEnd_                  = windowStart + match->end;
-                matchFormattedReplacement_ = pattern_->FormatReplacement(window, *match, replacementText_);
-                return;
-            }
-            reach += kWindowBody; // possibly truncated -- widen and retry from the same searchFrom
-            continue;
-        }
-
-        if (atDocEnd) {
-            break;
-        }
-        // No match anywhere in [searchFrom, windowEnd) -- safe to skip the
-        // whole window; a match can't start earlier than searchFrom (it was
-        // excluded from this search) or inside a range just proven empty.
-        searchFrom = windowEnd;
-        reach      = kWindowBody;
-    }
-
-    hasMatch_ = false;
-    stage_    = Stage::Done;
+    hasMatch_                  = true;
+    matchStart_                = found->windowStart + found->match.start;
+    matchEnd_                  = found->windowStart + found->match.end;
+    matchFormattedReplacement_ = pattern_->FormatReplacement(found->window, found->match, replacementText_);
 }
 
 void QueryReplace::ReplaceAndNext() {
