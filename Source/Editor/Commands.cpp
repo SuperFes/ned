@@ -1037,6 +1037,33 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
         }
     });
 
+    // binary-safety-guardrails follow-up: the escape hatch for
+    // BinarySafeguardsActive() -- see Buffer.h's own doc comment on that
+    // predicate and the guard sites it gates (save-buffer's format-on-save/
+    // ensure-final-newline/forced-line-ending steps, format-buffer,
+    // convert-line-endings-to-*). A no-op message (not silently ignored)
+    // for a buffer that was never LikelyBinary() in the first place -- there's
+    // nothing to override.
+    registry.Register("toggle-binary-safeguards",
+                      "Toggle whether a binary-detected buffer's format/line-ending/final-newline safeguards apply.",
+                      [](CommandContext& context) {
+                          if (!context.buffer.LikelyBinary()) {
+                              if (context.message) {
+                                  *context.message = "\"" + context.buffer.Name() + "\" was never detected as binary -- nothing to override.";
+                              }
+                              return;
+                          }
+                          const bool wasOverridden = context.buffer.BinarySafetyOverride();
+                          context.buffer.SetBinarySafetyOverride(!wasOverridden);
+                          if (context.message) {
+                              *context.message = wasOverridden
+                                                     ? "Binary safeguards restored for \"" + context.buffer.Name() + "\"."
+                                                     : "Binary safeguards overridden for \"" + context.buffer.Name() +
+                                                           "\" -- format-on-save, forced line-ending conversion, and "
+                                                           "ensure-final-newline now apply like an ordinary text buffer.";
+                          }
+                      });
+
     // keyboard-quit follow-up: real Emacs' C-g aborts several things at
     // once (the current command, a pending prefix key, an active
     // minibuffer) -- the prefix-key/minibuffer cases are already handled
@@ -1412,13 +1439,24 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     // anyway" escape hatch).
     const auto saveBufferBody = [](CommandContext& context) {
         try {
+            // binary-safety-guardrails follow-up: a buffer opened via a
+            // confirmed "open anyway?" binary override gets none of the
+            // byte-level, content-changing save-time behaviors below by
+            // default -- auto-formatting, ensuring a final newline, and
+            // forced line-ending conversion are all safe/expected for real
+            // text but can silently corrupt binary content. Overridable
+            // per-buffer via toggle-binary-safeguards; a buffer that merely
+            // passed allowBinary but never actually looked binary is
+            // unaffected (BinarySafeguardsActive() stays false for it).
+            const bool binarySafeguards = context.buffer.BinarySafeguardsActive();
+
             // Only attempted when a command is actually configured (format-
             // on-save follow-up; see FormatOnSave.h) -- FormatCommand() is
             // checked separately from RunFormatCommand()'s result so a
             // configured-but-failing formatter can be reported distinctly
             // from "nothing configured," rather than both looking identical.
             bool formatFailed = false;
-            if (FormatCommand()) {
+            if (FormatCommand() && !binarySafeguards) {
                 if (const std::optional<std::string> formatted = RunFormatCommand(context.buffer.Text())) {
                     // Whole-buffer replace, not a targeted diff/patch -- simple
                     // and correct, at the cost of point landing at the end of
@@ -1442,8 +1480,9 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
             if (context.buffer.Path()) {
                 BackupFileBeforeSave(*context.buffer.Path());
             }
-            context.buffer.Save(EnsureFinalNewline(), TrimTrailingWhitespaceOnSave(),
-                                ResolveLineEndingForSave(context.buffer.LineEndingKind()));
+            context.buffer.Save(EnsureFinalNewline() && !binarySafeguards, TrimTrailingWhitespaceOnSave() && !binarySafeguards,
+                                binarySafeguards ? std::optional<text::LineEnding>{}
+                                                 : std::optional<text::LineEnding>(ResolveLineEndingForSave(context.buffer.LineEndingKind())));
             if (context.buffer.Path()) {
                 RemoveAutoSave(*context.buffer.Path());
             }
@@ -1468,7 +1507,11 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     // (RequestLspFormatThenSaveBuffer) instead of running saveBufferBody
     // synchronously, since an LSP round trip can't be waited on inline.
     const auto shouldDeferToLspFormat = [](CommandContext& context) {
-        if (FormatCommand() || !editor::lsp::LspFormatOnSaveEnabled() || !context.lspManager || !context.mode) {
+        // binary-safety-guardrails follow-up: an LSP formatter is exactly
+        // as capable of corrupting binary content as the external
+        // FormatCommand() this same early-out already skips for.
+        if (FormatCommand() || context.buffer.BinarySafeguardsActive() || !editor::lsp::LspFormatOnSaveEnabled() ||
+            !context.lspManager || !context.mode) {
             return false;
         }
         const std::string languageKey = LanguageKeyForMode(*context.mode);
@@ -1477,6 +1520,19 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
 
     registry.Register("save-buffer", "Save the current buffer to its associated file.",
                       [saveBufferBody, shouldDeferToLspFormat](CommandContext& context) {
+                          // progressive-huge-file-load follow-up: checked first, before
+                          // ExternallyModified()/HasConflictMarkers() below -- Buffer::
+                          // SaveToFile itself already refuses a still-loading buffer, but
+                          // HasConflictMarkers(context.buffer.Text()) fully materializes the
+                          // buffer unconditionally, so without this a save attempt on a
+                          // multi-GB still-loading buffer would pay that full-buffer stall
+                          // before ever reaching SaveToFile's own cheap rejection.
+                          if (context.buffer.IsLoading()) {
+                              if (context.message) {
+                                  *context.message = "Cannot save \"" + context.buffer.Name() + "\" -- still loading in the background";
+                              }
+                              return;
+                          }
                           // Never silently overwrite a file someone else wrote underneath
                           // this buffer (Emacs' supersession check): hand the decision to a
                           // y/n confirmation instead of writing anything.
@@ -1501,6 +1557,13 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
 
     registry.Register("save-buffer-force", "Save the current buffer even if its file changed on disk.",
                       [saveBufferBody, shouldDeferToLspFormat](CommandContext& context) {
+                          // See save-buffer's own comment on this guard.
+                          if (context.buffer.IsLoading()) {
+                              if (context.message) {
+                                  *context.message = "Cannot save \"" + context.buffer.Name() + "\" -- still loading in the background";
+                              }
+                              return;
+                          }
                           if (shouldDeferToLspFormat(context)) {
                               context.deferSaveForLspFormat = true; // force=true: mirrors this command's own "skip the guards" meaning
                               return;
@@ -1519,9 +1582,35 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     // read as "did nothing happened," not "nothing to do."
     registry.Register("format-buffer", "Run the configured format command over the whole buffer, without saving.",
                       [](CommandContext& context) {
+                          // progressive-huge-file-load follow-up: same reasoning as
+                          // save-buffer's own guard -- checked first since the whole-buffer
+                          // Text()+DeleteRange+InsertAt below fully materializes the buffer,
+                          // now newly reachable mid-load since a huge buffer is genuinely
+                          // editable while loading (see Buffer::ReadOnly()'s own doc
+                          // comment).
+                          if (context.buffer.IsLoading()) {
+                              if (context.message) {
+                                  *context.message = "Cannot format \"" + context.buffer.Name() + "\" -- still loading in the background";
+                              }
+                              return;
+                          }
                           if (!FormatCommand()) {
                               if (context.message) {
                                   *context.message = "No format command configured.";
+                              }
+                              return;
+                          }
+                          // binary-safety-guardrails follow-up: refuses an explicit
+                          // invocation too, not just the automatic format-on-save side
+                          // effect (see save-buffer's own guard) -- a formatter is just
+                          // as capable of corrupting binary content whether it runs as
+                          // a save side effect or because the user asked for it
+                          // directly. toggle-binary-safeguards is the escape hatch.
+                          if (context.buffer.BinarySafeguardsActive()) {
+                              if (context.message) {
+                                  *context.message = "\"" + context.buffer.Name() +
+                                                     "\" looks like binary content -- refusing to format it "
+                                                     "(run toggle-binary-safeguards to override)";
                               }
                               return;
                           }
@@ -1546,6 +1635,21 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     // same override-vs-global-policy relationship ensureFinalNewline has).
     const auto convertLineEndings = [](text::LineEnding ending) {
         return [ending](CommandContext& context) {
+            // binary-safety-guardrails follow-up: refused outright rather
+            // than set-and-silently-ignored -- saveBufferBody skips
+            // ResolveLineEndingForSave entirely for a BinarySafeguardsActive()
+            // buffer (see its own comment), so setting the override here
+            // would otherwise look like it took effect but never actually
+            // apply at save time. toggle-binary-safeguards is the escape
+            // hatch, same as format-buffer's own guard.
+            if (context.buffer.BinarySafeguardsActive()) {
+                if (context.message) {
+                    *context.message = "\"" + context.buffer.Name() +
+                                       "\" looks like binary content -- refusing to convert its line endings "
+                                       "(run toggle-binary-safeguards to override)";
+                }
+                return;
+            }
             context.buffer.SetLineEndingOverride(ending);
             if (context.message) {
                 *context.message = std::string("Buffer will be saved as ") + text::LineEndingName(ending) + " next.";

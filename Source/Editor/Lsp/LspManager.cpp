@@ -505,6 +505,20 @@ std::vector<std::string> LspManager::ActiveServerKeysForBuffer(const text::Buffe
 }
 
 void LspManager::SyncToServer(text::Buffer& buffer, const std::string& serverKey, const std::string& languageId) {
+    // progressive-huge-file-load follow-up: checked here, ahead of the
+    // buffer.Text() argument below, rather than relying solely on
+    // SyncTextToServer's own (still-kept, still-needed-by-
+    // SyncEmbeddedDocuments) client check -- buffer.Text() unconditionally
+    // materializes the whole document (Storage_->ToString()), which for a
+    // huge buffer with no server configured for its language was a real,
+    // reproduced live hang: every SyncBackgroundBuffers tick paid two full
+    // multi-GB copies (primary + prose-checker) just to discover there was
+    // nothing to send them to, and once that cost exceeds the tick
+    // interval the EventLoop::Post queue backs up forever. A no-op buffer
+    // argument is never worth evaluating eagerly.
+    if (!ClientForLanguage(serverKey)) {
+        return;
+    }
     SyncTextToServer(buffer, serverKey, languageId, buffer.Text());
 }
 

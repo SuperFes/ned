@@ -683,6 +683,7 @@ add_library(ned_lib STATIC
         Source/UI/BufferView.cpp
         Source/UI/WindowManager.cpp
         Source/UI/AsyncFileLoader.cpp
+        Source/UI/HugeFileLoader.cpp
         Source/UI/TabBar.cpp
         Source/UI/ScrollArrowButton.cpp
         Source/UI/ProjectSidebar.cpp

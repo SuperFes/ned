@@ -84,6 +84,16 @@ PieceTable PieceTable::FromFile(const std::filesystem::path& path) {
     return PieceTable(std::move(root), backing);
 }
 
+PieceTable PieceTable::FromFileRange(std::shared_ptr<const MappedFile> mappedFile, std::size_t fileByteOffset, std::size_t length) {
+    Backing backing{std::move(mappedFile), std::make_shared<std::string>()};
+    auto    root = BuildBalancedSpan(SpanSource::kOriginal, fileByteOffset, length, kOriginalChunkSize, backing);
+    return PieceTable(std::move(root), backing);
+}
+
+PieceTable PieceTable::Concatenated(const PieceTable& fragment) const {
+    return PieceTable(Concat(root_, fragment.root_), backing_);
+}
+
 bool PieceTable::Empty() const {
     return root_ == nullptr;
 }

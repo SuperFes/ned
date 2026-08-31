@@ -27,6 +27,7 @@
 
 #include "ITextStorage.h"
 #include "LineEnding.h"
+#include "PieceTable.h"
 #include "Rope.h"
 #include "UndoTree.h"
 
@@ -64,14 +65,20 @@ class Buffer {
     // contract FromFile does (a huge buffer isn't exempt from "don't open
     // binary as text" -- LooksBinary only reads the first 8 KiB, so this
     // stays cheap regardless of file size), MappedFileError
-    // (Text/MappedFile.h) if the file can't be mapped, and a plain
-    // std::runtime_error if the file contains any CRLF/CR line ending --
-    // Storage_ is always LF-only throughout this class, and normalizing
-    // that for a multi-GB file would mean rewriting every line, defeating
-    // the point of this path entirely; a CRLF huge file still opens fine
-    // via the normal FromFile path above, just without this one's
-    // memory/speed benefits. See the huge-file-editing plan for the
-    // follow-up that would lift this restriction.
+    // (Text/MappedFile.h) if the file can't be mapped, and (when allowBinary
+    // is false) a plain std::runtime_error if the file contains any CRLF/CR
+    // line ending -- Storage_ is always LF-only throughout this class, and
+    // normalizing that for a multi-GB file would mean rewriting every line,
+    // defeating the point of this path entirely; a CRLF huge file still
+    // opens fine via the normal FromFile path above, just without this
+    // one's memory/speed benefits. See the huge-file-editing plan for the
+    // follow-up that would lift this restriction for genuine text.
+    //
+    // open-binary-anyway follow-up: allowBinary also skips the CR scan
+    // entirely (not just the refusal) -- a confirmed binary open has no
+    // line-ending semantics to protect, so a stray 0x0D is just a byte, and
+    // a multi-GB binary file shouldn't pay for a second full-file streaming
+    // pass to reach a conclusion that wouldn't matter anyway.
     //
     // disk-space-safety follow-up: never refuses to open on disk-space
     // grounds (a huge file should always at least be viewable) -- instead,
@@ -132,6 +139,13 @@ class Buffer {
     // ReadOnly(false) still can't complete an unsafe save. That's the
     // actual hard guarantee this feature exists for; the open-time
     // downgrade is the soft, overridable layer.
+    //
+    // progressive-huge-file-load follow-up: also throws, unconditionally
+    // and first (before even the disk-space check above), whenever
+    // IsLoading() is true -- a still-loading huge buffer is genuinely
+    // editable (see ReadOnly()'s own doc comment), so without this a
+    // mid-load save could silently write a truncated, not-yet-fully-read
+    // file over the real one. Also has no override.
     void SaveToFile(const std::filesystem::path& path, bool ensureFinalNewline = true, bool trimTrailingWhitespace = true,
                     std::optional<LineEnding> lineEndingOverride = std::nullopt);
     // Writes to the buffer's associated file. Throws std::runtime_error if
@@ -268,6 +282,14 @@ class Buffer {
     // them (self-insert-command, kill-line, yank, ...). Deliberately does
     // NOT guard Undo()/Redo() -- out of scope, no real risk for a buffer
     // nobody is expected to type into in the first place.
+    //
+    // progressive-huge-file-load follow-up: this used to also read true
+    // whenever IsLoading() did, forcing every loading buffer read-only
+    // regardless of ReadOnly_ -- that coupling is gone. IsLoading() and
+    // ReadOnly() are now fully independent: MarkLoading(bool forceReadOnly)
+    // is what decides whether a given load keeps its buffer read-only (the
+    // existing 16MB-1GB async tier still does) or leaves it editable (the
+    // huge-file progressive tier). See MarkLoading's own doc comment.
     [[nodiscard]] bool ReadOnly() const;
     // disk-space-safety follow-up: reason, when given, is what a thrown
     // "read-only" error message names specifically (see ReadOnlyReason()
@@ -286,12 +308,49 @@ class Buffer {
     // first refused edit attempt.
     [[nodiscard]] const std::optional<std::string>& ReadOnlyReason() const;
 
+    // binary-safety-guardrails follow-up: true iff this buffer was opened
+    // via an explicit "open anyway?" binary override (allowBinary=true)
+    // AND LooksBinary() actually fired for it at open time -- never set
+    // just because allowBinary was passed defensively (e.g. --force-binary
+    // on a file that isn't actually binary). Set once, at open time
+    // (FromFile/FromHugeFile/the progressive huge-load placeholder), never
+    // afterward -- a buffer doesn't stop being "confirmed binary content"
+    // just because loading finished. Read-only; see BinarySafetyOverride()
+    // for the user's own escape hatch.
+    [[nodiscard]] bool LikelyBinary() const;
+
+    // The user's explicit "yes, treat this like ordinary text" override for
+    // a LikelyBinary() buffer -- toggle-binary-safeguards (Commands.cpp) is
+    // the only mutator. Independent of ReadOnly()/SetReadOnly(): this gates
+    // a *different* set of behaviors (auto-formatting, forced line-ending
+    // conversion, ensure-final-newline-on-save -- see BinarySafeguardsActive()
+    // below), not editability itself.
+    [[nodiscard]] bool BinarySafetyOverride() const;
+    void               SetBinarySafetyOverride(bool overridden);
+
+    // The single predicate every guard site checks: LikelyBinary() with no
+    // override yet. Byte-level, content-changing save-time behaviors that
+    // are safe/expected for real text but can silently corrupt binary
+    // content -- format-on-save (and format-buffer/an LSP formatter),
+    // ensure-final-newline-on-save, and forced line-ending conversion
+    // (Force CRLF/LF policy, and convert-line-endings itself) -- must all
+    // check this and refuse/skip while it's true. A buffer that was merely
+    // *opened* via allowBinary but never actually looked binary
+    // (LikelyBinary() false) is completely unaffected -- these guards only
+    // ever activate for a confirmed "this looked binary, you opened it
+    // anyway" buffer, and even then only until the user explicitly
+    // overrides.
+    [[nodiscard]] bool BinarySafeguardsActive() const;
+
     // large-file-async-load follow-up: true from the moment BufferList hands
     // out a placeholder for a file being loaded in the background until
-    // FinishLoad() runs. While true, ReadOnly() also reads true (no command
-    // can edit a buffer that's still filling in) regardless of what
-    // SetReadOnly() was last called with -- restored automatically by
-    // FinishLoad(), not something a caller needs to track separately.
+    // FinishLoad()/FinishHugeLoad() runs. progressive-huge-file-load
+    // follow-up: no longer implies ReadOnly() itself (see that method's own
+    // doc comment) -- background-maintenance passes (Backup, AutoMerge,
+    // PersistentUndo, AutoRevert, Session, RecentFiles) still gate on this
+    // directly and should keep doing so, since Storage_ can still be
+    // mutated out from under them by the loader while this is true,
+    // independent of whether the buffer is user-editable.
     [[nodiscard]] bool IsLoading() const;
 
     // The two operations BufferList's async file loader uses to populate a
@@ -321,12 +380,92 @@ class Buffer {
     void ReplaceContentForLoad(Rope content);
     void FinishLoad(Rope content, std::optional<LineEnding> detectedEnding = std::nullopt);
 
+    // progressive-huge-file-load follow-up: the PieceTable-backed
+    // counterparts to the two Rope methods above, used by
+    // Source/UI/HugeFileLoader.h instead of AsyncFileLoader for anything
+    // over HugeFileThreshold(). Unlike the Rope pair, the buffer stays
+    // editable throughout (see MarkLoading/ReadOnly above) -- so unlike
+    // ReplaceContentForLoad, AppendHugeLoadChunk below genuinely can race
+    // against real user edits landing on Storage_ in between two loader
+    // callbacks, and unlike FinishLoad, FinishHugeLoad must NOT reset
+    // UndoTree_/SavedSnapshot_ (both are already correctly, incrementally
+    // maintained by the time it runs -- see AppendHugeLoadChunk's own doc
+    // comment). ReplaceContentForHugeLoad is only ever used once, for the
+    // first chunk-group (the moment the placeholder buffer gets real
+    // content for the first time); every chunk-group after that goes
+    // through AppendHugeLoadChunk instead. Sets Storage_ AND SavedSnapshot_
+    // to identical PieceTableStorage clones of content -- the placeholder
+    // was an empty RopeStorage until now, and AppendHugeLoadChunk's
+    // dynamic_cast to PieceTableStorage needs both already converted before
+    // the second chunk-group ever lands.
+    void ReplaceContentForHugeLoad(PieceTable content);
+
+    // Splices fragment (a chunk-group's worth of freshly-scanned file
+    // content, built off the main thread via PieceTable::FromFileRange --
+    // see HugeFileLoader) onto the END of Storage_'s current content via
+    // the cheap O(log n) PieceTable::Concatenated. Always correct
+    // regardless of what the user has typed in the meantime: this only
+    // ever runs on the main thread (inside the loader's EventLoop::Post
+    // callback), and nothing can exist in the buffer past "however much
+    // has loaded so far" -- an edit can only ever touch the already-loaded
+    // prefix, never the splice point itself, so appending at
+    // Storage_->ByteLength() at the moment this runs is always the correct
+    // place, with no relocation needed for Point_/Mark_/SecondaryCursors_/
+    // NarrowedRange_ (none of them can already exceed the pre-append
+    // length).
+    //
+    // Also extends SavedSnapshot_ by the identical fragment (independent of
+    // whatever edits sit in Storage_) -- SavedSnapshot_ always tracks "pure
+    // disk content, however much has been read so far", exactly the same
+    // way it already stays untouched by ordinary edits until a real
+    // Save(); growing it here is not an edit, just more of what's already
+    // on disk becoming visible.
+    //
+    // Recorded into UndoTree_ via a coalescing lineage kept deliberately
+    // separate from ordinary typing (CanAmendLoadAppend_, not CanAmend_) --
+    // consecutive appends collapse into one undo step, consecutive
+    // keystrokes collapse into their own, and the two kinds can never merge
+    // into each other's step. Does NOT touch UnsavedChangeRanges_ (freshly
+    // -read-from-disk content is not an unsaved change).
+    //
+    // Only ever valid to call after ReplaceContentForHugeLoad has already
+    // installed a PieceTableStorage-backed Storage_/SavedSnapshot_ once.
+    void AppendHugeLoadChunk(PieceTable fragment);
+
+    // Terminal call once the whole file has been read. Mirrors FromHugeFile's
+    // own tail (disk-space downgrade check, LineEnding_ = LF,
+    // CaptureDiskTimestamp()) and clears IsLoading()/LoadProgress_ --
+    // deliberately does NOT touch UndoTree_ or SavedSnapshot_ (both already
+    // correctly reflect everything that happened during the load, including
+    // any real edits; FinishLoad's own reset of both would destroy that
+    // history and incorrectly mark the buffer as matching disk when it
+    // might not).
+    void FinishHugeLoad();
+
     // Called once by BufferList right after constructing a placeholder
-    // buffer for an async load -- sets IsLoading() true. Not meant to be
-    // called at any other point (there's no matching public "start loading
-    // again" use case), which is why this is a bare setter rather than
-    // something exposed as part of a larger state machine.
-    void MarkLoading();
+    // buffer for an async load -- sets IsLoading() true. forceReadOnly also
+    // sets ReadOnly_ true for the duration of the load (the existing
+    // 16MB-1GB async tier's behavior, unchanged); the huge-file progressive
+    // tier passes false, leaving the buffer editable while it streams in
+    // (see ReadOnly()'s own doc comment). FinishLoad/FinishHugeLoad
+    // unconditionally clear ReadOnly_ back to false at their own start,
+    // before either one's own later legitimate SetReadOnly(true, ...)
+    // calls (e.g. the disk-space downgrade) -- safe because a freshly
+    // constructed placeholder's ReadOnly_ was always false before this set
+    // it, so this exactly reproduces the pre-existing end state. Not meant
+    // to be called at any other point (there's no matching public "start
+    // loading again" use case), which is why this is a bare setter rather
+    // than something exposed as part of a larger state machine.
+    void MarkLoading(bool forceReadOnly = true);
+
+    // binary-safety-guardrails follow-up: called once by BufferList right
+    // after constructing a placeholder buffer (either load tier), mirroring
+    // MarkLoading's own contract -- FromFile/FromHugeFile set their
+    // internally-computed LikelyBinary_ directly (they're both members
+    // already), so this setter exists only for the placeholder-construction
+    // call site outside the class. Not meant to be called at any other
+    // point.
+    void SetLikelyBinary(bool likelyBinary);
 
     // Set by AsyncFileLoader at construction, cleared by FinishLoad
     // alongside IsLoading() itself. CurrentLoadProgress returns nullptr
@@ -875,14 +1014,30 @@ class Buffer {
     // The undo-record epilogue shared by every content mutator: inside an
     // open group, just marks the group dirty; outside one, records (or,
     // for a plain insert with canAmend, amends) exactly as each mutator
-    // did inline before undo grouping existed.
+    // did inline before undo grouping existed. Resets CanAmendLoadAppend_
+    // -- see RecordOrAmendLoadAppend's own doc comment for why the two
+    // coalescing lineages must never merge into each other.
     void RecordOrAmendUndo(bool canAmend);
 
-    // Shared by Undo()/Redo(): oldText is Rope_'s content just before the
-    // restore that already happened by the time this runs. See
-    // SavedSnapshot_'s own doc comment for why this checks against it
-    // first rather than only ever diffing oldText/Rope_.
-    void UpdateUnsavedRangesForRestore(const std::string& oldText);
+    // AppendHugeLoadChunk's own undo-record epilogue -- deliberately NOT
+    // RecordOrAmendUndo(true), which would let a background load-append
+    // coalesce into whatever undo step a real keystroke just left CanAmend_
+    // true for (or vice versa: let a keystroke typed right after an append
+    // silently merge into that append's step). Either direction would make
+    // a single Undo() remove two semantically-unrelated changes at once.
+    // Keyed off its own CanAmendLoadAppend_ instead: consecutive appends
+    // coalesce into one step, but always into their own lineage, and this
+    // resets CanAmend_ so a keystroke immediately after an append always
+    // starts its own fresh step too.
+    void RecordOrAmendLoadAppend();
+
+    // Shared by Undo()/Redo(): oldStorage is Storage_'s content just before
+    // the restore that already happened by the time this runs -- a clone
+    // taken before the swap, never materialized to a string (see
+    // ChangedByteRange's own comment for why: a huge buffer can't afford
+    // that). See SavedSnapshot_'s own doc comment for why this checks
+    // against it first rather than only ever diffing oldStorage/Storage_.
+    void UpdateUnsavedRangesForRestore(const ITextStorage& oldStorage);
 
     // Editable-multibuffer follow-up: Undo()/Redo()'s ExcerptRanges_
     // counterpart to UpdateUnsavedRangesForRestore, called the same way
@@ -898,7 +1053,7 @@ class Buffer {
     // does, composing the result onto RelocateExcerptRangesForDelete/Insert
     // instead of MarkUnsavedRangeDeleted/Inserted -- same diff, different
     // tracked field.
-    void UpdateExcerptRangesForRestore(const std::string& oldText);
+    void UpdateExcerptRangesForRestore(const ITextStorage& oldStorage);
 
     // Re-stats Path_ and records its current timestamp (or clears the
     // record if the file is missing/unstatable) -- called wherever content
@@ -929,10 +1084,13 @@ class Buffer {
     bool                                               UndoGroupDirty_        = false; // any mutation inside the open group?
     bool                                               CursorIterationActive_ = false; // see ForEachCursor + RelocateSecondaryCursorsForDelete
     bool                                               CanAmend_              = false;
+    bool                                               CanAmendLoadAppend_    = false; // see AppendHugeLoadChunk's own doc comment above
     bool                                               ReadOnly_              = false; // see ReadOnly()/SetReadOnly()'s own doc comment above
     std::optional<std::string>                        ReadOnlyReason_;                // see SetReadOnly()/ReadOnlyReason()'s own doc comment above
     bool                                               Loading_               = false; // see IsLoading()'s own doc comment above
     std::shared_ptr<LoadProgress>                      LoadProgress_;                  // see SetLoadProgress
+    bool                                               LikelyBinary_          = false; // see LikelyBinary()'s own doc comment above
+    bool                                               BinarySafetyOverride_  = false; // see BinarySafetyOverride()'s own doc comment above
     // Set by MoveToNextLine/MoveToPreviousLine, cleared by every other
     // point-moving or editing call -- see their doc comment above.
     std::optional<std::size_t>        GoalColumn_;

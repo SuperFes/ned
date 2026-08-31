@@ -283,6 +283,75 @@ TEST_CASE("PieceTable survives random edits across chunk boundaries and origins"
     std::filesystem::remove(path);
 }
 
+// progressive-huge-file-load follow-up: FromFileRange/Concatenated are the
+// two primitives HugeFileLoader composes to stream a file in progressively
+// -- FromFileRange builds a standalone fragment off the main thread,
+// Concatenated splices it onto a live tree cheaply on the main thread. See
+// Text/PieceTable.h's own doc comments on both.
+TEST_CASE("PieceTable::FromFileRange builds a fragment covering just the requested range", "[PieceTable]") {
+    const std::string           content = "0123456789abcdefghij";
+    const std::filesystem::path path    = WriteTempFile("ned_piecetable_range.txt", content);
+    auto                        mappedFile = std::make_shared<const ned::text::MappedFile>(ned::text::MappedFile::Open(path));
+
+    const PieceTable middle = PieceTable::FromFileRange(mappedFile, 4, 6);
+    REQUIRE(middle.ByteLength() == 6);
+    REQUIRE(middle.ToString() == "456789");
+
+    const PieceTable wholeAtOnce = PieceTable::FromFileRange(mappedFile, 0, content.size());
+    REQUIRE(wholeAtOnce.ToString() == content);
+
+    const PieceTable empty = PieceTable::FromFileRange(mappedFile, 5, 0);
+    REQUIRE(empty.Empty());
+    REQUIRE(empty.ToString().empty());
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("PieceTable::Concatenated joins fragments in order with no byte copied", "[PieceTable]") {
+    const std::string           content = "the quick brown fox jumps over the lazy dog";
+    const std::filesystem::path path    = WriteTempFile("ned_piecetable_concat.txt", content);
+    auto                        mappedFile = std::make_shared<const ned::text::MappedFile>(ned::text::MappedFile::Open(path));
+
+    // Mirrors HugeFileLoader's own usage: build the first range directly,
+    // then repeatedly build+splice the next range onto the growing table --
+    // never the whole file in one FromFileRange call.
+    PieceTable table = PieceTable::FromFileRange(mappedFile, 0, 10);
+    REQUIRE(table.ToString() == content.substr(0, 10));
+
+    for (std::size_t offset = 10; offset < content.size();) {
+        const std::size_t       len      = std::min<std::size_t>(7, content.size() - offset);
+        const PieceTable        fragment = PieceTable::FromFileRange(mappedFile, offset, len);
+        table                            = table.Concatenated(fragment);
+        offset += len;
+    }
+
+    REQUIRE(table.ByteLength() == content.size());
+    REQUIRE(table.ToString() == content);
+    REQUIRE(table.LineCount() == 1);
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("PieceTable::Concatenated result stays editable exactly like any other table", "[PieceTable]") {
+    const std::string           content = "abcdefghij";
+    const std::filesystem::path path    = WriteTempFile("ned_piecetable_concat_edit.txt", content);
+    auto                        mappedFile = std::make_shared<const ned::text::MappedFile>(ned::text::MappedFile::Open(path));
+
+    const PieceTable first  = PieceTable::FromFileRange(mappedFile, 0, 5);
+    const PieceTable second = PieceTable::FromFileRange(mappedFile, 5, 5);
+    const PieceTable joined = first.Concatenated(second);
+    REQUIRE(joined.ToString() == content);
+
+    // A real edit (Inserted/Erased) against the joined, mixed-origin tree
+    // works exactly like against a single FromFile table -- Concatenated
+    // must not leave the result in some special "fragment" state.
+    const PieceTable edited = joined.Inserted(5, "-mid-");
+    REQUIRE(edited.ToString() == "abcde-mid-fghij");
+    REQUIRE(joined.ToString() == content); // original untouched -- structural sharing
+
+    std::filesystem::remove(path);
+}
+
 #if defined(__linux__)
 TEST_CASE("PieceTable::FromFile does not leave a large file fully resident", "[PieceTable][memory]") {
     // The whole point of this type: opening a huge file must not pull it
@@ -319,6 +388,53 @@ TEST_CASE("PieceTable::FromFile does not leave a large file fully resident", "[P
     // blow well past this bound, not a tight budget on node bookkeeping.
     const std::size_t growthKb = rssAfterKb > rssBeforeKb ? rssAfterKb - rssBeforeKb : 0;
     REQUIRE(growthKb < kFileSize / 1024 / 4); // < 50 MiB, vs. a 200 MiB file -- measured in practice: ~200 KiB
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("PieceTable::FromFileRange plus per-call ReleasePages does not leave a large file fully resident",
+          "[PieceTable][memory]") {
+    // HugeFileLoader's own usage pattern: many FromFileRange calls over one
+    // long-lived MappedFile, each followed by ReleasePages for just the
+    // range that call touched -- unlike FromFile's single whole-file
+    // release at the end, this must keep RSS bounded to roughly one
+    // chunk-group's worth throughout the whole walk, not let it climb
+    // toward the file size the way the unreleased-until-the-end approach
+    // would.
+    constexpr std::size_t kFileSize  = 200 * 1024 * 1024; // 200 MiB
+    constexpr std::size_t kGroupSize = 4 * 1024 * 1024;   // 4 MiB, HugeFileLoader-ish granularity
+
+    std::string chunk(1024, 'x');
+    for (std::size_t i = 0; i < chunk.size(); ++i) {
+        chunk[i] = static_cast<char>('a' + (i % 26));
+    }
+
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_piecetable_range_rss.txt";
+    {
+        std::ofstream file(path, std::ios::binary);
+        for (std::size_t written = 0; written < kFileSize; written += chunk.size()) {
+            file.write(chunk.data(), static_cast<std::streamsize>(chunk.size()));
+        }
+    }
+
+    auto mappedFile = std::make_shared<const ned::text::MappedFile>(ned::text::MappedFile::Open(path));
+    mappedFile->Advise(ned::text::AccessPattern::kSequential);
+
+    const std::size_t rssBeforeKb = CurrentRssKb();
+    PieceTable         table;
+    for (std::size_t offset = 0; offset < kFileSize;) {
+        const std::size_t len      = std::min(kGroupSize, kFileSize - offset);
+        const PieceTable  fragment = PieceTable::FromFileRange(mappedFile, offset, len);
+        table                      = table.Empty() ? fragment : table.Concatenated(fragment);
+        mappedFile->ReleasePages(offset, len);
+        offset += len;
+    }
+    const std::size_t rssAfterKb = CurrentRssKb();
+
+    REQUIRE(table.ByteLength() == kFileSize);
+
+    const std::size_t growthKb = rssAfterKb > rssBeforeKb ? rssAfterKb - rssBeforeKb : 0;
+    REQUIRE(growthKb < kFileSize / 1024 / 4); // < 50 MiB, vs. a 200 MiB file -- same generous margin as the FromFile test above
 
     std::filesystem::remove(path);
 }

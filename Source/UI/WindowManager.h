@@ -31,6 +31,7 @@
 
 #include "ActiveBuffer.h"
 #include "AsyncFileLoader.h"
+#include "HugeFileLoader.h"
 #include "BufferView.h"
 #include "Editor/Command.h"
 #include "Editor/Dispatcher.h"
@@ -523,6 +524,14 @@ class WindowManager {
     // this once, alongside StartAutoSaveTimer, for the real running editor.
     void EnableAsyncFileLoading(EventLoop& eventLoop);
 
+    // progressive-huge-file-load follow-up: the huge-tier counterpart --
+    // wires bufferList_.SetAsyncHugeFileOpener to spin up a HugeFileLoader
+    // (Source/UI/HugeFileLoader.h) per huge file open instead of the
+    // AsyncFileLoader above, owned here in hugeFileLoaders_. Same
+    // not-called-from-the-constructor reasoning as EnableAsyncFileLoading;
+    // main.cpp calls both once, alongside StartAutoSaveTimer.
+    void EnableAsyncHugeFileLoading(EventLoop& eventLoop);
+
   private:
     // Drops any asyncFileLoaders_ entries that have finished (AsyncFileLoader
     // ::Done()) -- called opportunistically whenever a new load starts,
@@ -530,6 +539,8 @@ class WindowManager {
     // as there are large files currently being opened at once, so an
     // unbounded-until-next-open backlog is not a real concern.
     void PurgeFinishedAsyncLoaders();
+    // Same as PurgeFinishedAsyncLoaders, for hugeFileLoaders_/HugeFileLoader.
+    void PurgeFinishedHugeFileLoaders();
 
     // file-watcher follow-up: the external-change portion of the auto-save
     // tick (AutoRevertBuffers + AutoMergeBuffers + their status-line
@@ -660,6 +671,8 @@ class WindowManager {
 
     // See EnableAsyncFileLoading's own comment above.
     std::vector<std::unique_ptr<AsyncFileLoader>> asyncFileLoaders_;
+    // See EnableAsyncHugeFileLoading's own comment above.
+    std::vector<std::unique_ptr<HugeFileLoader>> hugeFileLoaders_;
 
     // See StartFileWatcher's own comment above. Shares autoSaveThread_'s
     // accepted latent shutdown ordering: main.cpp declares eventLoop after

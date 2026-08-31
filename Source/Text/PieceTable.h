@@ -58,6 +58,36 @@ class PieceTable {
     // per-edit cost.
     static PieceTable FromFile(const std::filesystem::path& path);
 
+    // progressive-huge-file-load follow-up: builds a standalone fragment
+    // covering [fileByteOffset, fileByteOffset+length) of mappedFile's
+    // original content -- the "build" half of streaming a huge file in
+    // progressively, meant to run on a background thread while the file is
+    // still loading (see Source/UI/HugeFileLoader.h). Touches only the
+    // given, already-open, read-only MappedFile (never mutated after
+    // Open(), so concurrent reads from a background thread are safe) and
+    // freshly-allocated Node objects -- no shared mutable state, unlike a
+    // call against a live Buffer's own PieceTable would be. Does not call
+    // MappedFile::Advise/ReleasePages itself -- unlike FromFile's one-shot
+    // whole-file scan, a caller here makes many of these calls across one
+    // loading session, so residency management is left to the caller, who
+    // owns the MappedFile for the session's whole lifetime.
+    //
+    // The "splice" half is Concatenated below, meant to run cheaply on
+    // whichever thread owns the tree being spliced onto (the main thread,
+    // for a live Buffer).
+    static PieceTable FromFileRange(std::shared_ptr<const MappedFile> mappedFile, std::size_t fileByteOffset, std::size_t length);
+
+    // Joins fragment onto the end of this table -- O(log n) (the same
+    // Concat primitive Inserted/Erased already use), never copies a byte.
+    // The result keeps THIS table's own backing (mappedFile + added
+    // buffer), not fragment's -- correct as long as fragment's leaves were
+    // built from the SAME mappedFile this table already uses (guaranteed
+    // when fragment came from FromFileRange above against the loader's own
+    // single, persistent MappedFile) and fragment carries no kAdded leaves
+    // of its own (guaranteed -- FromFileRange only ever builds kOriginal
+    // spans).
+    [[nodiscard]] PieceTable Concatenated(const PieceTable& fragment) const;
+
     [[nodiscard]] bool        Empty() const;
     [[nodiscard]] std::size_t ByteLength() const;
     [[nodiscard]] std::size_t CodepointLength() const;

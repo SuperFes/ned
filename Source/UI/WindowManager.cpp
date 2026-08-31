@@ -1127,6 +1127,18 @@ void WindowManager::PurgeFinishedAsyncLoaders() {
     std::erase_if(asyncFileLoaders_, [](const std::unique_ptr<AsyncFileLoader>& loader) { return loader->Done(); });
 }
 
+void WindowManager::EnableAsyncHugeFileLoading(EventLoop& eventLoop) {
+    bufferList_.SetAsyncHugeFileOpener(
+        [this, &eventLoop](text::Buffer& placeholder, const std::filesystem::path& path, bool allowBinary) {
+            PurgeFinishedHugeFileLoaders();
+            hugeFileLoaders_.push_back(std::make_unique<HugeFileLoader>(placeholder, bufferList_, path, allowBinary, eventLoop));
+        });
+}
+
+void WindowManager::PurgeFinishedHugeFileLoaders() {
+    std::erase_if(hugeFileLoaders_, [](const std::unique_ptr<HugeFileLoader>& loader) { return loader->Done(); });
+}
+
 void WindowManager::HandleWindowRequest(editor::InteractiveRequest request) {
     switch (request) {
         case editor::InteractiveRequest::SplitBelow:

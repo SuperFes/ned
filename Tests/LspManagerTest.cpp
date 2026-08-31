@@ -249,6 +249,74 @@ TEST_CASE("LspManager::SyncBuffer is a no-op when nothing is configured for the 
     REQUIRE(invoked);
 }
 
+#if defined(__linux__)
+// VmRSS in kB, per proc(5) -- same technique PieceTableTest.cpp/
+// BufferHugeFileTest.cpp's own [memory] tests use.
+std::size_t CurrentRssKb() {
+    std::ifstream status("/proc/self/status");
+    std::string   line;
+    while (std::getline(status, line)) {
+        if (line.starts_with("VmRSS:")) {
+            return static_cast<std::size_t>(std::stoul(line.substr(line.find_first_of("0123456789"))));
+        }
+    }
+    return 0;
+}
+
+// progressive-huge-file-load follow-up: real, reproduced live bug --
+// LspManager::SyncToServer used to call buffer.Text() (a full
+// Storage_->ToString() materialization) unconditionally, before ever
+// checking whether a client is configured for the target language. For a
+// huge buffer with no server configured, SyncBackgroundBuffers' periodic
+// tick (Source/Editor/Lsp/LspBackgroundSync.cpp) paid that full-document
+// copy on every single tick for nothing -- at multi-GB scale this made
+// each tick take longer than the tick interval itself, backing up
+// EventLoop::Post forever and hanging the whole editor. Fixed by moving
+// the ClientForLanguage check ahead of the buffer.Text() argument in
+// SyncToServer. This test proves the fix holds: syncing a huge buffer
+// against an unconfigured language must not materialize its content.
+TEST_CASE("LspManager::SyncBuffer does not materialize a huge buffer's content when no server is configured",
+          "[Lsp][memory]") {
+    constexpr std::size_t kFileSize = 200 * 1024 * 1024; // 200 MiB -- same "obviously wrong if resident" size the
+                                                          // sibling PieceTable/BufferHugeFile [memory] tests use
+
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_lsp_manager_huge_nosync.txt";
+    {
+        std::ofstream file(path, std::ios::binary);
+        const std::string chunk(1024 * 1024, 'x');
+        for (std::size_t written = 0; written < kFileSize; written += chunk.size()) {
+            file.write(chunk.data(), static_cast<std::streamsize>(chunk.size()));
+        }
+    }
+
+    struct ThresholdGuard {
+        ~ThresholdGuard() {
+            ned::text::SetHugeFileThreshold(1024ull * 1024 * 1024);
+        }
+    } guard;
+    ned::text::SetHugeFileThreshold(4); // well under this file's real size -- forces the huge/PieceTable path
+
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    Buffer&            buffer = bufferList.OpenFile(path);
+    REQUIRE(buffer.Content().IsHuge());
+
+    const std::size_t rssBeforeKb = CurrentRssKb();
+    // Mirrors what SyncBackgroundBuffers actually calls, repeatedly (the
+    // real periodic-tick shape) -- must stay cheap every time, not just once.
+    for (int i = 0; i < 5; ++i) {
+        manager.SyncBuffer(buffer, "a-language-nothing-is-configured-for");
+    }
+    const std::size_t rssAfterKb = CurrentRssKb();
+
+    const std::size_t growthKb = rssAfterKb > rssBeforeKb ? rssAfterKb - rssBeforeKb : 0;
+    REQUIRE(growthKb < kFileSize / 1024 / 4); // < 50 MiB, vs. a 200 MiB file -- a single Text() copy would blow well past this
+
+    std::filesystem::remove(path);
+}
+#endif
+
 TEST_CASE("LspManager::NotifyBufferClosed is a no-op for a buffer that was never synced", "[Lsp]") {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;

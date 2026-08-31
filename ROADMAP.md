@@ -200,8 +200,11 @@ Notcurses.
       close to double a file's size to safely rewrite it), with `toggle-read-only` as the
       override and a hard, non-overridable re-check at actual save time.
 
-      Still open: LSP sync for a huge buffer (currently never attempted, no opt-in yet);
-      `Minimap` bails out entirely for a huge buffer rather than the real bounded
+      Still open: LSP sync for a huge buffer now happens (background-tick sync no longer
+      special-cases `IsHuge()`, and a real fix below stopped it wasting a full-buffer copy
+      when no server is configured) but is otherwise unoptimized — a huge buffer *with* a
+      configured server still sends its whole content on every `didChange`, no incremental
+      sync; `Minimap` bails out entirely for a huge buffer rather than the real bounded
       line-sampling redesign (a stopgap fix for a real hang, see this file's own history
       for the underlying cause — `PieceTable`'s 256 KiB original-file leaves make any
       *unbounded* per-line iteration ~500x costlier than `Rope`'s); `BufferView`'s own
@@ -217,6 +220,79 @@ Notcurses.
       *well* on a huge buffer yet (nothing crashes; `IsHuge()`-unaware code just pays
       whatever cost full materialization costs). See the staged follow-up plan below for
       bringing those online incrementally rather than all at once.
+- [x] **Progressive, editable-while-loading huge-file open — v1 shipped.** The v1 floor
+      above opened a huge file fully synchronously on the main thread (one blocking
+      whole-file scan, one whole-file `MappedFile::ReleasePages` at the very end) — live-
+      tested against a real 14.7 GB file, this froze the UI for minutes with RSS climbing
+      toward the full file size. `Source/UI/HugeFileLoader.h/.cpp` (mirrors
+      `AsyncFileLoader`'s threading contract) now streams a huge file in on a background
+      `jthread`, `~8 MiB` chunk-groups at a time, via two new `PieceTable` primitives
+      (`FromFileRange` — builds a fragment off-thread from a given byte range of a shared,
+      loader-owned `MappedFile`; `Concatenated` — O(log n) splice onto the live tree, safe
+      to run inline on the main thread) — releasing each chunk-group's mmap pages as it
+      goes rather than holding the whole file resident. The buffer is genuinely editable
+      throughout (not just viewable) — `Buffer::MarkLoading(bool forceReadOnly)` decouples
+      `IsLoading()` from `ReadOnly()` (the existing async tier still passes `true`; this
+      tier passes `false`) — so `Buffer::AppendHugeLoadChunk` always splices at the
+      buffer's *current* end, safe regardless of concurrent edits since nothing can exist
+      past "however much has loaded so far." Background appends coalesce into their own
+      undo lineage (`CanAmendLoadAppend_`, separate from ordinary typing's `CanAmend_`) so
+      a multi-minute load with no user interaction is one undo step, not thousands, and
+      never merges with a real edit's own step either direction. If a user undoes past a
+      landed chunk, the loader detects its own next-append-size expectation no longer
+      matches and stops cleanly (logs a warning, leaves the buffer as-is) rather than
+      silently splicing past the gap.
+
+      Making Undo/Redo safe on a buffer this size surfaced a real, independent,
+      already-shipped bug: `Buffer::Undo()`/`Redo()` materialized the *whole* buffer via
+      `ToString()` (twice) just to diff old vs. new content — replaced with a
+      storage-native, exponentially-growing-block comparison built on the already-existing
+      `ITextStorage::Substring`, bounded to O(the actual differing region) rather than
+      O(document size) for the common case (one edit, or one load-append), for every
+      buffer, not just huge ones. Live full-scale testing (real 14.7 GB file) then
+      surfaced a second, more serious, also-pre-existing bug entirely unrelated to this
+      feature's own new code: `LspManager::SyncToServer` called `buffer.Text()`
+      unconditionally, *before* checking whether any LSP client was even configured for
+      the buffer's language — `SyncBackgroundBuffers`' periodic tick paid a full multi-GB
+      copy every 5 seconds for a buffer with no server configured at all, and once that
+      cost exceeded the tick interval the `EventLoop::Post` queue backed up forever,
+      hanging the whole editor (confirmed via a standalone timing harness against a live
+      4 GB reproduction, `[TICK] SyncBackgroundBuffers: 3687.77ms` against a 5 s interval —
+      not a hypothetical). Fixed by moving the `ClientForLanguage` check ahead of the
+      `buffer.Text()` argument. Also added: `SetLikelyBinary`/`BinarySafeguardsActive` —
+      a buffer opened via a confirmed "open anyway?" binary override now skips
+      format-on-save (external command and LSP formatter alike), ensure-final-newline,
+      and forced/explicit line-ending conversion by default (`toggle-binary-safeguards` to
+      override per-buffer) — a real file can look binary by the sniff heuristic and still
+      be something the user genuinely wants to edit as text, so this is a default, not a
+      hard block.
+
+      **Guardrails identified but deliberately not chased down in this pass** (each is a
+      real cost/risk at multi-GB scale, none is corruption-on-write the way the two fixed
+      bugs above were, and none blocks ordinary use):
+      - `save-buffer`'s own `HasConflictMarkers(context.buffer.Text())` check and
+        `TrimTrailingWhitespaceOnSave()` still fully materialize a huge buffer on every
+        save regardless of `LikelyBinary()` — real cost for a huge buffer that's
+        genuinely text, not guarded by size the way the disk-space check is.
+      - LSP/DAP full-document sync for a huge buffer *with* a real server configured is
+        unaffected by the `SyncToServer` fix above — every `didChange` still sends the
+        whole buffer; there's no incremental-sync path in this client yet (a much bigger
+        lift, protocol-level).
+      - `Backup::AutoSaveFileBuffers`/`PersistentUndo::SaveUndoHistory` silently skip a
+        buffer entirely once it clears `MaxBackupBytes()`/`MaxUndoBytes()` (16 MiB
+        default) — correct/safe (skip, don't materialize), but means an actively-edited
+        huge buffer today has *no* crash-recovery autosave and *no* persistent undo
+        history across restarts. Was a low-stakes gap while editing a huge buffer was
+        rare/awkward; matters more now that this feature makes it ordinary.
+      - `RegexPattern`/`QueryReplace`/`ProjectSearch` treat a `LikelyBinary()` buffer's
+        content as ordinary text for search/replace purposes — not a corruption risk the
+        way write-time formatting was, but semantically questionable in the same family;
+        no guard added yet.
+      - `AutoMerge`/`MergeExternalChanges`'s `ThreeWayMerge` still fully materializes both
+        sides for external-change reconciliation on a huge buffer — explicitly kept out of
+        scope this pass (diffing for *rarer* sync-to-disk-shaped operations was judged an
+        acceptable cost, unlike `Undo`/`Redo`'s hot path) but worth revisiting if
+        huge-buffer-plus-externally-changed-file turns out to be a real workflow.
 - [ ] Buffers restored by a project session open before the async-loader hook is wired,
       so a huge file inside a restored session still loads synchronously at startup —
       the same fix `main.cpp`'s CLI-arg path already has (`deferredLargeOpenPath`) needs

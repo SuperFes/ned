@@ -150,6 +150,20 @@ class BufferList {
     // AsyncFileLoader.h is what main.cpp actually wires in here.
     void SetAsyncFileOpener(std::function<void(Buffer&, const std::filesystem::path&)> hook);
 
+    // progressive-huge-file-load follow-up: the huge-tier counterpart to
+    // SetAsyncFileOpener above -- called by OpenFile with a freshly
+    // created, IsLoading() placeholder Buffer& (already inserted into this
+    // list) and the path to load, plus the allowBinary flag the caller
+    // originally passed to OpenFile (the huge tier still needs it, to skip
+    // the CR-refusal scan for a confirmed binary open -- see
+    // Buffer::FromHugeFile's own allowBinary contract), whenever a file
+    // exceeds HugeFileThreshold(). Unset by default -- with no hook set
+    // (every test that constructs a bare BufferList, same as
+    // asyncFileOpener_), OpenFile falls back to today's synchronous
+    // Buffer::FromHugeFile exactly as before. Source/UI/HugeFileLoader.h is
+    // what main.cpp/WindowManager actually wires in here.
+    void SetAsyncHugeFileOpener(std::function<void(Buffer&, const std::filesystem::path&, bool)> hook);
+
   private:
     [[nodiscard]] std::string UniqueName(const std::string& base) const;
 
@@ -157,8 +171,9 @@ class BufferList {
     mutable Buffer*                      previewBuffer_ = nullptr; // see PreviewBuffer()
     std::vector<Buffer*>                 mruOrder_;                // least recent first; see TouchBuffer()
 
-    std::function<void(Buffer&, const std::filesystem::path&)> asyncFileOpener_; // see SetAsyncFileOpener()
-    std::function<void(Buffer&)>                               onFileOpened_;    // see SetOnFileOpened()
+    std::function<void(Buffer&, const std::filesystem::path&)>       asyncFileOpener_;     // see SetAsyncFileOpener()
+    std::function<void(Buffer&, const std::filesystem::path&, bool)> asyncHugeFileOpener_; // see SetAsyncHugeFileOpener()
+    std::function<void(Buffer&)>                                     onFileOpened_;        // see SetOnFileOpened()
 };
 
 // loose-ends follow-up: the file-size threshold (bytes) above which

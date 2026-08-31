@@ -8,6 +8,8 @@
 #include "Text/Buffer.h"
 #include "Text/BinaryDetect.h"
 #include "Text/BufferList.h"
+#include "Text/MappedFile.h"
+#include "Text/PieceTable.h"
 
 using ned::text::BinaryFileError;
 using ned::text::Buffer;
@@ -22,6 +24,17 @@ std::filesystem::path WriteTempFile(const std::string& name, std::string_view co
     std::ofstream                file(path, std::ios::binary);
     file << content;
     return path;
+}
+
+// progressive-huge-file-load follow-up: builds a standalone PieceTable
+// fragment the way HugeFileLoader would, for tests exercising
+// ReplaceContentForHugeLoad/AppendHugeLoadChunk directly without a real
+// background thread/EventLoop -- same "test the synchronous entry points
+// directly" precedent the rest of this file already follows for
+// FromHugeFile itself.
+ned::text::PieceTable FragmentFor(const std::shared_ptr<const ned::text::MappedFile>& mappedFile, std::size_t offset,
+                                  std::size_t length) {
+    return ned::text::PieceTable::FromFileRange(mappedFile, offset, length);
 }
 
 #if defined(__linux__)
@@ -94,6 +107,26 @@ TEST_CASE("Buffer::FromHugeFile refuses a CRLF file rather than silently keeping
     // "this path doesn't support it yet" refusal, not a real file problem.
     Buffer normal = Buffer::FromFile(path);
     REQUIRE(normal.Text() == "line one\nline two\n");
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("Buffer::FromHugeFile with allowBinary skips the CR refusal and keeps raw bytes", "[Buffer][HugeFile]") {
+    // A confirmed binary open has no line-ending semantics to protect -- a
+    // stray 0x0D is just a byte, not a line ending, so this must open
+    // (rather than throw the way the plain-CRLF test above does) and must
+    // preserve every CR byte verbatim, not normalize it away. Built with
+    // explicit push_back/append (not a string literal) so an embedded NUL
+    // survives -- a literal's implicit const char* conversion would
+    // truncate at the first one.
+    std::string content = "line one\r\nline two\r\n";
+    content.push_back('\0');
+    content.append("mid");
+    content.push_back('\0');
+    const std::filesystem::path path = WriteTempFile("ned_buffer_huge_crlf_binary.bin", content);
+
+    Buffer buffer = Buffer::FromHugeFile(path, /*allowBinary=*/true);
+    REQUIRE(buffer.Text() == content);
 
     std::filesystem::remove(path);
 }
@@ -365,6 +398,125 @@ TEST_CASE("HugeFileDiskSpaceCheckEnabled(false) skips both the open-time and sav
     buffer.SetPoint(0);
     buffer.InsertAtPoint(">>>");
     buffer.Save(); // must not throw
+
+    std::filesystem::remove(path);
+}
+
+// progressive-huge-file-load follow-up: ReplaceContentForHugeLoad/
+// AppendHugeLoadChunk/FinishHugeLoad -- the API HugeFileLoader drives from
+// a background thread, exercised here synchronously/single-threaded the
+// same way this file already exercises FromHugeFile directly.
+
+TEST_CASE("Buffer progressive huge-load: buffer is editable mid-load and appends land after the current edit",
+          "[Buffer][HugeFile][ProgressiveLoad]") {
+    const std::filesystem::path path       = WriteTempFile("ned_buffer_huge_progressive.txt", "AAAABBBBCCCC");
+    auto                        mappedFile = std::make_shared<const ned::text::MappedFile>(ned::text::MappedFile::Open(path));
+
+    Buffer buffer = Buffer::NewFile(path);
+    buffer.MarkLoading(/*forceReadOnly=*/false);
+    REQUIRE(buffer.IsLoading());
+    REQUIRE_FALSE(buffer.ReadOnly());
+
+    buffer.ReplaceContentForHugeLoad(FragmentFor(mappedFile, 0, 4));
+    REQUIRE(buffer.Text() == "AAAA");
+    REQUIRE(buffer.Content().IsHuge());
+    REQUIRE(buffer.IsLoading()); // still loading -- only the first of three chunks has landed
+
+    // Editable while loading -- the whole point of this feature.
+    buffer.SetPoint(buffer.Size());
+    buffer.InsertAtPoint("-edit-");
+    REQUIRE(buffer.Text() == "AAAA-edit-");
+
+    // The next chunk splices onto the buffer's CURRENT end, after the edit
+    // just made -- not at the file-offset-derived position the naive
+    // "insert at 4" would give.
+    buffer.AppendHugeLoadChunk(FragmentFor(mappedFile, 4, 4));
+    REQUIRE(buffer.Text() == "AAAA-edit-BBBB");
+
+    buffer.AppendHugeLoadChunk(FragmentFor(mappedFile, 8, 4));
+    REQUIRE(buffer.Text() == "AAAA-edit-BBBBCCCC");
+
+    buffer.FinishHugeLoad();
+    REQUIRE_FALSE(buffer.IsLoading());
+    REQUIRE_FALSE(buffer.ReadOnly());
+    // A real edit was made during the load -- FinishHugeLoad must not reset
+    // Modified() to false the way FinishLoad's own SavedSnapshot_ reset
+    // would (that's exactly the bug this method's own doc comment warns
+    // against copy-pasting from FinishLoad).
+    REQUIRE(buffer.Modified());
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("Buffer progressive huge-load: consecutive appends with no intervening edit coalesce into one undo step",
+          "[Buffer][HugeFile][ProgressiveLoad]") {
+    const std::filesystem::path path       = WriteTempFile("ned_buffer_huge_progressive_coalesce.txt", "AAAABBBBCCCC");
+    auto                        mappedFile = std::make_shared<const ned::text::MappedFile>(ned::text::MappedFile::Open(path));
+
+    Buffer buffer = Buffer::NewFile(path);
+    buffer.MarkLoading(/*forceReadOnly=*/false);
+
+    buffer.ReplaceContentForHugeLoad(FragmentFor(mappedFile, 0, 4));
+    buffer.AppendHugeLoadChunk(FragmentFor(mappedFile, 4, 4));
+    buffer.AppendHugeLoadChunk(FragmentFor(mappedFile, 8, 4));
+    REQUIRE(buffer.Text() == "AAAABBBBCCCC");
+
+    REQUIRE(buffer.CanUndo());
+    buffer.Undo(); // one Undo() must unwind BOTH appends at once (they coalesced), landing back on the pre-load empty buffer
+    REQUIRE(buffer.Text().empty());
+    REQUIRE_FALSE(buffer.CanUndo());
+
+    REQUIRE(buffer.CanRedo());
+    buffer.Redo();
+    REQUIRE(buffer.Text() == "AAAABBBBCCCC");
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("Buffer progressive huge-load: a real edit between two appends keeps each its own undo step",
+          "[Buffer][HugeFile][ProgressiveLoad]") {
+    const std::filesystem::path path       = WriteTempFile("ned_buffer_huge_progressive_split.txt", "AAAABBBBCCCC");
+    auto                        mappedFile = std::make_shared<const ned::text::MappedFile>(ned::text::MappedFile::Open(path));
+
+    Buffer buffer = Buffer::NewFile(path);
+    buffer.MarkLoading(/*forceReadOnly=*/false);
+
+    buffer.ReplaceContentForHugeLoad(FragmentFor(mappedFile, 0, 4));
+    buffer.AppendHugeLoadChunk(FragmentFor(mappedFile, 4, 4)); // -> "AAAABBBB", one undo step
+    buffer.SetPoint(buffer.Size());
+    buffer.InsertAtPoint("X"); // real edit -- must not merge into the append's step, and must block the NEXT append from merging into it either
+    buffer.AppendHugeLoadChunk(FragmentFor(mappedFile, 8, 4)); // -> "AAAABBBBXCCCC", its own step
+    REQUIRE(buffer.Text() == "AAAABBBBXCCCC");
+
+    buffer.Undo();
+    REQUIRE(buffer.Text() == "AAAABBBBX"); // undid just the last append, not the edit too
+    buffer.Undo();
+    REQUIRE(buffer.Text() == "AAAABBBB"); // undid just the edit, not the first append too
+    buffer.Undo();
+    REQUIRE(buffer.Text().empty()); // undid the first append, back to the pre-load empty buffer
+    REQUIRE_FALSE(buffer.CanUndo());
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("Buffer progressive huge-load: SaveToFile refuses while loading and succeeds once FinishHugeLoad runs",
+          "[Buffer][HugeFile][ProgressiveLoad]") {
+    const std::filesystem::path path       = WriteTempFile("ned_buffer_huge_progressive_save.txt", "AAAABBBB");
+    auto                        mappedFile = std::make_shared<const ned::text::MappedFile>(ned::text::MappedFile::Open(path));
+
+    Buffer buffer = Buffer::NewFile(path);
+    buffer.MarkLoading(/*forceReadOnly=*/false);
+    buffer.ReplaceContentForHugeLoad(FragmentFor(mappedFile, 0, 4));
+
+    REQUIRE_THROWS_WITH(buffer.Save(), Catch::Matchers::ContainsSubstring("still loading"));
+
+    buffer.AppendHugeLoadChunk(FragmentFor(mappedFile, 4, 4));
+    buffer.FinishHugeLoad();
+    buffer.Save(/*ensureFinalNewline=*/false); // must not throw now; no trailing newline so the byte-for-byte check below is exact
+
+    std::ifstream saved(path, std::ios::binary);
+    const std::string savedContent((std::istreambuf_iterator<char>(saved)), std::istreambuf_iterator<char>());
+    REQUIRE(savedContent == "AAAABBBB");
 
     std::filesystem::remove(path);
 }

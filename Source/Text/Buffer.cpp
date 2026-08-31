@@ -1,6 +1,7 @@
 #include "Buffer.h"
 
 #include <algorithm>
+#include <cassert>
 #include <cstdio>
 #include <fstream>
 #include <iterator>
@@ -216,8 +217,8 @@ namespace {
         ranges.insert(mergeBegin, {mergedStart, mergedEnd});
     }
 
-    // Undo/Redo restore a full prior Rope snapshot rather than replaying a
-    // single insert/delete, so there's no edit-site offset/length already
+    // Undo/Redo restore a full prior storage snapshot rather than replaying
+    // a single insert/delete, so there's no edit-site offset/length already
     // in hand the way InsertAtPoint/DeleteRange have -- this recovers one
     // via a common-prefix/common-suffix scan, the standard cheap
     // approximation of a real diff (a single O(n) two-pointer pass, not a
@@ -239,21 +240,87 @@ namespace {
         std::size_t newStart, newEnd;
     };
 
-    std::optional<ChangedSpan> ChangedByteRange(std::string_view oldText, std::string_view newText) {
-        if (oldText == newText) {
+    // progressive-huge-file-load follow-up: this used to run against two
+    // fully-materialized std::strings (Storage_->ToString()) -- for a
+    // multi-GB piece-table buffer that's the exact freeze/OOM the huge-file
+    // feature exists to eliminate, and it's not even huge-load-specific:
+    // any Undo()/Redo() on any huge buffer paid it. CommonPrefixLength/
+    // CommonSuffixLength below read through ITextStorage::Substring in
+    // exponentially-growing blocks instead of ever materializing either
+    // side whole -- total bytes actually read is bounded to O(the common
+    // region actually found) via the standard doubling-search argument
+    // (geometric series dominated by its last term), so a single localized
+    // edit (or a single background load-append) costs O(edit size)
+    // regardless of total document size, whether the edit sits near the
+    // start, middle, or end of the buffer. The one case that's still
+    // O(document size) is a genuine full-content match (both common-prefix
+    // and common-suffix walks have to run to completion to prove it) --
+    // unavoidable for an exact-equality question, but still bounded-memory
+    // streaming via Substring rather than one giant allocation-plus-compare.
+    std::size_t CommonPrefixLength(const ITextStorage& a, const ITextStorage& b) {
+        const std::size_t maxLen = std::min(a.ByteLength(), b.ByteLength());
+        std::size_t        checked   = 0;
+        std::size_t        blockSize = 4096;
+        while (checked < maxLen) {
+            const std::size_t len    = std::min(blockSize, maxLen - checked);
+            const std::string blockA = a.Substring(checked, len);
+            const std::string blockB = b.Substring(checked, len);
+            const std::size_t common =
+                static_cast<std::size_t>(std::mismatch(blockA.begin(), blockA.end(), blockB.begin()).first - blockA.begin());
+            checked += common;
+            if (common < len) {
+                return checked;
+            }
+            blockSize *= 2;
+        }
+        return maxLen;
+    }
+
+    // Mirrors CommonPrefixLength, walking backward from the end of each
+    // side instead -- maxLen bounds the search (callers pass maxCommon
+    // minus whatever the prefix search already claimed, so the two scans
+    // can never overlap into the same bytes).
+    std::size_t CommonSuffixLength(const ITextStorage& a, const ITextStorage& b, std::size_t maxLen) {
+        const std::size_t aLen = a.ByteLength();
+        const std::size_t bLen = b.ByteLength();
+        std::size_t        checked   = 0;
+        std::size_t        blockSize = 4096;
+        while (checked < maxLen) {
+            const std::size_t len    = std::min(blockSize, maxLen - checked);
+            const std::string blockA = a.Substring(aLen - checked - len, len);
+            const std::string blockB = b.Substring(bLen - checked - len, len);
+            std::size_t        common = 0;
+            while (common < len && blockA[len - 1 - common] == blockB[len - 1 - common]) {
+                ++common;
+            }
+            checked += common;
+            if (common < len) {
+                return checked;
+            }
+            blockSize *= 2;
+        }
+        return maxLen;
+    }
+
+    // Bounded byte-for-byte equality -- length-mismatch is O(1); otherwise
+    // the same doubling walk as CommonPrefixLength, so two buffers that
+    // differ near the start are cheap to tell apart even at huge size.
+    bool StorageContentEquals(const ITextStorage& a, const ITextStorage& b) {
+        return a.ByteLength() == b.ByteLength() && CommonPrefixLength(a, b) == a.ByteLength();
+    }
+
+    std::optional<ChangedSpan> ChangedByteRange(const ITextStorage& oldStorage, const ITextStorage& newStorage) {
+        const std::size_t oldLen = oldStorage.ByteLength();
+        const std::size_t newLen = newStorage.ByteLength();
+        const std::size_t maxCommon = std::min(oldLen, newLen);
+
+        const std::size_t prefix = CommonPrefixLength(oldStorage, newStorage);
+        if (prefix == oldLen && prefix == newLen) {
             return std::nullopt;
         }
-        const std::size_t maxCommon = std::min(oldText.size(), newText.size());
-        std::size_t       prefix    = 0;
-        while (prefix < maxCommon && oldText[prefix] == newText[prefix]) {
-            ++prefix;
-        }
         const std::size_t maxSuffix = maxCommon - prefix;
-        std::size_t       suffix    = 0;
-        while (suffix < maxSuffix && oldText[oldText.size() - 1 - suffix] == newText[newText.size() - 1 - suffix]) {
-            ++suffix;
-        }
-        return ChangedSpan{prefix, oldText.size() - suffix, prefix, newText.size() - suffix};
+        const std::size_t suffix    = CommonSuffixLength(oldStorage, newStorage, maxSuffix);
+        return ChangedSpan{prefix, oldLen - suffix, prefix, newLen - suffix};
     }
 } // namespace
 
@@ -273,7 +340,8 @@ Buffer Buffer::FromFile(const std::filesystem::path& path, bool allowBinary) {
     // site changes. open-binary-anyway follow-up: allowBinary is the
     // explicit, caller-opted-in escape hatch -- see BinaryFileError's own
     // doc comment.
-    if (!allowBinary && LooksBinary(path)) {
+    const bool likelyBinary = LooksBinary(path);
+    if (!allowBinary && likelyBinary) {
         throw BinaryFileError("ned: refusing to open binary file as text: " + path.string());
     }
 
@@ -323,8 +391,9 @@ Buffer Buffer::FromFile(const std::filesystem::path& path, bool allowBinary) {
     }
 
     Buffer buffer(path.filename().string(), Rope(content));
-    buffer.Path_       = path;
-    buffer.LineEnding_ = detectedEnding;
+    buffer.Path_         = path;
+    buffer.LineEnding_   = detectedEnding;
+    buffer.LikelyBinary_ = likelyBinary; // only ever true here if allowBinary let a real binary-detected open through
     if (!timestampError) {
         buffer.DiskTimestamp_ = diskTime;
     }
@@ -335,7 +404,8 @@ Buffer Buffer::FromHugeFile(const std::filesystem::path& path, bool allowBinary)
     // Same cheap-fail-fast reasoning as FromFile above: LooksBinary only
     // reads the first 8 KiB, so this stays cheap regardless of the file's
     // real size.
-    if (!allowBinary && LooksBinary(path)) {
+    const bool likelyBinary = LooksBinary(path);
+    if (!allowBinary && likelyBinary) {
         throw BinaryFileError("ned: refusing to open binary file as text: " + path.string());
     }
 
@@ -353,15 +423,25 @@ Buffer Buffer::FromHugeFile(const std::filesystem::path& path, bool allowBinary)
     // after PieceTable::FromFile's own scan already released them
     // (MappedFile.h's residency model), a known minor follow-up, not a
     // correctness issue.
-    bool sawCarriageReturn = false;
-    table.ForEachChunk([&](std::string_view chunk) {
-        if (!sawCarriageReturn && HasCarriageReturn(chunk)) {
-            sawCarriageReturn = true;
+    //
+    // open-binary-anyway follow-up: skipped entirely when allowBinary is
+    // set -- a confirmed binary open has no line-ending semantics to
+    // protect (a 0x0D byte in binary content isn't a "line ending" at all),
+    // and arbitrary binary content is essentially guaranteed to contain a
+    // stray CR somewhere across a multi-GB file, so running this scan for a
+    // binary open would only ever pay its full-file cost to reach a refusal
+    // that makes no sense for non-text content.
+    if (!allowBinary) {
+        bool sawCarriageReturn = false;
+        table.ForEachChunk([&](std::string_view chunk) {
+            if (!sawCarriageReturn && HasCarriageReturn(chunk)) {
+                sawCarriageReturn = true;
+            }
+        });
+        if (sawCarriageReturn) {
+            throw std::runtime_error("ned: huge-file opening does not yet support CRLF/CR line endings (" +
+                                     path.string() + ") -- open with the normal loader instead, or convert to LF first");
         }
-    });
-    if (sawCarriageReturn) {
-        throw std::runtime_error("ned: huge-file opening does not yet support CRLF/CR line endings (" +
-                                 path.string() + ") -- open with the normal loader instead, or convert to LF first");
     }
 
     // A leading UTF-8 BOM is stripped the same way FromFile does above --
@@ -376,7 +456,13 @@ Buffer Buffer::FromHugeFile(const std::filesystem::path& path, bool allowBinary)
     buffer.UndoTree_      = UndoTree(buffer.Storage_->Clone());
     buffer.SavedSnapshot_ = buffer.Storage_->Clone();
     buffer.Path_          = path;
-    buffer.LineEnding_    = LineEnding::LF; // always true here -- see the CRLF-refusal comment above
+    buffer.LikelyBinary_  = likelyBinary; // only ever true here if allowBinary let a real binary-detected open through
+    // Storage_ is always LF-only for this path regardless of allowBinary --
+    // for a text open this is guaranteed by the refusal above; for a binary
+    // open there's no line-ending convention to detect at all, so LF is
+    // just this class's fixed save-time convention, not a claim about the
+    // raw byte content.
+    buffer.LineEnding_ = LineEnding::LF;
     if (!timestampError) {
         buffer.DiskTimestamp_ = diskTime;
     }
@@ -405,6 +491,17 @@ Buffer Buffer::NewFile(std::filesystem::path path) {
 
 void Buffer::SaveToFile(const std::filesystem::path& path, bool ensureFinalNewline, bool trimTrailingWhitespace,
                         std::optional<LineEnding> lineEndingOverride) {
+    // progressive-huge-file-load follow-up: a still-loading huge buffer is
+    // now genuinely editable (ReadOnly() no longer implies "can't save" the
+    // way it used to via Loading_) -- without this guard, nothing else
+    // would stop a mid-load save from silently writing a truncated,
+    // not-yet-fully-read version of the file over the real one. Checked
+    // first, before the disk-space check below, since it's a cheap,
+    // unconditional refusal rather than a size-dependent one.
+    if (Loading_) {
+        throw std::runtime_error("ned: cannot save \"" + Name_ + "\" -- still loading in the background");
+    }
+
     // Write to a sibling temp file and rename over the target so a failure
     // partway through (e.g. disk full) can't leave the original truncated or
     // corrupted -- std::filesystem::rename is atomic on POSIX when both
@@ -573,7 +670,7 @@ std::size_t Buffer::Size() const {
 }
 
 bool Buffer::ReadOnly() const {
-    return ReadOnly_ || Loading_;
+    return ReadOnly_;
 }
 
 void Buffer::SetReadOnly(bool readOnly, std::optional<std::string> reason) {
@@ -592,12 +689,35 @@ std::string Buffer::ReadOnlyErrorMessage() const {
     return "Buffer is read-only.";
 }
 
+bool Buffer::LikelyBinary() const {
+    return LikelyBinary_;
+}
+
+bool Buffer::BinarySafetyOverride() const {
+    return BinarySafetyOverride_;
+}
+
+void Buffer::SetBinarySafetyOverride(bool overridden) {
+    BinarySafetyOverride_ = overridden;
+}
+
+bool Buffer::BinarySafeguardsActive() const {
+    return LikelyBinary_ && !BinarySafetyOverride_;
+}
+
+void Buffer::SetLikelyBinary(bool likelyBinary) {
+    LikelyBinary_ = likelyBinary;
+}
+
 bool Buffer::IsLoading() const {
     return Loading_;
 }
 
-void Buffer::MarkLoading() {
+void Buffer::MarkLoading(bool forceReadOnly) {
     Loading_ = true;
+    if (forceReadOnly) {
+        ReadOnly_ = true;
+    }
 }
 
 void Buffer::SetLoadProgress(std::shared_ptr<LoadProgress> progress) {
@@ -614,6 +734,7 @@ void Buffer::ReplaceContentForLoad(Rope content) {
 }
 
 void Buffer::FinishLoad(Rope content, std::optional<LineEnding> detectedEnding) {
+    ReadOnly_      = false; // undoes MarkLoading(true)'s forced read-only -- see that method's own doc comment
     Storage_       = std::make_unique<RopeStorage>(std::move(content));
     UndoTree_      = UndoTree(Storage_->Clone());
     SavedSnapshot_ = Storage_->Clone();
@@ -629,6 +750,52 @@ void Buffer::FinishLoad(Rope content, std::optional<LineEnding> detectedEnding) 
     // window is absorbed rather than flagged, an accepted small race for
     // the async path only.
     CaptureDiskTimestamp();
+}
+
+void Buffer::ReplaceContentForHugeLoad(PieceTable content) {
+    // Both start identical -- Storage_/SavedSnapshot_ must already be
+    // PieceTableStorage by the time AppendHugeLoadChunk's dynamic_cast runs
+    // for the second chunk-group, and SavedSnapshot_ tracking "pure disk
+    // content read so far" starts here, at the very first content this
+    // placeholder ever had (it was an empty RopeStorage until now).
+    Storage_       = std::make_unique<PieceTableStorage>(content);
+    SavedSnapshot_ = std::make_unique<PieceTableStorage>(std::move(content));
+    ++ContentGeneration_;
+}
+
+void Buffer::AppendHugeLoadChunk(PieceTable fragment) {
+    auto* current = dynamic_cast<PieceTableStorage*>(Storage_.get());
+    auto* saved   = dynamic_cast<PieceTableStorage*>(SavedSnapshot_.get());
+    // Only ever called on a buffer that came through ReplaceContentForHugeLoad
+    // first -- see Buffer.h's own doc comment on the call sequence.
+    assert(current != nullptr && saved != nullptr);
+    Storage_       = std::make_unique<PieceTableStorage>(current->Value().Concatenated(fragment));
+    SavedSnapshot_ = std::make_unique<PieceTableStorage>(saved->Value().Concatenated(fragment));
+    RecordOrAmendLoadAppend();
+    ++ContentGeneration_;
+}
+
+void Buffer::FinishHugeLoad() {
+    ReadOnly_      = false; // undoes MarkLoading(false)'s no-op here, but mirrors FinishLoad's own unconditional reset
+    LineEnding_    = LineEnding::LF; // always true for this path -- see FromHugeFile's own doc comment
+    Loading_       = false;
+    LoadProgress_.reset();
+    ++ContentGeneration_;
+    CaptureDiskTimestamp();
+
+    // disk-space-safety follow-up: same soft, overridable downgrade
+    // FromHugeFile's own tail applies -- see that function's doc comment in
+    // Buffer.h for the full contract. The file still opens either way; only
+    // editability is at stake here.
+    if (Path_ && HugeFileDiskSpaceCheckEnabled()) {
+        const DiskSpaceCheck check = CheckFreeSpaceForSave(*Path_, Storage_->ByteLength(), HugeFileMinFreeSpaceMultiplier());
+        if (!check.sufficient) {
+            SetReadOnly(true, "not enough free disk space to safely save this file (need ~" +
+                                   FormatBytesHuman(check.requiredBytes) + " free, ~" +
+                                   FormatBytesHuman(check.availableBytes) +
+                                   " available) -- run toggle-read-only to edit anyway");
+        }
+    }
 }
 
 void Buffer::CaptureDiskTimestamp() {
@@ -923,6 +1090,7 @@ void Buffer::EndUndoGroup() {
 }
 
 void Buffer::RecordOrAmendUndo(bool canAmend) {
+    CanAmendLoadAppend_ = false; // a real edit must never let a later load-append silently amend into it
     if (UndoGroupDepth_ > 0) {
         UndoGroupDirty_ = true;
         return;
@@ -933,6 +1101,20 @@ void Buffer::RecordOrAmendUndo(bool canAmend) {
     }
     UndoTree_.Record(Storage_->Clone());
     CanAmend_ = canAmend;
+}
+
+void Buffer::RecordOrAmendLoadAppend() {
+    CanAmend_ = false; // a load-append must never let a later keystroke silently amend into it
+    if (UndoGroupDepth_ > 0) {
+        UndoGroupDirty_ = true;
+        return;
+    }
+    if (CanAmendLoadAppend_) {
+        UndoTree_.Amend(Storage_->Clone());
+        return;
+    }
+    UndoTree_.Record(Storage_->Clone());
+    CanAmendLoadAppend_ = true;
 }
 
 void Buffer::RelocateSecondaryCursorsForInsert(std::size_t insertOffset, std::size_t length) {
@@ -1280,7 +1462,7 @@ bool Buffer::CanDeleteExcerptRange(std::size_t rangeStart, std::size_t rangeEnd)
 }
 
 void Buffer::InsertAtPoint(std::string_view text) {
-    if (ReadOnly_ || Loading_) {
+    if (ReadOnly()) {
         throw std::runtime_error(ReadOnlyErrorMessage());
     }
     if (text.empty()) {
@@ -1319,7 +1501,7 @@ void Buffer::InsertAtPoint(std::string_view text) {
 }
 
 void Buffer::DeleteBackwardAtPoint() {
-    if (ReadOnly_ || Loading_) {
+    if (ReadOnly()) {
         throw std::runtime_error(ReadOnlyErrorMessage());
     }
     if (Point_ == 0) {
@@ -1357,7 +1539,7 @@ void Buffer::DeleteBackwardAtPoint() {
 }
 
 void Buffer::DeleteForwardAtPoint() {
-    if (ReadOnly_ || Loading_) {
+    if (ReadOnly()) {
         throw std::runtime_error(ReadOnlyErrorMessage());
     }
     if (Point_ >= Storage_->ByteLength()) {
@@ -1395,7 +1577,7 @@ void Buffer::DeleteForwardAtPoint() {
 }
 
 std::string Buffer::DeleteRange(std::size_t byteOffset, std::size_t byteLength) {
-    if (ReadOnly_ || Loading_) {
+    if (ReadOnly()) {
         throw std::runtime_error(ReadOnlyErrorMessage());
     }
     byteOffset = std::min(byteOffset, Storage_->ByteLength());
@@ -1442,7 +1624,7 @@ std::string Buffer::DeleteRange(std::size_t byteOffset, std::size_t byteLength) 
 }
 
 void Buffer::InsertAt(std::size_t byteOffset, std::string_view text) {
-    if (ReadOnly_ || Loading_) {
+    if (ReadOnly()) {
         throw std::runtime_error(ReadOnlyErrorMessage());
     }
     InsertAtImpl(byteOffset, text);
@@ -1757,34 +1939,36 @@ void Buffer::Undo() {
     if (!UndoTree_.CanUndo()) {
         return;
     }
-    const std::string oldText = Storage_->ToString();
+    const std::unique_ptr<ITextStorage> oldStorage = Storage_->Clone(); // O(1) -- never materializes, see ChangedByteRange's own comment
     UndoTree_.Undo();
     Storage_ = UndoTree_.Current().Clone();
     ClearSecondaryCursors(); // v1 decision -- see AddCursorAt's doc comment
     ClearSnippetRanges();    // same v1 decision -- see SnippetRange's doc comment
     ClampCursorsToContent();
-    CanAmend_ = false;
+    CanAmend_           = false;
+    CanAmendLoadAppend_ = false;
     GoalColumn_.reset();
     ++ContentGeneration_;
-    UpdateUnsavedRangesForRestore(oldText);
-    UpdateExcerptRangesForRestore(oldText); // NOT cleared -- see ExcerptRange's own doc comment
+    UpdateUnsavedRangesForRestore(*oldStorage);
+    UpdateExcerptRangesForRestore(*oldStorage); // NOT cleared -- see ExcerptRange's own doc comment
 }
 
 void Buffer::Redo() {
     if (!UndoTree_.CanRedo()) {
         return;
     }
-    const std::string oldText = Storage_->ToString();
+    const std::unique_ptr<ITextStorage> oldStorage = Storage_->Clone(); // O(1) -- never materializes, see ChangedByteRange's own comment
     UndoTree_.Redo();
     Storage_ = UndoTree_.Current().Clone();
     ClearSecondaryCursors(); // v1 decision -- see AddCursorAt's doc comment
     ClearSnippetRanges();    // same v1 decision -- see SnippetRange's doc comment
     ClampCursorsToContent();
-    CanAmend_ = false;
+    CanAmend_           = false;
+    CanAmendLoadAppend_ = false;
     GoalColumn_.reset();
     ++ContentGeneration_;
-    UpdateUnsavedRangesForRestore(oldText);
-    UpdateExcerptRangesForRestore(oldText); // NOT cleared -- see ExcerptRange's own doc comment
+    UpdateUnsavedRangesForRestore(*oldStorage);
+    UpdateExcerptRangesForRestore(*oldStorage); // NOT cleared -- see ExcerptRange's own doc comment
 }
 
 std::vector<UndoTree::SerializedNode> Buffer::SerializeUndo() const {
@@ -1797,27 +1981,25 @@ std::size_t Buffer::CurrentUndoNodeId() const {
 
 void Buffer::RestoreUndoTree(std::vector<UndoTree::SerializedNode> nodes, std::size_t currentId) {
     UndoTree restored = UndoTree::Deserialize(nodes, currentId);
-    if (restored.Current().ToString() != Storage_->ToString()) {
+    if (!StorageContentEquals(restored.Current(), *Storage_)) {
         throw std::runtime_error("Buffer::RestoreUndoTree: restored tree's current content doesn't match buffer content");
     }
     UndoTree_ = std::move(restored);
     CanAmend_ = false;
 }
 
-void Buffer::UpdateUnsavedRangesForRestore(const std::string& oldText) {
-    const std::string newText = Storage_->ToString();
-
+void Buffer::UpdateUnsavedRangesForRestore(const ITextStorage& oldStorage) {
     // Landed back on exactly the last-saved content, regardless of the
     // path taken to get there (this Undo()/Redo() step, or several
     // compounded with earlier ones) -- no unsaved change at all, full
     // stop, not just "nothing changed in this specific step." Found to be
-    // necessary via live testing: the diff-against-oldText path below is
+    // necessary via live testing: the diff-against-oldStorage path below is
     // exact for *this* step, but an edit undone anywhere except the very
     // end of the buffer still left a real, technically-accurate 1-byte
     // marker at the edit site even once content matched disk again --
     // correct in isolation, misleading in practice (still showed as an
     // unsaved change after undoing the exact edit that caused it).
-    if (newText == SavedSnapshot_->ToString()) {
+    if (StorageContentEquals(*Storage_, *SavedSnapshot_)) {
         if (!UnsavedChangeRanges_.empty()) {
             UnsavedChangeRanges_.clear();
             ++UnsavedChangeGeneration_;
@@ -1825,7 +2007,7 @@ void Buffer::UpdateUnsavedRangesForRestore(const std::string& oldText) {
         return;
     }
 
-    // Undoing/redoing restores a full prior Rope snapshot rather than
+    // Undoing/redoing restores a full prior storage snapshot rather than
     // replaying a single insert/delete, so there's no edit-site
     // offset/length already in hand -- ChangedByteRange recovers one via a
     // common-prefix/suffix diff against the just-replaced content, then
@@ -1837,7 +2019,7 @@ void Buffer::UpdateUnsavedRangesForRestore(const std::string& oldText) {
     // found to be a real, user-visible bug during manual testing (undoing
     // a single trivial edit lit up the entire gutter as changed), not just
     // an approximation worth tightening later.
-    if (const auto span = ChangedByteRange(oldText, newText)) {
+    if (const auto span = ChangedByteRange(oldStorage, *Storage_)) {
         // Only the non-empty side of the replacement -- MarkUnsavedRange*
         // each unconditionally record a span (MarkUnsavedRangeInserted's
         // own merge call has no empty-length guard the way InsertAtPoint's
@@ -1854,23 +2036,18 @@ void Buffer::UpdateUnsavedRangesForRestore(const std::string& oldText) {
     }
 }
 
-void Buffer::UpdateExcerptRangesForRestore(const std::string& oldText) {
-    // The empty check isn't just a fast path -- Storage_->ToString() below is a
-    // second full-content stringify on top of UpdateUnsavedRangesForRestore's
-    // own (that one can't be reused directly: it early-returns whenever the
-    // restored content matches SavedSnapshot_, a check with no ExcerptRanges_
-    // analog), so skip it entirely for the overwhelming majority of buffers
-    // that never carry excerpt ranges at all.
+void Buffer::UpdateExcerptRangesForRestore(const ITextStorage& oldStorage) {
+    // Fast path for the overwhelming majority of buffers that never carry
+    // excerpt ranges at all -- skips even the bounded diff below.
     if (ExcerptRanges_.empty()) {
         return;
     }
-    const std::string newText = Storage_->ToString();
     // Same delete-half-then-insert-half composition UpdateUnsavedRangesForRestore
     // uses, over the same ChangedByteRange diff, onto
     // RelocateExcerptRangesForDelete/Insert instead of
     // MarkUnsavedRangeDeleted/Inserted -- see this method's own doc comment
     // in Buffer.h for why relocating (not clearing) is the right call here.
-    if (const auto span = ChangedByteRange(oldText, newText)) {
+    if (const auto span = ChangedByteRange(oldStorage, *Storage_)) {
         if (span->oldEnd > span->oldStart) {
             RelocateExcerptRangesForDelete(span->oldStart, span->oldEnd);
         }
