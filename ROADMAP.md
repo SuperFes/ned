@@ -200,22 +200,18 @@ Notcurses.
       close to double a file's size to safely rewrite it), with `toggle-read-only` as the
       override and a hard, non-overridable re-check at actual save time.
 
-      Still open: `Minimap` bails out entirely for a huge buffer rather than the real bounded
-      line-sampling redesign (a stopgap fix for a real hang, see this file's own history
-      for the underlying cause — `PieceTable`'s 256 KiB original-file leaves make any
-      *unbounded* per-line iteration ~500x costlier than `Rope`'s); `BufferView`'s own
-      line-count/scrollbar reads haven't been audited for that same unbounded-iteration
-      risk class; the CLI-arg deferred-open path (`main.cpp`) only checks
-      `AsyncLoadThreshold()`, never `HugeFileThreshold()`, so a file under the async
-      threshold's default skips huge-file handling entirely when opened via CLI argument
-      (doesn't bite the real multi-GB target case, but is a real gap for a
-      lowered-threshold config) — same shape of fix as the session-restore bullet right
-      below. Every feature built on full-document access rather than the storage
-      engine's own bounded reads — Vim motions/search, Org, snippets, multibuffer,
-      bookmarks, session save-place, VCS blame/diff gutters — simply doesn't operate
-      *well* on a huge buffer yet (nothing crashes; `IsHuge()`-unaware code just pays
-      whatever cost full materialization costs). See the staged follow-up plan below for
-      bringing those online incrementally rather than all at once.
+      Still open: `BufferView`'s own line-count/scrollbar reads haven't been audited for
+      that same unbounded-iteration risk class. ~~`Minimap` bails out entirely for a huge
+      buffer~~ and ~~the CLI-arg deferred-open path only checks `AsyncLoadThreshold()`,
+      never `HugeFileThreshold()`~~ are both fixed, see huge-file-minimap-sampling and the
+      small-guardrails-bundle entries below. Every feature built on full-document access
+      rather than the storage engine's own bounded reads — Vim motions, Org, snippets,
+      multibuffer, bookmarks, session save-place, VCS blame/diff gutters — simply doesn't
+      operate *well* on a huge buffer yet (nothing crashes; `IsHuge()`-unaware code just
+      pays whatever cost full materialization costs; Vim's own `/`/`?`/`n`/`N`/`*`/`#`
+      search and `:s`/`:g` are the one motion-adjacent exception, see
+      huge-file-vim-search below). See the staged follow-up plan below for bringing the
+      rest online incrementally rather than all at once.
 - [x] **Progressive, editable-while-loading huge-file open — v1 shipped.** The v1 floor
       above opened a huge file fully synchronously on the main thread (one blocking
       whole-file scan, one whole-file `MappedFile::ReleasePages` at the very end) — live-
@@ -548,6 +544,38 @@ Notcurses.
         machinery existing. Both gates now check `size > AsyncLoadThreshold() || size >
         HugeFileThreshold()`. No live default-config bug (matches every prior framing of
         this gap) — only reachable with a lowered `HugeFileThreshold()`.
+- [x] **huge-file-minimap-sampling: `Minimap` no longer bails out entirely for a huge
+      buffer — a real bounded-cost line-sampling redesign, not just the earlier stopgap
+      blank-strip fix.** `Minimap::ForEachDensityDot` (`UI/Minimap.cpp`) used to walk
+      every one of a buffer's real lines per minimap sub-row to compute exact per-dot
+      density (`PieceTableStorage`'s per-line `LineToByteOffset`/`CodepointAt` cost ~500x
+      `Rope`'s — see the v1-floor entry above — extrapolating to the ~48-second hang that
+      motivated the original bail). A naive per-sub-row sample cap alone isn't sufficient
+      here, since sub-row count itself (`== dotRows`, `EnsurePlane`) isn't small — `8 *
+      height` in glyph mode, `height * celldimy` in real-pixel mode, which runs into the
+      thousands on a tall pane with a small font. Fixed with a *total* line-sample budget
+      (`kHugeLineSampleBudget = 4096`) spread evenly across sub-rows instead (at least one
+      line per row, so none goes fully unsampled) — worst-case cost is `max(budget,
+      subRows)` line lookups, both independently bounded, replacing the previous unbounded
+      `totalLines`. Each sub-row's density ratio (`hitCount / linesInRow`, `PaintPlane`)
+      stays meaningful because `linesInRow` itself reports the *sampled* count, not the
+      row's true line count, when sampling kicks in — an unbiased density estimate over
+      the sample rather than an exact count, the accepted approximation at this scale.
+      Ordinary (non-huge, `Rope`-backed) buffers are completely unaffected — same exact
+      per-line path as before, gated on `ITextStorage::IsHuge()`.
+
+      `ForEachDensityDot` is private and only reachable through `EnsurePlane`, which
+      bails out immediately with no `EventLoop` wired (`SetEventLoop`) — the same
+      real-pixel/glyph rendering internals `MinimapTest.cpp` already documents as
+      untestable headless (no fake/test `EventLoop` exists anywhere in this codebase),
+      consistent with how the original pixel-minimap feature itself shipped (tmux-
+      verified live, not unit tests — see this file's own history). Verified the same
+      way: a real 400K-line/14 MB synthetic file (`ned/set-huge-file-threshold` lowered
+      so a file this size still classifies as huge, avoiding an actual multi-GB fixture)
+      opened instantly with a real, non-blank, colored minimap; 400+ rapid page-down
+      scrolls (each one forces a full `ForEachDensityDot` recompute too, not just edits —
+      `position` is part of `EnsurePlane`'s cache key) stayed responsive with modest CPU;
+      an in-place edit landed cleanly with no hang.
 
 ### Editor Ergonomics
 

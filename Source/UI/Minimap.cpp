@@ -134,6 +134,34 @@ void Minimap::ForEachDensityDot(
     // isn't rendered past this column, no attempt to squeeze it in.
     const int maxColumn = static_cast<int>(static_cast<double>(subCols) * effectiveCharsPerDot);
 
+    // huge-file-minimap-sampling follow-up: PieceTable's LineToByteOffset/
+    // CodepointAt cost ~500x Rope's per call (256 KiB original-file leaves
+    // vs Rope's 512 bytes -- see PieceTable.cpp's own comment), so walking
+    // every real line per subRow below (the exact-density design) no longer
+    // bounds repaint cost by subRows -- it degrades back to O(totalLines),
+    // measured at ~48 seconds against a real 1.5M-line file. A per-subRow
+    // sample cap alone isn't enough, since subRows itself (== dotRows, see
+    // EnsurePlane) isn't small -- 8*height in glyph mode, height*celldimy in
+    // real-pixel mode, which can run into the thousands on a tall pane with
+    // a small font. Instead this bounds the *total* lines inspected across
+    // the whole call to kHugeLineSampleBudget, spread evenly across
+    // subRows (at least one line per row, so no row goes completely
+    // unsampled) -- worst-case cost is max(kHugeLineSampleBudget, subRows)
+    // line lookups, both independently bounded (the constant, and subRows'
+    // own realistic ceiling), unlike the unbounded totalLines this replaces.
+    // Every sampled line still only ever contributes at most one visit()
+    // call per dot it touches (same rule the exact path already followed),
+    // so the caller's hitCount/linesInRow density ratio (Minimap.cpp's own
+    // PaintPlane) stays meaningful: linesInRow below is the number of lines
+    // actually sampled for the row, not the row's true line count, making
+    // the ratio an unbiased density *estimate* over the sample rather than
+    // an exact count -- accepted approximation at this scale, ordinary
+    // (non-huge) buffers are completely unaffected and keep the exact path.
+    constexpr std::size_t kHugeLineSampleBudget = 4096;
+    const bool            sampleLines           = content.IsHuge();
+    const std::size_t     perSubRowCap =
+        sampleLines ? std::max<std::size_t>(1, kHugeLineSampleBudget / static_cast<std::size_t>(subRows)) : 0;
+
     for (int subRow = 0; subRow < subRows; ++subRow) {
         const std::size_t lineStart =
             static_cast<std::size_t>((static_cast<long long>(subRow) * static_cast<long long>(totalLines)) / subRows);
@@ -142,10 +170,20 @@ void Minimap::ForEachDensityDot(
         if (lineEnd <= lineStart) {
             lineEnd = lineStart + 1;
         }
-        lineEnd = std::min(lineEnd, totalLines);
-        const std::size_t linesInRow = lineEnd - lineStart;
+        lineEnd                          = std::min(lineEnd, totalLines);
+        const std::size_t realLinesInRow = lineEnd - lineStart;
 
-        for (std::size_t line = lineStart; line < lineEnd; ++line) {
+        std::size_t lineStep = 1;
+        if (sampleLines && realLinesInRow > perSubRowCap) {
+            lineStep = (realLinesInRow + perSubRowCap - 1) / perSubRowCap;
+        }
+        // The count visit() reports as this row's density denominator --
+        // the real line count when every line is inspected (lineStep == 1),
+        // or the (smaller) sampled count otherwise; see this function's own
+        // comment above for why that keeps the density ratio meaningful.
+        const std::size_t linesInRow = (realLinesInRow + lineStep - 1) / lineStep;
+
+        for (std::size_t line = lineStart; line < lineEnd; line += lineStep) {
             const std::size_t lineStartByte = content.LineToByteOffset(line);
             const std::size_t lineEndByte =
                 (line + 1 < totalLines) ? content.LineToByteOffset(line + 1) : content.ByteLength();
@@ -205,26 +243,15 @@ void Minimap::EnsurePlane() const {
 
     text::Buffer& buffer = activeBuffer_.Get();
 
-    // huge-file-editing follow-up: a real, live-reproduced hang, not a
-    // theoretical one -- ForEachDensityDot below walks every one of
-    // buffer.Content().LineCount() lines calling LineToByteOffset/
-    // CodepointAt per line, and PieceTableStorage's per-call cost for those
-    // (an O(leaf size) linear scan when a lookup lands inside a leaf, and
-    // PieceTable's original-file leaves are 256 KiB, not Rope's 512 bytes --
-    // see PieceTable.cpp's own comment on that tradeoff) is roughly 500x
-    // Rope's. Measured against a real 1.5M-line/86 MB file: ~32 microseconds
-    // per line, which extrapolates to the ~48-second, CPU-pegged, blank-
-    // screen hang actually observed opening one through the real `ned`
-    // binary. A real line-sampling redesign (bounded cost regardless of
-    // buffer size, working for every buffer including a huge one) is a
-    // separate, already-planned piece of this same effort -- this bail is
-    // the minimal stopgap so opening a huge file doesn't look hung in the
-    // meantime; it renders as a blank strip (PaintPlane's own background-
-    // color backstop), not an error.
-    if (buffer.Content().IsHuge()) {
-        ReleasePlane();
-        return;
-    }
+    // huge-file-minimap-sampling follow-up: this used to bail out (blank
+    // strip, ReleasePlane) for any huge buffer outright -- a real,
+    // live-reproduced ~48-second hang otherwise (ForEachDensityDot walking
+    // every one of a 1.5M-line file's lines through PieceTableStorage's own
+    // ~500x-costlier-than-Rope per-line lookup). ForEachDensityDot now
+    // bounds that cost itself (a fixed total-lines-sampled budget across
+    // the whole call, see its own doc comment), so a huge buffer renders a
+    // real, if approximated, minimap like any other buffer -- no special
+    // case needed here at all.
 
     const bool sameCache =
         plane_ != nullptr && cacheBuffer_ == &buffer && cacheContentGeneration_ == buffer.ContentGeneration() &&
