@@ -585,6 +585,7 @@ add_library(ned_lib STATIC
         Source/Editor/ThemeSetting.cpp
         Source/Editor/Variables.cpp
         Source/Editor/HighlightSettings.cpp
+        Source/Editor/HugeStructuralWindow.cpp
         Source/Editor/MinimapSettings.cpp
         Source/Editor/WhitespaceSettings.cpp
         Source/Editor/GitIgnore.cpp
@@ -874,6 +875,7 @@ if (NED_BUILD_TESTS)
             Tests/BufferViewBlameGutterTest.cpp
             Tests/BufferViewDiffGutterTest.cpp
             Tests/BufferViewSymbolGutterTest.cpp
+            Tests/BufferViewHugeStructuralGutterTest.cpp
             Tests/BufferViewVcsStatusTest.cpp
             Tests/BufferViewVcsCommitTest.cpp
             Tests/WindowManagerTest.cpp
@@ -923,6 +925,7 @@ if (NED_BUILD_TESTS)
             Tests/DiffRefreshSettingsTest.cpp
             Tests/ProcessTimeoutsTest.cpp
             Tests/HighlightSettingsTest.cpp
+            Tests/HugeStructuralWindowTest.cpp
             Tests/MinimapSettingsTest.cpp
             Tests/WhitespaceSettingsTest.cpp
             Tests/RelativeLineNumberSettingsTest.cpp

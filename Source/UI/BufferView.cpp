@@ -27,6 +27,7 @@
 #include "Editor/FuzzyMatch.h"
 #include "Editor/HeaderSource.h"
 #include "Editor/HighlightSettings.h"
+#include "Editor/HugeStructuralWindow.h"
 #include "Editor/ImportResolutionConfig.h"
 #include "Editor/InlineDiagnostics.h"
 #include "Editor/JanetSymbolComplete.h"
@@ -778,6 +779,37 @@ void BufferView::ClearBufferCaches(text::Buffer& buffer) {
     }
 }
 
+std::pair<std::size_t, std::size_t> BufferView::HugeStructuralWindow(const text::ITextStorage& content) const {
+    const std::size_t byteLength = content.ByteLength();
+    if (!content.IsHuge()) {
+        return {0, byteLength};
+    }
+
+    const std::size_t margin    = editor::HugeStructuralWindowBytes();
+    const std::size_t lineCount = content.LineCount();
+    const std::size_t lastLine  = lineCount > 0 ? lineCount - 1 : 0;
+    const std::size_t topLine   = std::min(topLine_, lastLine);
+    const std::size_t viewportHeight = size().height > 0 ? static_cast<std::size_t>(size().height) : 1;
+    const std::size_t bottomLine     = std::min(topLine + viewportHeight, lastLine);
+
+    const std::size_t viewportStartByte = content.LineToByteOffset(topLine);
+    const std::size_t viewportEndByte   = std::min(content.LineToByteOffset(bottomLine) + 1, byteLength);
+
+    // Snapped to the start of whatever line it lands in, not a raw byte
+    // subtraction -- confirmed empirically (not assumed) that feeding
+    // tree-sitter a substring beginning mid-line/mid-token can desync its
+    // parse badly enough to misidentify a spurious definition right at the
+    // cut, or silently miss a real one shortly after it, well beyond the
+    // "truncated at the tail" class of imprecision the trailing edge alone
+    // has to worry about. A clean line start costs at most one extra line
+    // of margin and gives the parser real, syntactically valid context from
+    // its very first byte.
+    const std::size_t rawWindowStart = viewportStartByte > margin ? viewportStartByte - margin : 0;
+    const std::size_t windowStart    = content.LineToByteOffset(content.ByteOffsetToLine(rawWindowStart));
+    const std::size_t windowEnd      = byteLength - viewportEndByte > margin ? viewportEndByte + margin : byteLength;
+    return {windowStart, windowEnd};
+}
+
 void BufferView::EnsureFoldableBlocksCache() const {
     text::Buffer& buffer = activeBuffer_.Get();
 
@@ -788,7 +820,12 @@ void BufferView::EnsureFoldableBlocksCache() const {
         return;
     }
 
-    if (foldableBlocksCacheBuffer_ == &buffer && foldableBlocksCacheGeneration_ == buffer.ContentGeneration()) {
+    const text::ITextStorage&            content                = buffer.Content();
+    const bool                           huge                   = content.IsHuge();
+    const auto [windowStart, windowEnd]                         = HugeStructuralWindow(content);
+
+    if (foldableBlocksCacheBuffer_ == &buffer && foldableBlocksCacheGeneration_ == buffer.ContentGeneration() &&
+        foldableBlocksCacheWindowStart_ == windowStart && foldableBlocksCacheWindowEnd_ == windowEnd) {
         return;
     }
 
@@ -798,19 +835,50 @@ void BufferView::EnsureFoldableBlocksCache() const {
     // this mirrors.
     const auto it = foldableBlocksCacheByBuffer_.find(&buffer);
     if (it == foldableBlocksCacheByBuffer_.end() || it->second.contentGeneration != buffer.ContentGeneration() ||
-        it->second.modeName != mode_.name) {
+        it->second.modeName != mode_.name || it->second.windowStart != windowStart || it->second.windowEnd != windowEnd) {
         FoldableBlocksCacheEntry entry;
-        entry.ranges            = editor::codefold::FoldableBlocks(mode_, buffer.Text());
+        // huge-file-structural-gutters follow-up: a huge buffer feeds
+        // mode_.fold a bounded window (content.Substring) instead of the
+        // whole document.
+        entry.ranges = huge ? editor::codefold::FoldableBlocks(mode_, content.Substring(windowStart, windowEnd - windowStart))
+                             : editor::codefold::FoldableBlocks(mode_, buffer.Text());
+        if (huge) {
+            // A block whose real closing brace lies beyond the window isn't
+            // simply "not found" -- tree-sitter still emits a
+            // compound_statement node via error recovery for the unclosed
+            // "{", extending all the way to wherever the fed substring runs
+            // out, and c-folds.scm's plain "(compound_statement) @fold"
+            // captures it regardless (confirmed empirically, not assumed:
+            // this is exactly what a first version of this fix's own test
+            // caught). Reporting that truncated range as the block's real
+            // extent would fold to an arbitrary window-edge line, not the
+            // block's actual close -- worse than not finding it at all. Drop
+            // any range whose end reaches the substring's own edge, the same
+            // "don't trust a result abutting the window's own tail unless
+            // the window reached the real document end" rule
+            // Editor/HugeRegexScan.h already established for search.
+            const std::size_t windowLength = windowEnd - windowStart;
+            const bool        reachedDocumentEnd = windowEnd >= content.ByteLength();
+            std::erase_if(entry.ranges, [&](const auto& range) { return !reachedDocumentEnd && range.second >= windowLength; });
+            for (auto& [start, end] : entry.ranges) {
+                start += windowStart;
+                end += windowStart;
+            }
+        }
         entry.contentGeneration = buffer.ContentGeneration();
         entry.modeName          = mode_.name;
+        entry.windowStart       = windowStart;
+        entry.windowEnd         = windowEnd;
         foldableBlocksCache_    = entry.ranges;
         foldableBlocksCacheByBuffer_.insert_or_assign(&buffer, std::move(entry));
     }
     else {
         foldableBlocksCache_ = it->second.ranges;
     }
-    foldableBlocksCacheBuffer_     = &buffer;
-    foldableBlocksCacheGeneration_ = buffer.ContentGeneration();
+    foldableBlocksCacheBuffer_      = &buffer;
+    foldableBlocksCacheGeneration_  = buffer.ContentGeneration();
+    foldableBlocksCacheWindowStart_ = windowStart;
+    foldableBlocksCacheWindowEnd_   = windowEnd;
 }
 
 void BufferView::EnsureEmbeddedDocumentCache() {
@@ -862,7 +930,8 @@ void BufferView::EnsureFoldGutterCache() const {
     text::Buffer& buffer = activeBuffer_.Get();
 
     if (foldGutterCacheBuffer_ == &buffer && foldGutterCacheContentGeneration_ == buffer.ContentGeneration() &&
-        foldGutterCacheFoldGeneration_ == buffer.FoldGeneration()) {
+        foldGutterCacheFoldGeneration_ == buffer.FoldGeneration() &&
+        foldGutterCacheWindowStart_ == foldableBlocksCacheWindowStart_ && foldGutterCacheWindowEnd_ == foldableBlocksCacheWindowEnd_) {
         return;
     }
 
@@ -942,6 +1011,8 @@ void BufferView::EnsureFoldGutterCache() const {
     foldGutterCacheBuffer_            = &buffer;
     foldGutterCacheContentGeneration_ = buffer.ContentGeneration();
     foldGutterCacheFoldGeneration_    = buffer.FoldGeneration();
+    foldGutterCacheWindowStart_       = foldableBlocksCacheWindowStart_;
+    foldGutterCacheWindowEnd_         = foldableBlocksCacheWindowEnd_;
 }
 
 void BufferView::EnsureUnsavedChangeCache() const {
@@ -1158,18 +1229,31 @@ void BufferView::EnsureSymbolGutterCache() const {
         return;
     }
 
-    if (symbolGutterCacheBuffer_ == &buffer && symbolGutterCacheContentGeneration_ == buffer.ContentGeneration()) {
+    const text::ITextStorage& content              = buffer.Content();
+    const bool                huge                 = content.IsHuge();
+    const auto [windowStart, windowEnd]             = HugeStructuralWindow(content);
+
+    if (symbolGutterCacheBuffer_ == &buffer && symbolGutterCacheContentGeneration_ == buffer.ContentGeneration() &&
+        symbolGutterCacheWindowStart_ == windowStart && symbolGutterCacheWindowEnd_ == windowEnd) {
         return;
     }
 
-    const text::ITextStorage& content = buffer.Content();
     // mode_.symbolKind already returns markers sorted by startByte (Mode.cpp's
     // own closure) -- collapsing to one entry per line via a plain overwrite
     // in that order keeps the LAST (highest-byte-offset) marker on a line
     // that somehow has more than one, the same "later wins" convention
     // HighlightSpan's own doc comment establishes elsewhere in this file.
+    // huge-file-structural-gutters follow-up: a huge buffer feeds
+    // mode_.symbolKind a bounded window instead of the whole document --
+    // marker.startByte is then window-relative, remapped back to absolute
+    // buffer coordinates (+= windowStart) before the ByteOffsetToLine call
+    // below, which otherwise operates on absolute offsets throughout.
     std::unordered_map<std::size_t, editor::SymbolKind> kindByLine;
-    for (const editor::SymbolMarker& marker : mode_.symbolKind(buffer.Text())) {
+    for (editor::SymbolMarker marker :
+         huge ? mode_.symbolKind(content.Substring(windowStart, windowEnd - windowStart)) : mode_.symbolKind(buffer.Text())) {
+        if (huge) {
+            marker.startByte += windowStart;
+        }
         kindByLine[content.ByteOffsetToLine(marker.startByte)] = marker.kind;
     }
     symbolGutterLineKinds_.assign(kindByLine.begin(), kindByLine.end());
@@ -1178,6 +1262,8 @@ void BufferView::EnsureSymbolGutterCache() const {
 
     symbolGutterCacheBuffer_            = &buffer;
     symbolGutterCacheContentGeneration_ = buffer.ContentGeneration();
+    symbolGutterCacheWindowStart_       = windowStart;
+    symbolGutterCacheWindowEnd_         = windowEnd;
 }
 
 void BufferView::EnsureTestGutterCache() const {
@@ -1194,8 +1280,13 @@ void BufferView::EnsureTestGutterCache() const {
         return;
     }
 
+    const text::ITextStorage& content              = buffer.Content();
+    const bool                huge                 = content.IsHuge();
+    const auto [windowStart, windowEnd]             = HugeStructuralWindow(content);
+
     if (testGutterCacheBuffer_ == &buffer && testGutterCacheContentGeneration_ == buffer.ContentGeneration() &&
-        testGutterCacheOutcomeGeneration_ == testRunner_->OutcomeGeneration()) {
+        testGutterCacheOutcomeGeneration_ == testRunner_->OutcomeGeneration() && testGutterCacheWindowStart_ == windowStart &&
+        testGutterCacheWindowEnd_ == windowEnd) {
         return;
     }
 
@@ -1204,8 +1295,14 @@ void BufferView::EnsureTestGutterCache() const {
         buffer.Path() ? buffer.Path()->filename().string() : std::string();
 
     testGutterLineStatuses_.clear();
-    const text::ITextStorage& content = buffer.Content();
-    for (const editor::TestMarker& marker : mode_.testDiscovery(buffer.Text())) {
+    // huge-file-structural-gutters follow-up: a huge buffer feeds
+    // mode_.testDiscovery a bounded window instead of the whole document --
+    // marker.startByte is then window-relative, remapped back to absolute
+    // buffer coordinates (+= windowStart) before the ByteOffsetToLine call
+    // below.
+    for (const editor::TestMarker& marker :
+         huge ? mode_.testDiscovery(content.Substring(windowStart, windowEnd - windowStart)) : mode_.testDiscovery(buffer.Text())) {
+        const std::size_t startByte = huge ? marker.startByte + windowStart : marker.startByte;
         // Aggregate every matching result (parameterized instances, go
         // subtests): Failed beats Passed beats Skipped. The result's file,
         // when it names one at all, is only a basename-level *filter*
@@ -1239,7 +1336,7 @@ void BufferView::EnsureTestGutterCache() const {
             aggregate = editor::testrun::TestResult::Status::Passed;
         }
         if (aggregate) {
-            testGutterLineStatuses_.emplace_back(content.ByteOffsetToLine(marker.startByte), *aggregate);
+            testGutterLineStatuses_.emplace_back(content.ByteOffsetToLine(startByte), *aggregate);
         }
     }
     // One entry per line, Failed winning a same-line tie (a class marker and
@@ -1267,6 +1364,8 @@ void BufferView::EnsureTestGutterCache() const {
     testGutterCacheBuffer_            = &buffer;
     testGutterCacheContentGeneration_ = buffer.ContentGeneration();
     testGutterCacheOutcomeGeneration_ = testRunner_->OutcomeGeneration();
+    testGutterCacheWindowStart_       = windowStart;
+    testGutterCacheWindowEnd_         = windowEnd;
 }
 
 void BufferView::EnsureInlineDiagnosticCache() const {

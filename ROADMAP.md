@@ -397,23 +397,22 @@ Notcurses.
          `QueryReplace` and Vim search. Vim's `:s`/`:g` needed no work at all — already
          line-scoped via `Content().Substring` per line, riding the same O(log n) line
          index as stage 2 above, never materializing more than one line at a time.
-      4. Structural/index-driven features (Org outline, code folding, symbol gutter, VCS
-         blame/diff) — these need a real index over the whole file, not just a bounded
-         read, so this is the biggest remaining lift. Two real techniques apply, neither
-         designed in detail yet: (a) generalize `PieceTable::Node`'s existing aggregate
-         (`byteLength`/`codepointLength`/`lineCount`, combined left+right at every
-         internal node) from a fixed triple into a pluggable, monoid-combined summary
-         type — the same pattern as Zed's `SumTree` and xi-editor's metric-parameterized
-         rope (formally: a finger-tree/monoid-augmented B-tree, Hinze & Paterson), so a
-         structural index (headline offsets, fold regions, symbol positions) rides the
-         same tree/traversal machinery instead of needing a bespoke index per feature;
-         (b) tree-sitter's own `included_ranges` API (parse only specific byte ranges,
-         stitch partial trees) is what would let that index stay lazy/viewport-driven
-         instead of requiring one big upfront parse of a multi-GB file.
-      5. Multibuffer/bookmarks/session save-place — mostly just track byte
-         ranges/points through `Buffer`'s own relocation logic, which already lives in
-         `Buffer.cpp` and is storage-agnostic — likely cheaper than stage 4 despite
-         listed after it here.
+      4. Structural gutters (code folding, symbol-kind) — shipped, see
+         huge-file-structural-gutters below (was mis-scoped in this bullet as needing a
+         whole-file index; it didn't).
+      5. Bookmarks/session save-place — shipped, see huge-file-navigation-verification
+         below. Multibuffer turned out to have a real, separate bug of its own, also
+         fixed there.
+
+      **VCS blame/diff and Org outline are both permanently descoped from huge-file
+      support**, not deferred: nobody meaningfully version-controls or diffs a multi-GB
+      file in practice, and Org files are user-authored notes that don't reach that
+      size either way — the same kind of deliberate, documented scope cut as the
+      Alt+Click cursor "won't do" above, not a gap awaiting a future stage.
+      `VcsRunner::RequestBlame`/`RequestDiff`/`RequestFullDiff`
+      (`Source/Editor/Vcs/VcsRunner.cpp`) already shell out to the VCS provider against
+      the file's on-disk path rather than `buffer.Text()` regardless, so this was never
+      a live bug — just scope not worth building out further.
 - [x] **huge-file-regex-replace: `query-replace-regexp` no longer materializes a huge
       buffer — real windowed regex search/replace, not just literal isearch.** The
       partial-match approach this section used to sketch (`PCRE2_PARTIAL_SOFT`/`HARD`,
@@ -576,6 +575,123 @@ Notcurses.
       scrolls (each one forces a full `ForEachDensityDot` recompute too, not just edits —
       `position` is part of `EnsurePlane`'s cache key) stayed responsive with modest CPU;
       an in-place edit landed cleanly with no hang.
+- [x] **huge-file-structural-gutters: the code-folding and symbol-kind (and
+      test-discovery) gutters no longer materialize/full-parse a huge buffer — narrower
+      than the "whole-file index" this section's own staged plan originally sketched for
+      structural features, and a live gap worse than several already-fixed entries
+      above.** `BufferView::EnsureFoldableBlocksCache`/`EnsureSymbolGutterCache`/
+      `EnsureTestGutterCache` used to call `mode_.fold`/`mode_.symbolKind`/
+      `mode_.testDiscovery` with `buffer.Text()` completely unguarded — no `IsHuge()`
+      check at all, unlike highlighting's blanket `MaxHighlightBytes()` disable — so a
+      huge buffer with a recognized mode paid a full string materialization *and* a full
+      tree-sitter parse (`Mode.cpp`'s shared `IncrementalParseCache`) on every
+      content-generation bump. VCS blame/diff, by contrast, was never actually broken —
+      already shells out against the on-disk file path rather than `buffer.Text()` (see
+      huge-file-navigation-verification below, now permanently descoped rather than
+      needing a fix) — the
+      monoid-augmented-`PieceTable::Node`/`SumTree`-style whole-file index this section
+      once sketched for "structural/index-driven features" as a group turned out
+      unnecessary for any of this: nothing here needs a whole-file index (no huge-file
+      project-wide symbol search is in scope — LSP symbol search is already excluded for
+      huge buffers by huge-file-lsp-gate above).
+
+      Fixed with a bounded window around the visible viewport
+      (`BufferView::HugeStructuralWindow`, new `ned/set-huge-structural-window-bytes`
+      setting mirroring `MaxHighlightBytes()`'s own pattern, default 4 MiB margin),
+      reusing `ITextStorage::Substring` + offset-remap-back-to-absolute — the same
+      technique `Editor/HugeRegexScan.h`/`IncrementalSearch::SearchHuge` already
+      established for search. No `Mode` function-type signature change needed — the
+      windowing/remap lives entirely in the three `Ensure*Cache` methods (plus
+      `EnsureFoldGutterCache`, whose own separate content/fold-generation cache gate had
+      to gain the window as a third cache key too, or a window-only change with no
+      content/fold edit at all left it silently serving a stale, pre-window result).
+
+      Two real correctness traps found empirically while testing this, not assumed —
+      matching this section's own standing "investigate, don't guess" precedent:
+      - A fold whose real closing brace lies outside the window isn't simply "not
+        found" the way a missed search match would be: tree-sitter's error recovery
+        still emits a `compound_statement` node for the unclosed `{`, extending all the
+        way to wherever the fed substring happens to end, and `c-folds.scm`'s plain
+        `(compound_statement) @fold` captures it regardless — reporting that as the
+        block's real extent would fold to an arbitrary window-edge line, not the actual
+        close. Fixed by dropping any range whose end reaches the substring's own edge,
+        *unless* the window already reached the real document end (in which case that
+        edge genuinely is the file's own close) — the same "don't trust a result
+        abutting the window's own tail unless it's the real document boundary" rule
+        `HugeRegexScan.h` established for search, just applied to the trailing edge of a
+        structural capture instead of a regex match.
+      - The mirror-image trap sits at the *leading* edge and is more serious: a
+        `windowStart` computed as a raw `viewportStartByte - margin` byte subtraction
+        typically lands mid-line/mid-token, and feeding tree-sitter a substring that
+        begins there was observed to desync the parse badly enough to report a spurious
+        definition at the cut *or silently drop a real one well past it* — not just
+        distort something exactly at the boundary the way the trailing-edge case does.
+        Fixed by snapping `windowStart` down to its containing line's start
+        (`ITextStorage::LineToByteOffset(ByteOffsetToLine(...))`) before ever handing the
+        substring to tree-sitter, costing at most one extra line of margin.
+
+      `[BufferView][HugeFile]`-tagged tests (`Tests/BufferViewHugeStructuralGutterTest.cpp`)
+      cover both traps directly: a fold whose close lies outside a small window is
+      absent, widening the window finds it; a fold/symbol reached only via a large,
+      nonzero `windowStart` (scrolled deep into a synthetic huge file) reports at its
+      correct absolute line, not a wrong one near the window's own start — the failure
+      mode a broken remap or an unsnapped `windowStart` would each produce. Full suite
+      (`ctest --test-dir build`) confirmed green throughout, including every pre-existing
+      non-huge fold/symbol gutter test, unaffected by construction (their window is
+      always `{0, ByteLength()}`).
+- [x] **huge-file-navigation-verification: bookmarks and session save-place confirmed
+      huge-file-safe by test — multibuffer excerpts, by contrast, had a real,
+      previously-unguarded `buffer.Text()` bug, now fixed.** Bookmarks
+      (`Editor/Bookmark.h`'s `RecordBookmark`) and session save-place
+      (`Editor/Session.h`'s `RecordFilePlace`/`RestoreFilePlace`) both resolve
+      point/(line, column) purely through `Buffer::ByteOffsetForLineAndColumn`/
+      `VisualColumnForByteOffset`, themselves bounded (`Content()`'s O(log n) line
+      index plus a `kMaxTabAwareColumnScan`-capped per-line scan, `Buffer.cpp`) —
+      confirmed, not just assumed, by `[Session][HugeFile]`/`[Bookmark][HugeFile]`
+      round-trip tests against a real huge (piece-table-backed) buffer, a bookmark/
+      place recorded deep in a 2000-line file (not line 0, the failure mode a
+      forgotten bound would actually produce) and restored to the exact same byte
+      offset. A plausible real workflow independent of VCS: bookmarking a line in a
+      huge log file, then reopening it later and having session save-place restore
+      point/scroll position.
+
+      Investigating multibuffer's own excerpt-building path (`Editor/Multibuffer.cpp`)
+      before assuming it shared the same clean bill of health found a real, live gap:
+      `ReadExcerptText`'s `ReadFullSourceText` helper called `open->Text()`
+      unconditionally on an already-open source buffer to slice out a handful of
+      excerpt lines — a real, unguarded full-document materialization (project-
+      find-references/project-todo-agenda/wgrep-style commit results all funnel
+      through this same path), and a second, independent call site inside
+      `BuildMultibuffer` itself (resolving an editable excerpt's source byte range)
+      had the identical bug. `CommitExcerptChanges`, by contrast, was already fine —
+      it only ever reads/writes via `Content().Substring`/`ByteLength()` against a
+      known byte range. Fixed both call sites the same way: `LineRangeToByteRange`
+      gained an `ITextStorage` overload (`Content().LineToByteOffset`, O(log n),
+      clamping past the real end rather than throwing — `Rope`/`PieceTable`'s own
+      documented behavior) that resolves a `[startLine, endLine]` request against an
+      already-open buffer directly, falling back to the original full-read-plus-
+      linear-scan `std::string` overload only when the source isn't open at all (an
+      inherently different problem — an *unopened* huge file referenced by project
+      search has no `Buffer`/`IsHuge()` to gate on in the first place, and streaming
+      that case is a separate, larger task left out of scope here).
+      `[Multibuffer][HugeFile]`-tagged tests cover both fixed call sites against a
+      real huge source buffer opened in the same `BufferList` (a line deep in a
+      2000-line file, plus the existing past-the-end-degrades-to-empty contract
+      preserved unchanged). Full suite (`ctest --test-dir build`) confirmed green
+      throughout, including every pre-existing non-huge `Session`/`Bookmark`/
+      `Multibuffer` test, unaffected by construction.
+
+      **VCS blame/diff and Org outline are both permanently descoped from huge-file
+      support**, not deferred: nobody meaningfully version-controls or diffs a
+      multi-GB file in practice (git itself handles large blobs poorly, and a
+      genuinely huge tracked file is realistically binary/generated content nobody
+      diffs line-by-line even when it is tracked) — the same reasoning, and the same
+      kind of deliberate, documented scope cut, as the Alt+Click cursor "won't do"
+      above. `VcsRunner::RequestBlame`/`RequestDiff`/`RequestFullDiff`
+      (`Source/Editor/Vcs/VcsRunner.cpp`) already shell out to the VCS provider
+      against the file's on-disk path rather than `buffer.Text()`, so this was never a
+      live bug the way the structural gutters above were — just scope not worth
+      verifying further, let alone building out.
 
 ### Editor Ergonomics
 

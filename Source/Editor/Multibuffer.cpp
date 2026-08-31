@@ -74,32 +74,13 @@ void ClearRegistryForTesting() {
 
 namespace {
 
-    // Prefers a live, already-open Buffer's own content (unsaved edits show
-    // up), else a raw file read -- shared by ReadExcerptText and
-    // BuildMultibuffer's own editable-excerpt byte-range resolution below.
-    // A plain lookup (FindByPath, not OpenOrCreateFile): resolving a byte
-    // range for an editable excerpt must not have the side effect of
-    // opening a new buffer for every excerpt's source file just to build a
-    // display buffer (project-find-references can span dozens of files).
-    // Returns "" on any read failure, the same degrade-don't-crash posture
-    // as everywhere else in this subsystem.
-    std::string ReadFullSourceText(text::BufferList& bufferList, const std::filesystem::path& path) {
-        if (text::Buffer* open = bufferList.FindByPath(path)) {
-            return open->Text();
-        }
-        std::ifstream input(path, std::ios::binary);
-        if (!input) {
-            return {};
-        }
-        std::ostringstream contents;
-        contents << input.rdbuf();
-        return contents.str();
-    }
-
     // [startLine, endLine] (1-indexed, inclusive) as a byte range into
     // fullText, scanning newlines -- a plain linear scan, not Rope-backed,
     // since every caller runs this once per excerpt at build time, not per
-    // frame. nullopt if startLine is past fullText's own last line.
+    // frame. nullopt if startLine is past fullText's own last line. Used
+    // only for the "no live buffer, read the file fresh off disk" fallback
+    // below -- an already-open buffer resolves through the bounded
+    // ITextStorage overload just below instead.
     std::optional<std::pair<std::size_t, std::size_t>> LineRangeToByteRange(const std::string& fullText,
                                                                             std::size_t startLine, std::size_t endLine) {
         std::size_t line       = 1;
@@ -122,11 +103,51 @@ namespace {
         return std::nullopt;
     }
 
+    // huge-file-navigation-verification follow-up: the same [startLine,
+    // endLine] contract as the std::string overload above, but resolved via
+    // ITextStorage's own bounded line index (LineToByteOffset is O(log n),
+    // clamping past the real end rather than throwing -- Rope::
+    // LineToByteOffset/PieceTable::LineToByteOffset's own documented
+    // behavior) instead of a linear newline scan over the whole document.
+    // This is what lets an already-open *huge* source buffer answer an
+    // excerpt request without ever materializing its full content -- a real,
+    // previously-unguarded `buffer.Text()` call both callers below used to
+    // make unconditionally, found while verifying multibuffer excerpts
+    // against a huge source buffer.
+    std::optional<std::pair<std::size_t, std::size_t>> LineRangeToByteRange(const text::ITextStorage& content,
+                                                                            std::size_t startLine, std::size_t endLine) {
+        const std::size_t lineCount = content.LineCount();
+        if (startLine == 0 || startLine > lineCount) {
+            return std::nullopt;
+        }
+        const std::size_t clampedEndLine = std::min(endLine, lineCount);
+        return std::make_pair(content.LineToByteOffset(startLine - 1), content.LineToByteOffset(clampedEndLine));
+    }
+
 } // namespace
 
 std::string ReadExcerptText(text::BufferList& bufferList, const std::filesystem::path& path, std::size_t startLine,
                             std::size_t endLine) {
-    const std::string fullText = ReadFullSourceText(bufferList, path);
+    // Prefers a live, already-open Buffer's own content (unsaved edits show
+    // up) via the bounded ITextStorage overload above; falls back to a raw
+    // file read plus the linear-scan overload only when the file isn't
+    // open. A plain lookup (FindByPath, not OpenOrCreateFile): resolving an
+    // excerpt must not have the side effect of opening a new buffer for
+    // every excerpt's source file just to build a display buffer
+    // (project-find-references can span dozens of files). Degrades to ""
+    // on any read failure, the same posture as everywhere else in this
+    // subsystem.
+    if (text::Buffer* open = bufferList.FindByPath(path)) {
+        const auto range = LineRangeToByteRange(open->Content(), startLine, endLine);
+        return range ? open->Content().Substring(range->first, range->second - range->first) : std::string();
+    }
+    std::ifstream input(path, std::ios::binary);
+    if (!input) {
+        return {};
+    }
+    std::ostringstream contents;
+    contents << input.rdbuf();
+    const std::string fullText = contents.str();
     const auto         range    = LineRangeToByteRange(fullText, startLine, endLine);
     return range ? fullText.substr(range->first, range->second - range->first) : std::string();
 }
@@ -226,8 +247,22 @@ text::Buffer& BuildMultibuffer(text::BufferList& bufferList, const std::string& 
         // non-editable -- the same degrade-don't-crash posture
         // ReadExcerptText already takes toward a missing/changed source.
         if (excerpt.editable && excerpt.sourceStartLine > 0) {
-            const std::string fullText = ReadFullSourceText(bufferList, excerpt.sourcePath);
-            if (const auto range = LineRangeToByteRange(fullText, excerpt.sourceStartLine, excerpt.sourceEndLine)) {
+            // huge-file-navigation-verification follow-up: resolves via the
+            // bounded ITextStorage overload when the source is already
+            // open, same as ReadExcerptText above -- this path only ever
+            // needs the byte range itself (composite.substr below supplies
+            // originalText), so unlike ReadExcerptText there's no source
+            // text to slice out at all, live-buffer or disk.
+            std::optional<std::pair<std::size_t, std::size_t>> range;
+            if (text::Buffer* open = bufferList.FindByPath(excerpt.sourcePath)) {
+                range = LineRangeToByteRange(open->Content(), excerpt.sourceStartLine, excerpt.sourceEndLine);
+            }
+            else if (std::ifstream input(excerpt.sourcePath, std::ios::binary); input) {
+                std::ostringstream contents;
+                contents << input.rdbuf();
+                range = LineRangeToByteRange(contents.str(), excerpt.sourceStartLine, excerpt.sourceEndLine);
+            }
+            if (range) {
                 excerptRanges.push_back(text::Buffer::ExcerptRange{
                     bodyStart, spanEnd, excerpt.sourcePath, range->first, range->second,
                     /*editable=*/true, composite.substr(bodyStart, spanEnd - bodyStart)});

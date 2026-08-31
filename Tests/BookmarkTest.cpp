@@ -189,6 +189,33 @@ TEST_CASE("RecordBookmark and FindBookmark round-trip through a Buffer", "[Bookm
     REQUIRE_FALSE(FindBookmark("mark1").has_value());
 }
 
+TEST_CASE("RecordBookmark and FindBookmark round-trip through a huge Buffer", "[Bookmark][HugeFile]") {
+    // huge-file-navigation-verification follow-up: RecordBookmark never
+    // touches buffer.Text() -- see SessionTest.cpp's own huge-file test for
+    // the identical Buffer::ByteOffsetForLineAndColumn/
+    // VisualColumnForByteOffset reasoning (bookmarks and session save-place
+    // share the exact same recording math). A line deep in the file proves
+    // the round-trip isn't only correct near the start.
+    BookmarkStateGuard          guard;
+    const std::filesystem::path dir = FreshTestDir("ned_bookmark_test_huge_buffer");
+    std::string                 content;
+    for (int i = 0; i < 2000; ++i) {
+        content += "line " + std::to_string(i) + "\n";
+    }
+    const std::filesystem::path file = WriteTestFile(dir / "huge.txt", content);
+
+    ned::text::Buffer buffer = ned::text::Buffer::FromHugeFile(file);
+    REQUIRE(buffer.Content().IsHuge());
+    buffer.SetPoint(buffer.ByteOffsetForLineAndColumn(1500, 3));
+    RecordBookmark("mark1", buffer, /*tabWidth=*/4);
+
+    const auto mark = FindBookmark("mark1");
+    REQUIRE(mark.has_value());
+    REQUIRE(mark->line == 1500);
+    REQUIRE(mark->column == 3);
+    REQUIRE(mark->path == RecentFilesStore::NormalizePathKey(file));
+}
+
 TEST_CASE("A pathless buffer never records a bookmark", "[Bookmark]") {
     BookmarkStateGuard guard;
 
