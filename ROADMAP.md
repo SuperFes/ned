@@ -273,23 +273,18 @@ Notcurses.
         entry below.
       - `Backup::AutoSaveFileBuffers`/`PersistentUndo::SaveUndoHistory` silently skip a
         buffer entirely once it clears `MaxBackupBytes()`/`MaxUndoBytes()` (16 MiB
-        default) — correct/safe (skip, don't materialize), but means an actively-edited
-        huge buffer today has *no* crash-recovery autosave and *no* persistent undo
-        history across restarts. Was a low-stakes gap while editing a huge buffer was
-        rare/awkward; matters more now that this feature makes it ordinary. Half fixed,
-        see huge-file-crash-recovery-backup below — the pre-save version-backup half of
-        this is safe to enable at huge-buffer scale (a cheap disk-to-disk copy); the
-        periodic autosave and persistent-undo halves genuinely aren't (both run on the
-        main thread every 5 seconds) and stay deliberately deferred.
+        default) — correct/safe (skip, don't materialize). The pre-save version-backup
+        half is fixed (safe to enable at huge-buffer scale, a cheap disk-to-disk copy),
+        see huge-file-crash-recovery-backup below; the periodic autosave and
+        persistent-undo halves are permanently descoped rather than deferred — see that
+        same entry's closing note.
       - ~~`RegexPattern`/`QueryReplace`/`ProjectSearch` treat a `LikelyBinary()` buffer's
         content as ordinary text for search/replace purposes~~ — fixed for `QueryReplace`
         (the only one that actually needed it), see the small-guardrails-bundle entry
         below.
       - `AutoMerge`/`MergeExternalChanges`'s `ThreeWayMerge` still fully materializes both
-        sides for external-change reconciliation on a huge buffer — explicitly kept out of
-        scope this pass (diffing for *rarer* sync-to-disk-shaped operations was judged an
-        acceptable cost, unlike `Undo`/`Redo`'s hot path) but worth revisiting if
-        huge-buffer-plus-externally-changed-file turns out to be a real workflow.
+        sides for external-change reconciliation on a huge buffer — permanently descoped,
+        not revisited; see the staged-path entry's closing note below.
 - [x] **huge-file-lsp-gate: LSP/prose-checker sync no longer touches a huge buffer at
       all — real, live-reproduced fix, not the "guardrail, not chased down yet" class
       above.** Live-tested opening a real 3.1 GB file with `harper-ls` on `$PATH` (the
@@ -374,7 +369,7 @@ Notcurses.
       `activeFile`/first-of-`openFiles` for the rare case RestoreWindowLayout still
       couldn't rebuild the tree at all (a pre-windowLayout-era session, or a file that
       failed to open even on retry).
-- [ ] **Staged path to full feature parity on a huge buffer**, once the piece-table v1
+- [x] **Staged path to full feature parity on a huge buffer**, once the piece-table v1
       above lands, each stage independently shippable and not blocking the next:
       1. A bounded-range `Buffer` API (`LineCount()`, `TextInRange(start,end)`,
          `LineRange(startLine,endLine)` or similar) that never leaks `Rope`/`PieceTable`
@@ -413,6 +408,20 @@ Notcurses.
       (`Source/Editor/Vcs/VcsRunner.cpp`) already shell out to the VCS provider against
       the file's on-disk path rather than `buffer.Text()` regardless, so this was never
       a live bug — just scope not worth building out further.
+
+      **Periodic crash-recovery autosave, persistent undo history, and `AutoMerge`'s
+      three-way reconciliation are likewise permanently descoped for a huge buffer**,
+      settled call rather than a gap: nobody needs undo/autosave/auto-merge magic on an
+      absurdly large file, the same judgment as the VCS/Org cut above. `Backup::
+      AutoSaveFileBuffers`/`PersistentUndo::SaveUndoHistory` keep silently skipping any
+      buffer once it clears `MaxBackupBytes()`/`MaxUndoBytes()` (16 MiB default) — the
+      pre-save version-backup half already covers the one crash-recovery case worth the
+      cost (see huge-file-crash-recovery-backup below); the periodic-write and
+      full-snapshot-per-undo-node halves stay off rather than being reworked to run
+      safely at huge-buffer scale. `AutoMerge`/`MergeExternalChanges`'s `ThreeWayMerge`
+      likewise stays fully-materializing for a huge buffer — not worth building a
+      windowed diff3 for a huge-buffer-plus-externally-changed-file workflow nobody's
+      hit.
 - [x] **huge-file-regex-replace: `query-replace-regexp` no longer materializes a huge
       buffer — real windowed regex search/replace, not just literal isearch.** The
       partial-match approach this section used to sketch (`PCRE2_PARTIAL_SOFT`/`HARD`,
@@ -494,10 +503,12 @@ Notcurses.
       whole huge-file effort already fixed twice (`huge-file-lsp-gate`, the `Minimap`
       bailout above) — persistent undo is worse still, since its format stores a *full
       content snapshot per undo node*, so an actively-edited huge buffer's tree would
-      balloon to many GB of on-disk JSON within minutes on that same tick. Neither is a
-      quick fix (the first needs the write genuinely backgrounded; the second needs a
-      different on-disk format entirely), so both stay deferred, same posture as
-      `AutoMerge`'s three-way merge above.
+      balloon to many GB of on-disk JSON within minutes on that same tick. Both would
+      need real engineering to fix (the first a genuinely backgrounded write; the second
+      a different on-disk format entirely) for a benefit nobody's asked for — a huge
+      buffer, by nature, is not a file worth carrying undo/autosave magic for. Settled as
+      permanently descoped rather than deferred, same call as `AutoMerge`'s three-way
+      merge for a huge buffer.
 
       `BackupFileBeforeSave` (the pre-save version-backup half) has a completely
       different cost profile, though: a single `std::filesystem::copy_file` of the
