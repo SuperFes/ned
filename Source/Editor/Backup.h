@@ -74,11 +74,13 @@ struct BackupVersion {
 // any content written externally since the buffer loaded. A silent no-op when
 // there's nothing to preserve or preserving is inappropriate: the file
 // doesn't exist yet (first save), it lives directly inside ScratchDirectory()
-// (scratches are already auto-saved originals, not copies), or it exceeds the
-// size cutoff (see Backup.cpp's kMaxBackupBytes). Swallows every filesystem
-// error internally -- a failed backup must never block the save it precedes.
-// nowSeconds is injectable for tests only (FilePlaceStore's convention) --
-// it's what makes same-second sequence numbering deterministic to assert on.
+// (scratches are already auto-saved originals, not copies), or it exceeds
+// BackupVersionMaxSizeMb() -- see that setting's own doc comment for why this
+// has a separate, much more generous cap than AutoSaveFileBuffers' own.
+// Swallows every filesystem error internally -- a failed backup must never
+// block the save it precedes. nowSeconds is injectable for tests only
+// (FilePlaceStore's convention) -- it's what makes same-second sequence
+// numbering deterministic to assert on.
 void BackupFileBeforeSave(const std::filesystem::path& file, std::optional<std::int64_t> nowSeconds = std::nullopt);
 
 // Writes content as file's `autosave` snapshot (creating the backup directory
@@ -130,14 +132,27 @@ void               SetBackupMaxAgeDays(int days);
 [[nodiscard]] int  BackupMaxAgeDays(); // default 14
 void               SetBackupMaxVersions(int versions);
 [[nodiscard]] int  BackupMaxVersions(); // default 20
-// Files/buffers past this size (in MiB) are skipped by both the version-
-// backup and autosave writers -- see BackupFileBeforeSave/AutoSaveFileBuffers'
-// own doc comments for why (the timer tick runs on the event-loop thread, so
-// copying a multi-hundred-MiB file every few seconds would stall the UI).
-// Non-positive values are clamped to 1 rather than rejected, same as
-// TabWidth::SetTabWidth's own convention.
+// Buffers past this size (in MiB) are skipped by AutoSaveFileBuffers' own
+// periodic crash-recovery snapshot -- deliberately conservative, because
+// that write runs on the event-loop thread every 5 seconds
+// (WindowManager::StartAutoSaveTimer posts it there), so a huge buffer's
+// full content would stall the UI on a recurring basis, not just once (see
+// huge-file-crash-recovery-backup in ROADMAP.md's Large Files section --
+// backgrounding that write so it's safe to enable for a huge buffer too is
+// deliberately not done yet). Non-positive values are clamped to 1 rather
+// than rejected, same as TabWidth::SetTabWidth's own convention.
 void              SetBackupMaxSizeMb(int megabytes);
 [[nodiscard]] int BackupMaxSizeMb(); // default 64
+// The equivalent cap for BackupFileBeforeSave -- deliberately separate from
+// (and far more generous than) BackupMaxSizeMb() above: this one guards a
+// single std::filesystem::copy_file of the *already-on-disk* file, done once
+// per explicit save, not a periodic in-editor materialize-and-write. No
+// UI-stall risk the periodic autosave has, so a huge (multi-GB) file is a
+// completely reasonable case to still back up here -- the cap exists only to
+// bound backup-directory disk usage for a pathologically large file, not to
+// protect responsiveness. Same non-positive-clamped-to-1 convention.
+void              SetBackupVersionMaxSizeMb(int megabytes);
+[[nodiscard]] int BackupVersionMaxSizeMb(); // default 65536 (64 GiB)
 // Resets every setting above to its default and clears the auto-save
 // generation memo and MaybePruneBackups' last-run stamp -- process-wide
 // statics leak between Catch2 cases otherwise (ResetFilePlacesForTesting's

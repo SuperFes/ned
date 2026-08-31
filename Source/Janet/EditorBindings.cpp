@@ -294,6 +294,11 @@ namespace {
         editor::SetBackupMaxSizeMb(static_cast<int>(megabytes));
     }
 
+    // huge-file-crash-recovery-backup follow-up.
+    void NedSetBackupVersionMaxSizeMb(std::int64_t megabytes) {
+        editor::SetBackupVersionMaxSizeMb(static_cast<int>(megabytes));
+    }
+
     // persistent-undo follow-up.
     void NedSetPersistentUndo(bool enabled) {
         editor::SetPersistentUndoEnabled(enabled);
@@ -1025,8 +1030,13 @@ void InstallEditorBindings(Environment& env) {
         "Days a backup version is kept before pruning (default 14; <= 0 keeps versions regardless of age).");
     env.Register<&NedSetBackupMaxSizeMb>(
         "ned", "set-backup-max-size-mb",
-        "Files/buffers past this size, in MiB, are skipped by both the version-backup and autosave writers (default "
-        "64; non-positive values are clamped to 1).");
+        "Buffers past this size, in MiB, are skipped by the periodic crash-recovery autosave writer (default 64; "
+        "non-positive values are clamped to 1). Deliberately conservative -- this write runs on a 5-second timer.");
+    env.Register<&NedSetBackupVersionMaxSizeMb>(
+        "ned", "set-backup-version-max-size-mb",
+        "Files past this size, in MiB, are skipped by the pre-save version-backup copy (default 65536, 64 GiB; "
+        "non-positive values are clamped to 1). Far more generous than set-backup-max-size-mb since this is a "
+        "one-time disk copy done on save, not a periodic in-editor write.");
     env.Register<&NedSetBackupMaxVersions>(
         "ned", "set-backup-max-versions",
         "Backup versions kept per file, oldest pruned first (default 20; <= 0 keeps unlimited versions).");
