@@ -405,18 +405,39 @@ Notcurses.
          ranges/points through `Buffer`'s own relocation logic, which already lives in
          `Buffer.cpp` and is storage-agnostic — likely cheaper than stage 4 despite
          listed after it here.
-- [ ] **Streaming/parallel search over a huge buffer** (regex, not just literal isearch).
-      PCRE2 (already `Editor/RegexPattern.h`'s engine) has a partial-match mode
-      (`PCRE2_PARTIAL_SOFT`/`PCRE2_PARTIAL_HARD` + a reusable `pcre2_match_data`) built
-      for exactly this — feeding a pattern successive chunks of a subject too large to
-      hold at once, a natural fit against `PieceTable::ForEachChunk`. Parallelizing
-      across one buffer would reuse `ProjectSearch::SearchDirectory`'s existing
-      work-stealing thread-pool shape (`Editor/ProjectSearch.cpp:95-131`), generalized
-      from "one file per worker" to "one byte range per worker," with an overlap margin
-      at split points sized to bound worst-case lookbehind/backreference width (same
-      class of accepted limit `ProjectSearch`'s RE2 path already has with no lookaround
-      at all). Query-replace over a huge buffer would then just be an ordinary sequence
-      of ranged `Buffer::DeleteRange`/`InsertAt` calls at each match, highest-offset-first.
+- [x] **huge-file-regex-replace: `query-replace-regexp` no longer materializes a huge
+      buffer — real windowed regex search/replace, not just literal isearch.** The
+      partial-match approach this section used to sketch (`PCRE2_PARTIAL_SOFT`/`HARD`,
+      chunk-fed via `PieceTable::ForEachChunk`) turned out to be the wrong tool: PCRE2's
+      DFA matcher supports multi-segment restart but has no capture groups at all (needed
+      for `$1`/named-group replacement templates), and the non-DFA matcher's own partial-
+      match support is documented as unreliable for genuine multi-segment matching. Shipped
+      instead: `QueryReplace::FindNextMatchHuge` (`Editor/QueryReplace.cpp`), a synchronous
+      overlapping-window scan in the same spirit as `IncrementalSearch::SearchHuge` but
+      generalized past a fixed-length literal needle. Two cursors drive it — `searchFrom`
+      (where the next match may start, monotonic) and `reach` (how far the current window
+      extends past it, grows on retry) — so a candidate match landing within
+      `kOverlapMargin` (64 KiB) of the window's own tail is never trusted unless the window
+      has reached the real document end; instead `reach` grows and the *same* `searchFrom`
+      is retried with a wider window (advancing `searchFrom` past an unconfirmed candidate
+      would skip a match starting in what's now the new window's lead-in). Each window
+      additionally starts `kOverlapMargin` bytes *before* `searchFrom`, so genuine
+      lookbehind gets real leading context. This bounds correctness to "a match, or the
+      lookaround/multi-line span it depends on, is at most `kOverlapMargin` bytes wide" —
+      the same class of accepted limit `ProjectSearch`'s line-bounded RE2 path already
+      lives with. `RegexPattern` itself needed no change (searched an initial design
+      through PCRE2 `NOTBOL`/`NOTEOL` options before realizing the two-cursor margin design
+      already makes a window's own synthetic start/end unreachable as a match position, so
+      the anchor flags would have been dead code — reverted, kept the change minimal).
+      `[QueryReplace][HugeFile]`-tagged tests cover parity with the in-memory path, a match
+      past the first window, one straddling a window boundary, lookbehind resolved in a
+      later window, multi-window `ReplaceAll` offset drift bookkeeping, and a no-match
+      multi-window termination case. Parallelizing the scan (the old sketch's
+      `ProjectSearch`-style work-stealing pool, one byte range per worker) is still
+      possible if single-threaded windowed scanning proves too slow in practice, but wasn't
+      needed to make the feature correct or usable — not chased down in this pass.
+      `ProjectReplace`/`ProjectSearch` (many normal-sized files on disk, not one open huge
+      buffer) are a different problem and stay out of scope here.
 
 ### Editor Ergonomics
 
