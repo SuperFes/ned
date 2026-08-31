@@ -318,9 +318,18 @@ auto main(int argc, char** argv) -> int {
         // on the sync path so it still gets its BinaryFileError ->
         // interactive-confirmation flow (cheap: LooksBinary reads only the
         // first 8 KiB).
+        //
+        // huge-file-cli-threshold-gap follow-up: also checked against
+        // HugeFileThreshold(), not just AsyncLoadThreshold() -- both hooks
+        // (SetAsyncFileOpener/SetAsyncHugeFileOpener) are wired at the same
+        // later point, and BufferList::OpenFile itself checks
+        // HugeFileThreshold() first, so a file that's "huge" by a
+        // lowered-below-AsyncLoadThreshold() HugeFileThreshold() config
+        // still needs deferring here, or it hits OpenOrCreateFile below with
+        // neither hook wired yet and opens fully synchronously regardless.
         std::error_code      sizeEc;
         const std::uintmax_t size = std::filesystem::file_size(pathArg, sizeEc);
-        if (!sizeEc && size > ned::text::AsyncLoadThreshold() &&
+        if (!sizeEc && (size > ned::text::AsyncLoadThreshold() || size > ned::text::HugeFileThreshold()) &&
             (forceBinary || !ned::text::LooksBinary(pathArg))) {
             deferredLargeOpenPath = pathArg;
         }
@@ -559,7 +568,10 @@ auto main(int argc, char** argv) -> int {
     // constraint deferredLargeOpenPath exists to work around for the CLI
     // arg. Deferred here the same way: opened for real right after those
     // hooks are wired, so a large/huge file inside a restored session
-    // streams in instead of blocking the splash.
+    // streams in instead of blocking the splash. huge-file-cli-threshold-gap
+    // follow-up: also checked against HugeFileThreshold() -- see
+    // deferredLargeOpenPath's own comment above for why AsyncLoadThreshold()
+    // alone isn't enough once HugeFileThreshold() can be configured lower.
     std::vector<std::filesystem::path> deferredSessionOpenPaths;
     if (restoredSession) {
         for (const auto& file : restoredSession->openFiles) {
@@ -569,7 +581,7 @@ auto main(int argc, char** argv) -> int {
             }
             std::error_code      sizeEc;
             const std::uintmax_t size = std::filesystem::file_size(file, sizeEc);
-            if (!sizeEc && size > ned::text::AsyncLoadThreshold()) {
+            if (!sizeEc && (size > ned::text::AsyncLoadThreshold() || size > ned::text::HugeFileThreshold())) {
                 deferredSessionOpenPaths.push_back(file);
                 continue;
             }
