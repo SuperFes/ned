@@ -436,6 +436,10 @@ void ProjectSidebar::SetOnFocusReturn(std::function<void()> handler) {
     onFocusReturn_ = std::move(handler);
 }
 
+void ProjectSidebar::SetOnHeaderClicked(std::function<void()> handler) {
+    onHeaderClicked_ = std::move(handler);
+}
+
 void ProjectSidebar::SetOnWidthCommitted(std::function<void(int)> handler) {
     onWidthCommitted_ = std::move(handler);
 }
@@ -639,7 +643,14 @@ bool ProjectSidebar::OnEvent(const Event& event) {
         // Header row (the title-carrying top border) -- consuming the click
         // here (rather than falling through to tree hit-testing below,
         // which a naive row-0 entry would otherwise resolve to) is what
-        // keeps this the project-settings hook point once that exists.
+        // keeps this the project-settings hook point. named-projects
+        // follow-up: that hook point now exists -- a click here fires
+        // switch-project the same way a keybinding would. Already gated
+        // above to a real left-button press, so this fires exactly once
+        // per click, no separate press/release bookkeeping needed.
+        if (onHeaderClicked_) {
+            onHeaderClicked_();
+        }
         return true;
     }
 

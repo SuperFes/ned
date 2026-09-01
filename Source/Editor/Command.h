@@ -144,6 +144,19 @@ enum class InteractiveRequest { None,
                                 // as-you-type) but over project files instead of command
                                 // names -- see BufferView::HandleProjectFindFileKey.
                                 ProjectFindFile,
+                                // named-projects follow-up: another prompt-shaped one-shot
+                                // request, same fuzzy-narrowed shape as ProjectFindFile but
+                                // over registered project names/roots (Editor/ProjectRegistry.h)
+                                // instead of files -- see BufferView::HandleSwitchProjectKey.
+                                SwitchProject,
+                                // named-projects follow-up: a genuinely different shape from
+                                // SwitchProject/ProjectFindFile -- a plain path-entry prompt
+                                // (FindFile's own shape, including its tab-completion), then,
+                                // for a not-yet-registered root, a second plain prompt for a
+                                // display name (BookmarkSet's own pre-filled-prompt shape) --
+                                // see BufferView::HandleOpenProjectPathKey/
+                                // HandleOpenProjectNameKey.
+                                OpenProject,
                                 // rich-theme-set follow-up (Phase 1): the select-theme picker,
                                 // same fuzzy prompt-shaped session as ProjectFindFile just
                                 // above but over theme names, with the highlighted candidate

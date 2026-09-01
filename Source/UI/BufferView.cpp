@@ -42,9 +42,11 @@
 #include "Editor/OrgCapture.h"
 #include "Editor/ProjectAgenda.h"
 #include "Editor/ProjectFileOps.h"
+#include "Editor/ProjectRegistry.h"
 #include "Editor/ProjectRoot.h"
 #include "Editor/ProjectSearch.h"
 #include "Editor/ProjectSettings.h"
+#include "Editor/ProjectSwitch.h"
 #include "Editor/ProjectTree.h"
 #include "Editor/ProjectUndo.h"
 #include "Editor/RecentFiles.h"
@@ -3799,7 +3801,12 @@ bool BufferView::OnKeyEvent(const Event& event) {
         inputMode_ == InputMode::DapAddWatch || inputMode_ == InputMode::DapSetVariableValue ||
         // editor-ergonomics follow-up: BookmarkSetName is a plain-text
         // prompt too, TaskName/GotoLine's own shape.
-        inputMode_ == InputMode::BookmarkSetName) {
+        inputMode_ == InputMode::BookmarkSetName ||
+        // named-projects follow-up: OpenProjectPath/OpenProjectName are both
+        // routed through this shared chain too -- FindFile's own shape
+        // (plus real path completion) and BookmarkSetName's own shape,
+        // respectively.
+        inputMode_ == InputMode::OpenProjectPath || inputMode_ == InputMode::OpenProjectName) {
         HandlePromptKey(*chord);
         ClampPointToNarrowing();
         return true;
@@ -3845,6 +3852,11 @@ bool BufferView::OnKeyEvent(const Event& event) {
     }
     if (inputMode_ == InputMode::FindRecentFile) {
         HandleFindRecentFileKey(*chord);
+        ClampPointToNarrowing();
+        return true;
+    }
+    if (inputMode_ == InputMode::SwitchProject) {
+        HandleSwitchProjectKey(*chord);
         ClampPointToNarrowing();
         return true;
     }
@@ -4878,6 +4890,10 @@ void BufferView::AcceptActiveCompletionAt(std::size_t index) {
     }
     activeCompletion_->selectedIndex = index;
     AcceptActiveCompletion();
+}
+
+void BufferView::TriggerSwitchProject() {
+    StartInteractiveSession(editor::InteractiveRequest::SwitchProject);
 }
 
 void BufferView::CycleActiveCompletion(int direction) {
@@ -6790,6 +6806,28 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             RefreshFindRecentFileStatus();
             return;
         }
+        // named-projects follow-up: ProjectFindFile/FindRecentFile's own
+        // "populate and show the full candidate list right away" shape.
+        case editor::InteractiveRequest::SwitchProject: {
+            switchProjectEntries_ = editor::ListProjects();
+            if (switchProjectEntries_.empty()) {
+                statusMessage_ = "No registered projects yet -- try open-project.";
+                return;
+            }
+            inputMode_ = InputMode::SwitchProject;
+            prompt_.emplace("Switch to project (fuzzy): ");
+            switchProjectSelection_ = 0;
+            RefreshSwitchProjectStatus();
+            return;
+        }
+        // named-projects follow-up: FindFile's own plain path-entry prompt
+        // shape -- Enter (HandlePromptKey's own OpenProjectPath branch)
+        // decides whether a second (name) prompt is needed.
+        case editor::InteractiveRequest::OpenProject:
+            inputMode_ = InputMode::OpenProjectPath;
+            prompt_.emplace("Open project (path): ");
+            statusMessage_ = prompt_->StatusText();
+            return;
         // editor-ergonomics follow-up: bookmark-set already checked
         // context.buffer.Path() before setting this (Commands.cpp), so
         // activeBuffer_.Get() is guaranteed file-backed here -- pre-fills
@@ -7444,6 +7482,10 @@ std::string_view BufferView::HistoryKeyForInputMode(InputMode mode) {
             return "acp-prompt-text";
         case InputMode::BookmarkSetName:
             return "bookmark-set";
+        case InputMode::OpenProjectPath:
+            return "open-project-path";
+        case InputMode::OpenProjectName:
+            return "open-project-name";
         default:
             return "prompt"; // unreachable from HandlePromptKey's own dispatch guard; a safe shared fallback regardless
     }
@@ -7531,6 +7573,32 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
             catch (const std::exception& e) {
                 ReportError(e.what());
             }
+        }
+        else if (inputMode_ == InputMode::OpenProjectPath) {
+            const std::filesystem::path root = editor::DetectProjectRoot(input);
+            if (editor::FindProjectByRoot(root)) {
+                // Already registered/named -- nothing to ask, activate directly.
+                ActivateProjectAndReport(root);
+            }
+            else {
+                // BookmarkSet's own pre-filled-second-prompt shape --
+                // returns rather than falling through to this function's
+                // shared EndInteractiveSession() tail below, since this
+                // transitions to OpenProjectName instead of finishing.
+                pendingOpenProjectRoot_ = root;
+                inputMode_              = InputMode::OpenProjectName;
+                prompt_.emplace("Project name: ");
+                prompt_->SetText(root.filename().string());
+                statusMessage_ = prompt_->StatusText();
+                return;
+            }
+        }
+        else if (inputMode_ == InputMode::OpenProjectName) {
+            const std::string           name = input.empty() ? pendingOpenProjectRoot_.filename().string() : input;
+            const std::filesystem::path root = pendingOpenProjectRoot_;
+            pendingOpenProjectRoot_.clear();
+            editor::RegisterProject(name, root);
+            ActivateProjectAndReport(root);
         }
         else if (inputMode_ == InputMode::SwitchToBuffer) {
             if (text::Buffer* found = bufferList_.Find(input)) {
@@ -7971,6 +8039,13 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
             case InputMode::BookmarkSetName:
                 label = "Bookmark name";
                 break;
+            case InputMode::OpenProjectPath:
+                label = "Open project";
+                break;
+            case InputMode::OpenProjectName:
+                label = "Project name";
+                pendingOpenProjectRoot_.clear();
+                break;
             default:
                 label = "Prompt";
                 break;
@@ -8056,7 +8131,7 @@ BufferView::PromptEditOutcome BufferView::HandlePromptEditingKey(const editor::K
 
 void BufferView::CompletePrompt() {
     std::vector<std::string> candidates;
-    if (inputMode_ == InputMode::FindFile) {
+    if (inputMode_ == InputMode::FindFile || inputMode_ == InputMode::OpenProjectPath) {
         candidates = text::CompleteFilePath(prompt_->Text());
     }
     else if (inputMode_ == InputMode::FindScratch) {
@@ -10900,6 +10975,130 @@ void BufferView::HandleFindRecentFileKey(const editor::KeyChord& chord) {
         RefreshFindRecentFileStatus();
     }
     // CursorMoved/NotHandled: nothing else consumes a key here -- stay in the prompt.
+}
+
+namespace {
+    // "name — root" -- unique per entry since ProjectRegistryStore keys on
+    // the normalized root, so this doubles as the lookup key back from a
+    // ranked/selected string to its underlying entry below.
+    std::string FormatProjectEntry(const ned::editor::ProjectRegistryEntry& entry) {
+        return entry.name + " — " + entry.root;
+    }
+} // namespace
+
+// named-projects follow-up: HandleProjectFindFileKey/RefreshProjectFindFileStatus's
+// own shape, over switchProjectEntries_ (Editor/ProjectRegistry.h's saved-project
+// list) formatted via FormatProjectEntry.
+void BufferView::RefreshSwitchProjectStatus() {
+    std::vector<std::string> candidates;
+    candidates.reserve(switchProjectEntries_.size());
+    for (const auto& entry : switchProjectEntries_) {
+        candidates.push_back(FormatProjectEntry(entry));
+    }
+
+    const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(candidates, prompt_->Text());
+    switchProjectSelection_ = ranked.empty() ? 0 : std::min(switchProjectSelection_, ranked.size() - 1);
+
+    statusMessage_ = prompt_->StatusText();
+    if (onCandidatesChanged_) {
+        onCandidatesChanged_(
+            ranked.empty() ? std::nullopt
+                           : std::optional(BuildFuzzyCandidatePopupModel(prompt_->StatusText(), ranked, switchProjectSelection_)));
+    }
+}
+
+void BufferView::HandleSwitchProjectKey(const editor::KeyChord& chord) {
+    std::vector<std::string> candidates;
+    candidates.reserve(switchProjectEntries_.size());
+    for (const auto& entry : switchProjectEntries_) {
+        candidates.push_back(FormatProjectEntry(entry));
+    }
+
+    if (chord.Special == editor::SpecialKey::Enter) {
+        promptHistory_.Record("switch-project", prompt_->Text());
+
+        const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(candidates, prompt_->Text());
+        if (ranked.empty()) {
+            statusMessage_ = "No project matching \"" + prompt_->Text() + "\"";
+            EndInteractiveSession();
+            return;
+        }
+
+        const std::string selected = ranked[std::min(switchProjectSelection_, ranked.size() - 1)];
+        EndInteractiveSession();
+
+        const auto it = std::find_if(switchProjectEntries_.begin(), switchProjectEntries_.end(),
+                                      [&selected](const editor::ProjectRegistryEntry& entry) {
+                                          return FormatProjectEntry(entry) == selected;
+                                      });
+        if (it == switchProjectEntries_.end()) {
+            ReportError("Internal error resolving the selected project.");
+            return;
+        }
+        ActivateProjectAndReport(it->root);
+        return;
+    }
+    if (IsQuit(chord)) {
+        statusMessage_ = "Switch project cancelled.";
+        EndInteractiveSession();
+        return;
+    }
+
+    if (TryNavigatePromptHistory(chord, "switch-project")) {
+        switchProjectSelection_ = 0;
+        RefreshSwitchProjectStatus();
+        return;
+    }
+
+    if (chord.Special == editor::SpecialKey::Down || chord.Special == editor::SpecialKey::Up) {
+        const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(candidates, prompt_->Text());
+        if (!ranked.empty()) {
+            switchProjectSelection_ = chord.Special == editor::SpecialKey::Down
+                                         ? (switchProjectSelection_ + 1) % ranked.size()
+                                         : (switchProjectSelection_ + ranked.size() - 1) % ranked.size();
+        }
+        RefreshSwitchProjectStatus();
+        return;
+    }
+
+    if (HandlePromptEditingKey(chord) == PromptEditOutcome::TextEdited) {
+        promptHistoryIndex_     = kNoHistoryIndex;
+        switchProjectSelection_ = 0;
+        RefreshSwitchProjectStatus();
+    }
+    // CursorMoved/NotHandled: nothing else consumes a key here -- stay in the prompt.
+}
+
+// named-projects follow-up: the shared tail of switch-project/open-project
+// once a target root is known -- see this method's own header-comment
+// contract in BufferView.h.
+void BufferView::ActivateProjectAndReport(const std::filesystem::path& root) {
+    switch (editor::ActivateProjectRoot(root)) {
+        case editor::ProjectActivationOutcome::OpenedInNewTab:
+            statusMessage_ = "Opened " + root.string() + " in a new tab.";
+            return;
+        case editor::ProjectActivationOutcome::RanCustomCommand:
+            statusMessage_ = "Opened " + root.string() + " via the configured open command.";
+            return;
+        case editor::ProjectActivationOutcome::ReplacingInPlace:
+            // HandleConfirmQuitKey's own 'y' branch: a visible message
+            // before quitting, then eventLoop_->Exit() directly -- ned's
+            // own main.cpp performs the actual execv() once every local
+            // there (this BufferView included) has been destroyed.
+            statusMessage_ = "Switching to " + root.string() + "...";
+            if (eventLoop_) {
+                eventLoop_->Exit();
+            }
+            return;
+        case editor::ProjectActivationOutcome::Failed:
+            statusMessage_ = "Could not switch to " + root.string() +
+                             " -- no terminal detected, no configured open command, and this "
+                             "process's own executable path couldn't be resolved.";
+            return;
+        case editor::ProjectActivationOutcome::RootMissing:
+            statusMessage_ = root.string() + " no longer exists.";
+            return;
+    }
 }
 
 // editor-ergonomics follow-up: same picker shape again, over

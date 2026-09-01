@@ -1,3 +1,5 @@
+#include <array>
+#include <cerrno>
 #include <clocale>
 #include <csignal>
 #include <cstdlib>
@@ -13,6 +15,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <tuple>
 #include <vector>
 
 #include <sys/socket.h>
@@ -40,8 +43,10 @@
 #include "Editor/Mode.h"
 #include "Editor/ModeOverrides.h"
 #include "Editor/ModePrewarm.h"
+#include "Editor/PendingReExec.h"
 #include "Editor/PersistentUndo.h"
 #include "Editor/ProjectPlugins.h"
+#include "Editor/ProjectRegistry.h"
 #include "Editor/ProjectRoot.h"
 #include "Editor/ProjectSession.h"
 #include "Editor/ProjectTrust.h"
@@ -198,100 +203,16 @@ int MinimapOverlayReserve() {
     return ned::editor::MinimapEnabled() ? ned::editor::MinimapWidth() : 0;
 }
 
-} // namespace
-
-auto main(int argc, char** argv) -> int {
-    // async-write-queue follow-up: this process writes to several
-    // subprocess pipes (LSP/DAP/ACP/task/VCS children) whose peer can exit
-    // out from under it at any time -- a write to a pipe with no reader left
-    // raises SIGPIPE, whose default disposition terminates the *entire*
-    // process over one bad write. LspBrokerMain.cpp's own RunLspBrokerDaemon
-    // already does this for exactly this reason; this process needs the
-    // same protection, not less of it -- confirmed live (not assumed) via a
-    // real SIGPIPE crash surfaced by LspClient's async write queue racing an
-    // already-closed test pipe, disproving an earlier, unverified comment
-    // that Notcurses' own terminal setup shielded this process from SIGPIPE.
-    // write()/send() already return EPIPE instead, which
-    // Transport::WriteFrame/ChildProcess::WriteAll already surface as a
-    // caught std::runtime_error -- ordinary, already-handled error paths,
-    // not a new failure mode to plumb through.
-    std::signal(SIGPIPE, SIG_IGN);
-
-    // startup-mode-unification follow-up: one CLI::App now owns every
-    // top-level flag ned recognizes, --detect-theme/--lsp-broker/
-    // --lsp-broker-stop included -- previously each was a hand-rolled
-    // `argv[1] == "..."` check run *before* any real parsing, so `ned
-    // --help` never documented them (and --detect-theme's own
-    // --transparent/output-path options, parsed by a second private
-    // CLI::App re-fed a shifted argv, weren't even reachable from here).
-    // They stay plain flags on this one App rather than becoming CLI11
-    // subcommands specifically to keep the exact existing invocations
-    // (`ned --lsp-broker`, notably self-exec'd by
-    // Lsp/LspBrokerConnect.cpp, and documented as a systemd ExecStart
-    // line) working unchanged -- a subcommand would mean `ned lsp-broker`
-    // instead, a real breaking syntax change for no behavioral gain here.
-    // ->excludes() catches the nonsensical case of passing more than one
-    // of the three as a real CLI11 error instead of silently letting
-    // whichever this code happened to check first win.
-    CLI::App app{"Ned -- a terminal-based, Janet-scriptable text editor.", "ned"};
-
-    bool detectTheme  = false;
-    bool transparent  = false;
-    bool lspBroker    = false;
-    bool lspBrokerStop = false;
-    bool forceBinary  = false;
-    bool noRestore    = false;
-    std::vector<std::string> paths;
-
-    CLI::Option* detectThemeOpt = app.add_flag(
-        "--detect-theme", detectTheme,
-        "Probe the terminal's actual configured colors, write a Theme file, and exit")
-        ->group("Startup modes");
-    app.add_flag("--transparent", transparent,
-                 "With --detect-theme: treat the detected background as transparent instead of an opaque color")
-        ->needs(detectThemeOpt)
-        ->group("Startup modes");
-    CLI::Option* lspBrokerOpt =
-        app.add_flag("--lsp-broker", lspBroker, "Run the headless LSP broker daemon and exit")
-            ->excludes(detectThemeOpt)
-            ->group("Startup modes");
-    app.add_flag("--lsp-broker-stop", lspBrokerStop, "Stop a running LSP broker daemon and exit")
-        ->excludes(detectThemeOpt)
-        ->excludes(lspBrokerOpt)
-        ->group("Startup modes");
-    app.add_flag("--force-binary", forceBinary,
-                 "Open files that look binary anyway, without an interactive confirmation");
-    app.add_flag("--no-restore", noRestore,
-                 "Don't restore the project's saved session (open buffers, breakpoints, sidebar state)");
-    app.add_option("paths", paths,
-                   "Files or directories to open (or, with --detect-theme, an optional single output path)");
-
-    try {
-        app.parse(argc, argv);
-    }
-    catch (const CLI::ParseError& e) {
-        return app.exit(e);
-    }
-
-    if (detectTheme) {
-        return RunDetectTheme(transparent, paths.empty() ? std::nullopt : std::optional(paths.front()));
-    }
-
-    // `ned --lsp-broker`: runs the headless LSP broker daemon itself (see
-    // Editor/Lsp/LspBrokerMain.h) instead of the interactive editor --
-    // dispatched here, strictly before EventLoop/Notcurses construct, same
-    // reasoning as --detect-theme above. This is what a `ned` process
-    // auto-forks-and-execve's into when no daemon is already reachable, and
-    // is equally the right ExecStart line for a `systemd --user` unit that
-    // starts it explicitly at login instead.
-    if (lspBroker) {
-        return ned::editor::lsp::RunLspBrokerDaemon();
-    }
-
-    if (lspBrokerStop) {
-        return RunLspBrokerStop();
-    }
-
+// Composition-root helper -- runs the interactive editor (everything past the
+// early --detect-theme/--lsp-broker/--lsp-broker-stop dispatch above) and
+// returns once the user quits. Split out of main() so a switch-project-
+// triggered re-exec (see Editor/ProjectSwitch.h) can execv() *after* every
+// local here -- windowManager/bufferList/eventLoop included -- has already
+// been destroyed at this function's own closing brace; that destruction is
+// what actually calls ~EventLoop() (notcurses_stop) and tears down every
+// child process, and it can only happen once this function returns, not
+// from inside it.
+int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std::string>& paths) {
     std::setlocale(LC_ALL, "");
 
     Ned::Application::SetTitle("Ned");
@@ -528,6 +449,12 @@ auto main(int argc, char** argv) -> int {
     // ned/set-recentf-enabled call there is honored from the first record.
     ned::editor::LoadRecentFiles();
     ned::editor::LoadBookmarks();
+    // named-projects follow-up: same "after LoadInitFile" placement as its
+    // siblings above -- each mutation (RegisterProject/TouchProject/...)
+    // saves itself immediately, so there's no matching SaveProjectRegistry
+    // call at quit the way SaveFilePlaces/SaveRecentFiles/SaveBookmarks
+    // need (ProjectRegistry.h's own "save on write" contract).
+    ned::editor::LoadProjectRegistry();
 
     // backup-and-recovery follow-up: startup backup pruning -- after
     // LoadInitFile for the same reason as LoadFilePlaces above, so a
@@ -783,6 +710,10 @@ auto main(int argc, char** argv) -> int {
     // reports Focused()" state this necessarily runs in (the sidebar holds
     // focus at that moment) via its first-leaf fallback.
     projectSidebar->SetOnFocusReturn([wm = windowManager.get()] { wm->TakeFocus(); });
+
+    // named-projects follow-up: a click on the sidebar's title row opens
+    // the switch-project picker, the same effect C-c P s has.
+    projectSidebar->SetOnHeaderClicked([wm = windowManager.get()] { wm->TriggerSwitchProject(); });
 
     // sidebar-width-memory follow-up: a committed divider drag becomes the
     // remembered global default width (read back a few lines below on the
@@ -1513,6 +1444,32 @@ auto main(int argc, char** argv) -> int {
     // ever shown for the focused pane).
     completionPopup.SetOnActivate([wm = windowManager.get()](std::size_t index) { wm->ActivateCompletionAt(index); });
 
+    // terminal-title follow-up: Ned::Application::SetTitle/GetTitle
+    // (Application.h) predate this and were otherwise dead beyond the one
+    // static "Ned" call at the top of this function -- this is what
+    // actually reflects it to the terminal. XTerm's title push/pop stack
+    // (\x1b[22;2t / \x1b[23;2t) restores whatever the surrounding shell/
+    // terminal had before on exit rather than guessing it; unsupported
+    // terminals just ignore both sequences, not an error either way.
+    static constexpr char kTitlePush[] = "\x1b[22;2t";
+    std::ignore                        = ::write(STDOUT_FILENO, kTitlePush, sizeof(kTitlePush) - 1); // best-effort, unsupported terminals just ignore it
+
+    std::string lastEmittedTitle;
+    const auto  emitTitleIfChanged = [&]() {
+        std::string title = projectRoot.filename().string();
+        if (title.empty()) {
+            title = projectRoot.string();
+        }
+        title += " — " + windowManager->FocusedActiveBuffer().Get().Name() + " — ned";
+        if (title == lastEmittedTitle) {
+            return;
+        }
+        lastEmittedTitle = title;
+        Ned::Application::SetTitle(title);
+        const std::string osc = "\x1b]2;" + title + "\x07";
+        std::ignore           = ::write(STDOUT_FILENO, osc.data(), osc.size()); // best-effort
+    };
+
     EventLoopCallbacks callbacks;
 
     callbacks.onResize = [&](Size size) {
@@ -1550,6 +1507,7 @@ auto main(int argc, char** argv) -> int {
         head.Paint(Canvas(screenBuffer, head.Box_()));
         overlays.Paint(screenBuffer);
         screenBuffer.Flush(eventLoop.StdPlane());
+        emitTitleIfChanged();
 
         if (!ned::editor::ActiveBackgroundActivities().empty()) {
             activityAnimationTimer.Arm(eventLoop, ned::editor::kBackgroundActivitySpinnerInterval, [] {});
@@ -1567,6 +1525,14 @@ auto main(int argc, char** argv) -> int {
     };
 
     eventLoop.Run(callbacks);
+
+    // terminal-title follow-up: pairs with kTitlePush above -- pop back to
+    // whatever title the shell/terminal had before this run, rather than
+    // leaving the last project/buffer title stuck in the tab/window
+    // afterward. Still before ~EventLoop's notcurses_stop (below, at this
+    // function's own closing brace), same as the push was before Run().
+    static constexpr char kTitlePop[] = "\x1b[23;2t";
+    std::ignore                       = ::write(STDOUT_FILENO, kTitlePop, sizeof(kTitlePop) - 1); // best-effort
 
     // Pixel-blitter-minimap follow-up: must run before eventLoop itself is
     // destroyed (which happens at this function's own closing brace,
@@ -1620,4 +1586,126 @@ auto main(int argc, char** argv) -> int {
                 "(terminal pty, DAP, VCS, task runner, LSP clients, window tree, Janet, EventLoop/terminal restore)");
 
     return 0;
+}
+
+} // namespace
+
+auto main(int argc, char** argv) -> int {
+    // async-write-queue follow-up: this process writes to several
+    // subprocess pipes (LSP/DAP/ACP/task/VCS children) whose peer can exit
+    // out from under it at any time -- a write to a pipe with no reader left
+    // raises SIGPIPE, whose default disposition terminates the *entire*
+    // process over one bad write. LspBrokerMain.cpp's own RunLspBrokerDaemon
+    // already does this for exactly this reason; this process needs the
+    // same protection, not less of it -- confirmed live (not assumed) via a
+    // real SIGPIPE crash surfaced by LspClient's async write queue racing an
+    // already-closed test pipe, disproving an earlier, unverified comment
+    // that Notcurses' own terminal setup shielded this process from SIGPIPE.
+    // write()/send() already return EPIPE instead, which
+    // Transport::WriteFrame/ChildProcess::WriteAll already surface as a
+    // caught std::runtime_error -- ordinary, already-handled error paths,
+    // not a new failure mode to plumb through.
+    std::signal(SIGPIPE, SIG_IGN);
+
+    // startup-mode-unification follow-up: one CLI::App now owns every
+    // top-level flag ned recognizes, --detect-theme/--lsp-broker/
+    // --lsp-broker-stop included -- previously each was a hand-rolled
+    // `argv[1] == "..."` check run *before* any real parsing, so `ned
+    // --help` never documented them (and --detect-theme's own
+    // --transparent/output-path options, parsed by a second private
+    // CLI::App re-fed a shifted argv, weren't even reachable from here).
+    // They stay plain flags on this one App rather than becoming CLI11
+    // subcommands specifically to keep the exact existing invocations
+    // (`ned --lsp-broker`, notably self-exec'd by
+    // Lsp/LspBrokerConnect.cpp, and documented as a systemd ExecStart
+    // line) working unchanged -- a subcommand would mean `ned lsp-broker`
+    // instead, a real breaking syntax change for no behavioral gain here.
+    // ->excludes() catches the nonsensical case of passing more than one
+    // of the three as a real CLI11 error instead of silently letting
+    // whichever this code happened to check first win.
+    CLI::App app{"Ned -- a terminal-based, Janet-scriptable text editor.", "ned"};
+
+    bool                     detectTheme   = false;
+    bool                     transparent   = false;
+    bool                     lspBroker     = false;
+    bool                     lspBrokerStop = false;
+    bool                     forceBinary   = false;
+    bool                     noRestore     = false;
+    std::vector<std::string> paths;
+
+    CLI::Option* detectThemeOpt = app.add_flag(
+                                         "--detect-theme", detectTheme,
+                                         "Probe the terminal's actual configured colors, write a Theme file, and exit")
+                                      ->group("Startup modes");
+    app.add_flag("--transparent", transparent,
+                 "With --detect-theme: treat the detected background as transparent instead of an opaque color")
+        ->needs(detectThemeOpt)
+        ->group("Startup modes");
+    CLI::Option* lspBrokerOpt =
+        app.add_flag("--lsp-broker", lspBroker, "Run the headless LSP broker daemon and exit")
+            ->excludes(detectThemeOpt)
+            ->group("Startup modes");
+    app.add_flag("--lsp-broker-stop", lspBrokerStop, "Stop a running LSP broker daemon and exit")
+        ->excludes(detectThemeOpt)
+        ->excludes(lspBrokerOpt)
+        ->group("Startup modes");
+    app.add_flag("--force-binary", forceBinary,
+                 "Open files that look binary anyway, without an interactive confirmation");
+    app.add_flag("--no-restore", noRestore,
+                 "Don't restore the project's saved session (open buffers, breakpoints, sidebar state)");
+    app.add_option("paths", paths,
+                   "Files or directories to open (or, with --detect-theme, an optional single output path)");
+
+    try {
+        app.parse(argc, argv);
+    }
+    catch (const CLI::ParseError& e) {
+        return app.exit(e);
+    }
+
+    if (detectTheme) {
+        return RunDetectTheme(transparent, paths.empty() ? std::nullopt : std::optional(paths.front()));
+    }
+
+    // `ned --lsp-broker`: runs the headless LSP broker daemon itself (see
+    // Editor/Lsp/LspBrokerMain.h) instead of the interactive editor --
+    // dispatched here, strictly before EventLoop/Notcurses construct, same
+    // reasoning as --detect-theme above. This is what a `ned` process
+    // auto-forks-and-execve's into when no daemon is already reachable, and
+    // is equally the right ExecStart line for a `systemd --user` unit that
+    // starts it explicitly at login instead.
+    if (lspBroker) {
+        return ned::editor::lsp::RunLspBrokerDaemon();
+    }
+
+    if (lspBrokerStop) {
+        return RunLspBrokerStop();
+    }
+
+    const int exitCode = RunInteractiveEditor(forceBinary, noRestore, paths);
+
+    // named-projects follow-up: PendingReExec is a plain process-wide global
+    // (Editor/PendingReExec.h) set deep inside RunInteractiveEditor's own
+    // call stack (switch-project's replace-in-place fallback,
+    // Editor/ProjectSwitch.h) -- read back here rather than threaded through
+    // RunInteractiveEditor's return value, since by this point every local
+    // there (windowManager/bufferList/eventLoop included) has already been
+    // destroyed at its own closing brace, which is exactly what makes
+    // execv() safe to call now and not from inside that function (see its
+    // own header comment).
+    if (const std::optional<ned::editor::PendingReExecRequest> reExec = ned::editor::TakePendingReExec()) {
+        std::string          exePath  = reExec->executablePath.string();
+        std::string          rootArg  = reExec->root.string();
+        std::array<char*, 3> execArgv = {exePath.data(), rootArg.data(), nullptr};
+        ::execv(exePath.c_str(), execArgv.data());
+        // execv() only returns on failure -- the executable was already
+        // resolved and verified executable before this was ever set
+        // (ProjectSwitch.h's own contract), so this is an unexpected,
+        // late failure (permissions changed underfoot, filesystem gone),
+        // not the common case.
+        std::cerr << "ned: re-exec into " << reExec->root.string() << " failed: " << std::strerror(errno) << '\n';
+        return 1;
+    }
+
+    return exitCode;
 }
