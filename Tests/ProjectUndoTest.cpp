@@ -35,8 +35,8 @@ ProjectUndoRecord ApplyOneFileEdit(Buffer& buffer, const std::string& text) {
 } // namespace
 
 TEST_CASE("RecordTransaction drops a transaction touching fewer than two files", "[ProjectUndo]") {
-    BufferList  bufferList;
-    Buffer&     a = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "project-undo-single.txt");
+    BufferList bufferList;
+    Buffer&    a = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "project-undo-single.txt");
 
     ProjectEditTransaction transaction;
     transaction.description = "single-file edit";
@@ -113,13 +113,13 @@ TEST_CASE("Undo skips a file edited separately since the transaction, without bl
     REQUIRE(outcome.divergedNames.size() == 1);
     REQUIRE(outcome.divergedNames.front() == a.Name());
     REQUIRE(a.Text() == "foo!"); // left exactly as the separate edit left it
-    REQUIRE(b.Text().empty());  // still rolled back
+    REQUIRE(b.Text().empty());   // still rolled back
 }
 
 TEST_CASE("Undo reports a closed file as diverged rather than dangling", "[ProjectUndo]") {
-    BufferList bufferList;
-    Buffer&    a = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "project-undo-closed-a.txt");
-    Buffer&    b = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "project-undo-closed-b.txt");
+    BufferList        bufferList;
+    Buffer&           a     = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "project-undo-closed-a.txt");
+    Buffer&           b     = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "project-undo-closed-b.txt");
     const std::string aName = a.Name();
 
     ProjectEditTransaction transaction;
@@ -139,8 +139,8 @@ TEST_CASE("Undo reports a closed file as diverged rather than dangling", "[Proje
 }
 
 TEST_CASE("Undo on an empty stack is a no-op outcome", "[ProjectUndo]") {
-    BufferList          bufferList;
-    ProjectUndoManager  manager;
+    BufferList               bufferList;
+    ProjectUndoManager       manager;
     const ProjectUndoOutcome outcome = manager.Undo(bufferList);
     REQUIRE(outcome.totalCount == 0);
     REQUIRE(outcome.appliedCount == 0);

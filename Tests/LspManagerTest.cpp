@@ -916,9 +916,10 @@ TEST_CASE("LspManager::RequestCodeActions sends the range and overlapping diagno
     REQUIRE(gotActions.size() == 1);
     REQUIRE(gotActions[0].title == "Fix the boom");
     REQUIRE(gotActions[0].hasEdit);
-    REQUIRE_FALSE(gotActions[0].touchesOtherFiles);
+    REQUIRE_FALSE(gotActions[0].touchesUnsupportedForm);
     REQUIRE(gotActions[0].edits.size() == 1);
-    REQUIRE(gotActions[0].edits[0].newText == "good");
+    REQUIRE(gotActions[0].edits[0].edits.size() == 1);
+    REQUIRE(gotActions[0].edits[0].edits[0].newText == "good");
 }
 
 TEST_CASE("LspManager::RequestCodeActions resolves to an empty list when the buffer was never synced", "[Lsp]") {
@@ -980,6 +981,51 @@ TEST_CASE("LspManager::ResolveCodeAction sends action.raw verbatim and returns t
     REQUIRE(gotResolved.has_value());
     REQUIRE(gotResolved->hasEdit);
     REQUIRE(gotResolved->edits.size() == 1);
+}
+
+TEST_CASE("LspManager::ResolveCodeActionEdits resolves a URI per touched file", "[Lsp]") {
+    CodeAction action;
+    action.hasEdit = true;
+    action.edits   = {
+        ned::editor::lsp::RenameEdit{
+            .uri   = "file:///a.c",
+            .edits = {ned::editor::lsp::WorkspaceTextEdit{.newText = "x"}},
+        },
+        ned::editor::lsp::RenameEdit{
+            .uri   = "file:///b.c",
+            .edits = {ned::editor::lsp::WorkspaceTextEdit{.newText = "y"}},
+        },
+    };
+
+    const auto resolved = LspManager::ResolveCodeActionEdits(action);
+    REQUIRE(resolved.has_value());
+    REQUIRE(resolved->size() == 2);
+    REQUIRE((*resolved)[0].path == std::filesystem::path("/a.c"));
+    REQUIRE((*resolved)[0].edits.size() == 1);
+    REQUIRE((*resolved)[0].edits[0].newText == "x");
+    REQUIRE((*resolved)[1].path == std::filesystem::path("/b.c"));
+}
+
+TEST_CASE("LspManager::ResolveCodeActionEdits returns nullopt for touchesUnsupportedForm or a missing edit", "[Lsp]") {
+    CodeAction unsupported;
+    unsupported.hasEdit                = true;
+    unsupported.touchesUnsupportedForm = true;
+    REQUIRE_FALSE(LspManager::ResolveCodeActionEdits(unsupported).has_value());
+
+    CodeAction noEdit;
+    noEdit.hasEdit = false;
+    REQUIRE_FALSE(LspManager::ResolveCodeActionEdits(noEdit).has_value());
+}
+
+TEST_CASE("LspManager::ResolveCodeActionEdits refuses wholesale when one URI doesn't resolve", "[Lsp]") {
+    CodeAction action;
+    action.hasEdit = true;
+    action.edits   = {
+        ned::editor::lsp::RenameEdit{.uri = "file:///a.c", .edits = {ned::editor::lsp::WorkspaceTextEdit{.newText = "x"}}},
+        ned::editor::lsp::RenameEdit{.uri = "not-a-file-uri", .edits = {ned::editor::lsp::WorkspaceTextEdit{.newText = "y"}}},
+    };
+
+    REQUIRE_FALSE(LspManager::ResolveCodeActionEdits(action).has_value());
 }
 
 TEST_CASE("LspManager::ResolveCodeAction resolves to nullopt when the buffer was never synced", "[Lsp]") {

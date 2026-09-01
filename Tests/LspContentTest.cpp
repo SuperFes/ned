@@ -137,14 +137,17 @@ TEST_CASE("ExtractCodeActions parses a CodeAction with a \"changes\" WorkspaceEd
     REQUIRE(actions.size() == 1);
     REQUIRE(actions[0].title == "Add missing include <cstdio>");
     REQUIRE(actions[0].hasEdit);
-    REQUIRE_FALSE(actions[0].touchesOtherFiles);
+    REQUIRE_FALSE(actions[0].touchesUnsupportedForm);
     REQUIRE(actions[0].edits.size() == 1);
-    REQUIRE(actions[0].edits[0].start == LspPosition{.line = 0, .character = 0});
-    REQUIRE(actions[0].edits[0].end == LspPosition{.line = 0, .character = 0});
-    REQUIRE(actions[0].edits[0].newText == "#include <cstdio>\n");
+    REQUIRE(actions[0].edits[0].uri == "file:///a.c");
+    REQUIRE(actions[0].edits[0].edits.size() == 1);
+    REQUIRE(actions[0].edits[0].edits[0].start == LspPosition{.line = 0, .character = 0});
+    REQUIRE(actions[0].edits[0].edits[0].end == LspPosition{.line = 0, .character = 0});
+    REQUIRE(actions[0].edits[0].edits[0].newText == "#include <cstdio>\n");
 }
 
-TEST_CASE("ExtractCodeActions refuses wholesale when \"changes\" also touches another URI", "[Lsp]") {
+TEST_CASE("ExtractCodeActions parses a \"changes\" WorkspaceEdit touching several files, one entry per URI",
+          "[Lsp]") {
     const Json result = Json::array({
         {{"title", "Rename across files"},
          {"edit",
@@ -158,11 +161,11 @@ TEST_CASE("ExtractCodeActions refuses wholesale when \"changes\" also touches an
     const std::vector<CodeAction> actions = ExtractCodeActions(result, "file:///a.c");
     REQUIRE(actions.size() == 1);
     REQUIRE(actions[0].hasEdit);
-    REQUIRE(actions[0].touchesOtherFiles);
-    REQUIRE(actions[0].edits.empty()); // refused wholesale, not partially applied
+    REQUIRE_FALSE(actions[0].touchesUnsupportedForm);
+    REQUIRE(actions[0].edits.size() == 2);
 }
 
-TEST_CASE("ExtractCodeActions marks a documentChanges-only edit as touching other files, with no edits parsed", "[Lsp]") {
+TEST_CASE("ExtractCodeActions marks a documentChanges-only edit as unsupported, with no edits parsed", "[Lsp]") {
     const Json result = Json::array({
         {{"title", "Rename symbol"},
          {"edit", {{"documentChanges", Json::array()}}}},
@@ -171,7 +174,7 @@ TEST_CASE("ExtractCodeActions marks a documentChanges-only edit as touching othe
     const std::vector<CodeAction> actions = ExtractCodeActions(result, "file:///a.c");
     REQUIRE(actions.size() == 1);
     REQUIRE(actions[0].hasEdit);
-    REQUIRE(actions[0].touchesOtherFiles);
+    REQUIRE(actions[0].touchesUnsupportedForm);
     REQUIRE(actions[0].edits.empty());
 }
 

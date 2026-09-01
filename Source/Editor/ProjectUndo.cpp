@@ -6,19 +6,19 @@ namespace ned::editor {
 
 namespace {
 
-[[nodiscard]] bool IsTarget(const std::deque<ProjectEditTransaction>& stack, const text::Buffer& buffer, bool wantAfterSequence) {
-    if (stack.empty() || !buffer.Path()) {
+    [[nodiscard]] bool IsTarget(const std::deque<ProjectEditTransaction>& stack, const text::Buffer& buffer, bool wantAfterSequence) {
+        if (stack.empty() || !buffer.Path()) {
+            return false;
+        }
+        const std::size_t current = buffer.CurrentUndoSequence();
+        for (const ProjectUndoRecord& record : stack.back().records) {
+            if (record.path != *buffer.Path()) {
+                continue;
+            }
+            return current == (wantAfterSequence ? record.afterSequence : record.beforeSequence);
+        }
         return false;
     }
-    const std::size_t current = buffer.CurrentUndoSequence();
-    for (const ProjectUndoRecord& record : stack.back().records) {
-        if (record.path != *buffer.Path()) {
-            continue;
-        }
-        return current == (wantAfterSequence ? record.afterSequence : record.beforeSequence);
-    }
-    return false;
-}
 
 } // namespace
 
@@ -55,7 +55,7 @@ ProjectUndoOutcome ProjectUndoManager::Undo(text::BufferList& bufferList) {
     undoStack_.pop_back();
 
     outcome.description = transaction.description;
-    outcome.totalCount   = transaction.records.size();
+    outcome.totalCount  = transaction.records.size();
     for (const ProjectUndoRecord& record : transaction.records) {
         text::Buffer* buffer = bufferList.FindByPath(record.path);
         if (!buffer || buffer->CurrentUndoSequence() != record.afterSequence || !buffer->TryJumpToUndoSequence(record.beforeSequence)) {
@@ -78,7 +78,7 @@ ProjectUndoOutcome ProjectUndoManager::Redo(text::BufferList& bufferList) {
     redoStack_.pop_back();
 
     outcome.description = transaction.description;
-    outcome.totalCount   = transaction.records.size();
+    outcome.totalCount  = transaction.records.size();
     for (const ProjectUndoRecord& record : transaction.records) {
         text::Buffer* buffer = bufferList.FindByPath(record.path);
         if (!buffer || buffer->CurrentUndoSequence() != record.beforeSequence || !buffer->TryJumpToUndoSequence(record.afterSequence)) {
