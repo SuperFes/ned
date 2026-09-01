@@ -46,6 +46,7 @@
 #include "Editor/ProjectSearch.h"
 #include "Editor/ProjectSettings.h"
 #include "Editor/ProjectTree.h"
+#include "Editor/ProjectUndo.h"
 #include "Editor/RecentFiles.h"
 #include "Editor/Rectangle.h"
 #include "Editor/RelativeLineNumberSettings.h"
@@ -758,8 +759,9 @@ editor::CommandContext BufferView::MakeContext() {
     editor::CommandContext context{activeBuffer_.Get(), killRing_, bufferList_, editor::KeyChord{}, &statusMessage_};
     context.mode       = &mode_;
     context.lspManager = lspManager_;
-    context.taskRunner = taskRunner_;
-    context.testRunner = testRunner_;
+    context.taskRunner  = taskRunner_;
+    context.testRunner  = testRunner_;
+    context.projectUndo = projectUndo_;
     return context;
 }
 
@@ -5193,6 +5195,33 @@ namespace {
 
 } // namespace
 
+void BufferView::ApplyProjectEdit(const std::vector<std::pair<text::Buffer*, std::vector<editor::lsp::WorkspaceTextEdit>>>& perBufferEdits,
+                                  std::string description) {
+    editor::ProjectEditTransaction transaction;
+    transaction.description = description;
+    transaction.records.reserve(perBufferEdits.size());
+    for (const auto& [buffer, edits] : perBufferEdits) {
+        const std::size_t beforeSequence = buffer->CurrentUndoSequence();
+        ApplyWorkspaceTextEdits(*buffer, edits);
+        if (buffer->Path()) {
+            transaction.records.push_back(editor::ProjectUndoRecord{
+                .path           = *buffer->Path(),
+                .beforeSequence = beforeSequence,
+                .afterSequence  = buffer->CurrentUndoSequence(),
+            });
+        }
+        // A path-less (unsaved, never-saved-to-disk) buffer can't be
+        // re-resolved by ProjectUndoManager::Undo/Redo later (they key on
+        // BufferList::FindByPath) -- left out of the transaction, so its
+        // own edit still undoes fine via plain per-buffer undo, it's just
+        // not folded into the group.
+    }
+    if (projectUndo_) {
+        projectUndo_->RecordTransaction(std::move(transaction));
+    }
+    statusMessage_ = description;
+}
+
 void BufferView::MaybeScheduleOnTypeFormatting(const editor::KeyChord& chord, std::size_t generationBefore) {
     if (inputMode_ != InputMode::Normal && inputMode_ != InputMode::Snippet) {
         return;
@@ -5785,10 +5814,12 @@ void BufferView::ApplyRename(const editor::lsp::LspManager::ResolvedRename& resu
         return;
     }
 
+    std::vector<std::pair<text::Buffer*, std::vector<editor::lsp::WorkspaceTextEdit>>> perBufferEdits;
+    perBufferEdits.reserve(result.edits.size());
     for (std::size_t i = 0; i < result.edits.size(); ++i) {
-        ApplyWorkspaceTextEdits(*buffers[i], result.edits[i].edits);
+        perBufferEdits.emplace_back(buffers[i], result.edits[i].edits);
     }
-    statusMessage_ = "Renamed (" + renameTitle_ + ").";
+    ApplyProjectEdit(perBufferEdits, "Renamed (" + renameTitle_ + ").");
 }
 
 void BufferView::ReplayMacro() {
@@ -11236,6 +11267,10 @@ void BufferView::SetLspManager(editor::lsp::LspManager* lspManager) {
 
 void BufferView::SetTaskRunner(editor::tasks::TaskRunner* taskRunner) {
     taskRunner_ = taskRunner;
+}
+
+void BufferView::SetProjectUndo(editor::ProjectUndoManager* projectUndo) {
+    projectUndo_ = projectUndo;
 }
 
 void BufferView::SetTestRunner(editor::testrun::TestRunner* testRunner) {

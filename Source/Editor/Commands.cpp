@@ -28,6 +28,7 @@
 #include "PageScroll.h"
 #include "ProjectRoot.h"
 #include "ProjectSession.h"
+#include "ProjectUndo.h"
 #include "SnippetRegistry.h"
 #include "TabWidth.h"
 #include "Text/Grapheme.h"
@@ -380,6 +381,20 @@ namespace {
         file << "# ned per-machine session state (window layout, open buffers)\n"
              << kEntry << '\n';
         return true;
+    }
+
+    // project-undo follow-up: shared by the undo/redo commands' delegation
+    // to ProjectUndoManager below.
+    std::string FormatProjectUndoMessage(const char* verb, const ProjectUndoOutcome& outcome) {
+        std::string message = std::string(verb) + " " + outcome.description;
+        if (!outcome.divergedNames.empty()) {
+            message += " (" + std::to_string(outcome.appliedCount) + "/" + std::to_string(outcome.totalCount) + " files -- ";
+            for (std::size_t i = 0; i < outcome.divergedNames.size(); ++i) {
+                message += (i == 0 ? "" : ", ") + outcome.divergedNames[i];
+            }
+            message += " edited separately since)";
+        }
+        return message;
     }
 
 } // namespace
@@ -1265,11 +1280,31 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
 
     registry.Register("undo", "Undo the last change.", [](CommandContext& context) {
         context.buffer.ClearMark();
+        // project-undo follow-up: if this buffer sits exactly on the edge a
+        // multi-file LSP edit left it on, undo every file that edit touched
+        // together rather than just this one -- see ProjectUndo.h's own
+        // doc comment. Falls back to a plain per-buffer undo otherwise
+        // (headless/no manager, an ordinary single-file edit, or a
+        // transaction this buffer has since diverged from).
+        if (context.projectUndo && context.projectUndo->IsUndoTarget(context.buffer)) {
+            const ProjectUndoOutcome outcome = context.projectUndo->Undo(context.bufferList);
+            if (context.message) {
+                *context.message = FormatProjectUndoMessage("Undid", outcome);
+            }
+            return;
+        }
         context.buffer.Undo();
     });
 
     registry.Register("redo", "Redo the last undone change.", [](CommandContext& context) {
         context.buffer.ClearMark();
+        if (context.projectUndo && context.projectUndo->IsRedoTarget(context.buffer)) {
+            const ProjectUndoOutcome outcome = context.projectUndo->Redo(context.bufferList);
+            if (context.message) {
+                *context.message = FormatProjectUndoMessage("Redid", outcome);
+            }
+            return;
+        }
         context.buffer.Redo();
     });
 
