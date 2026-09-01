@@ -2651,7 +2651,7 @@ TEST_CASE("switch-to-buffer reports an error and stays put for an unknown buffer
     view.OnEvent(ned::ui::test::Return());
 
     REQUIRE(&activeBuffer.Get() == &scratch);
-    REQUIRE(fixture.statusMessage == "No buffer named \"no-such-buffer\"");
+    REQUIRE(fixture.statusMessage == "No buffer matching \"no-such-buffer\"");
 }
 
 TEST_CASE("Switching to a shorter buffer clamps the viewport instead of rendering blank rows",
@@ -2944,7 +2944,12 @@ TEST_CASE("Switching to a buffer whose point already falls within the carried-ov
     REQUIRE(view.TopLine() == 20); // untouched -- bufferB's own point (line 22) was already visible
 }
 
-TEST_CASE("Tab in switch-to-buffer completes a unique prefix and confirms with Enter", "[BufferView]") {
+TEST_CASE("switch-to-buffer fuzzy-matches live as you type and Enter selects the highlighted candidate",
+          "[BufferView]") {
+    // dropdown-path-completion follow-up: switch-to-buffer is now a live
+    // fuzzy dropdown (HandleSwitchToBufferKey/RefreshSwitchToBufferStatus),
+    // same shape as switch-project -- no Tab step needed, a unique fuzzy
+    // match is already highlighted and Enter selects it directly.
     Fixture            fixture;
     ned::text::Buffer& scratch = fixture.bufferList.CreateBuffer("scratch");
     ned::text::Buffer& other   = fixture.bufferList.CreateBuffer("other-buffer");
@@ -2958,14 +2963,12 @@ TEST_CASE("Tab in switch-to-buffer completes a unique prefix and confirms with E
     view.OnEvent(ned::ui::test::Ctrl('x'));
     view.OnEvent(ned::ui::test::Character("b"));
     TypeText(view, "oth");
-    view.OnEvent(ned::ui::test::Tab());
-    REQUIRE(fixture.statusMessage == "Switch to buffer: other-buffer");
 
     view.OnEvent(ned::ui::test::Return());
     REQUIRE(&activeBuffer.Get() == &other);
 }
 
-TEST_CASE("Tab in switch-to-buffer with ambiguous matches completes to the common prefix and lists candidates",
+TEST_CASE("switch-to-buffer stays live with multiple fuzzy matches and Down/Enter picks the highlighted one",
           "[BufferView]") {
     Fixture            fixture;
     ned::text::Buffer& scratch = fixture.bufferList.CreateBuffer("scratch");
@@ -2980,13 +2983,19 @@ TEST_CASE("Tab in switch-to-buffer with ambiguous matches completes to the commo
     view.OnEvent(ned::ui::test::Ctrl('x'));
     view.OnEvent(ned::ui::test::Character("b"));
     TypeText(view, "al");
-    view.OnEvent(ned::ui::test::Tab());
 
-    // Common prefix of "alpha"/"alphabet" is "alpha" -- extends past what was typed.
-    REQUIRE(fixture.statusMessage == "Switch to buffer: alpha  {alpha alphabet}");
-
-    // Prompt is still live: still on the original buffer, no crash from the ambiguous Tab.
+    // Two candidates fuzzy-match ("alpha", "alphabet") -- the prompt stays
+    // live rather than forcing a pick, unlike a no-match query.
     REQUIRE(&activeBuffer.Get() == &scratch);
+    REQUIRE(fixture.statusMessage.starts_with("Switch to buffer: al"));
+
+    view.OnEvent(ned::ui::test::ArrowDown());
+    view.OnEvent(ned::ui::test::Return());
+
+    // Enter resolves whichever candidate Down highlighted -- some buffer
+    // whose name starts with "al", not the original scratch buffer.
+    REQUIRE(&activeBuffer.Get() != &scratch);
+    REQUIRE(activeBuffer.Get().Name().starts_with("al"));
 }
 
 TEST_CASE("Tab with no matches leaves the prompt untouched", "[BufferView]") {
@@ -3035,8 +3044,14 @@ TEST_CASE("Tab in find-file completes a unique file path and Enter opens it", "[
     std::filesystem::remove_all(dir);
 }
 
-TEST_CASE("Tab in find-file with ambiguous matches completes to the common prefix and lists candidates",
+TEST_CASE("Tab in find-file with ambiguous matches accepts the highlighted candidate into the prompt",
           "[BufferView]") {
+    // dropdown-path-completion follow-up: Tab now accepts the live popup's
+    // highlighted candidate (alphabetically first on a fresh listing, same
+    // sort text::CompleteFilePath already applies) instead of the old
+    // common-prefix-expand-and-list-in-the-echo-area behavior. Enter still
+    // finalizes literal prompt text either way -- see RefreshPathCompletionPopup's
+    // own doc comment for why (typing a nonexistent path must still work).
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_bufferview_test_tab_ambiguous";
     std::filesystem::remove_all(dir);
     std::filesystem::create_directory(dir);
@@ -3060,11 +3075,13 @@ TEST_CASE("Tab in find-file with ambiguous matches completes to the common prefi
     TypeText(view, (dir / "ap").string());
     view.OnEvent(ned::ui::test::Tab());
 
-    // Common prefix of "apple.txt"/"apricot.txt" is just "ap" -- unchanged.
-    REQUIRE(fixture.statusMessage ==
-            "Find file: " + (dir / "ap").string() + "  {" + (dir / "apple.txt").string() + " " +
-                (dir / "apricot.txt").string() + "}");
+    REQUIRE(fixture.statusMessage == "Find file: " + (dir / "apple.txt").string());
     REQUIRE(&activeBuffer.Get() == &scratch);
+
+    // Down/Tab-again would move to apricot.txt; Enter here finalizes what
+    // Tab already accepted.
+    view.OnEvent(ned::ui::test::Return());
+    REQUIRE(&activeBuffer.Get() != &scratch);
 
     std::filesystem::remove_all(dir);
 }

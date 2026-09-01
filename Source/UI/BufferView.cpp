@@ -227,8 +227,14 @@ namespace {
     // own checks against this same constant.
     constexpr std::string_view kCurrentThemeLabel = "Current theme";
 
+    // dropdown-path-completion follow-up: optional `display` transform lets a
+    // caller show something other than the raw candidate string per row (a
+    // path candidate masked down to its last segment) while `ranked` itself
+    // stays the real value Enter/Tab resolve against -- every pre-existing
+    // caller passes nullptr and is unaffected.
     ListPopupModel BuildFuzzyCandidatePopupModel(const std::string& title, const std::vector<std::string>& ranked,
-                                                 std::size_t selected) {
+                                                 std::size_t selected,
+                                                 const std::function<std::string(const std::string&)>& display = nullptr) {
         ListPopupModel model;
         model.title = title;
         if (ranked.empty()) {
@@ -256,7 +262,7 @@ namespace {
             model.rows.push_back({.main = "↑ " + std::to_string(windowStart) + " more above"});
         }
         for (std::size_t i = windowStart; i < windowEnd; ++i) {
-            model.rows.push_back({.main = ranked[i]});
+            model.rows.push_back({.main = display ? display(ranked[i]) : ranked[i]});
         }
         model.selectedIndex = (selected - windowStart) + (windowStart > 0 ? 1 : 0);
 
@@ -265,6 +271,22 @@ namespace {
             model.rows.push_back({.main = "↓ " + std::to_string(hiddenBelow) + " more below"});
         }
         return model;
+    }
+
+    // dropdown-path-completion follow-up: turns an accumulated
+    // text::CompleteFilePath candidate ("src/editor/" or
+    // "src/editor/BufferView.cpp") into just its last segment ("editor/" or
+    // "BufferView.cpp"), independent of how deep the accumulated prefix is --
+    // the `display` transform RefreshPathCompletionPopup passes to
+    // BuildFuzzyCandidatePopupModel for FindFile/OpenProjectPath rows.
+    std::string MaskPathCandidateToLastSegment(const std::string& candidate) {
+        const bool        isDirectory = candidate.ends_with('/');
+        const std::string trimmed     = isDirectory ? candidate.substr(0, candidate.size() - 1) : candidate;
+        std::string        segment     = std::filesystem::path(trimmed).filename().string();
+        if (isDirectory) {
+            segment += '/';
+        }
+        return segment;
     }
 
     // symbol-search follow-up. One display line for a SymbolResult, used as
@@ -3780,19 +3802,19 @@ bool BufferView::OnKeyEvent(const Event& event) {
         ClampPointToNarrowing();
         return true;
     }
-    if (inputMode_ == InputMode::FindFile || inputMode_ == InputMode::SwitchToBuffer ||
+    if (inputMode_ == InputMode::FindFile ||
         inputMode_ == InputMode::ProjectSearch || inputMode_ == InputMode::CreateDirectory ||
         inputMode_ == InputMode::FindScratch || inputMode_ == InputMode::StringRectangle ||
         inputMode_ == InputMode::SetHeadlineTags || inputMode_ == InputMode::TaskName ||
-        inputMode_ == InputMode::GotoLine || inputMode_ == InputMode::AcpAgentName ||
+        inputMode_ == InputMode::GotoLine ||
         inputMode_ == InputMode::AcpPromptText ||
-        // OnKeyEvent-dispatch-gap follow-up: DapEvaluate/VcsSwitchBranch/
-        // VcsCreateBranch are all handled inside HandlePromptKey (and
-        // documented there as routing through it, same shape as
-        // TaskName/GotoLine above) but were never actually reachable from a
-        // real keystroke -- missing here, so input silently fell through to
-        // ordinary self-insert-command instead of the prompt.
-        inputMode_ == InputMode::DapEvaluate || inputMode_ == InputMode::VcsSwitchBranch ||
+        // OnKeyEvent-dispatch-gap follow-up: DapEvaluate/VcsCreateBranch are
+        // both handled inside HandlePromptKey (and documented there as
+        // routing through it, same shape as TaskName/GotoLine above) but
+        // were never actually reachable from a real keystroke -- missing
+        // here, so input silently fell through to ordinary self-insert-command
+        // instead of the prompt.
+        inputMode_ == InputMode::DapEvaluate ||
         inputMode_ == InputMode::VcsCreateBranch || inputMode_ == InputMode::DeleteProperty ||
         inputMode_ == InputMode::OrgSchedule || inputMode_ == InputMode::OrgDeadline ||
         // DAP round 2: same dispatch-gap fix as DapEvaluate above -- these
@@ -3857,6 +3879,21 @@ bool BufferView::OnKeyEvent(const Event& event) {
     }
     if (inputMode_ == InputMode::SwitchProject) {
         HandleSwitchProjectKey(*chord);
+        ClampPointToNarrowing();
+        return true;
+    }
+    if (inputMode_ == InputMode::SwitchToBuffer) {
+        HandleSwitchToBufferKey(*chord);
+        ClampPointToNarrowing();
+        return true;
+    }
+    if (inputMode_ == InputMode::VcsSwitchBranch) {
+        HandleVcsSwitchBranchKey(*chord);
+        ClampPointToNarrowing();
+        return true;
+    }
+    if (inputMode_ == InputMode::AcpAgentName) {
+        HandleAcpAgentNameKey(*chord);
         ClampPointToNarrowing();
         return true;
     }
@@ -6089,12 +6126,14 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         case editor::InteractiveRequest::FindFile:
             inputMode_ = InputMode::FindFile;
             prompt_.emplace("Find file: ");
-            statusMessage_ = prompt_->StatusText();
+            pathCompletionSelection_ = 0;
+            RefreshPathCompletionPopup();
             return;
         case editor::InteractiveRequest::SwitchToBuffer:
             inputMode_ = InputMode::SwitchToBuffer;
             prompt_.emplace("Switch to buffer: ");
-            statusMessage_ = prompt_->StatusText();
+            switchToBufferSelection_ = 0;
+            RefreshSwitchToBufferStatus();
             return;
         case editor::InteractiveRequest::ProjectSearch:
             inputMode_ = InputMode::ProjectSearch;
@@ -6291,7 +6330,8 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         case editor::InteractiveRequest::FindScratch:
             inputMode_ = InputMode::FindScratch;
             prompt_.emplace("Find scratch: ");
-            statusMessage_ = prompt_->StatusText();
+            pathCompletionSelection_ = 0;
+            RefreshPathCompletionPopup();
             return;
         case editor::InteractiveRequest::RecoverFile: {
             // backup-and-recovery follow-up: both no-session outcomes
@@ -6569,7 +6609,8 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         case editor::InteractiveRequest::AcpStartSession:
             inputMode_ = InputMode::AcpAgentName;
             prompt_.emplace("ACP agent: ");
-            statusMessage_ = prompt_->StatusText();
+            acpAgentNameSelection_ = 0;
+            RefreshAcpAgentNameStatus();
             return;
         case editor::InteractiveRequest::AcpSendPrompt:
             if (!acpManager_) {
@@ -6826,7 +6867,8 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         case editor::InteractiveRequest::OpenProject:
             inputMode_ = InputMode::OpenProjectPath;
             prompt_.emplace("Open project (path): ");
-            statusMessage_ = prompt_->StatusText();
+            pathCompletionSelection_ = 0;
+            RefreshPathCompletionPopup();
             return;
         // editor-ergonomics follow-up: bookmark-set already checked
         // context.buffer.Path() before setting this (Commands.cpp), so
@@ -7438,8 +7480,6 @@ std::string_view BufferView::HistoryKeyForInputMode(InputMode mode) {
     switch (mode) {
         case InputMode::FindFile:
             return "find-file";
-        case InputMode::SwitchToBuffer:
-            return "switch-to-buffer";
         case InputMode::ProjectSearch:
             return "project-search";
         case InputMode::CreateDirectory:
@@ -7472,12 +7512,8 @@ std::string_view BufferView::HistoryKeyForInputMode(InputMode mode) {
             return "dap-add-watch";
         case InputMode::DapSetVariableValue:
             return "dap-set-variable";
-        case InputMode::VcsSwitchBranch:
-            return "vcs-switch-branch";
         case InputMode::VcsCreateBranch:
             return "vcs-create-branch";
-        case InputMode::AcpAgentName:
-            return "acp-agent-name";
         case InputMode::AcpPromptText:
             return "acp-prompt-text";
         case InputMode::BookmarkSetName:
@@ -7599,15 +7635,6 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
             pendingOpenProjectRoot_.clear();
             editor::RegisterProject(name, root);
             ActivateProjectAndReport(root);
-        }
-        else if (inputMode_ == InputMode::SwitchToBuffer) {
-            if (text::Buffer* found = bufferList_.Find(input)) {
-                activeBuffer_.Set(*found);
-                statusMessage_.clear();
-            }
-            else {
-                statusMessage_ = "No buffer named \"" + input + "\"";
-            }
         }
         else if (inputMode_ == InputMode::CreateDirectory) {
             try {
@@ -7750,18 +7777,6 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
                 }
             }
         }
-        else if (inputMode_ == InputMode::AcpAgentName) {
-            if (input.empty()) {
-                statusMessage_ = "No agent name given.";
-            }
-            else if (!acpManager_) {
-                statusMessage_ = "No ACP manager available.";
-            }
-            else if (text::Buffer* buffer = acpManager_->StartSession(input)) {
-                activeBuffer_.Set(*buffer);
-                statusMessage_.clear();
-            }
-        }
         else if (inputMode_ == InputMode::AcpPromptText) {
             // Fire-and-forget, same async shape as DapEvaluate below: the
             // reply streams into the output buffer asynchronously via
@@ -7875,7 +7890,7 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
             }
             pendingDapSetVariable_.reset();
         }
-        else if (inputMode_ == InputMode::VcsSwitchBranch || inputMode_ == InputMode::VcsCreateBranch) {
+        else if (inputMode_ == InputMode::VcsCreateBranch) {
             if (input.empty()) {
                 statusMessage_ = "No branch name given.";
             }
@@ -7883,8 +7898,7 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
                 statusMessage_ = "no vcs runner configured";
             }
             else {
-                const bool create = inputMode_ == InputMode::VcsCreateBranch;
-                statusMessage_    = (create ? "Creating branch " : "Switching to ") + input + "...";
+                statusMessage_ = "Creating branch " + input + "...";
                 // A branch switch rewrites the working tree underneath any
                 // open buffer. Unmodified buffers catch up on the next
                 // auto-revert tick (external-modification-safety follow-up,
@@ -7892,19 +7906,14 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
                 // to say "not reloaded"); a *modified* buffer is still left
                 // alone, and its save will hit the supersession y/n rather
                 // than a confusing stale-content overwrite.
-                auto onSuccess = [this, input, create] {
-                    statusMessage_ = (create ? "Created and switched to " : "Switched to ") + input +
-                                     " (modified buffers not reloaded)";
-                    RefreshVcsStatusBuffer();
-                    RequestDiffForCurrentBuffer();
-                };
-                auto onError = [this](std::string error) { statusMessage_ = "vcs branch: " + error; };
-                if (create) {
-                    vcsRunner_->RequestBranchCreate(input, std::move(onSuccess), std::move(onError));
-                }
-                else {
-                    vcsRunner_->RequestBranchSwitch(input, std::move(onSuccess), std::move(onError));
-                }
+                vcsRunner_->RequestBranchCreate(
+                    input,
+                    [this, input] {
+                        statusMessage_ = "Created and switched to " + input + " (modified buffers not reloaded)";
+                        RefreshVcsStatusBuffer();
+                        RequestDiffForCurrentBuffer();
+                    },
+                    [this](std::string error) { statusMessage_ = "vcs branch: " + error; });
             }
         }
         else if (inputMode_ == InputMode::GotoLine) {
@@ -7970,9 +7979,6 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
             case InputMode::FindFile:
                 label = "Find file";
                 break;
-            case InputMode::SwitchToBuffer:
-                label = "Switch to buffer";
-                break;
             case InputMode::ProjectSearch:
                 label = "Project search";
                 break;
@@ -8024,14 +8030,8 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
                 label = "Set variable";
                 pendingDapSetVariable_.reset();
                 break;
-            case InputMode::VcsSwitchBranch:
-                label = "Switch branch";
-                break;
             case InputMode::VcsCreateBranch:
                 label = "Create branch";
-                break;
-            case InputMode::AcpAgentName:
-                label = "Start ACP session";
                 break;
             case InputMode::AcpPromptText:
                 label = "Send ACP prompt";
@@ -8054,6 +8054,38 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
         EndInteractiveSession();
         return;
     }
+    if (inputMode_ == InputMode::FindFile || inputMode_ == InputMode::OpenProjectPath ||
+        inputMode_ == InputMode::FindScratch) {
+        // dropdown-path-completion follow-up: Up/Down move the live popup's
+        // highlight (prompt history stays on M-p/M-n, TryNavigatePromptHistory
+        // below -- never plain Up/Down, so there's no conflict); Tab accepts
+        // the highlighted candidate's full accumulated value (not the masked
+        // display text) into the prompt rather than the old common-prefix-
+        // expand-and-list-in-the-echo-area behavior -- a directory candidate's
+        // trailing '/' means the very next refresh re-lists that directory's
+        // own contents, giving a descend-by-Tab feel. Enter/Quit are handled
+        // by the generic chains above/below, unchanged -- this mode still
+        // finalizes on literal prompt_->Text(), not the popup selection.
+        if (chord.Special == editor::SpecialKey::Down || chord.Special == editor::SpecialKey::Up) {
+            const std::vector<std::string> candidates = GatherPathCompletionCandidates();
+            if (!candidates.empty()) {
+                pathCompletionSelection_ = chord.Special == editor::SpecialKey::Down
+                                               ? (pathCompletionSelection_ + 1) % candidates.size()
+                                               : (pathCompletionSelection_ + candidates.size() - 1) % candidates.size();
+            }
+            RefreshPathCompletionPopup();
+            return;
+        }
+        if (chord.Special == editor::SpecialKey::Tab) {
+            const std::vector<std::string> candidates = GatherPathCompletionCandidates();
+            if (!candidates.empty()) {
+                prompt_->SetText(candidates[std::min(pathCompletionSelection_, candidates.size() - 1)]);
+                pathCompletionSelection_ = 0;
+            }
+            RefreshPathCompletionPopup();
+            return;
+        }
+    }
     if (chord.Special == editor::SpecialKey::Tab && inputMode_ != InputMode::ProjectSearch &&
         inputMode_ != InputMode::CreateDirectory && inputMode_ != InputMode::StringRectangle &&
         inputMode_ != InputMode::SetHeadlineTags && inputMode_ != InputMode::LspRenameNewName &&
@@ -8063,19 +8095,18 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
         inputMode_ != InputMode::OrgSchedule && inputMode_ != InputMode::OrgDeadline &&
         inputMode_ != InputMode::DapBreakpointCondition && inputMode_ != InputMode::DapBreakpointLogMessage &&
         inputMode_ != InputMode::DapAddWatch && inputMode_ != InputMode::DapSetVariableValue &&
-        inputMode_ != InputMode::GotoLine) { // completing a line number is meaningless
+        inputMode_ != InputMode::GotoLine &&
+        // dropdown-path-completion follow-up: Tab is fully handled by the
+        // dedicated block above for these three (accept-highlighted, never
+        // reaching this common-prefix/echo-area-list path anymore).
+        inputMode_ != InputMode::FindFile && inputMode_ != InputMode::OpenProjectPath &&
+        inputMode_ != InputMode::FindScratch) { // completing a line number is meaningless
         // DapEvaluate excluded too: completing a debuggee expression
         // against buffer names would be meaningless, same reasoning as
         // ProjectSearch's regex pattern. VcsCreateBranch likewise
-        // (deliberately *new* free text); VcsSwitchBranch is NOT excluded --
-        // CompletePrompt completes it against the fetched branch list.
-        // AcpAgentName is NOT excluded either, same reasoning (ACP round-1-
-        // live-validation follow-up -- registered agent names are a real
-        // candidate list via AcpConfig::AcpAgentNames(), the multi-account
-        // "claude-personal"/"claude-work"/"claude-consulting" case this
-        // makes practical). AcpPromptText stays free-text -- it's a message
-        // to the agent, not a name. OrgSchedule/OrgDeadline: a typed
-        // date/relative-shorthand has no candidate list either.
+        // (deliberately *new* free text). AcpPromptText stays free-text --
+        // it's a message to the agent, not a name. OrgSchedule/OrgDeadline: a
+        // typed date/relative-shorthand has no candidate list either.
         // against. DeleteProperty likewise -- completing a property name
         // against file/buffer names would be meaningless. The four new DAP
         // round-2 prompts (condition/log-message/watch expression/variable
@@ -8091,6 +8122,12 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
 
     if (HandlePromptEditingKey(chord) == PromptEditOutcome::TextEdited) {
         promptHistoryIndex_ = kNoHistoryIndex; // editing exits history browsing -- see TryNavigatePromptHistory's own doc comment
+        if (inputMode_ == InputMode::FindFile || inputMode_ == InputMode::OpenProjectPath ||
+            inputMode_ == InputMode::FindScratch) {
+            pathCompletionSelection_ = 0;
+            RefreshPathCompletionPopup();
+            return;
+        }
     }
     // CursorMoved/NotHandled: nothing else consumes a key here -- stay in the prompt.
 
@@ -8129,31 +8166,60 @@ BufferView::PromptEditOutcome BufferView::HandlePromptEditingKey(const editor::K
     return PromptEditOutcome::NotHandled;
 }
 
-void BufferView::CompletePrompt() {
-    std::vector<std::string> candidates;
+// dropdown-path-completion follow-up: the candidate source
+// RefreshPathCompletionPopup/the Up-Down-Tab handling in HandlePromptKey
+// below all share -- FindFile/OpenProjectPath/FindScratch's own directory-
+// or name-prefix-filtered lists, unchanged from what CompletePrompt used to
+// gather inline before Tab was the only trigger.
+std::vector<std::string> BufferView::GatherPathCompletionCandidates() const {
     if (inputMode_ == InputMode::FindFile || inputMode_ == InputMode::OpenProjectPath) {
-        candidates = text::CompleteFilePath(prompt_->Text());
+        return text::CompleteFilePath(prompt_->Text());
     }
-    else if (inputMode_ == InputMode::FindScratch) {
-        candidates = editor::CompleteScratchNames(prompt_->Text());
+    if (inputMode_ == InputMode::FindScratch) {
+        return editor::CompleteScratchNames(prompt_->Text());
     }
-    else if (inputMode_ == InputMode::VcsSwitchBranch) {
-        for (const std::string& name : vcsBranchCandidates_) {
-            if (name.starts_with(prompt_->Text())) {
-                candidates.push_back(name);
-            }
-        }
+    return {};
+}
+
+// dropdown-path-completion follow-up: FindFile/OpenProjectPath/FindScratch's
+// own live dropdown -- unlike the selection-based Handle<Mode>Key sessions
+// (switch-project/switch-to-buffer/vcs-switch-branch/acp-agent-name), Enter
+// still finalizes on literal prompt_->Text() in HandlePromptKey, unchanged,
+// since typing a path/name with no match is a valid "create new" action
+// here (a new file, a new scratch pad, a new project root). This popup is a
+// visual + Tab-to-accept aid only, called on session start and on every
+// keystroke/Up/Down (see HandlePromptKey's own call sites).
+void BufferView::RefreshPathCompletionPopup() {
+    const std::vector<std::string> candidates = GatherPathCompletionCandidates();
+    pathCompletionSelection_ = candidates.empty() ? 0 : std::min(pathCompletionSelection_, candidates.size() - 1);
+
+    statusMessage_ = prompt_->StatusText();
+    if (!onCandidatesChanged_) {
+        return;
     }
-    else if (inputMode_ == InputMode::AcpAgentName) {
-        for (const std::string& name : editor::acp::AcpAgentNames()) {
-            if (name.starts_with(prompt_->Text())) {
-                candidates.push_back(name);
-            }
-        }
+    if (candidates.empty()) {
+        onCandidatesChanged_(std::nullopt);
+        return;
     }
-    else {
-        candidates = text::CompleteBufferNames(bufferList_, prompt_->Text());
-    }
+    const bool isPathMode = inputMode_ == InputMode::FindFile || inputMode_ == InputMode::OpenProjectPath;
+    const std::function<std::string(const std::string&)> display =
+        isPathMode ? std::function<std::string(const std::string&)>(MaskPathCandidateToLastSegment)
+                   : std::function<std::string(const std::string&)>{};
+    onCandidatesChanged_(
+        BuildFuzzyCandidatePopupModel(prompt_->StatusText(), candidates, pathCompletionSelection_, display));
+}
+
+void BufferView::CompletePrompt() {
+    // dropdown-path-completion follow-up: FindFile/OpenProjectPath/FindScratch
+    // (path/name modes that still need to finalize on literal typed text --
+    // see RefreshPathCompletionPopup's own doc comment) now get a live popup
+    // instead of Tab reaching this function; VcsSwitchBranch/AcpAgentName/
+    // SwitchToBuffer are fully dedicated Handle<Mode>Key sessions, intercepted
+    // before this function is ever reached. Everything left below is the
+    // original catch-all default, still used by whichever other prompt modes
+    // reach Tab without their own candidate source (e.g. OpenProjectName,
+    // BookmarkSetName).
+    std::vector<std::string> candidates = text::CompleteBufferNames(bufferList_, prompt_->Text());
 
     if (candidates.empty()) {
         statusMessage_ = prompt_->StatusText();
@@ -9092,7 +9158,8 @@ void BufferView::BeginVcsSwitchBranchPrompt() {
             }
             inputMode_ = InputMode::VcsSwitchBranch;
             prompt_.emplace("Switch to branch: ");
-            statusMessage_ = prompt_->StatusText();
+            vcsSwitchBranchSelection_ = 0;
+            RefreshVcsSwitchBranchStatus();
         },
         [this](std::string error) { statusMessage_ = "vcs branch: " + error; });
 }
@@ -11065,6 +11132,236 @@ void BufferView::HandleSwitchProjectKey(const editor::KeyChord& chord) {
         promptHistoryIndex_     = kNoHistoryIndex;
         switchProjectSelection_ = 0;
         RefreshSwitchProjectStatus();
+    }
+    // CursorMoved/NotHandled: nothing else consumes a key here -- stay in the prompt.
+}
+
+// dropdown-path-completion follow-up: HandleSwitchProjectKey's own shape,
+// over every open buffer's name (text::CompleteBufferNames(bufferList_, "")
+// -- the full list, fuzzy-ranked here rather than prefix-filtered). Unlike
+// find-file/find-scratch, there's no "create a new buffer by typing a name
+// that doesn't exist" case (the old CompletePrompt-driven prompt reported an
+// error on a non-match rather than creating anything), so Enter safely
+// resolves the highlighted ranked candidate instead of literal prompt text.
+void BufferView::RefreshSwitchToBufferStatus() {
+    const std::vector<std::string> candidates = text::CompleteBufferNames(bufferList_, "");
+    const std::vector<std::string> ranked     = editor::FuzzyFilterAndRank(candidates, prompt_->Text());
+    switchToBufferSelection_ = ranked.empty() ? 0 : std::min(switchToBufferSelection_, ranked.size() - 1);
+
+    statusMessage_ = prompt_->StatusText();
+    if (onCandidatesChanged_) {
+        onCandidatesChanged_(
+            ranked.empty() ? std::nullopt
+                           : std::optional(BuildFuzzyCandidatePopupModel(prompt_->StatusText(), ranked, switchToBufferSelection_)));
+    }
+}
+
+void BufferView::HandleSwitchToBufferKey(const editor::KeyChord& chord) {
+    const std::vector<std::string> candidates = text::CompleteBufferNames(bufferList_, "");
+
+    if (chord.Special == editor::SpecialKey::Enter) {
+        promptHistory_.Record("switch-to-buffer", prompt_->Text());
+
+        const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(candidates, prompt_->Text());
+        if (ranked.empty()) {
+            statusMessage_ = "No buffer matching \"" + prompt_->Text() + "\"";
+            EndInteractiveSession();
+            return;
+        }
+
+        const std::string selected = ranked[std::min(switchToBufferSelection_, ranked.size() - 1)];
+        EndInteractiveSession();
+
+        if (text::Buffer* found = bufferList_.Find(selected)) {
+            activeBuffer_.Set(*found);
+            statusMessage_.clear();
+        }
+        else {
+            ReportError("Internal error resolving the selected buffer.");
+        }
+        return;
+    }
+    if (IsQuit(chord)) {
+        statusMessage_ = "Switch to buffer cancelled.";
+        EndInteractiveSession();
+        return;
+    }
+
+    if (TryNavigatePromptHistory(chord, "switch-to-buffer")) {
+        switchToBufferSelection_ = 0;
+        RefreshSwitchToBufferStatus();
+        return;
+    }
+
+    if (chord.Special == editor::SpecialKey::Down || chord.Special == editor::SpecialKey::Up) {
+        const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(candidates, prompt_->Text());
+        if (!ranked.empty()) {
+            switchToBufferSelection_ = chord.Special == editor::SpecialKey::Down
+                                          ? (switchToBufferSelection_ + 1) % ranked.size()
+                                          : (switchToBufferSelection_ + ranked.size() - 1) % ranked.size();
+        }
+        RefreshSwitchToBufferStatus();
+        return;
+    }
+
+    if (HandlePromptEditingKey(chord) == PromptEditOutcome::TextEdited) {
+        promptHistoryIndex_      = kNoHistoryIndex;
+        switchToBufferSelection_ = 0;
+        RefreshSwitchToBufferStatus();
+    }
+    // CursorMoved/NotHandled: nothing else consumes a key here -- stay in the prompt.
+}
+
+// dropdown-path-completion follow-up: RefreshSwitchToBufferStatus's own
+// shape, over vcsBranchCandidates_ (populated once, before this mode is
+// entered -- see BeginVcsSwitchBranchPrompt). VcsCreateBranch is a distinct
+// InputMode (free-text new-branch naming, no candidate list) and is not
+// handled here -- it stays on HandlePromptKey's own literal-text path.
+void BufferView::RefreshVcsSwitchBranchStatus() {
+    const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(vcsBranchCandidates_, prompt_->Text());
+    vcsSwitchBranchSelection_ = ranked.empty() ? 0 : std::min(vcsSwitchBranchSelection_, ranked.size() - 1);
+
+    statusMessage_ = prompt_->StatusText();
+    if (onCandidatesChanged_) {
+        onCandidatesChanged_(
+            ranked.empty() ? std::nullopt
+                           : std::optional(BuildFuzzyCandidatePopupModel(prompt_->StatusText(), ranked, vcsSwitchBranchSelection_)));
+    }
+}
+
+void BufferView::HandleVcsSwitchBranchKey(const editor::KeyChord& chord) {
+    if (chord.Special == editor::SpecialKey::Enter) {
+        promptHistory_.Record("vcs-switch-branch", prompt_->Text());
+
+        const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(vcsBranchCandidates_, prompt_->Text());
+        if (ranked.empty()) {
+            statusMessage_ = "No branch matching \"" + prompt_->Text() + "\"";
+            EndInteractiveSession();
+            return;
+        }
+
+        const std::string selected = ranked[std::min(vcsSwitchBranchSelection_, ranked.size() - 1)];
+        EndInteractiveSession();
+
+        if (!vcsRunner_) {
+            statusMessage_ = "no vcs runner configured";
+            return;
+        }
+        // A branch switch rewrites the working tree underneath any open
+        // buffer. Unmodified buffers catch up on the next auto-revert tick
+        // (external-modification-safety follow-up, Editor/AutoRevert.h);
+        // a *modified* buffer is left alone, its save hitting the
+        // supersession y/n rather than a confusing stale-content overwrite.
+        statusMessage_ = "Switching to " + selected + "...";
+        vcsRunner_->RequestBranchSwitch(
+            selected,
+            [this, selected] {
+                statusMessage_ = "Switched to " + selected + " (modified buffers not reloaded)";
+                RefreshVcsStatusBuffer();
+                RequestDiffForCurrentBuffer();
+            },
+            [this](std::string error) { statusMessage_ = "vcs branch: " + error; });
+        return;
+    }
+    if (IsQuit(chord)) {
+        statusMessage_ = "Switch branch cancelled.";
+        EndInteractiveSession();
+        return;
+    }
+
+    if (TryNavigatePromptHistory(chord, "vcs-switch-branch")) {
+        vcsSwitchBranchSelection_ = 0;
+        RefreshVcsSwitchBranchStatus();
+        return;
+    }
+
+    if (chord.Special == editor::SpecialKey::Down || chord.Special == editor::SpecialKey::Up) {
+        const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(vcsBranchCandidates_, prompt_->Text());
+        if (!ranked.empty()) {
+            vcsSwitchBranchSelection_ = chord.Special == editor::SpecialKey::Down
+                                           ? (vcsSwitchBranchSelection_ + 1) % ranked.size()
+                                           : (vcsSwitchBranchSelection_ + ranked.size() - 1) % ranked.size();
+        }
+        RefreshVcsSwitchBranchStatus();
+        return;
+    }
+
+    if (HandlePromptEditingKey(chord) == PromptEditOutcome::TextEdited) {
+        promptHistoryIndex_       = kNoHistoryIndex;
+        vcsSwitchBranchSelection_ = 0;
+        RefreshVcsSwitchBranchStatus();
+    }
+    // CursorMoved/NotHandled: nothing else consumes a key here -- stay in the prompt.
+}
+
+// dropdown-path-completion follow-up: RefreshSwitchToBufferStatus's own
+// shape, over editor::acp::AcpAgentNames() (a static configured list --
+// same "no create-new case" reasoning as switch-to-buffer above).
+void BufferView::RefreshAcpAgentNameStatus() {
+    const std::vector<std::string> candidates = editor::acp::AcpAgentNames();
+    const std::vector<std::string> ranked      = editor::FuzzyFilterAndRank(candidates, prompt_->Text());
+    acpAgentNameSelection_ = ranked.empty() ? 0 : std::min(acpAgentNameSelection_, ranked.size() - 1);
+
+    statusMessage_ = prompt_->StatusText();
+    if (onCandidatesChanged_) {
+        onCandidatesChanged_(
+            ranked.empty() ? std::nullopt
+                           : std::optional(BuildFuzzyCandidatePopupModel(prompt_->StatusText(), ranked, acpAgentNameSelection_)));
+    }
+}
+
+void BufferView::HandleAcpAgentNameKey(const editor::KeyChord& chord) {
+    const std::vector<std::string> candidates = editor::acp::AcpAgentNames();
+
+    if (chord.Special == editor::SpecialKey::Enter) {
+        promptHistory_.Record("acp-agent-name", prompt_->Text());
+
+        const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(candidates, prompt_->Text());
+        if (ranked.empty()) {
+            statusMessage_ = "No agent matching \"" + prompt_->Text() + "\"";
+            EndInteractiveSession();
+            return;
+        }
+
+        const std::string selected = ranked[std::min(acpAgentNameSelection_, ranked.size() - 1)];
+        EndInteractiveSession();
+
+        if (!acpManager_) {
+            statusMessage_ = "No ACP manager available.";
+        }
+        else if (text::Buffer* buffer = acpManager_->StartSession(selected)) {
+            activeBuffer_.Set(*buffer);
+            statusMessage_.clear();
+        }
+        return;
+    }
+    if (IsQuit(chord)) {
+        statusMessage_ = "Start ACP session cancelled.";
+        EndInteractiveSession();
+        return;
+    }
+
+    if (TryNavigatePromptHistory(chord, "acp-agent-name")) {
+        acpAgentNameSelection_ = 0;
+        RefreshAcpAgentNameStatus();
+        return;
+    }
+
+    if (chord.Special == editor::SpecialKey::Down || chord.Special == editor::SpecialKey::Up) {
+        const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(candidates, prompt_->Text());
+        if (!ranked.empty()) {
+            acpAgentNameSelection_ = chord.Special == editor::SpecialKey::Down
+                                        ? (acpAgentNameSelection_ + 1) % ranked.size()
+                                        : (acpAgentNameSelection_ + ranked.size() - 1) % ranked.size();
+        }
+        RefreshAcpAgentNameStatus();
+        return;
+    }
+
+    if (HandlePromptEditingKey(chord) == PromptEditOutcome::TextEdited) {
+        promptHistoryIndex_     = kNoHistoryIndex;
+        acpAgentNameSelection_ = 0;
+        RefreshAcpAgentNameStatus();
     }
     // CursorMoved/NotHandled: nothing else consumes a key here -- stay in the prompt.
 }
