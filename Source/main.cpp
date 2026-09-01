@@ -1,4 +1,5 @@
 #include <clocale>
+#include <csignal>
 #include <cstdlib>
 #include <cstring>
 #include <deque>
@@ -200,6 +201,22 @@ int MinimapOverlayReserve() {
 } // namespace
 
 auto main(int argc, char** argv) -> int {
+    // async-write-queue follow-up: this process writes to several
+    // subprocess pipes (LSP/DAP/ACP/task/VCS children) whose peer can exit
+    // out from under it at any time -- a write to a pipe with no reader left
+    // raises SIGPIPE, whose default disposition terminates the *entire*
+    // process over one bad write. LspBrokerMain.cpp's own RunLspBrokerDaemon
+    // already does this for exactly this reason; this process needs the
+    // same protection, not less of it -- confirmed live (not assumed) via a
+    // real SIGPIPE crash surfaced by LspClient's async write queue racing an
+    // already-closed test pipe, disproving an earlier, unverified comment
+    // that Notcurses' own terminal setup shielded this process from SIGPIPE.
+    // write()/send() already return EPIPE instead, which
+    // Transport::WriteFrame/ChildProcess::WriteAll already surface as a
+    // caught std::runtime_error -- ordinary, already-handled error paths,
+    // not a new failure mode to plumb through.
+    std::signal(SIGPIPE, SIG_IGN);
+
     // startup-mode-unification follow-up: one CLI::App now owns every
     // top-level flag ned recognizes, --detect-theme/--lsp-broker/
     // --lsp-broker-stop included -- previously each was a hand-rolled

@@ -922,6 +922,7 @@ if (NED_BUILD_TESTS)
             Tests/FormatOnSaveTest.cpp
             Tests/ClipboardTest.cpp
             Tests/ClipboardTestGuard.cpp
+            Tests/SigpipeTestGuard.cpp
             Tests/TabWidthTest.cpp
             Tests/PageScrollTest.cpp
             Tests/DiffRefreshSettingsTest.cpp

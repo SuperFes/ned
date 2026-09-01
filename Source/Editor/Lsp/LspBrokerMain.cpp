@@ -527,14 +527,17 @@ namespace {
 
 int RunLspBrokerDaemon(int maxConcurrentServers) {
     // The daemon writes to many sockets/pipes that routinely close out from
-    // under it (an evicted/crashed/disconnected peer) -- unlike the
-    // interactive editor (shielded by whatever Notcurses' own terminal
-    // setup does with signal disposition), this process has no such
-    // protection, and an unhandled SIGPIPE's default action is to
-    // terminate the *entire* daemon over one bad write, taking down every
-    // other project's warm session with it. write()/send() already return
-    // EPIPE instead, which Transport::WriteFrame already surfaces as a
-    // caught std::runtime_error.
+    // under it (an evicted/crashed/disconnected peer), and an unhandled
+    // SIGPIPE's default action is to terminate the *entire* daemon over one
+    // bad write, taking down every other project's warm session with it.
+    // write()/send() already return EPIPE instead, which
+    // Transport::WriteFrame already surfaces as a caught std::runtime_error.
+    // async-write-queue follow-up: main.cpp's own main() now sets the exact
+    // same disposition, for the same reason -- an earlier version of this
+    // comment claimed the interactive editor didn't need it (Notcurses'
+    // terminal setup supposedly shielding it); that was never verified and
+    // turned out false, so don't assume this process is a special case
+    // either.
     std::signal(SIGPIPE, SIG_IGN);
 
     BrokerDaemon daemon(maxConcurrentServers);

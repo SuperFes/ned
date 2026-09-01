@@ -64,14 +64,36 @@ Notcurses.
         the server's advertised sync-kind capability, and a full-sync fallback for a
         server that doesn't support incremental.
       - **`ProtocolStallTimeoutMs()`'s 30s default** (`Transport.h`) is shared by both
-        the write side (what actually blocked the main thread) and the read side
-        (where a genuinely slow response — a large workspace-wide rename, say —
-        legitimately needs tolerance). The debounce is what keeps the pipe from
-        backing up in the first place, so this wasn't necessary to fix what was
-        actually observed, but splitting it into separate write/read timeouts (a much
-        shorter write-side one — a healthy server should never take long just to
-        *accept* a notification) would be a reasonable defense-in-depth hardening on
-        top.
+        the write side and the read side (where a genuinely slow response — a large
+        workspace-wide rename, say — legitimately needs tolerance). Superseded as a
+        main-thread-freeze concern by the async write queue below (a stalled write no
+        longer blocks the main thread at all, regardless of this value), but splitting
+        it into separate write/read timeouts would still be a reasonable defense-in-
+        depth hardening on top — a healthy server should never take long just to
+        *accept* a notification.
+- [ ] **Async LSP write queue for DapClient/AcpClient** (async-write-queue follow-up: a
+      *second*, distinct gdb-confirmed live freeze — `LspBackgroundSync.cpp`'s periodic
+      5s `SyncBackgroundBuffers` tick sent a synchronous `didOpen` for a large,
+      never-before-synced background buffer to a slow server, blocking the main thread
+      independently of typing speed or bursts, unrelated to the sync-debounce fix
+      above — fixed by moving every `LspClient` write off the main thread entirely: a
+      dedicated `writeThread_` drains a queue (`EnqueueWrite`), so
+      `SendRequest`/`SendNotification`/a server-request response never block the
+      caller, only that thread. Two destruction policies distinguish final process
+      shutdown (`PrepareForGracefulShutdown` — drains the queue so
+      `LspManager::Shutdown()`'s courtesy `shutdown`/`exit` frames still land) from
+      ordinary mid-session teardown (`LspManager::ClientDisconnected`'s erase — no
+      drain, since blocking the main thread to flush writes to an already-dying
+      connection would reintroduce the exact bug this fixes; a residual bound of one
+      in-flight write, ≤30s, remains here in the pathological case, no worse than
+      today's pre-fix per-call bound). `DapClient.cpp` (1 write site) and
+      `AcpClient.cpp` (4 write sites, its own `Transport::WriteMessage`) mirror
+      `LspClient`'s threading shape closely enough to transplant the same fix directly,
+      but weren't touched — both bugs motivating this fix were LSP-specific, and DAP/
+      ACP's single-session/modal nature means a stalled write there blocks only an
+      active debug/chat session the user is already looking at, not the whole editor.
+      Worth doing for consistency once a similar live freeze is actually reported
+      against either.
 - [ ] Whether Markdown fenced code blocks / Org `#+BEGIN_SRC` blocks should get the same
       real-LSP-sync treatment HTML `<script>`/`<style>` embedded documents already have
       is an open question — spawning a live language server per code fence in an
