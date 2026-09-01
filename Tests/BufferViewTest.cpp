@@ -6715,6 +6715,115 @@ TEST_CASE("Any other key dismisses the completion popup instead of accepting it"
     REQUIRE(buffer.Text() != "foobar");
 }
 
+TEST_CASE("Typing a word character schedules an automatic completion request after the debounce", "[BufferView]") {
+    // completion-auto-trigger-gate follow-up: sanity check for the positive
+    // side of the gate -- an ordinary identifier keystroke still requests
+    // completion automatically, unlike the punctuation case below.
+    Fixture                     fixture;
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_bufferview_auto_trigger_word_test.txt";
+    ned::text::Buffer&          buffer = fixture.bufferList.OpenOrCreateFile(path);
+    fixture.activeBuffer.Set(buffer);
+
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::LspClient* client = nullptr;
+    FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.SetEventLoop(&eventLoop);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
+    ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    view.Paint(canvas); // triggers SyncBuffer -> didOpen
+    DrainAllPendingFrames(server.serverStdinRead);
+
+    TypeText(view, "f");
+    std::this_thread::sleep_for(std::chrono::milliseconds(600)); // past LspCompletionDebounceMs()'s default 500ms
+    REQUIRE(eventLoop.DrainPosted_());                           // runs both debounce timers' posted callbacks -- completion AND
+                                                                 // documentHighlight (which has no trigger-character gate at all,
+                                                                 // just "did point move" -- see MaybeScheduleDocumentHighlight)
+
+    const std::vector<ned::editor::lsp::Json> requests = ReadLspFrames(server.serverStdinRead, 2);
+    REQUIRE(std::any_of(requests.begin(), requests.end(),
+                        [](const ned::editor::lsp::Json& r) { return r["method"] == "textDocument/completion"; }));
+}
+
+TEST_CASE("Typing '.' schedules an automatic completion request (member-access trigger)", "[BufferView]") {
+    // completion-auto-trigger-gate follow-up: the small hardcoded trigger-
+    // punctuation carve-out (".", ":", ">") alongside plain word characters.
+    Fixture                     fixture;
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_bufferview_auto_trigger_dot_test.txt";
+    ned::text::Buffer&          buffer = fixture.bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("foo");
+    fixture.activeBuffer.Set(buffer);
+
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::LspClient* client = nullptr;
+    FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.SetEventLoop(&eventLoop);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
+    ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+    DrainAllPendingFrames(server.serverStdinRead);
+
+    TypeText(view, ".");
+    std::this_thread::sleep_for(std::chrono::milliseconds(600));
+    REQUIRE(eventLoop.DrainPosted_()); // completion AND documentHighlight, same as the word-character test above
+
+    const std::vector<ned::editor::lsp::Json> requests = ReadLspFrames(server.serverStdinRead, 2);
+    REQUIRE(std::any_of(requests.begin(), requests.end(),
+                        [](const ned::editor::lsp::Json& r) { return r["method"] == "textDocument/completion"; }));
+}
+
+TEST_CASE("Typing a statement-ending character like ';' does not schedule an automatic completion request",
+          "[BufferView]") {
+    // completion-auto-trigger-gate follow-up: the actual bug fix -- found
+    // live, typing ";" was popping the completion popup because nothing
+    // gated on *which* character was just typed, only the syntax class
+    // already at point (see MaybeScheduleAutoCompletion's own doc comment).
+    Fixture                     fixture;
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_bufferview_auto_trigger_semicolon_test.txt";
+    ned::text::Buffer&          buffer = fixture.bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("foo()");
+    fixture.activeBuffer.Set(buffer);
+
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::LspClient* client = nullptr;
+    FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.SetEventLoop(&eventLoop);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    CaptureCompletion(view, fixture.completion);
+
+    ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
+    ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+    DrainAllPendingFrames(server.serverStdinRead);
+
+    TypeText(view, ";");
+    std::this_thread::sleep_for(std::chrono::milliseconds(600)); // past the debounce, if it had (wrongly) armed
+    REQUIRE(eventLoop.DrainPosted_());                           // documentHighlight's own debounce still fires -- it has no
+                                                                 // trigger-character gate at all, just "did point move" (typing
+                                                                 // ";" always does) -- only completion's own request must be absent
+
+    REQUIRE(buffer.Text() == "foo();");
+    const std::vector<ned::editor::lsp::Json> requests = ReadLspFrames(server.serverStdinRead, 1);
+    REQUIRE_FALSE(std::any_of(requests.begin(), requests.end(),
+                              [](const ned::editor::lsp::Json& r) { return r["method"] == "textDocument/completion"; }));
+    REQUIRE_FALSE(fixture.completion.has_value());
+}
+
 TEST_CASE("Completion popup hides when point's row scrolls off screen, but the suggestion is retained", "[BufferView]") {
     Fixture                     fixture;
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_bufferview_lsp_complete_scroll_test.txt";

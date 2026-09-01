@@ -675,14 +675,18 @@ namespace {
     // insertText). Deliberately ASCII-only (matches Buffer's own word-motion
     // classification), so the returned [start, point) range is guaranteed
     // single-byte-per-codepoint -- safe to treat as raw bytes.
+    // Factored out of WordPrefixStart below so completion-auto-trigger-gate
+    // follow-up's own trigger check can share the exact same ASCII-only word
+    // definition rather than drifting from it.
+    bool IsWordCodepoint(char32_t codepoint) {
+        return (codepoint < 0x80) && (std::isalnum(static_cast<unsigned char>(codepoint)) != 0 || codepoint == U'_');
+    }
+
     std::size_t WordPrefixStart(const text::ITextStorage& content, std::size_t point) {
         std::size_t start = point;
         while (start > 0) {
-            const std::size_t prior      = content.PreviousCodepointBoundary(start);
-            const auto        decoded    = content.CodepointAt(prior);
-            const bool        isWordChar = (decoded.codepoint < 0x80) &&
-                                           (std::isalnum(static_cast<unsigned char>(decoded.codepoint)) != 0 || decoded.codepoint == U'_');
-            if (!isWordChar) {
+            const std::size_t prior = content.PreviousCodepointBoundary(start);
+            if (!IsWordCodepoint(content.CodepointAt(prior).codepoint)) {
                 break;
             }
             start = prior;
@@ -4686,6 +4690,24 @@ void BufferView::MaybeScheduleAutoCompletion(const editor::KeyChord& chord, std:
     }
     if (chord.Control || chord.Meta || chord.Special != editor::SpecialKey::None) {
         return; // only plain self-insert keystrokes schedule automatic completion
+    }
+    // completion-auto-trigger-gate follow-up: only a word-continuation
+    // keystroke (an identifier the user is actively typing) or a small,
+    // hardcoded set of real completion trigger characters (member access
+    // ".", C++ scope resolution "::"/arrow "->", both ending in one of
+    // ":"/">" ) schedules a request -- everything else (";", ")", "}", ",",
+    // whitespace, ...) is a statement/expression boundary, not a place
+    // completions are useful. Same "small fixed set, not real server-
+    // declared triggerCharacters capability negotiation" precedent
+    // MaybeScheduleSignatureHelp's own "(" / "," gate already establishes
+    // just below -- this codebase has no completionProvider.triggerCharacters
+    // plumbing to consult instead. Found live: typing ";" was popping the
+    // completion popup because clangd (like most servers) happily answers
+    // textDocument/completion with general in-scope symbols even for an
+    // empty/non-identifier prefix -- nothing here previously looked at
+    // *which* character was typed, only the syntax class already at point.
+    if (!IsWordCodepoint(chord.Codepoint) && chord.Codepoint != U'.' && chord.Codepoint != U':' && chord.Codepoint != U'>') {
+        return;
     }
     if (activeBuffer_.Get().ContentGeneration() == generationBefore) {
         return; // nothing actually changed
