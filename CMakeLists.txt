@@ -8,6 +8,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(NED_BUILD_TESTS "Build the ned_tests target" ON)
 option(NED_ENABLE_SANITIZERS "Build with AddressSanitizer/UndefinedBehaviorSanitizer" OFF)
+option(NED_TEST_TERMINAL_INTEGRATION "Include PtyProcessTest.cpp, which forkpty's real shells/processes, in ned_tests" OFF)
 
 # Use ccache automatically when it's on PATH -- this project's FetchContent
 find_program(CCACHE_PROGRAM ccache)
@@ -1004,7 +1005,6 @@ if (NED_BUILD_TESTS)
             Tests/TestRunConfigTest.cpp
             Tests/TestRunnerTest.cpp
             Tests/JanetTestParserTest.cpp
-            Tests/PtyProcessTest.cpp
             Tests/TerminalEmulatorTest.cpp
             Tests/TerminalPanelTest.cpp
             Tests/TreeSitterTest.cpp
@@ -1024,6 +1024,21 @@ if (NED_BUILD_TESTS)
             Tests/VimExCommandTest.cpp
             Tests/VimEngineTest.cpp
     )
+
+    if (NED_TEST_TERMINAL_INTEGRATION)
+        # PtyProcessTest.cpp forkpty's real shells/processes (sh, sleep, ...) --
+        # excluded from the default test run since a real controlling-tty/session
+        # forkpty isn't guaranteed to behave under every sandbox/CI environment.
+        # ProjectSwitchIntegrationTest.cpp calls the real ActivateProjectRoot
+        # against an existing directory, which has no test seam over
+        # TerminalTabLauncher's real terminal detection -- on a real interactive
+        # session (e.g. Konsole with its D-Bus gate enabled) this genuinely opens
+        # a new terminal tab pointed at "/tmp" on every run.
+        # Configure with -DNED_TEST_TERMINAL_INTEGRATION=ON to include both.
+        target_sources(ned_tests PRIVATE
+                Tests/PtyProcessTest.cpp
+                Tests/ProjectSwitchIntegrationTest.cpp)
+    endif()
 
     target_link_libraries(ned_tests PRIVATE ned_lib Catch2::Catch2WithMain)
 
