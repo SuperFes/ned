@@ -747,6 +747,16 @@ namespace {
         editor::lsp::SetLspDiagnosticsDebounceMs(static_cast<int>(milliseconds));
     }
 
+    // sync-debounce follow-up: same "just forward to the process-wide
+    // setter" shape as NedSetLspCompletionDebounce above, for how long
+    // LspManager waits after an edit before actually sending
+    // textDocument/didChange (see LspServerConfig.h's own doc comment for
+    // why this fix exists and why it must stay shorter than the completion
+    // debounce).
+    void NedSetLspSyncDebounce(std::int64_t milliseconds) {
+        editor::lsp::SetLspSyncDebounceMs(static_cast<int>(milliseconds));
+    }
+
     // toolchain-include-paths follow-up: same "just forward to the
     // process-wide setter" shape as NedSetLspCompletionDebounce above.
     void NedSetIncludePathCacheTtlSeconds(std::int64_t seconds) {
@@ -1390,6 +1400,13 @@ void InstallEditorBindings(Environment& env) {
         "buffer before it's actually applied (default 500) -- keeps inline diagnostics from repainting on nearly "
         "every keystroke while typing, settling in only once the server goes quiet for this long. Non-positive "
         "values are clamped to 1.");
+    env.Register<&NedSetLspSyncDebounce>(
+        "ned", "set-lsp-sync-debounce",
+        "Set the delay, in milliseconds, after an edit before ned actually sends textDocument/didChange to a "
+        "buffer's LSP servers (default 150) -- prevents a full-document sync on every single keystroke, which can "
+        "block the UI if a server can't drain its input fast enough. Keep this shorter than "
+        "set-lsp-completion-debounce (default 500) or completion/hover/etc. requests may race ahead of a server "
+        "that doesn't have the latest content yet. Non-positive values are clamped to 1.");
     env.Register<&NedSetIncludePathCacheTtlSeconds>(
         "ned", "set-include-path-cache-ttl-seconds",
         "Set how long (in seconds) a compiler-derived default include-path result stays cached before "

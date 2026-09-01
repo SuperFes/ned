@@ -803,6 +803,24 @@ class LspManager {
         std::size_t lastSyncedGeneration = 0;
         int         version              = 0;
         bool        opened               = false;
+
+        // sync-debounce follow-up: the content generation a currently-armed
+        // syncDebounceTimers_ entry targets, distinct from
+        // lastSyncedGeneration (what the server has actually been told
+        // about). SyncToServer -- the buffer.Text()-based wrapper SyncBuffer
+        // calls for the primary/prose connections, not SyncTextToServer
+        // itself, which embedded-document sync also calls directly and
+        // stays fully synchronous/undebounced -- only (re)arms the timer
+        // when this doesn't already match buffer.ContentGeneration(); without
+        // that check, a Paint() call that runs for any *other* reason during
+        // the debounce window (another feature's own debounce firing, a
+        // mouse event, ...) would keep resetting the clock and the sync
+        // would never actually fire. Deliberately never reset back to
+        // nullopt after firing -- ContentGeneration() is monotonic, so a
+        // stale match can only recur if no further edit has happened, in
+        // which case "nothing new to (re)arm" is exactly the right call
+        // anyway.
+        std::optional<std::size_t> pendingSyncGeneration;
     };
 
     // prose-checking follow-up: SyncBuffer's actual body, generalized so it
@@ -1048,6 +1066,17 @@ class LspManager {
     // cancels) a buffer's entry before it can fire against a Buffer* that
     // may no longer be valid.
     std::unordered_map<text::Buffer*, ned::ui::DeadlineTimer> diagnosticsDebounceTimers_;
+
+    // sync-debounce follow-up: one debounce timer per (buffer, serverKey)
+    // with a pending textDocument/didChange -- see BufferSyncState::
+    // pendingSyncGeneration's own doc comment for why SyncTextToServer only
+    // (re)arms an entry when a genuinely new edit has landed, not on every
+    // Paint()-driven re-entry. Nested the same way bufferState_ itself is
+    // (per buffer, per serverKey) since primary and prose sync
+    // independently. NotifyBufferClosed erases a buffer's whole entry
+    // before any of its timers could fire against a dead buffer -- same
+    // rationale as diagnosticsDebounceTimers_ just above.
+    std::unordered_map<text::Buffer*, std::unordered_map<std::string, ned::ui::DeadlineTimer>> syncDebounceTimers_;
 
     // error-visibility follow-up. A process-lifetime latch, keyed by
     // language, on the exact argv that last failed to spawn -- lets

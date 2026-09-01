@@ -20,6 +20,9 @@ namespace {
     std::mutex g_diagnosticsDebounceMutex;
     int        g_diagnosticsDebounceMs = 500;
 
+    std::mutex g_syncDebounceMutex;
+    int        g_syncDebounceMs = 150;
+
     std::mutex g_signatureHelpAutoTriggerMutex;
     bool       g_signatureHelpAutoTriggerEnabled = true;
 
@@ -90,6 +93,16 @@ void SetLspDiagnosticsDebounceMs(int milliseconds) {
 int LspDiagnosticsDebounceMs() {
     const std::lock_guard<std::mutex> lock(g_diagnosticsDebounceMutex);
     return g_diagnosticsDebounceMs;
+}
+
+void SetLspSyncDebounceMs(int milliseconds) {
+    const std::lock_guard<std::mutex> lock(g_syncDebounceMutex);
+    g_syncDebounceMs = (milliseconds > 0) ? milliseconds : 1;
+}
+
+int LspSyncDebounceMs() {
+    const std::lock_guard<std::mutex> lock(g_syncDebounceMutex);
+    return g_syncDebounceMs;
 }
 
 void SetLspSignatureHelpAutoTriggerEnabled(bool enabled) {

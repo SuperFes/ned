@@ -663,15 +663,48 @@ void LspManager::SyncToServer(text::Buffer& buffer, const std::string& serverKey
     // hang (see this file's own history). Duplicating the same check here,
     // ahead of buffer.Text(), is what actually makes the "second call is a
     // no-op" claim true.
+    BufferSyncState* existingState = nullptr;
     if (const auto bufferIt = bufferState_.find(&buffer); bufferIt != bufferState_.end()) {
         if (const auto stateIt = bufferIt->second.find(serverKey); stateIt != bufferIt->second.end()) {
-            if (stateIt->second.opened && stateIt->second.lastSyncedGeneration == buffer.ContentGeneration()) {
+            existingState = &stateIt->second;
+            if (existingState->opened && existingState->lastSyncedGeneration == buffer.ContentGeneration()) {
                 return; // nothing changed since the last sync
             }
         }
     }
 
-    SyncTextToServer(buffer, serverKey, languageId, buffer.Text(), root);
+    if (!existingState || !existingState->opened) {
+        // Not yet opened -- didOpen must stay immediate, never debounced (a
+        // newly visible buffer needs diagnostics/highlighting right away,
+        // not after an arbitrary delay); SyncTextToServer's own
+        // !state.opened branch is what actually sends it.
+        SyncTextToServer(buffer, serverKey, languageId, buffer.Text(), root);
+        return;
+    }
+
+    // sync-debounce follow-up: already open, content changed -- debounce
+    // the actual textDocument/didChange send instead of materializing
+    // buffer.Text() and sending synchronously right here. A real,
+    // gdb-confirmed live freeze traced to exactly this send happening on
+    // every single keystroke (see LspServerConfig.h's LspSyncDebounceMs
+    // doc comment): the main thread blocked inside ChildProcess::WriteAll,
+    // stuck writing a full-document sync to a server whose stdin pipe
+    // couldn't drain fast enough. See BufferSyncState::pendingSyncGeneration's
+    // own doc comment for why this guards against re-arming on every
+    // Paint(), not just on a genuine new edit.
+    if (existingState->pendingSyncGeneration && *existingState->pendingSyncGeneration == buffer.ContentGeneration()) {
+        return; // already debounced for this exact generation -- let it run its course
+    }
+    existingState->pendingSyncGeneration = buffer.ContentGeneration();
+
+    text::Buffer* const bufferPtr = &buffer;
+    syncDebounceTimers_[&buffer][serverKey].Arm(
+        eventLoop_, std::chrono::milliseconds(LspSyncDebounceMs()), [this, bufferPtr, serverKey, languageId, root] {
+            // Re-reads buffer.Text() fresh here, not at arm time -- more
+            // edits may have landed during the debounce window, and this
+            // must send the *latest* content, not a stale snapshot.
+            SyncTextToServer(*bufferPtr, serverKey, languageId, bufferPtr->Text(), root);
+        });
 }
 
 void LspManager::SyncTextToServer(text::Buffer& buffer, const std::string& serverKey, const std::string& languageId,
@@ -969,6 +1002,7 @@ void LspManager::NotifyBufferClosed(text::Buffer& buffer) {
     }
     diagnosticsBySource_.erase(&buffer);
     diagnosticsDebounceTimers_.erase(&buffer); // cancels a pending timer before it can fire against a dead buffer
+    syncDebounceTimers_.erase(&buffer);        // sync-debounce follow-up: same rationale, for a pending didChange send
     primaryServerKey_.erase(&buffer);
     bufferResolvedRoot_.erase(&buffer); // LSP multi-root follow-up
     embeddedServerKeys_.erase(&buffer);
@@ -1196,6 +1230,14 @@ void LspManager::RequestSemanticTokensFull(text::Buffer& buffer, const std::stri
     if (!state || !state->opened) {
         return;
     }
+    // sync-debounce follow-up: the server may not have this generation's
+    // content yet -- SyncToServer's own didChange send is now debounced
+    // (LspSyncDebounceMs), so a Paint() can reach here before it's landed.
+    // Retried on the next Paint() once it does (see SyncToServer's own doc
+    // comment for why that's guaranteed to happen without extra plumbing).
+    if (state->lastSyncedGeneration != buffer.ContentGeneration()) {
+        return;
+    }
     if (const auto it = semanticTokensRequestedGeneration_.find(&buffer);
         it != semanticTokensRequestedGeneration_.end() && it->second == buffer.ContentGeneration()) {
         return; // already requested for this exact content -- a cursor-blink/scroll-only repaint, not a real change
@@ -1278,6 +1320,11 @@ void LspManager::RequestInlayHints(text::Buffer& buffer, std::size_t viewportSta
     if (!state || !state->opened) {
         return;
     }
+    // sync-debounce follow-up: see RequestSemanticTokensFull's own doc
+    // comment for why this guard exists now.
+    if (state->lastSyncedGeneration != buffer.ContentGeneration()) {
+        return;
+    }
     const auto requestedRange = std::make_tuple(buffer.ContentGeneration(), viewportStartByte, viewportEndByte);
     if (const auto it = inlayHintsRequestedRange_.find(&buffer); it != inlayHintsRequestedRange_.end() && it->second == requestedRange) {
         return; // already requested for this exact (content, viewport) -- a cursor-blink/scroll-into-the-same-view repaint
@@ -1344,6 +1391,11 @@ void LspManager::RequestCodeLenses(text::Buffer& buffer, const std::string& serv
     }
     BufferSyncState* state = ResolveSyncState(buffer, serverKey);
     if (!state || !state->opened) {
+        return;
+    }
+    // sync-debounce follow-up: see RequestSemanticTokensFull's own doc
+    // comment for why this guard exists now.
+    if (state->lastSyncedGeneration != buffer.ContentGeneration()) {
         return;
     }
     if (const auto it = codeLensRequestedGeneration_.find(&buffer);
