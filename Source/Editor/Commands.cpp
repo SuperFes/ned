@@ -2278,6 +2278,14 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           context.interactiveRequest = InteractiveRequest::LspQuickFix;
                       });
 
+    // codeLens follow-up: unbound by default, same as expand-snippet --
+    // M-x only. See BufferView::RequestCodeLensAtPoint's own doc comment
+    // for the "only the first lens on the line" v1 scope cut.
+    registry.Register("lsp-run-code-lens-at-point", "Run the code lens at point, resolving it first if needed.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::LspRunCodeLensAtPoint;
+                      });
+
     // inline-diagnostics follow-up: a plain process-wide toggle, actable
     // right here (no BufferView state involved -- the very next Paint()
     // reads the flag fresh), so no InteractiveRequest is needed at all.

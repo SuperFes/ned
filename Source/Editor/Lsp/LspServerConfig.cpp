@@ -26,6 +26,21 @@ namespace {
     std::mutex g_formatOnSaveMutex;
     bool       g_formatOnSaveEnabled = false;
 
+    std::mutex g_onTypeFormattingMutex;
+    bool       g_onTypeFormattingEnabled = false;
+
+    std::mutex g_pullDiagnosticsMutex;
+    bool       g_pullDiagnosticsEnabled = false;
+
+    std::mutex g_semanticHighlightingMutex;
+    bool       g_semanticHighlightingEnabled = true;
+
+    std::mutex g_inlayHintsMutex;
+    bool       g_inlayHintsEnabled = true;
+
+    std::mutex g_codeLensMutex;
+    bool       g_codeLensEnabled = true;
+
 } // namespace
 
 void SetLspServerCommand(const std::string& language, std::vector<std::string> argv) {
@@ -95,6 +110,56 @@ void SetLspFormatOnSaveEnabled(bool enabled) {
 bool LspFormatOnSaveEnabled() {
     const std::lock_guard<std::mutex> lock(g_formatOnSaveMutex);
     return g_formatOnSaveEnabled;
+}
+
+void SetLspOnTypeFormattingEnabled(bool enabled) {
+    const std::lock_guard<std::mutex> lock(g_onTypeFormattingMutex);
+    g_onTypeFormattingEnabled = enabled;
+}
+
+bool LspOnTypeFormattingEnabled() {
+    const std::lock_guard<std::mutex> lock(g_onTypeFormattingMutex);
+    return g_onTypeFormattingEnabled;
+}
+
+void SetLspPullDiagnosticsEnabled(bool enabled) {
+    const std::lock_guard<std::mutex> lock(g_pullDiagnosticsMutex);
+    g_pullDiagnosticsEnabled = enabled;
+}
+
+bool LspPullDiagnosticsEnabled() {
+    const std::lock_guard<std::mutex> lock(g_pullDiagnosticsMutex);
+    return g_pullDiagnosticsEnabled;
+}
+
+void SetLspSemanticHighlightingEnabled(bool enabled) {
+    const std::lock_guard<std::mutex> lock(g_semanticHighlightingMutex);
+    g_semanticHighlightingEnabled = enabled;
+}
+
+bool LspSemanticHighlightingEnabled() {
+    const std::lock_guard<std::mutex> lock(g_semanticHighlightingMutex);
+    return g_semanticHighlightingEnabled;
+}
+
+void SetLspInlayHintsEnabled(bool enabled) {
+    const std::lock_guard<std::mutex> lock(g_inlayHintsMutex);
+    g_inlayHintsEnabled = enabled;
+}
+
+bool LspInlayHintsEnabled() {
+    const std::lock_guard<std::mutex> lock(g_inlayHintsMutex);
+    return g_inlayHintsEnabled;
+}
+
+void SetLspCodeLensEnabled(bool enabled) {
+    const std::lock_guard<std::mutex> lock(g_codeLensMutex);
+    g_codeLensEnabled = enabled;
+}
+
+bool LspCodeLensEnabled() {
+    const std::lock_guard<std::mutex> lock(g_codeLensMutex);
+    return g_codeLensEnabled;
 }
 
 } // namespace ned::editor::lsp

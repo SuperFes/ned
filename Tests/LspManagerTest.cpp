@@ -22,12 +22,15 @@
 #include "Text/BufferList.h"
 #include "UI/EventLoop.h"
 
+using ned::editor::HighlightSpan;
+using ned::editor::SyntaxClass;
 using ned::editor::lsp::CodeAction;
 using ned::editor::lsp::CompletionItem;
 using ned::editor::lsp::Json;
 using ned::editor::lsp::kProseLanguageKey;
 using ned::editor::lsp::LspClient;
 using ned::editor::lsp::LspManager;
+using ned::editor::lsp::SemanticTokensLegend;
 using ned::editor::lsp::Transport;
 using ned::text::Buffer;
 using ned::text::BufferList;
@@ -2106,6 +2109,328 @@ TEST_CASE("A second publish from one source replaces only that source's own diag
     REQUIRE(sawSecondError);
     REQUIRE_FALSE(sawFirstError); // primary's own stale diagnostic is gone
     REQUIRE(sawTypo);             // prose's diagnostic from before is untouched
+}
+
+namespace {
+// pull-diagnostics follow-up: same RAII shape as this codebase's other
+// opt-in-toggle test guards (e.g. BufferViewTest.cpp's
+// LspFormatOnSaveGuard).
+struct PullDiagnosticsEnabledGuard {
+    PullDiagnosticsEnabledGuard() {
+        ned::editor::lsp::SetLspPullDiagnosticsEnabled(true);
+    }
+    ~PullDiagnosticsEnabledGuard() {
+        ned::editor::lsp::SetLspPullDiagnosticsEnabled(false);
+    }
+};
+} // namespace
+
+TEST_CASE("A didOpen sync sends textDocument/diagnostic when lsp-pull-diagnostics is enabled, and a full report "
+          "lands in Buffer::Diagnostics()",
+          "[Lsp]") {
+    const PullDiagnosticsEnabledGuard guard;
+    BufferList                        bufferList;
+    ned::ui::EventLoop                eventLoop;
+    LspManager                        manager(bufferList, eventLoop);
+    const std::filesystem::path       path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-pull-diagnostics-test.txt";
+    Buffer&                           buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("bad code");
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+
+    // didOpen and the pull-diagnostics request are sent back-to-back,
+    // synchronously -- both can land in the same read() (ReadRawFrame's own
+    // one-frame-per-call assumption breaks here, same as ParseAllFrames'
+    // own header comment describes for LspManager::Shutdown's frame pair).
+    const std::string raw    = ReadRawFramesUntil(server.serverStdinRead, 2);
+    const auto        frames = ParseAllFrames(raw);
+    REQUIRE(frames.size() == 2);
+    REQUIRE(frames[0]["method"] == "textDocument/didOpen");
+    REQUIRE(frames[1]["method"] == "textDocument/diagnostic");
+    REQUIRE(frames[1]["params"]["textDocument"]["uri"] == "file://" + path.string());
+
+    const auto response = Json{
+        {"jsonrpc", "2.0"},
+        {"id", frames[1]["id"]},
+        {"result", {{"kind", "full"},
+                    {"items", Json::array({{{"range", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 3}}}}},
+                                            {"severity", 1},
+                                            {"message", "pulled error"}}})}}},
+    };
+    client->DispatchFrame(response.dump());
+
+    REQUIRE(buffer.Diagnostics().size() == 1);
+    REQUIRE(buffer.Diagnostics()[0].message == "pulled error");
+}
+
+TEST_CASE("A server erroring on textDocument/diagnostic is never asked again for that connection's lifetime",
+          "[Lsp]") {
+    const PullDiagnosticsEnabledGuard guard;
+    BufferList                        bufferList;
+    ned::ui::EventLoop                eventLoop;
+    LspManager                        manager(bufferList, eventLoop);
+    const std::filesystem::path       path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-pull-diagnostics-unsupported-test.txt";
+    Buffer&                           buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("a");
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+
+    // didOpen and the pull-diagnostics request land back-to-back in the
+    // same read() -- see the sibling success-case test's own comment.
+    const std::string raw    = ReadRawFramesUntil(server.serverStdinRead, 2);
+    const auto        frames = ParseAllFrames(raw);
+    REQUIRE(frames.size() == 2);
+    REQUIRE(frames[1]["method"] == "textDocument/diagnostic");
+    client->DispatchFrame(
+        Json{{"jsonrpc", "2.0"}, {"id", frames[1]["id"]}, {"error", {{"code", -32601}, {"message", "method not found"}}}}.dump());
+
+    // A second content change re-syncs (didChange) but must not send a
+    // second textDocument/diagnostic -- only NoFrameArrives can confirm
+    // this safely (see its own doc comment: nothing else is queued to read).
+    buffer.InsertAtPoint("b");
+    manager.SyncBuffer(buffer, "test-lang");
+    const std::string didChange = ReadRawFrame(server.serverStdinRead);
+    REQUIRE(Json::parse(didChange.substr(didChange.find("\r\n\r\n") + 4))["method"] == "textDocument/didChange");
+    REQUIRE(NoFrameArrives(server.serverStdinRead));
+}
+
+TEST_CASE("No textDocument/diagnostic request is sent when lsp-pull-diagnostics is disabled (the default)", "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-pull-diagnostics-disabled-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("bad code");
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen -- nothing else was ever queued behind it
+    REQUIRE(NoFrameArrives(server.serverStdinRead));
+}
+
+TEST_CASE("RequestSemanticTokensFull sends a request when a legend is set and applies decoded, byte-resolved spans",
+          "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-semantic-tokens-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("int x = 1;");
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SetSemanticTokensLegendForTesting(
+        "test-lang", SemanticTokensLegend{.tokenTypes = {"keyword", "variable", "unknown"}, .tokenModifiers = {}});
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    REQUIRE(manager.SemanticTokensGeneration(buffer) == 0);
+    manager.RequestSemanticTokensFull(buffer, "test-lang");
+    const std::string raw     = ReadRawFrame(server.serverStdinRead);
+    const auto        request = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(request["method"] == "textDocument/semanticTokens/full");
+
+    // "int" (keyword, type index 0) at [0,3), "x" (variable, type index 1) at [4,5) -- deltaStartChar relative
+    // since deltaLine is 0. "unknown" (type index 2 -- present in the legend but unmapped, see
+    // SyntaxClassForSemanticTokenType) at [6,7) must be dropped, not force-fit onto a class.
+    const auto response = Json{
+        {"jsonrpc", "2.0"},
+        {"id", RequestIdFromFrame(raw)},
+        {"result", {{"data", Json::array({0, 0, 3, 0, 0, 0, 4, 1, 1, 0, 0, 2, 1, 2, 0})}}},
+    };
+    client->DispatchFrame(response.dump());
+
+    REQUIRE(manager.SemanticTokensGeneration(buffer) == 1);
+    const std::vector<HighlightSpan>& spans = manager.SemanticTokenSpans(buffer);
+    REQUIRE(spans.size() == 2);
+    REQUIRE(spans[0].startByte == 0);
+    REQUIRE(spans[0].endByte == 3);
+    REQUIRE(spans[0].syntaxClass == SyntaxClass::Keyword);
+    REQUIRE(spans[1].startByte == 4);
+    REQUIRE(spans[1].endByte == 5);
+    REQUIRE(spans[1].syntaxClass == SyntaxClass::Variable);
+}
+
+TEST_CASE("RequestSemanticTokensFull sends nothing when the server never advertised a legend", "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-semantic-tokens-no-legend-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("int x = 1;");
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen -- nothing else was ever queued behind it
+
+    manager.RequestSemanticTokensFull(buffer, "test-lang");
+    REQUIRE(NoFrameArrives(server.serverStdinRead));
+    REQUIRE(manager.SemanticTokenSpans(buffer).empty());
+}
+
+TEST_CASE("RequestSemanticTokensFull does not resend for unchanged content", "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-semantic-tokens-dedup-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("int x = 1;");
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SetSemanticTokensLegendForTesting("test-lang", SemanticTokensLegend{.tokenTypes = {"keyword"}, .tokenModifiers = {}});
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    manager.RequestSemanticTokensFull(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // the one real request
+
+    // Called again with no intervening edit -- BufferView calls this once
+    // per Paint(), and a cursor-blink/scroll-only repaint must not resend.
+    manager.RequestSemanticTokensFull(buffer, "test-lang");
+    REQUIRE(NoFrameArrives(server.serverStdinRead));
+}
+
+TEST_CASE("RequestSemanticTokensFull sends nothing when semantic highlighting is disabled", "[Lsp]") {
+    ned::editor::lsp::SetLspSemanticHighlightingEnabled(false);
+    struct RestoreGuard {
+        ~RestoreGuard() {
+            ned::editor::lsp::SetLspSemanticHighlightingEnabled(true);
+        }
+    } restore;
+
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-semantic-tokens-disabled-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("int x = 1;");
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SetSemanticTokensLegendForTesting("test-lang", SemanticTokensLegend{.tokenTypes = {"keyword"}, .tokenModifiers = {}});
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    manager.RequestSemanticTokensFull(buffer, "test-lang");
+    REQUIRE(NoFrameArrives(server.serverStdinRead));
+}
+
+TEST_CASE("RequestInlayHints sends the viewport range and applies byte-resolved, sorted hints", "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-inlay-hints-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("int x = 1;");
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    manager.RequestInlayHints(buffer, 0, buffer.Size(), "test-lang");
+    const std::string raw     = ReadRawFrame(server.serverStdinRead);
+    const auto        request = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(request["method"] == "textDocument/inlayHint");
+    REQUIRE(request["params"]["range"]["start"]["character"] == 0);
+
+    // Two hints, sent out of order -- confirms InlayHintSpans sorts by
+    // byteOffset rather than trusting response order.
+    const auto response = Json{
+        {"jsonrpc", "2.0"},
+        {"id", RequestIdFromFrame(raw)},
+        {"result", Json::array({{{"position", {{"line", 0}, {"character", 9}}}, {"label", ": int"}},
+                                {{"position", {{"line", 0}, {"character", 3}}}, {"label", ": int"}}})},
+    };
+    client->DispatchFrame(response.dump());
+
+    const std::vector<LspManager::ResolvedInlayHint>& hints = manager.InlayHintSpans(buffer);
+    REQUIRE(hints.size() == 2);
+    REQUIRE(hints[0].byteOffset == 3);
+    REQUIRE(hints[1].byteOffset == 9);
+}
+
+TEST_CASE("RequestInlayHints does not resend for the same (content, viewport), but does resend for a different "
+          "viewport",
+          "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-inlay-hints-dedup-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("int x = 1;\nint y = 2;\n");
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    manager.RequestInlayHints(buffer, 0, 11, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // the one real request for this range
+
+    manager.RequestInlayHints(buffer, 0, 11, "test-lang"); // same range, no edit -- a repaint, not a real change
+    REQUIRE(NoFrameArrives(server.serverStdinRead));
+
+    manager.RequestInlayHints(buffer, 11, 22, "test-lang"); // scrolled to reveal new content
+    const std::string raw = ReadRawFrame(server.serverStdinRead);
+    REQUIRE(Json::parse(raw.substr(raw.find("\r\n\r\n") + 4))["method"] == "textDocument/inlayHint");
+}
+
+TEST_CASE("A server erroring on textDocument/inlayHint is never asked again for that connection's lifetime", "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-inlay-hints-unsupported-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("a");
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    manager.RequestInlayHints(buffer, 0, 1, "test-lang");
+    const std::string raw = ReadRawFrame(server.serverStdinRead);
+    client->DispatchFrame(
+        Json{{"jsonrpc", "2.0"}, {"id", RequestIdFromFrame(raw)}, {"error", {{"code", -32601}, {"message", "method not found"}}}}.dump());
+
+    buffer.InsertAtPoint("b");
+    manager.SyncBuffer(buffer, "test-lang");
+    const std::string didChange = ReadRawFrame(server.serverStdinRead);
+    REQUIRE(Json::parse(didChange.substr(didChange.find("\r\n\r\n") + 4))["method"] == "textDocument/didChange");
+    manager.RequestInlayHints(buffer, 0, 2, "test-lang"); // different viewport too -- would resend if not latched
+    REQUIRE(NoFrameArrives(server.serverStdinRead));
+}
+
+TEST_CASE("No textDocument/inlayHint request is sent when lsp-inlay-hints is disabled", "[Lsp]") {
+    ned::editor::lsp::SetLspInlayHintsEnabled(false);
+    struct RestoreGuard {
+        ~RestoreGuard() {
+            ned::editor::lsp::SetLspInlayHintsEnabled(true);
+        }
+    } restore;
+
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-inlay-hints-disabled-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("int x = 1;");
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    manager.RequestInlayHints(buffer, 0, buffer.Size(), "test-lang");
+    REQUIRE(NoFrameArrives(server.serverStdinRead));
 }
 
 TEST_CASE("NotifyBufferClosed sends didClose to every server the buffer was opened with", "[Lsp]") {

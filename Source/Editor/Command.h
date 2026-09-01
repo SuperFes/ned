@@ -286,6 +286,13 @@ enum class InteractiveRequest { None,
                                 // (undo is the safety net), falling back to LspCodeAction's own
                                 // select session only when the choice is genuinely ambiguous.
                                 LspQuickFix,
+                                // codeLens follow-up: same one-shot shape as LspQuickFix just
+                                // above -- BufferView::RequestCodeLensAtPoint runs the first
+                                // code lens on point's own line (resolving it first via
+                                // codeLens/resolve if needed), no selection session at all
+                                // (see that method's own doc comment for the deliberate v1
+                                // "only the first lens" simplification).
+                                LspRunCodeLensAtPoint,
                                 // error-visibility follow-up: another one-shot direct action,
                                 // same shape as ProjectAgenda -- BufferView finds-or-creates
                                 // the shared *lsp log* buffer (lsp::kLspLogBufferName) and

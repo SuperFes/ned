@@ -973,6 +973,19 @@ class BufferView : public Widget {
     // only when no selector produces exactly one candidate.
     void RequestQuickFixAtPoint();
 
+    // codeLens follow-up. Runs the first code lens (LspManager::
+    // CodeLensSpans, sorted by startByte) whose range covers point's own
+    // line -- a deliberate v1 simplification, not a full disambiguation
+    // picker: a line carrying more than one lens only ever runs the
+    // first, the same "curated v1 subset" precedent this codebase already
+    // has elsewhere (Org priorities capped at A-C). Resolves via
+    // codeLens/resolve first when the lens has no command yet
+    // (!hasCommand), then always finishes with ExecuteCommand
+    // (workspace/executeCommand) -- the same two-step
+    // resolve-then-run shape RequestQuickFixAtPoint already uses for code
+    // actions.
+    void RequestCodeLensAtPoint();
+
     // declaration/typeDefinition/implementation follow-up: which LSP
     // location-request RequestDefinitionAtPoint sends -- the request/
     // response/jump/select-list handling below is identical for all four
@@ -2151,6 +2164,16 @@ class BufferView : public Widget {
     // has.
     std::size_t highlightCacheClassGeneration_ = 0;
 
+    // semanticTokens follow-up: LspManager::SemanticTokensGeneration(buffer)
+    // at the moment this cache entry was last built -- a third staleness
+    // check alongside content/class generation, since an LSP response can
+    // arrive (and change what should render) with no buffer edit at all.
+    // 0 (LspManager's own "never had a response applied" value) when
+    // lspManager_ is unset, so every existing test/construction path that
+    // never wires it behaves exactly as before -- see LspManager-sourced
+    // spans' own appending comment at this cache's build site.
+    std::size_t highlightCacheSemanticTokensGeneration_ = 0;
+
     // per-buffer-highlight-cache follow-up: the three fields just above only
     // remember the *most recently painted* buffer -- switching away and
     // back (A -> B -> A) was a guaranteed miss even though nothing about A
@@ -2168,8 +2191,9 @@ class BufferView : public Widget {
     // every real close already goes through) so a closed Buffer* never
     // lingers as a cache key indefinitely.
     struct HighlightCacheEntry {
-        std::size_t                        contentGeneration = 0;
-        std::size_t                        classGeneration   = 0;
+        std::size_t                        contentGeneration        = 0;
+        std::size_t                        classGeneration          = 0;
+        std::size_t                        semanticTokensGeneration = 0;
         std::string                        modeName;
         std::vector<editor::HighlightSpan> spans;
     };
@@ -2602,6 +2626,24 @@ class BufferView : public Widget {
     // of view), then the message, both in the severity's own theme color.
     void PaintInlineDiagnosticRow(Canvas& c, int row, std::size_t line, std::size_t gutterWidth);
 
+    // codeLens follow-up. AnnotationRowsForLine's leading (above-the-line)
+    // sibling -- today only a trailing row exists (the diagnostic one
+    // above); a code lens reads more naturally as a heading over the code
+    // it describes, matching real editors' own convention for this
+    // feature. Reads lspManager_->CodeLensSpans(buffer) fresh on each call
+    // (a plain small-vector scan, cheap enough that no BufferView-side
+    // cache/generation-tracking was worth adding -- see this method's own
+    // definition comment for why that's a deliberate deviation from
+    // AnnotationRowsForLine's own EnsureInlineDiagnosticCache precedent).
+    // 0 while editor::lsp::LspCodeLensEnabled() is off or lspManager_ is
+    // unset.
+    [[nodiscard]] std::size_t LeadingAnnotationRowsForLine(std::size_t line) const;
+    // Paints one leading row for `line` at screen row `row`: every lens
+    // whose range starts on `line`, titles joined by " | ", dim italic
+    // text -- no carets (unlike PaintInlineDiagnosticRow, a lens isn't
+    // anchored to a sub-line span, just the line as a whole).
+    void PaintCodeLensRow(Canvas& c, int row, std::size_t line, std::size_t gutterWidth) const;
+
     // prose-diagnostic-callout follow-up: the prose/spell/grammar checker's
     // own diagnostics (text::Buffer::Diagnostic::Origin::Prose -- harper-ls
     // via Editor/Lsp/ProseChecker.h, see LspManager::kProseLanguageKey) get
@@ -2719,6 +2761,17 @@ class BufferView : public Widget {
 
     void MaybeScheduleSignatureHelp(const editor::KeyChord& chord, std::size_t generationBefore);
     void RequestSignatureHelpAtPoint();
+
+    // on-type-formatting follow-up. No debounce timer -- unlike completion/
+    // signature-help this only fires once per matching trigger keystroke,
+    // not repeatedly while typing, so the request goes out immediately.
+    // Still needs the same staleness guard those two use: the LSP round
+    // trip can't complete synchronously within the keystroke's own
+    // dispatch, so by the time the response arrives the buffer/point may
+    // have moved on.
+    std::size_t onTypeFormattingRequestGeneration_ = 0;
+
+    void MaybeScheduleOnTypeFormatting(const editor::KeyChord& chord, std::size_t generationBefore);
 
     // lsp-format-on-save follow-up. Mirrors Commands.cpp's saveBufferBody
     // shape (format step, backup, Buffer::Save, autosave cleanup, status

@@ -697,6 +697,36 @@ namespace {
         editor::lsp::SetLspFormatOnSaveEnabled(enabled);
     }
 
+    // on-type-formatting follow-up: same "just forward to the process-wide
+    // setter" shape as NedSetLspFormatOnSave above.
+    void NedSetLspOnTypeFormatting(bool enabled) {
+        editor::lsp::SetLspOnTypeFormattingEnabled(enabled);
+    }
+
+    // pull-diagnostics follow-up: same "just forward to the process-wide
+    // setter" shape as NedSetLspFormatOnSave above.
+    void NedSetLspPullDiagnostics(bool enabled) {
+        editor::lsp::SetLspPullDiagnosticsEnabled(enabled);
+    }
+
+    // semanticTokens follow-up: same "just forward to the process-wide
+    // setter" shape as NedSetLspSignatureHelpAutoTrigger above.
+    void NedSetLspSemanticHighlighting(bool enabled) {
+        editor::lsp::SetLspSemanticHighlightingEnabled(enabled);
+    }
+
+    // inlayHint follow-up: same "just forward to the process-wide setter"
+    // shape as NedSetLspSemanticHighlighting above.
+    void NedSetLspInlayHints(bool enabled) {
+        editor::lsp::SetLspInlayHintsEnabled(enabled);
+    }
+
+    // codeLens follow-up: same "just forward to the process-wide setter"
+    // shape as NedSetLspInlayHints above.
+    void NedSetLspCodeLens(bool enabled) {
+        editor::lsp::SetLspCodeLensEnabled(enabled);
+    }
+
     // diagnostics-debounce follow-up: same "just forward to the process-wide
     // setter" shape as NedSetLspCompletionDebounce, for how long a buffer's
     // inline diagnostics wait after the server's most recent publish before
@@ -1305,6 +1335,32 @@ void InstallEditorBindings(Environment& env) {
         "ned", "set-lsp-format-on-save",
         "Enable or disable formatting the buffer via the language server on save (default false). Ignored "
         "whenever ned/set-format-command has an external formatter configured -- that always takes precedence.");
+    env.Register<&NedSetLspOnTypeFormatting>(
+        "ned", "set-lsp-on-type-formatting",
+        "Enable or disable automatically formatting via the language server after typing one of its declared "
+        "trigger characters (e.g. a closing brace or newline; default false). A server that doesn't advertise "
+        "documentOnTypeFormattingProvider never triggers regardless of this setting.");
+    env.Register<&NedSetLspPullDiagnostics>(
+        "ned", "set-lsp-pull-diagnostics",
+        "Enable or disable requesting diagnostics via textDocument/diagnostic on every content sync (default "
+        "false). Only useful for a server that never sends its own publishDiagnostics notifications -- a server "
+        "that proves it doesn't support pull either is never asked again for that connection's lifetime.");
+    env.Register<&NedSetLspSemanticHighlighting>(
+        "ned", "set-lsp-semantic-highlighting",
+        "Enable or disable server-informed syntax highlighting (textDocument/semanticTokens/full), layered on top "
+        "of tree-sitter's own highlighting rather than replacing it (default true). A server with no "
+        "semanticTokensProvider legend never sends a request regardless of this setting.");
+    env.Register<&NedSetLspInlayHints>(
+        "ned", "set-lsp-inlay-hints",
+        "Enable or disable inline parameter-name/type hints (textDocument/inlayHint), rendered as dim virtual text "
+        "the language server supplies (default true). A server that proves it doesn't support the method is never "
+        "asked again for that connection's lifetime.");
+    env.Register<&NedSetLspCodeLens>(
+        "ned", "set-lsp-code-lens",
+        "Enable or disable code lens annotations (textDocument/codeLens), rendered as a dim line above the code "
+        "they annotate (default true). Run the lens at point with lsp-run-code-lens-at-point (M-x, unbound by "
+        "default). A server that proves it doesn't support the method is never asked again for that connection's "
+        "lifetime.");
     env.Register<&NedSetLspDiagnosticsDebounce>(
         "ned", "set-lsp-diagnostics-debounce",
         "Set the delay, in milliseconds, after the LSP server's most recently received diagnostics publish for a "

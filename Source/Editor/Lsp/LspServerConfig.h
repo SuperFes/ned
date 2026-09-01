@@ -85,6 +85,43 @@ void              SetLspSignatureHelpAutoTriggerEnabled(bool enabled); // defaul
 void              SetLspFormatOnSaveEnabled(bool enabled); // default false
 [[nodiscard]] bool LspFormatOnSaveEnabled();
 
+// on-type-formatting follow-up. Same shape/reasoning as
+// SetLspFormatOnSaveEnabled above -- opt-in (default false), since this
+// mutates buffer content as you type, not just a passive UI cue. Gated
+// separately from format-on-save: a user may want one without the other.
+void              SetLspOnTypeFormattingEnabled(bool enabled); // default false
+[[nodiscard]] bool LspOnTypeFormattingEnabled();
+
+// pull-diagnostics follow-up. Opt-in (default false), same reasoning as
+// SetLspFormatOnSaveEnabled above: enabled, this sends an extra
+// textDocument/diagnostic request on every content sync (every server,
+// every keystroke-driven didChange) for the rest of that connection's
+// lifetime, or until it proves unsupported -- a real recurring side effect,
+// not passive UI, even though a supporting server would otherwise get no
+// diagnostics at all without it (see RequestPullDiagnostics' own doc
+// comment in LspManager.h).
+void              SetLspPullDiagnosticsEnabled(bool enabled); // default false
+[[nodiscard]] bool LspPullDiagnosticsEnabled();
+
+// semanticTokens follow-up. Same shape as SetLspSignatureHelpAutoTriggerEnabled
+// above -- default true, since this is read-only decoration (server-informed
+// highlighting layered on top of tree-sitter's own, never replacing it) with
+// no editing-flow risk, the same reasoning documentHighlight's own toggle
+// already established.
+void              SetLspSemanticHighlightingEnabled(bool enabled); // default true
+[[nodiscard]] bool LspSemanticHighlightingEnabled();
+
+// inlayHint follow-up. Same reasoning as SetLspSemanticHighlightingEnabled
+// above -- default true, read-only decoration, no editing-flow risk.
+void              SetLspInlayHintsEnabled(bool enabled); // default true
+[[nodiscard]] bool LspInlayHintsEnabled();
+
+// codeLens follow-up. Same reasoning as SetLspInlayHintsEnabled above --
+// default true, read-only annotation until explicitly invoked
+// (lsp-run-code-lens-at-point), no editing-flow risk.
+void              SetLspCodeLensEnabled(bool enabled); // default true
+[[nodiscard]] bool LspCodeLensEnabled();
+
 } // namespace ned::editor::lsp
 
 #endif // NED_EDITOR_LSP_LSPSERVERCONFIG_H

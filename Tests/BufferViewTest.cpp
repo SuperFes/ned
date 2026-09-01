@@ -12,6 +12,7 @@
 #include <thread>
 #include <vector>
 
+#include <poll.h>
 #include <unistd.h>
 
 #include "Editor/Backup.h"
@@ -431,6 +432,41 @@ std::string ReadRawLspFrame(int fd) {
 
 int LspRequestIdFromFrame(const std::string& raw) {
     return ned::editor::lsp::Json::parse(raw.substr(raw.find("\r\n\r\n") + 4))["id"].get<int>();
+}
+
+// on-type-formatting follow-up: asserting "nothing was ever sent" can't use
+// ReadRawLspFrame's own blocking ::read (it would hang forever on a fd that
+// legitimately never gets written to -- the case under test). Mirrors
+// LspManagerTest.cpp's own NoFrameArrives exactly.
+bool NoFrameArrives(int fd) {
+    pollfd pfd{.fd = fd, .events = POLLIN, .revents = 0};
+    return ::poll(&pfd, 1, 200) == 0; // 0 == timed out, nothing readable
+}
+
+// codeLens follow-up: a single Paint() call can now fire more than one
+// background request synchronously (didOpen, semanticTokens, inlayHint,
+// codeLens) -- small enough that a single 512-byte ::read() routinely
+// scoops up more than one frame at once. Looping ReadRawLspFrame per
+// "frame" (as this used to) doesn't work: it returns as soon as it sees
+// the first frame complete, but the caller discards that return value
+// wholesale, silently losing whatever next-frame header/body bytes rode
+// along in the same read() call -- a real, reproducible hang, not a race
+// (confirmed live: a later call blocks in ::read() forever on a headerless
+// mid-JSON tail fragment with no Content-Length left to find). Reads raw
+// bytes directly into one persistent buffer until the pipe genuinely goes
+// quiet instead, so there's no frame boundary to misplace -- the robust
+// replacement for every "(void)ReadRawLspFrame(...); // drain didOpen"
+// call site in this file.
+void DrainAllPendingFrames(int fd) {
+    std::string all;
+    char        buffer[512];
+    while (!NoFrameArrives(fd)) {
+        const ssize_t n = ::read(fd, buffer, sizeof(buffer));
+        if (n <= 0) {
+            break;
+        }
+        all.append(buffer, static_cast<std::size_t>(n));
+    }
 }
 
 // Parses every complete Content-Length-framed message found in raw,
@@ -1070,6 +1106,115 @@ TEST_CASE("BufferView renders JsonMode's tree-sitter highlighting for strings, n
     REQUIRE(CellMatchesBrush(screen.PixelAt(gutter + 15, 0),
                              fixture.theme.BrushFor(ned::editor::SyntaxClass::ConstantBuiltin)));                        // 'r' in "true"
     REQUIRE(CellMatchesBrush(screen.PixelAt(gutter + 0, 0), fixture.theme.BrushFor(ned::editor::SyntaxClass::Default))); // '{'
+}
+
+// semanticTokens follow-up: '1' at byte 6 is a Number span [6,7) under
+// tree-sitter alone (see the sibling test just above) -- this overrides it
+// via a semanticTokens response and confirms the LSP-sourced span wins, the
+// same "later span wins" convention Injection.h's own engine already
+// exploits for the same reason.
+TEST_CASE("A textDocument/semanticTokens/full response overrides tree-sitter's own classification at overlapping bytes",
+          "[BufferView]") {
+    Fixture                     fixture;
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_bufferview_semantic_tokens_test.json";
+    ned::text::Buffer&          buffer = fixture.bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint(R"({"a": 1, "b": true})");
+    fixture.mode = ned::editor::JsonMode();
+    fixture.activeBuffer.Set(buffer);
+
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
+    manager.SetSemanticTokensLegendForTesting(
+        "json", ned::editor::lsp::SemanticTokensLegend{.tokenTypes = {"keyword"}, .tokenModifiers = {}});
+    ned::editor::lsp::LspClient* client = nullptr;
+    FakeLspServer                server = FakeLspServer::Create(manager, "json", eventLoop, client);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
+
+    ned::ui::Screen screen = ned::ui::Screen(40, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
+    view.Paint(canvas); // triggers didOpen and the semanticTokens request, back-to-back
+
+    // Both can land in the same read() -- ReadRawLspFrame's own one-frame-
+    // per-call assumption breaks here, same as the pull-diagnostics tests'
+    // own precedent above.
+    const std::vector<ned::editor::lsp::Json> frames = ReadLspFrames(server.serverStdinRead, 2);
+    REQUIRE(frames.size() == 2);
+    REQUIRE(frames[0]["method"] == "textDocument/didOpen");
+    REQUIRE(frames[1]["method"] == "textDocument/semanticTokens/full");
+    const ned::editor::lsp::Json& semanticRequest = frames[1];
+
+    // '1' at byte 6, length 1, type index 0 ("keyword").
+    const auto response = ned::editor::lsp::Json{
+        {"jsonrpc", "2.0"},
+        {"id", semanticRequest["id"]},
+        {"result", {{"data", ned::editor::lsp::Json::array({0, 6, 1, 0, 0})}}},
+    };
+    client->DispatchFrame(response.dump());
+
+    view.Paint(canvas); // re-paint to pick up the bumped SemanticTokensGeneration
+
+    const int gutter = GutterWidth(1, /*foldColumn=*/4);
+    REQUIRE(CellMatchesBrush(screen.PixelAt(gutter + 6, 0), fixture.theme.BrushFor(ned::editor::SyntaxClass::Keyword))); // '1', now Keyword
+    REQUIRE(CellMatchesBrush(screen.PixelAt(gutter + 2, 0), fixture.theme.BrushFor(ned::editor::SyntaxClass::String)));  // 'a', untouched
+
+    std::filesystem::remove(path);
+}
+
+// inlayHint follow-up: an inlay hint renders as extra dimmed/italic cells
+// *between* two real characters, without consuming any real bytes -- the
+// real character immediately after the hint's anchor must still render,
+// just shifted right by the hint's own width, and every real byte before
+// the anchor must stay exactly where it already was.
+TEST_CASE("A textDocument/inlayHint response renders virtual text mid-line without disturbing real content",
+          "[BufferView]") {
+    Fixture                     fixture;
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_bufferview_inlay_hint_test.txt";
+    ned::text::Buffer&          buffer = fixture.bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("x = 1;"); // hint anchors right after 'x', at byte 1
+    fixture.activeBuffer.Set(buffer);
+
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::LspClient* client = nullptr;
+    FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
+
+    ned::ui::Screen screen = ned::ui::Screen(40, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
+    view.Paint(canvas); // triggers didOpen and the inlayHint request, back-to-back
+
+    const std::vector<ned::editor::lsp::Json> frames = ReadLspFrames(server.serverStdinRead, 2);
+    REQUIRE(frames.size() == 2);
+    REQUIRE(frames[1]["method"] == "textDocument/inlayHint");
+
+    const auto response = ned::editor::lsp::Json{
+        {"jsonrpc", "2.0"},
+        {"id", frames[1]["id"]},
+        {"result", ned::editor::lsp::Json::array({{{"position", {{"line", 0}, {"character", 1}}}, {"label", ": int"}}})},
+    };
+    client->DispatchFrame(response.dump());
+
+    view.Paint(canvas);
+
+    const int gutter = GutterWidth(1);
+    REQUIRE(screen.PixelAt(gutter + 0, 0).character == "x"); // real, untouched
+    const ned::ui::Brush hintBrush{.background = fixture.theme.background, .foreground = fixture.theme.ghostTextForeground, .italic = true};
+    REQUIRE(CellMatchesBrush(screen.PixelAt(gutter + 1, 0), hintBrush));
+    REQUIRE(screen.PixelAt(gutter + 1, 0).character == ":");
+    REQUIRE(screen.PixelAt(gutter + 2, 0).character == " ");
+    REQUIRE(screen.PixelAt(gutter + 3, 0).character == "i");
+    REQUIRE(screen.PixelAt(gutter + 4, 0).character == "n");
+    REQUIRE(screen.PixelAt(gutter + 5, 0).character == "t");
+    REQUIRE(screen.PixelAt(gutter + 6, 0).character == " "); // real ' ' from "x = 1;", shifted right by the hint
+    REQUIRE(screen.PixelAt(gutter + 7, 0).character == "=");
+
+    std::filesystem::remove(path);
 }
 
 TEST_CASE("A read-only buffer suppresses both fold gutter and syntax highlighting, even under a mode with both",
@@ -6561,7 +6706,7 @@ TEST_CASE("M-x lsp-document-highlight paints every reported occurrence with the 
     ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
     ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
     view.Paint(canvas);
-    (void)ReadRawLspFrame(server.serverStdinRead); // drain didOpen
+    DrainAllPendingFrames(server.serverStdinRead); // drain didOpen + any other background requests from this Paint()
 
     view.OnEvent(ned::ui::test::Alt('x'));
     TypeText(view, "lsp-document-highlight");
@@ -6803,7 +6948,7 @@ TEST_CASE("M-. with one definition location jumps directly, no confirmation", "[
     ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
     ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
     view.Paint(canvas);
-    (void)ReadRawLspFrame(server.serverStdinRead); // drain didOpen
+    DrainAllPendingFrames(server.serverStdinRead); // drain didOpen + any other background requests from this Paint()
 
     view.OnEvent(ManualGotoDefinitionEvent());
 
@@ -6947,7 +7092,7 @@ TEST_CASE("M-x lsp-goto-declaration sends textDocument/declaration and jumps on 
     ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
     ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
     view.Paint(canvas);
-    (void)ReadRawLspFrame(server.serverStdinRead); // drain didOpen
+    DrainAllPendingFrames(server.serverStdinRead); // drain didOpen + any other background requests from this Paint()
 
     view.OnEvent(ned::ui::test::Alt('x'));
     TypeText(view, "lsp-goto-declaration");
@@ -6996,7 +7141,7 @@ TEST_CASE("M-x lsp-goto-symbol sends textDocument/documentSymbol and jumps to th
     ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
     ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
     view.Paint(canvas);
-    (void)ReadRawLspFrame(server.serverStdinRead); // drain didOpen
+    DrainAllPendingFrames(server.serverStdinRead); // drain didOpen + any other background requests from this Paint()
 
     view.OnEvent(ned::ui::test::Alt('x'));
     TypeText(view, "lsp-goto-symbol");
@@ -7048,7 +7193,7 @@ TEST_CASE("M-x lsp-workspace-symbol sends an immediate workspace/symbol request 
     ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
     ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
     view.Paint(canvas);
-    (void)ReadRawLspFrame(server.serverStdinRead); // drain didOpen
+    DrainAllPendingFrames(server.serverStdinRead); // drain didOpen + any other background requests from this Paint()
 
     view.OnEvent(ned::ui::test::Alt('x'));
     TypeText(view, "lsp-workspace-symbol");
@@ -7110,7 +7255,7 @@ TEST_CASE("M-x lsp-signature-help shows the active parameter emphasized in the s
     ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
     ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
     view.Paint(canvas);
-    (void)ReadRawLspFrame(server.serverStdinRead); // drain didOpen
+    DrainAllPendingFrames(server.serverStdinRead); // drain didOpen + any other background requests from this Paint()
 
     view.OnEvent(ned::ui::test::Alt('x'));
     TypeText(view, "lsp-signature-help");
@@ -7269,7 +7414,7 @@ TEST_CASE("M-o switches to the file clangd's switchSourceHeader response names",
     ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
     ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
     view.Paint(canvas);
-    (void)ReadRawLspFrame(server.serverStdinRead); // drain didOpen
+    DrainAllPendingFrames(server.serverStdinRead); // drain didOpen + any other background requests from this Paint()
 
     view.OnEvent(ManualSwitchHeaderSourceEvent());
 
@@ -7426,7 +7571,7 @@ TEST_CASE("C-c C-M-r prompts for a new name, then applies a multi-file rename ac
     ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
     ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
     view.Paint(canvas);
-    (void)ReadRawLspFrame(server.serverStdinRead); // drain didOpen
+    DrainAllPendingFrames(server.serverStdinRead); // drain didOpen + any other background requests from this Paint()
 
     view.OnEvent(ned::ui::test::Ctrl('c'));
     view.OnEvent(ManualRenameEvent());
@@ -8903,7 +9048,7 @@ TEST_CASE("C-x C-s prefers an external format command over lsp-format-on-save wh
     ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
     ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
     view.Paint(canvas);
-    (void)ReadRawLspFrame(server.serverStdinRead); // drain didOpen
+    DrainAllPendingFrames(server.serverStdinRead); // drain didOpen + any other background requests from this Paint()
 
     view.OnEvent(ned::ui::test::Ctrl('x'));
     view.OnEvent(ned::ui::test::Ctrl('s'));
@@ -8919,6 +9064,152 @@ TEST_CASE("C-x C-s prefers an external format command over lsp-format-on-save wh
     }
 
     std::filesystem::remove(path);
+}
+
+namespace {
+// on-type-formatting follow-up: same RAII shape as LspFormatOnSaveGuard
+// above, for the sibling toggle.
+struct OnTypeFormattingEnabledGuard {
+    OnTypeFormattingEnabledGuard() {
+        ned::editor::lsp::SetLspOnTypeFormattingEnabled(true);
+    }
+    ~OnTypeFormattingEnabledGuard() {
+        ned::editor::lsp::SetLspOnTypeFormattingEnabled(false);
+    }
+};
+} // namespace
+
+TEST_CASE("Typing the server's declared trigger character sends textDocument/onTypeFormatting and applies "
+          "the edit as its own undo step",
+          "[BufferView]") {
+    const OnTypeFormattingEnabledGuard guard;
+    const std::filesystem::path        path = std::filesystem::temp_directory_path() / "ned_bufferview_on_type_formatting_test.txt";
+    {
+        std::ofstream(path) << "int x=1";
+    }
+
+    Fixture            fixture;
+    ned::text::Buffer& buffer = fixture.bufferList.OpenOrCreateFile(path);
+    buffer.SetPoint(buffer.Size());
+    fixture.activeBuffer.Set(buffer);
+
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::LspClient* client = nullptr;
+    FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
+    // SetClientForTesting bypasses the real initialize handshake entirely --
+    // this is the test-only substitute for what a real server's response
+    // would have populated (see SetOnTypeFormattingTriggersForTesting's own
+    // doc comment in LspManager.h).
+    manager.SetOnTypeFormattingTriggersForTesting("fundamental", ned::editor::lsp::OnTypeFormattingTriggers{.first = ";", .more = {}});
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
+    ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    view.Paint(canvas); // triggers SyncBuffer -> didOpen
+    (void)ReadRawLspFrame(server.serverStdinRead);
+
+    view.OnEvent(ned::ui::test::Character(";"));
+    REQUIRE(buffer.Text() == "int x=1;"); // the self-insert itself, independent of anything LSP-related
+
+    const std::string raw     = ReadRawLspFrame(server.serverStdinRead);
+    const auto        request = ned::editor::lsp::Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(request["method"] == "textDocument/onTypeFormatting");
+    REQUIRE(request["params"]["ch"] == ";");
+    REQUIRE(request["params"]["position"]["character"] == 8); // right after the just-inserted ';'
+
+    const auto response = ned::editor::lsp::Json{
+        {"jsonrpc", "2.0"},
+        {"id", LspRequestIdFromFrame(raw)},
+        {"result", ned::editor::lsp::Json::array(
+                       {{{"range", {{"start", {{"line", 0}, {"character", 5}}}, {"end", {{"line", 0}, {"character", 6}}}}}, {"newText", " = "}}})},
+    };
+    client->DispatchFrame(response.dump());
+
+    REQUIRE(buffer.Text() == "int x = 1;");
+
+    // Two separate undo steps -- the formatting edit first, then the
+    // triggering keystroke, since the async response can't land inside the
+    // keystroke's own dispatch/undo group (see MaybeScheduleOnTypeFormatting's
+    // own doc comment in BufferView.h).
+    buffer.Undo();
+    REQUIRE(buffer.Text() == "int x=1;");
+    buffer.Undo();
+    REQUIRE(buffer.Text() == "int x=1");
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("Typing a non-trigger character does not send an on-type-formatting request", "[BufferView]") {
+    const OnTypeFormattingEnabledGuard guard;
+    const std::filesystem::path        path = std::filesystem::temp_directory_path() / "ned_bufferview_on_type_formatting_no_trigger_test.txt";
+    {
+        std::ofstream(path) << "int x=1";
+    }
+
+    Fixture            fixture;
+    ned::text::Buffer& buffer = fixture.bufferList.OpenOrCreateFile(path);
+    buffer.SetPoint(buffer.Size());
+    fixture.activeBuffer.Set(buffer);
+
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::LspClient* client = nullptr;
+    FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
+    manager.SetOnTypeFormattingTriggersForTesting("fundamental", ned::editor::lsp::OnTypeFormattingTriggers{.first = ";", .more = {}});
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
+    ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+    DrainAllPendingFrames(server.serverStdinRead); // drain didOpen + any other background requests from this Paint()
+
+    view.OnEvent(ned::ui::test::Character(","));
+    REQUIRE(buffer.Text() == "int x=1,");
+
+    // Unlike MaybeScheduleSignatureHelp/MaybeScheduleAutoCompletion, this
+    // request (when sent at all) goes out synchronously within the same
+    // OnEvent call, no debounce timer to wait on -- a bounded poll suffices.
+    REQUIRE(NoFrameArrives(server.serverStdinRead));
+}
+
+TEST_CASE("Typing the server's declared trigger character sends nothing when lsp-on-type-formatting is disabled "
+          "(the default)",
+          "[BufferView]") {
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_bufferview_on_type_formatting_disabled_test.txt";
+    {
+        std::ofstream(path) << "int x=1";
+    }
+
+    Fixture            fixture;
+    ned::text::Buffer& buffer = fixture.bufferList.OpenOrCreateFile(path);
+    buffer.SetPoint(buffer.Size());
+    fixture.activeBuffer.Set(buffer);
+
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::LspClient* client = nullptr;
+    FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
+    manager.SetOnTypeFormattingTriggersForTesting("fundamental", ned::editor::lsp::OnTypeFormattingTriggers{.first = ";", .more = {}});
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
+    ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+    DrainAllPendingFrames(server.serverStdinRead); // drain didOpen + any other background requests from this Paint()
+
+    view.OnEvent(ned::ui::test::Character(";"));
+    REQUIRE(buffer.Text() == "int x=1;");
+    REQUIRE(NoFrameArrives(server.serverStdinRead));
 }
 
 // --- Snippet expansion sessions (snippet-expansion follow-up) -------------
