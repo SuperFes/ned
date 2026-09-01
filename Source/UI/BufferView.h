@@ -1254,6 +1254,35 @@ class BufferView : public Widget {
     void HandleSwitchProjectKey(const editor::KeyChord& chord);
     void RefreshSwitchProjectStatus();
 
+    // dropdown-path-completion follow-up: HandleSwitchProjectKey's own
+    // shape, over every open buffer's name -- there's no "create a new
+    // buffer by typing a name that doesn't exist" case, so Enter resolves
+    // the highlighted ranked candidate.
+    void HandleSwitchToBufferKey(const editor::KeyChord& chord);
+    void RefreshSwitchToBufferStatus();
+
+    // dropdown-path-completion follow-up: same shape, over
+    // vcsBranchCandidates_ (populated before this mode is entered -- see
+    // BeginVcsSwitchBranchPrompt). VcsCreateBranch stays on HandlePromptKey's
+    // own literal-text path (free-text new-branch naming).
+    void HandleVcsSwitchBranchKey(const editor::KeyChord& chord);
+    void RefreshVcsSwitchBranchStatus();
+
+    // dropdown-path-completion follow-up: same shape, over
+    // editor::acp::AcpAgentNames().
+    void HandleAcpAgentNameKey(const editor::KeyChord& chord);
+    void RefreshAcpAgentNameStatus();
+
+    // dropdown-path-completion follow-up: FindFile/OpenProjectPath/
+    // FindScratch's shared candidate source (GatherPathCompletionCandidates)
+    // and live popup refresh (RefreshPathCompletionPopup) -- unlike the pairs
+    // just above, Enter for these three still finalizes on literal
+    // prompt_->Text() in HandlePromptKey (typing a path/name with no match is
+    // a valid "create new" action), so there is no HandleXKey of their own --
+    // just Up/Down/Tab handling inline in HandlePromptKey.
+    [[nodiscard]] std::vector<std::string> GatherPathCompletionCandidates() const;
+    void RefreshPathCompletionPopup();
+
     // named-projects follow-up: the shared tail of switch-project/
     // open-project once a target root is known -- runs
     // editor::ActivateProjectRoot's real priority chain and reports the
@@ -2209,6 +2238,21 @@ class BufferView : public Widget {
     // not just the "name — root" display text FuzzyFilterAndRank ranks.
     std::vector<editor::ProjectRegistryEntry> switchProjectEntries_;
     std::size_t                               switchProjectSelection_ = 0;
+
+    // dropdown-path-completion follow-up: selection index for each of the
+    // three newly-dedicated fuzzy-dropdown sessions -- switchProjectSelection_'s
+    // own shape, one member per mode since that's this file's established
+    // convention even though only one of these (or switchProjectSelection_
+    // itself) is ever live at a time.
+    std::size_t switchToBufferSelection_  = 0;
+    std::size_t vcsSwitchBranchSelection_ = 0;
+    std::size_t acpAgentNameSelection_    = 0;
+    // dropdown-path-completion follow-up: shared across FindFile/
+    // OpenProjectPath/FindScratch (see GatherPathCompletionCandidates'/
+    // RefreshPathCompletionPopup's own doc comments) -- one member is enough
+    // since exactly one of these three modes is ever live at a time.
+    std::size_t pathCompletionSelection_ = 0;
+
     // named-projects follow-up: the root open-project's path step resolved,
     // held across the transition to its own second (name) prompt --
     // pendingPropertyName_'s own "state carried between two prompts in the
