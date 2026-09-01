@@ -417,6 +417,44 @@ namespace {
         return nullptr;
     }
 
+    // inlayHint follow-up. A LspManager::ResolvedInlayHint (byteOffset +
+    // label) filtered down to just [lineStart, lineEnd) -- same "filter
+    // once per line, consult per-codepoint" shape LinksForLine/
+    // SpansForLine already establish. Unlike a RenderedLink, this never
+    // consumes/replaces real bytes -- see InlayHintStartingAt's own doc
+    // comment for how a render-loop consumer uses it.
+    struct RenderedInlayHint {
+        std::size_t byteOffset;
+        std::string label;
+    };
+
+    std::vector<RenderedInlayHint> InlayHintsForLine(const std::vector<editor::lsp::LspManager::ResolvedInlayHint>& hints,
+                                                     std::size_t lineStart, std::size_t lineEnd) {
+        std::vector<RenderedInlayHint> rendered;
+        for (const editor::lsp::LspManager::ResolvedInlayHint& hint : hints) {
+            if (hint.byteOffset >= lineStart && hint.byteOffset < lineEnd) {
+                rendered.push_back(RenderedInlayHint{.byteOffset = hint.byteOffset, .label = hint.label});
+            }
+        }
+        return rendered;
+    }
+
+    // Finds the RenderedInlayHint (if any) anchored exactly at offset --
+    // same linear-scan-over-a-small-per-line-list shape LinkStartingAt
+    // uses. Unlike LinkStartingAt, a caller finding one here does NOT skip
+    // past offset -- the hint renders as extra cells *before* the real
+    // character still at offset, which keeps rendering normally right
+    // after (a hint is virtual text alongside real content, not a
+    // replacement for it).
+    const RenderedInlayHint* InlayHintStartingAt(const std::vector<RenderedInlayHint>& hints, std::size_t offset) {
+        for (const RenderedInlayHint& hint : hints) {
+            if (hint.byteOffset == offset) {
+                return &hint;
+            }
+        }
+        return nullptr;
+    }
+
     // Visual column (0-indexed, not counting the gutter) that byteOffset
     // renders at within the line starting at lineStart -- see
     // CodepointColumns for why this can't be a plain codepoint count.
@@ -1418,6 +1456,74 @@ std::size_t BufferView::AnnotationRowsForLine(std::size_t line) const {
     return inlineDiagnosticsByLine_.contains(line) ? 1 : 0;
 }
 
+std::size_t BufferView::LeadingAnnotationRowsForLine(std::size_t line) const {
+    if (!lspManager_ || !editor::lsp::LspCodeLensEnabled()) {
+        return 0;
+    }
+    text::Buffer&             buffer  = activeBuffer_.Get();
+    const text::ITextStorage& content = buffer.Content();
+    if (line >= content.LineCount()) {
+        return 0;
+    }
+    const std::size_t lineStart = content.LineToByteOffset(line);
+    const std::size_t lineEnd =
+        (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
+    for (const auto& lens : lspManager_->CodeLensSpans(buffer)) {
+        if (lens.startByte >= lineStart && lens.startByte < lineEnd) {
+            return 1;
+        }
+        // A lens anchored at an empty line's own zero-width range (lineEnd
+        // == lineStart there) would never satisfy `< lineEnd` above --
+        // caught here instead, the same edge case InlayHintsForLine's own
+        // [lineStart, lineEnd) convention doesn't need to worry about
+        // (an inlay hint is never the only content on its own line).
+        if (lineStart == lineEnd && lens.startByte == lineStart) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+void BufferView::PaintCodeLensRow(Canvas& c, int row, std::size_t line, std::size_t gutterWidth) const {
+    text::Buffer&             buffer  = activeBuffer_.Get();
+    const text::ITextStorage& content = buffer.Content();
+    if (line >= content.LineCount() || !lspManager_) {
+        return;
+    }
+    const std::size_t lineStart = content.LineToByteOffset(line);
+    const std::size_t lineEnd =
+        (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
+
+    std::string joinedTitle;
+    for (const auto& lens : lspManager_->CodeLensSpans(buffer)) {
+        const bool onThisLine =
+            (lens.startByte >= lineStart && lens.startByte < lineEnd) || (lineStart == lineEnd && lens.startByte == lineStart);
+        if (!onThisLine || lens.title.empty()) {
+            continue;
+        }
+        if (!joinedTitle.empty()) {
+            joinedTitle += " | ";
+        }
+        joinedTitle += lens.title;
+    }
+    if (joinedTitle.empty()) {
+        return; // shouldn't happen (RowsForLine/LeadingAnnotationRowsForLine agree with this scan) -- leave the blanked row
+    }
+
+    const Brush titleBrush{.background = theme_.background, .foreground = theme_.ghostTextForeground, .italic = true};
+    const int   width = c.size().width;
+    int         col   = static_cast<int>(gutterWidth);
+    for (const char ch : joinedTitle) {
+        if (col >= width) {
+            break;
+        }
+        Cell& cell     = c[{.x = col, .y = row}];
+        cell.character = std::string(1, ch);
+        titleBrush.ApplyTo(cell);
+        ++col;
+    }
+}
+
 void BufferView::EnsureBlameGutterCache() const {
     text::Buffer& buffer = activeBuffer_.Get();
     if (blameGutterCacheBuffer_ == &buffer && blameGutterCacheContentGeneration_ == buffer.ContentGeneration()) {
@@ -1715,12 +1821,17 @@ std::size_t BufferView::RowsForLine(std::size_t line) const {
     // rows ride, so none of them can disagree about where an annotation
     // shifted the rows below it.
     const std::size_t annotationRows = AnnotationRowsForLine(line);
+    // codeLens follow-up: LeadingAnnotationRowsForLine's own 0-or-1 count,
+    // added at the same three return points annotationRows already is --
+    // see that method's own doc comment for why this is a leading
+    // (above-the-line) row rather than another trailing one.
+    const std::size_t leadingRows = LeadingAnnotationRowsForLine(line);
     if (!EffectiveWrapLines()) {
-        return 1 + annotationRows;
+        return 1 + leadingRows + annotationRows;
     }
     EnsureRowCountCache();
     if (line >= rowCountPerLine_.size()) {
-        return 1 + annotationRows;
+        return 1 + leadingRows + annotationRows;
     }
     if (rowCountPerLine_[line] == kRowCountUnknown) {
         // line-wrap follow-up: the real, lazy, per-line word-break scan --
@@ -1737,7 +1848,7 @@ std::size_t BufferView::RowsForLine(std::size_t line) const {
         rowCountPerLine_[line] =
             ComputeWrapSegments(content, lineStart, lineEnd, rowCountCacheContentWidth_, lineLinks).size();
     }
-    return rowCountPerLine_[line] + annotationRows; // memoized value is content rows only -- annotation state changes independently of the wrap cache's keys
+    return rowCountPerLine_[line] + leadingRows + annotationRows; // memoized value is content rows only -- annotation state changes independently of the wrap cache's keys
 }
 
 std::size_t BufferView::VisibleRowCountBetween(std::size_t startLine, std::size_t endLineExclusive) const {
@@ -1924,6 +2035,38 @@ void BufferView::Paint(Canvas c) {
     // itself).
     if (lspManager_) {
         lspManager_->SyncBuffer(buffer, editor::LanguageKeyForMode(mode_));
+        // semanticTokens follow-up: same per-frame, active-buffer-only
+        // cadence as SyncBuffer just above, deliberately called from here
+        // (BufferView's own per-frame decision point) rather than from
+        // inside LspManager::SyncToServer -- see RequestSemanticTokensFull's
+        // own doc comment in LspManager.h for why keeping it out of that
+        // hot path matters (a real lesson from pull-diagnostics' own
+        // test-regression fix). No-ops internally when disabled, unopened,
+        // or content unchanged since the last request.
+        lspManager_->RequestSemanticTokensFull(buffer, editor::LanguageKeyForMode(mode_));
+
+        // inlayHint follow-up: same per-frame cadence as the two calls just
+        // above, scoped to the currently visible line range -- unlike
+        // semanticTokens' whole-document request, inlayHint's own "range"
+        // param exists specifically so a client only asks for what's on
+        // screen. Same viewport computation HugeStructuralWindow uses,
+        // minus its huge-buffer-only parse-safety margin (not needed here
+        // -- there's no parser to desync, just a request scope).
+        {
+            const std::size_t lastLine    = totalLines > 0 ? totalLines - 1 : 0;
+            const std::size_t viewportTop = std::min(topLine_, lastLine);
+            const std::size_t viewportHeight = size().height > 0 ? static_cast<std::size_t>(size().height) : 1;
+            const std::size_t viewportBottom    = std::min(viewportTop + viewportHeight, lastLine);
+            const std::size_t viewportStartByte = content.LineToByteOffset(viewportTop);
+            const std::size_t viewportEndByte   = std::min(content.LineToByteOffset(viewportBottom) + 1, content.ByteLength());
+            lspManager_->RequestInlayHints(buffer, viewportStartByte, viewportEndByte, editor::LanguageKeyForMode(mode_));
+        }
+
+        // codeLens follow-up: same per-frame cadence as the calls above,
+        // whole-document scope (codeLens has no "range" param, unlike
+        // inlayHint) -- see RequestCodeLenses' own doc comment in
+        // LspManager.h for the dedup/learn-once gating this no-ops behind.
+        lspManager_->RequestCodeLenses(buffer, editor::LanguageKeyForMode(mode_));
 
         // embedded-language-documents follow-up: computes/caches this
         // buffer's embedded documents (currently just html-mode's
@@ -2072,32 +2215,51 @@ void BufferView::Paint(Canvas c) {
         highlightCacheBuffer_ = nullptr;
         highlightCacheSpans_.clear();
     }
-    else if (highlightCacheBuffer_ != &buffer || highlightCacheGeneration_ != buffer.ContentGeneration() ||
-             highlightCacheClassGeneration_ != editor::CaptureClassGeneration()) {
+    else if (const std::size_t semanticTokensGeneration = lspManager_ ? lspManager_->SemanticTokensGeneration(buffer) : 0;
+             highlightCacheBuffer_ != &buffer || highlightCacheGeneration_ != buffer.ContentGeneration() ||
+             highlightCacheClassGeneration_ != editor::CaptureClassGeneration() ||
+             highlightCacheSemanticTokensGeneration_ != semanticTokensGeneration) {
         // per-buffer-highlight-cache follow-up: persists across a buffer
         // switch, not just repeated Paint() calls on the same buffer -- see
         // highlightCacheByBuffer_'s own doc comment in BufferView.h. The
         // CaptureClassGeneration() check (exhaustive-highlighting
         // follow-up) and the modeName check (this follow-up) both matter
         // here for the same reason: either can make a stale entry's spans
-        // wrong even though buffer's content hasn't changed at all.
+        // wrong even though buffer's content hasn't changed at all --
+        // semanticTokensGeneration (semanticTokens follow-up) is the same
+        // idea again: an LSP response can arrive, and change what should
+        // render, with no buffer edit at all.
         const auto it = highlightCacheByBuffer_.find(&buffer);
         if (it == highlightCacheByBuffer_.end() || it->second.contentGeneration != buffer.ContentGeneration() ||
-            it->second.classGeneration != editor::CaptureClassGeneration() || it->second.modeName != mode_.name) {
+            it->second.classGeneration != editor::CaptureClassGeneration() || it->second.modeName != mode_.name ||
+            it->second.semanticTokensGeneration != semanticTokensGeneration) {
             HighlightCacheEntry entry;
-            entry.spans             = mode_.highlight(buffer.Text());
-            entry.contentGeneration = buffer.ContentGeneration();
-            entry.classGeneration   = editor::CaptureClassGeneration();
-            entry.modeName          = mode_.name;
-            highlightCacheSpans_    = entry.spans;
+            entry.spans = mode_.highlight(buffer.Text());
+            // semanticTokens follow-up: appended *after* tree-sitter's own
+            // spans so LSP-informed classification wins at overlapping
+            // bytes -- the exact "later span wins" convention the
+            // injection engine already exploits for the same reason (see
+            // Mode.h's own HighlightSpan doc comment), not a new
+            // resolution rule. Empty when lspManager_ is unset, disabled,
+            // or no response has landed yet.
+            if (lspManager_) {
+                const std::vector<editor::HighlightSpan>& semanticSpans = lspManager_->SemanticTokenSpans(buffer);
+                entry.spans.insert(entry.spans.end(), semanticSpans.begin(), semanticSpans.end());
+            }
+            entry.contentGeneration        = buffer.ContentGeneration();
+            entry.classGeneration          = editor::CaptureClassGeneration();
+            entry.semanticTokensGeneration = semanticTokensGeneration;
+            entry.modeName                 = mode_.name;
+            highlightCacheSpans_           = entry.spans;
             highlightCacheByBuffer_.insert_or_assign(&buffer, std::move(entry));
         }
         else {
             highlightCacheSpans_ = it->second.spans;
         }
-        highlightCacheBuffer_          = &buffer;
-        highlightCacheGeneration_      = buffer.ContentGeneration();
-        highlightCacheClassGeneration_ = editor::CaptureClassGeneration();
+        highlightCacheBuffer_                   = &buffer;
+        highlightCacheGeneration_               = buffer.ContentGeneration();
+        highlightCacheClassGeneration_          = editor::CaptureClassGeneration();
+        highlightCacheSemanticTokensGeneration_ = semanticTokensGeneration;
     }
     const std::vector<editor::HighlightSpan>& highlightSpans = highlightCacheSpans_;
 
@@ -2134,6 +2296,7 @@ void BufferView::Paint(Canvas c) {
     std::vector<WrapSegment>           lineSegments;
     std::vector<editor::HighlightSpan> currentLineSpans;
     std::vector<RenderedLink>          currentLineLinks;
+    std::vector<RenderedInlayHint>     currentLineInlayHints;
     // Whitespace-visualization follow-up: same "compute once per line, not
     // once per row/character" shape as currentLineSpans/currentLineLinks
     // above. currentLineTrailingWhitespaceStart is the byte offset of the
@@ -2177,6 +2340,15 @@ void BufferView::Paint(Canvas c) {
     // an annotation -- the NEXT loop iteration renders that annotation row
     // instead of a buffer line, mirroring how RowsForLine already counts it.
     std::optional<std::size_t> pendingAnnotationLine;
+    // codeLens follow-up: the last line whose leading row has already been
+    // painted -- unlike pendingAnnotationLine (an optional consumed the
+    // very next iteration), a leading row must be checked/emitted the
+    // FIRST time this loop reaches a line (segmentIndex == 0), before that
+    // line's own real content, and must not re-trigger on that same
+    // line's later wrap-continuation rows -- this sentinel is what tells
+    // the two apart. kNoRowLine (never a real line index) starts it "no
+    // line's leading row emitted yet."
+    std::size_t leadingAnnotationEmittedLine = kNoRowLine;
     // prose-diagnostic-callout follow-up: recorded per screen row as the main
     // loop below paints it, then walked in one pass by
     // PaintProseDiagnosticCallouts after the loop -- kNoRowLine marks a row
@@ -2204,6 +2376,20 @@ void BufferView::Paint(Canvas c) {
             continue; // consumed this row; `line` already points at the next buffer line
         }
 
+        // codeLens follow-up: checked/emitted the first time this loop
+        // reaches `line` (segmentIndex == 0), BEFORE that line's own real
+        // content -- the opposite ordering from pendingAnnotationLine's
+        // trailing row above. Neither `line` nor `segmentIndex` advance
+        // here, so the very next iteration renders this same line's real
+        // first row normally; leadingAnnotationEmittedLine is what stops
+        // this branch from re-triggering on that next iteration.
+        if (line < renderEndLine && segmentIndex == 0 && line != leadingAnnotationEmittedLine &&
+            LeadingAnnotationRowsForLine(line) > 0) {
+            PaintCodeLensRow(c, row, line, gutterWidth);
+            leadingAnnotationEmittedLine = line;
+            continue;
+        }
+
         if (line < renderEndLine) {
             const std::size_t lineStart = content.LineToByteOffset(line);
             const std::size_t lineEnd =
@@ -2221,6 +2407,14 @@ void BufferView::Paint(Canvas c) {
             if (segmentIndex == 0) {
                 currentLineSpans = SpansForLine(highlightSpans, lineStart, lineEnd);
                 currentLineLinks = LinksForLine(linkCache_, lineStart, lineEnd, point);
+                // inlayHint follow-up: empty when lspManager_ is unset,
+                // disabled, or no response has landed for this line's range
+                // yet -- InlayHintSpans itself is O(1) (no cache to poll a
+                // generation counter for), so no extra staleness bookkeeping
+                // is needed here unlike the tree-sitter highlight cache.
+                currentLineInlayHints =
+                    InlayHintsForLine(lspManager_ ? lspManager_->InlayHintSpans(buffer) : std::vector<editor::lsp::LspManager::ResolvedInlayHint>{},
+                                      lineStart, lineEnd);
                 // Whitespace-visualization follow-up: skipped (both fields
                 // left at their "empty run" default) unless at least one of
                 // the two features is on, so a default-off installation pays
@@ -2724,6 +2918,33 @@ void BufferView::Paint(Canvas c) {
                     }
                     offset = link->endByte;
                     continue;
+                }
+
+                // inlayHint follow-up: unlike the link branch above, this
+                // does NOT `continue` -- a hint is virtual text alongside
+                // the real byte still at offset, not a replacement for it,
+                // so rendering falls through to the ordinary per-character
+                // path right after. Deliberately not routed through
+                // SpanAtOffset/ResolvedBrush -- a fixed dimmed/italic brush
+                // (theme_.ghostTextForeground), the same styling choice
+                // ghost-text completion already makes for the same reason
+                // (synthetic text, not a real SyntaxClass). Never emits a
+                // raw control byte, matching every other glyph-writing loop
+                // in this function.
+                if (const RenderedInlayHint* hint = InlayHintStartingAt(currentLineInlayHints, offset)) {
+                    const Brush      hintBrush{.background = theme_.background, .foreground = theme_.ghostTextForeground, .italic = true};
+                    std::size_t      hintTextOffset = 0;
+                    const text::Rope hintRope(hint->label);
+                    while (hintTextOffset < hintRope.ByteLength() && col < c.size().width) {
+                        const auto glyph = hintRope.CodepointAt(hintTextOffset);
+                        if (glyph.codepoint >= 0x20 && glyph.codepoint != 0x7F) {
+                            Cell& cell     = c[{.x = col, .y = row}];
+                            cell.character = text::EncodeCodepointUtf8(glyph.codepoint);
+                            hintBrush.ApplyTo(cell);
+                            ++col;
+                        }
+                        hintTextOffset += glyph.byteLength;
+                    }
                 }
 
                 const auto decoded = content.CodepointAt(offset);
@@ -4134,6 +4355,7 @@ bool BufferView::RunCommandAndHandleOutcome(editor::CommandContext& context, con
     if (triggeringChord) {
         MaybeScheduleAutoCompletion(*triggeringChord, generationBefore);
         MaybeScheduleSignatureHelp(*triggeringChord, generationBefore);
+        MaybeScheduleOnTypeFormatting(*triggeringChord, generationBefore);
     }
 
     // Diff gutter markers follow-up: unlike MaybeScheduleAutoCompletion
@@ -4783,6 +5005,66 @@ void BufferView::RequestQuickFixAtPoint() {
         serverKey);
 }
 
+void BufferView::RequestCodeLensAtPoint() {
+    if (!lspManager_) {
+        statusMessage_ = "No LSP manager available.";
+        return;
+    }
+    text::Buffer&             buffer    = activeBuffer_.Get();
+    const text::ITextStorage& content   = buffer.Content();
+    const std::size_t         point     = buffer.Point();
+    const std::size_t         line      = content.ByteOffsetToLine(point);
+    const std::size_t         lineStart = content.LineToByteOffset(line);
+    const std::size_t         lineEnd =
+        (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
+
+    const editor::lsp::LspManager::ResolvedCodeLens* found = nullptr;
+    for (const auto& lens : lspManager_->CodeLensSpans(buffer)) {
+        const bool onThisLine =
+            (lens.startByte >= lineStart && lens.startByte < lineEnd) || (lineStart == lineEnd && lens.startByte == lineStart);
+        if (onThisLine) {
+            found = &lens; // v1: only the first lens on the line -- see this method's own doc comment in BufferView.h
+            break;
+        }
+    }
+    if (!found) {
+        statusMessage_ = "No code lens at point.";
+        return;
+    }
+
+    const std::string   serverKey = editor::LanguageKeyForMode(mode_);
+    text::Buffer* const bufferPtr = &buffer;
+
+    if (found->hasCommand) {
+        statusMessage_ = "Running " + (found->title.empty() ? found->commandName : found->title) + "...";
+        lspManager_->ExecuteCommand(buffer, serverKey, found->commandName, found->commandArguments,
+                                    [this](bool ok) { statusMessage_ = ok ? "Code lens command executed." : "Code lens command failed."; });
+        return;
+    }
+
+    // Copied, not a held pointer -- ResolveCodeLens's own callback runs
+    // later, by which time a fresh RequestCodeLenses response (this
+    // buffer's own per-Paint() background sync) could have replaced
+    // CodeLensSpans' underlying vector out from under a raw pointer into it.
+    const editor::lsp::LspManager::ResolvedCodeLens lensCopy = *found;
+    statusMessage_                                           = "Resolving code lens...";
+    lspManager_->ResolveCodeLens(
+        buffer, lensCopy,
+        [this, bufferPtr, serverKey](std::optional<editor::lsp::LspManager::ResolvedCodeLens> resolved) {
+            if (bufferPtr != &activeBuffer_.Get()) {
+                return; // buffer changed under us
+            }
+            if (!resolved || !resolved->hasCommand) {
+                statusMessage_ = "Code lens has no runnable command.";
+                return;
+            }
+            statusMessage_ = "Running " + (resolved->title.empty() ? resolved->commandName : resolved->title) + "...";
+            lspManager_->ExecuteCommand(
+                *bufferPtr, serverKey, resolved->commandName, resolved->commandArguments,
+                [this](bool ok) { statusMessage_ = ok ? "Code lens command executed." : "Code lens command failed."; });
+        });
+}
+
 void BufferView::RefreshCodeActionSelectStatus() {
     statusMessage_ = "Code action: ";
     if (!onCandidatesChanged_) {
@@ -4910,6 +5192,75 @@ namespace {
     }
 
 } // namespace
+
+void BufferView::MaybeScheduleOnTypeFormatting(const editor::KeyChord& chord, std::size_t generationBefore) {
+    if (inputMode_ != InputMode::Normal && inputMode_ != InputMode::Snippet) {
+        return;
+    }
+    if (!editor::lsp::LspOnTypeFormattingEnabled()) {
+        return;
+    }
+    if (chord.Control || chord.Meta) {
+        return;
+    }
+    std::string ch;
+    if (chord.Special == editor::SpecialKey::Enter) {
+        // "newline"/"open-line" insert a real '\n' -- Enter never carries a
+        // literal codepoint the way an ordinary self-insert keystroke does,
+        // but it's exactly clangd's own firstTriggerCharacter (reindent
+        // after a newline), so it needs its own mapping here rather than
+        // being excluded the way MaybeScheduleSignatureHelp excludes every
+        // SpecialKey.
+        ch = "\n";
+    }
+    else if (chord.Special == editor::SpecialKey::None) {
+        ch = text::EncodeCodepointUtf8(chord.Codepoint);
+    }
+    else {
+        return; // no other special key inserts trigger-shaped text
+    }
+    if (activeBuffer_.Get().ContentGeneration() == generationBefore) {
+        return; // nothing actually changed
+    }
+    if (!lspManager_) {
+        return;
+    }
+
+    text::Buffer&      buffer      = activeBuffer_.Get();
+    const std::size_t  point       = buffer.Point();
+    const std::string  serverKey   = ResolvedLspServerKey(point);
+    const std::string  languageKey = serverKey.empty() ? editor::LanguageKeyForMode(mode_) : serverKey;
+    const std::optional<editor::lsp::OnTypeFormattingTriggers> triggers = lspManager_->OnTypeFormattingTriggersFor(languageKey);
+    if (!triggers) {
+        return; // this server never advertised documentOnTypeFormattingProvider at all
+    }
+    if (ch != triggers->first && std::find(triggers->more.begin(), triggers->more.end(), ch) == triggers->more.end()) {
+        return; // not one of this server's own declared trigger characters
+    }
+
+    // Deliberately no debounce timer (unlike MaybeScheduleAutoCompletion/
+    // MaybeScheduleSignatureHelp above): this only fires once per matching
+    // trigger keystroke, not repeatedly while typing, so the request goes
+    // out right away.
+    text::Buffer* const bufferPtr  = &buffer;
+    const std::size_t   generation = ++onTypeFormattingRequestGeneration_;
+    lspManager_->RequestOnTypeFormatting(
+        buffer, point, ch,
+        [this, bufferPtr, generation](std::optional<std::vector<editor::lsp::WorkspaceTextEdit>> edits) {
+            if (generation != onTypeFormattingRequestGeneration_ || bufferPtr != &activeBuffer_.Get()) {
+                return; // superseded, or the active buffer changed under us
+            }
+            if (edits && !edits->empty()) {
+                // A second, separate undo step from the keystroke that
+                // triggered this -- the LSP round trip can't complete
+                // synchronously within that keystroke's own dispatch, so
+                // there's no existing mechanism to join the two (see this
+                // method's own doc comment in BufferView.h).
+                ApplyWorkspaceTextEdits(*bufferPtr, *edits);
+            }
+        },
+        serverKey);
+}
 
 void BufferView::RequestLspFormatThenSaveBuffer() {
     text::Buffer&       buffer     = activeBuffer_.Get();
@@ -6615,6 +6966,11 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         // be genuinely ambiguous (see RequestQuickFixAtPoint's doc comment).
         case editor::InteractiveRequest::LspQuickFix:
             RequestQuickFixAtPoint();
+            return;
+        // codeLens follow-up: same one-shot shape as LspQuickFix just
+        // above -- never enters an InputMode at all.
+        case editor::InteractiveRequest::LspRunCodeLensAtPoint:
+            RequestCodeLensAtPoint();
             return;
     }
 

@@ -1,5 +1,6 @@
 #include "LspManager.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <ctime>
@@ -126,6 +127,47 @@ namespace {
         return 3; // unreachable for a real enum value -- Information is the same safe default SeverityFromLsp uses
     }
 
+    // semanticTokens follow-up. Maps one of the LSP spec's standard
+    // SemanticTokenTypes strings onto an existing editor::SyntaxClass --
+    // reusing the same curated set tree-sitter highlighting already
+    // populates rather than adding a new axis to HighlightSpan (see
+    // ROADMAP.md/the plan this follows for why). nullopt for a token type
+    // with no sensible existing class (dropped by the caller, not
+    // force-fit) -- "event" and "unknown" (a real type clangd itself
+    // emits) are the two standard-or-observed-in-practice types left
+    // unmapped. Deliberately ignores tokenModifiers -- a v1 scope cut, not
+    // a bug: a "readonly"/"static"/etc. refinement is a real future
+    // improvement, not required for the base feature to be useful.
+    std::optional<editor::SyntaxClass> SyntaxClassForSemanticTokenType(const std::string& tokenType) {
+        static const std::unordered_map<std::string, editor::SyntaxClass> kMapping = {
+            {"namespace", editor::SyntaxClass::Namespace},
+            {"class", editor::SyntaxClass::Type},
+            {"enum", editor::SyntaxClass::Type},
+            {"interface", editor::SyntaxClass::Type},
+            {"struct", editor::SyntaxClass::Type},
+            {"type", editor::SyntaxClass::Type},
+            {"typeParameter", editor::SyntaxClass::Type},
+            {"parameter", editor::SyntaxClass::Parameter},
+            {"variable", editor::SyntaxClass::Variable},
+            {"property", editor::SyntaxClass::Property},
+            {"enumMember", editor::SyntaxClass::Constant},
+            {"function", editor::SyntaxClass::Function},
+            {"method", editor::SyntaxClass::Method},
+            {"macro", editor::SyntaxClass::FunctionBuiltin},
+            {"keyword", editor::SyntaxClass::Keyword},
+            {"modifier", editor::SyntaxClass::KeywordModifier},
+            {"comment", editor::SyntaxClass::Comment},
+            {"string", editor::SyntaxClass::String},
+            {"number", editor::SyntaxClass::Number},
+            {"regexp", editor::SyntaxClass::String},
+            {"operator", editor::SyntaxClass::Operator},
+            {"decorator", editor::SyntaxClass::Attribute},
+            {"label", editor::SyntaxClass::Label},
+        };
+        const auto it = kMapping.find(tokenType);
+        return it != kMapping.end() ? std::optional(it->second) : std::nullopt;
+    }
+
     // error-visibility follow-up. No existing timestamp-formatting
     // convention exists anywhere else in this codebase (confirmed via
     // search) -- this is a small, self-contained, file-local helper, not
@@ -227,6 +269,26 @@ Json BuildInitializeParams(const std::filesystem::path& projectRoot, const Json&
             {"rename", Json::object()},
             {"formatting", Json::object()},
             {"rangeFormatting", Json::object()},
+            {"onTypeFormatting", Json::object()},
+            // semanticTokens follow-up: tokenTypes/tokenModifiers here are
+            // spec-required but purely informational (the client's own
+            // decode is index-based against the server's own legend, not
+            // filtered against this list) -- declares every standard type
+            // SyntaxClassForSemanticTokenType actually maps, so a
+            // capability-strict server has no reason to omit any of them
+            // from its own legend. requests.full only (no range/delta yet
+            // -- see ROADMAP.md); formats always ["relative"], the only
+            // value the spec defines.
+            {"semanticTokens",
+             {{"requests", {{"full", true}}},
+              {"tokenTypes", Json::array({"namespace", "class", "enum", "interface", "struct", "type", "typeParameter",
+                                          "parameter", "variable", "property", "enumMember", "function", "method", "macro",
+                                          "keyword", "modifier", "comment", "string", "number", "regexp", "operator",
+                                          "decorator", "label"})},
+              {"tokenModifiers", Json::array()},
+              {"formats", Json::array({"relative"})}}},
+            {"inlayHint", Json::object()},
+            {"codeLens", Json::object()},
             {"publishDiagnostics", Json::object()},
             {"codeAction",
              {{"codeActionLiteralSupport",
@@ -393,7 +455,7 @@ LspClient* LspManager::ClientForLanguage(const std::string& language) {
         "initialize",
         BuildInitializeParams(editor::ProjectRoot(), editor::LspInitializationOptionsForLanguage(projectSettings, language)),
         [this, rawClient, language, workspaceConfiguration = projectSettings.lspWorkspaceConfiguration](
-            std::optional<Json>, std::optional<Json> error) {
+            std::optional<Json> result, std::optional<Json> error) {
             // hang-on-timed-out-initialize follow-up: ExpireStaleRequests
             // invokes this with (nullopt, a synthesized timeout error) if
             // the server never responds -- previously this branch was
@@ -407,6 +469,19 @@ LspClient* LspManager::ClientForLanguage(const std::string& language) {
                 disconnectDetail_[language] = ExtractErrorMessage(*error);
                 ClientDisconnected(language);
                 return;
+            }
+            // semantic-tokens/on-type-formatting follow-up: the only two
+            // pieces of this response this class keeps -- see
+            // SemanticTokensLegendFor/OnTypeFormattingTriggersFor's own doc
+            // comment in LspManager.h for why. Absent means whatever result
+            // is present, the provider just isn't advertised.
+            if (result) {
+                if (const auto legend = ExtractSemanticTokensLegend(*result)) {
+                    semanticTokensLegend_[language] = *legend;
+                }
+                if (const auto triggers = ExtractOnTypeFormattingTriggers(*result)) {
+                    onTypeFormattingTriggers_[language] = *triggers;
+                }
             }
             rawClient->SendNotification("initialized", Json::object());
             if (!workspaceConfiguration.empty()) {
@@ -597,6 +672,15 @@ void LspManager::SyncTextToServer(text::Buffer& buffer, const std::string& serve
                                                          });
         state.opened               = true;
         state.lastSyncedGeneration = buffer.ContentGeneration();
+        // pull-diagnostics follow-up: same cadence as didOpen/didChange
+        // itself, no separate debounce timer -- see RequestPullDiagnostics'
+        // own doc comment in LspManager.h. Opt-in (LspPullDiagnosticsEnabled,
+        // default false): unconditionally, this would mean one extra
+        // request per content sync for every server, forever, whether or
+        // not it actually needs pull diagnostics at all.
+        if (LspPullDiagnosticsEnabled()) {
+            RequestPullDiagnostics(buffer, serverKey);
+        }
         return;
     }
 
@@ -610,6 +694,9 @@ void LspManager::SyncTextToServer(text::Buffer& buffer, const std::string& serve
                                                            {"contentChanges", Json::array({{{"text", documentText}}})},
                                                        });
     state.lastSyncedGeneration = buffer.ContentGeneration();
+    if (LspPullDiagnosticsEnabled()) {
+        RequestPullDiagnostics(buffer, serverKey);
+    }
 }
 
 LspManager::BufferSyncState* LspManager::PrimarySyncState(text::Buffer& buffer) {
@@ -674,6 +761,14 @@ void LspManager::ClientDisconnected(const std::string& language) {
     // erase() is safe again and retired_ is gone.
     clients_.erase(languageCopy);
     brokerBackedLanguages_.erase(languageCopy); // graceful-lsp-shutdown follow-up -- must not outlive the client it described
+    // semantic-tokens/on-type-formatting follow-up: a respawned server may
+    // advertise a different legend/trigger set than the one that just
+    // died -- don't let a stale entry outlive this connection.
+    semanticTokensLegend_.erase(languageCopy);
+    onTypeFormattingTriggers_.erase(languageCopy);
+    pullDiagnosticsUnsupported_.erase(languageCopy); // a respawned server gets one fresh attempt
+    inlayHintsUnsupported_.erase(languageCopy);       // ditto
+    codeLensUnsupported_.erase(languageCopy);         // ditto
     // mode-line-lsp-status-round-2 follow-up: latch the disconnect so
     // StatusForLanguage can report it, distinct from "never configured" --
     // cleared the moment a fresh spawn succeeds (ClientForLanguage) or the
@@ -796,6 +891,16 @@ std::string LspManager::DisconnectReason(const std::string& language) const {
     return it != disconnectDetail_.end() ? it->second : std::string();
 }
 
+std::optional<SemanticTokensLegend> LspManager::SemanticTokensLegendFor(const std::string& serverKey) const {
+    const auto it = semanticTokensLegend_.find(serverKey);
+    return it != semanticTokensLegend_.end() ? std::optional(it->second) : std::nullopt;
+}
+
+std::optional<OnTypeFormattingTriggers> LspManager::OnTypeFormattingTriggersFor(const std::string& serverKey) const {
+    const auto it = onTypeFormattingTriggers_.find(serverKey);
+    return it != onTypeFormattingTriggers_.end() ? std::optional(it->second) : std::nullopt;
+}
+
 void LspManager::NotifyBufferClosed(text::Buffer& buffer) {
     const auto it = bufferState_.find(&buffer);
     if (it != bufferState_.end()) {
@@ -818,6 +923,16 @@ void LspManager::NotifyBufferClosed(text::Buffer& buffer) {
     embeddedServerKeys_.erase(&buffer);
     embeddedOwnedRanges_.erase(&buffer);
     hugeSyncSkipNotified_.erase(&buffer);
+    semanticTokensRequestedGeneration_.erase(&buffer);
+    semanticTokensRequestCounter_.erase(&buffer);
+    semanticTokenSpans_.erase(&buffer);
+    semanticTokensGeneration_.erase(&buffer);
+    inlayHintsRequestedRange_.erase(&buffer);
+    inlayHintsRequestCounter_.erase(&buffer);
+    inlayHintSpans_.erase(&buffer);
+    codeLensRequestedGeneration_.erase(&buffer);
+    codeLensRequestCounter_.erase(&buffer);
+    codeLensSpans_.erase(&buffer);
 }
 
 void LspManager::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
@@ -897,28 +1012,7 @@ void LspManager::HandlePublishDiagnostics(const Json& params, const std::string&
             });
         }
     }
-    // embedded-language-documents follow-up: an embedded server (one with an
-    // owned-ranges record) only ever legitimately reports within its own
-    // owned regions -- a padded/blanked region should tokenize as inert
-    // whitespace, so a diagnostic starting outside every owned range is
-    // either a rare parser edge case at a padding boundary or a server
-    // ignoring content it wasn't asked about. Dropped defensively rather
-    // than surfaced against the wrong language's chrome. No effect on the
-    // primary language or kProseLanguageKey, neither of which ever has an
-    // owned-ranges entry (they own the whole buffer).
-    if (const auto ownedIt = embeddedOwnedRanges_.find(buffer); ownedIt != embeddedOwnedRanges_.end()) {
-        if (const auto rangeIt = ownedIt->second.find(language); rangeIt != ownedIt->second.end()) {
-            const std::vector<std::pair<std::size_t, std::size_t>>& ranges = rangeIt->second;
-            std::erase_if(diagnostics, [&ranges](const text::Buffer::Diagnostic& diagnostic) {
-                for (const auto& range : ranges) {
-                    if (diagnostic.startByte >= range.first && diagnostic.startByte < range.second) {
-                        return false;
-                    }
-                }
-                return true;
-            });
-        }
-    }
+    FilterToOwnedRanges(buffer, language, diagnostics);
 
     // prose-checking follow-up: this server's own full current diagnostic
     // set for buffer replaces only its own slice -- another server's slice
@@ -934,6 +1028,349 @@ void LspManager::HandlePublishDiagnostics(const Json& params, const std::string&
     // application once the buffer goes quiet for a beat.
     diagnosticsDebounceTimers_[buffer].Arm(eventLoop_, std::chrono::milliseconds(LspDiagnosticsDebounceMs()),
                                            [this, buffer] { PushMergedDiagnostics(*buffer); });
+}
+
+void LspManager::FilterToOwnedRanges(text::Buffer* buffer, const std::string& language,
+                                     std::vector<text::Buffer::Diagnostic>& diagnostics) const {
+    // embedded-language-documents follow-up: an embedded server (one with an
+    // owned-ranges record) only ever legitimately reports within its own
+    // owned regions -- a padded/blanked region should tokenize as inert
+    // whitespace, so a diagnostic starting outside every owned range is
+    // either a rare parser edge case at a padding boundary or a server
+    // ignoring content it wasn't asked about. Dropped defensively rather
+    // than surfaced against the wrong language's chrome. No effect on the
+    // primary language or kProseLanguageKey, neither of which ever has an
+    // owned-ranges entry (they own the whole buffer).
+    const auto ownedIt = embeddedOwnedRanges_.find(buffer);
+    if (ownedIt == embeddedOwnedRanges_.end()) {
+        return;
+    }
+    const auto rangeIt = ownedIt->second.find(language);
+    if (rangeIt == ownedIt->second.end()) {
+        return;
+    }
+    const std::vector<std::pair<std::size_t, std::size_t>>& ranges = rangeIt->second;
+    std::erase_if(diagnostics, [&ranges](const text::Buffer::Diagnostic& diagnostic) {
+        for (const auto& range : ranges) {
+            if (diagnostic.startByte >= range.first && diagnostic.startByte < range.second) {
+                return false;
+            }
+        }
+        return true;
+    });
+}
+
+void LspManager::RequestPullDiagnostics(text::Buffer& buffer, const std::string& serverKey) {
+    if (pullDiagnosticsUnsupported_.contains(serverKey)) {
+        return; // learned once that this server doesn't support textDocument/diagnostic
+    }
+    BufferSyncState* state = ResolveSyncState(buffer, serverKey);
+    if (!state || !state->opened) {
+        return;
+    }
+    LspClient* client = ExistingClientForLanguage(state->language);
+    if (!client) {
+        return;
+    }
+
+    // uri/language captured by value, not the buffer itself: the response
+    // arrives after a real async round trip, during which the buffer could
+    // legitimately close -- resolved fresh (by uri, via bufferList_) inside
+    // the callback below rather than holding a pointer across the gap, the
+    // same resolve-fresh-not-capture-stale discipline
+    // HandlePublishDiagnostics itself already follows for a notification
+    // arriving whenever the server feels like sending it.
+    const std::string uri      = state->uri;
+    const std::string language = state->language;
+    const Json         params   = {{"textDocument", {{"uri", uri}}}};
+    client->SendRequest(
+        "textDocument/diagnostic", params,
+        [this, uri, language](std::optional<Json> result, std::optional<Json> error) {
+            if (error) {
+                // A real error response (as opposed to a legitimate "no
+                // diagnostics right now" empty items array) is this
+                // server's own proof it doesn't implement the method --
+                // stop asking for the rest of this connection's lifetime
+                // rather than re-erroring on every sync.
+                pullDiagnosticsUnsupported_.insert(language);
+                return;
+            }
+            if (!result) {
+                return;
+            }
+            const std::optional<std::vector<PullDiagnosticItem>> items = ExtractPullDiagnosticReport(*result);
+            if (!items) {
+                return; // an "unchanged" report, or nothing parseable -- leave the existing slice alone
+            }
+            const std::optional<std::filesystem::path> path   = UriToPath(uri);
+            text::Buffer* const                        buffer = path ? bufferList_.FindByPath(*path) : nullptr;
+            if (!buffer) {
+                return; // buffer closed since this was requested
+            }
+            const text::ITextStorage&             content = buffer->Content();
+            std::vector<text::Buffer::Diagnostic> diagnostics;
+            diagnostics.reserve(items->size());
+            for (const PullDiagnosticItem& item : *items) {
+                diagnostics.push_back(text::Buffer::Diagnostic{
+                    .startByte = LspPositionToByte(content, item.start),
+                    .endByte   = LspPositionToByte(content, item.end),
+                    .severity  = SeverityFromLsp(item.severity),
+                    .origin    = (language == kProseLanguageKey) ? text::Buffer::Diagnostic::Origin::Prose
+                                                                 : text::Buffer::Diagnostic::Origin::Code,
+                    .message   = item.message,
+                });
+            }
+            FilterToOwnedRanges(buffer, language, diagnostics);
+            // Same source-key slot HandlePublishDiagnostics writes into --
+            // see this method's own doc comment in LspManager.h for why
+            // that's the deliberate choice here.
+            diagnosticsBySource_[buffer][language] = std::move(diagnostics);
+            PushMergedDiagnostics(*buffer);
+        });
+}
+
+void LspManager::RequestSemanticTokensFull(text::Buffer& buffer, const std::string& serverKey) {
+    if (!LspSemanticHighlightingEnabled()) {
+        return;
+    }
+    BufferSyncState* state = ResolveSyncState(buffer, serverKey);
+    if (!state || !state->opened) {
+        return;
+    }
+    if (const auto it = semanticTokensRequestedGeneration_.find(&buffer);
+        it != semanticTokensRequestedGeneration_.end() && it->second == buffer.ContentGeneration()) {
+        return; // already requested for this exact content -- a cursor-blink/scroll-only repaint, not a real change
+    }
+    const std::optional<SemanticTokensLegend> legend = SemanticTokensLegendFor(state->language);
+    if (!legend) {
+        return; // server never advertised a legend -- the response would be undecodable anyway
+    }
+    LspClient* client = ExistingClientForLanguage(state->language);
+    if (!client) {
+        return;
+    }
+
+    semanticTokensRequestedGeneration_[&buffer] = buffer.ContentGeneration();
+    const std::size_t requestId                 = ++semanticTokensRequestCounter_[&buffer];
+
+    text::Buffer* const        bufferPtr  = &buffer;
+    const Json                 params     = {{"textDocument", {{"uri", state->uri}}}};
+    const SemanticTokensLegend legendCopy = *legend;
+    client->SendRequest(
+        "textDocument/semanticTokens/full", params,
+        [this, bufferPtr, requestId, legendCopy](std::optional<Json> result, std::optional<Json> error) {
+            const auto counterIt = semanticTokensRequestCounter_.find(bufferPtr);
+            if (counterIt == semanticTokensRequestCounter_.end() || counterIt->second != requestId) {
+                return; // superseded by a newer request for this buffer
+            }
+            if (error || !result) {
+                return; // leave whatever spans were already applied in place
+            }
+            const std::vector<SemanticToken>   tokens  = ExtractSemanticTokens(*result);
+            const text::ITextStorage&          content = bufferPtr->Content();
+            std::vector<editor::HighlightSpan> spans;
+            spans.reserve(tokens.size());
+            for (const SemanticToken& token : tokens) {
+                if (token.tokenTypeIndex >= legendCopy.tokenTypes.size()) {
+                    continue; // out-of-range index -- a malformed/mismatched-legend response, skip rather than crash
+                }
+                const std::optional<editor::SyntaxClass> syntaxClass =
+                    SyntaxClassForSemanticTokenType(legendCopy.tokenTypes[token.tokenTypeIndex]);
+                if (!syntaxClass) {
+                    continue; // no sensible existing class for this token type -- dropped, not force-fit
+                }
+                // A semantic token never spans multiple lines (per spec) --
+                // its end is always {start.line, start.character + length}.
+                const LspPosition end{.line = token.start.line, .character = token.start.character + token.length};
+                spans.push_back(editor::HighlightSpan{
+                    .startByte   = LspPositionToByte(content, token.start),
+                    .endByte     = LspPositionToByte(content, end),
+                    .syntaxClass = *syntaxClass,
+                });
+            }
+            semanticTokenSpans_[bufferPtr] = std::move(spans);
+            ++semanticTokensGeneration_[bufferPtr];
+        });
+}
+
+const std::vector<editor::HighlightSpan>& LspManager::SemanticTokenSpans(const text::Buffer& buffer) const {
+    static const std::vector<editor::HighlightSpan> kEmpty;
+    const auto                                      it = semanticTokenSpans_.find(const_cast<text::Buffer*>(&buffer));
+    return it != semanticTokenSpans_.end() ? it->second : kEmpty;
+}
+
+std::size_t LspManager::SemanticTokensGeneration(const text::Buffer& buffer) const {
+    const auto it = semanticTokensGeneration_.find(const_cast<text::Buffer*>(&buffer));
+    return it != semanticTokensGeneration_.end() ? it->second : 0;
+}
+
+void LspManager::RequestInlayHints(text::Buffer& buffer, std::size_t viewportStartByte, std::size_t viewportEndByte,
+                                   const std::string& serverKey) {
+    if (!LspInlayHintsEnabled()) {
+        return;
+    }
+    if (inlayHintsUnsupported_.contains(serverKey)) {
+        return; // learned once that this server doesn't support textDocument/inlayHint
+    }
+    BufferSyncState* state = ResolveSyncState(buffer, serverKey);
+    if (!state || !state->opened) {
+        return;
+    }
+    const auto requestedRange = std::make_tuple(buffer.ContentGeneration(), viewportStartByte, viewportEndByte);
+    if (const auto it = inlayHintsRequestedRange_.find(&buffer); it != inlayHintsRequestedRange_.end() && it->second == requestedRange) {
+        return; // already requested for this exact (content, viewport) -- a cursor-blink/scroll-into-the-same-view repaint
+    }
+    LspClient* client = ExistingClientForLanguage(state->language);
+    if (!client) {
+        return;
+    }
+
+    inlayHintsRequestedRange_[&buffer] = requestedRange;
+    const std::size_t requestId        = ++inlayHintsRequestCounter_[&buffer];
+
+    const text::ITextStorage& content   = buffer.Content();
+    const LspPosition         start     = BytePositionToLsp(content, viewportStartByte);
+    const LspPosition         end       = BytePositionToLsp(content, viewportEndByte);
+    text::Buffer* const       bufferPtr = &buffer;
+    const Json                params    = {
+        {"textDocument", {{"uri", state->uri}}},
+        {"range", {{"start", {{"line", start.line}, {"character", start.character}}}, {"end", {{"line", end.line}, {"character", end.character}}}}},
+    };
+    client->SendRequest(
+        "textDocument/inlayHint", params,
+        [this, bufferPtr, requestId, serverKey](std::optional<Json> result, std::optional<Json> error) {
+            const auto counterIt = inlayHintsRequestCounter_.find(bufferPtr);
+            if (counterIt == inlayHintsRequestCounter_.end() || counterIt->second != requestId) {
+                return; // superseded by a newer request for this buffer
+            }
+            if (error) {
+                // A real error response is this server's own proof it
+                // doesn't implement the method -- stop asking for the rest
+                // of this connection's lifetime rather than re-erroring on
+                // every viewport change.
+                inlayHintsUnsupported_.insert(serverKey);
+                return;
+            }
+            if (!result) {
+                return;
+            }
+            const std::vector<InlayHint>   hints   = ExtractInlayHints(*result);
+            const text::ITextStorage&      content = bufferPtr->Content();
+            std::vector<ResolvedInlayHint> resolved;
+            resolved.reserve(hints.size());
+            for (const InlayHint& hint : hints) {
+                resolved.push_back(ResolvedInlayHint{.byteOffset = LspPositionToByte(content, hint.position), .label = hint.label});
+            }
+            std::sort(resolved.begin(), resolved.end(),
+                      [](const ResolvedInlayHint& a, const ResolvedInlayHint& b) { return a.byteOffset < b.byteOffset; });
+            inlayHintSpans_[bufferPtr] = std::move(resolved);
+        });
+}
+
+const std::vector<LspManager::ResolvedInlayHint>& LspManager::InlayHintSpans(const text::Buffer& buffer) const {
+    static const std::vector<ResolvedInlayHint> kEmpty;
+    const auto                                  it = inlayHintSpans_.find(const_cast<text::Buffer*>(&buffer));
+    return it != inlayHintSpans_.end() ? it->second : kEmpty;
+}
+
+void LspManager::RequestCodeLenses(text::Buffer& buffer, const std::string& serverKey) {
+    if (!LspCodeLensEnabled()) {
+        return;
+    }
+    if (codeLensUnsupported_.contains(serverKey)) {
+        return; // learned once that this server doesn't support textDocument/codeLens
+    }
+    BufferSyncState* state = ResolveSyncState(buffer, serverKey);
+    if (!state || !state->opened) {
+        return;
+    }
+    if (const auto it = codeLensRequestedGeneration_.find(&buffer);
+        it != codeLensRequestedGeneration_.end() && it->second == buffer.ContentGeneration()) {
+        return; // already requested for this exact content
+    }
+    LspClient* client = ExistingClientForLanguage(state->language);
+    if (!client) {
+        return;
+    }
+
+    codeLensRequestedGeneration_[&buffer] = buffer.ContentGeneration();
+    const std::size_t requestId           = ++codeLensRequestCounter_[&buffer];
+
+    text::Buffer* const bufferPtr = &buffer;
+    const Json          params    = {{"textDocument", {{"uri", state->uri}}}};
+    client->SendRequest(
+        "textDocument/codeLens", params,
+        [this, bufferPtr, requestId, serverKey](std::optional<Json> result, std::optional<Json> error) {
+            const auto counterIt = codeLensRequestCounter_.find(bufferPtr);
+            if (counterIt == codeLensRequestCounter_.end() || counterIt->second != requestId) {
+                return; // superseded by a newer request for this buffer
+            }
+            if (error) {
+                codeLensUnsupported_.insert(serverKey);
+                return;
+            }
+            if (!result) {
+                return;
+            }
+            const std::vector<CodeLens>   lenses  = ExtractCodeLenses(*result);
+            const text::ITextStorage&     content = bufferPtr->Content();
+            std::vector<ResolvedCodeLens> resolved;
+            resolved.reserve(lenses.size());
+            for (const CodeLens& lens : lenses) {
+                resolved.push_back(ResolvedCodeLens{
+                    .startByte        = LspPositionToByte(content, lens.start),
+                    .endByte          = LspPositionToByte(content, lens.end),
+                    .title            = lens.title,
+                    .commandName      = lens.commandName,
+                    .commandArguments = lens.commandArguments,
+                    .hasCommand       = lens.hasCommand,
+                    .raw              = lens.raw,
+                });
+            }
+            std::sort(resolved.begin(), resolved.end(),
+                      [](const ResolvedCodeLens& a, const ResolvedCodeLens& b) { return a.startByte < b.startByte; });
+            codeLensSpans_[bufferPtr] = std::move(resolved);
+        });
+}
+
+const std::vector<LspManager::ResolvedCodeLens>& LspManager::CodeLensSpans(const text::Buffer& buffer) const {
+    static const std::vector<ResolvedCodeLens> kEmpty;
+    const auto                                 it = codeLensSpans_.find(const_cast<text::Buffer*>(&buffer));
+    return it != codeLensSpans_.end() ? it->second : kEmpty;
+}
+
+void LspManager::ResolveCodeLens(text::Buffer& buffer, const ResolvedCodeLens& lens, ResolveCodeLensCallback callback,
+                                 const std::string& serverKey) {
+    BufferSyncState* state = ResolveSyncState(buffer, serverKey);
+    if (!state || !state->opened) {
+        callback(std::nullopt);
+        return;
+    }
+    LspClient* client = ExistingClientForLanguage(state->language);
+    if (!client) {
+        callback(std::nullopt);
+        return;
+    }
+
+    const std::size_t startByte = lens.startByte;
+    const std::size_t endByte   = lens.endByte;
+    client->SendRequest("codeLens/resolve", lens.raw,
+                        [callback = std::move(callback), startByte, endByte](std::optional<Json> result, std::optional<Json> error) {
+                            if (error || !result) {
+                                callback(std::nullopt);
+                                return;
+                            }
+                            const CodeLens resolved = ExtractSingleCodeLens(*result);
+                            callback(ResolvedCodeLens{
+                                .startByte        = startByte,
+                                .endByte          = endByte,
+                                .title            = resolved.title,
+                                .commandName      = resolved.commandName,
+                                .commandArguments = resolved.commandArguments,
+                                .hasCommand       = resolved.hasCommand,
+                                .raw              = resolved.raw,
+                            });
+                        });
 }
 
 void LspManager::PushMergedDiagnostics(text::Buffer& buffer) {
@@ -1453,6 +1890,42 @@ void LspManager::RequestRangeFormatting(text::Buffer& buffer, std::size_t rangeS
         {"options", FormattingOptionsJson()},
     };
     client->SendRequest("textDocument/rangeFormatting", params,
+                        [this, language, callback = std::move(callback)](std::optional<Json> result, std::optional<Json> error) {
+                            if (error) {
+                                LogError(language, ExtractErrorMessage(*error));
+                                callback(std::nullopt);
+                                return;
+                            }
+                            if (!result) {
+                                callback(std::nullopt);
+                                return;
+                            }
+                            callback(ExtractFormattingEdits(*result));
+                        });
+}
+
+void LspManager::RequestOnTypeFormatting(text::Buffer& buffer, std::size_t byteOffset, const std::string& ch, FormattingCallback callback,
+                                         const std::string& serverKey) {
+    BufferSyncState* state = ResolveSyncState(buffer, serverKey);
+    if (!state || !state->opened) {
+        callback(std::nullopt);
+        return;
+    }
+    LspClient* client = ExistingClientForLanguage(state->language);
+    if (!client) {
+        callback(std::nullopt);
+        return;
+    }
+
+    const std::string language = state->language;
+    const LspPosition position = BytePositionToLsp(buffer.Content(), byteOffset);
+    const Json        params   = {
+        {"textDocument", {{"uri", state->uri}}},
+        {"position", {{"line", position.line}, {"character", position.character}}},
+        {"ch", ch},
+        {"options", FormattingOptionsJson()},
+    };
+    client->SendRequest("textDocument/onTypeFormatting", params,
                         [this, language, callback = std::move(callback)](std::optional<Json> result, std::optional<Json> error) {
                             if (error) {
                                 LogError(language, ExtractErrorMessage(*error));

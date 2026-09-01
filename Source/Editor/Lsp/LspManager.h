@@ -29,12 +29,14 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
 
 #include <nlohmann/json.hpp>
+#include "Editor/Mode.h"
 #include "Editor/ProcessTimeouts.h"
 #include "UI/EventLoop.h"
 
@@ -393,6 +395,17 @@ class LspManager {
     void RequestRangeFormatting(text::Buffer& buffer, std::size_t rangeStartByte, std::size_t rangeEndByte,
                                 FormattingCallback callback, const std::string& serverKey = {});
 
+    // on-type-formatting follow-up. ch is the just-typed trigger character
+    // (the caller is expected to have already matched it against
+    // OnTypeFormattingTriggersFor(serverKey) -- see that method's own doc
+    // comment for why this class doesn't do that matching itself);
+    // byteOffset is where it landed, converted to the request's own
+    // "position". Reuses FormattingCallback's exact shape/nullopt-on-failure
+    // convention, and the same fixed FormattingOptions RequestFormatting
+    // already builds.
+    void RequestOnTypeFormatting(text::Buffer& buffer, std::size_t byteOffset, const std::string& ch, FormattingCallback callback,
+                                 const std::string& serverKey = {});
+
     // symbol-search follow-up. A SymbolEntry (LspContent.h) with its own uri
     // already resolved to a real filesystem path -- mirrors ResolvedLocation's
     // own reasoning (LspManager owns the uri<->path boundary, callers never
@@ -474,6 +487,25 @@ class LspManager {
     LspClient& SetClientForTesting(std::string language, std::unique_ptr<LspClient> client,
                                    const Json& workspaceConfiguration = Json::object(), bool brokerBacked = false);
 
+    // on-type-formatting follow-up. SetClientForTesting above bypasses the
+    // real spawn/initialize/initialized handshake entirely, so a test
+    // driving it never populates onTypeFormattingTriggers_/
+    // semanticTokensLegend_ the way a real handshake does (see the
+    // `initialize` response lambda in LspManager.cpp) -- this is the same
+    // "test-only, production code never calls this" injection point for
+    // that one piece of state, mirroring SetClientForTesting's own
+    // rationale exactly.
+    void SetOnTypeFormattingTriggersForTesting(std::string language, OnTypeFormattingTriggers triggers) {
+        onTypeFormattingTriggers_[std::move(language)] = std::move(triggers);
+    }
+
+    // semanticTokens follow-up: same test-only injection point as
+    // SetOnTypeFormattingTriggersForTesting just above, for the sibling
+    // piece of `initialize`-response state.
+    void SetSemanticTokensLegendForTesting(std::string language, SemanticTokensLegend legend) {
+        semanticTokensLegend_[std::move(language)] = std::move(legend);
+    }
+
     // LspManagerTest-broker-hermeticity follow-up: routes ClientForLanguage's
     // real spawn path's TryConnectToBroker call at a caller-chosen path
     // instead of the real BrokerSocketPath() -- lets a test that wants a
@@ -540,6 +572,124 @@ class LspManager {
     // StatusForLanguage's current result.
     [[nodiscard]] std::string SpawnFailureDetail(const std::string& language) const;
     [[nodiscard]] std::string DisconnectReason(const std::string& language) const;
+
+    // semantic-tokens/on-type-formatting follow-up. Captured from
+    // serverKey's own `initialize` response the moment it arrives (the one
+    // place this class previously discarded that response entirely) --
+    // nullopt if serverKey has never finished a handshake, or its server
+    // doesn't advertise the corresponding provider. See LspContent.h's
+    // ExtractSemanticTokensLegend/ExtractOnTypeFormattingTriggers for why
+    // these two are stored as data a request needs to function, not as a
+    // general capability-gating check (this class deliberately has none --
+    // see ExecuteCommand's own doc comment above).
+    [[nodiscard]] std::optional<SemanticTokensLegend>     SemanticTokensLegendFor(const std::string& serverKey) const;
+    [[nodiscard]] std::optional<OnTypeFormattingTriggers> OnTypeFormattingTriggersFor(const std::string& serverKey) const;
+
+    // semanticTokens follow-up. Called once per Paint() for the active
+    // buffer (BufferView.cpp, alongside the existing SyncBuffer call, not
+    // from inside SyncBuffer/SyncToServer itself -- see this method's own
+    // definition comment for why keeping it out of LspManager's core sync
+    // path matters, a real lesson learned fixing pull-diagnostics' own test
+    // regression above). No-ops when semantic highlighting is disabled
+    // (LspSemanticHighlightingEnabled), when serverKey never advertised a
+    // legend (SemanticTokensLegendFor -- the response would be
+    // undecodable), or when buffer's content hasn't changed since this was
+    // last called for it (a cursor-blink/scroll-only repaint must not
+    // resend the request every single frame). Result lands in
+    // SemanticTokenSpans(buffer)/SemanticTokensGeneration(buffer) below,
+    // not a caller-supplied callback -- BufferView's highlight cache is
+    // this method's only real consumer, and it polls the generation counter
+    // the same way it already polls Buffer::ContentGeneration(), rather
+    // than being pushed to.
+    void RequestSemanticTokensFull(text::Buffer& buffer, const std::string& serverKey);
+
+    // The most recently applied full-document semantic-token spans for
+    // buffer, already resolved to byte offsets/SyntaxClass -- empty if
+    // never requested, not yet answered, or the server has no legend at
+    // all. captureId is always kNoCapture on every span (see
+    // SyntaxClassForSemanticTokenType's own doc comment for why this
+    // reuses SyntaxClass rather than adding a new styling axis).
+    [[nodiscard]] const std::vector<editor::HighlightSpan>& SemanticTokenSpans(const text::Buffer& buffer) const;
+
+    // Bumped every time SemanticTokenSpans(buffer) actually changes --
+    // BufferView's own highlight-cache key polls this alongside
+    // Buffer::ContentGeneration()/editor::CaptureClassGeneration(), the
+    // same "cheap did-it-change counter" shape ContentGeneration() itself
+    // already is. 0 if buffer has never had a semantic-tokens response
+    // applied.
+    [[nodiscard]] std::size_t SemanticTokensGeneration(const text::Buffer& buffer) const;
+
+    // inlayHint follow-up. One applied hint, already resolved to a byte
+    // offset -- label is the plain, already-flattened display text (see
+    // lsp::InlayHint's own doc comment in LspContent.h for how a
+    // richer InlayHintLabelPart[] response collapses to this).
+    struct ResolvedInlayHint {
+        std::size_t byteOffset;
+        std::string label;
+    };
+
+    // Called once per Paint() for the active buffer (BufferView.cpp,
+    // alongside SyncBuffer/RequestSemanticTokensFull), scoped to
+    // [viewportStartByte, viewportEndByte) -- unlike semanticTokens'
+    // whole-document request, the LSP spec's own "range" param on this
+    // method exists specifically so a client only asks for what's visible,
+    // since a large file can carry far more hints than are ever on screen
+    // at once. No legend/data precondition to gate on (inlay hints aren't
+    // index-encoded) -- this is a plain recurring background request, so
+    // (matching RequestPullDiagnostics'/RequestSemanticTokensFull's own
+    // precedent) it no-ops when disabled (LspInlayHintsEnabled), when the
+    // exact same [buffer, viewport range, content generation] triple was
+    // already requested (a cursor-blink/scroll-into-the-same-view repaint
+    // must not resend), and latches a real error response into
+    // inlayHintsUnsupported_ so a non-implementing server is never asked
+    // again for this connection's lifetime.
+    void RequestInlayHints(text::Buffer& buffer, std::size_t viewportStartByte, std::size_t viewportEndByte,
+                           const std::string& serverKey);
+
+    // The most recently applied inlay hints for buffer, sorted by
+    // byteOffset -- empty if never requested, not yet answered, or the
+    // server has no hints for the last-requested range at all.
+    [[nodiscard]] const std::vector<ResolvedInlayHint>& InlayHintSpans(const text::Buffer& buffer) const;
+
+    // codeLens follow-up. One applied lens, already resolved to byte
+    // offsets -- see LspContent.h's CodeLens for what each field means;
+    // raw is kept for a later codeLens/resolve if hasCommand is false.
+    struct ResolvedCodeLens {
+        std::size_t startByte;
+        std::size_t endByte;
+        std::string title;
+        std::string commandName;
+        Json        commandArguments;
+        bool        hasCommand;
+        Json        raw;
+    };
+
+    // Called once per Paint() for the active buffer, alongside
+    // RequestSemanticTokensFull/RequestInlayHints -- whole-document scope
+    // (codeLens has no "range" param, unlike inlayHint), so the dedup gate
+    // is just buffer.ContentGeneration(), the same shape
+    // RequestSemanticTokensFull's own gate is. No legend/data precondition
+    // (codeLens ranges aren't index-encoded) -- a plain recurring
+    // background request, so (matching RequestPullDiagnostics'/
+    // RequestInlayHints' own precedent) it no-ops when disabled
+    // (LspCodeLensEnabled) and latches a real error response into
+    // codeLensUnsupported_ so a non-implementing server is never asked
+    // again for this connection's lifetime.
+    void RequestCodeLenses(text::Buffer& buffer, const std::string& serverKey);
+
+    // The most recently applied code lenses for buffer, sorted by
+    // startByte -- empty if never requested, not yet answered, or the
+    // server reported none.
+    [[nodiscard]] const std::vector<ResolvedCodeLens>& CodeLensSpans(const text::Buffer& buffer) const;
+
+    // lsp-run-code-lens-at-point follow-up. Sends codeLens/resolve with
+    // lens.raw verbatim (the same round-trip ResolveCodeAction already
+    // does for code actions) -- called only when lens.hasCommand is
+    // false. callback receives the resolved ResolvedCodeLens (hasCommand
+    // true if the server actually filled it in) or nullopt on any failure.
+    using ResolveCodeLensCallback = std::function<void(std::optional<ResolvedCodeLens> resolved)>;
+    void ResolveCodeLens(text::Buffer& buffer, const ResolvedCodeLens& lens, ResolveCodeLensCallback callback,
+                        const std::string& serverKey = {});
 
   private:
     // Returns the already-running client for language, or nullptr if none
@@ -629,7 +779,39 @@ class LspManager {
     // (disconnect) so stale diagnostics from a dead server don't linger.
     void PushMergedDiagnostics(text::Buffer& buffer);
 
+    // pull-diagnostics follow-up. Called from SyncTextToServer right after
+    // each real didOpen/didChange it sends -- no separate debounce timer,
+    // since it rides that same cadence -- but only when
+    // LspServerConfig.h's LspPullDiagnosticsEnabled() is on (checked at
+    // that call site, not in here): unconditionally, this would mean one
+    // extra request per content sync for every server, forever, which both
+    // wastes round trips against a server that already pushes fine and
+    // (found empirically, fixing a real test-suite regression) interleaves
+    // unpredictably with whatever frame a test/caller expects to read next
+    // off that same connection. Deliberately per-serverKey rather than
+    // gated on any capability check (this class has none -- see
+    // ExecuteCommand's own doc comment above), but unlike a one-shot
+    // user-invoked request, this one repeats on every sync once enabled, so
+    // a server that answers with a real error (not just "no diagnostics")
+    // is latched in pullDiagnosticsUnsupported_ and never asked again for
+    // this connection's lifetime -- the same "learned once, don't retry a
+    // known-bad thing every cycle" shape failedCommands_ already
+    // establishes, just keyed on a response instead of a spawn outcome.
+    // Writes into the *same* diagnosticsBySource_[buffer][serverKey] slice
+    // HandlePublishDiagnostics uses -- a server that also happens to push
+    // publishDiagnostics unprompted just has this overwritten by the next
+    // push, same as any two publishes today.
+    void RequestPullDiagnostics(text::Buffer& buffer, const std::string& serverKey);
+
     void HandlePublishDiagnostics(const nlohmann::json& params, const std::string& language);
+
+    // embedded-language-documents follow-up: factored out of
+    // HandlePublishDiagnostics so pull-diagnostics' own response handler
+    // (RequestPullDiagnostics) applies the exact same owned-ranges filtering
+    // without duplicating it -- see HandlePublishDiagnostics' original
+    // inline comment (now moved here) for the "why" of dropping a
+    // diagnostic outside every owned range for an embedded server.
+    void FilterToOwnedRanges(text::Buffer* buffer, const std::string& language, std::vector<text::Buffer::Diagnostic>& diagnostics) const;
 
     // workDoneProgress-support follow-up. Handles a "$/progress"
     // notification: begin/end drive the shared "LSP" BackgroundActivity
@@ -758,6 +940,68 @@ class LspManager {
     // documented v1 limitation, matching this subsystem's existing "static
     // config, no auto-retry" model (see LspServerConfig.h).
     std::unordered_map<std::string, std::vector<std::string>> failedCommands_;
+
+    // semantic-tokens/on-type-formatting follow-up. Keyed by serverKey,
+    // captured from that server's own `initialize` response the moment it
+    // arrives; erased in ClientDisconnected alongside everything else tied
+    // to that connection's lifetime (a respawned server may advertise a
+    // different legend/trigger set than the one that just died). See
+    // SemanticTokensLegendFor/OnTypeFormattingTriggersFor's own doc comment
+    // above for why these exist instead of a general capability store.
+    std::unordered_map<std::string, SemanticTokensLegend>     semanticTokensLegend_;
+    std::unordered_map<std::string, OnTypeFormattingTriggers> onTypeFormattingTriggers_;
+
+    // pull-diagnostics follow-up: see RequestPullDiagnostics' own doc
+    // comment above for why this exists instead of a capability check.
+    // Erased in ClientDisconnected alongside everything else tied to that
+    // connection's lifetime -- a respawned server gets one fresh attempt.
+    std::unordered_set<std::string> pullDiagnosticsUnsupported_;
+
+    // semanticTokens follow-up. requestedGeneration_ is buffer's own
+    // ContentGeneration() at the moment RequestSemanticTokensFull last sent
+    // a request for it -- the dedup gate that keeps a cursor-blink/scroll-
+    // only repaint (content unchanged) from resending the request every
+    // frame, the same role bufferState_'s own lastSyncedGeneration plays
+    // for didChange. requestCounter_ is a separate, plain incrementing
+    // per-buffer counter -- the staleness guard inside the response
+    // callback (only the reply to the *latest* request for a buffer is
+    // ever applied, an older one arriving after a newer request was
+    // already sent is just discarded, matching
+    // BufferView::signatureHelpRequestGeneration_'s own precedent). spans_/
+    // generation_ are the applied result BufferView actually reads. All
+    // four erased together in NotifyBufferClosed.
+    std::unordered_map<text::Buffer*, std::size_t>                     semanticTokensRequestedGeneration_;
+    std::unordered_map<text::Buffer*, std::size_t>                     semanticTokensRequestCounter_;
+    std::unordered_map<text::Buffer*, std::vector<editor::HighlightSpan>> semanticTokenSpans_;
+    std::unordered_map<text::Buffer*, std::size_t>                     semanticTokensGeneration_;
+
+    // inlayHint follow-up. requestedRange_ is the (contentGeneration,
+    // viewportStartByte, viewportEndByte) triple last requested for a
+    // buffer -- the dedup gate (same role semanticTokensRequestedGeneration_
+    // plays, just keyed on viewport too, since scrolling to reveal new
+    // content is worth a fresh request even when content itself hasn't
+    // changed). requestCounter_ is the same plain per-buffer staleness
+    // guard semanticTokensRequestCounter_ is. spans_ is the applied,
+    // byte-resolved, sorted-by-byteOffset result BufferView reads.
+    // unsupported_ is the same "learned once from a real error response,
+    // stop asking" set pullDiagnosticsUnsupported_ already establishes.
+    // All four erased together in NotifyBufferClosed (unsupported_ instead
+    // cleared in ClientDisconnected, same as the others of its kind).
+    std::unordered_map<text::Buffer*, std::tuple<std::size_t, std::size_t, std::size_t>> inlayHintsRequestedRange_;
+    std::unordered_map<text::Buffer*, std::size_t>                                       inlayHintsRequestCounter_;
+    std::unordered_map<text::Buffer*, std::vector<ResolvedInlayHint>>                    inlayHintSpans_;
+    std::unordered_set<std::string>                                                      inlayHintsUnsupported_;
+
+    // codeLens follow-up. requestedGeneration_ is the same
+    // dedup-by-content-generation gate semanticTokensRequestedGeneration_
+    // is (whole-document scope, no viewport to also key on).
+    // requestCounter_/spans_/unsupported_ mirror the same three fields'
+    // roles for semanticTokens/inlayHint. All erased in NotifyBufferClosed
+    // (unsupported_ instead cleared in ClientDisconnected).
+    std::unordered_map<text::Buffer*, std::size_t>                   codeLensRequestedGeneration_;
+    std::unordered_map<text::Buffer*, std::size_t>                   codeLensRequestCounter_;
+    std::unordered_map<text::Buffer*, std::vector<ResolvedCodeLens>> codeLensSpans_;
+    std::unordered_set<std::string>                                  codeLensUnsupported_;
 
     // mode-line-lsp-status-round-3 follow-up: the exception message from the
     // spawn attempt that populated failedCommands_[language] -- cleared

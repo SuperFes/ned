@@ -12,6 +12,7 @@
 #ifndef NED_EDITOR_LSP_LSPCONTENT_H
 #define NED_EDITOR_LSP_LSPCONTENT_H
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
@@ -284,6 +285,151 @@ struct SymbolEntry {
 // server-ranked-against-its-query order for workspace/symbol; no
 // client-side re-sorting either way.
 [[nodiscard]] std::vector<SymbolEntry> ExtractSymbols(const Json& result, const std::string& ownUri = {});
+
+// semantic-tokens/on-type-formatting follow-up. Two pieces of an
+// `initialize` response's `capabilities` this client cannot proceed without
+// once it decides to ask -- unlike every other ExtractX function in this
+// file, these are read from the handshake response itself, not from a
+// per-feature request's own response. Deliberately not part of a general
+// "does the server support X" capability store: this codebase never gates a
+// request on the server's advertised capabilities (see LspManager.h's own
+// ExecuteCommand doc comment) -- it just sends the request and treats an
+// error/empty response like any other "no results" case. These two are
+// different in kind: the response is literally uninterpretable without
+// them (semanticTokens' numeric token stream needs the server's own
+// type/modifier vocabulary to decode at all; onTypeFormatting needs to know
+// *which* keystroke should even trigger a request, since there's no
+// sensible default). nullopt when the server doesn't advertise the
+// corresponding provider at all -- that absence is what tells the caller
+// not to bother asking, the same "empty means unsupported" signal every
+// other ExtractX result already carries.
+struct SemanticTokensLegend {
+    std::vector<std::string> tokenTypes;
+    std::vector<std::string> tokenModifiers;
+
+    bool operator==(const SemanticTokensLegend&) const = default;
+};
+
+// Parses `capabilities.semanticTokensProvider.legend` out of a full
+// `initialize` response. Per spec, semanticTokensProvider is always an
+// object (never a bare boolean) and legend is required within it whenever
+// the provider is present at all; a present-but-malformed legend (either
+// array missing or not an array) is treated the same as an absent provider.
+[[nodiscard]] std::optional<SemanticTokensLegend> ExtractSemanticTokensLegend(const Json& initializeResult);
+
+struct OnTypeFormattingTriggers {
+    std::string              first; // documentOnTypeFormattingProvider.firstTriggerCharacter, required by spec whenever the provider is present
+    std::vector<std::string> more;  // ...moreTriggerCharacter, optional -- [] if the server sent none
+
+    bool operator==(const OnTypeFormattingTriggers&) const = default;
+};
+
+// Parses `capabilities.documentOnTypeFormattingProvider` out of a full
+// `initialize` response. nullopt when the provider is absent, or present
+// without a "firstTriggerCharacter" string (the one field the spec actually
+// requires).
+[[nodiscard]] std::optional<OnTypeFormattingTriggers> ExtractOnTypeFormattingTriggers(const Json& initializeResult);
+
+// pull-diagnostics follow-up. One entry from a textDocument/diagnostic
+// response's "items" array -- same range/severity/message shape
+// LspManager::HandlePublishDiagnostics already parses inline for the push
+// form (publishDiagnostics), kept here as its own struct rather than
+// reused directly since converting to byte offsets needs a Buffer's
+// content, which this file deliberately has no dependency on (LspManager
+// does that conversion itself, the same layering ExtractFormattingEdits'
+// LspPosition-based WorkspaceTextEdit already established).
+struct PullDiagnosticItem {
+    LspPosition start;
+    LspPosition end;
+    int         severity = 3; // raw LSP DiagnosticSeverity (1=Error..4=Hint); 3=Information is the spec's own implied default
+    std::string message;
+};
+
+// Parses a textDocument/diagnostic response's DocumentDiagnosticReport
+// envelope. A "full" report (`kind: "full"`, or no "kind" at all -- some
+// servers omit it despite the spec listing it as required) yields its own
+// "items" array. An "unchanged" report (`kind: "unchanged"`, carrying only
+// a "resultId") means the server has nothing new to say since the caller's
+// last request -- nullopt, distinct from an empty vector, so the caller
+// knows to leave its existing diagnostics slice alone rather than clearing
+// it. Also nullopt for a non-object result or an unrecognized "kind".
+[[nodiscard]] std::optional<std::vector<PullDiagnosticItem>> ExtractPullDiagnosticReport(const Json& result);
+
+// semanticTokens follow-up. One decoded entry from a
+// textDocument/semanticTokens/full response's delta-encoded "data" array --
+// already unpacked to absolute line/character (the encoding's own
+// deltaLine/deltaStartChar arithmetic resolved here, once, rather than
+// leaving it to every caller), but still carrying the server's own raw
+// token-type/modifier indices rather than a resolved name -- resolving
+// those against the server's own legend (Phase 0's
+// ExtractSemanticTokensLegend) is the caller's job, the same layering split
+// PullDiagnosticItem's raw severity int already uses.
+struct SemanticToken {
+    LspPosition   start;
+    std::size_t   length;         // UTF-16 code units, same unit LspPosition::character already uses
+    std::size_t   tokenTypeIndex; // index into the server's own legend.tokenTypes
+    std::uint32_t tokenModifiers; // bitset -- bit i set means legend.tokenModifiers[i] applies
+
+    bool operator==(const SemanticToken&) const = default;
+};
+
+// Decodes a textDocument/semanticTokens/full (or /range) response's "data"
+// array: quintuples of (deltaLine, deltaStartChar, length, tokenType,
+// tokenModifiers) per the spec's relative encoding -- deltaLine is relative
+// to the previous token's line, deltaStartChar is relative to the previous
+// token's start character *only when deltaLine is 0* (an absolute column
+// otherwise), exactly as the spec defines it. Empty for a null/missing/
+// non-array "data", or one whose length isn't a multiple of 5.
+[[nodiscard]] std::vector<SemanticToken> ExtractSemanticTokens(const Json& result);
+
+// inlayHint follow-up. One entry from a textDocument/inlayHint response --
+// position stays an LspPosition (not yet resolved to a byte offset; the
+// caller does that against real buffer content, the same layering every
+// other LSP-position-carrying struct in this file already uses). label is
+// the resolved display text: a bare string per the simpler response shape,
+// or the concatenated "value" fields of an InlayHintLabelPart[] per the
+// richer one -- both flattened to plain text here, since this client
+// doesn't support per-part tooltips/commands (a v1 scope cut).
+struct InlayHint {
+    LspPosition position;
+    std::string label;
+
+    bool operator==(const InlayHint&) const = default;
+};
+
+// Parses a textDocument/inlayHint response: InlayHint[] | null. An entry
+// missing "position", missing "label", or resolving to an empty label
+// (nothing to render either way) is skipped, not treated as a parse error.
+[[nodiscard]] std::vector<InlayHint> ExtractInlayHints(const Json& result);
+
+// codeLens follow-up. One entry from a textDocument/codeLens response --
+// start/end stay LspPositions, resolved to byte offsets by the caller, the
+// same layering every other LSP-position-carrying struct in this file
+// already uses. A lens sent with no "command" at all (hasCommand=false)
+// needs codeLens/resolve before it's runnable -- title/commandName/
+// commandArguments are all empty/default in that case. raw is the original
+// item verbatim, needed to send back for resolve (same role
+// CodeAction::raw already plays for codeAction/resolve).
+struct CodeLens {
+    LspPosition start;
+    LspPosition end;
+    std::string title;                            // Command.title -- what's rendered; empty until resolved
+    std::string commandName;                      // Command.command -- opaque, replayed via workspace/executeCommand
+    Json        commandArguments = Json::array(); // Command.arguments, round-tripped verbatim
+    bool        hasCommand       = false;
+    Json        raw;
+
+    bool operator==(const CodeLens&) const = default;
+};
+
+// Parses a single textDocument/codeLens response item (also what a
+// codeLens/resolve response is -- always exactly one CodeLens, not an
+// array, mirroring ExtractSingleCodeAction's own reuse for resolve).
+[[nodiscard]] CodeLens ExtractSingleCodeLens(const Json& item);
+
+// Parses a textDocument/codeLens response: CodeLens[] | null. An entry
+// missing "range" is skipped, not treated as a parse error.
+[[nodiscard]] std::vector<CodeLens> ExtractCodeLenses(const Json& result);
 
 } // namespace ned::editor::lsp
 

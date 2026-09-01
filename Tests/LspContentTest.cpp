@@ -12,13 +12,23 @@ using ned::editor::lsp::ExtractDefinitionLocations;
 using ned::editor::lsp::ExtractDocumentHighlights;
 using ned::editor::lsp::ExtractHoverText;
 using ned::editor::lsp::ExtractFormattingEdits;
+using ned::editor::lsp::ExtractOnTypeFormattingTriggers;
+using ned::editor::lsp::ExtractPullDiagnosticReport;
+using ned::editor::lsp::CodeLens;
+using ned::editor::lsp::ExtractCodeLenses;
+using ned::editor::lsp::ExtractInlayHints;
+using ned::editor::lsp::ExtractSingleCodeLens;
 using ned::editor::lsp::ExtractRenameEdits;
+using ned::editor::lsp::ExtractSemanticTokens;
+using ned::editor::lsp::ExtractSemanticTokensLegend;
 using ned::editor::lsp::ExtractSignatureHelp;
 using ned::editor::lsp::ExtractSingleCodeAction;
 using ned::editor::lsp::ExtractSymbols;
 using ned::editor::lsp::Json;
 using ned::editor::lsp::LspPosition;
+using ned::editor::lsp::OnTypeFormattingTriggers;
 using ned::editor::lsp::RenameResult;
+using ned::editor::lsp::SemanticTokensLegend;
 using ned::editor::lsp::SymbolEntry;
 using ned::editor::lsp::SymbolKindLabel;
 
@@ -576,4 +586,196 @@ TEST_CASE("ExtractSymbols skips a malformed entry and returns empty for a non-ar
     const Json result = Json::array({{{"kind", 5}}}); // missing "name"
     REQUIRE(ExtractSymbols(result).empty());
     REQUIRE(ExtractSymbols(Json(nullptr)).empty());
+}
+
+TEST_CASE("ExtractSemanticTokensLegend parses tokenTypes and tokenModifiers from a full initialize response", "[Lsp]") {
+    const Json result = {
+        {"capabilities",
+         {{"semanticTokensProvider",
+           {{"legend", {{"tokenTypes", Json::array({"class", "function", "variable"})}, {"tokenModifiers", Json::array({"declaration", "readonly"})}}},
+            {"full", true}}}}},
+    };
+    const auto legend = ExtractSemanticTokensLegend(result);
+    REQUIRE(legend.has_value());
+    REQUIRE(legend->tokenTypes == std::vector<std::string>{"class", "function", "variable"});
+    REQUIRE(legend->tokenModifiers == std::vector<std::string>{"declaration", "readonly"});
+}
+
+TEST_CASE("ExtractSemanticTokensLegend defaults tokenModifiers to empty when the server omits it", "[Lsp]") {
+    const Json result = {
+        {"capabilities", {{"semanticTokensProvider", {{"legend", {{"tokenTypes", Json::array({"comment"})}}}}}}},
+    };
+    const auto legend = ExtractSemanticTokensLegend(result);
+    REQUIRE(legend.has_value());
+    REQUIRE(legend->tokenTypes == std::vector<std::string>{"comment"});
+    REQUIRE(legend->tokenModifiers.empty());
+}
+
+TEST_CASE("ExtractSemanticTokensLegend returns nullopt when the provider is absent, malformed, or the result isn't an object", "[Lsp]") {
+    REQUIRE_FALSE(ExtractSemanticTokensLegend(Json{{"capabilities", Json::object()}}).has_value());
+    REQUIRE_FALSE(ExtractSemanticTokensLegend(Json{{"capabilities", {{"semanticTokensProvider", true}}}}).has_value());
+    REQUIRE_FALSE(ExtractSemanticTokensLegend(Json{{"capabilities", {{"semanticTokensProvider", Json::object()}}}}).has_value());
+    REQUIRE_FALSE(ExtractSemanticTokensLegend(Json(nullptr)).has_value());
+}
+
+TEST_CASE("ExtractOnTypeFormattingTriggers parses firstTriggerCharacter and moreTriggerCharacter", "[Lsp]") {
+    const Json result = {
+        {"capabilities",
+         {{"documentOnTypeFormattingProvider", {{"firstTriggerCharacter", "}"}, {"moreTriggerCharacter", Json::array({";", "\n"})}}}}},
+    };
+    const auto triggers = ExtractOnTypeFormattingTriggers(result);
+    REQUIRE(triggers.has_value());
+    REQUIRE(triggers->first == "}");
+    REQUIRE(triggers->more == std::vector<std::string>{";", "\n"});
+}
+
+TEST_CASE("ExtractOnTypeFormattingTriggers defaults moreTriggerCharacter to empty when omitted", "[Lsp]") {
+    const Json result = {
+        {"capabilities", {{"documentOnTypeFormattingProvider", {{"firstTriggerCharacter", ";"}}}}},
+    };
+    const auto triggers = ExtractOnTypeFormattingTriggers(result);
+    REQUIRE(triggers.has_value());
+    REQUIRE(triggers->first == ";");
+    REQUIRE(triggers->more.empty());
+}
+
+TEST_CASE("ExtractOnTypeFormattingTriggers returns nullopt when the provider is absent or missing firstTriggerCharacter", "[Lsp]") {
+    REQUIRE_FALSE(ExtractOnTypeFormattingTriggers(Json{{"capabilities", Json::object()}}).has_value());
+    REQUIRE_FALSE(
+        ExtractOnTypeFormattingTriggers(Json{{"capabilities", {{"documentOnTypeFormattingProvider", Json::object()}}}}).has_value());
+    REQUIRE_FALSE(ExtractOnTypeFormattingTriggers(Json(nullptr)).has_value());
+}
+
+TEST_CASE("ExtractPullDiagnosticReport parses a full report's items", "[Lsp]") {
+    const Json result = {
+        {"kind", "full"},
+        {"items", Json::array({{{"range", MakeRange(0, 0, 0, 3)}, {"severity", 1}, {"message", "syntax error"}}})},
+    };
+    const auto items = ExtractPullDiagnosticReport(result);
+    REQUIRE(items.has_value());
+    REQUIRE(items->size() == 1);
+    REQUIRE((*items)[0].severity == 1);
+    REQUIRE((*items)[0].message == "syntax error");
+    REQUIRE((*items)[0].end.character == 3);
+}
+
+TEST_CASE("ExtractPullDiagnosticReport treats a missing \"kind\" the same as \"full\"", "[Lsp]") {
+    const Json result = {{"items", Json::array({{{"range", MakeRange(0, 0, 0, 1)}}})}};
+    const auto items  = ExtractPullDiagnosticReport(result);
+    REQUIRE(items.has_value());
+    REQUIRE(items->size() == 1);
+}
+
+TEST_CASE("ExtractPullDiagnosticReport returns nullopt for an \"unchanged\" report", "[Lsp]") {
+    const Json result = {{"kind", "unchanged"}, {"resultId", "abc123"}};
+    REQUIRE_FALSE(ExtractPullDiagnosticReport(result).has_value());
+}
+
+TEST_CASE("ExtractPullDiagnosticReport skips an entry missing \"range\" and returns nullopt for a non-object result",
+          "[Lsp]") {
+    const Json result = {{"kind", "full"}, {"items", Json::array({{{"message", "no range"}}, {{"range", MakeRange(0, 0, 0, 1)}}})}};
+    const auto items  = ExtractPullDiagnosticReport(result);
+    REQUIRE(items.has_value());
+    REQUIRE(items->size() == 1);
+
+    REQUIRE_FALSE(ExtractPullDiagnosticReport(Json(nullptr)).has_value());
+    REQUIRE_FALSE(ExtractPullDiagnosticReport(Json{{"kind", "something-unrecognized"}}).has_value());
+}
+
+TEST_CASE("ExtractSemanticTokens decodes deltaLine/deltaStartChar per the spec's relative encoding", "[Lsp]") {
+    // Three tokens: (line 0, char 0, len 3, type 5, mods 0) -- "int"
+    //               (line 0, char 4, len 1, type 8, mods 1) -- "x", same line as the first (deltaStartChar relative)
+    //               (line 1, char 2, len 6, type 5, mods 0) -- "return" on the next line (deltaStartChar absolute)
+    const Json result = {{"data", Json::array({0, 0, 3, 5, 0, 0, 4, 1, 8, 1, 1, 2, 6, 5, 0})}};
+    const auto tokens  = ExtractSemanticTokens(result);
+    REQUIRE(tokens.size() == 3);
+    REQUIRE(tokens[0].start.line == 0);
+    REQUIRE(tokens[0].start.character == 0);
+    REQUIRE(tokens[0].length == 3);
+    REQUIRE(tokens[0].tokenTypeIndex == 5);
+    REQUIRE(tokens[0].tokenModifiers == 0);
+
+    REQUIRE(tokens[1].start.line == 0);
+    REQUIRE(tokens[1].start.character == 4); // 0 + 4, same line as token 0
+    REQUIRE(tokens[1].tokenModifiers == 1);
+
+    REQUIRE(tokens[2].start.line == 1);
+    REQUIRE(tokens[2].start.character == 2); // absolute, not 4 + 2 -- deltaLine != 0
+    REQUIRE(tokens[2].tokenTypeIndex == 5);
+}
+
+TEST_CASE("ExtractSemanticTokens returns empty for a missing/non-array/malformed-length \"data\"", "[Lsp]") {
+    REQUIRE(ExtractSemanticTokens(Json::object()).empty());
+    REQUIRE(ExtractSemanticTokens(Json{{"data", "not an array"}}).empty());
+    REQUIRE(ExtractSemanticTokens(Json{{"data", Json::array({0, 0, 3, 5})}}).empty()); // 4 entries, not a multiple of 5
+    REQUIRE(ExtractSemanticTokens(Json(nullptr)).empty());
+}
+
+TEST_CASE("ExtractInlayHints parses a bare-string label", "[Lsp]") {
+    const Json result = Json::array({{{"position", {{"line", 2}, {"character", 5}}}, {"label", ": int"}}});
+    const auto hints   = ExtractInlayHints(result);
+    REQUIRE(hints.size() == 1);
+    REQUIRE(hints[0].position.line == 2);
+    REQUIRE(hints[0].position.character == 5);
+    REQUIRE(hints[0].label == ": int");
+}
+
+TEST_CASE("ExtractInlayHints concatenates an InlayHintLabelPart[] label's own \"value\" fields", "[Lsp]") {
+    const Json result = Json::array(
+        {{{"position", {{"line", 0}, {"character", 0}}}, {"label", Json::array({{{"value", "x"}}, {{"value", ": "}}, {{"value", "int"}}})}}});
+    const auto hints = ExtractInlayHints(result);
+    REQUIRE(hints.size() == 1);
+    REQUIRE(hints[0].label == "x: int");
+}
+
+TEST_CASE("ExtractInlayHints skips an entry missing position/label, an empty-string label, and returns empty for a "
+          "non-array result",
+          "[Lsp]") {
+    const Json result = Json::array({
+        {{"label", "no position"}},
+        {{"position", {{"line", 0}, {"character", 0}}}}, // no label
+        {{"position", {{"line", 0}, {"character", 0}}}, {"label", ""}},
+        {{"position", {{"line", 1}, {"character", 1}}}, {"label", "kept"}},
+    });
+    const auto hints = ExtractInlayHints(result);
+    REQUIRE(hints.size() == 1);
+    REQUIRE(hints[0].label == "kept");
+
+    REQUIRE(ExtractInlayHints(Json(nullptr)).empty());
+    REQUIRE(ExtractInlayHints(Json::object()).empty());
+}
+
+TEST_CASE("ExtractSingleCodeLens parses range and a resolved command", "[Lsp]") {
+    const Json item = {
+        {"range", MakeRange(2, 0, 2, 10)},
+        {"command", {{"title", "3 references"}, {"command", "editor.action.showReferences"}, {"arguments", Json::array({1, 2})}}},
+    };
+    const CodeLens lens = ExtractSingleCodeLens(item);
+    REQUIRE(lens.start.line == 2);
+    REQUIRE(lens.end.character == 10);
+    REQUIRE(lens.title == "3 references");
+    REQUIRE(lens.commandName == "editor.action.showReferences");
+    REQUIRE(lens.hasCommand);
+    REQUIRE(lens.commandArguments == Json::array({1, 2}));
+}
+
+TEST_CASE("ExtractSingleCodeLens leaves hasCommand false for an unresolved lens (no \"command\" at all)", "[Lsp]") {
+    const Json item = {{"range", MakeRange(0, 0, 0, 5)}};
+    const CodeLens lens = ExtractSingleCodeLens(item);
+    REQUIRE_FALSE(lens.hasCommand);
+    REQUIRE(lens.title.empty());
+    REQUIRE(lens.raw == item); // round-trips verbatim for a later resolve
+}
+
+TEST_CASE("ExtractCodeLenses skips an entry missing \"range\" and returns empty for a non-array result", "[Lsp]") {
+    const Json result = Json::array({
+        {{"command", {{"title", "no range"}, {"command", "x"}}}},
+        {{"range", MakeRange(0, 0, 0, 1)}, {"command", {{"title", "kept"}, {"command", "x"}}}},
+    });
+    const auto lenses = ExtractCodeLenses(result);
+    REQUIRE(lenses.size() == 1);
+    REQUIRE(lenses[0].title == "kept");
+
+    REQUIRE(ExtractCodeLenses(Json(nullptr)).empty());
+    REQUIRE(ExtractCodeLenses(Json::object()).empty());
 }

@@ -49,102 +49,19 @@ Notcurses.
       real-LSP-sync treatment HTML `<script>`/`<style>` embedded documents already have
       is an open question — spawning a live language server per code fence in an
       ordinary notes file could be noisy for illustrative/incomplete snippets.
-- [ ] **LSP request coverage is narrow** (2026-08-25 audit; `declaration`/`typeDefinition`/
-      `implementation`/`signatureHelp` closed 2026-08-26; `references`/`documentSymbol`/
-      `workspace/symbol` plus a capabilities-object/completion-context hygiene pass closed
-      2026-08-26; `documentHighlight`, `signatureHelp` auto-trigger, and
-      `documentFormatting`/`rangeFormatting` closed 2026-08-26 — see below). Only
-      hover/completion/codeAction(+resolve)/definition/declaration/typeDefinition/
-      implementation/references/documentSymbol/workspace-symbol/rename/switchSourceHeader/
-      executeCommand/signatureHelp/documentHighlight/formatting/rangeFormatting are ever
-      sent. Still missing: `semanticTokens` full/delta/range (highlighting stays
-      tree-sitter-only, never server-informed — matters where tree-sitter can't
-      disambiguate, e.g. C++ template vs. less-than); `inlayHint`; `codeLens`;
-      `callHierarchy`/`typeHierarchy`; and `onTypeFormatting`. Pull diagnostics
-      (`textDocument/diagnostic`) also unsupported — harmless while every configured server
-      pushes, a real gap only if one doesn't.
-      2026-08-26 (closed same day it was flagged): `documentHighlight` — live-on-
-      cursor-move (debounced via the same `LspCompletionDebounceMs()` completion already
-      uses) plus a manual `lsp-document-highlight` command (M-x only), both driving
-      `BufferView`'s own ephemeral `documentHighlight_` state (not `Buffer::Diagnostics()`'
-      persistent shape — closer to ghost-text completion's lifecycle) rendered via a new
-      `Theme::documentHighlightBackground` overlay, below selection/isearch/snippet-field
-      in `Paint()`'s brush-priority chain but above the execution-line/multibuffer/
-      trailing-whitespace washes. No on/off toggle — read-only decoration with no editing-
-      flow risk unlike auto-trigger completion/signature-help. `signatureHelp` auto-trigger
-      — fires on typing `(`/`,` (same debounce, gated by a new
-      `LspSignatureHelpAutoTriggerEnabled()` toggle, default true) via
-      `MaybeScheduleSignatureHelp`/`RequestSignatureHelpAtPoint`, writing into the shared
-      `statusMessage_` the same way `lsp-hover`/manual `lsp-signature-help` already do —
-      coexists with ghost-text completion (disjoint UI surfaces, inline vs. echo area), no
-      mutual suppression. `documentFormatting`/`rangeFormatting` — `LspManager::
-      RequestFormatting`/`RequestRangeFormatting` (bare `TextEdit[] | null` response,
-      `ExtractFormattingEdits`; `rangeFormatting` added for API symmetry but not wired into
-      any command yet — `save-buffer`/`format-buffer` are whole-buffer operations already).
-      `save-buffer`/`save-buffer-force` defer to a new async `BufferView::
-      RequestLspFormatThenSaveBuffer` (via `CommandContext::deferSaveForLspFormat`) only
-      when a new opt-in toggle (`ned/set-lsp-format-on-save`, default **false** — silently
-      changing existing installations' save behavior would be a real surprise) is on, no
-      external `FormatCommand()` is configured (that always wins unconditionally — the
-      more specific, deliberately hand-configured choice), and a server is actually running
-      for the buffer's language; `FormattingOptions` is fixed (`tabSize: TabWidth()`,
-      `insertSpaces: true` — this codebase has no per-buffer tabs-vs-spaces concept to
-      source them from yet). Found and fixed in the same pass: `BufferView.cpp`'s
-      anonymous-namespace `ApplyWorkspaceTextEdits` (shared by `ApplyCodeAction`/
-      `ApplyRename`, now also this) never wrapped its apply loop in
-      `Buffer::BeginUndoGroup`/`EndUndoGroup` — invisible for rename/code-actions' usual
-      handful of edits, but would have made undoing a whole-document format take one
-      keypress per edit; now one `Buffer::Undo()` reverts a full format. All three
-      tmux+clangd-verified live (documentHighlight's occurrence tracking across edits/
-      motion; signature-help appearing after `(` with no manual invocation; a real
-      badly-formatted file reformatted on save both on disk and in the buffer, one `C-_`
-      restoring it, and the external-formatter-precedence case confirmed by configuring
-      both and observing the external one win).
-      2026-08-26 (closed same day it was flagged): the direct-subprocess
-      `LspClient` path (as opposed to a broker-owned connection) previously had no
-      graceful `shutdown`/`exit` handshake at editor exit at all — it just let the child
-      get killed by `ChildProcess`'s destructor. `LspManager::Shutdown()` (called once from
-      `main.cpp`'s post-`Run()` sequence, before local teardown) now sends real
-      `"shutdown"`+`"exit"` frames to every *directly-spawned* client, mirroring
-      `LspBroker::Shutdown()`'s own fire-both-frames-without-waiting-for-the-response
-      pattern exactly (there is no live `EventLoop::Run()` left at that point to wait
-      with — `Transport::WriteFrame`'s own bounded stall timeout is what keeps this from
-      hanging, and `ChildProcess::~ChildProcess()`'s existing close-stdin/poll/SIGKILL
-      escalation is still what actually bounds the wait for the process to exit, unchanged
-      by this addition). A broker-backed client (`LspManager::brokerBackedLanguages_`,
-      stamped in `ClientForLanguage` at the one call site that already knows the
-      distinction) is correctly *never* sent shutdown/exit — that server is shared with
-      other `ned` processes and the broker daemon itself, and must outlive this one.
-      tmux-verified live both ways: a direct-spawned clangd was confirmed as a real child
-      process (`pstree`) that exits promptly on `C-x C-c` with no hang; a broker-backed
-      clangd (parented to the broker daemon) was confirmed to keep running, untouched,
-      after `ned` exited normally.
-      2026-08-26: `find-references`/`lsp-find-references` — `project-find-references`
-      (`M-?`) now tries a real `textDocument/references` first when a language server is
-      running for the buffer (`LspManager::RequestReferences`), falling back to the
-      original RE2 text scan only when none is (mirrors `SwitchHeaderSource`'s own
-      "LSP is a nice-to-have accelerant, not the only path" precedent — unlike
-      `lsp-goto-definition`/etc., which refuse outright with no server). `lsp-goto-symbol`
-      (`M-g i`, real Emacs' own `imenu` binding) sends `textDocument/documentSymbol` and
-      opens a `project-find-file`-style fuzzy picker over the results.
-      `lsp-workspace-symbol` (`C-c l w`) sends `workspace/symbol`, live-re-querying
-      (debounced via the same `LspCompletionDebounceMs()` ghost-text completion already
-      uses) as the query is typed, since the server does its own matching rather than
-      handing back a full list to filter locally. Both share `LspContent.h`'s
-      `ExtractSymbols`, which parses all three response shapes the spec allows
-      (hierarchical `DocumentSymbol[]`, flat `SymbolInformation[]`, and 3.17's
-      range-optional `WorkspaceSymbol[]`) uniformly.
-      Also 2026-08-26: `lsp-goto-declaration`/`lsp-goto-type-definition`/
-      `lsp-goto-implementation` gained default bindings (`C-c l d`/`C-c l t`/`C-c l i`,
-      previously M-x-only); `BuildInitializeParams`' advertised capabilities object
-      previously declared only `completion`/`codeAction`/`window.workDoneProgress` despite
-      this client sending/handling hover/definition/declaration/typeDefinition/
-      implementation/references/rename/signatureHelp/publishDiagnostics and
-      `workspace/configuration`/`workspace/executeCommand` — all now declared too (harmless
-      against clangd's own permissive handling either way, confirmed before and after, but
-      a capability-strict server is entitled to assume otherwise); `textDocument/completion`
-      requests now carry `context: {triggerKind: 1}` (every call site here is a manual/
-      explicit trigger, never a tracked trigger character).
+- [ ] **Call hierarchy / type hierarchy** — `textDocument/prepareCallHierarchy` +
+      `callHierarchy/incomingCalls`/`outgoingCalls`, and the analogous
+      `prepareTypeHierarchy`/`typeHierarchy/supertypes`/`subtypes`, are the two LSP
+      methods this client has never sent. Unlike every other LSP result view in this
+      codebase (a flat list: references, symbols, diagnostics), a hierarchy is
+      genuinely tree-shaped and expands on demand (each node's children are a fresh
+      request) — there's no existing widget to render that. Worth building a generic
+      expandable tree/list widget in `Source/UI/` for this rather than a one-off, since
+      nothing here currently renders hierarchical data and a future consumer (a VCS
+      log graph, a project outline pane) could reuse it instead of growing its own.
+- [ ] **`semanticTokens/range` and delta requests** — the semantic-highlighting client
+      only ever sends the full-document `semanticTokens/full` request; no huge-buffer
+      windowing or incremental delta support yet.
 - [ ] **LSP edit-application gaps** (2026-08-25 audit) — `ApplyCodeAction`
       (`BufferView.cpp`) outright refuses any code action whose edit touches more than
       one file, unlike rename, which does apply multi-file edits correctly; rename
@@ -157,6 +74,12 @@ Notcurses.
       `prepareRename`, `linkedEditingRange`, or `workspace/willRenameFiles`/
       `didRenameFiles`) — import paths elsewhere go stale until the server notices on
       its own.
+- [ ] **No multi-root LSP workspace support** — `LspManager` spawns one server per
+      language/server-key against the single process-wide `ProjectRoot()`; a monorepo
+      with multiple real project roots (or a server that itself supports
+      `workspaceFolders`) gets one server pinned to whichever root the process started
+      against. Already a known simplification (see `CLAUDE.md`'s `Lsp/` section) that's
+      never been tracked here until now.
 
 ### Navigation & Search
 
@@ -173,6 +96,24 @@ Notcurses.
       common case and drops real `<<<<<<<`/`=======`/`>>>>>>>` conflict markers into the
       buffer for a genuine divergence, but a real conflict is still hand-edited text,
       not a visual diff.
+- [ ] **No jump-back stack** — every location-jumping command
+      (`lsp-goto-definition`/`-declaration`/`-type-definition`/`-implementation`,
+      `lsp-goto-symbol`, `goto-line`, `bookmark-jump`) has no way back: no Emacs
+      `mark-ring`/`xref-pop-marker-stack`, no Vim `C-o`/`C-i`, no VSCode `Ctrl--`. Needs a
+      per-window stack of saved (buffer, offset) positions, pushed before any jump and
+      popped by a new `pop-mark`/`jump-back` command — `Buffer`'s point/mark primitives
+      already cover the storage half. Distinct from, but a natural shared foundation for,
+      Editor Ergonomics' Vim-mode jumplist/changelist gap below, which is Vim's own
+      separate `C-o`/`C-i` ring convention.
+- [ ] **No generic `next-error`/`previous-error`** — Emacs' unifying "walk the last set
+      of located things" primitive, working uniformly across compile output, grep
+      results, and diagnostics. Ned already has the individual result buffers (`*vcs
+      status*`, project-search results, the stitched `*diagnostics*` buffer) but nothing
+      walks them as a cursor motion outside clicking a line directly.
+- [ ] **No hunk-navigation motion** — `vcs-stage-hunk`/`vcs-unstage-hunk` operate on
+      whatever hunk covers point, but nothing jumps point to the next/previous changed
+      hunk in the buffer (gitsigns' `]c`/`[c`); today that means scanning the diff gutter
+      by eye first.
 
 ### Editor Ergonomics
 
@@ -227,6 +168,14 @@ Notcurses.
       beyond hand-writing `init.janet` — real live-editing already exists for themes
       specifically (`save-theme`/`ned/theme-set`); a general settings surface would
       generalize that. Vague, unscoped.
+- [ ] **No `fill-paragraph`/auto-fill** — Emacs' `M-q` (wrap the paragraph at point to a
+      fill column) has no equivalent anywhere in `Commands.cpp`, despite the stated
+      Emacs-class-parity vision.
+- [ ] **No surround editing** (vim-surround/mini.surround/evil-surround: add/change/
+      delete a delimiter pair around a region or text object) — distinct from
+      `AutoPair.cpp`'s type-time pairing; Vim mode's existing
+      `Editor/Vim/VimTextObject.h` text-object parsing is most of what it needs to hang
+      on to.
 
 ### Jupyter Notebooks
 
@@ -672,6 +621,24 @@ these accumulate detail in place.
       only if the content-gate default proves too lossy in practice (i.e. people
       habitually edit files outside ned in ways that touch none of a session's own undo
       states and lose history often enough to complain).
+- [ ] **Sticky scroll** — a pinned enclosing-function/class header row while scrolling a
+      long body, Zed/VSCode's readability feature. No Emacs precedent; a conscious yes/no
+      against the Emacs-class-parity vision rather than an obvious extension of it.
+- [ ] **Peek definition** — a floating inline preview of a definition's source without
+      leaving the buffer (Zed/VSCode's "peek"), rather than `lsp-goto-definition`'s real
+      buffer switch. `Overlay.h`'s `OverlayHost` (already generic, used by
+      `TerminalPanel`/`AcpPanel`) is a plausible cheap substrate if this is ever pursued.
+- [ ] **Completion UX: ghost-text vs. popup.** Current `lsp-completion`/`M-n`/`M-p`
+      cycling is a deliberate Emacs-flavored choice (one inline suggestion, cycle to the
+      next), not a gap in the ghost-text implementation itself. A ranked popup menu with
+      inline type/doc info alongside each candidate is the VSCode/Zed norm and a real
+      alternative worth naming — pulls against "Emacs-class parity," toward "terminal
+      Zed." A direction to decide, not a bug to fix.
+- [ ] **AI edit-prediction** (Zed's Zeta: predicting the next multi-line edit from
+      cursor/edit history, distinct from LSP-driven completion or ACP's chat) has no
+      equivalent here. A different feature from everything `Acp/` already provides, and
+      probably needs some model-serving backend of its own — worth naming as a conscious
+      gap rather than assuming ACP already covers "AI in the editor."
 
 ## Won't Do (at Least Not Soon)
 

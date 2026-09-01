@@ -578,4 +578,199 @@ std::optional<std::string> ExtractSignatureHelp(const Json& result) {
     return label;
 }
 
+namespace {
+
+[[nodiscard]] std::vector<std::string> StringArray(const Json& array) {
+    std::vector<std::string> values;
+    if (!array.is_array()) {
+        return values;
+    }
+    values.reserve(array.size());
+    for (const Json& entry : array) {
+        if (entry.is_string()) {
+            values.push_back(entry.get<std::string>());
+        }
+    }
+    return values;
+}
+
+} // namespace
+
+std::optional<SemanticTokensLegend> ExtractSemanticTokensLegend(const Json& initializeResult) {
+    if (!initializeResult.is_object()) {
+        return std::nullopt;
+    }
+    const auto capabilitiesIt = initializeResult.find("capabilities");
+    if (capabilitiesIt == initializeResult.end() || !capabilitiesIt->is_object()) {
+        return std::nullopt;
+    }
+    const auto providerIt = capabilitiesIt->find("semanticTokensProvider");
+    if (providerIt == capabilitiesIt->end() || !providerIt->is_object()) {
+        return std::nullopt;
+    }
+    const auto legendIt = providerIt->find("legend");
+    if (legendIt == providerIt->end() || !legendIt->is_object()) {
+        return std::nullopt;
+    }
+    const auto typesIt = legendIt->find("tokenTypes");
+    if (typesIt == legendIt->end() || !typesIt->is_array()) {
+        return std::nullopt;
+    }
+    SemanticTokensLegend legend;
+    legend.tokenTypes = StringArray(*typesIt);
+    if (const auto modifiersIt = legendIt->find("tokenModifiers"); modifiersIt != legendIt->end()) {
+        legend.tokenModifiers = StringArray(*modifiersIt);
+    }
+    return legend;
+}
+
+std::optional<OnTypeFormattingTriggers> ExtractOnTypeFormattingTriggers(const Json& initializeResult) {
+    if (!initializeResult.is_object()) {
+        return std::nullopt;
+    }
+    const auto capabilitiesIt = initializeResult.find("capabilities");
+    if (capabilitiesIt == initializeResult.end() || !capabilitiesIt->is_object()) {
+        return std::nullopt;
+    }
+    const auto providerIt = capabilitiesIt->find("documentOnTypeFormattingProvider");
+    if (providerIt == capabilitiesIt->end() || !providerIt->is_object()) {
+        return std::nullopt;
+    }
+    const auto firstIt = providerIt->find("firstTriggerCharacter");
+    if (firstIt == providerIt->end() || !firstIt->is_string()) {
+        return std::nullopt;
+    }
+    OnTypeFormattingTriggers triggers;
+    triggers.first = firstIt->get<std::string>();
+    if (const auto moreIt = providerIt->find("moreTriggerCharacter"); moreIt != providerIt->end()) {
+        triggers.more = StringArray(*moreIt);
+    }
+    return triggers;
+}
+
+std::optional<std::vector<PullDiagnosticItem>> ExtractPullDiagnosticReport(const Json& result) {
+    if (!result.is_object()) {
+        return std::nullopt;
+    }
+    // Some servers omit "kind" entirely despite the spec listing it as
+    // required -- treated the same as "full" (the only shape carrying an
+    // "items" array to parse), matching every other ExtractX function's
+    // tolerant-of-a-missing-field convention in this file.
+    const std::string kind = result.value("kind", std::string("full"));
+    if (kind == "unchanged") {
+        return std::nullopt; // nothing new -- caller keeps its existing slice
+    }
+    if (kind != "full") {
+        return std::nullopt; // an unrecognized report kind, not a parse error
+    }
+    const auto itemsIt = result.find("items");
+    if (itemsIt == result.end() || !itemsIt->is_array()) {
+        return std::nullopt;
+    }
+    std::vector<PullDiagnosticItem> items;
+    items.reserve(itemsIt->size());
+    for (const Json& item : *itemsIt) {
+        const Json& range = item.value("range", Json::object());
+        if (!range.contains("start") || !range.contains("end")) {
+            continue;
+        }
+        items.push_back(PullDiagnosticItem{
+            .start    = PositionFromJson(range["start"]),
+            .end      = PositionFromJson(range["end"]),
+            .severity = item.value("severity", 3),
+            .message  = item.value("message", std::string()),
+        });
+    }
+    return items;
+}
+
+std::vector<SemanticToken> ExtractSemanticTokens(const Json& result) {
+    std::vector<SemanticToken> tokens;
+    if (!result.is_object()) {
+        return tokens;
+    }
+    const auto dataIt = result.find("data");
+    if (dataIt == result.end() || !dataIt->is_array() || dataIt->size() % 5 != 0) {
+        return tokens;
+    }
+    tokens.reserve(dataIt->size() / 5);
+    std::size_t line      = 0;
+    std::size_t character = 0;
+    for (std::size_t i = 0; i < dataIt->size(); i += 5) {
+        const std::size_t deltaLine      = (*dataIt)[i].get<std::size_t>();
+        const std::size_t deltaStartChar = (*dataIt)[i + 1].get<std::size_t>();
+        line += deltaLine;
+        character = (deltaLine == 0) ? character + deltaStartChar : deltaStartChar;
+        tokens.push_back(SemanticToken{
+            .start          = LspPosition{.line = line, .character = character},
+            .length         = (*dataIt)[i + 2].get<std::size_t>(),
+            .tokenTypeIndex = (*dataIt)[i + 3].get<std::size_t>(),
+            .tokenModifiers = (*dataIt)[i + 4].get<std::uint32_t>(),
+        });
+    }
+    return tokens;
+}
+
+std::vector<InlayHint> ExtractInlayHints(const Json& result) {
+    std::vector<InlayHint> hints;
+    if (!result.is_array()) {
+        return hints;
+    }
+    hints.reserve(result.size());
+    for (const Json& item : result) {
+        if (!item.is_object() || !item.contains("position") || !item.contains("label")) {
+            continue;
+        }
+        std::string label;
+        const Json& labelJson = item["label"];
+        if (labelJson.is_string()) {
+            label = labelJson.get<std::string>();
+        }
+        else if (labelJson.is_array()) {
+            for (const Json& part : labelJson) {
+                if (part.is_object() && part.value("value", std::string()).size() > 0) {
+                    label += part["value"].get<std::string>();
+                }
+            }
+        }
+        if (label.empty()) {
+            continue; // nothing to render either way
+        }
+        hints.push_back(InlayHint{.position = PositionFromJson(item["position"]), .label = std::move(label)});
+    }
+    return hints;
+}
+
+CodeLens ExtractSingleCodeLens(const Json& item) {
+    CodeLens lens;
+    lens.raw = item;
+    const Json& range = item.value("range", Json::object());
+    if (range.is_object() && range.contains("start") && range.contains("end")) {
+        lens.start = PositionFromJson(range["start"]);
+        lens.end   = PositionFromJson(range["end"]);
+    }
+    if (const auto commandIt = item.find("command"); commandIt != item.end() && commandIt->is_object()) {
+        lens.title            = commandIt->value("title", std::string());
+        lens.commandName      = commandIt->value("command", std::string());
+        lens.commandArguments = commandIt->value("arguments", Json::array());
+        lens.hasCommand       = !lens.commandName.empty();
+    }
+    return lens;
+}
+
+std::vector<CodeLens> ExtractCodeLenses(const Json& result) {
+    std::vector<CodeLens> lenses;
+    if (!result.is_array()) {
+        return lenses;
+    }
+    lenses.reserve(result.size());
+    for (const Json& item : result) {
+        if (!item.is_object() || !item.contains("range")) {
+            continue;
+        }
+        lenses.push_back(ExtractSingleCodeLens(item));
+    }
+    return lenses;
+}
+
 } // namespace ned::editor::lsp
