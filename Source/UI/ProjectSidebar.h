@@ -68,15 +68,26 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "ActiveBuffer.h"
 #include "Editor/ProjectTree.h"
+#include "Editor/Vcs/VcsRunner.h"
 #include "Text/BufferList.h"
 #include "Theme.h"
 #include "Widget.h"
 
 namespace ned::ui {
+
+// changed-files-highlight follow-up: how severe a row's (or, for a
+// directory, its most severe descendant's) git status is, ordered
+// least-to-most severe so merging two children's statuses is a plain
+// std::max. Deliberately just these four buckets, not a verbatim porcelain
+// code -- a tree row only needs to know which color to paint, the same
+// "don't reinterpret VCS-specific text beyond what the UI needs" call
+// BufferView's own DiffLineKind already makes for the per-line diff gutter.
+enum class VcsRowStatus { None, Untracked, Added, Modified, Deleted };
 
 class ProjectSidebar : public Widget {
   public:
@@ -232,6 +243,21 @@ class ProjectSidebar : public Widget {
     // main.cpp wires this to WindowManager::RequestOpenBinaryFile.
     void SetOnBinaryFileOpenRequest(std::function<void(const std::filesystem::path&)> handler);
 
+    // changed-files-highlight follow-up: unset (the default, matching every
+    // other Set* hook here) leaves every row rendered exactly as before --
+    // no VCS provider ever resolving for the root behaves the same way
+    // (VcsRunner::RequestStatus's onError just fires, vcsStatus_ stays
+    // empty). main.cpp wires this the same place it wires
+    // WindowManager::SetVcsRunner.
+    void SetVcsRunner(editor::vcs::VcsRunner* vcsRunner);
+
+    // Testing-only entry point, BufferView::DispatchStatusForTesting's own
+    // precedent: builds vcsStatus_ directly from pre-parsed entries against
+    // the current editor::ProjectRoot(), bypassing VcsRunner/a real
+    // subprocess entirely so a test can assert on Paint()'s resulting row
+    // colors without a live git repo.
+    void DispatchVcsStatusForTesting(const std::vector<editor::vcs::VcsStatusEntry>& entries);
+
   private:
     std::function<ActiveBuffer&()>                    activeBufferProvider_;
     text::BufferList&                                 bufferList_;
@@ -340,6 +366,18 @@ class ProjectSidebar : public Widget {
     bool                                  treeCacheValid_ = false;
     std::filesystem::path                 treeCacheRoot_;
     std::chrono::steady_clock::time_point treeCacheTime_;
+
+    // changed-files-highlight follow-up: absolute path -> most severe status
+    // at or below that path (a file's own status, or the max over a
+    // directory's descendants -- see RefreshVcsStatus's own comment).
+    // Rebuilt on the same kTreeCacheThrottle cadence CachedTree() already
+    // uses (piggybacked onto that same "due for a refresh" check, not a
+    // second timer) -- deliberately not more eager than that: like the tree
+    // walk itself, a git-status lag of up to kTreeCacheThrottle is an
+    // accepted trade-off here, not a correctness requirement.
+    std::unordered_map<std::filesystem::path, VcsRowStatus> vcsStatus_;
+    editor::vcs::VcsRunner*                                 vcsRunner_ = nullptr;
+    void RefreshVcsStatus(const std::filesystem::path& root);
 };
 
 } // namespace ned::ui

@@ -617,6 +617,9 @@ void WindowManager::SetVcsRunner(editor::vcs::VcsRunner* vcsRunner) {
     for (Pane* pane : Leaves()) {
         pane->Buffer().SetVcsRunner(vcsRunner);
     }
+    if (projectSidebar_) {
+        projectSidebar_->SetVcsRunner(vcsRunner);
+    }
 }
 
 void WindowManager::SetDapManager(editor::dap::DapManager* dapManager) {

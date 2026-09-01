@@ -146,6 +146,96 @@ namespace {
         return filename.empty() ? root.string() : filename;
     }
 
+    // changed-files-highlight follow-up: classifies git's own two-letter
+    // porcelain "XY" status code (VcsStatusEntry::state, kept verbatim by
+    // VcsProvider::ParseStatus -- see that struct's own comment) into the
+    // four buckets a row can be painted with. Checked by substring rather
+    // than fixed column position: "??" is untracked outright, and otherwise
+    // either column (index vs. worktree) can carry the letter that matters,
+    // e.g. "AM" is a staged-then-further-edited add. Priority among the
+    // remaining letters -- D beats M beats A -- mirrors VcsRowStatus's own
+    // least-to-most-severe ordering; a letter with no dedicated bucket
+    // (R rename, C copy, T typechange, U unmerged) falls back to Modified,
+    // the closest real-world reading of "this file's content changed".
+    VcsRowStatus ClassifyPorcelainStatus(const std::string& state) {
+        if (state == "??") {
+            return VcsRowStatus::Untracked;
+        }
+        if (state.find('D') != std::string::npos) {
+            return VcsRowStatus::Deleted;
+        }
+        if (state.find('M') != std::string::npos) {
+            return VcsRowStatus::Modified;
+        }
+        if (state.find('A') != std::string::npos) {
+            return VcsRowStatus::Added;
+        }
+        return VcsRowStatus::Modified;
+    }
+
+    // changed-files-highlight follow-up: builds the absolute-path -> status
+    // index RefreshVcsStatus stores. Every changed file gets its own
+    // classified status; every ancestor directory between it and root gets
+    // the max (most severe) status over all its changed descendants, the
+    // same "does this directory contain a change" propagation VS Code's own
+    // file-tree decorations do. Mirrors RevealPath's own ancestor-walk loop
+    // exactly (walk parent_path() up to root, bail out at the filesystem
+    // root if root is somehow never reached).
+    std::unordered_map<std::filesystem::path, VcsRowStatus> BuildVcsStatusIndex(
+        const std::vector<editor::vcs::VcsStatusEntry>& entries, const std::filesystem::path& root) {
+        std::unordered_map<std::filesystem::path, VcsRowStatus> index;
+        auto merge = [&index](const std::filesystem::path& path, VcsRowStatus status) {
+            auto [it, inserted] = index.try_emplace(path, status);
+            if (!inserted && status > it->second) {
+                it->second = status;
+            }
+        };
+        for (const editor::vcs::VcsStatusEntry& entry : entries) {
+            const VcsRowStatus           status   = ClassifyPorcelainStatus(entry.state);
+            const std::filesystem::path filePath = (root / entry.path).lexically_normal();
+            merge(filePath, status);
+
+            std::filesystem::path dir = filePath.parent_path();
+            while (dir != root) {
+                const std::filesystem::path parent = dir.parent_path();
+                if (parent == dir) {
+                    break; // reached the filesystem root without finding root -- not under it
+                }
+                merge(dir, status);
+                dir = parent;
+            }
+        }
+        return index;
+    }
+
+    [[nodiscard]] VcsRowStatus LookupVcsStatus(const std::unordered_map<std::filesystem::path, VcsRowStatus>& index,
+                                               const std::filesystem::path& path) {
+        const auto it = index.find(path.lexically_normal());
+        return it == index.end() ? VcsRowStatus::None : it->second;
+    }
+
+    // Reuses the diff gutter's own three constants (BufferView.cpp) rather
+    // than adding new Theme fields -- foreground-only, same deliberate
+    // choice Theme.h's own diffAddedBackground/diffRemovedBackground comment
+    // documents (a background wash was tried for the live gutter and
+    // reverted for fighting syntax-highlight contrast). BrightCyan for
+    // Untracked is the one new addition, since nothing existing covers it.
+    [[nodiscard]] std::optional<Color> VcsStatusColor(VcsRowStatus status) {
+        switch (status) {
+            case VcsRowStatus::Deleted:
+                return Color::BrightRed;
+            case VcsRowStatus::Modified:
+                return Color::BrightBlue;
+            case VcsRowStatus::Added:
+                return Color::BrightGreen;
+            case VcsRowStatus::Untracked:
+                return Color::BrightCyan;
+            case VcsRowStatus::None:
+                return std::nullopt;
+        }
+        return std::nullopt;
+    }
+
     // Ancestor entries of entries[index], returned root-to-leaf (index 0 =
     // shallowest), found by scanning backward for the nearest preceding
     // entry at each successively shallower depth -- depth-first order
@@ -301,12 +391,37 @@ const std::vector<editor::ProjectTreeEntry>& ProjectSidebar::CachedTree() {
         treeCacheRoot_  = root;
         treeCacheTime_  = now;
         treeCacheValid_ = true;
+        RefreshVcsStatus(root);
     }
     return treeCache_;
 }
 
 void ProjectSidebar::InvalidateTree() {
     treeCacheValid_ = false;
+}
+
+void ProjectSidebar::SetVcsRunner(editor::vcs::VcsRunner* vcsRunner) {
+    vcsRunner_ = vcsRunner;
+}
+
+void ProjectSidebar::DispatchVcsStatusForTesting(const std::vector<editor::vcs::VcsStatusEntry>& entries) {
+    vcsStatus_ = BuildVcsStatusIndex(entries, editor::ProjectRoot());
+}
+
+void ProjectSidebar::RefreshVcsStatus(const std::filesystem::path& root) {
+    if (!vcsRunner_) {
+        vcsStatus_.clear();
+        return;
+    }
+    // A prior request still in flight (this fires at most every
+    // kTreeCacheThrottle) makes RequestStatus's onError fire immediately --
+    // silently discarded, vcsStatus_ just keeps its last-known contents
+    // until the next tick's request actually completes. No VCS provider
+    // resolving for root behaves the same way, which is exactly
+    // "highlighting is only meaningful in a VCS-tracked project tree".
+    vcsRunner_->RequestStatus(
+        [this, root](std::vector<editor::vcs::VcsStatusEntry> entries) { vcsStatus_ = BuildVcsStatusIndex(entries, root); },
+        [](const std::string&) {});
 }
 
 void ProjectSidebar::SetOnBufferClosed(std::function<void(text::Buffer&)> handler) {
@@ -414,11 +529,14 @@ void ProjectSidebar::Paint(Canvas c) {
         // reads the same everywhere.
         const bool isSelected = focused && static_cast<int>(*index) == selectedIndex_;
 
+        const std::optional<Color> vcsColor = VcsStatusColor(LookupVcsStatus(vcsStatus_, entry.path));
+
         Brush brush =
             isActiveFile ? theme_.activeTab
             : isSticky   ? theme_.tabBar // pinned ancestor header -- same chrome family as TabBar's own row
                          : Brush{.background = theme_.background,
-                                 .foreground = entry.isDirectory ? theme_.lineNumberForeground : theme_.defaultForeground};
+                                 .foreground = vcsColor.value_or(entry.isDirectory ? theme_.lineNumberForeground
+                                                                                    : theme_.defaultForeground)};
         if (isSelected) {
             brush.background = theme_.selectionBackground;
             for (int x = contentLeft; x < contentLeft + contentColumns; ++x) {

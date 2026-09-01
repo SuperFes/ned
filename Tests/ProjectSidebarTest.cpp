@@ -1234,3 +1234,66 @@ TEST_CASE("A keyboard summon of a hidden sidebar never commits visibility", "[Pr
 
     std::filesystem::remove_all(dir);
 }
+
+TEST_CASE("changed-files-highlight: rows are tinted by VCS status, directories by their most severe descendant",
+          "[ProjectSidebar]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_sidebar_test_vcs_status";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir / "sub");
+    {
+        std::ofstream(dir / "a.txt") << "x"; // modified
+    }
+    {
+        std::ofstream(dir / "b.txt") << "x"; // untracked
+    }
+    {
+        std::ofstream(dir / "c.txt") << "x"; // clean -- no status entry at all
+    }
+    {
+        std::ofstream(dir / "sub" / "d.txt") << "x"; // added
+    }
+    {
+        std::ofstream(dir / "sub" / "e.txt") << "x"; // modified -- outranks d.txt's Added when merged onto sub/
+    }
+    const CurrentPathGuard cwdGuard(dir);
+
+    ned::text::BufferList   list;
+    ned::text::Buffer&      scratch = list.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer   activeBuffer(scratch);
+    ned::ui::Theme          theme = ned::ui::DarkTheme();
+    std::string             statusMessage;
+    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    PlaceSidebar(sidebar, 28, 8);
+
+    sidebar.OnEvent(MousePress(0, 1)); // expand "sub/" (row 1 -- row 0 is the header)
+    sidebar.DispatchVcsStatusForTesting({
+        {" M", "a.txt"    },
+        {"??", "b.txt"    },
+        {"A ", "sub/d.txt"},
+        {" M", "sub/e.txt"},
+    });
+
+    ned::ui::Screen screen = ned::ui::Screen(28, 8);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 27, .y_min = 0, .y_max = 7});
+    sidebar.Paint(canvas);
+
+    // Visible rows in order: sub/ (row1), d.txt (row2), e.txt (row3),
+    // a.txt (row4), b.txt (row5), c.txt (row6).
+    REQUIRE(RowText(screen, 1, 28).find("sub/") != std::string::npos);
+    REQUIRE(RowText(screen, 2, 28).find("d.txt") != std::string::npos);
+    REQUIRE(RowText(screen, 3, 28).find("e.txt") != std::string::npos);
+    REQUIRE(RowText(screen, 4, 28).find("a.txt") != std::string::npos);
+    REQUIRE(RowText(screen, 5, 28).find("b.txt") != std::string::npos);
+    REQUIRE(RowText(screen, 6, 28).find("c.txt") != std::string::npos);
+
+    // sub/ has no status of its own but two changed descendants -- it's
+    // colored by the more severe one (Modified beats Added).
+    REQUIRE(screen.PixelAt(1, 1).foreground_color == ned::ui::Color::BrightBlue);
+    REQUIRE(screen.PixelAt(1, 2).foreground_color == ned::ui::Color::BrightGreen);  // d.txt: Added
+    REQUIRE(screen.PixelAt(1, 3).foreground_color == ned::ui::Color::BrightBlue);   // e.txt: Modified
+    REQUIRE(screen.PixelAt(1, 4).foreground_color == ned::ui::Color::BrightBlue);   // a.txt: Modified
+    REQUIRE(screen.PixelAt(1, 5).foreground_color == ned::ui::Color::BrightCyan);   // b.txt: Untracked
+    REQUIRE(screen.PixelAt(1, 6).foreground_color == theme.defaultForeground);      // c.txt: clean, untouched
+
+    std::filesystem::remove_all(dir);
+}
