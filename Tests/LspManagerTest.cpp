@@ -484,6 +484,112 @@ TEST_CASE("LspManager::NotifyBufferClosed is a no-op for a buffer that was never
     SUCCEED();
 }
 
+TEST_CASE("SyncBuffer's didOpen is sent immediately, never debounced", "[Lsp]") {
+    // sync-debounce follow-up: a freshly opened/focused buffer must get
+    // diagnostics/highlighting right away -- only the *second+* sync
+    // (didChange, after an edit) is debounced. No sleep, no DrainPosted_:
+    // if this were debounced too, the frame simply wouldn't be there yet.
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    Buffer&            buffer = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-lsp-manager-didopen-immediate-test.txt");
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+
+    const std::string raw = ReadRawFrame(server.serverStdinRead);
+    REQUIRE(Json::parse(raw.substr(raw.find("\r\n\r\n") + 4))["method"] == "textDocument/didOpen");
+}
+
+TEST_CASE("SyncBuffer debounces a rapid burst of edits into a single didChange with the final content", "[Lsp]") {
+    // sync-debounce follow-up: the user's own reported bug, made concrete --
+    // a burst of edits with no pause between them (well within
+    // LspSyncDebounceMs() of each other) must collapse into exactly one
+    // textDocument/didChange, not one per keystroke.
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    Buffer&            buffer = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-lsp-manager-sync-debounce-coalesce-test.txt");
+    buffer.InsertAtPoint("a");
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    for (const char c : std::string("bcdefghij")) {
+        buffer.InsertAtPoint(std::string(1, c));
+        manager.SyncBuffer(buffer, "test-lang"); // (re)arms the same debounce timer each time -- no send yet
+    }
+    // No "nothing sent yet" check here -- NoFrameArrives' own 200ms poll is
+    // longer than LspSyncDebounceMs()'s 150ms default, so it would race
+    // against the debounce firing mid-poll. WaitUntil below is the real,
+    // race-free assertion: exactly one didChange eventually arrives, with
+    // the burst's *final* content.
+    WaitUntil(eventLoop, [&] { return !NoFrameArrives(server.serverStdinRead); });
+    const std::string didChange = ReadRawFrame(server.serverStdinRead);
+    const Json        frame     = Json::parse(didChange.substr(didChange.find("\r\n\r\n") + 4));
+    REQUIRE(frame["method"] == "textDocument/didChange");
+    REQUIRE(frame["params"]["contentChanges"][0]["text"] == "abcdefghij"); // the *final* content, not an early snapshot
+    REQUIRE(NoFrameArrives(server.serverStdinRead));                       // exactly one didChange for the whole burst
+}
+
+TEST_CASE("SyncBuffer sends a separate didChange for edits spaced further apart than the debounce", "[Lsp]") {
+    // sync-debounce follow-up: the debounce must not merge genuinely
+    // separate edits into nothing -- each edit that's allowed to settle
+    // still produces its own didChange.
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    Buffer&            buffer = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-lsp-manager-sync-debounce-separate-test.txt");
+    buffer.InsertAtPoint("a");
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    buffer.InsertAtPoint("b");
+    manager.SyncBuffer(buffer, "test-lang");
+    WaitUntil(eventLoop, [&] { return !NoFrameArrives(server.serverStdinRead); });
+    const std::string firstRaw = ReadRawFrame(server.serverStdinRead);
+    REQUIRE(Json::parse(firstRaw.substr(firstRaw.find("\r\n\r\n") + 4))["params"]["contentChanges"][0]["text"] == "ab");
+
+    buffer.InsertAtPoint("c");
+    manager.SyncBuffer(buffer, "test-lang");
+    WaitUntil(eventLoop, [&] { return !NoFrameArrives(server.serverStdinRead); });
+    const std::string secondRaw = ReadRawFrame(server.serverStdinRead);
+    REQUIRE(Json::parse(secondRaw.substr(secondRaw.find("\r\n\r\n") + 4))["params"]["contentChanges"][0]["text"] == "abc");
+}
+
+TEST_CASE("NotifyBufferClosed cancels a pending sync debounce cleanly", "[Lsp]") {
+    // sync-debounce follow-up: a buffer closed while a debounced didChange
+    // is still pending must not crash, and the stale send must never reach
+    // the (now-closed, from LspManager's perspective) connection.
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    Buffer&            buffer = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-lsp-manager-sync-debounce-close-test.txt");
+    buffer.InsertAtPoint("a");
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    buffer.InsertAtPoint("b");
+    manager.SyncBuffer(buffer, "test-lang");    // arms the debounce -- never allowed to fire
+    manager.NotifyBufferClosed(buffer);         // must not crash; cancels the pending timer
+    (void)ReadRawFrame(server.serverStdinRead); // drain didClose
+
+    // Long enough for the (cancelled) debounce to have fired if it were
+    // somehow still live -- nothing should ever arrive.
+    std::this_thread::sleep_for(std::chrono::milliseconds(2 * ned::editor::lsp::LspSyncDebounceMs()));
+    eventLoop.DrainPosted_();
+    REQUIRE(NoFrameArrives(server.serverStdinRead));
+}
+
 TEST_CASE("LspManager::RequestHover round-trips a real request/response through an injected client", "[Lsp]") {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
@@ -2351,8 +2457,13 @@ TEST_CASE("A server erroring on textDocument/diagnostic is never asked again for
     // A second content change re-syncs (didChange) but must not send a
     // second textDocument/diagnostic -- only NoFrameArrives can confirm
     // this safely (see its own doc comment: nothing else is queued to read).
+    // sync-debounce follow-up: SyncBuffer no longer sends didChange
+    // synchronously -- it (re)arms a per-(buffer, serverKey) DeadlineTimer
+    // (LspSyncDebounceMs), same WaitUntil-polling idiom this file already
+    // uses for the diagnostics debounce above.
     buffer.InsertAtPoint("b");
     manager.SyncBuffer(buffer, "test-lang");
+    WaitUntil(eventLoop, [&] { return !NoFrameArrives(server.serverStdinRead); });
     const std::string didChange = ReadRawFrame(server.serverStdinRead);
     REQUIRE(Json::parse(didChange.substr(didChange.find("\r\n\r\n") + 4))["method"] == "textDocument/didChange");
     REQUIRE(NoFrameArrives(server.serverStdinRead));
@@ -2561,8 +2672,12 @@ TEST_CASE("A server erroring on textDocument/inlayHint is never asked again for 
     client->DispatchFrame(
         Json{{"jsonrpc", "2.0"}, {"id", RequestIdFromFrame(raw)}, {"error", {{"code", -32601}, {"message", "method not found"}}}}.dump());
 
+    // sync-debounce follow-up: SyncBuffer no longer sends didChange
+    // synchronously -- see the sibling diagnostics-unsupported test's own
+    // comment for why WaitUntil is needed here now.
     buffer.InsertAtPoint("b");
     manager.SyncBuffer(buffer, "test-lang");
+    WaitUntil(eventLoop, [&] { return !NoFrameArrives(server.serverStdinRead); });
     const std::string didChange = ReadRawFrame(server.serverStdinRead);
     REQUIRE(Json::parse(didChange.substr(didChange.find("\r\n\r\n") + 4))["method"] == "textDocument/didChange");
     manager.RequestInlayHints(buffer, 0, 2, "test-lang"); // different viewport too -- would resend if not latched

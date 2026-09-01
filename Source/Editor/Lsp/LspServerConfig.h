@@ -67,6 +67,25 @@ void             SetLspCompletionDebounceMs(int milliseconds); // default 500
 void             SetLspDiagnosticsDebounceMs(int milliseconds); // default 500
 [[nodiscard]] int LspDiagnosticsDebounceMs();
 
+// sync-debounce follow-up: how long LspManager::SyncTextToServer waits, after
+// a buffer's most recent edit, before actually sending the resulting
+// textDocument/didChange -- a real, reproduced live freeze (gdb-confirmed:
+// the main thread blocked inside ChildProcess::WriteAll's WaitWritable,
+// stuck writing a full-document didChange to a server whose stdin pipe
+// couldn't drain fast enough) traced directly to SyncBuffer sending one
+// full-document sync per keystroke, with no debounce at all, to *two*
+// servers (the primary language server and the prose checker) every single
+// Paint(). Deliberately kept shorter than LspCompletionDebounceMs() (and so
+// than signature-help/document-highlight, which reuse that same value) --
+// this must land server-side *before* those feature debounces elapse and
+// fire their own requests, or they'd race ahead of a server that doesn't
+// have the latest content yet. Widening this past that value without
+// re-checking that invariant would reintroduce staleness races on
+// completion/hover/etc. Same non-positive-clamped-to-1ms convention as the
+// other debounces above.
+void              SetLspSyncDebounceMs(int milliseconds); // default 150
+[[nodiscard]] int LspSyncDebounceMs();
+
 // signature-help-auto-trigger follow-up. Same shape as
 // SetLspAutoCompleteEnabled/LspAutoCompleteEnabled above -- a single
 // editor-wide toggle, not per-language. Reuses LspCompletionDebounceMs()

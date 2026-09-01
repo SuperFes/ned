@@ -45,6 +45,33 @@ Notcurses.
       PSR-4 autoloader parse; JS dynamic `import(...)` isn't resolved; node_modules
       `package.json` main/exports resolution goes no further than `index.*` inference;
       Rust has no bundled mode yet to resolve at all.
+- [ ] **Sync outgoing payload size, remainder** (sync-debounce follow-up: a real,
+      gdb-confirmed live freeze — the main thread blocked inside `ChildProcess::
+      WriteAll`, stuck writing a full-document `textDocument/didChange` to a server
+      whose stdin pipe couldn't drain fast enough, because `SyncBuffer` sent one
+      full-document sync per keystroke with no debounce at all — fixed by debouncing
+      the actual send, `LspSyncDebounceMs()`, default 150ms, shorter than every other
+      LSP debounce so it lands before they fire their own requests) — two follow-ups
+      deliberately left out of that fix:
+      - **Incremental sync** (`TextDocumentSyncKind.Incremental` — `contentChanges:
+        [{range, rangeLength, text}]`, sending only the changed span instead of the
+        whole document) is real LSP, gated by whatever `textDocumentSync.change` a
+        server advertises during `initialize` (0=none, 1=full, 2=incremental) — this
+        client never checks it and always sends the full-document form. Debouncing
+        cuts *how often* a sync happens; this would cut *how much* each one sends —
+        genuinely complementary, not a substitute. Needs old-vs-new content diffing,
+        converting the changed byte range to LSP's UTF-16 `Position` math, respecting
+        the server's advertised sync-kind capability, and a full-sync fallback for a
+        server that doesn't support incremental.
+      - **`ProtocolStallTimeoutMs()`'s 30s default** (`Transport.h`) is shared by both
+        the write side (what actually blocked the main thread) and the read side
+        (where a genuinely slow response — a large workspace-wide rename, say —
+        legitimately needs tolerance). The debounce is what keeps the pipe from
+        backing up in the first place, so this wasn't necessary to fix what was
+        actually observed, but splitting it into separate write/read timeouts (a much
+        shorter write-side one — a healthy server should never take long just to
+        *accept* a notification) would be a reasonable defense-in-depth hardening on
+        top.
 - [ ] Whether Markdown fenced code blocks / Org `#+BEGIN_SRC` blocks should get the same
       real-LSP-sync treatment HTML `<script>`/`<style>` embedded documents already have
       is an open question — spawning a live language server per code fence in an
