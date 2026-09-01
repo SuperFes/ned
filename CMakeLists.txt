@@ -608,6 +608,7 @@ add_library(ned_lib STATIC
         Source/Editor/ScratchPad.cpp
         Source/Editor/Backup.cpp
         Source/Editor/PersistentUndo.cpp
+        Source/Editor/ProjectUndo.cpp
         Source/Editor/DiagnosticsLog.cpp
         Source/Editor/Session.cpp
         Source/Editor/RecentFiles.cpp

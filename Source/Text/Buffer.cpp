@@ -1975,12 +1975,7 @@ void Buffer::ClampCursorsToContent() {
     }
 }
 
-void Buffer::Undo() {
-    if (!UndoTree_.CanUndo()) {
-        return;
-    }
-    const std::unique_ptr<ITextStorage> oldStorage = Storage_->Clone(); // O(1) -- never materializes, see ChangedByteRange's own comment
-    UndoTree_.Undo();
+void Buffer::ApplyUndoTreeNavigation(const ITextStorage& oldStorage) {
     Storage_ = UndoTree_.Current().Clone();
     ClearSecondaryCursors(); // v1 decision -- see AddCursorAt's doc comment
     ClearSnippetRanges();    // same v1 decision -- see SnippetRange's doc comment
@@ -1989,8 +1984,17 @@ void Buffer::Undo() {
     CanAmendLoadAppend_ = false;
     GoalColumn_.reset();
     ++ContentGeneration_;
-    UpdateUnsavedRangesForRestore(*oldStorage);
-    UpdateExcerptRangesForRestore(*oldStorage); // NOT cleared -- see ExcerptRange's own doc comment
+    UpdateUnsavedRangesForRestore(oldStorage);
+    UpdateExcerptRangesForRestore(oldStorage); // NOT cleared -- see ExcerptRange's own doc comment
+}
+
+void Buffer::Undo() {
+    if (!UndoTree_.CanUndo()) {
+        return;
+    }
+    const std::unique_ptr<ITextStorage> oldStorage = Storage_->Clone(); // O(1) -- never materializes, see ChangedByteRange's own comment
+    UndoTree_.Undo();
+    ApplyUndoTreeNavigation(*oldStorage);
 }
 
 void Buffer::Redo() {
@@ -1999,16 +2003,23 @@ void Buffer::Redo() {
     }
     const std::unique_ptr<ITextStorage> oldStorage = Storage_->Clone(); // O(1) -- never materializes, see ChangedByteRange's own comment
     UndoTree_.Redo();
-    Storage_ = UndoTree_.Current().Clone();
-    ClearSecondaryCursors(); // v1 decision -- see AddCursorAt's doc comment
-    ClearSnippetRanges();    // same v1 decision -- see SnippetRange's doc comment
-    ClampCursorsToContent();
-    CanAmend_           = false;
-    CanAmendLoadAppend_ = false;
-    GoalColumn_.reset();
-    ++ContentGeneration_;
-    UpdateUnsavedRangesForRestore(*oldStorage);
-    UpdateExcerptRangesForRestore(*oldStorage); // NOT cleared -- see ExcerptRange's own doc comment
+    ApplyUndoTreeNavigation(*oldStorage);
+}
+
+std::size_t Buffer::CurrentUndoSequence() const {
+    return UndoTree_.CurrentSequence();
+}
+
+bool Buffer::TryJumpToUndoSequence(std::size_t sequence) {
+    if (!UndoTree_.HasSequence(sequence)) {
+        return false;
+    }
+    const std::unique_ptr<ITextStorage> oldStorage = Storage_->Clone();
+    if (!UndoTree_.JumpTo(sequence)) {
+        return false; // unreachable given the HasSequence check above, but never silently misapply
+    }
+    ApplyUndoTreeNavigation(*oldStorage);
+    return true;
 }
 
 std::vector<UndoTree::SerializedNode> Buffer::SerializeUndo() const {
