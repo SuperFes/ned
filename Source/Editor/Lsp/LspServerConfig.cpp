@@ -15,7 +15,7 @@ namespace {
     bool       g_autoCompleteEnabled = true;
 
     std::mutex g_debounceMutex;
-    int        g_completionDebounceMs = 350;
+    int        g_completionDebounceMs = 500;
 
     std::mutex g_diagnosticsDebounceMutex;
     int        g_diagnosticsDebounceMs = 500;

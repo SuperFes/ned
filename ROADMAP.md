@@ -95,6 +95,14 @@ Notcurses.
       roots can shadow each other's legend/status/progress-label; every actual request
       still routes to the correct per-root connection regardless (see `LspManager.h`'s
       own header comment).
+- [ ] **Completion popup, remainder** (completion-popup follow-up: replaced ghost text
+      wholesale with a real `ListPopup`, anchored at point, kind glyph + label + detail
+      column, `Tab` accepts, `Up`/`Down`/`M-n`/`M-p` cycle — shipped) — still open: no
+      documentation/markdown preview alongside the popup (a real "hover-doc panel next
+      to the candidate list" is a plausible follow-up, distinct from `lsp-hover`'s own
+      echo-area/callout display); no mouse click-to-select/accept (`ListPopup`'s own
+      non-focusable mode has never wired mouse input for any consumer — a generic gap,
+      not specific to completion).
 
 ### Navigation & Search
 
@@ -191,6 +199,75 @@ Notcurses.
       `AutoPair.cpp`'s type-time pairing; Vim mode's existing
       `Editor/Vim/VimTextObject.h` text-object parsing is most of what it needs to hang
       on to.
+
+### VCS Side Panel (New Feature)
+
+A persistent left-side panel for working-tree changes, physically shaped like
+`ProjectSidebar` (`UI/ProjectSidebar.h` — rounded border, collapsible to a 1-column
+strip, `C-c p`-style dedicated focus toggle, sticky-scroll for section headers) and
+docked opposite it or swappable with it. Today VCS status/stage/commit/branch/diff are
+all one-shot commands landing in transient `*vcs status*`/`*vcs diff*`/`*vcs branches*`
+buffers (`Commands.cpp`'s `vcs-*` family, `C-c v` prefix) — useful for a quick look, but
+nothing stays on screen the way `ProjectSidebar` does, and nothing supports multi-select
+batch actions. `VcsRunner`/`VcsProvider` (`Editor/Vcs/`) already have the async
+request/parse plumbing this panel would consume; the gaps are UI-side and, for a few
+items below, `VcsProvider` vocabulary that doesn't exist yet.
+
+- [ ] **Tree view of working-tree state** — staged / unstaged / untracked as three
+      collapsible sections (mirroring `ProjectSidebar`'s directory-expand model), each
+      row a `VcsStatusEntry` (path + short status code). Directories group files the same
+      way `BuildProjectTree` does, not a flat list.
+      keyboard-focusable, arrow-key navigation, matching `ProjectSidebar`'s
+      `Focusable()`/`TakeKeyboardFocus` precedent.
+- [ ] **Multi-select and batch actions** — checkbox/toggle-select on rows (space to
+      toggle, like a dired-style mark), then stage/unstage/discard the whole selection at
+      once instead of one `vcs-stage-file` call per file. Needs a small selection-state
+      structure the panel owns; `VcsRunner::RequestStage`/`RequestUnstage` already take a
+      path list shape or would need a trivial batch wrapper.
+- [ ] **Inline diff preview on selection** — clicking/arrowing to a row shows that file's
+      hunks in a preview pane (split panel or an overlay), reusing `VcsRunner::RequestDiff`
+      + `DiffPatch.h`'s hunk-slicing rather than only jumping straight into the buffer.
+      Hunk-level stage/unstage from the preview (`vcs-stage-hunk`/`-unstage-hunk`'s logic,
+      currently buffer-point-driven only) would need to accept an explicit hunk instead of
+      "whichever covers point."
+- [ ] **Commit compose inline** — a compose row/mini-panel that opens the existing
+      `*vcs commit message*` buffer/mode (`vcs-commit`/`vcs-commit-finish`) but seeded
+      from the panel's current staged selection, not "whatever's currently staged
+      globally" — most VCSes commit everything staged regardless, so this is really about
+      surfacing *what's about to be committed* next to the compose box, not a new commit
+      primitive.
+- [ ] **Branch switcher/creator inline** — a branch row or header dropdown-equivalent
+      exposing `vcs-branches`/`vcs-switch-branch`/`vcs-create-branch` without leaving the
+      panel or going through M-x; `VcsProvider::ParseBranchList`/`current` already has
+      everything needed to render it.
+- [ ] **Discard/revert changes** — no `VcsProvider` vocabulary exists yet for "revert this
+      file's working-tree changes to HEAD" (distinct from unstage, which only moves the
+      index). Needs a new `RevertArgv`/provider method (backend gap, not just UI) plus a
+      confirm prompt before running it — this is the one destructive action in the whole
+      panel and should get real "are you sure" friction, unlike stage/unstage.
+- [ ] **Stash support** — no `VcsProvider` vocabulary for stash list/push/pop/drop either;
+      would need the same argv-builder/output-parser split every existing operation uses,
+      plus a stash-list section in the panel akin to the staged/unstaged/untracked ones.
+      Backend gap first, panel UI second.
+- [ ] **Push/pull/fetch** — also absent from `VcsProvider` today (the vocabulary stops at
+      local commit/branch operations). Worth a header button/status
+      (ahead/behind count, if the provider can report it) once the vocabulary exists;
+      lower priority than stage/commit/branch since `C-c v` commands or the terminal panel
+      already cover it in the meantime.
+- [ ] **Ahead/behind + dirty-count summary** — a small header line (e.g. "3 staged, 2
+      unstaged, 1 untracked · ↑2 ↓0") — cheap once status + push/pull vocabulary exist,
+      gives the panel a reason to stay open even when collapsed-adjacent.
+- [ ] **Conflict-file affordance** — surface files with real `<<<<<<<` conflict markers
+      (`Text/ThreeWayMerge.h`'s `HasConflictMarkers`, already used by `save-buffer`'s
+      guard) as a distinct panel state/section rather than just another modified file —
+      jump-to-first-marker on click.
+
+Scope note: this reads as roughly `ProjectSidebar`-sized for the tree/select/stage/
+commit/branch core, plus a genuinely separate, smaller backend slice (revert/stash/
+push-pull) extending `VcsProvider`'s vocabulary and `vcs-git.janet`'s callback table to
+match. The core panel is buildable entirely on what `VcsRunner`/`VcsProvider` already
+expose; the vocabulary-completion items should probably land as their own follow-up
+rather than blocking the panel's first version.
 
 ### Jupyter Notebooks
 
@@ -436,9 +513,7 @@ LSP-against-the-wrong-toolchain prove it's needed in practice, not speculatively
       `claude-consulting` — see below). Still open: no scrollback in the panel; a real
       diff view (actual +/- lines, not just a line-count delta) has no reusable
       line-diff utility to build on yet (`ThreeWayMerge.h`'s LCS diff is a private
-      implementation detail); a completion-popover replacement for ghost text, an M-x
-      dropdown, and code-action lists are all still squeezed into the one-row
-      `EchoArea`; `terminal/*` tool-call support and `elicitation/create` structured
+      implementation detail); `terminal/*` tool-call support and `elicitation/create` structured
       forms are undeclared as client capabilities; no multiple concurrent agents/
       sessions (still one at a time, `Dap/`'s own precedent — revisit once a second
       agent, e.g. OpenCode, is wired the same way); no `session/load` history replay;
@@ -643,12 +718,6 @@ these accumulate detail in place.
       leaving the buffer (Zed/VSCode's "peek"), rather than `lsp-goto-definition`'s real
       buffer switch. `Overlay.h`'s `OverlayHost` (already generic, used by
       `TerminalPanel`/`AcpPanel`) is a plausible cheap substrate if this is ever pursued.
-- [ ] **Completion UX: ghost-text vs. popup.** Current `lsp-completion`/`M-n`/`M-p`
-      cycling is a deliberate Emacs-flavored choice (one inline suggestion, cycle to the
-      next), not a gap in the ghost-text implementation itself. A ranked popup menu with
-      inline type/doc info alongside each candidate is the VSCode/Zed norm and a real
-      alternative worth naming — pulls against "Emacs-class parity," toward "terminal
-      Zed." A direction to decide, not a bug to fix.
 - [ ] **AI edit-prediction** (Zed's Zeta: predicting the next multi-line edit from
       cursor/edit history, distinct from LSP-driven completion or ACP's chat) has no
       equivalent here. A different feature from everything `Acp/` already provides, and

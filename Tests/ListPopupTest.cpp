@@ -125,3 +125,50 @@ TEST_CASE("ListPopup focus mode navigates, digit-selects, activates, and cancels
     REQUIRE(popup.OnEvent(ned::ui::test::Escape()));
     REQUIRE(cancelled);
 }
+
+TEST_CASE("ListPopup right-aligns the detail column and truncates main before it", "[ListPopup]") {
+    // completion-popup follow-up.
+    ned::ui::Theme     theme = ned::ui::DarkTheme();
+    ned::ui::ListPopup popup(theme);
+    popup.SetModel(ned::ui::ListPopupModel{.rows = {{.main = "a_very_long_label_that_overflows", .right = "int"}}});
+
+    ned::ui::Screen screen = ned::ui::Screen(30, 4);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 29, .y_min = 0, .y_max = 3});
+    popup.Paint(canvas);
+
+    // `right` is right-aligned against the border (x=29), ending at the
+    // last content column (x=28).
+    REQUIRE(screen.PixelAt(26, 1).character == "i");
+    REQUIRE(screen.PixelAt(27, 1).character == "n");
+    REQUIRE(screen.PixelAt(28, 1).character == "t");
+
+    // `main` -- far longer than the space actually available -- is
+    // truncated before colliding with it, leaving a gap column clear.
+    REQUIRE(screen.PixelAt(25, 1).character == " ");
+}
+
+TEST_CASE("ListPopup omits the detail column when right is empty, same as before it existed", "[ListPopup]") {
+    // completion-popup follow-up: every non-completion consumer never sets
+    // `right` -- confirms that leaves `main` free to use the full width,
+    // unchanged from before this field existed.
+    ned::ui::Theme     theme = ned::ui::DarkTheme();
+    ned::ui::ListPopup popup(theme);
+    popup.SetModel(ned::ui::ListPopupModel{.rows = {{.main = "plain-row"}}});
+
+    ned::ui::Screen screen = ned::ui::Screen(30, 4);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 29, .y_min = 0, .y_max = 3});
+    popup.Paint(canvas);
+
+    REQUIRE(screen.PixelAt(4, 1).character == "p");
+    REQUIRE(screen.PixelAt(12, 1).character == "w");
+}
+
+TEST_CASE("ListPopup::Anchor round-trips through SetModel", "[ListPopup]") {
+    // completion-popup follow-up.
+    ned::ui::Theme     theme = ned::ui::DarkTheme();
+    ned::ui::ListPopup popup(theme);
+    REQUIRE_FALSE(popup.Anchor().has_value());
+
+    popup.SetModel(ned::ui::ListPopupModel{.rows = {{.main = "x"}}, .anchor = ned::ui::Point{.x = 5, .y = 7}});
+    REQUIRE(popup.Anchor() == ned::ui::Point{.x = 5, .y = 7});
+}

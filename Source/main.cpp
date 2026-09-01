@@ -1443,6 +1443,49 @@ auto main(int argc, char** argv) -> int {
             }
         });
 
+    // completion-popup follow-up: replaces LSP/dabbrev/Janet-binding ghost
+    // text entirely -- a dedicated ListPopup+overlay, not a reuse of
+    // candidatePopup above (see BufferView::SetOnCompletionChanged's own
+    // doc comment for why: this is non-modal, live-typing UI, not a
+    // mutually-exclusive modal prompt session). Placement is anchor-aware
+    // (BufferView::CompletionAnchorNow, carried through ListPopupModel::
+    // anchor/ListPopup::Anchor()) rather than docked -- opens directly under
+    // point, flipping to open above when it wouldn't fit before the
+    // terminal's bottom edge, and shifted horizontally to stay on screen.
+    ned::ui::ListPopup completionPopup(theme);
+    overlays.Add(completionPopup, [panel = &completionPopup](Size size) {
+        const ned::ui::Point origin = panel->Anchor().value_or(ned::ui::Point{});
+        const int            width  = std::min(64, size.width);
+        const int            height = std::clamp(panel->ContentRowCount(), 3, std::min(10, size.height));
+
+        const int xMin = std::clamp(origin.x, 0, std::max(0, size.width - width));
+        const int xMax = std::min(size.width - 1, xMin + width - 1);
+
+        int yMin, yMax;
+        if (origin.y + height - 1 <= size.height - 1) {
+            // Fits below the anchor (one row under point) -- the common case.
+            yMin = origin.y;
+            yMax = yMin + height - 1;
+        }
+        else {
+            // Flip upward, ending just above point's own line (origin.y -
+            // 1) so the popup never covers the line being typed on.
+            yMax = std::max(0, origin.y - 2);
+            yMin = std::max(0, yMax - height + 1);
+        }
+        return Box{.x_min = xMin, .x_max = xMax, .y_min = yMin, .y_max = yMax};
+    });
+    windowManager->SetOnCompletionChanged(
+        [&overlays, panel = &completionPopup](std::optional<ned::ui::ListPopupModel> model) {
+            if (model) {
+                panel->SetModel(std::move(*model));
+                overlays.Show(*panel);
+            }
+            else {
+                overlays.Hide(*panel);
+            }
+        });
+
     EventLoopCallbacks callbacks;
 
     callbacks.onResize = [&](Size size) {

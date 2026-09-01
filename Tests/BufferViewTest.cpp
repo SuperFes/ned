@@ -55,16 +55,6 @@
 #include "UI/Theme.h"
 #include "UI/ThemeRegistry.h"
 
-namespace ned::ui {
-// ned::ui::Point (Widget.h) is a plain aggregate with no operator== of its
-// own (nothing in production code has ever needed to compare two) -- defined
-// here, in its own namespace so ADL finds it, rather than pulled into
-// production code purely for test convenience.
-bool operator==(const Point& a, const Point& b) {
-    return a.x == b.x && a.y == b.y;
-}
-} // namespace ned::ui
-
 namespace {
 
 // Types out a whole path/name into a find-file/switch-to-buffer prompt one
@@ -220,6 +210,12 @@ struct Fixture {
     // -- isn't legal to return without a callable move constructor).
     std::optional<ned::ui::ListPopupModel> candidates;
 
+    // completion-popup follow-up: same shape as `candidates` immediately
+    // above, but for the (structurally distinct, see
+    // BufferView::SetOnCompletionChanged's own doc comment) completion
+    // popup -- wired via CaptureCompletion(view, fixture.completion).
+    std::optional<ned::ui::ListPopupModel> completion;
+
     ned::ui::BufferView View() {
         return ned::ui::BufferView(activeBuffer, killRing, registers, promptHistory, bufferList, dispatcher,
                                    statusMessage, mode, theme);
@@ -231,6 +227,19 @@ struct Fixture {
 // comment for why this can't just live inside Fixture::View().
 void CaptureCandidates(ned::ui::BufferView& view, std::optional<ned::ui::ListPopupModel>& out) {
     view.SetOnCandidatesChanged([&out](std::optional<ned::ui::ListPopupModel> model) { out = std::move(model); });
+}
+
+// completion-popup follow-up: same wiring as CaptureCandidates above, for
+// SetOnCompletionChanged.
+void CaptureCompletion(ned::ui::BufferView& view, std::optional<ned::ui::ListPopupModel>& out) {
+    view.SetOnCompletionChanged([&out](std::optional<ned::ui::ListPopupModel> model) { out = std::move(model); });
+}
+
+std::optional<std::string> CompletionSelectedLabel(const std::optional<ned::ui::ListPopupModel>& model) {
+    if (!model || !model->selectedIndex || *model->selectedIndex >= model->rows.size()) {
+        return std::nullopt;
+    }
+    return model->rows[*model->selectedIndex].main;
 }
 
 bool CandidatesContain(const std::optional<ned::ui::ListPopupModel>& model, const std::string& name) {
@@ -6566,7 +6575,8 @@ TEST_CASE("The candidate popup caps its row count with a trailing '+K more' row,
     std::filesystem::remove_all(fewDir);
 }
 
-TEST_CASE("C-M-i (lsp-complete) shows ghost text from a real completion response, and Tab accepts it", "[BufferView]") {
+TEST_CASE("C-M-i (lsp-complete) shows a completion popup from a real completion response, and Tab accepts it",
+          "[BufferView]") {
     Fixture                     fixture;
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_bufferview_lsp_complete_test.txt";
     ned::text::Buffer&          buffer = fixture.bufferList.OpenOrCreateFile(path);
@@ -6581,6 +6591,7 @@ TEST_CASE("C-M-i (lsp-complete) shows ghost text from a real completion response
     ned::ui::BufferView view = fixture.View();
     view.SetLspManager(&manager);
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    CaptureCompletion(view, fixture.completion);
 
     ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
     ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
@@ -6596,23 +6607,32 @@ TEST_CASE("C-M-i (lsp-complete) shows ghost text from a real completion response
     const auto response = ned::editor::lsp::Json{
         {"jsonrpc", "2.0"},
         {"id", LspRequestIdFromFrame(raw)},
-        {"result", {{"isIncomplete", false}, {"items", ned::editor::lsp::Json::array({{{"label", "foobar"}, {"insertText", "foobar"}}})}}},
+        {"result",
+         {{"isIncomplete", false},
+          {"items", ned::editor::lsp::Json::array(
+                        {{{"label", "foobar"}, {"insertText", "foobar"}, {"kind", 3}, {"detail", "() -> int"}}})}}},
     };
     client->DispatchFrame(response.dump());
 
-    // Ghost text renders dimmed right after point -- "o" then "obar" (the
-    // suffix past the already-typed "fo" prefix).
-    view.Paint(canvas);
-    REQUIRE(ContentRowText(screenBuf, 0, 6, 1) == "foobar");
-    const ned::ui::Cell& ghostCell = screenBuf.PixelAt(GutterWidth(1) + 2, 0); // right after "fo"
-    REQUIRE(ghostCell.foreground_color == fixture.theme.ghostTextForeground);
-    REQUIRE(ghostCell.italic);
+    // The popup carries the item's label/kind glyph/detail, anchored one
+    // row below point -- nothing renders inline in the buffer itself
+    // anymore.
+    REQUIRE(fixture.completion.has_value());
+    REQUIRE(fixture.completion->rows.size() == 1);
+    REQUIRE(fixture.completion->rows[0].main == "foobar");
+    REQUIRE(fixture.completion->rows[0].right == "() -> int");
+    REQUIRE(fixture.completion->rows[0].left == "\xC6\x92"); // "ƒ" -- LSP kind 3 == Function == SymbolKind::Callable
+    REQUIRE(fixture.completion->anchor.has_value());
+    REQUIRE(fixture.completion->anchor->x == static_cast<int>(GutterWidth(1)) + 2); // right after "fo"
+    REQUIRE(fixture.completion->anchor->y == 1);                                    // one row below point's own row (0)
+    REQUIRE(ContentRowText(screenBuf, 0, 6, 1) == "fo    ");                        // the buffer row itself is untouched
 
     view.OnEvent(ned::ui::test::Tab());
     REQUIRE(buffer.Text() == "foobar");
+    REQUIRE_FALSE(fixture.completion.has_value()); // accepting hides the popup
 }
 
-TEST_CASE("M-n cycles to the next ghost-text candidate", "[BufferView]") {
+TEST_CASE("Up/Down and M-n/M-p both cycle the completion popup's selection", "[BufferView]") {
     Fixture                     fixture;
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_bufferview_lsp_complete_cycle_test.txt";
     ned::text::Buffer&          buffer = fixture.bufferList.OpenOrCreateFile(path);
@@ -6627,6 +6647,7 @@ TEST_CASE("M-n cycles to the next ghost-text candidate", "[BufferView]") {
     ned::ui::BufferView view = fixture.View();
     view.SetLspManager(&manager);
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    CaptureCompletion(view, fixture.completion);
 
     ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
     ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
@@ -6641,13 +6662,20 @@ TEST_CASE("M-n cycles to the next ghost-text candidate", "[BufferView]") {
         {"result", ned::editor::lsp::Json::array({{{"label", "foobar"}, {"insertText", "foobar"}}, {{"label", "foobaz"}, {"insertText", "foobaz"}}})},
     };
     client->DispatchFrame(response.dump());
+    REQUIRE(CompletionSelectedLabel(fixture.completion) == "foobar");
 
-    view.OnEvent(ned::ui::test::Alt('n')); // M-n
+    view.OnEvent(ned::ui::test::ArrowDown());
+    REQUIRE(CompletionSelectedLabel(fixture.completion) == "foobaz");
+    view.OnEvent(ned::ui::test::ArrowUp());
+    REQUIRE(CompletionSelectedLabel(fixture.completion) == "foobar");
+
+    view.OnEvent(ned::ui::test::Alt('n')); // M-n -- kept alongside Down for existing muscle memory
+    REQUIRE(CompletionSelectedLabel(fixture.completion) == "foobaz");
     view.OnEvent(ned::ui::test::Tab());
     REQUIRE(buffer.Text() == "foobaz");
 }
 
-TEST_CASE("Any other key dismisses ghost text instead of accepting it", "[BufferView]") {
+TEST_CASE("Any other key dismisses the completion popup instead of accepting it", "[BufferView]") {
     Fixture                     fixture;
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_bufferview_lsp_complete_dismiss_test.txt";
     ned::text::Buffer&          buffer = fixture.bufferList.OpenOrCreateFile(path);
@@ -6662,6 +6690,7 @@ TEST_CASE("Any other key dismisses ghost text instead of accepting it", "[Buffer
     ned::ui::BufferView view = fixture.View();
     view.SetLspManager(&manager);
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    CaptureCompletion(view, fixture.completion);
 
     ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
     ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
@@ -6676,12 +6705,65 @@ TEST_CASE("Any other key dismisses ghost text instead of accepting it", "[Buffer
         {"result", ned::editor::lsp::Json::array({{{"label", "foobar"}, {"insertText", "foobar"}}})},
     };
     client->DispatchFrame(response.dump());
+    REQUIRE(fixture.completion.has_value());
 
     view.OnEvent(ned::ui::test::ArrowRight()); // any other key -- dismisses, doesn't accept
-    REQUIRE(buffer.Text() == "fo");            // ghost text was never actually inserted
+    REQUIRE(buffer.Text() == "fo");            // the suggestion was never actually inserted
+    REQUIRE_FALSE(fixture.completion.has_value()); // ... and the popup is hidden
 
-    view.OnEvent(ned::ui::test::Tab()); // Tab now, with no ghost showing, does whatever it ordinarily does (self-insert)
+    view.OnEvent(ned::ui::test::Tab()); // Tab now, with no popup showing, does whatever it ordinarily does (self-insert)
     REQUIRE(buffer.Text() != "foobar");
+}
+
+TEST_CASE("Completion popup hides when point's row scrolls off screen, but the suggestion is retained", "[BufferView]") {
+    Fixture                     fixture;
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_bufferview_lsp_complete_scroll_test.txt";
+    ned::text::Buffer&          buffer = fixture.bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("fo");
+    for (int i = 0; i < 20; ++i) {
+        buffer.InsertAtPoint("\nline" + std::to_string(i));
+    }
+    buffer.SetPoint(2); // right after "fo" on line 0
+    fixture.activeBuffer.Set(buffer);
+
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::LspClient* client = nullptr;
+    FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 4});
+    CaptureCompletion(view, fixture.completion);
+
+    ned::ui::Screen screenBuf = ned::ui::Screen(40, 5);
+    ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 4});
+    view.Paint(canvas);
+    DrainAllPendingFrames(server.serverStdinRead); // drain didOpen + any other background requests from this Paint()
+
+    view.OnEvent(ManualCompleteEvent());
+    const std::string raw      = ReadRawLspFrame(server.serverStdinRead);
+    const auto        response = ned::editor::lsp::Json{
+        {"jsonrpc", "2.0"},
+        {"id", LspRequestIdFromFrame(raw)},
+        {"result", ned::editor::lsp::Json::array({{{"label", "foobar"}, {"insertText", "foobar"}}})},
+    };
+    client->DispatchFrame(response.dump());
+    REQUIRE(fixture.completion.has_value()); // still on screen right after the response
+
+    // A pure scroll (point never moves) pushes point's own line above the
+    // viewport -- nothing about activeCompletion_ itself changes, so only
+    // Paint()'s own per-frame anchor check can catch this.
+    view.OnEvent(MouseWheel(0, 0, ned::ui::MouseEvent::Button::WheelDown));
+    view.Paint(canvas);
+    REQUIRE(buffer.Point() == 2); // wheel never moves point
+    REQUIRE_FALSE(fixture.completion.has_value());
+
+    // The suggestion itself is still live -- Tab still accepts it even
+    // though the popup isn't currently drawn, same tolerance the original
+    // off-screen ghost text had.
+    view.OnEvent(ned::ui::test::Tab());
+    REQUIRE(buffer.Text().starts_with("foobar"));
 }
 
 // documentHighlight follow-up.
@@ -7319,7 +7401,7 @@ TEST_CASE("Typing ( inside a call auto-triggers signature help after the debounc
 
     TypeText(view, "foo("); // the trailing '(' is the trigger character
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(450)); // past LspCompletionDebounceMs()'s default 350ms
+    std::this_thread::sleep_for(std::chrono::milliseconds(600)); // past LspCompletionDebounceMs()'s default 500ms
     REQUIRE(eventLoop.DrainPosted_()); // runs both debounce timers' posted callbacks -- signature help AND
                                        // documentHighlight (which has no toggle to disable, see design decision
                                        // 2 -- so its own request rides along here too)
@@ -7372,7 +7454,7 @@ TEST_CASE("Typing a non-trigger character does not schedule an automatic signatu
     // point/changes content regardless), so DrainPosted_() itself can't be
     // used as the signal; assert instead that no signatureHelp request
     // specifically was ever sent.
-    std::this_thread::sleep_for(std::chrono::milliseconds(450));
+    std::this_thread::sleep_for(std::chrono::milliseconds(600)); // past LspCompletionDebounceMs()'s default 500ms
     (void)eventLoop.DrainPosted_();
     const std::vector<ned::editor::lsp::Json> requests = ReadLspFrames(server.serverStdinRead, 1);
     REQUIRE(std::none_of(requests.begin(), requests.end(),
@@ -9422,6 +9504,7 @@ TEST_CASE("Accepting a snippet-format LSP completion starts a tabstop session", 
     ned::ui::BufferView view = fixture.View();
     view.SetLspManager(&manager);
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    CaptureCompletion(view, fixture.completion);
 
     ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
     ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
@@ -9442,9 +9525,10 @@ TEST_CASE("Accepting a snippet-format LSP completion starts a tabstop session", 
     };
     client->DispatchFrame(response.dump());
 
-    // The ghost renders the *parsed* text's suffix -- no raw ${1:...} markers.
-    view.Paint(canvas);
-    REQUIRE(ContentRowText(screenBuf, 0, 11, 1) == "foobar(arg)");
+    // The popup shows the item's own label verbatim -- no raw ${1:...}
+    // markers, but also not the parsed expansion (that's only computed on
+    // accept).
+    REQUIRE(CompletionSelectedLabel(fixture.completion) == "foobar");
 
     // Tab accepts: the typed prefix is replaced by the parsed expansion and
     // a tabstop session opens on the placeholder field.

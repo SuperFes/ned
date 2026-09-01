@@ -525,6 +525,7 @@ std::unique_ptr<Pane> WindowManager::MakePane(text::Buffer& buffer, editor::Mode
     pane->Buffer().SetOnBufferListToggle(onBufferListToggle_);
     pane->Buffer().SetOnPrefixHintChanged(onPrefixHintChanged_);
     pane->Buffer().SetOnCandidatesChanged(onCandidatesChanged_);
+    pane->Buffer().SetOnCompletionChanged(onCompletionChanged_);
     // Split-resize follow-up: see WindowManager.h's own resizingSplit_
     // comment and BufferView::SetSplitResizeQuery's own doc comment.
     pane->Buffer().SetSplitResizeQuery([this] { return resizingSplit_; });
@@ -596,6 +597,13 @@ void WindowManager::SetOnCandidatesChanged(std::function<void(std::optional<List
     onCandidatesChanged_ = std::move(onCandidatesChanged);
     for (Pane* pane : Leaves()) {
         pane->Buffer().SetOnCandidatesChanged(onCandidatesChanged_);
+    }
+}
+
+void WindowManager::SetOnCompletionChanged(std::function<void(std::optional<ListPopupModel>)> onCompletionChanged) {
+    onCompletionChanged_ = std::move(onCompletionChanged);
+    for (Pane* pane : Leaves()) {
+        pane->Buffer().SetOnCompletionChanged(onCompletionChanged_);
     }
 }
 

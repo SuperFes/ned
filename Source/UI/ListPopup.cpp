@@ -38,6 +38,21 @@ namespace {
         return x;
     }
 
+    // One column per codepoint, the same crude-but-consistent approximation
+    // PaintRowText's own per-codepoint cell writes already make (no
+    // grapheme-cluster/east-asian-width accounting anywhere in this
+    // widget) -- used to reserve the right column's own width before
+    // painting it.
+    int DisplayColumnCount(const std::string& text) {
+        int         count = 0;
+        std::size_t pos   = 0;
+        while (pos < text.size()) {
+            pos = text::NextCodepointBoundary(text, pos);
+            ++count;
+        }
+        return count;
+    }
+
 } // namespace
 
 ListPopup::ListPopup(const Theme& theme) : theme_(theme) {
@@ -49,6 +64,10 @@ void ListPopup::SetModel(ListPopupModel model) {
 
 int ListPopup::ContentRowCount() const {
     return static_cast<int>(model_.rows.size()) + 2; // + top/bottom border rows
+}
+
+std::optional<Point> ListPopup::Anchor() const {
+    return model_.anchor;
 }
 
 void ListPopup::SetFocusable(bool focusable) {
@@ -118,9 +137,29 @@ void ListPopup::Paint(Canvas c) {
         }
 
         const ListPopupRow& popupRow = model_.rows[i];
-        int                 x        = PaintRowText(c, 2, width, row, popupRow.left, popupRow.accented ? left : mainText);
+        // completion-popup follow-up: leftForeground overrides the
+        // accented/plain choice entirely -- see its own doc comment.
+        const Brush leftOverrideBrush{
+            .background = selected ? theme_.selectionBackground : theme_.background,
+            .foreground = popupRow.leftForeground.value_or(Color::Default)};
+        const Brush& leftBrush = popupRow.leftForeground ? leftOverrideBrush : (popupRow.accented ? left : mainText);
+        int          x         = PaintRowText(c, 2, width, row, popupRow.left, leftBrush);
         x += 2; // gap between the left column and the main label
-        PaintRowText(c, x, width, row, popupRow.main, mainText);
+
+        // completion-popup follow-up: reserve the right-aligned detail
+        // column (plus one gap column ahead of it) before painting `main`,
+        // so a long label truncates instead of running underneath it.
+        // Skipped entirely (main gets the full remaining width, as before
+        // this field existed) when `right` is empty or the popup is too
+        // narrow to fit it sensibly next to `main`'s own start column.
+        const int rightWidth = DisplayColumnCount(popupRow.right);
+        const int rightStart = width - 1 - rightWidth;
+        const int mainWidth  = (rightWidth > 0 && rightStart - 1 > x) ? rightStart : width;
+
+        PaintRowText(c, x, mainWidth, row, popupRow.main, mainText);
+        if (rightWidth > 0 && rightStart - 1 > x) {
+            PaintRowText(c, rightStart, width, row, popupRow.right, mainText);
+        }
         ++row;
     }
 }
