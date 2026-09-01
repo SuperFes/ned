@@ -2160,6 +2160,14 @@ void LspManager::Shutdown() {
         // live EventLoop::Run() left to wait with; see this method's own
         // doc comment in LspManager.h). The callback is never expected to
         // run; passed only because SendRequest requires one.
+        //
+        // async-write-queue follow-up: PrepareForGracefulShutdown must be
+        // called before these two sends, since the actual write is now
+        // async (queued, not synchronous) -- it's what makes ~LspClient()
+        // (run moments from now, when clients_ itself is destroyed as part
+        // of this process's normal teardown) drain the queue instead of
+        // applying its ordinary best-effort/no-drain policy.
+        client->PrepareForGracefulShutdown();
         client->SendRequest("shutdown", Json::object(), [](std::optional<Json>, std::optional<Json>) {});
         client->SendNotification("exit", Json::object());
     }

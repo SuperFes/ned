@@ -33,11 +33,52 @@ LspClient::LspClient(std::vector<std::string> argv, ned::ui::EventLoop& eventLoo
     : transport_(std::move(argv), /*captureStderr=*/true), eventLoop_(eventLoop), handshakeComplete_(false) {
     StartReadLoop();
     StartStderrReadLoop();
+    StartWriteLoop();
 }
 
 LspClient::LspClient(Transport transport, ned::ui::EventLoop& eventLoop, bool startHandshakeComplete) : transport_(std::move(transport)), eventLoop_(eventLoop), handshakeComplete_(startHandshakeComplete) {
     StartReadLoop();
     StartStderrReadLoop(); // no-op unless transport_ was itself constructed with captureStderr -- see header comment
+    StartWriteLoop();
+}
+
+void LspClient::StartWriteLoop() {
+    // async-write-queue follow-up -- see header comment.
+    writeThread_ = std::jthread([this](const std::stop_token& stopToken) {
+        while (true) {
+            std::string frame;
+            {
+                std::unique_lock<std::mutex> lock(writeMutex_);
+                writeCv_.wait(lock, stopToken, [&] { return !writeQueue_.empty() || stopToken.stop_requested(); });
+                if (writeQueue_.empty()) {
+                    return; // nothing left -- clean stop
+                }
+                if (stopToken.stop_requested() && !drainQueueOnStop_.load()) {
+                    return; // ordinary teardown: don't attempt stale writes against a dying/dead connection
+                }
+                frame = std::move(writeQueue_.front());
+                writeQueue_.pop_front();
+            }
+            try {
+                transport_.WriteFrame(frame);
+            }
+            catch (const std::exception&) {
+                return; // pipe's gone -- the read loop's own EOF/error path already reports this
+            }
+        }
+    });
+}
+
+void LspClient::EnqueueWrite(std::string frame) {
+    {
+        std::lock_guard<std::mutex> lock(writeMutex_);
+        writeQueue_.push_back(std::move(frame));
+    }
+    writeCv_.notify_one();
+}
+
+void LspClient::PrepareForGracefulShutdown() {
+    drainQueueOnStop_ = true;
 }
 
 void LspClient::StartReadLoop() {
@@ -215,7 +256,7 @@ void LspClient::DispatchFrame(const std::string& frameText) {
                                 {"id", message["id"]},
                                 {"error", {{"code", -32601}, {"message", "method not found: " + method}}}};
             }
-            transport_.WriteFrame(response.dump());
+            EnqueueWrite(response.dump());
             return;
         }
 
@@ -245,7 +286,7 @@ void LspClient::SendRequest(const std::string& method, Json params, ResponseCall
         {"method", method},
         {"params", std::move(params)},
     };
-    transport_.WriteFrame(message.dump());
+    EnqueueWrite(message.dump());
 }
 
 void LspClient::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
@@ -287,7 +328,7 @@ void LspClient::SendNotification(const std::string& method, Json params) {
         {"method", method},
         {"params", std::move(params)},
     };
-    transport_.WriteFrame(message.dump());
+    EnqueueWrite(message.dump());
 
     if (method == "initialized") {
         handshakeComplete_                              = true;

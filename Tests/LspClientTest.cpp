@@ -13,8 +13,10 @@
 #include "Editor/BackgroundActivity.h"
 #include "Editor/Lsp/LspClient.h"
 #include "Editor/Lsp/Transport.h"
+#include "Editor/ProcessTimeouts.h"
 #include "UI/EventLoop.h"
 
+using ned::editor::SetProtocolStallTimeoutMs;
 using ned::editor::lsp::Json;
 using ned::editor::lsp::LspClient;
 using ned::editor::lsp::Transport;
@@ -184,6 +186,16 @@ std::vector<Json> ReadQueuedFrames(int fd, std::size_t count) {
     }
     return frames;
 }
+
+// async-write-queue follow-up: ProtocolStallTimeoutMs() is process-wide
+// state (see ProcessTimeouts.h's own doc comment) -- any test that shortens
+// it to keep a stalled-pipe test fast must restore the default afterward,
+// mirroring ProcessTimeoutsTest.cpp's own ProcessTimeoutsGuard shape.
+struct ProtocolStallTimeoutGuard {
+    ~ProtocolStallTimeoutGuard() {
+        SetProtocolStallTimeoutMs(30000);
+    }
+};
 
 } // namespace
 
@@ -540,4 +552,108 @@ TEST_CASE("Once the gate is open, further calls write immediately with no more q
     const std::string raw     = ReadRawFrame(fixture.serverStdinRead);
     const Json        message = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
     REQUIRE(message["method"] == "textDocument/didOpen"); // arrived without needing another "initialized"
+}
+
+// async-write-queue follow-up: the tests below exercise LspClient's write
+// queue directly -- see LspClient.h's own header comment on writeThread_/
+// EnqueueWrite/PrepareForGracefulShutdown for the design this verifies.
+
+TEST_CASE("SendNotification returns immediately even while the underlying pipe is stalled", "[Lsp]") {
+    const ProtocolStallTimeoutGuard guard;
+    SetProtocolStallTimeoutMs(60000); // deliberately long -- proves the *caller* never waits on it, not that it's short
+
+    ClientFixture fixture = ClientFixture::Create();
+
+    // Never read fixture.serverStdinRead in this test -- the OS pipe buffer
+    // (a few tens of KiB) fills after enough unread payload, and any write
+    // past that point genuinely blocks inside transport_.WriteFrame until
+    // something drains it. That blocking now happens on writeThread_, not
+    // the calling thread -- this test's own timing is the proof.
+    const std::string bigParam(4096, 'x');
+    const auto         start = std::chrono::steady_clock::now();
+    for (int i = 0; i < 64; ++i) { // 64 * (4096 + framing overhead) comfortably exceeds any real pipe buffer
+        fixture.client.SendNotification("textDocument/didChange", Json{{"marker", bigParam}});
+    }
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+
+    // Generous bound (well under the 60s stall timeout above) -- this would
+    // have taken tens of seconds (or hung outright, pre-fix) if any of these
+    // calls had blocked on the actual write.
+    REQUIRE(elapsed < std::chrono::seconds(5));
+}
+
+TEST_CASE("Frames enqueued while a write is stalled still arrive, in order, once drained", "[Lsp]") {
+    const ProtocolStallTimeoutGuard guard;
+    SetProtocolStallTimeoutMs(60000);
+
+    ClientFixture fixture = ClientFixture::Create();
+
+    // First, back the pipe up the same way the test above does, without
+    // reading -- this puts writeThread_ into a genuinely blocked WriteFrame
+    // call before the frames under test are even enqueued.
+    const std::string bigParam(4096, 'x');
+    for (int i = 0; i < 32; ++i) {
+        fixture.client.SendNotification("textDocument/didChange", Json{{"marker", bigParam}, {"seq", -1}});
+    }
+
+    fixture.client.SendNotification("textDocument/didChange", Json{{"seq", 1}});
+    fixture.client.SendNotification("textDocument/didChange", Json{{"seq", 2}});
+    fixture.client.SendNotification("textDocument/didChange", Json{{"seq", 3}});
+
+    // Now drain -- proves nothing was lost or reordered, just delayed.
+    std::string all;
+    char        buffer[4096];
+    for (int i = 0; i < 200; ++i) { // generous cap; stops as soon as every frame's been seen
+        const ssize_t n = ::read(fixture.serverStdinRead, buffer, sizeof(buffer));
+        if (n <= 0) {
+            break;
+        }
+        all.append(buffer, static_cast<std::size_t>(n));
+        std::size_t seqCount = 0;
+        std::size_t pos      = 0;
+        while ((pos = all.find("\"seq\":3", pos)) != std::string::npos) {
+            ++seqCount;
+            ++pos;
+        }
+        if (seqCount > 0) {
+            break; // the last frame under test has arrived
+        }
+    }
+
+    const auto posSeq1 = all.find("\"seq\":1");
+    const auto posSeq2 = all.find("\"seq\":2");
+    const auto posSeq3 = all.find("\"seq\":3");
+    REQUIRE(posSeq1 != std::string::npos);
+    REQUIRE(posSeq2 != std::string::npos);
+    REQUIRE(posSeq3 != std::string::npos);
+    REQUIRE(posSeq1 < posSeq2);
+    REQUIRE(posSeq2 < posSeq3);
+}
+
+TEST_CASE("PrepareForGracefulShutdown drains a queued frame before the writer thread stops", "[Lsp]") {
+    ClientFixture fixture = ClientFixture::Create();
+
+    fixture.client.PrepareForGracefulShutdown();
+    fixture.client.SendNotification("shutdown-marker", Json::object());
+
+    const std::string raw = ReadRawFrame(fixture.serverStdinRead);
+    const Json        message = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(message["method"] == "shutdown-marker"); // delivered, not silently dropped by teardown
+}
+
+TEST_CASE("Ordinary destruction (no PrepareForGracefulShutdown) does not hang", "[Lsp]") {
+    // Regression test for a real hang this async write queue introduced and
+    // then fixed: std::condition_variable::wait never wakes on
+    // request_stop() alone (only notify_one()/notify_all() does), so
+    // writeCv_ has to be a condition_variable_any using the stop_token-aware
+    // wait() overload -- see writeCv_'s own header comment. Destroying a
+    // client with an idle (empty-queue) writer thread must return promptly.
+    const auto start = std::chrono::steady_clock::now();
+    {
+        ClientFixture fixture = ClientFixture::Create();
+        fixture.client.SendNotification("textDocument/didOpen", Json::object());
+        (void)ReadRawFrame(fixture.serverStdinRead); // let the queue drain to empty before destruction
+    }
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    REQUIRE(elapsed < std::chrono::seconds(2));
 }

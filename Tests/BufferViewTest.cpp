@@ -6596,7 +6596,7 @@ TEST_CASE("C-M-i (lsp-complete) shows a completion popup from a real completion 
     ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
     ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
     view.Paint(canvas); // triggers SyncBuffer -> didOpen
-    (void)ReadRawLspFrame(server.serverStdinRead);
+    DrainAllPendingFrames(server.serverStdinRead);
 
     view.OnEvent(ManualCompleteEvent()); // C-M-i -- lsp-complete
 
@@ -6652,7 +6652,7 @@ TEST_CASE("Up/Down and M-n/M-p both cycle the completion popup's selection", "[B
     ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
     ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
     view.Paint(canvas);
-    (void)ReadRawLspFrame(server.serverStdinRead);
+    DrainAllPendingFrames(server.serverStdinRead);
 
     view.OnEvent(ManualCompleteEvent());
     const std::string raw      = ReadRawLspFrame(server.serverStdinRead);
@@ -6695,7 +6695,7 @@ TEST_CASE("Any other key dismisses the completion popup instead of accepting it"
     ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
     ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
     view.Paint(canvas);
-    (void)ReadRawLspFrame(server.serverStdinRead);
+    DrainAllPendingFrames(server.serverStdinRead);
 
     view.OnEvent(ManualCompleteEvent());
     const std::string raw      = ReadRawLspFrame(server.serverStdinRead);
@@ -6896,7 +6896,7 @@ TEST_CASE("A completion item's documentation populates the popup's previewText",
     ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
     ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
     view.Paint(canvas);
-    (void)ReadRawLspFrame(server.serverStdinRead);
+    DrainAllPendingFrames(server.serverStdinRead);
 
     view.OnEvent(ManualCompleteEvent());
     const std::string raw      = ReadRawLspFrame(server.serverStdinRead);
@@ -6938,7 +6938,7 @@ TEST_CASE("AcceptActiveCompletionAt accepts the given index regardless of the cu
     ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
     ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
     view.Paint(canvas);
-    (void)ReadRawLspFrame(server.serverStdinRead);
+    DrainAllPendingFrames(server.serverStdinRead);
 
     view.OnEvent(ManualCompleteEvent());
     const std::string raw      = ReadRawLspFrame(server.serverStdinRead);
@@ -7026,7 +7026,7 @@ TEST_CASE("C-c C-a with no code actions reports \"No code actions available.\"",
     ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
     ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
     view.Paint(canvas);
-    (void)ReadRawLspFrame(server.serverStdinRead);
+    DrainAllPendingFrames(server.serverStdinRead);
 
     view.OnEvent(ned::ui::test::Ctrl('c'));
     view.OnEvent(ned::ui::test::Ctrl('a'));
@@ -7058,7 +7058,7 @@ TEST_CASE("C-c C-a with one code action applies it directly, no confirmation", "
     ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
     ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
     view.Paint(canvas);
-    (void)ReadRawLspFrame(server.serverStdinRead);
+    DrainAllPendingFrames(server.serverStdinRead);
 
     view.OnEvent(ned::ui::test::Ctrl('c'));
     view.OnEvent(ned::ui::test::Ctrl('a'));
@@ -7105,7 +7105,7 @@ TEST_CASE("C-c C-a with multiple code actions: digit-select applies the right on
     ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
     ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
     view.Paint(canvas);
-    (void)ReadRawLspFrame(server.serverStdinRead);
+    DrainAllPendingFrames(server.serverStdinRead);
 
     view.OnEvent(ned::ui::test::Ctrl('c'));
     view.OnEvent(ned::ui::test::Ctrl('a'));
@@ -7157,7 +7157,7 @@ TEST_CASE("Escape at the code-action selection list leaves the buffer untouched"
     ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
     ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
     view.Paint(canvas);
-    (void)ReadRawLspFrame(server.serverStdinRead);
+    DrainAllPendingFrames(server.serverStdinRead);
 
     view.OnEvent(ned::ui::test::Ctrl('c'));
     view.OnEvent(ned::ui::test::Ctrl('a'));
@@ -7270,7 +7270,7 @@ TEST_CASE("M-. with no definitions reports \"No definition found.\"", "[BufferVi
     ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
     ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
     view.Paint(canvas);
-    (void)ReadRawLspFrame(server.serverStdinRead);
+    DrainAllPendingFrames(server.serverStdinRead);
 
     view.OnEvent(ManualGotoDefinitionEvent());
 
@@ -7301,7 +7301,7 @@ TEST_CASE("M-. with multiple definitions: digit-select jumps to the chosen one",
     ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
     ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
     view.Paint(canvas);
-    (void)ReadRawLspFrame(server.serverStdinRead);
+    DrainAllPendingFrames(server.serverStdinRead);
 
     view.OnEvent(ManualGotoDefinitionEvent());
 
@@ -7590,7 +7590,7 @@ TEST_CASE("Typing ( inside a call auto-triggers signature help after the debounc
     ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
     ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
     view.Paint(canvas); // triggers SyncBuffer -> didOpen
-    (void)ReadRawLspFrame(server.serverStdinRead);
+    DrainAllPendingFrames(server.serverStdinRead);
 
     TypeText(view, "foo("); // the trailing '(' is the trigger character
 
@@ -7638,7 +7638,7 @@ TEST_CASE("Typing a non-trigger character does not schedule an automatic signatu
     ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
     ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
     view.Paint(canvas);
-    (void)ReadRawLspFrame(server.serverStdinRead);
+    DrainAllPendingFrames(server.serverStdinRead);
 
     TypeText(view, "foo");
 
@@ -7739,7 +7739,7 @@ TEST_CASE("M-o falls back to the filesystem heuristic when the server reports no
     ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
     ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
     view.Paint(canvas);
-    (void)ReadRawLspFrame(server.serverStdinRead);
+    DrainAllPendingFrames(server.serverStdinRead);
 
     view.OnEvent(ManualSwitchHeaderSourceEvent());
 
@@ -8929,7 +8929,7 @@ struct QuickFixHarness {
         ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
         ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
         view.Paint(canvas);
-        (void)ReadRawLspFrame(server.serverStdinRead);
+        DrainAllPendingFrames(server.serverStdinRead);
     }
 
     // Sends C-c C-q and answers the resulting codeAction request with
@@ -9264,7 +9264,7 @@ TEST_CASE("C-x C-s formats via the language server before saving when lsp-format
     ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
     ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
     view.Paint(canvas); // triggers SyncBuffer -> didOpen
-    (void)ReadRawLspFrame(server.serverStdinRead);
+    DrainAllPendingFrames(server.serverStdinRead);
 
     view.OnEvent(ned::ui::test::Ctrl('x'));
     view.OnEvent(ned::ui::test::Ctrl('s'));
@@ -9385,7 +9385,7 @@ TEST_CASE("Typing the server's declared trigger character sends textDocument/onT
     ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
     ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
     view.Paint(canvas); // triggers SyncBuffer -> didOpen
-    (void)ReadRawLspFrame(server.serverStdinRead);
+    DrainAllPendingFrames(server.serverStdinRead);
 
     view.OnEvent(ned::ui::test::Character(";"));
     REQUIRE(buffer.Text() == "int x=1;"); // the self-insert itself, independent of anything LSP-related
@@ -9702,7 +9702,7 @@ TEST_CASE("Accepting a snippet-format LSP completion starts a tabstop session", 
     ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
     ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
     view.Paint(canvas); // triggers SyncBuffer -> didOpen
-    (void)ReadRawLspFrame(server.serverStdinRead);
+    DrainAllPendingFrames(server.serverStdinRead);
 
     view.OnEvent(ManualCompleteEvent()); // C-M-i -- lsp-complete
     const std::string raw = ReadRawLspFrame(server.serverStdinRead);

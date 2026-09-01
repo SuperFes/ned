@@ -55,13 +55,36 @@
 // constructor (the Transport-taking constructor never captures stderr,
 // matching its own default -- test-injected clients have nothing to drain).
 //
+// async-write-queue follow-up: every SendRequest/SendNotification/server-
+// request-response send used to call transport_.WriteFrame directly on the
+// main thread -- synchronous, and unboundedly blocking (up to
+// ProtocolStallTimeoutMs()) whenever a server's stdin pipe backs up. Two
+// real, gdb-confirmed live freezes traced to exactly this (a rapid-typing
+// didChange flood, and a periodic background-sync didOpen stall against a
+// slow server) -- see LspManager's own sync-debounce/background-sync
+// comments. Writes now go through EnqueueWrite -> writeQueue_, drained by a
+// dedicated writeThread_, so a stalled write only ever blocks that thread.
+// writeThread_ needs the *opposite* member-order relationship transport_ has
+// with readThread_/stderrThread_ above: it must finish (and join) *before*
+// transport_ destructs, not after, or a graceful-shutdown drain (see
+// PrepareForGracefulShutdown) would attempt to write through an
+// already-closed transport. So writeThread_ (and writeMutex_/writeCv_/
+// writeQueue_/drainQueueOnStop_, which must outlive it) are declared *after*
+// transport_ -- the mirror image of the readThread_/stderrThread_ rule above.
+// Do not "fix" one ordering to match the other; they're deliberately
+// opposite for opposite reasons.
+//
 
 #ifndef NED_EDITOR_LSP_LSPCLIENT_H
 #define NED_EDITOR_LSP_LSPCLIENT_H
 
+#include <atomic>
 #include <chrono>
+#include <condition_variable> // condition_variable_any, for its stop_token-aware wait() overload -- see writeCv_'s own comment
+#include <deque>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <thread>
@@ -228,9 +251,31 @@ class LspClient {
     // can pass a much shorter maxAge than the real default.
     void ExpireStaleRequests(std::chrono::milliseconds maxAge = ProtocolRequestTimeoutMs());
 
+    // async-write-queue follow-up: marks this client for graceful shutdown --
+    // guarantees any currently-queued or subsequently-enqueued frame (in
+    // practice, LspManager::Shutdown()'s courtesy "shutdown" request + "exit"
+    // notification) is actually attempted by writeThread_ before it stops,
+    // instead of the destructor's ordinary best-effort/no-drain policy (see
+    // header comment). Call this immediately before those two calls. Not
+    // meant for any other caller -- ordinary mid-session teardown
+    // (LspManager::ClientDisconnected) must NOT call this, since draining a
+    // queue against a connection that's already dying/dead is exactly the
+    // main-thread stall this whole mechanism exists to avoid, and there's
+    // nothing worth delivering to a dead connection anyway.
+    void PrepareForGracefulShutdown();
+
   private:
     void StartReadLoop();
     void StartStderrReadLoop(); // lsp-stderr-capture follow-up -- see header comment
+    void StartWriteLoop();      // async-write-queue follow-up -- see header comment
+
+    // async-write-queue follow-up: enqueues frame for writeThread_ to send,
+    // returning immediately -- replaces every direct transport_.WriteFrame
+    // call. All three call sites (server-request responses, SendRequest,
+    // SendNotification) run on the main thread only, so enqueue order is
+    // call order is on-wire order -- unchanged from the old synchronous
+    // behavior, just no longer blocking to get there.
+    void EnqueueWrite(std::string frame);
 
     // lsp-use-after-free follow-up: see this file's own header comment.
     // Declaration position doesn't matter for correctness (a shared_ptr's
@@ -244,6 +289,25 @@ class LspClient {
     Transport    transport_;
 
     ned::ui::EventLoop& eventLoop_;
+
+    // async-write-queue follow-up: writeThread_ is declared *after*
+    // transport_ (opposite of readThread_/stderrThread_ above) so it
+    // destructs *before* transport_ -- see header comment. writeMutex_/
+    // writeCv_/writeQueue_/drainQueueOnStop_ must outlive writeThread_, so
+    // they're declared ahead of it here.
+    std::mutex writeMutex_;
+    // condition_variable_any, not condition_variable: plain condition_variable::wait
+    // never wakes on request_stop() alone -- only notify_one()/notify_all() wakes
+    // it, and request_stop() calls neither. condition_variable_any's stop_token-aware
+    // wait(lock, stopToken, predicate) overload registers its own internal
+    // stop_callback that does the notifying -- without this, ~LspClient()'s implicit
+    // join() on writeThread_ hangs forever whenever the writer is idly waiting on an
+    // empty queue at destruction time (confirmed live: nearly every existing
+    // LspClientTest.cpp test hung on this before the fix).
+    std::condition_variable_any writeCv_;
+    std::deque<std::string>     writeQueue_;
+    std::atomic<bool>       drainQueueOnStop_ = false; // see PrepareForGracefulShutdown
+    std::jthread            writeThread_;
 
     struct PendingRequest {
         ResponseCallback                      callback;
