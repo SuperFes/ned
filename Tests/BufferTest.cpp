@@ -1560,3 +1560,38 @@ TEST_CASE("RestoreUndoTree rejects a tree whose current node disagrees with buff
     Buffer mismatched("scratch", ned::text::Rope("totally different content"));
     REQUIRE_THROWS_AS(mismatched.RestoreUndoTree(nodes, currentId), std::runtime_error);
 }
+
+TEST_CASE("TryJumpToUndoSequence moves directly to a prior state and runs the same post-move bookkeeping as Undo",
+          "[Buffer]") {
+    Buffer buffer("scratch", ned::text::Rope("a"));
+    buffer.SetPoint(1);
+    buffer.InsertAtPoint("b");
+    const std::size_t afterFirstInsert = buffer.CurrentUndoSequence();
+    buffer.MoveBackward(); // breaks coalescing, matching the SerializeUndo test above
+    buffer.MoveForward();
+    buffer.InsertAtPoint("c");
+    REQUIRE(buffer.Text() == "abc");
+
+    buffer.AddCursorAt(0); // secondary cursor -- TryJumpToUndoSequence should clear it, same as Undo()/Redo()
+    REQUIRE(buffer.HasSecondaryCursors());
+
+    REQUIRE(buffer.TryJumpToUndoSequence(afterFirstInsert));
+    REQUIRE(buffer.Text() == "ab");
+    REQUIRE_FALSE(buffer.HasSecondaryCursors());
+    REQUIRE(buffer.CanUndo());
+    REQUIRE(buffer.CanRedo());
+
+    // Jumping forward again lands back on "abc" via the same branch, not a
+    // different one -- JumpTo's own mostRecentChild bookkeeping.
+    buffer.Redo();
+    REQUIRE(buffer.Text() == "abc");
+}
+
+TEST_CASE("TryJumpToUndoSequence returns false and leaves the buffer untouched for an unknown sequence", "[Buffer]") {
+    Buffer buffer("scratch", ned::text::Rope("a"));
+    buffer.SetPoint(1);
+    buffer.InsertAtPoint("b");
+
+    REQUIRE_FALSE(buffer.TryJumpToUndoSequence(999));
+    REQUIRE(buffer.Text() == "ab");
+}
