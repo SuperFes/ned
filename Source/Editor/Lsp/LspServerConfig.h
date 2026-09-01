@@ -52,7 +52,7 @@ void              SetLspAutoCompleteEnabled(bool enabled); // default true
 // Non-positive values are clamped to 1ms rather than rejected -- same
 // "don't throw over a config value, just make it sane" convention
 // TabWidth::SetTabWidth already established.
-void             SetLspCompletionDebounceMs(int milliseconds); // default 350
+void             SetLspCompletionDebounceMs(int milliseconds); // default 500
 [[nodiscard]] int LspCompletionDebounceMs();
 
 // diagnostics-debounce follow-up: how long LspManager waits, after the most

@@ -42,6 +42,19 @@ struct ListPopupRow {
     std::string left;          // optional leading column (a key chord, a mark glyph, "N)") -- empty means none
     std::string main;          // the row's main label
     bool        accented = false; // paint `left` in the theme's accent brush (which-key's chord color)
+    // completion-popup follow-up: overrides `left`'s color entirely (ahead
+    // of `accented`) with an explicit foreground -- a completion item's
+    // kind glyph is colored per-kind (Theme::BrushFor(SyntaxClassFor(...))),
+    // not the single fixed accent color every other `left` column uses.
+    // Unset (every other consumer) keeps the existing accented/plain choice.
+    std::optional<Color> leftForeground;
+    // completion-popup follow-up: optional trailing column, right-aligned
+    // against the popup's right border (a completion item's type/signature
+    // detail) -- empty means none, same convention as `left`. Painted in
+    // the same dim/accent style `left` uses, never `accented`-selectable
+    // itself; `main` is truncated before it rather than allowed to run
+    // underneath.
+    std::string right;
 };
 
 struct ListPopupModel {
@@ -52,6 +65,15 @@ struct ListPopupModel {
     // ProjectSidebar's own selected-row technique). Unset => a plain static
     // list, which-key's original look.
     std::optional<std::size_t> selectedIndex;
+
+    // completion-popup follow-up: absolute screen position to open near,
+    // set only by a completion-at-point-style consumer -- unset (every
+    // other consumer today: which-key, M-x/find-file/.../code-action-select)
+    // keeps the existing static/docked placement untouched. The placement
+    // function reads this back via ListPopup::Anchor() rather than this
+    // model directly, the same "widget echoes back one derived fact"
+    // shape ContentRowCount() already establishes.
+    std::optional<Point> anchor;
 };
 
 class ListPopup : public Widget {
@@ -69,6 +91,12 @@ class ListPopup : public Widget {
     // function uses this to size the popup's Box without needing its own
     // copy of the model.
     [[nodiscard]] int ContentRowCount() const;
+
+    // completion-popup follow-up: the current model's anchor, for a
+    // placement function to position this popup near (see ListPopupModel::
+    // anchor's own doc comment). std::nullopt for every non-anchored
+    // consumer.
+    [[nodiscard]] std::optional<Point> Anchor() const;
 
     // Selects the focus-owning mode described in this file's header comment.
     // Defaults to false (which-key's original non-focusable behavior).

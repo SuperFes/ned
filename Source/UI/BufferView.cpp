@@ -670,7 +670,7 @@ namespace {
     // hover/completion follow-up: byte offset where the ASCII word/
     // identifier token immediately before point begins (an alnum/underscore
     // run) -- shared by the auto-completion suppression heuristic (rejecting
-    // a purely numeric token) and ghost-text suffix computation (the
+    // a purely numeric token) and completion-insert-suffix computation (the
     // already-typed prefix to subtract from a completion item's own
     // insertText). Deliberately ASCII-only (matches Buffer's own word-motion
     // classification), so the returned [start, point) range is guaranteed
@@ -803,6 +803,10 @@ void BufferView::SetOnPrefixHintChanged(std::function<void(std::optional<WhichKe
 
 void BufferView::SetOnCandidatesChanged(std::function<void(std::optional<ListPopupModel>)> handler) {
     onCandidatesChanged_ = std::move(handler);
+}
+
+void BufferView::SetOnCompletionChanged(std::function<void(std::optional<ListPopupModel>)> handler) {
+    onCompletionChanged_ = std::move(handler);
 }
 
 void BufferView::ClearBufferCaches(text::Buffer& buffer) {
@@ -1151,6 +1155,45 @@ namespace {
                 return "="; // a constant/variable-like definition
         }
         return " "; // unreachable, same convention as DiagnosticGlyphFor above
+    }
+
+    // completion-popup follow-up: buckets a raw LSP CompletionItemKind
+    // (spec section 3.17.2.3, 1-25) down onto the gutter's own three-bucket
+    // SymbolKind wherever the mapping is a natural fit, reusing
+    // SymbolGlyphFor/editor::SyntaxClassFor/Theme::BrushFor entirely
+    // unchanged for the glyph and its color -- deliberately NOT a fourth
+    // SymbolKind enumerator: that type's own doc comment scopes it to the
+    // gutter's tree-sitter-tag-derived "definition site" landmarks, and a
+    // completion item (a keyword, a snippet, a file path, ...) often isn't
+    // one at all. Everything outside the three matched ranges (Text,
+    // Keyword, Snippet, Color, File, Folder, Unit, Operator, Event,
+    // Reference, Value) returns nullopt -- rendered as a dim, generic glyph
+    // by the caller instead of stretching this mapping to cover every LSP
+    // kind.
+    std::optional<editor::SymbolKind> CompletionKindBucket(int lspKind) {
+        switch (lspKind) {
+            case 2: // Method
+            case 3: // Function
+            case 4: // Constructor
+                return editor::SymbolKind::Callable;
+            case 7:  // Class
+            case 8:  // Interface
+            case 9:  // Module
+            case 22: // Struct
+            case 13: // Enum
+            case 25: // TypeParameter
+                return editor::SymbolKind::TypeLike;
+            case 5:  // Field
+            case 6:  // Variable
+            case 10: // Property
+            case 11: // Unit
+            case 12: // Value
+            case 20: // EnumMember
+            case 21: // Constant
+                return editor::SymbolKind::Data;
+            default:
+                return std::nullopt;
+        }
     }
 
     // test-runner integration: the per-test gutter mark. Colors are the
@@ -1621,8 +1664,8 @@ void BufferView::ScheduleDiffRefresh() {
         return; // headless test, or no VcsRunner wired in -- see this method's own header comment
     }
     // Same "Arm re-cancels any still-pending previous fire" debounce shape
-    // completionDebounceTimer_ already established for LSP ghost-text
-    // completion -- rapid typing keeps pushing the debounce deadline out
+    // completionDebounceTimer_ already established for LSP completion --
+    // rapid typing keeps pushing the debounce deadline out
     // rather than firing once per keystroke.
     diffRefreshTimer_.Arm(*eventLoop_, editor::DiffRefreshDebounce(), [this] { RequestDiffForCurrentBuffer(); });
 }
@@ -2928,9 +2971,8 @@ void BufferView::Paint(Canvas c) {
                 // so rendering falls through to the ordinary per-character
                 // path right after. Deliberately not routed through
                 // SpanAtOffset/ResolvedBrush -- a fixed dimmed/italic brush
-                // (theme_.ghostTextForeground), the same styling choice
-                // ghost-text completion already makes for the same reason
-                // (synthetic text, not a real SyntaxClass). Never emits a
+                // (theme_.ghostTextForeground, named for this: synthetic
+                // virtual text, not a real SyntaxClass). Never emits a
                 // raw control byte, matching every other glyph-writing loop
                 // in this function.
                 if (const RenderedInlayHint* hint = InlayHintStartingAt(currentLineInlayHints, offset)) {
@@ -3244,62 +3286,17 @@ void BufferView::Paint(Canvas c) {
                 }
             } // if (segmentIndex + 1 == lineSegments.size()) -- fold ellipsis/preview
 
-            // hover/completion follow-up: ghost-text completion suggestion,
-            // dimmed, right after point on point's own line. Deliberately
-            // anchored via VisualColumn(..., point, ...) rather than reusing
-            // this row's own `col` (which reflects where the LINE's real
-            // content ends, not where POINT is -- the two only coincide
-            // when point sits at end-of-line, the common case right after a
-            // self-insert keystroke that triggered this, but not guaranteed
-            // in general). requestPoint == point is the staleness check --
-            // point moving since the request was issued/answered means this
-            // suggestion no longer applies to whatever's now under point.
-            // line-wrap follow-up: also requires point to fall within THIS
-            // row's own segment -- point's line can span several wrapped
-            // rows, and the suggestion belongs only on the one actually
-            // showing point, not every one of them.
-            if (ghostCompletion_ && line == pointLine && ghostCompletion_->requestPoint == point &&
-                point >= currentSegment.startByte && point <= currentSegment.endByte &&
-                static_cast<int>(gutterWidth) < c.size().width) {
-                // line-wrap follow-up: horizontal-scroll-follow -- same
-                // leftColumn_-aware bound/offset CursorPosition() uses;
-                // always a no-op adjustment while wrapActive (leftColumn_
-                // stays 0 then).
-                const int ghostContentWidth = c.size().width - static_cast<int>(gutterWidth);
-                const int maxColumns        = ghostContentWidth + static_cast<int>(leftColumn_);
-                if (const std::optional<int> pointColumn = VisualColumn(content, currentSegment.startByte, point, maxColumns, lineLinks);
-                    pointColumn && *pointColumn >= static_cast<int>(leftColumn_)) {
-                    const std::string suffix = GhostSuffixFor(ghostCompletion_->items[ghostCompletion_->selectedIndex]);
-                    const Brush       ghostBrush{.background = theme_.background, .foreground = theme_.ghostTextForeground, .italic = true};
-                    const text::Rope  suffixRope(suffix);
-                    std::size_t       suffixOffset = 0;
-                    int               ghostCol     = static_cast<int>(gutterWidth) + *pointColumn - static_cast<int>(leftColumn_);
-                    while (suffixOffset < suffixRope.ByteLength() && ghostCol < c.size().width) {
-                        const auto decoded = suffixRope.CodepointAt(suffixOffset);
-                        // Never send a raw control byte to the terminal --
-                        // same discipline tab-rendering-fix/binary-rendering
-                        // established (see this file's own header comment);
-                        // a completion suggestion realistically never
-                        // contains one, so truncating here rather than
-                        // growing a parallel hex-placeholder path for this
-                        // narrow case is the right trade.
-                        if (decoded.codepoint < 0x20 || decoded.codepoint == 0x7F) {
-                            break;
-                        }
-                        Cell& cell     = c[{.x = ghostCol, .y = row}];
-                        cell.character = text::EncodeCodepointUtf8(decoded.codepoint);
-                        ghostBrush.ApplyTo(cell);
-                        ++ghostCol;
-                        suffixOffset += decoded.byteLength;
-                    }
-                }
-            }
+            // completion-popup follow-up: completion no longer paints
+            // anything inline here -- ActiveCompletion renders via a real
+            // ListPopup overlay instead (NotifyCompletionChanged, called at
+            // every activeCompletion_ mutation site plus once per Paint()
+            // below when point's on-screen position has moved).
 
             // prose-diagnostic-callout follow-up: this row's real content
             // ends at `col` (everything painted above it -- text, truncation
-            // indicator, fold ellipsis/preview, ghost completion -- has
-            // already advanced it) -- see rowLine/rowContentEndColumn's own
-            // doc comment above the row loop.
+            // indicator, fold ellipsis/preview -- has already advanced it)
+            // -- see rowLine/rowContentEndColumn's own doc comment above the
+            // row loop.
             rowLine[row]             = line;
             rowContentEndColumn[row] = col;
 
@@ -3333,6 +3330,19 @@ void BufferView::Paint(Canvas c) {
     }
 
     PaintProseDiagnosticCallouts(c, rowLine, rowContentEndColumn, gutterWidth);
+
+    // completion-popup follow-up: activeCompletion_ mutation sites already
+    // notify onCompletionChanged_ directly (NotifyCompletionChanged), but
+    // none of them fire on a pure scroll -- nothing about ActiveCompletion
+    // itself changes when the view scrolls, only where point now renders.
+    // This is the cheap per-frame catch-up for exactly that case: recompute
+    // the anchor and re-notify only when it actually moved (including
+    // moving to/from "off screen", i.e. std::nullopt) -- comparing anchors
+    // first (cheap: two field reads) avoids rebuilding/resending the whole
+    // popup model on every ordinary repaint while nothing about it changed.
+    if (activeCompletion_ && CompletionAnchorNow() != lastNotifiedCompletionAnchor_) {
+        NotifyCompletionChanged();
+    }
 }
 
 void BufferView::PaintInlineDiagnosticRow(Canvas& c, int row, std::size_t line, std::size_t gutterWidth) {
@@ -3914,28 +3924,34 @@ bool BufferView::OnKeyEvent(const Event& event) {
         return true;
     }
 
-    // hover/completion follow-up: ghost-text state only ever exists while
-    // inputMode_ == Normal (every branch above returns before reaching
-    // here), so this is the one place it needs handling -- Tab accepts,
-    // M-n/M-p cycle, and (falling through the first three) any other key
-    // dismisses it, then continues to whatever that key would ordinarily
-    // do. Checked ahead of the normal dispatch below so Tab/M-n/M-p never
-    // reach Dispatcher::Feed while a suggestion is showing.
-    if (ghostCompletion_) {
+    // completion-popup follow-up (was hover/completion follow-up): completion
+    // state only ever exists while inputMode_ == Normal (every branch above
+    // returns before reaching here), so this is the one place it needs
+    // handling -- Tab accepts, Up/Down/M-n/M-p cycle (arrows for the popup's
+    // own standard navigation, M-n/M-p kept for existing muscle memory --
+    // plain arrows are otherwise free here, multi-cursor's add-cursor-above/
+    // -below use C-Up/C-Down), and (falling through) any other key dismisses
+    // it, then continues to whatever that key would ordinarily do. Checked
+    // ahead of the normal dispatch below so none of these ever reach
+    // Dispatcher::Feed while the popup is showing.
+    if (activeCompletion_) {
         if (chord->Special == editor::SpecialKey::Tab && !chord->Control && !chord->Meta) {
-            AcceptGhostCompletion();
+            AcceptActiveCompletion();
             ClampPointToNarrowing();
             return true;
         }
-        if (chord->Meta && !chord->Control && chord->Codepoint == U'n') {
-            CycleGhostCompletion(1);
+        if ((chord->Special == editor::SpecialKey::Down && !chord->Control && !chord->Meta) ||
+            (chord->Meta && !chord->Control && chord->Codepoint == U'n')) {
+            CycleActiveCompletion(1);
             return true;
         }
-        if (chord->Meta && !chord->Control && chord->Codepoint == U'p') {
-            CycleGhostCompletion(-1);
+        if ((chord->Special == editor::SpecialKey::Up && !chord->Control && !chord->Meta) ||
+            (chord->Meta && !chord->Control && chord->Codepoint == U'p')) {
+            CycleActiveCompletion(-1);
             return true;
         }
-        ghostCompletion_.reset();
+        activeCompletion_.reset();
+        NotifyCompletionChanged();
     }
 
     // project-search-visit-result follow-up: Enter on a read-only
@@ -4394,7 +4410,7 @@ bool BufferView::RunCommandAndHandleOutcome(editor::CommandContext& context, con
     // documentHighlight follow-up: not gated on triggeringChord/plain-self-
     // insert -- arrow motion, search, and any other point-moving command
     // must refresh the highlighted-occurrences set too, not just organic
-    // typing (the completion ghost-text precedent this otherwise mirrors).
+    // typing (the completion-popup precedent this otherwise mirrors).
     MaybeScheduleDocumentHighlight(pointBefore, generationBefore);
 
     ClampPointToNarrowing();
@@ -4470,11 +4486,11 @@ void BufferView::ReportError(std::string message, editor::LogCategory category) 
 }
 
 void BufferView::RequestCompletionAtPoint() {
-    // Ghost text is a Normal-mode-only construct (see OnKeyEvent's
-    // ghostCompletion_ block): a debounce timer armed by Normal-mode typing
+    // Completion is a Normal-mode-only construct (see OnKeyEvent's
+    // activeCompletion_ block): a debounce timer armed by Normal-mode typing
     // can fire after an interactive session has since started -- found live
     // with the snippet session, where typing a trigger word armed the timer
-    // and TAB's expansion won the race, leaving a ghost popped over the
+    // and TAB's expansion won the race, leaving a completion popped over the
     // active field that the session's own TAB could then never accept.
     // MaybeScheduleAutoCompletion's scheduling-side gate can't cover an
     // already-armed timer, so the fire path bails here too.
@@ -4529,11 +4545,13 @@ void BufferView::RequestCompletionAtPoint() {
                 return; // buffer/point changed since the request was sent
             }
             if (items.empty()) {
-                ghostCompletion_.reset();
+                activeCompletion_.reset();
+                NotifyCompletionChanged();
                 return;
             }
-            ghostCompletion_ = GhostCompletion{
+            activeCompletion_ = ActiveCompletion{
                 .requestPoint = point, .items = std::move(items), .selectedIndex = 0, .prefixStart = prefixStart};
+            NotifyCompletionChanged();
         },
         serverKey);
 }
@@ -4545,16 +4563,22 @@ void BufferView::ApplyDabbrevCompletion(text::Buffer& buffer, std::size_t point)
 
     std::vector<std::string> words = editor::CollectDabbrevCandidates(buffer.Text(), point, prefix);
     if (words.empty()) {
-        ghostCompletion_.reset();
+        activeCompletion_.reset();
+        NotifyCompletionChanged();
         return;
     }
     std::vector<editor::lsp::CompletionItem> items;
     items.reserve(words.size());
     for (std::string& word : words) {
-        items.push_back(editor::lsp::CompletionItem{.label = word, .insertText = word});
+        // completion-popup follow-up: kind 1 == LSP CompletionItemKind::Text
+        // -- a buffer-scanned word has no real semantic category, but a
+        // fixed, sensible glyph beats the popup's "unrecognized kind"
+        // fallback for every dabbrev row.
+        items.push_back(editor::lsp::CompletionItem{.label = word, .insertText = word, .kind = 1});
     }
-    ghostCompletion_ =
-        GhostCompletion{.requestPoint = point, .items = std::move(items), .selectedIndex = 0, .prefixStart = prefixStart};
+    activeCompletion_ =
+        ActiveCompletion{.requestPoint = point, .items = std::move(items), .selectedIndex = 0, .prefixStart = prefixStart};
+    NotifyCompletionChanged();
 }
 
 bool BufferView::ApplyJanetBindingCompletion(text::Buffer& buffer, std::size_t point) {
@@ -4580,19 +4604,22 @@ bool BufferView::ApplyJanetBindingCompletion(text::Buffer& buffer, std::size_t p
         // prefix verbatim -- point already sits right after a complete
         // binding name, nothing left to suggest (DabbrevComplete.h's own
         // "exact-length matches excluded" rule, applied here for the same
-        // reason: GhostSuffixFor's insertText-doesn't-share-prefix fallback
-        // would otherwise show the whole name again as a bogus duplicate
-        // suffix).
+        // reason: CompletionInsertSuffix's insertText-doesn't-share-prefix
+        // fallback would otherwise show the whole name again as a bogus
+        // duplicate suffix).
         if (name.size() == prefix.size()) {
             continue;
         }
-        items.push_back(editor::lsp::CompletionItem{.label = name, .insertText = name});
+        // completion-popup follow-up: kind 3 == LSP CompletionItemKind::
+        // Function -- every "ned/*" binding is, semantically, a callable.
+        items.push_back(editor::lsp::CompletionItem{.label = name, .insertText = name, .kind = 3});
     }
     if (items.empty()) {
         return false;
     }
-    ghostCompletion_ =
-        GhostCompletion{.requestPoint = point, .items = std::move(items), .selectedIndex = 0, .prefixStart = prefixStart};
+    activeCompletion_ =
+        ActiveCompletion{.requestPoint = point, .items = std::move(items), .selectedIndex = 0, .prefixStart = prefixStart};
+    NotifyCompletionChanged();
     return true;
 }
 
@@ -4639,9 +4666,10 @@ bool BufferView::ShouldSuppressAutoCompletion() const {
 }
 
 void BufferView::MaybeScheduleAutoCompletion(const editor::KeyChord& chord, std::size_t generationBefore) {
-    ghostCompletion_.reset(); // typing invalidates any currently-shown suggestion
-    // snippet-expansion follow-up: ghost text is a Normal-mode-only
-    // construct (see OnKeyEvent's ghostCompletion_ block), but typing
+    activeCompletion_.reset(); // typing invalidates any currently-shown suggestion
+    NotifyCompletionChanged();
+    // snippet-expansion follow-up: completion is a Normal-mode-only
+    // construct (see OnKeyEvent's activeCompletion_ block), but typing
     // inside a snippet field reaches here through HandleSnippetKey's
     // re-dispatch -- without this gate the debounce timer could pop a
     // suggestion mid-session that TAB (consumed by the session) could then
@@ -4744,7 +4772,7 @@ void BufferView::MaybeScheduleSignatureHelp(const editor::KeyChord& chord, std::
     // Deliberately not gated on InputMode::Snippet the way
     // MaybeScheduleAutoCompletion is -- typing "(" or "," while filling a
     // snippet tabstop argument is exactly when signature help is most
-    // useful, and unlike ghost-text completion it never competes with TAB.
+    // useful, and unlike the completion popup it never competes with TAB.
     if (inputMode_ != InputMode::Normal && inputMode_ != InputMode::Snippet) {
         return;
     }
@@ -4797,56 +4825,61 @@ void BufferView::RequestSignatureHelpAtPoint() {
         serverKey);
 }
 
-void BufferView::AcceptGhostCompletion() {
-    if (!ghostCompletion_) {
+void BufferView::AcceptActiveCompletion() {
+    if (!activeCompletion_) {
         return;
     }
     text::Buffer&                     buffer = activeBuffer_.Get();
-    const editor::lsp::CompletionItem item   = ghostCompletion_->items[ghostCompletion_->selectedIndex];
+    const editor::lsp::CompletionItem item   = activeCompletion_->items[activeCompletion_->selectedIndex];
     if (item.isSnippet) {
         // snippet-expansion follow-up: a snippet-format item's insertText
         // is TextMate syntax, never literal text -- replace the typed
         // prefix with the parsed expansion and start a tabstop session,
         // the exact InteractiveRequest::SnippetExpand path.
-        const std::size_t prefixStart = ghostCompletion_->prefixStart;
-        ghostCompletion_.reset();
+        const std::size_t prefixStart = activeCompletion_->prefixStart;
+        activeCompletion_.reset();
+        NotifyCompletionChanged();
         BeginSnippetExpansion(prefixStart, buffer.Point(), item.insertText);
         return;
     }
-    const std::string suffix = GhostSuffixFor(item);
-    ghostCompletion_.reset();
+    const std::string suffix = CompletionInsertSuffix(item);
+    activeCompletion_.reset();
+    NotifyCompletionChanged();
     if (!suffix.empty()) {
         buffer.InsertAtPoint(suffix);
     }
 }
 
-void BufferView::CycleGhostCompletion(int direction) {
-    if (!ghostCompletion_ || ghostCompletion_->items.empty()) {
+void BufferView::CycleActiveCompletion(int direction) {
+    if (!activeCompletion_ || activeCompletion_->items.empty()) {
         return;
     }
-    const std::size_t count         = ghostCompletion_->items.size();
-    const std::size_t current       = ghostCompletion_->selectedIndex;
-    ghostCompletion_->selectedIndex = (direction > 0) ? (current + 1) % count : (current + count - 1) % count;
+    const std::size_t count          = activeCompletion_->items.size();
+    const std::size_t current        = activeCompletion_->selectedIndex;
+    activeCompletion_->selectedIndex = (direction > 0) ? (current + 1) % count : (current + count - 1) % count;
+    NotifyCompletionChanged();
 }
 
-std::string BufferView::GhostSuffixFor(const editor::lsp::CompletionItem& item) const {
-    // ghostCompletion_ is guaranteed set by both call sites (AcceptGhostCompletion,
-    // the ghost-text render path) -- this method only ever runs against one
-    // of its own items. Uses the prefixStart captured when the suggestion
-    // was populated (see GhostCompletion's own doc comment) rather than
-    // recomputing it here: WordPrefixStart's ASCII alnum/'_' rule is wrong
-    // for a "ned/*" binding item, which was ranked against
-    // JanetSymbolPrefixStart's wider rule instead.
-    const text::Buffer& buffer      = activeBuffer_.Get();
-    const text::ITextStorage&   content     = buffer.Content();
-    const std::size_t   point       = buffer.Point();
-    const std::size_t   prefixStart = ghostCompletion_->prefixStart;
-    const std::string   prefix      = content.Substring(prefixStart, point - prefixStart);
+std::string BufferView::CompletionInsertSuffix(const editor::lsp::CompletionItem& item) const {
+    // activeCompletion_ is guaranteed set by its one call site
+    // (AcceptActiveCompletion, for a non-snippet item) -- this method only
+    // ever runs against one of its own items. Uses the prefixStart captured
+    // when the suggestion was populated (see ActiveCompletion's own doc
+    // comment) rather than recomputing it here:
+    // WordPrefixStart's ASCII alnum/'_' rule is wrong for a "ned/*" binding
+    // item, which was ranked against JanetSymbolPrefixStart's wider rule
+    // instead.
+    const text::Buffer&       buffer      = activeBuffer_.Get();
+    const text::ITextStorage& content     = buffer.Content();
+    const std::size_t         point       = buffer.Point();
+    const std::size_t         prefixStart = activeCompletion_->prefixStart;
+    const std::string         prefix      = content.Substring(prefixStart, point - prefixStart);
 
     // snippet-expansion follow-up: a snippet-format item's raw insertText
-    // carries ${1:...} markers -- preview against the parsed plain text
-    // instead (AcceptGhostCompletion expands it for real; this path only
-    // renders the ghost and serves the non-snippet insert).
+    // carries ${1:...} markers -- AcceptActiveCompletion never reaches this
+    // method for a snippet item (it expands via BeginSnippetExpansion
+    // instead), but item.isSnippet is still checked defensively here for
+    // the same reason the original ghost-text path did.
     const std::string effectiveText =
         item.isSnippet ? editor::ParseSnippet(item.insertText).text : item.insertText;
     if (effectiveText.size() > prefix.size() && effectiveText.compare(0, prefix.size(), prefix) == 0) {
@@ -4856,6 +4889,60 @@ std::string BufferView::GhostSuffixFor(const editor::lsp::CompletionItem& item) 
     // prefix (e.g. it used a textEdit range instead) -- shown in full
     // rather than guessed at; a documented v1 limitation, not a crash risk.
     return effectiveText;
+}
+
+std::optional<Point> BufferView::CompletionAnchorNow() const {
+    const std::optional<Point> local = CursorPosition();
+    if (!local) {
+        return std::nullopt;
+    }
+    // Same local-to-absolute conversion main.cpp's own render() callback
+    // uses to place the real terminal cursor -- one row below point, so the
+    // popup opens under the text being typed rather than over it.
+    const Box& box = Box_();
+    return Point{.x = box.x_min + local->x, .y = box.y_min + local->y + 1};
+}
+
+void BufferView::NotifyCompletionChanged() {
+    if (!onCompletionChanged_) {
+        return;
+    }
+    if (!activeCompletion_) {
+        lastNotifiedCompletionAnchor_.reset();
+        onCompletionChanged_(std::nullopt);
+        return;
+    }
+
+    const std::optional<Point> anchor = CompletionAnchorNow();
+    lastNotifiedCompletionAnchor_     = anchor;
+    if (!anchor) {
+        onCompletionChanged_(std::nullopt); // point's row isn't on screen this frame
+        return;
+    }
+
+    ListPopupModel model;
+    model.selectedIndex = activeCompletion_->selectedIndex;
+    model.anchor        = anchor;
+    model.rows.reserve(activeCompletion_->items.size());
+    for (const editor::lsp::CompletionItem& item : activeCompletion_->items) {
+        ListPopupRow row;
+        row.main  = item.label;
+        row.right = item.detail;
+        if (const std::optional<editor::SymbolKind> bucket = CompletionKindBucket(item.kind)) {
+            row.left           = SymbolGlyphFor(*bucket);
+            row.leftForeground = theme_.BrushFor(editor::SyntaxClassFor(*bucket)).foreground;
+        }
+        else {
+            // Unrecognized/absent kind (a bare keyword, snippet, file path,
+            // ... -- see CompletionKindBucket's own doc comment): a dim,
+            // generic marker rather than no glyph at all, so every row
+            // still has a visual anchor in this column.
+            row.left           = "·"; // MIDDLE DOT
+            row.leftForeground = theme_.ghostTextForeground;
+        }
+        model.rows.push_back(std::move(row));
+    }
+    onCompletionChanged_(std::move(model));
 }
 
 void BufferView::RequestCodeActionsAtPoint() {
@@ -6999,9 +7086,9 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             OpenLinkAtPoint();
             return;
         // hover/completion follow-up: another one-shot direct action --
-        // doesn't touch inputMode_, ghost-text state coexists with ordinary
+        // doesn't touch inputMode_, completion state coexists with ordinary
         // Normal-mode editing rather than replacing it (see
-        // GhostCompletion's own doc comment in BufferView.h).
+        // ActiveCompletion's own doc comment in BufferView.h).
         case editor::InteractiveRequest::LspComplete:
             RequestCompletionAtPoint();
             return;

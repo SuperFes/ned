@@ -457,6 +457,20 @@ TEST_CASE("ExtractCompletionItems reads insertTextFormat's snippet flag", "[Lsp]
     REQUIRE_FALSE(items[2].isSnippet); // absent defaults to PlainText per the spec
 }
 
+TEST_CASE("ExtractCompletionItems reads kind and detail when present", "[Lsp]") {
+    // completion-popup follow-up.
+    const auto                        result = ned::editor::lsp::Json::array({
+        {{"label", "foo"}, {"insertText", "foo"}, {"kind", 3}, {"detail", "() -> int"}},
+        {{"label", "bar"}, {"insertText", "bar"}},
+    });
+    const std::vector<CompletionItem> items  = ExtractCompletionItems(result);
+    REQUIRE(items.size() == 2);
+    REQUIRE(items[0].kind == 3);
+    REQUIRE(items[0].detail == "() -> int");
+    REQUIRE(items[1].kind == 0); // absent -> unset
+    REQUIRE(items[1].detail.empty());
+}
+
 TEST_CASE("ExtractSignatureHelp wraps the active parameter's string label in guillemets", "[Lsp]") {
     const Json result = {
         {"signatures", Json::array({{{"label", "foo(a: int, b: string)"},

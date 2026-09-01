@@ -687,7 +687,7 @@ namespace {
 
     // hover/completion follow-up: the only way LspServerConfig.h's own
     // process-wide auto-complete toggle/debounce ever get configured away
-    // from their defaults (enabled, 350ms), same "just forward to the
+    // from their defaults (enabled, 500ms), same "just forward to the
     // process-wide setter" shape NedSetTabWidth already established.
     void NedSetLspAutoComplete(bool enabled) {
         editor::lsp::SetLspAutoCompleteEnabled(enabled);
@@ -1344,12 +1344,12 @@ void InstallEditorBindings(Environment& env) {
         "height when docked at the bottom, width when docked at the right.");
     env.Register<&NedSetLspAutoComplete>(
         "ned", "set-lsp-auto-complete",
-        "Enable or disable automatic LSP completion ghost text while typing (default true). Manual completion "
+        "Enable or disable the automatic LSP completion popup while typing (default true). Manual completion "
         "(lsp-complete, bound to C-M-i) works regardless of this setting.");
     env.Register<&NedSetLspCompletionDebounce>(
         "ned", "set-lsp-completion-debounce",
         "Set the delay, in milliseconds, after the last relevant keystroke before an automatic completion request "
-        "is sent (default 350). Non-positive values are clamped to 1.");
+        "is sent (default 500). Non-positive values are clamped to 1.");
     env.Register<&NedSetLspSignatureHelpAutoTrigger>(
         "ned", "set-lsp-signature-help-auto-trigger",
         "Enable or disable automatically requesting signature help after typing ( or , inside a call (default "

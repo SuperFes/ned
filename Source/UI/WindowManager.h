@@ -299,6 +299,12 @@ class WindowManager {
     // above -- see BufferView::SetOnCandidatesChanged's own doc comment.
     void SetOnCandidatesChanged(std::function<void(std::optional<ListPopupModel>)> onCandidatesChanged);
 
+    // completion-popup follow-up: same "forwarded to every pane, present and
+    // future" shape as SetOnCandidatesChanged immediately above -- see
+    // BufferView::SetOnCompletionChanged's own doc comment for why this is
+    // a distinct hook rather than a reuse of that one.
+    void SetOnCompletionChanged(std::function<void(std::optional<ListPopupModel>)> onCompletionChanged);
+
     // task-runner follow-up: same "forwarded to every pane, present and
     // future" shape as SetProjectSidebar/SetLspManager above.
     void SetTaskRunner(editor::tasks::TaskRunner* taskRunner);
@@ -650,6 +656,7 @@ class WindowManager {
     std::function<void()>             onBufferListToggle_;       // see SetOnBufferListToggle
     std::function<void(std::optional<WhichKeyHint>)> onPrefixHintChanged_; // see SetOnPrefixHintChanged
     std::function<void(std::optional<ListPopupModel>)> onCandidatesChanged_; // see SetOnCandidatesChanged
+    std::function<void(std::optional<ListPopupModel>)> onCompletionChanged_; // see SetOnCompletionChanged
 
     std::unique_ptr<WindowNode> root_;
     Container                   rootComponent_{Axis::Vertical, {}};

@@ -506,6 +506,21 @@ class BufferView : public Widget {
     // is a safe no-op.
     void SetOnCandidatesChanged(std::function<void(std::optional<ListPopupModel>)> handler);
 
+    // completion-popup follow-up: same OverlayHost-owned-above-this-class
+    // shape as SetOnCandidatesChanged immediately above, but for a
+    // structurally different session -- ActiveCompletion (renamed from
+    // GhostCompletion) is transient, non-modal UI that coexists with live
+    // InputMode::Normal typing, unlike the modal EchoArea-prompt-driven
+    // sessions SetOnCandidatesChanged serves, so it gets its own hook/popup
+    // instance rather than sharing that one. Fired with a populated
+    // ListPopupModel (its `anchor` field set to point's current on-screen
+    // position) whenever activeCompletion_ changes, and with std::nullopt
+    // when it's cleared or point's row scrolls off screen. Wired via
+    // WindowManager::SetOnCompletionChanged fanning out to every pane;
+    // main.cpp's registrant shows/hides its own shared, anchor-aware
+    // ListPopup overlay. Unset is a safe no-op.
+    void SetOnCompletionChanged(std::function<void(std::optional<ListPopupModel>)> handler);
+
     // per-buffer-mode follow-up: called at the top of Paint() whenever the
     // active buffer's identity has changed since the last Paint() call --
     // the same "recompute, don't cache, detect via pointer identity" idiom
@@ -2166,6 +2181,7 @@ class BufferView : public Widget {
     std::function<void(text::Buffer&)>              onActiveBufferChanged_; // see SetOnActiveBufferChanged
     std::function<void(std::optional<WhichKeyHint>)> onPrefixHintChanged_;  // see SetOnPrefixHintChanged
     std::function<void(std::optional<ListPopupModel>)> onCandidatesChanged_; // see SetOnCandidatesChanged
+    std::function<void(std::optional<ListPopupModel>)> onCompletionChanged_; // see SetOnCompletionChanged
 
     // Caches mode_.highlight's result across Paint() calls (tree-sitter
     // foundation follow-up) -- Paint() runs far more often than the buffer's
@@ -2704,11 +2720,14 @@ class BufferView : public Widget {
 
     // hover/completion follow-up. See Command.h's InteractiveRequest::
     // LspComplete doc comment and completionDebounceTimer_ above for the
-    // request/debounce flow; GhostCompletion itself is transient UI state,
+    // request/debounce flow; ActiveCompletion itself is transient UI state,
     // not modal -- it coexists with ordinary InputMode::Normal editing
     // rather than replacing it (no dedicated InputMode value), the same way
-    // e.g. a diagnostic gutter marker does.
-    struct GhostCompletion {
+    // e.g. a diagnostic gutter marker does. completion-popup follow-up:
+    // renamed from GhostCompletion -- rendering moved from an inline dimmed
+    // suffix to a real ListPopup (see NotifyCompletionChanged), so nothing
+    // about this state is "ghost" anymore.
+    struct ActiveCompletion {
         std::size_t                              requestPoint = 0; // buffer.Point() when this was requested/received -- stale if point has since moved
         std::vector<editor::lsp::CompletionItem> items;
         std::size_t                              selectedIndex = 0;
@@ -2716,12 +2735,19 @@ class BufferView : public Widget {
         // item's insertText was ranked/computed against (WordPrefixStart's
         // ASCII alnum/'_' rule for LSP/dabbrev items, JanetSymbolPrefixStart's
         // wider '-'/'/' -inclusive rule for ned/* binding items) -- stored
-        // once at request time rather than recomputed by GhostSuffixFor from
-        // whichever rule happens to be lexically closest, since the two
+        // once at request time rather than recomputed by CompletionInsertSuffix
+        // from whichever rule happens to be lexically closest, since the two
         // rules disagree on where a name like "ned/register-command" starts.
         std::size_t prefixStart = 0;
     };
-    std::optional<GhostCompletion> ghostCompletion_;
+    std::optional<ActiveCompletion> activeCompletion_;
+
+    // completion-popup follow-up: the screen-absolute anchor last sent to
+    // onCompletionChanged_, so Paint() can cheaply detect "point's on-screen
+    // position moved since the last notify" (a pure scroll, which touches no
+    // ActiveCompletion field at all) and re-notify -- see
+    // NotifyCompletionChanged's own doc comment.
+    std::optional<Point> lastNotifiedCompletionAnchor_;
 
     // Debounce deadline for an automatic completion request -- set by
     // MaybeScheduleAutoCompletion, consumed once completionDebounceTimer_
@@ -2748,7 +2774,7 @@ class BufferView : public Widget {
     std::size_t completionRequestGeneration_ = 0;
 
     // documentHighlight follow-up. BufferView-owned, ephemeral point-
-    // triggered UI state -- same lifecycle class as GhostCompletion above,
+    // triggered UI state -- same lifecycle class as ActiveCompletion above,
     // not Buffer-owned server-pushed state like Diagnostics(). buffer/
     // contentGeneration guard Paint()'s own read (see
     // currentLineDocumentHighlightSpans) against a stale response landing
@@ -2815,24 +2841,44 @@ class BufferView : public Widget {
     // dabbrev-fallback follow-up: the "no running LSP client for this
     // buffer's language" half of RequestCompletionAtPoint -- scans the
     // buffer itself (Editor/DabbrevComplete.h) for candidates instead of
-    // asking a server, populating ghostCompletion_ synchronously (no
+    // asking a server, populating activeCompletion_ synchronously (no
     // generation/staleness bookkeeping needed, unlike the async LSP path).
     void ApplyDabbrevCompletion(text::Buffer& buffer, std::size_t point);
     // Self-hosting-completion follow-up: the "Janet-mode buffer" half of
     // RequestCompletionAtPoint, tried ahead of ApplyDabbrevCompletion --
     // fuzzy-ranks every live "ned/*" binding name (Janet/Environment.h's
     // BindingNamesWithPrefix) against the Janet-symbol-aware prefix at point
-    // (JanetSymbolPrefixStart, not WordPrefixStart -- see GhostCompletion's
-    // own prefixStart doc comment). Returns false (ghostCompletion_ left
+    // (JanetSymbolPrefixStart, not WordPrefixStart -- see ActiveCompletion's
+    // own prefixStart doc comment). Returns false (activeCompletion_ left
     // untouched) when there's no janetEnv_ wired, the prefix is empty, or
     // nothing fuzzy-matches, so the caller falls through to plain
     // dabbrev-expand instead of showing an empty suggestion.
     [[nodiscard]] bool        ApplyJanetBindingCompletion(text::Buffer& buffer, std::size_t point);
     [[nodiscard]] bool        ShouldSuppressAutoCompletion() const;
     void                      MaybeScheduleAutoCompletion(const editor::KeyChord& chord, std::size_t generationBefore);
-    void                      AcceptGhostCompletion();
-    void                      CycleGhostCompletion(int direction);
-    [[nodiscard]] std::string GhostSuffixFor(const editor::lsp::CompletionItem& item) const;
+    void                      AcceptActiveCompletion();
+    void                      CycleActiveCompletion(int direction);
+    [[nodiscard]] std::string CompletionInsertSuffix(const editor::lsp::CompletionItem& item) const;
+
+    // completion-popup follow-up: builds a ListPopupModel from
+    // activeCompletion_ (kind glyph + label + detail per row, anchored at
+    // point's current on-screen position via CursorPosition()/Box_()) and
+    // fires it through onCompletionChanged_, or fires std::nullopt when
+    // activeCompletion_ is unset or point's row isn't currently on screen.
+    // Called at every activeCompletion_ mutation site (mirrors
+    // onCandidatesChanged_'s own many explicit call sites elsewhere in this
+    // class) -- also called once per Paint() when activeCompletion_ is set
+    // and the freshly computed anchor differs from
+    // lastNotifiedCompletionAnchor_, which is what keeps the popup glued to
+    // point across a pure scroll (no activeCompletion_ mutation site can
+    // observe that on its own).
+    void NotifyCompletionChanged();
+    // The screen-absolute position NotifyCompletionChanged anchors the
+    // popup to -- CursorPosition()'s local result plus Box_()'s own origin
+    // (main.cpp's real-terminal-cursor conversion, reused here), one row
+    // below point. std::nullopt when point's row isn't currently on screen
+    // (CursorPosition() itself returns nullopt then).
+    [[nodiscard]] std::optional<Point> CompletionAnchorNow() const;
 
     // code-actions follow-up: pendingCodeActions_/codeActionSelection_ are
     // valid only while inputMode_ is LspCodeActionSelect (see

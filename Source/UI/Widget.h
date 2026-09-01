@@ -33,6 +33,12 @@ namespace ned::ui {
 struct Point {
     int x = 0;
     int y = 0;
+
+    // completion-popup follow-up: needed to compare two
+    // std::optional<Point> anchors (has the popup's anchor moved since the
+    // last notify?) -- same defaulted-equality precedent Brush/Theme
+    // already establish elsewhere in this UI layer.
+    [[nodiscard]] constexpr bool operator==(const Point&) const = default;
 };
 
 struct Size {
