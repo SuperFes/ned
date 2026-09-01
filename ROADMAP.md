@@ -62,14 +62,17 @@ Notcurses.
 - [ ] **`semanticTokens/range` and delta requests** — the semantic-highlighting client
       only ever sends the full-document `semanticTokens/full` request; no huge-buffer
       windowing or incremental delta support yet.
-- [ ] **LSP edit-application gaps** (2026-08-25 audit) — `ApplyCodeAction`
-      (`BufferView.cpp`) outright refuses any code action whose edit touches more than
-      one file, unlike rename, which does apply multi-file edits correctly; rename
-      itself only applies the `changes`-map response form and silently drops a
-      `documentChanges`-only response (`LspContent.cpp`'s `touchesUnsupportedForm`); a
-      code action that triggers a server-side `workspace/applyEdit` push (rather than
-      `workspace/executeCommand`) has no client handler at all — nothing ned wires up
-      needs this yet, but it'll break silently the day something does.
+- [ ] **LSP edit-application gaps, remainder** (2026-08-25 audit; project-undo follow-up
+      closed the multi-file-code-action half of this on 2026-09-01 — `ApplyCodeAction`
+      now applies a cross-file edit the same way rename does, both routed through
+      `BufferView::ApplyProjectEdit` and `Editor/ProjectUndo.h`'s project-wide undo/redo
+      transaction) — still open: rename and code actions alike only apply the
+      `changes`-map `WorkspaceEdit` form and silently refuse a `documentChanges`-only
+      response (`LspContent.cpp`'s `touchesUnsupportedForm`) — no file create/rename/
+      delete resource ops; and a code action that triggers a server-side
+      `workspace/applyEdit` push (rather than `workspace/executeCommand`) has no client
+      handler at all — nothing ned wires up needs this yet, but it'll break silently the
+      day something does.
 - [ ] `rename-project-path` never tells an open LSP server about the rename (no
       `prepareRename`, `linkedEditingRange`, or `workspace/willRenameFiles`/
       `didRenameFiles`) — import paths elsewhere go stale until the server notices on
