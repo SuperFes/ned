@@ -404,6 +404,12 @@ class WindowManager {
     // HandlePromptKey already offers, instead of just reporting a refusal.
     void RequestOpenBinaryFile(const std::filesystem::path& path);
 
+    // named-projects follow-up: same "route to whichever pane is currently
+    // focused" shape as RequestOpenBinaryFile just above -- wired to
+    // ProjectSidebar::SetOnHeaderClicked so a click on the sidebar's title
+    // row opens the switch-project picker.
+    void TriggerSwitchProject();
+
     // mouse-support follow-up: same "route to whichever pane is currently
     // focused" shape as RequestCloseBuffer/RequestOpenBinaryFile above --
     // wired to the completion popup's own ListPopup::SetOnActivate in

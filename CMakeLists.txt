@@ -615,6 +615,10 @@ add_library(ned_lib STATIC
         Source/Editor/Bookmark.cpp
         Source/Editor/ProjectSession.cpp
         Source/Editor/ProjectTrust.cpp
+        Source/Editor/ProjectRegistry.cpp
+        Source/Editor/PendingReExec.cpp
+        Source/Editor/TerminalTabLauncher.cpp
+        Source/Editor/ProjectSwitch.cpp
         Source/Editor/ProjectPlugins.cpp
         Source/Editor/Vim/VimSettings.cpp
         Source/Editor/Vim/VimMotion.cpp
@@ -960,6 +964,10 @@ if (NED_BUILD_TESTS)
             Tests/BookmarkTest.cpp
             Tests/ProjectSessionTest.cpp
             Tests/ProjectTrustTest.cpp
+            Tests/ProjectRegistryTest.cpp
+            Tests/PendingReExecTest.cpp
+            Tests/TerminalTabLauncherTest.cpp
+            Tests/ProjectSwitchTest.cpp
             Tests/ProjectPluginsTest.cpp
             Tests/VcsProviderRegistryTest.cpp
             Tests/DiffPatchTest.cpp

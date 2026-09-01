@@ -43,6 +43,7 @@
 #include "Editor/Mode.h"
 #include "Editor/Org.h"
 #include "Editor/PrefixArgument.h"
+#include "Editor/ProjectRegistry.h"
 #include "Editor/ProjectReplace.h"
 #include "Editor/ProjectTrust.h"
 #include "Editor/PromptHistory.h"
@@ -533,6 +534,14 @@ class BufferView : public Widget {
     // ListPopup::SetOnActivate in main.cpp.
     void AcceptActiveCompletionAt(std::size_t index);
 
+    // named-projects follow-up: AcceptActiveCompletionAt's own "public
+    // because the trigger arrives from outside this class" shape --
+    // WindowManager::TriggerSwitchProject forwards here from
+    // ProjectSidebar's header-row click (main.cpp wiring), the same way a
+    // keybinding reaches StartInteractiveSession via the ordinary
+    // command-dispatch path.
+    void TriggerSwitchProject();
+
     // per-buffer-mode follow-up: called at the top of Paint() whenever the
     // active buffer's identity has changed since the last Paint() call --
     // the same "recompute, don't cache, detect via pointer identity" idiom
@@ -593,6 +602,23 @@ class BufferView : public Widget {
                            ConfirmSaveWithConflicts,
                            ExecuteCommand,
                            ProjectFindFile,
+                           // named-projects follow-up: ProjectFindFile's own fuzzy-narrowed
+                           // picker shape, over registered project names/roots instead of
+                           // files -- see HandleSwitchProjectKey/RefreshSwitchProjectStatus.
+                           SwitchProject,
+                           // named-projects follow-up: a plain path-entry prompt, FindFile's
+                           // own shape including its tab-completion (see CompletePrompt) --
+                           // routed through the shared HandlePromptKey else-chain like
+                           // FindFile/BookmarkSetName, not a dedicated handler. Enter checks
+                           // whether the resolved root is already registered (activate
+                           // directly) or transitions to OpenProjectName (BookmarkSetName's
+                           // own pre-filled-second-prompt shape) for a not-yet-known one.
+                           OpenProjectPath,
+                           // named-projects follow-up: BookmarkSetName's own shape --
+                           // pre-filled with the directory's basename, editable, Enter
+                           // registers pendingOpenProjectRoot_ under the typed name and
+                           // activates it.
+                           OpenProjectName,
                            PointToRegister,
                            JumpToRegister,
                            CopyToRegister,
@@ -1218,6 +1244,24 @@ class BufferView : public Widget {
     // absolute, unlike ProjectFindFile's project-relative candidates).
     void HandleFindRecentFileKey(const editor::KeyChord& chord);
     void RefreshFindRecentFileStatus();
+
+    // named-projects follow-up: HandleProjectFindFileKey/
+    // RefreshProjectFindFileStatus's own shape, over switchProjectEntries_
+    // (Editor/ProjectRegistry.h's saved-project list, cached once per
+    // session like the file list) instead of a project directory walk --
+    // candidates are formatted "name — root" strings; Enter resolves the
+    // selected one back to its entry and calls ActivateProjectAndReport.
+    void HandleSwitchProjectKey(const editor::KeyChord& chord);
+    void RefreshSwitchProjectStatus();
+
+    // named-projects follow-up: the shared tail of switch-project/
+    // open-project once a target root is known -- runs
+    // editor::ActivateProjectRoot's real priority chain and reports the
+    // outcome, including calling eventLoop_->Exit() for the replace-in-place
+    // case (HandleConfirmQuitKey's own 'y'-branch precedent -- ned itself
+    // performs the actual execv() from main.cpp, once this function's own
+    // stack has fully unwound).
+    void ActivateProjectAndReport(const std::filesystem::path& root);
 
     // editor-ergonomics follow-up: same picker shape again, over
     // bookmarkCandidates_ (Editor/Bookmark.h's sorted name list). Enter
@@ -2158,6 +2202,18 @@ class BufferView : public Widget {
     // populated from editor::RecentFilePaths() when the session starts.
     std::vector<std::string> recentFileCandidates_;
     std::size_t              recentFileSelection_ = 0;
+
+    // named-projects follow-up: switch-project's own pair, populated from
+    // editor::ListProjects() when the session starts -- entries, not
+    // pre-formatted strings, since Enter needs the underlying root back,
+    // not just the "name — root" display text FuzzyFilterAndRank ranks.
+    std::vector<editor::ProjectRegistryEntry> switchProjectEntries_;
+    std::size_t                               switchProjectSelection_ = 0;
+    // named-projects follow-up: the root open-project's path step resolved,
+    // held across the transition to its own second (name) prompt --
+    // pendingPropertyName_'s own "state carried between two prompts in the
+    // same session" shape above.
+    std::filesystem::path pendingOpenProjectRoot_;
 
     // editor-ergonomics follow-up: same pair again, over
     // editor::BookmarkNames(); bookmarkPromptAction_ distinguishes

@@ -2025,6 +2025,24 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           context.interactiveRequest = InteractiveRequest::FindRecentFile;
                       });
 
+    // named-projects follow-up: switch-project/open-project, same "just
+    // signal intent" shape as project-find-file/find-recent-file above --
+    // the registered-project list, fuzzy-narrow, and the actual
+    // detect-terminal/custom-command/replace-in-place activation chain all
+    // live in BufferView/Editor/ProjectSwitch.h.
+    registry.Register("switch-project",
+                      "Switch to a registered project (Editor/ProjectRegistry.h), narrowed by fuzzy matching as "
+                      "you type.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::SwitchProject;
+                      });
+    registry.Register("open-project",
+                      "Open a project by path, registering it under a name (prompted, defaulting to the "
+                      "directory's own basename) if it isn't already known, then switch to it.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::OpenProject;
+                      });
+
     // editor-ergonomics follow-up: bookmark-set/-jump/-delete (Emacs
     // bookmark.el's own core trio). bookmark-set needs an open, file-backed
     // buffer -- checked here, org-set-tags' own "guard in the command body"
@@ -3432,6 +3450,14 @@ Keymap BuildDefaultGlobalKeymap() {
     // the toggle's own C-c C-p, same pairing pattern the "C-c v" VCS
     // family established for an otherwise-unused plain-letter slot.
     keymap.Bind(ParseKeySequence("C-c p"), "focus-project-sidebar");
+    // named-projects follow-up: "C-c P" prefix (shifted "p", ACP/Tests' own
+    // "C-c A"/"C-c T" uppercase-prefix trick) -- plain "C-c p" is already
+    // focus-project-sidebar's own leaf binding, so "C-c p <anything>" is
+    // structurally unreachable the same way "C-c a" blocks "C-c a <x>" (see
+    // the ACP prefix's own comment above); uppercase P is a distinct
+    // codepoint chord at the terminal level, confirmed free.
+    keymap.Bind(ParseKeySequence("C-c P s"), "switch-project");
+    keymap.Bind(ParseKeySequence("C-c P o"), "open-project");
     keymap.Bind(ParseKeySequence("C-c m"), "toggle-minimap");
     // Terminal-panel follow-up: C-` is the reserved primary (the VS Code
     // convention; only ever deliverable under the kitty keyboard protocol

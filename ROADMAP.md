@@ -233,9 +233,6 @@ Notcurses.
 - [ ] **No server/daemon mode** — no `emacsclient`-equivalent; one process per terminal,
       no way to keep a warm process (buffers, LSP connections, undo history) alive and
       attach a new terminal client to it.
-- [ ] **Project root is fixed at startup** — `ProjectRoot.h` exposes `SetProjectRoot` as
-      a primitive but nothing wires an `M-x`-reachable command to it; switching projects
-      means restarting the process.
 - [ ] **Test-runner gaps**: no gutter-click run-this-test; no Go/Rust test discovery (no
       bundled modes — their output still parses); pytest needs `-v` or junit-xml for
       per-test pass marks; Go's basename-only `file:line` can miss jump-to-source in
@@ -446,19 +443,78 @@ UI) is the natural substrate for displaying a `#+BEGIN_SRC` block's results, rat
 a third bespoke implementation — worth designing the renderer as its own reusable piece
 rather than embedding it directly in `NotebookView` for exactly this reason.
 
+### Named Projects & Multi-Project Sidebar (New Feature)
+
+Local-only slice shipped: `Editor/ProjectRegistry.h` (a named-project catalog,
+`$XDG_STATE_HOME/ned/projects.json`, `Session.h`'s `FilePlaceStore` precedent),
+`switch-project`/`open-project` (`C-c P s`/`C-c P o`, plus a click on the sidebar's
+title row for switch-project), and `Editor/ProjectSwitch.h`'s activate-root chain —
+`Editor/TerminalTabLauncher.h` opens the picked project as a sibling process in a new
+tab/window when a known terminal/multiplexer is detected (tmux, screen, Konsole,
+GNOME Terminal, WezTerm, Ghostty, kitty — all live-verified except GNOME Terminal, not
+installed in the environment this shipped in), else a configured
+`ned/set-project-open-command`, else replaces the current process in place
+(`main.cpp`'s `RunInteractiveEditor`/`PendingReExec`/`execv()`). Two real settings
+adjustments some terminals need before the new-tab path actually launches anything —
+Konsole's `konsolerc` `[KonsoleWindow]`/`EnableSecuritySensitiveDBusAPI`, kitty's
+`allow_remote_control`/`listen_on` — are covered in `ned/set-project-open-command`'s
+own doc string; ned never sets either itself, both are real "let a running terminal
+accept typed-in commands over IPC" security toggles.
+
+Still open, all genuinely gated on Remote Development below (a registry entry's root
+staying local-only for now is a storage-shape choice, not a hole in what shipped):
+
+- [ ] **Remote project URIs (`user@host:/path`)** — a registry entry's root can be a
+      remote URI using the same syntax `scp`/`ssh` already accept (no bespoke URI
+      grammar to invent). Actually opening one is gated on Remote Development's own
+      file-I/O seam (`Buffer::FromFile`'s remote path) existing first — this bullet is a
+      UI/storage change on top of that, not a substitute for it.
+- [ ] **`~/.ssh/config` awareness** — parse (not shell out to `ssh -G`, which resolves
+      one host at a time and is awkward to batch-query for autocomplete) the user's own
+      `~/.ssh/config` — `Host`/`HostName`/`User`/`Port`/`IdentityFile`/`ProxyJump`,
+      wildcard `Host` patterns included — to default the user/port/key when a typed
+      `host:/path` URI doesn't repeat what SSH config already knows, and to drive
+      host-name autocomplete on the open/connect prompt. A small self-contained parser
+      (the format is simple and line-oriented) rather than a new dependency.
+- [ ] **Autocomplete on the open/connect prompt** — project name (registry) first, then
+      host (parsed `~/.ssh/config` `Host` entries) for an unregistered target, then
+      remote path (once connected, via lazy per-directory SFTP `readdir` — the same
+      expand-on-demand shape `ProjectSidebar` already uses locally). `Editor/
+      FuzzyMatch.h` is the natural filter for all three, matching every other
+      fuzzy-completed prompt in this codebase.
+- [ ] **SSH transport: shell out vs. libssh** — either is fine; leaning shell-out first,
+      consistent with Remote Development's own phase-(a) plan below. Shelling out to
+      real `ssh`/`sftp` (`Editor/Process/ChildProcess.h`'s existing subprocess-wrapping
+      precedent) means zero new build dependency and automatic, free reuse of the
+      user's own config/agent/`known_hosts` handling — the cost is a process-spawn
+      round trip per operation and no persistent multiplexed connection without also
+      managing `ssh -M`/`ControlMaster` sockets by hand (worth trying before reaching
+      for `libssh` — it may close most of the multiplexing gap with no new dependency
+      at all). Direct `libssh` linkage buys one auth handshake + many channels and
+      programmatic SFTP with no per-call subprocess spawn, at the cost of a new
+      `FetchContent` dependency and reimplementing config/agent/known-hosts handling
+      the real `ssh` binary already gives away for free.
+- [ ] **`TerminalTabLauncher` remainder** — Terminator, Tilix, and any other emulator
+      with a real CLI/IPC way to join a running instance are a documented remainder,
+      not v1; add on the same table-driven pattern once someone actually needs one. GNOME
+      Terminal's own handler shipped but was never live-verified (not installed in the
+      environment this shipped in) — worth a real check the first time it's reachable.
+
 ### Remote Development (SSH Remote Editing)
 
 The goal: edit files on a remote host over SSH without ned itself running remotely —
-comfortable enough that it doesn't feel like a degraded mode. Two shapes are on the
-table and genuinely undecided: **(a) client-only**, everything shells out to `ssh`/
-`sftp` per operation, no code footprint on the remote host at all; **(b) client + thin
-remote agent**, a small companion binary deployed to the remote host (the JetBrains
-Gateway/VS Code Remote-SSH precedent) that does what a bare SSH session is genuinely bad
-at — fast recursive search, live file-change notification, and, the big one, running
-the actual language server/debugger/task/VCS subprocesses *on* the remote host against
-its real toolchain rather than against a locally-synced copy missing the remote
-system's headers/deps/`compile_commands.json`. Likely path: build (a) first since it's
-simpler and gets editing working at all; add (b) only once search latency or
+comfortable enough that it doesn't feel like a degraded mode. See "Named Projects &
+Multi-Project Sidebar" above for how a remote root is named/stored/opened/switched to;
+this section is the actual file-I/O/search/agent mechanics underneath one. Two shapes
+are on the table and genuinely undecided: **(a) client-only**, everything shells out to
+`ssh`/`sftp` per operation, no code footprint on the remote host at all; **(b) client +
+thin remote agent**, a small companion binary deployed to the remote host (the
+JetBrains Gateway/VS Code Remote-SSH precedent) that does what a bare SSH session is
+genuinely bad at — fast recursive search, live file-change notification, and, the big
+one, running the actual language server/debugger/task/VCS subprocesses *on* the remote
+host against its real toolchain rather than against a locally-synced copy missing the
+remote system's headers/deps/`compile_commands.json`. Likely path: build (a) first
+since it's simpler and gets editing working at all; add (b) only once search latency or
 LSP-against-the-wrong-toolchain prove it's needed in practice, not speculatively.
 
 **File I/O & the editing model**
@@ -532,13 +588,16 @@ LSP-against-the-wrong-toolchain prove it's needed in practice, not speculatively
       *remote* host's architecture, not the build machine's — either cross-compiled at
       ned's build time or fetched prebuilt per-arch (GitHub-releases-style), since a
       build toolchain isn't guaranteed to exist on an arbitrary remote host.
+- [ ] Perhaps we could have a way to enable and execute a remote debug session,
+      particularly useful for things like PHP, and the like, where we could remotely
+      debug something that's happening live in production.
+
 
 **Connect UX**
 - [ ] A connect dialog/command (`ned-connect` or similar): host, user, port, key/agent
-      selection, jump-host/bastion support — ideally sourcing defaults from the user's
-      own `~/.ssh/config` rather than reinventing host aliasing.
-- [ ] A remembered recent-connections list — same shape as the recentf gap already on
-      this roadmap, worth building on the same primitive rather than a separate one.
+      selection, jump-host/bastion support. Sourcing defaults from `~/.ssh/config` and
+      the remembered-projects list are covered by "Named Projects & Multi-Project
+      Sidebar" above rather than a separate mechanism here.
 - [ ] Host-key verification / first-connection trust prompt — `ProjectTrust.h`'s
       existing hash-based, disuse-expiring trust registry (built for `.ned/init.janet`)
       is a good precedent for this UX rather than silently trusting or reimplementing
@@ -644,10 +703,28 @@ LSP-against-the-wrong-toolchain prove it's needed in practice, not speculatively
 
 ### Documentation & Companion Tooling
 
-- [ ] **Documentation framework** — man page(s), PDF, and a web page generated from one
-      shared source (pandoc is the direct fit), mining the `ned/*` binding doc strings
-      already passed to `Register<Fn>`. A build/release-time step, nothing ned does at
-      runtime.
+- [ ] **Internal/developer docs: Doxygen.** `/** */` doc-tags on the C++ side
+      (namespace/class-hierarchy aware, matching this codebase's `ned::text`/`editor`/
+      `janet`/`ui` layering), themed with Doxygen Awesome. Wired via CMake's
+      `find_package(Doxygen)` + `doxygen_add_docs()` as an opt-in `docs` target, not part
+      of `ALL` — a build/release-time step, nothing ned does at runtime. clang-doc was
+      considered and rejected as still too early-stage (LLVM's own docs warn of bugs/
+      crashes on real codebases).
+- [ ] **End-user docs: mdBook + pandoc, one Markdown source.** A `book/src/` tree (the
+      `Docs/*.md` files migrate in near-verbatim) renders via mdBook into a
+      navigable/searchable site, deployed to GitHub Pages via its first-party
+      `actions/starter-workflows/pages/mdbook.yml` template — self-hostable later too,
+      it's plain static output. Man pages come from pandoc (`pandoc -s -t man`) run over
+      a curated subset of the same source files (CLI invocation, the settings/variables
+      reference, the scripting API reference — not the whole book; prose guides don't
+      map to man's NAME/SYNOPSIS/DESCRIPTION shape). The scripting API reference page is
+      generated, not hand-written: a small `Tools/` binary linking `ned_lib`, walking
+      `CommandRegistry`/the `ned/*` Janet binding table, dumping the doc strings already
+      passed to `Register<Fn>` into a `.md` file the mdBook build consumes (mirroring
+      Helix's `cargo xtask docgen` pattern for its own keymap/command reference pages).
+      Sphinx+MyST was considered — it natively builds man+PDF+HTML from one source too —
+      but rejected in favor of mdBook to avoid adding a Python toolchain to a project
+      that currently has none, and for mdBook's first-party GitHub Pages support.
 - [ ] **Environment setup tool** (`ned-setup` or similar) — first-run detection: shell
       integration, plus scanning the system for installed tree-sitter grammars and
       *generating an editable Janet file* loaded from `init.janet`. Deliberately a
@@ -715,6 +792,14 @@ global-state leak already fixed once in this codebase, `ChildProcess hang-protec
 round 2`). Not yet worth a deep dive on its own; next time it reproduces, capture which
 other test(s) ran immediately before it in that run — that's the fastest path to an
 actual repro.
+
+A second, previously undocumented order-dependent flake, seen twice in the same
+session (2026-09-01) while running the full suite repeatedly during unrelated work:
+"A textDocument/inlayHint response renders virtual text mid-line without disturbing
+real content" — same signature as the VimEngine one above (fails only under
+`ctest --test-dir build`, passes cleanly every time run standalone). Not yet
+investigated at all; noting it here so it doesn't need rediscovering from scratch next
+time it reproduces.
 
 ### Named Non-Goals (Leaning "Won't Do", Kept Visible So It's a Conscious Call)
 

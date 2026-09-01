@@ -765,6 +765,12 @@ void WindowManager::RequestOpenBinaryFile(const std::filesystem::path& path) {
     }
 }
 
+void WindowManager::TriggerSwitchProject() {
+    if (Pane* pane = FocusedPane()) {
+        pane->Buffer().TriggerSwitchProject();
+    }
+}
+
 void WindowManager::ActivateCompletionAt(std::size_t index) {
     if (Pane* pane = FocusedPane()) {
         pane->Buffer().AcceptActiveCompletionAt(index);

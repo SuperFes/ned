@@ -124,6 +124,14 @@ class ProjectSidebar : public Widget {
     // WindowManager::TakeFocus.
     void SetOnFocusReturn(std::function<void()> handler);
 
+    // named-projects follow-up: fired on a click anywhere in the header/
+    // title row -- OnEvent already reserves and no-ops that row specifically
+    // for this (see its own comment), so wiring it up here needed no
+    // hit-testing changes at all. Unset (the default) is a safe no-op,
+    // matching every other Set* hook here; main.cpp wires this to fire
+    // switch-project the same way a keybinding would.
+    void SetOnHeaderClicked(std::function<void()> handler);
+
     // focus-project-sidebar's (C-c p) entry point: expands a collapsed
     // sidebar first (focus into a 1-column strip would be meaningless) and
     // remembers that it *was* collapsed, so returning focus (Escape/C-g, or
@@ -304,6 +312,9 @@ class ProjectSidebar : public Widget {
 
     // sidebar-keyboard-focus follow-up -- see Focusable() above.
     std::function<void()> onFocusReturn_;
+
+    // named-projects follow-up -- see SetOnHeaderClicked above.
+    std::function<void()> onHeaderClicked_;
 
     std::function<void(int)> onWidthCommitted_; // see SetOnWidthCommitted
 

@@ -39,6 +39,7 @@
 #include "Editor/ProcessTimeouts.h"
 #include "Editor/ProjectRoot.h"
 #include "Editor/ProjectSession.h"
+#include "Editor/ProjectSwitch.h"
 #include "Editor/ProjectTrust.h"
 #include "Editor/RelativeLineNumberSettings.h"
 #include "Editor/ScratchPad.h"
@@ -486,6 +487,15 @@ namespace {
     // name, mirroring NedSetLspCommand's own empty-clears convention.
     void NedSetTaskCommand(std::string name, std::vector<std::string> argv) {
         editor::tasks::SetTaskCommand(name, std::move(argv));
+    }
+
+    // named-projects follow-up: the escape hatch in switch-project/
+    // open-project's activate-root chain for a terminal TerminalTabLauncher
+    // doesn't auto-detect (or a user's own preferred invocation) -- same
+    // argv shape/empty-clears convention as NedSetTaskCommand, plus a
+    // "{root}" placeholder substituted into every argv element.
+    void NedSetProjectOpenCommand(std::vector<std::string> argv) {
+        editor::SetProjectOpenCommand(std::move(argv));
     }
 
     // ACP client slice 1: same argv shape/empty-clears convention as
@@ -1288,6 +1298,22 @@ void InstallEditorBindings(Environment& env) {
         "Set the command run by run-task for a task name: (name argv), e.g. (ned/set-task-command \"build\" "
         "[\"cmake\" \"--build\" \".\"]). argv is an array or tuple of strings -- argv[0] the executable (resolved "
         "against $PATH), the rest its arguments. An empty argv clears the configured command for name.");
+    env.Register<&NedSetProjectOpenCommand>(
+        "ned", "set-project-open-command",
+        "Set the command switch-project/open-project run to open another project in a new tab/window when no "
+        "built-in terminal/multiplexer is auto-detected (or to override auto-detection with your own preferred "
+        "invocation): (argv), e.g. (ned/set-project-open-command [\"tmux\" \"new-window\" \"-c\" \"{root}\" \"ned\" "
+        "\"{root}\"]). argv is an array or tuple of strings; every \"{root}\" occurrence in every element is "
+        "replaced with the project's own path -- never through a shell. An empty argv clears it. Auto-detection "
+        "already covers tmux, GNU screen, Konsole, GNOME Terminal, WezTerm, Ghostty, and kitty -- this is for "
+        "anything else, or a different invocation than the built-in one (e.g. a tmux pane split instead of a new "
+        "window). Two of the auto-detected terminals need a one-time setting change of their own before they'll "
+        "actually run anything (opening the tab still works either way, but the command inside it won't launch "
+        "until this is done): Konsole requires `EnableSecuritySensitiveDBusAPI=true` under the `[KonsoleWindow]` "
+        "section of konsolerc, plus restarting Konsole; kitty requires `allow_remote_control` (and usually "
+        "`listen_on`) set in kitty.conf. Neither is ever changed by ned itself -- both hand a running terminal "
+        "instance the ability to type arbitrary commands into it via IPC, a real security-relevant choice that's "
+        "the user's own to make.");
     env.Register<&NedSetTestCommand>(
         "ned", "set-test-command",
         "Set the project's test command and output format: (argv format), e.g. (ned/set-test-command "
