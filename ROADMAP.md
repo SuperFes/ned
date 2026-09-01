@@ -77,12 +77,24 @@ Notcurses.
       `prepareRename`, `linkedEditingRange`, or `workspace/willRenameFiles`/
       `didRenameFiles`) — import paths elsewhere go stale until the server notices on
       its own.
-- [ ] **No multi-root LSP workspace support** — `LspManager` spawns one server per
-      language/server-key against the single process-wide `ProjectRoot()`; a monorepo
-      with multiple real project roots (or a server that itself supports
-      `workspaceFolders`) gets one server pinned to whichever root the process started
-      against. Already a known simplification (see `CLAUDE.md`'s `Lsp/` section) that's
-      never been tracked here until now.
+- [ ] **LSP multi-root, remainder** — the per-buffer-resolved-root half (a monorepo
+      subpackage's own `package.json`/`pyproject.toml`/`Cargo.toml`/
+      `compile_commands.json`/... earning its own server connection distinct from the
+      outer repo's single `ProjectRoot()`, via `Editor/Lsp/LspRootResolver.h` +
+      `LspManager`'s `ConnectionKey`) shipped. Still open: a server that itself supports
+      the LSP `workspaceFolders` protocol (one process, multiple folders) is never used
+      that way — this client always spawns a separate process per resolved root instead,
+      consistent with `LspManager`'s existing "one connection per key" design, but a
+      genuinely heavier footprint for a server that would rather multiplex folders
+      itself. Also: five connection-scoped caches (`semanticTokensLegend_`,
+      `onTypeFormattingTriggers_`, `pullDiagnosticsUnsupported_`,
+      `inlayHintsUnsupported_`, `codeLensUnsupported_`, `activeProgress_`, and the
+      `failedCommands_`/`disconnected*` status-latch group) stay keyed by the plain
+      language string rather than the per-root connection identity — two
+      *simultaneously running* servers for the same language against two different
+      roots can shadow each other's legend/status/progress-label; every actual request
+      still routes to the correct per-root connection regardless (see `LspManager.h`'s
+      own header comment).
 
 ### Navigation & Search
 

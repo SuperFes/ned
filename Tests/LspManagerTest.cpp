@@ -16,13 +16,17 @@
 #include "Editor/Lsp/LspBackgroundSync.h"
 #include "Editor/Lsp/LspClient.h"
 #include "Editor/Lsp/LspManager.h"
+#include "Editor/Lsp/LspRootResolver.h"
 #include "Editor/Lsp/LspServerConfig.h"
 #include "Editor/Lsp/Transport.h"
+#include "Editor/ProjectRoot.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
 #include "UI/EventLoop.h"
 
 using ned::editor::HighlightSpan;
+using ned::editor::ProjectRoot;
+using ned::editor::SetProjectRoot;
 using ned::editor::SyntaxClass;
 using ned::editor::lsp::CodeAction;
 using ned::editor::lsp::CompletionItem;
@@ -31,6 +35,7 @@ using ned::editor::lsp::kProseLanguageKey;
 using ned::editor::lsp::LspClient;
 using ned::editor::lsp::LspManager;
 using ned::editor::lsp::SemanticTokensLegend;
+using ned::editor::lsp::SetLspRootMarkers;
 using ned::editor::lsp::Transport;
 using ned::text::Buffer;
 using ned::text::BufferList;
@@ -59,13 +64,15 @@ struct FakeServer {
     FakeServer(FakeServer&&)                 = default;
 
     static FakeServer Create(LspManager& manager, const std::string& language, ned::ui::EventLoop& eventLoop, LspClient*& outClient,
-                             const Json& workspaceConfiguration = Json::object(), bool brokerBacked = false) {
+                             const Json& workspaceConfiguration = Json::object(), bool brokerBacked = false,
+                             std::optional<std::string> connectionKeyOverride = std::nullopt) {
         int clientWritesHere[2]; // client's write end -> test's read end
         int clientReadsHere[2];  // test's write end -> client's read end
         REQUIRE(::pipe(clientWritesHere) == 0);
         REQUIRE(::pipe(clientReadsHere) == 0);
         auto client = std::make_unique<LspClient>(Transport(clientReadsHere[0], clientWritesHere[1]), eventLoop);
-        outClient   = &manager.SetClientForTesting(language, std::move(client), workspaceConfiguration, brokerBacked);
+        outClient   = &manager.SetClientForTesting(language, std::move(client), workspaceConfiguration, brokerBacked,
+                                                   std::move(connectionKeyOverride));
         return FakeServer(clientWritesHere[0], clientReadsHere[1]);
     }
 };
@@ -151,6 +158,16 @@ std::string ReadRawFramesUntil(int fd, std::size_t frameCount) {
 int RequestIdFromFrame(const std::string& raw) {
     return Json::parse(raw.substr(raw.find("\r\n\r\n") + 4))["id"].get<int>();
 }
+
+// LSP multi-root follow-up: ProjectRoot() is process-wide state -- mirrors
+// ProjectRootTest.cpp's own ProjectRootGuard exactly, so a test that changes
+// it restores the value even if a REQUIRE fails partway through.
+struct ProjectRootGuard {
+    std::filesystem::path previous = ProjectRoot();
+    ~ProjectRootGuard() {
+        SetProjectRoot(previous);
+    }
+};
 
 // prose-checking follow-up: asserting "nothing was ever sent" can't use
 // ReadRawFrame's own blocking ::read (it would hang forever on a fd that
@@ -498,6 +515,103 @@ TEST_CASE("LspManager::RequestHover round-trips a real request/response through 
     REQUIRE(invoked);
     REQUIRE(gotText.has_value());
     REQUIRE(*gotText == "it's an int");
+}
+
+TEST_CASE("LspManager routes two buffers under different resolved LSP roots to two distinct connections", "[Lsp]") {
+    // LSP multi-root follow-up: the actual feature under test -- two buffers
+    // whose configured root markers resolve to two different directories
+    // (neither the process's own ProjectRoot()) must never share a
+    // connection, even though both sync the exact same language/serverKey
+    // string. SetClientForTesting's connectionKeyOverride pre-registers a
+    // fake server under the exact connection identity SyncBuffer's real
+    // resolution path (LspRootResolver.h's ResolveLspRoot, then
+    // LspManager's own ConnectionKey) is expected to compute -- see
+    // ConnectionKey's own doc comment in LspManager.h for the composition
+    // rule asserted here.
+    ProjectRootGuard            rootGuard;
+    const std::string           language = "lsp-manager-multiroot-test-lang";
+    const std::string           marker   = "lsp-manager-multiroot-test.marker";
+    const std::filesystem::path base     = std::filesystem::temp_directory_path() / "ned-lsp-manager-multiroot-test";
+    const std::filesystem::path pkgA     = base / "packages" / "a";
+    const std::filesystem::path pkgB     = base / "packages" / "b";
+    std::filesystem::create_directories(pkgA);
+    std::filesystem::create_directories(pkgB);
+    {
+        std::ofstream(pkgA / marker) << "";
+    }
+    {
+        std::ofstream(pkgB / marker) << "";
+    }
+    SetProjectRoot(base); // deliberately NOT pkgA/pkgB -- neither buffer's resolved root should collapse to this
+    SetLspRootMarkers(language, {marker});
+
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    Buffer&            bufferA = bufferList.OpenOrCreateFile(pkgA / "file.txt");
+    Buffer&            bufferB = bufferList.OpenOrCreateFile(pkgB / "file.txt");
+
+    LspClient* clientA = nullptr;
+    LspClient* clientB = nullptr;
+    FakeServer serverA = FakeServer::Create(manager, language, eventLoop, clientA, Json::object(), false,
+                                            pkgA.string() + '\x1f' + language);
+    FakeServer serverB = FakeServer::Create(manager, language, eventLoop, clientB, Json::object(), false,
+                                            pkgB.string() + '\x1f' + language);
+
+    manager.SyncBuffer(bufferA, language);
+    manager.SyncBuffer(bufferB, language);
+    (void)ReadRawFrame(serverA.serverStdinRead); // drain each buffer's own didOpen
+    (void)ReadRawFrame(serverB.serverStdinRead);
+
+    bool invokedA = false;
+    bool invokedB = false;
+    manager.RequestHover(bufferA, 0, [&](std::optional<std::string>) { invokedA = true; });
+    manager.RequestHover(bufferB, 0, [&](std::optional<std::string>) { invokedB = true; });
+
+    // Each buffer's own request must reach its own fake server, never the
+    // other's -- a shared/collapsed connection would deliver both (or
+    // neither) request to a single pipe.
+    const std::string rawA = ReadRawFrame(serverA.serverStdinRead);
+    const std::string rawB = ReadRawFrame(serverB.serverStdinRead);
+    REQUIRE(Json::parse(rawA.substr(rawA.find("\r\n\r\n") + 4))["method"] == "textDocument/hover");
+    REQUIRE(Json::parse(rawB.substr(rawB.find("\r\n\r\n") + 4))["method"] == "textDocument/hover");
+    REQUIRE(NoFrameArrives(serverA.serverStdinRead)); // bufferB's request never leaked onto serverA's pipe
+    REQUIRE(NoFrameArrives(serverB.serverStdinRead)); // and vice versa
+
+    clientA->DispatchFrame(
+        Json{{"jsonrpc", "2.0"}, {"id", RequestIdFromFrame(rawA)}, {"result", {{"contents", "a"}}}}.dump());
+    clientB->DispatchFrame(
+        Json{{"jsonrpc", "2.0"}, {"id", RequestIdFromFrame(rawB)}, {"result", {{"contents", "b"}}}}.dump());
+    REQUIRE(invokedA);
+    REQUIRE(invokedB);
+
+    SetLspRootMarkers(language, {}); // cleanup -- process-wide state
+    std::filesystem::remove_all(base);
+}
+
+TEST_CASE("LspManager collapses a buffer's resolved root to the plain server key when it equals ProjectRoot()", "[Lsp]") {
+    // The common-case guarantee ConnectionKey's own doc comment makes: a
+    // buffer with no configured root markers (or whose nearest marker
+    // happens to resolve to editor::ProjectRoot() itself) shares the exact
+    // same bare-language-keyed connection every pre-existing single-root
+    // test already relies on -- confirmed here by registering under the
+    // bare language string (no override) and letting SyncBuffer's real
+    // resolution path find it.
+    ProjectRootGuard rootGuard;
+    SetProjectRoot(std::filesystem::temp_directory_path());
+
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    Buffer&            buffer =
+        bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-lsp-manager-collapse-test.txt");
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "lsp-manager-collapse-test-lang", eventLoop, client);
+
+    manager.SyncBuffer(buffer, "lsp-manager-collapse-test-lang");
+    const std::string raw = ReadRawFrame(server.serverStdinRead);
+    REQUIRE(Json::parse(raw.substr(raw.find("\r\n\r\n") + 4))["method"] == "textDocument/didOpen");
 }
 
 TEST_CASE("LspManager::ExpireStaleRequests reaches an injected client's own pending request", "[Lsp]") {

@@ -1,10 +1,26 @@
 //
 // LSP client follow-up. Owns every running language-server connection
-// (LspClient), keyed by language name -- one server process per language,
-// matching editor::ProjectRoot()'s own existing single-root, process-wide
-// model (no multi-root workspace support anywhere in this codebase; see this
-// subsystem's own ROADMAP.md entry for why that's a documented v1 scope cut,
-// not an oversight).
+// (LspClient), keyed by language name -- one server process per language, per
+// resolved root (LSP multi-root follow-up: LspRootResolver.h's
+// ResolveLspRoot picks a buffer's own root, which may be more specific than
+// editor::ProjectRoot() when the buffer's language has configured root
+// markers -- e.g. the nearest package.json for a "javascript" buffer inside
+// a monorepo -- and falls back to editor::ProjectRoot() unchanged otherwise).
+// The common case -- no markers configured, or none matched -- resolves to
+// exactly editor::ProjectRoot() for every buffer, so clients_ stays keyed by
+// a bare language string exactly as before (see ConnectionKey's own doc
+// comment for why); only a genuinely more-specific resolved root earns its
+// own distinct connection. A handful of connection-scoped caches
+// (semanticTokensLegend_, onTypeFormattingTriggers_,
+// pullDiagnosticsUnsupported_, inlayHintsUnsupported_, codeLensUnsupported_,
+// activeProgress_, and the failedCommands_/disconnected* status-latch group)
+// stay keyed by the plain language string regardless of root -- a documented
+// v1 cut: two *simultaneously running* servers for the same language against
+// two different roots share these caches (one's legend/status can shadow the
+// other's), which is cosmetic at worst -- every actual request still routes
+// through the correct per-root connection via BufferSyncState::connectionKey,
+// see ExistingClientForLanguage's own callers. See ROADMAP.md for the
+// follow-up that would close this remaining gap.
 //
 // Constructed once, alongside bufferList/killRing/registers, and passed by
 // reference the same way -- LSP state is shared editor-wide state, not
@@ -117,6 +133,14 @@ class LspManager {
     // buffer.ContentGeneration() has advanced since the last sync -- mirrors
     // exactly how BufferView's own highlight cache already decides "has this
     // changed since I last looked."
+    //
+    // LSP multi-root follow-up: resolves (and caches -- see
+    // ResolveCachedRoot) buffer's own LSP root via LspRootResolver.h's
+    // ResolveLspRoot(*buffer.Path(), language), then uses that same resolved
+    // root for both this sync and the prose-checker sync below, and (if
+    // SyncEmbeddedDocuments is called for this buffer afterward) every
+    // embedded-language sync too -- one buffer always has exactly one LSP
+    // root, never a different one per server key.
     //
     // prose-checking follow-up: also syncs buffer to the prose-checker
     // connection (kProseLanguageKey), completely independently -- whether
@@ -498,8 +522,19 @@ class LspManager {
     // (Shutdown()'s own skip case) without needing a real broker connection
     // -- defaults to false, so every existing call site (an ordinary
     // direct-spawn stand-in) keeps compiling and behaving unchanged.
+    //
+    // LSP multi-root follow-up: connectionKeyOverride lets a test register a
+    // client under a distinct connection identity from its own serverKey
+    // (language) -- needed to simulate "two roots, same language, two
+    // separate connections" without a real filesystem walk. nullopt (the
+    // default, every pre-existing call site) registers clients_[language]
+    // exactly as before -- ClientForLanguage's own real spawn path collapses
+    // to that same bare-language key whenever a buffer's resolved root is
+    // editor::ProjectRoot() (see ConnectionKey), which is what every
+    // existing SyncBuffer-driven test still resolves to.
     LspClient& SetClientForTesting(std::string language, std::unique_ptr<LspClient> client,
-                                   const Json& workspaceConfiguration = Json::object(), bool brokerBacked = false);
+                                   const Json& workspaceConfiguration = Json::object(), bool brokerBacked = false,
+                                   std::optional<std::string> connectionKeyOverride = std::nullopt);
 
     // on-type-formatting follow-up. SetClientForTesting above bypasses the
     // real spawn/initialize/initialized handshake entirely, so a test
@@ -713,15 +748,57 @@ class LspManager {
     [[nodiscard]] LspClient* ExistingClientForLanguage(const std::string& language) const;
 
     // Returns the running (lazily spawning one if needed) client for
-    // language, or nullptr if nothing is configured for it. language ==
-    // kProseLanguageKey resolves its command via ProseCheckerCommand()
-    // instead of LspServerCommand(language) -- the only place that
-    // distinction is made; everything else here treats it like any other
-    // language key.
-    LspClient* ClientForLanguage(const std::string& language);
+    // serverKey against root, or nullptr if nothing is configured for it.
+    // serverKey == kProseLanguageKey resolves its command via
+    // ProseCheckerCommand() instead of LspServerCommand(serverKey) -- the
+    // only place that distinction is made; everything else here treats it
+    // like any other language key. LSP multi-root follow-up: root is what
+    // actually gets sent as the "initialize" request's rootUri and threaded
+    // into TryConnectToBroker's own (root, language) keying -- see
+    // ConnectionKey for how it also (usually invisibly) affects clients_'s
+    // own key.
+    LspClient* ClientForLanguage(const std::string& serverKey, const std::filesystem::path& root);
+
+    // LSP multi-root follow-up: clients_'s actual key for (root, serverKey)
+    // -- collapses to serverKey unchanged when root equals
+    // editor::ProjectRoot(), which is what keeps every pre-existing
+    // single-root behavior (including every LspManagerTest fixture, which
+    // registers a test client under a bare serverKey string via
+    // SetClientForTesting) byte-for-byte unchanged: only a buffer whose
+    // resolved root is genuinely more specific (LspRootResolver.h's marker
+    // tier actually matched) earns a distinct, composite connection
+    // identity. '\x1f' separator mirrors activeProgress_'s own existing
+    // composite-key convention below, not a new one.
+    [[nodiscard]] std::string ConnectionKey(const std::filesystem::path& root, const std::string& serverKey) const;
+
+    // LSP multi-root follow-up: resolves and caches buffer's own LSP root
+    // (LspRootResolver.h's ResolveLspRoot), keyed by its containing
+    // directory + language rather than by Buffer* -- so buffers sharing a
+    // directory reuse one cached walk, and a buffer whose path changes (e.g.
+    // save-as) naturally resolves fresh against the new directory's own
+    // cache entry instead of needing an explicit per-buffer invalidation.
+    // ResolveLspRoot's own upward directory walk is a real per-call
+    // filesystem cost -- SyncBuffer runs every Paint() for the active buffer
+    // and every background tick for every other open one, so paying that
+    // walk more than once per (directory, language) pair for this process's
+    // lifetime would be a real, unbounded-per-frame regression, the same
+    // class of bug this subsystem's own per-frame-sync-materialize follow-up
+    // already fixed once (see SyncToServer's own doc comment). Never
+    // invalidated within a session -- the same "detected once" reasoning
+    // editor::ProjectRoot() itself already relies on.
+    [[nodiscard]] std::filesystem::path ResolveCachedRoot(const std::filesystem::path& bufferPath, const std::string& language);
 
     struct BufferSyncState {
-        std::string language;
+        // LSP multi-root follow-up: renamed from `language` -- now the
+        // *connection* identity (ConnectionKey's own result, see
+        // SyncTextToServer), not necessarily the bare language/serverKey
+        // string, though the two are equal whenever this buffer's resolved
+        // root is editor::ProjectRoot() (the common case). Every
+        // Request*/Resolve* method below reads this field to find the
+        // right running client via ExistingClientForLanguage -- that's what
+        // actually routes a request to the correct per-root server, with no
+        // other change needed at any of those call sites.
+        std::string connectionKey;
         std::string uri;
         std::size_t lastSyncedGeneration = 0;
         int         version              = 0;
@@ -739,8 +816,9 @@ class LspManager {
     // A thin wrapper around SyncTextToServer passing buffer.Text() --
     // embedded-language-documents follow-up: SyncEmbeddedDocuments calls
     // SyncTextToServer directly with a virtual document's own padded text
-    // instead.
-    void SyncToServer(text::Buffer& buffer, const std::string& serverKey, const std::string& languageId);
+    // instead. LSP multi-root follow-up: root is the buffer's own resolved
+    // LSP root (ResolveCachedRoot), forwarded to ClientForLanguage.
+    void SyncToServer(text::Buffer& buffer, const std::string& serverKey, const std::string& languageId, const std::filesystem::path& root);
 
     // embedded-language-documents follow-up: SyncToServer's actual body,
     // generalized so the text synced isn't always buffer.Text() -- an
@@ -748,7 +826,7 @@ class LspManager {
     // and line/UTF-16 structure as the host buffer (see EmbeddedDocumentSync's
     // own doc comment) but not the same content.
     void SyncTextToServer(text::Buffer& buffer, const std::string& serverKey, const std::string& languageId,
-                          const std::string& documentText);
+                          const std::string& documentText, const std::filesystem::path& root);
 
     // hover/completion/code-actions/definition/rename follow-up: resolves
     // the *primary* language's BufferSyncState for buffer via
@@ -847,7 +925,14 @@ class LspManager {
     // doc comment on lspWorkspaceConfiguration for why this is a flat,
     // language-agnostic tree rather than keyed by language like
     // initializationOptions is.
-    void WireNotificationHandlers(LspClient& client, const std::string& language,
+    //
+    // LSP multi-root follow-up: serverKey and connectionKey are threaded
+    // through separately -- serverKey (plain) captures into
+    // HandlePublishDiagnostics/the workDoneProgress handler (the
+    // deliberately-still-plain-keyed caches, see this class's own header
+    // comment), connectionKey captures into the disconnect handler, which
+    // must erase the exact same clients_ entry ClientForLanguage inserted.
+    void WireNotificationHandlers(LspClient& client, const std::string& serverKey, const std::string& connectionKey,
                                   const Json& workspaceConfiguration = Json::object());
 
     // error-visibility follow-up. Called (on the main thread, via
@@ -860,7 +945,13 @@ class LspManager {
     // branch re-fires a fresh didOpen against the respawned client instead
     // of silently believing a server that no longer exists already knows
     // about these buffers.
-    void ClientDisconnected(const std::string& language);
+    //
+    // LSP multi-root follow-up: serverKey drives every still-plain-keyed
+    // cache below (unchanged from before this follow-up); connectionKey is
+    // what actually gets erased from clients_/brokerBackedLanguages_ -- must
+    // be the exact identity ClientForLanguage inserted those under, or a
+    // disconnected client would never actually leave clients_.
+    void ClientDisconnected(const std::string& serverKey, const std::string& connectionKey);
 
     text::BufferList&   bufferList_;
     ned::ui::EventLoop& eventLoop_;
@@ -874,7 +965,21 @@ class LspManager {
     // -- see SetBrokerSocketPathOverrideForTesting's own doc comment.
     std::optional<std::filesystem::path> brokerSocketPathOverrideForTesting_;
 
-    std::unordered_map<std::string, std::unique_ptr<LspClient>> clients_; // keyed by language
+    std::unordered_map<std::string, std::unique_ptr<LspClient>> clients_; // keyed by ConnectionKey (see its own doc comment)
+
+    // LSP multi-root follow-up: see ResolveCachedRoot's own doc comment for
+    // why this cache exists and why it's keyed by directory rather than by
+    // Buffer*. Never erased -- unbounded only in the number of distinct
+    // (directory, language) pairs ever synced this session, which tracks
+    // the number of directories actually opened, not per-buffer/per-frame.
+    std::unordered_map<std::string, std::filesystem::path> resolvedRootCache_;
+
+    // LSP multi-root follow-up: buffer's own resolved LSP root, stamped by
+    // SyncBuffer -- what SyncEmbeddedDocuments reads instead of re-resolving
+    // (an embedded document shares its host buffer's root, never its own
+    // embedded language's, see SyncBuffer's own doc comment). Erased in
+    // NotifyBufferClosed.
+    std::unordered_map<text::Buffer*, std::filesystem::path> bufferResolvedRoot_;
 
     // graceful-lsp-shutdown follow-up: languages whose current clients_
     // entry is a connection to an already-running LSP broker daemon rather

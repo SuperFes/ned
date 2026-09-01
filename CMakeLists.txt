@@ -634,6 +634,7 @@ add_library(ned_lib STATIC
         Source/Editor/Lsp/Transport.cpp
         Source/Editor/Lsp/LspClient.cpp
         Source/Editor/Lsp/LspServerConfig.cpp
+        Source/Editor/Lsp/LspRootResolver.cpp
         Source/Editor/Lsp/ProseChecker.cpp
         Source/Editor/Lsp/LspPosition.cpp
         Source/Editor/Lsp/LspContent.cpp
@@ -971,6 +972,7 @@ if (NED_BUILD_TESTS)
             Tests/LspTransportTest.cpp
             Tests/LspClientTest.cpp
             Tests/LspServerConfigTest.cpp
+            Tests/LspRootResolverTest.cpp
             Tests/ProseCheckerTest.cpp
             Tests/ProseCheckerTestGuard.cpp
             Tests/LspPositionTest.cpp
