@@ -28,6 +28,7 @@
 #include "Editor/LineEndingPolicy.h"
 #include "Editor/Link.h"
 #include "Editor/Lsp/LspBackgroundSync.h"
+#include "Editor/Lsp/LspRootResolver.h"
 #include "Editor/Lsp/LspServerConfig.h"
 #include "Editor/Lsp/ProseChecker.h"
 #include "Editor/MinimapSettings.h"
@@ -453,6 +454,17 @@ namespace {
     // empty-clears convention.
     void NedSetLspCommand(std::string language, std::vector<std::string> argv) {
         editor::lsp::SetLspServerCommand(language, std::move(argv));
+    }
+
+    // LSP multi-root follow-up: overrides language's root-marker list (see
+    // Editor/Lsp/LspRootResolver.h) -- e.g. (ned/set-lsp-root-markers "rust"
+    // ["Cargo.toml"]) for a language with no compiled-in default. An empty
+    // markers list clears the override, reverting to the compiled-in
+    // default (if any) rather than to "walk for nothing," unlike
+    // NedSetLspCommand's own empty-clears-entirely convention -- see
+    // SetLspRootMarkers's own doc comment for why.
+    void NedSetLspRootMarkers(std::string language, std::vector<std::string> markers) {
+        editor::lsp::SetLspRootMarkers(language, std::move(markers));
     }
 
     // DAP client slice 1: same argv shape as NedSetLspCommand for the
@@ -1239,6 +1251,17 @@ void InstallEditorBindings(Environment& env) {
         "[\"clangd\"]). argv is an array or tuple of strings -- argv[0] the executable (resolved against $PATH), the "
         "rest its arguments. ned never installs or updates a language server itself; this only configures which "
         "already-installed one to run. An empty argv clears the configured command for language.");
+    env.Register<&NedSetLspRootMarkers>(
+        "ned", "set-lsp-root-markers",
+        "Override the root-marker filenames ned looks for when resolving which directory to initialize a "
+        "language's LSP server against: (language markers), e.g. (ned/set-lsp-root-markers \"rust\" "
+        "[\"Cargo.toml\"]). Walks upward from an opened buffer's own directory for the nearest ancestor "
+        "containing one of these as an immediate child; falls back to editor::ProjectRoot() when none match "
+        "(or markers is empty and language has no compiled-in default) -- this is what lets a monorepo "
+        "subpackage (its own package.json/pyproject.toml/Cargo.toml/compile_commands.json, ...) get its own "
+        "LSP root distinct from the outer repo's single .git. An empty markers list clears the override, "
+        "reverting to the compiled-in default (bundled for c/cpp/python/javascript/typescript/tsx/php) rather "
+        "than to no markers at all.");
     env.Register<&NedSetDapAdapter>(
         "ned", "set-dap-adapter",
         "Set the command used to launch a language's DAP debug adapter: (language argv), e.g. (ned/set-dap-adapter "
