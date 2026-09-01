@@ -1824,6 +1824,22 @@ void LspManager::RequestRename(text::Buffer& buffer, std::size_t byteOffset, con
                         });
 }
 
+std::optional<std::vector<LspManager::ResolvedRenameEdit>> LspManager::ResolveCodeActionEdits(const CodeAction& action) {
+    if (action.touchesUnsupportedForm || !action.hasEdit) {
+        return std::nullopt;
+    }
+    std::vector<ResolvedRenameEdit> resolved;
+    resolved.reserve(action.edits.size());
+    for (const RenameEdit& edit : action.edits) {
+        const std::optional<std::filesystem::path> path = UriToPath(edit.uri);
+        if (!path) {
+            return std::nullopt; // see ResolvedRenameEdit's own doc comment -- refused wholesale, not partially
+        }
+        resolved.push_back(ResolvedRenameEdit{.path = *path, .edits = edit.edits});
+    }
+    return resolved;
+}
+
 namespace {
     // formatting follow-up: fixed per plan decision -- this codebase has no
     // per-buffer tabs-vs-spaces concept yet, so insertSpaces is hardcoded

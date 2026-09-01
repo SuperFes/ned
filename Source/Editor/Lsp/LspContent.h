@@ -65,11 +65,27 @@ struct WorkspaceTextEdit {
     bool operator==(const WorkspaceTextEdit&) const = default;
 };
 
+// project-undo follow-up: one URI's worth of edits out of a WorkspaceEdit's
+// "changes" map -- shared by CodeAction::edits and RenameResult::edits
+// below, since both a code action's and a rename's edit can touch more than
+// one file the exact same way (LSP's WorkspaceEdit is the one wire shape
+// behind both requests).
+struct RenameEdit {
+    std::string                    uri;
+    std::vector<WorkspaceTextEdit> edits;
+};
+
 struct CodeAction {
-    std::string                    title;
-    std::vector<WorkspaceTextEdit> edits;                     // edits touching ownUri only; empty if hasEdit is false or touchesOtherFiles is true
-    bool                           hasEdit           = false; // false for a bare Command with no "edit" at all -- executing one is out of scope
-    bool                           touchesOtherFiles = false; // a "changes" map naming more than one URI, or a "documentChanges" form (unparsed)
+    std::string             title;
+    std::vector<RenameEdit> edits;           // one entry per touched URI/file; empty if hasEdit is false or touchesUnsupportedForm is true
+    bool                    hasEdit = false; // false for a bare Command with no "edit" at all -- executing one is out of scope
+    // project-undo follow-up: was touchesOtherFiles, refused wholesale --
+    // multiple URIs are now parsed into edits above like RenameResult
+    // already does. Only a "documentChanges" WorkspaceEdit (file
+    // create/rename/delete, not just edits to existing ones) is still
+    // unparsed/refused -- same scope cut RenameResult's own
+    // touchesUnsupportedForm documents.
+    bool touchesUnsupportedForm = false;
 
     // code-actions-resolve follow-up. Many real servers (clangd included)
     // advertise codeActionProvider.resolveProvider and deliberately send a
@@ -121,13 +137,17 @@ struct CodeAction {
 // Parses one response item, either a bare Command (has "command", no
 // "edit" -- hasEdit=false) or a real CodeAction ("title" required; "edit"
 // is an optional WorkspaceEdit). Only the "changes": {uri: TextEdit[]}
-// shape of WorkspaceEdit is parsed; an edit naming a URI other than ownUri,
-// or a WorkspaceEdit using "documentChanges" instead of "changes", is
-// reported as touchesOtherFiles=true with edits left empty -- refused
-// wholesale by the caller rather than partially applied. Exposed publicly
-// (not just used internally by ExtractCodeActions' own loop below) so
-// LspManager::ResolveCodeAction can parse a codeAction/resolve response --
-// itself always exactly one CodeAction, not an array -- the same way.
+// shape of WorkspaceEdit is parsed -- one RenameEdit per named URI, however
+// many that is; a WorkspaceEdit using "documentChanges" instead of
+// "changes" is reported as touchesUnsupportedForm=true with edits left
+// empty -- refused wholesale by the caller rather than partially applied.
+// Exposed publicly (not just used internally by ExtractCodeActions' own
+// loop below) so LspManager::ResolveCodeAction can parse a
+// codeAction/resolve response -- itself always exactly one CodeAction, not
+// an array -- the same way. ownUri is kept in the signature for call-site
+// symmetry with every other ExtractX(..., ownUri) function in this file,
+// though project-undo follow-up: edits parsing no longer filters by it
+// (every URI the "changes" map names is now kept, not just this one).
 [[nodiscard]] CodeAction ExtractSingleCodeAction(const Json& item, const std::string& ownUri);
 
 // Each element of a textDocument/codeAction response array, parsed via
@@ -158,17 +178,9 @@ struct DefinitionLocation {
 // parse error. Empty for a null result.
 [[nodiscard]] std::vector<DefinitionLocation> ExtractDefinitionLocations(const Json& result);
 
-// rename follow-up. One URI's worth of edits out of a textDocument/rename
-// response's WorkspaceEdit -- unlike CodeAction::edits (deliberately scoped
-// to one buffer's own URI, see that struct's own doc comment above), a
-// rename is expected to touch every file a symbol appears in, so this keeps
-// one entry per URI the response actually named, not just the buffer the
-// request was sent from.
-struct RenameEdit {
-    std::string                    uri;
-    std::vector<WorkspaceTextEdit> edits;
-};
-
+// rename follow-up: a rename is expected to touch every file a symbol
+// appears in, the same "one entry per named URI" shape RenameEdit (defined
+// above, alongside CodeAction) already gives CodeAction::edits.
 struct RenameResult {
     std::vector<RenameEdit> edits;
     // "documentChanges" is a real, more general WorkspaceEdit form (needed

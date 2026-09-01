@@ -370,6 +370,20 @@ class LspManager {
         bool                            hasEdit                = false;
     };
     using RenameCallback = std::function<void(std::optional<ResolvedRename> result)>;
+
+    // project-undo follow-up: resolves a CodeAction's own edits (LspContent.h's
+    // CodeAction::edits, one RenameEdit per touched URI) to real filesystem
+    // paths -- the same URI resolution just above does for ResolvedRename,
+    // exposed here as a pure, synchronous, no-I/O conversion since (unlike a
+    // real request) nothing needs to round-trip a server: the edits already
+    // arrived with the action itself. Returns nullopt if
+    // action.touchesUnsupportedForm, the action has no edit at all, or any
+    // one URI fails to resolve -- mirrors ResolvedRename's own
+    // resolve-every-file-or-none contract (BufferView::ApplyCodeAction needs
+    // every touched file genuinely applicable before applying any of them,
+    // never a partial fix across only some of them).
+    [[nodiscard]] static std::optional<std::vector<ResolvedRenameEdit>> ResolveCodeActionEdits(const CodeAction& action);
+
     // Sent for lsp-rename. nullopt on any failure (buffer never synced, no
     // running client, or an error response) -- mirrors ResolveCallback's
     // own nullopt-on-failure convention. serverKey: see RequestHover's own

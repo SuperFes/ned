@@ -5332,8 +5332,8 @@ void BufferView::RequestLspFormatThenSaveBuffer() {
 }
 
 void BufferView::ApplyCodeAction(const editor::lsp::CodeAction& action) {
-    if (action.touchesOtherFiles) {
-        statusMessage_ = "\"" + action.title + "\" edits other files -- not supported yet.";
+    if (action.touchesUnsupportedForm) {
+        statusMessage_ = "\"" + action.title + "\" uses an unsupported edit form -- not applied.";
         return;
     }
     if (!action.hasEdit && !action.command) {
@@ -5346,8 +5346,34 @@ void BufferView::ApplyCodeAction(const editor::lsp::CodeAction& action) {
     // both). Neither step depends on the other's outcome; the edit is
     // synchronous, the command async, so the two failure paths report
     // independently rather than one gating the other.
+    //
+    // project-undo follow-up: a code action's edit can now touch more than
+    // one file (previously refused via touchesOtherFiles above) -- resolved
+    // and applied the same all-or-nothing, one-project-transaction way
+    // ApplyRename already does.
     if (action.hasEdit && !action.edits.empty()) {
-        ApplyWorkspaceTextEdits(activeBuffer_.Get(), action.edits);
+        const std::optional<std::vector<editor::lsp::LspManager::ResolvedRenameEdit>> resolved =
+            editor::lsp::LspManager::ResolveCodeActionEdits(action);
+        if (!resolved) {
+            statusMessage_ = "\"" + action.title + "\" names a file this editor can't resolve -- not applied.";
+            return;
+        }
+        std::vector<std::pair<text::Buffer*, std::vector<editor::lsp::WorkspaceTextEdit>>> perBufferEdits;
+        perBufferEdits.reserve(resolved->size());
+        try {
+            for (const editor::lsp::LspManager::ResolvedRenameEdit& edit : *resolved) {
+                text::Buffer* buffer = bufferList_.FindByPath(edit.path);
+                if (!buffer) {
+                    buffer = &bufferList_.OpenFile(edit.path);
+                }
+                perBufferEdits.emplace_back(buffer, edit.edits);
+            }
+        }
+        catch (const std::exception& e) {
+            ReportError(std::string("\"" + action.title + "\" failed: ") + e.what(), editor::LogCategory::Lsp);
+            return;
+        }
+        ApplyProjectEdit(perBufferEdits, "Applied \"" + action.title + "\".");
     }
     if (!action.command) {
         statusMessage_ = "Applied \"" + action.title + "\".";

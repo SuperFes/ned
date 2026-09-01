@@ -48,8 +48,8 @@ struct ProjectEditTransaction {
 // undo/redo, via BufferView) to turn into a status/echo-area message.
 struct ProjectUndoOutcome {
     std::string              description;
-    std::size_t              totalCount    = 0; // records in the transaction
-    std::size_t              appliedCount  = 0;
+    std::size_t              totalCount   = 0; // records in the transaction
+    std::size_t              appliedCount = 0;
     std::vector<std::string> divergedNames; // buffer names skipped: closed, or edited separately since
 };
 

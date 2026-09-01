@@ -958,14 +958,18 @@ class BufferView : public Widget {
     // cancelled via AcpManager::CancelPermissionPrompt.
     void HandleAcpPermissionPromptKey(const editor::KeyChord& chord);
     // Refuses (reports via statusMessage_, no buffer mutation) if
-    // action.touchesOtherFiles or it has no edit to apply. Otherwise
-    // resolves each WorkspaceTextEdit's LspPositions to byte offsets against
-    // the buffer's CURRENT content (safe without a fresh generation check --
-    // the modal Select/Confirm input modes already block ordinary
-    // typing/editing for the whole exchange), sorts the resolved edits
-    // descending by start byte (so an edit not yet applied keeps a valid
-    // offset as an earlier-in-the-buffer one shifts positions), then applies
-    // each via Buffer::DeleteRange + Buffer::InsertAt.
+    // action.touchesUnsupportedForm (a "documentChanges" WorkspaceEdit --
+    // still unparsed, see LspContent.h) or it has no edit to apply.
+    // Otherwise resolves action.edits' URIs to real paths
+    // (LspManager::ResolveCodeActionEdits, refusing wholesale on any
+    // unresolvable one) and opens/finds every touched buffer first, the
+    // same all-or-nothing-open guarantee ApplyRename establishes -- a code
+    // action's edit can touch more than one file exactly the way a rename
+    // can. Hands the result to ApplyProjectEdit, which resolves each
+    // buffer's own WorkspaceTextEdit LspPositions to byte offsets against
+    // its CURRENT content (safe without a fresh generation check -- the
+    // modal Select/Confirm input modes already block ordinary
+    // typing/editing for the whole exchange) and applies them.
     void ApplyCodeAction(const editor::lsp::CodeAction& action);
     // code-actions-resolve follow-up (factored out for quick-fix). Sends
     // codeAction/resolve first when the action arrived without its edit

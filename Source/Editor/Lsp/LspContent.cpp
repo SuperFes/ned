@@ -75,54 +75,63 @@ namespace {
         };
     }
 
-    // code-actions follow-up. Parses a WorkspaceEdit's "changes" map,
-    // collecting only the TextEdits for ownUri; sets touchesOtherFiles if
-    // the map names any other URI, or if the edit uses "documentChanges"
-    // instead of "changes" at all (a real, more general form -- renames,
-    // file creation -- this v1 doesn't parse). On touchesOtherFiles, the
-    // caller (ExtractCodeActions) discards any collected edits wholesale
-    // rather than applying a partial fix.
-    std::vector<WorkspaceTextEdit> ExtractWorkspaceEditForUri(const Json& edit, const std::string& ownUri, bool& touchesOtherFiles) {
+    // Shared by ExtractWorkspaceEditChanges/ExtractFormattingEdits: one
+    // "changes" map entry's (or a bare formatting response's) TextEdit[]
+    // into WorkspaceTextEdits. An entry missing "range" is skipped, not
+    // treated as a parse error, matching every other ExtractX function in
+    // this file.
+    std::vector<WorkspaceTextEdit> ParseTextEditArray(const Json& editArray) {
         std::vector<WorkspaceTextEdit> edits;
+        for (const Json& textEdit : editArray) {
+            if (!textEdit.is_object() || !textEdit.contains("range")) {
+                continue;
+            }
+            const Json& range = textEdit["range"];
+            edits.push_back(WorkspaceTextEdit{
+                .start   = PositionFromJson(range.value("start", Json::object())),
+                .end     = PositionFromJson(range.value("end", Json::object())),
+                .newText = textEdit.value("newText", std::string()),
+            });
+        }
+        return edits;
+    }
+
+    // project-undo follow-up: shared by ExtractSingleCodeAction and
+    // ExtractRenameEdits -- parses a WorkspaceEdit's "changes" map into one
+    // RenameEdit per named URI, however many that is. Sets
+    // touchesUnsupportedForm and returns empty if the edit uses
+    // "documentChanges" instead of "changes" at all (a real, more general
+    // form -- file creation/rename/deletion, not just edits to existing
+    // ones -- this v1 doesn't parse); the caller refuses the whole result
+    // wholesale in that case rather than applying a partial fix. A URI
+    // whose own edit array is empty after parsing is dropped rather than
+    // kept as a no-op entry.
+    std::vector<RenameEdit> ExtractWorkspaceEditChanges(const Json& edit, bool& touchesUnsupportedForm) {
+        std::vector<RenameEdit> result;
         if (!edit.is_object()) {
-            return edits;
+            return result;
         }
 
         if (edit.contains("documentChanges")) {
-            touchesOtherFiles = true;
-            return edits;
+            touchesUnsupportedForm = true;
+            return result;
         }
 
         const auto changesIt = edit.find("changes");
         if (changesIt == edit.end() || !changesIt->is_object()) {
-            return edits; // no "changes" map at all -- an edit with nothing to apply
+            return result; // no "changes" map at all -- an edit with nothing to apply
         }
 
         for (const auto& [uri, editArray] : changesIt->items()) {
-            if (uri != ownUri) {
-                touchesOtherFiles = true;
-                continue;
-            }
             if (!editArray.is_array()) {
                 continue;
             }
-            for (const Json& textEdit : editArray) {
-                if (!textEdit.is_object() || !textEdit.contains("range")) {
-                    continue;
-                }
-                const Json& range = textEdit["range"];
-                edits.push_back(WorkspaceTextEdit{
-                    .start   = PositionFromJson(range.value("start", Json::object())),
-                    .end     = PositionFromJson(range.value("end", Json::object())),
-                    .newText = textEdit.value("newText", std::string()),
-                });
+            std::vector<WorkspaceTextEdit> edits = ParseTextEditArray(editArray);
+            if (!edits.empty()) {
+                result.push_back(RenameEdit{.uri = uri, .edits = std::move(edits)});
             }
         }
-
-        if (touchesOtherFiles) {
-            return {}; // refused wholesale, not partially applied
-        }
-        return edits;
+        return result;
     }
 
     // symbol-search follow-up. Recurses a single DocumentSymbol object
@@ -347,7 +356,7 @@ CodeAction ExtractSingleCodeAction(const Json& item, const std::string& ownUri) 
 
     if (const auto editIt = item.find("edit"); editIt != item.end()) {
         action.hasEdit = true;
-        action.edits   = ExtractWorkspaceEditForUri(*editIt, ownUri, action.touchesOtherFiles);
+        action.edits   = ExtractWorkspaceEditChanges(*editIt, action.touchesUnsupportedForm);
     }
     else {
         // code-actions-resolve follow-up: "kind" is a real-CodeAction-only
@@ -455,60 +464,16 @@ std::vector<DefinitionLocation> ExtractDefinitionLocations(const Json& result) {
 
 RenameResult ExtractRenameEdits(const Json& result) {
     RenameResult renameResult;
-    if (!result.is_object()) {
-        return renameResult;
-    }
-    if (result.contains("documentChanges")) {
-        renameResult.touchesUnsupportedForm = true;
-        return renameResult;
-    }
-
-    const auto changesIt = result.find("changes");
-    if (changesIt == result.end() || !changesIt->is_object()) {
-        return renameResult; // no edits at all -- e.g. a no-op rename to the same name
-    }
-
-    for (const auto& [uri, editArray] : changesIt->items()) {
-        if (!editArray.is_array()) {
-            continue;
-        }
-        std::vector<WorkspaceTextEdit> edits;
-        for (const Json& textEdit : editArray) {
-            if (!textEdit.is_object() || !textEdit.contains("range")) {
-                continue;
-            }
-            const Json& range = textEdit["range"];
-            edits.push_back(WorkspaceTextEdit{
-                .start   = PositionFromJson(range.value("start", Json::object())),
-                .end     = PositionFromJson(range.value("end", Json::object())),
-                .newText = textEdit.value("newText", std::string()),
-            });
-        }
-        if (!edits.empty()) {
-            renameResult.edits.push_back(RenameEdit{.uri = uri, .edits = std::move(edits)});
-        }
-    }
+    renameResult.edits   = ExtractWorkspaceEditChanges(result, renameResult.touchesUnsupportedForm);
     renameResult.hasEdit = !renameResult.edits.empty();
     return renameResult;
 }
 
 std::vector<WorkspaceTextEdit> ExtractFormattingEdits(const Json& result) {
-    std::vector<WorkspaceTextEdit> edits;
     if (!result.is_array()) {
-        return edits;
+        return {};
     }
-    for (const Json& textEdit : result) {
-        if (!textEdit.is_object() || !textEdit.contains("range")) {
-            continue;
-        }
-        const Json& range = textEdit["range"];
-        edits.push_back(WorkspaceTextEdit{
-            .start   = PositionFromJson(range.value("start", Json::object())),
-            .end     = PositionFromJson(range.value("end", Json::object())),
-            .newText = textEdit.value("newText", std::string()),
-        });
-    }
-    return edits;
+    return ParseTextEditArray(result);
 }
 
 std::vector<DocumentHighlight> ExtractDocumentHighlights(const Json& result) {
