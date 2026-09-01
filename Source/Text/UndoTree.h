@@ -20,6 +20,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "ITextStorage.h"
@@ -52,6 +53,32 @@ class UndoTree {
     // activity). Exposed mainly so callers/tests can confirm branching
     // doesn't discard anything.
     [[nodiscard]] std::size_t ChildCount() const;
+
+    // project-undo follow-up: a per-node identity that, unlike CurrentNodeId()
+    // below, stays valid for the lifetime of the node -- assigned once at
+    // Record() time from a monotonic counter, never recomputed by walking the
+    // tree, so an unrelated Record() elsewhere in the tree can never shift an
+    // already-handed-out value the way CurrentNodeId()'s DFS position can.
+    // Meant to be held onto (Editor/ProjectUndo.h does, across an arbitrary
+    // span of time/other edits) and later re-checked/jumped to, unlike
+    // CurrentNodeId()/Serialize(), which are only ever meant for one
+    // immediate round trip.
+    [[nodiscard]] std::size_t CurrentSequence() const;
+
+    // True if `sequence` still names a live node in this tree (it always
+    // does, once issued -- Record() never discards history -- but a caller
+    // holding a sequence from a *different* UndoTree instance, e.g. the
+    // wrong buffer, should not assume it does).
+    [[nodiscard]] bool HasSequence(std::size_t sequence) const;
+
+    // Moves current directly to the node identified by `sequence` -- O(1),
+    // no parent-chain/child-index walk needed since the node's own address is
+    // already known. Also repoints the jumped-to node's parent's
+    // mostRecentChild at it, so a later plain Redo() from that parent
+    // continues down this branch -- a jump counts as a "visit" the same way
+    // Record()/Redo() already do. No-op (returns false) if `sequence` isn't
+    // known to this tree.
+    bool JumpTo(std::size_t sequence);
 
     // persistent-undo follow-up: a flat, JSON-agnostic view of the whole
     // tree (not just the current-to-root path) for a caller one layer up
@@ -97,10 +124,16 @@ class UndoTree {
         Node*                                parent = nullptr; // non-owning; root_ keeps the tree alive
         std::vector<std::unique_ptr<Node>>  children;
         std::size_t                          mostRecentChild = 0;
+        std::size_t                          sequence        = 0; // see CurrentSequence()'s own doc comment
     };
 
     std::unique_ptr<Node> root_;
     Node*                 current_ = nullptr; // non-owning observer into root_'s tree
+    std::size_t           nextSequence_ = 1;  // 0 is the root's; see CurrentSequence()
+    // Populated alongside every Node's creation (constructor's root, Record(),
+    // Deserialize()) -- a node's `sequence` is never reused, so this never
+    // needs pruning.
+    std::unordered_map<std::size_t, Node*> bySequence_;
 };
 
 } // namespace ned::text

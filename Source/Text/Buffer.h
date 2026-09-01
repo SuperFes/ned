@@ -714,6 +714,26 @@ class Buffer {
     void               Undo();
     void               Redo();
 
+    // project-undo follow-up: a stable identity for the undo node this
+    // buffer is currently on -- unlike CurrentUndoNodeId() below, valid to
+    // hold onto and re-check arbitrarily later (see UndoTree::CurrentSequence's
+    // own doc comment). Editor/ProjectUndo.h captures this immediately
+    // before/after applying one file's half of a multi-file edit, to later
+    // detect whether this buffer has since diverged (been edited again on
+    // its own) before attempting to fold it into a project-wide undo/redo.
+    [[nodiscard]] std::size_t CurrentUndoSequence() const;
+
+    // Moves directly to the undo node identified by `sequence`, running the
+    // same post-move bookkeeping Undo()/Redo() do (secondary cursors/snippet
+    // ranges cleared, cursors clamped, ContentGeneration_ bumped, unsaved/
+    // excerpt ranges rediffed against the prior content) -- the three are
+    // otherwise identical but for which UndoTree_ navigation call they make.
+    // Returns false (no-op) if `sequence` isn't a node in this buffer's own
+    // tree -- a caller-contract violation (the sequence came from a
+    // different buffer, or predates this buffer's content being replaced
+    // wholesale), not a normal runtime condition.
+    bool TryJumpToUndoSequence(std::size_t sequence);
+
     // persistent-undo follow-up: hands the whole UndoTree out as a flat,
     // JSON-agnostic node list plus which node is current -- Editor/
     // PersistentUndo.h is what actually serializes this to disk; Buffer/
@@ -1039,6 +1059,17 @@ class Buffer {
     // resets CanAmend_ so a keystroke immediately after an append always
     // starts its own fresh step too.
     void RecordOrAmendLoadAppend();
+
+    // Shared by Undo()/Redo()/TryJumpToUndoSequence(): applies UndoTree_'s
+    // now-current node's content as Storage_ plus every side effect that
+    // needs to follow (clearing secondary cursors/snippet ranges, clamping
+    // cursors, bumping ContentGeneration_, rediffing unsaved/excerpt
+    // ranges against oldStorage) -- called after the caller has already
+    // moved UndoTree_'s own current node (Undo()/Redo()/JumpTo()).
+    // oldStorage is Storage_'s content from just before that move, cloned
+    // (never materialized -- see UpdateUnsavedRangesForRestore's own
+    // comment) by the caller before it happened.
+    void ApplyUndoTreeNavigation(const ITextStorage& oldStorage);
 
     // Shared by Undo()/Redo(): oldStorage is Storage_'s content just before
     // the restore that already happened by the time this runs -- a clone

@@ -11,9 +11,11 @@
 namespace ned::text {
 
 UndoTree::UndoTree(std::unique_ptr<ITextStorage> initialState) {
-    root_        = std::make_unique<Node>();
-    root_->state = std::move(initialState);
-    current_     = root_.get();
+    root_           = std::make_unique<Node>();
+    root_->state    = std::move(initialState);
+    root_->sequence = 0;
+    current_        = root_.get();
+    bySequence_.emplace(0, root_.get());
 }
 
 const ITextStorage& UndoTree::Current() const {
@@ -21,15 +23,17 @@ const ITextStorage& UndoTree::Current() const {
 }
 
 void UndoTree::Record(std::unique_ptr<ITextStorage> newState) {
-    auto child    = std::make_unique<Node>();
-    child->state  = std::move(newState);
-    child->parent = current_;
+    auto child      = std::make_unique<Node>();
+    child->state    = std::move(newState);
+    child->parent   = current_;
+    child->sequence = nextSequence_++;
 
     Node* childPtr = child.get();
 
     current_->children.push_back(std::move(child));
     current_->mostRecentChild = current_->children.size() - 1;
     current_                  = childPtr;
+    bySequence_.emplace(childPtr->sequence, childPtr);
 }
 
 void UndoTree::Amend(std::unique_ptr<ITextStorage> newState) {
@@ -60,6 +64,32 @@ void UndoTree::Redo() {
 
 std::size_t UndoTree::ChildCount() const {
     return current_->children.size();
+}
+
+std::size_t UndoTree::CurrentSequence() const {
+    return current_->sequence;
+}
+
+bool UndoTree::HasSequence(std::size_t sequence) const {
+    return bySequence_.contains(sequence);
+}
+
+bool UndoTree::JumpTo(std::size_t sequence) {
+    const auto it = bySequence_.find(sequence);
+    if (it == bySequence_.end()) {
+        return false;
+    }
+    Node* const target = it->second;
+    if (target->parent != nullptr) {
+        for (std::size_t i = 0; i < target->parent->children.size(); ++i) {
+            if (target->parent->children[i].get() == target) {
+                target->parent->mostRecentChild = i;
+                break;
+            }
+        }
+    }
+    current_ = target;
+    return true;
 }
 
 std::vector<UndoTree::SerializedNode> UndoTree::Serialize() const {
@@ -154,6 +184,12 @@ UndoTree UndoTree::Deserialize(const std::vector<SerializedNode>& nodes, std::si
     std::unordered_map<std::size_t, Node*>                 live;
     owned.reserve(nodes.size());
     live.reserve(nodes.size());
+    // Sequences have no persisted meaning to restore -- CurrentSequence()'s
+    // own doc comment establishes they're an in-memory-only identity
+    // (Editor/ProjectUndo.h's project-wide undo stacks don't survive a
+    // restart either) -- so a fresh sequence is simply assigned per node in
+    // nodes' own order.
+    std::size_t nextSeq = 1;
     for (const auto& node : nodes) {
         auto n             = std::make_unique<Node>();
         // Deserialize always reconstructs a Rope-backed snapshot -- see
@@ -162,6 +198,7 @@ UndoTree UndoTree::Deserialize(const std::vector<SerializedNode>& nodes, std::si
         // in the first place).
         n->state           = std::make_unique<RopeStorage>(Rope(node.content));
         n->mostRecentChild = node.mostRecentChild;
+        n->sequence        = (node.id == *rootId) ? 0 : nextSeq++;
         live[node.id]      = n.get();
         owned[node.id]     = std::move(n);
     }
@@ -178,6 +215,11 @@ UndoTree UndoTree::Deserialize(const std::vector<SerializedNode>& nodes, std::si
     UndoTree tree{std::make_unique<RopeStorage>()};
     tree.root_    = std::move(owned.at(*rootId));
     tree.current_ = live.at(currentId);
+    tree.nextSequence_ = nextSeq;
+    tree.bySequence_.clear();
+    for (const auto& [id, node] : live) {
+        tree.bySequence_.emplace(node->sequence, node);
+    }
     return tree;
 }
 
