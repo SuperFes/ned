@@ -140,3 +140,55 @@ TEST_CASE("Deserialize rejects malformed node lists", "[UndoTree]") {
     REQUIRE_THROWS_AS(UndoTree::Deserialize({Node{0, std::nullopt, "a", 0}, Node{0, std::nullopt, "b", 0}}, 0),
                       std::runtime_error); // duplicate id
 }
+
+TEST_CASE("CurrentSequence is stable across unrelated Record() calls elsewhere in the tree", "[UndoTree]") {
+    // project-undo follow-up: this is exactly the property CurrentNodeId()
+    // (a DFS-recomputed index) does NOT have -- the reason a separate
+    // sequence exists at all. See UndoTree.h's own doc comment.
+    UndoTree tree(Snapshot("start"));
+    tree.Record(Snapshot("start+1"));
+    const std::size_t seq1 = tree.CurrentSequence();
+    tree.Undo();
+
+    // Record an unrelated sibling branch off root -- in a DFS-preorder
+    // numbering this would shift every id that comes after it.
+    tree.Record(Snapshot("other-branch"));
+    REQUIRE(tree.HasSequence(seq1));
+
+    tree.JumpTo(seq1);
+    REQUIRE(tree.Current().ToString() == "start+1");
+    REQUIRE(tree.CurrentSequence() == seq1);
+}
+
+TEST_CASE("JumpTo moves directly to a node by sequence, skipping intermediate nodes", "[UndoTree]") {
+    UndoTree tree(Snapshot("start"));
+    tree.Record(Snapshot("start+1"));
+    const std::size_t seq1 = tree.CurrentSequence();
+    tree.Record(Snapshot("start+2"));
+    tree.Record(Snapshot("start+3"));
+
+    REQUIRE(tree.JumpTo(seq1));
+    REQUIRE(tree.Current().ToString() == "start+1");
+    REQUIRE(tree.CanUndo());
+    REQUIRE(tree.CanRedo());
+
+    REQUIRE_FALSE(tree.JumpTo(999)); // unknown sequence -- no-op, current unchanged
+    REQUIRE(tree.Current().ToString() == "start+1");
+}
+
+TEST_CASE("JumpTo repoints the parent's mostRecentChild so a later plain Redo() follows the jumped-to branch", "[UndoTree]") {
+    UndoTree tree(Snapshot("start"));
+    tree.Record(Snapshot("branch-A")); // sequence 1
+    tree.Undo();
+    tree.Record(Snapshot("branch-B")); // sequence 2, now mostRecentChild
+    tree.Undo();
+    REQUIRE(tree.Current().ToString() == "start");
+
+    REQUIRE(tree.JumpTo(1)); // jump to branch-A, a "visit" of that child
+    REQUIRE(tree.Current().ToString() == "branch-A");
+
+    tree.Undo();
+    REQUIRE(tree.Current().ToString() == "start");
+    tree.Redo();
+    REQUIRE(tree.Current().ToString() == "branch-A"); // not branch-B
+}

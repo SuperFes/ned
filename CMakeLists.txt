@@ -951,6 +951,7 @@ if (NED_BUILD_TESTS)
             Tests/ScratchPadTest.cpp
             Tests/BackupTest.cpp
             Tests/PersistentUndoTest.cpp
+            Tests/ProjectUndoTest.cpp
             Tests/DiagnosticsLogTest.cpp
             Tests/SessionTest.cpp
             Tests/RecentFilesTest.cpp
