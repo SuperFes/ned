@@ -1,6 +1,7 @@
 #include "ListPopup.h"
 
 #include <algorithm>
+#include <cctype>
 #include <utility>
 
 #include "Border.h"
@@ -53,6 +54,61 @@ namespace {
         return count;
     }
 
+    // completion-popup-preview follow-up: a plain greedy word-wrap -- no
+    // markdown rendering, no paragraph-break preservation (all whitespace,
+    // including a literal "\n\n" a multi-entry hover-style join can
+    // produce, collapses to a single space between words), matching
+    // lsp-hover's own flat-text precedent. Scans raw bytes for ASCII
+    // whitespace (safe against UTF-8 content: a continuation byte is
+    // always >= 0x80, never mistaken for a space/tab/newline), but walks
+    // a word's own span via NextCodepointBoundary so a multi-byte glyph
+    // is never split. A single word wider than `width` is never
+    // hyphenated -- it just overflows that one line, same "don't grow a
+    // parallel narrow-case path" call DisplayColumnCount's own truncation
+    // callers already make.
+    std::vector<std::string> WrapText(const std::string& text, int width) {
+        std::vector<std::string> lines;
+        if (width <= 0) {
+            return lines;
+        }
+
+        std::vector<std::string> words;
+        std::size_t              pos = 0;
+        while (pos < text.size()) {
+            while (pos < text.size() && std::isspace(static_cast<unsigned char>(text[pos]))) {
+                ++pos;
+            }
+            const std::size_t start = pos;
+            while (pos < text.size() && !std::isspace(static_cast<unsigned char>(text[pos]))) {
+                pos = text::NextCodepointBoundary(text, pos);
+            }
+            if (pos > start) {
+                words.push_back(text.substr(start, pos - start));
+            }
+        }
+
+        std::string currentLine;
+        int         currentWidth = 0;
+        for (const std::string& word : words) {
+            const int wordWidth = DisplayColumnCount(word);
+            if (!currentLine.empty() && currentWidth + 1 + wordWidth > width) {
+                lines.push_back(std::move(currentLine));
+                currentLine.clear();
+                currentWidth = 0;
+            }
+            if (!currentLine.empty()) {
+                currentLine += ' ';
+                ++currentWidth;
+            }
+            currentLine += word;
+            currentWidth += wordWidth;
+        }
+        if (!currentLine.empty()) {
+            lines.push_back(std::move(currentLine));
+        }
+        return lines;
+    }
+
 } // namespace
 
 ListPopup::ListPopup(const Theme& theme) : theme_(theme) {
@@ -63,7 +119,11 @@ void ListPopup::SetModel(ListPopupModel model) {
 }
 
 int ListPopup::ContentRowCount() const {
-    return static_cast<int>(model_.rows.size()) + 2; // + top/bottom border rows
+    int rows = static_cast<int>(model_.rows.size()) + 2; // + top/bottom border rows
+    if (model_.previewText) {
+        rows += 1 + kPreviewMaxLines; // + one divider row + the fixed preview budget
+    }
+    return rows;
 }
 
 std::optional<Point> ListPopup::Anchor() const {
@@ -162,14 +222,47 @@ void ListPopup::Paint(Canvas c) {
         }
         ++row;
     }
+
+    // completion-popup-preview follow-up: the wrapped-text footer, drawn
+    // below whatever rows fit (skipped entirely once there's no room left
+    // for even the divider row -- same "silently truncate" convention the
+    // row loop above already follows for its own overflow).
+    if (model_.previewText && row < height - 1) {
+        for (int x = 1; x < width - 1; ++x) {
+            c[{.x = x, .y = row}].character = text::EncodeCodepointUtf8(RoundedBorderGlyphs().horizontal);
+            labelBrush.ApplyTo(c[{.x = x, .y = row}]);
+        }
+        ++row;
+
+        const std::vector<std::string> lines = WrapText(*model_.previewText, width - 3); // 1-col margin each side + border
+        for (std::size_t i = 0; i < lines.size() && i < static_cast<std::size_t>(kPreviewMaxLines) && row < height - 1; ++i) {
+            // More wrapped lines exist past this one -- reserve the row's
+            // own last column for a "…" marker rather than slicing lines[i]
+            // itself (which could land mid-codepoint); PaintRowText is
+            // capped one column short instead, so the marker never
+            // overwrites real text.
+            const bool truncated = (i + 1 == static_cast<std::size_t>(kPreviewMaxLines)) && lines.size() > static_cast<std::size_t>(kPreviewMaxLines);
+            const int  lineWidth = truncated ? width - 1 : width;
+            PaintRowText(c, 2, lineWidth, row, lines[i], labelBrush);
+            if (truncated) {
+                Cell& cell     = c[{.x = width - 2, .y = row}];
+                cell.character = "…";
+                labelBrush.ApplyTo(cell);
+            }
+            ++row;
+        }
+    }
 }
 
 bool ListPopup::OnEvent(const Event& event) {
+    // mouse-support follow-up: mouse dispatch no longer sits behind the
+    // focus guard below -- a non-focusable consumer (the completion popup)
+    // never calls TakeFocus() but still wants clicks handled.
+    if (event.is_mouse()) {
+        return HandleMouseEvent(event);
+    }
     if (!focusable_ || !Focused()) {
         return false;
-    }
-    if (event.is_mouse()) {
-        return false; // click-to-select is a future follow-up, not required by any current consumer
     }
     return HandleKeyEvent(event);
 }
@@ -235,6 +328,33 @@ bool ListPopup::HandleKeyEvent(const Event& event) {
         onKey_(*chord);
     }
     return true; // every other key is consumed while this widget holds focus
+}
+
+bool ListPopup::HandleMouseEvent(const Event& event) {
+    const std::optional<MouseEvent> mouse = LocalMouseEvent(event);
+    if (!mouse) {
+        return true; // outside this popup's own Box_() -- can't happen in practice
+                     // (OverlayHost only forwards a click already inside it), but
+                     // consumed regardless, matching every other mouse handler here
+    }
+    if (mouse->button != MouseEvent::Button::Left || mouse->motion != MouseEvent::Motion::Pressed) {
+        return true; // only a left press activates a row -- everything else (release,
+                     // other buttons, motion) is a no-op click-wise, still consumed
+    }
+
+    const int row = mouse->at.y - 1; // row 0 (local y=0) is the top border
+    if (row < 0 || static_cast<std::size_t>(row) >= model_.rows.size()) {
+        return true; // border, preview footer, or past the last row -- no target
+    }
+
+    const auto index = static_cast<std::size_t>(row);
+    if (onHighlightChange_) {
+        onHighlightChange_(index);
+    }
+    if (onActivate_) {
+        onActivate_(index);
+    }
+    return true;
 }
 
 } // namespace ned::ui

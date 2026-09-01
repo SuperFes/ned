@@ -95,14 +95,29 @@ Notcurses.
       roots can shadow each other's legend/status/progress-label; every actual request
       still routes to the correct per-root connection regardless (see `LspManager.h`'s
       own header comment).
-- [ ] **Completion popup, remainder** (completion-popup follow-up: replaced ghost text
-      wholesale with a real `ListPopup`, anchored at point, kind glyph + label + detail
-      column, `Tab` accepts, `Up`/`Down`/`M-n`/`M-p` cycle — shipped) — still open: no
-      documentation/markdown preview alongside the popup (a real "hover-doc panel next
-      to the candidate list" is a plausible follow-up, distinct from `lsp-hover`'s own
-      echo-area/callout display); no mouse click-to-select/accept (`ListPopup`'s own
-      non-focusable mode has never wired mouse input for any consumer — a generic gap,
-      not specific to completion).
+- [ ] **`ListPopup` mouse support, remainder** (mouse-support follow-up: click-to-
+      select-and-activate shipped for `BufferListPanel` — free, its existing
+      `SetOnHighlightChange`/`SetOnActivate` wiring just started receiving mouse events
+      too — and for the completion popup, via a new `BufferView::
+      AcceptActiveCompletionAt`/`WindowManager::ActivateCompletionAt` pair) — still open:
+      the shared M-x/find-file/find-recent-file/bookmark-jump/select-theme/document-
+      symbol/workspace-symbol/code-action-select/definition-select candidate popup
+      (`candidatePopup` in `main.cpp`) has no click support at all. Confirmed by grepping
+      `BufferView.cpp` directly: only `HandleCodeActionSelectKey`/
+      `HandleDefinitionSelectKey` (fixed short lists) special-case a plain `'1'`-`'9'`
+      keystroke as jump-select; every free-text-filtered session (M-x and the rest)
+      treats a digit as literal query text, so a "synthesize a digit chord on click"
+      shortcut isn't safely generalizable across all ~9 of its driving sessions — it
+      would misbehave (insert a digit into the filter) for most of them. Wiring this
+      properly needs a real per-session "activate index N" entry point generalized
+      across every `Handle*Key` method that drives this popup, a materially bigger
+      effort than the two consumers above. which-key's own popup stays intentionally
+      mouse-free (read-only hint, no row is a sensible click target). Also out of scope
+      for either popup: hover-highlight-on-mouse-move (bare motion events reaching
+      `ListPopup::OnEvent` isn't confirmed for this terminal backend) and wheel-scroll
+      (a driving session's `rows` is already a pre-truncated window with synthetic "N
+      more above/below" rows baked in — scrolling it is session-level, not something
+      `ListPopup` itself does).
 
 ### Navigation & Search
 

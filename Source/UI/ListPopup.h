@@ -74,6 +74,17 @@ struct ListPopupModel {
     // model directly, the same "widget echoes back one derived fact"
     // shape ContentRowCount() already establishes.
     std::optional<Point> anchor;
+
+    // completion-popup-preview follow-up: word-wrapped free text shown as a
+    // footer below the candidate rows, separated by one divider row --
+    // e.g. a completion item's LSP documentation. Unset (every consumer but
+    // the completion popup) keeps the existing rows-only layout untouched.
+    // Rendered against ListPopup::kPreviewMaxLines regardless of how many
+    // lines the real wrap needs (truncated with an ellipsis past that), so
+    // sizing never depends on the popup's own (fixed, placement-function-
+    // chosen) width -- see ListPopup.cpp's own Paint()/ContentRowCount()
+    // comments for why.
+    std::optional<std::string> previewText;
 };
 
 class ListPopup : public Widget {
@@ -87,10 +98,18 @@ class ListPopup : public Widget {
     void SetModel(ListPopupModel model);
 
     // Rows the current model needs to display in full (rows.size() + 2 for
-    // the border), before any placement-side height cap -- the placement
-    // function uses this to size the popup's Box without needing its own
-    // copy of the model.
+    // the border, plus a fixed budget for model_.previewText when set --
+    // see ListPopupModel::previewText's own doc comment), before any
+    // placement-side height cap -- the placement function uses this to
+    // size the popup's Box without needing its own copy of the model.
     [[nodiscard]] int ContentRowCount() const;
+
+    // completion-popup-preview follow-up: the fixed row budget
+    // ListPopupModel::previewText gets, regardless of how many lines its
+    // real word-wrap needs at paint time -- see ListPopupModel::
+    // previewText's own doc comment for why this is a constant rather than
+    // computed from content.
+    static constexpr int kPreviewMaxLines = 4;
 
     // completion-popup follow-up: the current model's anchor, for a
     // placement function to position this popup near (see ListPopupModel::
@@ -105,11 +124,18 @@ class ListPopup : public Widget {
         return focusable_;
     }
 
-    // Focus-mode callbacks -- ignored entirely in non-focus mode, since
-    // OnEvent is never reached there (nothing ever calls TakeFocus() on a
-    // non-focusable widget).
+    // mouse-support follow-up: onHighlightChange_/onActivate_ were
+    // originally focus-mode-only (only ever fired from keyboard handling,
+    // which requires TakeFocus()) -- a mouse click now fires them too,
+    // regardless of focus mode (see HandleMouseEvent's own doc comment),
+    // so a non-focusable consumer that wants click support (the completion
+    // popup) can set these without ever calling SetFocusable(true). A
+    // non-focusable consumer that leaves them unset (which-key,
+    // candidatePopup) is unaffected -- a click there is simply a no-op.
     void SetOnHighlightChange(std::function<void(std::size_t)> onHighlightChange);
     void SetOnActivate(std::function<void(std::size_t)> onActivate);
+    // onCancel_/onKey_ stay focus-mode-only, unlike the two above -- mouse
+    // has no Escape/"any other key" equivalent to drive them from.
     void SetOnCancel(std::function<void()> onCancel);
     void SetOnKey(std::function<void(const editor::KeyChord&)> onKey);
 
@@ -127,6 +153,20 @@ class ListPopup : public Widget {
     std::function<void(const editor::KeyChord&)>    onKey_;
 
     bool HandleKeyEvent(const Event& event);
+
+    // mouse-support follow-up: handles a mouse event regardless of
+    // focus/focusable mode (OnEvent routes every mouse event here before
+    // the keyboard path's focus guard). A press inside a row's own area
+    // (Widget::LocalMouseEvent's local coords, row = local.y - 1 for the
+    // top border) fires onHighlightChange_ then onActivate_ for that row
+    // -- select-and-activate together, the same one-motion convenience
+    // HandleKeyEvent's own digit-jump branch already gives keyboard users.
+    // A click on the border, the preview footer, or outside the model's
+    // row count is a no-op. Always returns true (mouse events landing
+    // here already passed OverlayHost's own containment test -- see
+    // Overlay.h -- so there is nothing else for this click to fall
+    // through to).
+    bool HandleMouseEvent(const Event& event);
 };
 
 } // namespace ned::ui

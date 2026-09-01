@@ -340,11 +340,19 @@ std::vector<CompletionItem> ExtractCompletionItems(const Json& result) {
         const bool  isSnippet = item.value("insertTextFormat", 1) == 2;
         const int   kind      = item.value("kind", 0);
         std::string detail    = item.value("detail", std::string());
-        items.push_back(CompletionItem{.label      = std::move(label),
-                                       .insertText = std::move(insertText),
-                                       .isSnippet  = isSnippet,
-                                       .kind       = kind,
-                                       .detail     = std::move(detail)});
+        // completion-popup-preview follow-up: wraps the raw "documentation" value in
+        // the same {"contents": ...} shape ExtractHoverText already expects, reusing
+        // its string-or-MarkupContent extraction verbatim instead of duplicating it.
+        std::string documentation;
+        if (const auto docIt = item.find("documentation"); docIt != item.end()) {
+            documentation = ExtractHoverText(Json{{"contents", *docIt}}).value_or(std::string());
+        }
+        items.push_back(CompletionItem{.label         = std::move(label),
+                                       .insertText    = std::move(insertText),
+                                       .isSnippet     = isSnippet,
+                                       .kind          = kind,
+                                       .detail        = std::move(detail),
+                                       .documentation = std::move(documentation)});
     }
     return items;
 }

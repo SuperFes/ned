@@ -521,6 +521,18 @@ class BufferView : public Widget {
     // ListPopup overlay. Unset is a safe no-op.
     void SetOnCompletionChanged(std::function<void(std::optional<ListPopupModel>)> handler);
 
+    // mouse-support follow-up: the click-driven counterpart to
+    // AcceptActiveCompletion() -- accepts whichever row was clicked rather
+    // than whatever's currently selected (a click and the current selection
+    // needn't agree; a click is itself a selection). A no-op if
+    // activeCompletion_ is unset or index is out of range (e.g. a stale
+    // click racing a just-cleared popup). Public (unlike
+    // AcceptActiveCompletion() and activeCompletion_ itself) because the
+    // click arrives from outside this class -- WindowManager::
+    // ActivateCompletionAt forwards here from the completion popup's own
+    // ListPopup::SetOnActivate in main.cpp.
+    void AcceptActiveCompletionAt(std::size_t index);
+
     // per-buffer-mode follow-up: called at the top of Paint() whenever the
     // active buffer's identity has changed since the last Paint() call --
     // the same "recompute, don't cache, detect via pointer identity" idiom

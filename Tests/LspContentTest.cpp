@@ -471,6 +471,20 @@ TEST_CASE("ExtractCompletionItems reads kind and detail when present", "[Lsp]") 
     REQUIRE(items[1].detail.empty());
 }
 
+TEST_CASE("ExtractCompletionItems reads documentation, both string and MarkupContent form", "[Lsp]") {
+    // completion-popup-preview follow-up.
+    const auto                        result = ned::editor::lsp::Json::array({
+        {{"label", "foo"}, {"insertText", "foo"}, {"documentation", "plain string doc"}},
+        {{"label", "bar"}, {"insertText", "bar"}, {"documentation", {{"kind", "markdown"}, {"value", "**bold** doc"}}}},
+        {{"label", "baz"}, {"insertText", "baz"}},
+    });
+    const std::vector<CompletionItem> items  = ExtractCompletionItems(result);
+    REQUIRE(items.size() == 3);
+    REQUIRE(items[0].documentation == "plain string doc");
+    REQUIRE(items[1].documentation == "**bold** doc"); // MarkupContent -- value extracted, kind ignored
+    REQUIRE(items[2].documentation.empty());           // absent -> unset
+}
+
 TEST_CASE("ExtractSignatureHelp wraps the active parameter's string label in guillemets", "[Lsp]") {
     const Json result = {
         {"signatures", Json::array({{{"label", "foo(a: int, b: string)"},

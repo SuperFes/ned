@@ -6766,6 +6766,90 @@ TEST_CASE("Completion popup hides when point's row scrolls off screen, but the s
     REQUIRE(buffer.Text().starts_with("foobar"));
 }
 
+TEST_CASE("A completion item's documentation populates the popup's previewText", "[BufferView]") {
+    // completion-popup-preview follow-up.
+    Fixture                     fixture;
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_bufferview_lsp_complete_doc_test.txt";
+    ned::text::Buffer&          buffer = fixture.bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("fo");
+    fixture.activeBuffer.Set(buffer);
+
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::LspClient* client = nullptr;
+    FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    CaptureCompletion(view, fixture.completion);
+
+    ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
+    ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+    (void)ReadRawLspFrame(server.serverStdinRead);
+
+    view.OnEvent(ManualCompleteEvent());
+    const std::string raw      = ReadRawLspFrame(server.serverStdinRead);
+    const auto        response = ned::editor::lsp::Json{
+        {"jsonrpc", "2.0"},
+        {"id", LspRequestIdFromFrame(raw)},
+        {"result", ned::editor::lsp::Json::array(
+                       {{{"label", "foobar"}, {"insertText", "foobar"}, {"documentation", "does a thing"}},
+                        {{"label", "foobaz"}, {"insertText", "foobaz"}}})}, // no documentation
+    };
+    client->DispatchFrame(response.dump());
+
+    REQUIRE(fixture.completion.has_value());
+    REQUIRE(fixture.completion->previewText == "does a thing");
+
+    view.OnEvent(ned::ui::test::ArrowDown()); // select "foobaz", which has none
+    REQUIRE_FALSE(fixture.completion->previewText.has_value());
+}
+
+TEST_CASE("AcceptActiveCompletionAt accepts the given index regardless of the current selection", "[BufferView]") {
+    // mouse-support follow-up: the click-driven counterpart to Tab's
+    // "accept whatever's selected" -- a click supplies its own index.
+    Fixture                     fixture;
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_bufferview_lsp_complete_click_test.txt";
+    ned::text::Buffer&          buffer = fixture.bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("fo");
+    fixture.activeBuffer.Set(buffer);
+
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::LspClient* client = nullptr;
+    FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    CaptureCompletion(view, fixture.completion);
+
+    ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
+    ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+    (void)ReadRawLspFrame(server.serverStdinRead);
+
+    view.OnEvent(ManualCompleteEvent());
+    const std::string raw      = ReadRawLspFrame(server.serverStdinRead);
+    const auto        response = ned::editor::lsp::Json{
+        {"jsonrpc", "2.0"},
+        {"id", LspRequestIdFromFrame(raw)},
+        {"result", ned::editor::lsp::Json::array({{{"label", "foobar"}, {"insertText", "foobar"}}, {{"label", "foobaz"}, {"insertText", "foobaz"}}})},
+    };
+    client->DispatchFrame(response.dump());
+    REQUIRE(CompletionSelectedLabel(fixture.completion) == "foobar"); // selection still at index 0
+
+    view.AcceptActiveCompletionAt(1); // click on the *second* row, never selected
+    REQUIRE(buffer.Text() == "foobaz");
+    REQUIRE_FALSE(fixture.completion.has_value()); // popup hides, same as Tab
+
+    // Out-of-range/stale click is a no-op, not a crash.
+    view.AcceptActiveCompletionAt(5);
+    REQUIRE(buffer.Text() == "foobaz");
+}
+
 // documentHighlight follow-up.
 TEST_CASE("M-x lsp-document-highlight paints every reported occurrence with the document-highlight background",
           "[BufferView]") {

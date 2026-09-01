@@ -404,6 +404,13 @@ class WindowManager {
     // HandlePromptKey already offers, instead of just reporting a refusal.
     void RequestOpenBinaryFile(const std::filesystem::path& path);
 
+    // mouse-support follow-up: same "route to whichever pane is currently
+    // focused" shape as RequestCloseBuffer/RequestOpenBinaryFile above --
+    // wired to the completion popup's own ListPopup::SetOnActivate in
+    // main.cpp, so a click on a completion row accepts it the same way
+    // Tab does. See BufferView::AcceptActiveCompletionAt's own doc comment.
+    void ActivateCompletionAt(std::size_t index);
+
     // session-persistence slice 3: routes the .ned/init.janet trust prompt
     // to whichever pane has focus -- RequestOpenBinaryFile's exact shape;
     // see BufferView::RequestTrustProjectInit for the prompt's own

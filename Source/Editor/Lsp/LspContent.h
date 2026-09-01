@@ -47,6 +47,14 @@ struct CompletionItem {
     int         kind = 0;
     std::string detail;
 
+    // completion-popup-preview follow-up: the server's completionItem.documentation
+    // (string | MarkupContent per the spec), joined/flattened the same way
+    // ExtractHoverText already does for hover's own "contents" field -- reused
+    // directly rather than re-implementing the string-or-MarkupContent extraction.
+    // Empty when the server omitted it (dabbrev/Janet-binding synthesized items
+    // always leave this empty -- no doc source to draw from).
+    std::string documentation;
+
     bool operator==(const CompletionItem&) const = default;
 };
 
