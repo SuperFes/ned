@@ -94,7 +94,7 @@ class Pane {
          std::string& statusMessage, const Theme& theme,
          ProjectSidebar* projectSidebar, editor::lsp::LspManager* lspManager, editor::tasks::TaskRunner* taskRunner,
          editor::testrun::TestRunner* testRunner, editor::vcs::VcsRunner* vcsRunner, editor::dap::DapManager* dapManager,
-         editor::acp::AcpManager* acpManager, const janet::Environment* janetEnv,
+         editor::acp::AcpManager* acpManager, editor::ProjectUndoManager* projectUndo, const janet::Environment* janetEnv,
          std::function<void(editor::InteractiveRequest)> onWindowRequest, std::function<void(text::Buffer&)> onBufferClosed);
 
     Pane(const Pane&)            = delete;
@@ -340,6 +340,10 @@ class WindowManager {
     // capturing some pane that may have been closed by then (identical
     // reasoning to SetDapManager's own SetOnStopped wiring).
     void SetAcpManager(editor::acp::AcpManager* acpManager);
+
+    // project-undo follow-up: same "forwarded to every pane, present and
+    // future" shape as SetLspManager/SetTaskRunner above.
+    void SetProjectUndo(editor::ProjectUndoManager* projectUndo);
 
     // Self-hosting-completion follow-up: same "forwarded to every pane,
     // present and future" shape as SetLspManager above -- see
@@ -635,6 +639,7 @@ class WindowManager {
     editor::vcs::VcsRunner*           vcsRunner_      = nullptr;
     editor::dap::DapManager*          dapManager_     = nullptr; // see SetDapManager
     editor::acp::AcpManager*          acpManager_     = nullptr; // see SetAcpManager
+    editor::ProjectUndoManager*       projectUndo_    = nullptr; // see SetProjectUndo
     const janet::Environment*         janetEnv_       = nullptr; // see SetJanetEnvironment
     EventLoop*                        eventLoop_      = nullptr; // see SetEventLoop
     std::function<void(const Theme&)> themeApplier_;             // see SetThemeApplier

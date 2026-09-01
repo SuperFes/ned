@@ -44,6 +44,7 @@
 #include "Editor/ProjectRoot.h"
 #include "Editor/ProjectSession.h"
 #include "Editor/ProjectTrust.h"
+#include "Editor/ProjectUndo.h"
 #include "Editor/PromptHistory.h"
 #include "Editor/RecentFiles.h"
 #include "Editor/Register.h"
@@ -1023,6 +1024,13 @@ auto main(int argc, char** argv) -> int {
     // connect after construction" convention.
     ned::editor::tasks::TaskRunner taskRunner(bufferList, eventLoop);
     windowManager->SetTaskRunner(&taskRunner);
+
+    // project-undo follow-up: no EventLoop/subprocess dependency (unlike
+    // every manager around it) -- just a process-lifetime, in-memory
+    // undo/redo transaction log. Same "wired into windowManager, connect
+    // after construction" convention regardless.
+    ned::editor::ProjectUndoManager projectUndo;
+    windowManager->SetProjectUndo(&projectUndo);
 
     // test-runner integration: same shape as taskRunner just above. The
     // outcome hook keeps an already-open "*test results*" buffer live --

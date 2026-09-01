@@ -184,7 +184,7 @@ Pane::Pane(text::Buffer& buffer, text::KillRing& killRing, editor::RegisterTable
            std::string& statusMessage, const Theme& theme, ProjectSidebar* projectSidebar,
            editor::lsp::LspManager* lspManager, editor::tasks::TaskRunner* taskRunner,
            editor::testrun::TestRunner* testRunner, editor::vcs::VcsRunner* vcsRunner, editor::dap::DapManager* dapManager,
-           editor::acp::AcpManager* acpManager, const janet::Environment* janetEnv,
+           editor::acp::AcpManager* acpManager, editor::ProjectUndoManager* projectUndo, const janet::Environment* janetEnv,
            std::function<void(editor::InteractiveRequest)> onWindowRequest,
            std::function<void(text::Buffer&)>              onBufferClosed) : activeBuffer_(buffer), mode_(std::move(mode)),
                                                                 dispatcher_(registry, editor::KeymapStack({&janetKeymap, &mode_.keymap, &globalKeymap})),
@@ -253,6 +253,7 @@ Pane::Pane(text::Buffer& buffer, text::KillRing& killRing, editor::RegisterTable
     bufferView_->SetVcsRunner(vcsRunner);
     bufferView_->SetDapManager(dapManager);
     bufferView_->SetAcpManager(acpManager);
+    bufferView_->SetProjectUndo(projectUndo);
     // user-facing-hang-affordance follow-up: every real, composed pane opts
     // into the live *Messages* alert -- see BufferView::
     // SetSurfaceUnseenLogEntries's own doc comment for why this is opt-in
@@ -513,7 +514,7 @@ std::unique_ptr<Pane> WindowManager::MakePane(text::Buffer& buffer, editor::Mode
     auto pane = std::make_unique<Pane>(
         buffer, killRing_, registers_, promptHistory_, bufferList_, registry_, janetKeymap_, globalKeymap_, std::move(mode),
         statusMessage_, theme_, projectSidebar_, lspManager_, taskRunner_, testRunner_, vcsRunner_, dapManager_, acpManager_,
-        janetEnv_,
+        projectUndo_, janetEnv_,
         [this](editor::InteractiveRequest request) { HandleWindowRequest(request); },
         [this](text::Buffer& closedBuffer) { HandleBufferClosed(closedBuffer); });
     pane->SetEventLoop(eventLoop_);
@@ -609,6 +610,13 @@ void WindowManager::SetTaskRunner(editor::tasks::TaskRunner* taskRunner) {
     taskRunner_ = taskRunner;
     for (Pane* pane : Leaves()) {
         pane->Buffer().SetTaskRunner(taskRunner);
+    }
+}
+
+void WindowManager::SetProjectUndo(editor::ProjectUndoManager* projectUndo) {
+    projectUndo_ = projectUndo;
+    for (Pane* pane : Leaves()) {
+        pane->Buffer().SetProjectUndo(projectUndo);
     }
 }
 

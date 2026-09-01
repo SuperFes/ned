@@ -200,6 +200,14 @@ class BufferView : public Widget {
     // SetLspManager already establishes.
     void SetTaskRunner(editor::tasks::TaskRunner* taskRunner);
 
+    // project-undo follow-up: registers the shared ProjectUndoManager,
+    // forwarded to CommandContext::projectUndo before each dispatch so
+    // undo/redo can fold a multi-file LSP edit's sibling files into a
+    // single invocation -- same "unset is a safe no-op" convention
+    // SetLspManager already establishes (plain per-buffer undo/redo keeps
+    // working unchanged if this was never called).
+    void SetProjectUndo(editor::ProjectUndoManager* projectUndo);
+
     // test-runner integration: registers the shared TestRunner -- same
     // "unset is a safe no-op" convention as SetTaskRunner (the run-tests
     // family reports "No test runner available." via statusMessage_ if this
@@ -1086,15 +1094,27 @@ class BufferView : public Widget {
     // any one of them fails to open, so a rename either fully applies
     // across every file or leaves every buffer untouched, never a partial
     // rename across only some of the affected files. Once every buffer is
-    // confirmed open, applies each buffer's own edits via the same
-    // resolve-LspPositions-against-current-content + descending-sort-by-
-    // start-byte + DeleteRange/InsertAt sequence ApplyCodeAction already
-    // established -- factored into a shared ApplyWorkspaceTextEdits helper
-    // (BufferView.cpp, file-local) both now call. Every affected buffer is
-    // left modified-but-unsaved, exactly like any other in-editor edit --
-    // no auto-save-across-files behavior, matching this codebase's existing
+    // confirmed open, hands every buffer's own edits to ApplyProjectEdit
+    // below, which applies each (the same resolve-LspPositions-against-
+    // current-content + descending-sort-by-start-byte + DeleteRange/InsertAt
+    // sequence ApplyCodeAction also uses) and records the whole set as one
+    // project-wide undo/redo transaction. Every affected buffer is left
+    // modified-but-unsaved, exactly like any other in-editor edit -- no
+    // auto-save-across-files behavior, matching this codebase's existing
     // "saves are always user-initiated" convention.
     void ApplyRename(const editor::lsp::LspManager::ResolvedRename& result);
+
+    // project-undo follow-up: applies one WorkspaceTextEdit list per buffer
+    // (via the file-local ApplyWorkspaceTextEdits helper, one undo group
+    // each) and, if more than one buffer is touched, records the whole set
+    // as one ProjectUndoManager transaction (a no-op if SetProjectUndo was
+    // never called) -- the shared tail ApplyRename and a cross-file
+    // ApplyCodeAction both fold into, so a project-wide undo/redo covers
+    // either source uniformly. `description` becomes the status message and
+    // (for a multi-buffer edit) the transaction's own label surfaced later
+    // by undo/redo.
+    void ApplyProjectEdit(const std::vector<std::pair<text::Buffer*, std::vector<editor::lsp::WorkspaceTextEdit>>>& perBufferEdits,
+                          std::string description);
 
     // point-to-register/jump-to-register/copy-to-register/insert-register
     // follow-up: one shared method for all four (mirrors HandlePromptKey's
@@ -1928,6 +1948,7 @@ class BufferView : public Widget {
     Widget*                      minimapScrollColumn_ = nullptr; // see SetMinimap
     editor::lsp::LspManager*     lspManager_          = nullptr; // see SetLspManager
     editor::tasks::TaskRunner*   taskRunner_          = nullptr; // see SetTaskRunner
+    editor::ProjectUndoManager*  projectUndo_         = nullptr; // see SetProjectUndo
     editor::testrun::TestRunner* testRunner_          = nullptr; // see SetTestRunner
     editor::vcs::VcsRunner*      vcsRunner_           = nullptr; // see SetVcsRunner
     editor::dap::DapManager*     dapManager_          = nullptr; // see SetDapManager

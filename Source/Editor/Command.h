@@ -39,6 +39,8 @@ class TestRunner;
 
 namespace ned::editor {
 
+class ProjectUndoManager;
+
 struct Mode;
 
 // Set by a command that needs to hand control to an interactive sub-session
@@ -697,6 +699,13 @@ struct CommandContext {
     // "a UI fact/resource a command needs" shape as lspManager above. Only
     // run-task/cancel-task read this.
     tasks::TaskRunner* taskRunner = nullptr;
+    // project-undo follow-up: the editor-wide ProjectUndoManager, set by the
+    // host UI before each dispatch (nullptr if unset, e.g. headless tests)
+    // -- same "a UI fact/resource a command needs" shape as lspManager/
+    // taskRunner above. Only undo/redo read this, to fold a multi-file LSP
+    // edit's sibling files into a plain undo/redo invocation when the
+    // current buffer sits exactly on that transaction's edge.
+    ProjectUndoManager* projectUndo = nullptr;
     // snippet-expansion follow-up: outbound, paired with
     // InteractiveRequest::SnippetExpand -- what to replace with which
     // registered snippet body. [replaceStart, replaceEnd) is the trigger
