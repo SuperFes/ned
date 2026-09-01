@@ -1456,7 +1456,10 @@ auto main(int argc, char** argv) -> int {
     overlays.Add(completionPopup, [panel = &completionPopup](Size size) {
         const ned::ui::Point origin = panel->Anchor().value_or(ned::ui::Point{});
         const int            width  = std::min(64, size.width);
-        const int            height = std::clamp(panel->ContentRowCount(), 3, std::min(10, size.height));
+        // completion-popup-preview follow-up: raised from 10 -- a shown
+        // preview footer adds up to 1 + ListPopup::kPreviewMaxLines rows on
+        // top of the candidate rows, and this cap must have room for both.
+        const int height = std::clamp(panel->ContentRowCount(), 3, std::min(18, size.height));
 
         const int xMin = std::clamp(origin.x, 0, std::max(0, size.width - width));
         const int xMax = std::min(size.width - 1, xMin + width - 1);
@@ -1485,6 +1488,13 @@ auto main(int argc, char** argv) -> int {
                 overlays.Hide(*panel);
             }
         });
+    // mouse-support follow-up: a click on a completion row accepts it
+    // directly, the same effect Tab has on whichever row is currently
+    // selected -- WindowManager::ActivateCompletionAt routes to whichever
+    // pane is focused (there's only ever one BufferView with a live
+    // activeCompletion_ at a time in practice, since this popup is only
+    // ever shown for the focused pane).
+    completionPopup.SetOnActivate([wm = windowManager.get()](std::size_t index) { wm->ActivateCompletionAt(index); });
 
     EventLoopCallbacks callbacks;
 

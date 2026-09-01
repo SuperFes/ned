@@ -765,6 +765,12 @@ void WindowManager::RequestOpenBinaryFile(const std::filesystem::path& path) {
     }
 }
 
+void WindowManager::ActivateCompletionAt(std::size_t index) {
+    if (Pane* pane = FocusedPane()) {
+        pane->Buffer().AcceptActiveCompletionAt(index);
+    }
+}
+
 void WindowManager::RequestTrustProjectInit(
     const std::filesystem::path&                                                   initPath,
     std::function<void(const std::filesystem::path&, editor::ProjectInitDecision)> onDecision) {

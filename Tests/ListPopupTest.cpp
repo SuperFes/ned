@@ -172,3 +172,94 @@ TEST_CASE("ListPopup::Anchor round-trips through SetModel", "[ListPopup]") {
     popup.SetModel(ned::ui::ListPopupModel{.rows = {{.main = "x"}}, .anchor = ned::ui::Point{.x = 5, .y = 7}});
     REQUIRE(popup.Anchor() == ned::ui::Point{.x = 5, .y = 7});
 }
+
+TEST_CASE("ListPopup renders a preview footer below a divider row when previewText is set", "[ListPopup]") {
+    // completion-popup-preview follow-up.
+    ned::ui::Theme     theme = ned::ui::DarkTheme();
+    ned::ui::ListPopup popup(theme);
+    popup.SetModel(ned::ui::ListPopupModel{
+        .rows        = {{.main = "foo"}},
+        .previewText = "a short one-line doc",
+    });
+
+    ned::ui::Screen screen = ned::ui::Screen(30, 8);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 29, .y_min = 0, .y_max = 7});
+    popup.Paint(canvas);
+
+    // Row 1 is the candidate row, row 2 is the divider, row 3 is the wrapped text.
+    REQUIRE(screen.PixelAt(4, 1).character == "f"); // the "foo" row, unaffected
+    REQUIRE(screen.PixelAt(4, 2).character == "─");
+    REQUIRE(screen.PixelAt(2, 3).character == "a");
+}
+
+TEST_CASE("ListPopup omits the preview footer when previewText is unset, same as before it existed", "[ListPopup]") {
+    // completion-popup-preview follow-up: every non-completion consumer never
+    // sets previewText -- confirms ContentRowCount()/layout is unaffected.
+    ned::ui::Theme     theme = ned::ui::DarkTheme();
+    ned::ui::ListPopup popup(theme);
+    popup.SetModel(ned::ui::ListPopupModel{.rows = {{.main = "foo"}}});
+
+    REQUIRE(popup.ContentRowCount() == 3); // 1 row + top/bottom border, no preview budget added
+
+    ned::ui::Screen screen = ned::ui::Screen(30, 8);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 29, .y_min = 0, .y_max = 7});
+    popup.Paint(canvas);
+    REQUIRE(screen.PixelAt(4, 2).character == " "); // row 2 is plain interior fill, not a divider
+}
+
+TEST_CASE("ListPopup truncates a preview past kPreviewMaxLines with an ellipsis marker", "[ListPopup]") {
+    // completion-popup-preview follow-up.
+    ned::ui::Theme     theme = ned::ui::DarkTheme();
+    ned::ui::ListPopup popup(theme);
+    std::string        longDoc;
+    for (int i = 0; i < 40; ++i) {
+        longDoc += "word" + std::to_string(i) + " ";
+    }
+    popup.SetModel(ned::ui::ListPopupModel{.rows = {{.main = "foo"}}, .previewText = longDoc});
+
+    REQUIRE(popup.ContentRowCount() == 1 + 2 + 1 + ned::ui::ListPopup::kPreviewMaxLines); // row + border*2 + divider + budget
+
+    ned::ui::Screen screen = ned::ui::Screen(20, 12);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 11});
+    popup.Paint(canvas);
+
+    // Last preview row (row 2 for divider + kPreviewMaxLines rows: rows 3..3+kPreviewMaxLines-1)
+    const int lastPreviewRow = 2 + ned::ui::ListPopup::kPreviewMaxLines;
+    REQUIRE(screen.PixelAt(18, lastPreviewRow).character == "…");
+}
+
+TEST_CASE("ListPopup click activates the row in non-focusable mode without ever taking focus", "[ListPopup]") {
+    // mouse-support follow-up.
+    ned::ui::Theme     theme = ned::ui::DarkTheme();
+    ned::ui::ListPopup popup(theme);
+    popup.SetModel(ned::ui::ListPopupModel{.rows = {{.main = "one"}, {.main = "two"}, {.main = "three"}}});
+    popup.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 29, .y_min = 0, .y_max = 5});
+
+    std::optional<std::size_t> highlighted;
+    popup.SetOnHighlightChange([&](std::size_t index) { highlighted = index; });
+    std::optional<std::size_t> activated;
+    popup.SetOnActivate([&](std::size_t index) { activated = index; });
+
+    REQUIRE_FALSE(popup.Focusable());
+    // Row 1 (local y=2) is "two".
+    REQUIRE(popup.OnEvent(ned::ui::test::Mouse(5, 2, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Pressed)));
+    REQUIRE(highlighted == 1);
+    REQUIRE(activated == 1);
+    REQUIRE_FALSE(popup.Focused()); // never took focus -- BufferView (or nothing) still owns it
+}
+
+TEST_CASE("ListPopup click on the border or past the last row is a no-op", "[ListPopup]") {
+    // mouse-support follow-up.
+    ned::ui::Theme     theme = ned::ui::DarkTheme();
+    ned::ui::ListPopup popup(theme);
+    popup.SetModel(ned::ui::ListPopupModel{.rows = {{.main = "one"}}});
+    popup.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 29, .y_min = 0, .y_max = 5});
+
+    int activations = 0;
+    popup.SetOnActivate([&](std::size_t) { ++activations; });
+
+    REQUIRE(popup.OnEvent(ned::ui::test::Mouse(5, 0, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Pressed)));  // top border
+    REQUIRE(popup.OnEvent(ned::ui::test::Mouse(5, 3, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Pressed)));  // past the one row
+    REQUIRE(popup.OnEvent(ned::ui::test::Mouse(5, 1, ned::ui::MouseEvent::Button::Right, ned::ui::MouseEvent::Motion::Pressed))); // wrong button
+    REQUIRE(activations == 0);
+}

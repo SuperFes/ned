@@ -4850,6 +4850,14 @@ void BufferView::AcceptActiveCompletion() {
     }
 }
 
+void BufferView::AcceptActiveCompletionAt(std::size_t index) {
+    if (!activeCompletion_ || index >= activeCompletion_->items.size()) {
+        return; // stale click racing a just-cleared/just-replaced popup
+    }
+    activeCompletion_->selectedIndex = index;
+    AcceptActiveCompletion();
+}
+
 void BufferView::CycleActiveCompletion(int direction) {
     if (!activeCompletion_ || activeCompletion_->items.empty()) {
         return;
@@ -4941,6 +4949,14 @@ void BufferView::NotifyCompletionChanged() {
             row.leftForeground = theme_.ghostTextForeground;
         }
         model.rows.push_back(std::move(row));
+    }
+    // completion-popup-preview follow-up: the *selected* item's own
+    // documentation, not every item's -- ListPopup renders it as a footer
+    // below the row list, updated for free on every selection change since
+    // this method already runs then (CycleActiveCompletion, a click, ...).
+    if (const std::string& documentation = activeCompletion_->items[activeCompletion_->selectedIndex].documentation;
+        !documentation.empty()) {
+        model.previewText = documentation;
     }
     onCompletionChanged_(std::move(model));
 }
