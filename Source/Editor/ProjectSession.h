@@ -78,6 +78,15 @@ struct ProjectSessionData {
     // shape verbatim (see DapManager::AllBreakpoints/RestoreBreakpoints).
     std::map<std::string, std::vector<std::size_t>> breakpoints;
 
+    // ACP auto-reconnect follow-up: the agent name passed to this project's
+    // most recent AcpManager::StartSession, if any -- lets opening the chat
+    // panel reconnect to whatever agent this project was last using instead
+    // of requiring the "ACP agent:" prompt every time. nullopt until a
+    // session has ever been started in this project. Not cleared by
+    // StopSession -- deliberately sticky, mirroring AcpManager::AgentName()'s
+    // own "empty before the first StartSession, never reset after" contract.
+    std::optional<std::string> lastAcpAgent;
+
     // Empty means "no captured layout" (falls back to the pre-existing
     // single-pane restore) -- WindowManager::CaptureWindowLayout leaves it
     // empty rather than populate a partial tree when some leaf's buffer has

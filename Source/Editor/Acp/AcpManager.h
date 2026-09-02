@@ -92,8 +92,18 @@ class AcpManager {
     // fresh authoritative snapshot of that one plan/tool-call, not an
     // independent new event.
     struct TranscriptEntry {
+        // ACP chat-feel round 2: AgentThought is its own Kind, not a bool
+        // tacked onto AgentText -- session/update's agent_thought_chunk and
+        // agent_message_chunk were previously coalesced into the very same
+        // transcript entry (PushOrAppendAgentText didn't distinguish them at
+        // all), so a reply read as one undifferentiated stream of tokens with
+        // no visual seam between an agent's private reasoning and its actual
+        // answer. Kept as a separate Kind (matching how every other entry
+        // shape here is modeled) rather than a flag so AcpPanel's own
+        // per-Kind styling switch needs no special-casing.
         enum class Kind { UserMessage,
                           AgentText,
+                          AgentThought,
                           ToolCall,
                           Plan,
                           Permission,
@@ -242,7 +252,7 @@ class AcpManager {
     void          AppendToOutputBuffer(std::string_view text);
     text::Buffer& OutputBuffer(const std::string& agentName);
 
-    void PushOrAppendAgentText(std::string_view text);
+    void PushOrAppendAgentText(TranscriptEntry::Kind kind, std::string_view text);
     void PushOrUpdateToolCall(const Json& update);
     void PushOrReplacePlan(const Json& update);
     void PushTranscriptEntry(TranscriptEntry entry);
@@ -268,6 +278,17 @@ class AcpManager {
     std::size_t                  transcriptGeneration_ = 0;
     std::optional<std::size_t>   livePlanEntryIndex_; // index into transcript_, reset on EndSession
     std::function<void()>        onTranscriptChanged_;
+    // ACP chat-feel round 2: coalesces the UI-facing onTranscriptChanged_
+    // callback while a reply streams in token-by-token -- transcript_/
+    // transcriptGeneration_ above stay synchronously correct on every single
+    // chunk either way (nothing here is delayed for *data* consumers), only
+    // the repaint-triggering notification is debounced. Confirmed live as
+    // visible jitter otherwise: AcpPanel's own transcript rendering
+    // word-wraps the whole logical line fresh on every Paint(), so a
+    // several-times-a-second notification for a several-byte append was
+    // reflowing (and therefore visibly reshuffling) the trailing few lines
+    // of the panel every single chunk.
+    ned::ui::DeadlineTimer agentTextRepaintDebounce_;
 };
 
 } // namespace ned::editor::acp

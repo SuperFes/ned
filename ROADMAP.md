@@ -669,6 +669,78 @@ LSP-against-the-wrong-toolchain prove it's needed in practice, not speculatively
         handling. Also fixed same day: a redundant "session ready" line no longer
         duplicates the panel's own `[Active]` title-bar state in the transcript (the raw
         `*acp: <agent>*` log buffer still gets it verbatim).
+      - **ACP chat-feel round 2**, closed 2026-09-01. `agent_thought_chunk` now lands in
+        its own `TranscriptEntry::Kind::AgentThought` (Dim style) instead of being
+        coalesced into the same entry as `agent_message_chunk` text (Accent) — a reply
+        used to read as one undifferentiated stream of tokens with no seam between an
+        agent's private reasoning and its actual answer. Rapid-fire streaming repaints are
+        now debounced (~40ms, `AcpManager::agentTextRepaintDebounce_`, `Editor/EventLoop.h`'s
+        `DeadlineTimer` — the same primitive the LSP-sync-debounce fix uses) so a
+        several-times-a-second token stream doesn't visibly reflow the trailing lines of
+        the panel on every single chunk; a brand-new entry (a fresh thought/answer block
+        starting, a tool call, a plan update) still notifies synchronously. Resolved tool
+        calls superseded by a later one collapse to a single right-aligned-marker line
+        (`[done]`/`[fail]`/`[cancel]`) instead of permanently holding 1-2 lines each,
+        reclaiming space given the panel's own no-scrollback constraint. The composer
+        (`MinibufferPrompt`) gained word-wise cursor motion (`MoveCursorWordLeft/Right`,
+        Control-Left/Right — the shared primitive, so find-file/M-x/DAP console could pick
+        this up too, though only `AcpPanel` is wired to it yet) and shell-style prompt
+        history (Up/Down, re-derived from `Transcript()`'s own `Kind::UserMessage` entries
+        rather than a separate ring — editing a recalled entry and paging away from it
+        discards those local edits, a deliberate v1 simplification). The panel can now
+        minimize to a thin title-only strip (`[-]` button or `M-m`, `AcpPanel::Collapsed()`
+        — ProjectSidebar's own convention; the session keeps running in the background) and
+        resize via border-drag (mirroring `ProjectSidebar::BeginResize`/`UpdateResize`) or
+        Control-Up/Down, applied live through `AcpPanelSizePercent()`. Opening the panel
+        now reconnects to the project's last-used agent automatically
+        (`ProjectSessionData::lastAcpAgent`, seeded/saved by `WindowManager`) instead of
+        requiring the "ACP agent:" prompt every time — a no-op if a session is already
+        running or the remembered agent is no longer configured. A real bug caught live
+        (screenshot from the user, not found by the unit tests above): `SetCollapsed`
+        alone left a stale, wrongly-sized Box in place — `OverlayHost` only recomputes a
+        panel's Box from its placement lambda on `Show()`/`Reflow()` (`Overlay.h`'s own
+        header comment: "re-derived on every Reflow/Show"), never on every `Paint()`, so
+        minimizing repainted the *old, full-size* Box with the collapsed strip's blank
+        fill — a wash over most of the screen with the title line at the wrong spot,
+        despite the strip logic itself being correct. Fixed via
+        `AcpPanel::SetOnCollapseChanged`, firing only on an actual state change, with
+        `main.cpp` re-invoking `overlays.Show(*panel)` to force the Box recompute
+        immediately; confirmed live in tmux (a content row within the panel's true bounds
+        blanks while open and reappears once minimized, matching the Box's real size at
+        each step) since headless `Screen::PixelAt` assertions alone hadn't caught the
+        stale-Box case. Two more caught live in the same pass, both same-day fixes: the
+        minimized strip's title text was painted with `theme_.border`/`borderAccent` (a
+        color tuned for a thin decorative line, not a full row of text) — reported as
+        nearly unreadable, fixed by switching to `theme_.echoArea`, the composer's own
+        proven-legible brush; and the `[-]` minimize button used a plain ASCII "-" where
+        `TerminalPanel`'s own title-row buttons use a real glyph (`▼`/`▲`/`×`) — reported
+        as visually inconsistent, fixed by adopting `TerminalPanel`'s own `▼` verbatim
+        (`kMinimizeIcon`). Separately, an unrelated but adjacent false-alarm bug: every
+        line an ACP agent process writes to its own stderr was unconditionally logged at
+        `LogSeverity::Warning` (`AcpClient::StartStderrReadLoop`, mirroring
+        `LspClient`'s identical pattern) — for `Lsp` this is silent by default (that
+        category defaults hidden, specifically because LSP servers are stderr-noisy), but
+        `Acp` defaults *visible*, so any benign startup banner line an agent printed (a
+        literal "session started" was reported live) tripped `BufferView`'s unsolicited
+        "New warning -- see *Messages*" echo message for something that was never actually
+        a warning. Fixed by downgrading only that one call site to `LogSeverity::Info`;
+        the four genuine-problem call sites in the same file (agent exited, malformed
+        frame, request timeout, a real disconnect) are untouched and still warn correctly.
+        Known rough edges: a
+        right-docked panel's resize handle (its left edge column) has no visually reserved
+        border the way `ProjectSidebar`'s divider column does, so it's a click target with
+        no on-screen affordance; the user separately floated a bigger idea — a shared
+        tabbed bottom dock across `TerminalPanel`/`AcpPanel`/`DebugConsolePanel` instead of
+        three independent overlays — deliberately not attempted here, scoped as its own
+        follow-up below.
+      - **Tabbed bottom-dock overlays** (floated 2026-09-01, not scoped in detail). Right
+        now `TerminalPanel`/`AcpPanel`/`DebugConsolePanel` are three independent
+        `OverlayHost` overlays, each toggled and placed separately (`AcpPanel` can also
+        dock right). Unifying the bottom-docked ones behind one shared tab strip (so
+        minimizing/switching one is a tab click, not a separate toggle per panel) would be
+        a real architectural change — a new shared container widget owning the tab bar
+        plus whichever child panel is active, versus the current "each panel manages its
+        own Box via its own placement lambda" shape every overlay in `main.cpp` uses today.
       - **Checkpoint/rewind per turn.** Claude Code's double-Esc `/rewind` (checkpoint
         auto-created per prompt, restore code/conversation/both) is the single most-cited
         "saved me" feature in the research above — and this codebase already has the two

@@ -14,6 +14,7 @@
 
 #include "Editor/Acp/AcpClient.h"
 #include "Editor/Acp/AcpManager.h"
+#include "Editor/Acp/AcpPanelConfig.h"
 #include "Editor/Acp/Transport.h"
 #include "TestEvents.h"
 #include "Text/BufferList.h"
@@ -394,4 +395,132 @@ TEST_CASE("AcpPanel's Escape cancels a pending permission prompt instead of togg
     const Json response = fixture.reader.Next();
     REQUIRE(response["id"] == 3);
     REQUIRE(response["result"]["outcome"]["outcome"] == "cancelled");
+}
+
+TEST_CASE("AcpPanel's Control-Left/Right move the composer cursor by word", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.panel.OnEvent(ned::ui::test::Character('f'));
+    fixture.panel.OnEvent(ned::ui::test::Character('o'));
+    fixture.panel.OnEvent(ned::ui::test::Character('o'));
+    fixture.panel.OnEvent(ned::ui::test::Character(' '));
+    fixture.panel.OnEvent(ned::ui::test::Character('b'));
+    fixture.panel.OnEvent(ned::ui::test::Character('a'));
+    fixture.panel.OnEvent(ned::ui::test::Character('r'));
+    // cursor is now at the end of "foo bar"
+
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::ArrowLeftCtrl()));
+    fixture.panel.OnEvent(ned::ui::test::Character('X')); // inserted at the start of "bar"
+
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code");
+    fixture.panel.OnEvent(ned::ui::test::Return());
+    const Json promptRequest = fixture.reader.Next();
+    REQUIRE(promptRequest["params"]["prompt"][0]["text"] == "foo Xbar");
+    fixture.client->DispatchFrame(ResultFrame(promptRequest["id"], Json{{"stopReason", "end_turn"}}));
+}
+
+TEST_CASE("AcpPanel's Up/Down recall previously sent prompts, shell-history style", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code");
+
+    fixture.panel.OnEvent(ned::ui::test::Character('f'));
+    fixture.panel.OnEvent(ned::ui::test::Character('i'));
+    fixture.panel.OnEvent(ned::ui::test::Character('r'));
+    fixture.panel.OnEvent(ned::ui::test::Character('s'));
+    fixture.panel.OnEvent(ned::ui::test::Character('t'));
+    fixture.panel.OnEvent(ned::ui::test::Return());
+    Json firstRequest = fixture.reader.Next(); // the session/prompt request for "first"
+    fixture.client->DispatchFrame(ResultFrame(firstRequest["id"], Json{{"stopReason", "end_turn"}}));
+
+    fixture.panel.OnEvent(ned::ui::test::Character('s'));
+    fixture.panel.OnEvent(ned::ui::test::Character('e'));
+    fixture.panel.OnEvent(ned::ui::test::Character('c'));
+    fixture.panel.OnEvent(ned::ui::test::Return());
+    Json secondRequest = fixture.reader.Next(); // the session/prompt request for "sec"
+    fixture.client->DispatchFrame(ResultFrame(secondRequest["id"], Json{{"stopReason", "end_turn"}}));
+
+    fixture.panel.OnEvent(ned::ui::test::Character('d')); // an in-progress, unsent draft
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::ArrowUp()));
+    fixture.Paint();
+    REQUIRE(fixture.RowText(kHeight - 1) == "Prompt: sec"); // most recent sent prompt
+
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::ArrowUp()));
+    fixture.Paint();
+    REQUIRE(fixture.RowText(kHeight - 1) == "Prompt: first");
+
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::ArrowDown()));
+    fixture.Paint();
+    REQUIRE(fixture.RowText(kHeight - 1) == "Prompt: sec");
+
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::ArrowDown()));
+    fixture.Paint();
+    REQUIRE(fixture.RowText(kHeight - 1) == "Prompt: d"); // back to the unsent draft
+}
+
+TEST_CASE("AcpPanel's minimize button and M-m both collapse the panel to a thin strip, click-to-reopen", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code");
+    REQUIRE_FALSE(fixture.panel.Collapsed());
+
+    fixture.panel.OnEvent(
+        ned::ui::test::Mouse(kWidth - 6, 0, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Pressed));
+    REQUIRE(fixture.panel.Collapsed());
+
+    fixture.Paint();
+    REQUIRE(fixture.RowText(0).find("claude-code") != std::string::npos);
+    REQUIRE(fixture.RowText(0).find("minimized") != std::string::npos);
+
+    // The whole collapsed strip is a click-to-reopen target.
+    fixture.panel.OnEvent(
+        ned::ui::test::Mouse(5, 0, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Pressed));
+    REQUIRE_FALSE(fixture.panel.Collapsed());
+
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Alt('m')));
+    REQUIRE(fixture.panel.Collapsed());
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Alt('m'))); // toggles back
+    REQUIRE_FALSE(fixture.panel.Collapsed());
+}
+
+TEST_CASE("AcpPanel::SetOnCollapseChanged fires only on an actual state change", "[AcpPanel]") {
+    // panel-resize/minimize regression: OverlayHost only recomputes this
+    // panel's on-screen Box from Show()/Reflow(), never on every Paint() --
+    // so main.cpp relies on this callback firing exactly when Collapsed()
+    // actually flips, to force a Box recompute (overlays.Show) immediately
+    // instead of leaving a stale, wrongly-sized Box in place. A no-op
+    // SetCollapsed call (already at that value) must not force a needless
+    // recompute.
+    Fixture fixture;
+    int     changes = 0;
+    fixture.panel.SetOnCollapseChanged([&changes] { ++changes; });
+
+    fixture.panel.SetCollapsed(false); // already false -- no-op
+    REQUIRE(changes == 0);
+
+    fixture.panel.SetCollapsed(true);
+    REQUIRE(changes == 1);
+    REQUIRE(fixture.panel.Collapsed());
+
+    fixture.panel.SetCollapsed(true); // already true -- no-op
+    REQUIRE(changes == 1);
+
+    fixture.panel.ToggleCollapsed();
+    REQUIRE(changes == 2);
+    REQUIRE_FALSE(fixture.panel.Collapsed());
+}
+
+TEST_CASE("AcpPanel's Control-Up/Down grow/shrink AcpPanelSizePercent", "[AcpPanel]") {
+    const int original = ned::editor::acp::AcpPanelSizePercent();
+    ned::editor::acp::SetAcpPanelSizePercent(30);
+
+    Fixture fixture;
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::ArrowUpCtrl()));
+    REQUIRE(ned::editor::acp::AcpPanelSizePercent() == 35);
+
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::ArrowDownCtrl()));
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::ArrowDownCtrl()));
+    REQUIRE(ned::editor::acp::AcpPanelSizePercent() == 25);
+
+    ned::editor::acp::SetAcpPanelSizePercent(original); // cleanup -- process-wide state
 }

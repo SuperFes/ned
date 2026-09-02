@@ -148,14 +148,19 @@ void AcpManager::NotifyTranscriptChanged() {
     }
 }
 
-void AcpManager::PushOrAppendAgentText(std::string_view text) {
-    if (!transcript_.empty() && transcript_.back().kind == TranscriptEntry::Kind::AgentText) {
+void AcpManager::PushOrAppendAgentText(TranscriptEntry::Kind kind, std::string_view text) {
+    if (!transcript_.empty() && transcript_.back().kind == kind) {
         transcript_.back().text += text;
         ++transcriptGeneration_;
-        NotifyTranscriptChanged();
+        // Debounced, not immediate -- see agentTextRepaintDebounce_'s own
+        // doc comment. A brand-new entry (the branch below) still notifies
+        // synchronously: that's a discrete, meaningful event (a fresh
+        // thought/answer block starting), not one more token in an existing
+        // stream, and should show up without a repaint delay.
+        agentTextRepaintDebounce_.Arm(eventLoop_, std::chrono::milliseconds(40), [this] { NotifyTranscriptChanged(); });
         return;
     }
-    PushTranscriptEntry(TranscriptEntry{.kind = TranscriptEntry::Kind::AgentText, .text = std::string(text)});
+    PushTranscriptEntry(TranscriptEntry{.kind = kind, .text = std::string(text)});
 }
 
 void AcpManager::PushOrUpdateToolCall(const Json& update) {
@@ -534,8 +539,14 @@ void AcpManager::HandleSessionUpdate(const Json& params) {
             // user_message_chunk is the agent echoing what SendPrompt
             // already pushed as one clean Kind::UserMessage entry --
             // coalescing it here too would duplicate that entry.
-            if (kind != "user_message_chunk") {
-                PushOrAppendAgentText(text);
+            // agent_thought_chunk is routed to its own Kind (AgentThought)
+            // rather than folded into AgentText -- see TranscriptEntry::Kind's
+            // own doc comment.
+            if (kind == "agent_thought_chunk") {
+                PushOrAppendAgentText(TranscriptEntry::Kind::AgentThought, text);
+            }
+            else if (kind == "agent_message_chunk") {
+                PushOrAppendAgentText(TranscriptEntry::Kind::AgentText, text);
             }
         }
         return;

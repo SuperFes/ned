@@ -127,6 +127,55 @@ TEST_CASE("DeleteBackward/DeleteForward handle multi-byte codepoints as a single
     REQUIRE(prompt.Text() == "az");
 }
 
+TEST_CASE("MoveCursorWordLeft/Right skip whole words, mirroring Buffer::MoveForwardWord/MoveBackwardWord", "[MinibufferPrompt]") {
+    MinibufferPrompt prompt("");
+    prompt.SetText("foo bar_baz  qux");
+    REQUIRE(prompt.CursorByteOffset() == 16); // at the end
+
+    prompt.MoveCursorWordLeft();
+    REQUIRE(prompt.CursorByteOffset() == 13); // start of "qux"
+
+    prompt.MoveCursorWordLeft();
+    REQUIRE(prompt.CursorByteOffset() == 4); // start of "bar_baz" -- underscore counts as a word char
+
+    prompt.MoveCursorWordLeft();
+    REQUIRE(prompt.CursorByteOffset() == 0); // start of "foo"
+
+    prompt.MoveCursorWordLeft(); // already at the start -- no-op
+    REQUIRE(prompt.CursorByteOffset() == 0);
+
+    prompt.MoveCursorWordRight();
+    REQUIRE(prompt.CursorByteOffset() == 3); // end of "foo"
+
+    prompt.MoveCursorWordRight();
+    REQUIRE(prompt.CursorByteOffset() == 11); // end of "bar_baz"
+
+    prompt.MoveCursorWordRight();
+    REQUIRE(prompt.CursorByteOffset() == 16); // end of "qux"
+
+    prompt.MoveCursorWordRight(); // already at the end -- no-op
+    REQUIRE(prompt.CursorByteOffset() == 16);
+}
+
+TEST_CASE("MoveCursorWordLeft/Right from mid-word land at that word's own boundary", "[MinibufferPrompt]") {
+    MinibufferPrompt prompt("");
+    prompt.SetText("hello world");
+    prompt.MoveCursorToStart();
+    for (int i = 0; i < 3; ++i) {
+        prompt.MoveCursorRight(); // cursor now inside "hello", after "hel"
+    }
+
+    prompt.MoveCursorWordRight();
+    REQUIRE(prompt.CursorByteOffset() == 5); // end of "hello", not "world"
+
+    prompt.MoveCursorToStart();
+    for (int i = 0; i < 8; ++i) {
+        prompt.MoveCursorRight(); // cursor now inside "world", after "wor"
+    }
+    prompt.MoveCursorWordLeft();
+    REQUIRE(prompt.CursorByteOffset() == 6); // start of "world", not "hello"
+}
+
 TEST_CASE("CursorDisplayColumn counts codepoints across label and text, one column each", "[MinibufferPrompt]") {
     MinibufferPrompt prompt("> ");
     prompt.InsertChar(U'é'); // 2 UTF-8 bytes, 1 display column

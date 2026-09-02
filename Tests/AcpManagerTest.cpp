@@ -354,7 +354,48 @@ Json AgentMessageChunkUpdate(const std::string& text) {
     };
 }
 
+// ACP chat-feel round 2.
+Json AgentThoughtChunkUpdate(const std::string& text) {
+    return Json{
+        {"jsonrpc", "2.0"},
+        {"method", "session/update"},
+        {"params", {{"sessionId", "s1"}, {"update", {{"sessionUpdate", "agent_thought_chunk"}, {"content", {{"type", "text"}, {"text", text}}}}}}},
+    };
+}
+
 } // namespace
+
+TEST_CASE("AcpManager routes agent_thought_chunk into its own AgentThought entry, separate from AgentText", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+    const std::size_t baseline = fixture.manager.Transcript().size();
+
+    fixture.client->DispatchFrame(AgentThoughtChunkUpdate("considering the question").dump());
+    fixture.client->DispatchFrame(AgentMessageChunkUpdate("the answer is 42").dump());
+
+    const auto& transcript = fixture.manager.Transcript();
+    REQUIRE(transcript.size() == baseline + 2);
+    REQUIRE(transcript[baseline].kind == AcpManager::TranscriptEntry::Kind::AgentThought);
+    REQUIRE(transcript[baseline].text == "considering the question");
+    REQUIRE(transcript[baseline + 1].kind == AcpManager::TranscriptEntry::Kind::AgentText);
+    REQUIRE(transcript[baseline + 1].text == "the answer is 42");
+}
+
+TEST_CASE("AcpManager coalesces consecutive agent_thought_chunk updates the same way agent_message_chunk does", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+    const std::size_t baseline = fixture.manager.Transcript().size();
+
+    fixture.client->DispatchFrame(AgentThoughtChunkUpdate("first").dump());
+    fixture.client->DispatchFrame(AgentThoughtChunkUpdate(" second").dump());
+
+    const auto& transcript = fixture.manager.Transcript();
+    REQUIRE(transcript.size() == baseline + 1);
+    REQUIRE(transcript.back().kind == AcpManager::TranscriptEntry::Kind::AgentThought);
+    REQUIRE(transcript.back().text == "first second");
+}
 
 TEST_CASE("AcpManager coalesces consecutive agent_message_chunk updates into one transcript entry", "[Acp]") {
     ManagerFixture fixture;

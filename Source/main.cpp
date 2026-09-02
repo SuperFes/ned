@@ -27,6 +27,7 @@
 
 #include "Application.h"
 
+#include "Editor/Acp/AcpConfig.h"
 #include "Editor/Acp/AcpManager.h"
 #include "Editor/Acp/AcpPanelConfig.h"
 #include "Editor/BackgroundActivity.h"
@@ -665,6 +666,10 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     auto windowManager = std::make_shared<ned::ui::WindowManager>(
         *buffer, killRing, registers, promptHistory, bufferList, registry, janetKeymap, globalKeymap, std::move(mode),
         statusMessage, theme);
+    // ACP auto-reconnect follow-up: seeds SaveProjectSessionNow's own
+    // fallback for a run that never touches ACP at all -- see
+    // WindowManager::SetLastKnownAcpAgent's own doc comment.
+    windowManager->SetLastKnownAcpAgent(restoredSession ? restoredSession->lastAcpAgent : std::nullopt);
 
     // session-persistence-window-layout follow-up: RestoreWindowLayout used
     // to run right here -- moved below, after EnableAsyncFileLoading/
@@ -1239,12 +1244,29 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     // area whenever the panel itself has focus -- see
     // WindowManager::SetAcpPanelFocusChecker's own doc comment.
     windowManager->SetAcpPanelFocusChecker([&acpPanel] { return acpPanel.Focused(); });
-    overlays.Add(acpPanel, [](Size size) {
+    overlays.Add(acpPanel, [panel = &acpPanel](Size size) {
+        // panel-resize/minimize follow-up: the drag-resize handler needs the
+        // full terminal size (its own Box only ever reports its *own*
+        // current dimensions) to convert a pixel delta into a size-percent
+        // delta -- refreshed here since this lambda already runs fresh every
+        // Reflow. See AcpPanel::SetTerminalSize's own doc comment.
+        panel->SetTerminalSize(size);
+
         // acp-panel-minimap-overlap follow-up: see MinimapOverlayReserve's
         // own comment for why this is needed at all.
         const int minimapReserve = MinimapOverlayReserve();
         const int yMax           = std::max(1, size.height - 2); // above the echo area row
-        if (ned::editor::acp::GetAcpPanelDock() == ned::editor::acp::AcpPanelDock::Right) {
+        const bool rightDock     = ned::editor::acp::GetAcpPanelDock() == ned::editor::acp::AcpPanelDock::Right;
+        if (panel->Collapsed()) {
+            // Thin strip: one column for a right dock, one row for a bottom
+            // dock -- PaintCollapsedStrip's own doc comment.
+            if (rightDock) {
+                const int xMin = size.width - 1 - minimapReserve;
+                return Box{.x_min = xMin, .x_max = xMin, .y_min = 1, .y_max = yMax};
+            }
+            return Box{.x_min = 0, .x_max = std::max(0, size.width - 1 - minimapReserve), .y_min = yMax, .y_max = yMax};
+        }
+        if (rightDock) {
             const int width = std::clamp(size.width * ned::editor::acp::AcpPanelSizePercent() / 100, 20, size.width - 1);
             const int xMin  = size.width - width;
             return Box{.x_min = xMin, .x_max = std::max(xMin, size.width - 1 - minimapReserve), .y_min = 1, .y_max = yMax};
@@ -1262,11 +1284,27 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
         if (!overlays.IsVisible(*panel)) {
             overlays.Show(*panel);
         }
+        // panel-resize/minimize follow-up: fresh content arriving while
+        // minimized un-minimizes too -- otherwise a reply could stream in
+        // fully behind a strip showing only "(minimized)".
+        panel->SetCollapsed(false);
     });
-    auto toggleAcpPanel = [&overlays, panel = &acpPanel] {
+    auto toggleAcpPanel = [&overlays, panel = &acpPanel, &acpManager, lastAcpAgent = restoredSession ? restoredSession->lastAcpAgent : std::nullopt] {
         if (!overlays.IsVisible(*panel)) {
             overlays.Show(*panel);
+            panel->SetCollapsed(false);
             panel->TakeFocus();
+            // ACP auto-reconnect follow-up: opening the panel reconnects to
+            // whichever agent this project last used, instead of always
+            // requiring the "ACP agent:" prompt again -- a no-op if a
+            // session is already running (e.g. re-showing after a hide), if
+            // this project has never started one before, or if the
+            // remembered agent name is no longer configured (renamed/
+            // removed from init.janet since).
+            if (acpManager.State() == ned::editor::acp::AcpManager::SessionState::Inactive && lastAcpAgent &&
+                ned::editor::acp::AcpAgentCommand(*lastAcpAgent)) {
+                acpManager.StartSession(*lastAcpAgent);
+            }
         }
         else {
             overlays.Hide(*panel);
@@ -1274,6 +1312,14 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     };
     windowManager->SetOnAcpPanelToggle(toggleAcpPanel);
     acpPanel.SetOnToggleRequest(toggleAcpPanel);
+    // panel-resize/minimize follow-up: OverlayHost only recomputes a panel's
+    // Box from its placement lambda on Show()/Reflow() (Overlay.h's own
+    // header comment), never on every Paint() -- so SetCollapsed alone would
+    // leave a stale, wrongly-sized Box in place (and Paint() would fill that
+    // whole stale area with the collapsed strip's blank fill) until the next
+    // real terminal resize. Re-invoking Show() on an already-visible widget
+    // is a safe, cheap no-op beyond recomputing its Box.
+    acpPanel.SetOnCollapseChanged([&overlays, panel = &acpPanel] { overlays.Show(*panel); });
 
     // DAP round 2: the debug console (REPL) panel -- same OverlayHost-overlay
     // shape as terminalPanel/acpPanel above, hardcoded bottom-dock like

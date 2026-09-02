@@ -35,6 +35,12 @@ class MinibufferPrompt {
     void DeleteForward();                // delete: removes the codepoint at the cursor, if any
     void MoveCursorLeft();
     void MoveCursorRight();
+    // Word-wise motion (Ctrl-Left/Right in every other single-line field in
+    // this codebase) -- ASCII alnum+underscore word classification, mirroring
+    // Buffer::MoveForwardWord/MoveBackwardWord's own deliberately-not-
+    // Unicode-aware rule exactly (see MinibufferPrompt.cpp's IsWordByte).
+    void MoveCursorWordLeft();
+    void MoveCursorWordRight();
     void MoveCursorToStart();       // Home
     void MoveCursorToEnd();         // End
     void SetText(std::string text); // wholesale replace, e.g. Tab-completion; cursor moves to the end

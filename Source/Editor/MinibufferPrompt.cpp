@@ -22,6 +22,20 @@ namespace {
         return columns;
     }
 
+    // ASCII alphanumeric + underscore -- deliberately not Unicode-aware,
+    // mirroring Buffer.cpp's private IsWordCodepoint exactly (same
+    // "one-line predicate private to each consumer" convention AcpPanel.cpp's
+    // own IsPlainCharacter comment documents, rather than a new shared
+    // utility for one three-line check). Safe to test a single byte at a
+    // codepoint boundary: a UTF-8 continuation byte is always >= 0x80 and a
+    // multi-byte lead byte is too, so neither can ever match this range
+    // (WordWrap's own `text[pos] == ' '` check in AcpPanel.cpp relies on the
+    // same fact).
+    bool IsWordByte(char ch) {
+        const unsigned char uch = static_cast<unsigned char>(ch);
+        return (uch >= 'a' && uch <= 'z') || (uch >= 'A' && uch <= 'Z') || (uch >= '0' && uch <= '9') || uch == '_';
+    }
+
 } // namespace
 
 MinibufferPrompt::MinibufferPrompt(std::string label) : label_(std::move(label)) {
@@ -56,6 +70,35 @@ void MinibufferPrompt::MoveCursorLeft() {
 
 void MinibufferPrompt::MoveCursorRight() {
     cursor_ = text::NextCodepointBoundary(text_, cursor_);
+}
+
+void MinibufferPrompt::MoveCursorWordLeft() {
+    // Skip any run of non-word bytes immediately behind the cursor, then the
+    // word run behind that -- Buffer::MoveBackwardWord's exact two-phase
+    // structure, just walking a plain std::string instead of a Rope.
+    while (cursor_ > 0) {
+        const std::size_t previous = text::PreviousCodepointBoundary(text_, cursor_);
+        if (IsWordByte(text_[previous])) {
+            break;
+        }
+        cursor_ = previous;
+    }
+    while (cursor_ > 0) {
+        const std::size_t previous = text::PreviousCodepointBoundary(text_, cursor_);
+        if (!IsWordByte(text_[previous])) {
+            break;
+        }
+        cursor_ = previous;
+    }
+}
+
+void MinibufferPrompt::MoveCursorWordRight() {
+    while (cursor_ < text_.size() && !IsWordByte(text_[cursor_])) {
+        cursor_ = text::NextCodepointBoundary(text_, cursor_);
+    }
+    while (cursor_ < text_.size() && IsWordByte(text_[cursor_])) {
+        cursor_ = text::NextCodepointBoundary(text_, cursor_);
+    }
 }
 
 void MinibufferPrompt::MoveCursorToStart() {
