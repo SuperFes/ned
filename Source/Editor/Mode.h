@@ -239,9 +239,12 @@ using ImportTargetFunction =
 // SymbolKind back to a real theme color, so a custom theme needs no new
 // fields of its own for this.
 enum class SymbolKind {
-    Callable, // a function or method definition
-    TypeLike, // a class/interface/type-alias/enum/struct/module definition
-    Data,     // a constant/variable-like definition
+    Callable,  // a function or method definition
+    TypeLike,  // a class/interface/type-alias/enum/struct/module definition
+    Data,      // a constant/variable-like definition
+    Namespace, // main-editor-sticky-scroll follow-up: a namespace definition
+               // -- distinct from TypeLike so a breadcrumb (or gutter glyph)
+               // doesn't conflate "namespace foo" with a class/struct
 };
 
 // The SyntaxClass a SymbolKind's gutter glyph borrows its color from --
@@ -253,9 +256,19 @@ enum class SymbolKind {
 // own start (BufferView maps it to a line via ByteOffsetToLine the same way
 // diagnostics/diff hunks already do; a definition spanning multiple lines,
 // e.g. a multi-line function signature, only ever marks its first line).
+// endByte and name (main-editor-sticky-scroll follow-up) are the whole
+// definition node's own end and its captured "@name" text -- both were
+// unused by the original consumer (the symbol-kind gutter glyph, which only
+// ever needed a kind and a line to put it on) and so weren't captured at
+// all; sticky scroll's enclosing-chain resolution needs the full range for
+// containment and the name for the breadcrumb label. name is empty if the
+// query's match had no "name" capture for some reason (shouldn't happen per
+// the tags.scm convention every bundled query follows, but never assumed).
 struct SymbolMarker {
     std::size_t startByte;
+    std::size_t endByte = 0;
     SymbolKind  kind;
+    std::string name;
 };
 
 // Given a buffer's full text, returns every definition-site landmark in it

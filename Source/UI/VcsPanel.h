@@ -287,6 +287,17 @@ class VcsPanel : public Widget {
     };
     [[nodiscard]] std::vector<Row> BuildRows() const;
 
+    // Sticky-scroll follow-up (ROADMAP's own "deliberate v1 scope cut, not
+    // an oversight"): unlike ProjectSidebar's multi-ancestor stack
+    // (sections here aren't nested), there is at most one sticky row ever --
+    // the nearest preceding SectionHeader row above scrollOffset_, if
+    // scrollOffset_ has scrolled past it. std::nullopt when scrollOffset_ is
+    // itself 0 or already sitting on a SectionHeader row (nothing to pin,
+    // the real header is already the top visible row). Paint() and
+    // OnEvent()'s click handler both call this so row-index resolution
+    // agrees between what's drawn and what a click resolves to.
+    [[nodiscard]] std::optional<std::size_t> StickyHeaderIndex(const std::vector<Row>& rows) const;
+
     void ToggleDirectory(const std::filesystem::path& path);
     void OpenFileEntry(const std::filesystem::path& path);
     bool HandleKeyEvent(const Event& event);

@@ -100,6 +100,13 @@ Theme ThemeFromPalette(std::string name, const ThemePalette& p) {
         // scrollBarDisabled above already uses for "visible but recessive."
         .trailingWhitespaceBackground = Color::Interpolate(0.82F, p.magenta, p.background),
         .indentGuideForeground        = Color::Interpolate(0.5F, p.subtleForeground, p.background),
+        // Depth-colorized-indent-guides follow-up: the palette's own six
+        // accent hues, each pulled halfway toward background the same way
+        // indentGuideForeground above is -- dim enough to stay secondary to
+        // real syntax highlighting, in every derived theme uniformly.
+        .indentGuideDepthPalette      = {Color::Interpolate(0.5F, p.red, p.background), Color::Interpolate(0.5F, p.orange, p.background),
+                                         Color::Interpolate(0.5F, p.yellow, p.background), Color::Interpolate(0.5F, p.green, p.background),
+                                         Color::Interpolate(0.5F, p.blue, p.background), Color::Interpolate(0.5F, p.purple, p.background)},
         .headlineLevel1Foreground     = p.blue,
         .headlineLevel2Foreground     = p.cyan,
         .headlineLevel3Foreground     = p.green,

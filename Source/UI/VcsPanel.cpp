@@ -420,6 +420,22 @@ std::vector<VcsPanel::Row> VcsPanel::BuildRows() const {
     return rows;
 }
 
+std::optional<std::size_t> VcsPanel::StickyHeaderIndex(const std::vector<Row>& rows) const {
+    if (scrollOffset_ <= 0) {
+        return std::nullopt;
+    }
+    const auto idx = static_cast<std::size_t>(scrollOffset_);
+    if (idx >= rows.size() || rows[idx].kind == Row::Kind::SectionHeader) {
+        return std::nullopt; // already showing its own header at the top -- nothing to pin
+    }
+    for (std::size_t i = idx; i-- > 0;) {
+        if (rows[i].kind == Row::Kind::SectionHeader) {
+            return i;
+        }
+    }
+    return std::nullopt;
+}
+
 void VcsPanel::Paint(Canvas c) {
     RefreshStatus(/*force=*/false);
 
@@ -486,10 +502,18 @@ void VcsPanel::Paint(Canvas c) {
     if (!rows.empty()) {
         selectedIndex_ = std::clamp(selectedIndex_, 0, static_cast<int>(rows.size()) - 1);
     }
-    const bool focused = Focused();
+    const bool                       focused      = Focused();
+    const std::optional<std::size_t> stickyHeader = StickyHeaderIndex(rows);
+    const int                        stickyRowCount = stickyHeader ? 1 : 0;
 
     for (int contentRow = 0; contentRow < contentHeight; ++contentRow) {
-        const std::size_t index = static_cast<std::size_t>(scrollOffset_ + contentRow);
+        std::size_t index;
+        if (stickyHeader && contentRow == 0) {
+            index = *stickyHeader; // pinned copy of the section header that's scrolled off
+        }
+        else {
+            index = static_cast<std::size_t>(scrollOffset_ + contentRow - stickyRowCount);
+        }
         if (index >= rows.size()) {
             break;
         }
@@ -619,8 +643,16 @@ bool VcsPanel::OnEvent(const Event& event) {
         return true; // chrome, not content
     }
 
-    const std::vector<Row> rows = BuildRows();
-    const std::size_t      index = static_cast<std::size_t>(scrollOffset_ + (mouse->at.y - kHeaderHeight));
+    const std::vector<Row>           rows         = BuildRows();
+    const std::optional<std::size_t> stickyHeader = StickyHeaderIndex(rows);
+    const int                        contentRow   = mouse->at.y - kHeaderHeight;
+    std::size_t                      index;
+    if (stickyHeader && contentRow == 0) {
+        index = *stickyHeader; // clicking the pinned header acts on the real row it stands in for
+    }
+    else {
+        index = static_cast<std::size_t>(scrollOffset_ + contentRow - (stickyHeader ? 1 : 0));
+    }
     if (index >= rows.size()) {
         return true;
     }

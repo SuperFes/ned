@@ -24,6 +24,18 @@ void               SetTrailingWhitespaceHighlightEnabled(bool enabled);
 void               SetIndentGuidesEnabled(bool enabled);
 [[nodiscard]] bool IndentGuidesEnabled();
 
+// Depth-colorized-indent-guides follow-up: cycles each guide column's color
+// through Theme::indentGuideDepthPalette by its own nesting level (1st
+// indent level, 2nd, ...) instead of the flat indentGuideForeground --
+// purely a per-column arithmetic recoloring (displayColumn / tabWidth), no
+// fold/tree-sitter data needed, so it applies uniformly to every mode,
+// including ones with no fold query at all. Default true: unlike
+// IndentGuidesEnabled above (which decides whether guides render at all),
+// this only changes their color once guides are already on, so there's no
+// equivalent "editors don't do this by default" precedent to follow.
+void               SetIndentGuideDepthColorsEnabled(bool enabled);
+[[nodiscard]] bool IndentGuideDepthColorsEnabled();
+
 } // namespace ned::editor
 
 #endif // NED_EDITOR_WHITESPACESETTINGS_H

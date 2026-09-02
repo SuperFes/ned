@@ -48,6 +48,7 @@
 #include "Editor/SearchSettings.h"
 #include "Editor/Session.h"
 #include "Editor/SnippetRegistry.h"
+#include "Editor/StickyScrollSettings.h"
 #include "Editor/SyntaxTheme.h"
 #include "Editor/TabWidth.h"
 #include "Editor/Tasks/TaskConfig.h"
@@ -277,6 +278,10 @@ namespace {
         editor::SetIndentGuidesEnabled(enabled);
     }
 
+    void NedSetIndentGuideDepthColorsEnabled(bool enabled) {
+        editor::SetIndentGuideDepthColorsEnabled(enabled);
+    }
+
     void NedSetAutoDetectProjectRoot(bool enabled) {
         editor::SetAutoDetectProjectRoot(enabled);
     }
@@ -419,6 +424,14 @@ namespace {
 
     void NedSetCodeFoldingEnabled(bool enabled) {
         editor::SetCodeFoldingEnabled(enabled);
+    }
+
+    void NedSetStickyScrollEnabled(bool enabled) {
+        editor::SetStickyScrollEnabled(enabled);
+    }
+
+    void NedSetStickyScrollMaxRows(std::int64_t rows) {
+        editor::SetStickyScrollMaxRows(static_cast<int>(rows));
     }
 
     void NedSetRelativeLineNumbers(bool enabled) {
@@ -1088,6 +1101,11 @@ void InstallEditorBindings(Environment& env) {
         "ned", "set-indent-guides-enabled",
         "Enable/disable vertical indentation guide glyphs at each indent-width column within a line's own "
         "leading whitespace. Default false, same opt-in reasoning as set-trailing-whitespace-highlight-enabled.");
+    env.Register<&NedSetIndentGuideDepthColorsEnabled>(
+        "ned", "set-indent-guide-depth-colors-enabled",
+        "Enable/disable cycling each indent guide's color by its own nesting level (Theme's "
+        "indent-guide-depth-palette) instead of one flat color. Only visible when indent guides themselves are "
+        "on. Default true.");
     env.Register<&NedSetAutoDetectProjectRoot>(
         "ned", "set-auto-detect-project-root",
         "Enable/disable walking upward from an opened file for a VCS marker directory to find the project root "
@@ -1228,6 +1246,16 @@ void InstallEditorBindings(Environment& env) {
     env.Register<&NedSetCodeFoldingEnabled>(
         "ned", "set-code-folding-enabled",
         "Enable/disable the gutter code-folding affordance for modes with a fold query (default true).");
+    env.Register<&NedSetStickyScrollEnabled>(
+        "ned", "set-sticky-scroll-enabled",
+        "Enable/disable pinned namespace/class/method breadcrumb rows at the top of a pane while scrolled into "
+        "their body (default true). Only meaningful for a mode with a tags query (symbolKind) -- see "
+        "set-sticky-scroll-max-rows for capping how many rows it can reserve.");
+    env.Register<&NedSetStickyScrollMaxRows>(
+        "ned", "set-sticky-scroll-max-rows",
+        "How many pinned breadcrumb rows a pane will ever reserve, regardless of how deep the actual enclosing "
+        "namespace/class/method chain is (default 4). 0 effectively disables the rows without touching "
+        "set-sticky-scroll-enabled.");
     env.Register<&NedSetRelativeLineNumbers>(
         "ned", "set-relative-line-numbers",
         "Enable/disable relative line numbers in the gutter (default false): the current line keeps its real "

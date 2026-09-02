@@ -54,6 +54,8 @@
 #include "Editor/RelativeLineNumberSettings.h"
 #include "Editor/ScratchPad.h"
 #include "Editor/Session.h"
+#include "Editor/StickyScroll.h"
+#include "Editor/StickyScrollSettings.h"
 #include "Editor/SyntaxTheme.h"
 #include "Editor/TabWidth.h"
 #include "Editor/TestRun/TestResultsBuffer.h"
@@ -353,6 +355,25 @@ namespace {
     // cell that lands exactly on an indent-width column boundary -- see the
     // render loop's own use below.
     constexpr char32_t kIndentGuide = U'│';
+
+    // Depth-colorized-indent-guides follow-up: which color a guide glyph at
+    // a given display column gets. displayColumn is always a positive
+    // multiple of tabWidth at every real call site (the callers' own
+    // "displayColumn > 0 && displayColumn % tabWidth == 0" guard), so
+    // displayColumn / tabWidth is that guide's 1-indexed nesting level --
+    // pure column arithmetic, no fold/tree-sitter data needed, which is what
+    // lets this apply uniformly to every mode, including ones with no fold
+    // query at all (plain text, JSON without json-folds.scm's block shape
+    // matching visual indentation, ...). Falls back to the flat
+    // indentGuideForeground when the setting's off or a hand-built Theme
+    // left the palette empty.
+    Color IndentGuideColor(const Theme& theme, int displayColumn, int tabWidth) {
+        if (!editor::IndentGuideDepthColorsEnabled() || theme.indentGuideDepthPalette.empty() || tabWidth <= 0) {
+            return theme.indentGuideForeground;
+        }
+        const std::size_t level = static_cast<std::size_t>(displayColumn / tabWidth - 1);
+        return theme.indentGuideDepthPalette[level % theme.indentGuideDepthPalette.size()];
+    }
 
     char32_t HexDigit(char32_t nibble) {
         return (nibble < 10) ? (U'0' + nibble) : (U'A' + (nibble - 10));
@@ -1181,6 +1202,8 @@ namespace {
                 return "◇"; // WHITE DIAMOND -- a class/interface/type/module definition
             case editor::SymbolKind::Data:
                 return "="; // a constant/variable-like definition
+            case editor::SymbolKind::Namespace:
+                return "§"; // SECTION SIGN -- a namespace definition, distinct from TypeLike's ◇
         }
         return " "; // unreachable, same convention as DiagnosticGlyphFor above
     }
@@ -1325,7 +1348,7 @@ void BufferView::EnsureDiagnosticGutterCache() const {
     diagnosticGutterCacheGeneration_ = buffer.DiagnosticsGeneration();
 }
 
-void BufferView::EnsureSymbolGutterCache() const {
+void BufferView::EnsureSymbolMarkersCache() const {
     text::Buffer& buffer = activeBuffer_.Get();
 
     // Eligibility gate -- mirrors FoldGutterActive's own mode_.fold/
@@ -1334,47 +1357,73 @@ void BufferView::EnsureSymbolGutterCache() const {
     // empty result). Stamped as up to date even when ineligible so a repeat
     // call this same frame/buffer stays a cheap no-op.
     if (!mode_.symbolKind || buffer.ReadOnly()) {
-        symbolGutterLineKinds_.clear();
-        symbolGutterCacheBuffer_            = &buffer;
-        symbolGutterCacheContentGeneration_ = buffer.ContentGeneration();
+        symbolMarkersCache_.clear();
+        symbolMarkersCacheBuffer_            = &buffer;
+        symbolMarkersCacheContentGeneration_ = buffer.ContentGeneration();
         return;
     }
 
-    const text::ITextStorage& content              = buffer.Content();
-    const bool                huge                 = content.IsHuge();
-    const auto [windowStart, windowEnd]             = HugeStructuralWindow(content);
+    const text::ITextStorage& content  = buffer.Content();
+    const bool                huge     = content.IsHuge();
+    const auto [windowStart, windowEnd] = HugeStructuralWindow(content);
 
-    if (symbolGutterCacheBuffer_ == &buffer && symbolGutterCacheContentGeneration_ == buffer.ContentGeneration() &&
-        symbolGutterCacheWindowStart_ == windowStart && symbolGutterCacheWindowEnd_ == windowEnd) {
+    if (symbolMarkersCacheBuffer_ == &buffer && symbolMarkersCacheContentGeneration_ == buffer.ContentGeneration() &&
+        symbolMarkersCacheWindowStart_ == windowStart && symbolMarkersCacheWindowEnd_ == windowEnd) {
         return;
     }
 
-    // mode_.symbolKind already returns markers sorted by startByte (Mode.cpp's
-    // own closure) -- collapsing to one entry per line via a plain overwrite
-    // in that order keeps the LAST (highest-byte-offset) marker on a line
-    // that somehow has more than one, the same "later wins" convention
-    // HighlightSpan's own doc comment establishes elsewhere in this file.
     // huge-file-structural-gutters follow-up: a huge buffer feeds
     // mode_.symbolKind a bounded window instead of the whole document --
-    // marker.startByte is then window-relative, remapped back to absolute
-    // buffer coordinates (+= windowStart) before the ByteOffsetToLine call
-    // below, which otherwise operates on absolute offsets throughout.
-    std::unordered_map<std::size_t, editor::SymbolKind> kindByLine;
-    for (editor::SymbolMarker marker :
-         huge ? mode_.symbolKind(content.Substring(windowStart, windowEnd - windowStart)) : mode_.symbolKind(buffer.Text())) {
-        if (huge) {
+    // both startByte and endByte are then window-relative, remapped back to
+    // absolute buffer coordinates (+= windowStart) here so every consumer
+    // (the gutter below, sticky scroll) can treat this cache's coordinates
+    // uniformly regardless of buffer size.
+    symbolMarkersCache_ =
+        huge ? mode_.symbolKind(content.Substring(windowStart, windowEnd - windowStart)) : mode_.symbolKind(buffer.Text());
+    if (huge) {
+        for (editor::SymbolMarker& marker : symbolMarkersCache_) {
             marker.startByte += windowStart;
+            marker.endByte += windowStart;
         }
+    }
+    symbolMarkersCacheBuffer_            = &buffer;
+    symbolMarkersCacheContentGeneration_ = buffer.ContentGeneration();
+    symbolMarkersCacheWindowStart_       = windowStart;
+    symbolMarkersCacheWindowEnd_         = windowEnd;
+}
+
+void BufferView::EnsureSymbolGutterCache() const {
+    EnsureSymbolMarkersCache();
+    text::Buffer& buffer = activeBuffer_.Get();
+
+    if (symbolGutterCacheBuffer_ == &buffer && symbolGutterCacheContentGeneration_ == buffer.ContentGeneration() &&
+        symbolGutterCacheWindowStart_ == symbolMarkersCacheWindowStart_ &&
+        symbolGutterCacheWindowEnd_ == symbolMarkersCacheWindowEnd_) {
+        return;
+    }
+
+    // symbolMarkersCache_ arrives sorted by startByte (Mode.cpp's own
+    // closure) -- collapsing to one entry per line via a plain overwrite in
+    // that order keeps the LAST (highest-byte-offset) marker on a line that
+    // somehow has more than one, the same "later wins" convention
+    // HighlightSpan's own doc comment establishes elsewhere in this file.
+    const text::ITextStorage&                           content = buffer.Content();
+    std::unordered_map<std::size_t, editor::SymbolKind> kindByLine;
+    for (const editor::SymbolMarker& marker : symbolMarkersCache_) {
         kindByLine[content.ByteOffsetToLine(marker.startByte)] = marker.kind;
     }
     symbolGutterLineKinds_.assign(kindByLine.begin(), kindByLine.end());
     std::sort(symbolGutterLineKinds_.begin(), symbolGutterLineKinds_.end(),
               [](const auto& a, const auto& b) { return a.first < b.first; });
+    symbolGutterCacheBuffer_            = &buffer;
+    symbolGutterCacheContentGeneration_ = buffer.ContentGeneration();
+    symbolGutterCacheWindowStart_       = symbolMarkersCacheWindowStart_;
+    symbolGutterCacheWindowEnd_         = symbolMarkersCacheWindowEnd_;
 
     symbolGutterCacheBuffer_            = &buffer;
     symbolGutterCacheContentGeneration_ = buffer.ContentGeneration();
-    symbolGutterCacheWindowStart_       = windowStart;
-    symbolGutterCacheWindowEnd_         = windowEnd;
+    symbolGutterCacheWindowStart_       = symbolMarkersCacheWindowStart_;
+    symbolGutterCacheWindowEnd_         = symbolMarkersCacheWindowEnd_;
 }
 
 void BufferView::EnsureTestGutterCache() const {
@@ -1597,6 +1646,83 @@ void BufferView::PaintCodeLensRow(Canvas& c, int row, std::size_t line, std::siz
     }
 }
 
+std::vector<editor::SymbolMarker> BufferView::StickyScrollChainForCurrentViewport() const {
+    if (!editor::StickyScrollEnabled()) {
+        return {};
+    }
+    const int maxRows = editor::StickyScrollMaxRows();
+    if (maxRows <= 0) {
+        return {};
+    }
+    EnsureSymbolMarkersCache();
+    if (symbolMarkersCache_.empty()) {
+        return {};
+    }
+
+    const text::Buffer&       buffer          = activeBuffer_.Get();
+    const text::ITextStorage& content         = buffer.Content();
+    const std::size_t         viewportTopByte = content.LineToByteOffset(topLine_);
+    std::vector<editor::SymbolMarker> chain =
+        editor::stickyscroll::StickyChainForViewportTop(symbolMarkersCache_, viewportTopByte);
+    if (static_cast<int>(chain.size()) > maxRows) {
+        // Keep the INNERMOST rows (nearest ancestors) when the chain runs
+        // deeper than the cap -- the immediate enclosing context is more
+        // useful than the outermost namespace once space is tight.
+        chain.erase(chain.begin(), chain.begin() + (static_cast<int>(chain.size()) - maxRows));
+    }
+    return chain;
+}
+
+int BufferView::PaintStickyScrollRows(Canvas& c, std::size_t gutterWidth) const {
+    const std::vector<editor::SymbolMarker> chain = StickyScrollChainForCurrentViewport();
+    if (chain.empty()) {
+        return 0;
+    }
+
+    const int width = c.size().width;
+    for (std::size_t i = 0; i < chain.size(); ++i) {
+        const editor::SymbolMarker& marker = chain[i];
+        const int                   row    = static_cast<int>(i);
+
+        for (int col = 0; col < width; ++col) {
+            Cell& cell     = c[{.x = col, .y = row}];
+            cell.character = " ";
+            theme_.tabBar.ApplyTo(cell);
+        }
+
+        // Staircase indent, one level per ancestor row -- same "clustered
+        // structure column" spirit the gutter's own symbol column uses,
+        // just written inline here since there's no separate column for it.
+        int col = static_cast<int>(gutterWidth) + static_cast<int>(i) * 2;
+        if (col >= width) {
+            continue;
+        }
+        const Brush glyphBrush{.background = theme_.tabBar.background,
+                               .foreground = theme_.BrushFor(editor::SyntaxClassFor(marker.kind)).foreground,
+                               .bold       = true};
+        Cell& glyphCell     = c[{.x = col, .y = row}];
+        glyphCell.character = SymbolGlyphFor(marker.kind);
+        glyphBrush.ApplyTo(glyphCell);
+        ++col;
+        if (col < width) {
+            ++col; // one blank column between the glyph and the name
+        }
+        // Names are effectively-always-ASCII identifiers in every bundled
+        // tags.scm; a raw byte-per-cell walk here mirrors PaintCodeLensRow's
+        // own established (same-file) precedent for arbitrary title text.
+        for (const char ch : marker.name) {
+            if (col >= width) {
+                break;
+            }
+            Cell& cell     = c[{.x = col, .y = row}];
+            cell.character = std::string(1, ch);
+            glyphBrush.ApplyTo(cell);
+            ++col;
+        }
+    }
+    return static_cast<int>(chain.size());
+}
+
 void BufferView::EnsureBlameGutterCache() const {
     text::Buffer& buffer = activeBuffer_.Get();
     if (blameGutterCacheBuffer_ == &buffer && blameGutterCacheContentGeneration_ == buffer.ContentGeneration()) {
@@ -1707,6 +1833,7 @@ void BufferView::DispatchDiffForTesting(std::vector<editor::vcs::VcsDiffHunk> hu
     // branch.
     diffSyncBuffer_ = &activeBuffer_.Get();
     std::vector<std::pair<std::size_t, DiffLineKind>> kinds;
+    std::vector<std::size_t>                          hunkStartLines;
     for (const editor::vcs::VcsDiffHunk& hunk : hunks) {
         if (hunk.newCount == 0) {
             // Pure deletion -- a boundary, not a covered range. git's
@@ -1716,15 +1843,53 @@ void BufferView::DispatchDiffForTesting(std::vector<editor::vcs::VcsDiffHunk> hu
             // diff -U0` output while building this (see
             // GitVcsPluginTest.cpp).
             kinds.emplace_back(hunk.newStart, DiffLineKind::Removed);
+            hunkStartLines.push_back(hunk.newStart);
             continue;
         }
         const DiffLineKind kind = (hunk.oldCount == 0) ? DiffLineKind::Added : DiffLineKind::Modified;
         for (std::size_t i = 0; i < hunk.newCount; ++i) {
             kinds.emplace_back(hunk.newStart - 1 + i, kind); // newStart is 1-indexed
         }
+        hunkStartLines.push_back(hunk.newStart - 1);
     }
     std::sort(kinds.begin(), kinds.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
     diffLineKinds_ = std::move(kinds);
+    std::sort(hunkStartLines.begin(), hunkStartLines.end());
+    diffHunkStartLines_ = std::move(hunkStartLines);
+}
+
+void BufferView::JumpToNextHunk() {
+    if (diffHunkStartLines_.empty()) {
+        statusMessage_ = "No changes in this buffer.";
+        return;
+    }
+    text::Buffer&      buffer      = activeBuffer_.Get();
+    const std::size_t  currentLine = buffer.Content().ByteOffsetToLine(buffer.Point());
+    const auto         it          = std::upper_bound(diffHunkStartLines_.begin(), diffHunkStartLines_.end(), currentLine);
+    if (it == diffHunkStartLines_.end()) {
+        statusMessage_ = "No more changed hunks below point.";
+        return;
+    }
+    buffer.SetPoint(buffer.Content().LineToByteOffset(*it));
+    statusMessage_.clear();
+    ScrollToShowPoint();
+}
+
+void BufferView::JumpToPreviousHunk() {
+    if (diffHunkStartLines_.empty()) {
+        statusMessage_ = "No changes in this buffer.";
+        return;
+    }
+    text::Buffer&      buffer      = activeBuffer_.Get();
+    const std::size_t  currentLine = buffer.Content().ByteOffsetToLine(buffer.Point());
+    const auto         it          = std::lower_bound(diffHunkStartLines_.begin(), diffHunkStartLines_.end(), currentLine);
+    if (it == diffHunkStartLines_.begin()) {
+        statusMessage_ = "No more changed hunks above point.";
+        return;
+    }
+    buffer.SetPoint(buffer.Content().LineToByteOffset(*(it - 1)));
+    statusMessage_.clear();
+    ScrollToShowPoint();
 }
 
 void BufferView::RequestDiffForCurrentBuffer() {
@@ -1943,7 +2108,7 @@ bool BufferView::VisibleRowCountAtLeast(std::size_t startLine, std::size_t endLi
     return false;
 }
 
-void BufferView::Paint(Canvas c) {
+void BufferView::Paint(Canvas paneCanvas) {
     EnsureTopLineValidForActiveBuffer();
     EnsureStatusMessageFreshness();
 
@@ -2434,6 +2599,25 @@ void BufferView::Paint(Canvas c) {
     // untouched (the annotation-row continue, and the past-end-of-buffer
     // blank-row case) explicitly correct that default where it's actually
     // known to be safe.
+    // main-editor-sticky-scroll follow-up: drawn into paneCanvas (the pane's
+    // full, unshifted view) first; every line of code below this point (the
+    // row loop, its rowLine/rowContentEndColumn bookkeeping,
+    // PaintProseDiagnosticCallouts) then works against `c`, a NEW Canvas
+    // bound to a Box shifted down by however many rows were just drawn --
+    // Canvas has a reference member (deleted copy-assignment), so this has
+    // to be a fresh local binding, not a reassignment of paneCanvas itself;
+    // that's the whole reason the parameter is named paneCanvas and not `c`
+    // here. A 0-row shift is a true no-op, so this needs no branch for the
+    // common "nothing pinned" case. stickyRowCount_ itself is live
+    // BufferView state (not Paint()-local) -- CursorPosition()/
+    // ByteOffsetForPoint() read it back so the terminal cursor, popup
+    // anchors, and mouse-click row resolution all agree with what got drawn
+    // this frame.
+    stickyRowCount_ = PaintStickyScrollRows(paneCanvas, gutterWidth);
+    Box shiftedBox = Box_();
+    shiftedBox.y_min += stickyRowCount_;
+    Canvas c = paneCanvas.ForBox(shiftedBox);
+
     std::vector<std::size_t> rowLine(static_cast<std::size_t>(c.size().height), kNoRowLine);
     std::vector<int>         rowContentEndColumn(static_cast<std::size_t>(c.size().height), c.size().width);
     for (int row = 0; row < c.size().height; ++row) {
@@ -3135,7 +3319,7 @@ void BufferView::Paint(Canvas c) {
                             // see currentLineIndentEnd's own doc comment.
                             cell.character        = text::EncodeCodepointUtf8(kIndentGuide);
                             Brush guideBrush      = brush;
-                            guideBrush.foreground = theme_.indentGuideForeground;
+                            guideBrush.foreground = IndentGuideColor(theme_, displayColumn, tabWidth);
                             guideBrush.ApplyTo(cell);
                         }
                         else {
@@ -3189,7 +3373,7 @@ void BufferView::Paint(Canvas c) {
                         displayColumn % editor::TabWidth() == 0) {
                         cell.character        = text::EncodeCodepointUtf8(kIndentGuide);
                         Brush guideBrush      = brush;
-                        guideBrush.foreground = theme_.indentGuideForeground;
+                        guideBrush.foreground = IndentGuideColor(theme_, displayColumn, editor::TabWidth());
                         guideBrush.ApplyTo(cell);
                     }
                     else {
@@ -3713,8 +3897,15 @@ std::optional<Point> BufferView::CursorPosition() const {
         }
     }
 
+    // main-editor-sticky-scroll follow-up: visibleRow is still relative to
+    // topLine_'s own screen row (row 0) -- stickyRowCount_ is added to the
+    // final Point below, once, rather than threaded through every
+    // intermediate row computation above; the bound check here has to widen
+    // by the same amount first, or a point that's genuinely still on screen
+    // (just pushed down by the pinned rows) would be wrongly reported as
+    // off-screen.
     const std::size_t visibleRow = VisibleRowCountBetween(topLine_, pointLine) + rowWithinLine;
-    if (sizeIsKnown && visibleRow >= static_cast<std::size_t>(sizeNow.height)) {
+    if (sizeIsKnown && visibleRow + static_cast<std::size_t>(stickyRowCount_) >= static_cast<std::size_t>(sizeNow.height)) {
         return std::nullopt;
     }
 
@@ -3737,7 +3928,7 @@ std::optional<Point> BufferView::CursorPosition() const {
     if (sizeIsKnown && col >= static_cast<std::size_t>(sizeNow.width)) {
         return std::nullopt; // scrolled off horizontally to the right
     }
-    return Point{.x = static_cast<int>(col), .y = static_cast<int>(visibleRow)};
+    return Point{.x = static_cast<int>(col), .y = static_cast<int>(visibleRow) + stickyRowCount_};
 }
 
 bool BufferView::Focusable() const {
@@ -6707,6 +6898,16 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         case editor::InteractiveRequest::VcsUnstageHunk:
             StageOrUnstageHunkAtPoint(false);
             return;
+        // Hunk-navigation follow-up: pure point motion against the
+        // already-cached diffHunkStartLines_, no VcsRunner round trip and
+        // no Modified() gate (see JumpToNextHunk/JumpToPreviousHunk's own
+        // doc comments).
+        case editor::InteractiveRequest::VcsNextHunk:
+            JumpToNextHunk();
+            return;
+        case editor::InteractiveRequest::VcsPreviousHunk:
+            JumpToPreviousHunk();
+            return;
         case editor::InteractiveRequest::VcsFullDiffBuffer:
             RequestVcsFullDiffBuffer();
             return;
@@ -9110,6 +9311,14 @@ void BufferView::StageHunkAtPointForTesting(bool stage) {
     StageOrUnstageHunkAtPoint(stage);
 }
 
+void BufferView::JumpToNextHunkForTesting() {
+    JumpToNextHunk();
+}
+
+void BufferView::JumpToPreviousHunkForTesting() {
+    JumpToPreviousHunk();
+}
+
 void BufferView::RequestDiagnosticsBufferForTesting() {
     RequestDiagnosticsBuffer();
 }
@@ -9795,7 +10004,14 @@ std::size_t BufferView::ByteOffsetForPoint(Point at) const {
     const text::ITextStorage&   content    = buffer.Content();
     const std::size_t   totalLines = content.LineCount();
 
-    std::size_t targetRow     = static_cast<std::size_t>(std::max(at.y, 0));
+    // main-editor-sticky-scroll follow-up: at.y is in this pane's own local
+    // coordinates, unaware that Paint() may have pushed real content down by
+    // stickyRowCount_ rows this frame -- subtracted here so a click below
+    // the pinned rows still resolves to the buffer line actually drawn
+    // there. A click landing IN the pinned band itself (result would be
+    // negative) clamps to row 0, same as the existing at.y<0 defensive
+    // clamp below.
+    std::size_t targetRow     = static_cast<std::size_t>(std::max(at.y - stickyRowCount_, 0));
     std::size_t line          = topLine_;
     std::size_t segmentInLine = 0;
     while (line < totalLines) {
@@ -10035,6 +10251,25 @@ bool BufferView::OnMouseEvent(const Event& event) {
         // exist side by side -- a click into a pane is how focus moves
         // there, mirroring real Emacs' own "clicking a window selects it."
         TakeFocus();
+
+        // main-editor-sticky-scroll follow-up: click-to-jump, checked first
+        // (same "one specific region wins over the generic click fallthrough"
+        // shape the fold-gutter click check just below already has) -- a
+        // click inside the pinned band moves point to that ancestor's own
+        // definition start instead of falling through to ByteOffsetForPoint,
+        // which would otherwise resolve it against whatever real buffer line
+        // the pinned rows are currently covering.
+        if (stickyRowCount_ > 0 && mouse->at.y < stickyRowCount_) {
+            const std::vector<editor::SymbolMarker> chain = StickyScrollChainForCurrentViewport();
+            const auto                              index = static_cast<std::size_t>(mouse->at.y);
+            if (index < chain.size()) {
+                text::Buffer& buffer = activeBuffer_.Get();
+                buffer.ClearMark();
+                buffer.SetPoint(chain[index].startByte);
+                ScrollToShowPoint();
+            }
+            return true;
+        }
 
         // depth-aware-fold-gutter follow-up: a click inside the reserved
         // fold-depth region (see GutterWidth()/Paint()'s own doc comments)

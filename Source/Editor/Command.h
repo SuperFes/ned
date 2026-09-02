@@ -485,6 +485,14 @@ enum class InteractiveRequest { None,
                                 // from mismatched line numbers would pick the wrong hunk.
                                 VcsStageHunk,
                                 VcsUnstageHunk,
+                                // Hunk-navigation follow-up: one-shot direct point motion to
+                                // the next/previous changed hunk in the *current* buffer
+                                // (gitsigns' ]c/[c convention) -- reads BufferView's own
+                                // diffHunkStartLines_ cache directly, no VcsRunner round trip,
+                                // so (unlike VcsStageHunk/VcsUnstageHunk above) this never gates
+                                // on the buffer being saved/unmodified.
+                                VcsNextHunk,
+                                VcsPreviousHunk,
                                 // Multibuffers follow-up: one-shot direct action, same shape as
                                 // VcsBlameBuffer/VcsShowLog -- switches to a synthesized,
                                 // read-only "*vcs diff*" buffer stitching every changed file's

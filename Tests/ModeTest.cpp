@@ -876,3 +876,47 @@ TEST_CASE("PythonMode's symbolKind classifies a function definition and a class 
             std::vector{SymbolKind::Callable});
     REQUIRE(KindsInOrder(mode.symbolKind("class Point:\n    pass\n")) == std::vector{SymbolKind::TypeLike});
 }
+
+// main-editor-sticky-scroll follow-up: SymbolMarker gained name/endByte
+// (Query::Matches()-based correlation, see Mode.cpp's own doc comment) --
+// these lock in that the definition's *whole* range is captured (not just
+// the identifier) and that the name text matches the identifier exactly.
+TEST_CASE("CMode's symbolKind captures each definition's full range and name", "[Mode]") {
+    const auto mode = CMode();
+    const std::string source = "int add(int a, int b) { return a + b; }\n";
+    const auto markers = mode.symbolKind(source);
+    REQUIRE(markers.size() == 1);
+    REQUIRE(markers[0].name == "add");
+    REQUIRE(markers[0].startByte == 0);
+    // Spans the whole definition through its closing brace, not just "add".
+    REQUIRE(markers[0].endByte == source.find('\n'));
+}
+
+TEST_CASE("CppMode's symbolKind classifies a namespace definition distinctly from a class", "[Mode]") {
+    using ned::editor::SymbolKind;
+    const auto mode = CppMode();
+    const auto markers = mode.symbolKind("namespace outer {\nnamespace inner {\nclass Widget {};\n}\n}\n");
+    REQUIRE(KindsInOrder(markers) == std::vector{SymbolKind::Namespace, SymbolKind::Namespace, SymbolKind::TypeLike});
+    REQUIRE(markers[0].name == "outer");
+    REQUIRE(markers[1].name == "inner");
+    REQUIRE(markers[2].name == "Widget");
+    // Properly nested: outer contains inner contains Widget.
+    REQUIRE(markers[0].startByte < markers[1].startByte);
+    REQUIRE(markers[1].endByte < markers[0].endByte);
+    REQUIRE(markers[1].startByte < markers[2].startByte);
+    REQUIRE(markers[2].endByte < markers[1].endByte);
+}
+
+TEST_CASE("CppMode's symbolKind ranges nest properly -- a method's range sits inside its class's", "[Mode]") {
+    const auto mode = CppMode();
+    const auto markers =
+        mode.symbolKind("class Widget {\npublic:\n    int getValue() const { return value_; }\n};\n");
+    REQUIRE(markers.size() == 2);
+    REQUIRE(markers[0].name == "Widget");
+    REQUIRE(markers[1].name == "getValue");
+    // The method's definition is fully contained within the class's --
+    // exactly the invariant EnclosingSymbolChain relies on (see
+    // Editor/StickyScroll.h's own doc comment).
+    REQUIRE(markers[1].startByte > markers[0].startByte);
+    REQUIRE(markers[1].endByte < markers[0].endByte);
+}

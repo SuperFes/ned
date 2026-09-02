@@ -313,6 +313,12 @@ Theme DarkTheme() {
         .diffRemovedBackground         = Color::RGB(0x3a2a2a), // dim red wash, same lightness as diffAddedBackground
         .trailingWhitespaceBackground  = Color::RGB(0x40282f), // dim maroon wash, distinct from diffRemovedBackground's red
         .indentGuideForeground         = Color::RGB(0x4a4a48), // dim gray, deliberately low-contrast against defaultForeground
+        // Depth-colorized-indent-guides follow-up: a 6-color rotation, dim
+        // enough to stay secondary to real syntax highlighting (same
+        // "deliberately low-contrast" spirit as indentGuideForeground
+        // above, just spread across a few distinct hues instead of one).
+        .indentGuideDepthPalette       = {Color::RGB(0x8a5050), Color::RGB(0x8a7250), Color::RGB(0x8a8a50),
+                                          Color::RGB(0x508a5f), Color::RGB(0x50748a), Color::RGB(0x74508a)},
         .headlineLevel1Foreground      = Color::BrightBlue,
         .headlineLevel2Foreground      = Color::BrightCyan,
         .headlineLevel3Foreground      = Color::BrightGreen,
@@ -405,6 +411,11 @@ Theme LightTheme() {
         .diffRemovedBackground         = Color::RGB(0xf5dcdc), // light red wash, same lightness as diffAddedBackground
         .trailingWhitespaceBackground  = Color::RGB(0xf0dde8), // light pink wash, distinct from diffRemovedBackground's red
         .indentGuideForeground         = Color::RGB(0xd8d8d0), // light gray, deliberately low-contrast against defaultForeground
+        // Depth-colorized-indent-guides follow-up: DarkTheme's own palette
+        // pulled darker/more saturated so each hue stays visible against a
+        // light background instead of washing out.
+        .indentGuideDepthPalette       = {Color::RGB(0xb03030), Color::RGB(0xb07a20), Color::RGB(0x9a9a20),
+                                          Color::RGB(0x2f9a4f), Color::RGB(0x2f70b0), Color::RGB(0x7a2fb0)},
         .headlineLevel1Foreground      = Color::RGB(0x1f4fa0),
         .headlineLevel2Foreground      = Color::RGB(0x1f7a7a),
         .headlineLevel3Foreground      = Color::RGB(0x2f6f2f),
@@ -499,6 +510,11 @@ Theme AnsiDarkTheme() {
         .diffRemovedBackground         = Color::Red,
         .trailingWhitespaceBackground  = Color::Yellow,
         .indentGuideForeground         = Color::Blue,
+        // Depth-colorized-indent-guides follow-up: the ANSI 8-color palette
+        // has no dim/desaturated variants to reach for, so this is
+        // literally the base hue rotation -- rainbow indent guides in the
+        // plainest sense.
+        .indentGuideDepthPalette       = {Color::Red, Color::Yellow, Color::Green, Color::Cyan, Color::Blue, Color::Magenta},
         .headlineLevel1Foreground      = Color::Blue,
         .headlineLevel2Foreground      = Color::Cyan,
         .headlineLevel3Foreground      = Color::Green,
@@ -582,6 +598,7 @@ Theme AnsiLightTheme() {
         .diffRemovedBackground         = Color::Red,
         .trailingWhitespaceBackground  = Color::Yellow,
         .indentGuideForeground         = Color::Blue,
+        .indentGuideDepthPalette       = {Color::Red, Color::Yellow, Color::Green, Color::Cyan, Color::Blue, Color::Magenta},
         .headlineLevel1Foreground      = Color::Blue,
         .headlineLevel2Foreground      = Color::Magenta,
         .headlineLevel3Foreground      = Color::Green,

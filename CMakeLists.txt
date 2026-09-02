@@ -564,6 +564,8 @@ add_library(ned_lib STATIC
         Source/Editor/WrapOverrides.cpp
         Source/Editor/CodeFold.cpp
         Source/Editor/CodeFoldSettings.cpp
+        Source/Editor/StickyScroll.cpp
+        Source/Editor/StickyScrollSettings.cpp
         Source/Editor/RelativeLineNumberSettings.cpp
         Source/Editor/WhichKeySettings.cpp
         Source/Editor/Org.cpp
@@ -886,6 +888,9 @@ if (NED_BUILD_TESTS)
             Tests/BufferViewTest.cpp
             Tests/BufferViewBlameGutterTest.cpp
             Tests/BufferViewDiffGutterTest.cpp
+            Tests/BufferViewHunkNavigationTest.cpp
+            Tests/BufferViewIndentGuideDepthTest.cpp
+            Tests/BufferViewStickyScrollTest.cpp
             Tests/BufferViewSymbolGutterTest.cpp
             Tests/BufferViewHugeStructuralGutterTest.cpp
             Tests/BufferViewVcsStatusTest.cpp
@@ -901,6 +906,7 @@ if (NED_BUILD_TESTS)
             Tests/HugeRegexScanTest.cpp
             Tests/ModeTest.cpp
             Tests/CodeFoldTest.cpp
+            Tests/StickyScrollTest.cpp
             Tests/OrgTest.cpp
             Tests/OrgHighlightTest.cpp
             Tests/OrgCaptureTest.cpp
