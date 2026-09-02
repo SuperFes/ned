@@ -1002,7 +1002,12 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           if (end > start) {
                               buffer.DeleteRange(start, end - start);
                           }
-                          buffer.SetPoint(content.LineToByteOffset(first));
+                          // Fresh reference, not the outer `content` -- the
+                          // DeleteRange just above replaces the buffer's
+                          // internal storage (a real, ASan-caught heap-use-
+                          // after-free otherwise, same shape as toggle-line-
+                          // comment's own fix above).
+                          buffer.SetPoint(buffer.Content().LineToByteOffset(first));
                       });
 
     registry.Register("recenter", "Scroll so the line at point is centered in the window.",
@@ -2954,6 +2959,11 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           const std::string& prefix = context.mode->lineCommentPrefix;
 
                           text::Buffer&     buffer  = context.buffer;
+                          // Safe to capture once here -- only read-only
+                          // uses below (line-range resolution, the first
+                          // pass' own scan) ever touch it; the second
+                          // pass's mutating loop re-fetches its own fresh
+                          // reference per iteration instead (see there).
                           const text::ITextStorage& content = buffer.Content();
                           std::size_t       firstLine, lastLine;
                           if (buffer.HasMark()) {
@@ -2994,11 +3004,20 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
 
                           // Second pass (bottom-to-top, so earlier lines'
                           // offsets are never invalidated by editing a
-                          // later one): apply the toggle.
+                          // later one): apply the toggle. Re-fetches
+                          // buffer.Content() fresh each iteration -- a real,
+                          // ASan-caught heap-use-after-free otherwise: each
+                          // InsertAt/DeleteRange below replaces the buffer's
+                          // internal storage (Buffer::InsertAtImpl), which
+                          // frees whatever the OUTER `content` reference
+                          // (captured once, above the first pass) still
+                          // pointed at, the moment the very first mutation
+                          // in this loop runs.
                           for (std::size_t line = lastLine + 1; line-- > firstLine;) {
-                              const std::size_t start  = content.LineToByteOffset(line);
-                              const std::size_t end    = LineContentEnd(content, start);
-                              const std::string text   = content.Substring(start, end - start);
+                              const text::ITextStorage& lineContent = buffer.Content();
+                              const std::size_t start  = lineContent.LineToByteOffset(line);
+                              const std::size_t end    = LineContentEnd(lineContent, start);
+                              const std::string text   = lineContent.Substring(start, end - start);
                               const std::size_t indent = text.find_first_not_of(" \t");
                               if (indent == std::string::npos) {
                                   continue;
