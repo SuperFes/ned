@@ -287,98 +287,17 @@ Notcurses.
 
 ### VCS Side Panel
 
-Core slice shipped 2026-09-01: a persistent left-side panel for working-tree changes,
-`UI/VcsPanel.h/.cpp`, physically shaped like `ProjectSidebar` (rounded border,
-collapsible to a 1-column strip, drag-resize divider, keyboard-focusable with arrow-key
-navigation) and docked in the same left slot, swappable with it — `toggle-vcs-panel`
-(`C-c V`)/`focus-vcs-panel` (`C-c v p`) mirror `toggle-project-sidebar`/
-`focus-project-sidebar`'s own pair, and `BufferView` keeps the two mutually exclusive on
-that shared slot (expanding one collapses the other via plain `SetCollapsed`, not the
-persisting `CommitCollapsed`, so an automatic swap never overwrites the other widget's
-own remembered visibility). Starts hidden by default (unlike `ProjectSidebar`) since it's
-a new opt-in surface. `Editor/Vcs/VcsRowStatus.h` hoists the row-severity classification
-(`VcsRowStatus`/`ClassifyPorcelainStatus`) that used to be `ProjectSidebar.cpp`-local so
-both widgets share it, and adds `PartitionVcsStatus` (staged/unstaged/untracked bucketing
-from git's porcelain `XY` code) for this panel's own section grouping. Built entirely on
-the `VcsRunner`/`VcsProvider` plumbing that already existed — no backend changes.
+Shipped 2026-09-01 (`decd881`, `53b8054`) — `UI/VcsPanel.h/.cpp`, a persistent left-side
+panel (`toggle-vcs-panel` on `C-c V`, mutually exclusive with `ProjectSidebar` on the
+same slot) covering: tree view of staged/unstaged/untracked with multi-select batch
+stage/unstage, inline diff preview with per-hunk stage/unstage, commit/branch compose,
+discard-with-confirm, stash, push/pull/fetch, ahead/behind summary, and a conflict-marker
+affordance. Built entirely on existing `VcsRunner`/`VcsProvider` plumbing.
 
-Two deliberate v1 cuts from the original design sketch below: no sticky-scroll for
-section headers while scrolled into deep content (`ProjectSidebar`'s own affordance,
-skipped here as scope, not an oversight), and directory-tree rows use indentation only,
-no box-drawing tree-connector glyphs (`ProjectSidebar`'s `├─└─│`) — both easy follow-ups
-if the plain-indent tree reads as too flat in practice.
-
-- [x] **Tree view of working-tree state** — staged / unstaged / untracked as three
-      collapsible sections, each file grouped into a directory tree (`VcsPanel.cpp`'s own
-      `BuildStatusTree`, built from the known status-entry path list rather than a disk
-      walk, reusing `ProjectTreeEntry`'s dir/file/depth shape) rather than a flat list.
-      Real ☐/☑ ballot-box glyphs for the multi-select checkbox (see below), not bracketed
-      ASCII.
-- [x] **Multi-select and batch actions** — Space marks/unmarks the focused row (dired-
-      style), and a click squarely on the ☐/☑ glyph does the same from the mouse (a click
-      anywhere else on a file row opens it instead). `a`/`u` stage/unstage the whole
-      marked selection if non-empty, else just the focused row — `VcsRunner::
-      RequestStage`/`RequestUnstage` already take one path at a time, so this loops one
-      call per target rather than needing a new batch primitive.
-- [x] **Inline diff preview on selection** — `UI/VcsDiffPreview.h/.cpp`, a non-focusable
-      `OverlayHost` bottom drawer (`TerminalPanel`/`AcpPanel`'s own geometry, shown/hidden
-      automatically by `VcsPanel::SetOnSelectionChanged` rather than a toggle keybinding).
-      Uses the new `VcsRunner::RequestFileDiffText` (raw diff text, scoped to one file --
-      `VcsDiffHunk`/`ParseDiff` is deliberately header-only, so the *raw* text is what
-      `DiffPatch.h`'s `ParseDiffHunks` needs) + a path-based `VcsRunner::RequestHunkApply`
-      overload (shares one core with the existing point-driven `Buffer`-taking overload).
-      Each hunk header renders a `[stage]`/`[unstage]` click affordance; clicking it calls
-      `RequestHunkApply` directly and re-fetches the same file's diff to stay live.
-      tmux-verified end to end (real SGR mouse click, confirmed against real `git diff`).
-- [x] **Commit compose inline** — `c` fires `BufferView::RequestVcsAction(Commit)`
-      (routed via `WindowManager::RequestVcsPanelAction` to whichever pane has focus),
-      which just calls the existing `BeginVcsCommitMessage()` unchanged — no new commit
-      primitive, the panel's border title shows "N staged" for context before it's fired.
-- [x] **Branch switcher/creator inline** — `w`/`n` fire the same `RequestVcsAction`
-      routing into the existing `BeginVcsSwitchBranchPrompt()`/(newly extracted)
-      `BeginVcsCreateBranchPrompt()`; the checked-out branch (from `RequestBranchList`'s
-      `current` entry) renders in the panel's border title rather than a dedicated content
-      row, `ProjectSidebar`'s own header-row precedent.
-- [x] **Discard/revert changes** — `VcsProvider::RevertArgv` (`git checkout HEAD -- path`,
-      explicitly targeting HEAD rather than the index so a staged-and-further-edited file
-      discards both halves at once). `x` on a file row enters a self-contained confirm
-      state (this widget has no `MinibufferPrompt` to borrow) rendered in place of the
-      border title; only a bare `y`/`Y` confirms, everything else — including Enter —
-      cancels, the one destructive action in the panel getting real "are you sure"
-      friction unlike stage/unstage.
-- [x] **Stash support** — `VcsProvider::StashListArgv`/`ParseStashList`/`StashPushArgv`/
-      `StashPopArgv`/`StashDropArgv` (+ `vcs-git.janet`'s own argv/parse implementations)
-      back a fourth panel section, "Stashes (N)" — unlike the three working-tree
-      sections, shown only when non-empty. `z` (Magit's own real-world stash mnemonic)
-      pushes the whole working tree from anywhere in the panel; Enter/click on a stash
-      row pops it, `d` drops it.
-- [x] **Push/pull/fetch** — `VcsProvider::PushArgv`/`PullArgv`/`FetchArgv` (bare, relying
-      on an already-configured upstream tracking branch, no `--set-upstream` vocabulary)
-      + `vcs-git.janet`'s own implementations. `f`/`F`/`P` (Magit's own real-world
-      mnemonics) fire fetch/pull/push from anywhere in the panel, no confirm friction.
-- [x] **Ahead/behind + dirty-count summary** — `VcsProvider::AheadBehindArgv`/
-      `ParseAheadBehind` (`git rev-list --left-right --count HEAD...@{u}`) refreshed on
-      the same throttled cycle as branch/status; the panel's border title gains
-      `↑N ↓M` when known and non-zero (nothing shown for "up to date" or "no upstream
-      configured", to keep the common case uncluttered) alongside the existing branch/
-      staged-count text.
-- [x] **Conflict-file affordance** — `VcsPanel::RefreshConflictedPaths` (piggybacked on
-      the same throttled `RefreshStatus` cycle) reads each staged/unstaged entry's
-      on-disk content and checks `Text/ThreeWayMerge.h`'s `HasConflictMarkers` (already
-      used by `save-buffer`'s guard); a hit appends a `⚠` glyph to the row (not prefixed,
-      to keep the checkbox-click column math undisturbed) and Enter/click jumps point to
-      the first line-start `<<<<<<<` marker.
-
-All items shipped 2026-09-01. One live bug found and fixed along the way, worth noting
-for anyone adding a third `VcsRunner::RequestStatus` poller in the future:
-`ProjectSidebar` and `VcsPanel` each independently poll status on their own timer (500ms/
-1000ms) against the identical `"status:"+root` key `VcsRunner` single-flights: since both
-paint from the same keypress-triggered frame and `ProjectSidebar` paints first in
-`main.cpp`'s composition, it won the race almost every time, permanently starving
-`VcsPanel`'s own throttled refresh (only succeeding via a `force=true` call from another
-operation's `onSuccess`). Fixed by having `VcsPanel::RefreshStatus` advance its own
-throttle timestamp only on real success, not preemptively — a lost race now retries on
-the very next frame instead of waiting out a whole new window.
+- [ ] Sticky-scroll for section headers while scrolled into deep content
+      (`ProjectSidebar` has this; deliberate v1 scope cut here, not an oversight).
+- [ ] Directory-tree rows use indentation only, no box-drawing tree-connector glyphs
+      (`ProjectSidebar`'s `├─└─│`) — revisit if the plain-indent tree reads as too flat.
 
 ### Jupyter Notebooks
 
@@ -495,21 +414,12 @@ rather than embedding it directly in `NotebookView` for exactly this reason.
 
 ### Named Projects & Multi-Project Sidebar (New Feature)
 
-Local-only slice shipped: `Editor/ProjectRegistry.h` (a named-project catalog,
-`$XDG_STATE_HOME/ned/projects.json`, `Session.h`'s `FilePlaceStore` precedent),
-`switch-project`/`open-project` (`C-c P s`/`C-c P o`, plus a click on the sidebar's
-title row for switch-project), and `Editor/ProjectSwitch.h`'s activate-root chain —
-`Editor/TerminalTabLauncher.h` opens the picked project as a sibling process in a new
-tab/window when a known terminal/multiplexer is detected (tmux, screen, Konsole,
-GNOME Terminal, WezTerm, Ghostty, kitty — all live-verified except GNOME Terminal, not
-installed in the environment this shipped in), else a configured
-`ned/set-project-open-command`, else replaces the current process in place
-(`main.cpp`'s `RunInteractiveEditor`/`PendingReExec`/`execv()`). Two real settings
-adjustments some terminals need before the new-tab path actually launches anything —
-Konsole's `konsolerc` `[KonsoleWindow]`/`EnableSecuritySensitiveDBusAPI`, kitty's
-`allow_remote_control`/`listen_on` — are covered in `ned/set-project-open-command`'s
-own doc string; ned never sets either itself, both are real "let a running terminal
-accept typed-in commands over IPC" security toggles.
+Local-only slice shipped: `Editor/ProjectRegistry.h` (named-project catalog),
+`switch-project`/`open-project` (`C-c P s`/`C-c P o`), and `Editor/TerminalTabLauncher.h`
+(opens a picked project in a new terminal tab/window — tmux, screen, Konsole, WezTerm,
+Ghostty, kitty live-verified; GNOME Terminal's handler shipped but unverified, not
+installed in that environment) falling back to a configured
+`ned/set-project-open-command` or an in-place `execv()` re-exec.
 
 Still open, all genuinely gated on Remote Development below (a registry entry's root
 staying local-only for now is a storage-shape choice, not a hole in what shipped):
@@ -666,158 +576,51 @@ LSP-against-the-wrong-toolchain prove it's needed in practice, not speculatively
 
 ### Collaboration & AI
 
-- [ ] **AI-assisted editing (ACP) gaps** (2026-08-26: round 1 validated live against
-      Claude Code's own ACP adapter, `@agentclientprotocol/claude-agent-acp` — first
-      real agent exercised end to end, not just crafted-JSON tests). Fixed this round:
-      `HandleSessionUpdate`/`PushOrUpdateToolCall` no longer clobber a tool call's
-      title/status back to a generic fallback when a later `tool_call_update` omits
-      them (confirmed live — Claude's adapter routinely does); a tool call's `"diff"`
-      content item (`{path, oldText, newText}`) is now captured
-      (`TranscriptEntry::diffOldText`/`diffNewText`) and rendered as a line-count
-      summary in the panel (a real unified-diff view is still a follow-up — see below);
-      permission-prompt *resolution* now happens directly in `AcpPanel` when it has
-      focus (`WindowManager::SetAcpPanelFocusChecker`), not only `BufferView`'s
-      echo-area flow; a pending permission prompt (or any live agent chatter) no longer
-      trips `ExpireStaleRequests`' generic 30s timeout out from under a human still
-      deciding — confirmed live, this previously hard-failed any permission decision
-      that took a bit over 30 seconds; the "ACP agent:" prompt now Tab-completes
-      against `AcpConfig::AcpAgentNames()` instead of being pure free text (useful for
-      registering several accounts, e.g. `claude-personal`/`claude-work`/
-      `claude-consulting` — see below). Still open: no scrollback in the panel; a real
-      diff view (actual +/- lines, not just a line-count delta) has no reusable
-      line-diff utility to build on yet (`ThreeWayMerge.h`'s LCS diff is a private
-      implementation detail); `terminal/*` tool-call support and `elicitation/create` structured
-      forms are undeclared as client capabilities; no multiple concurrent agents/
-      sessions (still one at a time, `Dap/`'s own precedent — revisit once a second
-      agent, e.g. OpenCode, is wired the same way); no `session/load` history replay;
-      `session/set_config_option`/`session/set_mode` aren't surfaced to the user; no
-      MCP server passthrough (`session/new`'s `mcpServers` is always `[]`); no
-      per-agent environment-variable override — `ChildProcess`'s `posix_spawn` always
-      forwards the parent's global `environ` (`ChildProcess.cpp:140`), so multiple
-      registered agents needing different credentials (e.g. separate Claude accounts)
-      need a shell-wrapper argv (`sh -c '<set the right env> exec ...'`) rather than
-      anything first-class; no per-agent "character" (a per-agent display-name/accent
-      color, distinguishing `agent_thought_chunk` from `agent_message_chunk`) — v1 only
-      widened `AcpPanel`'s own `DisplayStyle` (agent text/plan steps no longer share
-      the exact same style as a plain user-message echo), deliberately not a full
-      theming pass. Composer/echo-area input field's append-only editing (no cursor
-      position, no forward-delete, no arrow-key movement) closed 2026-08-26 — see
-      `git show da0a7c9`. Separately: `Keymap::AmbiguousBindings()` is diagnostic-only (a
-      `CommandsTest.cpp` regression test), not enforcement — `Keymap::Bind` still lets a
-      caller construct an unreachable-by-typing binding; a real structural fix (Emacs'
-      own `define-key` semantics: reject/restructure a bind that would shadow an
-      existing command) would change `Bind`'s signature across every call site
-      including `ned/define-key`.
-- [ ] **ACP chat-feel UX backlog** (2026-08-26 research pass — surveyed what Claude Code's
-      own CLI and OpenCode's TUI do that users specifically call out as good, cross-checked
-      against what `AcpPanel`/`AcpManager` actually do today; none of this is implemented
-      yet, just scoped). Roughly in order of how much a single session of chatting with an
-      agent would actually feel it:
-      - Interrupt an in-flight prompt, and a visible "agent is working" spinner between
-        sending a prompt and the first token, both closed 2026-08-26 — see
-        `AcpManager::CancelPrompt`/`PromptInFlight` and `AcpPanel::OnEvent`'s Escape
-        handling. Also fixed same day: a redundant "session ready" line no longer
-        duplicates the panel's own `[Active]` title-bar state in the transcript (the raw
-        `*acp: <agent>*` log buffer still gets it verbatim).
-      - **ACP chat-feel round 2**, closed 2026-09-01. `agent_thought_chunk` now lands in
-        its own `TranscriptEntry::Kind::AgentThought` (Dim style) instead of being
-        coalesced into the same entry as `agent_message_chunk` text (Accent) — a reply
-        used to read as one undifferentiated stream of tokens with no seam between an
-        agent's private reasoning and its actual answer. Rapid-fire streaming repaints are
-        now debounced (~40ms, `AcpManager::agentTextRepaintDebounce_`, `Editor/EventLoop.h`'s
-        `DeadlineTimer` — the same primitive the LSP-sync-debounce fix uses) so a
-        several-times-a-second token stream doesn't visibly reflow the trailing lines of
-        the panel on every single chunk; a brand-new entry (a fresh thought/answer block
-        starting, a tool call, a plan update) still notifies synchronously. Resolved tool
-        calls superseded by a later one collapse to a single right-aligned-marker line
-        (`[done]`/`[fail]`/`[cancel]`) instead of permanently holding 1-2 lines each,
-        reclaiming space given the panel's own no-scrollback constraint. The composer
-        (`MinibufferPrompt`) gained word-wise cursor motion (`MoveCursorWordLeft/Right`,
-        Control-Left/Right — the shared primitive, so find-file/M-x/DAP console could pick
-        this up too, though only `AcpPanel` is wired to it yet) and shell-style prompt
-        history (Up/Down, re-derived from `Transcript()`'s own `Kind::UserMessage` entries
-        rather than a separate ring — editing a recalled entry and paging away from it
-        discards those local edits, a deliberate v1 simplification). The panel can now
-        minimize to a thin title-only strip (`[-]` button or `M-m`, `AcpPanel::Collapsed()`
-        — ProjectSidebar's own convention; the session keeps running in the background) and
-        resize via border-drag (mirroring `ProjectSidebar::BeginResize`/`UpdateResize`) or
-        Control-Up/Down, applied live through `AcpPanelSizePercent()`. Opening the panel
-        now reconnects to the project's last-used agent automatically
-        (`ProjectSessionData::lastAcpAgent`, seeded/saved by `WindowManager`) instead of
-        requiring the "ACP agent:" prompt every time — a no-op if a session is already
-        running or the remembered agent is no longer configured. A real bug caught live
-        (screenshot from the user, not found by the unit tests above): `SetCollapsed`
-        alone left a stale, wrongly-sized Box in place — `OverlayHost` only recomputes a
-        panel's Box from its placement lambda on `Show()`/`Reflow()` (`Overlay.h`'s own
-        header comment: "re-derived on every Reflow/Show"), never on every `Paint()`, so
-        minimizing repainted the *old, full-size* Box with the collapsed strip's blank
-        fill — a wash over most of the screen with the title line at the wrong spot,
-        despite the strip logic itself being correct. Fixed via
-        `AcpPanel::SetOnCollapseChanged`, firing only on an actual state change, with
-        `main.cpp` re-invoking `overlays.Show(*panel)` to force the Box recompute
-        immediately; confirmed live in tmux (a content row within the panel's true bounds
-        blanks while open and reappears once minimized, matching the Box's real size at
-        each step) since headless `Screen::PixelAt` assertions alone hadn't caught the
-        stale-Box case. Two more caught live in the same pass, both same-day fixes: the
-        minimized strip's title text was painted with `theme_.border`/`borderAccent` (a
-        color tuned for a thin decorative line, not a full row of text) — reported as
-        nearly unreadable, fixed by switching to `theme_.echoArea`, the composer's own
-        proven-legible brush; and the `[-]` minimize button used a plain ASCII "-" where
-        `TerminalPanel`'s own title-row buttons use a real glyph (`▼`/`▲`/`×`) — reported
-        as visually inconsistent, fixed by adopting `TerminalPanel`'s own `▼` verbatim
-        (`kMinimizeIcon`). Separately, an unrelated but adjacent false-alarm bug: every
-        line an ACP agent process writes to its own stderr was unconditionally logged at
-        `LogSeverity::Warning` (`AcpClient::StartStderrReadLoop`, mirroring
-        `LspClient`'s identical pattern) — for `Lsp` this is silent by default (that
-        category defaults hidden, specifically because LSP servers are stderr-noisy), but
-        `Acp` defaults *visible*, so any benign startup banner line an agent printed (a
-        literal "session started" was reported live) tripped `BufferView`'s unsolicited
-        "New warning -- see *Messages*" echo message for something that was never actually
-        a warning. Fixed by downgrading only that one call site to `LogSeverity::Info`;
-        the four genuine-problem call sites in the same file (agent exited, malformed
-        frame, request timeout, a real disconnect) are untouched and still warn correctly.
-        Known rough edges: a
-        right-docked panel's resize handle (its left edge column) has no visually reserved
-        border the way `ProjectSidebar`'s divider column does, so it's a click target with
-        no on-screen affordance; the user separately floated a bigger idea — a shared
-        tabbed bottom dock across `TerminalPanel`/`AcpPanel`/`DebugConsolePanel` instead of
-        three independent overlays — deliberately not attempted here, scoped as its own
-        follow-up below.
-      - **Tabbed bottom-dock overlays** (floated 2026-09-01, not scoped in detail). Right
-        now `TerminalPanel`/`AcpPanel`/`DebugConsolePanel` are three independent
-        `OverlayHost` overlays, each toggled and placed separately (`AcpPanel` can also
-        dock right). Unifying the bottom-docked ones behind one shared tab strip (so
-        minimizing/switching one is a tab click, not a separate toggle per panel) would be
-        a real architectural change — a new shared container widget owning the tab bar
-        plus whichever child panel is active, versus the current "each panel manages its
-        own Box via its own placement lambda" shape every overlay in `main.cpp` uses today.
-      - **Checkpoint/rewind per turn.** Claude Code's double-Esc `/rewind` (checkpoint
-        auto-created per prompt, restore code/conversation/both) is the single most-cited
-        "saved me" feature in the research above — and this codebase already has the two
-        primitives it needs: `Text::UndoTree` (real tree, cheap `Rope` snapshots) and
-        `Editor/Backup.h`. A per-turn checkpoint could be "snapshot every buffer touched by
-        `fs/write_text_file` since the last user prompt" rather than a new storage format;
-        the open design question is what "restore conversation" even means against ACP's
-        `session/load` (still itself unimplemented — see the gaps entry above) rather than
-        a from-scratch mechanism.
-      - **Word-wrap in the transcript.** `AcpPanel::FormatTranscript`'s `Kind::AgentText`
-        case is explicitly "No word-wrap in v1 -- split only on literal newlines the agent
-        itself sent" (its own header comment) — a long unwrapped reply line just runs off
-        the panel's fixed width with no way to read the rest, unlike `BufferView`'s own
-        `Mode::wrapLines`.
-      - **Lightweight Markdown rendering** (bold, inline code, bullet markers) in
-        `AgentText`/`Kind::Plan` lines instead of showing `**`/backtick markup literally —
-        agents write Markdown by default and every popular chat surface (Claude Code
-        included) renders it rather than showing raw asterisks.
+- [ ] **AI-assisted editing (ACP) gaps** (validated live 2026-08-26 against Claude Code's
+      own ACP adapter — see `git log --grep=ACP` for the fix history). Still open: no
+      scrollback in the panel; a real diff view (actual +/- lines, not just a line-count
+      delta) has no reusable line-diff utility yet (`ThreeWayMerge.h`'s LCS diff is a
+      private implementation detail); `terminal/*` tool-call support and
+      `elicitation/create` structured forms are undeclared as client capabilities; no
+      multiple concurrent agents/sessions (still one at a time, `Dap/`'s own precedent);
+      no `session/load` history replay; `session/set_config_option`/`session/set_mode`
+      aren't surfaced to the user; no MCP server passthrough (`session/new`'s
+      `mcpServers` is always `[]`); no per-agent environment-variable override —
+      `ChildProcess`'s `posix_spawn` always forwards the parent's global `environ`, so
+      multiple registered agents needing different credentials need a shell-wrapper argv
+      rather than anything first-class; no per-agent "character" (display-name/accent
+      color distinguishing agents beyond the existing thought-vs-text style split).
+      Separately: `Keymap::AmbiguousBindings()` is diagnostic-only (a `CommandsTest.cpp`
+      regression test), not enforcement — `Keymap::Bind` still lets a caller construct an
+      unreachable-by-typing binding; a real structural fix (Emacs' own `define-key`
+      semantics: reject/restructure a bind that would shadow an existing command) would
+      change `Bind`'s signature across every call site including `ned/define-key`.
+- [ ] **ACP chat-feel UX backlog** (round 1 + round 2 shipped 2026-08-26/2026-09-01 —
+      interrupt/spinner, thought/text split, streaming debounce, collapsed tool-call
+      lines, composer word-motion + history, minimize/resize, auto-reconnect to last
+      agent; see `git log --grep=ACP` for detail). Still open, roughly in order of impact:
+      - **Word-wrap in the transcript** — `AcpPanel::FormatTranscript`'s `Kind::AgentText`
+        case only splits on literal newlines the agent sent; a long reply line runs off
+        the panel's fixed width with no way to read the rest (unlike `BufferView`'s own
+        `Mode::wrapLines`).
+      - **Checkpoint/rewind per turn** — Claude Code's double-Esc `/rewind`. The two
+        primitives it needs already exist (`Text::UndoTree`, `Editor/Backup.h`); the open
+        design question is what "restore conversation" means against ACP's still-
+        unimplemented `session/load` rather than a from-scratch mechanism.
+      - **Lightweight Markdown rendering** (bold, inline code, bullet markers) instead of
+        showing `**`/backtick markup literally in `AgentText`/`Kind::Plan` lines.
       - **`@`-style file-mention autocomplete in the composer** — reuse
-        `Editor/FuzzyMatch.h` (already backs find-file/M-x/theme-picker) plus
-        `Editor/ProjectTree.h` to fuzzy-complete a project-relative path inline while
-        typing a prompt, the same affordance Claude Code/OpenCode both use so a prompt
-        references an exact file instead of a name the agent has to go search for.
-      - Explicitly *not* pulled from the research: OpenCode's session-sharing (`/share`,
-        needs a hosted backend — out of scope for a local-first editor) and a unified
-        command palette (already a stated non-goal below, for the same
-        keep-purpose-built-commands-separate reasoning).
+        `Editor/FuzzyMatch.h` + `Editor/ProjectTree.h` to fuzzy-complete a project-
+        relative path inline while typing a prompt.
+      - **Tabbed bottom-dock overlays** (floated 2026-09-01, not scoped) — unify
+        `TerminalPanel`/`AcpPanel`/`DebugConsolePanel`'s three independent `OverlayHost`
+        overlays behind one shared tab strip; a real architectural change versus today's
+        "each panel manages its own Box via its own placement lambda" shape.
+      - Known rough edge: a right-docked `AcpPanel`'s resize handle has no visually
+        reserved border the way `ProjectSidebar`'s divider column does.
+      - Explicitly *not* pulled from prior research: OpenCode's session-sharing (needs a
+        hosted backend, out of scope for a local-first editor) and a unified command
+        palette (already a stated non-goal below).
 - [ ] **Real-time collaborative editing** (CRDT-based) — the biggest lift in this file;
       last.
 - [ ] VCS: "generalize the two-callback plugin shape past version control" (cloud CLIs,
@@ -860,47 +663,11 @@ LSP-against-the-wrong-toolchain prove it's needed in practice, not speculatively
 
 Real, reproduced, non-urgent — each is safe to leave as-is for now, but worth fixing
 opportunistically rather than re-discovering from scratch. Add to this list instead of
-just fixing-and-forgetting or letting it fade from memory between sessions.
-
-The LSP-broker-hermeticity flake, 2026-08-26 (`LspManagerTest.cpp`'s
-two spawn-failure tests, plus the same shape in `ModeLineTest.cpp`'s spawn-failure-glyph
-test — the latter caught by re-running the full suite against a real broker daemon left
-warm from a live tmux session, exactly the scenario this flake needed to reproduce), was
-fixed 2026-08-26 by adding `LspManager::SetBrokerSocketPathOverrideForTesting` and
-threading it into `ClientForLanguage`'s `TryConnectToBroker` call; all three affected
-tests now point at a guaranteed-nonexistent socket path instead of the real broker
-socket.
-
-`EchoArea::Paint`/`ModeLine::Paint` being byte-by-byte, not UTF-8-aware (found 2026-08-26,
-live tmux+clangd testing `lsp-signature-help` — a multi-byte guillemet marker rendered as
-blank padding, one blank cell per byte, silently wrong despite every unit test passing
-since those compared plain byte strings) was fixed 2026-08-26: both now walk by codepoint
-span (`Text/Utf8.h`'s `NextCodepointBoundary`, matching `BufferView`'s own
-one-codepoint-per-cell content rendering) instead of by raw byte — `EchoArea`'s six
-sentinel bytes (always exactly one byte) are still recognized via a one-byte-span check
-before the general case; `ModeLine` gained a shared `AppendUtf8Columns` helper replacing
-six duplicated byte-loop call sites. Double-width CJK/emoji columns are still one cell
-each, matching `BufferView`'s own accepted limitation there — no `wcwidth`-equivalent
-exists anywhere in this codebase, and fixing that only in these two widgets would be
-inconsistent. `lsp-signature-help`'s active-parameter marker still uses ASCII `**...**`
-rather than switching back to guillemets — a cosmetic choice either way now that the
-underlying bug is gone.
-
-Normal-mode self-insert silently dropping every non-ASCII keystroke (found 2026-08-26,
-reported live as "pasting an emoji does nothing" — any terminal paste/keystroke of a
-character outside 0x20-0x7E, not just emoji: accented Latin, CJK, ...) was fixed
-2026-08-26. `BuildDefaultGlobalKeymap` only ever gave printable ASCII its own real
-self-insert-command keymap entry (deliberately, per its own comment — enumerating a
-literal entry per Unicode codepoint isn't feasible), and `Dispatcher::Feed` had no
-fallback at all for a `NoMatch` on anything else, so it reported "<char> is undefined"
-and dropped the keystroke instead of inserting it. `Dispatcher::Feed`'s `NoMatch` case now
-falls through to `self-insert-command` for a *bare* (not mid-prefix-sequence) plain chord
-(no Control/Meta/Special) whose codepoint isn't a C0/DEL/C1 control character — a real
-rebind of any individual character, ASCII or not, still wins via `Match` before ever
-reaching this fallback. `C-y`/`PasteFromSystemClipboard` was never affected (it inserts
-the whole pasted string directly via `Buffer::InsertAtPoint`, bypassing per-character
-dispatch) — only a terminal-native paste or direct keystroke of a non-ASCII character hit
-this.
+just fixing-and-forgetting or letting it fade from memory between sessions. Fixed
+entries are removed once shipped rather than kept as a writeup here — the
+LSP-broker-hermeticity flake, `EchoArea`/`ModeLine`'s byte-vs-codepoint rendering bug,
+and normal-mode self-insert dropping non-ASCII keystrokes were all closed 2026-08-26
+(`git log --grep=flak`, `git log --grep=UTF-8`, `git log --grep=self-insert`).
 
 **Open, not yet root-caused:** `VimEngineTest.cpp:903`'s "Dot-repeat replays an Insert
 session that used C-o" — passes cleanly every time run standalone
