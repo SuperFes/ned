@@ -20,6 +20,7 @@
 #include "Editor/DiagnosticsLog.h"
 #include "Editor/DiffRefreshSettings.h"
 #include "Editor/FileWatch.h"
+#include "Editor/FillColumn.h"
 #include "Editor/FinalNewline.h"
 #include "Editor/FormatOnSave.h"
 #include "Editor/HighlightSettings.h"
@@ -177,6 +178,10 @@ namespace {
 
     void NedSetTabWidth(std::int64_t columns) {
         editor::SetTabWidth(static_cast<int>(columns));
+    }
+
+    void NedSetFillColumn(std::int64_t columns) {
+        editor::SetFillColumn(static_cast<int>(columns));
     }
 
     // Vim-mode follow-up: same process-wide-bool-toggle shape as
@@ -1004,6 +1009,9 @@ void InstallEditorBindings(Environment& env) {
         "defaults to \"xdg-open\"; empty string clears it entirely, disabling URL-following.");
     env.Register<&NedSetTabWidth>("ned", "set-tab-width",
                                   "Set the display width (in columns) a tab character expands to (default 4).");
+    env.Register<&NedSetFillColumn>(
+        "ned", "set-fill-column",
+        "Set the target line width (in codepoints) fill-paragraph (M-q) wraps prose/comments to (default 70).");
     env.Register<&NedSetVimMode>(
         "ned", "set-vim-mode",
         "Enable or disable Vim-style modal editing (Normal/Insert/Visual/Replace/command-line, default false). "

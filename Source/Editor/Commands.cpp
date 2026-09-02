@@ -14,6 +14,8 @@
 #include "Clipboard.h"
 #include "CodeFold.h"
 #include "EmbeddedDocuments.h"
+#include "Fill.h"
+#include "FillColumn.h"
 #include "FinalNewline.h"
 #include "FormatOnSave.h"
 #include "InlineDiagnostics.h"
@@ -2910,6 +2912,20 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                               }
                           }
                       });
+
+    // fill-paragraph follow-up: needs context.mode the same way
+    // toggle-line-comment above does, for the same reason -- whether the
+    // paragraph at point is comment-prefixed is a Mode property
+    // (Mode::lineCommentPrefix), the algorithm itself (Editor/Fill.h) has
+    // no Mode dependency of its own.
+    registry.Register(
+        "fill-paragraph",
+        "Reflow the paragraph at point to fill-column, preserving indentation and (if uniform) a per-line comment prefix.",
+        [](CommandContext& context) {
+            const std::string prefix = (context.mode != nullptr) ? context.mode->lineCommentPrefix : std::string();
+            FillParagraph(context.buffer, static_cast<std::size_t>(FillColumn()), prefix);
+        });
+
     // Real Org's own C-c C-q ("org-set-tags-command"): unlike the direct
     // commands above, tags are free-form text, so this just checks the
     // precondition (same "Not on a headline." report) and hands off to a
@@ -3084,12 +3100,28 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     // other command here, operates on context.buffer directly); it works
     // in any buffer containing a real GFM table, not only ones opened as
     // .md files.
-    registry.Register("markdown-table-align", "Realign the columns of the GFM table at point to their content width.",
-                      [](CommandContext& context) {
-                          if (!markdown::AlignTableAtPoint(context.buffer) && context.message) {
-                              *context.message = "Not in a table.";
-                          }
-                      });
+    // TAB-fallback-outside-table follow-up: unlike every other TAB binding
+    // in this codebase (org-cycle, indent-for-tab-command), this used to
+    // hard-stop on "Not in a table." outside a table -- leaving TAB
+    // effectively dead in a markdown buffer whenever point isn't on a GFM
+    // table. Falls through to indent-for-tab-command's own exact body
+    // (TrySnippetTrigger, else a literal tab) the same way
+    // markdown-metaup/markdown-metadown already fall through to a plain
+    // line move outside a table.
+    registry.Register(
+        "markdown-table-align",
+        "Realign the columns of the GFM table at point to their content width, or expand a snippet trigger / insert a "
+        "tab character otherwise.",
+        [](CommandContext& context) {
+            if (markdown::AlignTableAtPoint(context.buffer)) {
+                return;
+            }
+            if (TrySnippetTrigger(context)) {
+                return;
+            }
+            context.buffer.ClearMark();
+            context.buffer.InsertAtPoint("\t");
+        });
     // Markdown table editing surface follow-up: the rest of GFM's own
     // table-editing ops, same "context.message on failure" shape as
     // markdown-table-align above; each op realigns the whole table as a
@@ -3573,6 +3605,9 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("C-M-b"), "backward-sexp");
     keymap.Bind(ParseKeySequence("M-z"), "zap-to-char");
     keymap.Bind(ParseKeySequence("ESC z"), "zap-to-char");
+    // fill-paragraph follow-up: real Emacs' own default binding.
+    keymap.Bind(ParseKeySequence("M-q"), "fill-paragraph");
+    keymap.Bind(ParseKeySequence("ESC q"), "fill-paragraph");
     // Unlike the ESC-only bindings above, M-x is bound both ways
     // deliberately: a real fast Alt+x press arrives as a single Meta-chord
     // ("M-x"), while a genuinely separate Escape-then-x press arrives as two

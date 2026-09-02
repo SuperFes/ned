@@ -580,6 +580,8 @@ add_library(ned_lib STATIC
         Source/Editor/FormatOnSave.cpp
         Source/Editor/Clipboard.cpp
         Source/Editor/TabWidth.cpp
+        Source/Editor/FillColumn.cpp
+        Source/Editor/Fill.cpp
         Source/Editor/PageScroll.cpp
         Source/Editor/DiffRefreshSettings.cpp
         Source/Editor/ProcessTimeouts.cpp
@@ -929,6 +931,8 @@ if (NED_BUILD_TESTS)
             Tests/ClipboardTestGuard.cpp
             Tests/SigpipeTestGuard.cpp
             Tests/TabWidthTest.cpp
+            Tests/FillColumnTest.cpp
+            Tests/FillTest.cpp
             Tests/PageScrollTest.cpp
             Tests/DiffRefreshSettingsTest.cpp
             Tests/ProcessTimeoutsTest.cpp
