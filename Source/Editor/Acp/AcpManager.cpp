@@ -401,8 +401,12 @@ std::string AcpManager::StopSession() {
     // Best-effort polite close; teardown below must not depend on the agent
     // answering (or even still being alive to write to) -- same reasoning
     // as DapManager::StopSession.
+    // async-write-queue follow-up: PrepareForGracefulShutdown must be called
+    // before this SendRequest -- see DapManager::StopSession's identical
+    // comment.
     try {
         if (!sessionId_.empty() && client_) {
+            client_->PrepareForGracefulShutdown();
             client_->SendRequest("session/close", Json{{"sessionId", sessionId_}}, [](std::optional<Json>, std::optional<Json>) {});
         }
     }

@@ -24,6 +24,47 @@ AcpClient::AcpClient(std::vector<std::string> argv, ned::ui::EventLoop& eventLoo
 AcpClient::AcpClient(Transport transport, ned::ui::EventLoop& eventLoop) : transport_(std::move(transport)), eventLoop_(eventLoop) {
     StartReadLoop();
     StartStderrReadLoop(); // no-op unless transport_ was itself constructed with captureStderr -- see header comment
+    StartWriteLoop();
+}
+
+void AcpClient::StartWriteLoop() {
+    // async-write-queue follow-up -- identical to LspClient::StartWriteLoop,
+    // including the drain-on-stop policy -- see header comment.
+    writeThread_ = std::jthread([this](const std::stop_token& stopToken) {
+        while (true) {
+            std::string frame;
+            {
+                std::unique_lock<std::mutex> lock(writeMutex_);
+                writeCv_.wait(lock, stopToken, [&] { return !writeQueue_.empty() || stopToken.stop_requested(); });
+                if (writeQueue_.empty()) {
+                    return; // nothing left -- clean stop
+                }
+                if (stopToken.stop_requested() && !drainQueueOnStop_.load()) {
+                    return; // ordinary teardown: don't attempt stale writes against a dying/dead connection
+                }
+                frame = std::move(writeQueue_.front());
+                writeQueue_.pop_front();
+            }
+            try {
+                transport_.WriteMessage(frame);
+            }
+            catch (const std::exception&) {
+                return; // pipe's gone -- the read loop's own EOF/error path already reports this
+            }
+        }
+    });
+}
+
+void AcpClient::EnqueueWrite(std::string frame) {
+    {
+        std::lock_guard<std::mutex> lock(writeMutex_);
+        writeQueue_.push_back(std::move(frame));
+    }
+    writeCv_.notify_one();
+}
+
+void AcpClient::PrepareForGracefulShutdown() {
+    drainQueueOnStop_ = true;
 }
 
 void AcpClient::StartReadLoop() {
@@ -187,7 +228,7 @@ void AcpClient::DispatchFrame(const std::string& frameText) {
                 const Json response = {{"jsonrpc", "2.0"},
                                        {"id", requestId},
                                        {"error", {{"code", -32601}, {"message", "method not found: " + method}}}};
-                transport_.WriteMessage(response.dump());
+                EnqueueWrite(response.dump());
                 return;
             }
             it->second(params, [this, requestId](std::optional<Json> result, std::optional<Json> error) {
@@ -198,7 +239,7 @@ void AcpClient::DispatchFrame(const std::string& frameText) {
                 else {
                     response["result"] = result.value_or(Json(nullptr));
                 }
-                transport_.WriteMessage(response.dump());
+                EnqueueWrite(response.dump());
             });
             return;
         }
@@ -219,7 +260,7 @@ void AcpClient::SendRequest(const std::string& method, Json params, ResponseCall
         {"method", method},
         {"params", std::move(params)},
     };
-    transport_.WriteMessage(message.dump());
+    EnqueueWrite(message.dump());
 }
 
 void AcpClient::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
@@ -256,7 +297,7 @@ void AcpClient::SendNotification(const std::string& method, Json params) {
         {"method", method},
         {"params", std::move(params)},
     };
-    transport_.WriteMessage(message.dump());
+    EnqueueWrite(message.dump());
 }
 
 void AcpClient::SetNotificationHandler(std::string method, NotificationHandler handler) {

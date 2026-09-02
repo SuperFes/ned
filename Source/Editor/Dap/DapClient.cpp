@@ -24,6 +24,47 @@ DapClient::DapClient(std::vector<std::string> argv, ned::ui::EventLoop& eventLoo
 DapClient::DapClient(lsp::Transport transport, ned::ui::EventLoop& eventLoop) : transport_(std::move(transport)), eventLoop_(eventLoop) {
     StartReadLoop();
     StartStderrReadLoop(); // no-op unless transport_ was itself constructed with captureStderr -- see header comment
+    StartWriteLoop();
+}
+
+void DapClient::StartWriteLoop() {
+    // async-write-queue follow-up -- identical to LspClient::StartWriteLoop,
+    // including the drain-on-stop policy -- see header comment.
+    writeThread_ = std::jthread([this](const std::stop_token& stopToken) {
+        while (true) {
+            std::string frame;
+            {
+                std::unique_lock<std::mutex> lock(writeMutex_);
+                writeCv_.wait(lock, stopToken, [&] { return !writeQueue_.empty() || stopToken.stop_requested(); });
+                if (writeQueue_.empty()) {
+                    return; // nothing left -- clean stop
+                }
+                if (stopToken.stop_requested() && !drainQueueOnStop_.load()) {
+                    return; // ordinary teardown: don't attempt stale writes against a dying/dead connection
+                }
+                frame = std::move(writeQueue_.front());
+                writeQueue_.pop_front();
+            }
+            try {
+                transport_.WriteFrame(frame);
+            }
+            catch (const std::exception&) {
+                return; // pipe's gone -- the read loop's own EOF/error path already reports this
+            }
+        }
+    });
+}
+
+void DapClient::EnqueueWrite(std::string frame) {
+    {
+        std::lock_guard<std::mutex> lock(writeMutex_);
+        writeQueue_.push_back(std::move(frame));
+    }
+    writeCv_.notify_one();
+}
+
+void DapClient::PrepareForGracefulShutdown() {
+    drainQueueOnStop_ = true;
 }
 
 void DapClient::StartReadLoop() {
@@ -172,7 +213,7 @@ void DapClient::SendRequest(const std::string& command, Json arguments, Response
         {"command", command},
         {"arguments", std::move(arguments)},
     };
-    transport_.WriteFrame(message.dump());
+    EnqueueWrite(message.dump());
 }
 
 void DapClient::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
