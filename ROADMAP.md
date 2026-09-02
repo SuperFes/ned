@@ -666,41 +666,19 @@ opportunistically rather than re-discovering from scratch. Add to this list inst
 just fixing-and-forgetting or letting it fade from memory between sessions. Fixed
 entries are removed once shipped rather than kept as a writeup here — the
 LSP-broker-hermeticity flake, `EchoArea`/`ModeLine`'s byte-vs-codepoint rendering bug,
-and normal-mode self-insert dropping non-ASCII keystrokes were all closed 2026-08-26
-(`git log --grep=flak`, `git log --grep=UTF-8`, `git log --grep=self-insert`).
-
-**Open, not yet root-caused:** `VimEngineTest.cpp:903`'s "Dot-repeat replays an Insert
-session that used C-o" — passes cleanly every time run standalone
-(`./ned_tests "Dot-repeat replays an Insert session that used C-o"`), but has failed
-intermittently when the full suite runs (`ctest --test-dir build`), seen at least
-2026-08-30. No obvious static/global mutable state in `VimEngine.h/.cpp` itself on a
-first pass (grepped for `static`/`thread_local`, nothing suspicious) — order-dependence
-likely comes from somewhere else the test touches (a shared `Buffer`/`Dispatcher`
-fixture, register/clipboard global state, or similar to the `DiagnosticsLog`
-global-state leak already fixed once in this codebase, `ChildProcess hang-protection
-round 2`). Not yet worth a deep dive on its own; next time it reproduces, capture which
-other test(s) ran immediately before it in that run — that's the fastest path to an
-actual repro.
-
-A second, previously undocumented order-dependent flake, seen twice in the same
-session (2026-09-01) while running the full suite repeatedly during unrelated work:
-"A textDocument/inlayHint response renders virtual text mid-line without disturbing
-real content" — same signature as the VimEngine one above (fails only under
-`ctest --test-dir build`, passes cleanly every time run standalone). Not yet
-investigated at all; noting it here so it doesn't need rediscovering from scratch next
-time it reproduces.
-
-A third instance, different symptom (seen 2026-09-01 while adding the VCS side panel's
-own tests, entirely unrelated to LSP): `ctest --test-dir build` reports one `ned_tests`
-entry FAILED — `LspContentTest.cpp`'s `ExtractSignatureHelp resolves a [start, end)
-offset-pair parameter label` — but running that exact test name directly against the
-binary (`./ned_tests "ExtractSignatureHelp resolves a *"`) passes cleanly. The failing
-ctest entry's registered name is actually dozens of semicolon-joined `TEST_CASE` names
-concatenated into one (`catch_discover_tests`' own registration, visible via
-`ctest --test-dir build -N`) — a real suspect given CMake treats `;` as its list
-separator, so this may be a test-*discovery* artifact (a mis-split ctest invocation)
-rather than the test itself failing. Not yet root-caused; the individual Catch2 test
-is confirmed correct.
+normal-mode self-insert dropping non-ASCII keystrokes (all closed 2026-08-26), and the
+`VimEngineTest.cpp` dot-repeat/`inlayHint`/`ExtractSignatureHelp` trio previously listed
+here were all closed 2026-09-01 (`git log --grep=flak`). The trio turned out to share one
+root cause: an unbalanced `[` in one `LspContentTest.cpp` test name tripped a genuine bug
+in Catch2's vendored `CatchAddTests.cmake` (unquoted-list `foreach` silently merges any
+element with an odd bracket count into every following one), collapsing ~590
+alphabetically-later tests — including the VimEngine one — into a single bogus,
+deterministically-failing ctest entry that never actually ran them. Fixed by renaming
+that test. The `inlayHint` test (and a sibling `semanticTokens/full` test, found the same
+way) had a separate, real standalone race — `Paint()` can fire a non-deterministically-
+timed extra background request (codeLens) alongside the one under test — fixed by
+matching this file's own established `find_if`-by-method pattern instead of indexing a
+fixed frame count.
 
 ### Named Non-Goals (Leaning "Won't Do", Kept Visible So It's a Conscious Call)
 

@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <poll.h>
 #include <unistd.h>
 
 #include <filesystem>
@@ -144,6 +145,31 @@ int LspRequestIdFromFrame(const std::string& raw) {
     return ned::editor::lsp::Json::parse(raw.substr(raw.find("\r\n\r\n") + 4))["id"].get<int>();
 }
 
+// Mirrors BufferViewTest.cpp's own DrainAllPendingFrames -- a single Paint()
+// can fire more than one background request synchronously (didOpen plus,
+// non-deterministically depending on scheduling, something like codeLens),
+// so draining with a single-frame ReadRawLspFrame call can leave a second
+// frame sitting in the pipe for the next ReadRawLspFrame call to pick up
+// instead of the request actually under test. Reads raw bytes until the
+// pipe genuinely goes quiet rather than stopping at the first complete
+// frame.
+bool NoFrameArrives(int fd) {
+    pollfd pfd{.fd = fd, .events = POLLIN, .revents = 0};
+    return ::poll(&pfd, 1, 200) == 0; // 0 == timed out, nothing readable
+}
+
+void DrainAllPendingFrames(int fd) {
+    std::string all;
+    char        buffer[512];
+    while (!NoFrameArrives(fd)) {
+        const ssize_t n = ::read(fd, buffer, sizeof(buffer));
+        if (n <= 0) {
+            break;
+        }
+        all.append(buffer, static_cast<std::size_t>(n));
+    }
+}
+
 } // namespace
 
 TEST_CASE("RequestProjectFindReferences finds every whole-word match across the project, in one *references* multibuffer",
@@ -229,7 +255,7 @@ TEST_CASE("RequestProjectFindReferences sends textDocument/references when a lan
     ned::ui::Screen screenBuf(40, 3);
     ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
     view.Paint(canvas);                            // syncs the buffer -- see SyncBuffer's own didOpen
-    (void)ReadRawLspFrame(server.serverStdinRead); // drain didOpen
+    DrainAllPendingFrames(server.serverStdinRead); // drain didOpen (and any other background request Paint() fired alongside it)
 
     view.RequestProjectFindReferencesForTesting();
 

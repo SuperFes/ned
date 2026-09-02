@@ -1149,11 +1149,17 @@ TEST_CASE("A textDocument/semanticTokens/full response overrides tree-sitter's o
     // Both can land in the same read() -- ReadRawLspFrame's own one-frame-
     // per-call assumption breaks here, same as the pull-diagnostics tests'
     // own precedent above.
+    // A third background request (e.g. codeLens) can non-deterministically
+    // race in alongside semanticTokens on the same Paint() burst -- see the
+    // codeLens follow-up comment on ReadLspFrames above -- so find the
+    // semanticTokens request by method instead of assuming it's frames[1].
     const std::vector<ned::editor::lsp::Json> frames = ReadLspFrames(server.serverStdinRead, 2);
-    REQUIRE(frames.size() == 2);
     REQUIRE(frames[0]["method"] == "textDocument/didOpen");
-    REQUIRE(frames[1]["method"] == "textDocument/semanticTokens/full");
-    const ned::editor::lsp::Json& semanticRequest = frames[1];
+    const auto semanticIt = std::find_if(frames.begin(), frames.end(), [](const ned::editor::lsp::Json& f) {
+        return f["method"] == "textDocument/semanticTokens/full";
+    });
+    REQUIRE(semanticIt != frames.end());
+    const ned::editor::lsp::Json& semanticRequest = *semanticIt;
 
     // '1' at byte 6, length 1, type index 0 ("keyword").
     const auto response = ned::editor::lsp::Json{
@@ -1198,13 +1204,18 @@ TEST_CASE("A textDocument/inlayHint response renders virtual text mid-line witho
     ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
     view.Paint(canvas); // triggers didOpen and the inlayHint request, back-to-back
 
-    const std::vector<ned::editor::lsp::Json> frames = ReadLspFrames(server.serverStdinRead, 2);
-    REQUIRE(frames.size() == 2);
-    REQUIRE(frames[1]["method"] == "textDocument/inlayHint");
+    // A third background request (e.g. codeLens) can non-deterministically
+    // race in alongside inlayHint on the same Paint() burst -- see the
+    // codeLens follow-up comment on ReadLspFrames above -- so find the
+    // inlayHint request by method instead of assuming it's frames[1].
+    const std::vector<ned::editor::lsp::Json> frames      = ReadLspFrames(server.serverStdinRead, 2);
+    const auto                                inlayHintIt = std::find_if(
+        frames.begin(), frames.end(), [](const ned::editor::lsp::Json& f) { return f["method"] == "textDocument/inlayHint"; });
+    REQUIRE(inlayHintIt != frames.end());
 
     const auto response = ned::editor::lsp::Json{
         {"jsonrpc", "2.0"},
-        {"id", frames[1]["id"]},
+        {"id", (*inlayHintIt)["id"]},
         {"result", ned::editor::lsp::Json::array({{{"position", {{"line", 0}, {"character", 1}}}, {"label", ": int"}}})},
     };
     client->DispatchFrame(response.dump());
