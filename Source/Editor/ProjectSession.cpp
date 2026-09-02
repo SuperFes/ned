@@ -118,6 +118,9 @@ std::string ProjectSessionToJson(const ProjectSessionData& data, const std::file
     if (data.sidebarWidth) {
         json["sidebarWidth"] = *data.sidebarWidth;
     }
+    if (data.lastAcpAgent) {
+        json["lastAcpAgent"] = *data.lastAcpAgent;
+    }
     if (!windowLayout.empty()) {
         json["windowLayout"] = std::move(windowLayout);
     }
@@ -145,6 +148,9 @@ std::optional<ProjectSessionData> ProjectSessionFromJson(std::string_view json) 
         }
         if (parsed.contains("sidebarWidth") && parsed["sidebarWidth"].is_number_integer()) {
             data.sidebarWidth = parsed["sidebarWidth"].get<int>();
+        }
+        if (parsed.contains("lastAcpAgent") && parsed["lastAcpAgent"].is_string()) {
+            data.lastAcpAgent = parsed["lastAcpAgent"].get<std::string>();
         }
         if (parsed.contains("breakpoints") && parsed["breakpoints"].is_object()) {
             for (const auto& [pathKey, lines] : parsed["breakpoints"].items()) {

@@ -119,7 +119,20 @@ void AcpClient::StartStderrReadLoop() {
                     continue;
                 }
                 eventLoop_.Post([label, line = std::move(line)] {
-                    LogMessage(LogCategory::Acp, LogSeverity::Warning, label.empty() ? line : label + ": " + line);
+                    // acp-stderr-severity follow-up: Info, not Warning -- a
+                    // real agent's stderr is routinely just informational
+                    // chatter (a startup banner, a "session started" line),
+                    // not necessarily a warning. Unlike Lsp (which defaults
+                    // to a hidden log category specifically because its
+                    // stderr is noisy), Acp defaults visible, so a
+                    // Warning-severity entry here tripped BufferView's
+                    // unsolicited "New warning -- see *Messages*" echo
+                    // message for completely benign agent startup text --
+                    // reported live. Genuine ACP-level problems (agent
+                    // exited, malformed frame, request timeout, a real
+                    // disconnect) are logged at Warning from their own call
+                    // sites elsewhere in this file and are unaffected.
+                    LogMessage(LogCategory::Acp, LogSeverity::Info, label.empty() ? line : label + ": " + line);
                 });
             }
         }

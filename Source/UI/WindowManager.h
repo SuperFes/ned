@@ -26,6 +26,8 @@
 #include <cstddef>
 #include <functional>
 #include <memory>
+#include <optional>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -347,6 +349,16 @@ class WindowManager {
     // reasoning to SetDapManager's own SetOnStopped wiring).
     void SetAcpManager(editor::acp::AcpManager* acpManager);
 
+    // ACP auto-reconnect follow-up: seeds SaveProjectSessionNow's own
+    // lastAcpAgent field for a run where AcpManager::AgentName() never gets
+    // set at all (ACP never touched this run) -- without this, a fresh
+    // ProjectSessionData built from scratch every save would otherwise
+    // silently clobber a previously remembered agent name back to nullopt.
+    // Called once by main.cpp right after loading the restored session, with
+    // whatever it found there (or nothing, if this is a project's first-ever
+    // session).
+    void SetLastKnownAcpAgent(std::optional<std::string> name);
+
     // project-undo follow-up: same "forwarded to every pane, present and
     // future" shape as SetLspManager/SetTaskRunner above.
     void SetProjectUndo(editor::ProjectUndoManager* projectUndo);
@@ -658,6 +670,7 @@ class WindowManager {
     editor::vcs::VcsRunner*           vcsRunner_      = nullptr;
     editor::dap::DapManager*          dapManager_     = nullptr; // see SetDapManager
     editor::acp::AcpManager*          acpManager_     = nullptr; // see SetAcpManager
+    std::optional<std::string>        lastAcpAgentSeed_;         // see SetLastKnownAcpAgent
     editor::ProjectUndoManager*       projectUndo_    = nullptr; // see SetProjectUndo
     const janet::Environment*         janetEnv_       = nullptr; // see SetJanetEnvironment
     EventLoop*                        eventLoop_      = nullptr; // see SetEventLoop
