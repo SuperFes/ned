@@ -10,6 +10,7 @@
 
 #include "Editor/AutoPair.h"
 #include "Editor/Backup.h"
+#include "Editor/BlankLineCleanup.h"
 #include "Editor/Commands.h"
 #include "Editor/Dispatcher.h"
 #include "Editor/FormatOnSave.h"
@@ -3386,6 +3387,116 @@ TEST_CASE("newline stays a bare newline when indentColumn is unset", "[Commands]
     registry.Invoke("newline", context);
 
     REQUIRE(fixture.buffer.Text() == "int f(void) {\n");
+}
+
+TEST_CASE("newline clears a dangling blank line's whitespace but keeps the new line's own depth", "[Commands]") {
+    // smart-blank-line-on-newline follow-up: simulates pressing Enter a
+    // SECOND time -- point already sits on a line that only ever got
+    // auto-indented (4 trailing spaces, never typed into). This second
+    // Enter must clear that dangling whitespace (not leave it as its own
+    // line) while the brand new line below still indents to the SAME depth
+    // -- Python's own block structure doesn't shrink just because a blank
+    // line under it got shorter.
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    const Mode pyMode = PythonMode();
+    REQUIRE(ned::editor::CleanBlankLineOnNewline()); // default on
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    context.mode           = &pyMode;
+
+    fixture.buffer.InsertAtPoint("def f():\n    x = 1\n    ");
+    registry.Invoke("newline", context);
+
+    REQUIRE(fixture.buffer.Text() == "def f():\n    x = 1\n\n    ");
+    REQUIRE(fixture.buffer.Point() == fixture.buffer.Content().ByteLength());
+
+    // One undo step, not two -- the clear and the fresh indent are one
+    // keystroke.
+    REQUIRE(fixture.buffer.CanUndo());
+    fixture.buffer.Undo();
+    REQUIRE(fixture.buffer.Text() == "def f():\n    x = 1\n    ");
+}
+
+TEST_CASE("newline leaves a dangling blank line's whitespace alone when ned/set-clean-blank-line-on-newline is off",
+          "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    const Mode pyMode = PythonMode();
+    ned::editor::SetCleanBlankLineOnNewline(false);
+    struct RestoreGuard {
+        ~RestoreGuard() {
+            ned::editor::SetCleanBlankLineOnNewline(true);
+        }
+    } restoreGuard;
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    context.mode           = &pyMode;
+
+    fixture.buffer.InsertAtPoint("def f():\n    x = 1\n    ");
+    registry.Invoke("newline", context);
+
+    // The old whitespace is left in place, followed by a freshly indented
+    // new line -- the pre-existing, unmodified behavior.
+    REQUIRE(fixture.buffer.Text() == "def f():\n    x = 1\n    \n    ");
+}
+
+TEST_CASE("indent-for-tab-command rigidly indents every line in an active region, mode-agnostic", "[Commands]") {
+    // mode-agnostic-rigid-indent follow-up: no Mode at all -- context.mode
+    // stays nullptr, proving TAB's new mark-active branch doesn't need
+    // indentColumn the way the no-mark single-line path does.
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    fixture.buffer.InsertAtPoint("a\nb\nc"); // no trailing newline -- avoids
+                                             // selecting into a phantom
+                                             // trailing empty line
+    fixture.buffer.SetPoint(0);
+    fixture.buffer.SetMark(fixture.buffer.Content().ByteLength());
+
+    registry.Invoke("indent-for-tab-command", context);
+
+    REQUIRE(fixture.buffer.Text() == "    a\n    b\n    c");
+    // Clears the mark, matching every other editing command's convention.
+    REQUIRE_FALSE(fixture.buffer.HasMark());
+}
+
+TEST_CASE("unindent rigidly dedents the current line when no region is active", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    fixture.buffer.InsertAtPoint("        x = 1");
+    fixture.buffer.SetPoint(10); // inside the leading whitespace
+
+    registry.Invoke("unindent", context);
+    REQUIRE(fixture.buffer.Text() == "    x = 1"); // one width (4) removed
+}
+
+TEST_CASE("unindent rigidly dedents every line in an active region and clears the mark", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    fixture.buffer.InsertAtPoint("    a\n    b\n");
+    fixture.buffer.SetPoint(0);
+    fixture.buffer.SetMark(fixture.buffer.Content().ByteLength());
+
+    registry.Invoke("unindent", context);
+
+    REQUIRE(fixture.buffer.Text() == "a\nb\n");
+    REQUIRE_FALSE(fixture.buffer.HasMark());
 }
 
 TEST_CASE("indent-region reindents the marked region as one undo step and requires a mark", "[Commands]") {
