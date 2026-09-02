@@ -92,6 +92,12 @@ class BufferView : public Widget {
     BufferView(const BufferView&)            = delete;
     BufferView& operator=(const BufferView&) = delete;
 
+    // jump-back-stack follow-up: public so a test can assert the eviction
+    // cap without reaching into jumpBackStack_ itself -- same "expose a
+    // small, honest introspection point" precedent as MinimapActive()/
+    // ScrollColumnActive() below.
+    static constexpr std::size_t kMaxJumpBackStack = 64;
+
     void Paint(Canvas c) override;
     bool OnEvent(const Event& event) override;
     bool Focusable() const override;
@@ -1165,6 +1171,25 @@ class BufferView : public Widget {
     // position to restore, unlike JumpToDefinition, since a header/source
     // counterpart has no natural corresponding point.
     void OpenHeaderSourceCounterpart(const std::filesystem::path& path);
+
+    // jump-back-stack follow-up: a per-pane back-stack of saved positions,
+    // pushed right before every location-jumping command (JumpToDefinition;
+    // goto-line's HandlePromptKey branch; HandleBookmarkJumpKey;
+    // HandleRegisterKey's JumpToRegister case) and popped by jump-back
+    // (InteractiveRequest::JumpBack). Buffer identified by name, not a raw
+    // Buffer*, and re-resolved via bufferList_.Find at pop time -- same
+    // dangling-reference-avoidance precedent as Editor/Register.h's
+    // PointRegisterValue.
+    struct JumpMark {
+        std::string bufferName;
+        std::size_t byteOffset;
+    };
+    std::vector<JumpMark> jumpBackStack_;
+    void                  PushJumpMark();
+    // Pops entries until one resolves to a still-open buffer (skipping any
+    // whose buffer has since closed) and jumps there; sets a "No more jump
+    // history." status message if the stack is exhausted without finding one.
+    void JumpBack();
 
     // rename follow-up. StartInteractiveSession's LspRename case opens the
     // synchronous "New name: " prompt (inputMode_ = LspRenameNewName);

@@ -8465,6 +8465,156 @@ TEST_CASE("goto-line rejects non-numeric input and stays usable", "[BufferView]"
     REQUIRE(scratch.Text().find('z') == 0);
 }
 
+// --- jump-back-stack follow-up: jump-back (C-x C-SPC) -----------------------
+
+TEST_CASE("jump-back after goto-line returns point to the line it jumped from", "[BufferView]") {
+    Fixture               fixture;
+    ned::text::Buffer&    scratch = fixture.bufferList.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
+                               fixture.statusMessage, fixture.mode, fixture.theme);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    scratch.InsertAtPoint("one\ntwo\nthree\nfour\nfive");
+    scratch.SetPoint(scratch.Content().LineToByteOffset(1)); // line 2 ("two")
+
+    view.OnEvent(ned::ui::test::Alt('g'));
+    view.OnEvent(ned::ui::test::Character("g"));
+    TypeText(view, "4");
+    view.OnEvent(ned::ui::test::Return());
+    REQUIRE(scratch.Point() == scratch.Content().LineToByteOffset(3));
+
+    view.OnEvent(ned::ui::test::Ctrl('x'));
+    view.OnEvent(ned::ui::test::CtrlSpace());
+    REQUIRE(scratch.Point() == scratch.Content().LineToByteOffset(1));
+    REQUIRE(fixture.statusMessage.empty());
+}
+
+TEST_CASE("jump-back after jump-to-register restores both the origin buffer and offset", "[BufferView]") {
+    Fixture            fixture;
+    ned::text::Buffer& first  = fixture.bufferList.CreateBuffer("first");
+    ned::text::Buffer& second = fixture.bufferList.CreateBuffer("second");
+    first.InsertAtPoint("hello world");
+    second.InsertAtPoint("goodbye world");
+    first.SetPoint(3);
+    second.SetPoint(5);
+    fixture.activeBuffer.Set(second);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    // Save a position in `first`, jump to it from `second` -- jump-to-register
+    // pushes a mark for wherever it jumped *from* (second, offset 5).
+    fixture.activeBuffer.Set(first);
+    first.SetPoint(3);
+    view.OnEvent(ned::ui::test::Ctrl('x'));
+    view.OnEvent(ned::ui::test::Character("r"));
+    view.OnEvent(ned::ui::test::Character(" "));
+    view.OnEvent(ned::ui::test::Character("a"));
+
+    fixture.activeBuffer.Set(second);
+    second.SetPoint(5);
+    view.OnEvent(ned::ui::test::Ctrl('x'));
+    view.OnEvent(ned::ui::test::Character("r"));
+    view.OnEvent(ned::ui::test::Character("j"));
+    view.OnEvent(ned::ui::test::Character("a"));
+    REQUIRE(&fixture.activeBuffer.Get() == &first);
+    REQUIRE(first.Point() == 3);
+
+    view.OnEvent(ned::ui::test::Ctrl('x'));
+    view.OnEvent(ned::ui::test::CtrlSpace());
+    REQUIRE(&fixture.activeBuffer.Get() == &second);
+    REQUIRE(second.Point() == 5);
+}
+
+TEST_CASE("jump-back with no jump history reports a status message and doesn't crash", "[BufferView]") {
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Ctrl('x'));
+    view.OnEvent(ned::ui::test::CtrlSpace());
+    REQUIRE(fixture.statusMessage == "No more jump history.");
+}
+
+TEST_CASE("jump-back skips a mark whose buffer has since been closed", "[BufferView]") {
+    Fixture            fixture;
+    ned::text::Buffer& closesMe = fixture.bufferList.CreateBuffer("closes-me");
+    ned::text::Buffer& survives = fixture.bufferList.CreateBuffer("survives");
+    closesMe.InsertAtPoint("one\ntwo\nthree");
+    survives.InsertAtPoint("a\nb\nc\nd\ne");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    // Push a mark in survives (via goto-line), then a mark in closesMe (via
+    // goto-line again after switching), then close closesMe -- jump-back
+    // should skip straight past the dead entry to the one in survives.
+    fixture.activeBuffer.Set(survives);
+    survives.SetPoint(survives.Content().LineToByteOffset(1));
+    view.OnEvent(ned::ui::test::Alt('g'));
+    view.OnEvent(ned::ui::test::Character("g"));
+    TypeText(view, "4");
+    view.OnEvent(ned::ui::test::Return());
+    REQUIRE(&fixture.activeBuffer.Get() == &survives);
+    REQUIRE(survives.Point() == survives.Content().LineToByteOffset(3));
+
+    fixture.activeBuffer.Set(closesMe);
+    closesMe.SetPoint(0);
+    view.OnEvent(ned::ui::test::Alt('g'));
+    view.OnEvent(ned::ui::test::Character("g"));
+    TypeText(view, "3");
+    view.OnEvent(ned::ui::test::Return());
+    REQUIRE(&fixture.activeBuffer.Get() == &closesMe);
+
+    fixture.activeBuffer.Set(survives); // step off closesMe before closing it
+    fixture.bufferList.Close("closes-me");
+
+    view.OnEvent(ned::ui::test::Ctrl('x'));
+    view.OnEvent(ned::ui::test::CtrlSpace());
+    REQUIRE(&fixture.activeBuffer.Get() == &survives);
+    REQUIRE(survives.Point() == survives.Content().LineToByteOffset(1));
+    REQUIRE(fixture.statusMessage.empty());
+}
+
+TEST_CASE("jump-back stack evicts the oldest mark past its cap", "[BufferView]") {
+    Fixture               fixture;
+    ned::text::Buffer&    scratch = fixture.bufferList.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
+                               fixture.statusMessage, fixture.mode, fixture.theme);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    std::string text;
+    for (int i = 0; i < 100; ++i) {
+        text += "line\n";
+    }
+    scratch.InsertAtPoint(text);
+
+    // One more push than the cap allows -- goto-line itself moves point
+    // each time, so every jump pushes a genuinely fresh mark.
+    const std::size_t pushes = ned::ui::BufferView::kMaxJumpBackStack + 1;
+    for (std::size_t i = 0; i < pushes; ++i) {
+        scratch.SetPoint(scratch.Content().LineToByteOffset(i));
+        view.OnEvent(ned::ui::test::Alt('g'));
+        view.OnEvent(ned::ui::test::Character("g"));
+        TypeText(view, std::to_string(i + 2));
+        view.OnEvent(ned::ui::test::Return());
+    }
+
+    // Popping exactly kMaxJumpBackStack times must exhaust the stack --
+    // the oldest (first) push was evicted, so there's one fewer entry than
+    // pushes.
+    for (std::size_t i = 0; i < ned::ui::BufferView::kMaxJumpBackStack; ++i) {
+        view.OnEvent(ned::ui::test::Ctrl('x'));
+        view.OnEvent(ned::ui::test::CtrlSpace());
+        REQUIRE(fixture.statusMessage.empty());
+    }
+    view.OnEvent(ned::ui::test::Ctrl('x'));
+    view.OnEvent(ned::ui::test::CtrlSpace());
+    REQUIRE(fixture.statusMessage == "No more jump history.");
+}
+
 // --- minibuffer-history-recall follow-up: M-p/M-n --------------------------
 
 TEST_CASE("M-p in goto-line recalls previously submitted values, newest first", "[BufferView]") {

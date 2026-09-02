@@ -23,6 +23,9 @@ namespace ned::ui::test {
 
 // Ctrl+<letter> -- letter must be lowercase ('a'-'z').
 [[nodiscard]] Event Ctrl(char letter);
+// Ctrl+Space -- jump-back's C-x C-SPC binding, the one non-letter Ctrl chord
+// this codebase's default keymap uses.
+[[nodiscard]] Event CtrlSpace();
 
 // Alt/Meta+<letter>.
 [[nodiscard]] Event Alt(char letter);

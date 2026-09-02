@@ -5886,6 +5886,7 @@ void BufferView::HandleDefinitionSelectKey(const editor::KeyChord& chord) {
 void BufferView::JumpToDefinition(const editor::lsp::LspManager::ResolvedLocation& location) {
     try {
         text::Buffer& opened = bufferList_.OpenOrCreateFile(location.path);
+        PushJumpMark(); // before mutating point/activeBuffer_ -- see JumpMark's own doc comment
         activeBuffer_.Set(opened);
         opened.SetPoint(editor::lsp::LspPositionToByte(opened.Content(), location.position));
         statusMessage_.clear();
@@ -5894,6 +5895,29 @@ void BufferView::JumpToDefinition(const editor::lsp::LspManager::ResolvedLocatio
     catch (const std::exception& e) {
         ReportError(e.what());
     }
+}
+
+void BufferView::PushJumpMark() {
+    jumpBackStack_.push_back(JumpMark{activeBuffer_.Get().Name(), activeBuffer_.Get().Point()});
+    if (jumpBackStack_.size() > kMaxJumpBackStack) {
+        jumpBackStack_.erase(jumpBackStack_.begin());
+    }
+}
+
+void BufferView::JumpBack() {
+    while (!jumpBackStack_.empty()) {
+        const JumpMark mark = jumpBackStack_.back();
+        jumpBackStack_.pop_back();
+        if (text::Buffer* target = bufferList_.Find(mark.bufferName)) {
+            activeBuffer_.Set(*target);
+            target->SetPoint(mark.byteOffset); // Buffer::SetPoint already clamps out-of-range offsets
+            statusMessage_.clear();
+            ScrollToShowPoint();
+            return;
+        }
+        // buffer closed since the mark was pushed -- skip it, try the next one
+    }
+    statusMessage_ = "No more jump history.";
 }
 
 void BufferView::RequestDocumentSymbolsAtPoint() {
@@ -6471,6 +6495,9 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             return;
         case editor::InteractiveRequest::SwitchHeaderSource:
             SwitchHeaderSource();
+            return;
+        case editor::InteractiveRequest::JumpBack:
+            JumpBack();
             return;
         case editor::InteractiveRequest::LspRename:
             inputMode_ = InputMode::LspRenameNewName;
@@ -8162,6 +8189,7 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
                 // the last line rather than erroring.
                 text::Buffer&     buffer = activeBuffer_.Get();
                 const std::size_t target = std::min(std::max<std::size_t>(parsed, 1), buffer.Content().LineCount()) - 1;
+                PushJumpMark();
                 buffer.SetPoint(buffer.Content().LineToByteOffset(target));
                 statusMessage_.clear();
             }
@@ -10874,6 +10902,7 @@ void BufferView::HandleRegisterKey(const editor::KeyChord& chord) {
         case InputMode::JumpToRegister:
             if (const editor::PointRegisterValue* value = registers_.Point(name)) {
                 if (text::Buffer* target = bufferList_.Find(value->bufferName)) {
+                    PushJumpMark();
                     activeBuffer_.Set(*target);
                     // multi-cursor-round-2 follow-up: restores the primary
                     // point plus a secondary cursor for every further saved
@@ -11719,6 +11748,7 @@ void BufferView::HandleBookmarkJumpKey(const editor::KeyChord& chord) {
         }
         try {
             text::Buffer& opened = bufferList_.OpenOrCreateFile(mark->path);
+            PushJumpMark();
             activeBuffer_.Set(opened);
             opened.SetPoint(opened.ByteOffsetForLineAndColumn(mark->line, mark->column, static_cast<std::size_t>(editor::TabWidth())));
             statusMessage_ = "Bookmark: " + selected;
