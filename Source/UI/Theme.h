@@ -21,6 +21,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "Editor/Mode.h"
 #include "UI/Widget.h"
@@ -252,6 +253,14 @@ struct Theme {
     // Editor/WhitespaceSettings.h.
     Color trailingWhitespaceBackground;
     Color indentGuideForeground;
+    // Depth-colorized-indent-guides follow-up: a small rotating palette an
+    // indent guide's color cycles through by its own nesting level (see
+    // Editor/WhitespaceSettings.h's IndentGuideDepthColorsEnabled) --
+    // indentGuideForeground above stays the fallback whenever that's off.
+    // Never empty in a real Theme (every factory below populates it);
+    // BufferView treats an empty vector the same as the setting being off,
+    // for a Theme built by hand without it.
+    std::vector<Color> indentGuideDepthPalette;
 
     // Org-mode syntax-highlighting follow-up: one Color per new
     // Org-specific SyntaxClass member (Mode.h) -- headline levels cycle

@@ -35,6 +35,27 @@
     (function_declarator
       declarator: (identifier) @name))) @definition.function
 
+; main-editor-sticky-scroll follow-up: the bare function_declarator-anchored
+; patterns below (upstream's own, kept unmodified) are what a bodyless
+; member declaration/prototype needs -- there's no enclosing function_definition
+; for those at all, so this is the only range they can ever get. But the SAME
+; pattern also matches an in-class inline method's or an out-of-line
+; `Class::method` definition's own declarator, capturing only `run()`/
+; `Widget::run()` rather than the whole body -- fine for the gutter (only
+; ever reads startByte) but wrong for sticky scroll's containment check,
+; which needs a method's range to actually extend through its body. The two
+; function_definition-wrapped patterns just below cover that with-body case
+; with the correct, wider range; Mode.cpp's symbolKind builder dedupes the
+; resulting narrow/wide overlap for a with-body definition (same name+kind,
+; one range nested in the other) down to the wider one.
+(function_definition
+  declarator: (function_declarator
+    declarator: (field_identifier) @name)) @definition.function
+
+(function_definition
+  declarator: (function_declarator
+    declarator: (qualified_identifier scope: (namespace_identifier) @local.scope name: (identifier) @name))) @definition.method
+
 (function_declarator declarator: (field_identifier) @name) @definition.function
 
 (function_declarator declarator: (qualified_identifier scope: (namespace_identifier) @local.scope name: (identifier) @name)) @definition.method
@@ -44,3 +65,10 @@
 (enum_specifier name: (type_identifier) @name) @definition.type
 
 (class_specifier name: (type_identifier) @name) @definition.class
+
+; main-editor-sticky-scroll follow-up: not part of upstream tree-sitter-cpp's
+; own tags.scm -- added here (ned's own vendored file, see this file's own
+; header comment) so a namespace shows up in the sticky-scroll breadcrumb.
+; Anonymous namespaces (no `name:` field) simply don't match, which is
+; correct: there's no name to show in a breadcrumb for one.
+(namespace_definition name: (namespace_identifier) @name) @definition.namespace

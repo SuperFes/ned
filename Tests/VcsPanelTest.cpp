@@ -535,3 +535,61 @@ TEST_CASE("ToggleCollapsed collapses to a 1-column strip and back", "[VcsPanel]"
     REQUIRE_FALSE(panel.Collapsed());
     REQUIRE(panel.Width() == 24);
 }
+
+TEST_CASE("Scrolling past a section header pins it as a sticky row", "[VcsPanel]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_vcs_panel_test_sticky_header";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    const CurrentPathGuard cwdGuard(dir);
+
+    ned::text::BufferList list;
+    ned::text::Buffer&    scratch = list.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    std::string           statusMessage;
+    ned::ui::VcsPanel      panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    PlacePanel(panel, 30, 6); // contentHeight == 4 (6 - border top/bottom - kHeaderHeight)
+
+    // Rows: "Staged (5)" header, a..e.txt (5 files), "Unstaged (0)" header,
+    // "Untracked (0)" header -- 8 rows total, more than fits in 4.
+    panel.DispatchVcsStatusForTesting({
+        {"M ", "a.txt"},
+        {"M ", "b.txt"},
+        {"M ", "c.txt"},
+        {"M ", "d.txt"},
+        {"M ", "e.txt"},
+    });
+
+    // Wheel-scroll past the header -- kWheelScrollLines == 3, so this lands
+    // scrollOffset_ on row 3 (c.txt), three rows below the "Staged" header.
+    panel.OnEvent(MousePress(1, 2)); // arbitrary non-resize x, content y
+    panel.OnEvent(ned::ui::test::Mouse(1, 2, ned::ui::MouseEvent::Button::WheelDown, ned::ui::MouseEvent::Motion::Pressed));
+
+    ned::ui::Screen screen = ned::ui::Screen(30, 6);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 29, .y_min = 0, .y_max = 5});
+    panel.Paint(canvas);
+
+    // Row 0 is the border; row 1 is the pinned "Staged (5)" header even
+    // though its real row scrolled off, followed by the actual scrolled-to
+    // content (c/d/e.txt) in the remaining 3 content rows.
+    REQUIRE(RowText(screen, 1, 30).find("Staged (5)") != std::string::npos);
+    REQUIRE(RowText(screen, 2, 30).find("c.txt") != std::string::npos);
+    REQUIRE(RowText(screen, 3, 30).find("d.txt") != std::string::npos);
+    REQUIRE(RowText(screen, 4, 30).find("e.txt") != std::string::npos);
+
+    // Clicking the pinned header acts on the real header row it stands in
+    // for -- collapsing "Staged" here, not whatever real row happens to sit
+    // at screen row 1's raw scrollOffset_ + 0 index.
+    panel.OnEvent(MousePress(1, 1));
+    // Scroll back to the top -- with "Staged" now collapsed there are only
+    // 3 rows total, and scrollOffset_ clamping on a shrunk row count is a
+    // pre-existing, unrelated concern this test isn't after.
+    panel.OnEvent(ned::ui::test::Mouse(1, 2, ned::ui::MouseEvent::Button::WheelUp, ned::ui::MouseEvent::Motion::Pressed));
+    ned::ui::Screen afterClick = ned::ui::Screen(30, 6);
+    ned::ui::Canvas afterCanvas(afterClick, ned::ui::Box{.x_min = 0, .x_max = 29, .y_min = 0, .y_max = 5});
+    panel.Paint(afterCanvas);
+    REQUIRE(RowText(afterClick, 1, 30).find("Staged (5)") != std::string::npos);
+    REQUIRE(RowText(afterClick, 2, 30).find("Unstaged") != std::string::npos); // files hidden, section collapsed
+
+    std::filesystem::remove_all(dir);
+}

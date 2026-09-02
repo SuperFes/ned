@@ -197,10 +197,11 @@ Notcurses.
       results, and diagnostics. Ned already has the individual result buffers (`*vcs
       status*`, project-search results, the stitched `*diagnostics*` buffer) but nothing
       walks them as a cursor motion outside clicking a line directly.
-- [ ] **No hunk-navigation motion** — `vcs-stage-hunk`/`vcs-unstage-hunk` operate on
-      whatever hunk covers point, but nothing jumps point to the next/previous changed
-      hunk in the buffer (gitsigns' `]c`/`[c`); today that means scanning the diff gutter
-      by eye first.
+- [x] Hunk-navigation motion — `vcs-next-hunk`/`vcs-previous-hunk` (`C-c v N`/`C-c v P`),
+      shipped 2026-09-01. A native Vim-mode `]c`/`[c` binding (gitsigns' own convention)
+      is a small remaining follow-up — the global `C-c v N`/`P` binding already works
+      under Vim mode via the shared keymap-stack fallthrough, so this is polish, not a
+      functional gap.
 
 ### Editor Ergonomics
 
@@ -210,6 +211,19 @@ Notcurses.
       multiple terminals/tabs, no terminal-side mouse forwarding to the shell (clicks
       focus the panel, wheel scrolls the ring — TUI apps inside don't receive mouse
       events), no OSC 52/title integration.
+- [ ] **Sticky scroll for Markdown/Org headings** (main-editor-sticky-scroll follow-up,
+      raised 2026-09-01) — the shipped sticky scroll (`Editor/StickyScroll.h`,
+      `BufferView::PaintStickyScrollRows`) is generic over `SymbolMarker`, but pins
+      namespace/class/method context from a language's tags.scm query, which relies on a
+      real AST containment guarantee (a method's range is genuinely nested inside its
+      class's). A heading outline isn't LSP-provided and isn't shaped like that: in
+      Markdown/Org's own parse tree, `# H1`/`## H2` are flat siblings, not parent/child —
+      "H2 belongs under H1" is a heading-level *convention*, the same one
+      `org::ParseOutline`/subtree-extent logic already has to compute by hand rather than
+      reading off the tree directly. Doable, but needs synthesized ranges (each heading's
+      range runs until the next heading of equal-or-shallower level), not a direct
+      tags.scm capture — a different marker source feeding the same
+      `StickyChainForViewportTop`/rendering machinery, not a rewrite of it.
 - [ ] **Vim-mode gaps**: no jumplist/changelist ring beyond the single `` ` ``/`''`
       toggle (no `C-o`/`C-i` ring); mark letters limited to `a`-`z`/`A`-`Z`/`'<`/`'>`
       (`A`-`Z` are buffer-local here, not vim's cross-file global marks); macros record
@@ -294,8 +308,9 @@ stage/unstage, inline diff preview with per-hunk stage/unstage, commit/branch co
 discard-with-confirm, stash, push/pull/fetch, ahead/behind summary, and a conflict-marker
 affordance. Built entirely on existing `VcsRunner`/`VcsProvider` plumbing.
 
-- [ ] Sticky-scroll for section headers while scrolled into deep content
-      (`ProjectSidebar` has this; deliberate v1 scope cut here, not an oversight).
+- [x] Sticky-scroll for section headers — shipped 2026-09-01 (`VcsPanel::
+      StickyHeaderIndex`). Simpler than `ProjectSidebar`'s multi-ancestor stack since
+      sections here aren't nested: at most one pinned row ever.
 - [ ] Directory-tree rows use indentation only, no box-drawing tree-connector glyphs
       (`ProjectSidebar`'s `├─└─│`) — revisit if the plain-indent tree reads as too flat.
 

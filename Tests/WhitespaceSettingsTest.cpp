@@ -2,7 +2,9 @@
 
 #include "Editor/WhitespaceSettings.h"
 
+using ned::editor::IndentGuideDepthColorsEnabled;
 using ned::editor::IndentGuidesEnabled;
+using ned::editor::SetIndentGuideDepthColorsEnabled;
 using ned::editor::SetIndentGuidesEnabled;
 using ned::editor::SetTrailingWhitespaceHighlightEnabled;
 using ned::editor::TrailingWhitespaceHighlightEnabled;
@@ -17,6 +19,7 @@ struct WhitespaceSettingsGuard {
     ~WhitespaceSettingsGuard() {
         SetTrailingWhitespaceHighlightEnabled(false);
         SetIndentGuidesEnabled(false);
+        SetIndentGuideDepthColorsEnabled(true);
     }
 };
 
@@ -42,4 +45,17 @@ TEST_CASE("SetIndentGuidesEnabled/IndentGuidesEnabled round-trip", "[WhitespaceS
     REQUIRE(IndentGuidesEnabled());
     SetIndentGuidesEnabled(false);
     REQUIRE_FALSE(IndentGuidesEnabled());
+}
+
+TEST_CASE("Indent guide depth colors default to enabled", "[WhitespaceSettings]") {
+    const WhitespaceSettingsGuard guard;
+    REQUIRE(IndentGuideDepthColorsEnabled());
+}
+
+TEST_CASE("SetIndentGuideDepthColorsEnabled/IndentGuideDepthColorsEnabled round-trip", "[WhitespaceSettings]") {
+    const WhitespaceSettingsGuard guard;
+    SetIndentGuideDepthColorsEnabled(false);
+    REQUIRE_FALSE(IndentGuideDepthColorsEnabled());
+    SetIndentGuideDepthColorsEnabled(true);
+    REQUIRE(IndentGuideDepthColorsEnabled());
 }
