@@ -38,6 +38,14 @@ class Node {
     [[nodiscard]] std::size_t StartByte() const;
     [[nodiscard]] std::size_t EndByte() const;
 
+    // smart-indentation follow-up: 0-indexed source row of this node's start
+    // -- O(1), tree-sitter already tracks it during parsing. What lets the
+    // indent engine compare "did these two ancestors open on the same source
+    // line" without ever falling back to a byte-offset-to-row scan (the kind
+    // IncrementalParse.cpp's private PointForByteOffset does), which would
+    // make a per-line batch reindent (Indent.h's IndentRegion) quadratic.
+    [[nodiscard]] std::size_t StartRow() const;
+
     [[nodiscard]] std::size_t ChildCount() const;
     [[nodiscard]] Node        Child(std::size_t index) const; // precondition: index < ChildCount()
 
@@ -64,6 +72,14 @@ class Node {
     // out-of-range request).
     [[nodiscard]] Node NamedDescendantForByteRange(std::size_t start, std::size_t end) const;
 
+    // smart-indentation follow-up: NamedDescendantForByteRange's
+    // unnamed-inclusive sibling -- needed because a "@dedent" query capture
+    // routinely lands on an anonymous token (a literal "}"), which
+    // NamedDescendantForByteRange can never resolve to a real Node by
+    // definition (it skips straight past anonymous nodes to their nearest
+    // named descendant/ancestor instead).
+    [[nodiscard]] Node DescendantForByteRange(std::size_t start, std::size_t end) const;
+
     // True for a node returned by a failed/out-of-range lookup (e.g.
     // Tree::RootNode() on a parse that produced no tree) -- every other
     // accessor is only meaningful when this is false.
@@ -73,6 +89,16 @@ class Node {
     // call further tree-sitter C functions this wrapper doesn't expose yet.
     // Not for use outside Source/Editor/TreeSitter/.
     [[nodiscard]] TSNode Raw() const noexcept;
+
+    // smart-indentation follow-up: tree-sitter's own stable node identity
+    // (TSNode's public `id` field) -- unlike a (startByte, endByte) byte
+    // range, this disambiguates two DIFFERENT nodes that happen to span the
+    // exact same bytes (confirmed real, not hypothetical: tree-sitter-
+    // python's "block" node has no opening delimiter of its own, so a block
+    // with a single statement and that statement itself are byte-range-
+    // identical -- Editor/Indent.h's ancestor walk needs to tell them apart
+    // precisely because only one of the two is ever @indent-captured).
+    [[nodiscard]] const void* Id() const noexcept;
 
   private:
     TSNode node_;

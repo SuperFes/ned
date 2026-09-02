@@ -12,6 +12,7 @@
 #include <utility>
 
 #include "AutoPair.h"
+#include "Indent.h"
 #include "Injection.h"
 #include "Key.h"
 #include "Link.h"
@@ -535,7 +536,8 @@ std::optional<SymbolKind> SymbolKindFromCaptureName(std::string_view captureName
 
 Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& language, std::string_view querySource,
                                 std::string_view foldQuerySource, std::string_view importQuerySource,
-                                std::string_view symbolKindQuerySource, std::string_view testQuerySource) {
+                                std::string_view symbolKindQuerySource, std::string_view testQuerySource,
+                                std::string_view indentQuerySource) {
     const auto parser = std::make_shared<treesitter::Parser>(language);
 
     // language-scoped-capture-rules follow-up: LanguageKeyForMode's own
@@ -980,6 +982,22 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
         };
     }
 
+    // smart-indentation follow-up: an eighth closure sharing the same
+    // parser/sharedParse as everything above, for the same "don't trigger a
+    // redundant full reparse on the same Paint() cycle" reason. Only built
+    // when an indent query source was actually given; otherwise
+    // mode.indentColumn stays a default-constructed, empty std::function,
+    // the same "no support" signal every other capability above uses.
+    // Captures `name` (the mode's own full name, e.g. "python-mode") by
+    // value into BuildIndentFunction BEFORE it's moved into the returned
+    // Mode below -- see BuildIndentFunction's own doc comment (Indent.h) for
+    // why the indent style lookup needs this rather than languageKey.
+    IndentFunction indentColumn;
+    if (!indentQuerySource.empty()) {
+        const auto indentQuery = std::make_shared<treesitter::Query>(language, indentQuerySource);
+        indentColumn            = BuildIndentFunction(parser, indentQuery, sharedParse, name);
+    }
+
     return Mode{.name            = std::move(name),
                 .keymap          = Keymap(),
                 .highlight       = std::move(highlight),
@@ -989,12 +1007,13 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
                 .autoPairs       = DefaultAutoPairs(),
                 .symbolKind      = std::move(symbolKind),
                 .importTarget    = std::move(importTarget),
-                .testDiscovery   = std::move(testDiscovery)};
+                .testDiscovery   = std::move(testDiscovery),
+                .indentColumn    = std::move(indentColumn)};
 }
 
 Mode TreeSitterMode(std::string name, std::string_view languageName, const char* querySource,
                     const char* foldQuerySource, const char* importQuerySource, const char* symbolKindQuerySource,
-                    const char* testQuerySource) {
+                    const char* testQuerySource, const char* indentQuerySource) {
     const auto language = treesitter::LanguageByName(languageName);
     // Every languageName this is called with (below) names a grammar
     // Languages.cpp always bundles -- if this ever fires it's a build-time
@@ -1005,11 +1024,13 @@ Mode TreeSitterMode(std::string name, std::string_view languageName, const char*
                                       foldQuerySource != nullptr ? std::string_view(foldQuerySource) : std::string_view(),
                                       importQuerySource != nullptr ? std::string_view(importQuerySource) : std::string_view(),
                                       symbolKindQuerySource != nullptr ? std::string_view(symbolKindQuerySource) : std::string_view(),
-                                      testQuerySource != nullptr ? std::string_view(testQuerySource) : std::string_view());
+                                      testQuerySource != nullptr ? std::string_view(testQuerySource) : std::string_view(),
+                                      indentQuerySource != nullptr ? std::string_view(indentQuerySource) : std::string_view());
 }
 
 Mode JanetMode() {
-    Mode mode              = TreeSitterMode("janet-mode", "janet", treesitter::queries::kJanet, nullptr, treesitter::queries::kJanetImports);
+    Mode mode              = TreeSitterMode("janet-mode", "janet", treesitter::queries::kJanet, nullptr, treesitter::queries::kJanetImports,
+                                            nullptr, nullptr, treesitter::queries::kJanetIndents);
     mode.lineCommentPrefix = ";";             // Lisp-family convention
     mode.autoPairs         = LispAutoPairs(); // '(...) is the reader's quote macro, not a paired delimiter
     return mode;
@@ -1019,12 +1040,14 @@ Mode JsonMode() {
     // No lineCommentPrefix -- JSON has no comment syntax at all, real or
     // otherwise; toggle-line-comment correctly reports nothing configured
     // rather than inserting something that would make the file invalid JSON.
-    return TreeSitterMode("json-mode", "json", treesitter::queries::kJson, treesitter::queries::kJsonFolds);
+    return TreeSitterMode("json-mode", "json", treesitter::queries::kJson, treesitter::queries::kJsonFolds, nullptr,
+                          nullptr, nullptr, treesitter::queries::kJsonIndents);
 }
 
 Mode CMode() {
     Mode mode              = TreeSitterMode("c-mode", "c", treesitter::queries::kC, treesitter::queries::kCFolds,
-                                            treesitter::queries::kCImports, treesitter::queries::kCTags);
+                                            treesitter::queries::kCImports, treesitter::queries::kCTags, nullptr,
+                                            treesitter::queries::kCIndents);
     mode.lineCommentPrefix = "//";
     return mode;
 }
@@ -1032,14 +1055,15 @@ Mode CMode() {
 Mode CppMode() {
     Mode mode              = TreeSitterMode("cpp-mode", "cpp", treesitter::queries::kCpp, treesitter::queries::kCppFolds,
                                             treesitter::queries::kCImports, treesitter::queries::kCppTags,
-                                            treesitter::queries::kCppTests);
+                                            treesitter::queries::kCppTests, treesitter::queries::kCppIndents);
     mode.lineCommentPrefix = "//";
     return mode;
 }
 
 Mode PhpMode() {
     Mode mode              = TreeSitterMode("php-mode", "php", treesitter::queries::kPhp, nullptr, treesitter::queries::kPhpImports,
-                                            treesitter::queries::kPhpTags, treesitter::queries::kPhpTests);
+                                            treesitter::queries::kPhpTags, treesitter::queries::kPhpTests,
+                                            treesitter::queries::kPhpIndents);
     mode.lineCommentPrefix = "//";
     return mode;
 }
@@ -1047,7 +1071,8 @@ Mode PhpMode() {
 Mode JavaScriptMode() {
     Mode mode              = TreeSitterMode("javascript-mode", "javascript", treesitter::queries::kJavaScript,
                                             treesitter::queries::kJavaScriptFolds, treesitter::queries::kJavaScriptImports,
-                                            treesitter::queries::kJavaScriptTags, treesitter::queries::kJavaScriptTests);
+                                            treesitter::queries::kJavaScriptTags, treesitter::queries::kJavaScriptTests,
+                                            treesitter::queries::kJavaScriptIndents);
     mode.lineCommentPrefix = "//";
     return mode;
 }
@@ -1055,7 +1080,8 @@ Mode JavaScriptMode() {
 Mode TypeScriptMode() {
     Mode mode              = TreeSitterMode("typescript-mode", "typescript", treesitter::queries::kTypeScript,
                                             treesitter::queries::kTypeScriptFolds, treesitter::queries::kTypeScriptImports,
-                                            treesitter::queries::kTypeScriptTags, treesitter::queries::kTypeScriptTests);
+                                            treesitter::queries::kTypeScriptTags, treesitter::queries::kTypeScriptTests,
+                                            treesitter::queries::kTypeScriptIndents);
     mode.lineCommentPrefix = "//";
     return mode;
 }
@@ -1063,13 +1089,14 @@ Mode TypeScriptMode() {
 Mode TsxMode() {
     Mode mode              = TreeSitterMode("tsx-mode", "tsx", treesitter::queries::kTypeScript, treesitter::queries::kTypeScriptFolds,
                                             treesitter::queries::kTypeScriptImports, treesitter::queries::kTypeScriptTags,
-                                            treesitter::queries::kTypeScriptTests);
+                                            treesitter::queries::kTypeScriptTests, treesitter::queries::kTypeScriptIndents);
     mode.lineCommentPrefix = "//";
     return mode;
 }
 
 Mode HtmlMode() {
-    Mode mode = TreeSitterMode("html-mode", "html", treesitter::queries::kHtml);
+    Mode mode = TreeSitterMode("html-mode", "html", treesitter::queries::kHtml, nullptr, nullptr, nullptr, nullptr,
+                               treesitter::queries::kHtmlIndents);
     // No lineCommentPrefix -- HTML only has block comments (<!-- -->), no
     // single-line comment token to toggle per line.
 
@@ -1132,25 +1159,28 @@ Mode HtmlMode() {
 Mode CssMode() {
     // No lineCommentPrefix -- same reasoning as HtmlMode, CSS only has
     // block comments (/* */).
-    return TreeSitterMode("css-mode", "css", treesitter::queries::kCss, nullptr, treesitter::queries::kCssImports);
+    return TreeSitterMode("css-mode", "css", treesitter::queries::kCss, nullptr, treesitter::queries::kCssImports, nullptr,
+                          nullptr, treesitter::queries::kCssIndents);
 }
 
 Mode PythonMode() {
     Mode mode              = TreeSitterMode("python-mode", "python", treesitter::queries::kPython, treesitter::queries::kPythonFolds,
                                             treesitter::queries::kPythonImports, treesitter::queries::kPythonTags,
-                                            treesitter::queries::kPythonTests);
+                                            treesitter::queries::kPythonTests, treesitter::queries::kPythonIndents);
     mode.lineCommentPrefix = "#";
     return mode;
 }
 
 Mode BashMode() {
-    Mode mode              = TreeSitterMode("bash-mode", "bash", treesitter::queries::kBash, nullptr, treesitter::queries::kBashImports);
+    Mode mode              = TreeSitterMode("bash-mode", "bash", treesitter::queries::kBash, nullptr, treesitter::queries::kBashImports,
+                                            nullptr, nullptr, treesitter::queries::kBashIndents);
     mode.lineCommentPrefix = "#";
     return mode;
 }
 
 Mode FishMode() {
-    Mode mode              = TreeSitterMode("fish-mode", "fish", treesitter::queries::kFish);
+    Mode mode              = TreeSitterMode("fish-mode", "fish", treesitter::queries::kFish, nullptr, nullptr, nullptr, nullptr,
+                                            treesitter::queries::kFishIndents);
     mode.lineCommentPrefix = "#";
     return mode;
 }
@@ -1158,24 +1188,27 @@ Mode FishMode() {
 Mode XmlMode() {
     // No lineCommentPrefix -- XML only has block comments (<!-- -->), same
     // reasoning as HtmlMode/CssMode above.
-    return TreeSitterMode("xml-mode", "xml", treesitter::queries::kXml);
+    return TreeSitterMode("xml-mode", "xml", treesitter::queries::kXml, nullptr, nullptr, nullptr, nullptr,
+                          treesitter::queries::kXmlIndents);
 }
 
 Mode YamlMode() {
-    Mode mode              = TreeSitterMode("yaml-mode", "yaml", treesitter::queries::kYaml);
+    Mode mode              = TreeSitterMode("yaml-mode", "yaml", treesitter::queries::kYaml, nullptr, nullptr, nullptr, nullptr,
+                                            treesitter::queries::kYamlIndents);
     mode.lineCommentPrefix = "#";
     return mode;
 }
 
 Mode TomlMode() {
-    Mode mode              = TreeSitterMode("toml-mode", "toml", treesitter::queries::kToml);
+    Mode mode              = TreeSitterMode("toml-mode", "toml", treesitter::queries::kToml, nullptr, nullptr, nullptr, nullptr,
+                                            treesitter::queries::kTomlIndents);
     mode.lineCommentPrefix = "#";
     return mode;
 }
 
 Mode ClojureMode() {
     Mode mode              = TreeSitterMode("clojure-mode", "clojure", treesitter::queries::kClojure, treesitter::queries::kClojureFolds,
-                                            treesitter::queries::kClojureImports);
+                                            treesitter::queries::kClojureImports, nullptr, nullptr, treesitter::queries::kClojureIndents);
     mode.lineCommentPrefix = ";";             // Lisp-family convention, same as JanetMode
     mode.autoPairs         = LispAutoPairs(); // same reasoning as JanetMode
     return mode;
@@ -1184,7 +1217,7 @@ Mode ClojureMode() {
 Mode JankMode() {
     // Same grammar and query as ClojureMode, distinct name -- see Mode.h.
     Mode mode              = TreeSitterMode("jank-mode", "clojure", treesitter::queries::kClojure, treesitter::queries::kClojureFolds,
-                                            treesitter::queries::kClojureImports);
+                                            treesitter::queries::kClojureImports, nullptr, nullptr, treesitter::queries::kClojureIndents);
     mode.lineCommentPrefix = ";";
     mode.autoPairs         = LispAutoPairs(); // same reasoning as JanetMode
     return mode;
@@ -1305,6 +1338,92 @@ Mode MarkdownMode() {
         CollectInjectedHighlightSpans(root, bufferText, *injectionQuery, *embeddedLanguageCache, spans);
 
         return spans;
+    };
+
+    // smart-indentation follow-up: hand-rolled, mirroring .highlight's own
+    // bypass of the generic query-driven path above -- real Markdown list
+    // continuation needs a hanging indent to the bullet's own content
+    // COLUMN (e.g. "1. " = 3, "- " = 2), not level * a fixed width, so this
+    // doesn't fit Editor/Indent.h's generic @indent/@dedent engine at all
+    // (see that file's own header comment). Shares blockParser/sharedParse
+    // with .highlight above -- one more closure reusing the same cached
+    // parse, not a second reparse on the same Paint()/keystroke cycle.
+    mode.indentColumn = [blockParser, sharedParse](std::string_view bufferText, std::size_t lineStart,
+                                                    std::size_t lineEnd) -> std::optional<int> {
+        const treesitter::Tree& tree = sharedParse->Update(*blockParser, bufferText);
+        if (tree.IsNull()) {
+            return std::nullopt;
+        }
+
+        std::size_t contentStart = lineEnd; // default: the whole line is blank
+        for (std::size_t i = lineStart; i < lineEnd; ++i) {
+            if (bufferText[i] != ' ' && bufferText[i] != '\t') {
+                contentStart = i;
+                break;
+            }
+        }
+
+        treesitter::Node node = tree.RootNode().NamedDescendantForByteRange(contentStart, contentStart);
+        if (node.IsNull()) {
+            return 0;
+        }
+
+        // Fenced-code passthrough: content inside a ```-fenced block is
+        // opaque non-Markdown text, not reflowed/recomputed from structure
+        // at all -- copy whatever the previous line's own leading
+        // whitespace already is, byte-for-byte (a deliberate, explicit
+        // exception to "never naive-copy-the-line-above," justified because
+        // fence content genuinely isn't Markdown structure to walk). Codepoint
+        // count, not display column (Fill.h's own documented v1 scope cut,
+        // same reasoning -- a leading run of plain spaces/tabs essentially
+        // never needs real tab-expansion math to reproduce verbatim).
+        for (treesitter::Node ancestor = node; !ancestor.IsNull(); ancestor = ancestor.Parent()) {
+            if (ancestor.Type() != "code_fence_content") {
+                continue;
+            }
+            if (lineStart == 0) {
+                return 0;
+            }
+            // lineStart - 1 is the '\n' terminating the PREVIOUS line itself
+            // (lineStart is always right after a real newline here) -- the
+            // search for that line's own START has to look one byte further
+            // back than that, for the newline terminating the line before
+            // IT, or this finds lineStart right back again instead of the
+            // previous line's start.
+            const std::size_t searchFrom  = (lineStart <= 1) ? 0 : lineStart - 2;
+            std::size_t        prevLineStart = bufferText.rfind('\n', searchFrom);
+            prevLineStart                  = (prevLineStart == std::string_view::npos) ? 0 : prevLineStart + 1;
+            int column                = 0;
+            for (std::size_t i = prevLineStart; i < bufferText.size() && (bufferText[i] == ' ' || bufferText[i] == '\t');
+                 ++i) {
+                ++column;
+            }
+            return column;
+        }
+
+        // Otherwise: sum each enclosing list_item's own marker width (its
+        // first child's byte length, e.g. "- " = 2, "10. " = 4 -- nested
+        // lists stack additively) plus 2 per enclosing block_quote ("> ").
+        // A list_item/block_quote is excluded from its OWN opening/marker
+        // line (StartByte() == contentStart) -- the same self-exclusion
+        // Editor/Indent.h's generic engine needs for a bracket-language
+        // container's own opening line, confirmed by the same kind of real
+        // parse-tree check that caught that engine's own bugs.
+        int column = 0;
+        for (treesitter::Node ancestor = node; !ancestor.IsNull(); ancestor = ancestor.Parent()) {
+            if (ancestor.Type() == "list_item") {
+                if (ancestor.StartByte() != contentStart && ancestor.ChildCount() > 0) {
+                    const treesitter::Node marker = ancestor.Child(0);
+                    column += static_cast<int>(marker.EndByte() - marker.StartByte());
+                }
+            }
+            else if (ancestor.Type() == "block_quote") {
+                if (ancestor.StartByte() != contentStart) {
+                    column += 2;
+                }
+            }
+        }
+        return column;
     };
 
     return mode;
@@ -1485,6 +1604,59 @@ Mode OrgMode() {
         return spans;
     };
 
+    // smart-indentation follow-up: hand-rolled, mirroring MarkdownMode()'s
+    // own bespoke closure -- real Org list continuation needs a hanging
+    // indent to the bullet's own content COLUMN (checked against a real
+    // parse dump: "listitem"'s children are [bullet, ...body], with the
+    // body's own start byte -- NOT bullet's own end byte, there's a
+    // separating space in between not covered by either -- giving the real
+    // hang width), so this doesn't fit Editor/Indent.h's generic
+    // @indent/@dedent engine any more than Markdown's own list handling
+    // does. Headline body text is deliberately NOT indented under its own
+    // stars here -- real Org's own long-standing convention keeps body text
+    // flush regardless of heading level, unlike list continuation. Shares
+    // parser/sharedParse with highlight above.
+    IndentFunction indentColumn = [parser, sharedParse](std::string_view bufferText, std::size_t lineStart,
+                                                        std::size_t lineEnd) -> std::optional<int> {
+        const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
+        if (tree.IsNull()) {
+            return std::nullopt;
+        }
+
+        std::size_t contentStart = lineEnd; // default: the whole line is blank
+        for (std::size_t i = lineStart; i < lineEnd; ++i) {
+            if (bufferText[i] != ' ' && bufferText[i] != '\t') {
+                contentStart = i;
+                break;
+            }
+        }
+
+        const treesitter::Node node = tree.RootNode().NamedDescendantForByteRange(contentStart, contentStart);
+        if (node.IsNull()) {
+            return 0;
+        }
+
+        // Sum each enclosing listitem's own hang width (its second child's
+        // byte offset from its own start -- bullet plus whatever separates
+        // it from the body, e.g. "- " = 2, "1. " = 3) -- nested lists stack
+        // additively. A listitem is excluded from its OWN bullet line
+        // (StartByte() == contentStart), the same self-exclusion
+        // Editor/Indent.h's generic engine needs for a container's own
+        // opening line.
+        int column = 0;
+        for (treesitter::Node ancestor = node; !ancestor.IsNull(); ancestor = ancestor.Parent()) {
+            if (ancestor.Type() != "listitem") {
+                continue;
+            }
+            if (ancestor.StartByte() == contentStart || ancestor.ChildCount() < 2) {
+                continue;
+            }
+            const treesitter::Node body = ancestor.Child(1);
+            column += static_cast<int>(body.StartByte() - ancestor.StartByte());
+        }
+        return column;
+    };
+
     // Real Org's own comment-line convention (org-comment-string's default).
     // line-wrap follow-up: same reasoning as MarkdownMode() -- Org files
     // are prose too.
@@ -1493,6 +1665,7 @@ Mode OrgMode() {
                 .highlight         = std::move(highlight),
                 .lineCommentPrefix = "#",
                 .autoPairs         = DefaultAutoPairs(),
+                .indentColumn      = std::move(indentColumn),
                 .wrapLines         = true};
 }
 

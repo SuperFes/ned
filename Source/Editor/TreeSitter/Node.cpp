@@ -17,6 +17,10 @@ std::size_t Node::EndByte() const {
     return ts_node_end_byte(node_);
 }
 
+std::size_t Node::StartRow() const {
+    return ts_node_start_point(node_).row;
+}
+
 std::size_t Node::ChildCount() const {
     return ts_node_child_count(node_);
 }
@@ -45,12 +49,20 @@ Node Node::NamedDescendantForByteRange(std::size_t start, std::size_t end) const
     return Node(ts_node_named_descendant_for_byte_range(node_, static_cast<uint32_t>(start), static_cast<uint32_t>(end)));
 }
 
+Node Node::DescendantForByteRange(std::size_t start, std::size_t end) const {
+    return Node(ts_node_descendant_for_byte_range(node_, static_cast<uint32_t>(start), static_cast<uint32_t>(end)));
+}
+
 bool Node::IsNull() const {
     return ts_node_is_null(node_);
 }
 
 TSNode Node::Raw() const noexcept {
     return node_;
+}
+
+const void* Node::Id() const noexcept {
+    return node_.id;
 }
 
 } // namespace ned::editor::treesitter

@@ -340,6 +340,31 @@ struct InjectionRegion {
 // unset.
 using EmbeddedRegionFunction = std::function<std::vector<InjectionRegion>(std::string_view bufferText)>;
 
+// smart-indentation follow-up. bufferText is the buffer's full text;
+// [lineStart, lineEnd) is the byte range of the line indentation is being
+// computed FOR (lineEnd excludes that line's own trailing newline; a
+// not-yet-typed new line passes lineStart == lineEnd, its own future
+// insertion point). Returns the target visual column that line's leading
+// whitespace should occupy, or std::nullopt for "no opinion" (e.g. no parse
+// tree at all) -- callers fall back to whatever they'd do with this
+// capability unset entirely, same "empty means not configured" convention
+// as every other Mode field above, just resolved per-call rather than by
+// leaving the whole std::function empty, since a query-driven mode can have
+// a real opinion on most lines and none on a pathological one.
+//
+// Unlike HighlightFunction/FoldFunction (whole-buffer, no line parameter),
+// this is inherently a per-line query -- indentation is never a property of
+// the whole buffer at once. Two implementation shapes share this one type
+// (see Editor/Indent.h's own doc comment): most modes get one built by the
+// generic "@indent"/"@dedent" tree-walk engine off a per-language
+// indents.scm (TreeSitterModeFromLanguage, mirroring FoldFunction/
+// importTarget/testDiscovery's own construction); Markdown's own closure is
+// hand-rolled directly in MarkdownMode(), mirroring how that Mode's
+// .highlight already bypasses the generic query path for logic a flat
+// capture list can't express (list-item hanging indent needs the bullet's
+// own content column, not a multiple of one fixed indent width).
+using IndentFunction = std::function<std::optional<int>(std::string_view bufferText, std::size_t lineStart, std::size_t lineEnd)>;
+
 struct Mode {
     std::string       name;
     Keymap            keymap;
@@ -394,6 +419,13 @@ struct Mode {
     // "empty means not configured" convention as everything above -- only
     // html-mode sets this (see HtmlMode() in Mode.cpp).
     EmbeddedRegionFunction embeddedRegions;
+    // smart-indentation follow-up: empty function (the default) means
+    // indent-for-tab-command/newline/indent-region/indent-buffer report
+    // there's no structural indent support configured for this mode, same
+    // "empty means not configured" convention as everything above -- TAB/RET
+    // fall back to their pre-existing literal-tab/bare-newline behavior
+    // unchanged.
+    IndentFunction indentColumn;
     // line-wrap follow-up: this mode's own default for whether BufferView
     // should soft-wrap long lines at word boundaries instead of scrolling
     // horizontally -- false (matching every bundled mode except the two
@@ -454,9 +486,15 @@ struct Mode {
 // Mode::testDiscovery's own doc comment) -- nullptr (the default) means
 // this language has no test-discovery query yet, leaving the returned
 // Mode's .testDiscovery empty.
+// indentQuerySource (smart-indentation follow-up): same optional contract,
+// but for an "@indent"/"@dedent"-capture query (see Mode::indentColumn's own
+// doc comment and Editor/Indent.h) -- nullptr (the default) means this
+// language has no indent query yet, leaving the returned Mode's
+// .indentColumn empty.
 [[nodiscard]] Mode TreeSitterMode(std::string name, std::string_view languageName, const char* querySource,
                                   const char* foldQuerySource = nullptr, const char* importQuerySource = nullptr,
-                                  const char* symbolKindQuerySource = nullptr, const char* testQuerySource = nullptr);
+                                  const char* symbolKindQuerySource = nullptr, const char* testQuerySource = nullptr,
+                                  const char* indentQuerySource = nullptr);
 
 // The shared construction logic TreeSitterMode above delegates to, split out
 // (dynamic-grammar-loading follow-up) so a caller that already has a
@@ -471,12 +509,14 @@ struct Mode {
 // that call. querySource is also optional (empty leaves .highlight empty,
 // same as an empty foldQuerySource leaves .fold empty) -- some real grammars
 // have no highlights.scm at all. importQuerySource: same optional contract,
-// see TreeSitterMode's own doc comment above.
+// see TreeSitterMode's own doc comment above. indentQuerySource: same
+// optional contract, see TreeSitterMode's own doc comment above.
 [[nodiscard]] Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& language,
                                               std::string_view querySource = {}, std::string_view foldQuerySource = {},
                                               std::string_view importQuerySource     = {},
                                               std::string_view symbolKindQuerySource = {},
-                                              std::string_view testQuerySource       = {});
+                                              std::string_view testQuerySource       = {},
+                                              std::string_view indentQuerySource     = {});
 
 // A real tree-sitter-backed Janet mode (bundle-remaining-grammars
 // follow-up), replacing the original hand-rolled per-line #-comment/

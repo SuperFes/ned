@@ -43,11 +43,17 @@ namespace ned::editor::treesitter {
 
 // One capture from running a Query against a tree -- name is the query
 // pattern's capture name (e.g. "comment", "string", without the leading
-// '@'), [startByte, endByte) is the captured node's byte range.
+// '@'), [startByte, endByte) is the captured node's byte range. nodeId
+// (smart-indentation follow-up) is the captured node's own stable identity
+// (Node::Id()) -- needed by any consumer that must tell apart two DIFFERENT
+// nodes sharing the exact same byte range (real, not hypothetical: see
+// Node::Id()'s own doc comment for tree-sitter-python's "block" node), since
+// [startByte, endByte) alone can't disambiguate that case.
 struct QueryCapture {
     std::string name;
     std::size_t startByte;
     std::size_t endByte;
+    const void* nodeId;
 };
 
 // A capture within a QueryMatch -- same shape as QueryCapture, kept as a

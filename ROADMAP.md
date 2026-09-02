@@ -242,33 +242,30 @@ Notcurses.
 - [ ] **No buffer-list/ibuffer-style management** — `switch-to-buffer` is a
       name-completion prompt only; no dedicated buffer-list buffer with mark/save/kill
       batch operations.
-- [ ] **No smart/positional indentation** (fill-paragraph follow-up, 2026-09-01 audit) —
-      `indent-for-tab-command`'s own comment in `Commands.cpp` already says it plainly:
-      "not real indent logic ... this codebase has no per-mode indent rules yet." TAB
-      today either hits a mode's own keymap override (`org-cycle`'s fold-or-table-align,
-      `markdown-table-align`'s table-align-or-fallback) or, globally, just inserts a
-      literal `\t` — there's no "compute the correct indentation column for the line at
-      point from surrounding syntax" anywhere, and `newline` (`Commands.cpp`) is a bare
-      `InsertAtPoint("\n")` with no indent-carry to the new line either (no
-      electric-indent). A genuinely new subsystem, not a small follow-up: nothing in
-      `Mode` (`HighlightFunction`/`FoldFunction`/`ExpandSelectionFunction` are its only
-      function-pointer fields today) or `TreeSitter/` (no `indents.scm` query-embedding
-      convention alongside the existing `highlights.scm`/`*-folds.scm`/`*-tags.scm`
-      ones) has anything to build this on top of. Likely shape, mirroring the
-      nvim-treesitter/Helix convention rather than inventing one: a per-language
-      `indents.scm` (`@indent`/`@dedent`/`@aligned`-style captures) embedded the same way
-      `ned_embed_treesitter_query` already embeds every other bundled query, a new
-      `Mode::indentColumn` function-pointer field alongside the other three, and an
-      algorithm that walks the syntax tree from the target line up through indent/dedent
-      markers to a column (real Emacs' and Helix's approach, not naive "copy the line
-      above's indent" — that's `[Performance]`-cheap but wrong the moment nesting
-      changes). Both `indent-for-tab-command` and a new `newline-and-indent` (or making
-      plain `newline` electric) would consume it. Scope is per-language: JSON/YAML/Python
-      "just" need indent-after-`:`/after-open-bracket; C/C++/JS/TS/PHP need brace-depth
-      plus continuation-line rules; Markdown/Org need list-item/heading-relative
-      indentation entirely outside a code-syntax model. A real feature, not a quick
-      follow-up — scope it per-language incrementally rather than attempting full parity
-      in one pass.
+- [x] **Smart/positional indentation** — shipped 2026-09-02 (all 19 bundled grammars,
+      completed same day as the initial 3-tier landing). `Editor/Indent.h`'s generic
+      `@indent`/`@dedent` tree-walk engine (`Mode::indentColumn`, one `*-indents.scm` per
+      language) covers every bracket/keyword-delimited grammar (C/C++/JSON/JS/TS/TSX/PHP/
+      CSS/HTML/XML/Bash/Fish/YAML/TOML, plus Janet/Clojure at a deliberately simple
+      bracket-depth level, not real per-form Lisp indent) and Python's own
+      indentation-sensitive `block`-node scoping (zero bespoke code). Markdown and Org
+      each get a hand-rolled closure instead (`MarkdownMode()`/`OrgMode()`) for hanging
+      list-item indent to the bullet's own content column, blockquote nesting, and (Markdown
+      only) fenced-code passthrough — the one tier that doesn't fit level-counting.
+      `indent-for-tab-command`/`newline` are additive (every mode without indentColumn is
+      byte-for-byte unchanged); `indent-region`/`indent-buffer` reuse the same per-line
+      primitive for batch reindent, the substrate a future save-time cleanup pass would
+      call. Two real, non-obvious engine bugs surfaced extending past the initial 3
+      grammars, both fixed generically (not per-language workarounds): tree-sitter-python's
+      "block" node can be byte-*range*-identical to its own single statement, requiring
+      captured-node identity (`Node::Id()`/`QueryCapture::nodeId`) instead of byte-range
+      keying; and HTML/XML's "element" wraps a NAMED "start_tag"/"STag" opening marker
+      (unlike every other grammar's anonymous "{"/"("), needing one narrow, explicitly-
+      documented promotion step in the walk-start resolution. `@aligned`-style
+      paren-column alignment stays deferred, as does incremental/windowed reindent for
+      huge files (`IndentRegion` materializes full buffer text per line, same cost class
+      as fill-paragraph — fine for occasional use, not engineered further without a real
+      report).
 - [ ] **No server/daemon mode** — no `emacsclient`-equivalent; one process per terminal,
       no way to keep a warm process (buffers, LSP connections, undo history) alive and
       attach a new terminal client to it.

@@ -50,6 +50,7 @@
 #include "Editor/SnippetRegistry.h"
 #include "Editor/StickyScrollSettings.h"
 #include "Editor/SyntaxTheme.h"
+#include "Editor/IndentStyle.h"
 #include "Editor/TabWidth.h"
 #include "Editor/Tasks/TaskConfig.h"
 #include "Editor/Terminal/Config.h"
@@ -179,6 +180,23 @@ namespace {
 
     void NedSetTabWidth(std::int64_t columns) {
         editor::SetTabWidth(static_cast<int>(columns));
+    }
+
+    // smart-indentation follow-up. modeName empty sets the process-wide
+    // default; non-empty (a Mode::name, e.g. "python-mode") sets a per-mode
+    // override -- same "empty string means the process-wide/no-override
+    // case" convention NedSetFormatCommand/NedSetUrlOpenCommand already use,
+    // since Value.h has no std::optional<std::string> FromJanet
+    // specialization yet (see the org-capture-register-template binding's
+    // own comment on the same gap).
+    void NedSetIndentStyle(std::string modeName, bool useTabs, std::int64_t width) {
+        const editor::IndentStyle style{.useTabs = useTabs, .width = static_cast<int>(width)};
+        if (modeName.empty()) {
+            editor::SetIndentStyle(style);
+        }
+        else {
+            editor::SetIndentStyleForMode(modeName, style);
+        }
     }
 
     void NedSetFillColumn(std::int64_t columns) {
@@ -1022,6 +1040,11 @@ void InstallEditorBindings(Environment& env) {
         "defaults to \"xdg-open\"; empty string clears it entirely, disabling URL-following.");
     env.Register<&NedSetTabWidth>("ned", "set-tab-width",
                                   "Set the display width (in columns) a tab character expands to (default 4).");
+    env.Register<&NedSetIndentStyle>(
+        "ned", "set-indent-style",
+        "Set the indent style smart-indentation (indent-for-tab-command/newline/indent-region/indent-buffer) writes: "
+        "(mode-name-or-empty use-tabs? width). An empty mode-name sets the process-wide default (spaces, width 4); "
+        "a Mode name (e.g. \"python-mode\") sets a per-mode override, checked first.");
     env.Register<&NedSetFillColumn>(
         "ned", "set-fill-column",
         "Set the target line width (in codepoints) fill-paragraph (M-q) wraps prose/comments to (default 70).");
