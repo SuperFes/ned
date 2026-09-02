@@ -496,7 +496,7 @@ TEST_CASE("ExtractSignatureHelp wraps the active parameter's string label in gui
     REQUIRE(*text == "foo(a: int, **b: string**)");
 }
 
-TEST_CASE("ExtractSignatureHelp resolves a [start, end) offset-pair parameter label", "[Lsp]") {
+TEST_CASE("ExtractSignatureHelp resolves a half-open start/end offset-pair parameter label", "[Lsp]") {
     const Json result = {
         {"signatures", Json::array({{{"label", "foo(a, b)"}, {"parameters", Json::array({{{"label", Json::array({4, 5})}}, {{"label", Json::array({7, 8})}}})}}})},
         {"activeParameter", 1},
