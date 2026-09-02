@@ -401,3 +401,173 @@ TEST_CASE("bundled git plugin stages and unstages a single hunk end to end", "[G
     REQUIRE(statusEntries.size() == 1);
     REQUIRE(statusEntries[0].state == " M"); // nothing staged anymore, both edits back in the worktree only
 }
+
+TEST_CASE("bundled git plugin runs revert/stash against a real temp repo end to end", "[GitVcsPlugin]") {
+    if (!GitAvailable()) {
+        SKIP("git not found on $PATH");
+    }
+
+    RegistryResetGuard guard;
+    Environment&       env = ned_tests::TestEnvironment();
+    InstallEditorBindings(env);
+    LoadBundledPlugins(env);
+
+    const std::filesystem::path repoRoot =
+        std::filesystem::temp_directory_path() / ("ned-git-vcs-revert-stash-test-" + std::to_string(::getpid()));
+    std::filesystem::remove_all(repoRoot);
+    std::filesystem::create_directories(repoRoot);
+    struct Cleanup {
+        std::filesystem::path path;
+        ~Cleanup() {
+            std::filesystem::remove_all(path);
+        }
+    } cleanup{repoRoot};
+
+    const std::string root = repoRoot.string();
+    RunToCompletion({"git", "-C", root, "init", "-q", "-b", "main"});
+    RunToCompletion({"git", "-C", root, "config", "user.email", "ned-test@example.com"});
+    RunToCompletion({"git", "-C", root, "config", "user.name", "Ned Test"});
+
+    const std::filesystem::path filePath = repoRoot / "file.txt";
+    { std::ofstream(filePath) << "hello world\n"; }
+    RunToCompletion({"git", "-C", root, "add", "file.txt"});
+    RunToCompletion({"git", "-C", root, "commit", "-q", "-m", "initial commit"});
+
+    auto* provider = ned::editor::vcs::ActiveProviderFor(repoRoot);
+    REQUIRE(provider != nullptr);
+
+    // Revert: a working-tree edit (both staged and further edited)
+    // disappears entirely, back to HEAD's own content -- distinct from
+    // unstage, which only moves the index.
+    { std::ofstream(filePath) << "staged change\n"; }
+    RunToCompletion(provider->StageArgv(filePath).argv);
+    { std::ofstream(filePath, std::ios::app) << "further unstaged edit\n"; }
+    auto statusEntries = provider->ParseStatus(RunToCompletion(provider->StatusArgv(repoRoot).argv));
+    REQUIRE(statusEntries.size() == 1);
+    REQUIRE(statusEntries[0].state == "MM"); // tracked file: staged mod + further unstaged mod
+    RunToCompletion(provider->RevertArgv(filePath).argv);
+    statusEntries = provider->ParseStatus(RunToCompletion(provider->StatusArgv(repoRoot).argv));
+    REQUIRE(statusEntries.empty());
+    {
+        std::ifstream  in(filePath);
+        std::string    content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        REQUIRE(content == "hello world\n");
+    }
+
+    // Stash: list/push/pop/drop.
+    auto stashes = provider->ParseStashList(RunToCompletion(provider->StashListArgv(repoRoot).argv));
+    REQUIRE(stashes.empty());
+
+    { std::ofstream(filePath) << "hello world, stashable\n"; }
+    RunToCompletion(provider->StashPushArgv(repoRoot, "my test stash").argv);
+    statusEntries = provider->ParseStatus(RunToCompletion(provider->StatusArgv(repoRoot).argv));
+    REQUIRE(statusEntries.empty()); // stashed away, working tree clean again
+    stashes = provider->ParseStashList(RunToCompletion(provider->StashListArgv(repoRoot).argv));
+    REQUIRE(stashes.size() == 1);
+    REQUIRE(stashes[0].ref == "stash@{0}");
+    REQUIRE(stashes[0].message.find("my test stash") != std::string::npos);
+
+    RunToCompletion(provider->StashPopArgv(repoRoot, stashes[0].ref).argv);
+    statusEntries = provider->ParseStatus(RunToCompletion(provider->StatusArgv(repoRoot).argv));
+    REQUIRE(statusEntries.size() == 1); // the edit is back
+    stashes = provider->ParseStashList(RunToCompletion(provider->StashListArgv(repoRoot).argv));
+    REQUIRE(stashes.empty()); // pop removes the stash entry, unlike apply
+
+    RunToCompletion(provider->StashPushArgv(repoRoot, "").argv); // empty message -> git's own default
+    stashes = provider->ParseStashList(RunToCompletion(provider->StashListArgv(repoRoot).argv));
+    REQUIRE(stashes.size() == 1);
+    RunToCompletion(provider->StashDropArgv(repoRoot, stashes[0].ref).argv);
+    stashes = provider->ParseStashList(RunToCompletion(provider->StashListArgv(repoRoot).argv));
+    REQUIRE(stashes.empty());
+    statusEntries = provider->ParseStatus(RunToCompletion(provider->StatusArgv(repoRoot).argv));
+    REQUIRE(statusEntries.empty()); // drop discards the change entirely, doesn't restore it
+}
+
+TEST_CASE("bundled git plugin runs push/pull/fetch/ahead-behind against a real bare remote end to end",
+          "[GitVcsPlugin]") {
+    if (!GitAvailable()) {
+        SKIP("git not found on $PATH");
+    }
+
+    RegistryResetGuard guard;
+    Environment&       env = ned_tests::TestEnvironment();
+    InstallEditorBindings(env);
+    LoadBundledPlugins(env);
+
+    const std::filesystem::path base =
+        std::filesystem::temp_directory_path() / ("ned-git-vcs-push-pull-test-" + std::to_string(::getpid()));
+    std::filesystem::remove_all(base);
+    std::filesystem::create_directories(base);
+    struct Cleanup {
+        std::filesystem::path path;
+        ~Cleanup() {
+            std::filesystem::remove_all(path);
+        }
+    } cleanup{base};
+
+    const std::filesystem::path bareRemote = base / "remote.git";
+    const std::filesystem::path repoA      = base / "a"; // pushes/fetches against bareRemote
+    const std::filesystem::path repoB      = base / "b"; // makes the upstream commit repoA fetches/pulls
+
+    RunToCompletion({"git", "init", "-q", "--bare", "-b", "main", bareRemote.string()});
+
+    RunToCompletion({"git", "clone", "-q", bareRemote.string(), repoA.string()});
+    RunToCompletion({"git", "-C", repoA.string(), "config", "user.email", "ned-test@example.com"});
+    RunToCompletion({"git", "-C", repoA.string(), "config", "user.name", "Ned Test"});
+    { std::ofstream(repoA / "file.txt") << "hello from a\n"; }
+    RunToCompletion({"git", "-C", repoA.string(), "add", "file.txt"});
+    RunToCompletion({"git", "-C", repoA.string(), "commit", "-q", "-m", "initial commit"});
+    RunToCompletion({"git", "-C", repoA.string(), "push", "-q", "-u", "origin", "main"});
+
+    auto* provider = ned::editor::vcs::ActiveProviderFor(repoA);
+    REQUIRE(provider != nullptr);
+
+    // Up to date immediately after the push.
+    auto ab = provider->ParseAheadBehind(RunToCompletion(provider->AheadBehindArgv(repoA).argv));
+    REQUIRE(ab.ahead == 0);
+    REQUIRE(ab.behind == 0);
+
+    // A local-only commit puts repoA one ahead of its upstream.
+    { std::ofstream(repoA / "file.txt", std::ios::app) << "a local commit\n"; }
+    RunToCompletion({"git", "-C", repoA.string(), "commit", "-aq", "-m", "local commit"});
+    ab = provider->ParseAheadBehind(RunToCompletion(provider->AheadBehindArgv(repoA).argv));
+    REQUIRE(ab.ahead == 1);
+    REQUIRE(ab.behind == 0);
+
+    // PushArgv (bare, no --set-upstream -- relies on the tracking branch
+    // already configured by the -u push above) brings it back even.
+    RunToCompletion(provider->PushArgv(repoA).argv);
+    ab = provider->ParseAheadBehind(RunToCompletion(provider->AheadBehindArgv(repoA).argv));
+    REQUIRE(ab.ahead == 0);
+    REQUIRE(ab.behind == 0);
+
+    // A second clone pushes a commit repoA doesn't have yet.
+    RunToCompletion({"git", "clone", "-q", bareRemote.string(), repoB.string()});
+    RunToCompletion({"git", "-C", repoB.string(), "config", "user.email", "ned-test@example.com"});
+    RunToCompletion({"git", "-C", repoB.string(), "config", "user.name", "Ned Test"});
+    { std::ofstream(repoB / "file.txt", std::ios::app) << "a remote commit\n"; }
+    RunToCompletion({"git", "-C", repoB.string(), "commit", "-aq", "-m", "remote commit"});
+    RunToCompletion({"git", "-C", repoB.string(), "push", "-q"});
+
+    // FetchArgv alone updates the remote-tracking ref, not the local branch.
+    RunToCompletion(provider->FetchArgv(repoA).argv);
+    ab = provider->ParseAheadBehind(RunToCompletion(provider->AheadBehindArgv(repoA).argv));
+    REQUIRE(ab.ahead == 0);
+    REQUIRE(ab.behind == 1);
+    {
+        std::ifstream  in(repoA / "file.txt");
+        std::string    content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        REQUIRE(content.find("a remote commit") == std::string::npos); // not merged into the working tree yet
+    }
+
+    // PullArgv (fetch + merge) brings the local branch up to date.
+    RunToCompletion(provider->PullArgv(repoA).argv);
+    ab = provider->ParseAheadBehind(RunToCompletion(provider->AheadBehindArgv(repoA).argv));
+    REQUIRE(ab.ahead == 0);
+    REQUIRE(ab.behind == 0);
+    {
+        std::ifstream  in(repoA / "file.txt");
+        std::string    content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        REQUIRE(content.find("a remote commit") != std::string::npos);
+    }
+}

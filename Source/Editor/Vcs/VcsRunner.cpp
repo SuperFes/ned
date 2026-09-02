@@ -387,9 +387,19 @@ void VcsRunner::RequestHunkApply(const text::Buffer& buffer, std::size_t targetL
         onError("no file associated with this buffer");
         return;
     }
+    RequestHunkApplyForPath(*buffer.Path(), targetLine, stage, std::move(onSuccess), std::move(onError));
+}
+
+void VcsRunner::RequestHunkApply(const std::filesystem::path& path, std::size_t targetLine, bool stage,
+                                 std::function<void()> onSuccess, std::function<void(std::string)> onError) {
+    RequestHunkApplyForPath(path, targetLine, stage, std::move(onSuccess), std::move(onError));
+}
+
+void VcsRunner::RequestHunkApplyForPath(const std::filesystem::path& pathArg, std::size_t targetLine, bool stage,
+                                        std::function<void()> onSuccess, std::function<void(std::string)> onError) {
     // weakly_canonical for the same relative-path-vs-"-C" reason
     // RequestBlame spells out above.
-    const std::filesystem::path path      = std::filesystem::weakly_canonical(*buffer.Path());
+    const std::filesystem::path path      = std::filesystem::weakly_canonical(pathArg);
     const char*                 operation = stage ? "stage hunk" : "unstage hunk";
     const std::string           keyPrefix = stage ? "stage-hunk" : "unstage-hunk";
 
@@ -473,6 +483,100 @@ void VcsRunner::RequestBranchCreate(const std::string& name, std::function<void(
         "branch creation", "branch-create:" + root.string(),
         [&root, &name](VcsProvider& provider) { return provider.BranchCreateArgv(root, name); },
         [onSuccess = std::move(onSuccess)](VcsProvider&, std::string) { onSuccess(); }, std::move(onError));
+}
+
+void VcsRunner::RequestRevert(const std::filesystem::path& path, std::function<void()> onSuccess,
+                              std::function<void(std::string)> onError) {
+    const std::filesystem::path canonical = std::filesystem::weakly_canonical(path);
+    RunProviderOperation(
+        "revert", "revert:" + canonical.string(),
+        [&canonical](VcsProvider& provider) { return provider.RevertArgv(canonical); },
+        [onSuccess = std::move(onSuccess)](VcsProvider&, std::string) { onSuccess(); }, std::move(onError));
+}
+
+void VcsRunner::RequestStashList(std::function<void(std::vector<VcsStashEntry>)> onComplete,
+                                 std::function<void(std::string)>                 onError) {
+    const std::filesystem::path root = ProjectRoot();
+    RunProviderOperation(
+        "stash listing", "stash-list:" + root.string(),
+        [&root](VcsProvider& provider) { return provider.StashListArgv(root); },
+        [onComplete = std::move(onComplete)](VcsProvider& provider, std::string output) {
+            onComplete(provider.ParseStashList(output));
+        },
+        std::move(onError));
+}
+
+void VcsRunner::RequestStashPush(const std::string& message, std::function<void()> onSuccess,
+                                 std::function<void(std::string)> onError) {
+    const std::filesystem::path root = ProjectRoot();
+    RunProviderOperation(
+        "stash push", "stash-push:" + root.string(),
+        [&root, &message](VcsProvider& provider) { return provider.StashPushArgv(root, message); },
+        [onSuccess = std::move(onSuccess)](VcsProvider&, std::string) { onSuccess(); }, std::move(onError));
+}
+
+void VcsRunner::RequestStashPop(const std::string& stashRef, std::function<void()> onSuccess,
+                                std::function<void(std::string)> onError) {
+    const std::filesystem::path root = ProjectRoot();
+    RunProviderOperation(
+        "stash pop", "stash-pop:" + root.string() + ":" + stashRef,
+        [&root, &stashRef](VcsProvider& provider) { return provider.StashPopArgv(root, stashRef); },
+        [onSuccess = std::move(onSuccess)](VcsProvider&, std::string) { onSuccess(); }, std::move(onError));
+}
+
+void VcsRunner::RequestStashDrop(const std::string& stashRef, std::function<void()> onSuccess,
+                                 std::function<void(std::string)> onError) {
+    const std::filesystem::path root = ProjectRoot();
+    RunProviderOperation(
+        "stash drop", "stash-drop:" + root.string() + ":" + stashRef,
+        [&root, &stashRef](VcsProvider& provider) { return provider.StashDropArgv(root, stashRef); },
+        [onSuccess = std::move(onSuccess)](VcsProvider&, std::string) { onSuccess(); }, std::move(onError));
+}
+
+void VcsRunner::RequestPush(std::function<void()> onSuccess, std::function<void(std::string)> onError) {
+    const std::filesystem::path root = ProjectRoot();
+    RunProviderOperation(
+        "push", "push:" + root.string(), [&root](VcsProvider& provider) { return provider.PushArgv(root); },
+        [onSuccess = std::move(onSuccess)](VcsProvider&, std::string) { onSuccess(); }, std::move(onError));
+}
+
+void VcsRunner::RequestPull(std::function<void()> onSuccess, std::function<void(std::string)> onError) {
+    const std::filesystem::path root = ProjectRoot();
+    RunProviderOperation(
+        "pull", "pull:" + root.string(), [&root](VcsProvider& provider) { return provider.PullArgv(root); },
+        [onSuccess = std::move(onSuccess)](VcsProvider&, std::string) { onSuccess(); }, std::move(onError));
+}
+
+void VcsRunner::RequestFetch(std::function<void()> onSuccess, std::function<void(std::string)> onError) {
+    const std::filesystem::path root = ProjectRoot();
+    RunProviderOperation(
+        "fetch", "fetch:" + root.string(), [&root](VcsProvider& provider) { return provider.FetchArgv(root); },
+        [onSuccess = std::move(onSuccess)](VcsProvider&, std::string) { onSuccess(); }, std::move(onError));
+}
+
+void VcsRunner::RequestAheadBehind(std::function<void(VcsAheadBehind)> onComplete,
+                                   std::function<void(std::string)>    onError) {
+    const std::filesystem::path root = ProjectRoot();
+    RunProviderOperation(
+        "ahead/behind", "ahead-behind:" + root.string(),
+        [&root](VcsProvider& provider) { return provider.AheadBehindArgv(root); },
+        [onComplete = std::move(onComplete)](VcsProvider& provider, std::string output) {
+            onComplete(provider.ParseAheadBehind(output));
+        },
+        std::move(onError));
+}
+
+void VcsRunner::RequestFileDiffText(const std::filesystem::path& path, bool staged,
+                                    std::function<void(std::string)> onComplete, std::function<void(std::string)> onError) {
+    const std::filesystem::path canonical = std::filesystem::weakly_canonical(path);
+    const std::string           keyPrefix = staged ? "file-diff-staged:" : "file-diff:";
+    RunProviderOperation(
+        "diff preview", keyPrefix + canonical.string(),
+        [&canonical, staged](VcsProvider& provider) {
+            return staged ? provider.StagedDiffArgv(canonical) : provider.DiffArgv(canonical);
+        },
+        [onComplete = std::move(onComplete)](VcsProvider&, std::string output) { onComplete(std::move(output)); },
+        std::move(onError));
 }
 
 } // namespace ned::editor::vcs
