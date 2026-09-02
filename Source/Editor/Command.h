@@ -641,7 +641,15 @@ enum class InteractiveRequest { None,
                                 // distinguished by BufferView's own bookmarkPromptAction_,
                                 // set alongside inputMode_ in StartInteractiveSession.
                                 BookmarkJump,
-                                BookmarkDelete };
+                                BookmarkDelete,
+                                // next-error follow-up: two one-shot direct actions, same
+                                // point-motion shape as VcsNextHunk/VcsPreviousHunk above, but
+                                // walking whichever results buffer (Editor/NextError.h's
+                                // "last results buffer") was most recently built instead of a
+                                // per-buffer diff-hunk cache -- BufferView::NextError/
+                                // PreviousError do the actual walk+jump.
+                                NextError,
+                                PreviousError };
 
 // Everything a command implementation might need. Built fresh per invocation
 // from live references -- never stored, so there's no lifetime concern beyond

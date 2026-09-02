@@ -2088,6 +2088,21 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           context.interactiveRequest = InteractiveRequest::BookmarkDelete;
                       });
 
+    // next-error follow-up: Emacs' unifying "walk the last set of located
+    // things" primitive -- pure point motion + jump, same one-shot shape as
+    // vcs-next-hunk/vcs-previous-hunk, but generic over whichever results
+    // buffer (*vcs status*, *search results*, *diagnostics*, *references:
+    // ...*, *agenda*, *test results*, ...) was most recently built. See
+    // Editor/NextError.h.
+    registry.Register("next-error", "Jump to the next location in the last results buffer built (search, VCS status, diagnostics, ...).",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::NextError;
+                      });
+    registry.Register("previous-error", "Jump to the previous location in the last results buffer built.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::PreviousError;
+                      });
+
     // rich-theme-set follow-up (Phase 1): same "just signal intent" shape as
     // project-find-file above. M-x reachable only, no default chord -- theme
     // switching is an occasional act, not an editing motion worth a global
@@ -3348,6 +3363,13 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("M-g g"), "goto-line");
     keymap.Bind(ParseKeySequence("M-g M-g"), "goto-line");
     keymap.Bind(ParseKeySequence("ESC g g"), "goto-line");
+    // next-error/previous-error: real Emacs' own default bindings under the
+    // same M-g prefix goto-line uses, with the ESC two-key fallback M-g g's
+    // own binding above establishes.
+    keymap.Bind(ParseKeySequence("M-g n"), "next-error");
+    keymap.Bind(ParseKeySequence("ESC g n"), "next-error");
+    keymap.Bind(ParseKeySequence("M-g p"), "previous-error");
+    keymap.Bind(ParseKeySequence("ESC g p"), "previous-error");
     // Same "bind both real input shapes" reasoning as M-x below -- a fast
     // Alt+w press arrives as one Meta-chord, a genuinely separate Escape-
     // then-w press arrives as two.
