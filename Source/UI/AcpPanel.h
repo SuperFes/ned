@@ -20,6 +20,7 @@
 #define NED_UI_ACPPANEL_H
 
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -42,6 +43,32 @@ class AcpPanel : public Widget {
     // main.cpp to the same toggle lambda acp-toggle-panel drives, mirroring
     // TerminalPanel::SetOnToggleRequest exactly.
     void SetOnToggleRequest(std::function<void()> onToggle);
+
+    // ACP chat-feel round 2 -- panel resize/minimize follow-up. Collapsed()
+    // shrinks the panel to a thin title-only strip (ProjectSidebar's own
+    // Collapsed() convention: still on screen, still occupying its Box, the
+    // ACP session itself keeps running in the background -- distinct from
+    // SetOnToggleRequest's full hide). main.cpp's placement lambda consults
+    // Collapsed() to shrink the Box accordingly -- but OverlayHost only ever
+    // calls that lambda from Show()/Reflow() (Overlay.h's own header
+    // comment: "re-derived on every Reflow/Show"), never on every Paint(),
+    // so SetCollapsed alone would leave a stale, wrongly-sized Box in place
+    // until the next real terminal resize. SetOnCollapseChanged is the fix:
+    // fires whenever Collapsed() actually changes, main.cpp's own hook
+    // re-invoking overlays.Show(*this) to force the Box to be recomputed
+    // immediately.
+    [[nodiscard]] bool Collapsed() const;
+    void               SetCollapsed(bool collapsed);
+    void               SetOnCollapseChanged(std::function<void()> onCollapseChanged);
+    void               ToggleCollapsed();
+
+    // The full terminal size, refreshed by main.cpp's placement lambda every
+    // Reflow -- needed to convert a resize-drag's pixel delta into an
+    // AcpPanelSizePercent() delta (this panel's own Box only ever reports its
+    // *own* current size, not the terminal's). Safe to leave unset in tests:
+    // resize-dragging is simply inert (BeginResize/UpdateResize compute a
+    // zero-sized percent delta) until this is called at least once.
+    void SetTerminalSize(Size size);
 
     void Paint(Canvas canvas) override;
     bool OnEvent(const Event& event) override;
@@ -69,14 +96,56 @@ class AcpPanel : public Widget {
         DisplayStyle style;
     };
 
-    [[nodiscard]] std::vector<DisplayLine> FormatTranscript() const;
+    [[nodiscard]] std::vector<DisplayLine> FormatTranscript(int width) const;
     [[nodiscard]] Brush                    BrushForStyle(DisplayStyle style) const;
     [[nodiscard]] bool                     CloseButtonAt(Point local) const;
+    [[nodiscard]] bool                     MinimizeButtonAt(Point local) const;
+    void                                   PaintCollapsedStrip(Canvas& canvas, int width, int height) const;
+
+    // Border-drag resize, mirroring ProjectSidebar::BeginResize/UpdateResize/
+    // EndResize's exact shape -- Begin anchors the drag's start point and
+    // starting size-percent, Update recomputes a fresh percent from the
+    // drag's *total* displacement from that anchor every move event (not a
+    // per-event delta -- ProjectSidebar's own comment explains why: once a
+    // growing drag crosses into a sibling widget's territory, there's no
+    // single consistent "previous event" to diff against). Percent is
+    // applied live via SetAcpPanelSizePercent on every Update, not just on
+    // End -- unlike ProjectSidebar's width_, AcpPanelSizePercent() already
+    // *is* the one live value the placement lambda reads every frame, so
+    // there's no separate "committed" step to wire.
+    void BeginResize(Point globalMouse);
+    void UpdateResize(Point globalMouse);
+    void EndResize();
+
+    // History recall (Up/Down in the composer, shell-style) -- deliberately
+    // has no storage of its own: it re-derives the list of past prompts from
+    // acpManager_->Transcript()'s own Kind::UserMessage entries fresh every
+    // time rather than keeping a separate duplicate list, so it can never
+    // drift from what the transcript actually shows. historyIndex_ is the
+    // index into that filtered list currently displayed (nullopt = editing
+    // the live, unsent draft, saved in historyDraft_ the moment browsing
+    // starts). Deliberate v1 simplification: editing a recalled entry's text
+    // and then pressing Up/Down again discards those local edits rather than
+    // saving them back into the list -- real shells do something fancier
+    // here, not attempted.
+    void HistoryPrevious();
+    void HistoryNext();
 
     const Theme&             theme_;
     editor::acp::AcpManager* acpManager_ = nullptr;
     editor::MinibufferPrompt prompt_;
     std::function<void()>    onToggleRequest_;
+
+    bool                   collapsed_ = false;
+    std::function<void()> onCollapseChanged_;
+    Size                   terminalSize_{.width = 0, .height = 0};
+
+    bool  resizing_             = false;
+    Point resizeAnchorGlobal_{.x = 0, .y = 0};
+    int   resizeStartPercent_ = 0;
+
+    std::optional<std::size_t> historyIndex_;
+    std::string                historyDraft_;
 };
 
 } // namespace ned::ui

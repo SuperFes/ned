@@ -706,6 +706,10 @@ void WindowManager::SetAcpManager(editor::acp::AcpManager* acpManager) {
     acpManager->SetOnSessionEnded([this](std::string reason) { statusMessage_ = std::move(reason); });
 }
 
+void WindowManager::SetLastKnownAcpAgent(std::optional<std::string> name) {
+    lastAcpAgentSeed_ = std::move(name);
+}
+
 void WindowManager::SetJanetEnvironment(const janet::Environment* janetEnv) {
     janetEnv_ = janetEnv;
     for (Pane* pane : Leaves()) {
@@ -1001,6 +1005,22 @@ void WindowManager::SaveProjectSessionNow() {
 
     if (dapManager_ != nullptr) {
         data.breakpoints = dapManager_->AllBreakpoints();
+    }
+
+    // ACP auto-reconnect follow-up: AgentName() is sticky for the rest of
+    // this process once a session has ever been started (AcpManager.cpp's
+    // own StartSession is the only assignment site, never cleared by
+    // StopSession) -- prefer it live whenever set, falling back to
+    // lastAcpAgentSeed_ (what SetLastKnownAcpAgent seeded from the
+    // previously *saved* value) so a run that never touches ACP at all
+    // doesn't clobber a project's remembered agent back to nullopt, since
+    // `data` here is built fresh from scratch every save rather than loaded
+    // first.
+    if (acpManager_ != nullptr && !acpManager_->AgentName().empty()) {
+        data.lastAcpAgent = acpManager_->AgentName();
+    }
+    else {
+        data.lastAcpAgent = lastAcpAgentSeed_;
     }
 
     CaptureWindowLayout(data);
