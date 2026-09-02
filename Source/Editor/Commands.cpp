@@ -2674,6 +2674,17 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                       [](CommandContext& context) {
                           context.interactiveRequest = InteractiveRequest::VcsUnstageHunk;
                       });
+    // Hunk-navigation follow-up: gitsigns' ]c/[c convention, Emacs-style
+    // naming/binding to match every other vcs-* command here. Pure point
+    // motion, no staging -- doesn't share vcs-stage-hunk's Modified() gate.
+    registry.Register("vcs-next-hunk", "Move point to the next changed hunk in this buffer.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::VcsNextHunk;
+                      });
+    registry.Register("vcs-previous-hunk", "Move point to the previous changed hunk in this buffer.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::VcsPreviousHunk;
+                      });
     // Multibuffers follow-up: M-x/keybinding reachable, same shape as
     // vcs-blame-buffer/vcs-show-log above.
     registry.Register("vcs-full-diff-buffer", "Show every changed file's real diff, stitched into one *vcs diff* buffer.",
@@ -3494,6 +3505,12 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("C-c v d"), "vcs-full-diff-buffer");
     keymap.Bind(ParseKeySequence("C-c v h"), "vcs-stage-hunk");
     keymap.Bind(ParseKeySequence("C-c v H"), "vcs-unstage-hunk");
+    // Hunk-navigation follow-up: "n"/"p" (next/previous) are already taken
+    // by vcs-create-branch/focus-vcs-panel, so this uses the same shifted-
+    // twin trick "h"/"H" above already establishes -- a distinct codepoint
+    // chord, nothing special-cased.
+    keymap.Bind(ParseKeySequence("C-c v N"), "vcs-next-hunk");
+    keymap.Bind(ParseKeySequence("C-c v P"), "vcs-previous-hunk");
     // VCS side panel: "C-c C-v" is already project-search-visit-result, so
     // this uses the shifted "C-c V" trick "C-c A"/"C-c T" already use beside
     // their own lowercase twins -- a distinct codepoint chord, nothing

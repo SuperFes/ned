@@ -495,6 +495,8 @@ SyntaxClass SyntaxClassFor(SymbolKind kind) {
             return SyntaxClass::Type;
         case SymbolKind::Data:
             return SyntaxClass::Constant;
+        case SymbolKind::Namespace:
+            return SyntaxClass::Namespace;
     }
     return SyntaxClass::Default; // unreachable, same convention as SyntaxClassForCapture's own default
 }
@@ -521,6 +523,12 @@ std::optional<SymbolKind> SymbolKindFromCaptureName(std::string_view captureName
         captureName == "definition.variable" || captureName == "definition.field" ||
         captureName == "definition.property") {
         return SymbolKind::Data;
+    }
+    // main-editor-sticky-scroll follow-up: a distinct capture name, not
+    // folded into "definition.module" above -- see SymbolKind::Namespace's
+    // own doc comment for why namespace stays its own bucket.
+    if (captureName == "definition.namespace") {
+        return SymbolKind::Namespace;
     }
     return std::nullopt;
 }
@@ -623,6 +631,13 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
     // "@definition.*" captures (what this wants) with "@reference.*"/
     // "@name"/"@doc"/"@local.scope" ones from the same pattern match --
     // SymbolKindFromCaptureName is what filters to only the former.
+    //
+    // main-editor-sticky-scroll follow-up: switched from Captures() (flat,
+    // loses which "@name" capture belongs to which "@definition.*" one) to
+    // Matches() (match-grouped -- same mechanism CollectRawInjectionMatches
+    // in Injection.cpp uses to pair "@injection.language" with
+    // "@injection.content" from one pattern instance) so SymbolMarker can
+    // carry the definition's own full range and name, not just its kind.
     SymbolKindFunction symbolKind;
     if (!symbolKindQuerySource.empty()) {
         const auto symbolKindQuery = std::make_shared<treesitter::Query>(language, symbolKindQuerySource);
@@ -633,11 +648,53 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
             }
 
             std::vector<SymbolMarker> markers;
-            for (const treesitter::QueryCapture& capture : symbolKindQuery->Captures(tree.RootNode(), bufferText)) {
-                if (const std::optional<SymbolKind> kind = SymbolKindFromCaptureName(capture.name)) {
-                    markers.push_back({.startByte = capture.startByte, .kind = *kind});
+            for (const treesitter::QueryMatch& match : symbolKindQuery->Matches(tree.RootNode(), bufferText)) {
+                std::optional<SymbolKind>                    kind;
+                std::optional<treesitter::QueryMatchCapture> definitionCapture;
+                std::optional<treesitter::QueryMatchCapture> nameCapture;
+                for (const treesitter::QueryMatchCapture& capture : match.captures) {
+                    if (!kind) {
+                        if (const std::optional<SymbolKind> capturedKind = SymbolKindFromCaptureName(capture.name)) {
+                            kind              = capturedKind;
+                            definitionCapture = capture;
+                        }
+                    }
+                    if (!nameCapture && capture.name == "name") {
+                        nameCapture = capture;
+                    }
                 }
+                if (!kind || !definitionCapture) {
+                    continue;
+                }
+                std::string name;
+                if (nameCapture) {
+                    name = std::string(bufferText.substr(nameCapture->startByte, nameCapture->endByte - nameCapture->startByte));
+                }
+                markers.push_back({.startByte = definitionCapture->startByte,
+                                   .endByte   = definitionCapture->endByte,
+                                   .kind      = *kind,
+                                   .name      = std::move(name)});
             }
+            // main-editor-sticky-scroll follow-up: a query can legitimately
+            // double-match one definition -- cpp-tags.scm's own bodyless-
+            // prototype pattern (the only range a real prototype can ever
+            // get, since it has no enclosing function_definition to widen
+            // into) also matches a with-body definition's own declarator,
+            // producing a second, narrower marker alongside the wider
+            // function_definition-anchored one for the same symbol. Collapse
+            // any marker whose range is fully nested inside another
+            // same-name/same-kind marker's own range down to just the wider
+            // one -- the gutter (startByte only) can't tell the difference
+            // either way, but EnclosingSymbolChain's containment check needs
+            // the real (wider) range, not a truncated duplicate sitting
+            // alongside it.
+            std::erase_if(markers, [&markers](const SymbolMarker& marker) {
+                return std::any_of(markers.begin(), markers.end(), [&marker](const SymbolMarker& other) {
+                    return &other != &marker && other.name == marker.name && other.kind == marker.kind &&
+                           other.startByte <= marker.startByte && marker.endByte <= other.endByte &&
+                           (other.startByte != marker.startByte || other.endByte != marker.endByte);
+                });
+            });
             std::sort(markers.begin(), markers.end(),
                       [](const SymbolMarker& a, const SymbolMarker& b) { return a.startByte < b.startByte; });
             return markers;

@@ -382,6 +382,12 @@ class BufferView : public Widget {
     void BeginVcsCommitMessageForTesting();
     void FinishVcsCommitMessageForTesting();
     void AbortVcsCommitMessageForTesting();
+    // Hunk-navigation follow-up: same seam again, for JumpToNextHunk/
+    // JumpToPreviousHunk -- both are fully synchronous (a plain search over
+    // diffHunkStartLines_, no VcsRunner round trip), so these wrappers need
+    // no live EventLoop at all, unlike most *ForTesting entries above.
+    void JumpToNextHunkForTesting();
+    void JumpToPreviousHunkForTesting();
 
     // Diagnostics-multibuffer follow-up: same "public primarily for tests"
     // seam, but RequestDiagnosticsBuffer needs no live EventLoop at all --
@@ -1620,6 +1626,15 @@ class BufferView : public Widget {
     // *earlier* unstaged edits in the same file is a recorded caveat, see
     // ROADMAP.md.)
     void StageOrUnstageHunkAtPoint(bool stage);
+    // Hunk-navigation follow-up (vcs-next-hunk/vcs-previous-hunk): moves
+    // point to the next/previous entry in diffHunkStartLines_ relative to
+    // point's own current line, wrapping neither direction (an empty/
+    // exhausted search is a status-message no-op, not a wrap-around --
+    // matches next-error's own "you've reached the end" convention rather
+    // than isearch's wrap-and-continue one, since there's no obvious
+    // "current" hunk to resume scanning from after a wrap here).
+    void JumpToNextHunk();
+    void JumpToPreviousHunk();
     // multi-line-commit-message follow-up: opens (or, if one's already
     // mid-composition, just switches to) the *vcs commit message* buffer --
     // InteractiveRequest::VcsCommit's entry point.
@@ -2012,6 +2027,17 @@ class BufferView : public Widget {
     std::string autoDiagnosticMessage_;
 
     std::size_t topLine_ = 0; // first visible buffer line (0-indexed)
+    // main-editor-sticky-scroll follow-up: how many pinned breadcrumb rows
+    // the MOST RECENT Paint() call reserved at the top of this pane -- live
+    // state read back by CursorPosition()/ByteOffsetForPoint() so the
+    // terminal cursor, popup anchors, and mouse-click row resolution all
+    // agree with what Paint() actually drew this frame (real content starts
+    // stickyRowCount_ rows below the pane's own top edge whenever this is
+    // nonzero). Same "not a Paint()-local, a real always-current member"
+    // shape topLine_ itself already is. 0 whenever sticky scroll is
+    // disabled, the mode has no tags query, or nothing is scrolled far
+    // enough to pin anything yet.
+    int stickyRowCount_ = 0;
     // The buffer topLine_ was last validated against -- topLine_ itself is
     // BufferView-level state, not per-buffer, so switching which buffer is
     // active (TabBar's own click handler calls ActiveBuffer::Set() directly,
@@ -2610,6 +2636,22 @@ class BufferView : public Widget {
     // overwrite during the by-line collapse already produces that), sorted
     // by line for the per-row lower_bound lookup Paint() does, same shape as
     // diagnosticLineSeverities_ just above.
+    // main-editor-sticky-scroll follow-up: the raw sorted-by-startByte
+    // marker list EnsureSymbolGutterCache below collapses down to one
+    // {line, kind} entry per line -- kept here too, in full (absolute byte
+    // coordinates, huge-window-remapped the same way), since sticky scroll's
+    // StickyChainForViewportTop needs each marker's real endByte/name, which
+    // the gutter's own collapsed shape throws away. EnsureSymbolGutterCache
+    // calls EnsureSymbolMarkersCache first and derives its own cache from
+    // this one, rather than the two independently calling mode_.symbolKind
+    // and reparsing/re-querying twice per Paint().
+    mutable text::Buffer*                     symbolMarkersCacheBuffer_            = nullptr;
+    mutable std::size_t                       symbolMarkersCacheContentGeneration_ = 0;
+    mutable std::size_t                       symbolMarkersCacheWindowStart_       = 0;
+    mutable std::size_t                       symbolMarkersCacheWindowEnd_         = 0;
+    mutable std::vector<editor::SymbolMarker> symbolMarkersCache_;
+    void                                       EnsureSymbolMarkersCache() const;
+
     mutable text::Buffer*                                           symbolGutterCacheBuffer_            = nullptr;
     mutable std::size_t                                             symbolGutterCacheContentGeneration_ = 0;
     // huge-file-structural-gutters follow-up: see
@@ -2677,6 +2719,15 @@ class BufferView : public Widget {
                               Modified,
                               Removed };
     mutable std::vector<std::pair<std::size_t, DiffLineKind>> diffLineKinds_;
+    // Hunk-navigation follow-up: one 0-indexed line per hunk -- its first
+    // affected line for Added/Modified, the same boundary line a pure
+    // deletion's own DiffLineKind::Removed entry already marks. Sorted
+    // ascending (built alongside diffLineKinds_ in DispatchDiffForTesting,
+    // from the same hunk list), so JumpToNextHunk/JumpToPreviousHunk are a
+    // plain upper_bound/lower_bound away from "the next/previous hunk
+    // relative to point's line" -- no need to re-derive hunk boundaries by
+    // scanning diffLineKinds_' flattened per-line form.
+    mutable std::vector<std::size_t> diffHunkStartLines_;
     // Mirrors completionDebounceTimer_'s own "single pending fire,
     // re-arming cancels the previous one" shape (see that member's doc
     // comment) -- re-armed on every content-changing edit
@@ -2821,6 +2872,22 @@ class BufferView : public Widget {
     // text -- no carets (unlike PaintInlineDiagnosticRow, a lens isn't
     // anchored to a sub-line span, just the line as a whole).
     void PaintCodeLensRow(Canvas& c, int row, std::size_t line, std::size_t gutterWidth) const;
+    // main-editor-sticky-scroll follow-up: draws the pinned namespace/class/
+    // method breadcrumb rows into the TOP of `c` (still at its full,
+    // unshifted size when this runs) and returns how many rows it drew --
+    // Paint() then reassigns its own local `c` to a Canvas::ForBox view
+    // shifted down by that count, so the ordinary per-line rendering loop
+    // that follows needs no changes of its own to make room. Requires
+    // EnsureSymbolMarkersCache() to have already been called this frame.
+    [[nodiscard]] int PaintStickyScrollRows(Canvas& c, std::size_t gutterWidth) const;
+    // main-editor-sticky-scroll follow-up: the same capped
+    // StickyChainForViewportTop query PaintStickyScrollRows renders,
+    // factored out so OnEvent's click-to-jump handler resolves exactly the
+    // same rows against exactly the same cap without recomputing the cap
+    // logic a second, possibly-drifting way. Calls EnsureSymbolMarkersCache()
+    // itself -- cheap/idempotent when already fresh -- rather than assuming
+    // Paint() already ran this frame before a caller reaches this.
+    [[nodiscard]] std::vector<editor::SymbolMarker> StickyScrollChainForCurrentViewport() const;
 
     // prose-diagnostic-callout follow-up: the prose/spell/grammar checker's
     // own diagnostics (text::Buffer::Diagnostic::Origin::Prose -- harper-ls
