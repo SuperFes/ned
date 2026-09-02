@@ -1405,22 +1405,75 @@ Mode MarkdownMode() {
         // first child's byte length, e.g. "- " = 2, "10. " = 4 -- nested
         // lists stack additively) plus 2 per enclosing block_quote ("> ").
         // A list_item/block_quote is excluded from its OWN opening/marker
-        // line (StartByte() == contentStart) -- the same self-exclusion
+        // line (StartByte() == position) -- the same self-exclusion
         // Editor/Indent.h's generic engine needs for a bracket-language
         // container's own opening line, confirmed by the same kind of real
-        // parse-tree check that caught that engine's own bugs.
-        int column = 0;
-        for (treesitter::Node ancestor = node; !ancestor.IsNull(); ancestor = ancestor.Parent()) {
-            if (ancestor.Type() == "list_item") {
-                if (ancestor.StartByte() != contentStart && ancestor.ChildCount() > 0) {
-                    const treesitter::Node marker = ancestor.Child(0);
-                    column += static_cast<int>(marker.EndByte() - marker.StartByte());
+        // parse-tree check that caught that engine's own bugs. A lambda,
+        // not an inline loop -- smart-blank-line-on-newline follow-up:
+        // needs calling twice, see the rescue immediately below.
+        const auto sumHangColumn = [](const treesitter::Node& startNode, std::size_t position) {
+            int result = 0;
+            for (treesitter::Node ancestor = startNode; !ancestor.IsNull(); ancestor = ancestor.Parent()) {
+                if (ancestor.Type() == "list_item") {
+                    if (ancestor.StartByte() != position && ancestor.ChildCount() > 0) {
+                        const treesitter::Node marker = ancestor.Child(0);
+                        result += static_cast<int>(marker.EndByte() - marker.StartByte());
+                    }
+                }
+                else if (ancestor.Type() == "block_quote") {
+                    if (ancestor.StartByte() != position) {
+                        result += 2;
+                    }
                 }
             }
-            else if (ancestor.Type() == "block_quote") {
-                if (ancestor.StartByte() != contentStart) {
-                    column += 2;
+            return result;
+        };
+
+        int column = sumHangColumn(node, contentStart);
+
+        // smart-blank-line-on-newline follow-up: a freshly inserted,
+        // not-yet-typed blank line (lineStart == lineEnd) at the document's
+        // own tail can fall entirely outside every list_item/block_quote's
+        // own byte range, the same boundary gap Editor/Indent.h's generic
+        // engine hit (confirmed via a real failing test, not assumed) --
+        // Markdown's own list_item has no closing delimiter either, so
+        // there's nothing here to accidentally rescue onto the WRONG side
+        // of (unlike that engine's own dedent-range exclusion). Re-sum from
+        // the last real, non-whitespace byte instead.
+        if (lineStart == lineEnd && column == 0 && contentStart == bufferText.size() && contentStart > 0) {
+            const std::size_t rescuePos = bufferText.find_last_not_of(" \t\n\r", contentStart - 1);
+            if (rescuePos != std::string_view::npos) {
+                const treesitter::Node rescueNode = tree.RootNode().NamedDescendantForByteRange(rescuePos, rescuePos);
+                if (!rescueNode.IsNull()) {
+                    column = sumHangColumn(rescueNode, rescuePos);
                 }
+            }
+        }
+
+        // smart-blank-line-on-newline follow-up: a SECOND consecutive
+        // Enter on an empty list-continuation line breaks out of the list
+        // (real Markdown/Org editors' own convention) instead of hang-
+        // indenting to the same column again forever. Checked only when
+        // the ordinary computation above actually found a real hang column
+        // (column > 0, i.e. we're genuinely inside a list/blockquote) --
+        // never touches the fenced-code passthrough above (which already
+        // returned early) or an ordinary column-0 result. A plain textual
+        // check of the immediately preceding line, not tree-based --
+        // deterministic, no parse-dump verification needed the way a
+        // tree-sitter-driven rule would be.
+        if (lineStart == lineEnd && column > 0 && lineStart > 0) {
+            const std::size_t searchFrom    = (lineStart <= 1) ? 0 : lineStart - 2;
+            std::size_t        prevLineStart = bufferText.rfind('\n', searchFrom);
+            prevLineStart                  = (prevLineStart == std::string_view::npos) ? 0 : prevLineStart + 1;
+            bool prevLineBlank = true;
+            for (std::size_t i = prevLineStart; i < lineStart - 1; ++i) {
+                if (bufferText[i] != ' ' && bufferText[i] != '\t') {
+                    prevLineBlank = false;
+                    break;
+                }
+            }
+            if (prevLineBlank) {
+                return 0;
             }
         }
         return column;
@@ -1640,19 +1693,63 @@ Mode OrgMode() {
         // byte offset from its own start -- bullet plus whatever separates
         // it from the body, e.g. "- " = 2, "1. " = 3) -- nested lists stack
         // additively. A listitem is excluded from its OWN bullet line
-        // (StartByte() == contentStart), the same self-exclusion
-        // Editor/Indent.h's generic engine needs for a container's own
-        // opening line.
-        int column = 0;
-        for (treesitter::Node ancestor = node; !ancestor.IsNull(); ancestor = ancestor.Parent()) {
-            if (ancestor.Type() != "listitem") {
-                continue;
+        // (StartByte() == position), the same self-exclusion Editor/
+        // Indent.h's generic engine needs for a container's own opening
+        // line. A lambda, not an inline loop -- smart-blank-line-on-newline
+        // follow-up: needs calling twice, see the rescue immediately below.
+        const auto sumHangColumn = [](const treesitter::Node& startNode, std::size_t position) {
+            int result = 0;
+            for (treesitter::Node ancestor = startNode; !ancestor.IsNull(); ancestor = ancestor.Parent()) {
+                if (ancestor.Type() != "listitem") {
+                    continue;
+                }
+                if (ancestor.StartByte() == position || ancestor.ChildCount() < 2) {
+                    continue;
+                }
+                const treesitter::Node body = ancestor.Child(1);
+                result += static_cast<int>(body.StartByte() - ancestor.StartByte());
             }
-            if (ancestor.StartByte() == contentStart || ancestor.ChildCount() < 2) {
-                continue;
+            return result;
+        };
+
+        int column = sumHangColumn(node, contentStart);
+
+        // smart-blank-line-on-newline follow-up: mirrors MarkdownMode()'s
+        // own rescue -- a freshly inserted, not-yet-typed blank line at the
+        // document's own tail can fall entirely outside every listitem's
+        // own byte range. Re-sum from the last real, non-whitespace byte
+        // instead when that happens; see MarkdownMode()'s own comment for
+        // the full reasoning.
+        if (lineStart == lineEnd && column == 0 && contentStart == bufferText.size() && contentStart > 0) {
+            const std::size_t rescuePos = bufferText.find_last_not_of(" \t\n\r", contentStart - 1);
+            if (rescuePos != std::string_view::npos) {
+                const treesitter::Node rescueNode = tree.RootNode().NamedDescendantForByteRange(rescuePos, rescuePos);
+                if (!rescueNode.IsNull()) {
+                    column = sumHangColumn(rescueNode, rescuePos);
+                }
             }
-            const treesitter::Node body = ancestor.Child(1);
-            column += static_cast<int>(body.StartByte() - ancestor.StartByte());
+        }
+
+        // smart-blank-line-on-newline follow-up: mirrors MarkdownMode()'s
+        // own addition just above -- a second consecutive Enter on an
+        // empty list-continuation line breaks out of the list rather than
+        // hang-indenting to the same column again. See that comment for
+        // the full reasoning; only duplicated here for the same reason
+        // this closure's own contentStart computation already is.
+        if (lineStart == lineEnd && column > 0 && lineStart > 0) {
+            const std::size_t searchFrom    = (lineStart <= 1) ? 0 : lineStart - 2;
+            std::size_t        prevLineStart = bufferText.rfind('\n', searchFrom);
+            prevLineStart                  = (prevLineStart == std::string_view::npos) ? 0 : prevLineStart + 1;
+            bool prevLineBlank = true;
+            for (std::size_t i = prevLineStart; i < lineStart - 1; ++i) {
+                if (bufferText[i] != ' ' && bufferText[i] != '\t') {
+                    prevLineBlank = false;
+                    break;
+                }
+            }
+            if (prevLineBlank) {
+                return 0;
+            }
         }
         return column;
     };

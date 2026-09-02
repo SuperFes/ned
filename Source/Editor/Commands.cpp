@@ -11,6 +11,7 @@
 
 #include "AutoPair.h"
 #include "Backup.h"
+#include "BlankLineCleanup.h"
 #include "Clipboard.h"
 #include "CodeFold.h"
 #include "EmbeddedDocuments.h"
@@ -1320,17 +1321,47 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     registry.Register(
         "newline", "Insert a newline at point, electric-indenting the new line when the mode supports it.",
         PerCursor([](CommandContext& context) {
-            context.buffer.ClearMark();
-            context.buffer.InsertAtPoint("\n");
+            text::Buffer& buffer = context.buffer;
+            buffer.ClearMark();
+            buffer.BeginUndoGroup();
+
+            // smart-blank-line-on-newline follow-up: if point currently
+            // sits on a line that's ENTIRELY whitespace (typically one a
+            // prior "newline" call itself auto-indented and nothing was
+            // ever typed into), clear that dangling run before splitting --
+            // replacing [lineStart, lineEnd) with a bare "\n" in one step
+            // rather than leaving stale whitespace behind AND inserting a
+            // second newline after it. Mode-agnostic and unconditional:
+            // this alone is what gives a tree-sitter-backed mode (Python,
+            // say) "clear the whitespace, keep the depth" behavior on a
+            // second Enter, since the new line's own indent is still
+            // computed fresh below regardless. See BlankLineCleanup.h's own
+            // doc comment for the further, mode-specific Markdown/Org
+            // "second Enter also ends list continuation" addition this
+            // deliberately does NOT handle here.
+            if (CleanBlankLineOnNewline()) {
+                const auto&       content   = buffer.Content();
+                const std::size_t line      = content.ByteOffsetToLine(buffer.Point());
+                const std::size_t lineStart = content.LineToByteOffset(line);
+                std::size_t        lineEnd   = (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) : content.ByteLength();
+                if (line + 1 < content.LineCount() && lineEnd > lineStart) {
+                    --lineEnd; // exclude the line's own trailing '\n'
+                }
+                if (lineEnd > lineStart && LineIndentEnd(content, lineStart) == lineEnd) {
+                    buffer.DeleteRange(lineStart, lineEnd - lineStart);
+                    buffer.SetPoint(lineStart);
+                }
+            }
+
+            buffer.InsertAtPoint("\n");
             // smart-indentation follow-up: purely additive -- a mode without
             // indentColumn configured (every mode not yet migrated, e.g.
-            // Fundamental/Org this pass) leaves this a bare InsertAtPoint("\n"),
+            // Fundamental this pass) leaves this a bare InsertAtPoint("\n"),
             // byte-for-byte unchanged from before. lineStart == lineStart as
             // the [lineStart, lineEnd) argument is IndentFunction's own
             // "not-yet-typed blank line" convention (Mode.h) -- the new line
             // is empty at this point, nothing to bound.
             if (context.mode != nullptr && context.mode->indentColumn) {
-                text::Buffer&      buffer    = context.buffer;
                 const auto&        content   = buffer.Content();
                 const std::size_t  line      = content.ByteOffsetToLine(buffer.Point());
                 const std::size_t  lineStart = content.LineToByteOffset(line);
@@ -1340,6 +1371,7 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                     buffer.SetPoint(lineStart + IndentString(*column, style).size());
                 }
             }
+            buffer.EndUndoGroup();
         }));
 
     registry.Register("self-insert-command", "Insert the character that was pressed.", PerCursor([](CommandContext& context) {
@@ -1436,9 +1468,36 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     // through the expand-snippet command instead).
     registry.Register(
         "indent-for-tab-command",
-        "Reindent the current line to its computed indentation, or expand the snippet trigger before point, or "
+        "Reindent the current line to its computed indentation, or -- with an active region -- rigidly indent "
+        "every line the region spans by one indent width; otherwise expand the snippet trigger before point, or "
         "insert a tab character.",
         [](CommandContext& context) {
+            // mode-agnostic-rigid-indent follow-up: an active mark routes
+            // TAB to a rigid, mode-agnostic "nudge every selected line one
+            // indent width to the right" instead of the single-line
+            // recompute below -- deliberately a DIFFERENT, simpler
+            // operation than indent-region's own tree-sitter recompute
+            // (which stays M-x-only, unbound, keeping its existing
+            // "language-aware reindent" meaning). Works even when the mode
+            // has no indentColumn configured at all -- RigidShiftRegion
+            // only ever reads/writes existing leading whitespace, never
+            // consults Mode. Mirrors indent-region's own region-to-line-
+            // range resolution (Commands.cpp's own "indent-region"
+            // command) for consistency. Clears the mark afterward --
+            // matches every other editing command's own convention
+            // ("Editing commands clear a leftover mark, unlike plain
+            // motion", CommandsTest.cpp), not modern IDEs' own
+            // keep-selection-for-repeated-Tab convention.
+            if (context.buffer.HasMark()) {
+                const auto [start, end]      = context.buffer.Region();
+                const auto&        content    = context.buffer.Content();
+                const std::size_t  startLine  = content.ByteOffsetToLine(start);
+                const std::size_t  endLine    = content.ByteOffsetToLine(end) + 1; // exclusive
+                const IndentStyle  style      = EffectiveIndentStyle(context.mode != nullptr ? context.mode->name : std::string());
+                context.buffer.ClearMark();
+                RigidShiftRegion(context.buffer, style, startLine, endLine, 1);
+                return;
+            }
             if (context.mode != nullptr && context.mode->indentColumn) {
                 text::Buffer&      buffer    = context.buffer;
                 const auto&        content   = buffer.Content();
@@ -1465,6 +1524,33 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
             }
             context.buffer.ClearMark();
             context.buffer.InsertAtPoint("\t");
+        });
+
+    // mode-agnostic-rigid-indent follow-up: S-TAB's own symmetric sibling
+    // to indent-for-tab-command's new mark-active branch above -- no
+    // leading-whitespace-position guard (unlike TAB, S-TAB never means
+    // "insert a literal character", so there's no ambiguity to stay clear
+    // of), and no-mark dedents just the current line instead of a no-op.
+    registry.Register(
+        "unindent",
+        "Rigidly remove one indent width from every line the active region spans, or from the current line if no "
+        "region is active.",
+        [](CommandContext& context) {
+            const IndentStyle style = EffectiveIndentStyle(context.mode != nullptr ? context.mode->name : std::string());
+            if (context.buffer.HasMark()) {
+                const auto [start, end]     = context.buffer.Region();
+                const auto&        content   = context.buffer.Content();
+                const std::size_t  startLine = content.ByteOffsetToLine(start);
+                const std::size_t  endLine   = content.ByteOffsetToLine(end) + 1; // exclusive
+                // Clears the mark afterward -- matches every other editing
+                // command's own convention, see indent-for-tab-command's
+                // own mark-active branch above.
+                context.buffer.ClearMark();
+                RigidShiftRegion(context.buffer, style, startLine, endLine, -1);
+                return;
+            }
+            const std::size_t line = context.buffer.Content().ByteOffsetToLine(context.buffer.Point());
+            RigidShiftRegion(context.buffer, style, line, line + 1, -1);
         });
 
     registry.Register("expand-snippet",
@@ -3490,6 +3576,12 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("ESC w"), "kill-ring-save");
     keymap.Bind(ParseKeySequence("RET"), "newline");
     keymap.Bind(ParseKeySequence("TAB"), "indent-for-tab-command");
+    // mode-agnostic-rigid-indent follow-up: safe to bind globally --
+    // Markdown/Org's own table-cell S-TAB bindings and the snippet
+    // session's own S-TAB handling both take priority over this (mode
+    // keymaps win via KeymapStack's priority order; snippet mode
+    // intercepts S-TAB before dispatch entirely, see BufferView.h).
+    keymap.Bind(ParseKeySequence("S-TAB"), "unindent");
     keymap.Bind(ParseKeySequence("LEFT"), "backward-char");
     keymap.Bind(ParseKeySequence("RIGHT"), "forward-char");
     // KeyTranslation.cpp already decodes Control+Arrow (ArrowLeftCtrl/

@@ -209,11 +209,6 @@ Notcurses.
 - [ ] **No buffer-list/ibuffer-style management** — `switch-to-buffer` is a
       name-completion prompt only; no dedicated buffer-list buffer with mark/save/kill
       batch operations.
-- [ ] **Indent engine gaps** (`Editor/Indent.h`): `@aligned`-style paren-column alignment
-      isn't implemented; `indent-region`/`indent-buffer` materialize full buffer text per
-      line (same cost class as fill-paragraph), with no incremental/windowed path for
-      huge files — deferred without a real report. Janet/Clojure indent at a deliberately
-      simple bracket-depth level, not real per-form Lisp indent.
 - [ ] **No server/daemon mode** — no `emacsclient`-equivalent; one process per terminal,
       no way to keep a warm process (buffers, LSP connections, undo history) alive and
       attach a new terminal client to it.
