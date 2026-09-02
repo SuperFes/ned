@@ -91,6 +91,15 @@ enum class InteractiveRequest { None,
                                 // keyboard focus (ProjectSidebar's own key handling takes
                                 // over until Enter/Escape/C-g returns focus).
                                 FocusProjectSidebar,
+                                // VCS side panel: same "just set
+                                // interactiveRequest" shape as
+                                // ToggleProjectSidebar/FocusProjectSidebar --
+                                // BufferView keeps the panel and
+                                // ProjectSidebar mutually exclusive on the
+                                // left dock (see BufferView::SetVcsPanel's
+                                // own doc comment).
+                                ToggleVcsPanel,
+                                FocusVcsPanel,
                                 // org-agenda follow-up: another one-shot direct action, same
                                 // shape as ToggleProjectSidebar -- BufferView builds and
                                 // switches to a synthesized "*agenda*" buffer.

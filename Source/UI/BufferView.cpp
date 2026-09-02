@@ -6153,8 +6153,27 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             // sidebar stays active and paints a 1-column strip so the
             // double-click-to-expand affordance never vanishes -- see
             // ProjectSidebar.h), not a Widget::active flip.
+            // VCS side panel follow-up: expanding the sidebar collapses
+            // vcsPanel_ first (plain SetCollapsed, not a committing
+            // CommitCollapsed -- this is a side effect of the *sidebar's*
+            // own toggle, not a deliberate vcsPanel_ toggle, so it must not
+            // overwrite vcsPanel_'s own persisted visibility preference) --
+            // see SetVcsPanel's own doc comment for why the two stay
+            // mutually exclusive on the shared left dock slot.
             if (projectSidebar_ != nullptr) {
+                if (projectSidebar_->Collapsed() && vcsPanel_ != nullptr) {
+                    vcsPanel_->SetCollapsed(true);
+                }
                 projectSidebar_->ToggleCollapsed();
+            }
+            return;
+        case editor::InteractiveRequest::ToggleVcsPanel:
+            // Same shape as ToggleProjectSidebar above, mirrored.
+            if (vcsPanel_ != nullptr) {
+                if (vcsPanel_->Collapsed() && projectSidebar_ != nullptr) {
+                    projectSidebar_->SetCollapsed(true);
+                }
+                vcsPanel_->ToggleCollapsed();
             }
             return;
         case editor::InteractiveRequest::ToggleTerminal:
@@ -6179,8 +6198,22 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             // the keyboard -- ProjectSidebar's own OnEvent drives the
             // selection until it returns focus, re-collapsing then if it
             // was collapsed on entry (see TakeKeyboardFocus's own comment).
+            // VCS side panel follow-up: same mutual-exclusion side effect
+            // ToggleProjectSidebar above applies.
             if (projectSidebar_ != nullptr) {
+                if (projectSidebar_->Collapsed() && vcsPanel_ != nullptr) {
+                    vcsPanel_->SetCollapsed(true);
+                }
                 projectSidebar_->TakeKeyboardFocus();
+            }
+            return;
+        case editor::InteractiveRequest::FocusVcsPanel:
+            // Same shape as FocusProjectSidebar above, mirrored.
+            if (vcsPanel_ != nullptr) {
+                if (vcsPanel_->Collapsed() && projectSidebar_ != nullptr) {
+                    projectSidebar_->SetCollapsed(true);
+                }
+                vcsPanel_->TakeKeyboardFocus();
             }
             return;
         case editor::InteractiveRequest::ToggleMinimap:
@@ -6699,13 +6732,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             BeginVcsSwitchBranchPrompt();
             return;
         case editor::InteractiveRequest::VcsCreateBranch:
-            if (!vcsRunner_) {
-                statusMessage_ = "no vcs runner configured";
-                return;
-            }
-            inputMode_ = InputMode::VcsCreateBranch;
-            prompt_.emplace("New branch: ");
-            statusMessage_ = prompt_->StatusText();
+            BeginVcsCreateBranchPrompt();
             return;
         // org-set-tags follow-up: org-set-tags already checked
         // HeadlineAtPoint before setting this request, but point can't
@@ -9162,6 +9189,19 @@ void BufferView::BeginVcsSwitchBranchPrompt() {
             RefreshVcsSwitchBranchStatus();
         },
         [this](std::string error) { statusMessage_ = "vcs branch: " + error; });
+}
+
+// VCS side panel follow-up: pulled out of the VcsCreateBranch switch case
+// verbatim so VcsPanel's own 'n' key (via RequestVcsAction) can start the
+// exact same prompt InteractiveRequest::VcsCreateBranch already does.
+void BufferView::BeginVcsCreateBranchPrompt() {
+    if (!vcsRunner_) {
+        statusMessage_ = "no vcs runner configured";
+        return;
+    }
+    inputMode_ = InputMode::VcsCreateBranch;
+    prompt_.emplace("New branch: ");
+    statusMessage_ = prompt_->StatusText();
 }
 
 void BufferView::OpenLinkAtPoint() {
@@ -11897,6 +11937,24 @@ void BufferView::SetScrollArrows(ScrollArrowButton* up, ScrollArrowButton* down)
 
 void BufferView::SetProjectSidebar(ProjectSidebar* sidebar) {
     projectSidebar_ = sidebar;
+}
+
+void BufferView::SetVcsPanel(VcsPanel* panel) {
+    vcsPanel_ = panel;
+}
+
+void BufferView::RequestVcsAction(VcsPanelAction action) {
+    switch (action) {
+        case VcsPanelAction::Commit:
+            BeginVcsCommitMessage();
+            return;
+        case VcsPanelAction::SwitchBranch:
+            BeginVcsSwitchBranchPrompt();
+            return;
+        case VcsPanelAction::CreateBranch:
+            BeginVcsCreateBranchPrompt();
+            return;
+    }
 }
 
 void BufferView::SetThemeApplier(std::function<void(const Theme&)> applier) {

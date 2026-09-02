@@ -52,6 +52,7 @@
 #include "Minimap.h"
 #include "ModeLine.h"
 #include "ProjectSidebar.h"
+#include "VcsPanel.h"
 #include "ScrollArrowButton.h"
 #include "ScrollBar.h"
 #include "Text/Buffer.h"
@@ -238,6 +239,13 @@ class WindowManager {
     // that happens after some panes already exist).
     void SetProjectSidebar(ProjectSidebar* sidebar);
 
+    // VCS side panel: same "forwarded to every pane, present and future"
+    // shape as SetProjectSidebar above -- also forwarded to projectSidebar_
+    // (and vice versa) so each pane's BufferView can keep the two mutually
+    // exclusive on the shared left dock slot; see
+    // BufferView::SetVcsPanel's own doc comment.
+    void SetVcsPanel(VcsPanel* panel);
+
     // LSP client follow-up: same "forwarded to every pane, present and
     // future" shape as SetProjectSidebar above. Also used by
     // HandleBufferClosed/NotifyBufferClosing to send textDocument/didClose
@@ -415,6 +423,12 @@ class WindowManager {
     // binary file gets the same y/n confirmation find-file's own
     // HandlePromptKey already offers, instead of just reporting a refusal.
     void RequestOpenBinaryFile(const std::filesystem::path& path);
+
+    // VCS side panel: same "route to whichever pane is currently focused"
+    // shape as RequestOpenBinaryFile just above -- wired to
+    // VcsPanel::SetOnAction so a panel-triggered commit/branch-switch/
+    // branch-create starts on the focused pane's own BufferView.
+    void RequestVcsPanelAction(VcsPanelAction action);
 
     // named-projects follow-up: same "route to whichever pane is currently
     // focused" shape as RequestOpenBinaryFile just above -- wired to
@@ -664,6 +678,7 @@ class WindowManager {
     std::string&                      statusMessage_;
     const Theme&                      theme_;
     ProjectSidebar*                   projectSidebar_ = nullptr;
+    VcsPanel*                         vcsPanel_       = nullptr;
     editor::lsp::LspManager*          lspManager_     = nullptr;
     editor::tasks::TaskRunner*        taskRunner_     = nullptr;
     editor::testrun::TestRunner*      testRunner_     = nullptr; // see SetTestRunner
