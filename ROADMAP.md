@@ -71,24 +71,6 @@ Notcurses.
         it into separate write/read timeouts would still be a reasonable defense-in-
         depth hardening on top — a healthy server should never take long just to
         *accept* a notification.
-- [x] **Async LSP write queue for DapClient/AcpClient** — shipped 2026-09-02, transplanting
-      `LspClient`'s own `writeThread_`/`EnqueueWrite`/`PrepareForGracefulShutdown` shape
-      onto `DapClient` (1 write site) and `AcpClient` (4 write sites, its own
-      `Transport::WriteMessage`) verbatim, for consistency (no live freeze had been
-      reported against either specifically). `PrepareForGracefulShutdown` turned out not
-      to be LSP-only, contrary to this entry's original prediction: `DapManager::
-      StopSession`'s best-effort "disconnect" request and `AcpManager::StopSession`'s
-      "session/close" request each immediately precede destroying their client, the same
-      shape as `LspManager::Shutdown`'s "shutdown"/"exit" pair — caught by a real
-      `DapManagerTest.cpp` failure (`StopSession sends a disconnect and tears down
-      immediately`) during the transplant, where the courtesy frame raced the
-      destructor's implicit `request_stop()` and was silently dropped without the drain.
-      Verified clean under ASan/UBSan across repeated runs; a pre-existing
-      `DapClientTest.cpp`/`DapManagerTest.cpp` `FrameReader::Next()` helper's assertion
-      count is now mildly non-deterministic (332–337 in one run) now that writes are
-      genuinely concurrent with the test's own read loop — harmless (the helper's
-      in-loop `REQUIRE` just fires more than once when a two-`write()` DAP frame
-      (header, then body) lands split across reads instead of together), not a bug.
 - [ ] Whether Markdown fenced code blocks / Org `#+BEGIN_SRC` blocks should get the same
       real-LSP-sync treatment HTML `<script>`/`<style>` embedded documents already have
       is an open question — spawning a live language server per code fence in an
@@ -178,23 +160,13 @@ Notcurses.
       common case and drops real `<<<<<<<`/`=======`/`>>>>>>>` conflict markers into the
       buffer for a genuine divergence, but a real conflict is still hand-edited text,
       not a visual diff.
-- [x] Jump-back stack — `jump-back` on `C-x C-SPC`, shipped 2026-09-02. A forward/redo
-      stack (Vim's `C-i`) and Vim-mode's own separate `C-o`/`C-i` jumplist/changelist ring
-      remain open (Editor Ergonomics' Vim-mode gap below).
-- [x] `next-error`/`previous-error` (`M-g n`/`M-g p`, `ESC g n`/`ESC g p`) — shipped
-      2026-09-02, `Editor/NextError.h`. Generic over every read-only results buffer
-      already jump-capable via `VisitResultUnderPoint` (multibuffer- and flat-
-      "path:line:"-backed alike): `*vcs status*`/`*vcs blame ...*`, `*search results*`/
-      `*project replace*`, `*diagnostics*`, `*references: ...*`, `*agenda*`,
-      `*clock report*`, `*vcs diff*`, `*test results*`. Global, process-wide "last
-      results buffer" + walk cursor (not per-pane), matching real Emacs'
-      `next-error-last-buffer` semantics; a source-shaped `*vcs log ...*` buffer is
-      deliberately never registered (no per-line location to walk).
-- [x] Hunk-navigation motion — `vcs-next-hunk`/`vcs-previous-hunk` (`C-c v N`/`C-c v P`),
-      shipped 2026-09-01. A native Vim-mode `]c`/`[c` binding (gitsigns' own convention)
-      is a small remaining follow-up — the global `C-c v N`/`P` binding already works
-      under Vim mode via the shared keymap-stack fallthrough, so this is polish, not a
-      functional gap.
+- [ ] **Jump-back forward/redo stack** — `jump-back` (`C-x C-SPC`) has no forward
+      direction (Vim's `C-i` equivalent); Vim-mode's own separate jumplist/changelist
+      ring is tracked below under Vim-mode gaps.
+- [ ] Native Vim-mode `]c`/`[c` binding (gitsigns' own convention) for
+      `vcs-next-hunk`/`vcs-previous-hunk` — the global `C-c v N`/`P` binding already
+      works under Vim mode via the shared keymap-stack fallthrough, so this is polish,
+      not a functional gap.
 
 ### Editor Ergonomics
 
@@ -237,30 +209,11 @@ Notcurses.
 - [ ] **No buffer-list/ibuffer-style management** — `switch-to-buffer` is a
       name-completion prompt only; no dedicated buffer-list buffer with mark/save/kill
       batch operations.
-- [x] **Smart/positional indentation** — shipped 2026-09-02 (all 19 bundled grammars,
-      completed same day as the initial 3-tier landing). `Editor/Indent.h`'s generic
-      `@indent`/`@dedent` tree-walk engine (`Mode::indentColumn`, one `*-indents.scm` per
-      language) covers every bracket/keyword-delimited grammar (C/C++/JSON/JS/TS/TSX/PHP/
-      CSS/HTML/XML/Bash/Fish/YAML/TOML, plus Janet/Clojure at a deliberately simple
-      bracket-depth level, not real per-form Lisp indent) and Python's own
-      indentation-sensitive `block`-node scoping (zero bespoke code). Markdown and Org
-      each get a hand-rolled closure instead (`MarkdownMode()`/`OrgMode()`) for hanging
-      list-item indent to the bullet's own content column, blockquote nesting, and (Markdown
-      only) fenced-code passthrough — the one tier that doesn't fit level-counting.
-      `indent-for-tab-command`/`newline` are additive (every mode without indentColumn is
-      byte-for-byte unchanged); `indent-region`/`indent-buffer` reuse the same per-line
-      primitive for batch reindent, the substrate a future save-time cleanup pass would
-      call. Two real, non-obvious engine bugs surfaced extending past the initial 3
-      grammars, both fixed generically (not per-language workarounds): tree-sitter-python's
-      "block" node can be byte-*range*-identical to its own single statement, requiring
-      captured-node identity (`Node::Id()`/`QueryCapture::nodeId`) instead of byte-range
-      keying; and HTML/XML's "element" wraps a NAMED "start_tag"/"STag" opening marker
-      (unlike every other grammar's anonymous "{"/"("), needing one narrow, explicitly-
-      documented promotion step in the walk-start resolution. `@aligned`-style
-      paren-column alignment stays deferred, as does incremental/windowed reindent for
-      huge files (`IndentRegion` materializes full buffer text per line, same cost class
-      as fill-paragraph — fine for occasional use, not engineered further without a real
-      report).
+- [ ] **Indent engine gaps** (`Editor/Indent.h`): `@aligned`-style paren-column alignment
+      isn't implemented; `indent-region`/`indent-buffer` materialize full buffer text per
+      line (same cost class as fill-paragraph), with no incremental/windowed path for
+      huge files — deferred without a real report. Janet/Clojure indent at a deliberately
+      simple bracket-depth level, not real per-form Lisp indent.
 - [ ] **No server/daemon mode** — no `emacsclient`-equivalent; one process per terminal,
       no way to keep a warm process (buffers, LSP connections, undo history) alive and
       attach a new terminal client to it.
@@ -298,9 +251,6 @@ stage/unstage, inline diff preview with per-hunk stage/unstage, commit/branch co
 discard-with-confirm, stash, push/pull/fetch, ahead/behind summary, and a conflict-marker
 affordance. Built entirely on existing `VcsRunner`/`VcsProvider` plumbing.
 
-- [x] Sticky-scroll for section headers — shipped 2026-09-01 (`VcsPanel::
-      StickyHeaderIndex`). Simpler than `ProjectSidebar`'s multi-ancestor stack since
-      sections here aren't nested: at most one pinned row ever.
 - [ ] Directory-tree rows use indentation only, no box-drawing tree-connector glyphs
       (`ProjectSidebar`'s `├─└─│`) — revisit if the plain-indent tree reads as too flat.
 
