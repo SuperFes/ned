@@ -2435,6 +2435,16 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           context.interactiveRequest = InteractiveRequest::SwitchHeaderSource;
                       });
 
+    // jump-back-stack follow-up: one-shot direct action, same shape as
+    // switch-header-source above (see InteractiveRequest::JumpBack's own doc
+    // comment in Command.h) -- BufferView::JumpBack owns the actual pop/restore.
+    registry.Register("jump-back",
+                      "Jump back to the position before the last location-jumping command "
+                      "(goto-definition, goto-line, bookmark-jump, jump-to-register, ...).",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::JumpBack;
+                      });
+
     // task-runner follow-up: two more prompt-shaped one-shot requests, same
     // "just signal intent" shape as every InteractiveRequest-routed command
     // above -- BufferView::HandlePromptKey's InputMode::TaskName case is
@@ -3670,6 +3680,10 @@ Keymap BuildDefaultGlobalKeymap() {
     // (kmacro-start-macro / kmacro-end-or-call-macro) and map cleanly here.
     keymap.Bind(ParseKeySequence("F3"), "kmacro-start-macro");
     keymap.Bind(ParseKeySequence("F4"), "kmacro-end-or-call-macro");
+    // jump-back-stack follow-up: real Emacs' own pop-global-mark binding --
+    // the closest match, since this is a cross-buffer jump stack, not the
+    // local-buffer mark-ring plain pop-mark/C-u C-SPC covers.
+    keymap.Bind(ParseKeySequence("C-x C-SPC"), "jump-back");
     keymap.Bind(ParseKeySequence("C-x r SPC"), "point-to-register");
     keymap.Bind(ParseKeySequence("C-x r j"), "jump-to-register");
     keymap.Bind(ParseKeySequence("C-x r s"), "copy-to-register");

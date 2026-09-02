@@ -183,15 +183,9 @@ Notcurses.
       common case and drops real `<<<<<<<`/`=======`/`>>>>>>>` conflict markers into the
       buffer for a genuine divergence, but a real conflict is still hand-edited text,
       not a visual diff.
-- [ ] **No jump-back stack** — every location-jumping command
-      (`lsp-goto-definition`/`-declaration`/`-type-definition`/`-implementation`,
-      `lsp-goto-symbol`, `goto-line`, `bookmark-jump`) has no way back: no Emacs
-      `mark-ring`/`xref-pop-marker-stack`, no Vim `C-o`/`C-i`, no VSCode `Ctrl--`. Needs a
-      per-window stack of saved (buffer, offset) positions, pushed before any jump and
-      popped by a new `pop-mark`/`jump-back` command — `Buffer`'s point/mark primitives
-      already cover the storage half. Distinct from, but a natural shared foundation for,
-      Editor Ergonomics' Vim-mode jumplist/changelist gap below, which is Vim's own
-      separate `C-o`/`C-i` ring convention.
+- [x] Jump-back stack — `jump-back` on `C-x C-SPC`, shipped 2026-09-02. A forward/redo
+      stack (Vim's `C-i`) and Vim-mode's own separate `C-o`/`C-i` jumplist/changelist ring
+      remain open (Editor Ergonomics' Vim-mode gap below).
 - [ ] **No generic `next-error`/`previous-error`** — Emacs' unifying "walk the last set
       of located things" primitive, working uniformly across compile output, grep
       results, and diagnostics. Ned already has the individual result buffers (`*vcs

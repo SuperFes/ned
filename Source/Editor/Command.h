@@ -577,6 +577,12 @@ enum class InteractiveRequest { None,
                                 // at all -- unlike LspGotoDefinition, LSP absence here is a normal
                                 // fallback path, not an error.
                                 SwitchHeaderSource,
+                                // jump-back-stack follow-up: one-shot direct action, same shape as
+                                // SwitchHeaderSource above -- BufferView::JumpBack pops its own
+                                // private per-pane jumpBackStack_ (pushed to by
+                                // JumpToDefinition/goto-line/bookmark-jump/jump-to-register) and
+                                // restores the saved (buffer, point).
+                                JumpBack,
                                 // org-clock-display follow-up: another one-shot direct action,
                                 // same shape as ProjectAgenda -- BufferView builds and switches
                                 // to a synthesized "*clock report*" buffer (a

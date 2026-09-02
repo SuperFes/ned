@@ -71,6 +71,18 @@ Event Ctrl(char letter) {
     return FromInput(input);
 }
 
+Event CtrlSpace() {
+    ncinput input{};
+    // Real Ctrl+Space: id is the literal space codepoint (not uppercased --
+    // KeyTranslation.cpp's DecodeBaseKey only re-cases 'A'-'Z' ids) with
+    // NCKEY_MOD_CTRL set, matching what ParseKeyChord("C-SPC") itself
+    // produces (Editor/Key.cpp: Codepoint = U' ').
+    input.id        = static_cast<std::uint32_t>(U' ');
+    input.modifiers = NCKEY_MOD_CTRL;
+    input.evtype    = NCTYPE_PRESS;
+    return FromInput(input);
+}
+
 Event Alt(char letter) {
     ncinput input{};
     input.id        = static_cast<std::uint32_t>(static_cast<unsigned char>(letter));
