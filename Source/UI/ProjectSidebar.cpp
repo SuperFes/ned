@@ -146,33 +146,6 @@ namespace {
         return filename.empty() ? root.string() : filename;
     }
 
-    // changed-files-highlight follow-up: classifies git's own two-letter
-    // porcelain "XY" status code (VcsStatusEntry::state, kept verbatim by
-    // VcsProvider::ParseStatus -- see that struct's own comment) into the
-    // four buckets a row can be painted with. Checked by substring rather
-    // than fixed column position: "??" is untracked outright, and otherwise
-    // either column (index vs. worktree) can carry the letter that matters,
-    // e.g. "AM" is a staged-then-further-edited add. Priority among the
-    // remaining letters -- D beats M beats A -- mirrors VcsRowStatus's own
-    // least-to-most-severe ordering; a letter with no dedicated bucket
-    // (R rename, C copy, T typechange, U unmerged) falls back to Modified,
-    // the closest real-world reading of "this file's content changed".
-    VcsRowStatus ClassifyPorcelainStatus(const std::string& state) {
-        if (state == "??") {
-            return VcsRowStatus::Untracked;
-        }
-        if (state.find('D') != std::string::npos) {
-            return VcsRowStatus::Deleted;
-        }
-        if (state.find('M') != std::string::npos) {
-            return VcsRowStatus::Modified;
-        }
-        if (state.find('A') != std::string::npos) {
-            return VcsRowStatus::Added;
-        }
-        return VcsRowStatus::Modified;
-    }
-
     // changed-files-highlight follow-up: builds the absolute-path -> status
     // index RefreshVcsStatus stores. Every changed file gets its own
     // classified status; every ancestor directory between it and root gets
@@ -191,7 +164,7 @@ namespace {
             }
         };
         for (const editor::vcs::VcsStatusEntry& entry : entries) {
-            const VcsRowStatus           status   = ClassifyPorcelainStatus(entry.state);
+            const VcsRowStatus           status   = editor::vcs::ClassifyPorcelainStatus(entry.state);
             const std::filesystem::path filePath = (root / entry.path).lexically_normal();
             merge(filePath, status);
 

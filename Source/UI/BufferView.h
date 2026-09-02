@@ -59,6 +59,7 @@
 #include "ListPopup.h"
 #include "Minimap.h"
 #include "ProjectSidebar.h"
+#include "VcsPanel.h"
 #include "ScrollArrowButton.h"
 #include "ScrollBar.h"
 #include "Text/Buffer.h"
@@ -151,6 +152,28 @@ class BufferView : public Widget {
     // alone is sufficient -- every widget recomputes its own layout/paint
     // fresh each frame, so no separate forced-reflow step is needed.
     void SetProjectSidebar(ProjectSidebar* sidebar);
+
+    // VCS side panel: registers the panel so ToggleVcsPanel/FocusVcsPanel
+    // (toggle-vcs-panel/focus-vcs-panel) can drive it, and so both requests
+    // -- and ToggleProjectSidebar/FocusProjectSidebar above -- can keep
+    // this panel and projectSidebar_ mutually exclusive on the shared left
+    // dock slot: expanding one collapses the other first (via plain
+    // SetCollapsed, not the committing CommitCollapsed/ToggleCollapsed --
+    // an automatic side effect of the *other* widget's toggle shouldn't
+    // overwrite that other widget's own persisted visibility preference).
+    // nullptr (the default) means no-op, same "unset is a safe no-op"
+    // convention SetProjectSidebar establishes; a project with no VCS
+    // provider configured just never gets this wired in main.cpp.
+    void SetVcsPanel(VcsPanel* panel);
+
+    // VCS side panel: starts an existing VCS interactive flow (commit
+    // compose / branch switch / branch create) on this pane -- the same
+    // entry points InteractiveRequest::VcsCommit/VcsSwitchBranch/
+    // VcsCreateBranch already drive from C-c v c/w/n, given a second
+    // trigger here since VcsPanel has no BufferView& of its own.
+    // WindowManager::RequestVcsPanelAction (routed to whichever pane has
+    // focus, RequestOpenBinaryFile's own shape) is the real caller.
+    void RequestVcsAction(VcsPanelAction action);
 
     // rich-theme-set follow-up (Phase 1): registers the callback the
     // select-theme picker applies a Theme through -- wired by main.cpp (via
@@ -1629,6 +1652,7 @@ class BufferView : public Widget {
     // vcsBranchCandidates_ for Tab completion. Dropped (with a status
     // message) if another prompt began while the fetch was in flight.
     void BeginVcsSwitchBranchPrompt();
+    void BeginVcsCreateBranchPrompt(); // VCS side panel follow-up -- see BufferView.cpp's own comment
 
     // Links follow-up: another one-shot direct action, same shape as
     // VisitSearchResult -- doesn't touch inputMode_. In an org-mode buffer,
@@ -2047,6 +2071,7 @@ class BufferView : public Widget {
     ScrollArrowButton*           scrollUpArrow_   = nullptr; // see SetScrollArrows
     ScrollArrowButton*           scrollDownArrow_ = nullptr;
     ProjectSidebar*              projectSidebar_  = nullptr;     // see SetProjectSidebar
+    VcsPanel*                    vcsPanel_        = nullptr;     // see SetVcsPanel
     std::function<bool()>        splitResizeQuery_;              // see SetSplitResizeQuery
     Minimap*                     minimap_             = nullptr; // see SetMinimap
     Widget*                      minimapScrollColumn_ = nullptr; // see SetMinimap

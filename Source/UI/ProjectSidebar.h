@@ -73,6 +73,7 @@
 
 #include "ActiveBuffer.h"
 #include "Editor/ProjectTree.h"
+#include "Editor/Vcs/VcsRowStatus.h"
 #include "Editor/Vcs/VcsRunner.h"
 #include "Text/BufferList.h"
 #include "Theme.h"
@@ -80,14 +81,10 @@
 
 namespace ned::ui {
 
-// changed-files-highlight follow-up: how severe a row's (or, for a
-// directory, its most severe descendant's) git status is, ordered
-// least-to-most severe so merging two children's statuses is a plain
-// std::max. Deliberately just these four buckets, not a verbatim porcelain
-// code -- a tree row only needs to know which color to paint, the same
-// "don't reinterpret VCS-specific text beyond what the UI needs" call
-// BufferView's own DiffLineKind already makes for the per-line diff gutter.
-enum class VcsRowStatus { None, Untracked, Added, Modified, Deleted };
+// changed-files-highlight follow-up: VcsRowStatus (how severe a row's git
+// status is) now lives in Editor/Vcs/VcsRowStatus.h, shared with VcsPanel
+// (VCS side panel follow-up) rather than defined here alone.
+using editor::vcs::VcsRowStatus;
 
 class ProjectSidebar : public Widget {
   public:

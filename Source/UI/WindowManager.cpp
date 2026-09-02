@@ -518,6 +518,10 @@ std::unique_ptr<Pane> WindowManager::MakePane(text::Buffer& buffer, editor::Mode
         [this](editor::InteractiveRequest request) { HandleWindowRequest(request); },
         [this](text::Buffer& closedBuffer) { HandleBufferClosed(closedBuffer); });
     pane->SetEventLoop(eventLoop_);
+    // VCS side panel: not threaded through the Pane constructor's own
+    // parameter list like projectSidebar_ above -- wired post-construction
+    // here instead, same as every other Set*-hook forward below.
+    pane->Buffer().SetVcsPanel(vcsPanel_);
     pane->Buffer().SetThemeApplier(themeApplier_);
     pane->Buffer().SetOnTerminalToggle(onTerminalToggle_);
     pane->Buffer().SetOnAcpPanelToggle(onAcpPanelToggle_);
@@ -536,6 +540,13 @@ void WindowManager::SetProjectSidebar(ProjectSidebar* sidebar) {
     projectSidebar_ = sidebar;
     for (Pane* pane : Leaves()) {
         pane->Buffer().SetProjectSidebar(sidebar);
+    }
+}
+
+void WindowManager::SetVcsPanel(VcsPanel* panel) {
+    vcsPanel_ = panel;
+    for (Pane* pane : Leaves()) {
+        pane->Buffer().SetVcsPanel(panel);
     }
 }
 
@@ -635,6 +646,9 @@ void WindowManager::SetVcsRunner(editor::vcs::VcsRunner* vcsRunner) {
     }
     if (projectSidebar_) {
         projectSidebar_->SetVcsRunner(vcsRunner);
+    }
+    if (vcsPanel_) {
+        vcsPanel_->SetVcsRunner(vcsRunner);
     }
 }
 
@@ -760,6 +774,12 @@ ActiveBuffer& WindowManager::FocusedActiveBuffer() {
 void WindowManager::RequestCloseBuffer(text::Buffer& buffer) {
     if (Pane* pane = FocusedPane()) {
         pane->Buffer().RequestCloseBuffer(buffer);
+    }
+}
+
+void WindowManager::RequestVcsPanelAction(VcsPanelAction action) {
+    if (Pane* pane = FocusedPane()) {
+        pane->Buffer().RequestVcsAction(action);
     }
 }
 

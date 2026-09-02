@@ -1863,6 +1863,24 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           context.interactiveRequest = InteractiveRequest::FocusProjectSidebar;
                       });
 
+    // VCS side panel: same "just set interactiveRequest" shape as
+    // toggle-project-sidebar/focus-project-sidebar just above -- docked
+    // left, mutually exclusive with the project sidebar (see
+    // BufferView::SetVcsPanel's own doc comment).
+    registry.Register("toggle-vcs-panel",
+                      "Show or hide the left-side VCS status panel (staged/unstaged/untracked files); "
+                      "collapses the project sidebar if it's currently shown in the same slot.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::ToggleVcsPanel;
+                      });
+    registry.Register("focus-vcs-panel",
+                      "Move keyboard focus into the VCS status panel (Up/Down to move, Space to mark, Enter to "
+                      "open/toggle, 'a'/'u' to stage/unstage the marked (or focused) file, 'c' to compose a "
+                      "commit, 'w'/'n' to switch/create a branch, Escape or C-g to return to the editor).",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::FocusVcsPanel;
+                      });
+
     // session-persistence slice 3: creates the project's .ned/ directory --
     // the strictly-opt-in marker nothing else ever creates -- so the
     // session moves to <root>/.ned/session.json and a .ned/init.janet can
@@ -3476,6 +3494,15 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("C-c v d"), "vcs-full-diff-buffer");
     keymap.Bind(ParseKeySequence("C-c v h"), "vcs-stage-hunk");
     keymap.Bind(ParseKeySequence("C-c v H"), "vcs-unstage-hunk");
+    // VCS side panel: "C-c C-v" is already project-search-visit-result, so
+    // this uses the shifted "C-c V" trick "C-c A"/"C-c T" already use beside
+    // their own lowercase twins -- a distinct codepoint chord, nothing
+    // special-cased. "p" for panel is unbound under the "C-c v" prefix
+    // (every other leaf letter above is already taken), mirroring
+    // "C-c C-p"/"C-c p" toggle-project-sidebar/focus-project-sidebar's own
+    // pair.
+    keymap.Bind(ParseKeySequence("C-c V"), "toggle-vcs-panel");
+    keymap.Bind(ParseKeySequence("C-c v p"), "focus-vcs-panel");
     keymap.Bind(ParseKeySequence("C-c C-r"), "project-replace");
     keymap.Bind(ParseKeySequence("C-c C-p"), "toggle-project-sidebar");
     // sidebar-keyboard-focus follow-up: the non-control second key beside
