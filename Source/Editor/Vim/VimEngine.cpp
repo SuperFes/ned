@@ -14,6 +14,7 @@
 #include "Text/Utf8.h"
 #include "VimLineUtil.h"
 #include "VimMotion.h"
+#include "VimSurround.h"
 #include "VimTextObject.h"
 
 namespace ned::editor::vim {
@@ -596,6 +597,19 @@ void VimEngine::HandleNormalOrVisualKey(text::Buffer& buffer, const KeyChord& ch
         return;
     }
 
+    // ds/cs/ys (Editor/Vim/VimSurround.h): 's' arriving right after 'd'/'c'/'y' has
+    // already set pendingOperator_ pending. Must come before the doubled-operator/
+    // ResolveOperatorChord/HandleAction checks below -- HandleAction's own plain 's'
+    // binding (substitute-char) would otherwise fire instead, silently ignoring the
+    // pending operator the same way it already does for any other non-motion chord.
+    if (mode_ == Mode::Normal && pendingOperator_ && IsPlainChar(chord, U's') &&
+        (*pendingOperator_ == U'd' || *pendingOperator_ == U'c' || *pendingOperator_ == U'y')) {
+        const char32_t op = *pendingOperator_;
+        pendingOperator_.reset();
+        BeginSurroundSequence(buffer, op);
+        return;
+    }
+
     if (mode_ == Mode::Normal && IsPlainChar(chord, U'g')) {
         pendingCharHandler_ = [this](text::Buffer& buf, const KeyChord& c) { HandleGPrefixed(buf, c); };
         return;
@@ -876,50 +890,47 @@ void VimEngine::ApplyDoubledOperator(text::Buffer& buffer, char32_t op, long cou
     ApplyOperator(buffer, op, start, end, true);
 }
 
+ObjectRange VimEngine::ResolveTextObjectRange(const text::Buffer& buffer, bool inner, char32_t c, long count) const {
+    if (c == U'w') {
+        return inner ? InnerWord(buffer, buffer.Point(), false, count) : AroundWord(buffer, buffer.Point(), false, count);
+    }
+    if (c == U'W') {
+        return inner ? InnerWord(buffer, buffer.Point(), true, count) : AroundWord(buffer, buffer.Point(), true, count);
+    }
+    if (c == U'"' || c == U'\'' || c == U'`') {
+        return inner ? InnerQuote(buffer, buffer.Point(), c) : AroundQuote(buffer, buffer.Point(), c);
+    }
+    if (c == U'(' || c == U')' || c == U'b') {
+        return inner ? InnerBracket(buffer, buffer.Point(), U'(', U')') : AroundBracket(buffer, buffer.Point(), U'(', U')');
+    }
+    if (c == U'[' || c == U']') {
+        return inner ? InnerBracket(buffer, buffer.Point(), U'[', U']') : AroundBracket(buffer, buffer.Point(), U'[', U']');
+    }
+    if (c == U'{' || c == U'}' || c == U'B') {
+        return inner ? InnerBracket(buffer, buffer.Point(), U'{', U'}') : AroundBracket(buffer, buffer.Point(), U'{', U'}');
+    }
+    if (c == U'<' || c == U'>') {
+        return inner ? InnerBracket(buffer, buffer.Point(), U'<', U'>') : AroundBracket(buffer, buffer.Point(), U'<', U'>');
+    }
+    if (c == U'p') {
+        return inner ? InnerParagraph(buffer, buffer.Point()) : AroundParagraph(buffer, buffer.Point());
+    }
+    if (c == U's') {
+        return inner ? InnerSentence(buffer, buffer.Point(), count) : AroundSentence(buffer, buffer.Point(), count);
+    }
+    if (c == U't') {
+        return inner ? InnerTag(buffer, buffer.Point()) : AroundTag(buffer, buffer.Point());
+    }
+    return ObjectRange{buffer.Point(), buffer.Point(), false, false};
+}
+
 void VimEngine::ApplyTextObject(text::Buffer& buffer, bool inner, const KeyChord& objectChord) {
     if (!IsPlainCharChord(objectChord)) {
         FinishCommand(buffer);
         return;
     }
-    const char32_t c = objectChord.Codepoint;
-    ObjectRange    range{buffer.Point(), buffer.Point(), false, false};
-
-    const long count = EffectiveCount(); // only word/sentence objects honor a count > 1 -- see VimTextObject.h
-
-    if (c == U'w') {
-        range = inner ? InnerWord(buffer, buffer.Point(), false, count) : AroundWord(buffer, buffer.Point(), false, count);
-    }
-    else if (c == U'W') {
-        range = inner ? InnerWord(buffer, buffer.Point(), true, count) : AroundWord(buffer, buffer.Point(), true, count);
-    }
-    else if (c == U'"' || c == U'\'' || c == U'`') {
-        range = inner ? InnerQuote(buffer, buffer.Point(), c) : AroundQuote(buffer, buffer.Point(), c);
-    }
-    else if (c == U'(' || c == U')' || c == U'b') {
-        range = inner ? InnerBracket(buffer, buffer.Point(), U'(', U')') : AroundBracket(buffer, buffer.Point(), U'(', U')');
-    }
-    else if (c == U'[' || c == U']') {
-        range = inner ? InnerBracket(buffer, buffer.Point(), U'[', U']') : AroundBracket(buffer, buffer.Point(), U'[', U']');
-    }
-    else if (c == U'{' || c == U'}' || c == U'B') {
-        range = inner ? InnerBracket(buffer, buffer.Point(), U'{', U'}') : AroundBracket(buffer, buffer.Point(), U'{', U'}');
-    }
-    else if (c == U'<' || c == U'>') {
-        range = inner ? InnerBracket(buffer, buffer.Point(), U'<', U'>') : AroundBracket(buffer, buffer.Point(), U'<', U'>');
-    }
-    else if (c == U'p') {
-        range = inner ? InnerParagraph(buffer, buffer.Point()) : AroundParagraph(buffer, buffer.Point());
-    }
-    else if (c == U's') {
-        range = inner ? InnerSentence(buffer, buffer.Point(), count) : AroundSentence(buffer, buffer.Point(), count);
-    }
-    else if (c == U't') {
-        range = inner ? InnerTag(buffer, buffer.Point()) : AroundTag(buffer, buffer.Point());
-    }
-    else {
-        FinishCommand(buffer);
-        return;
-    }
+    const long        count = EffectiveCount(); // only word/sentence objects honor a count > 1 -- see VimTextObject.h
+    const ObjectRange range = ResolveTextObjectRange(buffer, inner, objectChord.Codepoint, count);
 
     if (!range.found) {
         FinishCommand(buffer);
@@ -937,6 +948,83 @@ void VimEngine::ApplyTextObject(text::Buffer& buffer, bool inner, const KeyChord
         buffer.SetPoint(point);
     }
     FinishCommand(buffer);
+}
+
+void VimEngine::FinishAddSurround(text::Buffer& buffer, std::size_t start, std::size_t end, char32_t to) {
+    std::size_t point = start;
+    if (AddSurround(buffer, start, end, to, point)) {
+        buffer.SetPoint(point);
+    }
+    FinishCommand(buffer);
+}
+
+void VimEngine::BeginSurroundSequence(text::Buffer& buffer, char32_t op) {
+    if (op == U'd') {
+        pendingCharHandler_ = [this](text::Buffer& buf, const KeyChord& c) {
+            if (IsPlainCharChord(c)) {
+                DeleteSurroundAtPoint(buf, c.Codepoint);
+            }
+            FinishCommand(buf);
+        };
+        return;
+    }
+    if (op == U'c') {
+        pendingCharHandler_ = [this](text::Buffer& buf, const KeyChord& fromChord) {
+            if (!IsPlainCharChord(fromChord)) {
+                FinishCommand(buf);
+                return;
+            }
+            const char32_t from = fromChord.Codepoint;
+            pendingCharHandler_ = [this, from](text::Buffer& buf2, const KeyChord& toChord) {
+                if (IsPlainCharChord(toChord)) {
+                    ChangeSurroundAtPoint(buf2, from, toChord.Codepoint);
+                }
+                FinishCommand(buf2);
+            };
+        };
+        return;
+    }
+    // op == U'y' -- "ys{object}{to}" (a text object only, no arbitrary motion -- see this
+    // file's own header comment) or the doubled "yss{to}" current-line form.
+    const long count    = EffectiveCount();
+    pendingCharHandler_ = [this, count](text::Buffer& buf, const KeyChord& c) {
+        if (IsPlainChar(c, U's')) {
+            pendingCharHandler_ = [this](text::Buffer& buf2, const KeyChord& toChord) {
+                if (!IsPlainCharChord(toChord)) {
+                    FinishCommand(buf2);
+                    return;
+                }
+                const std::size_t line  = LineOf(buf2, buf2.Point());
+                const std::size_t start = FirstNonBlankOffset(buf2, line);
+                const std::size_t end   = LineContentEnd(buf2, line);
+                FinishAddSurround(buf2, start, end, toChord.Codepoint);
+            };
+            return;
+        }
+        if (IsPlainCharChord(c) && (c.Codepoint == U'i' || c.Codepoint == U'a')) {
+            const bool inner    = c.Codepoint == U'i';
+            pendingCharHandler_ = [this, inner, count](text::Buffer& buf2, const KeyChord& objChord) {
+                if (!IsPlainCharChord(objChord)) {
+                    FinishCommand(buf2);
+                    return;
+                }
+                const ObjectRange range = ResolveTextObjectRange(buf2, inner, objChord.Codepoint, count);
+                if (!range.found) {
+                    FinishCommand(buf2);
+                    return;
+                }
+                pendingCharHandler_ = [this, range](text::Buffer& buf3, const KeyChord& toChord) {
+                    if (!IsPlainCharChord(toChord)) {
+                        FinishCommand(buf3);
+                        return;
+                    }
+                    FinishAddSurround(buf3, range.start, range.end, toChord.Codepoint);
+                };
+            };
+            return;
+        }
+        FinishCommand(buf);
+    };
 }
 
 void VimEngine::HandleGPrefixed(text::Buffer& buffer, const KeyChord& chord) {
@@ -1067,6 +1155,36 @@ bool VimEngine::HandleVisualSpecific(text::Buffer& buffer, const KeyChord& chord
     if (mode_ == Mode::VisualBlock && IsPlainChar(chord, U'c')) {
         ApplyVisualBlockChange(buffer);
         FinishCommand(buffer);
+        return true;
+    }
+    // S (Editor/Vim/VimSurround.h) -- vim-surround's own visual-mode add-surround. Plain
+    // Visual/VisualLine only: real vim's own 'S' has no meaningful block-mode behavior,
+    // and this engine's default (unmapped) Visual 'S' was already a no-op, so there's no
+    // existing binding here to preserve.
+    if ((mode_ == Mode::Visual || mode_ == Mode::VisualLine) && IsPlainChar(chord, U'S')) {
+        RememberVisualRange(buffer);
+        const std::size_t anchor = visualAnchor_;
+        const std::size_t point  = buffer.Point();
+        std::size_t       start  = std::min(anchor, point);
+        std::size_t       end    = std::max(anchor, point);
+        if (mode_ == Mode::VisualLine) {
+            // Trimmed line content, matching yss's own convention -- wrapping literal
+            // line boundaries would swallow the line's own leading indentation/trailing
+            // newline into the delimiters.
+            start = FirstNonBlankOffset(buffer, LineOf(buffer, start));
+            end   = LineContentEnd(buffer, LineOf(buffer, end));
+        }
+        else if (end < buffer.Content().ByteLength()) {
+            end = text::NextGraphemeBoundary(buffer.Content(), end); // charwise Visual selection is inclusive of its own end
+        }
+        mode_               = Mode::Normal;
+        pendingCharHandler_ = [this, start, end](text::Buffer& buf, const KeyChord& c) {
+            if (!IsPlainCharChord(c)) {
+                FinishCommand(buf);
+                return;
+            }
+            FinishAddSurround(buf, start, end, c.Codepoint);
+        };
         return true;
     }
     if (IsPlainChar(chord, U':')) {

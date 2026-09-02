@@ -116,11 +116,21 @@ class VimEngine {
     void                                      ApplyOperator(text::Buffer& buffer, char32_t op, std::size_t start, std::size_t end, bool linewise);
     void                                      ApplyDoubledOperator(text::Buffer& buffer, char32_t op, long count);
     void                                      ApplyTextObject(text::Buffer& buffer, bool inner, const KeyChord& objectChord);
+    [[nodiscard]] ObjectRange                 ResolveTextObjectRange(const text::Buffer& buffer, bool inner, char32_t objectChar, long count) const;
     void                                      HandleGPrefixed(text::Buffer& buffer, const KeyChord& chord);
     void                                      HandleZPrefixed(text::Buffer& buffer, const KeyChord& chord);
     void                                      HandleCapitalZPrefixed(text::Buffer& buffer, const KeyChord& chord);
     bool                                      HandleVisualSpecific(text::Buffer& buffer, const KeyChord& chord, long count); // true if the chord was consumed
     void                                      HandleAction(text::Buffer& buffer, const KeyChord& chord, long count);
+
+    // ds/cs/ys (Editor/Vim/VimSurround.h) -- entered when 's' arrives with pendingOperator_
+    // already d/c/y (real vim-surround's own "ys"/"ds"/"cs" two-letter mappings, reusing
+    // the ordinary d/c/y operator-pending state this engine already sets up rather than a
+    // new prefix key). Sets up the pendingCharHandler_ chain reading whatever the specific
+    // form still needs (ds: one char; cs: two; ys: a text object, or a doubled 's' for the
+    // current-line form, then one char).
+    void BeginSurroundSequence(text::Buffer& buffer, char32_t op);
+    void FinishAddSurround(text::Buffer& buffer, std::size_t start, std::size_t end, char32_t to);
 
     void ApplyVisualOperator(text::Buffer& buffer, char32_t op);
     void ApplyVisualBlockOperator(text::Buffer& buffer, char32_t op, std::size_t anchor, std::size_t point);

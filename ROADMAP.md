@@ -231,11 +231,6 @@ Notcurses.
       beyond hand-writing `init.janet` — real live-editing already exists for themes
       specifically (`save-theme`/`ned/theme-set`); a general settings surface would
       generalize that. Vague, unscoped.
-- [ ] **No surround editing** (vim-surround/mini.surround/evil-surround: add/change/
-      delete a delimiter pair around a region or text object) — distinct from
-      `AutoPair.cpp`'s type-time pairing; Vim mode's existing
-      `Editor/Vim/VimTextObject.h` text-object parsing is most of what it needs to hang
-      on to.
 
 ### VCS Side Panel
 

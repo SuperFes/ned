@@ -648,6 +648,7 @@ add_library(ned_lib STATIC
         Source/Editor/Vim/VimSettings.cpp
         Source/Editor/Vim/VimMotion.cpp
         Source/Editor/Vim/VimTextObject.cpp
+        Source/Editor/Vim/VimSurround.cpp
         Source/Editor/Vim/VimRegisters.cpp
         Source/Editor/Vim/VimExCommand.cpp
         Source/Editor/Vim/VimEngine.cpp
@@ -1061,6 +1062,7 @@ if (NED_BUILD_TESTS)
             Tests/VcsDiffPreviewTest.cpp
             Tests/VimMotionTest.cpp
             Tests/VimTextObjectTest.cpp
+            Tests/VimSurroundTest.cpp
             Tests/VimRegistersTest.cpp
             Tests/VimExCommandTest.cpp
             Tests/VimEngineTest.cpp
