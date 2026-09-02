@@ -49,13 +49,36 @@
 // passes captureStderr=true; the Transport-taking test constructor never
 // captures (StartStderrReadLoop is a no-op when StderrFd() < 0).
 //
+// async-write-queue follow-up (extended to ACP, for consistency -- no live
+// freeze reported against this client specifically): mirrors LspClient's own
+// writeThread_/EnqueueWrite/PrepareForGracefulShutdown exactly -- see
+// LspClient.h's own header comment for the full reasoning. AcpManager::
+// StopSession sends a best-effort "session/close" request immediately
+// before EndSession destroys the client (mirroring LspManager::Shutdown's
+// own "shutdown"+"exit" courtesy pair) -- confirmed live by a real
+// DapManagerTest.cpp test failure during this transplant (DapClient hit the
+// identical race first): without PrepareForGracefulShutdown, that
+// SendRequest-then-immediately-destroy sequence races the destructor's
+// implicit request_stop() against writeThread_ actually writing the queued
+// frame, silently dropping it more often than not. Four call sites move
+// onto the queue: SendRequest, SendNotification, and DispatchFrame's two
+// response writes (the MethodNotFound error for an unhandled
+// agent-initiated request, and the `respond` continuation's own write --
+// the latter may run synchronously inline or much later, per this class's
+// own RequestHandler contract above; either way it now enqueues instead of
+// writing directly).
+//
 
 #ifndef NED_EDITOR_ACP_ACPCLIENT_H
 #define NED_EDITOR_ACP_ACPCLIENT_H
 
+#include <atomic>
 #include <chrono>
+#include <condition_variable> // condition_variable_any -- see LspClient.h's own comment on writeCv_
+#include <deque>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <thread>
@@ -161,9 +184,23 @@ class AcpClient {
     // been outstanding that long -- see lastActivityAt_/DispatchFrame.
     void ExpireStaleRequests(std::chrono::milliseconds maxAge = ProtocolRequestTimeoutMs());
 
+    // async-write-queue follow-up: see LspClient::PrepareForGracefulShutdown's
+    // identical doc comment -- call this immediately before a best-effort
+    // courtesy request (e.g. AcpManager::StopSession's "session/close") that
+    // must actually reach the wire before this AcpClient is destroyed.
+    void PrepareForGracefulShutdown();
+
   private:
     void StartReadLoop();
     void StartStderrReadLoop(); // lsp-stderr-capture follow-up -- see header comment
+    void StartWriteLoop();      // async-write-queue follow-up -- see header comment
+
+    // async-write-queue follow-up: enqueues frame for writeThread_ to send,
+    // returning immediately -- replaces every direct transport_.WriteMessage
+    // call. All four call sites (SendRequest, SendNotification, and
+    // DispatchFrame's two response writes) run on the main thread only, so
+    // enqueue order is call order is on-wire order.
+    void EnqueueWrite(std::string frame);
 
     // lsp-use-after-free follow-up: see LspClient.h's own header comment on
     // alive_ and this file's header comment above.
@@ -174,6 +211,17 @@ class AcpClient {
     Transport    transport_;
 
     ned::ui::EventLoop& eventLoop_;
+
+    // async-write-queue follow-up: writeThread_ is declared *after*
+    // transport_ (opposite of readThread_/stderrThread_ above) so it
+    // destructs *before* transport_ -- see LspClient.h's own header comment.
+    // writeMutex_/writeCv_/writeQueue_ must outlive writeThread_, so they're
+    // declared ahead of it here.
+    std::mutex                  writeMutex_;
+    std::condition_variable_any writeCv_;
+    std::deque<std::string>     writeQueue_;
+    std::atomic<bool>       drainQueueOnStop_ = false; // see PrepareForGracefulShutdown
+    std::jthread            writeThread_;
 
     struct PendingRequest {
         ResponseCallback                      callback;

@@ -386,7 +386,13 @@ std::string DapManager::StopSession() {
     }
     // Best-effort polite disconnect; teardown below must not depend on the
     // adapter answering (or even still being alive to write to).
+    // async-write-queue follow-up: PrepareForGracefulShutdown must be called
+    // before this SendRequest -- without it, EndSession destroying client_
+    // right below could race the write thread's own stop and silently drop
+    // this "disconnect" frame before it ever reaches the wire (see
+    // DapClient.h's own header comment).
     try {
+        client_->PrepareForGracefulShutdown();
         client_->SendRequest("disconnect", Json{{"terminateDebuggee", true}}, [](bool, const Json&, const std::string&) {});
     }
     catch (const std::exception&) {
