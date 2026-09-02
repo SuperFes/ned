@@ -543,11 +543,8 @@ LSP-against-the-wrong-toolchain prove it's needed in practice, not speculatively
 - [ ] **ACP chat-feel UX backlog** (round 1 + round 2 shipped 2026-08-26/2026-09-01 —
       interrupt/spinner, thought/text split, streaming debounce, collapsed tool-call
       lines, composer word-motion + history, minimize/resize, auto-reconnect to last
-      agent; see `git log --grep=ACP` for detail). Still open, roughly in order of impact:
-      - **Word-wrap in the transcript** — `AcpPanel::FormatTranscript`'s `Kind::AgentText`
-        case only splits on literal newlines the agent sent; a long reply line runs off
-        the panel's fixed width with no way to read the rest (unlike `BufferView`'s own
-        `Mode::wrapLines`).
+      agent, transcript/composer word-wrap; see `git log --grep=ACP` for detail). Still
+      open, roughly in order of impact:
       - **Checkpoint/rewind per turn** — Claude Code's double-Esc `/rewind`. The two
         primitives it needs already exist (`Text::UndoTree`, `Editor/Backup.h`); the open
         design question is what "restore conversation" means against ACP's still-
