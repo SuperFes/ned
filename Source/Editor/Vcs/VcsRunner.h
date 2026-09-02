@@ -143,10 +143,45 @@ class VcsRunner {
     // hunk covers targetLine. Both provider callbacks still only ever run
     // on the main thread, same as everywhere else here.
     void RequestHunkApply(const text::Buffer& buffer, std::size_t targetLine, bool stage, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
+    // VCS side panel follow-up: RequestHunkApply's own path-based sibling,
+    // for a caller with no live Buffer& (VcsPanel's diff preview) -- shares
+    // the same private core as the Buffer-taking overload above (which only
+    // ever used buffer.Path(), nothing content-dependent; the "buffer not
+    // modified" guard that gates the point-driven caller lives in
+    // BufferView::StageOrUnstageHunkAtPoint, not here).
+    void RequestHunkApply(const std::filesystem::path& path, std::size_t targetLine, bool stage, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
     void RequestCommit(const std::string& message, std::function<void(std::string summary)> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
     void RequestBranchList(std::function<void(std::vector<VcsBranchEntry>)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
     void RequestBranchSwitch(const std::string& name, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
     void RequestBranchCreate(const std::string& name, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
+
+    // VCS side panel follow-up: discard/revert/stash/push-pull-fetch/
+    // ahead-behind, same guarantees/conventions as everything above.
+    // RequestRevert/RequestStashPop/RequestStashDrop take a path/stashRef
+    // the same way RequestStage/RequestBranchSwitch already do; the
+    // root-scoped operations (stash list/push, push/pull/fetch,
+    // ahead-behind) take no path, matching RequestStatus/RequestCommit's
+    // own shape.
+    void RequestRevert(const std::filesystem::path& path, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
+    void RequestStashList(std::function<void(std::vector<VcsStashEntry>)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
+    // message may be empty -- see VcsProvider::StashPushArgv's own doc comment.
+    void RequestStashPush(const std::string& message, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
+    void RequestStashPop(const std::string& stashRef, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
+    void RequestStashDrop(const std::string& stashRef, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
+    void RequestPush(std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
+    void RequestPull(std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
+    void RequestFetch(std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
+    void RequestAheadBehind(std::function<void(VcsAheadBehind)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
+
+    // VCS side panel follow-up: raw diff text for one file (unstaged
+    // worktree diff, or -- when staged is true -- the staged/index-vs-HEAD
+    // diff), for the panel's inline diff preview. RequestFullDiff's own "no
+    // parse half, hand back raw stdout" shape, scoped to one path instead
+    // of the whole root -- needed because VcsDiffHunk/ParseDiff is
+    // deliberately header-only (no +/- line bodies, see VcsDiffHunk's own
+    // doc comment in VcsProvider.h); Editor/Vcs/DiffPatch.h's
+    // ParseDiffHunks is what turns this raw text into renderable hunks.
+    void RequestFileDiffText(const std::filesystem::path& path, bool staged, std::function<void(std::string rawDiff)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
 
   private:
     // Spawns argv (keyed by key, to guard against a duplicate concurrent
@@ -157,6 +192,10 @@ class VcsRunner {
                        std::function<void(std::string output, std::optional<int> exitCode)> onDone);
 
     [[nodiscard]] bool IsRunning(const std::string& key) const;
+
+    // Shared core both RequestHunkApply overloads delegate to -- see the
+    // path-based overload's own doc comment above.
+    void RequestHunkApplyForPath(const std::filesystem::path& path, std::size_t targetLine, bool stage, std::function<void()> onSuccess, std::function<void(std::string)> onError);
 
     // The shared resolve-provider/guard/run/report skeleton the
     // vocabulary-completion operations all use (blame/log/diff predate it

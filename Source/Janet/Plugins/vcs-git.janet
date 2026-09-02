@@ -97,6 +97,49 @@
 (defn branch-create-argv [root name]
   ["git" "-C" root "checkout" "-b" name])
 
+## --- VCS side panel: revert/stash/push-pull-fetch/ahead-behind ------------
+##
+## revert-argv targets HEAD explicitly (not `git checkout -- path`, which
+## would restore from the index instead of HEAD for an already-staged file)
+## -- "revert this file's working tree back to HEAD" is meant to discard
+## both staged and unstaged local changes alike, distinct from unstage-argv
+## above (index only). Push/pull/fetch rely on an already-configured
+## upstream tracking branch -- no remote/branch arguments, a documented v1
+## cut (see ROADMAP.md).
+
+(defn revert-argv [path]
+  ["git" "-C" (dirname path) "checkout" "HEAD" "--" path])
+
+(defn stash-list-argv [root]
+  ["git" "-C" root "stash" "list" "--pretty=format:%gd\t%s"])
+
+(defn stash-push-argv [root message]
+  (if (empty? message)
+    ["git" "-C" root "stash" "push"]
+    ["git" "-C" root "stash" "push" "-m" message]))
+
+(defn stash-pop-argv [root stash-ref]
+  ["git" "-C" root "stash" "pop" stash-ref])
+
+(defn stash-drop-argv [root stash-ref]
+  ["git" "-C" root "stash" "drop" stash-ref])
+
+(defn push-argv [root]
+  ["git" "-C" root "push"])
+
+(defn pull-argv [root]
+  ["git" "-C" root "pull"])
+
+(defn fetch-argv [root]
+  ["git" "-C" root "fetch"])
+
+# HEAD...@{u} (triple-dot symmetric-difference) against the upstream --
+# fails with git's own clear error when no upstream is configured, surfaced
+# verbatim through the same RequestAheadBehind onError path every other
+# unsupported/failing operation already uses.
+(defn ahead-behind-argv [root]
+  ["git" "-C" root "rev-list" "--left-right" "--count" "HEAD...@{u}"])
+
 ## --- blame porcelain parsing -------------------------------------------
 ##
 ## `git blame --porcelain` emits, per source line, either a full commit-info
@@ -252,6 +295,30 @@
         (array/push result {:name name :current (string/has-prefix? "* " line)}))))
   result)
 
+## --- stash-list parsing ----------------------------------------------------
+##
+## One "<ref>\t<message>" line per stash entry (stash-list-argv's own
+## --pretty=format), tab-separated the same way ahead-behind's rev-list
+## output below is -- one consistent separator convention across both new
+## parsers.
+
+(defn parse-stash-list [stdout]
+  (def result @[])
+  (each line (string/split "\n" stdout)
+    (unless (empty? line)
+      (def parts (string/split "\t" line))
+      (array/push result {:ref (get parts 0 "") :message (get parts 1 "")})))
+  result)
+
+## --- ahead/behind parsing ---------------------------------------------------
+##
+## `git rev-list --left-right --count HEAD...@{u}` emits one line,
+## "<ahead>\t<behind>" (HEAD is the left side of the symmetric difference).
+
+(defn parse-ahead-behind [stdout]
+  (def parts (string/split "\t" (string/trim stdout)))
+  {:ahead (scan-number (get parts 0 "0")) :behind (scan-number (get parts 1 "0"))})
+
 (ned/vcs-register-provider "git"
   {:detect detect
    :blame-argv blame-argv
@@ -272,4 +339,15 @@
    :branch-list-argv branch-list-argv
    :parse-branch-list parse-branch-list
    :branch-switch-argv branch-switch-argv
-   :branch-create-argv branch-create-argv})
+   :branch-create-argv branch-create-argv
+   :revert-argv revert-argv
+   :stash-list-argv stash-list-argv
+   :parse-stash-list parse-stash-list
+   :stash-push-argv stash-push-argv
+   :stash-pop-argv stash-pop-argv
+   :stash-drop-argv stash-drop-argv
+   :push-argv push-argv
+   :pull-argv pull-argv
+   :fetch-argv fetch-argv
+   :ahead-behind-argv ahead-behind-argv
+   :parse-ahead-behind parse-ahead-behind})

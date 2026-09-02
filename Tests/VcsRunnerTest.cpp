@@ -184,6 +184,35 @@ TEST_CASE("VcsRunner root-scoped requests report an error when no provider is re
     runner.RequestFullDiff([](std::string) { FAIL("onComplete should not be called"); },
                            [&error](std::string message) { error = message; });
     REQUIRE_FALSE(error.empty());
+
+    // VCS side panel follow-up: revert/stash/push-pull-fetch/ahead-behind.
+    error.clear();
+    runner.RequestStashList(
+        [](std::vector<ned::editor::vcs::VcsStashEntry>) { FAIL("onComplete should not be called"); },
+        [&error](std::string message) { error = message; });
+    REQUIRE_FALSE(error.empty());
+
+    error.clear();
+    runner.RequestStashPush(
+        "a message", [] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
+    REQUIRE_FALSE(error.empty());
+
+    error.clear();
+    runner.RequestPush([] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
+    REQUIRE_FALSE(error.empty());
+
+    error.clear();
+    runner.RequestPull([] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
+    REQUIRE_FALSE(error.empty());
+
+    error.clear();
+    runner.RequestFetch([] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
+    REQUIRE_FALSE(error.empty());
+
+    error.clear();
+    runner.RequestAheadBehind([](ned::editor::vcs::VcsAheadBehind) { FAIL("onComplete should not be called"); },
+                              [&error](std::string message) { error = message; });
+    REQUIRE_FALSE(error.empty());
 }
 
 TEST_CASE("VcsRunner surfaces the provider's own 'not supported' answer for unimplemented operations", "[VcsRunner]") {
@@ -236,6 +265,63 @@ TEST_CASE("VcsRunner surfaces the provider's own 'not supported' answer for unim
     runner.RequestFullDiff([](std::string) { FAIL("onComplete should not be called"); },
                            [&error](std::string message) { error = message; });
     REQUIRE(error == "full diff not supported by this provider");
+
+    // VCS side panel follow-up: revert/stash/push-pull-fetch/ahead-behind.
+    error.clear();
+    runner.RequestRevert(
+        "/tmp/ned-vcs-runner-test-file.txt", [] { FAIL("onSuccess should not be called"); },
+        [&error](std::string message) { error = message; });
+    REQUIRE(error == "revert not supported by this provider");
+
+    error.clear();
+    runner.RequestStashList(
+        [](std::vector<ned::editor::vcs::VcsStashEntry>) { FAIL("onComplete should not be called"); },
+        [&error](std::string message) { error = message; });
+    REQUIRE(error == "stash listing not supported by this provider");
+
+    error.clear();
+    runner.RequestStashPush(
+        "", [] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
+    REQUIRE(error == "stash push not supported by this provider");
+
+    error.clear();
+    runner.RequestStashPop(
+        "stash@{0}", [] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
+    REQUIRE(error == "stash pop not supported by this provider");
+
+    error.clear();
+    runner.RequestStashDrop(
+        "stash@{0}", [] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
+    REQUIRE(error == "stash drop not supported by this provider");
+
+    error.clear();
+    runner.RequestPush([] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
+    REQUIRE(error == "push not supported by this provider");
+
+    error.clear();
+    runner.RequestPull([] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
+    REQUIRE(error == "pull not supported by this provider");
+
+    error.clear();
+    runner.RequestFetch([] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
+    REQUIRE(error == "fetch not supported by this provider");
+
+    error.clear();
+    runner.RequestAheadBehind([](ned::editor::vcs::VcsAheadBehind) { FAIL("onComplete should not be called"); },
+                              [&error](std::string message) { error = message; });
+    REQUIRE(error == "ahead/behind not supported by this provider");
+
+    // staged=true (not false): FakeProvider does implement DiffArgv (it
+    // predates the vocabulary-completion split, "blame/log/diff only" per
+    // its own comment above) -- staged=false would actually spawn a real
+    // "sleep 5" subprocess instead of erroring. StagedDiffArgv is a
+    // vocabulary-completion-era method FakeProvider doesn't override, same
+    // distinction the RequestHunkApply test above already relies on.
+    error.clear();
+    runner.RequestFileDiffText(
+        "/tmp/ned-vcs-runner-test-file.txt", /*staged=*/true, [](std::string) { FAIL("onComplete should not be called"); },
+        [&error](std::string message) { error = message; });
+    REQUIRE(error == "staged diff not supported by this provider");
 }
 
 namespace {
@@ -328,6 +414,25 @@ TEST_CASE("VcsRunner::RequestHunkApply surfaces a provider without the staged-di
         buffer, 1, /*stage=*/true, [] { FAIL("onSuccess should not be called"); },
         [&secondError](std::string message) { secondError = message; });
     REQUIRE_FALSE(secondError.empty());
+}
+
+// VCS side panel follow-up: the path-based RequestHunkApply overload (no
+// live Buffer&, VcsPanel's own diff preview) shares RequestHunkApplyForPath
+// with the Buffer-taking overload above -- same "surfaces a provider
+// without the staged-diff vocabulary" behavior confirms both really do
+// share one core rather than having silently diverged.
+TEST_CASE("VcsRunner::RequestHunkApply's path-based overload surfaces the same provider errors", "[VcsRunner]") {
+    RegistryResetGuard guard;
+    RegisterProvider("fake", std::make_unique<FakeProvider>()); // no StagedDiffArgv override
+
+    ned::ui::EventLoop eventLoop;
+    VcsRunner          runner(eventLoop);
+
+    std::string error;
+    runner.RequestHunkApply(
+        std::filesystem::path("/tmp/ned-vcs-runner-test-file.txt"), 1, /*stage=*/false,
+        [] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
+    REQUIRE(error == "staged diff not supported by this provider");
 }
 
 TEST_CASE("VcsCommitMessagePath is the temp dir plus kVcsCommitMessageFilename", "[Vcs]") {

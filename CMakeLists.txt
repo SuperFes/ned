@@ -700,6 +700,7 @@ add_library(ned_lib STATIC
         Source/UI/ScrollArrowButton.cpp
         Source/UI/ProjectSidebar.cpp
         Source/UI/VcsPanel.cpp
+        Source/UI/VcsDiffPreview.cpp
         Source/UI/ModeLine.cpp
         Source/UI/EchoArea.cpp
         Source/UI/Theme.cpp
@@ -1026,6 +1027,7 @@ if (NED_BUILD_TESTS)
             Tests/BorderTest.cpp
             Tests/ProjectSidebarTest.cpp
             Tests/VcsPanelTest.cpp
+            Tests/VcsDiffPreviewTest.cpp
             Tests/VimMotionTest.cpp
             Tests/VimTextObjectTest.cpp
             Tests/VimRegistersTest.cpp

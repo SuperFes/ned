@@ -320,12 +320,16 @@ if the plain-indent tree reads as too flat in practice.
       marked selection if non-empty, else just the focused row — `VcsRunner::
       RequestStage`/`RequestUnstage` already take one path at a time, so this loops one
       call per target rather than needing a new batch primitive.
-- [ ] **Inline diff preview on selection** — clicking/arrowing to a row shows that file's
-      hunks in a preview pane (split panel or an overlay), reusing `VcsRunner::RequestDiff`
-      + `DiffPatch.h`'s hunk-slicing rather than only jumping straight into the buffer.
-      Hunk-level stage/unstage from the preview (`vcs-stage-hunk`/`-unstage-hunk`'s logic,
-      currently buffer-point-driven only) would need to accept an explicit hunk instead of
-      "whichever covers point." Not part of the shipped core slice.
+- [x] **Inline diff preview on selection** — `UI/VcsDiffPreview.h/.cpp`, a non-focusable
+      `OverlayHost` bottom drawer (`TerminalPanel`/`AcpPanel`'s own geometry, shown/hidden
+      automatically by `VcsPanel::SetOnSelectionChanged` rather than a toggle keybinding).
+      Uses the new `VcsRunner::RequestFileDiffText` (raw diff text, scoped to one file --
+      `VcsDiffHunk`/`ParseDiff` is deliberately header-only, so the *raw* text is what
+      `DiffPatch.h`'s `ParseDiffHunks` needs) + a path-based `VcsRunner::RequestHunkApply`
+      overload (shares one core with the existing point-driven `Buffer`-taking overload).
+      Each hunk header renders a `[stage]`/`[unstage]` click affordance; clicking it calls
+      `RequestHunkApply` directly and re-fetches the same file's diff to stay live.
+      tmux-verified end to end (real SGR mouse click, confirmed against real `git diff`).
 - [x] **Commit compose inline** — `c` fires `BufferView::RequestVcsAction(Commit)`
       (routed via `WindowManager::RequestVcsPanelAction` to whichever pane has focus),
       which just calls the existing `BeginVcsCommitMessage()` unchanged — no new commit
@@ -335,32 +339,46 @@ if the plain-indent tree reads as too flat in practice.
       `BeginVcsCreateBranchPrompt()`; the checked-out branch (from `RequestBranchList`'s
       `current` entry) renders in the panel's border title rather than a dedicated content
       row, `ProjectSidebar`'s own header-row precedent.
-- [ ] **Discard/revert changes** — no `VcsProvider` vocabulary exists yet for "revert this
-      file's working-tree changes to HEAD" (distinct from unstage, which only moves the
-      index). Needs a new `RevertArgv`/provider method (backend gap, not just UI) plus a
-      confirm prompt before running it — this is the one destructive action in the whole
-      panel and should get real "are you sure" friction, unlike stage/unstage.
-- [ ] **Stash support** — no `VcsProvider` vocabulary for stash list/push/pop/drop either;
-      would need the same argv-builder/output-parser split every existing operation uses,
-      plus a stash-list section in the panel akin to the staged/unstaged/untracked ones.
-      Backend gap first, panel UI second.
-- [ ] **Push/pull/fetch** — also absent from `VcsProvider` today (the vocabulary stops at
-      local commit/branch operations). Worth a header button/status
-      (ahead/behind count, if the provider can report it) once the vocabulary exists;
-      lower priority than stage/commit/branch since `C-c v` commands or the terminal panel
-      already cover it in the meantime.
-- [ ] **Ahead/behind + dirty-count summary** — a small header line (e.g. "3 staged, 2
-      unstaged, 1 untracked · ↑2 ↓0") — cheap once status + push/pull vocabulary exist,
-      gives the panel a reason to stay open even when collapsed-adjacent.
-- [ ] **Conflict-file affordance** — surface files with real `<<<<<<<` conflict markers
-      (`Text/ThreeWayMerge.h`'s `HasConflictMarkers`, already used by `save-buffer`'s
-      guard) as a distinct panel state/section rather than just another modified file —
-      jump-to-first-marker on click.
+- [x] **Discard/revert changes** — `VcsProvider::RevertArgv` (`git checkout HEAD -- path`,
+      explicitly targeting HEAD rather than the index so a staged-and-further-edited file
+      discards both halves at once). `x` on a file row enters a self-contained confirm
+      state (this widget has no `MinibufferPrompt` to borrow) rendered in place of the
+      border title; only a bare `y`/`Y` confirms, everything else — including Enter —
+      cancels, the one destructive action in the panel getting real "are you sure"
+      friction unlike stage/unstage.
+- [x] **Stash support** — `VcsProvider::StashListArgv`/`ParseStashList`/`StashPushArgv`/
+      `StashPopArgv`/`StashDropArgv` (+ `vcs-git.janet`'s own argv/parse implementations)
+      back a fourth panel section, "Stashes (N)" — unlike the three working-tree
+      sections, shown only when non-empty. `z` (Magit's own real-world stash mnemonic)
+      pushes the whole working tree from anywhere in the panel; Enter/click on a stash
+      row pops it, `d` drops it.
+- [x] **Push/pull/fetch** — `VcsProvider::PushArgv`/`PullArgv`/`FetchArgv` (bare, relying
+      on an already-configured upstream tracking branch, no `--set-upstream` vocabulary)
+      + `vcs-git.janet`'s own implementations. `f`/`F`/`P` (Magit's own real-world
+      mnemonics) fire fetch/pull/push from anywhere in the panel, no confirm friction.
+- [x] **Ahead/behind + dirty-count summary** — `VcsProvider::AheadBehindArgv`/
+      `ParseAheadBehind` (`git rev-list --left-right --count HEAD...@{u}`) refreshed on
+      the same throttled cycle as branch/status; the panel's border title gains
+      `↑N ↓M` when known and non-zero (nothing shown for "up to date" or "no upstream
+      configured", to keep the common case uncluttered) alongside the existing branch/
+      staged-count text.
+- [x] **Conflict-file affordance** — `VcsPanel::RefreshConflictedPaths` (piggybacked on
+      the same throttled `RefreshStatus` cycle) reads each staged/unstaged entry's
+      on-disk content and checks `Text/ThreeWayMerge.h`'s `HasConflictMarkers` (already
+      used by `save-buffer`'s guard); a hit appends a `⚠` glyph to the row (not prefixed,
+      to keep the checkbox-click column math undisturbed) and Enter/click jumps point to
+      the first line-start `<<<<<<<` marker.
 
-Remaining scope note: everything still open above (diff preview, revert/stash/push-pull,
-ahead/behind, conflict-file affordance) is a genuinely separate, smaller backend slice
-extending `VcsProvider`'s vocabulary and `vcs-git.janet`'s callback table to match, not
-blocked on anything about the now-shipped panel itself.
+All items shipped 2026-09-01. One live bug found and fixed along the way, worth noting
+for anyone adding a third `VcsRunner::RequestStatus` poller in the future:
+`ProjectSidebar` and `VcsPanel` each independently poll status on their own timer (500ms/
+1000ms) against the identical `"status:"+root` key `VcsRunner` single-flights: since both
+paint from the same keypress-triggered frame and `ProjectSidebar` paints first in
+`main.cpp`'s composition, it won the race almost every time, permanently starving
+`VcsPanel`'s own throttled refresh (only succeeding via a `force=true` call from another
+operation's `onSuccess`). Fixed by having `VcsPanel::RefreshStatus` advance its own
+throttle timestamp only on real success, not preemptively — a lost race now retries on
+the very next frame instead of waiting out a whole new window.
 
 ### Jupyter Notebooks
 

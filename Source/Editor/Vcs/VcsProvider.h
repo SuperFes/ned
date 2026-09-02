@@ -19,6 +19,7 @@
 #ifndef NED_EDITOR_VCS_VCSPROVIDER_H
 #define NED_EDITOR_VCS_VCSPROVIDER_H
 
+#include <cstddef>
 #include <filesystem>
 #include <stdexcept>
 #include <string>
@@ -85,6 +86,28 @@ struct VcsStatusEntry {
 struct VcsBranchEntry {
     std::string name;
     bool        current;
+};
+
+// VCS side panel follow-up: one stash entry, as returned by
+// VcsProvider::ParseStashList. ref is the VCS's own addressable form (git's
+// "stash@{0}"), kept verbatim like every other *Entry ref/state field in
+// this header; message is whatever summary text the VCS attaches (git's own
+// "WIP on <branch>: <subject>" by default, or a custom message if one was
+// given to StashPushArgv).
+struct VcsStashEntry {
+    std::string ref;
+    std::string message;
+};
+
+// VCS side panel follow-up: ahead/behind counts relative to the current
+// branch's upstream, as returned by VcsProvider::ParseAheadBehind. Both 0
+// means up to date; a provider/repo with no upstream configured reports
+// this by throwing from AheadBehindArgv/failing the spawned process (the
+// same "not supported"/failed-command surface every other operation here
+// uses), not via a special "no upstream" state in this struct.
+struct VcsAheadBehind {
+    std::size_t ahead;
+    std::size_t behind;
 };
 
 // A VCS-agnostic provider: translates the common vocabulary below into
@@ -241,6 +264,75 @@ class VcsProvider {
         (void)root;
         (void)name;
         throw std::runtime_error("branch creation not supported by this provider");
+    }
+
+    // VCS side panel follow-up: discard/revert/stash/push-pull-fetch/
+    // ahead-behind, the vocabulary the panel's remaining ROADMAP items need.
+    // Same default-throwing, argv-builder(+optional parse-half) shape as
+    // every operation above.
+
+    // Reverts path's own working-tree changes back to HEAD (distinct from
+    // UnstageArgv, which only moves the index) -- exit code only, no parse
+    // half. The one destructive operation in this vocabulary; the caller
+    // (VcsPanel) is expected to confirm before calling VcsRunner::
+    // RequestRevert, not this method itself.
+    [[nodiscard]] virtual VcsCommandSpec RevertArgv(const std::filesystem::path& path) const {
+        (void)path;
+        throw std::runtime_error("revert not supported by this provider");
+    }
+
+    [[nodiscard]] virtual VcsCommandSpec StashListArgv(const std::filesystem::path& root) const {
+        (void)root;
+        throw std::runtime_error("stash listing not supported by this provider");
+    }
+    [[nodiscard]] virtual std::vector<VcsStashEntry> ParseStashList(const std::string& stdout_) const {
+        (void)stdout_;
+        throw std::runtime_error("stash listing not supported by this provider");
+    }
+    // message may be empty -- an empty message means "use the VCS's own
+    // default stash message" (git: "WIP on <branch>: ..."), not a request to
+    // pass a literal empty string through to the underlying command.
+    [[nodiscard]] virtual VcsCommandSpec StashPushArgv(const std::filesystem::path& root, const std::string& message) const {
+        (void)root;
+        (void)message;
+        throw std::runtime_error("stash push not supported by this provider");
+    }
+    [[nodiscard]] virtual VcsCommandSpec StashPopArgv(const std::filesystem::path& root, const std::string& stashRef) const {
+        (void)root;
+        (void)stashRef;
+        throw std::runtime_error("stash pop not supported by this provider");
+    }
+    [[nodiscard]] virtual VcsCommandSpec StashDropArgv(const std::filesystem::path& root, const std::string& stashRef) const {
+        (void)root;
+        (void)stashRef;
+        throw std::runtime_error("stash drop not supported by this provider");
+    }
+
+    // Push/pull/fetch rely on an already-configured upstream tracking
+    // branch -- no --set-upstream/remote-selection vocabulary here (a
+    // documented v1 cut, see ROADMAP.md); a repo with no upstream just
+    // fails via the same exit-code/stderr surface every other operation
+    // reports failure through.
+    [[nodiscard]] virtual VcsCommandSpec PushArgv(const std::filesystem::path& root) const {
+        (void)root;
+        throw std::runtime_error("push not supported by this provider");
+    }
+    [[nodiscard]] virtual VcsCommandSpec PullArgv(const std::filesystem::path& root) const {
+        (void)root;
+        throw std::runtime_error("pull not supported by this provider");
+    }
+    [[nodiscard]] virtual VcsCommandSpec FetchArgv(const std::filesystem::path& root) const {
+        (void)root;
+        throw std::runtime_error("fetch not supported by this provider");
+    }
+
+    [[nodiscard]] virtual VcsCommandSpec AheadBehindArgv(const std::filesystem::path& root) const {
+        (void)root;
+        throw std::runtime_error("ahead/behind not supported by this provider");
+    }
+    [[nodiscard]] virtual VcsAheadBehind ParseAheadBehind(const std::string& stdout_) const {
+        (void)stdout_;
+        throw std::runtime_error("ahead/behind not supported by this provider");
     }
 };
 

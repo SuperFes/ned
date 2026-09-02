@@ -86,6 +86,7 @@
 #include "UI/ListPopup.h"
 #include "UI/Overlay.h"
 #include "UI/ProjectSidebar.h"
+#include "UI/VcsDiffPreview.h"
 #include "UI/VcsPanel.h"
 #include "UI/TabBar.h"
 #include "UI/TerminalColorProbe.h"
@@ -1217,6 +1218,57 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     // own header comment for the three hooks below and why keyboard needs
     // none). Inert until something is Show()n.
     OverlayHost overlays;
+
+    // Inline diff preview (VCS side panel follow-up): a bottom-docked,
+    // non-focusable overlay, TerminalPanel's own geometry but smaller and
+    // shown/hidden by VcsPanel's own selection rather than a toggle
+    // keybinding -- see UI/VcsDiffPreview.h's own header comment.
+    ned::ui::VcsDiffPreview vcsDiffPreview(theme);
+    overlays.Add(vcsDiffPreview, [](Size size) {
+        const int yMax   = std::max(1, size.height - 2); // above the echo area row
+        const int height = std::max(6, size.height * 30 / 100);
+        return Box{.x_min = 0, .x_max = std::max(0, size.width - 1), .y_min = std::max(1, yMax - height + 1), .y_max = yMax};
+    });
+    // Both directions of a hunk-apply (staging out of the worktree diff,
+    // unstaging out of the staged diff) re-fetch the same (path, staged)
+    // view afterward -- the preview would otherwise go stale the moment a
+    // hunk it just showed no longer exists on that side, since VcsPanel's
+    // own selection (what normally drives a re-fetch) hasn't moved.
+    vcsDiffPreview.SetOnHunkStageToggle(
+        [&vcsRunner, &vcsDiffPreview, panel = vcsPanel.get()](const std::filesystem::path& path, std::size_t newStart, bool stage) {
+            vcsRunner.RequestHunkApply(
+                path, newStart, stage,
+                [&vcsRunner, &vcsDiffPreview, panel, path, stage] {
+                    panel->ForceRefresh();
+                    vcsRunner.RequestFileDiffText(
+                        path, !stage,
+                        [&vcsDiffPreview, path, stage](std::string rawDiff) {
+                            vcsDiffPreview.SetModel(ned::ui::VcsDiffPreviewModel{
+                                path, !stage, ned::editor::vcs::ParseDiffHunks(rawDiff)});
+                        },
+                        [&vcsDiffPreview](const std::string&) { vcsDiffPreview.SetModel(std::nullopt); });
+                },
+                [](const std::string&) {});
+        });
+    vcsPanel->SetOnSelectionChanged(
+        [&overlays, &vcsRunner, &vcsDiffPreview](std::optional<std::filesystem::path> path, bool staged) {
+            if (!path) {
+                overlays.Hide(vcsDiffPreview);
+                vcsDiffPreview.SetModel(std::nullopt);
+                return;
+            }
+            vcsRunner.RequestFileDiffText(
+                *path, staged,
+                [&overlays, &vcsDiffPreview, path = *path, staged](std::string rawDiff) {
+                    vcsDiffPreview.SetModel(
+                        ned::ui::VcsDiffPreviewModel{path, staged, ned::editor::vcs::ParseDiffHunks(rawDiff)});
+                    overlays.Show(vcsDiffPreview);
+                },
+                [&overlays, &vcsDiffPreview](const std::string&) {
+                    vcsDiffPreview.SetModel(std::nullopt);
+                    overlays.Hide(vcsDiffPreview);
+                });
+        });
 
     // The built-in terminal drawer: full width, bottom
     // TerminalHeightPercent() of the screen, floating just above the echo

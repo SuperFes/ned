@@ -22,7 +22,10 @@ namespace ned::janet {
 // :parse-status, :stage-argv, :unstage-argv,
 // :staged-diff-argv, :stage-patch-argv, :unstage-patch-argv -- hunk-staging
 // follow-up -- :commit-argv, :branch-list-argv, :parse-branch-list,
-// :branch-switch-argv, :branch-create-argv) -- vocabulary-completion
+// :branch-switch-argv, :branch-create-argv, :revert-argv, :stash-list-argv,
+// :parse-stash-list, :stash-push-argv, :stash-pop-argv, :stash-drop-argv,
+// :push-argv, :pull-argv, :fetch-argv, :ahead-behind-argv,
+// :parse-ahead-behind -- VCS side panel follow-up) -- vocabulary-completion
 // follow-up, replacing the
 // original 7-positional-argument form outright once the vocabulary grew
 // past what positional arguments could carry legibly. Only :detect is
@@ -88,6 +91,25 @@ class JanetVcsProvider : public editor::vcs::VcsProvider {
                                                                const std::string&           name) const override;
     [[nodiscard]] editor::vcs::VcsCommandSpec BranchCreateArgv(const std::filesystem::path& root,
                                                                const std::string&           name) const override;
+
+    // VCS side panel follow-up: revert/stash/push-pull-fetch/ahead-behind,
+    // the same optional (falls through to VcsProvider's own default-throw
+    // when the plugin didn't supply the callback) shape as every method
+    // above.
+    [[nodiscard]] editor::vcs::VcsCommandSpec RevertArgv(const std::filesystem::path& path) const override;
+
+    [[nodiscard]] editor::vcs::VcsCommandSpec             StashListArgv(const std::filesystem::path& root) const override;
+    [[nodiscard]] std::vector<editor::vcs::VcsStashEntry> ParseStashList(const std::string& stdout_) const override;
+    [[nodiscard]] editor::vcs::VcsCommandSpec StashPushArgv(const std::filesystem::path& root, const std::string& message) const override;
+    [[nodiscard]] editor::vcs::VcsCommandSpec StashPopArgv(const std::filesystem::path& root, const std::string& stashRef) const override;
+    [[nodiscard]] editor::vcs::VcsCommandSpec StashDropArgv(const std::filesystem::path& root, const std::string& stashRef) const override;
+
+    [[nodiscard]] editor::vcs::VcsCommandSpec PushArgv(const std::filesystem::path& root) const override;
+    [[nodiscard]] editor::vcs::VcsCommandSpec PullArgv(const std::filesystem::path& root) const override;
+    [[nodiscard]] editor::vcs::VcsCommandSpec FetchArgv(const std::filesystem::path& root) const override;
+
+    [[nodiscard]] editor::vcs::VcsCommandSpec  AheadBehindArgv(const std::filesystem::path& root) const override;
+    [[nodiscard]] editor::vcs::VcsAheadBehind ParseAheadBehind(const std::string& stdout_) const override;
 
   private:
     // The generated janet_def name for callback key ("detect",

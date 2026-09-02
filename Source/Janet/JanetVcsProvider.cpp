@@ -33,6 +33,17 @@ namespace {
         "parse-branch-list",
         "branch-switch-argv",
         "branch-create-argv",
+        "revert-argv",
+        "stash-list-argv",
+        "parse-stash-list",
+        "stash-push-argv",
+        "stash-pop-argv",
+        "stash-drop-argv",
+        "push-argv",
+        "pull-argv",
+        "fetch-argv",
+        "ahead-behind-argv",
+        "parse-ahead-behind",
     };
 
     // Reads keyword key from entry (a struct {} or table @{}, either is a
@@ -157,6 +168,39 @@ namespace {
             });
         }
         return entries;
+    }
+
+    std::vector<editor::vcs::VcsStashEntry> ParseStashEntries(Janet result) {
+        const Janet* items = nullptr;
+        std::int32_t count = 0;
+        if (!janet_indexed_view(result, &items, &count)) {
+            throw std::runtime_error("ned: expected a vcs plugin parse-stash-list function to return an array of tables");
+        }
+        std::vector<editor::vcs::VcsStashEntry> entries;
+        entries.reserve(static_cast<std::size_t>(count));
+        for (std::int32_t i = 0; i < count; ++i) {
+            if (!janet_checktype(items[i], JANET_TABLE) && !janet_checktype(items[i], JANET_STRUCT)) {
+                continue;
+            }
+            entries.push_back(editor::vcs::VcsStashEntry{
+                StringField(items[i], "ref"),
+                StringField(items[i], "message"),
+            });
+        }
+        return entries;
+    }
+
+    // Unlike every ParseX above (which return an array of entries), a
+    // plugin's parse-ahead-behind returns one table directly -- there's
+    // only ever one ahead/behind fact for the current branch.
+    editor::vcs::VcsAheadBehind ParseAheadBehindResult(Janet result) {
+        if (!janet_checktype(result, JANET_TABLE) && !janet_checktype(result, JANET_STRUCT)) {
+            throw std::runtime_error("ned: expected a vcs plugin parse-ahead-behind function to return a table");
+        }
+        return editor::vcs::VcsAheadBehind{
+            NumberField(result, "ahead"),
+            NumberField(result, "behind"),
+        };
     }
 
 } // namespace
@@ -380,6 +424,94 @@ editor::vcs::VcsCommandSpec JanetVcsProvider::BranchCreateArgv(const std::filesy
         return VcsProvider::BranchCreateArgv(root, name);
     }
     return ParseCommandSpec(CallWithStrings(*fn, root.string(), name));
+}
+
+editor::vcs::VcsCommandSpec JanetVcsProvider::RevertArgv(const std::filesystem::path& path) const {
+    const std::string* fn = InternalName("revert-argv");
+    if (!fn) {
+        return VcsProvider::RevertArgv(path);
+    }
+    return ParseCommandSpec(CallWithString(*fn, path.string()));
+}
+
+editor::vcs::VcsCommandSpec JanetVcsProvider::StashListArgv(const std::filesystem::path& root) const {
+    const std::string* fn = InternalName("stash-list-argv");
+    if (!fn) {
+        return VcsProvider::StashListArgv(root);
+    }
+    return ParseCommandSpec(CallWithString(*fn, root.string()));
+}
+
+std::vector<editor::vcs::VcsStashEntry> JanetVcsProvider::ParseStashList(const std::string& stdout_) const {
+    const std::string* fn = InternalName("parse-stash-list");
+    if (!fn) {
+        return VcsProvider::ParseStashList(stdout_);
+    }
+    return ParseStashEntries(CallWithString(*fn, stdout_));
+}
+
+editor::vcs::VcsCommandSpec JanetVcsProvider::StashPushArgv(const std::filesystem::path& root, const std::string& message) const {
+    const std::string* fn = InternalName("stash-push-argv");
+    if (!fn) {
+        return VcsProvider::StashPushArgv(root, message);
+    }
+    return ParseCommandSpec(CallWithStrings(*fn, root.string(), message));
+}
+
+editor::vcs::VcsCommandSpec JanetVcsProvider::StashPopArgv(const std::filesystem::path& root, const std::string& stashRef) const {
+    const std::string* fn = InternalName("stash-pop-argv");
+    if (!fn) {
+        return VcsProvider::StashPopArgv(root, stashRef);
+    }
+    return ParseCommandSpec(CallWithStrings(*fn, root.string(), stashRef));
+}
+
+editor::vcs::VcsCommandSpec JanetVcsProvider::StashDropArgv(const std::filesystem::path& root, const std::string& stashRef) const {
+    const std::string* fn = InternalName("stash-drop-argv");
+    if (!fn) {
+        return VcsProvider::StashDropArgv(root, stashRef);
+    }
+    return ParseCommandSpec(CallWithStrings(*fn, root.string(), stashRef));
+}
+
+editor::vcs::VcsCommandSpec JanetVcsProvider::PushArgv(const std::filesystem::path& root) const {
+    const std::string* fn = InternalName("push-argv");
+    if (!fn) {
+        return VcsProvider::PushArgv(root);
+    }
+    return ParseCommandSpec(CallWithString(*fn, root.string()));
+}
+
+editor::vcs::VcsCommandSpec JanetVcsProvider::PullArgv(const std::filesystem::path& root) const {
+    const std::string* fn = InternalName("pull-argv");
+    if (!fn) {
+        return VcsProvider::PullArgv(root);
+    }
+    return ParseCommandSpec(CallWithString(*fn, root.string()));
+}
+
+editor::vcs::VcsCommandSpec JanetVcsProvider::FetchArgv(const std::filesystem::path& root) const {
+    const std::string* fn = InternalName("fetch-argv");
+    if (!fn) {
+        return VcsProvider::FetchArgv(root);
+    }
+    return ParseCommandSpec(CallWithString(*fn, root.string()));
+}
+
+editor::vcs::VcsCommandSpec JanetVcsProvider::AheadBehindArgv(const std::filesystem::path& root) const {
+    const std::string* fn = InternalName("ahead-behind-argv");
+    if (!fn) {
+        return VcsProvider::AheadBehindArgv(root);
+    }
+    return ParseCommandSpec(CallWithString(*fn, root.string()));
+}
+
+editor::vcs::VcsAheadBehind JanetVcsProvider::ParseAheadBehind(const std::string& stdout_) const {
+    const std::string* fn = InternalName("parse-ahead-behind");
+    if (!fn) {
+        return VcsProvider::ParseAheadBehind(stdout_);
+    }
+    return ParseAheadBehindResult(CallWithString(*fn, stdout_));
 }
 
 } // namespace ned::janet

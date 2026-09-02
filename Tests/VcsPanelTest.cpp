@@ -321,6 +321,199 @@ TEST_CASE("'c'/'w'/'n' fire SetOnAction with Commit/SwitchBranch/CreateBranch an
     std::filesystem::remove_all(dir);
 }
 
+TEST_CASE("A file with real conflict markers gets a warning glyph and Enter jumps to the first marker", "[VcsPanel]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_vcs_panel_test_conflict";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    {
+        std::ofstream out(dir / "a.txt");
+        out << "line one\n<<<<<<< buffer\nours\n=======\ntheirs\n>>>>>>> disk\nline two\n";
+    }
+    { std::ofstream(dir / "clean.txt") << "no conflict here\n"; }
+    const CurrentPathGuard cwdGuard(dir);
+
+    ned::text::BufferList list;
+    ned::text::Buffer&    scratch = list.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    std::string           statusMessage;
+    ned::ui::VcsPanel      panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    PlacePanel(panel, 30, 12);
+    panel.DispatchVcsStatusForTesting({
+        {" M", "a.txt"    },
+        {" M", "clean.txt"},
+    });
+    // DispatchVcsStatusForTesting only builds sections_ (ProjectSidebar's
+    // own DispatchVcsStatusForTesting precedent bypasses VcsRunner
+    // entirely) -- the conflict scan itself is a real disk read driven by
+    // RefreshStatus's success callback, so exercise it directly here the
+    // same way.
+    panel.RefreshConflictedPathsForTesting();
+
+    ned::ui::Screen screen = ned::ui::Screen(30, 12);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 29, .y_min = 0, .y_max = 11});
+    panel.Paint(canvas);
+
+    // Every section header renders regardless of emptiness (BuildRows'
+    // own convention): row1 "Staged (0)", row2 "Unstaged (2)", row3
+    // a.txt, row4 clean.txt, row5 "Untracked (0)".
+    REQUIRE(RowText(screen, 3, 30).find("⚠") != std::string::npos); // a.txt
+    REQUIRE(RowText(screen, 4, 30).find("⚠") == std::string::npos); // clean.txt
+
+    panel.TakeKeyboardFocus();
+    panel.OnEvent(ned::ui::test::ArrowDown()); // "Unstaged (2)" header
+    panel.OnEvent(ned::ui::test::ArrowDown()); // a.txt
+    panel.OnEvent(ned::ui::test::Return());
+
+    REQUIRE(activeBuffer.Get().Name() == "a.txt");
+    REQUIRE(activeBuffer.Get().Text().substr(activeBuffer.Get().Point(), 7) == "<<<<<<<");
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("'x' enters a discard/revert confirm state that only 'y' actually confirms", "[VcsPanel]") {
+    RegistryResetGuard guard;
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_vcs_panel_test_revert_confirm";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    const CurrentPathGuard cwdGuard(dir);
+
+    ned::editor::vcs::RegisterProvider("throwing", std::make_unique<ThrowingProvider>());
+    ned::ui::EventLoop eventLoop;
+    VcsRunner          runner(eventLoop);
+
+    ned::text::BufferList list;
+    ned::text::Buffer&    scratch = list.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    std::string           statusMessage;
+    ned::ui::VcsPanel      panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    PlacePanel(panel, 50, 12); // wide enough for the confirm prompt's own text
+    panel.SetVcsRunner(&runner);
+    panel.DispatchVcsStatusForTesting({
+        {"M ", "a.txt"},
+    });
+    panel.TakeKeyboardFocus();
+    panel.OnEvent(ned::ui::test::ArrowDown()); // a.txt
+
+    panel.OnEvent(ned::ui::test::Character('x'));
+    ned::ui::Screen screen = ned::ui::Screen(50, 12);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 49, .y_min = 0, .y_max = 11});
+    panel.Paint(canvas);
+    REQUIRE(RowText(screen, 0, 50).find("Discard changes to a.txt? y/n") != std::string::npos);
+
+    // Enter does NOT confirm -- only a bare 'y' does.
+    panel.OnEvent(ned::ui::test::Return());
+    REQUIRE(statusMessage.empty());
+
+    // Re-enter and cancel with Escape.
+    panel.OnEvent(ned::ui::test::Character('x'));
+    panel.OnEvent(ned::ui::test::Escape());
+    REQUIRE(statusMessage.empty());
+
+    // Re-enter and confirm with 'y' -- ThrowingProvider's RevertArgv
+    // default-throws synchronously, confirming a real RequestRevert call
+    // was actually made.
+    panel.OnEvent(ned::ui::test::Character('x'));
+    panel.OnEvent(ned::ui::test::Character('y'));
+    REQUIRE(statusMessage.find("revert not supported") != std::string::npos);
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("Stash section is hidden when empty and shows entries when not, with push/pop/drop wired", "[VcsPanel]") {
+    RegistryResetGuard guard;
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_vcs_panel_test_stash";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    const CurrentPathGuard cwdGuard(dir);
+
+    ned::editor::vcs::RegisterProvider("throwing", std::make_unique<ThrowingProvider>());
+    ned::ui::EventLoop eventLoop;
+    VcsRunner          runner(eventLoop);
+
+    ned::text::BufferList list;
+    ned::text::Buffer&    scratch = list.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    std::string           statusMessage;
+    ned::ui::VcsPanel      panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    PlacePanel(panel, 40, 12);
+    panel.SetVcsRunner(&runner);
+
+    ned::ui::Screen screen = ned::ui::Screen(40, 12);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 11});
+    panel.Paint(canvas);
+    for (int row = 0; row < 12; ++row) {
+        REQUIRE(RowText(screen, row, 40).find("Stash") == std::string::npos);
+    }
+
+    panel.DispatchStashesForTesting({
+        {"stash@{0}", "WIP on main: a test stash"},
+    });
+    panel.Paint(canvas);
+    // rows: 0=border, 1=Staged(0), 2=Unstaged(0), 3=Untracked(0), 4=Stashes(1), 5=entry
+    REQUIRE(RowText(screen, 4, 40).find("Stashes (1)") != std::string::npos);
+    REQUIRE(RowText(screen, 5, 40).find("stash@{0}") != std::string::npos);
+    REQUIRE(RowText(screen, 5, 40).find("a test stash") != std::string::npos);
+
+    panel.TakeKeyboardFocus();
+    // 'z' pushes a new stash from anywhere -- ThrowingProvider's
+    // StashPushArgv default-throws synchronously, confirming a real call.
+    panel.OnEvent(ned::ui::test::Character('z'));
+    REQUIRE(statusMessage.find("stash push not supported") != std::string::npos);
+    statusMessage.clear();
+
+    // Enter on the stash row pops it.
+    for (int i = 0; i < 4; ++i) {
+        panel.OnEvent(ned::ui::test::ArrowDown());
+    }
+    panel.OnEvent(ned::ui::test::Return());
+    REQUIRE(statusMessage.find("stash pop not supported") != std::string::npos);
+    statusMessage.clear();
+
+    // 'd' on the stash row drops it.
+    panel.OnEvent(ned::ui::test::Character('d'));
+    REQUIRE(statusMessage.find("stash drop not supported") != std::string::npos);
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("'f'/'F'/'P' fire fetch/pull/push", "[VcsPanel]") {
+    RegistryResetGuard guard;
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_vcs_panel_test_remote_actions";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    const CurrentPathGuard cwdGuard(dir);
+
+    ned::editor::vcs::RegisterProvider("throwing", std::make_unique<ThrowingProvider>());
+    ned::ui::EventLoop eventLoop;
+    VcsRunner          runner(eventLoop);
+
+    ned::text::BufferList list;
+    ned::text::Buffer&    scratch = list.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    std::string           statusMessage;
+    ned::ui::VcsPanel      panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    PlacePanel(panel, 40, 12);
+    panel.SetVcsRunner(&runner);
+    panel.TakeKeyboardFocus();
+
+    panel.OnEvent(ned::ui::test::Character('f'));
+    REQUIRE(statusMessage.find("fetch not supported") != std::string::npos);
+    statusMessage.clear();
+
+    panel.OnEvent(ned::ui::test::Character('F'));
+    REQUIRE(statusMessage.find("pull not supported") != std::string::npos);
+    statusMessage.clear();
+
+    panel.OnEvent(ned::ui::test::Character('P'));
+    REQUIRE(statusMessage.find("push not supported") != std::string::npos);
+
+    std::filesystem::remove_all(dir);
+}
+
 TEST_CASE("ToggleCollapsed collapses to a 1-column strip and back", "[VcsPanel]") {
     ned::text::BufferList list;
     ned::text::Buffer&    scratch = list.CreateBuffer("scratch");
