@@ -141,6 +141,53 @@ TEST_CASE("di( deletes inside parens", "[VimEngine]") {
     REQUIRE(buffer.Text() == "foo(bar()qux)end");
 }
 
+TEST_CASE("ds strips an enclosing delimiter pair", "[VimEngine]") {
+    Buffer    buffer = MakeBuffer("x = \"hello\" + 1");
+    VimEngine engine;
+
+    buffer.SetPoint(6); // inside "hello"
+    Feed(engine, buffer, "ds\"");
+    REQUIRE(buffer.Text() == "x = hello + 1");
+    REQUIRE(engine.CurrentMode() == Mode::Normal);
+}
+
+TEST_CASE("cs changes an enclosing delimiter pair and pads an opening-bracket target", "[VimEngine]") {
+    Buffer    buffer = MakeBuffer("say \"hi\" now");
+    VimEngine engine;
+
+    buffer.SetPoint(6);
+    Feed(engine, buffer, "cs\"(");
+    REQUIRE(buffer.Text() == "say ( hi ) now");
+}
+
+TEST_CASE("ysiw surrounds the word under point with the given delimiter", "[VimEngine]") {
+    Buffer    buffer = MakeBuffer("foo bar baz");
+    VimEngine engine;
+
+    buffer.SetPoint(5); // inside "bar"
+    Feed(engine, buffer, "ysiw)");
+    REQUIRE(buffer.Text() == "foo (bar) baz");
+    REQUIRE(engine.CurrentMode() == Mode::Normal);
+}
+
+TEST_CASE("yss surrounds the current line's content, skipping only leading indentation", "[VimEngine]") {
+    Buffer    buffer = MakeBuffer("  hello world  \n");
+    VimEngine engine;
+
+    buffer.SetPoint(2);
+    Feed(engine, buffer, "yss\"");
+    REQUIRE(buffer.Text() == "  \"hello world  \"\n");
+}
+
+TEST_CASE("Visual S surrounds the selected charwise range, padding an opening-bracket target", "[VimEngine]") {
+    Buffer    buffer = MakeBuffer("abcdef");
+    VimEngine engine;
+
+    Feed(engine, buffer, "vllS(");
+    REQUIRE(buffer.Text() == "( abc )def");
+    REQUIRE(engine.CurrentMode() == Mode::Normal);
+}
+
 TEST_CASE("yy then p yanks and pastes a whole line below", "[VimEngine]") {
     Buffer    buffer = MakeBuffer("one\ntwo\n");
     VimEngine engine;
