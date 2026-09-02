@@ -2342,12 +2342,18 @@ TEST_CASE("markdown-table-align realigns a GFM table and reports failure off one
     REQUIRE(fixture.buffer.Text() == "| N     | Age |\n|-------|-----|\n| Alice | 3   |\n");
     REQUIRE(message.empty());
 
+    // TAB-fallback-outside-table follow-up: off a table, this falls through
+    // to indent-for-tab-command's own body (no snippet trigger registered
+    // here, so a literal tab) rather than reporting "Not in a table." --
+    // unlike org-table-align above, which real Org's C-c ' /TAB-in-table
+    // convention keeps a hard stop for.
     fixture.buffer.SetPoint(fixture.buffer.Size());
     fixture.buffer.InsertAtPoint("\nplain text");
     fixture.buffer.SetPoint(fixture.buffer.Size() - 3);
 
     registry.Invoke("markdown-table-align", context);
-    REQUIRE(message == "Not in a table.");
+    REQUIRE(message.empty());
+    REQUIRE(fixture.buffer.Text().ends_with("plain t\text"));
 }
 
 TEST_CASE("BuildDefaultGlobalKeymap binds C-c C-l to open-link-at-point", "[Commands]") {
