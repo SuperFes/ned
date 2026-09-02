@@ -693,6 +693,18 @@ timed extra background request (codeLens) alongside the one under test — fixed
 matching this file's own established `find_if`-by-method pattern instead of indexing a
 fixed frame count.
 
+Newly observed 2026-09-02 (next-error follow-up's full `ctest -j8` run) -- three tests
+failed only under parallel `-j8` execution, each passing clean when re-run standalone
+(`ctest -R <name>`, no `-j`), so likely resource contention under parallel load rather
+than a logic bug: `FileWatchTest.cpp`'s "SetWatchedFiles resync drops directories no
+longer watched" and "A burst of rapid writes coalesces into one callback" (both real
+inotify/debounce timing, plausible under load); `VimEngineTest.cpp`'s "~ toggles case of
+count characters and advances" is the concerning one -- it failed with a **Bus error**
+(a real crash, not just a wrong assertion) under `-j8`, still standalone-clean. Not yet
+root-caused; not touched by next-error's own change set (`Command.h`/`Commands.cpp`/
+`BufferView.h/.cpp`/new `Editor/NextError.h`), so presumed pre-existing rather than a
+regression, but that presumption is unverified against a clean checkout.
+
 ### Named Non-Goals (Leaning "Won't Do", Kept Visible So It's a Conscious Call)
 
 - [ ] A plugin marketplace/package registry (VSCode extensions, MELPA/straight.el).
