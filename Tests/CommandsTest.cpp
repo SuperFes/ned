@@ -3298,3 +3298,162 @@ TEST_CASE("expand-snippet reports when no trigger matches", "[Commands]") {
     REQUIRE(message == "No snippet matches the word before point.");
     REQUIRE(fixture.buffer.Text() == "nomatch"); // no literal-tab fallback here
 }
+
+TEST_CASE("indent-for-tab-command reindents the current line in place for a mode with indentColumn configured",
+          "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    const Mode     cMode   = CMode();
+    context.mode           = &cMode;
+
+    // Well-formed/closed source -- an unclosed brace triggers tree-sitter's
+    // own error recovery, which nests unpredictably and isn't what this
+    // test means to exercise (Tests/IndentTest.cpp covers the algorithm
+    // itself against real, well-formed C source).
+    fixture.buffer.InsertAtPoint("int f(void) {\n\n}\n");
+    fixture.buffer.SetPoint(14); // start of the blank line1, right after "int f(void) {\n"
+    registry.Invoke("indent-for-tab-command", context);
+
+    REQUIRE(fixture.buffer.Text() == "int f(void) {\n    \n}\n");
+    REQUIRE(fixture.buffer.Point() == 18); // point lands at the new indent's end
+}
+
+TEST_CASE("indent-for-tab-command falls back to literal-tab/snippet behavior when indentColumn is unset",
+          "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context(); // context.mode stays nullptr
+
+    fixture.buffer.InsertAtPoint("int f(void) {\n");
+    registry.Invoke("indent-for-tab-command", context);
+
+    REQUIRE(fixture.buffer.Text() == "int f(void) {\n\t"); // unchanged, pre-existing literal-tab behavior
+}
+
+TEST_CASE("indent-for-tab-command falls back to a literal tab when point is past the line's leading whitespace",
+          "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    const Mode     cMode   = CMode();
+    context.mode           = &cMode;
+
+    fixture.buffer.InsertAtPoint("int f(void) {\n    return 0;");
+    // Point is at the end of "return 0;", well past the line's own leading
+    // whitespace -- TAB here must not silently reindent the line instead of
+    // inserting, matching every mode without indentColumn configured.
+    registry.Invoke("indent-for-tab-command", context);
+
+    REQUIRE(fixture.buffer.Text() == "int f(void) {\n    return 0;\t");
+}
+
+TEST_CASE("newline electric-indents the new line for a mode with indentColumn configured", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    const Mode     cMode   = CMode();
+    context.mode           = &cMode;
+
+    // Well-formed/closed source, point right after "{" -- an unclosed brace
+    // triggers tree-sitter's own error recovery, which nests unpredictably
+    // and isn't what this test means to exercise (Tests/IndentTest.cpp
+    // covers the algorithm itself against real, well-formed C source).
+    fixture.buffer.InsertAtPoint("int f(void) {\n}\n");
+    fixture.buffer.SetPoint(13); // right after "{", before the existing "\n"
+    registry.Invoke("newline", context);
+
+    REQUIRE(fixture.buffer.Text() == "int f(void) {\n    \n}\n");
+    REQUIRE(fixture.buffer.Point() == 18); // point lands at the new indent's end
+}
+
+TEST_CASE("newline stays a bare newline when indentColumn is unset", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context(); // context.mode stays nullptr
+
+    fixture.buffer.InsertAtPoint("int f(void) {");
+    registry.Invoke("newline", context);
+
+    REQUIRE(fixture.buffer.Text() == "int f(void) {\n");
+}
+
+TEST_CASE("indent-region reindents the marked region as one undo step and requires a mark", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    const Mode     cMode   = CMode();
+    context.mode           = &cMode;
+
+    std::string message;
+    context.message = &message;
+
+    // No mark -- reports and does nothing, matching kill-region's own
+    // no-mark-no-op convention.
+    fixture.buffer.InsertAtPoint("int f(void) {\nreturn 0;\n}\n");
+    registry.Invoke("indent-region", context);
+    REQUIRE(message == "No region selected.");
+    REQUIRE(fixture.buffer.Text() == "int f(void) {\nreturn 0;\n}\n");
+
+    fixture.buffer.SetPoint(0);
+    fixture.buffer.SetMark(fixture.buffer.Text().size());
+    registry.Invoke("indent-region", context);
+
+    REQUIRE(fixture.buffer.Text() == "int f(void) {\n    return 0;\n}\n");
+    REQUIRE_FALSE(fixture.buffer.HasMark());
+
+    REQUIRE(fixture.buffer.CanUndo());
+    fixture.buffer.Undo();
+    REQUIRE(fixture.buffer.Text() == "int f(void) {\nreturn 0;\n}\n");
+}
+
+TEST_CASE("indent-buffer reindents the whole buffer and reports how many lines changed", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    const Mode     cMode   = CMode();
+    context.mode           = &cMode;
+    std::string message;
+    context.message = &message;
+
+    fixture.buffer.InsertAtPoint("int f(void) {\nreturn 0;\n}\n");
+    registry.Invoke("indent-buffer", context);
+
+    REQUIRE(fixture.buffer.Text() == "int f(void) {\n    return 0;\n}\n");
+    REQUIRE(message == "1 line(s) reindented.");
+}
+
+TEST_CASE("indent-region/indent-buffer report when no indent rules are configured for the mode", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context(); // context.mode stays nullptr
+    std::string    message;
+    context.message = &message;
+
+    fixture.buffer.InsertAtPoint("anything\n");
+    fixture.buffer.SetPoint(0);
+    fixture.buffer.SetMark(fixture.buffer.Text().size());
+
+    registry.Invoke("indent-region", context);
+    REQUIRE(message == "No indent rules configured for this mode.");
+
+    registry.Invoke("indent-buffer", context);
+    REQUIRE(message == "No indent rules configured for this mode.");
+    REQUIRE(fixture.buffer.Text() == "anything\n");
+}

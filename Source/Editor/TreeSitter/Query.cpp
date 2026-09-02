@@ -372,6 +372,7 @@ std::vector<QueryCapture> Query::Captures(const Node& root, std::string_view sou
             .name      = std::string(name, nameLength),
             .startByte = ts_node_start_byte(capture.node),
             .endByte   = ts_node_end_byte(capture.node),
+            .nodeId    = capture.node.id,
         });
     }
 
