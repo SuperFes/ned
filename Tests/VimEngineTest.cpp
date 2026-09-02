@@ -401,7 +401,7 @@ TEST_CASE("Visual block U uppercases the selected columns only", "[VimEngine]") 
     REQUIRE(buffer.Text() == "aBCdef\ngHIjkl\n");
 }
 
-TEST_CASE("~ toggles case of count characters and advances", "[VimEngine]") {
+TEST_CASE("tilde toggles case of count characters and advances", "[VimEngine]") {
     Buffer    buffer = MakeBuffer("abcDEF");
     VimEngine engine;
 
@@ -413,7 +413,7 @@ TEST_CASE("~ toggles case of count characters and advances", "[VimEngine]") {
     REQUIRE(buffer.Point() == 4);
 }
 
-TEST_CASE("~ at end of line does not advance past the last character", "[VimEngine]") {
+TEST_CASE("tilde at end of line does not advance past the last character", "[VimEngine]") {
     Buffer    buffer = MakeBuffer("ab");
     VimEngine engine;
 
