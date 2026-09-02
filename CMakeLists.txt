@@ -336,6 +336,7 @@ ned_add_treesitter_grammar(tree-sitter-json https://github.com/tree-sitter/tree-
 
 ned_embed_treesitter_query("${tree-sitter-json_SOURCE_DIR}/queries/highlights.scm" Json)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/json-folds.scm" JsonFolds)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/json-indents.scm" JsonIndents)
 
 ned_add_treesitter_grammar(tree-sitter-c https://github.com/tree-sitter/tree-sitter-c.git v0.24.2)
 
@@ -352,6 +353,7 @@ ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter
 # prototype/definition); c-tags.scm's own header comment has the full story,
 # confirmed against a real false positive (see BufferViewSymbolGutterTest.cpp).
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/c-tags.scm" CTags)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/c-indents.scm" CIndents)
 
 ned_add_treesitter_grammar(tree-sitter-cpp https://github.com/tree-sitter/tree-sitter-cpp.git v0.23.4)
 
@@ -361,6 +363,7 @@ ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter
 # own header comment.
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/cpp-tags.scm" CppTags)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/cpp-tests.scm" CppTests)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/cpp-indents.scm" CppIndents)
 
 ned_add_treesitter_grammar(tree-sitter-php https://github.com/tree-sitter/tree-sitter-php.git v0.24.2 php)
 
@@ -375,6 +378,7 @@ ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter
 # -- see c-tags.scm's own header comment for why those two needed vendoring.
 ned_embed_treesitter_query("${tree-sitter-php_SOURCE_DIR}/queries/tags.scm" PhpTags)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/php-tests.scm" PhpTests)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/php-indents.scm" PhpIndents)
 
 ned_add_treesitter_grammar(tree-sitter-javascript https://github.com/tree-sitter/tree-sitter-javascript.git v0.25.0)
 
@@ -386,6 +390,7 @@ ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter
 # either.
 ned_embed_treesitter_query("${tree-sitter-javascript_SOURCE_DIR}/queries/tags.scm" JavaScriptTags)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/javascript-tests.scm" JavaScriptTests)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/javascript-indents.scm" JavaScriptIndents)
 
 ned_fetch_treesitter_source(tree-sitter-typescript-src https://github.com/tree-sitter/tree-sitter-typescript.git v0.23.2)
 
@@ -402,6 +407,7 @@ ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter
 # queries above.
 ned_embed_treesitter_query("${tree-sitter-typescript-src_SOURCE_DIR}/queries/tags.scm" TypeScriptTags)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/typescript-tests.scm" TypeScriptTests)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/typescript-indents.scm" TypeScriptIndents)
 
 ned_add_treesitter_grammar(tree-sitter-html https://github.com/tree-sitter/tree-sitter-html.git v0.23.2)
 
@@ -409,11 +415,13 @@ ned_embed_treesitter_query("${tree-sitter-html_SOURCE_DIR}/queries/highlights.sc
 # embedded-language-injection follow-up: real injections.scm, driving
 # <script>/<style> highlighting through Injection.h's generic engine.
 ned_embed_treesitter_query("${tree-sitter-html_SOURCE_DIR}/queries/injections.scm" HtmlInjections)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/html-indents.scm" HtmlIndents)
 
 ned_add_treesitter_grammar(tree-sitter-css https://github.com/tree-sitter/tree-sitter-css.git v0.25.0)
 
 ned_embed_treesitter_query("${tree-sitter-css_SOURCE_DIR}/queries/highlights.scm" Css)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/css-imports.scm" CssImports)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/css-indents.scm" CssIndents)
 
 ned_add_treesitter_grammar(tree-sitter-python https://github.com/tree-sitter/tree-sitter-python.git v0.25.0)
 
@@ -423,16 +431,19 @@ ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter
 # gutter-symbol-kind follow-up: see PhpTags' own comment above.
 ned_embed_treesitter_query("${tree-sitter-python_SOURCE_DIR}/queries/tags.scm" PythonTags)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/python-tests.scm" PythonTests)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/python-indents.scm" PythonIndents)
 
 ned_add_treesitter_grammar(tree-sitter-bash https://github.com/tree-sitter/tree-sitter-bash.git v0.25.1)
 
 ned_embed_treesitter_query("${tree-sitter-bash_SOURCE_DIR}/queries/highlights.scm" Bash)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/bash-imports.scm" BashImports)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/bash-indents.scm" BashIndents)
 
 ned_add_treesitter_grammar(tree-sitter-janet-simple https://github.com/sogaiu/tree-sitter-janet-simple.git v0.0.7)
 
 ned_embed_treesitter_query("${tree-sitter-janet-simple_SOURCE_DIR}/queries/highlights.scm" Janet)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/janet-imports.scm" JanetImports)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/janet-indents.scm" JanetIndents)
 
 ned_add_treesitter_grammar(tree-sitter-markdown https://github.com/tree-sitter-grammars/tree-sitter-markdown.git v0.5.3 tree-sitter-markdown)
 
@@ -460,10 +471,12 @@ ned_embed_treesitter_query("${tree-sitter-org_SOURCE_DIR}/queries/injections.scm
 ned_add_treesitter_grammar(tree-sitter-yaml https://github.com/tree-sitter-grammars/tree-sitter-yaml.git v0.7.2)
 
 ned_embed_treesitter_query("${tree-sitter-yaml_SOURCE_DIR}/queries/highlights.scm" Yaml)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/yaml-indents.scm" YamlIndents)
 
 ned_add_treesitter_grammar(tree-sitter-toml https://github.com/tree-sitter-grammars/tree-sitter-toml.git v0.7.0)
 
 ned_embed_treesitter_query("${tree-sitter-toml_SOURCE_DIR}/queries/highlights.scm" Toml)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/toml-indents.scm" TomlIndents)
 
 # sogaiu/tree-sitter-clojure (same author as tree-sitter-janet-simple above);
 # one grammar serving both ClojureMode and JankMode -- jank is a Clojure
@@ -477,6 +490,7 @@ ned_add_treesitter_grammar(tree-sitter-clojure https://github.com/sogaiu/tree-si
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/clojure.scm" Clojure)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/clojure-folds.scm" ClojureFolds)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/clojure-imports.scm" ClojureImports)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/clojure-indents.scm" ClojureIndents)
 
 # ram02z/tree-sitter-fish -- the grammar every real consumer (nvim-treesitter)
 # builds on, ships a pre-generated src/parser.c+scanner.c and a real
@@ -484,6 +498,7 @@ ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter
 ned_add_treesitter_grammar(tree-sitter-fish https://github.com/ram02z/tree-sitter-fish.git 3.7.0)
 
 ned_embed_treesitter_query("${tree-sitter-fish_SOURCE_DIR}/queries/highlights.scm" Fish)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/fish-indents.scm" FishIndents)
 
 # tree-sitter-grammars/tree-sitter-xml -- the community-maintained XML+DTD
 # grammar (same org as yaml/toml above), ships a real, well-authored
@@ -498,6 +513,7 @@ ned_embed_treesitter_query("${tree-sitter-fish_SOURCE_DIR}/queries/highlights.sc
 ned_add_treesitter_grammar(tree-sitter-xml https://github.com/tree-sitter-grammars/tree-sitter-xml.git v0.7.0 xml)
 
 ned_embed_treesitter_query("${tree-sitter-xml_SOURCE_DIR}/queries/xml/highlights.scm" Xml)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/xml-indents.scm" XmlIndents)
 #------------------------------------------------------------------------------
 
 #--- Fetch Catch2 --------------------------------------------------------------
@@ -583,6 +599,8 @@ add_library(ned_lib STATIC
         Source/Editor/FormatOnSave.cpp
         Source/Editor/Clipboard.cpp
         Source/Editor/TabWidth.cpp
+        Source/Editor/IndentStyle.cpp
+        Source/Editor/Indent.cpp
         Source/Editor/FillColumn.cpp
         Source/Editor/Fill.cpp
         Source/Editor/PageScroll.cpp
@@ -907,6 +925,9 @@ if (NED_BUILD_TESTS)
             Tests/HugeRegexScanTest.cpp
             Tests/ModeTest.cpp
             Tests/CodeFoldTest.cpp
+            Tests/IndentStyleTest.cpp
+            Tests/IndentEngineTest.cpp
+            Tests/IndentTest.cpp
             Tests/StickyScrollTest.cpp
             Tests/OrgTest.cpp
             Tests/OrgHighlightTest.cpp

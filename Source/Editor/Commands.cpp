@@ -18,6 +18,8 @@
 #include "FillColumn.h"
 #include "FinalNewline.h"
 #include "FormatOnSave.h"
+#include "Indent.h"
+#include "IndentStyle.h"
 #include "InlineDiagnostics.h"
 #include "LineEndingPolicy.h"
 #include "Lsp/LspManager.h"
@@ -1310,10 +1312,30 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
         context.buffer.Redo();
     });
 
-    registry.Register("newline", "Insert a newline at point.", PerCursor([](CommandContext& context) {
-                          context.buffer.ClearMark();
-                          context.buffer.InsertAtPoint("\n");
-                      }));
+    registry.Register(
+        "newline", "Insert a newline at point, electric-indenting the new line when the mode supports it.",
+        PerCursor([](CommandContext& context) {
+            context.buffer.ClearMark();
+            context.buffer.InsertAtPoint("\n");
+            // smart-indentation follow-up: purely additive -- a mode without
+            // indentColumn configured (every mode not yet migrated, e.g.
+            // Fundamental/Org this pass) leaves this a bare InsertAtPoint("\n"),
+            // byte-for-byte unchanged from before. lineStart == lineStart as
+            // the [lineStart, lineEnd) argument is IndentFunction's own
+            // "not-yet-typed blank line" convention (Mode.h) -- the new line
+            // is empty at this point, nothing to bound.
+            if (context.mode != nullptr && context.mode->indentColumn) {
+                text::Buffer&      buffer    = context.buffer;
+                const auto&        content   = buffer.Content();
+                const std::size_t  line      = content.ByteOffsetToLine(buffer.Point());
+                const std::size_t  lineStart = content.LineToByteOffset(line);
+                if (const std::optional<int> column = context.mode->indentColumn(buffer.Text(), lineStart, lineStart)) {
+                    const IndentStyle style = EffectiveIndentStyle(context.mode->name);
+                    SetLineIndent(buffer, lineStart, *column, style);
+                    buffer.SetPoint(lineStart + IndentString(*column, style).size());
+                }
+            }
+        }));
 
     registry.Register("self-insert-command", "Insert the character that was pressed.", PerCursor([](CommandContext& context) {
                           if (context.triggeringKey.Special != SpecialKey::None || context.triggeringKey.Codepoint == 0) {
@@ -1393,24 +1415,52 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           context.buffer.InsertAtPoint(inserted);
                       }));
 
-    // Snippet expansion first, then a literal-tab insert -- not real indent
-    // logic (Emacs' own indent-for-tab-command computes indentation; this
-    // codebase has no per-mode indent rules yet); the v1 scope call is just
-    // "typing Tab in Normal mode does something sane" rather than being
-    // silently swallowed as Unbound. Global, but a mode's own keymap (e.g.
-    // org-mode's org-cycle, markdown-mode's markdown-table-align) still
-    // wins via KeymapStack's priority order, so this only ever fires where
-    // nothing more specific claimed TAB first (snippet expansion in those
-    // modes goes through the expand-snippet command instead).
-    registry.Register("indent-for-tab-command",
-                      "Expand the snippet trigger before point, or insert a tab character.",
-                      [](CommandContext& context) {
-                          if (TrySnippetTrigger(context)) {
-                              return;
-                          }
-                          context.buffer.ClearMark();
-                          context.buffer.InsertAtPoint("\t");
-                      });
+    // smart-indentation follow-up: when the mode has real indentColumn
+    // support AND point sits at-or-before the end of the current line's own
+    // leading whitespace (i.e. TAB pressed at/near the start of the line,
+    // not deep inside real content), reindent this line to its computed
+    // column in place. Otherwise -- indentColumn unset, or point is past the
+    // leading whitespace -- falls through to the original, unchanged
+    // behavior: snippet expansion first, then a literal-tab insert (Emacs'
+    // own indent-for-tab-command computes indentation for every mode; this
+    // codebase only has that for the modes Editor/Indent.h's engine has been
+    // extended to). Global, but a mode's own keymap (e.g. org-mode's
+    // org-cycle, markdown-mode's markdown-table-align) still wins via
+    // KeymapStack's priority order, so this only ever fires where nothing
+    // more specific claimed TAB first (snippet expansion in those modes goes
+    // through the expand-snippet command instead).
+    registry.Register(
+        "indent-for-tab-command",
+        "Reindent the current line to its computed indentation, or expand the snippet trigger before point, or "
+        "insert a tab character.",
+        [](CommandContext& context) {
+            if (context.mode != nullptr && context.mode->indentColumn) {
+                text::Buffer&      buffer    = context.buffer;
+                const auto&        content   = buffer.Content();
+                const std::size_t  line      = content.ByteOffsetToLine(buffer.Point());
+                const std::size_t  lineStart = content.LineToByteOffset(line);
+                const std::size_t  indentEnd = LineIndentEnd(content, lineStart);
+                if (buffer.Point() <= indentEnd) {
+                    std::size_t lineEnd =
+                        (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) : content.ByteLength();
+                    if (line + 1 < content.LineCount() && lineEnd > lineStart) {
+                        --lineEnd; // exclude the line's own trailing '\n'
+                    }
+                    if (const std::optional<int> column = context.mode->indentColumn(buffer.Text(), lineStart, lineEnd)) {
+                        const IndentStyle style = EffectiveIndentStyle(context.mode->name);
+                        buffer.ClearMark();
+                        SetLineIndent(buffer, lineStart, *column, style);
+                        buffer.SetPoint(lineStart + IndentString(*column, style).size());
+                        return;
+                    }
+                }
+            }
+            if (TrySnippetTrigger(context)) {
+                return;
+            }
+            context.buffer.ClearMark();
+            context.buffer.InsertAtPoint("\t");
+        });
 
     registry.Register("expand-snippet",
                       "Expand the registered snippet whose trigger word ends at point.",
@@ -2979,6 +3029,50 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
             const std::string prefix = (context.mode != nullptr) ? context.mode->lineCommentPrefix : std::string();
             FillParagraph(context.buffer, static_cast<std::size_t>(FillColumn()), prefix);
         });
+
+    // smart-indentation follow-up: the batch/linter-reuse half of
+    // Editor/Indent.h -- the same per-line primitive indent-for-tab-command/
+    // newline drive interactively, looped over a range. Requires a mark, the
+    // same "no mark, no-op" convention kill-region already established
+    // (there is no "whole buffer" fallback here -- that's indent-buffer's
+    // own, separate job below).
+    registry.Register("indent-region", "Reindent every line the region between point and mark spans.",
+                      [](CommandContext& context) {
+                          if (context.mode == nullptr || !context.mode->indentColumn) {
+                              if (context.message) {
+                                  *context.message = "No indent rules configured for this mode.";
+                              }
+                              return;
+                          }
+                          if (!context.buffer.HasMark()) {
+                              if (context.message) {
+                                  *context.message = "No region selected.";
+                              }
+                              return;
+                          }
+                          const auto [start, end] = context.buffer.Region();
+                          const auto&        content   = context.buffer.Content();
+                          const std::size_t  startLine = content.ByteOffsetToLine(start);
+                          const std::size_t  endLine   = content.ByteOffsetToLine(end) + 1; // exclusive
+                          context.buffer.ClearMark();
+                          const std::size_t changed = IndentRegion(context.buffer, *context.mode, startLine, endLine);
+                          if (context.message) {
+                              *context.message = std::to_string(changed) + " line(s) reindented.";
+                          }
+                      });
+
+    registry.Register("indent-buffer", "Reindent the whole buffer to its computed indentation.", [](CommandContext& context) {
+        if (context.mode == nullptr || !context.mode->indentColumn) {
+            if (context.message) {
+                *context.message = "No indent rules configured for this mode.";
+            }
+            return;
+        }
+        const std::size_t changed = IndentBuffer(context.buffer, *context.mode);
+        if (context.message) {
+            *context.message = std::to_string(changed) + " line(s) reindented.";
+        }
+    });
 
     // Real Org's own C-c C-q ("org-set-tags-command"): unlike the direct
     // commands above, tags are free-form text, so this just checks the

@@ -134,6 +134,44 @@ extern const char* const kJavaScriptTests;
 extern const char* const kTypeScriptTests;
 extern const char* const kPythonTests;
 
+// smart-indentation follow-up: hand-written "indent"/"dedent" queries, one
+// per in-scope language (Source/Editor/TreeSitter/queries/*-indents.scm),
+// borrowing nvim-treesitter/Helix's own capture-NAME convention only -- no
+// #set!-based priority/scope directives, since Query::Captures() never
+// evaluates those (see Query.h's own doc comment). Proven against three
+// deliberately different indent models first (Editor/Indent.h's own header
+// comment): the bracket tier here (C/C++/JSON); the indentation-sensitive
+// tier (Python, reusing tree-sitter-python's own block-node scoping, no
+// bespoke code needed); Markdown's own hand-rolled closure (MarkdownMode())
+// covers the prose/structural tier without a query file at all. Every other
+// bundled grammar is a documented, unscoped-for-now follow-up (ROADMAP.md) --
+// their Mode::indentColumn simply stays empty, same "empty means not
+// configured" convention as fold/importTarget/symbolKind/testDiscovery.
+extern const char* const kCIndents;
+extern const char* const kCppIndents;
+extern const char* const kJsonIndents;
+extern const char* const kPythonIndents;
+// bundle-remaining-indents follow-up: the rest of the bundled grammars, each
+// a fast, mechanical addition once the engine itself was proven above -- no
+// engine changes, just a new query file per language (see each *-indents.scm
+// file's own header comment). kTypeScriptIndents is shared by TypeScriptMode
+// and TsxMode; kClojureIndents is shared by ClojureMode and JankMode -- same
+// sharing every other query constant in this file already uses. Janet/
+// Clojure are deliberately bracket-depth only, not real per-form Lisp
+// indent -- see janet-indents.scm's own header comment.
+extern const char* const kJavaScriptIndents;
+extern const char* const kTypeScriptIndents;
+extern const char* const kPhpIndents;
+extern const char* const kCssIndents;
+extern const char* const kHtmlIndents;
+extern const char* const kXmlIndents;
+extern const char* const kBashIndents;
+extern const char* const kFishIndents;
+extern const char* const kJanetIndents;
+extern const char* const kClojureIndents;
+extern const char* const kYamlIndents;
+extern const char* const kTomlIndents;
+
 } // namespace ned::editor::treesitter::queries
 
 #endif // NED_EDITOR_TREESITTER_QUERIES_H
