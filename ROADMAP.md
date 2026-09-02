@@ -676,34 +676,11 @@ LSP-against-the-wrong-toolchain prove it's needed in practice, not speculatively
 
 Real, reproduced, non-urgent — each is safe to leave as-is for now, but worth fixing
 opportunistically rather than re-discovering from scratch. Add to this list instead of
-just fixing-and-forgetting or letting it fade from memory between sessions. Fixed
-entries are removed once shipped rather than kept as a writeup here — the
-LSP-broker-hermeticity flake, `EchoArea`/`ModeLine`'s byte-vs-codepoint rendering bug,
-normal-mode self-insert dropping non-ASCII keystrokes (all closed 2026-08-26), and the
-`VimEngineTest.cpp` dot-repeat/`inlayHint`/`ExtractSignatureHelp` trio previously listed
-here were all closed 2026-09-01 (`git log --grep=flak`). The trio turned out to share one
-root cause: an unbalanced `[` in one `LspContentTest.cpp` test name tripped a genuine bug
-in Catch2's vendored `CatchAddTests.cmake` (unquoted-list `foreach` silently merges any
-element with an odd bracket count into every following one), collapsing ~590
-alphabetically-later tests — including the VimEngine one — into a single bogus,
-deterministically-failing ctest entry that never actually ran them. Fixed by renaming
-that test. The `inlayHint` test (and a sibling `semanticTokens/full` test, found the same
-way) had a separate, real standalone race — `Paint()` can fire a non-deterministically-
-timed extra background request (codeLens) alongside the one under test — fixed by
-matching this file's own established `find_if`-by-method pattern instead of indexing a
-fixed frame count.
-
-Newly observed 2026-09-02 (next-error follow-up's full `ctest -j8` run) -- three tests
-failed only under parallel `-j8` execution, each passing clean when re-run standalone
-(`ctest -R <name>`, no `-j`), so likely resource contention under parallel load rather
-than a logic bug: `FileWatchTest.cpp`'s "SetWatchedFiles resync drops directories no
-longer watched" and "A burst of rapid writes coalesces into one callback" (both real
-inotify/debounce timing, plausible under load); `VimEngineTest.cpp`'s "~ toggles case of
-count characters and advances" is the concerning one -- it failed with a **Bus error**
-(a real crash, not just a wrong assertion) under `-j8`, still standalone-clean. Not yet
-root-caused; not touched by next-error's own change set (`Command.h`/`Commands.cpp`/
-`BufferView.h/.cpp`/new `Editor/NextError.h`), so presumed pre-existing rather than a
-regression, but that presumption is unverified against a clean checkout.
+just fixing-and-forgetting or letting it fade from memory between sessions. Fixed entries
+are removed once shipped rather than kept as a writeup here — see `git log --grep=flak`
+for closed-issue history. Nothing currently open: the full suite reruns clean under
+`ctest -j8`/`-j16`/`-j32 --repeat until-fail:3` and under the ASan/UBSan
+(`build-sanitize`) configuration alike (verified 2026-09-02).
 
 ### Named Non-Goals (Leaning "Won't Do", Kept Visible So It's a Conscious Call)
 
