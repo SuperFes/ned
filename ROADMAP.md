@@ -71,29 +71,24 @@ Notcurses.
         it into separate write/read timeouts would still be a reasonable defense-in-
         depth hardening on top — a healthy server should never take long just to
         *accept* a notification.
-- [ ] **Async LSP write queue for DapClient/AcpClient** (async-write-queue follow-up: a
-      *second*, distinct gdb-confirmed live freeze — `LspBackgroundSync.cpp`'s periodic
-      5s `SyncBackgroundBuffers` tick sent a synchronous `didOpen` for a large,
-      never-before-synced background buffer to a slow server, blocking the main thread
-      independently of typing speed or bursts, unrelated to the sync-debounce fix
-      above — fixed by moving every `LspClient` write off the main thread entirely: a
-      dedicated `writeThread_` drains a queue (`EnqueueWrite`), so
-      `SendRequest`/`SendNotification`/a server-request response never block the
-      caller, only that thread. Two destruction policies distinguish final process
-      shutdown (`PrepareForGracefulShutdown` — drains the queue so
-      `LspManager::Shutdown()`'s courtesy `shutdown`/`exit` frames still land) from
-      ordinary mid-session teardown (`LspManager::ClientDisconnected`'s erase — no
-      drain, since blocking the main thread to flush writes to an already-dying
-      connection would reintroduce the exact bug this fixes; a residual bound of one
-      in-flight write, ≤30s, remains here in the pathological case, no worse than
-      today's pre-fix per-call bound). `DapClient.cpp` (1 write site) and
-      `AcpClient.cpp` (4 write sites, its own `Transport::WriteMessage`) mirror
-      `LspClient`'s threading shape closely enough to transplant the same fix directly,
-      but weren't touched — both bugs motivating this fix were LSP-specific, and DAP/
-      ACP's single-session/modal nature means a stalled write there blocks only an
-      active debug/chat session the user is already looking at, not the whole editor.
-      Worth doing for consistency once a similar live freeze is actually reported
-      against either.
+- [x] **Async LSP write queue for DapClient/AcpClient** — shipped 2026-09-02, transplanting
+      `LspClient`'s own `writeThread_`/`EnqueueWrite`/`PrepareForGracefulShutdown` shape
+      onto `DapClient` (1 write site) and `AcpClient` (4 write sites, its own
+      `Transport::WriteMessage`) verbatim, for consistency (no live freeze had been
+      reported against either specifically). `PrepareForGracefulShutdown` turned out not
+      to be LSP-only, contrary to this entry's original prediction: `DapManager::
+      StopSession`'s best-effort "disconnect" request and `AcpManager::StopSession`'s
+      "session/close" request each immediately precede destroying their client, the same
+      shape as `LspManager::Shutdown`'s "shutdown"/"exit" pair — caught by a real
+      `DapManagerTest.cpp` failure (`StopSession sends a disconnect and tears down
+      immediately`) during the transplant, where the courtesy frame raced the
+      destructor's implicit `request_stop()` and was silently dropped without the drain.
+      Verified clean under ASan/UBSan across repeated runs; a pre-existing
+      `DapClientTest.cpp`/`DapManagerTest.cpp` `FrameReader::Next()` helper's assertion
+      count is now mildly non-deterministic (332–337 in one run) now that writes are
+      genuinely concurrent with the test's own read loop — harmless (the helper's
+      in-loop `REQUIRE` just fires more than once when a two-`write()` DAP frame
+      (header, then body) lands split across reads instead of together), not a bug.
 - [ ] Whether Markdown fenced code blocks / Org `#+BEGIN_SRC` blocks should get the same
       real-LSP-sync treatment HTML `<script>`/`<style>` embedded documents already have
       is an open question — spawning a live language server per code fence in an

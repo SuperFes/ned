@@ -37,13 +37,29 @@
 // constructor never captures (StartStderrReadLoop is a no-op when
 // StderrFd() < 0).
 //
+// async-write-queue follow-up (extended to DAP, for consistency -- no live
+// freeze reported against this client specifically): mirrors LspClient's own
+// writeThread_/EnqueueWrite/PrepareForGracefulShutdown exactly -- see
+// LspClient.h's own header comment for the full reasoning. DapManager::
+// StopSession sends a best-effort "disconnect" request immediately before
+// EndSession destroys the client (mirroring LspManager::Shutdown's own
+// "shutdown"+"exit" courtesy pair) -- confirmed live by a real test failure
+// during this transplant: without PrepareForGracefulShutdown, that
+// SendRequest-then-immediately-destroy sequence raced the destructor's
+// implicit request_stop() against writeThread_ actually writing the queued
+// disconnect frame, silently dropping it more often than not.
+//
 
 #ifndef NED_EDITOR_DAP_DAPCLIENT_H
 #define NED_EDITOR_DAP_DAPCLIENT_H
 
+#include <atomic>
 #include <chrono>
+#include <condition_variable> // condition_variable_any -- see LspClient.h's own comment on writeCv_
+#include <deque>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <thread>
@@ -122,9 +138,22 @@ class DapClient {
     // hang-protection-round-2 follow-up).
     void ExpireStaleRequests(std::chrono::milliseconds maxAge = ProtocolRequestTimeoutMs());
 
+    // async-write-queue follow-up: see LspClient::PrepareForGracefulShutdown's
+    // identical doc comment -- call this immediately before a best-effort
+    // courtesy request (e.g. DapManager::StopSession's "disconnect") that
+    // must actually reach the wire before this DapClient is destroyed.
+    void PrepareForGracefulShutdown();
+
   private:
     void StartReadLoop();
     void StartStderrReadLoop(); // lsp-stderr-capture follow-up -- see header comment
+    void StartWriteLoop();      // async-write-queue follow-up -- see header comment
+
+    // async-write-queue follow-up: enqueues frame for writeThread_ to send,
+    // returning immediately -- replaces the direct transport_.WriteFrame
+    // call. The one call site (SendRequest) runs on the main thread only, so
+    // enqueue order is call order is on-wire order.
+    void EnqueueWrite(std::string frame);
 
     // lsp-use-after-free follow-up: see LspClient.h's own header comment on
     // alive_ and this file's header comment above.
@@ -135,6 +164,17 @@ class DapClient {
     lsp::Transport transport_;
 
     ned::ui::EventLoop& eventLoop_;
+
+    // async-write-queue follow-up: writeThread_ is declared *after*
+    // transport_ (opposite of readThread_/stderrThread_ above) so it
+    // destructs *before* transport_ -- see LspClient.h's own header comment.
+    // writeMutex_/writeCv_/writeQueue_ must outlive writeThread_, so they're
+    // declared ahead of it here.
+    std::mutex                  writeMutex_;
+    std::condition_variable_any writeCv_;
+    std::deque<std::string>     writeQueue_;
+    std::atomic<bool>       drainQueueOnStop_ = false; // see PrepareForGracefulShutdown
+    std::jthread            writeThread_;
 
     struct PendingRequest {
         ResponseCallback                      callback;
