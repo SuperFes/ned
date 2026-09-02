@@ -631,6 +631,7 @@ add_library(ned_lib STATIC
         Source/Editor/Vim/VimEngine.cpp
         Source/Editor/Vcs/DiffPatch.cpp
         Source/Editor/Vcs/VcsProviderRegistry.cpp
+        Source/Editor/Vcs/VcsRowStatus.cpp
         Source/Editor/Vcs/VcsRunner.cpp
         Source/Editor/Process/ChildProcess.cpp
         Source/Editor/Acp/Transport.cpp
@@ -698,6 +699,7 @@ add_library(ned_lib STATIC
         Source/UI/TabBar.cpp
         Source/UI/ScrollArrowButton.cpp
         Source/UI/ProjectSidebar.cpp
+        Source/UI/VcsPanel.cpp
         Source/UI/ModeLine.cpp
         Source/UI/EchoArea.cpp
         Source/UI/Theme.cpp
@@ -977,6 +979,7 @@ if (NED_BUILD_TESTS)
             Tests/VcsProviderRegistryTest.cpp
             Tests/DiffPatchTest.cpp
             Tests/VcsRunnerTest.cpp
+            Tests/VcsRowStatusTest.cpp
             Tests/BackgroundActivityTest.cpp
             Tests/AcpTransportTest.cpp
             Tests/AcpClientTest.cpp
@@ -1022,6 +1025,7 @@ if (NED_BUILD_TESTS)
             Tests/WrapOverridesTest.cpp
             Tests/BorderTest.cpp
             Tests/ProjectSidebarTest.cpp
+            Tests/VcsPanelTest.cpp
             Tests/VimMotionTest.cpp
             Tests/VimTextObjectTest.cpp
             Tests/VimRegistersTest.cpp

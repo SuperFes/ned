@@ -285,46 +285,56 @@ Notcurses.
       `Editor/Vim/VimTextObject.h` text-object parsing is most of what it needs to hang
       on to.
 
-### VCS Side Panel (New Feature)
+### VCS Side Panel
 
-A persistent left-side panel for working-tree changes, physically shaped like
-`ProjectSidebar` (`UI/ProjectSidebar.h` — rounded border, collapsible to a 1-column
-strip, `C-c p`-style dedicated focus toggle, sticky-scroll for section headers) and
-docked opposite it or swappable with it. Today VCS status/stage/commit/branch/diff are
-all one-shot commands landing in transient `*vcs status*`/`*vcs diff*`/`*vcs branches*`
-buffers (`Commands.cpp`'s `vcs-*` family, `C-c v` prefix) — useful for a quick look, but
-nothing stays on screen the way `ProjectSidebar` does, and nothing supports multi-select
-batch actions. `VcsRunner`/`VcsProvider` (`Editor/Vcs/`) already have the async
-request/parse plumbing this panel would consume; the gaps are UI-side and, for a few
-items below, `VcsProvider` vocabulary that doesn't exist yet.
+Core slice shipped 2026-09-01: a persistent left-side panel for working-tree changes,
+`UI/VcsPanel.h/.cpp`, physically shaped like `ProjectSidebar` (rounded border,
+collapsible to a 1-column strip, drag-resize divider, keyboard-focusable with arrow-key
+navigation) and docked in the same left slot, swappable with it — `toggle-vcs-panel`
+(`C-c V`)/`focus-vcs-panel` (`C-c v p`) mirror `toggle-project-sidebar`/
+`focus-project-sidebar`'s own pair, and `BufferView` keeps the two mutually exclusive on
+that shared slot (expanding one collapses the other via plain `SetCollapsed`, not the
+persisting `CommitCollapsed`, so an automatic swap never overwrites the other widget's
+own remembered visibility). Starts hidden by default (unlike `ProjectSidebar`) since it's
+a new opt-in surface. `Editor/Vcs/VcsRowStatus.h` hoists the row-severity classification
+(`VcsRowStatus`/`ClassifyPorcelainStatus`) that used to be `ProjectSidebar.cpp`-local so
+both widgets share it, and adds `PartitionVcsStatus` (staged/unstaged/untracked bucketing
+from git's porcelain `XY` code) for this panel's own section grouping. Built entirely on
+the `VcsRunner`/`VcsProvider` plumbing that already existed — no backend changes.
 
-- [ ] **Tree view of working-tree state** — staged / unstaged / untracked as three
-      collapsible sections (mirroring `ProjectSidebar`'s directory-expand model), each
-      row a `VcsStatusEntry` (path + short status code). Directories group files the same
-      way `BuildProjectTree` does, not a flat list.
-      keyboard-focusable, arrow-key navigation, matching `ProjectSidebar`'s
-      `Focusable()`/`TakeKeyboardFocus` precedent.
-- [ ] **Multi-select and batch actions** — checkbox/toggle-select on rows (space to
-      toggle, like a dired-style mark), then stage/unstage/discard the whole selection at
-      once instead of one `vcs-stage-file` call per file. Needs a small selection-state
-      structure the panel owns; `VcsRunner::RequestStage`/`RequestUnstage` already take a
-      path list shape or would need a trivial batch wrapper.
+Two deliberate v1 cuts from the original design sketch below: no sticky-scroll for
+section headers while scrolled into deep content (`ProjectSidebar`'s own affordance,
+skipped here as scope, not an oversight), and directory-tree rows use indentation only,
+no box-drawing tree-connector glyphs (`ProjectSidebar`'s `├─└─│`) — both easy follow-ups
+if the plain-indent tree reads as too flat in practice.
+
+- [x] **Tree view of working-tree state** — staged / unstaged / untracked as three
+      collapsible sections, each file grouped into a directory tree (`VcsPanel.cpp`'s own
+      `BuildStatusTree`, built from the known status-entry path list rather than a disk
+      walk, reusing `ProjectTreeEntry`'s dir/file/depth shape) rather than a flat list.
+      Real ☐/☑ ballot-box glyphs for the multi-select checkbox (see below), not bracketed
+      ASCII.
+- [x] **Multi-select and batch actions** — Space marks/unmarks the focused row (dired-
+      style), and a click squarely on the ☐/☑ glyph does the same from the mouse (a click
+      anywhere else on a file row opens it instead). `a`/`u` stage/unstage the whole
+      marked selection if non-empty, else just the focused row — `VcsRunner::
+      RequestStage`/`RequestUnstage` already take one path at a time, so this loops one
+      call per target rather than needing a new batch primitive.
 - [ ] **Inline diff preview on selection** — clicking/arrowing to a row shows that file's
       hunks in a preview pane (split panel or an overlay), reusing `VcsRunner::RequestDiff`
       + `DiffPatch.h`'s hunk-slicing rather than only jumping straight into the buffer.
       Hunk-level stage/unstage from the preview (`vcs-stage-hunk`/`-unstage-hunk`'s logic,
       currently buffer-point-driven only) would need to accept an explicit hunk instead of
-      "whichever covers point."
-- [ ] **Commit compose inline** — a compose row/mini-panel that opens the existing
-      `*vcs commit message*` buffer/mode (`vcs-commit`/`vcs-commit-finish`) but seeded
-      from the panel's current staged selection, not "whatever's currently staged
-      globally" — most VCSes commit everything staged regardless, so this is really about
-      surfacing *what's about to be committed* next to the compose box, not a new commit
-      primitive.
-- [ ] **Branch switcher/creator inline** — a branch row or header dropdown-equivalent
-      exposing `vcs-branches`/`vcs-switch-branch`/`vcs-create-branch` without leaving the
-      panel or going through M-x; `VcsProvider::ParseBranchList`/`current` already has
-      everything needed to render it.
+      "whichever covers point." Not part of the shipped core slice.
+- [x] **Commit compose inline** — `c` fires `BufferView::RequestVcsAction(Commit)`
+      (routed via `WindowManager::RequestVcsPanelAction` to whichever pane has focus),
+      which just calls the existing `BeginVcsCommitMessage()` unchanged — no new commit
+      primitive, the panel's border title shows "N staged" for context before it's fired.
+- [x] **Branch switcher/creator inline** — `w`/`n` fire the same `RequestVcsAction`
+      routing into the existing `BeginVcsSwitchBranchPrompt()`/(newly extracted)
+      `BeginVcsCreateBranchPrompt()`; the checked-out branch (from `RequestBranchList`'s
+      `current` entry) renders in the panel's border title rather than a dedicated content
+      row, `ProjectSidebar`'s own header-row precedent.
 - [ ] **Discard/revert changes** — no `VcsProvider` vocabulary exists yet for "revert this
       file's working-tree changes to HEAD" (distinct from unstage, which only moves the
       index). Needs a new `RevertArgv`/provider method (backend gap, not just UI) plus a
@@ -347,12 +357,10 @@ items below, `VcsProvider` vocabulary that doesn't exist yet.
       guard) as a distinct panel state/section rather than just another modified file —
       jump-to-first-marker on click.
 
-Scope note: this reads as roughly `ProjectSidebar`-sized for the tree/select/stage/
-commit/branch core, plus a genuinely separate, smaller backend slice (revert/stash/
-push-pull) extending `VcsProvider`'s vocabulary and `vcs-git.janet`'s callback table to
-match. The core panel is buildable entirely on what `VcsRunner`/`VcsProvider` already
-expose; the vocabulary-completion items should probably land as their own follow-up
-rather than blocking the panel's first version.
+Remaining scope note: everything still open above (diff preview, revert/stash/push-pull,
+ahead/behind, conflict-file affordance) is a genuinely separate, smaller backend slice
+extending `VcsProvider`'s vocabulary and `vcs-git.janet`'s callback table to match, not
+blocked on anything about the now-shipped panel itself.
 
 ### Jupyter Notebooks
 
@@ -896,6 +904,18 @@ real content" — same signature as the VimEngine one above (fails only under
 `ctest --test-dir build`, passes cleanly every time run standalone). Not yet
 investigated at all; noting it here so it doesn't need rediscovering from scratch next
 time it reproduces.
+
+A third instance, different symptom (seen 2026-09-01 while adding the VCS side panel's
+own tests, entirely unrelated to LSP): `ctest --test-dir build` reports one `ned_tests`
+entry FAILED — `LspContentTest.cpp`'s `ExtractSignatureHelp resolves a [start, end)
+offset-pair parameter label` — but running that exact test name directly against the
+binary (`./ned_tests "ExtractSignatureHelp resolves a *"`) passes cleanly. The failing
+ctest entry's registered name is actually dozens of semicolon-joined `TEST_CASE` names
+concatenated into one (`catch_discover_tests`' own registration, visible via
+`ctest --test-dir build -N`) — a real suspect given CMake treats `;` as its list
+separator, so this may be a test-*discovery* artifact (a mis-split ctest invocation)
+rather than the test itself failing. Not yet root-caused; the individual Catch2 test
+is confirmed correct.
 
 ### Named Non-Goals (Leaning "Won't Do", Kept Visible So It's a Conscious Call)
 

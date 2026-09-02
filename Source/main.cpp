@@ -86,6 +86,7 @@
 #include "UI/ListPopup.h"
 #include "UI/Overlay.h"
 #include "UI/ProjectSidebar.h"
+#include "UI/VcsPanel.h"
 #include "UI/TabBar.h"
 #include "UI/TerminalColorProbe.h"
 #include "UI/TerminalPanel.h"
@@ -775,6 +776,47 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
         projectSidebar->RevealPath(*buffer->Path());
     }
 
+    // VCS side panel: same physical shape as ProjectSidebar just above,
+    // docked in the same left slot, swappable via toggle-vcs-panel/
+    // toggle-project-sidebar (see BufferView::SetVcsPanel's own doc
+    // comment for how the two are kept mutually exclusive).
+    auto vcsPanel = std::make_shared<ned::ui::VcsPanel>(
+        [wm = windowManager.get()]() -> ned::ui::ActiveBuffer& { return wm->FocusedActiveBuffer(); }, bufferList,
+        statusMessage, theme);
+
+    windowManager->SetVcsPanel(vcsPanel.get());
+
+    vcsPanel->SetOnFocusReturn([wm = windowManager.get()] { wm->TakeFocus(); });
+
+    vcsPanel->SetOnAction(
+        [wm = windowManager.get()](ned::ui::VcsPanelAction action) { wm->RequestVcsPanelAction(action); });
+
+    vcsPanel->SetOnWidthCommitted(
+        [](int width) { ned::editor::SetVariable("vcs-panel-width", std::to_string(width)); });
+    vcsPanel->SetOnCollapseCommitted(
+        [](bool collapsed) { ned::editor::SetVariable("vcs-panel-visible", collapsed ? "false" : "true"); });
+
+    if (const auto rememberedWidth = ned::editor::Variable("vcs-panel-width")) {
+        try {
+            vcsPanel->SetWidth(std::stoi(*rememberedWidth));
+        }
+        catch (const std::exception&) {
+            // Malformed state (hand-edited variables.json) -- keep the default.
+        }
+    }
+    if (const auto rememberedVisible = ned::editor::Variable("vcs-panel-visible")) {
+        vcsPanel->SetCollapsed(*rememberedVisible == "false");
+    }
+    else {
+        // Unlike ProjectSidebar, a brand-new install starts with this
+        // panel hidden -- it's a new opt-in feature, and showing two
+        // sidebar-like columns on first launch (both default-expanded,
+        // side by side) would be a surprising default. C-c V/C-c v p
+        // reveals it; a deliberate toggle persists via
+        // SetOnCollapseCommitted above, same as ProjectSidebar's own.
+        vcsPanel->SetCollapsed(true);
+    }
+
     tabBar->SetOnCloseRequest(
         [wm = windowManager.get()](ned::text::Buffer& buffer) { wm->RequestCloseBuffer(buffer); });
 
@@ -816,6 +858,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
 
     Container bufferRow(Axis::Horizontal, {
                                               {projectSidebar.get(), SizeSpec::DynamicFixed([raw = projectSidebar.get()] { return raw->Width(); })},
+                                              {vcsPanel.get(), SizeSpec::DynamicFixed([raw = vcsPanel.get()] { return raw->Width(); })},
                                               {&mainColumn, SizeSpec::Flex()},
                                           });
 
