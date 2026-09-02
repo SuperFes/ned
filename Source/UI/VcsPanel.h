@@ -30,6 +30,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "ActiveBuffer.h"
@@ -50,8 +51,11 @@ namespace ned::ui {
 // just a second entry point into flows that already work from C-c v c/w/n.
 enum class VcsPanelAction { Commit, SwitchBranch, CreateBranch };
 
-// Which of the three working-tree buckets a row belongs to.
-enum class VcsPanelSection { Staged, Unstaged, Untracked };
+// Which working-tree/stash bucket a row belongs to. Stash support follow-up:
+// Stash is a fourth bucket, distinct from the three working-tree ones --
+// unlike them, its section is only ever shown when non-empty (see
+// VcsPanel::BuildRows's own comment).
+enum class VcsPanelSection { Staged, Unstaged, Untracked, Stash };
 
 class VcsPanel : public Widget {
   public:
@@ -88,6 +92,23 @@ class VcsPanel : public Widget {
     // in this codebase.
     void SetOnAction(std::function<void(VcsPanelAction)> handler);
 
+    // Inline diff preview: fired whenever the keyboard/mouse selection
+    // moves onto (or off of) a staged/unstaged file row -- std::nullopt for
+    // every other row kind (a section header, a directory, an untracked
+    // file with no meaningful `git diff`, or a stash entry). staged mirrors
+    // VcsRunner::RequestFileDiffText's own parameter (which section the row
+    // is in). main.cpp wires this to request the file's diff text and feed
+    // VcsDiffPreview, showing/hiding its overlay on Some/nullopt. Unset
+    // (the default) is a safe no-op, matching every other Set* hook here.
+    void SetOnSelectionChanged(std::function<void(std::optional<std::filesystem::path>, bool staged)> handler);
+
+    // Inline diff preview: forces an immediate status refresh, the same
+    // "force=true" path stage/unstage/commit/etc. already use internally --
+    // public so main.cpp's own hunk-stage-toggle wiring (VcsDiffPreview::
+    // SetOnHunkStageToggle) can bring this panel's section counts back in
+    // sync right after a hunk apply, without waiting out the throttle.
+    void ForceRefresh();
+
     [[nodiscard]] int  Width() const;
     void               SetWidth(int width);
     [[nodiscard]] bool Collapsed() const;
@@ -119,6 +140,21 @@ class VcsPanel : public Widget {
     // own precedent -- builds the section trees directly from pre-parsed
     // entries, bypassing VcsRunner/a real subprocess entirely.
     void DispatchVcsStatusForTesting(const std::vector<editor::vcs::VcsStatusEntry>& entries);
+
+    // Conflict-file affordance: DispatchVcsStatusForTesting bypasses
+    // VcsRunner entirely (ProjectSidebar's own precedent), so it never
+    // drives the real-disk-read conflict scan RefreshStatus's success
+    // callback normally triggers -- this exposes that scan directly for a
+    // test to call after seeding sections_ via DispatchVcsStatusForTesting.
+    void RefreshConflictedPathsForTesting() {
+        RefreshConflictedPaths();
+    }
+
+    // Stash support: same bypass-VcsRunner-entirely testing precedent as
+    // DispatchVcsStatusForTesting above.
+    void DispatchStashesForTesting(std::vector<editor::vcs::VcsStashEntry> entries) {
+        stashes_ = std::move(entries);
+    }
 
     // Test-only introspection: the currently marked (multi-selected) paths,
     // in no particular order -- same "small, honest introspection point"
@@ -170,9 +206,34 @@ class VcsPanel : public Widget {
 
     std::function<void(VcsPanelAction)> onAction_;
 
+    // Inline diff preview -- see SetOnSelectionChanged's own doc comment.
+    // lastNotified_ suppresses re-firing for the same (path, staged) pair
+    // (e.g. Down past a stash section back onto the same file row is a
+    // no-op re-request otherwise possible if BuildRows' row count changed
+    // around it) -- nullopt means "last notification was nullopt too".
+    std::function<void(std::optional<std::filesystem::path>, bool)> onSelectionChanged_;
+    std::optional<std::pair<std::filesystem::path, bool>>           lastNotifiedSelection_;
+    void                                                              NotifySelectionChanged();
+
     editor::vcs::VcsRunner*        vcsRunner_ = nullptr;
     editor::vcs::VcsStatusSections sections_;
     bool                           haveStatus_ = false;
+
+    // Conflict-file affordance: absolute paths (of the staged/unstaged
+    // entries currently in `sections_`) whose on-disk content contains real
+    // <<<<<<< conflict markers (Text/ThreeWayMerge.h's HasConflictMarkers,
+    // save-buffer's own guard precedent) -- recomputed on the same
+    // throttled cadence as sections_ itself, not per-frame. Untracked files
+    // are never checked -- "conflict" is a merge concept that doesn't apply
+    // to a file git doesn't know about yet.
+    std::set<std::filesystem::path> conflictedPaths_;
+    void                            RefreshConflictedPaths();
+
+    // Stash support: refreshed on the same throttled cadence as sections_.
+    std::vector<editor::vcs::VcsStashEntry> stashes_;
+    void                                    PushStash();
+    void                                    PopStash(const std::string& ref);
+    void                                    DropStash(const std::string& ref);
 
     // Branch switcher/creator inline: the checked-out branch, shown in the
     // border title (ProjectSidebar's own header-row precedent) rather than
@@ -181,6 +242,16 @@ class VcsPanel : public Widget {
     // calls a header sub-row. Refreshed on the same throttled tick
     // RefreshStatus already runs.
     std::optional<std::string> currentBranch_;
+
+    // Push/pull/fetch + ahead/behind summary: nullopt until the first
+    // successful RequestAheadBehind (e.g. no upstream configured) -- the
+    // title shows nothing extra in that case rather than "0 0", which
+    // would misleadingly claim "up to date" when the fact is actually
+    // unknown.
+    std::optional<editor::vcs::VcsAheadBehind> aheadBehind_;
+
+    enum class RemoteAction { Fetch, Pull, Push };
+    void RunRemoteAction(RemoteAction action);
 
     // Own throttled poll, independent of ProjectSidebar's own cache timer
     // (VCS-side-panel follow-up doc comment, VcsPanel.h's own header) --
@@ -194,15 +265,25 @@ class VcsPanel : public Widget {
     int  pendingBatchOps_ = 0;
     void StageOrUnstageSelectionOrFocused(bool stage);
 
+    // Discard/revert: the one destructive action in this panel -- 'x' on a
+    // file row enters this confirm state (rendered in place of the border
+    // title, see Paint()) instead of acting immediately. This widget has no
+    // BufferView/MinibufferPrompt to borrow a y/n prompt from, so it's a
+    // small, self-contained piece of state rather than reusing a shared
+    // mechanism that doesn't exist here.
+    std::optional<std::filesystem::path> pendingRevertConfirm_;
+
     [[nodiscard]] int ContentHeight() const;
 
     struct Row {
-        enum class Kind { SectionHeader, Entry };
+        enum class Kind { SectionHeader, Entry, StashEntry };
         Kind                      kind;
         VcsPanelSection           section;
         std::size_t               fileCount = 0; // SectionHeader only
         editor::ProjectTreeEntry  entry{};        // Entry only
         editor::vcs::VcsRowStatus status = editor::vcs::VcsRowStatus::None; // Entry (file rows) only
+        bool                      conflicted = false; // Entry (file rows) only -- see conflictedPaths_
+        editor::vcs::VcsStashEntry stash{};      // StashEntry only
     };
     [[nodiscard]] std::vector<Row> BuildRows() const;
 

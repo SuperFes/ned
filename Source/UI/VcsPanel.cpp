@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <exception>
+#include <fstream>
+#include <iterator>
 #include <map>
 #include <unordered_map>
 #include <utility>
@@ -11,6 +13,7 @@
 #include "Editor/ProjectRoot.h"
 #include "KeyTranslation.h"
 #include "Text/BinaryDetect.h"
+#include "Text/ThreeWayMerge.h"
 #include "Text/Utf8.h"
 
 namespace ned::ui {
@@ -112,7 +115,8 @@ namespace {
     std::string SectionLabel(VcsPanelSection section, std::size_t count) {
         const char* name = section == VcsPanelSection::Staged     ? "Staged"
                           : section == VcsPanelSection::Unstaged ? "Unstaged"
-                                                                  : "Untracked";
+                          : section == VcsPanelSection::Untracked ? "Untracked"
+                                                                   : "Stashes";
         return std::string(name) + " (" + std::to_string(count) + ")";
     }
 
@@ -207,6 +211,39 @@ void VcsPanel::SetOnAction(std::function<void(VcsPanelAction)> handler) {
     onAction_ = std::move(handler);
 }
 
+void VcsPanel::SetOnSelectionChanged(std::function<void(std::optional<std::filesystem::path>, bool)> handler) {
+    onSelectionChanged_ = std::move(handler);
+}
+
+void VcsPanel::ForceRefresh() {
+    RefreshStatus(/*force=*/true);
+}
+
+void VcsPanel::NotifySelectionChanged() {
+    if (!onSelectionChanged_) {
+        return;
+    }
+    const std::vector<Row> rows = BuildRows();
+    std::optional<std::pair<std::filesystem::path, bool>> current;
+    if (static_cast<std::size_t>(selectedIndex_) < rows.size()) {
+        const Row& row = rows[static_cast<std::size_t>(selectedIndex_)];
+        if (row.kind == Row::Kind::Entry && !row.entry.isDirectory &&
+            (row.section == VcsPanelSection::Staged || row.section == VcsPanelSection::Unstaged)) {
+            current = std::make_pair(row.entry.path, row.section == VcsPanelSection::Staged);
+        }
+    }
+    if (current == lastNotifiedSelection_) {
+        return;
+    }
+    lastNotifiedSelection_ = current;
+    if (current) {
+        onSelectionChanged_(current->first, current->second);
+    }
+    else {
+        onSelectionChanged_(std::nullopt, false);
+    }
+}
+
 void VcsPanel::TakeKeyboardFocus() {
     collapseOnFocusReturn_ = collapsed_;
     SetCollapsed(false);
@@ -245,16 +282,28 @@ void VcsPanel::RefreshStatus(bool force) {
     if (!force && haveStatus_ && (now - lastRefreshTime_) < kRefreshThrottle) {
         return;
     }
-    lastRefreshTime_ = now;
-    // A prior request still in flight makes RequestStatus's onError fire
-    // immediately (VcsRunner's own single-concurrent-request-per-key guard)
-    // -- silently discarded, sections_ just keeps its last-known contents
-    // until the next tick's request actually completes, ProjectSidebar's
-    // own RefreshVcsStatus precedent.
+    // lastRefreshTime_ only advances on a real success (below), not here --
+    // confirmed live: ProjectSidebar polls VcsRunner::RequestStatus on its
+    // own independent 500ms timer against the identical "status:"+root key
+    // VcsRunner (Editor/Vcs/VcsRunner.cpp) single-flights, and since
+    // ProjectSidebar paints first in main.cpp's composition (ahead of this
+    // widget in bufferRow's child order), it wins that race almost every
+    // time a request actually gets attempted -- both widgets are painted
+    // from the same keypress-triggered frame, and 1000ms being an exact
+    // multiple of ProjectSidebar's 500ms made the collision close to
+    // deterministic in practice, not occasional. Advancing the timestamp
+    // unconditionally (the original code) meant a lost race went silent
+    // for a full new throttle window every time -- observed live as
+    // sections_/stashes_/aheadBehind_ never updating at all outside a
+    // force=true refresh (stage/commit/etc.'s own onSuccess). Leaving it
+    // unadvanced on failure makes the very next Paint() retry immediately
+    // instead, which is what actually converges in practice.
     vcsRunner_->RequestStatus(
         [this](std::vector<editor::vcs::VcsStatusEntry> entries) {
-            sections_   = editor::vcs::PartitionVcsStatus(entries);
-            haveStatus_ = true;
+            sections_        = editor::vcs::PartitionVcsStatus(entries);
+            haveStatus_      = true;
+            lastRefreshTime_ = std::chrono::steady_clock::now();
+            RefreshConflictedPaths();
         },
         [](const std::string&) {});
     vcsRunner_->RequestBranchList(
@@ -267,6 +316,37 @@ void VcsPanel::RefreshStatus(bool force) {
             }
         },
         [](const std::string&) {});
+    // Stash support: same throttled cadence, silently keeps stashes_'s last-
+    // known contents on error (a provider without stash vocabulary just
+    // never shows the section, ParseStashList/PartitionVcsStatus's own
+    // "highlighting is only meaningful when it works" precedent).
+    vcsRunner_->RequestStashList([this](std::vector<editor::vcs::VcsStashEntry> entries) { stashes_ = std::move(entries); },
+                                 [](const std::string&) {});
+    // Ahead/behind summary: silently keeps the last-known value on error
+    // (no upstream configured is the common, expected case for a repo with
+    // no remote at all) -- same "highlighting is only meaningful when it
+    // works" precedent as the rest of this refresh.
+    vcsRunner_->RequestAheadBehind([this](editor::vcs::VcsAheadBehind ab) { aheadBehind_ = ab; }, [](const std::string&) {});
+}
+
+void VcsPanel::RefreshConflictedPaths() {
+    conflictedPaths_.clear();
+    const std::filesystem::path root = editor::ProjectRoot();
+    const auto                  scan = [&](const std::vector<editor::vcs::VcsStatusEntry>& entries) {
+        for (const editor::vcs::VcsStatusEntry& entry : entries) {
+            const std::filesystem::path absPath = (root / entry.path).lexically_normal();
+            std::ifstream                file(absPath, std::ios::binary);
+            if (!file) {
+                continue;
+            }
+            const std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+            if (text::HasConflictMarkers(content)) {
+                conflictedPaths_.insert(absPath);
+            }
+        }
+    };
+    scan(sections_.staged);
+    scan(sections_.unstaged);
 }
 
 std::vector<VcsPanel::Row> VcsPanel::BuildRows() const {
@@ -302,7 +382,8 @@ std::vector<VcsPanel::Row> VcsPanel::BuildRows() const {
             row.entry   = entry;
             if (!entry.isDirectory) {
                 const auto it = statusByPath.find(entry.path);
-                row.status    = it != statusByPath.end() ? it->second : editor::vcs::VcsRowStatus::None;
+                row.status     = it != statusByPath.end() ? it->second : editor::vcs::VcsRowStatus::None;
+                row.conflicted = conflictedPaths_.contains(entry.path);
             }
             rows.push_back(row);
             if (entry.isDirectory && !expandedDirs_.contains(entry.path)) {
@@ -314,6 +395,28 @@ std::vector<VcsPanel::Row> VcsPanel::BuildRows() const {
     addSection(VcsPanelSection::Staged, sections_.staged);
     addSection(VcsPanelSection::Unstaged, sections_.unstaged);
     addSection(VcsPanelSection::Untracked, sections_.untracked);
+
+    // Stash support: unlike the three sections above, this one is only
+    // shown when non-empty -- ROADMAP's own "shown only when non-empty"
+    // call, since an empty stash list is the overwhelmingly common case and
+    // permanently reserving a row for it would be pure clutter.
+    if (!stashes_.empty()) {
+        Row header;
+        header.kind      = Row::Kind::SectionHeader;
+        header.section   = VcsPanelSection::Stash;
+        header.fileCount = stashes_.size();
+        rows.push_back(header);
+        if (!collapsedSections_.contains(VcsPanelSection::Stash)) {
+            for (const editor::vcs::VcsStashEntry& entry : stashes_) {
+                Row row;
+                row.kind    = Row::Kind::StashEntry;
+                row.section = VcsPanelSection::Stash;
+                row.stash   = entry;
+                rows.push_back(row);
+            }
+        }
+    }
+
     return rows;
 }
 
@@ -348,16 +451,30 @@ void VcsPanel::Paint(Canvas c) {
     const Brush frameBrush = (resizing_ || Focused()) ? theme_.borderAccent : theme_.border;
     DrawBorder(c, frameBrush);
 
-    // Branch switcher/creator inline: the checked-out branch and staged
-    // count ride the border title (ProjectSidebar's own header-row
-    // precedent) rather than a dedicated content row -- see currentBranch_'s
-    // own doc comment.
-    std::string title = "VCS";
-    if (currentBranch_) {
-        title += " · " + *currentBranch_;
+    std::string title;
+    if (pendingRevertConfirm_) {
+        // Discard/revert: the confirm prompt replaces the title outright
+        // while pending -- the one destructive action here gets real
+        // friction, unlike stage/unstage.
+        title = "Discard changes to " + pendingRevertConfirm_->filename().string() + "? y/n";
     }
-    if (!sections_.staged.empty()) {
-        title += " · " + std::to_string(sections_.staged.size()) + " staged";
+    else {
+        // Branch switcher/creator inline: the checked-out branch and staged
+        // count ride the border title (ProjectSidebar's own header-row
+        // precedent) rather than a dedicated content row -- see
+        // currentBranch_'s own doc comment.
+        title = "VCS";
+        if (currentBranch_) {
+            title += " · " + *currentBranch_;
+        }
+        // Ahead/behind: arrows only when known and actually non-zero --
+        // keeps the common "up to date"/"no upstream" case uncluttered.
+        if (aheadBehind_ && (aheadBehind_->ahead > 0 || aheadBehind_->behind > 0)) {
+            title += " ↑" + std::to_string(aheadBehind_->ahead) + " ↓" + std::to_string(aheadBehind_->behind);
+        }
+        if (!sections_.staged.empty()) {
+            title += " · " + std::to_string(sections_.staged.size()) + " staged";
+        }
     }
     DrawBorderTitle(c, title, theme_.borderAccent);
 
@@ -396,6 +513,10 @@ void VcsPanel::Paint(Canvas c) {
             label += ToCodepoints(SectionLabel(row.section, row.fileCount));
             brush = theme_.tabBar;
         }
+        else if (row.kind == Row::Kind::StashEntry) {
+            label = U"  " + ToCodepoints(row.stash.ref) + U": " + ToCodepoints(row.stash.message);
+            brush = Brush{.background = theme_.background, .foreground = theme_.lineNumberForeground};
+        }
         else {
             const bool marked = !row.entry.isDirectory && selected_.contains(row.entry.path);
             std::u32string indent(static_cast<std::size_t>(row.entry.depth) * 2, U' ');
@@ -414,6 +535,12 @@ void VcsPanel::Paint(Canvas c) {
             label += ToCodepoints(row.entry.path.filename().string());
             if (row.entry.isDirectory) {
                 label += U'/';
+            }
+            if (row.conflicted) {
+                // Appended, not prefixed -- keeps OnEvent's fixed checkbox-
+                // column math (contentLeft + depth*2) undisturbed regardless
+                // of conflict state.
+                label += U" ⚠";
             }
             const std::optional<Color> statusColor = VcsStatusColor(row.status);
             brush = Brush{.background = theme_.background,
@@ -498,6 +625,7 @@ bool VcsPanel::OnEvent(const Event& event) {
         return true;
     }
     selectedIndex_ = static_cast<int>(index);
+    NotifySelectionChanged();
     const Row& row = rows[index];
 
     if (row.kind == Row::Kind::SectionHeader) {
@@ -507,6 +635,10 @@ bool VcsPanel::OnEvent(const Event& event) {
         else {
             collapsedSections_.insert(row.section);
         }
+        return true;
+    }
+    if (row.kind == Row::Kind::StashEntry) {
+        PopStash(row.stash.ref);
         return true;
     }
     if (row.entry.isDirectory) {
@@ -552,12 +684,79 @@ void VcsPanel::OpenFileEntry(const std::filesystem::path& path) {
         text::Buffer& opened = bufferList_.OpenOrCreateFile(path);
         activeBufferProvider_().Set(opened);
         statusMessage_.clear();
+        if (conflictedPaths_.contains(path.lexically_normal())) {
+            // Conflict-file affordance: jump to the first real conflict
+            // marker rather than leaving point at the top -- a small local
+            // scan (line-start "<<<<<<<" only, not mid-line text that
+            // happens to contain it), no new shared infrastructure.
+            const std::string content = opened.Text();
+            std::size_t       pos     = content.find("<<<<<<<");
+            while (pos != std::string::npos && pos != 0 && content[pos - 1] != '\n') {
+                pos = content.find("<<<<<<<", pos + 1);
+            }
+            if (pos != std::string::npos) {
+                opened.SetPoint(pos);
+            }
+        }
     }
     catch (const text::BinaryFileError&) {
         statusMessage_ = "\"" + path.string() + "\" looks like a binary file.";
     }
     catch (const std::exception& e) {
         statusMessage_ = e.what();
+    }
+}
+
+void VcsPanel::PushStash() {
+    if (!vcsRunner_) {
+        statusMessage_ = "no vcs runner configured";
+        return;
+    }
+    vcsRunner_->RequestStashPush(
+        "", [this] { RefreshStatus(/*force=*/true); },
+        [this](const std::string& error) { statusMessage_ = "vcs: " + error; });
+}
+
+void VcsPanel::PopStash(const std::string& ref) {
+    if (!vcsRunner_) {
+        statusMessage_ = "no vcs runner configured";
+        return;
+    }
+    vcsRunner_->RequestStashPop(
+        ref, [this] { RefreshStatus(/*force=*/true); },
+        [this](const std::string& error) { statusMessage_ = "vcs: " + error; });
+}
+
+void VcsPanel::DropStash(const std::string& ref) {
+    if (!vcsRunner_) {
+        statusMessage_ = "no vcs runner configured";
+        return;
+    }
+    vcsRunner_->RequestStashDrop(
+        ref, [this] { RefreshStatus(/*force=*/true); },
+        [this](const std::string& error) { statusMessage_ = "vcs: " + error; });
+}
+
+void VcsPanel::RunRemoteAction(RemoteAction action) {
+    if (!vcsRunner_) {
+        statusMessage_ = "no vcs runner configured";
+        return;
+    }
+    auto onSuccess = [this] {
+        statusMessage_.clear();
+        RefreshStatus(/*force=*/true);
+    };
+    auto onError = [this](const std::string& error) { statusMessage_ = "vcs: " + error; };
+    switch (action) {
+        case RemoteAction::Fetch:
+            vcsRunner_->RequestFetch(onSuccess, onError);
+            return;
+        case RemoteAction::Pull:
+            vcsRunner_->RequestPull(onSuccess, onError);
+            return;
+        case RemoteAction::Push:
+            vcsRunner_->RequestPush(onSuccess, onError);
+            return;
     }
 }
 
@@ -630,6 +829,33 @@ bool VcsPanel::HandleKeyEvent(const Event& event) {
     }
     const bool cancel = chord->Special == editor::SpecialKey::Escape || (chord->Control && chord->Codepoint == U'g');
 
+    // Discard/revert confirm state intercepts every key while pending,
+    // before any of the normal navigation/action handling below --
+    // matching BufferView's own y/n confirmation shape (ConfirmOverwriteSave
+    // etc.), just implemented locally since this widget has no
+    // MinibufferPrompt of its own.
+    if (pendingRevertConfirm_) {
+        // Only a bare 'y'/'Y' confirms -- deliberately not Enter too, real
+        // "are you sure" friction for the one destructive action in this
+        // panel (matches the ROADMAP's own explicit call for this).
+        // Anything else, including Escape/'n', cancels.
+        const bool confirmed = chord->Special == editor::SpecialKey::None && !chord->Control && !chord->Meta &&
+                               (chord->Codepoint == U'y' || chord->Codepoint == U'Y');
+        const std::filesystem::path target = *pendingRevertConfirm_;
+        pendingRevertConfirm_.reset();
+        if (confirmed) {
+            if (vcsRunner_) {
+                vcsRunner_->RequestRevert(
+                    target, [this] { RefreshStatus(/*force=*/true); },
+                    [this](const std::string& error) { statusMessage_ = "vcs: " + error; });
+            }
+            else {
+                statusMessage_ = "no vcs runner configured";
+            }
+        }
+        return true;
+    }
+
     const std::vector<Row> rows = BuildRows();
     if (rows.empty()) {
         if (cancel) {
@@ -645,6 +871,7 @@ bool VcsPanel::HandleKeyEvent(const Event& event) {
     if (up || down) {
         selectedIndex_ = std::clamp(selectedIndex_ + (down ? 1 : -1), 0, static_cast<int>(rows.size()) - 1);
         EnsureSelectionVisible();
+        NotifySelectionChanged();
         return true;
     }
 
@@ -656,6 +883,9 @@ bool VcsPanel::HandleKeyEvent(const Event& event) {
             else {
                 collapsedSections_.insert(row.section);
             }
+        }
+        else if (row.kind == Row::Kind::StashEntry) {
+            PopStash(row.stash.ref);
         }
         else if (row.entry.isDirectory) {
             ToggleDirectory(row.entry.path);
@@ -696,6 +926,45 @@ bool VcsPanel::HandleKeyEvent(const Event& event) {
         }
         if (chord->Codepoint == U'u') {
             StageOrUnstageSelectionOrFocused(/*stage=*/false);
+            return true;
+        }
+        if (chord->Codepoint == U'x') {
+            // Discard/revert: dired's own "delete/discard" mnemonic. Only
+            // meaningful on a real file row -- a section header or
+            // directory has nothing to revert.
+            if (row.kind == Row::Kind::Entry && !row.entry.isDirectory) {
+                pendingRevertConfirm_ = row.entry.path;
+            }
+            return true;
+        }
+        if (chord->Codepoint == U'z') {
+            // Stash support: Magit's own real-world mnemonic for its stash
+            // prefix -- stashes the whole working tree (not row-scoped),
+            // meaningful from anywhere in the panel.
+            PushStash();
+            return true;
+        }
+        if (chord->Codepoint == U'd') {
+            // Drop the focused stash entry -- meaningless anywhere else.
+            if (row.kind == Row::Kind::StashEntry) {
+                DropStash(row.stash.ref);
+            }
+            return true;
+        }
+        if (chord->Codepoint == U'f') {
+            // Push/pull/fetch: Magit's own real-world 'f'/'F'/'P' mnemonics,
+            // reused directly. Meaningful from anywhere in the panel (root-
+            // scoped, not row-scoped); no confirm friction -- the least
+            // destructive of the remote-touching actions here.
+            RunRemoteAction(RemoteAction::Fetch);
+            return true;
+        }
+        if (chord->Codepoint == U'F') {
+            RunRemoteAction(RemoteAction::Pull);
+            return true;
+        }
+        if (chord->Codepoint == U'P') {
+            RunRemoteAction(RemoteAction::Push);
             return true;
         }
         if (chord->Codepoint == U'c' || chord->Codepoint == U'w' || chord->Codepoint == U'n') {
