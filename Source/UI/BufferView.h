@@ -394,6 +394,11 @@ class BufferView : public Widget {
     // no live EventLoop at all, unlike most *ForTesting entries above.
     void JumpToNextHunkForTesting();
     void JumpToPreviousHunkForTesting();
+    // next-error follow-up: same seam again, for NextError/PreviousError --
+    // fully synchronous (Editor/NextError.h's CollectResultLocations is a
+    // plain scan, no VcsRunner/LSP round trip), so no live EventLoop needed.
+    void NextErrorForTesting();
+    void PreviousErrorForTesting();
 
     // Diagnostics-multibuffer follow-up: same "public primarily for tests"
     // seam, but RequestDiagnosticsBuffer needs no live EventLoop at all --
@@ -1660,6 +1665,15 @@ class BufferView : public Widget {
     // "current" hunk to resume scanning from after a wrap here).
     void JumpToNextHunk();
     void JumpToPreviousHunk();
+    // next-error follow-up: JumpToNextHunk/JumpToPreviousHunk's own
+    // walk-with-no-wrap shape, generalized over whichever results buffer
+    // Editor/NextError.h's LastResultsBuffer() names instead of a private
+    // per-pane cache -- StepError resolves the buffer, collects its
+    // locations, and asks StepResultLocation (its own process-wide cursor,
+    // not this pane's point) for the next/previous one to jump to.
+    void NextError();
+    void PreviousError();
+    void StepError(bool forward);
     // multi-line-commit-message follow-up: opens (or, if one's already
     // mid-composition, just switches to) the *vcs commit message* buffer --
     // InteractiveRequest::VcsCommit's entry point.

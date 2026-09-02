@@ -561,6 +561,7 @@ add_library(ned_lib STATIC
         Source/Editor/ModeOverrides.cpp
         Source/Editor/ModePrewarm.cpp
         Source/Editor/Multibuffer.cpp
+        Source/Editor/NextError.cpp
         Source/Editor/WrapOverrides.cpp
         Source/Editor/CodeFold.cpp
         Source/Editor/CodeFoldSettings.cpp
@@ -1026,6 +1027,8 @@ if (NED_BUILD_TESTS)
             Tests/ModeOverridesTest.cpp
             Tests/ModePrewarmTest.cpp
             Tests/MultibufferTest.cpp
+            Tests/NextErrorTest.cpp
+            Tests/BufferViewNextErrorTest.cpp
             Tests/BufferViewDiagnosticsBufferTest.cpp
             Tests/BufferViewEmbeddedLspTest.cpp
             Tests/BufferViewProjectFindReferencesTest.cpp
