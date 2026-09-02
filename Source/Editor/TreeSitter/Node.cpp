@@ -21,6 +21,10 @@ std::size_t Node::StartRow() const {
     return ts_node_start_point(node_).row;
 }
 
+std::size_t Node::StartColumn() const {
+    return ts_node_start_point(node_).column;
+}
+
 std::size_t Node::ChildCount() const {
     return ts_node_child_count(node_);
 }

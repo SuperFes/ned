@@ -9,14 +9,19 @@
 ; genuinely different scope-cut than c-folds.scm's own deliberate omission of
 ; it -- that was a folding-affordance decision, not an indentation one:
 ; struct members still need to indent one level regardless of whether the
-; struct body itself is foldable). initializer_list/parameter_list/
-; argument_list cover multi-line brace-initializers and wrapped declaration/
-; call parameter lists.
+; struct body itself is foldable). initializer_list covers multi-line
+; brace-initializers. parameter_list/argument_list (@aligned-paren-column-
+; alignment follow-up) get "aligned" rather than "indent" -- a wrapped
+; declaration/call's continuation lines conventionally line up under the
+; first parameter/argument's own column (e.g. "foo(a,\n    b)"), not one
+; flat indent level deeper; Editor/Indent.h's engine falls back to plain
+; @indent behavior automatically when the opener is alone on its own line
+; (nothing to align to), so this loses nothing for that shape.
 (compound_statement) @indent
 (field_declaration_list) @indent
 (initializer_list) @indent
-(parameter_list) @indent
-(argument_list) @indent
+(parameter_list) @aligned
+(argument_list) @aligned
 
 (compound_statement "}" @dedent)
 (field_declaration_list "}" @dedent)

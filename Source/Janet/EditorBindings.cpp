@@ -14,6 +14,7 @@
 #include "Editor/AutoPair.h"
 #include "Editor/AutoRevert.h"
 #include "Editor/Backup.h"
+#include "Editor/BlankLineCleanup.h"
 #include "Editor/Clipboard.h"
 #include "Editor/CodeFoldSettings.h"
 #include "Editor/Dap/DapConfig.h"
@@ -430,6 +431,10 @@ namespace {
 
     void NedSetTrimTrailingWhitespaceOnSave(bool enabled) {
         editor::SetTrimTrailingWhitespaceOnSave(enabled);
+    }
+
+    void NedSetCleanBlankLineOnNewline(bool enabled) {
+        editor::SetCleanBlankLineOnNewline(enabled);
     }
 
     // crlf-handling follow-up: "preserve" (default) keeps whatever ending
@@ -1260,6 +1265,12 @@ void InstallEditorBindings(Environment& env) {
         "Enable/disable stripping trailing spaces/tabs from every line and collapsing trailing blank lines at "
         "end-of-file, applied to a file's written content on save (default true). Disk-only, same as "
         "set-ensure-final-newline -- the buffer's own live content is never touched.");
+    env.Register<&NedSetCleanBlankLineOnNewline>(
+        "ned", "set-clean-blank-line-on-newline",
+        "Enable/disable clearing a whitespace-only line's own leading run before splitting it when the newline "
+        "command is invoked with point on one (default true) -- a second Enter on a line that only ever got "
+        "auto-indented and never actually typed into removes that dangling whitespace instead of leaving it "
+        "behind, while the new line's own indent is still computed fresh.");
     env.Register<&NedSetLineEndingPolicy>(
         "ned", "set-line-ending-policy",
         "\"preserve\" (default) keeps each buffer's own detected/converted line ending on save; \"lf\"/\"crlf\"/"

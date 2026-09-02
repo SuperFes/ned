@@ -1,10 +1,14 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <filesystem>
+#include <fstream>
 #include <string>
 
+#include "Editor/HugeStructuralWindow.h"
 #include "Editor/Indent.h"
 #include "Editor/IndentStyle.h"
 #include "Editor/Mode.h"
+#include "Editor/TabWidth.h"
 #include "Text/Buffer.h"
 
 using ned::editor::BashMode;
@@ -19,6 +23,7 @@ using ned::editor::HtmlMode;
 using ned::editor::IndentBuffer;
 using ned::editor::IndentRegion;
 using ned::editor::IndentStyle;
+using ned::editor::RigidShiftRegion;
 using ned::editor::JanetMode;
 using ned::editor::JankMode;
 using ned::editor::JavaScriptMode;
@@ -51,6 +56,28 @@ std::pair<std::size_t, std::size_t> LineRange(const Buffer& buffer, std::size_t 
     return {lineStart, lineEnd};
 }
 
+// huge-file-indent-windowing follow-up: mirrors
+// BufferViewHugeStructuralGutterTest.cpp's own WriteTempFile/FromHugeFile
+// precedent -- Buffer::FromHugeFile doesn't itself check size (only
+// BufferList::OpenFile's threshold gate does), so a small file loaded this
+// way still reports ITextStorage::IsHuge() == true and exercises
+// IndentRegion/IndentBuffer's real windowed path without needing an
+// actually huge file on disk.
+std::filesystem::path WriteTempFile(const std::string& name, std::string_view content) {
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / name;
+    std::ofstream                file(path, std::ios::binary);
+    file << content;
+    return path;
+}
+
+// Process-wide state -- restored via RAII, matching
+// BufferViewHugeStructuralGutterTest.cpp's own HugeStructuralWindowBytesGuard.
+struct HugeStructuralWindowBytesGuard {
+    ~HugeStructuralWindowBytesGuard() {
+        ned::editor::SetHugeStructuralWindowBytes(4 * 1024 * 1024);
+    }
+};
+
 } // namespace
 
 TEST_CASE("CMode indentColumn indents inside a nested if-block", "[Indent]") {
@@ -74,6 +101,30 @@ TEST_CASE("CMode indentColumn aligns a closing brace with its opener's own level
     const auto column               = mode.indentColumn(buffer.Text(), lineStart, lineEnd);
     REQUIRE(column.has_value());
     REQUIRE(*column == 4); // matches "if (1) {"'s own level, not one deeper
+}
+
+TEST_CASE("CMode indentColumn aligns a wrapped call's continuation argument to the first argument's column",
+          "[Indent]") {
+    const auto mode = CMode();
+    Buffer     buffer("test.c");
+    buffer.InsertAtPoint("int r = foo(a,\n            b);\n");
+
+    const auto [contStart, contEnd] = LineRange(buffer, 1); // "            b);"
+    const auto contColumn           = mode.indentColumn(buffer.Text(), contStart, contEnd);
+    REQUIRE(contColumn.has_value());
+    REQUIRE(*contColumn == 12); // aligns under "a", the byte right after "("
+}
+
+TEST_CASE("CMode indentColumn falls back to a plain indent level when a wrapped call's opener is alone on its line",
+          "[Indent]") {
+    const auto mode = CMode();
+    Buffer     buffer("test.c");
+    buffer.InsertAtPoint("int r = foo(\n    a\n);\n");
+
+    const auto [contStart, contEnd] = LineRange(buffer, 1); // "    a"
+    const auto contColumn           = mode.indentColumn(buffer.Text(), contStart, contEnd);
+    REQUIRE(contColumn.has_value());
+    REQUIRE(*contColumn == 4); // nothing to align to -- one ordinary indent level
 }
 
 TEST_CASE("CppMode indentColumn indents a struct member and a nested method body", "[Indent]") {
@@ -238,6 +289,37 @@ TEST_CASE("MarkdownMode indentColumn copies a fenced code block's own content in
     REQUIRE(*nextColumn == 4); // copies "    weird indent"'s own 4-space leading run
 }
 
+TEST_CASE("MarkdownMode indentColumn breaks out of a list on a second consecutive blank Enter", "[Indent]") {
+    // smart-blank-line-on-newline follow-up. "- item one\n  \n" already has
+    // ONE auto-indented blank continuation line (2 spaces, matching "- "'s
+    // own width) -- querying for a brand new blank line right after it
+    // (the lineStart == lineEnd convention "newline" itself uses) is what a
+    // SECOND consecutive Enter looks like.
+    const auto mode = MarkdownMode();
+    Buffer     buffer("test.md");
+    buffer.InsertAtPoint("- item one\n  \n");
+
+    const std::size_t newLinePos = buffer.Content().ByteLength();
+    const auto         column     = mode.indentColumn(buffer.Text(), newLinePos, newLinePos);
+    REQUIRE(column.has_value());
+    REQUIRE(*column == 0);
+}
+
+TEST_CASE("MarkdownMode indentColumn still hangs a blank continuation on the FIRST Enter (single blank line)",
+          "[Indent]") {
+    // Same shape as the "breaks out" test above, but only ONE real content
+    // line precedes -- confirms the second-blank-line check doesn't
+    // misfire on the ordinary, ubiquitous single-Enter case.
+    const auto mode = MarkdownMode();
+    Buffer     buffer("test.md");
+    buffer.InsertAtPoint("- item one\n");
+
+    const std::size_t newLinePos = buffer.Content().ByteLength();
+    const auto         column     = mode.indentColumn(buffer.Text(), newLinePos, newLinePos);
+    REQUIRE(column.has_value());
+    REQUIRE(*column == 2);
+}
+
 TEST_CASE("JavaScriptMode indentColumn indents a nested if-block and aligns its closing brace", "[Indent]") {
     const auto mode = JavaScriptMode();
     REQUIRE(mode.indentColumn);
@@ -249,6 +331,18 @@ TEST_CASE("JavaScriptMode indentColumn indents a nested if-block and aligns its 
 
     const auto [closeStart, closeEnd] = LineRange(buffer, 3); // "}" closing the if
     REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd) == 4);
+}
+
+TEST_CASE("JavaScriptMode indentColumn aligns a wrapped call's continuation argument to the first argument's column",
+          "[Indent]") {
+    const auto mode = JavaScriptMode();
+    Buffer     buffer("test.js");
+    buffer.InsertAtPoint("foo(a,\n    b);\n");
+
+    const auto [contStart, contEnd] = LineRange(buffer, 1); // "    b);"
+    const auto contColumn           = mode.indentColumn(buffer.Text(), contStart, contEnd);
+    REQUIRE(contColumn.has_value());
+    REQUIRE(*contColumn == 4); // aligns under "a", the byte right after "("
 }
 
 TEST_CASE("TypeScriptMode indentColumn indents an interface body", "[Indent]") {
@@ -349,24 +443,33 @@ TEST_CASE("FishMode indentColumn indents an if-body and aligns end with its own 
     REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd) == 0);
 }
 
-TEST_CASE("JanetMode indentColumn indents inside a form and aligns a lone closing paren", "[Indent]") {
+TEST_CASE("JanetMode indentColumn aligns an ordinary call's continuation right after the opener, and its own "
+          "closing paren with its opening line",
+          "[Indent]") {
+    // real-per-form-lisp-indent follow-up: "a" isn't a recognized special
+    // form, so this form is plain @aligned -- and since "a" (the operator
+    // itself) is the only thing following "(" on its own line, that's what
+    // the continuation aligns to (column 1, right after "("), not a flat
+    // bracket-depth level.
     const auto mode = JanetMode();
     Buffer     buffer("test.janet");
     buffer.InsertAtPoint("(a\nb\n)\n");
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 1); // "b"
-    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd) == 4);
+    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd) == 1);
     const auto [closeStart, closeEnd] = LineRange(buffer, 2); // ")"
     REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd) == 0);
 }
 
-TEST_CASE("ClojureMode indentColumn indents inside a form and aligns a lone closing paren", "[Indent]") {
+TEST_CASE("ClojureMode indentColumn aligns an ordinary call's continuation right after the opener, and its own "
+          "closing paren with its opening line",
+          "[Indent]") {
     const auto mode = ClojureMode();
     Buffer     buffer("test.clj");
     buffer.InsertAtPoint("(a\nb\n)\n");
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 1); // "b"
-    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd) == 4);
+    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd) == 1);
     const auto [closeStart, closeEnd] = LineRange(buffer, 2); // ")"
     REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd) == 0);
 }
@@ -378,6 +481,64 @@ TEST_CASE("JankMode indentColumn shares Clojure's own indentation", "[Indent]") 
     buffer.InsertAtPoint("(a\nb)\n");
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 1); // "b)"
+    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd) == 1);
+}
+
+TEST_CASE("JanetMode indentColumn indents a let form's body a fixed 2 columns past its own column", "[Indent]") {
+    const auto mode = JanetMode();
+    Buffer     buffer("test.janet");
+    buffer.InsertAtPoint("(let [x 1]\n  body)\n");
+
+    const auto [bodyStart, bodyEnd] = LineRange(buffer, 1); // "  body)"
+    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd) == 2);
+}
+
+TEST_CASE("JanetMode indentColumn indents a defn form's body the same fixed 2 columns", "[Indent]") {
+    const auto mode = JanetMode();
+    Buffer     buffer("test.janet");
+    buffer.InsertAtPoint("(defn foo [x]\n  body)\n");
+
+    const auto [bodyStart, bodyEnd] = LineRange(buffer, 1); // "  body)"
+    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd) == 2);
+}
+
+TEST_CASE("JanetMode indentColumn falls back to plain bracket-depth when an ordinary call's opener has nothing "
+          "following it on its own line",
+          "[Indent]") {
+    const auto mode = JanetMode();
+    Buffer     buffer("test.janet");
+    buffer.InsertAtPoint("(\n  foo a\n  b)\n");
+
+    const auto [bodyStart, bodyEnd] = LineRange(buffer, 2); // "  b)"
+    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd) == 4);
+}
+
+TEST_CASE("ClojureMode indentColumn indents a let form's body a fixed 2 columns past its own column", "[Indent]") {
+    const auto mode = ClojureMode();
+    Buffer     buffer("test.clj");
+    buffer.InsertAtPoint("(let [x 1]\n  body)\n");
+
+    const auto [bodyStart, bodyEnd] = LineRange(buffer, 1); // "  body)"
+    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd) == 2);
+}
+
+TEST_CASE("ClojureMode indentColumn indents a defn form's body the same fixed 2 columns", "[Indent]") {
+    const auto mode = ClojureMode();
+    Buffer     buffer("test.clj");
+    buffer.InsertAtPoint("(defn foo [x]\n  body)\n");
+
+    const auto [bodyStart, bodyEnd] = LineRange(buffer, 1); // "  body)"
+    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd) == 2);
+}
+
+TEST_CASE("ClojureMode indentColumn falls back to plain bracket-depth when an ordinary call's opener has nothing "
+          "following it on its own line",
+          "[Indent]") {
+    const auto mode = ClojureMode();
+    Buffer     buffer("test.clj");
+    buffer.InsertAtPoint("(\n  foo a\n  b)\n");
+
+    const auto [bodyStart, bodyEnd] = LineRange(buffer, 2); // "  b)"
     REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd) == 4);
 }
 
@@ -426,6 +587,29 @@ TEST_CASE("OrgMode indentColumn hangs a list item's continuation to its own bull
     REQUIRE(mode.indentColumn(buffer.Text(), contStart, contEnd) == 2); // "- " is 2 columns wide
 }
 
+TEST_CASE("OrgMode indentColumn breaks out of a list on a second consecutive blank Enter", "[Indent]") {
+    const auto mode = OrgMode();
+    Buffer     buffer("test.org");
+    buffer.InsertAtPoint("- item one\n  \n");
+
+    const std::size_t newLinePos = buffer.Content().ByteLength();
+    const auto         column     = mode.indentColumn(buffer.Text(), newLinePos, newLinePos);
+    REQUIRE(column.has_value());
+    REQUIRE(*column == 0);
+}
+
+TEST_CASE("OrgMode indentColumn still hangs a blank continuation on the FIRST Enter (single blank line)",
+          "[Indent]") {
+    const auto mode = OrgMode();
+    Buffer     buffer("test.org");
+    buffer.InsertAtPoint("- item one\n");
+
+    const std::size_t newLinePos = buffer.Content().ByteLength();
+    const auto         column     = mode.indentColumn(buffer.Text(), newLinePos, newLinePos);
+    REQUIRE(column.has_value());
+    REQUIRE(*column == 2);
+}
+
 TEST_CASE("FundamentalMode has no indentColumn configured", "[Indent]") {
     const Mode mode = FundamentalMode();
     REQUIRE_FALSE(static_cast<bool>(mode.indentColumn));
@@ -469,4 +653,74 @@ TEST_CASE("IndentRegion respects a per-mode indent style override", "[Indent]") 
     // Restore the default for any later test relying on the usual width-4
     // process-wide default (IndentStyle.h's own state is process-wide).
     SetIndentStyleForMode("c-mode", IndentStyle{.useTabs = false, .width = 4});
+}
+
+TEST_CASE("IndentBuffer reindents correctly on a huge buffer via the windowed path", "[Indent][HugeFile]") {
+    const HugeStructuralWindowBytesGuard guard;
+    // A tiny margin -- smaller than most of this fixture's own lines -- so
+    // the windowed path genuinely engages (windowStart/windowEnd land
+    // strictly inside the document, not "the whole file" by coincidence),
+    // not just exercises the huge=true/false branch with an effectively
+    // unbounded window.
+    ned::editor::SetHugeStructuralWindowBytes(8);
+
+    const std::filesystem::path path =
+        WriteTempFile("ned_indent_huge_windowed.c", "int f(void) {\nif (1) {\n           return 0;\n}\n}\n");
+    Buffer buffer = Buffer::FromHugeFile(path);
+    REQUIRE(buffer.Content().IsHuge());
+
+    const auto mode = CMode();
+    REQUIRE(IndentBuffer(buffer, mode) > 0);
+    // Identical to the non-huge "reindent a deliberately misindented C
+    // file" test above -- windowing must not change the actual result, only
+    // how much text mode.indentColumn sees at once.
+    REQUIRE(buffer.Text() == "int f(void) {\n    if (1) {\n        return 0;\n    }\n}\n");
+}
+
+TEST_CASE("RigidShiftRegion indents every line in range by one width, mode-agnostic", "[Indent]") {
+    // No Mode/indentColumn involved at all -- proves this is genuinely
+    // mode-agnostic, unlike IndentRegion's own tree-sitter recompute.
+    Buffer buffer("test.txt");
+    buffer.InsertAtPoint("a\nb\nc\n");
+    const IndentStyle style{.useTabs = false, .width = 4};
+
+    const std::size_t changed = RigidShiftRegion(buffer, style, 0, 3, 1);
+    REQUIRE(changed == 3);
+    REQUIRE(buffer.Text() == "    a\n    b\n    c\n");
+
+    // A second indent stacks additively, not replacing.
+    RigidShiftRegion(buffer, style, 0, 3, 1);
+    REQUIRE(buffer.Text() == "        a\n        b\n        c\n");
+}
+
+TEST_CASE("RigidShiftRegion dedents every line in range by one width, floored at zero", "[Indent]") {
+    Buffer buffer("test.txt");
+    buffer.InsertAtPoint("    a\n  b\nc\n"); // 4, 2, 0 columns of existing indent
+    const IndentStyle style{.useTabs = false, .width = 4};
+
+    RigidShiftRegion(buffer, style, 0, 3, -1);
+    // "    a" (4) drops to 0; "  b" (2) and "c" (0) were already below one
+    // width and both floor at 0 rather than going negative.
+    REQUIRE(buffer.Text() == "a\nb\nc\n");
+}
+
+TEST_CASE("RigidShiftRegion measures existing tabs via the configured tab width before shifting", "[Indent]") {
+    const int previousTabWidth = ned::editor::TabWidth();
+    ned::editor::SetTabWidth(8);
+    struct RestoreGuard {
+        int width;
+        ~RestoreGuard() {
+            ned::editor::SetTabWidth(width);
+        }
+    } restoreGuard{previousTabWidth};
+
+    Buffer buffer("test.txt");
+    buffer.InsertAtPoint("\ta\n"); // one literal tab -- visual column 8
+    const IndentStyle style{.useTabs = false, .width = 4};
+
+    RigidShiftRegion(buffer, style, 0, 1, 1);
+    // 8 (the tab's own visual width) + 4 (one style.width) = 12 spaces --
+    // and the literal tab itself is replaced (IndentString never re-uses
+    // useTabs=false's own leftover tab byte).
+    REQUIRE(buffer.Text() == std::string(12, ' ') + "a\n");
 }

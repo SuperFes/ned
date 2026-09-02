@@ -13,6 +13,7 @@
 #include "Editor/TreeSitter/Tree.h"
 
 using ned::editor::IndentColumnForLevel;
+using ned::editor::IndentComputation;
 using ned::editor::IndentLevelForLine;
 using ned::editor::IndentStyle;
 using ned::editor::treesitter::IncrementalParseCache;
@@ -51,10 +52,38 @@ std::pair<std::size_t, std::size_t> LineRange(const std::string& text, std::size
     return {start, end};
 }
 
-std::optional<int> LevelForLine(const Tree& tree, const std::string& text, const Query& query, std::size_t line) {
+// Existing callers only ever exercise Kind::Level results (Column results --
+// @aligned -- get their own dedicated tests below) -- unwrap straight to the
+// raw level so every pre-existing assertion in this file stays unchanged.
+std::optional<int> LevelForLine(const Tree& tree, const std::string& text, const Query& query, std::size_t line,
+                                const IndentStyle& style = IndentStyle{}) {
     const auto [lineStart, lineEnd] = LineRange(text, line);
-    return IndentLevelForLine(tree, text, query, lineStart, lineEnd);
+    const std::optional<IndentComputation> result = IndentLevelForLine(tree, text, query, lineStart, lineEnd, style);
+    if (!result) {
+        return std::nullopt;
+    }
+    REQUIRE(result->kind == IndentComputation::Kind::Level);
+    return result->value;
 }
+
+// @aligned-paren-column-alignment follow-up: unlike LevelForLine above, does
+// not assert a Kind -- callers below check for Kind::Column explicitly.
+std::optional<IndentComputation> ComputationForLine(const Tree& tree, const std::string& text, const Query& query,
+                                                     std::size_t line, const IndentStyle& style = IndentStyle{}) {
+    const auto [lineStart, lineEnd] = LineRange(text, line);
+    return IndentLevelForLine(tree, text, query, lineStart, lineEnd, style);
+}
+
+// @aligned-paren-column-alignment follow-up: mirrors kJsonIndentTestQuery
+// above, but captures the array container "aligned" instead of "indent" --
+// object stays a plain "indent" container so the nested-combine test below
+// has something to nest inside an aligned container.
+constexpr const char* kJsonAlignedIndentTestQuery = R"SCM(
+(object) @indent
+(array) @aligned
+(object "}" @dedent)
+(array "]" @dedent)
+)SCM";
 
 } // namespace
 
@@ -142,6 +171,54 @@ TEST_CASE("IndentLevelForLine returns level 0 everywhere when the query has no i
         REQUIRE(level.has_value());
         REQUIRE(*level == 0);
     }
+}
+
+TEST_CASE("IndentLevelForLine aligns a continuation line to the column right after an @aligned opener",
+          "[Indent]") {
+    const auto   language = LanguageByName("json");
+    REQUIRE(language.has_value());
+    const Parser  parser(*language);
+    const Query   query(*language, kJsonAlignedIndentTestQuery);
+    const std::string text = "[1, 2,\n    3]\n";
+    const Tree    tree = parser.Parse(text);
+
+    const std::optional<IndentComputation> result = ComputationForLine(tree, text, query, 1); // "    3]"
+    REQUIRE(result.has_value());
+    REQUIRE(result->kind == IndentComputation::Kind::Column);
+    REQUIRE(result->value == 1); // aligns under "1", the byte right after "["
+}
+
+TEST_CASE("IndentLevelForLine falls back to a plain indent level when an @aligned opener is alone on its own line",
+          "[Indent]") {
+    const auto   language = LanguageByName("json");
+    REQUIRE(language.has_value());
+    const Parser  parser(*language);
+    const Query   query(*language, kJsonAlignedIndentTestQuery);
+    const std::string text = "[\n1\n]\n";
+    const Tree    tree = parser.Parse(text);
+
+    const std::optional<IndentComputation> result = ComputationForLine(tree, text, query, 1); // "1"
+    REQUIRE(result.has_value());
+    REQUIRE(result->kind == IndentComputation::Kind::Level);
+    REQUIRE(result->value == 1); // nothing to align to -- behaves exactly like @indent
+}
+
+TEST_CASE("IndentLevelForLine combines a nested indent level with its enclosing @aligned column", "[Indent]") {
+    const auto   language = LanguageByName("json");
+    REQUIRE(language.has_value());
+    const Parser  parser(*language);
+    const Query   query(*language, kJsonAlignedIndentTestQuery);
+    // The object opens right after "[" on line 0 (so it aligns to column 1,
+    // same as the plain-alignment case above); its own body should still
+    // indent one level deeper than ITS OWN column, not from column zero.
+    const std::string text = "[{\"a\": 1,\n\"b\": 2}]\n";
+    const Tree    tree = parser.Parse(text);
+    const IndentStyle style{.useTabs = false, .width = 4};
+
+    const std::optional<IndentComputation> result = ComputationForLine(tree, text, query, 1, style); // "\"b\": 2}]"
+    REQUIRE(result.has_value());
+    REQUIRE(result->kind == IndentComputation::Kind::Column);
+    REQUIRE(result->value == 5); // column 1 (the object's own aligned column) + one level (4)
 }
 
 TEST_CASE("IndentColumnForLevel respects IndentStyle::width", "[Indent]") {

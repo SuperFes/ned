@@ -601,6 +601,7 @@ add_library(ned_lib STATIC
         Source/Editor/TabWidth.cpp
         Source/Editor/IndentStyle.cpp
         Source/Editor/Indent.cpp
+        Source/Editor/BlankLineCleanup.cpp
         Source/Editor/FillColumn.cpp
         Source/Editor/Fill.cpp
         Source/Editor/PageScroll.cpp

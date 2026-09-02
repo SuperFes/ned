@@ -46,6 +46,15 @@ class Node {
     // make a per-line batch reindent (Indent.h's IndentRegion) quadratic.
     [[nodiscard]] std::size_t StartRow() const;
 
+    // @aligned-paren-column-alignment follow-up: 0-indexed BYTE column (not
+    // visual/tab-expanded) of this node's start on its own row -- tree-sitter
+    // tracks this natively alongside StartRow(), same O(1) cost. Callers
+    // needing a real visual column (tabs/multi-byte UTF-8 aware) still have
+    // to walk the source text themselves from this byte column; this is only
+    // ever a starting point for that walk, never a display column on its
+    // own.
+    [[nodiscard]] std::size_t StartColumn() const;
+
     [[nodiscard]] std::size_t ChildCount() const;
     [[nodiscard]] Node        Child(std::size_t index) const; // precondition: index < ChildCount()
 

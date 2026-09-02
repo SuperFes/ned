@@ -7,6 +7,14 @@
 // convention, borrowed as names only -- NOT their #set!-based priority/scope
 // directives, which Query::Captures() never evaluates at all; see Query.h's
 // own doc comment on why an unrecognized predicate/directive is inert).
+// @aligned-paren-column-alignment/real-per-form-lisp-indent follow-ups added
+// two more capture names on top of that original pair: "aligned" (a
+// container whose continuation lines line up under its first argument's own
+// column instead of one flat indent level, falling back to plain "indent"
+// behavior when nothing follows the opener on its own line) and
+// "indent.body" (a Lisp special form's body, a fixed 2 columns past the
+// form's own column, Emacs' lisp-indent-function convention -- never falls
+// back, see janet-indents.scm/clojure-indents.scm for real usage of both).
 //
 // BuildIndentFunction below is what TreeSitterModeFromLanguage (Mode.cpp)
 // calls to construct Mode::indentColumn for most bundled modes, mirroring
@@ -62,6 +70,17 @@ namespace ned::editor {
                                                  std::shared_ptr<treesitter::IncrementalParseCache> sharedParse,
                                                  std::string                                       modeName);
 
+// @aligned-paren-column-alignment follow-up: IndentLevelForLine's result is
+// tagged rather than a bare level, since an "@aligned" capture (see below)
+// resolves to an ABSOLUTE column that must bypass IndentColumnForLevel's
+// level*width multiply entirely -- Level is the original, unchanged meaning
+// every other capture still produces.
+struct IndentComputation {
+    enum class Kind { Level, Column };
+    Kind kind;
+    int  value;
+};
+
 // The pure per-line tree-walk primitive BuildIndentFunction's closure calls,
 // exposed standalone so it can be unit-tested directly against a hand-built
 // query/tree without going through a whole *Mode() factory (Tests/
@@ -71,21 +90,36 @@ namespace ned::editor {
 // this particular line still has an opinion: "no indent").
 //
 // Captures partition into "indent" (an ancestor whose own line, when
-// distinct from whatever line was last counted, adds one indent level) and
+// distinct from whatever line was last counted, adds one indent level),
 // "dedent" (typically an anonymous closing-delimiter token on the target
 // line itself, which instead makes the WHOLE line align with its own
-// opener's line rather than one level deeper). See Indent.cpp for the walk
-// itself -- the short version: seed a (node, lastRow) pair (either the
-// target line's own innermost containing node, or -- when a dedent capture
-// starts on this line -- the matching opener's own innermost containing
-// node), then walk ancestors counting each "indent"-captured node whose
-// StartRow() differs from whatever row was last counted.
-[[nodiscard]] std::optional<int> IndentLevelForLine(const treesitter::Tree& tree, std::string_view bufferText,
-                                                    const treesitter::Query& indentQuery, std::size_t lineStart,
-                                                    std::size_t lineEnd);
+// opener's line rather than one level deeper), and "aligned"
+// (@aligned-paren-column-alignment follow-up: like "indent", but when real
+// content follows the container's own opening delimiter on the delimiter's
+// own line -- e.g. "foo(a," -- the result is that content's own COLUMN, not
+// one level deeper; an @aligned container whose opener is alone on its own
+// line, with nothing following it, falls back to behaving exactly like a
+// plain "indent" capture instead, since there's no column to align to). See
+// Indent.cpp for the walk itself -- the short version: seed a (node,
+// lastRow) pair (either the target line's own innermost containing node, or
+// -- when a dedent capture starts on this line -- the matching opener's own
+// innermost containing node), then walk ancestors counting each
+// "indent"/"aligned"-captured node whose StartRow() differs from whatever
+// row was last counted, EXCEPT that the first (innermost) "aligned"-captured
+// ancestor encountered with a real alignment column short-circuits the walk
+// with a Column result -- that column PLUS whatever levels were already
+// counted strictly inside it (IndentColumnForLevel(level, style)), which is
+// why style is threaded in here rather than applied only afterward the way
+// a pure Level result still is (see BuildIndentFunction).
+[[nodiscard]] std::optional<IndentComputation> IndentLevelForLine(const treesitter::Tree& tree,
+                                                                   std::string_view bufferText,
+                                                                   const treesitter::Query& indentQuery,
+                                                                   std::size_t lineStart, std::size_t lineEnd,
+                                                                   const IndentStyle& style);
 
-// level * style.width -- the only place an abstract indent level ever
-// becomes a real visual column.
+// level * style.width -- the only place an abstract indent LEVEL ever
+// becomes a real visual column (an IndentComputation::Kind::Column result
+// bypasses this entirely -- see BuildIndentFunction).
 [[nodiscard]] int IndentColumnForLevel(int level, const IndentStyle& style);
 
 // -- Buffer-level indent-manipulation utilities. None of these exist
@@ -123,18 +157,44 @@ std::ptrdiff_t SetLineIndent(text::Buffer& buffer, std::size_t lineStart, int co
 // SetLineIndent's own inner group). No-op (returns 0, touches nothing) if
 // mode.indentColumn is unset. Returns the number of lines actually changed.
 //
-// Known v1 cost, accepted rather than engineered around now (mirrors
-// Buffer.cpp's own kMaxTabAwareColumnScan precedent of "bounded/approximate
-// over unbounded/exact"): buffer.Text() -- a full O(n) materialize -- is
+// For an ORDINARY buffer: buffer.Text() -- a full O(n) materialize -- is
 // called once per line processed, so this is O(n * linesInRange) for a large
-// n. Fine for an occasional, user-triggered whole-buffer cleanup (the same
-// cost class as fill-paragraph or a manual reindent, not a hot per-frame
-// path); a future optimization is a real follow-up only if this proves slow
-// on a genuinely huge file in practice, not built speculatively here.
+// n. Accepted rather than engineered around (mirrors Buffer.cpp's own
+// kMaxTabAwareColumnScan precedent of "bounded/approximate over unbounded/
+// exact") -- fine for an occasional, user-triggered whole-buffer cleanup
+// (the same cost class as fill-paragraph or a manual reindent, not a hot
+// per-frame path).
+//
+// huge-file-indent-windowing follow-up: for a HUGE (ITextStorage::IsHuge())
+// buffer, mode.indentColumn is instead handed a bounded window around
+// [startLine, endLineExclusive) (padded by HugeStructuralWindowBytes() on
+// each side, snapped to line boundaries) via ITextStorage::Substring,
+// mirroring BufferView::HugeStructuralWindow's own established pattern for
+// the same buffer.Text()-is-unsafe-on-huge-files problem elsewhere. Bounded
+// by window size, not document size, either way -- an ordinary buffer is
+// completely unaffected, the window always spans the whole document there.
 std::size_t IndentRegion(text::Buffer& buffer, const Mode& mode, std::size_t startLine, std::size_t endLineExclusive);
 
 // IndentRegion(buffer, mode, 0, buffer.Content().LineCount()).
 std::size_t IndentBuffer(text::Buffer& buffer, const Mode& mode);
+
+// mode-agnostic-rigid-indent follow-up: a deliberately SIMPLER sibling to
+// IndentRegion above -- shifts every line in [startLine, endLineExclusive)
+// by one style.width-worth of columns per deltaLevels (positive = indent,
+// negative = dedent, clamped at 0 -- never goes negative), measuring each
+// line's EXISTING leading whitespace via Buffer::VisualColumnForByteOffset
+// (tab-aware, using the general editor::TabWidth() display setting to
+// interpret whatever's already there, same as everywhere else in this
+// codebase that reads existing tabs) and applying the result via the same
+// SetLineIndent every other primitive in this file already uses. Takes no
+// Mode at all -- unlike IndentRegion's tree-sitter RECOMPUTE (language-
+// aware "what SHOULD this line's indent be"), this is a pure nudge ("what
+// IS it, plus or minus one step") that works identically whether or not
+// the buffer's mode has indentColumn configured at all. Bottom-to-top, one
+// undo step, same reasoning as IndentRegion. Returns the number of lines
+// actually changed.
+std::size_t RigidShiftRegion(text::Buffer& buffer, const IndentStyle& style, std::size_t startLine,
+                             std::size_t endLineExclusive, int deltaLevels);
 
 } // namespace ned::editor
 
