@@ -186,11 +186,15 @@ Notcurses.
 - [x] Jump-back stack — `jump-back` on `C-x C-SPC`, shipped 2026-09-02. A forward/redo
       stack (Vim's `C-i`) and Vim-mode's own separate `C-o`/`C-i` jumplist/changelist ring
       remain open (Editor Ergonomics' Vim-mode gap below).
-- [ ] **No generic `next-error`/`previous-error`** — Emacs' unifying "walk the last set
-      of located things" primitive, working uniformly across compile output, grep
-      results, and diagnostics. Ned already has the individual result buffers (`*vcs
-      status*`, project-search results, the stitched `*diagnostics*` buffer) but nothing
-      walks them as a cursor motion outside clicking a line directly.
+- [x] `next-error`/`previous-error` (`M-g n`/`M-g p`, `ESC g n`/`ESC g p`) — shipped
+      2026-09-02, `Editor/NextError.h`. Generic over every read-only results buffer
+      already jump-capable via `VisitResultUnderPoint` (multibuffer- and flat-
+      "path:line:"-backed alike): `*vcs status*`/`*vcs blame ...*`, `*search results*`/
+      `*project replace*`, `*diagnostics*`, `*references: ...*`, `*agenda*`,
+      `*clock report*`, `*vcs diff*`, `*test results*`. Global, process-wide "last
+      results buffer" + walk cursor (not per-pane), matching real Emacs'
+      `next-error-last-buffer` semantics; a source-shaped `*vcs log ...*` buffer is
+      deliberately never registered (no per-line location to walk).
 - [x] Hunk-navigation motion — `vcs-next-hunk`/`vcs-previous-hunk` (`C-c v N`/`C-c v P`),
       shipped 2026-09-01. A native Vim-mode `]c`/`[c` binding (gitsigns' own convention)
       is a small remaining follow-up — the global `C-c v N`/`P` binding already works

@@ -37,6 +37,7 @@
 #include "Editor/Lsp/LspServerConfig.h"
 #include "Editor/ModeOverrides.h"
 #include "Editor/Multibuffer.h"
+#include "Editor/NextError.h"
 #include "Editor/NodeModules.h"
 #include "Editor/Org.h"
 #include "Editor/OrgCapture.h"
@@ -1890,6 +1891,43 @@ void BufferView::JumpToPreviousHunk() {
     buffer.SetPoint(buffer.Content().LineToByteOffset(*(it - 1)));
     statusMessage_.clear();
     ScrollToShowPoint();
+}
+
+void BufferView::NextError() {
+    StepError(/*forward=*/true);
+}
+
+void BufferView::PreviousError() {
+    StepError(/*forward=*/false);
+}
+
+void BufferView::StepError(bool forward) {
+    const std::optional<std::string> name = editor::LastResultsBuffer();
+    if (!name) {
+        statusMessage_ = "No results to step through.";
+        return;
+    }
+    text::Buffer* resultsBuffer = bufferList_.Find(*name);
+    if (!resultsBuffer) {
+        statusMessage_ = "No results to step through.";
+        return;
+    }
+    const std::vector<editor::ErrorLocation> locations = editor::CollectResultLocations(*resultsBuffer);
+    if (locations.empty()) {
+        statusMessage_ = "No results to step through.";
+        return;
+    }
+
+    // Editor/NextError.h's StepResultLocation owns the actual walk cursor
+    // (index-based, process-wide, reset whenever a fresh results buffer is
+    // registered) -- see its own doc comment for why this can't just
+    // compare against resultsBuffer's Point().
+    const std::optional<editor::ErrorLocation> next = editor::StepResultLocation(locations, forward);
+    if (!next) {
+        statusMessage_ = forward ? "No more errors below point." : "No more errors above point.";
+        return;
+    }
+    JumpToPathLine(next->sourcePath, next->sourceLine);
 }
 
 void BufferView::RequestDiffForCurrentBuffer() {
@@ -6655,6 +6693,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
                 statusMessage_ = "No test results yet -- run-tests (C-c T t) first.";
                 return;
             }
+            editor::SetLastResultsBuffer(editor::testrun::TestResultsBufferName());
             activeBuffer_.Set(editor::testrun::RebuildTestResultsBuffer(bufferList_, *outcome));
             return;
         }
@@ -6934,6 +6973,15 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             return;
         case editor::InteractiveRequest::VcsPreviousHunk:
             JumpToPreviousHunk();
+            return;
+        // next-error follow-up: same point-motion shape as VcsNextHunk/
+        // VcsPreviousHunk just above, generalized over Editor/NextError.h's
+        // "last results buffer" instead of a private per-pane cache.
+        case editor::InteractiveRequest::NextError:
+            NextError();
+            return;
+        case editor::InteractiveRequest::PreviousError:
+            PreviousError();
             return;
         case editor::InteractiveRequest::VcsFullDiffBuffer:
             RequestVcsFullDiffBuffer();
@@ -8605,10 +8653,12 @@ void BufferView::BuildVcsBlameBuffer(const std::filesystem::path& path, const st
                        " | " + line.summary + "\n";
     }
 
-    text::Buffer& results = bufferList_.CreateBuffer("*vcs blame " + path.filename().string() + "*");
+    const std::string bufferName = "*vcs blame " + path.filename().string() + "*";
+    text::Buffer&      results   = bufferList_.CreateBuffer(bufferName);
     results.InsertAtPoint(resultsText);
     results.SetPoint(0);
     results.SetReadOnly(true); // see BuildResultsBuffer's own doc comment for why
+    editor::SetLastResultsBuffer(bufferName);
     activeBuffer_.Set(results);
 }
 
@@ -8733,6 +8783,7 @@ void BufferView::RequestVcsFullDiffBuffer() {
             }
 
             text::Buffer& results = editor::multibuffer::BuildMultibuffer(bufferList_, "*vcs diff*", excerpts);
+            editor::SetLastResultsBuffer("*vcs diff*");
             activeBuffer_.Set(results);
             statusMessage_ = excerpts.empty() ? "Working tree clean." : std::to_string(excerpts.size()) + " changed hunk" + (excerpts.size() == 1 ? "" : "s");
         },
@@ -8798,6 +8849,7 @@ void BufferView::RequestDiagnosticsBuffer() {
     }
 
     text::Buffer& results = editor::multibuffer::BuildMultibuffer(bufferList_, "*diagnostics*", excerpts);
+    editor::SetLastResultsBuffer("*diagnostics*");
     activeBuffer_.Set(results);
     statusMessage_ =
         excerpts.empty() ? "No diagnostics." : std::to_string(excerpts.size()) + " diagnostic" + (excerpts.size() == 1 ? "" : "s");
@@ -8887,6 +8939,7 @@ void BufferView::BuildAgendaMultibuffer() {
     }
 
     text::Buffer& results = editor::multibuffer::BuildMultibuffer(bufferList_, "*agenda*", excerpts);
+    editor::SetLastResultsBuffer("*agenda*");
     activeBuffer_.Set(results);
     statusMessage_ = excerpts.empty() ? "No active TODOs." : std::to_string(excerpts.size()) + " agenda item" + (excerpts.size() == 1 ? "" : "s");
 }
@@ -8948,6 +9001,7 @@ void BufferView::BuildClockReportMultibuffer() {
     }
 
     text::Buffer& results = editor::multibuffer::BuildMultibuffer(bufferList_, "*clock report*", excerpts);
+    editor::SetLastResultsBuffer("*clock report*");
     activeBuffer_.Set(results);
     statusMessage_ = excerpts.empty() ? "No clocked time in this buffer."
                                       : std::to_string(excerpts.size()) + " clocked headline" + (excerpts.size() == 1 ? "" : "s");
@@ -9078,6 +9132,7 @@ void BufferView::RequestProjectFindReferences() {
                 }
 
                 text::Buffer& results = editor::multibuffer::BuildMultibuffer(bufferList_, "*references: " + word + "*", excerpts);
+                editor::SetLastResultsBuffer("*references: " + word + "*");
                 activeBuffer_.Set(results);
                 statusMessage_ = std::to_string(locations.size()) + " reference" + (locations.size() == 1 ? "" : "s") + " to \"" +
                                  word + "\" -- C-c v v to visit";
@@ -9119,6 +9174,7 @@ void BufferView::RequestProjectFindReferences() {
     }
 
     text::Buffer& results = editor::multibuffer::BuildMultibuffer(bufferList_, "*references: " + word + "*", excerpts);
+    editor::SetLastResultsBuffer("*references: " + word + "*");
     activeBuffer_.Set(results);
     statusMessage_ = std::to_string(matches.size()) + " reference" + (matches.size() == 1 ? "" : "s") + " to \"" + word +
                      "\" -- C-c v v to visit";
@@ -9175,6 +9231,7 @@ void BufferView::BuildVcsStatusBuffer(const std::vector<editor::vcs::VcsStatusEn
 
     text::Buffer& status = RefillSingletonBuffer(bufferList_, kVcsStatusBufferName, text);
     if (announce) {
+        editor::SetLastResultsBuffer(kVcsStatusBufferName);
         activeBuffer_.Set(status);
         statusMessage_ = entries.empty()
                              ? "Working tree clean."
@@ -9345,6 +9402,14 @@ void BufferView::JumpToNextHunkForTesting() {
 
 void BufferView::JumpToPreviousHunkForTesting() {
     JumpToPreviousHunk();
+}
+
+void BufferView::NextErrorForTesting() {
+    NextError();
+}
+
+void BufferView::PreviousErrorForTesting() {
+    PreviousError();
 }
 
 void BufferView::RequestDiagnosticsBufferForTesting() {
@@ -9590,6 +9655,7 @@ void BufferView::BuildResultsBuffer(const std::vector<editor::SearchMatch>& matc
     // never triggers the close/quit unsaved-changes prompt. See
     // RequestCloseBuffer/StartInteractiveSession's ConfirmQuit case.
     results.SetReadOnly(true);
+    editor::SetLastResultsBuffer(name);
     activeBuffer_.Set(results);
 }
 
