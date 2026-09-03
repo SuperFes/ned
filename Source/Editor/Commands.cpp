@@ -1604,6 +1604,9 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           }
                       });
 
+    registry.Register("suspend-frame", "Suspend ned and return to the shell (job control), like Emacs' C-z.",
+                      [](CommandContext& context) { context.suspend = true; });
+
     // external-modification-safety follow-up: the actual save body, shared
     // by save-buffer (which gates it behind a supersession check) and
     // save-buffer-force (what BufferView's overwrite confirmation invokes
@@ -3665,6 +3668,7 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("ESC v"), "scroll-page-up");
     keymap.Bind(ParseKeySequence("C-x C-s"), "save-buffer");
     keymap.Bind(ParseKeySequence("C-x C-c"), "quit");
+    keymap.Bind(ParseKeySequence("C-z"), "suspend-frame");
     keymap.Bind(ParseKeySequence("C-x C-x"), "exchange-point-and-mark");
     keymap.Bind(ParseKeySequence("M-<"), "beginning-of-buffer");
     keymap.Bind(ParseKeySequence("ESC <"), "beginning-of-buffer");
