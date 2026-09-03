@@ -1095,7 +1095,22 @@ void WindowManager::SaveProjectSessionNow() {
     }
 
     if (dapManager_ != nullptr) {
-        data.breakpoints = dapManager_->AllBreakpoints();
+        // session-persistence round 2: DapManager::PersistedBreakpoint ->
+        // editor::BreakpointState per entry -- same shape, different
+        // namespace (ProjectSession.h stays Dap-header-free, see
+        // BreakpointState's own doc comment).
+        for (const auto& [key, entries] : dapManager_->AllBreakpoints()) {
+            std::vector<editor::BreakpointState>& out = data.breakpoints[key];
+            for (const auto& bp : entries) {
+                out.push_back(editor::BreakpointState{
+                    .line         = bp.line,
+                    .condition    = bp.condition,
+                    .logMessage   = bp.logMessage,
+                    .hitCondition = bp.hitCondition,
+                });
+            }
+        }
+        data.watches = dapManager_->Watches();
     }
 
     // ACP auto-reconnect follow-up: AgentName() is sticky for the rest of

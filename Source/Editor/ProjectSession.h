@@ -69,14 +69,36 @@ struct WindowLayoutNode {
     bool operator==(const WindowLayoutNode&) const = default;
 };
 
+// session-persistence round 2: one breakpoint's persisted state, mirroring
+// DapManager::PersistedBreakpoint's own shape verbatim (condition/
+// logMessage/hitCondition now round-trip across a restart; verified/
+// actualLine deliberately don't -- see that struct's own doc comment for
+// why). Kept as ProjectSession's own type rather than reusing
+// DapManager::PersistedBreakpoint directly, same "this file stays
+// Dap-header-free" boundary the pre-round-2 line-only shape already
+// established -- WindowManager.cpp/main.cpp convert between the two at
+// their respective capture/restore call sites.
+struct BreakpointState {
+    std::size_t line = 0;
+    std::string condition;
+    std::string logMessage;
+    std::string hitCondition;
+
+    bool operator==(const BreakpointState&) const = default;
+};
+
 struct ProjectSessionData {
     std::vector<std::filesystem::path>   openFiles; // absolute, in BufferList order
     std::optional<std::filesystem::path> activeFile;
     std::optional<bool>                  sidebarVisible;
     std::optional<int>                   sidebarWidth;
-    // Normalized path key -> sorted 1-based lines, DapManager's own store
-    // shape verbatim (see DapManager::AllBreakpoints/RestoreBreakpoints).
-    std::map<std::string, std::vector<std::size_t>> breakpoints;
+    // Normalized path key -> sorted-by-line BreakpointStates, DapManager's
+    // own store shape (see DapManager::AllBreakpoints/RestoreBreakpoints).
+    std::map<std::string, std::vector<BreakpointState>> breakpoints;
+    // session-persistence round 2: DapManager::Watches()/RestoreWatches's
+    // plain ordered list -- watch expressions now survive a restart the
+    // same way breakpoints do (closes the gap ROADMAP.md recorded).
+    std::vector<std::string> watches;
 
     // ACP auto-reconnect follow-up: the agent name passed to this project's
     // most recent AcpManager::StartSession, if any -- lets opening the chat

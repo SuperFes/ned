@@ -170,18 +170,23 @@ std::vector<std::size_t> DapManager::BreakpointsForFile(const std::filesystem::p
     return lines;
 }
 
-std::map<std::string, std::vector<std::size_t>> DapManager::AllBreakpoints() const {
-    std::map<std::string, std::vector<std::size_t>> lineOnly;
+std::map<std::string, std::vector<DapManager::PersistedBreakpoint>> DapManager::AllBreakpoints() const {
+    std::map<std::string, std::vector<PersistedBreakpoint>> persisted;
     for (const auto& [key, breakpoints] : breakpoints_) {
-        std::vector<std::size_t>& lines = lineOnly[key];
+        std::vector<PersistedBreakpoint>& entries = persisted[key];
         for (const Breakpoint& bp : breakpoints) {
-            lines.push_back(bp.line);
+            entries.push_back(PersistedBreakpoint{
+                .line         = bp.line,
+                .condition    = bp.condition,
+                .logMessage   = bp.logMessage,
+                .hitCondition = bp.hitCondition,
+            });
         }
     }
-    return lineOnly;
+    return persisted;
 }
 
-void DapManager::RestoreBreakpoints(std::map<std::string, std::vector<std::size_t>> breakpoints) {
+void DapManager::RestoreBreakpoints(std::map<std::string, std::vector<PersistedBreakpoint>> breakpoints) {
     // Union of old and new keys first, so a live adapter (the robustness
     // guard case -- see the header) also hears about files whose set just
     // became empty, same reasoning as ToggleBreakpoint's erase path.
@@ -193,21 +198,31 @@ void DapManager::RestoreBreakpoints(std::map<std::string, std::vector<std::size_
         affectedKeys.push_back(key);
     }
 
-    // Sorted, deduplicated, and empty-entry-free -- the exact invariants
-    // ToggleBreakpoint maintains, enforced here because these lines came
-    // from a session file rather than through it. condition/logMessage
-    // aren't part of the on-disk shape (see ROADMAP.md) -- every restored
-    // entry starts as a plain breakpoint.
+    // Sorted-by-line, deduplicated-by-line (a duplicate line collapses to
+    // its first occurrence, discarding whichever condition/logMessage/
+    // hitCondition it carried -- session-file data is trusted to already be
+    // well-formed, same as the pre-round-2 line-only shape was), and
+    // empty-entry-free -- the exact invariants ToggleBreakpoint maintains.
+    // verified/actualLine are NOT restored (see PersistedBreakpoint) --
+    // every entry starts exactly like a freshly-toggled breakpoint.
     breakpoints_.clear();
-    for (auto& [key, lines] : breakpoints) {
-        std::sort(lines.begin(), lines.end());
-        lines.erase(std::unique(lines.begin(), lines.end()), lines.end());
-        if (lines.empty()) {
+    for (auto& [key, entries] : breakpoints) {
+        std::sort(entries.begin(), entries.end(),
+                  [](const PersistedBreakpoint& a, const PersistedBreakpoint& b) { return a.line < b.line; });
+        entries.erase(std::unique(entries.begin(), entries.end(),
+                                  [](const PersistedBreakpoint& a, const PersistedBreakpoint& b) { return a.line == b.line; }),
+                      entries.end());
+        if (entries.empty()) {
             continue;
         }
         std::vector<Breakpoint>& converted = breakpoints_[key];
-        for (const std::size_t line : lines) {
-            converted.push_back(Breakpoint{.line = line});
+        for (const PersistedBreakpoint& entry : entries) {
+            converted.push_back(Breakpoint{
+                .line         = entry.line,
+                .condition    = entry.condition,
+                .logMessage   = entry.logMessage,
+                .hitCondition = entry.hitCondition,
+            });
         }
     }
 
@@ -719,6 +734,10 @@ void DapManager::RemoveWatchAt(std::size_t index) {
 
 const std::vector<std::string>& DapManager::Watches() const {
     return watches_;
+}
+
+void DapManager::RestoreWatches(std::vector<std::string> watches) {
+    watches_ = std::move(watches);
 }
 
 void DapManager::RequestThreads(std::function<void(std::vector<Thread>)> callback) {
