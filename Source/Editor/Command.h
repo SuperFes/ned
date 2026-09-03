@@ -434,6 +434,19 @@ enum class InteractiveRequest { None,
                                 DapSelectThread,
                                 DapSetVariable,
                                 DapToggleConsole,
+                                // DAP round 3: hit-count breakpoints
+                                // (DapSetBreakpointHitCondition, DapSetBreakpointCondition's
+                                // exact sibling), function breakpoints
+                                // (DapToggleFunctionBreakpoint, prompt-shaped, not tied to
+                                // point's line), exception breakpoints
+                                // (DapSelectExceptionBreakpoints, numbered-checklist like
+                                // DapSelectThread but multi-select/toggle), and attach mode
+                                // (DapAttach, one-shot like DapContinue but start-only --
+                                // ned/set-dap-attach configuration, not a prompt).
+                                DapSetBreakpointHitCondition,
+                                DapToggleFunctionBreakpoint,
+                                DapSelectExceptionBreakpoints,
+                                DapAttach,
                                 // VCS blame gutter follow-up: one-shot direct actions, same
                                 // shape as ProjectAgenda/LspShowLog. VcsShowBlame is the
                                 // primary, inline-in-place one: populates the gutter for the

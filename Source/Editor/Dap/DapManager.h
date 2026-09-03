@@ -40,6 +40,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -89,6 +90,12 @@ class DapManager {
         std::size_t line = 0;
         std::string condition;
         std::string logMessage;
+        // DAP round 3: DAP's own `hitCondition` -- an adapter-evaluated
+        // expression ("> 5", "== 10", adapter-specific grammar) against the
+        // running hit count; the breakpoint only actually stops once it's
+        // satisfied. Same "empty means none" convention as condition/
+        // logMessage.
+        std::string hitCondition;
         bool        verified = true;
     };
 
@@ -103,23 +110,62 @@ class DapManager {
     // (most adapters honor fields they didn't advertise).
     std::string SetBreakpointCondition(const std::filesystem::path& path, std::size_t line, std::string condition);
     std::string SetBreakpointLogMessage(const std::filesystem::path& path, std::size_t line, std::string logMessage);
+    // DAP round 3: SetBreakpointCondition's exact sibling for hitCondition.
+    std::string SetBreakpointHitCondition(const std::filesystem::path& path, std::size_t line, std::string hitCondition);
 
     // Sorted breakpoint lines for path (normalized the same way) — empty if
     // none. Backs slice 2's gutter markers; public now for tests.
     [[nodiscard]] std::vector<std::size_t> BreakpointsForFile(const std::filesystem::path& path) const;
+
+    // DAP round 3: function breakpoints -- a separate store from the
+    // line-keyed one above, DAP's own `setFunctionBreakpoints` request.
+    // Toggle returns true if now set, false if just removed (ToggleBreakpoint's
+    // own shape); pushed to a live adapter immediately, same as
+    // ToggleBreakpoint. Kept sorted+deduped. No gutter representation (not
+    // tied to a line) -- status-string feedback only.
+    bool                                          ToggleFunctionBreakpoint(std::string name);
+    [[nodiscard]] const std::vector<std::string>& FunctionBreakpoints() const;
+
+    // DAP round 3: exception breakpoints -- DAP's `setExceptionBreakpoints`
+    // request. The adapter advertises available filters on its `initialize`
+    // response (id/label/whether it's on by default); enabled ones are
+    // whichever the adapter marked default until SetExceptionBreakpointFilters
+    // overrides the set, both reset fresh at the start of every new session
+    // (never persisted -- session-lifetime only, same policy as watches).
+    struct ExceptionFilter {
+        std::string id;
+        std::string label;
+        bool        defaultEnabled = false;
+    };
+    [[nodiscard]] const std::vector<ExceptionFilter>& AvailableExceptionFilters() const;
+    [[nodiscard]] const std::set<std::string>&        EnabledExceptionFilters() const;
+    // Replaces the enabled set wholesale and pushes to a live adapter
+    // immediately (a no-op send target if no session is active -- the next
+    // session re-seeds from its own defaults regardless, this isn't
+    // persisted).
+    void SetExceptionBreakpointFilters(std::set<std::string> ids);
 
     // F5. No session: starts one for language (adapter + launch config both
     // required, see DapConfig.h). Stopped: sends `continue` for the stopped
     // thread. Starting/Running: reports that, changes nothing.
     std::string StartOrContinue(const std::string& language);
 
+    // DAP round 3: attach instead of launch -- requires an attach
+    // configuration (ned/set-dap-attach) rather than a launch one, and
+    // (unlike StartOrContinue) is start-only: no continue/resume semantics,
+    // since "attach" isn't a thing you resume into. Inactive-only; any
+    // other state reports "Debug session already running." unchanged.
+    std::string Attach(const std::string& language);
+
     // Requests a pause of the running debuggee (the adapter answers with a
     // `stopped` event, which flows through SetOnStopped like any other).
     std::string Pause();
 
-    // S-F5. Sends a best-effort `disconnect` (terminateDebuggee: true),
-    // then tears the session down immediately — the teardown must not
-    // depend on a well-behaved adapter answering.
+    // S-F5. Sends a best-effort `disconnect` (terminateDebuggee: true for a
+    // launched session, false for an attached one -- DAP round 3: ned never
+    // kills a process it didn't start), then tears the session down
+    // immediately — the teardown must not depend on a well-behaved adapter
+    // answering.
     std::string StopSession();
 
     // Slice 2: F10/F11/S-F11 (DAP's own `next`/`stepIn`/`stepOut`
@@ -279,8 +325,20 @@ class DapManager {
     DapClient& SetClientForTesting(std::unique_ptr<DapClient> client);
 
   private:
-    void SendLaunch();
+    // DAP round 3: the shared body of StartOrContinue's "no session yet"
+    // branch and Attach -- spawns/reuses client_, sends `initialize`,
+    // parses capabilities, and on success sends `launch` or `attach`
+    // (SendLaunchOrAttach, per attach) once the response lands. Returns the
+    // same short status string both public entry points hand back.
+    std::string BeginSession(const std::string& language, bool attach);
+    // Renamed from the original slice-1 SendLaunch: reads isAttach_ to send
+    // `launch` (DapLaunchConfig) or `attach` (DapAttachConfig).
+    void SendLaunchOrAttach();
     void SendBreakpointsForFile(const std::string& pathKey);
+    // DAP round 3: setFunctionBreakpoints/setExceptionBreakpoints --
+    // SendBreakpointsForFile's siblings for the two non-line-keyed stores.
+    void SendFunctionBreakpoints();
+    void SendExceptionBreakpoints();
     void HandleInitializedEvent();
     void HandleStoppedEvent(const Json& body);
     // The shared body of StepOver/StepInto/StepOut -- command is the DAP
@@ -320,6 +378,23 @@ class DapManager {
 
     std::map<std::string, std::vector<Breakpoint>> breakpoints_; // normalized path -> sorted-by-line breakpoints
 
+    // DAP round 3: sorted+deduped function-breakpoint names -- see
+    // ToggleFunctionBreakpoint.
+    std::vector<std::string> functionBreakpoints_;
+
+    // DAP round 3: the adapter's advertised exception filters and which are
+    // currently enabled -- see AvailableExceptionFilters/
+    // EnabledExceptionFilters/SetExceptionBreakpointFilters. Both reset in
+    // EndSession, re-seeded from the new session's own initialize response
+    // (never persisted, same policy as watches_ below).
+    std::vector<ExceptionFilter> exceptionFilters_;
+    std::set<std::string>        enabledExceptionFilters_;
+
+    // DAP round 3: true for a session started via Attach, false for
+    // StartOrContinue's own launch path -- read by SendLaunchOrAttach (which
+    // config/request name to use) and StopSession (terminateDebuggee).
+    bool isAttach_ = false;
+
     // Slice 4: adapter capabilities from the last `initialize` response --
     // reset at the top of every new session. Used only to append a soft,
     // informational warning to a status string; never blocks an action
@@ -328,6 +403,9 @@ class DapManager {
         bool conditionalBreakpoints = false;
         bool logPoints              = false;
         bool setVariable            = false;
+        // DAP round 3.
+        bool hitConditionalBreakpoints = false;
+        bool functionBreakpoints       = false;
     };
     Capabilities capabilities_;
 
