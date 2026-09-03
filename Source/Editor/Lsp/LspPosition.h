@@ -10,6 +10,7 @@
 #define NED_EDITOR_LSP_LSPPOSITION_H
 
 #include <cstddef>
+#include <string_view>
 
 namespace ned::text {
 class ITextStorage;
@@ -34,6 +35,32 @@ struct LspPosition {
 // offset. Bounded by the line's own byte range, so a malformed/out-of-range
 // server-reported character can't walk off the end of the line.
 [[nodiscard]] std::size_t LspPositionToByte(const text::ITextStorage& content, LspPosition position);
+
+// incremental-sync follow-up. contentChanges[0].range's shape for an
+// incremental textDocument/didChange.
+struct LspRange {
+    LspPosition start;
+    LspPosition end;
+
+    bool operator==(const LspRange&) const = default;
+};
+
+// Converts a [startByte, endByte) span within content to an LspRange.
+// Unlike BytePositionToLsp/LspPositionToByte above, this walks content
+// directly rather than through ITextStorage: incremental sync's two
+// operands are a frozen "last synced text" snapshot and a freshly
+// materialized "new text" (which, for an embedded virtual document, is
+// never the same string as any live buffer's own storage at all) -- plain
+// strings with no ITextStorage wrapper, and building a real
+// RopeStorage/PieceTableStorage just to convert one range would be a
+// needless tree-build allocation on every sync. startByte and endByte must
+// satisfy startByte <= endByte <= content.size().
+[[nodiscard]] LspRange ByteRangeToLspRange(std::string_view content, std::size_t startByte, std::size_t endByte);
+
+// UTF-16 code-unit length of content[startByte, endByte) --
+// contentChanges[0].rangeLength, deprecated by the LSP spec but still
+// required by some servers. Same content contract as ByteRangeToLspRange.
+[[nodiscard]] std::size_t Utf16LengthOfByteRange(std::string_view content, std::size_t startByte, std::size_t endByte);
 
 } // namespace ned::editor::lsp
 

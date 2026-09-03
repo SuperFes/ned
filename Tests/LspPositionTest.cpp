@@ -5,8 +5,11 @@
 #include "Text/RopeStorage.h"
 
 using ned::editor::lsp::BytePositionToLsp;
+using ned::editor::lsp::ByteRangeToLspRange;
 using ned::editor::lsp::LspPosition;
 using ned::editor::lsp::LspPositionToByte;
+using ned::editor::lsp::LspRange;
+using ned::editor::lsp::Utf16LengthOfByteRange;
 using ned::text::Rope;
 using ned::text::RopeStorage;
 
@@ -59,4 +62,46 @@ TEST_CASE("LspPositionToByte is bounded by the line's own byte range for an out-
     // walk past that bound.
     const std::size_t byteOffset = LspPositionToByte(content, LspPosition{.line = 0, .character = 999});
     REQUIRE(byteOffset == 3);
+}
+
+TEST_CASE("ByteRangeToLspRange computes a single-line ASCII range", "[Lsp]") {
+    const std::string content = "abcdef";
+    const LspRange    range   = ByteRangeToLspRange(content, 2, 5); // "cde"
+    REQUIRE(range.start == LspPosition{.line = 0, .character = 2});
+    REQUIRE(range.end == LspPosition{.line = 0, .character = 5});
+}
+
+TEST_CASE("ByteRangeToLspRange spans multiple lines", "[Lsp]") {
+    const std::string content = "first\nsecond\nthird";
+    // "d\nt" -- the last byte of "second", the newline, and the first byte
+    // of "third": a span crossing exactly one line boundary.
+    const std::size_t startByte = content.find("d\n"); // 'd' of "second"
+    const std::size_t endByte   = startByte + 3;       // spans "d\nt"
+    const LspRange    range     = ByteRangeToLspRange(content, startByte, endByte);
+    REQUIRE(range.start == LspPosition{.line = 1, .character = 5}); // "secon|d"
+    REQUIRE(range.end == LspPosition{.line = 2, .character = 1});   // "t|hird"
+}
+
+TEST_CASE("ByteRangeToLspRange counts a non-BMP codepoint as two UTF-16 units", "[Lsp]") {
+    // U+1F600 (grinning face emoji), 4 bytes in UTF-8, a surrogate pair (2 code units) in UTF-16.
+    const std::string content = "\xF0\x9F\x98\x80X";
+    const LspRange    range   = ByteRangeToLspRange(content, 0, 4); // just the emoji
+    REQUIRE(range.start == LspPosition{.line = 0, .character = 0});
+    REQUIRE(range.end == LspPosition{.line = 0, .character = 2});
+}
+
+TEST_CASE("ByteRangeToLspRange handles startByte == endByte as a zero-width range", "[Lsp]") {
+    const std::string content = "abcdef";
+    const LspRange    range   = ByteRangeToLspRange(content, 3, 3);
+    REQUIRE(range.start == range.end);
+    REQUIRE(range.start == LspPosition{.line = 0, .character = 3});
+}
+
+TEST_CASE("Utf16LengthOfByteRange matches the character delta ByteRangeToLspRange reports for the same span", "[Lsp]") {
+    const std::string content     = "caf\xc3\xa9 \xF0\x9F\x98\x80!"; // "café <emoji>!"
+    const std::size_t startByte   = 0;
+    const std::size_t endByte     = content.size() - 1; // up to, not including, the trailing '!'
+    const LspRange    range       = ByteRangeToLspRange(content, startByte, endByte);
+    const std::size_t utf16Length = Utf16LengthOfByteRange(content, startByte, endByte);
+    REQUIRE(range.end.character - range.start.character == utf16Length);
 }

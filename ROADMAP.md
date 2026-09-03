@@ -51,18 +51,17 @@ Notcurses.
       whose stdin pipe couldn't drain fast enough, because `SyncBuffer` sent one
       full-document sync per keystroke with no debounce at all — fixed by debouncing
       the actual send, `LspSyncDebounceMs()`, default 150ms, shorter than every other
-      LSP debounce so it lands before they fire their own requests) — two follow-ups
-      deliberately left out of that fix:
-      - **Incremental sync** (`TextDocumentSyncKind.Incremental` — `contentChanges:
-        [{range, rangeLength, text}]`, sending only the changed span instead of the
-        whole document) is real LSP, gated by whatever `textDocumentSync.change` a
-        server advertises during `initialize` (0=none, 1=full, 2=incremental) — this
-        client never checks it and always sends the full-document form. Debouncing
-        cuts *how often* a sync happens; this would cut *how much* each one sends —
-        genuinely complementary, not a substitute. Needs old-vs-new content diffing,
-        converting the changed byte range to LSP's UTF-16 `Position` math, respecting
-        the server's advertised sync-kind capability, and a full-sync fallback for a
-        server that doesn't support incremental.
+      LSP debounce so it lands before they fire their own requests. Incremental sync
+      — `TextDocumentSyncKind.Incremental`, sending only the changed span instead of
+      the whole document — shipped as the complementary follow-up: `LspContent.h`'s
+      `ExtractTextDocumentSyncKind` parses the server's advertised
+      `textDocumentSync.change` capability, `LspManager::SyncTextToServer` diffs
+      `BufferSyncState::lastSyncedText` against the new content via a common-prefix/
+      common-suffix walk and sends a ranged `contentChanges[0]` for an
+      Incremental-capable server, falling back to the original full-document form
+      otherwise — a server that never advertises a sync kind defaults to Full, not
+      the spec's technical None, to keep every already-working server's behavior
+      unchanged) — one follow-up deliberately left out of both fixes:
       - **`ProtocolStallTimeoutMs()`'s 30s default** (`Transport.h`) is shared by both
         the write side and the read side (where a genuinely slow response — a large
         workspace-wide rename, say — legitimately needs tolerance). Superseded as a

@@ -361,6 +361,32 @@ struct OnTypeFormattingTriggers {
 // requires).
 [[nodiscard]] std::optional<OnTypeFormattingTriggers> ExtractOnTypeFormattingTriggers(const Json& initializeResult);
 
+// incremental-sync follow-up. LSP's own TextDocumentSyncKind (spec section
+// "TextDocumentSyncKind") -- what a server's advertised
+// capabilities.textDocumentSync says about how it wants
+// textDocument/didChange's contentChanges shaped. A third legitimate
+// exception to "no general capability store" (see this comment block's own
+// opening paragraph above): the outgoing payload shape is uninterpretable
+// without knowing which kind a server actually negotiated, the same reason
+// SemanticTokensLegend/OnTypeFormattingTriggers are extracted here instead
+// of just sent-and-forgotten.
+enum class TextDocumentSyncKind {
+    None        = 0,
+    Full        = 1,
+    Incremental = 2,
+};
+
+// Parses `capabilities.textDocumentSync` out of a full `initialize`
+// response. Per spec this field is either a bare integer (0/1/2, the legacy
+// form) or an object whose own "change" field carries the same 0/1/2
+// ("openClose"/"save" aren't read -- not needed by anything this client
+// does). nullopt when absent, non-numeric, or an out-of-range int --
+// LspManager::TextDocumentSyncKindFor treats nullopt the same as Full (see
+// its own doc comment for why: preserving every already-working server's
+// current behavior takes priority over the spec's technical "absent means
+// None" default).
+[[nodiscard]] std::optional<TextDocumentSyncKind> ExtractTextDocumentSyncKind(const Json& initializeResult);
+
 // pull-diagnostics follow-up. One entry from a textDocument/diagnostic
 // response's "items" array -- same range/severity/message shape
 // LspManager::HandlePublishDiagnostics already parses inline for the push

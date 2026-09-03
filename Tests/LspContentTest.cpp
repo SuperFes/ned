@@ -3,30 +3,31 @@
 #include "Editor/Lsp/LspContent.h"
 
 using ned::editor::lsp::CodeAction;
+using ned::editor::lsp::CodeLens;
 using ned::editor::lsp::CompletionItem;
 using ned::editor::lsp::DefinitionLocation;
 using ned::editor::lsp::DocumentHighlight;
 using ned::editor::lsp::ExtractCodeActions;
+using ned::editor::lsp::ExtractCodeLenses;
 using ned::editor::lsp::ExtractCompletionItems;
 using ned::editor::lsp::ExtractDefinitionLocations;
 using ned::editor::lsp::ExtractDocumentHighlights;
-using ned::editor::lsp::ExtractHoverText;
 using ned::editor::lsp::ExtractFormattingEdits;
-using ned::editor::lsp::ExtractOnTypeFormattingTriggers;
-using ned::editor::lsp::ExtractPullDiagnosticReport;
-using ned::editor::lsp::CodeLens;
-using ned::editor::lsp::ExtractCodeLenses;
 using ned::editor::lsp::ExtractHierarchyItems;
+using ned::editor::lsp::ExtractHoverText;
 using ned::editor::lsp::ExtractIncomingCalls;
 using ned::editor::lsp::ExtractInlayHints;
+using ned::editor::lsp::ExtractOnTypeFormattingTriggers;
 using ned::editor::lsp::ExtractOutgoingCalls;
-using ned::editor::lsp::ExtractSingleCodeLens;
+using ned::editor::lsp::ExtractPullDiagnosticReport;
 using ned::editor::lsp::ExtractRenameEdits;
 using ned::editor::lsp::ExtractSemanticTokens;
 using ned::editor::lsp::ExtractSemanticTokensLegend;
 using ned::editor::lsp::ExtractSignatureHelp;
 using ned::editor::lsp::ExtractSingleCodeAction;
+using ned::editor::lsp::ExtractSingleCodeLens;
 using ned::editor::lsp::ExtractSymbols;
+using ned::editor::lsp::ExtractTextDocumentSyncKind;
 using ned::editor::lsp::HierarchyCall;
 using ned::editor::lsp::HierarchyItem;
 using ned::editor::lsp::Json;
@@ -36,6 +37,7 @@ using ned::editor::lsp::RenameResult;
 using ned::editor::lsp::SemanticTokensLegend;
 using ned::editor::lsp::SymbolEntry;
 using ned::editor::lsp::SymbolKindLabel;
+using ned::editor::lsp::TextDocumentSyncKind;
 
 TEST_CASE("ExtractHoverText handles a bare string contents field", "[Lsp]") {
     const Json result = {{"contents", "hello world"}};
@@ -680,6 +682,46 @@ TEST_CASE("ExtractOnTypeFormattingTriggers returns nullopt when the provider is 
     REQUIRE_FALSE(
         ExtractOnTypeFormattingTriggers(Json{{"capabilities", {{"documentOnTypeFormattingProvider", Json::object()}}}}).has_value());
     REQUIRE_FALSE(ExtractOnTypeFormattingTriggers(Json(nullptr)).has_value());
+}
+
+TEST_CASE("ExtractTextDocumentSyncKind parses the legacy bare-integer form", "[Lsp]") {
+    const auto kind = ExtractTextDocumentSyncKind(Json{{"capabilities", {{"textDocumentSync", 2}}}});
+    REQUIRE(kind.has_value());
+    REQUIRE(*kind == TextDocumentSyncKind::Incremental);
+}
+
+TEST_CASE("ExtractTextDocumentSyncKind parses the object form's change field", "[Lsp]") {
+    const Json result = {
+        {"capabilities", {{"textDocumentSync", {{"change", 1}, {"openClose", true}}}}},
+    };
+    const auto kind = ExtractTextDocumentSyncKind(result);
+    REQUIRE(kind.has_value());
+    REQUIRE(*kind == TextDocumentSyncKind::Full);
+}
+
+TEST_CASE("ExtractTextDocumentSyncKind returns None for change: 0", "[Lsp]") {
+    const auto kind = ExtractTextDocumentSyncKind(Json{{"capabilities", {{"textDocumentSync", 0}}}});
+    REQUIRE(kind.has_value());
+    REQUIRE(*kind == TextDocumentSyncKind::None);
+}
+
+TEST_CASE("ExtractTextDocumentSyncKind returns nullopt when textDocumentSync is absent", "[Lsp]") {
+    REQUIRE_FALSE(ExtractTextDocumentSyncKind(Json{{"capabilities", Json::object()}}).has_value());
+}
+
+TEST_CASE("ExtractTextDocumentSyncKind returns nullopt for an out-of-range change value", "[Lsp]") {
+    REQUIRE_FALSE(ExtractTextDocumentSyncKind(Json{{"capabilities", {{"textDocumentSync", 7}}}}).has_value());
+    REQUIRE_FALSE(
+        ExtractTextDocumentSyncKind(Json{{"capabilities", {{"textDocumentSync", {{"change", -1}}}}}}).has_value());
+}
+
+TEST_CASE("ExtractTextDocumentSyncKind returns nullopt for a non-object, non-integer textDocumentSync", "[Lsp]") {
+    REQUIRE_FALSE(ExtractTextDocumentSyncKind(Json{{"capabilities", {{"textDocumentSync", "full"}}}}).has_value());
+    REQUIRE_FALSE(ExtractTextDocumentSyncKind(Json{{"capabilities", {{"textDocumentSync", Json::array({1, 2})}}}}).has_value());
+}
+
+TEST_CASE("ExtractTextDocumentSyncKind returns nullopt for a null initialize result", "[Lsp]") {
+    REQUIRE_FALSE(ExtractTextDocumentSyncKind(Json(nullptr)).has_value());
 }
 
 TEST_CASE("ExtractPullDiagnosticReport parses a full report's items", "[Lsp]") {
