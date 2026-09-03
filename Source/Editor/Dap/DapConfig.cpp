@@ -11,6 +11,7 @@ namespace {
     std::mutex                                                g_mutex;
     std::unordered_map<std::string, std::vector<std::string>> g_adapterCommands;
     std::unordered_map<std::string, std::string>              g_launchConfigs;
+    std::unordered_map<std::string, std::string>              g_attachConfigs;
 
 } // namespace
 
@@ -47,6 +48,25 @@ std::optional<std::string> DapLaunchConfig(const std::string& language) {
     const std::lock_guard<std::mutex> lock(g_mutex);
     const auto                        it = g_launchConfigs.find(language);
     if (it == g_launchConfigs.end()) {
+        return std::nullopt;
+    }
+    return it->second;
+}
+
+void SetDapAttachConfig(const std::string& language, std::string attachConfigJson) {
+    const std::lock_guard<std::mutex> lock(g_mutex);
+    if (attachConfigJson.empty()) {
+        g_attachConfigs.erase(language);
+    }
+    else {
+        g_attachConfigs[language] = std::move(attachConfigJson);
+    }
+}
+
+std::optional<std::string> DapAttachConfig(const std::string& language) {
+    const std::lock_guard<std::mutex> lock(g_mutex);
+    const auto                        it = g_attachConfigs.find(language);
+    if (it == g_attachConfigs.end()) {
         return std::nullopt;
     }
     return it->second;

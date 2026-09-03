@@ -21,6 +21,7 @@
 #include <functional>
 #include <limits>
 #include <optional>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -890,6 +891,17 @@ class BufferView : public Widget {
                            DapAddWatch,
                            DapSetVariableValue,
                            DapThreadSelect,
+                           // DAP round 3: DapBreakpointHitCondition/DapFunctionBreakpointName
+                           // are two more HandlePromptKey-routed plain-text prompts, the
+                           // condition/logMessage/AddWatch shape above.
+                           // DapExceptionFilterSelect is different in kind, DapThreadSelect's
+                           // own shape -- own dedicated handler
+                           // (BeginDapExceptionFilterSelect/RefreshDapExceptionFilterStatus/
+                           // HandleDapExceptionFilterSelectKey), except multi-select/toggle
+                           // instead of single-pick.
+                           DapBreakpointHitCondition,
+                           DapFunctionBreakpointName,
+                           DapExceptionFilterSelect,
                            // editor-ergonomics follow-up: FindRecentFile is
                            // ProjectFindFile's own fuzzy-narrowed-picker shape, over
                            // Editor/RecentFiles.h's candidate list instead of a directory
@@ -2077,6 +2089,16 @@ class BufferView : public Widget {
     void RefreshDapThreadSelectStatus();
     void HandleDapThreadSelectKey(const editor::KeyChord& chord);
 
+    // DAP round 3: dap-select-exception-breakpoints's entry point --
+    // BeginDapThreadSelect's shape, but multi-select/toggle over
+    // DapManager::AvailableExceptionFilters() rather than a single pick;
+    // pendingDapExceptionFilters_/dapExceptionFilterSelection_/
+    // pendingDapEnabledExceptionFilters_ are the driving state (see their
+    // own declarations below).
+    void BeginDapExceptionFilterSelect();
+    void RefreshDapExceptionFilterStatus();
+    void HandleDapExceptionFilterSelectKey(const editor::KeyChord& chord);
+
     // Diagnostic aid, opt-in via $NED_DEBUG_MOUSE (a file path to append
     // to): logs the raw event plus current point/mark/topLine_/size at the
     // top of every mouse handler call, before any of it can be mutated by
@@ -2346,11 +2368,21 @@ class BufferView : public Widget {
     std::vector<editor::dap::DapManager::Thread> pendingDapThreads_;
     std::size_t                                  dapThreadSelection_ = 0;
 
+    // DAP round 3: valid only while inputMode_ ==
+    // InputMode::DapExceptionFilterSelect -- pendingDapThreads_'s own
+    // convention, but the enabled set is a local editable copy (toggled by
+    // Space/digit as the user browses) rather than DapManager's own live
+    // state, committed via SetExceptionBreakpointFilters only on Enter.
+    std::vector<editor::dap::DapManager::ExceptionFilter> pendingDapExceptionFilters_;
+    std::set<std::string>                                 pendingDapEnabledExceptionFilters_;
+    std::size_t                                           dapExceptionFilterSelection_ = 0;
+
     // DAP round 2: the path:line a dap-set-breakpoint-condition/
     // dap-set-breakpoint-log-message prompt targets -- captured when the
     // command runs (point's own line, mirroring dap-toggle-breakpoint),
     // consumed on Enter inside HandlePromptKey. Valid only while inputMode_
-    // is DapBreakpointCondition/DapBreakpointLogMessage.
+    // is DapBreakpointCondition/DapBreakpointLogMessage. DAP round 3:
+    // DapBreakpointHitCondition joins the same two modes/same struct.
     struct PendingDapBreakpointTarget {
         std::filesystem::path path;
         std::size_t            line = 0;

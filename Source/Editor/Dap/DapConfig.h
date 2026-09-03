@@ -37,6 +37,13 @@ void                                                  SetDapAdapterCommand(const
 void                                     SetDapLaunchConfig(const std::string& language, std::string launchConfigJson);
 [[nodiscard]] std::optional<std::string> DapLaunchConfig(const std::string& language);
 
+// DAP round 3: the `attach` request's own arguments object -- same opaque,
+// unvalidated, adapter-specific JSON-string shape as the launch config
+// above, just for DapManager::Attach instead of StartOrContinue's launch
+// path. An empty string clears.
+void                                     SetDapAttachConfig(const std::string& language, std::string attachConfigJson);
+[[nodiscard]] std::optional<std::string> DapAttachConfig(const std::string& language);
+
 } // namespace ned::editor::dap
 
 #endif // NED_EDITOR_DAP_DAPCONFIG_H

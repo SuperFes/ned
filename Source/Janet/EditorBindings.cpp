@@ -522,6 +522,12 @@ namespace {
         editor::dap::SetDapLaunchConfig(language, std::move(launchConfigJson));
     }
 
+    // DAP round 3: same opaque-JSON shape as NedSetDapLaunch, for
+    // DapManager::Attach's `attach` request instead of the launch path.
+    void NedSetDapAttach(std::string language, std::string attachConfigJson) {
+        editor::dap::SetDapAttachConfig(language, std::move(attachConfigJson));
+    }
+
     // task-runner follow-up: argv[0] is the task's executable, remaining
     // elements its arguments, e.g. (ned/set-task-command "build" ["cmake"
     // "--build" "."]). An empty argv clears any existing registration for
@@ -1363,6 +1369,12 @@ void InstallEditorBindings(Environment& env) {
         "`{\"program\": \"./build/ned\"}`). The string is passed verbatim as the launch request's own "
         "adapter-specific arguments object -- see your adapter's documentation for its keys. An empty string clears "
         "it. Both this and ned/set-dap-adapter must be configured before dap-continue (F5) can start a session.");
+    env.Register<&NedSetDapAttach>(
+        "ned", "set-dap-attach",
+        "Set the DAP attach configuration for a language: (language json), ned/set-dap-launch's own shape but for "
+        "the dap-attach command's `attach` request instead of `launch` -- see your adapter's documentation for its "
+        "attach-specific keys (commonly a process id or a connection host/port). An empty string clears it. Both "
+        "this and ned/set-dap-adapter must be configured before dap-attach can start a session.");
     env.Register<&NedSetTaskCommand>(
         "ned", "set-task-command",
         "Set the command run by run-task for a task name: (name argv), e.g. (ned/set-task-command \"build\" "

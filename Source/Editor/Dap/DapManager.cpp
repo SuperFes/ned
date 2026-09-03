@@ -101,6 +101,64 @@ std::string DapManager::SetBreakpointLogMessage(const std::filesystem::path& pat
     return status;
 }
 
+std::string DapManager::SetBreakpointHitCondition(const std::filesystem::path& path, std::size_t line, std::string hitCondition) {
+    const std::string        key   = NormalizePathKey(path);
+    std::vector<Breakpoint>& lines = breakpoints_[key];
+    auto                     it    = std::find_if(lines.begin(), lines.end(), [line](const Breakpoint& bp) { return bp.line == line; });
+    if (it == lines.end()) {
+        lines.push_back(Breakpoint{.line = line});
+        std::sort(lines.begin(), lines.end(), [](const Breakpoint& a, const Breakpoint& b) { return a.line < b.line; });
+        it = std::find_if(lines.begin(), lines.end(), [line](const Breakpoint& bp) { return bp.line == line; });
+    }
+    it->hitCondition = hitCondition;
+    if (client_ && state_ != SessionState::Inactive) {
+        SendBreakpointsForFile(key);
+    }
+    std::string status = (hitCondition.empty() ? "Hit condition cleared at " : "Hit condition set at ") +
+                         path.filename().string() + ":" + std::to_string(line);
+    if (!hitCondition.empty() && client_ && state_ != SessionState::Inactive && !capabilities_.hitConditionalBreakpoints) {
+        status += " (adapter did not advertise hit-conditional-breakpoint support -- may be ignored)";
+    }
+    return status;
+}
+
+bool DapManager::ToggleFunctionBreakpoint(std::string name) {
+    const auto it = std::find(functionBreakpoints_.begin(), functionBreakpoints_.end(), name);
+    bool       nowSet;
+    if (it != functionBreakpoints_.end()) {
+        functionBreakpoints_.erase(it);
+        nowSet = false;
+    }
+    else {
+        functionBreakpoints_.push_back(std::move(name));
+        std::sort(functionBreakpoints_.begin(), functionBreakpoints_.end());
+        nowSet = true;
+    }
+    if (client_ && state_ != SessionState::Inactive) {
+        SendFunctionBreakpoints();
+    }
+    return nowSet;
+}
+
+const std::vector<std::string>& DapManager::FunctionBreakpoints() const {
+    return functionBreakpoints_;
+}
+
+const std::vector<DapManager::ExceptionFilter>& DapManager::AvailableExceptionFilters() const {
+    return exceptionFilters_;
+}
+
+const std::set<std::string>& DapManager::EnabledExceptionFilters() const {
+    return enabledExceptionFilters_;
+}
+
+void DapManager::SetExceptionBreakpointFilters(std::set<std::string> ids) {
+    enabledExceptionFilters_ = std::move(ids);
+    if (client_ && state_ != SessionState::Inactive) {
+        SendExceptionBreakpoints();
+    }
+}
+
 std::vector<std::size_t> DapManager::BreakpointsForFile(const std::filesystem::path& path) const {
     const auto                it = breakpoints_.find(NormalizePathKey(path));
     std::vector<std::size_t>  lines;
@@ -184,13 +242,27 @@ std::string DapManager::StartOrContinue(const std::string& language) {
     if (state_ != SessionState::Inactive) {
         return "Debug session already running.";
     }
-
-    const auto launchConfig = DapLaunchConfig(language);
-    if (!launchConfig) {
+    if (!DapLaunchConfig(language)) {
         return "No launch configuration for " + language + " (ned/set-dap-launch).";
     }
+    return BeginSession(language, /*attach=*/false);
+}
 
+std::string DapManager::Attach(const std::string& language) {
+    if (state_ != SessionState::Inactive) {
+        return "Debug session already running.";
+    }
+    if (!DapAttachConfig(language)) {
+        return "No attach configuration for " + language + " (ned/set-dap-attach).";
+    }
+    return BeginSession(language, /*attach=*/true);
+}
+
+std::string DapManager::BeginSession(const std::string& language, bool attach) {
     capabilities_ = Capabilities{}; // fresh adapter, fresh capabilities -- see the header's own doc comment
+    exceptionFilters_.clear();
+    enabledExceptionFilters_.clear();
+    isAttach_ = attach;
 
     if (!client_) {
         const auto argv = DapAdapterCommand(language);
@@ -236,26 +308,49 @@ std::string DapManager::StartOrContinue(const std::string& language) {
                              if (body.contains("supportsSetVariable") && body["supportsSetVariable"].is_boolean()) {
                                  capabilities_.setVariable = body["supportsSetVariable"].get<bool>();
                              }
-                             SendLaunch();
+                             if (body.contains("supportsHitConditionalBreakpoints") &&
+                                 body["supportsHitConditionalBreakpoints"].is_boolean()) {
+                                 capabilities_.hitConditionalBreakpoints = body["supportsHitConditionalBreakpoints"].get<bool>();
+                             }
+                             if (body.contains("supportsFunctionBreakpoints") && body["supportsFunctionBreakpoints"].is_boolean()) {
+                                 capabilities_.functionBreakpoints = body["supportsFunctionBreakpoints"].get<bool>();
+                             }
+                             if (body.contains("exceptionBreakpointFilters") && body["exceptionBreakpointFilters"].is_array()) {
+                                 for (const Json& filterJson : body["exceptionBreakpointFilters"]) {
+                                     ExceptionFilter filter;
+                                     filter.id             = filterJson.value("filter", "");
+                                     filter.label          = filterJson.value("label", filter.id);
+                                     filter.defaultEnabled = filterJson.value("default", false);
+                                     if (filter.id.empty()) {
+                                         continue;
+                                     }
+                                     if (filter.defaultEnabled) {
+                                         enabledExceptionFilters_.insert(filter.id);
+                                     }
+                                     exceptionFilters_.push_back(std::move(filter));
+                                 }
+                             }
+                             SendLaunchOrAttach();
                          });
-    return "Starting debug session (" + language + ")...";
+    return std::string("Starting debug session (") + language + ")...";
 }
 
-void DapManager::SendLaunch() {
-    const auto launchConfig = DapLaunchConfig(language_);
-    Json       arguments    = Json::object();
-    if (launchConfig) {
+void DapManager::SendLaunchOrAttach() {
+    const auto config    = isAttach_ ? DapAttachConfig(language_) : DapLaunchConfig(language_);
+    Json       arguments = Json::object();
+    if (config) {
         try {
-            arguments = Json::parse(*launchConfig);
+            arguments = Json::parse(*config);
         }
         catch (const std::exception& e) {
-            EndSession(std::string("launch configuration is not valid JSON: ") + e.what());
+            EndSession(std::string(isAttach_ ? "attach" : "launch") + " configuration is not valid JSON: " + e.what());
             return;
         }
     }
-    client_->SendRequest("launch", std::move(arguments), [this](bool success, const Json&, const std::string& message) {
+    const std::string command = isAttach_ ? "attach" : "launch";
+    client_->SendRequest(command, std::move(arguments), [this, command](bool success, const Json&, const std::string& message) {
         if (!success) {
-            EndSession("launch failed: " + message);
+            EndSession(command + " failed: " + message);
             return;
         }
         if (state_ == SessionState::Starting) {
@@ -280,10 +375,40 @@ void DapManager::HandleInitializedEvent() {
         (void)lines;
         SendBreakpointsForFile(pathKey);
     }
+    // DAP round 3: function/exception breakpoints go out here too, same as
+    // the per-file setBreakpoints loop above -- everything before
+    // configurationDone.
+    SendFunctionBreakpoints();
+    SendExceptionBreakpoints();
     client_->SendRequest("configurationDone", Json::object(), [](bool, const Json&, const std::string&) {
         // Nothing to do either way — a failure here surfaces soon enough
         // through the launch response or a terminated event.
     });
+}
+
+void DapManager::SendFunctionBreakpoints() {
+    Json breakpointsJson = Json::array();
+    for (const std::string& name : functionBreakpoints_) {
+        breakpointsJson.push_back(Json{{"name", name}});
+    }
+    client_->SendRequest("setFunctionBreakpoints", Json{{"breakpoints", std::move(breakpointsJson)}},
+                         [](bool, const Json&, const std::string&) {
+                             // No per-entry "verified" tracking for function
+                             // breakpoints yet (documented cut, ROADMAP.md) --
+                             // same "fire and let a failure surface via the
+                             // session ending" shape as configurationDone above.
+                         });
+}
+
+void DapManager::SendExceptionBreakpoints() {
+    Json filtersJson = Json::array();
+    for (const std::string& id : enabledExceptionFilters_) {
+        filtersJson.push_back(id);
+    }
+    client_->SendRequest("setExceptionBreakpoints", Json{{"filters", std::move(filtersJson)}},
+                         [](bool, const Json&, const std::string&) {
+                             // Same fire-and-forget shape as setFunctionBreakpoints above.
+                         });
 }
 
 void DapManager::SendBreakpointsForFile(const std::string& pathKey) {
@@ -296,6 +421,9 @@ void DapManager::SendBreakpointsForFile(const std::string& pathKey) {
             }
             if (!bp.logMessage.empty()) {
                 entry["logMessage"] = bp.logMessage;
+            }
+            if (!bp.hitCondition.empty()) {
+                entry["hitCondition"] = bp.hitCondition;
             }
             breakpointsJson.push_back(std::move(entry));
         }
@@ -393,7 +521,9 @@ std::string DapManager::StopSession() {
     // DapClient.h's own header comment).
     try {
         client_->PrepareForGracefulShutdown();
-        client_->SendRequest("disconnect", Json{{"terminateDebuggee", true}}, [](bool, const Json&, const std::string&) {});
+        // DAP round 3: an attached session never kills a process ned didn't
+        // start -- only a launched one does.
+        client_->SendRequest("disconnect", Json{{"terminateDebuggee", !isAttach_}}, [](bool, const Json&, const std::string&) {});
     }
     catch (const std::exception&) {
         // EPIPE from an already-dead adapter — teardown proceeds regardless.
@@ -632,6 +762,12 @@ void DapManager::EndSession(std::string reason) {
     stoppedFrameId_.reset();
     focusedThreadId_.reset();
     capabilities_ = Capabilities{};
+    // DAP round 3: exception filters/isAttach_ are per-session, same reset
+    // policy as capabilities_ above -- the next BeginSession re-seeds them
+    // regardless, this just keeps a post-EndSession query honest.
+    exceptionFilters_.clear();
+    enabledExceptionFilters_.clear();
+    isAttach_ = false;
     // lsp-use-after-free follow-up: client_ used to move into retired_ here
     // instead of destroying in place, deferring to the next StartOrContinue
     // ("safe here: nothing of a previous session is on the stack" -- true,
