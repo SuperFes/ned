@@ -641,6 +641,16 @@ class LspManager {
         semanticTokensLegend_[std::move(language)] = std::move(legend);
     }
 
+    // incremental-sync follow-up: same test-only injection point as
+    // SetSemanticTokensLegendForTesting just above, for the sibling piece of
+    // `initialize`-response state -- a test wanting to exercise the
+    // Incremental sync path must seed this directly, since
+    // SetClientForTesting bypasses the real handshake that would otherwise
+    // populate it.
+    void SetTextDocumentSyncKindForTesting(std::string language, TextDocumentSyncKind kind) {
+        textDocumentSyncKind_[std::move(language)] = kind;
+    }
+
     // LspManagerTest-broker-hermeticity follow-up: routes ClientForLanguage's
     // real spawn path's TryConnectToBroker call at a caller-chosen path
     // instead of the real BrokerSocketPath() -- lets a test that wants a
@@ -719,6 +729,15 @@ class LspManager {
     // see ExecuteCommand's own doc comment above).
     [[nodiscard]] std::optional<SemanticTokensLegend>     SemanticTokensLegendFor(const std::string& serverKey) const;
     [[nodiscard]] std::optional<OnTypeFormattingTriggers> OnTypeFormattingTriggersFor(const std::string& serverKey) const;
+
+    // incremental-sync follow-up: unlike the two accessors above, this
+    // returns a plain TextDocumentSyncKind rather than an optional -- every
+    // caller wants the already-defaulted value (Full when serverKey never
+    // advertised, or unparseably advertised, a sync kind -- see
+    // ExtractTextDocumentSyncKind's own doc comment for why Full and not the
+    // spec's technical None default), and there's no legitimate case for a
+    // caller to distinguish "unset" from "explicitly Full."
+    [[nodiscard]] TextDocumentSyncKind TextDocumentSyncKindFor(const std::string& serverKey) const;
 
     // semanticTokens follow-up. Called once per Paint() for the active
     // buffer (BufferView.cpp, alongside the existing SyncBuffer call, not
@@ -907,6 +926,20 @@ class LspManager {
         // which case "nothing new to (re)arm" is exactly the right call
         // anyway.
         std::optional<std::size_t> pendingSyncGeneration;
+
+        // incremental-sync follow-up: the exact text last sent to this
+        // server (via didOpen or didChange), used as the "old" side of a
+        // byte diff the next time this same (buffer, serverKey) syncs, so an
+        // Incremental-capable server can be sent only the changed span
+        // instead of the whole document again. Updated after *every*
+        // successful send, including the full-text fallback path -- a
+        // server that stops being Incremental-capable mid-session (or never
+        // was) must still leave a valid baseline for a later sync to diff
+        // against. Doubles per-buffer memory for a buffer talking to an
+        // Incremental-capable server -- accepted, since a buffer big enough
+        // for that to matter is already excluded from LSP sync entirely by
+        // SyncBuffer's own huge-file-lsp-gate check.
+        std::string lastSyncedText;
     };
 
     // prose-checking follow-up: SyncBuffer's actual body, generalized so it
@@ -1202,6 +1235,13 @@ class LspManager {
     // above for why these exist instead of a general capability store.
     std::unordered_map<std::string, SemanticTokensLegend>     semanticTokensLegend_;
     std::unordered_map<std::string, OnTypeFormattingTriggers> onTypeFormattingTriggers_;
+
+    // incremental-sync follow-up: same role/lifetime as the two caches just
+    // above -- captured from `initialize`'s own response, erased in
+    // ClientDisconnected. Absent means "assume Full" (see
+    // ExtractTextDocumentSyncKind's own doc comment) -- TextDocumentSyncKindFor
+    // applies that default itself, so callers never re-derive it.
+    std::unordered_map<std::string, TextDocumentSyncKind> textDocumentSyncKind_;
 
     // pull-diagnostics follow-up: see RequestPullDiagnostics' own doc
     // comment above for why this exists instead of a capability check.

@@ -626,6 +626,34 @@ std::optional<OnTypeFormattingTriggers> ExtractOnTypeFormattingTriggers(const Js
     return triggers;
 }
 
+std::optional<TextDocumentSyncKind> ExtractTextDocumentSyncKind(const Json& initializeResult) {
+    if (!initializeResult.is_object()) {
+        return std::nullopt;
+    }
+    const auto capabilitiesIt = initializeResult.find("capabilities");
+    if (capabilitiesIt == initializeResult.end() || !capabilitiesIt->is_object()) {
+        return std::nullopt;
+    }
+    const auto syncIt = capabilitiesIt->find("textDocumentSync");
+    if (syncIt == capabilitiesIt->end()) {
+        return std::nullopt;
+    }
+    std::optional<int> change;
+    if (syncIt->is_number_integer()) {
+        change = syncIt->get<int>(); // legacy bare-int form
+    }
+    else if (syncIt->is_object()) {
+        const auto changeIt = syncIt->find("change");
+        if (changeIt != syncIt->end() && changeIt->is_number_integer()) {
+            change = changeIt->get<int>();
+        }
+    }
+    if (!change || *change < 0 || *change > 2) {
+        return std::nullopt;
+    }
+    return static_cast<TextDocumentSyncKind>(*change);
+}
+
 std::optional<std::vector<PullDiagnosticItem>> ExtractPullDiagnosticReport(const Json& result) {
     if (!result.is_object()) {
         return std::nullopt;

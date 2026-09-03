@@ -514,6 +514,9 @@ LspClient* LspManager::ClientForLanguage(const std::string& serverKey, const std
                 if (const auto triggers = ExtractOnTypeFormattingTriggers(*result)) {
                     onTypeFormattingTriggers_[serverKey] = *triggers;
                 }
+                if (const auto syncKind = ExtractTextDocumentSyncKind(*result)) {
+                    textDocumentSyncKind_[serverKey] = *syncKind;
+                }
             }
             rawClient->SendNotification("initialized", Json::object());
             if (!workspaceConfiguration.empty()) {
@@ -754,6 +757,7 @@ void LspManager::SyncTextToServer(text::Buffer& buffer, const std::string& serve
                                                          });
         state.opened               = true;
         state.lastSyncedGeneration = buffer.ContentGeneration();
+        state.lastSyncedText       = documentText; // incremental-sync follow-up: baseline for the first didChange's diff
         // pull-diagnostics follow-up: same cadence as didOpen/didChange
         // itself, no separate debounce timer -- see RequestPullDiagnostics'
         // own doc comment in LspManager.h. Opt-in (LspPullDiagnosticsEnabled,
@@ -771,11 +775,60 @@ void LspManager::SyncTextToServer(text::Buffer& buffer, const std::string& serve
     }
 
     ++state.version;
-    client->SendNotification("textDocument/didChange", {
-                                                           {"textDocument", {{"uri", state.uri}, {"version", state.version}}},
-                                                           {"contentChanges", Json::array({{{"text", documentText}}})},
-                                                       });
+    if (TextDocumentSyncKindFor(serverKey) == TextDocumentSyncKind::Incremental) {
+        // incremental-sync follow-up: common-prefix/common-suffix byte diff,
+        // the same shape as IncrementalParseCache::Update's own diff
+        // (Editor/TreeSitter/IncrementalParse.cpp) -- "correct, if not
+        // always maximally minimal" is enough here too: a multi-cursor edit
+        // or a large external revert just widens to one outer span, which
+        // is spec-legal for a single contentChanges[0] entry. oldText may
+        // also be a differently-padded rebuild of the same embedded region
+        // rather than a minimal edit of it (SyncEmbeddedDocuments
+        // periodically rebuilds virtual-document text with shifted
+        // whitespace padding) -- this walk handles that the same as any
+        // other "far apart" edit, no special-casing needed: it just finds a
+        // smaller common prefix/suffix and sends a wider span.
+        const std::string& oldText   = state.lastSyncedText;
+        const std::size_t  maxCommon = std::min(oldText.size(), documentText.size());
+        std::size_t        prefix    = 0;
+        while (prefix < maxCommon && oldText[prefix] == documentText[prefix]) {
+            ++prefix;
+        }
+        const std::size_t maxSuffix = maxCommon - prefix;
+        std::size_t       suffix    = 0;
+        while (suffix < maxSuffix && oldText[oldText.size() - 1 - suffix] == documentText[documentText.size() - 1 - suffix]) {
+            ++suffix;
+        }
+        const std::size_t oldStartByte = prefix;
+        const std::size_t oldEndByte   = oldText.size() - suffix;
+        const std::size_t newStartByte = prefix;
+        const std::size_t newEndByte   = documentText.size() - suffix;
+
+        const LspRange    range       = ByteRangeToLspRange(oldText, oldStartByte, oldEndByte);
+        const std::size_t rangeLength = Utf16LengthOfByteRange(oldText, oldStartByte, oldEndByte);
+        const std::string changedText = documentText.substr(newStartByte, newEndByte - newStartByte);
+
+        client->SendNotification(
+            "textDocument/didChange",
+            {
+                {"textDocument", {{"uri", state.uri}, {"version", state.version}}},
+                {"contentChanges", Json::array({{
+                                       {"range",
+                                        {{"start", {{"line", range.start.line}, {"character", range.start.character}}},
+                                         {"end", {{"line", range.end.line}, {"character", range.end.character}}}}},
+                                       {"rangeLength", rangeLength},
+                                       {"text", changedText},
+                                   }})},
+            });
+    }
+    else {
+        client->SendNotification("textDocument/didChange", {
+                                                               {"textDocument", {{"uri", state.uri}, {"version", state.version}}},
+                                                               {"contentChanges", Json::array({{{"text", documentText}}})},
+                                                           });
+    }
     state.lastSyncedGeneration = buffer.ContentGeneration();
+    state.lastSyncedText       = documentText;
     if (LspPullDiagnosticsEnabled()) {
         RequestPullDiagnostics(buffer, serverKey);
     }
@@ -854,6 +907,7 @@ void LspManager::ClientDisconnected(const std::string& serverKey, const std::str
     // died -- don't let a stale entry outlive this connection.
     semanticTokensLegend_.erase(languageCopy);
     onTypeFormattingTriggers_.erase(languageCopy);
+    textDocumentSyncKind_.erase(languageCopy);       // ditto -- a respawned server may advertise a different sync kind
     pullDiagnosticsUnsupported_.erase(languageCopy); // a respawned server gets one fresh attempt
     inlayHintsUnsupported_.erase(languageCopy);       // ditto
     codeLensUnsupported_.erase(languageCopy);         // ditto
@@ -987,6 +1041,11 @@ std::optional<SemanticTokensLegend> LspManager::SemanticTokensLegendFor(const st
 std::optional<OnTypeFormattingTriggers> LspManager::OnTypeFormattingTriggersFor(const std::string& serverKey) const {
     const auto it = onTypeFormattingTriggers_.find(serverKey);
     return it != onTypeFormattingTriggers_.end() ? std::optional(it->second) : std::nullopt;
+}
+
+TextDocumentSyncKind LspManager::TextDocumentSyncKindFor(const std::string& serverKey) const {
+    const auto it = textDocumentSyncKind_.find(serverKey);
+    return it != textDocumentSyncKind_.end() ? it->second : TextDocumentSyncKind::Full;
 }
 
 void LspManager::NotifyBufferClosed(text::Buffer& buffer) {
