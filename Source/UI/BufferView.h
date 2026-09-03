@@ -1330,11 +1330,23 @@ class BufferView : public Widget {
         std::size_t byteOffset;
     };
     std::vector<JumpMark> jumpBackStack_;
+    // jump-back-stack follow-up, forward direction: the mirror-image stack --
+    // JumpBack pushes the position it's leaving onto this before jumping,
+    // JumpForward pops from it and pushes back onto jumpBackStack_ in turn,
+    // so the pair behaves like a browser's back/forward buttons. PushJumpMark
+    // clears this whenever a *new* jump is made (goto-definition, goto-line,
+    // ...), since branching off mid-history invalidates the old forward path
+    // the same way a fresh navigation does in a browser. Evicted the same
+    // way and against the same cap as jumpBackStack_ (kMaxJumpBackStack) --
+    // no separate constant for it.
+    std::vector<JumpMark> jumpForwardStack_;
     void                  PushJumpMark();
     // Pops entries until one resolves to a still-open buffer (skipping any
     // whose buffer has since closed) and jumps there; sets a "No more jump
     // history." status message if the stack is exhausted without finding one.
     void JumpBack();
+    // JumpBack's redo direction -- see jumpForwardStack_'s own doc comment.
+    void JumpForward();
 
     // rename follow-up. StartInteractiveSession's LspRename case opens the
     // synchronous "New name: " prompt (inputMode_ = LspRenameNewName);

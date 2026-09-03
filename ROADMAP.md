@@ -140,9 +140,6 @@ Notcurses.
       common case and drops real `<<<<<<<`/`=======`/`>>>>>>>` conflict markers into the
       buffer for a genuine divergence, but a real conflict is still hand-edited text,
       not a visual diff.
-- [ ] **Jump-back forward/redo stack** — `jump-back` (`C-x C-SPC`) has no forward
-      direction (Vim's `C-i` equivalent); Vim-mode's own separate jumplist/changelist
-      ring is tracked below under Vim-mode gaps.
 - [ ] Native Vim-mode `]c`/`[c` binding (gitsigns' own convention) for
       `vcs-next-hunk`/`vcs-previous-hunk` — the global `C-c v N`/`P` binding already
       works under Vim mode via the shared keymap-stack fallthrough, so this is polish,

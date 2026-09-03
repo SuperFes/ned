@@ -599,6 +599,14 @@ enum class InteractiveRequest { None,
                                 // JumpToDefinition/goto-line/bookmark-jump/jump-to-register) and
                                 // restores the saved (buffer, point).
                                 JumpBack,
+                                // jump-back-stack follow-up, forward direction: the redo
+                                // counterpart to JumpBack above -- BufferView::JumpForward pops
+                                // its own private per-pane jumpForwardStack_ (pushed to by
+                                // JumpBack every time it actually jumps somewhere, and cleared
+                                // by PushJumpMark, mirroring a browser's back/forward history:
+                                // a fresh jump discards stale forward entries rather than
+                                // leaving them reachable).
+                                JumpForward,
                                 // org-clock-display follow-up: another one-shot direct action,
                                 // same shape as ProjectAgenda -- BufferView builds and switches
                                 // to a synthesized "*clock report*" buffer (a
