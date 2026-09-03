@@ -317,6 +317,26 @@ namespace {
         return label;
     }
 
+    // call/type-hierarchy follow-up: one TreeRow::label, BuildSymbolLabel's
+    // own "kind name — path:line" shape reused verbatim (SymbolKindLabel
+    // takes the same raw LSP SymbolKind vocabulary both HierarchyItem::kind
+    // and SymbolEntry::kind use) -- a hierarchy row and a symbol-picker row
+    // are answering the same underlying question ("what is this, and
+    // where"), so they read the same way. containerName has no equivalent
+    // here (HierarchyItem carries none), so this is the includePath=true
+    // branch of BuildSymbolLabel with the containerName segment dropped
+    // rather than a parallel near-duplicate.
+    std::string BuildHierarchyRowLabel(const editor::lsp::LspManager::ResolvedHierarchyItem& resolved) {
+        std::string label(editor::lsp::SymbolKindLabel(resolved.item.kind));
+        label += " ";
+        label += resolved.item.name;
+        std::error_code             ec;
+        const std::filesystem::path relative = std::filesystem::relative(resolved.path, editor::ProjectRoot(), ec);
+        label += "  — " + ((!ec && !relative.empty()) ? relative.string() : resolved.path.string());
+        label += ":" + std::to_string(resolved.item.position.line + 1);
+        return label;
+    }
+
     // Binary-rendering follow-up: a raw control byte (C0 control range, plus
     // DEL) sent straight to a real terminal isn't "print one glyph and
     // advance" -- some of them are actual terminal control codes (cursor
@@ -5935,6 +5955,231 @@ void BufferView::JumpToDefinition(const editor::lsp::LspManager::ResolvedLocatio
     }
 }
 
+// call/type-hierarchy follow-up. See HierarchyDirection/HierarchySession's
+// own doc comments in BufferView.h for the overall session shape.
+void BufferView::RequestHierarchyAtPoint(HierarchyDirection direction) {
+    if (!lspManager_) {
+        statusMessage_ = "No LSP manager available.";
+        return;
+    }
+    text::Buffer&       buffer     = activeBuffer_.Get();
+    text::Buffer* const bufferPtr  = &buffer;
+    const std::size_t   point      = buffer.Point();
+    const std::size_t   generation = ++hierarchyRequestGeneration_;
+    const std::string   serverKey  = ResolvedLspServerKey(point);
+
+    std::string subjectLabel; // for "No <subjectLabel> at point." on an empty prepare result
+    switch (direction) {
+        case HierarchyDirection::IncomingCalls:
+        case HierarchyDirection::OutgoingCalls:
+            subjectLabel = "callable symbol";
+            break;
+        case HierarchyDirection::Supertypes:
+        case HierarchyDirection::Subtypes:
+            subjectLabel = "type";
+            break;
+    }
+
+    statusMessage_ = "Requesting hierarchy...";
+    auto onPrepared = [this, bufferPtr, point, generation, direction, serverKey,
+                       subjectLabel](std::vector<editor::lsp::LspManager::ResolvedHierarchyItem> items) {
+        if (generation != hierarchyRequestGeneration_) {
+            return; // superseded by a newer request
+        }
+        if (bufferPtr != &activeBuffer_.Get() || activeBuffer_.Get().Point() != point) {
+            return; // buffer/point changed since the request was sent -- see RequestDefinitionAtPoint's own identical guard
+        }
+        if (items.empty()) {
+            statusMessage_ = "No " + subjectLabel + " at point.";
+            return;
+        }
+        // overload-set follow-up (see this method's own doc comment in
+        // BufferView.h): more than one match is rare enough that taking
+        // the first is an acceptable v1 cut.
+        editor::lsp::LspManager::ResolvedHierarchyItem root = std::move(items.front());
+        HierarchySession                               session{.direction = direction, .buffer = bufferPtr, .serverKey = serverKey, .rootName = root.item.name};
+        session.tree.Reset({std::move(root)});
+        hierarchySession_      = std::move(session);
+        hierarchySelectedIndex_ = 0;
+        ExpandHierarchyNode(0); // auto-expand the root -- see this method's own doc comment in BufferView.h
+    };
+
+    switch (direction) {
+        case HierarchyDirection::IncomingCalls:
+        case HierarchyDirection::OutgoingCalls:
+            lspManager_->RequestPrepareCallHierarchy(buffer, point, std::move(onPrepared), serverKey);
+            break;
+        case HierarchyDirection::Supertypes:
+        case HierarchyDirection::Subtypes:
+            lspManager_->RequestPrepareTypeHierarchy(buffer, point, std::move(onPrepared), serverKey);
+            break;
+    }
+}
+
+void BufferView::ExpandHierarchyNode(std::size_t index) {
+    if (!hierarchySession_ || !lspManager_ || index >= hierarchySession_->tree.Size()) {
+        return;
+    }
+    HierarchySession& session = *hierarchySession_;
+    if (session.tree.IsLoading(index)) {
+        return;
+    }
+    if (session.tree.ChildrenFetched(index)) {
+        // Already explored -- just reveal it again, no request needed (see
+        // this method's own doc comment in BufferView.h).
+        session.tree.SetExpanded(index, true);
+        PushHierarchyModel();
+        return;
+    }
+
+    session.tree.BeginLoading(index);
+    PushHierarchyModel(); // shows the loading glyph immediately
+
+    const editor::lsp::HierarchyItem item       = session.tree.At(index).data.item;
+    text::Buffer&                    buffer     = *session.buffer;
+    const std::string                serverKey  = session.serverKey;
+    const HierarchyDirection         direction  = session.direction;
+    const std::size_t                generation = ++hierarchyRequestGeneration_;
+
+    // find-references follow-up's own reasoning applies here too: a
+    // superseded/stale response is simply dropped, not applied to
+    // whatever the tree has become by the time it arrives.
+    auto onItems = [this, index, generation](std::vector<editor::lsp::LspManager::ResolvedHierarchyItem> children) {
+        if (!hierarchySession_ || generation != hierarchyRequestGeneration_) {
+            return;
+        }
+        hierarchySession_->tree.Expand(index, std::move(children));
+        PushHierarchyModel();
+    };
+    // callHierarchy/incomingCalls and .../outgoingCalls respond with the
+    // extra fromRanges wrapper (LspManager::ResolvedHierarchyCall) --
+    // call.callSites isn't surfaced in the tree yet (see LspManager.h's own
+    // ResolvedHierarchyCall doc comment on that v1 cut), so this just
+    // unwraps each entry's item and reuses onItems above.
+    auto onCalls = [this, index, generation](std::vector<editor::lsp::LspManager::ResolvedHierarchyCall> calls) {
+        if (!hierarchySession_ || generation != hierarchyRequestGeneration_) {
+            return;
+        }
+        std::vector<editor::lsp::LspManager::ResolvedHierarchyItem> children;
+        children.reserve(calls.size());
+        for (editor::lsp::LspManager::ResolvedHierarchyCall& call : calls) {
+            children.push_back(std::move(call.item));
+        }
+        hierarchySession_->tree.Expand(index, std::move(children));
+        PushHierarchyModel();
+    };
+
+    switch (direction) {
+        case HierarchyDirection::IncomingCalls:
+            lspManager_->RequestIncomingCalls(buffer, item, std::move(onCalls), serverKey);
+            break;
+        case HierarchyDirection::OutgoingCalls:
+            lspManager_->RequestOutgoingCalls(buffer, item, std::move(onCalls), serverKey);
+            break;
+        case HierarchyDirection::Supertypes:
+            lspManager_->RequestSupertypes(buffer, item, std::move(onItems), serverKey);
+            break;
+        case HierarchyDirection::Subtypes:
+            lspManager_->RequestSubtypes(buffer, item, std::move(onItems), serverKey);
+            break;
+    }
+}
+
+void BufferView::PushHierarchyModel() {
+    if (!hierarchySession_) {
+        if (onHierarchyChanged_) {
+            onHierarchyChanged_(std::nullopt);
+        }
+        return;
+    }
+
+    const HierarchySession& session = *hierarchySession_;
+    std::string             verb;
+    switch (session.direction) {
+        case HierarchyDirection::IncomingCalls:
+            verb = "Callers of ";
+            break;
+        case HierarchyDirection::OutgoingCalls:
+            verb = "Calls from ";
+            break;
+        case HierarchyDirection::Supertypes:
+            verb = "Supertypes of ";
+            break;
+        case HierarchyDirection::Subtypes:
+            verb = "Subtypes of ";
+            break;
+    }
+
+    ui::TreeViewModel model;
+    model.title = verb + session.rootName;
+
+    const std::vector<editor::ExpandableTree<editor::lsp::LspManager::ResolvedHierarchyItem>::VisibleRow> rows =
+        session.tree.FlattenVisible();
+    model.rows.reserve(rows.size());
+    for (const auto& row : rows) {
+        const auto& node = session.tree.At(row.index);
+        model.rows.push_back(ui::TreeRow{
+            .label       = BuildHierarchyRowLabel(node.data),
+            .depth       = row.depth,
+            .hasChildren = !node.childrenFetched || !node.children.empty(),
+            .expanded    = node.expanded,
+            .loading     = node.loading,
+        });
+    }
+    if (!model.rows.empty()) {
+        model.selectedIndex = std::min(hierarchySelectedIndex_, model.rows.size() - 1);
+    }
+
+    if (onHierarchyChanged_) {
+        onHierarchyChanged_(std::move(model));
+    }
+}
+
+void BufferView::EndHierarchySession() {
+    hierarchySession_.reset();
+    hierarchySelectedIndex_ = 0;
+    if (onHierarchyChanged_) {
+        onHierarchyChanged_(std::nullopt);
+    }
+    TakeFocus(); // reclaim keyboard focus from the TreeView overlay
+}
+
+void BufferView::SetOnHierarchyChanged(std::function<void(std::optional<ui::TreeViewModel>)> handler) {
+    onHierarchyChanged_ = std::move(handler);
+}
+
+void BufferView::HierarchyActivate(std::size_t index) {
+    if (!hierarchySession_ || index >= hierarchySession_->tree.Size()) {
+        return;
+    }
+    const editor::lsp::LspManager::ResolvedHierarchyItem& resolved = hierarchySession_->tree.At(index).data;
+    const editor::lsp::LspManager::ResolvedLocation       location{.path = resolved.path, .position = resolved.item.position};
+    EndHierarchySession();
+    JumpToDefinition(location);
+}
+
+void BufferView::HierarchyToggleExpand(std::size_t index) {
+    hierarchySelectedIndex_ = index;
+    ExpandHierarchyNode(index);
+}
+
+void BufferView::HierarchyCollapse(std::size_t index) {
+    if (!hierarchySession_ || index >= hierarchySession_->tree.Size()) {
+        return;
+    }
+    hierarchySelectedIndex_ = index;
+    hierarchySession_->tree.SetExpanded(index, false);
+    PushHierarchyModel();
+}
+
+void BufferView::HierarchyCancel() {
+    EndHierarchySession();
+}
+
+void BufferView::HierarchySelectionChanged(std::size_t index) {
+    hierarchySelectedIndex_ = index;
+}
+
 void BufferView::PushJumpMark() {
     jumpBackStack_.push_back(JumpMark{activeBuffer_.Get().Name(), activeBuffer_.Get().Point()});
     if (jumpBackStack_.size() > kMaxJumpBackStack) {
@@ -6530,6 +6775,21 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             prompt_.emplace("Workspace symbol: ");
             workspaceSymbolSelection_ = 0;
             RequestWorkspaceSymbolsForCurrentQuery();
+            return;
+        // call/type-hierarchy follow-up: four more one-shot direct actions,
+        // same shape as LspGotoSymbol above -- RequestHierarchyAtPoint owns
+        // the actual prepare/expand/browse session.
+        case editor::InteractiveRequest::LspCallHierarchyIncoming:
+            RequestHierarchyAtPoint(HierarchyDirection::IncomingCalls);
+            return;
+        case editor::InteractiveRequest::LspCallHierarchyOutgoing:
+            RequestHierarchyAtPoint(HierarchyDirection::OutgoingCalls);
+            return;
+        case editor::InteractiveRequest::LspTypeHierarchySupertypes:
+            RequestHierarchyAtPoint(HierarchyDirection::Supertypes);
+            return;
+        case editor::InteractiveRequest::LspTypeHierarchySubtypes:
+            RequestHierarchyAtPoint(HierarchyDirection::Subtypes);
             return;
         case editor::InteractiveRequest::SwitchHeaderSource:
             SwitchHeaderSource();
@@ -9418,6 +9678,10 @@ void BufferView::RequestDiagnosticsBufferForTesting() {
 
 void BufferView::RequestProjectFindReferencesForTesting() {
     RequestProjectFindReferences();
+}
+
+void BufferView::RequestHierarchyAtPointForTesting(HierarchyDirection direction) {
+    RequestHierarchyAtPoint(direction);
 }
 
 void BufferView::BeginVcsCommitMessageForTesting() {

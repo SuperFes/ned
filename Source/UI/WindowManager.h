@@ -315,6 +315,33 @@ class WindowManager {
     // a distinct hook rather than a reuse of that one.
     void SetOnCompletionChanged(std::function<void(std::optional<ListPopupModel>)> onCompletionChanged);
 
+    // call/type-hierarchy follow-up: NOT a plain "forwarded to every pane"
+    // shape the way SetOnCandidatesChanged/SetOnCompletionChanged above
+    // are -- each pane's BufferView is wrapped in its own small forwarding
+    // lambda (WireHierarchyCallback) that first records which Pane just
+    // showed/hid the shared TreeView overlay (hierarchyOwnerPane_) before
+    // calling the handler main.cpp gave here. That's what lets
+    // HierarchyActivate/HierarchyToggleExpand/HierarchyCollapse/
+    // HierarchyCancel/HierarchySelectionChanged below route back to the
+    // right BufferView at all: once the TreeView overlay holds keyboard
+    // focus, the originating pane's own BufferView is no longer Focused()
+    // (see FocusedPane()'s own definition), so the "route to whichever pane
+    // is currently focused" shape ActivateCompletionAt/TriggerSwitchProject
+    // use doesn't work for this session -- see BufferView::
+    // SetOnHierarchyChanged's own doc comment.
+    void SetOnHierarchyChanged(std::function<void(std::optional<TreeViewModel>)> onHierarchyChanged);
+
+    // Routes to hierarchyOwnerPane_ (see SetOnHierarchyChanged above), not
+    // FocusedPane() -- a no-op if no session is currently visible anywhere.
+    // Wired to the shared TreeView overlay's own SetOnActivate/
+    // SetOnToggleExpand/SetOnCollapseRequested/SetOnCancel/
+    // SetOnSelectionChanged in main.cpp.
+    void HierarchyActivate(std::size_t index);
+    void HierarchyToggleExpand(std::size_t index);
+    void HierarchyCollapse(std::size_t index);
+    void HierarchyCancel();
+    void HierarchySelectionChanged(std::size_t index);
+
     // task-runner follow-up: same "forwarded to every pane, present and
     // future" shape as SetProjectSidebar/SetLspManager above.
     void SetTaskRunner(editor::tasks::TaskRunner* taskRunner);
@@ -698,6 +725,21 @@ class WindowManager {
     std::function<void(std::optional<WhichKeyHint>)> onPrefixHintChanged_; // see SetOnPrefixHintChanged
     std::function<void(std::optional<ListPopupModel>)> onCandidatesChanged_; // see SetOnCandidatesChanged
     std::function<void(std::optional<ListPopupModel>)> onCompletionChanged_; // see SetOnCompletionChanged
+
+    // call/type-hierarchy follow-up: onHierarchyChanged_ is the handler
+    // main.cpp gave SetOnHierarchyChanged, called from inside each pane's
+    // own per-pane wrapper (WireHierarchyCallback) rather than forwarded
+    // directly the way onCandidatesChanged_ is. hierarchyOwnerPane_ is
+    // that wrapper's own bookkeeping: whichever Pane most recently showed
+    // (non-nullopt model) the shared overlay, cleared back to nullptr the
+    // moment any pane hides it (nullopt model) -- see SetOnHierarchyChanged's
+    // own doc comment for why FocusedPane() can't serve this role instead.
+    std::function<void(std::optional<TreeViewModel>)> onHierarchyChanged_;
+    Pane*                                              hierarchyOwnerPane_ = nullptr;
+
+    // Builds the per-pane wrapper SetOnHierarchyChanged/MakePane both need
+    // -- factored out so the two call sites can't drift apart.
+    [[nodiscard]] std::function<void(std::optional<TreeViewModel>)> WireHierarchyCallback(Pane* pane);
 
     std::unique_ptr<WindowNode> root_;
     Container                   rootComponent_{Axis::Vertical, {}};

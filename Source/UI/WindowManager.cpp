@@ -530,6 +530,7 @@ std::unique_ptr<Pane> WindowManager::MakePane(text::Buffer& buffer, editor::Mode
     pane->Buffer().SetOnPrefixHintChanged(onPrefixHintChanged_);
     pane->Buffer().SetOnCandidatesChanged(onCandidatesChanged_);
     pane->Buffer().SetOnCompletionChanged(onCompletionChanged_);
+    pane->Buffer().SetOnHierarchyChanged(WireHierarchyCallback(pane.get()));
     // Split-resize follow-up: see WindowManager.h's own resizingSplit_
     // comment and BufferView::SetSplitResizeQuery's own doc comment.
     pane->Buffer().SetSplitResizeQuery([this] { return resizingSplit_; });
@@ -615,6 +616,52 @@ void WindowManager::SetOnCompletionChanged(std::function<void(std::optional<List
     onCompletionChanged_ = std::move(onCompletionChanged);
     for (Pane* pane : Leaves()) {
         pane->Buffer().SetOnCompletionChanged(onCompletionChanged_);
+    }
+}
+
+std::function<void(std::optional<TreeViewModel>)> WindowManager::WireHierarchyCallback(Pane* pane) {
+    return [this, pane](std::optional<TreeViewModel> model) {
+        hierarchyOwnerPane_ = model ? pane : nullptr;
+        if (onHierarchyChanged_) {
+            onHierarchyChanged_(std::move(model));
+        }
+    };
+}
+
+void WindowManager::SetOnHierarchyChanged(std::function<void(std::optional<TreeViewModel>)> onHierarchyChanged) {
+    onHierarchyChanged_ = std::move(onHierarchyChanged);
+    for (Pane* pane : Leaves()) {
+        pane->Buffer().SetOnHierarchyChanged(WireHierarchyCallback(pane));
+    }
+}
+
+void WindowManager::HierarchyActivate(std::size_t index) {
+    if (hierarchyOwnerPane_) {
+        hierarchyOwnerPane_->Buffer().HierarchyActivate(index);
+    }
+}
+
+void WindowManager::HierarchyToggleExpand(std::size_t index) {
+    if (hierarchyOwnerPane_) {
+        hierarchyOwnerPane_->Buffer().HierarchyToggleExpand(index);
+    }
+}
+
+void WindowManager::HierarchyCollapse(std::size_t index) {
+    if (hierarchyOwnerPane_) {
+        hierarchyOwnerPane_->Buffer().HierarchyCollapse(index);
+    }
+}
+
+void WindowManager::HierarchyCancel() {
+    if (hierarchyOwnerPane_) {
+        hierarchyOwnerPane_->Buffer().HierarchyCancel();
+    }
+}
+
+void WindowManager::HierarchySelectionChanged(std::size_t index) {
+    if (hierarchyOwnerPane_) {
+        hierarchyOwnerPane_->Buffer().HierarchySelectionChanged(index);
     }
 }
 

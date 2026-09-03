@@ -36,6 +36,7 @@
 #include "Editor/DiffRefreshSettings.h"
 #include "Editor/Dispatcher.h"
 #include "Editor/EmbeddedDocuments.h"
+#include "Editor/ExpandableTree.h"
 #include "Editor/IncrementalSearch.h"
 #include "Editor/Link.h"
 #include "Editor/Lsp/LspManager.h"
@@ -58,6 +59,7 @@
 #include "EventLoop.h"
 #include "ListPopup.h"
 #include "Minimap.h"
+#include "TreeView.h"
 #include "ProjectSidebar.h"
 #include "VcsPanel.h"
 #include "ScrollArrowButton.h"
@@ -411,6 +413,28 @@ class BufferView : public Widget {
     // needed, same reasoning as RequestDiagnosticsBufferForTesting above.
     void RequestProjectFindReferencesForTesting();
 
+    // call/type-hierarchy follow-up. Which of the four requests a session
+    // browses -- fixed for the session's whole lifetime (chosen once, at
+    // RequestHierarchyAtPoint's own entry point), since every further
+    // expand in the tree re-asks the *same* direction against whichever
+    // node the user opens next (a caller browsing "who calls this" expects
+    // every subsequent expand to keep answering "who calls *that*", not
+    // switch direction mid-tree). Public (unlike every other Lsp* session's
+    // own enum/state in this class) purely so RequestHierarchyAtPointForTesting
+    // below can take one -- the InteractiveRequest dispatch path
+    // (StartInteractiveSession's own switch) is what a real keybinding
+    // actually goes through, same as RequestProjectFindReferencesForTesting's
+    // own reasoning.
+    enum class HierarchyDirection { IncomingCalls,
+                                    OutgoingCalls,
+                                    Supertypes,
+                                    Subtypes };
+
+    // Same "public primarily for tests" seam as RequestProjectFindReferencesForTesting
+    // above -- RequestHierarchyAtPoint itself is private since a real
+    // keybinding reaches it only via StartInteractiveSession's own switch.
+    void RequestHierarchyAtPointForTesting(HierarchyDirection direction);
+
     // Registers the EventLoop used to end the whole app on `quit`/confirmed
     // ConfirmQuit, and to back completionDebounceDeadline_/
     // statusMessageChangedAt_'s own DeadlineTimer-based deadlines (see their
@@ -573,6 +597,40 @@ class BufferView : public Widget {
     // ActivateCompletionAt forwards here from the completion popup's own
     // ListPopup::SetOnActivate in main.cpp.
     void AcceptActiveCompletionAt(std::size_t index);
+
+    // call/type-hierarchy follow-up: same OverlayHost-owned-above-this-
+    // class shape as SetOnCandidatesChanged/SetOnCompletionChanged above,
+    // for the one shared ui::TreeView overlay every hierarchy-browse
+    // session (lsp-call-hierarchy-incoming/-outgoing, lsp-type-hierarchy-
+    // supertypes/-subtypes) uses. Fired with a populated TreeViewModel
+    // every time PushHierarchyModel runs, and with std::nullopt when
+    // EndHierarchySession clears the session. Wired via
+    // WindowManager::SetOnHierarchyChanged fanning out to every pane (see
+    // that method's own doc comment for why the fan-out there is not a
+    // plain forward the way SetOnCandidatesChanged's is); main.cpp's
+    // registrant shows/hides a shared TreeView overlay and hands it
+    // keyboard focus. Unset is a safe no-op.
+    void SetOnHierarchyChanged(std::function<void(std::optional<ui::TreeViewModel>)> handler);
+
+    // The five methods a hierarchy session's TreeView overlay drives, once
+    // it holds keyboard focus (unlike every ListPopup-backed session above,
+    // which never leaves BufferView's own focus at all -- see
+    // HierarchySession's own doc comment for why this one genuinely needs
+    // a different wiring shape). Each is a no-op without an active
+    // hierarchySession_, or when index is out of range -- a stale callback
+    // racing an already-ended session is handled the same tolerant way
+    // AcceptActiveCompletionAt handles a stale click. Public, and reached
+    // via WindowManager::HierarchyActivate/HierarchyToggleExpand/
+    // HierarchyCollapse/HierarchyCancel/HierarchySelectionChanged, which
+    // route to whichever pane's BufferView currently owns the visible
+    // session (WindowManager remembers this explicitly -- FocusedPane()
+    // itself can't, since this BufferView is no longer Focused() once the
+    // TreeView overlay holds the keyboard).
+    void HierarchyActivate(std::size_t index);
+    void HierarchyToggleExpand(std::size_t index);
+    void HierarchyCollapse(std::size_t index);
+    void HierarchyCancel();
+    void HierarchySelectionChanged(std::size_t index);
 
     // named-projects follow-up: AcceptActiveCompletionAt's own "public
     // because the trigger arrives from outside this class" shape --
@@ -1126,6 +1184,66 @@ class BufferView : public Widget {
     // and moves point to location.position, resolved against the newly-
     // opened buffer's own content.
     void JumpToDefinition(const editor::lsp::LspManager::ResolvedLocation& location);
+
+    // One browse session's state: the tree itself (Editor/ExpandableTree.h,
+    // NodeData = LspManager::ResolvedHierarchyItem so every node keeps both
+    // the item to replay on its own next expand and the resolved path/
+    // position to jump to), which of the four requests every expand in this
+    // session sends, and the buffer/serverKey pair every request in this
+    // session is resolved against -- always the buffer point was in when
+    // the session started (RequestHierarchyAtPoint's own bufferPtr), not
+    // whichever buffer happens to be active when a later expand fires
+    // (activeBuffer_ may have changed, or even be a different buffer
+    // entirely, once keyboard focus has moved to the TreeView overlay).
+    struct HierarchySession {
+        editor::ExpandableTree<editor::lsp::LspManager::ResolvedHierarchyItem> tree;
+        HierarchyDirection                                                    direction;
+        text::Buffer*                                                         buffer;
+        std::string                                                           serverKey;
+        std::string                                                           rootName; // for the TreeView's own border title
+    };
+
+    // Sent for lsp-call-hierarchy-incoming/-outgoing/lsp-type-hierarchy-
+    // supertypes/-subtypes. Sends textDocument/prepareCallHierarchy or
+    // .../prepareTypeHierarchy (whichever direction implies) at point;
+    // zero items reports "No callable/typed symbol at point."; more than
+    // one (a real but rare case -- an overload set, a macro expansion)
+    // takes the first, the same precision-vs-scope cut WorkspaceSymbol's
+    // own range-less-location fallback already makes elsewhere in this
+    // file, rather than adding a whole extra disambiguation step for
+    // something this uncommon. On success, seeds a fresh HierarchySession
+    // with that one item as the tree's sole root and immediately expands
+    // it (ExpandHierarchyNode) -- a hierarchy browser opened to a collapsed
+    // root showing only the symbol's own name would make the user perform
+    // a manual first expand for no reason, since that's the entire point
+    // of having opened it.
+    void RequestHierarchyAtPoint(HierarchyDirection direction);
+
+    // Sends whichever of RequestIncomingCalls/RequestOutgoingCalls/
+    // RequestSupertypes/RequestSubtypes hierarchySession_->direction
+    // implies for the node at index, against hierarchySession_->tree.At(index)
+    // .data.item -- a no-op if there's no active session, index is out of
+    // range, or the node is already loading. A node whose children were
+    // already fetched (ExpandableTree::ChildrenFetched) is expanded
+    // without a new request at all (ExpandableTree::SetExpanded) -- a
+    // Right-arrow on a previously-collapsed-but-already-explored node
+    // should feel instant, not re-issue an LSP round trip for an answer
+    // already in hand.
+    void ExpandHierarchyNode(std::size_t index);
+
+    // Rebuilds a ui::TreeViewModel from hierarchySession_->tree.FlattenVisible()
+    // and fires onHierarchyChanged_ with it -- called after every
+    // expand/collapse/selection change, i.e. every mutation to
+    // hierarchySession_ or hierarchySelectedIndex_. Fires with std::nullopt
+    // instead when there's no active session (hides the overlay).
+    void PushHierarchyModel();
+
+    // Ends hierarchySession_ (clears it, fires onHierarchyChanged_(nullopt))
+    // and reclaims keyboard focus for this BufferView (TakeFocus()) -- the
+    // shared tail of HierarchyActivate/HierarchyCancel, since both close
+    // the session the same way, only differing in whether a jump happens
+    // first.
+    void EndHierarchySession();
 
     // symbol-search follow-up. Bumps documentSymbolRequestGeneration_ and
     // calls LspManager::RequestDocumentSymbols; discards a stale response
@@ -2384,6 +2502,26 @@ class BufferView : public Widget {
     std::function<void(std::optional<WhichKeyHint>)> onPrefixHintChanged_;  // see SetOnPrefixHintChanged
     std::function<void(std::optional<ListPopupModel>)> onCandidatesChanged_; // see SetOnCandidatesChanged
     std::function<void(std::optional<ListPopupModel>)> onCompletionChanged_; // see SetOnCompletionChanged
+
+    // call/type-hierarchy follow-up: onHierarchyChanged_ mirrors
+    // onCandidatesChanged_'s own role, for the shared TreeView overlay
+    // (see SetOnHierarchyChanged's own doc comment). hierarchySession_ is
+    // unset whenever no browse session is active; hierarchySelectedIndex_
+    // is this BufferView's own record of the TreeView's current selection
+    // (TreeView owns navigation directly once focused, so this is only
+    // ever *written* by HierarchySelectionChanged/HierarchyActivate/
+    // HierarchyToggleExpand/HierarchyCollapse's own index arguments -- see
+    // TreeView::SetOnSelectionChanged's own doc comment for why this needs
+    // tracking at all) -- carried into every PushHierarchyModel rebuild so
+    // an expand/collapse elsewhere in the tree never resets the user's own
+    // place in it. hierarchyRequestGeneration_ is definitionRequestGeneration_'s
+    // own staleness-guard shape, shared by every request a session sends
+    // (prepare and every subsequent expand alike -- only one can be
+    // meaningfully in flight at a time regardless of which node it's for).
+    std::function<void(std::optional<ui::TreeViewModel>)> onHierarchyChanged_;
+    std::optional<HierarchySession>                       hierarchySession_;
+    std::size_t                                           hierarchySelectedIndex_    = 0;
+    std::size_t                                           hierarchyRequestGeneration_ = 0;
 
     // Caches mode_.highlight's result across Paint() calls (tree-sitter
     // foundation follow-up) -- Paint() runs far more often than the buffer's

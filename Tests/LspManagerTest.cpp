@@ -1668,6 +1668,171 @@ TEST_CASE("LspManager::RequestWorkspaceSymbols sends workspace/symbol with the q
     REQUIRE(got[0].position.line == 4);
 }
 
+TEST_CASE("LspManager::RequestPrepareCallHierarchy sends textDocument/prepareCallHierarchy and resolves the item's uri "
+          "to a path",
+          "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-prepare-callh-test.cpp";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("call_site();");
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    const std::string didOpen = ReadRawFrame(server.serverStdinRead);
+    const std::string ownUri  = Json::parse(didOpen.substr(didOpen.find("\r\n\r\n") + 4))["params"]["textDocument"]["uri"].get<std::string>();
+
+    bool                                              invoked = false;
+    std::vector<LspManager::ResolvedHierarchyItem> got;
+    manager.RequestPrepareCallHierarchy(buffer, 0, [&](std::vector<LspManager::ResolvedHierarchyItem> items) {
+        invoked = true;
+        got     = std::move(items);
+    });
+
+    const std::string raw     = ReadRawFrame(server.serverStdinRead);
+    const Json        request = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(request["method"] == "textDocument/prepareCallHierarchy");
+    REQUIRE(request["params"]["textDocument"]["uri"] == ownUri);
+    REQUIRE(request["params"]["position"]["line"] == 0);
+
+    const Json itemJson = {
+        {"name", "call_site"},       {"kind", 12},
+        {"uri", ownUri},             {"range", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 9}}}}},
+        {"selectionRange", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 9}}}}},
+        {"data", {{"opaque", 1}}},
+    };
+    const Json response = {{"jsonrpc", "2.0"}, {"id", RequestIdFromFrame(raw)}, {"result", Json::array({itemJson})}};
+    client->DispatchFrame(response.dump());
+
+    REQUIRE(invoked);
+    REQUIRE(got.size() == 1);
+    REQUIRE(got[0].item.name == "call_site");
+    REQUIRE(got[0].path == path);
+    REQUIRE(got[0].item.raw == itemJson); // full item kept verbatim, not just name/kind/position
+}
+
+TEST_CASE("LspManager::RequestIncomingCalls sends item.raw verbatim as \"item\" and resolves fromRanges/from.uri",
+          "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-incoming-calls-test.cpp";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("callee();");
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    const std::string didOpen = ReadRawFrame(server.serverStdinRead);
+    const std::string ownUri  = Json::parse(didOpen.substr(didOpen.find("\r\n\r\n") + 4))["params"]["textDocument"]["uri"].get<std::string>();
+
+    const Json                  requestedItem = {{"name", "callee"},
+                                                 {"kind", 12},
+                                                 {"uri", ownUri},
+                                                 {"selectionRange", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 6}}}}},
+                                                 {"data", {{"opaque", 2}}}};
+    const ned::editor::lsp::HierarchyItem item = ned::editor::lsp::ExtractHierarchyItems(Json::array({requestedItem}))[0];
+
+    bool                                              invoked = false;
+    std::vector<LspManager::ResolvedHierarchyCall> got;
+    manager.RequestIncomingCalls(buffer, item, [&](std::vector<LspManager::ResolvedHierarchyCall> calls) {
+        invoked = true;
+        got     = std::move(calls);
+    });
+
+    const std::string raw     = ReadRawFrame(server.serverStdinRead);
+    const Json        request = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(request["method"] == "callHierarchy/incomingCalls");
+    REQUIRE(request["params"]["item"] == requestedItem); // round-tripped verbatim, including "data"
+
+    const std::filesystem::path callerPath = std::filesystem::temp_directory_path() / "ned-lsp-manager-caller-test.cpp";
+    const Json                  callerItem = {
+        {"name", "caller"},
+        {"kind", 12},
+        {"uri", "file://" + callerPath.string()},
+        {"selectionRange", {{"start", {{"line", 3}, {"character", 0}}}, {"end", {{"line", 3}, {"character", 6}}}}},
+    };
+    const Json response = {
+        {"jsonrpc", "2.0"},
+        {"id", RequestIdFromFrame(raw)},
+        {"result", Json::array({{{"from", callerItem},
+                                 {"fromRanges", Json::array({{{"start", {{"line", 5}, {"character", 2}}}, {"end", {{"line", 5}, {"character", 8}}}}})}}})},
+    };
+    client->DispatchFrame(response.dump());
+
+    REQUIRE(invoked);
+    REQUIRE(got.size() == 1);
+    REQUIRE(got[0].item.item.name == "caller");
+    REQUIRE(got[0].item.path == callerPath);
+    REQUIRE(got[0].callSites.size() == 1);
+    REQUIRE(got[0].callSites[0].line == 5);
+}
+
+TEST_CASE("LspManager::RequestSupertypes sends typeHierarchy/supertypes with item.raw and resolves the response",
+          "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-supertypes-test.cpp";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("class Derived {};");
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    const std::string didOpen = ReadRawFrame(server.serverStdinRead);
+    const std::string ownUri  = Json::parse(didOpen.substr(didOpen.find("\r\n\r\n") + 4))["params"]["textDocument"]["uri"].get<std::string>();
+
+    const Json                             requestedItem = {{"name", "Derived"},
+                                                 {"kind", 5},
+                                                 {"uri", ownUri},
+                                                 {"selectionRange", {{"start", {{"line", 0}, {"character", 6}}}, {"end", {{"line", 0}, {"character", 13}}}}}};
+    const ned::editor::lsp::HierarchyItem item          = ned::editor::lsp::ExtractHierarchyItems(Json::array({requestedItem}))[0];
+
+    bool                                              invoked = false;
+    std::vector<LspManager::ResolvedHierarchyItem> got;
+    manager.RequestSupertypes(buffer, item, [&](std::vector<LspManager::ResolvedHierarchyItem> items) {
+        invoked = true;
+        got     = std::move(items);
+    });
+
+    const std::string raw     = ReadRawFrame(server.serverStdinRead);
+    const Json        request = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(request["method"] == "typeHierarchy/supertypes");
+    REQUIRE(request["params"]["item"] == requestedItem);
+
+    const Json baseItem = {{"name", "Base"},
+                           {"kind", 5},
+                           {"uri", ownUri},
+                           {"selectionRange", {{"start", {{"line", 4}, {"character", 6}}}, {"end", {{"line", 4}, {"character", 10}}}}}};
+    client->DispatchFrame(
+        Json{{"jsonrpc", "2.0"}, {"id", RequestIdFromFrame(raw)}, {"result", Json::array({baseItem})}}.dump());
+
+    REQUIRE(invoked);
+    REQUIRE(got.size() == 1);
+    REQUIRE(got[0].item.name == "Base");
+    REQUIRE(got[0].path == path);
+}
+
+TEST_CASE("LspManager::RequestPrepareCallHierarchy resolves an empty vector when the buffer was never synced", "[Lsp]") {
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    Buffer&            buffer = bufferList.CreateBuffer("scratch");
+
+    bool                                              invoked = false;
+    std::vector<LspManager::ResolvedHierarchyItem> got{LspManager::ResolvedHierarchyItem{}}; // pre-seeded, must be cleared
+    manager.RequestPrepareCallHierarchy(buffer, 0, [&](std::vector<LspManager::ResolvedHierarchyItem> items) {
+        invoked = true;
+        got     = std::move(items);
+    });
+
+    REQUIRE(invoked);
+    REQUIRE(got.empty());
+}
+
 TEST_CASE("LspManager::RequestSignatureHelp sends textDocument/signatureHelp and resolves the formatted text", "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
@@ -2055,7 +2220,7 @@ TEST_CASE("BuildInitializeParams declares capabilities for every request/notific
     const Json& textDocument = params.at("capabilities").at("textDocument");
     for (const char* key :
          {"hover", "signatureHelp", "declaration", "definition", "typeDefinition", "implementation", "references", "rename",
-          "publishDiagnostics"}) {
+          "publishDiagnostics", "callHierarchy", "typeHierarchy"}) {
         REQUIRE(textDocument.contains(key));
     }
 

@@ -16,7 +16,10 @@ using ned::editor::lsp::ExtractOnTypeFormattingTriggers;
 using ned::editor::lsp::ExtractPullDiagnosticReport;
 using ned::editor::lsp::CodeLens;
 using ned::editor::lsp::ExtractCodeLenses;
+using ned::editor::lsp::ExtractHierarchyItems;
+using ned::editor::lsp::ExtractIncomingCalls;
 using ned::editor::lsp::ExtractInlayHints;
+using ned::editor::lsp::ExtractOutgoingCalls;
 using ned::editor::lsp::ExtractSingleCodeLens;
 using ned::editor::lsp::ExtractRenameEdits;
 using ned::editor::lsp::ExtractSemanticTokens;
@@ -24,6 +27,8 @@ using ned::editor::lsp::ExtractSemanticTokensLegend;
 using ned::editor::lsp::ExtractSignatureHelp;
 using ned::editor::lsp::ExtractSingleCodeAction;
 using ned::editor::lsp::ExtractSymbols;
+using ned::editor::lsp::HierarchyCall;
+using ned::editor::lsp::HierarchyItem;
 using ned::editor::lsp::Json;
 using ned::editor::lsp::LspPosition;
 using ned::editor::lsp::OnTypeFormattingTriggers;
@@ -809,4 +814,95 @@ TEST_CASE("ExtractCodeLenses skips an entry missing \"range\" and returns empty 
 
     REQUIRE(ExtractCodeLenses(Json(nullptr)).empty());
     REQUIRE(ExtractCodeLenses(Json::object()).empty());
+}
+
+namespace {
+
+Json MakeHierarchyItem(const std::string& name, const std::string& uri, std::optional<Json> data = std::nullopt) {
+    Json item = {
+        {"name", name},
+        {"kind", 12},
+        {"detail", "int(int)"},
+        {"uri", uri},
+        {"range", MakeRange(4, 0, 8, 1)},
+        {"selectionRange", MakeRange(4, 4, 4, 10)},
+    };
+    if (data) {
+        item["data"] = *data;
+    }
+    return item;
+}
+
+} // namespace
+
+TEST_CASE("ExtractHierarchyItems parses name/detail/kind/uri/position and round-trips the whole item verbatim as "
+          "\"raw\"",
+          "[Lsp]") {
+    const Json itemJson = MakeHierarchyItem("caller", "file:///a.cpp", Json{{"token", 7}});
+    const Json result   = Json::array({itemJson});
+    const auto items    = ExtractHierarchyItems(result);
+    REQUIRE(items.size() == 1);
+    REQUIRE(items[0].name == "caller");
+    REQUIRE(items[0].detail == "int(int)");
+    REQUIRE(items[0].kind == 12);
+    REQUIRE(items[0].uri == "file:///a.cpp");
+    REQUIRE(items[0].position.line == 4);
+    REQUIRE(items[0].position.character == 4);
+    REQUIRE(items[0].raw == itemJson); // round-trips verbatim -- including "data" -- for the next request's "item"
+}
+
+TEST_CASE("ExtractHierarchyItems' \"raw\" has no \"data\" key when the server omitted one", "[Lsp]") {
+    const Json result = Json::array({MakeHierarchyItem("caller", "file:///a.cpp")});
+    const auto items  = ExtractHierarchyItems(result);
+    REQUIRE(items.size() == 1);
+    REQUIRE_FALSE(items[0].raw.contains("data"));
+}
+
+TEST_CASE("ExtractHierarchyItems skips an entry missing name/uri/selectionRange and returns empty for a non-array "
+          "result",
+          "[Lsp]") {
+    const Json result = Json::array({
+        Json{{"uri", "file:///a.cpp"}, {"selectionRange", MakeRange(0, 0, 0, 1)}},        // missing name
+        Json{{"name", "x"}, {"selectionRange", MakeRange(0, 0, 0, 1)}},                    // missing uri
+        Json{{"name", "x"}, {"uri", "file:///a.cpp"}},                                     // missing selectionRange
+        MakeHierarchyItem("kept", "file:///b.cpp"),
+    });
+    const auto items = ExtractHierarchyItems(result);
+    REQUIRE(items.size() == 1);
+    REQUIRE(items[0].name == "kept");
+
+    REQUIRE(ExtractHierarchyItems(Json(nullptr)).empty());
+    REQUIRE(ExtractHierarchyItems(Json::object()).empty());
+}
+
+TEST_CASE("ExtractIncomingCalls parses \"from\"/\"fromRanges\" and keeps every call site", "[Lsp]") {
+    const Json result = Json::array({Json{
+        {"from", MakeHierarchyItem("caller", "file:///a.cpp")},
+        {"fromRanges", Json::array({MakeRange(5, 2, 5, 8), MakeRange(9, 2, 9, 8)})},
+    }});
+    const auto calls = ExtractIncomingCalls(result);
+    REQUIRE(calls.size() == 1);
+    REQUIRE(calls[0].item.name == "caller");
+    REQUIRE(calls[0].callSites.size() == 2);
+    REQUIRE(calls[0].callSites[0].line == 5);
+    REQUIRE(calls[0].callSites[1].line == 9);
+}
+
+TEST_CASE("ExtractOutgoingCalls parses \"to\" instead of \"from\", and defaults callSites to empty when "
+          "\"fromRanges\" is absent",
+          "[Lsp]") {
+    const Json result = Json::array({Json{{"to", MakeHierarchyItem("callee", "file:///a.cpp")}}});
+    const auto calls  = ExtractOutgoingCalls(result);
+    REQUIRE(calls.size() == 1);
+    REQUIRE(calls[0].item.name == "callee");
+    REQUIRE(calls[0].callSites.empty());
+}
+
+TEST_CASE("ExtractIncomingCalls/ExtractOutgoingCalls skip an entry with a malformed item and return empty for a "
+          "non-array result",
+          "[Lsp]") {
+    const Json badItem = Json::array({Json{{"from", Json{{"uri", "file:///a.cpp"}}}}}); // "from" missing "name"
+    REQUIRE(ExtractIncomingCalls(badItem).empty());
+    REQUIRE(ExtractIncomingCalls(Json(nullptr)).empty());
+    REQUIRE(ExtractOutgoingCalls(Json(nullptr)).empty());
 }

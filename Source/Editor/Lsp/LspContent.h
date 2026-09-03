@@ -462,6 +462,63 @@ struct CodeLens {
 // missing "range" is skipped, not treated as a parse error.
 [[nodiscard]] std::vector<CodeLens> ExtractCodeLenses(const Json& result);
 
+// call/type-hierarchy follow-up. CallHierarchyItem and TypeHierarchyItem are
+// wire-identical per the LSP spec (name/kind/detail/uri/range/
+// selectionRange/tags?/data?) -- one shared shape, the same "identical wire
+// shape, one struct" precedent RenameEdit already establishes for
+// CodeAction/RenameResult. kind uses the same raw LSP SymbolKind vocabulary
+// SymbolEntry::kind does (SymbolKindLabel applies here too). raw is the
+// entire original item verbatim -- the callHierarchy/incomingCalls,
+// .../outgoingCalls, typeHierarchy/supertypes, and .../subtypes requests all
+// take the *whole* item back as their "item" parameter (not just its "data"
+// token), so a partial reconstruction from this struct's own fields would
+// silently drop anything else the server sent (tags, extension fields);
+// the same "keep raw, replay unmodified" contract CodeAction::raw/
+// CodeLens::raw already use for resolve, just replayed as a sub-field of a
+// larger request object here rather than the whole request body.
+struct HierarchyItem {
+    std::string name;
+    std::string detail; // server's short type/signature string; "" if omitted
+    int         kind = 0;
+    std::string uri;
+    LspPosition position; // jump target: selectionRange.start
+    Json        raw;      // the original item verbatim; round-tripped as the next request's "item"
+
+    bool operator==(const HierarchyItem&) const = default;
+};
+
+// Parses a textDocument/prepareCallHierarchy, textDocument/prepareTypeHierarchy,
+// typeHierarchy/supertypes, or typeHierarchy/subtypes response -- all four
+// are a bare HierarchyItem[] | null, the simplest of the hierarchy shapes. An
+// entry missing "name", "uri", or "selectionRange" is skipped, not treated as
+// a parse error, matching every other ExtractX function in this file.
+[[nodiscard]] std::vector<HierarchyItem> ExtractHierarchyItems(const Json& result);
+
+// One call-site entry from a callHierarchy/incomingCalls or
+// .../outgoingCalls response -- "from"/"to" differ only in field name per
+// spec (the caller's own item for incoming, the callee's for outgoing), both
+// parsed through one shared helper. callSites is fromRanges[*].start only --
+// a jump target, the same "start is enough" convention DefinitionLocation/
+// SymbolEntry already use -- though a call site can legitimately appear more
+// than once within the same function, so every occurrence is kept rather
+// than just the first; empty if the server sent no "fromRanges" at all.
+struct HierarchyCall {
+    HierarchyItem            item;
+    std::vector<LspPosition> callSites;
+
+    bool operator==(const HierarchyCall&) const = default;
+};
+
+// Parses a callHierarchy/incomingCalls response: {from, fromRanges}[] | null.
+// An entry missing "from" (or whose "from" is itself missing "name"/"uri"/
+// "selectionRange") is skipped, not treated as a parse error.
+[[nodiscard]] std::vector<HierarchyCall> ExtractIncomingCalls(const Json& result);
+
+// Parses a callHierarchy/outgoingCalls response: {to, fromRanges}[] | null --
+// same shape as ExtractIncomingCalls above, just keyed on "to" instead of
+// "from" per spec.
+[[nodiscard]] std::vector<HierarchyCall> ExtractOutgoingCalls(const Json& result);
+
 } // namespace ned::editor::lsp
 
 #endif // NED_EDITOR_LSP_LSPCONTENT_H
