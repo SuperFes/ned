@@ -746,6 +746,100 @@ these accumulate detail in place.
       - **GDevelop** — event-based, largely no-code; not a natural fit for a text editor
         regardless of open-source status. Listed only to record it was considered and
         set aside, not as a live candidate.
+- [ ] **Debugging feature wishlist** (raised 2026-09-03, after auditing `gf`
+      (nakst/gf, a native GDB frontend) and GDBFrontend (rohanrhu/gdb-frontend, a
+      web-based one) against DAP round 1-5's current feature set — see
+      `git log --grep=dap-round` for everything already shipped). Framed the same way
+      as the game-dev list above: a list to pick from, not a commitment. Sorted
+      roughly cheapest-to-scope first; each entry notes what already-shipped
+      `DapManager`/`BufferView` machinery it would build on, since none of this needs
+      new architecture, only new DAP requests and (mostly) new M-x commands.
+      - **Reverse debugging** (`gf`'s rr-replay integration) — DAP has real protocol
+        support for this (`reverseContinue`/`stepBack` requests,
+        `supportsStepBack` capability), and it's the same shape `StepOver`/`StepInto`/
+        `StepOut` already are: `dap-reverse-continue`/`dap-step-back`, gated by a new
+        `Capabilities::stepBack` field parsed the same way `restartFrame` is. Only
+        useful against an adapter that itself replays a recording (`rr`, some native
+        adapters) — nothing to build if the active adapter never advertises it, but
+        cheap to wire regardless.
+      - **Run-to-cursor** (`gf`'s Ctrl+Click) — a temporary breakpoint at point,
+        `continue`, then clear it on the next stop; entirely composable from
+        `ToggleBreakpoint`/`StartOrContinue`/`SetOnStopped` as they exist today, no new
+        DAP request needed.
+      - **Jump to line** (`gf`'s Shift+Click "skip to line") — DAP's `goto`/
+        `gotoTargets` requests (`supportsGotoTargetsRequest`), a real but
+        adapter-support-dependent protocol feature; moves the stopped thread's
+        execution point without running through the skipped code.
+      - **Watch/variable display-format toggle** (`gf`'s `/` key, hex/decimal/binary) —
+        DAP's `evaluate`/`variables` requests both take an optional `format: {hex:
+        true}` argument the current `Evaluate`/`RequestVariables` never sends; a
+        per-watch or per-line format flag threaded through would be a small, contained
+        addition.
+      - **Line-inspect mode** (`gf`'s backtick key: evaluate every sub-expression on
+        the current source line at once) — needs a per-language "extract candidate
+        expressions from this line" step (a small tree-sitter walk over the line's own
+        parsed node, `Editor/TreeSitter/`'s existing query/predicate machinery) feeding
+        a batch of `Evaluate` calls; moderate, the one item here needing real new
+        per-language logic rather than just a new DAP request.
+      - **Pointer/linked-list graph view** (GDBFrontend's stand-out feature) — walking
+        a pointer chain is already mechanical (`RequestVariables` on each node's
+        `variablesReference`, `memoryReference` for the raw address), so the new work
+        is purely the rendering: `UI/TreeView.h` (built for LSP call/type hierarchy,
+        `git log --grep=lsp-call-type-hierarchy`) is a plausible existing substrate for
+        a node graph rather than inventing a second tree/graph widget.
+      - **Array-value graph and watch-history sparkline** (GDBFrontend's array-graph
+        charting; not in `gf`, but a natural extension of "graphing" generally) — a
+        numeric array watch rendered as a small bar chart, or a scalar watch's value
+        plotted across successive stops, both fit `Minimap.h`'s existing
+        braille-glyph-over-`Screen`-cells rendering technique (no new low-level drawing
+        primitive needed) with a real-pixel (`NCBLIT_PIXEL`) upgrade on capable
+        terminals following the Minimap's own precedent (`project_pixel_minimap_decision`).
+      - **Memory-as-image viewer** (`gf`'s RGBA bitmap Data tab) — a `dap-show-memory`
+        variant rendering a fetched `MemoryBlock` as pixels instead of the hex dump
+        `BuildMemoryBuffer` already produces, same pixel-vs-braille-fallback split as
+        the array graph above.
+      - **A dedicated live thread window** vs. today's one-shot numbered-choice
+        `dap-select-thread` picker (`BeginDapThreadSelect`) — an `OverlayHost` panel in
+        `DebugConsolePanel`/`AcpPanel`'s own shape, refreshing `RequestThreads` on each
+        stop instead of only when explicitly invoked.
+      - **Valgrind integration** (the concrete cheap win first): launching the target
+        under `valgrind --vgdb=yes --vgdb-error=0` and DAP-`Attach`ing to its vgdb
+        stub needs zero new `DapManager` code — `Attach`/`ned/set-dap-attach` already
+        do exactly this, memcheck errors arrive as ordinary `stopped` events. The
+        richer version is a structured one: `--xml=yes` memcheck/helgrind output
+        parsed into a synthetic diagnostics buffer, `TestRun/TestOutputParser.h` +
+        `TestResultsBuffer.h`'s own pattern (one `Buffer::Diagnostic` per leak/race,
+        `path:line:` convention for free jump-to-source) applied to a new tool instead
+        of a new test framework. Massif's heap-snapshot-over-time output is a genuine
+        graphing use case too — same sparkline/chart substrate as the array-value
+        graph above, fed by `ms_print`-format parsing instead of a live watch.
+      - **Sanitizer (ASan/UBSan) output parsing**, sibling to the valgrind XML parser
+        above and worth building alongside it since this codebase already builds and
+        tests itself under both (`-DNED_ENABLE_SANITIZERS=ON`, see CLAUDE.md's Build
+        section) — a generic "crash/report output to a diagnostics buffer" parser
+        would immediately pay for itself on ned's own development, not just as a
+        feature for ned's users.
+      - **Docker/embedded/OpenOCD targets** (GDBFrontend's bespoke UI for these) —
+        already possible today with zero new code: `Attach`'s adapter/config is
+        opaque argv + JSON (`DapConfig.h`), so pointing `ned/set-dap-adapter`/
+        `ned/set-dap-attach` at `cortex-debug`-style or Docker-aware adapters already
+        works. A documentation gap (a cookbook entry), not a code gap — worth noting
+        specifically *because* GDBFrontend had to hand-build this while a generic DAP
+        client gets it for free.
+      - **Game-dev debugging** (raised live, following on from the game-dev platform
+        list above) — same "already covered vs. real gap" split: Bevy (Rust) debugs
+        via ordinary `lldb-dap`/`gdb` once Rust language support itself lands, nothing
+        game-specific needed; LÖVE/Defold (Lua) need a real Lua DAP adapter
+        (`local-lua-debugger-vscode` is the common one) wired via the existing
+        `ned/set-dap-adapter` mechanism, not new `DapManager` code; Godot/GDScript is
+        the only genuine unknown — verify whether Godot 4 exposes a real DAP-speaking
+        debug adapter at all (its LSP's own reported TCP-socket-to-a-running-editor
+        transport quirk, noted in the game-dev list above, may recur here) before
+        assuming this is just a config entry like the other two.
+      - **Collaboration / multi-client synced debugging** (GDBFrontend's sketch-
+        annotation, synced-viewing feature) — doesn't fit ned's single-user terminal
+        model at all; listed only to record it was considered and set aside, the
+        game-dev list's own "GDevelop" precedent above.
 
 ## Won't Do (at Least Not Soon)
 
