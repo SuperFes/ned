@@ -38,6 +38,53 @@ Notcurses.
 
 ### Language Intelligence
 
+- [ ] **Java & Kotlin bundled language support** (raised 2026-09-03 — user wants broad,
+      general-purpose Java support, Kotlin alongside it, and Android development to not
+      be painful). A system-installed `libtree-sitter-java.so` (confirmed present on this
+      machine, e.g. Gentoo's own package) has no queries because a compiled grammar
+      `.so` never carries them — `queries/*.scm` are separate text files that live in the
+      grammar's own repo, not in the shared library; this is normal for every grammar,
+      not a Java-specific gap. `DynamicGrammar.h`'s `dlopen`/runtime-load path (currently
+      the only way to reach a non-bundled grammar via `init.janet`) would still need
+      those query files sourced from somewhere, so it doesn't actually save the real
+      work. The clean path is instead the same one every one of the ~19 bundled
+      languages already takes: a real `ned_add_treesitter_grammar(tree-sitter-java
+      https://github.com/tree-sitter/tree-sitter-java.git <tag>)` `FetchContent` entry in
+      `CMakeLists.txt` (pulls the grammar's own `queries/highlights.scm` etc. with it,
+      compiled in via `ned_embed_treesitter_query`, no system package involved at all —
+      same reasoning applies to Kotlin, whose absence from the system's own tree-sitter
+      packages is irrelevant to ned's build). A community-maintained
+      `tree-sitter-kotlin` grammar exists (verify current maintainer/repo/tag before
+      wiring it in — unlike Java's grammar, it isn't the tree-sitter org's own). Once
+      grammars are in, "broad support" is the same checklist every bundled language
+      gets, applied to two more:
+      - `TreeSitterMode`/`TreeSitterModeFromLanguage` one-line `JavaMode()`/`KotlinMode()`
+        factories (`Mode.h`'s existing pattern), `*-tags.scm` for the symbol-kind gutter,
+        smart-indent queries (`cpp-indents.scm`'s own precedent), `*-tests.scm` for test
+        discovery (JUnit 4/5's `@Test` annotation, Kotlin's `kotlin.test`/JUnit-on-Kotlin).
+      - LSP: `eclipse.jdt.ls` (jdtls) for Java, `kotlin-language-server` (or Kotlin's
+        newer official LSP, verify current recommendation) for Kotlin — both configured
+        the ordinary `ned/set-lsp-command` way, nothing bundled/auto-detected (this
+        project's own stated policy). `Editor/Lsp/LspRootResolver.cpp`'s per-language
+        root-marker table (`c`/`cpp`/`python`/`javascript`/... today) gets `java`/`kotlin`
+        entries: `pom.xml`/`build.gradle`/`build.gradle.kts`/`settings.gradle.kts`.
+      - Test running: `TestOutputParser.h` already has a `"junit-xml"` parser (Maven
+        Surefire/Gradle both emit JUnit XML reports) — Java/Kotlin projects need zero new
+        parser work, just `ned/set-test-command`/`ned/set-test-results-file` pointed at
+        `mvn test`/`gradle test` and the report path.
+      - DAP: `java-debug` (the adapter behind VS Code's own Java debugging, also usable
+        standalone) — `ned/set-dap-adapter`/`ned/set-dap-launch`, same as any other
+        language, no new `DapManager` work.
+      - **Android development** mostly falls out of the above once Java/Kotlin +
+        `Editor/Tasks/`'s existing generic task-runner (`ned/set-task-command` pointed at
+        `./gradlew ...`) + the already-bundled XML mode (layout files) are in place — no
+        Android-specific engineering needed for editing/building/testing an Android
+        project. A real gap worth naming separately: `adb logcat` streaming and a
+        one-click "install + run on device/emulator" flow have no natural home in
+        anything that exists today (closest precedent is `TerminalPanel`, but a raw
+        interactive shell isn't really an "install and launch" primitive) — worth
+        scoping only if plain shelled-out `adb`/`gradlew` tasks prove too manual in
+        practice, not speculatively.
 - [ ] **Go-to-file-at-point resolver gaps** (`Mode::importTarget`, the hand-rolled
       import/include resolver): LSP should be tried first where a server can answer it
       (clangd's `textDocument/documentLink` for `#include`); Python's leading-dot
@@ -175,11 +222,20 @@ Notcurses.
   defaults), and `terminateDebuggee` now distinguishing attach (false) from launch (true)
   closed 2026-09-03 — see `git log --grep=dap-round-3`. Data breakpoints stayed out
   (tied to a live variable rather than a source line, no natural entry point yet).
-- [ ] **DAP gaps, remainder**: remapping a breakpoint to the adapter's snapped line (only
-      verified/dimming is tracked today); cross-restart persistence of conditions/
-      logMessage/watches/thread focus (session storage deliberately stayed the old
-      line-only shape); debug console has no scrollback/search/history-recall; no
-      `restartFrame`; no disassembly/memory view (2026-08-25 audit, updated 2026-09-03).
+- `restartFrame` (dap-restart-frame, a `[frame:N]` marker on *debug* buffer stack lines,
+  `ShowDebugInfo`'s own convention), breakpoint-line remapping (the gutter glyph now
+  follows the adapter's snapped `actualLine` when it differs from the requested one --
+  editing operations still address the requested line), and the debug console's
+  scrollback (`TerminalPanel`'s own `scrollbackOffset_` mechanism) + input history-recall
+  (M-p/M-n over the same `Editor/PromptHistory.h` ring `BufferView`'s prompts use) closed
+  2026-09-03 — see `git log --grep=dap-round-4`.
+- [ ] **DAP gaps, remainder**: cross-restart persistence of conditions/logMessage/
+      hitCondition/watches (session storage deliberately stayed the old line-only shape;
+      thread focus deliberately excluded even if this is revisited -- a fresh session has
+      entirely new thread IDs, nothing meaningful to reattach it to); debug console has no
+      search over its own history (no established "search a list of lines" pattern to
+      reuse, and neither sibling overlay panel has one either); no disassembly/memory view
+      (2026-08-25 audit, updated 2026-09-03).
 - [ ] **No server/daemon mode** — no `emacsclient`-equivalent; one process per terminal,
       no way to keep a warm process (buffers, LSP connections, undo history) alive and
       attach a new terminal client to it.
@@ -645,6 +701,40 @@ these accumulate detail in place.
       equivalent here. A different feature from everything `Acp/` already provides, and
       probably needs some model-serving backend of its own — worth naming as a conscious
       gap rather than assuming ACP already covers "AI in the editor."
+- [ ] **Open-source game-dev platform support** (raised 2026-09-03, explicitly a list to
+      pick from, not a commitment to any of it). The real fork in each candidate is
+      whether it needs a *new base language* ned doesn't speak yet, or whether it rides
+      on one already planned above — worth deciding by language, not by engine:
+      - **Godot** (GDScript, optionally C# via Mono) — the most popular open-source
+        engine, so the strongest adoption case (see
+        [[project_design_priority_adoption_over_taste]]'s own precedent for weighing
+        that). Needs a GDScript tree-sitter grammar (a community one exists; verify
+        current maintainer/repo before wiring it in, same caveat as Kotlin's above) plus
+        the same highlight/fold/indent/tags checklist. Real open question, not yet
+        verified live: Godot 4's built-in GDScript language server reportedly speaks LSP
+        over a TCP socket to a *running Godot editor instance*, not as a spawned stdio
+        subprocess — if true, that's a genuine mismatch with `Lsp/Transport.h`'s
+        subprocess-+-pipes assumption and would need a real transport-layer addition
+        (a raw-socket `Transport`), not just a `ned/set-lsp-command` entry. Confirm before
+        scoping. The C#-via-Mono path shares C#'s own gap below.
+      - **Bevy** (Rust, no visual editor — code-first ECS) — needs nothing
+        Bevy-specific; entirely gated on general Rust language support, already a named
+        gap above (`Go-to-file-at-point resolver gaps`' "Rust has no bundled mode yet").
+        The natural highest-leverage pick if the goal is "unlock the most engines per
+        unit of work," since Rust support pays for itself outside game dev too.
+      - **LÖVE (Love2D)** and **Defold** (both Lua-based, open source, no bundled mode
+        for Lua at all today) — same shape as Bevy/Rust: gated on general Lua support,
+        not engine-specific work. `lua-language-server` already understands both
+        frameworks' APIs via community-maintained meta/addon files, so ned's own LSP
+        client needs no framework awareness once Lua itself works.
+      - **C#** (needed for Godot-via-Mono, and the prerequisite for ever considering
+        Unity despite it being closed-source and outside this list's own "open source"
+        framing) — no bundled mode today; `OmniSharp`/`csharp-ls` are the LSP options.
+        Named here because it's the one language gap shared by the most candidates, not
+        as an endorsement of any specific engine.
+      - **GDevelop** — event-based, largely no-code; not a natural fit for a text editor
+        regardless of open-source status. Listed only to record it was considered and
+        set aside, not as a live candidate.
 
 ## Won't Do (at Least Not Soon)
 

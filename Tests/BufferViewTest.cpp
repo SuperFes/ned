@@ -2050,6 +2050,48 @@ TEST_CASE("An unverified breakpoint renders in the dimmed marker color", "[Buffe
     REQUIRE(screen.PixelAt(0, 1).foreground_color == fixture.theme.unverifiedBreakpointMarker);
 }
 
+// DAP round 4 below.
+
+TEST_CASE("A breakpoint's gutter glyph follows the adapter's snapped line, not the requested one", "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("one\ntwo\nthree\nfour\nfive");
+    fixture.buffer.SetPath("/tmp/ned-dap-remap-test.c");
+    fixture.buffer.SetPoint(0);
+
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::dap::DapManager manager(eventLoop);
+    ned::editor::dap::DapClient* client  = nullptr;
+    FakeDapAdapter               adapter = FakeDapAdapter::Create(manager, eventLoop, client);
+
+    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-remap", "{}");
+    manager.StartOrContinue("bufferview-dap-remap");
+    const auto initialize = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(initialize["seq"].get<int>(), "initialize", ned::editor::dap::Json::object()));
+    const auto launch = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(launch["seq"].get<int>(), "launch", ned::editor::dap::Json::object()));
+    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-remap", "");
+
+    // Toggled on line 2 (a comment/blank line, say); the adapter snaps it to
+    // line 4, the next real statement.
+    manager.ToggleBreakpoint("/tmp/ned-dap-remap-test.c", 2);
+    const auto setBreakpoints = adapter.NextRequest();
+    REQUIRE(setBreakpoints["command"] == "setBreakpoints");
+    client->DispatchFrame(DapResponseFrame(
+        setBreakpoints["seq"].get<int>(), "setBreakpoints",
+        {{"breakpoints", ned::editor::dap::Json::array({{{"verified", true}, {"line", 4}}})}}));
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetDapManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 4});
+
+    ned::ui::Screen screen = ned::ui::Screen(20, 5);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 4});
+    view.Paint(canvas);
+
+    REQUIRE(screen.PixelAt(0, 1).character != "●"); // line 2 -- the requested line -- shows nothing
+    REQUIRE(screen.PixelAt(0, 3).character == "●"); // line 4 -- where the adapter actually put it
+}
+
 TEST_CASE("dap-set-breakpoint-condition's prompt sets a condition on point's own line", "[BufferView]") {
     Fixture fixture;
     fixture.buffer.InsertAtPoint("one\ntwo\nthree");

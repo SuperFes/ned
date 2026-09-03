@@ -2752,6 +2752,13 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           context.interactiveRequest = InteractiveRequest::DapAttach;
                       });
 
+    // DAP round 4: reruns the stopped thread from the top of the *debug*
+    // buffer stack frame at point (DAP's restartFrame request).
+    registry.Register("dap-restart-frame", "Restart execution from the top of the stack frame on the current *debug* buffer line.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::DapRestartFrame;
+                      });
+
     // ACP client slice 2: same "just set interactiveRequest" shape as
     // run-task/dap-continue above -- BufferView holds the shared AcpManager
     // and does the actual work (see Editor/Acp/AcpManager.h). Agent and

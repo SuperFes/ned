@@ -757,3 +757,67 @@ TEST_CASE("A launched session's StopSession still terminates the debuggee", "[Da
     REQUIRE(disconnect["arguments"]["terminateDebuggee"] == true);
     SetDapLaunchConfig("dap-manager-test-launch-terminate", "");
 }
+
+// DAP round 4 below.
+
+TEST_CASE("RestartFrame sends restartFrame with the given frameId and resumes on success", "[Dap]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartRunningSession("dap-manager-test-restart-frame");
+
+    fixture.client->DispatchFrame(EventFrame("stopped", Json{{"reason", "breakpoint"}, {"threadId", 1}}));
+    const Json stackTrace = fixture.reader.Next();
+    fixture.client->DispatchFrame(ResponseFrame(stackTrace["seq"].get<int>(), "stackTrace", true, Json{{"stackFrames", Json::array()}}));
+
+    REQUIRE(fixture.manager.RestartFrame(7) == "Restarting frame... (adapter did not advertise restart-frame support -- may be ignored)");
+    const Json restart = fixture.reader.Next();
+    REQUIRE(restart["command"] == "restartFrame");
+    REQUIRE(restart["arguments"]["frameId"] == 7);
+    fixture.client->DispatchFrame(ResponseFrame(restart["seq"].get<int>(), "restartFrame", true));
+    REQUIRE(fixture.manager.State() == DapManager::SessionState::Running);
+
+    // Refused outright while running -- same shape as StepInto's own guard.
+    REQUIRE(fixture.manager.RestartFrame(7) == "Not stopped (nothing to restart).");
+    SetDapLaunchConfig("dap-manager-test-restart-frame", "");
+}
+
+TEST_CASE("StartOrContinue parses restartFrame capability, dropping the warning suffix", "[Dap]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    SetDapLaunchConfig("dap-manager-test-restart-caps", R"({"program": "./fake"})");
+    fixture.manager.StartOrContinue("dap-manager-test-restart-caps");
+    const Json initialize = fixture.reader.Next();
+    fixture.client->DispatchFrame(
+        ResponseFrame(initialize["seq"].get<int>(), "initialize", true, Json{{"supportsRestartFrame", true}}));
+    fixture.reader.Next(); // launch
+
+    fixture.client->DispatchFrame(EventFrame("stopped", Json{{"reason", "breakpoint"}, {"threadId", 1}}));
+    const Json stackTrace = fixture.reader.Next();
+    fixture.client->DispatchFrame(ResponseFrame(stackTrace["seq"].get<int>(), "stackTrace", true, Json{{"stackFrames", Json::array()}}));
+
+    REQUIRE(fixture.manager.RestartFrame(1) == "Restarting frame...");
+    fixture.reader.Next(); // restartFrame
+    SetDapLaunchConfig("dap-manager-test-restart-caps", "");
+}
+
+TEST_CASE("SendBreakpointsForFile's response records the adapter's snapped actualLine", "[Dap]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartRunningSession("dap-manager-test-actual-line");
+
+    const std::filesystem::path path = std::filesystem::current_path() / "dap-test-actual-line.c";
+    fixture.manager.ToggleBreakpoint(path, 3); // toggled on a comment/blank line, say
+
+    const Json setBreakpoints = fixture.reader.Next();
+    REQUIRE(setBreakpoints["command"] == "setBreakpoints");
+    const auto beforeResponse = fixture.manager.BreakpointsForKey(DapManager::NormalizePathKey(path));
+    REQUIRE(beforeResponse[0].actualLine == 0); // not yet known
+
+    // The adapter snaps it to line 5, the next real statement.
+    fixture.client->DispatchFrame(ResponseFrame(setBreakpoints["seq"].get<int>(), "setBreakpoints", true,
+                                                Json{{"breakpoints", Json::array({Json{{"verified", true}, {"line", 5}}})}}));
+    const auto afterResponse = fixture.manager.BreakpointsForKey(DapManager::NormalizePathKey(path));
+    REQUIRE(afterResponse[0].line == 3);       // the requested line -- edits still address this
+    REQUIRE(afterResponse[0].actualLine == 5); // where it actually landed
+    SetDapLaunchConfig("dap-manager-test-actual-line", "");
+}
