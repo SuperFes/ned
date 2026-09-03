@@ -525,6 +525,7 @@ std::unique_ptr<Pane> WindowManager::MakePane(text::Buffer& buffer, editor::Mode
     pane->Buffer().SetThemeApplier(themeApplier_);
     pane->Buffer().SetOnTerminalToggle(onTerminalToggle_);
     pane->Buffer().SetOnAcpPanelToggle(onAcpPanelToggle_);
+    pane->Buffer().SetOnAcpRewindRequest(onAcpRewindRequest_);
     pane->Buffer().SetOnDapConsoleToggle(onDapConsoleToggle_);
     pane->Buffer().SetOnBufferListToggle(onBufferListToggle_);
     pane->Buffer().SetOnPrefixHintChanged(onPrefixHintChanged_);
@@ -586,6 +587,13 @@ void WindowManager::SetOnAcpPanelToggle(std::function<void()> onToggle) {
     onAcpPanelToggle_ = std::move(onToggle);
     for (Pane* pane : Leaves()) {
         pane->Buffer().SetOnAcpPanelToggle(onAcpPanelToggle_);
+    }
+}
+
+void WindowManager::SetOnAcpRewindRequest(std::function<void()> onRewind) {
+    onAcpRewindRequest_ = std::move(onRewind);
+    for (Pane* pane : Leaves()) {
+        pane->Buffer().SetOnAcpRewindRequest(onAcpRewindRequest_);
     }
 }
 

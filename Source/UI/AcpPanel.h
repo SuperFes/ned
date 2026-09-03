@@ -44,6 +44,15 @@ class AcpPanel : public Widget {
     // TerminalPanel::SetOnToggleRequest exactly.
     void SetOnToggleRequest(std::function<void()> onToggle);
 
+    // ACP checkpoint/rewind follow-up: main.cpp's SetOnAcpRewindRequest
+    // wiring calls this after showing/focusing the panel (acp-rewind, C-c A
+    // r). Replaces the transcript view with a numbered list of past turns
+    // (FormatRewindPicker) built from AcpManager::CheckpointCount()/
+    // CheckpointAt() -- a digit 1-9 rewinds to that turn (AcpManager::
+    // RewindTo) and closes the picker; Escape cancels with no effect. A
+    // no-op if no AcpManager is set.
+    void OpenRewindPicker();
+
     // ACP chat-feel round 2 -- panel resize/minimize follow-up. Collapsed()
     // shrinks the panel to a thin title-only strip (ProjectSidebar's own
     // Collapsed() convention: still on screen, still occupying its Box, the
@@ -97,6 +106,12 @@ class AcpPanel : public Widget {
     };
 
     [[nodiscard]] std::vector<DisplayLine> FormatTranscript(int width) const;
+    // ACP checkpoint/rewind follow-up: rewindPickerOpen_'s own content,
+    // same DisplayLine/word-wrap pipeline FormatTranscript's result already
+    // flows through (Paint()'s content-row loop doesn't care which one fed
+    // it). Ignores `width` today (no line here is ever long enough to need
+    // it) -- kept as a parameter to match FormatTranscript's own signature.
+    [[nodiscard]] std::vector<DisplayLine> FormatRewindPicker(int width) const;
     [[nodiscard]] Brush                    BrushForStyle(DisplayStyle style) const;
     [[nodiscard]] bool                     CloseButtonAt(Point local) const;
     [[nodiscard]] bool                     MinimizeButtonAt(Point local) const;
@@ -146,6 +161,9 @@ class AcpPanel : public Widget {
 
     std::optional<std::size_t> historyIndex_;
     std::string                historyDraft_;
+
+    // ACP checkpoint/rewind follow-up: see OpenRewindPicker/FormatRewindPicker.
+    bool rewindPickerOpen_ = false;
 };
 
 } // namespace ned::ui
