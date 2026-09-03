@@ -665,7 +665,16 @@ enum class InteractiveRequest { None,
                                 // per-buffer diff-hunk cache -- BufferView::NextError/
                                 // PreviousError do the actual walk+jump.
                                 NextError,
-                                PreviousError };
+                                PreviousError,
+                                // ACP checkpoint/rewind follow-up: one-shot direct action, same
+                                // "just forward, the target lives above this class" shape as
+                                // AcpTogglePanel above -- BufferView forwards to
+                                // SetOnAcpRewindRequest (main.cpp wires it to show/focus the ACP
+                                // panel and open its rewind picker; AcpPanel::OnEvent then reads
+                                // AcpManager::CheckpointCount()/CheckpointAt() to render the list
+                                // and calls AcpManager::RewindTo() on a digit keystroke -- see
+                                // Editor/Acp/AcpManager.h for the checkpoint/rewind data model).
+                                AcpRewind };
 
 // Everything a command implementation might need. Built fresh per invocation
 // from live references -- never stored, so there's no lifetime concern beyond

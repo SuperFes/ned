@@ -541,6 +541,14 @@ class BufferView : public Widget {
     // a safe no-op.
     void SetOnAcpPanelToggle(std::function<void()> handler);
 
+    // ACP checkpoint/rewind follow-up: acp-rewind's forwarding hook, same
+    // shape as SetOnAcpPanelToggle immediately above -- the picker itself
+    // lives in AcpPanel (another OverlayHost overlay owned by main.cpp's
+    // composition), wired via WindowManager::SetOnAcpRewindRequest fanning
+    // out to every pane. Unset is a safe no-op (reported via statusMessage_
+    // instead, see the InteractiveRequest::AcpRewind case).
+    void SetOnAcpRewindRequest(std::function<void()> handler);
+
     // DAP round 2: dap-toggle-console's forwarding hook, same shape and
     // reasoning as SetOnAcpPanelToggle immediately above -- the debug
     // console is another OverlayHost overlay owned by main.cpp's
@@ -2518,6 +2526,7 @@ class BufferView : public Widget {
     std::function<void(text::Buffer&)>              onBufferClosed_;
     std::function<void()>                           onTerminalToggle_;      // see SetOnTerminalToggle
     std::function<void()>                           onAcpPanelToggle_;      // see SetOnAcpPanelToggle
+    std::function<void()>                           onAcpRewindRequest_;    // see SetOnAcpRewindRequest
     std::function<void()>                           onDapConsoleToggle_;    // see SetOnDapConsoleToggle
     std::function<void()>                           onBufferListToggle_;    // see SetOnBufferListToggle
     std::function<void(text::Buffer&)>              onActiveBufferChanged_; // see SetOnActiveBufferChanged

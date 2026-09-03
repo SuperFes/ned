@@ -273,6 +273,13 @@ class WindowManager {
     // over the OverlayHost-owned AcpPanel) lives above this class entirely.
     void SetOnAcpPanelToggle(std::function<void()> onToggle);
 
+    // ACP checkpoint/rewind follow-up: same "forwarded to every pane,
+    // present and future" shape as SetOnAcpPanelToggle immediately above --
+    // acp-rewind can fire from whichever pane has focus, and the handler
+    // (main.cpp's, showing/focusing the OverlayHost-owned AcpPanel and
+    // opening its rewind picker) lives above this class entirely.
+    void SetOnAcpRewindRequest(std::function<void()> onRewind);
+
     // ACP round-1-live-validation follow-up: lets SetAcpManager's own
     // SetOnPermissionRequest wiring below know whether the OverlayHost-owned
     // AcpPanel (main.cpp's, not owned here either) currently has focus --
@@ -728,6 +735,7 @@ class WindowManager {
     std::function<void(const Theme&)> themeApplier_;             // see SetThemeApplier
     std::function<void()>             onTerminalToggle_;         // see SetOnTerminalToggle
     std::function<void()>             onAcpPanelToggle_;         // see SetOnAcpPanelToggle
+    std::function<void()>             onAcpRewindRequest_;       // see SetOnAcpRewindRequest
     std::function<bool()>             acpPanelFocused_;          // see SetAcpPanelFocusChecker
     std::function<void()>             onDapConsoleToggle_;       // see SetOnDapConsoleToggle
     std::function<void()>             onBufferListToggle_;       // see SetOnBufferListToggle

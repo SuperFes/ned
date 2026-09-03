@@ -1,6 +1,8 @@
 #include "AcpPanel.h"
 
 #include <algorithm>
+#include <cstdio>
+#include <ctime>
 
 #include "Border.h"
 #include "Editor/Acp/AcpPanelConfig.h"
@@ -46,6 +48,26 @@ namespace {
     // own title-row buttons.
     constexpr char32_t kMinimizeIcon = U'▼';
     constexpr int       kMaxInputRows          = 6;    // cap how far the composer grows before it starts scrolling internally
+    // ACP checkpoint/rewind follow-up: the picker only ever offers a digit
+    // 1-9 (PendingPermissionPrompt's own selection shape) -- older turns
+    // beyond this many simply aren't reachable in one keystroke; picking one
+    // of the shown 9 first, then reopening the picker again, still reaches
+    // anything further back one hop at a time.
+    constexpr std::size_t kMaxRewindChoices = 9;
+
+    // Matches Editor/Backup.cpp's own LocalTimeLabel format exactly (not
+    // shared -- that one's private to its .cpp) so a rewind checkpoint's
+    // timestamp reads the same way a backup version's does elsewhere in
+    // this editor.
+    std::string LocalTimeLabel(std::chrono::system_clock::time_point timestamp) {
+        const std::time_t seconds = std::chrono::system_clock::to_time_t(timestamp);
+        std::tm           local{};
+        localtime_r(&seconds, &local);
+        char buffer[32];
+        std::snprintf(buffer, sizeof(buffer), "%04d-%02d-%02d %02d:%02d:%02d", local.tm_year + 1900, local.tm_mon + 1, local.tm_mday,
+                      local.tm_hour, local.tm_min, local.tm_sec);
+        return buffer;
+    }
 
     // Codepoint count, matching WordWrap/PaintUtf8Row's own one-column-per-
     // codepoint convention -- used for right-aligning a short marker within
@@ -160,6 +182,12 @@ void AcpPanel::SetAcpManager(editor::acp::AcpManager* acpManager) {
 
 void AcpPanel::SetOnToggleRequest(std::function<void()> onToggle) {
     onToggleRequest_ = std::move(onToggle);
+}
+
+void AcpPanel::OpenRewindPicker() {
+    if (acpManager_) {
+        rewindPickerOpen_ = true;
+    }
 }
 
 bool AcpPanel::Collapsed() const {
@@ -376,6 +404,31 @@ std::vector<AcpPanel::DisplayLine> AcpPanel::FormatTranscript(int width) const {
     return lines;
 }
 
+std::vector<AcpPanel::DisplayLine> AcpPanel::FormatRewindPicker(int /*width*/) const {
+    std::vector<DisplayLine> lines;
+    lines.push_back({"Rewind to before which turn?", DisplayStyle::Warning});
+    if (!acpManager_) {
+        return lines;
+    }
+    const std::size_t count = acpManager_->CheckpointCount();
+    if (count == 0) {
+        lines.push_back({"  (no turns recorded yet)", DisplayStyle::Dim});
+        return lines;
+    }
+    // Newest first -- digit 1 is always the most recent turn, matching the
+    // picker's own "jump back from here" framing.
+    const std::size_t shown = std::min(count, kMaxRewindChoices);
+    for (std::size_t offset = 0; offset < shown; ++offset) {
+        const std::size_t                          index      = count - 1 - offset;
+        const editor::acp::AcpManager::Checkpoint& checkpoint = acpManager_->CheckpointAt(index);
+        lines.push_back({"  [" + std::to_string(offset + 1) + "] " + checkpoint.promptPreview + "  (" +
+                             LocalTimeLabel(checkpoint.timestamp) + ")",
+                         DisplayStyle::Plain});
+    }
+    lines.push_back({"  [Esc] cancel", DisplayStyle::Dim});
+    return lines;
+}
+
 bool AcpPanel::CloseButtonAt(Point local) const {
     const int width = size().width;
     if (local.y != 0 || width < kMinWidthForCloseButton) {
@@ -567,7 +620,7 @@ void AcpPanel::Paint(Canvas canvas) {
     const int contentRows = std::max(0, height - 1 - allottedInputRows);
     if (contentRows > 0) {
         std::vector<DisplayLine> lines;
-        for (const DisplayLine& logical : FormatTranscript(width)) {
+        for (const DisplayLine& logical : rewindPickerOpen_ ? FormatRewindPicker(width) : FormatTranscript(width)) {
             for (const WrappedRow& row : WordWrap(logical.text, width)) {
                 lines.push_back({row.text, logical.style});
             }
@@ -722,6 +775,27 @@ bool AcpPanel::OnEvent(const Event& event) {
         }
         // Anything else (typing into the composer, non-digit keys) falls
         // through unhandled by this block.
+    }
+
+    // ACP checkpoint/rewind follow-up: same digit-select shape as the
+    // PendingPermissionPrompt block above -- while the picker is open it
+    // owns every keystroke (nothing should land in the composer behind it),
+    // Escape cancels with no effect, a valid digit rewinds and closes it,
+    // anything else is swallowed rather than falling through.
+    if (rewindPickerOpen_) {
+        if (chord->Special == editor::SpecialKey::Escape) {
+            rewindPickerOpen_ = false;
+            return true;
+        }
+        if (acpManager_ && IsPlainCharacter(*chord) && chord->Codepoint >= U'1' && chord->Codepoint <= U'9') {
+            const std::size_t offset = static_cast<std::size_t>(chord->Codepoint - U'1');
+            const std::size_t count  = acpManager_->CheckpointCount();
+            if (offset < count && offset < kMaxRewindChoices) {
+                acpManager_->RewindTo(count - 1 - offset);
+            }
+            rewindPickerOpen_ = false;
+        }
+        return true;
     }
 
     if (chord->Special == editor::SpecialKey::Escape) {

@@ -1407,6 +1407,20 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     };
     windowManager->SetOnAcpPanelToggle(toggleAcpPanel);
     acpPanel.SetOnToggleRequest(toggleAcpPanel);
+    // ACP checkpoint/rewind follow-up: acp-rewind (C-c A r) ensures the
+    // panel is visible/focused (no session-reconnect attempt -- unlike
+    // toggleAcpPanel's own show-branch above, there's nothing useful to
+    // rewind without an already-active or prior session, and the picker
+    // itself reports "no turns recorded yet" when checkpoints_ is empty)
+    // then opens its rewind picker.
+    windowManager->SetOnAcpRewindRequest([&overlays, panel = &acpPanel] {
+        if (!overlays.IsVisible(*panel)) {
+            overlays.Show(*panel);
+            panel->SetCollapsed(false);
+        }
+        panel->TakeFocus();
+        panel->OpenRewindPicker();
+    });
     // panel-resize/minimize follow-up: OverlayHost only recomputes a panel's
     // Box from its placement lambda on Show()/Reflow() (Overlay.h's own
     // header comment), never on every Paint() -- so SetCollapsed alone would

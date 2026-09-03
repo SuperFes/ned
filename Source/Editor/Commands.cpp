@@ -2739,6 +2739,14 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     registry.Register("acp-toggle-panel", "Show, focus, or hide the ACP chat panel.", [](CommandContext& context) {
         context.interactiveRequest = InteractiveRequest::AcpTogglePanel;
     });
+    // ACP checkpoint/rewind follow-up: same "just set interactiveRequest"
+    // shape as acp-toggle-panel above -- the actual picker lives in
+    // AcpPanel (an OverlayHost overlay above this class), see Command.h's
+    // own AcpRewind doc comment for the full forwarding chain.
+    registry.Register("acp-rewind", "Rewind the ACP conversation and its file edits to before an earlier turn.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::AcpRewind;
+                      });
 
     // VCS blame gutter follow-up: same "just set interactiveRequest" shape
     // as lsp-show-log/run-task above -- BufferView owns the actual
@@ -3702,6 +3710,7 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("C-c A s"), "acp-start-session");
     keymap.Bind(ParseKeySequence("C-c A p"), "acp-send-prompt");
     keymap.Bind(ParseKeySequence("C-c A k"), "acp-stop-session"); // "k" for kill, matching Emacs' own kill-process vocabulary
+    keymap.Bind(ParseKeySequence("C-c A r"), "acp-rewind");       // "r" for rewind
     keymap.Bind(ParseKeySequence("C-c c"), "acp-toggle-panel");   // "c" for chat
     // test-runner integration: "C-c T" prefix (shifted "t" for tests --
     // plain "C-c t" is toggle-terminal's own leaf binding below, so a

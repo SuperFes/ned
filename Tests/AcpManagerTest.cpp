@@ -521,3 +521,172 @@ TEST_CASE("AcpManager::SetOnTranscriptChanged fires on every transcript-affectin
     fixture.client->DispatchFrame(AgentMessageChunkUpdate("hi").dump());
     REQUIRE(callCount == 1);
 }
+
+// ACP checkpoint/rewind follow-up.
+namespace {
+
+    // Dispatches an agent-initiated fs/write_text_file the way a real agent
+    // mid-turn tool call would, and drains its response -- request ids just
+    // need to be unique per test, requestId is the caller's own counter.
+    void WriteFileViaAgent(ManagerFixture& fixture, const std::filesystem::path& path, const std::string& content, int requestId) {
+        const Json request = {{"jsonrpc", "2.0"},
+                              {"id", requestId},
+                              {"method", "fs/write_text_file"},
+                              {"params", {{"path", path.string()}, {"content", content}}}};
+        fixture.client->DispatchFrame(request.dump());
+        (void)fixture.reader.Next();
+    }
+
+    // Runs one whole turn -- SendPrompt, an agent-initiated fs/write_text_file
+    // mid-turn (the write has to land *before* the session/prompt response,
+    // exactly like a real tool call would, so AcpManager's pendingCheckpoint_
+    // is still open to record it), then resolves session/prompt.
+    void RunTurnWithFileWrite(ManagerFixture& fixture, const std::string& promptText, const std::filesystem::path& path,
+                              const std::string& content, int requestId, const std::string& stopReason = "end_turn") {
+        REQUIRE(fixture.manager.SendPrompt(promptText) == "Sent.");
+        const Json promptRequest = fixture.reader.Next();
+        WriteFileViaAgent(fixture, path, content, requestId);
+        fixture.client->DispatchFrame(ResultFrame(promptRequest["id"], Json{{"stopReason", stopReason}}));
+    }
+
+} // namespace
+
+TEST_CASE("AcpManager checkpoints a turn's file edit and RewindTo reverts it, truncating the transcript", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+
+    const std::filesystem::path tempPath = std::filesystem::temp_directory_path() / "ned-acp-manager-test-rewind-1.txt";
+    {
+        std::ofstream out(tempPath);
+        out << "original content";
+    }
+    ned::text::Buffer& buffer = fixture.bufferList.OpenOrCreateFile(tempPath);
+    fixture.StartActiveSession("test-agent");
+
+    RunTurnWithFileWrite(fixture, "please rewrite the file", tempPath, "agent-written content", 5);
+    REQUIRE(buffer.Text() == "agent-written content");
+    REQUIRE(fixture.manager.CheckpointCount() == 1);
+    REQUIRE(fixture.manager.CheckpointAt(0).promptPreview == "please rewrite the file");
+    REQUIRE(fixture.manager.CheckpointAt(0).fileRecords.size() == 1);
+
+    const AcpManager::RewindOutcome outcome = fixture.manager.RewindTo(0);
+    REQUIRE(outcome.turnsRewound == 1);
+    REQUIRE(outcome.revertedFiles == std::vector<std::string>{tempPath.string()});
+    REQUIRE(outcome.divergedFiles.empty());
+    REQUIRE(outcome.untrackedFiles.empty());
+    REQUIRE(buffer.Text() == "original content");
+    REQUIRE(fixture.manager.CheckpointCount() == 0);
+
+    // The turn's own UserMessage entry is gone, replaced by exactly one
+    // SessionEvent summarizing the rewind.
+    REQUIRE(fixture.manager.Transcript().size() == 1);
+    REQUIRE(fixture.manager.Transcript().back().kind == AcpManager::TranscriptEntry::Kind::SessionEvent);
+    REQUIRE(fixture.manager.Transcript().back().text.find("rewound") != std::string::npos);
+
+    std::filesystem::remove(tempPath);
+}
+
+TEST_CASE("AcpManager::RewindTo on a later checkpoint leaves an earlier turn's edit and transcript entry intact", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+
+    const std::filesystem::path tempPath = std::filesystem::temp_directory_path() / "ned-acp-manager-test-rewind-2.txt";
+    {
+        std::ofstream out(tempPath);
+        out << "v0";
+    }
+    ned::text::Buffer& buffer = fixture.bufferList.OpenOrCreateFile(tempPath);
+    fixture.StartActiveSession("test-agent");
+
+    RunTurnWithFileWrite(fixture, "first turn", tempPath, "v1", 5);
+    RunTurnWithFileWrite(fixture, "second turn", tempPath, "v2", 6);
+    REQUIRE(buffer.Text() == "v2");
+    REQUIRE(fixture.manager.CheckpointCount() == 2);
+
+    // Rewind only the most recent checkpoint (index 1) -- the first turn's
+    // own edit and UserMessage entry must survive untouched.
+    const AcpManager::RewindOutcome outcome = fixture.manager.RewindTo(1);
+    REQUIRE(outcome.turnsRewound == 1);
+    REQUIRE(buffer.Text() == "v1");
+    REQUIRE(fixture.manager.CheckpointCount() == 1);
+
+    const auto& transcript = fixture.manager.Transcript();
+    const auto  firstTurnEntry = std::find_if(transcript.begin(), transcript.end(), [](const auto& e) {
+        return e.kind == AcpManager::TranscriptEntry::Kind::UserMessage && e.text == "first turn";
+    });
+    REQUIRE(firstTurnEntry != transcript.end());
+    const auto secondTurnEntry = std::find_if(transcript.begin(), transcript.end(), [](const auto& e) {
+        return e.kind == AcpManager::TranscriptEntry::Kind::UserMessage && e.text == "second turn";
+    });
+    REQUIRE(secondTurnEntry == transcript.end()); // truncated away
+
+    std::filesystem::remove(tempPath);
+}
+
+TEST_CASE("AcpManager::RewindTo reports a file edited again since its turn as diverged, leaving it untouched", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+
+    const std::filesystem::path tempPath = std::filesystem::temp_directory_path() / "ned-acp-manager-test-rewind-diverge.txt";
+    {
+        std::ofstream out(tempPath);
+        out << "original";
+    }
+    ned::text::Buffer& buffer = fixture.bufferList.OpenOrCreateFile(tempPath);
+    fixture.StartActiveSession("test-agent");
+
+    RunTurnWithFileWrite(fixture, "rewrite it", tempPath, "agent version", 5);
+    REQUIRE(fixture.manager.CheckpointCount() == 1);
+
+    // A local edit after the turn, not tracked by any checkpoint -- the
+    // buffer has now moved past this turn's own afterSequence.
+    buffer.InsertAtPoint("!");
+    const std::string editedText = buffer.Text();
+
+    const AcpManager::RewindOutcome outcome = fixture.manager.RewindTo(0);
+    REQUIRE(outcome.divergedFiles == std::vector<std::string>{tempPath.string()});
+    REQUIRE(outcome.revertedFiles.empty());
+    REQUIRE(buffer.Text() == editedText); // left alone, not force-reverted
+
+    std::filesystem::remove(tempPath);
+}
+
+TEST_CASE("AcpManager::RewindTo reports a file never open in ned as untracked, without touching it on disk", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+
+    const std::filesystem::path tempPath = std::filesystem::temp_directory_path() / "ned-acp-manager-test-rewind-untracked.txt";
+    {
+        std::ofstream out(tempPath);
+        out << "original";
+    }
+    // Deliberately never opened as a ned buffer.
+    fixture.StartActiveSession("test-agent");
+
+    RunTurnWithFileWrite(fixture, "rewrite an unopened file", tempPath, "agent version", 5);
+    REQUIRE(fixture.manager.CheckpointCount() == 1);
+    REQUIRE(fixture.manager.CheckpointAt(0).fileRecords.empty());
+    REQUIRE(fixture.manager.CheckpointAt(0).untrackedPaths == std::vector<std::filesystem::path>{tempPath});
+
+    const AcpManager::RewindOutcome outcome = fixture.manager.RewindTo(0);
+    REQUIRE(outcome.untrackedFiles == std::vector<std::string>{tempPath.string()});
+    REQUIRE(outcome.revertedFiles.empty());
+
+    std::ifstream diskContent(tempPath);
+    std::string   contentOnDisk((std::istreambuf_iterator<char>(diskContent)), std::istreambuf_iterator<char>());
+    REQUIRE(contentOnDisk == "agent version"); // RewindTo never touches disk directly
+
+    std::filesystem::remove(tempPath);
+}
+
+TEST_CASE("AcpManager::RewindTo with an out-of-range index is a no-op", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+
+    const std::size_t transcriptSize = fixture.manager.Transcript().size();
+    const AcpManager::RewindOutcome outcome = fixture.manager.RewindTo(0); // no checkpoints exist yet
+    REQUIRE(outcome.turnsRewound == 0);
+    REQUIRE(outcome.revertedFiles.empty());
+    REQUIRE(fixture.manager.Transcript().size() == transcriptSize);
+}
