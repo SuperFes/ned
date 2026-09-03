@@ -13,6 +13,7 @@ using ned::editor::lsp::ExtractCodeLenses;
 using ned::editor::lsp::ExtractCompletionItems;
 using ned::editor::lsp::ExtractDefinitionLocations;
 using ned::editor::lsp::ExtractDocumentHighlights;
+using ned::editor::lsp::ExtractFileOperationFilters;
 using ned::editor::lsp::ExtractFormattingEdits;
 using ned::editor::lsp::ExtractHierarchyItems;
 using ned::editor::lsp::ExtractHoverText;
@@ -802,6 +803,45 @@ TEST_CASE("ExtractTextDocumentSyncKind returns nullopt for a non-object, non-int
 
 TEST_CASE("ExtractTextDocumentSyncKind returns nullopt for a null initialize result", "[Lsp]") {
     REQUIRE_FALSE(ExtractTextDocumentSyncKind(Json(nullptr)).has_value());
+}
+
+TEST_CASE("ExtractFileOperationFilters parses willRename and didRename globs", "[Lsp]") {
+    const Json result = {
+        {"capabilities",
+         {{"workspace",
+           {{"fileOperations",
+             {{"willRename", {{"filters", Json::array({{{"pattern", {{"glob", "**/*.ts"}}}}})}}},
+              {"didRename", {{"filters", Json::array({{{"pattern", {{"glob", "**/*.ts"}}}}, {{"pattern", {{"glob", "**/*.tsx"}}}}})}}}}}}}}},
+    };
+    const auto filters = ExtractFileOperationFilters(result);
+    REQUIRE(filters.has_value());
+    REQUIRE(filters->willRenameGlobs == std::vector<std::string>{"**/*.ts"});
+    REQUIRE(filters->didRenameGlobs == std::vector<std::string>{"**/*.ts", "**/*.tsx"});
+}
+
+TEST_CASE("ExtractFileOperationFilters returns nullopt when fileOperations is absent", "[Lsp]") {
+    REQUIRE_FALSE(ExtractFileOperationFilters(Json{{"capabilities", Json::object()}}).has_value());
+    REQUIRE_FALSE(ExtractFileOperationFilters(Json{{"capabilities", {{"workspace", Json::object()}}}}).has_value());
+    REQUIRE_FALSE(ExtractFileOperationFilters(Json(nullptr)).has_value());
+}
+
+TEST_CASE("ExtractFileOperationFilters returns nullopt when neither operation carries a glob", "[Lsp]") {
+    const Json result = {
+        {"capabilities", {{"workspace", {{"fileOperations", {{"willRename", Json::object()}}}}}}},
+    };
+    REQUIRE_FALSE(ExtractFileOperationFilters(result).has_value());
+}
+
+TEST_CASE("ExtractFileOperationFilters populates only the advertised half", "[Lsp]") {
+    const Json result = {
+        {"capabilities",
+         {{"workspace",
+           {{"fileOperations", {{"didRename", {{"filters", Json::array({{{"pattern", {{"glob", "**/*.rs"}}}}})}}}}}}}}},
+    };
+    const auto filters = ExtractFileOperationFilters(result);
+    REQUIRE(filters.has_value());
+    REQUIRE(filters->willRenameGlobs.empty());
+    REQUIRE(filters->didRenameGlobs == std::vector<std::string>{"**/*.rs"});
 }
 
 TEST_CASE("ExtractPullDiagnosticReport parses a full report's items", "[Lsp]") {

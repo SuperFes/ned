@@ -1067,6 +1067,18 @@ class BufferView : public Widget {
     void HandleDeleteFileKey(const editor::KeyChord& chord);
     void HandleRenameFileKey(const editor::KeyChord& chord);
 
+    // rename-file-notifications follow-up: the actual rename, factored out
+    // of HandleRenameFileKey so it can run after EndInteractiveSession()
+    // clears renameSource_/renameStage_ -- source/destination are passed by
+    // value rather than read back off those members, which an in-flight
+    // LspManager::RequestWillRenameFiles round trip (see its own doc
+    // comment) could otherwise see reset out from under it by a
+    // subsequently-started rename session. When lspManager_ is unset (most
+    // tests) or nothing matches, RequestWillRenameFiles's callback fires
+    // synchronously with nullopt, so this still completes inline exactly as
+    // it did before this follow-up existed.
+    void PerformProjectRename(const std::filesystem::path& source, const std::filesystem::path& destination);
+
     // property-drawers follow-up: org-set-property's own two-stage session,
     // RenameFileStage/HandleRenameFileKey's exact shape -- propertyStage_ ==
     // EnteringName collects the property's name into pendingPropertyName_,

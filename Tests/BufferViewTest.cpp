@@ -4419,6 +4419,60 @@ TEST_CASE("rename-file on a path with no open buffer just renames on disk", "[Bu
     std::filesystem::remove_all(dir);
 }
 
+TEST_CASE("rename-file notifies a matching LSP server via willRenameFiles/didRenameFiles, deferring the actual rename until it answers",
+          "[BufferView]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_bufferview_test_rename_lsp";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    const std::filesystem::path from = dir / "old.ts";
+    const std::filesystem::path to   = dir / "new.ts";
+    {
+        std::ofstream(from) << "content";
+    }
+
+    Fixture                     fixture;
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
+    manager.SetFileOperationFiltersForTesting("fundamental", {.willRenameGlobs = {"**/*.ts"}, .didRenameGlobs = {"**/*.ts"}});
+    ned::editor::lsp::LspClient* client = nullptr;
+    FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Ctrl('c'));
+    view.OnEvent(ned::ui::test::Ctrl('n'));
+    TypeText(view, from.string());
+    view.OnEvent(ned::ui::test::Return());
+    TypeText(view, to.string());
+    view.OnEvent(ned::ui::test::Return());
+
+    // Deferred: the rename hasn't happened yet, the server hasn't answered.
+    REQUIRE(std::filesystem::exists(from));
+    REQUIRE_FALSE(std::filesystem::exists(to));
+
+    const std::string raw     = ReadRawLspFrame(server.serverStdinRead);
+    const auto        request = ned::editor::lsp::Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(request["method"] == "workspace/willRenameFiles");
+    REQUIRE(request["params"]["files"][0]["oldUri"].get<std::string>().find("old.ts") != std::string::npos);
+    REQUIRE(request["params"]["files"][0]["newUri"].get<std::string>().find("new.ts") != std::string::npos);
+
+    const auto response = ned::editor::lsp::Json{{"jsonrpc", "2.0"}, {"id", LspRequestIdFromFrame(raw)}, {"result", nullptr}};
+    client->DispatchFrame(response.dump());
+
+    REQUIRE_FALSE(std::filesystem::exists(from));
+    REQUIRE(std::filesystem::exists(to));
+    REQUIRE(fixture.statusMessage == "Renamed to " + to.string());
+
+    const std::string notifyRaw     = ReadRawLspFrame(server.serverStdinRead);
+    const auto        notifyRequest = ned::editor::lsp::Json::parse(notifyRaw.substr(notifyRaw.find("\r\n\r\n") + 4));
+    REQUIRE(notifyRequest["method"] == "workspace/didRenameFiles");
+    REQUIRE_FALSE(notifyRequest.contains("id"));
+
+    std::filesystem::remove_all(dir);
+}
+
 TEST_CASE("rename-file reports an error and ends the session when the source doesn't exist", "[BufferView]") {
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_bufferview_test_rename_missing";
     std::filesystem::remove_all(dir);
