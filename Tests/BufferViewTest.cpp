@@ -973,6 +973,25 @@ TEST_CASE("Isearch: an arrow key ends the search and applies the motion instead 
     REQUIRE(fixture.buffer.Text() == "the quick brown fox !jumps");
 }
 
+TEST_CASE("Isearch: a plain Emacs motion chord (C-f) ends the search and applies too, not just arrows",
+          "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("the quick brown fox jumps");
+    fixture.buffer.SetPoint(0);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Ctrl('s'));
+    view.OnEvent(ned::ui::test::Character("f"));
+    view.OnEvent(ned::ui::test::Character("o"));
+    view.OnEvent(ned::ui::test::Character("x"));
+    REQUIRE(fixture.buffer.Point() == 19); // right after "fox"
+
+    view.OnEvent(ned::ui::test::Ctrl('f')); // forward-char, same chord as plain Right in the default keymap
+    REQUIRE(fixture.buffer.Point() == 20);  // isearch ended (kept the match position) and forward-char ran
+}
+
 TEST_CASE("Isearch: C-r starts a backward search", "[BufferView]") {
     Fixture fixture;
     fixture.buffer.InsertAtPoint("the quick brown fox");
@@ -1031,7 +1050,8 @@ TEST_CASE("Isearch: a failing query emphasizes its still-matching prefix in the 
     REQUIRE(fixture.statusMessage == "I-search: fox"); // still matching, nothing emphasized
 
     view.OnEvent(ned::ui::test::Character("y")); // "foxy" doesn't exist, but "fox" does
-    REQUIRE(fixture.statusMessage == "Failing I-search: " + ned::ui::EmphasizeForEchoArea("fox") + "y");
+    REQUIRE(fixture.statusMessage ==
+            "Failing I-search: " + ned::ui::EmphasizeForEchoArea("fox") + ned::ui::ErrorForEchoArea("y"));
 
     view.OnEvent(ned::ui::test::Escape());
 }
@@ -1598,7 +1618,8 @@ TEST_CASE("Middle-click paste is a no-op when no primary-selection tool is resol
     ned::editor::SetClipboardEnabled(false);
 }
 
-TEST_CASE("Mouse input is ignored while an isearch session is active", "[BufferView]") {
+TEST_CASE("Isearch: a positional mouse click ends the search and places point there, not just dismisses it",
+          "[BufferView]") {
     Fixture fixture;
     fixture.buffer.InsertAtPoint("the quick brown fox");
     fixture.buffer.SetPoint(0);
@@ -1607,9 +1628,18 @@ TEST_CASE("Mouse input is ignored while an isearch session is active", "[BufferV
     view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
 
     view.OnEvent(ned::ui::test::Ctrl('s')); // start isearch-forward
-    view.OnEvent(MousePress(10, 0));
+    view.OnEvent(ned::ui::test::Character("f"));
+    view.OnEvent(ned::ui::test::Character("o"));
+    view.OnEvent(ned::ui::test::Character("x"));
+    REQUIRE(fixture.buffer.Point() == 19); // right after "fox"
 
-    REQUIRE(fixture.buffer.Point() == 0); // click did not move point mid-session
+    const int gutter = GutterWidth(1);
+    view.OnEvent(MousePress(gutter + 3, 0)); // click right after "the"
+    REQUIRE(fixture.buffer.Point() == 3);    // isearch ended and the click placed point, not the match position
+
+    // Back to normal editing: this must self-insert, not feed the search.
+    view.OnEvent(ned::ui::test::Character("!"));
+    REQUIRE(fixture.buffer.Text() == "the! quick brown fox");
 }
 
 TEST_CASE("The line-number gutter shows right-aligned, 1-indexed line numbers", "[BufferView]") {
