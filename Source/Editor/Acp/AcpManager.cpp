@@ -1,5 +1,6 @@
 #include "AcpManager.h"
 
+#include <algorithm>
 #include <fstream>
 #include <sstream>
 #include <string_view>
@@ -8,6 +9,7 @@
 
 #include "AcpConfig.h"
 #include "Editor/BackgroundActivity.h"
+#include "Editor/Backup.h"
 #include "Editor/ProjectRoot.h"
 #include "Editor/WrapOverrides.h"
 #include "Text/Buffer.h"
@@ -351,6 +353,26 @@ std::string AcpManager::SendPrompt(const std::string& text) {
     }
     AppendToOutputBuffer("\n> " + text + "\n");
     PushTranscriptEntry(TranscriptEntry{.kind = TranscriptEntry::Kind::UserMessage, .text = text});
+    // ACP checkpoint/rewind follow-up: opens this turn's checkpoint,
+    // finalized by FinalizePendingCheckpoint once its response arrives
+    // (below) or the session ends mid-turn (EndSession). A single-line,
+    // length-capped preview -- the transcript's own UserMessage entry above
+    // keeps the real text verbatim, this is only for the rewind picker's
+    // compact list.
+    {
+        std::string preview = text;
+        std::replace(preview.begin(), preview.end(), '\n', ' ');
+        constexpr std::size_t kMaxPreviewLength = 60;
+        if (preview.size() > kMaxPreviewLength) {
+            preview.resize(kMaxPreviewLength);
+            preview += "...";
+        }
+        pendingCheckpoint_ = Checkpoint{
+            .transcriptIndex = transcript_.size() - 1,
+            .promptPreview   = std::move(preview),
+            .timestamp       = std::chrono::system_clock::now(),
+        };
+    }
     // chat-feel follow-up: the only on-screen change between hitting Enter
     // and the first agent_message_chunk used to be nothing at all -- reads
     // as "did this hang?" for however long the agent takes to say anything.
@@ -366,6 +388,7 @@ std::string AcpManager::SendPrompt(const std::string& text) {
         [this](std::optional<Json> result, std::optional<Json> error) {
             promptInFlight_ = false;
             editor::EndBackgroundActivity(kAcpActivity);
+            FinalizePendingCheckpoint();
             if (error) {
                 const std::string message = "error: " + error->value("message", std::string("prompt failed"));
                 AppendToOutputBuffer("\n[" + message + "]\n");
@@ -429,6 +452,95 @@ bool AcpManager::PromptInFlight() const {
     return promptInFlight_;
 }
 
+void AcpManager::RecordCheckpointFileEdit(text::Buffer& buffer, const std::filesystem::path& path, std::size_t beforeSequence) {
+    if (!pendingCheckpoint_) {
+        return;
+    }
+    // A second (or later) write to the same path within one turn extends
+    // the existing record's afterSequence rather than adding a duplicate --
+    // beforeSequence must stay the sequence from *before this turn's first*
+    // write to it, not this write's own.
+    for (CheckpointFileRecord& record : pendingCheckpoint_->fileRecords) {
+        if (record.path == path) {
+            record.afterSequence = buffer.CurrentUndoSequence();
+            return;
+        }
+    }
+    pendingCheckpoint_->fileRecords.push_back(CheckpointFileRecord{
+        .path           = path,
+        .beforeSequence = beforeSequence,
+        .afterSequence  = buffer.CurrentUndoSequence(),
+    });
+}
+
+void AcpManager::FinalizePendingCheckpoint() {
+    if (pendingCheckpoint_) {
+        checkpoints_.push_back(std::move(*pendingCheckpoint_));
+        pendingCheckpoint_.reset();
+    }
+}
+
+std::size_t AcpManager::CheckpointCount() const {
+    return checkpoints_.size();
+}
+
+const AcpManager::Checkpoint& AcpManager::CheckpointAt(std::size_t index) const {
+    return checkpoints_.at(index);
+}
+
+AcpManager::RewindOutcome AcpManager::RewindTo(std::size_t index) {
+    RewindOutcome outcome;
+    if (index >= checkpoints_.size()) {
+        return outcome;
+    }
+    outcome.description  = checkpoints_[index].promptPreview;
+    outcome.turnsRewound = checkpoints_.size() - index;
+
+    // Newest-first: a file touched by more than one of the turns being
+    // rewound is walked back one hop at a time, so an intermediate turn's
+    // own beforeSequence/afterSequence pair still has to match up with its
+    // neighbor for the chain to continue -- exactly ProjectUndoManager's own
+    // divergence check, just applied repeatedly instead of once.
+    for (std::size_t i = checkpoints_.size(); i-- > index;) {
+        for (const CheckpointFileRecord& record : checkpoints_[i].fileRecords) {
+            text::Buffer* buffer = bufferList_.FindByPath(record.path);
+            if (!buffer) {
+                outcome.untrackedFiles.push_back(record.path.string());
+                continue;
+            }
+            if (buffer->CurrentUndoSequence() != record.afterSequence) {
+                outcome.divergedFiles.push_back(record.path.string());
+                continue;
+            }
+            if (buffer->TryJumpToUndoSequence(record.beforeSequence)) {
+                outcome.revertedFiles.push_back(record.path.string());
+            }
+        }
+        for (const std::filesystem::path& path : checkpoints_[i].untrackedPaths) {
+            outcome.untrackedFiles.push_back(path.string());
+        }
+    }
+
+    const std::size_t truncateAt = checkpoints_[index].transcriptIndex;
+    if (truncateAt < transcript_.size()) {
+        transcript_.erase(transcript_.begin() + static_cast<std::ptrdiff_t>(truncateAt), transcript_.end());
+        ++transcriptGeneration_;
+    }
+    checkpoints_.erase(checkpoints_.begin() + static_cast<std::ptrdiff_t>(index), checkpoints_.end());
+    livePlanEntryIndex_.reset(); // may have pointed past the new tail
+
+    std::string summary = "rewound " + std::to_string(outcome.turnsRewound) + " turn(s) to before \"" + outcome.description +
+                          "\" -- " + std::to_string(outcome.revertedFiles.size()) + " file(s) reverted";
+    if (!outcome.divergedFiles.empty()) {
+        summary += ", " + std::to_string(outcome.divergedFiles.size()) + " skipped (edited since)";
+    }
+    if (!outcome.untrackedFiles.empty()) {
+        summary += ", " + std::to_string(outcome.untrackedFiles.size()) + " unaffected (not open in ned -- see backup history)";
+    }
+    PushSessionEvent(summary);
+    return outcome;
+}
+
 void AcpManager::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
     if (client_ && !pendingPermissionPrompt_) {
         client_->ExpireStaleRequests(maxAge);
@@ -467,6 +579,20 @@ void AcpManager::WireClient(AcpClient& client) {
             respond(std::nullopt, Json{{"code", 1}, {"message", "missing path"}});
             return;
         }
+        // ACP checkpoint/rewind follow-up: captured before the write lands,
+        // so a buffer already open in ned can be jumped straight back to
+        // this exact undo node later -- see RecordCheckpointFileEdit. A
+        // buffer not currently open can't be undo-tracked at all; the best
+        // this can do for it is preserve the prior on-disk content as a
+        // Backup.h version before it's clobbered below, for manual recovery.
+        text::Buffer*              buffer = bufferList_.FindByPath(pathStr);
+        std::optional<std::size_t> beforeSequence;
+        if (buffer && !buffer->IsLoading()) {
+            beforeSequence = buffer->CurrentUndoSequence();
+        }
+        else if (pendingCheckpoint_) {
+            editor::BackupFileBeforeSave(pathStr);
+        }
         try {
             WriteFileAtomically(pathStr, content);
         }
@@ -479,7 +605,7 @@ void AcpManager::WireClient(AcpClient& client) {
         // situation AutoRevert/AutoMerge already solve, so reuse their own
         // gating (unmodified -> Revert, modified -> three-way
         // MergeExternalChanges) for this one buffer instead of new logic.
-        if (text::Buffer* buffer = bufferList_.FindByPath(pathStr); buffer && !buffer->IsLoading()) {
+        if (buffer && !buffer->IsLoading()) {
             try {
                 if (buffer->Modified()) {
                     (void)buffer->MergeExternalChanges();
@@ -491,6 +617,14 @@ void AcpManager::WireClient(AcpClient& client) {
             catch (const std::exception&) {
                 // Best-effort: the disk write itself already succeeded, so
                 // the agent's request is answered as successful regardless.
+            }
+        }
+        if (pendingCheckpoint_) {
+            if (buffer && beforeSequence) {
+                RecordCheckpointFileEdit(*buffer, pathStr, *beforeSequence);
+            }
+            else if (!buffer) {
+                pendingCheckpoint_->untrackedPaths.emplace_back(pathStr);
             }
         }
         respond(Json::object(), std::nullopt);
@@ -582,6 +716,7 @@ void AcpManager::EndSession(std::string reason) {
         // else would ever end this spinner.
         promptInFlight_ = false;
         editor::EndBackgroundActivity(kAcpActivity);
+        FinalizePendingCheckpoint();
     }
     sessionId_.clear();
     pendingPermissionPrompt_.reset();

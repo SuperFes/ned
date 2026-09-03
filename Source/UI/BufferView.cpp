@@ -852,6 +852,10 @@ void BufferView::SetOnAcpPanelToggle(std::function<void()> handler) {
     onAcpPanelToggle_ = std::move(handler);
 }
 
+void BufferView::SetOnAcpRewindRequest(std::function<void()> handler) {
+    onAcpRewindRequest_ = std::move(handler);
+}
+
 void BufferView::SetOnDapConsoleToggle(std::function<void()> handler) {
     onDapConsoleToggle_ = std::move(handler);
 }
@@ -7342,6 +7346,23 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             // only forward.
             if (onAcpPanelToggle_) {
                 onAcpPanelToggle_();
+            }
+            return;
+        case editor::InteractiveRequest::AcpRewind:
+            // ACP checkpoint/rewind follow-up: one-shot direct action, same
+            // "just forward, the target lives above this class" shape as
+            // AcpTogglePanel immediately above -- the picker itself lives in
+            // AcpPanel. Refused while a prompt is in flight: the agent could
+            // still be mid-write, and rewinding out from under that would
+            // race the very undo-sequence bookkeeping RewindTo relies on.
+            if (!acpManager_) {
+                statusMessage_ = "No ACP manager available.";
+            }
+            else if (acpManager_->PromptInFlight()) {
+                statusMessage_ = "Can't rewind while a prompt is in flight.";
+            }
+            else if (onAcpRewindRequest_) {
+                onAcpRewindRequest_();
             }
             return;
         // VCS blame gutter follow-up: one-shot direct actions, same shape

@@ -39,6 +39,7 @@
 #define NED_EDITOR_ACP_ACPMANAGER_H
 
 #include <chrono>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -177,6 +178,62 @@ class AcpManager {
     // no other on-screen change.
     [[nodiscard]] bool PromptInFlight() const;
 
+    // ACP checkpoint/rewind follow-up. One user turn's worth of file-edit
+    // bookkeeping, captured across the whole session/prompt round trip
+    // (SendPrompt -> the fs/write_text_file calls it provokes -> the
+    // session/prompt response). Deliberately independent of Editor/
+    // ProjectUndo.h's own transaction stack -- that one is shared with plain
+    // per-buffer undo/redo (C-_/M-/) and LSP multi-file edits, and folding
+    // ACP turns into the same LIFO would make "jump to an arbitrary earlier
+    // turn" (not just "one step back from the top") impossible to express
+    // cleanly. Instead this keeps its own ordered history, walked directly
+    // via Buffer::CurrentUndoSequence()/TryJumpToUndoSequence() -- the same
+    // primitives ProjectUndoManager itself is built on.
+    struct CheckpointFileRecord {
+        std::filesystem::path path;
+        std::size_t           beforeSequence = 0;
+        std::size_t           afterSequence  = 0;
+    };
+    struct Checkpoint {
+        std::size_t                           transcriptIndex = 0; // index of this turn's own UserMessage entry
+        std::string                           promptPreview;       // single-line, length-capped prompt text
+        std::chrono::system_clock::time_point timestamp;
+        std::vector<CheckpointFileRecord>     fileRecords;    // buffers open in ned during this turn -- fully rewindable
+        std::vector<std::filesystem::path>    untrackedPaths; // written by the agent but never open in ned -- only a
+                                                              // Backup.h version (if any) can recover these
+    };
+    [[nodiscard]] std::size_t CheckpointCount() const;
+    // index 0 = oldest turn. An out-of-range index is a caller-contract
+    // violation (AcpPanel's own picker only ever iterates
+    // 0..CheckpointCount()-1) -- throws std::out_of_range, matching
+    // std::vector::at.
+    [[nodiscard]] const Checkpoint& CheckpointAt(std::size_t index) const;
+
+    struct RewindOutcome {
+        std::string              description; // the target turn's own prompt preview, for a confirmation message
+        std::size_t              turnsRewound = 0;
+        std::vector<std::string> revertedFiles;
+        std::vector<std::string> divergedFiles;  // edited again since this turn -- left untouched
+        std::vector<std::string> untrackedFiles; // never tracked (closed, or never open in ned) -- unaffected
+    };
+    // Rewinds to right before the turn at checkpoints index `index`: every
+    // checkpoint from the most recent back through (and including) `index`
+    // is walked newest-first, each buffer still open and undiverged since
+    // (CurrentUndoSequence() still equals what that turn's own afterSequence
+    // recorded) is jumped back to beforeSequence; the transcript is then
+    // truncated back to that turn's own UserMessage entry (removed along
+    // with everything after it -- linear history, not a tree: this doesn't
+    // attempt to keep the discarded turns re-reachable, matching Claude
+    // Code's own rewind model), and every checkpoint from `index` onward is
+    // dropped. A SessionEvent summarizing the outcome is pushed as the new
+    // transcript tail. Deliberately does not touch the agent's own
+    // server-side memory of the discarded turns -- ACP has no
+    // session/truncate-equivalent call yet (see ROADMAP.md's "AI-assisted
+    // editing (ACP) gaps" entry); the agent may still recall what was
+    // rewound on its next reply. A no-op (default-constructed outcome) if
+    // `index` is out of range.
+    RewindOutcome RewindTo(std::size_t index);
+
     // subprocess-hang-protection follow-up. A no-op if no session is active;
     // otherwise forwards to the live client_'s own ExpireStaleRequests. See
     // LspManager::ExpireStaleRequests's identical wiring/reasoning -- meant
@@ -259,6 +316,18 @@ class AcpManager {
     void PushSessionEvent(std::string text);
     void NotifyTranscriptChanged();
 
+    // ACP checkpoint/rewind follow-up. Records/updates pendingCheckpoint_'s
+    // entry for `path` -- called from the fs/write_text_file handler with
+    // `buffer`'s CurrentUndoSequence() captured immediately before that
+    // write was applied. A safe no-op if no turn is currently pending (a
+    // tool call arriving outside an in-flight SendPrompt shouldn't happen,
+    // but this stays defensive rather than assuming it can't).
+    void RecordCheckpointFileEdit(text::Buffer& buffer, const std::filesystem::path& path, std::size_t beforeSequence);
+    // Moves pendingCheckpoint_ (if any) onto checkpoints_ -- called once a
+    // turn's own session/prompt response arrives (success, error, or a
+    // session tearing down mid-turn), never mid-turn.
+    void FinalizePendingCheckpoint();
+
     text::BufferList&   bufferList_;
     ned::ui::EventLoop& eventLoop_;
 
@@ -277,6 +346,16 @@ class AcpManager {
     std::vector<TranscriptEntry> transcript_;
     std::size_t                  transcriptGeneration_ = 0;
     std::optional<std::size_t>   livePlanEntryIndex_; // index into transcript_, reset on EndSession
+
+    // ACP checkpoint/rewind follow-up. pendingCheckpoint_ accumulates the
+    // in-flight turn's file edits (started in SendPrompt, finalized by
+    // FinalizePendingCheckpoint into checkpoints_ once that turn's
+    // session/prompt response arrives); checkpoints_ itself persists across
+    // StartSession/EndSession, matching transcript_'s own "never cleared"
+    // lifetime, so a rewind can still reach a turn from an earlier session
+    // in this same process.
+    std::vector<Checkpoint>      checkpoints_;
+    std::optional<Checkpoint>    pendingCheckpoint_;
     std::function<void()>        onTranscriptChanged_;
     // ACP chat-feel round 2: coalesces the UI-facing onTranscriptChanged_
     // callback while a reply streams in token-by-token -- transcript_/

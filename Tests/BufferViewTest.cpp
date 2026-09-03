@@ -4635,13 +4635,13 @@ TEST_CASE("M-x prompts for a command name, listing every command alphabetically 
 
     REQUIRE(fixture.statusMessage == "M-x ");
     // Display is capped to kMaxPopupRows (see BuildFuzzyCandidatePopupModel)
-    // -- "acp-send-prompt" is alphabetically first among registered commands
-    // (was "add-cursor-above", before that "backward-char" -- the ACP
-    // client slice 2 follow-up added three "acp-*" commands sorting ahead
-    // of it, the same shift its own comment already anticipated happening
-    // again), so it's always within that window regardless of how many
-    // other commands exist.
-    REQUIRE(CandidateSelected(fixture.candidates, "acp-send-prompt"));
+    // -- "acp-rewind" is alphabetically first among registered commands (was
+    // "acp-send-prompt", before that "add-cursor-above", before that
+    // "backward-char" -- the ACP checkpoint/rewind follow-up added
+    // "acp-rewind" sorting ahead of "acp-send-prompt", the same shift this
+    // comment already anticipated happening again), so it's always within
+    // that window regardless of how many other commands exist.
+    REQUIRE(CandidateSelected(fixture.candidates, "acp-rewind"));
     REQUIRE(CandidatesHaveMoreTail(fixture.candidates)); // more than kMaxPopupRows commands are registered
 }
 
