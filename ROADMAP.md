@@ -236,11 +236,17 @@ Notcurses.
   still load, one malformed entry skipped rather than discarding the file. `verified`/
   `actualLine` deliberately still don't round-trip (live-adapter-derived, meaningless
   before a session reconnects) — see `git log --grep=session-persistence-round-2`.
+- Debug console history search (`Editor/LineListSearch.h`, `IncrementalSearch.h`'s
+  shape adapted to a plain line list instead of a `text::Buffer`) and disassembly/memory
+  view (`dap-show-disassembly`/`dap-show-memory-at-point`, DAP's own `disassemble`/
+  `readMemory` requests, a `[mem:<ref>]` fourth marker alongside `FormatDebugVariableLine`'s
+  `[ref:N]`/`[owner:M]`) closed 2026-09-03 — see `git log --grep=debug-console-search`,
+  `--grep=dap-round-5`.
 - [ ] **DAP gaps, remainder**: thread focus deliberately excluded even if this is
       revisited -- a fresh session has entirely new thread IDs, nothing meaningful to
-      reattach it to; debug console has no search over its own history (no established
-      "search a list of lines" pattern to reuse, and neither sibling overlay panel has
-      one either); no disassembly/memory view (2026-08-25 audit, updated 2026-09-03).
+      reattach it to. Data breakpoints (tied to a live variable rather than a source
+      line) also stay out -- no natural entry point yet, same reasoning as round 3's
+      own note above.
 - [ ] **No server/daemon mode** — no `emacsclient`-equivalent; one process per terminal,
       no way to keep a warm process (buffers, LSP connections, undo history) alive and
       attach a new terminal client to it.

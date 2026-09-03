@@ -559,6 +559,7 @@ add_library(ned_lib STATIC
         Source/Editor/Commands.cpp
         Source/Editor/ScriptingSession.cpp
         Source/Editor/IncrementalSearch.cpp
+        Source/Editor/LineListSearch.cpp
         Source/Editor/PrefixArgument.cpp
         Source/Editor/QueryReplace.cpp
         Source/Editor/RegexPattern.cpp
@@ -925,6 +926,7 @@ if (NED_BUILD_TESTS)
             Tests/EchoAreaTest.cpp
             Tests/Utf8Test.cpp
             Tests/IncrementalSearchTest.cpp
+            Tests/LineListSearchTest.cpp
             Tests/PrefixArgumentTest.cpp
             Tests/QueryReplaceTest.cpp
             Tests/RegexPatternTest.cpp

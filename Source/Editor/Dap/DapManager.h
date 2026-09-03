@@ -35,6 +35,7 @@
 
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <map>
@@ -276,6 +277,11 @@ class DapManager {
         std::string                          name;
         std::optional<std::filesystem::path> path;
         std::size_t                          line = 0; // 1-based, valid only when path is set
+        // DAP round 5 (disassembly): the frame's own instruction pointer, as
+        // an opaque adapter-owned address string -- empty when the adapter
+        // didn't send one (older adapters, or a frame with no real machine
+        // address). Fed straight into RequestDisassembly, never parsed.
+        std::string instructionPointerReference;
     };
     void RequestStackTrace(std::function<void(std::vector<StackFrame>)> callback);
 
@@ -290,8 +296,43 @@ class DapManager {
         std::string value;
         std::string type;                   // empty if the adapter sent none
         int         variablesReference = 0; // > 0 means expandable (a composite) via RequestVariables
+        // DAP round 5 (memory view): an opaque adapter-owned address string
+        // for this variable's storage, empty when the adapter didn't send
+        // one (most variables -- only pointer/array-shaped ones typically
+        // carry one). Fed straight into RequestMemory, never parsed.
+        std::string memoryReference;
     };
     void RequestVariables(int variablesReference, std::function<void(std::vector<Variable>)> callback);
+
+    // DAP round 5: one disassembled instruction, backing dap-show-disassembly.
+    struct DisassembledInstruction {
+        std::string                          address;          // adapter's own opaque address string
+        std::string                          instructionBytes; // may be empty -- adapter-optional
+        std::string                          instruction;
+        std::optional<std::filesystem::path> path;
+        std::size_t                          line = 0; // 1-based, valid only when path is set
+    };
+    // Sends DAP's `disassemble` request against memoryReference (typically a
+    // StackFrame's own instructionPointerReference). instructionOffset may
+    // be negative (instructions before memoryReference) -- the adapter's own
+    // convention for windowing around an address rather than only forward
+    // from it. Graceful [] on no session/adapter error/empty memoryReference,
+    // same convention as every other Request* method.
+    void RequestDisassembly(const std::string& memoryReference, long instructionOffset, int instructionCount,
+                            std::function<void(std::vector<DisassembledInstruction>)> callback);
+
+    // DAP round 5: one `readMemory` response, backing dap-show-memory-at-point.
+    struct MemoryBlock {
+        std::string               address;
+        std::vector<std::uint8_t> data;
+        std::size_t               unreadableBytes = 0;
+    };
+    // Sends DAP's `readMemory` request against memoryReference (typically a
+    // Variable's own memoryReference). callback(success, block) -- graceful
+    // {false, {}} on no session/adapter error/empty memoryReference/capability
+    // absent, same convention as SetVariable's own success flag.
+    void RequestMemory(const std::string& memoryReference, long offset, std::size_t count,
+                       std::function<void(bool success, MemoryBlock)> callback);
 
     // Slice 3: one-shot expression evaluation, against the stopped top
     // frame when there is one. callback(success, text) -- text is the
@@ -457,6 +498,9 @@ class DapManager {
         bool functionBreakpoints       = false;
         // DAP round 4.
         bool restartFrame = false;
+        // DAP round 5.
+        bool disassemble = false;
+        bool readMemory  = false;
     };
     Capabilities capabilities_;
 

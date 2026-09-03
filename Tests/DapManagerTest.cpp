@@ -821,3 +821,171 @@ TEST_CASE("SendBreakpointsForFile's response records the adapter's snapped actua
     REQUIRE(afterResponse[0].actualLine == 5); // where it actually landed
     SetDapLaunchConfig("dap-manager-test-actual-line", "");
 }
+
+TEST_CASE("StackTrace/Variables parse instructionPointerReference/memoryReference when the adapter sends them",
+          "[Dap]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartRunningSession("dap-manager-test-round5-references");
+
+    fixture.client->DispatchFrame(EventFrame("stopped", Json{{"reason", "breakpoint"}, {"threadId", 1}}));
+    const Json autoStackTrace = fixture.reader.Next();
+    fixture.client->DispatchFrame(ResponseFrame(
+        autoStackTrace["seq"].get<int>(), "stackTrace", true,
+        Json{{"stackFrames", Json::array({Json{{"id", 1}, {"name", "main"}, {"instructionPointerReference", "0x1000"}},
+                                          Json{{"id", 2}, {"name", "caller"}}})}}));
+
+    std::vector<DapManager::StackFrame> frames;
+    fixture.manager.RequestStackTrace([&](std::vector<DapManager::StackFrame> result) { frames = std::move(result); });
+    const Json stackTrace = fixture.reader.Next();
+    fixture.client->DispatchFrame(ResponseFrame(
+        stackTrace["seq"].get<int>(), "stackTrace", true,
+        Json{{"stackFrames", Json::array({Json{{"id", 1}, {"name", "main"}, {"instructionPointerReference", "0x1000"}},
+                                          Json{{"id", 2}, {"name", "caller"}}})}}));
+    REQUIRE(frames.size() == 2);
+    REQUIRE(frames[0].instructionPointerReference == "0x1000");
+    REQUIRE(frames[1].instructionPointerReference.empty()); // adapter sent none for this frame
+
+    std::vector<DapManager::Variable> variables;
+    fixture.manager.RequestVariables(100, [&](std::vector<DapManager::Variable> result) { variables = std::move(result); });
+    const Json variablesRequest = fixture.reader.Next();
+    fixture.client->DispatchFrame(ResponseFrame(
+        variablesRequest["seq"].get<int>(), "variables", true,
+        Json{{"variables", Json::array({Json{{"name", "p"}, {"value", "0x2000"}, {"memoryReference", "0x2000"}},
+                                        Json{{"name", "x"}, {"value", "1"}}})}}));
+    REQUIRE(variables.size() == 2);
+    REQUIRE(variables[0].memoryReference == "0x2000");
+    REQUIRE(variables[1].memoryReference.empty()); // adapter sent none for this variable
+    SetDapLaunchConfig("dap-manager-test-round5-references", "");
+}
+
+TEST_CASE("StartOrContinue parses disassemble/readMemory capabilities from the initialize response", "[Dap]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    SetDapLaunchConfig("dap-manager-test-round5-capabilities", R"({"program": "./fake"})");
+    fixture.manager.StartOrContinue("dap-manager-test-round5-capabilities");
+    const Json initialize = fixture.reader.Next();
+    fixture.client->DispatchFrame(ResponseFrame(initialize["seq"].get<int>(), "initialize", true,
+                                                Json{{"supportsDisassembleRequest", true}, {"supportsReadMemoryRequest", false}}));
+    fixture.reader.Next(); // launch
+    // No public accessor exists for these (same as setVariable/
+    // functionBreakpoints capabilities) -- this test only pins that parsing
+    // the two new fields doesn't throw/crash on a well-formed response.
+    SetDapLaunchConfig("dap-manager-test-round5-capabilities", "");
+}
+
+TEST_CASE("RequestDisassembly sends disassemble with the given window and parses instructions", "[Dap]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartRunningSession("dap-manager-test-disassemble");
+    fixture.client->DispatchFrame(EventFrame("stopped", Json{{"reason", "breakpoint"}, {"threadId", 1}}));
+    const Json autoStackTrace = fixture.reader.Next();
+    fixture.client->DispatchFrame(
+        ResponseFrame(autoStackTrace["seq"].get<int>(), "stackTrace", true, Json{{"stackFrames", Json::array()}}));
+
+    std::vector<DapManager::DisassembledInstruction> instructions;
+    fixture.manager.RequestDisassembly("0x1000", -2, 4,
+                                       [&](std::vector<DapManager::DisassembledInstruction> result) { instructions = std::move(result); });
+    const Json disassemble = fixture.reader.Next();
+    REQUIRE(disassemble["command"] == "disassemble");
+    REQUIRE(disassemble["arguments"]["memoryReference"] == "0x1000");
+    REQUIRE(disassemble["arguments"]["instructionOffset"] == -2);
+    REQUIRE(disassemble["arguments"]["instructionCount"] == 4);
+
+    fixture.client->DispatchFrame(ResponseFrame(
+        disassemble["seq"].get<int>(), "disassemble", true,
+        Json{{"instructions", Json::array({Json{{"address", "0xffe"}, {"instructionBytes", "90"}, {"instruction", "nop"}},
+                                           Json{{"address", "0x1000"},
+                                                {"instruction", "call foo"},
+                                                {"location", Json{{"path", "/tmp/dap-test.c"}}},
+                                                {"line", 12}}})}}));
+    REQUIRE(instructions.size() == 2);
+    REQUIRE(instructions[0].address == "0xffe");
+    REQUIRE(instructions[0].instructionBytes == "90");
+    REQUIRE_FALSE(instructions[0].path.has_value());
+    REQUIRE(instructions[1].instruction == "call foo");
+    REQUIRE(instructions[1].path.has_value());
+    REQUIRE(*instructions[1].path == std::filesystem::path("/tmp/dap-test.c"));
+    REQUIRE(instructions[1].line == 12);
+    SetDapLaunchConfig("dap-manager-test-disassemble", "");
+}
+
+TEST_CASE("RequestDisassembly is a graceful no-op without a stopped session", "[Dap]") {
+    ned::ui::EventLoop eventLoop;
+    DapManager         manager(eventLoop);
+    bool               called = false;
+    manager.RequestDisassembly("0x1000", 0, 4, [&](std::vector<DapManager::DisassembledInstruction> result) {
+        called = true;
+        REQUIRE(result.empty());
+    });
+    REQUIRE(called);
+}
+
+TEST_CASE("RequestMemory sends readMemory and base64-decodes the response data", "[Dap]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartRunningSession("dap-manager-test-read-memory");
+    fixture.client->DispatchFrame(EventFrame("stopped", Json{{"reason", "breakpoint"}, {"threadId", 1}}));
+    const Json autoStackTrace = fixture.reader.Next();
+    fixture.client->DispatchFrame(
+        ResponseFrame(autoStackTrace["seq"].get<int>(), "stackTrace", true, Json{{"stackFrames", Json::array()}}));
+
+    bool                    called = false;
+    DapManager::MemoryBlock block;
+    fixture.manager.RequestMemory("0x2000", 0, 4, [&](bool success, DapManager::MemoryBlock result) {
+        called = true;
+        REQUIRE(success);
+        block = std::move(result);
+    });
+    const Json readMemory = fixture.reader.Next();
+    REQUIRE(readMemory["command"] == "readMemory");
+    REQUIRE(readMemory["arguments"]["memoryReference"] == "0x2000");
+    REQUIRE(readMemory["arguments"]["offset"] == 0);
+    REQUIRE(readMemory["arguments"]["count"] == 4);
+
+    // "AQIDBA==" is the base64 encoding of bytes {1, 2, 3, 4}.
+    fixture.client->DispatchFrame(
+        ResponseFrame(readMemory["seq"].get<int>(), "readMemory", true, Json{{"address", "0x2000"}, {"data", "AQIDBA=="}}));
+    REQUIRE(called);
+    REQUIRE(block.address == "0x2000");
+    REQUIRE(block.data == std::vector<std::uint8_t>{1, 2, 3, 4});
+    REQUIRE(block.unreadableBytes == 0);
+    SetDapLaunchConfig("dap-manager-test-read-memory", "");
+}
+
+TEST_CASE("RequestMemory reports a fully-unreadable range as success with empty data", "[Dap]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartRunningSession("dap-manager-test-read-memory-unreadable");
+    fixture.client->DispatchFrame(EventFrame("stopped", Json{{"reason", "breakpoint"}, {"threadId", 1}}));
+    const Json autoStackTrace = fixture.reader.Next();
+    fixture.client->DispatchFrame(
+        ResponseFrame(autoStackTrace["seq"].get<int>(), "stackTrace", true, Json{{"stackFrames", Json::array()}}));
+
+    bool                    called = false;
+    DapManager::MemoryBlock block;
+    fixture.manager.RequestMemory("0xdead", 0, 8, [&](bool success, DapManager::MemoryBlock result) {
+        called = true;
+        REQUIRE(success);
+        block = std::move(result);
+    });
+    const Json readMemory = fixture.reader.Next();
+    fixture.client->DispatchFrame(ResponseFrame(readMemory["seq"].get<int>(), "readMemory", true,
+                                                Json{{"address", "0xdead"}, {"unreadableBytes", 8}}));
+    REQUIRE(called);
+    REQUIRE(block.data.empty());
+    REQUIRE(block.unreadableBytes == 8);
+    SetDapLaunchConfig("dap-manager-test-read-memory-unreadable", "");
+}
+
+TEST_CASE("RequestMemory is a graceful failure without a stopped session", "[Dap]") {
+    ned::ui::EventLoop eventLoop;
+    DapManager         manager(eventLoop);
+    bool               called = false;
+    manager.RequestMemory("0x1000", 0, 4, [&](bool success, DapManager::MemoryBlock result) {
+        called = true;
+        REQUIRE_FALSE(success);
+        REQUIRE(result.data.empty());
+    });
+    REQUIRE(called);
+}

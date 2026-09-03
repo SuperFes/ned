@@ -4158,6 +4158,7 @@ bool BufferView::OnKeyEvent(const Event& event) {
         inputMode_ == InputMode::DapBreakpointCondition || inputMode_ == InputMode::DapBreakpointLogMessage ||
         inputMode_ == InputMode::DapAddWatch || inputMode_ == InputMode::DapSetVariableValue ||
         inputMode_ == InputMode::DapBreakpointHitCondition || inputMode_ == InputMode::DapFunctionBreakpointName ||
+        inputMode_ == InputMode::DapMemoryByteCount ||
         // editor-ergonomics follow-up: BookmarkSetName is a plain-text
         // prompt too, TaskName/GotoLine's own shape.
         inputMode_ == InputMode::BookmarkSetName ||
@@ -7327,6 +7328,22 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
                 RestartFrameAtPoint();
             }
             return;
+        case editor::InteractiveRequest::DapShowDisassembly:
+            if (!dapManager_) {
+                statusMessage_ = "No debugger available.";
+            }
+            else {
+                ShowDisassemblyAtPoint();
+            }
+            return;
+        case editor::InteractiveRequest::DapShowMemoryAtPoint:
+            if (!dapManager_) {
+                statusMessage_ = "No debugger available.";
+            }
+            else {
+                ShowMemoryAtPoint();
+            }
+            return;
         case editor::InteractiveRequest::DapEvaluate:
             if (!dapManager_) {
                 statusMessage_ = "No debugger available.";
@@ -8374,6 +8391,8 @@ std::string_view BufferView::HistoryKeyForInputMode(InputMode mode) {
             return "dap-breakpoint-hit-condition";
         case InputMode::DapFunctionBreakpointName:
             return "dap-function-breakpoint-name";
+        case InputMode::DapMemoryByteCount:
+            return "dap-memory-byte-count";
         case InputMode::VcsCreateBranch:
             return "vcs-create-branch";
         case InputMode::AcpPromptText:
@@ -8768,6 +8787,36 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
             }
             pendingDapSetVariable_.reset();
         }
+        else if (inputMode_ == InputMode::DapMemoryByteCount) {
+            if (!dapManager_ || !pendingDapMemoryReference_) {
+                statusMessage_ = "No debugger available.";
+            }
+            else {
+                std::size_t count = 128; // DAP round 5's default -- enough for most pointer/array previews
+                if (!input.empty()) {
+                    try {
+                        const long parsed = std::stol(input);
+                        if (parsed > 0) {
+                            count = static_cast<std::size_t>(parsed);
+                        }
+                    }
+                    catch (const std::exception&) {
+                        // Keep the default -- an unparsable count isn't worth failing the request over.
+                    }
+                }
+                const std::string memoryReference = *pendingDapMemoryReference_;
+                statusMessage_                    = "Fetching memory...";
+                dapManager_->RequestMemory(memoryReference, 0, count,
+                                           [this, memoryReference](bool success, editor::dap::DapManager::MemoryBlock block) {
+                                               if (!success) {
+                                                   statusMessage_ = "Read memory failed (adapter may not support readMemory).";
+                                                   return;
+                                               }
+                                               BuildMemoryBuffer(memoryReference, block);
+                                           });
+            }
+            pendingDapMemoryReference_.reset();
+        }
         else if (inputMode_ == InputMode::VcsCreateBranch) {
             if (input.empty()) {
                 statusMessage_ = "No branch name given.";
@@ -8916,6 +8965,10 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
             case InputMode::DapFunctionBreakpointName:
                 label = "Function breakpoint name";
                 break;
+            case InputMode::DapMemoryByteCount:
+                label = "Memory byte count";
+                pendingDapMemoryReference_.reset();
+                break;
             case InputMode::VcsCreateBranch:
                 label = "Create branch";
                 break;
@@ -8982,6 +9035,7 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
         inputMode_ != InputMode::DapBreakpointCondition && inputMode_ != InputMode::DapBreakpointLogMessage &&
         inputMode_ != InputMode::DapAddWatch && inputMode_ != InputMode::DapSetVariableValue &&
         inputMode_ != InputMode::DapBreakpointHitCondition && inputMode_ != InputMode::DapFunctionBreakpointName &&
+        inputMode_ != InputMode::DapMemoryByteCount &&
         inputMode_ != InputMode::GotoLine &&
         // dropdown-path-completion follow-up: Tab is fully handled by the
         // dedicated block above for these three (accept-highlighted, never
@@ -10248,14 +10302,18 @@ void BufferView::BuildResultsBuffer(const std::vector<editor::SearchMatch>& matc
 
 namespace {
 
-    // One *debug* buffer variable line: "  name: type = value  [ref:N] [owner:M]"
-    // -- "[ref:N]" only when the variable is composite (children fetchable
-    // via a variables request, ExpandVariableAtPoint's own marker), "[owner:M]"
-    // (round 2) whenever ownerRef is given: M is the variablesReference of the
+    // One *debug* buffer variable line:
+    // "  name: type = value  [ref:N] [owner:M] [mem:<ref>]" -- "[ref:N]" only
+    // when the variable is composite (children fetchable via a variables
+    // request, ExpandVariableAtPoint's own marker), "[owner:M]" (round 2)
+    // whenever ownerRef is given: M is the variablesReference of the
     // *container* (scope or parent composite) the variables request that
     // produced this line was made against -- what SetVariableAtPoint's
     // setVariable request needs, independent of and always present alongside
-    // an optional [ref:N].
+    // an optional [ref:N]. "[mem:<ref>]" (DAP round 5) whenever the adapter
+    // sent a memoryReference for this variable -- ShowMemoryAtPoint's own
+    // target marker, an opaque string rather than a small int like the other
+    // two (see DapManager::Variable::memoryReference's own doc comment).
     std::string FormatDebugVariableLine(const ned::editor::dap::DapManager::Variable& variable, std::size_t indent, int ownerRef) {
         std::string line(indent, ' ');
         line += variable.name;
@@ -10268,6 +10326,9 @@ namespace {
         }
         if (ownerRef > 0) {
             line += "  [owner:" + std::to_string(ownerRef) + "]";
+        }
+        if (!variable.memoryReference.empty()) {
+            line += "  [mem:" + variable.memoryReference + "]";
         }
         return line;
     }
@@ -10485,6 +10546,90 @@ void BufferView::RestartFrameAtPoint() {
     statusMessage_ = dapManager_->RestartFrame(frameId);
 }
 
+void BufferView::ShowDisassemblyAtPoint() {
+    text::Buffer&             buffer    = activeBuffer_.Get();
+    const text::ITextStorage& content   = buffer.Content();
+    const std::size_t         line      = content.ByteOffsetToLine(buffer.Point());
+    const std::size_t         lineStart = content.LineToByteOffset(line);
+    const std::size_t         lineEnd =
+        (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
+    const std::string lineText = content.Substring(lineStart, lineEnd - lineStart);
+
+    // "[frame:N]" is optional here (unlike RestartFrameAtPoint, which
+    // refuses without one) -- 0 means "no preference," falling back to the
+    // top stopped frame below.
+    const std::size_t markerPos        = lineText.rfind("[frame:");
+    int               requestedFrameId = 0;
+    if (markerPos != std::string::npos) {
+        try {
+            requestedFrameId = std::stoi(lineText.substr(markerPos + 7)); // stoi stops at the closing ']'
+        }
+        catch (const std::exception&) {
+            requestedFrameId = 0;
+        }
+    }
+
+    statusMessage_ = "Fetching instructions...";
+    dapManager_->RequestStackTrace([this, requestedFrameId](std::vector<editor::dap::DapManager::StackFrame> frames) {
+        if (frames.empty()) {
+            statusMessage_ = "No stack to disassemble (is the session stopped?).";
+            return;
+        }
+        const editor::dap::DapManager::StackFrame* target = &frames[0];
+        if (requestedFrameId != 0) {
+            for (const editor::dap::DapManager::StackFrame& frame : frames) {
+                if (frame.id == requestedFrameId) {
+                    target = &frame;
+                    break;
+                }
+            }
+        }
+        if (target->instructionPointerReference.empty()) {
+            statusMessage_ = "No instruction pointer for this frame (adapter didn't report one).";
+            return;
+        }
+        const std::string pcAddress = target->instructionPointerReference;
+        // A fixed, generous window centered on the PC -- ShowDebugInfo's own
+        // "one shot, re-invoke to refresh" model; no incremental paging.
+        dapManager_->RequestDisassembly(
+            pcAddress, -32, 64,
+            [this, pcAddress](std::vector<editor::dap::DapManager::DisassembledInstruction> instructions) {
+                if (instructions.empty()) {
+                    statusMessage_ = "No instructions returned (adapter may not support disassembly).";
+                    return;
+                }
+                BuildDisassemblyBuffer(instructions, pcAddress);
+            });
+    });
+}
+
+void BufferView::BuildDisassemblyBuffer(const std::vector<editor::dap::DapManager::DisassembledInstruction>& instructions,
+                                        const std::string&                                                   pcAddress) {
+    std::string text;
+    for (const editor::dap::DapManager::DisassembledInstruction& instruction : instructions) {
+        std::string line;
+        if (instruction.path) {
+            // The established "path:line: text" results convention, so
+            // C-c C-v (project-search-visit-result) jumps to a located
+            // instruction's source line with zero new navigation plumbing.
+            line += instruction.path->string() + ":" + std::to_string(instruction.line) + ": ";
+        }
+        line += (instruction.address == pcAddress) ? "-> " : "   ";
+        line += instruction.address;
+        if (!instruction.instructionBytes.empty()) {
+            line += "  " + instruction.instructionBytes;
+        }
+        line += "  " + instruction.instruction;
+        text += line + "\n";
+    }
+    text::Buffer& disassembly = bufferList_.CreateBuffer("*disassembly*");
+    disassembly.InsertAtPoint(text);
+    disassembly.SetPoint(0);
+    disassembly.SetReadOnly(true); // same tossable-read-only reasoning as BuildDebugBuffer
+    activeBuffer_.Set(disassembly);
+    statusMessage_ = "C-c C-v visits a located instruction's source line.";
+}
+
 void BufferView::RemoveWatchAtPoint() {
     text::Buffer&      buffer    = activeBuffer_.Get();
     const text::ITextStorage&  content   = buffer.Content();
@@ -10559,6 +10704,65 @@ void BufferView::SetVariableAtPoint() {
     inputMode_ = InputMode::DapSetVariableValue;
     prompt_.emplace("New value for " + name + ": ");
     statusMessage_ = prompt_->StatusText();
+}
+
+void BufferView::ShowMemoryAtPoint() {
+    text::Buffer&             buffer    = activeBuffer_.Get();
+    const text::ITextStorage& content   = buffer.Content();
+    const std::size_t         line      = content.ByteOffsetToLine(buffer.Point());
+    const std::size_t         lineStart = content.LineToByteOffset(line);
+    const std::size_t         lineEnd =
+        (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
+    const std::string lineText = content.Substring(lineStart, lineEnd - lineStart);
+
+    const std::size_t markerPos = lineText.rfind("[mem:");
+    const std::size_t closePos  = (markerPos == std::string::npos) ? std::string::npos : lineText.find(']', markerPos + 5);
+    if (markerPos == std::string::npos || closePos == std::string::npos) {
+        statusMessage_ = "No memory reference on this line.";
+        return;
+    }
+
+    pendingDapMemoryReference_ = lineText.substr(markerPos + 5, closePos - (markerPos + 5));
+    inputMode_                 = InputMode::DapMemoryByteCount;
+    prompt_.emplace("Byte count (default 128): ");
+    statusMessage_ = prompt_->StatusText();
+}
+
+void BufferView::BuildMemoryBuffer(const std::string& memoryReference, const editor::dap::DapManager::MemoryBlock& block) {
+    constexpr std::size_t kBytesPerRow = 16;
+
+    std::string text = "Memory at " + memoryReference;
+    if (!block.address.empty() && block.address != memoryReference) {
+        text += " (" + block.address + ")";
+    }
+    text += "\n";
+    for (std::size_t offset = 0; offset < block.data.size(); offset += kBytesPerRow) {
+        const std::size_t  rowLen = std::min(kBytesPerRow, block.data.size() - offset);
+        std::ostringstream row;
+        row << std::hex << std::setfill('0') << std::setw(8) << offset << "  ";
+        std::string ascii;
+        for (std::size_t i = 0; i < kBytesPerRow; ++i) {
+            if (i < rowLen) {
+                const auto byte = block.data[offset + i];
+                row << std::setw(2) << static_cast<unsigned>(byte) << ' ';
+                ascii += (byte >= 0x20 && byte < 0x7f) ? static_cast<char>(byte) : '.';
+            }
+            else {
+                row << "   ";
+            }
+        }
+        text += row.str() + " |" + ascii + "|\n";
+    }
+    if (block.unreadableBytes > 0) {
+        text += std::to_string(block.unreadableBytes) + " byte(s) unreadable.\n";
+    }
+
+    text::Buffer& memory = bufferList_.CreateBuffer("*memory*");
+    memory.InsertAtPoint(text);
+    memory.SetPoint(0);
+    memory.SetReadOnly(true); // same tossable-read-only reasoning as BuildDebugBuffer
+    activeBuffer_.Set(memory);
+    statusMessage_.clear();
 }
 
 void BufferView::BeginDapThreadSelect() {

@@ -8,6 +8,54 @@
 
 namespace ned::editor::dap {
 
+namespace {
+
+    // DAP round 5: readMemory's response `data` field is base64. No shared
+    // base64 helper exists in this codebase -- Clipboard.cpp keeps its own
+    // file-local Base64Encode, not exported -- so this is this file's own
+    // decoder, same "each consumer keeps its own" precedent.
+    std::vector<std::uint8_t> Base64Decode(std::string_view text) {
+        auto valueOf = [](char c) -> int {
+            if (c >= 'A' && c <= 'Z') {
+                return c - 'A';
+            }
+            if (c >= 'a' && c <= 'z') {
+                return c - 'a' + 26;
+            }
+            if (c >= '0' && c <= '9') {
+                return c - '0' + 52;
+            }
+            if (c == '+') {
+                return 62;
+            }
+            if (c == '/') {
+                return 63;
+            }
+            return -1; // padding ('=') or whitespace/garbage -- both just stop that group short
+        };
+
+        std::vector<std::uint8_t> result;
+        result.reserve((text.size() / 4) * 3);
+
+        int buffer       = 0;
+        int bitsInBuffer = 0;
+        for (const char c : text) {
+            const int value = valueOf(c);
+            if (value < 0) {
+                continue;
+            }
+            buffer = (buffer << 6) | value;
+            bitsInBuffer += 6;
+            if (bitsInBuffer >= 8) {
+                bitsInBuffer -= 8;
+                result.push_back(static_cast<std::uint8_t>((buffer >> bitsInBuffer) & 0xFF));
+            }
+        }
+        return result;
+    }
+
+} // namespace
+
 DapManager::DapManager(ned::ui::EventLoop& eventLoop) : eventLoop_(eventLoop) {
 }
 
@@ -333,6 +381,12 @@ std::string DapManager::BeginSession(const std::string& language, bool attach) {
                              if (body.contains("supportsRestartFrame") && body["supportsRestartFrame"].is_boolean()) {
                                  capabilities_.restartFrame = body["supportsRestartFrame"].get<bool>();
                              }
+                             if (body.contains("supportsDisassembleRequest") && body["supportsDisassembleRequest"].is_boolean()) {
+                                 capabilities_.disassemble = body["supportsDisassembleRequest"].get<bool>();
+                             }
+                             if (body.contains("supportsReadMemoryRequest") && body["supportsReadMemoryRequest"].is_boolean()) {
+                                 capabilities_.readMemory = body["supportsReadMemoryRequest"].get<bool>();
+                             }
                              if (body.contains("exceptionBreakpointFilters") && body["exceptionBreakpointFilters"].is_array()) {
                                  for (const Json& filterJson : body["exceptionBreakpointFilters"]) {
                                      ExceptionFilter filter;
@@ -653,6 +707,10 @@ void DapManager::RequestStackTrace(std::function<void(std::vector<StackFrame>)> 
                                          frame.path = std::filesystem::path(frameJson["source"]["path"].get<std::string>());
                                          frame.line = static_cast<std::size_t>(std::max(frameJson["line"].get<int>(), 1));
                                      }
+                                     if (frameJson.contains("instructionPointerReference") &&
+                                         frameJson["instructionPointerReference"].is_string()) {
+                                         frame.instructionPointerReference = frameJson["instructionPointerReference"].get<std::string>();
+                                     }
                                      frames.push_back(std::move(frame));
                                  }
                              }
@@ -695,10 +753,72 @@ void DapManager::RequestVariables(int variablesReference, std::function<void(std
                                          .value              = variableJson.value("value", ""),
                                          .type               = variableJson.value("type", ""),
                                          .variablesReference = variableJson.value("variablesReference", 0),
+                                         .memoryReference    = variableJson.value("memoryReference", ""),
                                      });
                                  }
                              }
                              callback(std::move(variables));
+                         });
+}
+
+void DapManager::RequestDisassembly(const std::string& memoryReference, long instructionOffset, int instructionCount,
+                                    std::function<void(std::vector<DisassembledInstruction>)> callback) {
+    if (!client_ || state_ != SessionState::Stopped || memoryReference.empty()) {
+        callback({});
+        return;
+    }
+    client_->SendRequest("disassemble",
+                         Json{
+                             {"memoryReference", memoryReference},
+                             {"offset", 0},
+                             {"instructionOffset", instructionOffset},
+                             {"instructionCount", instructionCount},
+                             {"resolveSymbols", true},
+                         },
+                         [callback = std::move(callback)](bool success, const Json& body, const std::string&) {
+                             std::vector<DisassembledInstruction> instructions;
+                             if (success && body.contains("instructions") && body["instructions"].is_array()) {
+                                 for (const Json& instructionJson : body["instructions"]) {
+                                     DisassembledInstruction instruction;
+                                     instruction.address          = instructionJson.value("address", "");
+                                     instruction.instructionBytes = instructionJson.value("instructionBytes", "");
+                                     instruction.instruction      = instructionJson.value("instruction", "");
+                                     if (instructionJson.contains("location") && instructionJson["location"].contains("path") &&
+                                         instructionJson["location"]["path"].is_string() && instructionJson.contains("line") &&
+                                         instructionJson["line"].is_number_integer()) {
+                                         instruction.path = std::filesystem::path(instructionJson["location"]["path"].get<std::string>());
+                                         instruction.line = static_cast<std::size_t>(std::max(instructionJson["line"].get<int>(), 1));
+                                     }
+                                     instructions.push_back(std::move(instruction));
+                                 }
+                             }
+                             callback(std::move(instructions));
+                         });
+}
+
+void DapManager::RequestMemory(const std::string& memoryReference, long offset, std::size_t count,
+                               std::function<void(bool success, MemoryBlock)> callback) {
+    if (!client_ || state_ != SessionState::Stopped || memoryReference.empty()) {
+        callback(false, MemoryBlock{});
+        return;
+    }
+    client_->SendRequest("readMemory", Json{{"memoryReference", memoryReference}, {"offset", offset}, {"count", count}},
+                         [callback = std::move(callback)](bool success, const Json& body, const std::string&) {
+                             if (!success) {
+                                 callback(false, MemoryBlock{});
+                                 return;
+                             }
+                             // A fully-unreadable range is still a successful
+                             // response, just with "data" absent and
+                             // unreadableBytes covering the whole request --
+                             // the DAP spec's own shape, not an error.
+                             MemoryBlock block;
+                             block.address = body.value("address", "");
+                             if (body.contains("data") && body["data"].is_string()) {
+                                 block.data = Base64Decode(body["data"].get<std::string>());
+                             }
+                             block.unreadableBytes = body.value("unreadableBytes", static_cast<std::size_t>(0));
+                             callback(true, std::move(block));
                          });
 }
 

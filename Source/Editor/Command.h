@@ -451,6 +451,20 @@ enum class InteractiveRequest { None,
                                 // DapExpandVariable, operating on point's own *debug*
                                 // buffer stack line (see RestartFrameAtPoint).
                                 DapRestartFrame,
+                                // DAP round 5: disassembly/memory view.
+                                // DapShowDisassembly is one-shot like DapShowDebug --
+                                // resolves the frame from point's own *debug* buffer
+                                // "[frame:N]" line if there is one, else the top stopped
+                                // frame, and chains the async disassemble request into a
+                                // synthesized "*disassembly*" buffer (see
+                                // ShowDisassemblyAtPoint). DapShowMemoryAtPoint is
+                                // prompt-shaped like DapEvaluate: it first parses the
+                                // "[mem:<ref>]" marker off point's own *debug* buffer
+                                // variable line (ShowMemoryAtPoint's first half), then
+                                // prompts for a byte count before sending the readMemory
+                                // request and switching to a synthesized "*memory*" buffer.
+                                DapShowDisassembly,
+                                DapShowMemoryAtPoint,
                                 // VCS blame gutter follow-up: one-shot direct actions, same
                                 // shape as ProjectAgenda/LspShowLog. VcsShowBlame is the
                                 // primary, inline-in-place one: populates the gutter for the
