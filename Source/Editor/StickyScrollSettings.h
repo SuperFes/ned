@@ -16,7 +16,7 @@ void               SetStickyScrollEnabled(bool enabled);
 
 // Caps how many pinned rows a pane will ever reserve for the breadcrumb,
 // regardless of how deep the actual enclosing chain is -- a pathologically
-// nested buffer shouldn't be able to eat the whole viewport. Default 4.
+// nested buffer shouldn't be able to eat the whole viewport. Default 3.
 void              SetStickyScrollMaxRows(int rows);
 [[nodiscard]] int StickyScrollMaxRows();
 

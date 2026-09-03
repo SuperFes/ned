@@ -18,7 +18,7 @@ namespace {
     }
 
     int& MaxRowsStorage() {
-        static int rows = 4;
+        static int rows = 3;
         return rows;
     }
 

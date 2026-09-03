@@ -920,3 +920,82 @@ TEST_CASE("CppMode's symbolKind ranges nest properly -- a method's range sits in
     REQUIRE(markers[1].startByte > markers[0].startByte);
     REQUIRE(markers[1].endByte < markers[0].endByte);
 }
+
+TEST_CASE("MarkdownMode's symbolKind synthesizes one marker per heading, properly nested by level",
+          "[Mode]") {
+    using ned::editor::SymbolKind;
+    const auto mode   = MarkdownMode();
+    REQUIRE(static_cast<bool>(mode.symbolKind));
+    const std::string source = "# H1\nintro\n## H2a\nbody a\n## H2b\nbody b\n# H1b\ntail\n";
+    const auto        markers = mode.symbolKind(source);
+
+    // main-editor-sticky-scroll-markdown follow-up: every heading, of any
+    // level, gets the same SymbolKind::Namespace ("section") kind -- level
+    // itself shows up in the sticky row's own reduced-signature text (the
+    // "#"/"##" markers), not as a distinct kind.
+    REQUIRE(KindsInOrder(markers) ==
+            std::vector{SymbolKind::Namespace, SymbolKind::Namespace, SymbolKind::Namespace, SymbolKind::Namespace});
+    REQUIRE(markers.size() == 4);
+    REQUIRE(markers[0].startByte == source.find("# H1\n"));
+    REQUIRE(markers[1].startByte == source.find("## H2a"));
+    REQUIRE(markers[2].startByte == source.find("## H2b"));
+    REQUIRE(markers[3].startByte == source.find("# H1b"));
+
+    // H1's own range runs through both its H2 children (real tree-sitter
+    // "section" nesting, see CollectMarkdownSectionMarkers' own doc
+    // comment) and stops exactly where the next H1 begins -- not at the
+    // document's end.
+    REQUIRE(markers[0].startByte < markers[1].startByte);
+    REQUIRE(markers[1].endByte <= markers[0].endByte);
+    REQUIRE(markers[2].endByte <= markers[0].endByte);
+    REQUIRE(markers[0].endByte == markers[3].startByte);
+    // The second H1 runs to the document's own end (no following
+    // equal-or-shallower heading).
+    REQUIRE(markers[3].endByte == source.size());
+    // Two H2 siblings under the same H1 don't overlap each other.
+    REQUIRE(markers[1].endByte <= markers[2].startByte);
+}
+
+TEST_CASE("MarkdownMode's symbolKind ignores a '#' that isn't a real heading (inside a fenced code block)",
+          "[Mode]") {
+    const auto        mode   = MarkdownMode();
+    const std::string source = "# Real\n```\n# not a heading\n```\n";
+    const auto        markers = mode.symbolKind(source);
+    REQUIRE(markers.size() == 1);
+    REQUIRE(markers[0].startByte == 0);
+}
+
+TEST_CASE("OrgMode's symbolKind synthesizes one marker per headline, properly nested by star count", "[Mode]") {
+    using ned::editor::SymbolKind;
+    const auto mode = OrgMode();
+    REQUIRE(static_cast<bool>(mode.symbolKind));
+    const std::string source = "* H1\nintro\n** H2a\nbody a\n** H2b\nbody b\n* H1b\ntail\n";
+    const auto        markers = mode.symbolKind(source);
+
+    REQUIRE(KindsInOrder(markers) ==
+            std::vector{SymbolKind::Namespace, SymbolKind::Namespace, SymbolKind::Namespace, SymbolKind::Namespace});
+    REQUIRE(markers.size() == 4);
+    REQUIRE(markers[0].startByte == source.find("* H1\n"));
+    REQUIRE(markers[1].startByte == source.find("** H2a"));
+    REQUIRE(markers[2].startByte == source.find("** H2b"));
+    REQUIRE(markers[3].startByte == source.find("* H1b"));
+
+    // Same nesting invariant as MarkdownMode's own test above, computed
+    // here by hand from star counts (org::SubtreeEndLine's own definition,
+    // in byte terms) rather than a real tree-sitter containment range --
+    // see this closure's own doc comment in Mode.cpp.
+    REQUIRE(markers[1].endByte <= markers[0].endByte);
+    REQUIRE(markers[2].endByte <= markers[0].endByte);
+    REQUIRE(markers[0].endByte == markers[3].startByte);
+    REQUIRE(markers[3].endByte == source.size());
+    REQUIRE(markers[1].endByte <= markers[2].startByte);
+}
+
+TEST_CASE("OrgMode's symbolKind doesn't mistake an indented '* not a headline' list item for a real headline",
+          "[Mode]") {
+    const auto        mode   = OrgMode();
+    const std::string source = "* Real\n  * not a headline\n";
+    const auto        markers = mode.symbolKind(source);
+    REQUIRE(markers.size() == 1);
+    REQUIRE(markers[0].startByte == 0);
+}

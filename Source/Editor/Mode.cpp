@@ -463,6 +463,33 @@ namespace {
         }
     }
 
+    // main-editor-sticky-scroll-markdown follow-up: unlike a tags.scm-driven
+    // SymbolKindFunction (which reads its containment range straight off one
+    // real AST node), a heading's "belongs under" relationship might look
+    // like it needs synthesizing by hand -- ATX/setext headings themselves
+    // are flat block-level nodes, no different level from each other in the
+    // tree. But tree-sitter-markdown's own grammar (see grammar.js's
+    // _section1.._section6 rules) already wraps each heading and everything
+    // through the next equal-or-shallower heading in a real "section" node
+    // that nests by level (a section's `repeat` only ever admits STRICTLY
+    // DEEPER sub-sections as children, never an equal-or-shallower one) --
+    // confirmed against the vendored grammar source, not assumed. So a
+    // section's own [StartByte, EndByte) is already exactly the synthesized
+    // range this would otherwise have to compute by hand from heading
+    // levels, and its first token is always its own heading -- no separate
+    // level bookkeeping needed at all. Pre-order (parent before children,
+    // siblings left-to-right) walk order is what keeps the result already
+    // sorted by startByte, Mode::symbolKind's own contract.
+    void CollectMarkdownSectionMarkers(const treesitter::Node& node, std::vector<SymbolMarker>& markers) {
+        if (node.Type() == "section") {
+            markers.push_back(SymbolMarker{
+                .startByte = node.StartByte(), .endByte = node.EndByte(), .kind = SymbolKind::Namespace, .name = std::string()});
+        }
+        for (std::size_t i = 0; i < node.ChildCount(); ++i) {
+            CollectMarkdownSectionMarkers(node.Child(i), markers);
+        }
+    }
+
 } // namespace
 
 std::vector<std::string> BuiltinCaptureNames() {
@@ -1479,6 +1506,27 @@ Mode MarkdownMode() {
         return column;
     };
 
+    // main-editor-sticky-scroll-markdown follow-up: shares blockParser/
+    // sharedParse with .highlight/.indentColumn above -- no extra reparse on
+    // a Paint() cycle that also needs one of those. See
+    // CollectMarkdownSectionMarkers' own doc comment for why a section's
+    // real tree range is already the synthesized "runs until the next
+    // equal-or-shallower heading" extent sticky scroll needs, with no
+    // per-level bookkeeping here. Reuses SymbolKind::Namespace (the "§"
+    // glyph already reads naturally as "section") rather than a new kind --
+    // heading level itself doesn't need representing separately, since the
+    // sticky row's own reduced-signature text (the heading's real source
+    // line, "#"/"##"/... markers included) already shows it.
+    mode.symbolKind = [blockParser, sharedParse](std::string_view bufferText) -> std::vector<SymbolMarker> {
+        const treesitter::Tree& tree = sharedParse->Update(*blockParser, bufferText);
+        if (tree.IsNull()) {
+            return {};
+        }
+        std::vector<SymbolMarker> markers;
+        CollectMarkdownSectionMarkers(tree.RootNode(), markers);
+        return markers;
+    };
+
     return mode;
 }
 
@@ -1754,6 +1802,43 @@ Mode OrgMode() {
         return column;
     };
 
+    // main-editor-sticky-scroll-markdown follow-up: unlike MarkdownMode()'s
+    // real tree-sitter "section" nesting, Org headlines have no equivalent
+    // in Ned's own tree-sitter-ned-org grammar to lean on -- so this
+    // synthesizes the same "runs until the next equal-or-shallower
+    // headline" extent org::SubtreeEndLine already defines (in line terms,
+    // for fold visibility), directly in byte terms from ParseOutline's
+    // flat, level-tagged list. No tree-sitter parse at all: ParseOutline is
+    // already a pure, tree-free line scan, so this needs neither parser nor
+    // sharedParse. todoKeywords left at its default (DefaultTodoKeywords())
+    // deliberately, not the live org::TodoKeywords() -- a headline's own
+    // level/lineStartByte (all this reads) never depend on which words are
+    // configured as TODO keywords, only title/todoKeyword do, so there's no
+    // reason to take a dependency on runtime-mutable global state here.
+    // Reuses SymbolKind::Namespace, MarkdownMode()'s own choice for the same
+    // reason: heading level already shows up in the sticky row's own
+    // reduced-signature text (the stars themselves), no separate kind
+    // needed to carry it.
+    SymbolKindFunction symbolKind = [](std::string_view bufferText) -> std::vector<SymbolMarker> {
+        const std::vector<org::Headline> headlines = org::ParseOutline(bufferText);
+        std::vector<SymbolMarker>        markers;
+        markers.reserve(headlines.size());
+        for (std::size_t i = 0; i < headlines.size(); ++i) {
+            std::size_t endByte = bufferText.size();
+            for (std::size_t j = i + 1; j < headlines.size(); ++j) {
+                if (headlines[j].level <= headlines[i].level) {
+                    endByte = headlines[j].lineStartByte;
+                    break;
+                }
+            }
+            markers.push_back(SymbolMarker{.startByte = headlines[i].lineStartByte,
+                                           .endByte   = endByte,
+                                           .kind      = SymbolKind::Namespace,
+                                           .name      = std::string()});
+        }
+        return markers;
+    };
+
     // Real Org's own comment-line convention (org-comment-string's default).
     // line-wrap follow-up: same reasoning as MarkdownMode() -- Org files
     // are prose too.
@@ -1762,6 +1847,7 @@ Mode OrgMode() {
                 .highlight         = std::move(highlight),
                 .lineCommentPrefix = "#",
                 .autoPairs         = DefaultAutoPairs(),
+                .symbolKind        = std::move(symbolKind),
                 .indentColumn      = std::move(indentColumn),
                 .wrapLines         = true};
 }

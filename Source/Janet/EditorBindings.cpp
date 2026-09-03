@@ -1288,7 +1288,7 @@ void InstallEditorBindings(Environment& env) {
     env.Register<&NedSetStickyScrollMaxRows>(
         "ned", "set-sticky-scroll-max-rows",
         "How many pinned breadcrumb rows a pane will ever reserve, regardless of how deep the actual enclosing "
-        "namespace/class/method chain is (default 4). 0 effectively disables the rows without touching "
+        "namespace/class/method chain is (default 3). 0 effectively disables the rows without touching "
         "set-sticky-scroll-enabled.");
     env.Register<&NedSetRelativeLineNumbers>(
         "ned", "set-relative-line-numbers",
