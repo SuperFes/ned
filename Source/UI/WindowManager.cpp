@@ -557,6 +557,15 @@ void WindowManager::SetLspManager(editor::lsp::LspManager* lspManager) {
         pane->Buffer().SetLspManager(lspManager);
         pane->ModeLineRef().SetLspManager(lspManager);
     }
+    // edit-application-gaps follow-up: wires a server-pushed
+    // workspace/applyEdit request through to whichever pane has focus, once
+    // per LspManager (not per-pane -- the handler itself is one std::function
+    // owned by LspManager, no pane-specific state to re-wire on split/close).
+    if (lspManager_) {
+        lspManager_->SetApplyEditHandler([this](const editor::lsp::LspManager::ResolvedRename& edit, const std::string& label) {
+            return ApplyServerPushedWorkspaceEdit(edit, label);
+        });
+    }
 }
 
 void WindowManager::SetThemeApplier(std::function<void(const Theme&)> applier) {
@@ -834,6 +843,13 @@ void WindowManager::RequestOpenBinaryFile(const std::filesystem::path& path) {
     if (Pane* pane = FocusedPane()) {
         pane->Buffer().RequestOpenBinaryFile(path);
     }
+}
+
+bool WindowManager::ApplyServerPushedWorkspaceEdit(const editor::lsp::LspManager::ResolvedRename& edit, const std::string& label) {
+    if (Pane* pane = FocusedPane()) {
+        return pane->Buffer().ApplyServerPushedWorkspaceEdit(edit, label);
+    }
+    return false; // no pane focused anywhere -- nowhere to route this
 }
 
 void WindowManager::TriggerSwitchProject() {

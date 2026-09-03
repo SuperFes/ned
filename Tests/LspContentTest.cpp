@@ -6,6 +6,7 @@ using ned::editor::lsp::CodeAction;
 using ned::editor::lsp::CodeLens;
 using ned::editor::lsp::CompletionItem;
 using ned::editor::lsp::DefinitionLocation;
+using ned::editor::lsp::DocumentChangeOp;
 using ned::editor::lsp::DocumentHighlight;
 using ned::editor::lsp::ExtractCodeActions;
 using ned::editor::lsp::ExtractCodeLenses;
@@ -172,10 +173,50 @@ TEST_CASE("ExtractCodeActions parses a \"changes\" WorkspaceEdit touching severa
     REQUIRE(actions[0].edits.size() == 2);
 }
 
-TEST_CASE("ExtractCodeActions marks a documentChanges-only edit as unsupported, with no edits parsed", "[Lsp]") {
+TEST_CASE("ExtractCodeActions parses a documentChanges edit into documentChangeOps, in order", "[Lsp]") {
     const Json result = Json::array({
-        {{"title", "Rename symbol"},
-         {"edit", {{"documentChanges", Json::array()}}}},
+        {{"title", "Extract to new file"},
+         {"edit",
+          {{"documentChanges",
+            Json::array({
+                {{"kind", "create"}, {"uri", "file:///new.c"}, {"options", {{"overwrite", true}}}},
+                {{"textDocument", {{"uri", "file:///new.c"}, {"version", nullptr}}},
+                 {"edits", Json::array({{{"range", MakeRange(0, 0, 0, 0)}, {"newText", "int x;\n"}}})}},
+                {{"kind", "rename"}, {"oldUri", "file:///old.c"}, {"newUri", "file:///renamed.c"}},
+                {{"kind", "delete"}, {"uri", "file:///gone.c"}, {"options", {{"ignoreIfNotExists", true}}}},
+            })}}}},
+    });
+
+    const std::vector<CodeAction> actions = ExtractCodeActions(result, "file:///a.c");
+    REQUIRE(actions.size() == 1);
+    REQUIRE(actions[0].hasEdit);
+    REQUIRE_FALSE(actions[0].touchesUnsupportedForm);
+    REQUIRE(actions[0].edits.empty()); // "changes" form stays empty -- documentChangeOps carries everything
+
+    const std::vector<DocumentChangeOp>& ops = actions[0].documentChangeOps;
+    REQUIRE(ops.size() == 4);
+
+    REQUIRE(ops[0].kind == DocumentChangeOp::Kind::CreateFile);
+    REQUIRE(ops[0].uri == "file:///new.c");
+    REQUIRE(ops[0].overwrite);
+
+    REQUIRE(ops[1].kind == DocumentChangeOp::Kind::EditFile);
+    REQUIRE(ops[1].uri == "file:///new.c");
+    REQUIRE(ops[1].edits.size() == 1);
+    REQUIRE(ops[1].edits[0].newText == "int x;\n");
+
+    REQUIRE(ops[2].kind == DocumentChangeOp::Kind::RenameFile);
+    REQUIRE(ops[2].oldUri == "file:///old.c");
+    REQUIRE(ops[2].uri == "file:///renamed.c");
+
+    REQUIRE(ops[3].kind == DocumentChangeOp::Kind::DeleteFile);
+    REQUIRE(ops[3].uri == "file:///gone.c");
+    REQUIRE(ops[3].ignoreIfNotExists);
+}
+
+TEST_CASE("ExtractCodeActions marks a malformed documentChanges entry as unsupported, refused wholesale", "[Lsp]") {
+    const Json result = Json::array({
+        {{"title", "Rename symbol"}, {"edit", {{"documentChanges", Json::array({{{"kind", "not-a-real-kind"}}})}}}},
     });
 
     const std::vector<CodeAction> actions = ExtractCodeActions(result, "file:///a.c");
@@ -183,6 +224,20 @@ TEST_CASE("ExtractCodeActions marks a documentChanges-only edit as unsupported, 
     REQUIRE(actions[0].hasEdit);
     REQUIRE(actions[0].touchesUnsupportedForm);
     REQUIRE(actions[0].edits.empty());
+    REQUIRE(actions[0].documentChangeOps.empty());
+}
+
+TEST_CASE("ExtractCodeActions treats an empty documentChanges array as a well-formed, no-op edit", "[Lsp]") {
+    const Json result = Json::array({
+        {{"title", "No-op"}, {"edit", {{"documentChanges", Json::array()}}}},
+    });
+
+    const std::vector<CodeAction> actions = ExtractCodeActions(result, "file:///a.c");
+    REQUIRE(actions.size() == 1);
+    REQUIRE(actions[0].hasEdit);
+    REQUIRE_FALSE(actions[0].touchesUnsupportedForm);
+    REQUIRE(actions[0].edits.empty());
+    REQUIRE(actions[0].documentChangeOps.empty());
 }
 
 TEST_CASE("ExtractCodeActions marks a bare Command item (no \"edit\") as hasEdit=false", "[Lsp]") {
@@ -373,12 +428,37 @@ TEST_CASE("ExtractRenameEdits parses a \"changes\" WorkspaceEdit spanning multip
     REQUIRE(renamed.edits.size() == 2); // both URIs kept -- unlike code actions, rename isn't scoped to one URI
 }
 
-TEST_CASE("ExtractRenameEdits marks a documentChanges-only edit as unsupported, with no edits parsed", "[Lsp]") {
-    const Json         result  = {{"documentChanges", Json::array()}};
+TEST_CASE("ExtractRenameEdits parses a documentChanges edit -- a rename that also moves the file", "[Lsp]") {
+    // The real-world shape this scope cut was closed for: a rename that
+    // needs the file itself renamed to match (a class whose containing file
+    // convention expects the file to follow), not just its content edited.
+    const Json result = {
+        {"documentChanges",
+         Json::array({
+             {{"kind", "rename"}, {"oldUri", "file:///Old.java"}, {"newUri", "file:///Renamed.java"}},
+             {{"textDocument", {{"uri", "file:///Renamed.java"}}},
+              {"edits", Json::array({{{"range", MakeRange(0, 13, 0, 16)}, {"newText", "Renamed"}}})}},
+         })},
+    };
+    const RenameResult renamed = ExtractRenameEdits(result);
+    REQUIRE(renamed.hasEdit);
+    REQUIRE_FALSE(renamed.touchesUnsupportedForm);
+    REQUIRE(renamed.edits.empty());
+    REQUIRE(renamed.documentChangeOps.size() == 2);
+    REQUIRE(renamed.documentChangeOps[0].kind == DocumentChangeOp::Kind::RenameFile);
+    REQUIRE(renamed.documentChangeOps[0].oldUri == "file:///Old.java");
+    REQUIRE(renamed.documentChangeOps[0].uri == "file:///Renamed.java");
+    REQUIRE(renamed.documentChangeOps[1].kind == DocumentChangeOp::Kind::EditFile);
+    REQUIRE(renamed.documentChangeOps[1].edits.size() == 1);
+}
+
+TEST_CASE("ExtractRenameEdits marks a malformed documentChanges entry as unsupported, refused wholesale", "[Lsp]") {
+    const Json         result  = {{"documentChanges", Json::array({Json::object()})}}; // neither a TextDocumentEdit nor a ResourceOperation
     const RenameResult renamed = ExtractRenameEdits(result);
     REQUIRE(renamed.touchesUnsupportedForm);
     REQUIRE_FALSE(renamed.hasEdit);
     REQUIRE(renamed.edits.empty());
+    REQUIRE(renamed.documentChangeOps.empty());
 }
 
 TEST_CASE("ExtractRenameEdits returns no edits for a result with no \"changes\" map", "[Lsp]") {

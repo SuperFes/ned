@@ -94,17 +94,51 @@ struct RenameEdit {
     std::vector<WorkspaceTextEdit> edits;
 };
 
+// edit-application-gaps follow-up. One entry from a WorkspaceEdit's
+// "documentChanges" array (LSP 3.13+) -- the more general form that, unlike
+// the plain "changes" map, can also create/rename/delete a file as part of
+// the same atomic edit (a rename that also needs the file itself moved to
+// match a renamed class/module, not just its content, is the common real
+// case). Order is preserved -- a later entry can target a file an earlier
+// CreateFile/RenameFile entry just brought into existence, so a caller must
+// apply these in sequence, not as an unordered per-URI map the way "changes"
+// entries are.
+struct DocumentChangeOp {
+    enum class Kind { EditFile, CreateFile, RenameFile, DeleteFile };
+
+    Kind        kind = Kind::EditFile;
+    std::string uri;    // EditFile/CreateFile/DeleteFile target, or RenameFile's newUri
+    std::string oldUri; // RenameFile only
+
+    std::vector<WorkspaceTextEdit> edits; // EditFile only
+
+    // CreateFile/RenameFile read "options.overwrite"/"options.ignoreIfExists";
+    // DeleteFile reads "options.ignoreIfNotExists" only -- its own
+    // "options.recursive" isn't parsed, since the caller's delete primitive
+    // (Editor/ProjectFileOps.h's DeleteProjectPath) is always recursive for a
+    // directory target, matching every other in-editor delete path.
+    bool overwrite         = false;
+    bool ignoreIfExists    = false;
+    bool ignoreIfNotExists = false;
+
+    bool operator==(const DocumentChangeOp&) const = default;
+};
+
 struct CodeAction {
     std::string             title;
-    std::vector<RenameEdit> edits;           // one entry per touched URI/file; empty if hasEdit is false or touchesUnsupportedForm is true
+    std::vector<RenameEdit> edits;           // one entry per touched URI/file, from a "changes"-form edit; empty if hasEdit is false or the edit used "documentChanges" instead
     bool                    hasEdit = false; // false for a bare Command with no "edit" at all -- executing one is out of scope
     // project-undo follow-up: was touchesOtherFiles, refused wholesale --
     // multiple URIs are now parsed into edits above like RenameResult
-    // already does. Only a "documentChanges" WorkspaceEdit (file
-    // create/rename/delete, not just edits to existing ones) is still
-    // unparsed/refused -- same scope cut RenameResult's own
-    // touchesUnsupportedForm documents.
-    bool touchesUnsupportedForm = false;
+    // already does. edit-application-gaps follow-up: a "documentChanges"
+    // WorkspaceEdit (file create/rename/delete, not just edits to existing
+    // ones) is now parsed into documentChangeOps below instead of refused
+    // outright -- touchesUnsupportedForm is now true only when
+    // documentChanges itself is malformed (an entry that isn't a recognized
+    // TextDocumentEdit or create/rename/delete ResourceOperation shape),
+    // refused wholesale the same way an unresolvable URI already is.
+    std::vector<DocumentChangeOp> documentChangeOps;
+    bool                          touchesUnsupportedForm = false;
 
     // code-actions-resolve follow-up. Many real servers (clangd included)
     // advertise codeActionProvider.resolveProvider and deliberately send a
@@ -155,12 +189,13 @@ struct CodeAction {
 
 // Parses one response item, either a bare Command (has "command", no
 // "edit" -- hasEdit=false) or a real CodeAction ("title" required; "edit"
-// is an optional WorkspaceEdit). Only the "changes": {uri: TextEdit[]}
-// shape of WorkspaceEdit is parsed -- one RenameEdit per named URI, however
-// many that is; a WorkspaceEdit using "documentChanges" instead of
-// "changes" is reported as touchesUnsupportedForm=true with edits left
-// empty -- refused wholesale by the caller rather than partially applied.
-// Exposed publicly (not just used internally by ExtractCodeActions' own
+// is an optional WorkspaceEdit). A "changes": {uri: TextEdit[]} WorkspaceEdit
+// parses into one RenameEdit per named URI; a "documentChanges" WorkspaceEdit
+// parses into documentChangeOps instead (edits left empty in that case) --
+// either way exactly one of the two is populated, never both. A
+// documentChanges array containing something unrecognized still sets
+// touchesUnsupportedForm=true with both left empty -- refused wholesale by
+// the caller rather than partially applied. Exposed publicly (not just used internally by ExtractCodeActions' own
 // loop below) so LspManager::ResolveCodeAction can parse a
 // codeAction/resolve response -- itself always exactly one CodeAction, not
 // an array -- the same way. ownUri is kept in the signature for call-site
@@ -201,24 +236,23 @@ struct DefinitionLocation {
 // appears in, the same "one entry per named URI" shape RenameEdit (defined
 // above, alongside CodeAction) already gives CodeAction::edits.
 struct RenameResult {
-    std::vector<RenameEdit> edits;
-    // "documentChanges" is a real, more general WorkspaceEdit form (needed
-    // for a rename that also creates/renames/deletes files, not just edits
-    // existing ones) this v1 doesn't parse -- same scope cut
-    // ExtractWorkspaceEditForUri's own doc comment already established for
-    // code actions. touchesUnsupportedForm is true when the response used
-    // it; edits is left empty in that case, refused wholesale rather than
-    // silently doing a partial rename.
-    bool touchesUnsupportedForm = false;
-    bool hasEdit                = false;
+    std::vector<RenameEdit> edits; // "changes" form; empty when documentChangeOps below is populated instead
+    // edit-application-gaps follow-up: "documentChanges" is a real, more
+    // general WorkspaceEdit form -- needed for a rename that also
+    // creates/renames/deletes files, not just edits existing ones -- now
+    // parsed into documentChangeOps rather than refused outright. See
+    // CodeAction::touchesUnsupportedForm's own doc comment: true now only
+    // when documentChanges itself is malformed, not merely present.
+    std::vector<DocumentChangeOp> documentChangeOps;
+    bool                          touchesUnsupportedForm = false;
+    bool                          hasEdit                = false;
 };
 
 // Parses a textDocument/rename response -- a bare WorkspaceEdit, not
-// wrapped in an array/item the way a code action response is. Only the
-// "changes": {uri: TextEdit[]} form is understood; see RenameResult's own
-// doc comment for the "documentChanges" scope cut. A URI whose own edit
-// array is empty after parsing is dropped rather than kept as a no-op
-// entry.
+// wrapped in an array/item the way a code action response is. Both the
+// "changes": {uri: TextEdit[]} and "documentChanges" forms are understood;
+// see RenameResult's own doc comment. A URI whose own edit array is empty
+// after parsing is dropped rather than kept as a no-op entry.
 [[nodiscard]] RenameResult ExtractRenameEdits(const Json& result);
 
 // formatting follow-up. A textDocument/formatting or /rangeFormatting

@@ -388,10 +388,28 @@ class LspManager {
         std::filesystem::path          path;
         std::vector<WorkspaceTextEdit> edits;
     };
+
+    // edit-application-gaps follow-up. DocumentChangeOp (LspContent.h) with
+    // its uri/oldUri resolved to real filesystem paths -- the same "resolve
+    // once, refuse wholesale on any failure" contract ResolvedRenameEdit
+    // already establishes. path is the EditFile/CreateFile/DeleteFile target,
+    // or RenameFile's destination (newUri); oldPath is set for RenameFile
+    // only.
+    struct ResolvedDocumentChangeOp {
+        DocumentChangeOp::Kind         kind = DocumentChangeOp::Kind::EditFile;
+        std::filesystem::path          path;
+        std::filesystem::path          oldPath; // RenameFile only
+        std::vector<WorkspaceTextEdit> edits;   // EditFile only
+        bool                           overwrite         = false;
+        bool                           ignoreIfExists    = false;
+        bool                           ignoreIfNotExists = false;
+    };
+
     struct ResolvedRename {
-        std::vector<ResolvedRenameEdit> edits;
-        bool                            touchesUnsupportedForm = false; // see RenameResult's own doc comment in LspContent.h
-        bool                            hasEdit                = false;
+        std::vector<ResolvedRenameEdit>       edits;                          // "changes" form; empty when documentChangeOps below is populated instead
+        std::vector<ResolvedDocumentChangeOp> documentChangeOps;              // "documentChanges" form, in order
+        bool                                  touchesUnsupportedForm = false; // see RenameResult's own doc comment in LspContent.h
+        bool                                  hasEdit                = false;
     };
     using RenameCallback = std::function<void(std::optional<ResolvedRename> result)>;
 
@@ -408,12 +426,46 @@ class LspManager {
     // never a partial fix across only some of them).
     [[nodiscard]] static std::optional<std::vector<ResolvedRenameEdit>> ResolveCodeActionEdits(const CodeAction& action);
 
+    // edit-application-gaps follow-up: resolves a parsed documentChangeOps
+    // list's own uri/oldUri fields to real filesystem paths -- same
+    // all-or-nothing contract ResolveCodeActionEdits establishes for the
+    // simpler "changes" form. Shared by ApplyCodeAction's own
+    // action.documentChangeOps, RequestRename's response handling, and the
+    // workspace/applyEdit server-request handler below -- all three consume
+    // a parsed documentChangeOps list the identical way. Returns nullopt if
+    // ops is empty or any one uri/oldUri fails to resolve.
+    [[nodiscard]] static std::optional<std::vector<ResolvedDocumentChangeOp>>
+    ResolveDocumentChangeOps(const std::vector<DocumentChangeOp>& ops);
+
     // Sent for lsp-rename. nullopt on any failure (buffer never synced, no
     // running client, or an error response) -- mirrors ResolveCallback's
     // own nullopt-on-failure convention. serverKey: see RequestHover's own
     // doc comment above.
     void RequestRename(text::Buffer& buffer, std::size_t byteOffset, const std::string& newName, RenameCallback callback,
                        const std::string& serverKey = {});
+
+    // edit-application-gaps follow-up. workspace/applyEdit is the one
+    // direction every request above doesn't cover: a server *pushing* a
+    // WorkspaceEdit at the client unprompted (e.g. in response to a
+    // workspace/executeCommand the client itself just sent), which per spec
+    // the client must answer with {applied: bool}. Parsing/resolving the
+    // pushed edit stays here (LspClient::RequestHandler is synchronous-only,
+    // and the parse/resolve step already is), but actually applying it needs
+    // real buffer mutation plus project-undo bookkeeping that only
+    // Source/UI/'s BufferView owns -- applyEditHandler, set via
+    // SetApplyEditHandler, is the same "Editor/ stays UI-free, hand the UI
+    // layer a callback" seam BufferList::SetOnFileOpened/SetAsyncFileOpener
+    // already establish for Text/ -> UI/ wiring. nullopt/unset means "no
+    // handler wired up yet" -- reported to the server as applied:false, the
+    // same honest failure this client would report for any other
+    // unsupported capability, rather than silently claiming success. label
+    // is the server's own optional human-readable description of the edit
+    // (WorkspaceEdit's sibling "label" field on the request, not on the edit
+    // itself), passed through for the handler's own status message.
+    using ApplyEditHandler = std::function<bool(const ResolvedRename& edit, const std::string& label)>;
+    void SetApplyEditHandler(ApplyEditHandler handler) {
+        applyEditHandler_ = std::move(handler);
+    }
 
     // formatting follow-up. Same callback shape for both -- nullopt on any
     // failure (buffer never synced, no running client, or an error
@@ -1110,6 +1162,10 @@ class LspManager {
 
     text::BufferList&   bufferList_;
     ned::ui::EventLoop& eventLoop_;
+
+    // edit-application-gaps follow-up: see SetApplyEditHandler's own doc
+    // comment above.
+    ApplyEditHandler applyEditHandler_;
 
     // LspManagerTest-broker-hermeticity follow-up: test-only override for
     // the broker socket path ClientForLanguage's TryConnectToBroker call

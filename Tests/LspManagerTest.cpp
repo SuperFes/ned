@@ -2399,6 +2399,11 @@ TEST_CASE("BuildInitializeParams declares capabilities for every request/notific
     REQUIRE(workspace.at("configuration") == true);
     REQUIRE(workspace.contains("didChangeConfiguration"));
     REQUIRE(workspace.contains("executeCommand"));
+    // edit-application-gaps follow-up: declares support for a server-pushed
+    // workspace/applyEdit request and the richer "documentChanges"
+    // WorkspaceEdit form (file create/rename/delete).
+    REQUIRE(workspace.at("applyEdit") == true);
+    REQUIRE(workspace.at("workspaceEdit").at("documentChanges") == true);
 }
 
 TEST_CASE("BuildInitializeParams absolutizes a relative rootUri", "[Lsp]") {
@@ -2549,6 +2554,120 @@ TEST_CASE("LspManager answers workspace/configuration with null for every item w
     REQUIRE(response["result"].is_array());
     REQUIRE(response["result"].size() == 1);
     CHECK(response["result"][0].is_null());
+}
+
+// edit-application-gaps follow-up: a server-pushed workspace/applyEdit
+// request -- LspManager::WireNotificationHandlers' own handler, exercised
+// the same live request/response round-trip window/workDoneProgress/create
+// and workspace/configuration already are above.
+TEST_CASE("LspManager answers workspace/applyEdit with applied:false when no handler is wired up", "[Lsp]") {
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+
+    const Json request = {{"jsonrpc", "2.0"},
+                          {"id", 11},
+                          {"method", "workspace/applyEdit"},
+                          {"params", {{"edit", {{"changes", {{"file:///a.c", Json::array({{{"range", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 1}}}}}, {"newText", "x"}}})}}}}}}}};
+    client->DispatchFrame(request.dump());
+
+    const std::string raw      = ReadRawFrame(server.serverStdinRead);
+    const Json        response = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(response["id"] == 11);
+    REQUIRE(response["result"]["applied"] == false);
+    REQUIRE(response["result"]["failureReason"] == "not supported");
+}
+
+TEST_CASE("LspManager routes workspace/applyEdit through the wired handler, resolved to real paths", "[Lsp]") {
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+
+    std::optional<LspManager::ResolvedRename> gotEdit;
+    std::string                               gotLabel;
+    manager.SetApplyEditHandler([&](const LspManager::ResolvedRename& edit, const std::string& label) {
+        gotEdit  = edit;
+        gotLabel = label;
+        return true;
+    });
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+
+    const Json request = {
+        {"jsonrpc", "2.0"},
+        {"id", 12},
+        {"method", "workspace/applyEdit"},
+        {"params",
+         {{"label", "Rename symbol"},
+          {"edit", {{"changes", {{"file:///a.c", Json::array({{{"range", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 1}}}}}, {"newText", "x"}}})}}}}}}}};
+    client->DispatchFrame(request.dump());
+
+    const std::string raw      = ReadRawFrame(server.serverStdinRead);
+    const Json        response = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(response["result"]["applied"] == true);
+
+    REQUIRE(gotEdit.has_value());
+    REQUIRE(gotLabel == "Rename symbol");
+    REQUIRE(gotEdit->hasEdit);
+    REQUIRE(gotEdit->edits.size() == 1);
+    REQUIRE(gotEdit->edits[0].path == std::filesystem::path("/a.c"));
+    REQUIRE(gotEdit->edits[0].edits[0].newText == "x");
+}
+
+TEST_CASE("LspManager answers workspace/applyEdit with applied:false for an unresolvable uri", "[Lsp]") {
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    manager.SetApplyEditHandler([](const LspManager::ResolvedRename&, const std::string&) { return true; });
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+
+    const Json request = {{"jsonrpc", "2.0"},
+                          {"id", 13},
+                          {"method", "workspace/applyEdit"},
+                          {"params", {{"edit", {{"changes", {{"not-a-file-uri", Json::array({{{"range", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 1}}}}}, {"newText", "x"}}})}}}}}}}};
+    client->DispatchFrame(request.dump());
+
+    const std::string raw      = ReadRawFrame(server.serverStdinRead);
+    const Json        response = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(response["result"]["applied"] == false);
+    REQUIRE(response["result"]["failureReason"] == "unresolvable uri");
+}
+
+TEST_CASE("LspManager::ResolveDocumentChangeOps resolves a create/rename/delete/edit sequence in order", "[Lsp]") {
+    using ned::editor::lsp::DocumentChangeOp;
+    using ned::editor::lsp::WorkspaceTextEdit;
+
+    const std::vector<DocumentChangeOp> ops = {
+        DocumentChangeOp{.kind = DocumentChangeOp::Kind::CreateFile, .uri = "file:///new.c", .overwrite = true},
+        DocumentChangeOp{.kind = DocumentChangeOp::Kind::EditFile, .uri = "file:///new.c", .edits = {WorkspaceTextEdit{.newText = "x"}}},
+        DocumentChangeOp{.kind = DocumentChangeOp::Kind::RenameFile, .uri = "file:///renamed.c", .oldUri = "file:///old.c"},
+        DocumentChangeOp{.kind = DocumentChangeOp::Kind::DeleteFile, .uri = "file:///gone.c", .ignoreIfNotExists = true},
+    };
+
+    const auto resolved = LspManager::ResolveDocumentChangeOps(ops);
+    REQUIRE(resolved.has_value());
+    REQUIRE(resolved->size() == 4);
+    CHECK((*resolved)[0].path == std::filesystem::path("/new.c"));
+    CHECK((*resolved)[0].overwrite);
+    CHECK((*resolved)[1].edits.size() == 1);
+    CHECK((*resolved)[2].oldPath == std::filesystem::path("/old.c"));
+    CHECK((*resolved)[2].path == std::filesystem::path("/renamed.c"));
+    CHECK((*resolved)[3].ignoreIfNotExists);
+}
+
+TEST_CASE("LspManager::ResolveDocumentChangeOps refuses wholesale when a rename's oldUri doesn't resolve", "[Lsp]") {
+    using ned::editor::lsp::DocumentChangeOp;
+
+    const std::vector<DocumentChangeOp> ops = {
+        DocumentChangeOp{.kind = DocumentChangeOp::Kind::RenameFile, .uri = "file:///renamed.c", .oldUri = "not-a-file-uri"},
+    };
+    REQUIRE_FALSE(LspManager::ResolveDocumentChangeOps(ops).has_value());
 }
 
 // prose-checking follow-up: the prose-checker connection is just another
