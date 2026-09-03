@@ -832,6 +832,13 @@ struct CommandContext {
     // taskRunner's exact shape. Only the run-tests family reads this.
     // Appended at the end per this struct's positional-aggregate-init rule.
     testrun::TestRunner* testRunner = nullptr;
+    // suspend-frame follow-up: set by suspend-frame (C-z, Emacs' own name/
+    // binding for this) requesting the process be job-control-suspended --
+    // same outbound "flip a bool, the host UI acts on it" shape as quit
+    // above, kept as its own field rather than overloading quit since the
+    // two are not mutually exclusive in principle and mean different things
+    // to the host UI (Exit() vs a to-the-shell Suspend()).
+    bool suspend = false;
 };
 
 using CommandFunction = std::function<void(CommandContext&)>;

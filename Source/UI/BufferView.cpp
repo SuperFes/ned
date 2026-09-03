@@ -4717,6 +4717,16 @@ bool BufferView::RunCommandAndHandleOutcome(editor::CommandContext& context, con
         return ran;
     }
 
+    // suspend-frame follow-up: same eventLoop_-null-check precedent as quit
+    // above (unset in every unit test/headless use). Not exclusive with
+    // anything else a dispatch might have done, so it falls through to the
+    // rest of ordinary post-command handling below rather than returning
+    // early -- EventLoop::Suspend() itself only flips a flag Run() consumes
+    // once this whole dispatch has returned, so nothing here blocks.
+    if (context.suspend && eventLoop_) {
+        eventLoop_->Suspend();
+    }
+
     // lsp-format-on-save follow-up: save-buffer/save-buffer-force set this
     // instead of running their own saveBufferBody synchronously when an LSP
     // round trip should format the buffer first -- the actual save hasn't
