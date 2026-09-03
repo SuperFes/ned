@@ -96,25 +96,111 @@ namespace {
         return edits;
     }
 
+    // edit-application-gaps follow-up: parses a WorkspaceEdit's
+    // "documentChanges" array (LSP 3.13+) into an ordered op list -- either a
+    // TextDocumentEdit (has "textDocument"+"edits") or a "create"/"rename"/
+    // "delete" ResourceOperation. malformed is set (and an empty vector
+    // returned) if documentChanges isn't an array, or any entry isn't one of
+    // those four recognized shapes with its required field(s) present -- the
+    // caller refuses the whole edit wholesale in that case, the same
+    // "all-or-nothing" contract ExtractWorkspaceEditChanges's own doc comment
+    // establishes for the simpler "changes" form.
+    std::vector<DocumentChangeOp> ExtractDocumentChangeOps(const Json& documentChanges, bool& malformed) {
+        std::vector<DocumentChangeOp> ops;
+        if (!documentChanges.is_array()) {
+            malformed = true;
+            return {};
+        }
+
+        for (const Json& item : documentChanges) {
+            if (!item.is_object()) {
+                malformed = true;
+                return {};
+            }
+
+            if (item.contains("textDocument") && item.contains("edits")) {
+                const Json& textDocument = item["textDocument"];
+                const auto  uriIt        = textDocument.is_object() ? textDocument.find("uri") : textDocument.end();
+                if (uriIt == textDocument.end() || !uriIt->is_string() || !item["edits"].is_array()) {
+                    malformed = true;
+                    return {};
+                }
+                ops.push_back(DocumentChangeOp{
+                    .kind  = DocumentChangeOp::Kind::EditFile,
+                    .uri   = uriIt->get<std::string>(),
+                    .edits = ParseTextEditArray(item["edits"]),
+                });
+                continue;
+            }
+
+            const std::string kind    = item.value("kind", std::string());
+            const Json&       options = item.value("options", Json::object());
+            if (kind == "create") {
+                const auto uriIt = item.find("uri");
+                if (uriIt == item.end() || !uriIt->is_string()) {
+                    malformed = true;
+                    return {};
+                }
+                ops.push_back(DocumentChangeOp{
+                    .kind           = DocumentChangeOp::Kind::CreateFile,
+                    .uri            = uriIt->get<std::string>(),
+                    .overwrite      = options.value("overwrite", false),
+                    .ignoreIfExists = options.value("ignoreIfExists", false),
+                });
+            }
+            else if (kind == "rename") {
+                const auto oldUriIt = item.find("oldUri");
+                const auto newUriIt = item.find("newUri");
+                if (oldUriIt == item.end() || !oldUriIt->is_string() || newUriIt == item.end() || !newUriIt->is_string()) {
+                    malformed = true;
+                    return {};
+                }
+                ops.push_back(DocumentChangeOp{
+                    .kind           = DocumentChangeOp::Kind::RenameFile,
+                    .uri            = newUriIt->get<std::string>(),
+                    .oldUri         = oldUriIt->get<std::string>(),
+                    .overwrite      = options.value("overwrite", false),
+                    .ignoreIfExists = options.value("ignoreIfExists", false),
+                });
+            }
+            else if (kind == "delete") {
+                const auto uriIt = item.find("uri");
+                if (uriIt == item.end() || !uriIt->is_string()) {
+                    malformed = true;
+                    return {};
+                }
+                ops.push_back(DocumentChangeOp{
+                    .kind              = DocumentChangeOp::Kind::DeleteFile,
+                    .uri               = uriIt->get<std::string>(),
+                    .ignoreIfNotExists = options.value("ignoreIfNotExists", false),
+                });
+            }
+            else {
+                malformed = true;
+                return {};
+            }
+        }
+        return ops;
+    }
+
     // project-undo follow-up: shared by ExtractSingleCodeAction and
     // ExtractRenameEdits -- parses a WorkspaceEdit's "changes" map into one
-    // RenameEdit per named URI, however many that is. Sets
-    // touchesUnsupportedForm and returns empty if the edit uses
-    // "documentChanges" instead of "changes" at all (a real, more general
-    // form -- file creation/rename/deletion, not just edits to existing
-    // ones -- this v1 doesn't parse); the caller refuses the whole result
-    // wholesale in that case rather than applying a partial fix. A URI
-    // whose own edit array is empty after parsing is dropped rather than
-    // kept as a no-op entry.
-    std::vector<RenameEdit> ExtractWorkspaceEditChanges(const Json& edit, bool& touchesUnsupportedForm) {
+    // RenameEdit per named URI, however many that is. edit-application-gaps
+    // follow-up: an edit using "documentChanges" instead of "changes" is now
+    // parsed via ExtractDocumentChangeOps above into documentChangeOps rather
+    // than refused outright -- touchesUnsupportedForm/malformed is set only
+    // when documentChanges itself doesn't parse. A URI whose own edit array
+    // is empty after parsing is dropped rather than kept as a no-op entry.
+    std::vector<RenameEdit> ExtractWorkspaceEditChanges(const Json& edit, std::vector<DocumentChangeOp>& documentChangeOps,
+                                                        bool& touchesUnsupportedForm) {
         std::vector<RenameEdit> result;
         if (!edit.is_object()) {
             return result;
         }
 
         if (edit.contains("documentChanges")) {
-            touchesUnsupportedForm = true;
-            return result;
+            documentChangeOps = ExtractDocumentChangeOps(edit["documentChanges"], touchesUnsupportedForm);
+            return result; // "changes" form left empty either way -- documentChangeOps carries everything when well-formed
         }
 
         const auto changesIt = edit.find("changes");
@@ -369,7 +455,7 @@ CodeAction ExtractSingleCodeAction(const Json& item, const std::string& ownUri) 
 
     if (const auto editIt = item.find("edit"); editIt != item.end()) {
         action.hasEdit = true;
-        action.edits   = ExtractWorkspaceEditChanges(*editIt, action.touchesUnsupportedForm);
+        action.edits   = ExtractWorkspaceEditChanges(*editIt, action.documentChangeOps, action.touchesUnsupportedForm);
     }
     else {
         // code-actions-resolve follow-up: "kind" is a real-CodeAction-only
@@ -477,8 +563,8 @@ std::vector<DefinitionLocation> ExtractDefinitionLocations(const Json& result) {
 
 RenameResult ExtractRenameEdits(const Json& result) {
     RenameResult renameResult;
-    renameResult.edits   = ExtractWorkspaceEditChanges(result, renameResult.touchesUnsupportedForm);
-    renameResult.hasEdit = !renameResult.edits.empty();
+    renameResult.edits   = ExtractWorkspaceEditChanges(result, renameResult.documentChangeOps, renameResult.touchesUnsupportedForm);
+    renameResult.hasEdit = !renameResult.edits.empty() || !renameResult.documentChangeOps.empty();
     return renameResult;
 }
 

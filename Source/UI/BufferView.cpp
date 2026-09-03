@@ -5846,30 +5846,34 @@ void BufferView::ApplyCodeAction(const editor::lsp::CodeAction& action) {
     // project-undo follow-up: a code action's edit can now touch more than
     // one file (previously refused via touchesOtherFiles above) -- resolved
     // and applied the same all-or-nothing, one-project-transaction way
-    // ApplyRename already does.
-    if (action.hasEdit && !action.edits.empty()) {
-        const std::optional<std::vector<editor::lsp::LspManager::ResolvedRenameEdit>> resolved =
-            editor::lsp::LspManager::ResolveCodeActionEdits(action);
-        if (!resolved) {
-            statusMessage_ = "\"" + action.title + "\" names a file this editor can't resolve -- not applied.";
-            return;
-        }
-        std::vector<std::pair<text::Buffer*, std::vector<editor::lsp::WorkspaceTextEdit>>> perBufferEdits;
-        perBufferEdits.reserve(resolved->size());
-        try {
-            for (const editor::lsp::LspManager::ResolvedRenameEdit& edit : *resolved) {
-                text::Buffer* buffer = bufferList_.FindByPath(edit.path);
-                if (!buffer) {
-                    buffer = &bufferList_.OpenFile(edit.path);
-                }
-                perBufferEdits.emplace_back(buffer, edit.edits);
+    // ApplyRename already does. edit-application-gaps follow-up: a
+    // "documentChanges" edit (file create/rename/delete alongside a symbol's
+    // own edits -- a real refactor.extract/rewrite shape, not just a rename)
+    // resolves and applies through the same ApplyResolvedWorkspaceEdit path.
+    if (action.hasEdit && (!action.edits.empty() || !action.documentChangeOps.empty())) {
+        editor::lsp::LspManager::ResolvedRename resolved;
+        if (!action.edits.empty()) {
+            const std::optional<std::vector<editor::lsp::LspManager::ResolvedRenameEdit>> resolvedEdits =
+                editor::lsp::LspManager::ResolveCodeActionEdits(action);
+            if (!resolvedEdits) {
+                statusMessage_ = "\"" + action.title + "\" names a file this editor can't resolve -- not applied.";
+                return;
             }
+            resolved.edits = std::move(*resolvedEdits);
         }
-        catch (const std::exception& e) {
-            ReportError(std::string("\"" + action.title + "\" failed: ") + e.what(), editor::LogCategory::Lsp);
-            return;
+        if (!action.documentChangeOps.empty()) {
+            const std::optional<std::vector<editor::lsp::LspManager::ResolvedDocumentChangeOp>> resolvedOps =
+                editor::lsp::LspManager::ResolveDocumentChangeOps(action.documentChangeOps);
+            if (!resolvedOps) {
+                statusMessage_ = "\"" + action.title + "\" names a file this editor can't resolve -- not applied.";
+                return;
+            }
+            resolved.documentChangeOps = std::move(*resolvedOps);
         }
-        ApplyProjectEdit(perBufferEdits, "Applied \"" + action.title + "\".");
+        resolved.hasEdit = !resolved.edits.empty() || !resolved.documentChangeOps.empty();
+        if (!ApplyResolvedWorkspaceEdit(resolved, "Applied \"" + action.title + "\".")) {
+            return; // ReportError/statusMessage_ already surfaced the failure
+        }
     }
     if (!action.command) {
         statusMessage_ = "Applied \"" + action.title + "\".";
@@ -6542,7 +6546,7 @@ void BufferView::RequestRenameAtPoint(const std::string& newName) {
                 statusMessage_ = "Rename uses an unsupported edit form -- not applied.";
                 return;
             }
-            if (!result->hasEdit || result->edits.empty()) {
+            if (!result->hasEdit) {
                 statusMessage_ = "No rename edits available.";
                 return;
             }
@@ -6551,8 +6555,27 @@ void BufferView::RequestRenameAtPoint(const std::string& newName) {
             for (const auto& edit : result->edits) {
                 editCount += edit.edits.size();
             }
+            // edit-application-gaps follow-up: a "documentChanges" rename
+            // can also carry pure resource ops (a plain file rename/create/
+            // delete with no text edits attached) alongside or instead of
+            // EditFile entries -- counted separately so "0 edits across 0
+            // files" doesn't read as a no-op when the rename is really just
+            // moving a file.
+            std::size_t opCount = 0;
+            for (const auto& op : result->documentChangeOps) {
+                if (op.kind == editor::lsp::DocumentChangeOp::Kind::EditFile) {
+                    ++fileCount;
+                    editCount += op.edits.size();
+                }
+                else {
+                    ++opCount;
+                }
+            }
             renameTitle_ = std::to_string(editCount) + " edit" + (editCount == 1 ? "" : "s") + " across " +
                            std::to_string(fileCount) + " file" + (fileCount == 1 ? "" : "s");
+            if (opCount > 0) {
+                renameTitle_ += ", " + std::to_string(opCount) + " file op" + (opCount == 1 ? "" : "s");
+            }
 
             ApplyRename(*result);
         },
@@ -6560,37 +6583,117 @@ void BufferView::RequestRenameAtPoint(const std::string& newName) {
 }
 
 void BufferView::ApplyRename(const editor::lsp::LspManager::ResolvedRename& result) {
-    if (result.touchesUnsupportedForm || !result.hasEdit || result.edits.empty()) {
-        statusMessage_ = "Rename has no edit to apply.";
-        return;
+    ApplyResolvedWorkspaceEdit(result, "Renamed (" + renameTitle_ + ").");
+}
+
+bool BufferView::ApplyServerPushedWorkspaceEdit(const editor::lsp::LspManager::ResolvedRename& edit, const std::string& label) {
+    return ApplyResolvedWorkspaceEdit(edit, "Applied \"" + label + "\" (server request).");
+}
+
+bool BufferView::ApplyResolvedWorkspaceEdit(const editor::lsp::LspManager::ResolvedRename& edit, std::string description) {
+    if (edit.touchesUnsupportedForm || !edit.hasEdit) {
+        statusMessage_ = description + " has no edit to apply.";
+        return false;
     }
 
-    // Resolve (find-or-open) every touched buffer FIRST, applying nothing
-    // until every single one succeeds -- a rename either fully applies
-    // across every affected file or leaves every buffer untouched, never a
-    // partial rename across only some of them.
-    std::vector<text::Buffer*> buffers;
-    buffers.reserve(result.edits.size());
+    // Resolve/apply everything through one try block -- a resource op
+    // (Create/Rename/DeleteFile) that fails partway (an unresolvable path,
+    // an already-existing create/rename target with neither overwrite nor
+    // ignoreIfExists set, a missing delete target) leaves earlier steps'
+    // filesystem side effects in place (they're not transactional the way
+    // in-memory buffer edits are), but stops before touching anything else
+    // -- the same "fail loud, don't guess" precedent HandleRenameFileKey/
+    // HandleDeleteFileKey already establish for the equivalent
+    // user-initiated commands.
+    std::vector<std::pair<text::Buffer*, std::vector<editor::lsp::WorkspaceTextEdit>>> perBufferEdits;
+    bool                                                                               touchedFilesystem = false;
     try {
-        for (const editor::lsp::LspManager::ResolvedRenameEdit& edit : result.edits) {
-            text::Buffer* buffer = bufferList_.FindByPath(edit.path);
+        // Resolve (find-or-open) every "changes"-form buffer FIRST, same
+        // all-or-nothing-open guarantee this method has always had.
+        perBufferEdits.reserve(edit.edits.size() + edit.documentChangeOps.size());
+        for (const editor::lsp::LspManager::ResolvedRenameEdit& renameEdit : edit.edits) {
+            text::Buffer* buffer = bufferList_.FindByPath(renameEdit.path);
             if (!buffer) {
-                buffer = &bufferList_.OpenFile(edit.path);
+                buffer = &bufferList_.OpenFile(renameEdit.path);
             }
-            buffers.push_back(buffer);
+            perBufferEdits.emplace_back(buffer, renameEdit.edits);
+        }
+
+        // documentChangeOps apply strictly in order -- a resource op's
+        // filesystem side effect must land before a later EditFile op that
+        // targets the file it just created/renamed.
+        using Kind = editor::lsp::DocumentChangeOp::Kind;
+        for (const editor::lsp::LspManager::ResolvedDocumentChangeOp& op : edit.documentChangeOps) {
+            switch (op.kind) {
+                case Kind::CreateFile: {
+                    const bool exists = std::filesystem::exists(op.path);
+                    if (exists && op.ignoreIfExists) {
+                        break;
+                    }
+                    if (exists && !op.overwrite) {
+                        throw std::runtime_error("create: " + op.path.string() + " already exists");
+                    }
+                    text::Buffer& buffer = bufferList_.OpenOrCreateFile(op.path);
+                    if (exists && op.overwrite) {
+                        buffer.BeginUndoGroup();
+                        buffer.DeleteRange(0, buffer.Content().ByteLength());
+                        buffer.EndUndoGroup();
+                    }
+                    touchedFilesystem = true;
+                    break;
+                }
+                case Kind::DeleteFile: {
+                    if (!std::filesystem::exists(op.path)) {
+                        if (op.ignoreIfNotExists) {
+                            break;
+                        }
+                        throw std::runtime_error("delete: " + op.path.string() + " does not exist");
+                    }
+                    editor::DeleteProjectPath(op.path);
+                    touchedFilesystem = true;
+                    break;
+                }
+                case Kind::RenameFile: {
+                    const bool targetExists = std::filesystem::exists(op.path);
+                    if (targetExists && !op.overwrite && !op.ignoreIfExists) {
+                        throw std::runtime_error("rename: " + op.path.string() + " already exists");
+                    }
+                    if (targetExists && op.ignoreIfExists && !op.overwrite) {
+                        break; // target already there, told to leave it alone
+                    }
+                    if (targetExists && op.overwrite) {
+                        editor::DeleteProjectPath(op.path); // RenameProjectPath refuses onto an existing target
+                    }
+                    editor::RenameProjectPath(op.oldPath, op.path);
+                    if (text::Buffer* buffer = bufferList_.FindByPath(op.oldPath)) {
+                        buffer->SetPath(op.path);
+                        buffer->Rename(op.path.filename().string());
+                        editor::ClearModeCacheFor(*buffer);
+                    }
+                    touchedFilesystem = true;
+                    break;
+                }
+                case Kind::EditFile: {
+                    text::Buffer* buffer = bufferList_.FindByPath(op.path);
+                    if (!buffer) {
+                        buffer = &bufferList_.OpenFile(op.path);
+                    }
+                    perBufferEdits.emplace_back(buffer, op.edits);
+                    break;
+                }
+            }
         }
     }
     catch (const std::exception& e) {
-        ReportError(std::string("Rename failed: ") + e.what(), editor::LogCategory::Lsp);
-        return;
+        ReportError(description + " failed: " + e.what(), editor::LogCategory::Lsp);
+        return false;
     }
 
-    std::vector<std::pair<text::Buffer*, std::vector<editor::lsp::WorkspaceTextEdit>>> perBufferEdits;
-    perBufferEdits.reserve(result.edits.size());
-    for (std::size_t i = 0; i < result.edits.size(); ++i) {
-        perBufferEdits.emplace_back(buffers[i], result.edits[i].edits);
+    ApplyProjectEdit(perBufferEdits, description);
+    if (touchedFilesystem && projectSidebar_) {
+        projectSidebar_->InvalidateTree();
     }
-    ApplyProjectEdit(perBufferEdits, "Renamed (" + renameTitle_ + ").");
+    return true;
 }
 
 void BufferView::ReplayMacro() {
