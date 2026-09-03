@@ -75,16 +75,6 @@ Notcurses.
       real-LSP-sync treatment HTML `<script>`/`<style>` embedded documents already have
       is an open question — spawning a live language server per code fence in an
       ordinary notes file could be noisy for illustrative/incomplete snippets.
-- [ ] **Call hierarchy / type hierarchy** — `textDocument/prepareCallHierarchy` +
-      `callHierarchy/incomingCalls`/`outgoingCalls`, and the analogous
-      `prepareTypeHierarchy`/`typeHierarchy/supertypes`/`subtypes`, are the two LSP
-      methods this client has never sent. Unlike every other LSP result view in this
-      codebase (a flat list: references, symbols, diagnostics), a hierarchy is
-      genuinely tree-shaped and expands on demand (each node's children are a fresh
-      request) — there's no existing widget to render that. Worth building a generic
-      expandable tree/list widget in `Source/UI/` for this rather than a one-off, since
-      nothing here currently renders hierarchical data and a future consumer (a VCS
-      log graph, a project outline pane) could reuse it instead of growing its own.
 - [ ] **`semanticTokens/range` and delta requests** — the semantic-highlighting client
       only ever sends the full-document `semanticTokens/full` request; no huge-buffer
       windowing or incremental delta support yet.

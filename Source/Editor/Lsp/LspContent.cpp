@@ -751,4 +751,92 @@ std::vector<CodeLens> ExtractCodeLenses(const Json& result) {
     return lenses;
 }
 
+namespace {
+
+    // call/type-hierarchy follow-up. Parses one CallHierarchyItem/
+    // TypeHierarchyItem object -- nullopt for one missing "name", "uri", or
+    // "selectionRange", matching every other ExtractX function's "skip a
+    // malformed entry" convention.
+    std::optional<HierarchyItem> HierarchyItemFromJson(const Json& item) {
+        if (!item.is_object()) {
+            return std::nullopt;
+        }
+        const auto nameIt = item.find("name");
+        const auto uriIt  = item.find("uri");
+        if (nameIt == item.end() || !nameIt->is_string() || uriIt == item.end() || !uriIt->is_string()) {
+            return std::nullopt;
+        }
+        const auto selectionRangeIt = item.find("selectionRange");
+        if (selectionRangeIt == item.end() || !selectionRangeIt->is_object() || !selectionRangeIt->contains("start")) {
+            return std::nullopt;
+        }
+        return HierarchyItem{
+            .name     = nameIt->get<std::string>(),
+            .detail   = item.value("detail", std::string()),
+            .kind     = item.value("kind", 0),
+            .uri      = uriIt->get<std::string>(),
+            .position = PositionFromJson((*selectionRangeIt)["start"]),
+            .raw      = item,
+        };
+    }
+
+    // Shared by ExtractIncomingCalls/ExtractOutgoingCalls -- itemField is
+    // "from" or "to" per spec, everything else about the two response shapes
+    // is identical.
+    std::vector<HierarchyCall> ExtractHierarchyCalls(const Json& result, const char* itemField) {
+        std::vector<HierarchyCall> calls;
+        if (!result.is_array()) {
+            return calls;
+        }
+        calls.reserve(result.size());
+        for (const Json& entry : result) {
+            if (!entry.is_object()) {
+                continue;
+            }
+            const auto itemIt = entry.find(itemField);
+            if (itemIt == entry.end()) {
+                continue;
+            }
+            std::optional<HierarchyItem> item = HierarchyItemFromJson(*itemIt);
+            if (!item) {
+                continue;
+            }
+            HierarchyCall call{.item = std::move(*item)};
+            if (const auto rangesIt = entry.find("fromRanges"); rangesIt != entry.end() && rangesIt->is_array()) {
+                call.callSites.reserve(rangesIt->size());
+                for (const Json& range : *rangesIt) {
+                    if (range.is_object() && range.contains("start")) {
+                        call.callSites.push_back(PositionFromJson(range["start"]));
+                    }
+                }
+            }
+            calls.push_back(std::move(call));
+        }
+        return calls;
+    }
+
+} // namespace
+
+std::vector<HierarchyItem> ExtractHierarchyItems(const Json& result) {
+    std::vector<HierarchyItem> items;
+    if (!result.is_array()) {
+        return items;
+    }
+    items.reserve(result.size());
+    for (const Json& entry : result) {
+        if (std::optional<HierarchyItem> item = HierarchyItemFromJson(entry)) {
+            items.push_back(std::move(*item));
+        }
+    }
+    return items;
+}
+
+std::vector<HierarchyCall> ExtractIncomingCalls(const Json& result) {
+    return ExtractHierarchyCalls(result, "from");
+}
+
+std::vector<HierarchyCall> ExtractOutgoingCalls(const Json& result) {
+    return ExtractHierarchyCalls(result, "to");
+}
+
 } // namespace ned::editor::lsp

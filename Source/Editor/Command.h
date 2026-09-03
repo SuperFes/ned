@@ -359,6 +359,22 @@ enum class InteractiveRequest { None,
                                 // a local fuzzy filter over an already-fetched list.
                                 LspGotoSymbol,
                                 LspWorkspaceSymbol,
+                                // call/type-hierarchy follow-up: four more one-shot direct
+                                // actions, same "async request, own session" shape as
+                                // LspGotoSymbol above -- BufferView::RequestHierarchyAtPoint
+                                // takes a direction parameter and drives all four through the
+                                // same prepare/auto-expand-root/browse machinery. Unlike every
+                                // other Lsp* session here, the resulting browse session hands
+                                // real keyboard focus to a dedicated ui::TreeView overlay
+                                // (Source/UI/TreeView.h) rather than staying in one of
+                                // BufferView's own InputMode key handlers -- a hierarchy is
+                                // genuinely tree-shaped and expands on demand, unlike every
+                                // other LSP result view in this codebase (a flat list), so it
+                                // needed a real widget instead of an echo-area numbered list.
+                                LspCallHierarchyIncoming,
+                                LspCallHierarchyOutgoing,
+                                LspTypeHierarchySupertypes,
+                                LspTypeHierarchySubtypes,
                                 LspRename,
                                 // task-runner follow-up: prompt-shaped requests, same "New
                                 // name" -> HandlePromptKey shape LspRename established above --

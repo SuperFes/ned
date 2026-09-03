@@ -479,6 +479,92 @@ class LspManager {
     void RequestWorkspaceSymbols(text::Buffer& buffer, const std::string& query, SymbolCallback callback,
                                  const std::string& serverKey = {});
 
+    // call/type-hierarchy follow-up. A HierarchyItem (LspContent.h) with its
+    // own uri resolved to a real filesystem path -- SymbolResult's own
+    // "LspManager owns the uri<->path boundary" reasoning applies verbatim.
+    // item.raw is kept as-is (untouched by path resolution) since it's what
+    // a later incomingCalls/outgoingCalls/supertypes/subtypes request
+    // replays back verbatim as its own "item" parameter -- the server-given
+    // uri inside it must stay exactly as sent, this codebase's own resolved
+    // path is purely an addition for BufferView's own use. Dropped, not kept
+    // with a nonsense path, when the uri doesn't resolve -- SymbolResult's
+    // own "one bad entry, minor degrade" precedent, not
+    // SendLocationRequest's stricter rename-only "refuse the whole batch."
+    struct ResolvedHierarchyItem {
+        HierarchyItem          item;
+        std::filesystem::path  path;
+    };
+    using HierarchyItemsCallback = std::function<void(std::vector<ResolvedHierarchyItem> items)>;
+
+    // Sent for lsp-call-hierarchy-incoming/-outgoing: the first of the two
+    // requests those commands issue (textDocument/prepareCallHierarchy),
+    // resolving point to however many CallHierarchyItems the server thinks
+    // sit there -- almost always 0 or 1, but the spec allows more (an
+    // overload set, a macro expansion) so every item is kept and, per real
+    // eglot/lsp-mode precedent, a caller with more than one should let the
+    // user pick rather than guessing. The *second* request (incoming/
+    // outgoing calls for whichever item the tree session is expanding) is
+    // RequestIncomingCalls/RequestOutgoingCalls below, not this method --
+    // prepare only ever runs once, at the point the session starts.
+    void RequestPrepareCallHierarchy(text::Buffer& buffer, std::size_t byteOffset, HierarchyItemsCallback callback,
+                                     const std::string& serverKey = {});
+
+    // Sent for lsp-type-hierarchy-supertypes/-subtypes' own prepare step --
+    // textDocument/prepareTypeHierarchy, otherwise identical to
+    // RequestPrepareCallHierarchy above (TypeHierarchyItem is wire-identical
+    // to CallHierarchyItem, see HierarchyItem's own doc comment).
+    void RequestPrepareTypeHierarchy(text::Buffer& buffer, std::size_t byteOffset, HierarchyItemsCallback callback,
+                                     const std::string& serverKey = {});
+
+    // call/type-hierarchy follow-up. One expand step of a call-hierarchy
+    // tree session: item must be a ResolvedHierarchyItem this same
+    // LspManager already handed back (from RequestPrepareCallHierarchy or a
+    // prior RequestIncomingCalls/RequestOutgoingCalls call on the same
+    // serverKey) -- its raw field is replayed verbatim as the request's own
+    // "item" parameter, which is how a server correlates this call back to
+    // the symbol it resolved earlier (via its own opaque "data", carried
+    // inside raw). buffer/serverKey resolve which running connection to
+    // send to -- callers should pass the same buffer/serverKey the
+    // originating prepare request used, so this lands on the exact same
+    // server session raw's "data" (if any) was minted by.
+    //
+    // callSites' file context differs by direction, per spec: for
+    // incomingCalls, each entry's callSites are positions within the
+    // *returned* item's own file (the caller calls the requested symbol at
+    // these points in the caller's own source); for outgoingCalls, they're
+    // positions within the *originally requested* item's file instead (the
+    // file the call site itself lives in), not the returned item's --
+    // BufferView must track which file that is itself rather than reading
+    // it off the returned item. Not resolved to a jump target in this v1 --
+    // ResolvedHierarchyItem::path/position (the item's own definition site)
+    // is the primary jump target a tree row offers; callSites is exposed
+    // only for an annotation like "(3 call sites)", real navigation to a
+    // specific call site is a documented future refinement.
+    struct ResolvedHierarchyCall {
+        ResolvedHierarchyItem     item;
+        std::vector<LspPosition> callSites;
+    };
+    using HierarchyCallsCallback = std::function<void(std::vector<ResolvedHierarchyCall> calls)>;
+
+    // callHierarchy/incomingCalls -- "who calls item".
+    void RequestIncomingCalls(text::Buffer& buffer, const HierarchyItem& item, HierarchyCallsCallback callback,
+                              const std::string& serverKey = {});
+
+    // callHierarchy/outgoingCalls -- "what item calls".
+    void RequestOutgoingCalls(text::Buffer& buffer, const HierarchyItem& item, HierarchyCallsCallback callback,
+                              const std::string& serverKey = {});
+
+    // typeHierarchy/supertypes -- "what item extends/implements". Reuses
+    // HierarchyItemsCallback (a bare HierarchyItem[] response, no call-site
+    // wrapper) since supertypes/subtypes have no fromRanges concept at all,
+    // unlike incoming/outgoingCalls.
+    void RequestSupertypes(text::Buffer& buffer, const HierarchyItem& item, HierarchyItemsCallback callback,
+                           const std::string& serverKey = {});
+
+    // typeHierarchy/subtypes -- "what extends/implements item".
+    void RequestSubtypes(text::Buffer& buffer, const HierarchyItem& item, HierarchyItemsCallback callback,
+                         const std::string& serverKey = {});
+
     // graceful-lsp-shutdown follow-up. Called once, synchronously, from
     // main.cpp's post-Run() shutdown sequence, before this LspManager (and
     // every LspClient it owns) is destroyed by ordinary local-variable
@@ -880,6 +966,24 @@ class LspManager {
     // "context" field without every other caller's params shape changing.
     void SendLocationRequest(const std::string& method, text::Buffer& buffer, std::size_t byteOffset, DefinitionCallback callback,
                              const std::string& serverKey, const Json& extraParams = Json::object());
+
+    // call/type-hierarchy follow-up: SendLocationRequest's sibling for the
+    // two prepare requests -- same textDocument/position params shape, but
+    // ExtractHierarchyItems/ResolvedHierarchyItem instead of
+    // ExtractDefinitionLocations/ResolvedLocation, so it isn't just another
+    // extraParams-shaped call through SendLocationRequest itself.
+    void SendHierarchyPrepareRequest(const std::string& method, text::Buffer& buffer, std::size_t byteOffset,
+                                     HierarchyItemsCallback callback, const std::string& serverKey);
+
+    // call/type-hierarchy follow-up: shared by RequestSupertypes/
+    // RequestSubtypes -- both send {"item": item.raw} and parse a bare
+    // HierarchyItem[] back, differing only in method name. RequestIncomingCalls/
+    // RequestOutgoingCalls don't share this (their response shape has the
+    // extra fromRanges wrapper ExtractIncomingCalls/ExtractOutgoingCalls
+    // parse), so each stays its own small method rather than forcing a third
+    // shape through here.
+    void SendTypeHierarchyStepRequest(const std::string& method, text::Buffer& buffer, const HierarchyItem& item,
+                                      HierarchyItemsCallback callback, const std::string& serverKey);
 
     // prose-checking follow-up: flattens every source language's current
     // diagnostics slice for buffer (diagnosticsBySource_[&buffer]) into one

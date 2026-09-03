@@ -2577,6 +2577,27 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           context.interactiveRequest = InteractiveRequest::LspWorkspaceSymbol;
                       });
 
+    // call/type-hierarchy follow-up: four more one-shot direct actions --
+    // BufferView::RequestHierarchyAtPoint owns the actual prepare/expand/
+    // browse session for all four (see InteractiveRequest::
+    // LspCallHierarchyIncoming's own doc comment in Command.h).
+    registry.Register("lsp-call-hierarchy-incoming", "Show callers of the symbol at point, via the language server (callHierarchy/incomingCalls).",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::LspCallHierarchyIncoming;
+                      });
+    registry.Register("lsp-call-hierarchy-outgoing", "Show what the symbol at point calls, via the language server (callHierarchy/outgoingCalls).",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::LspCallHierarchyOutgoing;
+                      });
+    registry.Register("lsp-type-hierarchy-supertypes", "Show supertypes of the symbol at point, via the language server (typeHierarchy/supertypes).",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::LspTypeHierarchySupertypes;
+                      });
+    registry.Register("lsp-type-hierarchy-subtypes", "Show subtypes of the symbol at point, via the language server (typeHierarchy/subtypes).",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::LspTypeHierarchySubtypes;
+                      });
+
     registry.Register("lsp-rename", "Rename the symbol at point across every file the language server reports it in.",
                       [](CommandContext& context) {
                           context.interactiveRequest = InteractiveRequest::LspRename;
@@ -3657,6 +3678,16 @@ Keymap BuildDefaultGlobalKeymap() {
     // prefix just established above ("w" for workspace).
     keymap.Bind(ParseKeySequence("M-g i"), "lsp-goto-symbol");
     keymap.Bind(ParseKeySequence("C-c l w"), "lsp-workspace-symbol");
+    // call/type-hierarchy follow-up: continues the "C-c l" mnemonic prefix
+    // -- no standard real-Emacs/eglot default to align with (call/type
+    // hierarchy predates neither xref nor imenu). "c"/shifted-"C" for
+    // call-hierarchy incoming/outgoing (callers vs. callees), "s"/shifted-"S"
+    // for type-hierarchy supertypes/subtypes -- the same "shifted variant is
+    // the paired/stronger action" trick "C-c v h"/"C-c v H" already uses.
+    keymap.Bind(ParseKeySequence("C-c l c"), "lsp-call-hierarchy-incoming");
+    keymap.Bind(ParseKeySequence("C-c l C"), "lsp-call-hierarchy-outgoing");
+    keymap.Bind(ParseKeySequence("C-c l s"), "lsp-type-hierarchy-supertypes");
+    keymap.Bind(ParseKeySequence("C-c l S"), "lsp-type-hierarchy-subtypes");
     // header-source-switching follow-up: "M-o" is free (grepped the full
     // bind list in this function) and matches the VS Code/CLion C/C++
     // extensions' own Alt+O convention for this exact action -- no

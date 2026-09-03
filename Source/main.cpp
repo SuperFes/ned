@@ -1585,6 +1585,41 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     // ever shown for the focused pane).
     completionPopup.SetOnActivate([wm = windowManager.get()](std::size_t index) { wm->ActivateCompletionAt(index); });
 
+    // call/type-hierarchy follow-up: the shared TreeView overlay behind
+    // lsp-call-hierarchy-incoming/-outgoing/lsp-type-hierarchy-supertypes/
+    // -subtypes -- unlike candidatePopup/completionPopup above, this one
+    // takes real keyboard focus for the whole session (WindowManager::
+    // SetOnHierarchyChanged's own doc comment explains why), so on show it
+    // also calls TakeFocus(); the reverse hand-back (on cancel/activate)
+    // is BufferView::EndHierarchySession's own job, called from the
+    // WindowManager::Hierarchy* routing methods these callbacks invoke.
+    // Sized larger than the two popups above (most of the screen, roughly
+    // centered) -- a tree worth browsing needs real room, unlike a
+    // single-line-anchored candidate list.
+    ned::ui::TreeView hierarchyTreeView(theme);
+    overlays.Add(hierarchyTreeView, [panel = &hierarchyTreeView](Size size) {
+        const int width  = std::max(20, std::min(100, size.width - 4));
+        const int height = std::max(6, std::min(34, size.height - 4));
+        const int xMin   = std::max(0, (size.width - width) / 2);
+        const int yMin   = std::max(0, (size.height - height) / 2);
+        return Box{.x_min = xMin, .x_max = xMin + width - 1, .y_min = yMin, .y_max = yMin + height - 1};
+    });
+    windowManager->SetOnHierarchyChanged([&overlays, panel = &hierarchyTreeView](std::optional<ned::ui::TreeViewModel> model) {
+        if (model) {
+            panel->SetModel(std::move(*model));
+            overlays.Show(*panel);
+            panel->TakeFocus();
+        }
+        else {
+            overlays.Hide(*panel);
+        }
+    });
+    hierarchyTreeView.SetOnActivate([wm = windowManager.get()](std::size_t index) { wm->HierarchyActivate(index); });
+    hierarchyTreeView.SetOnToggleExpand([wm = windowManager.get()](std::size_t index) { wm->HierarchyToggleExpand(index); });
+    hierarchyTreeView.SetOnCollapseRequested([wm = windowManager.get()](std::size_t index) { wm->HierarchyCollapse(index); });
+    hierarchyTreeView.SetOnCancel([wm = windowManager.get()] { wm->HierarchyCancel(); });
+    hierarchyTreeView.SetOnSelectionChanged([wm = windowManager.get()](std::size_t index) { wm->HierarchySelectionChanged(index); });
+
     // terminal-title follow-up: Ned::Application::SetTitle/GetTitle
     // (Application.h) predate this and were otherwise dead beyond the one
     // static "Ned" call at the top of this function -- this is what
