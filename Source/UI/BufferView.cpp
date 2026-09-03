@@ -8125,8 +8125,28 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
 }
 
 std::string BufferView::SearchStatusText() const {
-    std::string text = search_->StatusText();
-    if (search_->Query().empty() && !lastSearchQuery_.empty()) {
+    std::string         text  = search_->StatusLabel();
+    const std::string&  query = search_->Query();
+
+    // partial-match-highlighting follow-up: a failing search's query is
+    // split at MatchedPrefixLength() -- the still-matching prefix rendered
+    // emphasized (bold), the rest plain -- so it's visible at a glance how
+    // much of what's typed so far still corresponds to real buffer content,
+    // rather than only learning that from the "Failing " label. Falls back
+    // to the whole query plain whenever there's nothing meaningful to split
+    // (a successful search, an empty query, or MatchedPrefixLength()
+    // reporting "not available" for a huge buffer -- see its own doc
+    // comment).
+    const std::size_t matchedLen = search_->MatchedPrefixLength();
+    if (search_->Found() || query.empty() || matchedLen >= query.size()) {
+        text += query;
+    }
+    else {
+        text += EmphasizeForEchoArea(query.substr(0, matchedLen));
+        text += query.substr(matchedLen);
+    }
+
+    if (query.empty() && !lastSearchQuery_.empty()) {
         text += GhostForEchoArea(lastSearchQuery_);
     }
     return text;
@@ -8284,7 +8304,26 @@ void BufferView::HandleSearchKey(const editor::KeyChord& chord) {
     else if (IsPlainCharacter(chord)) {
         search_->AppendChar(chord.Codepoint);
     }
-    // Anything else (arrow keys, unrelated control combos) is ignored mid-search.
+    else if (!chord.Control && !chord.Meta &&
+             (chord.Special == editor::SpecialKey::Up || chord.Special == editor::SpecialKey::Down ||
+              chord.Special == editor::SpecialKey::Left || chord.Special == editor::SpecialKey::Right ||
+              chord.Special == editor::SpecialKey::Home || chord.Special == editor::SpecialKey::End ||
+              chord.Special == editor::SpecialKey::PageUp || chord.Special == editor::SpecialKey::PageDown)) {
+        // isearch-motion-key-exits follow-up: real Emacs isearch behavior --
+        // none of these are isearch commands, so rather than being silently
+        // swallowed (this branch's old behavior), the key ends the search
+        // (keeping the current match position, same as Enter) and
+        // re-dispatches itself through the normal keymap, applying the
+        // motion instead of requiring an explicit Enter/Escape first.
+        if (!search_->Query().empty()) {
+            lastSearchQuery_ = search_->Query();
+        }
+        search_->Accept();
+        EndInteractiveSession();
+        DispatchChordNormally(chord);
+        return;
+    }
+    // Anything else (unrelated control combos) is ignored mid-search.
 
     statusMessage_ = SearchStatusText();
     ScrollToShowPoint();

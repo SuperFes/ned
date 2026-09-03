@@ -67,6 +67,24 @@ class IncrementalSearch {
     [[nodiscard]] bool                Found() const;
     // "I-search: query" / "Failing I-search: query" (backward prepends "Backward").
     [[nodiscard]] std::string         StatusText() const;
+    // StatusText()'s own prefix, everything up to but not including the
+    // query itself -- split out so a caller that wants to render the query
+    // with its own byte-range styling (partial-match-highlighting follow-up:
+    // the UI layer distinguishing a failing query's still-matching prefix
+    // from the rest) doesn't have to duplicate this format string.
+    [[nodiscard]] std::string         StatusLabel() const;
+
+    // Byte length of the longest prefix of Query() that still matches
+    // somewhere in the buffer -- Query().size() itself whenever Found() is
+    // true (the whole query matches) or the buffer is huge (see below).
+    // Lets a caller highlight exactly the trailing bytes responsible for a
+    // failing search (real editors' "show me where it stopped matching"
+    // isearch UX) without re-deriving the search itself. Not computed for a
+    // huge buffer -- always Query().size() there regardless of Found(),
+    // matching the existing reduced-feature-set precedent (SearchHuge()'s
+    // own header comment): a caller sees "no shorter prefix info available"
+    // and falls back to its plain, whole-query rendering.
+    [[nodiscard]] std::size_t         MatchedPrefixLength() const;
 
   private:
     void Search(std::size_t from);
@@ -74,6 +92,14 @@ class IncrementalSearch {
     // of Search -- windowed scanning via Content().Substring instead of
     // content_/contentLower_, which are left empty for a huge buffer.
     void SearchHuge(std::size_t from);
+    // partial-match-highlighting follow-up: called only from Search() (never
+    // SearchHuge(), see MatchedPrefixLength()'s own doc comment) right after
+    // the full query_ has failed to match anywhere -- walks query_ backward
+    // one codepoint at a time until a shorter prefix exists somewhere in the
+    // buffer (existence only; direction/wrap-around, relevant to Search()
+    // itself, don't apply here) or nothing shorter than the whole query is
+    // left.
+    [[nodiscard]] std::size_t ComputeMatchedPrefixLength() const;
 
     text::Buffer& buffer_;
     Direction     direction_;
@@ -83,6 +109,7 @@ class IncrementalSearch {
     std::string   query_;
     std::size_t   originalPoint_;
     bool          found_ = true;
+    std::size_t   matchedPrefixLength_ = 0; // see MatchedPrefixLength()'s own doc comment
 };
 
 } // namespace ned::editor

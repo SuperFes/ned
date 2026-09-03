@@ -143,21 +143,45 @@ bool IncrementalSearch::Found() const {
     return found_;
 }
 
-std::string IncrementalSearch::StatusText() const {
-    std::string text;
+std::string IncrementalSearch::StatusLabel() const {
+    std::string label;
     if (!found_) {
-        text += "Failing ";
+        label += "Failing ";
     }
     if (direction_ == Direction::Backward) {
-        text += "Backward ";
+        label += "Backward ";
     }
-    text += "I-search: " + query_;
-    return text;
+    label += "I-search: ";
+    return label;
+}
+
+std::string IncrementalSearch::StatusText() const {
+    return StatusLabel() + query_;
+}
+
+std::size_t IncrementalSearch::MatchedPrefixLength() const {
+    return matchedPrefixLength_;
+}
+
+std::size_t IncrementalSearch::ComputeMatchedPrefixLength() const {
+    const bool          caseSensitive = HasAsciiUppercase(query_);
+    const std::string&  haystack      = caseSensitive ? content_ : contentLower_;
+    const std::string   needleOwner   = caseSensitive ? query_ : ToAsciiLower(query_);
+
+    std::size_t len = text::PreviousCodepointBoundary(query_, query_.size());
+    while (len > 0) {
+        if (haystack.find(needleOwner.substr(0, len)) != std::string::npos) {
+            return len;
+        }
+        len = text::PreviousCodepointBoundary(query_, len);
+    }
+    return 0;
 }
 
 void IncrementalSearch::Search(std::size_t from) {
     if (query_.empty()) {
-        found_ = true;
+        found_               = true;
+        matchedPrefixLength_ = 0;
         buffer_.SetPoint(originalPoint_);
         return;
     }
@@ -188,11 +212,13 @@ void IncrementalSearch::Search(std::size_t from) {
     }
 
     if (pos == std::string::npos) {
-        found_ = false;
+        found_               = false;
+        matchedPrefixLength_ = ComputeMatchedPrefixLength();
         return; // point stays wherever the last successful match left it
     }
 
-    found_ = true;
+    found_               = true;
+    matchedPrefixLength_ = query_.size();
     buffer_.SetPoint(direction_ == Direction::Forward ? pos + query_.size() : pos);
 }
 
@@ -272,10 +298,15 @@ void IncrementalSearch::SearchHuge(std::size_t from) {
 
     if (pos == std::string::npos) {
         found_ = false;
+        // partial-match-highlighting follow-up: no partial-prefix info for a
+        // huge buffer (see MatchedPrefixLength()'s own doc comment) --
+        // query_.size() itself signals "not available" to a caller.
+        matchedPrefixLength_ = query_.size();
         return; // point stays wherever the last successful match left it
     }
 
-    found_ = true;
+    found_               = true;
+    matchedPrefixLength_ = query_.size();
     buffer_.SetPoint(direction_ == Direction::Forward ? pos + query_.size() : pos);
 }
 

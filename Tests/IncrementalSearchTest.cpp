@@ -187,6 +187,54 @@ TEST_CASE("A query with no match reports Found() == false and leaves point unmov
     REQUIRE(buffer.Point() == 0); // never found anything to move to
 }
 
+TEST_CASE("MatchedPrefixLength reports the whole query when found, and the longest matching prefix when failing",
+          "[IncrementalSearch]") {
+    Buffer buffer("scratch", Rope(kText));
+    buffer.SetPoint(0);
+
+    IncrementalSearch search(buffer, IncrementalSearch::Direction::Forward);
+    search.AppendChar(U'f');
+    search.AppendChar(U'o');
+    search.AppendChar(U'x');
+    REQUIRE(search.Found());
+    REQUIRE(search.MatchedPrefixLength() == search.Query().size());
+
+    search.AppendChar(U'y'); // "foxy" doesn't exist, but "fox" does
+    REQUIRE_FALSE(search.Found());
+    REQUIRE(search.MatchedPrefixLength() == 3);
+
+    search.AppendChar(U'z'); // "foxyz" still doesn't exist; longest matching prefix is still "fox"
+    REQUIRE_FALSE(search.Found());
+    REQUIRE(search.MatchedPrefixLength() == 3);
+}
+
+TEST_CASE("MatchedPrefixLength is 0 when no prefix of the query matches at all", "[IncrementalSearch]") {
+    Buffer buffer("scratch", Rope(kText));
+    buffer.SetPoint(0);
+
+    IncrementalSearch search(buffer, IncrementalSearch::Direction::Forward);
+    search.AppendChar(U'9'); // never appears, not even as a single character
+    REQUIRE_FALSE(search.Found());
+    REQUIRE(search.MatchedPrefixLength() == 0);
+}
+
+TEST_CASE("MatchedPrefixLength reports Query().size() (unavailable) rather than crashing on a huge buffer",
+          "[IncrementalSearch][HugeFile]") {
+    const std::filesystem::path path   = WriteTempFile("ned_isearch_huge_prefix.txt", kText);
+    Buffer                      buffer = Buffer::FromHugeFile(path);
+    buffer.SetPoint(0);
+
+    IncrementalSearch search(buffer, IncrementalSearch::Direction::Forward);
+    search.AppendChar(U'f');
+    search.AppendChar(U'o');
+    search.AppendChar(U'x');
+    search.AppendChar(U'y'); // "foxy" doesn't exist
+    REQUIRE_FALSE(search.Found());
+    REQUIRE(search.MatchedPrefixLength() == search.Query().size());
+
+    std::filesystem::remove(path);
+}
+
 TEST_CASE("DeleteChar shortens the query and re-searches, recovering from a failing search", "[IncrementalSearch]") {
     Buffer buffer("scratch", Rope(kText));
     buffer.SetPoint(0);
@@ -253,6 +301,11 @@ TEST_CASE("StatusText reflects direction and failing state", "[IncrementalSearch
     IncrementalSearch backward(buffer, IncrementalSearch::Direction::Backward);
     backward.AppendChar(U'f');
     REQUIRE(backward.StatusText() == "Backward I-search: f");
+
+    IncrementalSearch labelForward(buffer, IncrementalSearch::Direction::Forward);
+    labelForward.AppendChar(U'f');
+    REQUIRE(labelForward.StatusLabel() == "I-search: ");
+    REQUIRE(labelForward.StatusText() == labelForward.StatusLabel() + labelForward.Query());
 
     IncrementalSearch failing(buffer, IncrementalSearch::Direction::Forward);
     failing.AppendChar(U'z');
