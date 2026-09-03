@@ -2319,6 +2319,127 @@ TEST_CASE("dap-set-variable edits a *debug* buffer variable line via the right o
     REQUIRE(fixture.bufferList.Find("*debug*")->Text().find("x: int = 42") != std::string::npos);
 }
 
+TEST_CASE("dap-show-disassembly builds a *disassembly* buffer around the stopped frame's PC", "[BufferView]") {
+    Fixture                      fixture;
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::dap::DapManager manager(eventLoop);
+    ned::editor::dap::DapClient* client  = nullptr;
+    FakeDapAdapter               adapter = FakeDapAdapter::Create(manager, eventLoop, client);
+
+    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-disassemble", "{}");
+    manager.StartOrContinue("bufferview-dap-disassemble");
+    const auto initialize = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(initialize["seq"].get<int>(), "initialize", ned::editor::dap::Json::object()));
+    const auto launch = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(launch["seq"].get<int>(), "launch", ned::editor::dap::Json::object()));
+
+    client->DispatchFrame(DapEventFrame("stopped", {{"reason", "breakpoint"}, {"threadId", 1}}));
+    const auto autoStackTrace = adapter.NextRequest();
+    client->DispatchFrame(
+        DapResponseFrame(autoStackTrace["seq"].get<int>(), "stackTrace", {{"stackFrames", ned::editor::dap::Json::array()}}));
+    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-disassemble", "");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetDapManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 20});
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "dap-show-disassembly");
+    view.OnEvent(ned::ui::test::Return());
+
+    const auto stackTrace = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(
+        stackTrace["seq"].get<int>(), "stackTrace",
+        {{"stackFrames", ned::editor::dap::Json::array({{{"id", 1}, {"name", "main"}, {"instructionPointerReference", "0x1000"}}})}}));
+
+    const auto disassemble = adapter.NextRequest();
+    REQUIRE(disassemble["command"] == "disassemble");
+    REQUIRE(disassemble["arguments"]["memoryReference"] == "0x1000");
+    REQUIRE(disassemble["arguments"]["instructionOffset"] == -32);
+    REQUIRE(disassemble["arguments"]["instructionCount"] == 64);
+    client->DispatchFrame(DapResponseFrame(
+        disassemble["seq"].get<int>(), "disassemble",
+        {{"instructions", ned::editor::dap::Json::array(
+                              {{{"address", "0x1000"}, {"instructionBytes", "90"}, {"instruction", "nop"}},
+                               {{"address", "0x1004"}, {"instruction", "ret"}}})}}));
+
+    ned::text::Buffer* disassembly = fixture.bufferList.Find("*disassembly*");
+    REQUIRE(disassembly != nullptr);
+    REQUIRE(disassembly->Text().find("-> 0x1000  90  nop") != std::string::npos);
+    REQUIRE(disassembly->Text().find("0x1004  ret") != std::string::npos);
+}
+
+TEST_CASE("dap-show-memory-at-point reads the [mem:] marker, prompts for a count, and builds a hex dump", "[BufferView]") {
+    Fixture                      fixture;
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::dap::DapManager manager(eventLoop);
+    ned::editor::dap::DapClient* client  = nullptr;
+    FakeDapAdapter               adapter = FakeDapAdapter::Create(manager, eventLoop, client);
+
+    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-memory", "{}");
+    manager.StartOrContinue("bufferview-dap-memory");
+    const auto initialize = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(initialize["seq"].get<int>(), "initialize", ned::editor::dap::Json::object()));
+    const auto launch = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(launch["seq"].get<int>(), "launch", ned::editor::dap::Json::object()));
+
+    client->DispatchFrame(DapEventFrame("stopped", {{"reason", "breakpoint"}, {"threadId", 1}}));
+    const auto autoStackTrace = adapter.NextRequest();
+    client->DispatchFrame(
+        DapResponseFrame(autoStackTrace["seq"].get<int>(), "stackTrace", {{"stackFrames", ned::editor::dap::Json::array()}}));
+    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-memory", "");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetDapManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 20});
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "dap-show-debug");
+    view.OnEvent(ned::ui::test::Return());
+
+    const auto showDebugStackTrace = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(
+        showDebugStackTrace["seq"].get<int>(), "stackTrace",
+        {{"stackFrames", ned::editor::dap::Json::array({{{"id", 1}, {"name", "main"}}})}}));
+    const auto scopesRequest = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(
+        scopesRequest["seq"].get<int>(), "scopes",
+        {{"scopes", ned::editor::dap::Json::array({{{"name", "Locals"}, {"variablesReference", 100}}})}}));
+    const auto variablesRequest = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(
+        variablesRequest["seq"].get<int>(), "variables",
+        {{"variables", ned::editor::dap::Json::array(
+                           {{{"name", "p"}, {"value", "0x2000"}, {"type", "int*"}, {"memoryReference", "0x2000"}}})}}));
+
+    ned::text::Buffer* debugBuffer = fixture.bufferList.Find("*debug*");
+    REQUIRE(debugBuffer != nullptr);
+    REQUIRE(debugBuffer->Text().find("[mem:0x2000]") != std::string::npos);
+    const std::size_t variableLineByte = debugBuffer->Text().find("p: int*");
+    REQUIRE(variableLineByte != std::string::npos);
+    debugBuffer->SetPoint(variableLineByte);
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "dap-show-memory-at-point");
+    view.OnEvent(ned::ui::test::Return());
+    REQUIRE(fixture.statusMessage == "Byte count (default 128): ");
+    TypeText(view, "4");
+    view.OnEvent(ned::ui::test::Return());
+
+    const auto readMemory = adapter.NextRequest();
+    REQUIRE(readMemory["command"] == "readMemory");
+    REQUIRE(readMemory["arguments"]["memoryReference"] == "0x2000");
+    REQUIRE(readMemory["arguments"]["count"] == 4);
+    // "AQIDBA==" is the base64 encoding of bytes {1, 2, 3, 4}.
+    client->DispatchFrame(
+        DapResponseFrame(readMemory["seq"].get<int>(), "readMemory", {{"address", "0x2000"}, {"data", "AQIDBA=="}}));
+
+    ned::text::Buffer* memory = fixture.bufferList.Find("*memory*");
+    REQUIRE(memory != nullptr);
+    REQUIRE(memory->Text().find("Memory at 0x2000") != std::string::npos);
+    REQUIRE(memory->Text().find("01 02 03 04") != std::string::npos);
+    REQUIRE(memory->Text().find("|....|") != std::string::npos);
+}
+
 TEST_CASE("dap-toggle-console reaches the registered callback", "[BufferView]") {
     Fixture             fixture;
     ned::ui::BufferView view = fixture.View();
