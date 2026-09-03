@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <stdexcept>
 
+#include <csignal>
 #include <fcntl.h>
 #include <poll.h>
 #include <termios.h>
@@ -66,7 +67,12 @@ namespace {
 
 } // namespace
 
-EventLoop::EventLoop() {
+// suspend-frame follow-up: everything the constructor originally did to
+// stand up nc_, extracted so Run()'s post-resume path (Suspend()'s own doc
+// comment) can rebuild an identical context after notcurses_stop()
+// invalidated the previous one -- resuming from a job-control suspend is
+// exactly a second cold start of Notcurses, not a re-show of anything.
+void EventLoop::InitializeNotcurses_() {
     // NCOPTION_NO_QUIT_SIGHANDLERS: Notcurses otherwise installs its own
     // SIGINT/SIGILL/SIGSEGV/SIGABRT/SIGTERM handlers that call
     // notcurses_stop() and exit -- a library that unilaterally decides when
@@ -112,6 +118,10 @@ EventLoop::EventLoop() {
         rawTermios.c_iflag &= ~static_cast<tcflag_t>(IXON | IXOFF);
         tcsetattr(STDIN_FILENO, TCSANOW, &rawTermios);
     }
+}
+
+EventLoop::EventLoop() {
+    InitializeNotcurses_();
 
     // A pipe purely for Post() to wake a blocked poll() from another thread
     // -- notcurses_inputready_fd (below, in Run) gives us a real pollable
@@ -194,6 +204,10 @@ bool EventLoop::DrainPosted_() {
     return !work.empty();
 }
 
+void EventLoop::Suspend() {
+    suspendRequested_ = true;
+}
+
 void EventLoop::Exit() {
     running_ = false;
     Wake_();
@@ -221,7 +235,7 @@ void EventLoop::Run(const EventLoopCallbacks& callbacks) {
     };
     repaint();
 
-    const int inputFd = notcurses_inputready_fd(nc_);
+    int inputFd = notcurses_inputready_fd(nc_);
 
     while (running_) {
         struct pollfd fds[2];
@@ -298,6 +312,40 @@ void EventLoop::Run(const EventLoopCallbacks& callbacks) {
             }
             if (callbacks.onEvent) {
                 SafeInvoke("onEvent", [&] { callbacks.onEvent(Event(input)); });
+            }
+            needsRepaint = true;
+        }
+
+        // suspend-frame follow-up: set by suspend-frame's own onEvent
+        // handling (CommandContext::suspend -> BufferView -> Suspend())
+        // above, consumed here rather than acted on synchronously inside
+        // that onEvent call -- notcurses_stop() below invalidates nc_
+        // outright, and inputFd (captured once before this loop started)
+        // would otherwise silently go stale, along with anything currently
+        // polling it. std::raise(SIGTSTP) blocks the entire process --
+        // every thread, not just this one -- until a later `fg` delivers
+        // SIGCONT, the exact same "leave raw mode, stop, wait, reinit,
+        // repaint" idiom vim/less/htop use for job control under a raw
+        // terminal. The terminal may have been resized while stopped (no
+        // NCKEY_RESIZE can arrive for that -- Notcurses wasn't running to
+        // see it), so this re-measures and drives onResize itself exactly
+        // like the NCKEY_RESIZE branch above does.
+        if (suspendRequested_) {
+            suspendRequested_ = false;
+            if (callbacks.onSuspend) {
+                SafeInvoke("onSuspend", callbacks.onSuspend);
+            }
+            notcurses_stop(nc_);
+            nc_ = nullptr;
+            std::raise(SIGTSTP);
+            InitializeNotcurses_();
+            inputFd = notcurses_inputready_fd(nc_);
+            unsigned rows = 0, cols = 0;
+            notcurses_refresh(nc_, &rows, &cols);
+            const Size resumedSize{static_cast<int>(cols), static_cast<int>(rows)};
+            if ((resumedSize.width != lastSize.width || resumedSize.height != lastSize.height) && callbacks.onResize) {
+                lastSize = resumedSize;
+                SafeInvoke("onResize", [&] { callbacks.onResize(resumedSize); });
             }
             needsRepaint = true;
         }

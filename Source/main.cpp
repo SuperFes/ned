@@ -1750,6 +1750,13 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
         return std::nullopt;
     };
 
+    // suspend-frame follow-up: same ReleaseMinimapPixelPlanes() call the
+    // final post-Run teardown below already relies on, just fired mid-
+    // session instead of at exit -- see EventLoopCallbacks::onSuspend's own
+    // doc comment for why this specific call is required before
+    // notcurses_stop(), not merely tidy.
+    callbacks.onSuspend = [&] { windowManager->ReleaseMinimapPixelPlanes(); };
+
     eventLoop.Run(callbacks);
 
     // terminal-title follow-up: pairs with kTitlePush above -- pop back to

@@ -55,6 +55,22 @@ struct EventLoopCallbacks {
     // Box, but the loop itself doesn't know enough about Widget trees to
     // compute that translation on the caller's behalf.
     std::function<std::optional<Point>()> render;
+
+    // suspend-frame follow-up: called once, right before notcurses_stop()
+    // tears the context down for a job-control suspend (EventLoop::Suspend()) --
+    // the composition root's one required cue to release any Notcurses
+    // resource it owns directly outside the ordinary Screen/Cell pipeline
+    // before that happens. Minimap's persistent pixel-graphics ncplane
+    // (Source/UI/Minimap.h) is the one such resource today: it survives
+    // across repaints by design, so nothing else would think to drop it
+    // here, and touching it after notcurses_stop() (a stale ncplane* into
+    // memory Notcurses already freed) is a real, confirmed SIGSEGV, not a
+    // hypothetical one -- the exact same ordering hazard
+    // WindowManager::ReleaseMinimapPixelPlanes()'s own doc comment already
+    // documents for process shutdown; this is that same fix's mid-session
+    // sibling. Optional: unset is a safe no-op, same convention as
+    // onResize/onEvent/render above.
+    std::function<void()> onSuspend;
 };
 
 // Owns exactly one Notcurses context for the process's lifetime -- like
@@ -107,6 +123,18 @@ class EventLoop {
 
     void Exit();
 
+    // suspend-frame follow-up: requests that Run()'s own loop
+    // job-control-suspend the process (Emacs' C-z/`suspend-frame`) the next
+    // time it's safe to do so -- deferred rather than done synchronously
+    // here for the same reason as Exit()/running_: this is called from deep
+    // inside a command's dispatch (BufferView, reacting to
+    // CommandContext::suspend), and the actual notcurses_stop/raise(SIGTSTP)/
+    // reinit sequence needs to happen back at Run()'s own stack frame, which
+    // is also the only place that can refresh the input fd Run() polls (see
+    // Run()'s own comment on why a stale post-reinit fd would otherwise
+    // silently stop delivering input).
+    void Suspend();
+
     // Thread-safe: queues fn to run on the loop's own thread at the next
     // opportunity, then wakes the loop if it's currently blocked waiting
     // for input (BufferView's scratch-auto-save background thread,
@@ -126,6 +154,13 @@ class EventLoop {
 
   private:
     void Wake_();
+
+    // suspend-frame follow-up: the notcurses_core_init/linesigs_disable/
+    // IXON-IXOFF-clearing sequence, shared between the constructor and
+    // Run()'s post-resume reinitialization -- notcurses_stop() invalidates
+    // nc_ outright, so resuming from a suspend has to rebuild the context
+    // from scratch exactly like startup does, not just re-show it.
+    void InitializeNotcurses_();
 
     // sidebar/drag-resize-not-working follow-up: a real, confirmed-via-
     // reading-Notcurses'-own-SGR-decoder bug (src/lib/in.c's mouse_click) --
@@ -151,8 +186,9 @@ class EventLoop {
     // "freshly pressed."
     std::optional<std::uint32_t> heldMouseButtonId_;
 
-    notcurses* nc_      = nullptr;
-    bool       running_ = false;
+    notcurses* nc_               = nullptr;
+    bool       running_          = false;
+    bool       suspendRequested_ = false; // suspend-frame follow-up: consumed by Run()'s own loop, see Suspend()'s doc comment
 
     int wakeReadFd_  = -1;
     int wakeWriteFd_ = -1;
