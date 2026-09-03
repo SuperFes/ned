@@ -1131,6 +1131,22 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     }
     if (restoredSession) {
         windowManager->RestoreWindowLayout(*restoredSession);
+        // cli-open-focus-vs-restored-layout follow-up: RestoreWindowLayout
+        // rebuilds the whole pane tree from the *saved* layout, including
+        // its own recorded focused pane/buffer -- unconditionally
+        // overwriting the CLI-named file's focus set at WindowManager
+        // construction above whenever that file happens to already appear
+        // somewhere in the restored session (FindByPath dedupe means it's
+        // the same Buffer either way, just not the one left showing). A
+        // file named explicitly on the command line must always win focus,
+        // matching every other CLI-open path's own stated contract
+        // (deferredLargeOpenPath's block below, the pathArg == nullptr
+        // guard just past it) -- re-applied here for the ordinary
+        // synchronous-open case those two don't cover.
+        if (pathArg != nullptr && !argIsDirectory && buffer != nullptr && deferredLargeOpenPath.empty()) {
+            windowManager->FocusedActiveBuffer().Set(*buffer);
+            projectSidebar->RevealPath(pathArg);
+        }
     }
 
     // loose-ends follow-up: the large CLI file deferred at the top of
