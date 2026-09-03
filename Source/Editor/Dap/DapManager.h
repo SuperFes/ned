@@ -109,6 +109,22 @@ class DapManager {
         std::size_t actualLine = 0;
     };
 
+    // session-persistence round 2: one breakpoint's persistable state --
+    // condition/logMessage/hitCondition now round-trip across a restart
+    // (closing the "session storage deliberately stayed the old line-only
+    // shape" gap recorded in ROADMAP.md). verified/actualLine deliberately
+    // stay OUT of this shape: both are live-adapter-derived facts that only
+    // mean anything relative to a session that's actually running one of
+    // this breakpoint's setBreakpoints requests, so every restored
+    // breakpoint starts fresh (verified=true, actualLine=0) exactly like a
+    // newly-toggled one -- see RestoreBreakpoints.
+    struct PersistedBreakpoint {
+        std::size_t line = 0;
+        std::string condition;
+        std::string logMessage;
+        std::string hitCondition;
+    };
+
     // Slice 4: sets/clears (empty string) the condition or log message on
     // the breakpoint at path:line, creating a plain breakpoint there first
     // if none exists yet (mirrors real Emacs dap-mode: setting a condition
@@ -141,7 +157,10 @@ class DapManager {
     // response (id/label/whether it's on by default); enabled ones are
     // whichever the adapter marked default until SetExceptionBreakpointFilters
     // overrides the set, both reset fresh at the start of every new session
-    // (never persisted -- session-lifetime only, same policy as watches).
+    // -- never persisted, unlike breakpoint conditions/watches (session-
+    // persistence round 2): a filter id is only meaningful relative to
+    // whichever adapter advertised it, so there's nothing stable to restore
+    // against before the next session's own initialize response arrives.
     struct ExceptionFilter {
         std::string id;
         std::string label;
@@ -222,23 +241,25 @@ class DapManager {
     [[nodiscard]] static std::string NormalizePathKey(const std::filesystem::path& path);
 
     // session-persistence slice 2: the whole store, in its own shape
-    // (normalized path key -> sorted 1-based lines), for ProjectSessionData
-    // to carry across restarts -- closes the "persisting breakpoints across
-    // restarts" v1 cut recorded in ROADMAP.md's DAP entry. Slice 4: returns
-    // by value now (a fresh line-only projection of the richer internal
-    // Breakpoint store) rather than a direct reference -- condition/
-    // logMessage/verified deliberately do NOT round-trip through session
-    // persistence (see ROADMAP.md), so this keeps the on-disk shape and
-    // every ProjectSession.cpp/WindowManager.cpp caller unchanged.
-    [[nodiscard]] std::map<std::string, std::vector<std::size_t>> AllBreakpoints() const;
+    // (normalized path key -> sorted-by-line PersistedBreakpoints), for
+    // ProjectSessionData to carry across restarts -- closes the "persisting
+    // breakpoints across restarts" v1 cut recorded in ROADMAP.md's DAP
+    // entry. session-persistence round 2: returns PersistedBreakpoint (line
+    // + condition/logMessage/hitCondition) rather than a bare line, closing
+    // the follow-up gap the same ROADMAP entry recorded -- verified/
+    // actualLine still don't round-trip (see PersistedBreakpoint's own doc
+    // comment).
+    [[nodiscard]] std::map<std::string, std::vector<PersistedBreakpoint>> AllBreakpoints() const;
 
     // Replaces the store wholesale (keys are trusted to be already
     // normalized -- they round-trip verbatim from AllBreakpoints via the
-    // session file). If a session is somehow live, every file whose set
-    // changed is pushed to the adapter; in the real startup wiring this
+    // session file). Every restored breakpoint starts verified=true/
+    // actualLine=0, same as a fresh ToggleBreakpoint (see
+    // PersistedBreakpoint). If a session is somehow live, every file whose
+    // set changed is pushed to the adapter; in the real startup wiring this
     // runs long before any session can exist, so that path is a
     // robustness guard, not a designed-for flow.
-    void RestoreBreakpoints(std::map<std::string, std::vector<std::size_t>> breakpoints);
+    void RestoreBreakpoints(std::map<std::string, std::vector<PersistedBreakpoint>> breakpoints);
 
     // subprocess-hang-protection follow-up. A no-op if no session is active;
     // otherwise forwards to the live client_'s own ExpireStaleRequests. See
@@ -280,15 +301,21 @@ class DapManager {
     // evaluation, "watch" is what ShowDebugInfo's watch-expression fan-out
     // passes (some adapters suppress side effects only for "watch").
     void Evaluate(const std::string& expression, std::function<void(bool, std::string)> callback,
-                   std::string context = "repl");
+                  std::string context = "repl");
 
     // Slice 4: watch expressions -- a plain ordered list, re-evaluated
     // (via Evaluate, "watch" context) by BufferView::ShowDebugInfo every
-    // time the *debug* buffer is rebuilt. Session-lifetime only, not
-    // persisted (see ROADMAP.md's DAP entry).
-    void                            AddWatch(std::string expression);
-    void                            RemoveWatchAt(std::size_t index);
+    // time the *debug* buffer is rebuilt. Kept across sessions the same way
+    // breakpoints_ is (session-persistence round 2 -- closes the "watches
+    // deliberately not persisted" gap ROADMAP.md recorded).
+    void                                          AddWatch(std::string expression);
+    void                                          RemoveWatchAt(std::size_t index);
     [[nodiscard]] const std::vector<std::string>& Watches() const;
+    // session-persistence round 2: replaces the watch list wholesale, same
+    // "keys/entries trusted, called before any session can exist" contract
+    // as RestoreBreakpoints. No live re-evaluation happens here -- the next
+    // ShowDebugInfo rebuild picks the restored list up on its own.
+    void RestoreWatches(std::vector<std::string> watches);
 
     // Slice 4: the thread picker. RequestThreads lists every thread the
     // adapter currently reports (graceful [] on no session/adapter error,
@@ -383,8 +410,8 @@ class DapManager {
 
     std::unique_ptr<DapClient> client_;
     std::string                language_;
-    SessionState                            state_           = SessionState::Inactive;
-    int                                     stoppedThreadId_ = 0;
+    SessionState               state_           = SessionState::Inactive;
+    int                        stoppedThreadId_ = 0;
     // Where the debuggee is stopped (slice 2) -- see CurrentStopKeyAndLine.
     std::optional<std::pair<std::string, std::size_t>> currentStop_;
     // The stopped top frame's own adapter-assigned id (slice 3) -- what
@@ -406,7 +433,9 @@ class DapManager {
     // currently enabled -- see AvailableExceptionFilters/
     // EnabledExceptionFilters/SetExceptionBreakpointFilters. Both reset in
     // EndSession, re-seeded from the new session's own initialize response
-    // (never persisted, same policy as watches_ below).
+    // (never persisted -- adapter-specific filter ids, nothing stable to
+    // restore against before the next initialize response, unlike
+    // watches_ below).
     std::vector<ExceptionFilter> exceptionFilters_;
     std::set<std::string>        enabledExceptionFilters_;
 
@@ -431,7 +460,7 @@ class DapManager {
     };
     Capabilities capabilities_;
 
-    std::vector<std::string> watches_; // slice 4, session-lifetime only -- see AddWatch/Watches
+    std::vector<std::string> watches_; // slice 4; persisted across restarts (round 2) -- see AddWatch/Watches/RestoreWatches
 
     std::function<void(const StoppedInfo&)> onStopped_;
     std::function<void(std::string)>        onSessionEnded_;

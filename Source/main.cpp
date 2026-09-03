@@ -1056,9 +1056,27 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
 
     // session-persistence slice 2: the restored session's breakpoints,
     // applied as soon as the store they live in exists -- long before any
-    // debug session could, so this never races an adapter.
+    // debug session could, so this never races an adapter. Round 2:
+    // condition/logMessage/hitCondition now round-trip too -- converts
+    // editor::BreakpointState back to DapManager::PersistedBreakpoint (same
+    // shape, different namespace, see BreakpointState's own doc comment).
     if (restoredSession && !restoredSession->breakpoints.empty()) {
-        dapManager.RestoreBreakpoints(restoredSession->breakpoints);
+        std::map<std::string, std::vector<ned::editor::dap::DapManager::PersistedBreakpoint>> converted;
+        for (const auto& [key, entries] : restoredSession->breakpoints) {
+            std::vector<ned::editor::dap::DapManager::PersistedBreakpoint>& out = converted[key];
+            for (const auto& bp : entries) {
+                out.push_back(ned::editor::dap::DapManager::PersistedBreakpoint{
+                    .line         = bp.line,
+                    .condition    = bp.condition,
+                    .logMessage   = bp.logMessage,
+                    .hitCondition = bp.hitCondition,
+                });
+            }
+        }
+        dapManager.RestoreBreakpoints(std::move(converted));
+    }
+    if (restoredSession && !restoredSession->watches.empty()) {
+        dapManager.RestoreWatches(restoredSession->watches);
     }
 
     // ACP client slice 2: same "constructed here, needs a real EventLoop&"

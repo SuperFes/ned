@@ -68,8 +68,22 @@ std::string ProjectSessionToJson(const ProjectSessionData& data, const std::file
     }
 
     Json breakpoints = Json::object();
-    for (const auto& [pathKey, lines] : data.breakpoints) {
-        breakpoints[pathKey] = lines;
+    for (const auto& [pathKey, entries] : data.breakpoints) {
+        Json list = Json::array();
+        for (const BreakpointState& bp : entries) {
+            Json entry = {{"line", bp.line}};
+            if (!bp.condition.empty()) {
+                entry["condition"] = bp.condition;
+            }
+            if (!bp.logMessage.empty()) {
+                entry["logMessage"] = bp.logMessage;
+            }
+            if (!bp.hitCondition.empty()) {
+                entry["hitCondition"] = bp.hitCondition;
+            }
+            list.push_back(std::move(entry));
+        }
+        breakpoints[pathKey] = std::move(list);
     }
 
     Json windowLayout = Json::array();
@@ -109,6 +123,9 @@ std::string ProjectSessionToJson(const ProjectSessionData& data, const std::file
         {"openFiles", std::move(openFiles)},
         {"breakpoints", std::move(breakpoints)},
     };
+    if (!data.watches.empty()) {
+        json["watches"] = data.watches;
+    }
     if (data.activeFile) {
         json["activeFile"] = data.activeFile->string();
     }
@@ -157,13 +174,39 @@ std::optional<ProjectSessionData> ProjectSessionFromJson(std::string_view json) 
                 if (!lines.is_array()) {
                     continue; // one malformed entry shouldn't discard the rest
                 }
-                std::vector<std::size_t> parsedLines;
-                for (const Json& line : lines) {
-                    if (line.is_number_unsigned()) {
-                        parsedLines.push_back(line.get<std::size_t>());
+                std::vector<BreakpointState> parsedEntries;
+                for (const Json& entry : lines) {
+                    // Pre-round-2 session files stored a bare line number;
+                    // tolerate both shapes rather than discarding an
+                    // otherwise-valid file across an upgrade.
+                    if (entry.is_number_unsigned()) {
+                        parsedEntries.push_back(BreakpointState{.line = entry.get<std::size_t>()});
+                        continue;
                     }
+                    if (!entry.is_object() || !entry.contains("line") || !entry["line"].is_number_unsigned()) {
+                        continue;
+                    }
+                    BreakpointState bp;
+                    bp.line = entry["line"].get<std::size_t>();
+                    if (entry.contains("condition") && entry["condition"].is_string()) {
+                        bp.condition = entry["condition"].get<std::string>();
+                    }
+                    if (entry.contains("logMessage") && entry["logMessage"].is_string()) {
+                        bp.logMessage = entry["logMessage"].get<std::string>();
+                    }
+                    if (entry.contains("hitCondition") && entry["hitCondition"].is_string()) {
+                        bp.hitCondition = entry["hitCondition"].get<std::string>();
+                    }
+                    parsedEntries.push_back(std::move(bp));
                 }
-                data.breakpoints.emplace(pathKey, std::move(parsedLines));
+                data.breakpoints.emplace(pathKey, std::move(parsedEntries));
+            }
+        }
+        if (parsed.contains("watches") && parsed["watches"].is_array()) {
+            for (const Json& watch : parsed["watches"]) {
+                if (watch.is_string()) {
+                    data.watches.push_back(watch.get<std::string>());
+                }
             }
         }
         if (parsed.contains("windowLayout") && parsed["windowLayout"].is_array()) {
