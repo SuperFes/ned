@@ -7,6 +7,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <string>
 
@@ -16,6 +18,7 @@
 #include "Editor/Acp/AcpManager.h"
 #include "Editor/Acp/AcpPanelConfig.h"
 #include "Editor/Acp/Transport.h"
+#include "Editor/ProjectRoot.h"
 #include "TestEvents.h"
 #include "Text/BufferList.h"
 #include "UI/AcpPanel.h"
@@ -130,6 +133,17 @@ struct Fixture {
         if (agentStdinRead >= 0) {
             ::close(agentStdinRead);
         }
+    }
+};
+
+// @-file-mention autocomplete follow-up: ProjectRoot is process-wide state --
+// BufferViewProjectFindReferencesTest.cpp's own ProjectRootGuard, mirrored
+// here rather than shared (this codebase's existing per-test-file fixture
+// convention, see MessageReader's own comment above).
+struct ProjectRootGuard {
+    std::filesystem::path previous = ned::editor::ProjectRoot();
+    ~ProjectRootGuard() {
+        ned::editor::SetProjectRoot(previous);
     }
 };
 
@@ -342,6 +356,57 @@ TEST_CASE("AcpPanel word-wraps a long agent message instead of truncating it", "
     }
 }
 
+TEST_CASE("AcpPanel renders **bold** and `code` Markdown spans in an agent message, stripping the markup", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code");
+
+    const Json chunk = {
+        {"jsonrpc", "2.0"},
+        {"method", "session/update"},
+        {"params",
+         {{"sessionId", "s1"},
+          {"update",
+           {{"sessionUpdate", "agent_message_chunk"}, {"content", {{"type", "text"}, {"text", "plain **bold** and `code` here"}}}}}}},
+    };
+    fixture.client->DispatchFrame(chunk.dump());
+    fixture.Paint();
+
+    const std::string row = fixture.RowText(1);
+    REQUIRE(row.find("plain bold and code here") != std::string::npos); // ** and ` markers themselves are stripped
+
+    const std::size_t boldStart = row.find("bold");
+    REQUIRE(boldStart != std::string::npos);
+    REQUIRE(fixture.screen.PixelAt(static_cast<int>(boldStart), 1).bold);
+    // "plain " itself stays un-bolded -- only the marked span is affected.
+    REQUIRE_FALSE(fixture.screen.PixelAt(0, 1).bold);
+
+    const std::size_t codeStart = row.find("code");
+    REQUIRE(codeStart != std::string::npos);
+    REQUIRE(fixture.screen.PixelAt(static_cast<int>(codeStart), 1).background_color == fixture.theme.documentHighlightBackground);
+    REQUIRE(fixture.screen.PixelAt(0, 1).background_color != fixture.theme.documentHighlightBackground);
+}
+
+TEST_CASE("AcpPanel renders a Markdown bullet marker as a glyph, not literal '- '", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code");
+
+    const Json chunk = {
+        {"jsonrpc", "2.0"},
+        {"method", "session/update"},
+        {"params",
+         {{"sessionId", "s1"},
+          {"update", {{"sessionUpdate", "agent_message_chunk"}, {"content", {{"type", "text"}, {"text", "- first item"}}}}}}},
+    };
+    fixture.client->DispatchFrame(chunk.dump());
+    fixture.Paint();
+
+    const std::string row = fixture.RowText(1);
+    REQUIRE(row.find("- first item") == std::string::npos);
+    REQUIRE(row.find("first item") != std::string::npos);
+}
+
 TEST_CASE("AcpPanel's composer grows past one row once typed text wraps, and keeps the caret visible", "[AcpPanel]") {
     Fixture fixture;
 
@@ -523,4 +588,109 @@ TEST_CASE("AcpPanel's Control-Up/Down grow/shrink AcpPanelSizePercent", "[AcpPan
     REQUIRE(ned::editor::acp::AcpPanelSizePercent() == 25);
 
     ned::editor::acp::SetAcpPanelSizePercent(original); // cleanup -- process-wide state
+}
+
+TEST_CASE("AcpPanel's composer opens an @-mention picker listing fuzzy-matched project files", "[AcpPanel]") {
+    const ProjectRootGuard rootGuard;
+
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_acp_mention_test";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    std::ofstream(dir / "alpha.txt") << "a";
+    std::ofstream(dir / "beta.txt") << "b";
+    ned::editor::SetProjectRoot(dir);
+
+    Fixture fixture;
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Character('@')));
+    fixture.Paint();
+
+    bool foundAlpha = false, foundBeta = false;
+    for (int y = 1; y < kHeight - 1; ++y) {
+        const std::string row = fixture.RowText(y);
+        if (row.find("alpha.txt") != std::string::npos) {
+            foundAlpha = true;
+        }
+        if (row.find("beta.txt") != std::string::npos) {
+            foundBeta = true;
+        }
+    }
+    REQUIRE(foundAlpha);
+    REQUIRE(foundBeta);
+
+    // Narrowing the query to "al" should fuzzy-filter beta.txt out.
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Character('a')));
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Character('l')));
+    fixture.Paint();
+
+    bool stillFoundBeta = false;
+    for (int y = 1; y < kHeight - 1; ++y) {
+        if (fixture.RowText(y).find("beta.txt") != std::string::npos) {
+            stillFoundBeta = true;
+        }
+    }
+    REQUIRE_FALSE(stillFoundBeta);
+}
+
+TEST_CASE("AcpPanel's @-mention picker inserts the selected path and closes on Enter", "[AcpPanel]") {
+    const ProjectRootGuard rootGuard;
+
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_acp_mention_accept_test";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    std::ofstream(dir / "readme.md") << "hello";
+    ned::editor::SetProjectRoot(dir);
+
+    Fixture fixture;
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Character('@')));
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Character('r')));
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Character('e')));
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Return()));
+
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Character('!'))); // continues typing after the inserted mention
+    fixture.Paint();
+
+    const std::string inputRow = fixture.RowText(kHeight - 1);
+    REQUIRE(inputRow.find("@readme.md !") != std::string::npos);
+
+    // The picker itself must be closed -- the content area shows the (empty)
+    // transcript, not "Mention a file".
+    for (int y = 1; y < kHeight - 1; ++y) {
+        REQUIRE(fixture.RowText(y).find("Mention a file") == std::string::npos);
+    }
+}
+
+TEST_CASE("AcpPanel's @-mention picker closes on Escape without touching the typed text", "[AcpPanel]") {
+    const ProjectRootGuard rootGuard;
+
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_acp_mention_escape_test";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    std::ofstream(dir / "file.txt") << "x";
+    ned::editor::SetProjectRoot(dir);
+
+    Fixture fixture;
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Character('@')));
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Character('f')));
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Escape()));
+    fixture.Paint();
+
+    REQUIRE(fixture.RowText(kHeight - 1).find("Prompt: @f") != std::string::npos); // typed text untouched
+    for (int y = 1; y < kHeight - 1; ++y) {
+        REQUIRE(fixture.RowText(y).find("Mention a file") == std::string::npos); // picker itself gone
+    }
+}
+
+TEST_CASE("AcpPanel does not open an @-mention picker mid-word (e.g. an email-shaped 'user@host')", "[AcpPanel]") {
+    const ProjectRootGuard rootGuard;
+    ned::editor::SetProjectRoot(std::filesystem::temp_directory_path());
+
+    Fixture fixture;
+    for (const char ch : std::string("user@host")) {
+        REQUIRE(fixture.panel.OnEvent(ned::ui::test::Character(ch)));
+    }
+    fixture.Paint();
+
+    for (int y = 1; y < kHeight - 1; ++y) {
+        REQUIRE(fixture.RowText(y).find("Mention a file") == std::string::npos);
+    }
 }
