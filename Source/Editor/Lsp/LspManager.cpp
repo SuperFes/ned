@@ -1254,7 +1254,8 @@ void LspManager::RequestSemanticTokensFull(text::Buffer& buffer, const std::stri
         return;
     }
 
-    semanticTokensRequestedGeneration_[&buffer] = buffer.ContentGeneration();
+    const std::size_t requestedGeneration       = buffer.ContentGeneration();
+    semanticTokensRequestedGeneration_[&buffer] = requestedGeneration;
     const std::size_t requestId                 = ++semanticTokensRequestCounter_[&buffer];
 
     text::Buffer* const        bufferPtr  = &buffer;
@@ -1262,13 +1263,31 @@ void LspManager::RequestSemanticTokensFull(text::Buffer& buffer, const std::stri
     const SemanticTokensLegend legendCopy = *legend;
     client->SendRequest(
         "textDocument/semanticTokens/full", params,
-        [this, bufferPtr, requestId, legendCopy](std::optional<Json> result, std::optional<Json> error) {
+        [this, bufferPtr, requestId, requestedGeneration, legendCopy](std::optional<Json> result, std::optional<Json> error) {
             const auto counterIt = semanticTokensRequestCounter_.find(bufferPtr);
             if (counterIt == semanticTokensRequestCounter_.end() || counterIt->second != requestId) {
                 return; // superseded by a newer request for this buffer
             }
             if (error || !result) {
                 return; // leave whatever spans were already applied in place
+            }
+            // stale-position-race follow-up: the response's LspPosition
+            // values were computed by the server against the document as it
+            // stood AT REQUEST TIME -- if a local edit landed while this was
+            // in flight, bufferPtr->Content() below is already the EDITED
+            // text, and converting the server's now-stale positions against
+            // it silently lands on the wrong bytes (off by however much the
+            // document shifted), not an out-of-range failure that would be
+            // caught some other way. A real, live-reported bug: syntax
+            // coloring visibly detached from the characters it belonged to
+            // for a moment after every keystroke. Discarding here is safe --
+            // RequestSemanticTokensFull's own debounce-aware re-request gate
+            // guarantees a fresh request for the new generation follows once
+            // SyncToServer's debounced didChange actually lands (see that
+            // function's own doc comment), so this is never a permanent gap,
+            // just a stale response correctly thrown away instead of misapplied.
+            if (bufferPtr->ContentGeneration() != requestedGeneration) {
+                return;
             }
             const std::vector<SemanticToken>   tokens  = ExtractSemanticTokens(*result);
             const text::ITextStorage&          content = bufferPtr->Content();
@@ -1334,8 +1353,9 @@ void LspManager::RequestInlayHints(text::Buffer& buffer, std::size_t viewportSta
         return;
     }
 
-    inlayHintsRequestedRange_[&buffer] = requestedRange;
-    const std::size_t requestId        = ++inlayHintsRequestCounter_[&buffer];
+    inlayHintsRequestedRange_[&buffer]    = requestedRange;
+    const std::size_t requestId           = ++inlayHintsRequestCounter_[&buffer];
+    const std::size_t requestedGeneration = buffer.ContentGeneration();
 
     const text::ITextStorage& content   = buffer.Content();
     const LspPosition         start     = BytePositionToLsp(content, viewportStartByte);
@@ -1347,7 +1367,7 @@ void LspManager::RequestInlayHints(text::Buffer& buffer, std::size_t viewportSta
     };
     client->SendRequest(
         "textDocument/inlayHint", params,
-        [this, bufferPtr, requestId, serverKey](std::optional<Json> result, std::optional<Json> error) {
+        [this, bufferPtr, requestId, requestedGeneration, serverKey](std::optional<Json> result, std::optional<Json> error) {
             const auto counterIt = inlayHintsRequestCounter_.find(bufferPtr);
             if (counterIt == inlayHintsRequestCounter_.end() || counterIt->second != requestId) {
                 return; // superseded by a newer request for this buffer
@@ -1361,6 +1381,16 @@ void LspManager::RequestInlayHints(text::Buffer& buffer, std::size_t viewportSta
                 return;
             }
             if (!result) {
+                return;
+            }
+            // stale-position-race follow-up: see RequestSemanticTokensFull's
+            // own doc comment on requestedGeneration -- same race, same fix:
+            // a hint position computed against the document as it stood at
+            // request time must not be converted against a since-edited
+            // bufferPtr->Content() below. A real, live-reported symptom: a
+            // parameter-name hint appearing to render one character off from
+            // its real argument right after a keystroke on an earlier line.
+            if (bufferPtr->ContentGeneration() != requestedGeneration) {
                 return;
             }
             const std::vector<InlayHint>   hints   = ExtractInlayHints(*result);

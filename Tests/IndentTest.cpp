@@ -610,6 +610,52 @@ TEST_CASE("OrgMode indentColumn still hangs a blank continuation on the FIRST En
     REQUIRE(*column == 2);
 }
 
+TEST_CASE("CppMode indentColumn aligns a wrapped call's continuation argument to the first argument's column",
+          "[Indent]") {
+    const auto mode = CppMode();
+    Buffer     buffer("test.cpp");
+    buffer.InsertAtPoint("int r = foo(a,\n            b);\n");
+
+    const auto [contStart, contEnd] = LineRange(buffer, 1); // "            b);"
+    const auto contColumn           = mode.indentColumn(buffer.Text(), contStart, contEnd);
+    REQUIRE(contColumn.has_value());
+    REQUIRE(*contColumn == 12); // aligns under "a", the byte right after "(" -- same as CMode
+}
+
+TEST_CASE("CppMode indentColumn does not indent a top-level namespace's own body", "[Indent]") {
+    // NamespaceIndentation: Inner (.clang-format) -- only a namespace nested
+    // inside another namespace indents its body; an ordinary top-level one
+    // (named or anonymous) does not. A real live-reported bug: a newline
+    // typed after an ordinary statement directly inside a top-level
+    // `namespace { ... }` landed one level too deep (8 columns instead of
+    // 4) because declaration_list (the namespace's own body) was counted as
+    // a real indent level regardless of nesting.
+    const auto mode = CppMode();
+    Buffer     buffer("test.cpp");
+    buffer.InsertAtPoint("namespace {\nvoid f() {\n    g();\n}\n}\n");
+
+    const auto [bodyStart, bodyEnd] = LineRange(buffer, 1); // "void f() {"
+    const auto bodyColumn           = mode.indentColumn(buffer.Text(), bodyStart, bodyEnd);
+    REQUIRE(bodyColumn.has_value());
+    REQUIRE(*bodyColumn == 0); // top-level namespace body: no extra level
+
+    const auto [stmtStart, stmtEnd] = LineRange(buffer, 2); // "    g();"
+    const auto stmtColumn           = mode.indentColumn(buffer.Text(), stmtStart, stmtEnd);
+    REQUIRE(stmtColumn.has_value());
+    REQUIRE(*stmtColumn == 4); // one level for f()'s own compound_statement, not two
+}
+
+TEST_CASE("CppMode indentColumn indents a namespace genuinely nested inside another namespace", "[Indent]") {
+    const auto mode = CppMode();
+    Buffer     buffer("test.cpp");
+    buffer.InsertAtPoint("namespace outer {\nnamespace inner {\nvoid f() {\n}\n}\n}\n");
+
+    const auto [nestedStart, nestedEnd] = LineRange(buffer, 2); // "void f() {"
+    const auto nestedColumn             = mode.indentColumn(buffer.Text(), nestedStart, nestedEnd);
+    REQUIRE(nestedColumn.has_value());
+    REQUIRE(*nestedColumn == 4); // one level, for being inside the genuinely-nested "inner"
+}
+
 TEST_CASE("FundamentalMode has no indentColumn configured", "[Indent]") {
     const Mode mode = FundamentalMode();
     REQUIRE_FALSE(static_cast<bool>(mode.indentColumn));
