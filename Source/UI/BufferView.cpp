@@ -2926,10 +2926,21 @@ void BufferView::Paint(Canvas paneCanvas) {
                         Brush{.background = theme_.background, .foreground = theme_.executionMarker, .bold = true}.ApplyTo(cell);
                     }
                     else {
-                        const auto bpIt = std::lower_bound(
-                            dapBreakpoints.begin(), dapBreakpoints.end(), line + 1,
-                            [](const editor::dap::DapManager::Breakpoint& bp, std::size_t targetLine) { return bp.line < targetLine; });
-                        if (bpIt != dapBreakpoints.end() && bpIt->line == line + 1) {
+                        // DAP round 4: dapBreakpoints stays sorted by the
+                        // *requested* line (toggle/condition/logMessage/
+                        // hitCondition all still address that) -- so a
+                        // linear scan on the *display* line (actualLine when
+                        // the adapter snapped it elsewhere, else line) is
+                        // what actually shows a moved breakpoint where it
+                        // really lands, rather than where it was toggled.
+                        // Per-file breakpoint counts are small; a lower_bound
+                        // can't be reused once the sort key and lookup key
+                        // diverge like this.
+                        const auto bpIt = std::find_if(dapBreakpoints.begin(), dapBreakpoints.end(),
+                                                       [line](const editor::dap::DapManager::Breakpoint& bp) {
+                                                           return (bp.actualLine != 0 ? bp.actualLine : bp.line) == line + 1;
+                                                       });
+                        if (bpIt != dapBreakpoints.end()) {
                             cell.character    = !bpIt->logMessage.empty()     ? "○"
                                                 : !bpIt->condition.empty()    ? "◆"
                                                 : !bpIt->hitCondition.empty() ? "◇"
@@ -7308,6 +7319,14 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
                 ExpandVariableAtPoint();
             }
             return;
+        case editor::InteractiveRequest::DapRestartFrame:
+            if (!dapManager_) {
+                statusMessage_ = "No debugger available.";
+            }
+            else {
+                RestartFrameAtPoint();
+            }
+            return;
         case editor::InteractiveRequest::DapEvaluate:
             if (!dapManager_) {
                 statusMessage_ = "No debugger available.";
@@ -10266,15 +10285,19 @@ void BufferView::ShowDebugInfo() {
         lines->push_back("== Stack ==");
         for (std::size_t i = 0; i < frames.size(); ++i) {
             const editor::dap::DapManager::StackFrame& frame = frames[i];
+            // DAP round 4: "[frame:N]" is dap-restart-frame's own target
+            // marker, RestartFrameAtPoint's counterpart to
+            // FormatDebugVariableLine's "[ref:N]"/"[owner:M]".
+            const std::string frameMarker = "  [frame:" + std::to_string(frame.id) + "]";
             if (frame.path) {
                 // The established "path:line: text" results convention, so
                 // C-c C-v (project-search-visit-result) jumps to a frame
                 // with zero new navigation plumbing.
                 lines->push_back(frame.path->string() + ":" + std::to_string(frame.line) + ": #" + std::to_string(i) +
-                                 " " + frame.name);
+                                 " " + frame.name + frameMarker);
             }
             else {
-                lines->push_back("#" + std::to_string(i) + " " + frame.name + " (no source)");
+                lines->push_back("#" + std::to_string(i) + " " + frame.name + " (no source)" + frameMarker);
             }
         }
         dapManager_->RequestScopes(frames[0].id, [this, lines](std::vector<editor::dap::DapManager::Scope> scopes) {
@@ -10434,6 +10457,32 @@ void BufferView::ExpandVariableAtPoint() {
             target.SetReadOnly(wasReadOnly);
             statusMessage_.clear();
         });
+}
+
+void BufferView::RestartFrameAtPoint() {
+    text::Buffer&             buffer    = activeBuffer_.Get();
+    const text::ITextStorage& content   = buffer.Content();
+    const std::size_t         line      = content.ByteOffsetToLine(buffer.Point());
+    const std::size_t         lineStart = content.LineToByteOffset(line);
+    const std::size_t         lineEnd =
+        (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
+    const std::string lineText = content.Substring(lineStart, lineEnd - lineStart);
+
+    const std::size_t markerPos = lineText.rfind("[frame:");
+    int               frameId   = 0;
+    if (markerPos != std::string::npos) {
+        try {
+            frameId = std::stoi(lineText.substr(markerPos + 7)); // stoi stops at the closing ']'
+        }
+        catch (const std::exception&) {
+            frameId = 0;
+        }
+    }
+    if (markerPos == std::string::npos) {
+        statusMessage_ = "Not a stack frame line.";
+        return;
+    }
+    statusMessage_ = dapManager_->RestartFrame(frameId);
 }
 
 void BufferView::RemoveWatchAtPoint() {

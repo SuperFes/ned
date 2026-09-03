@@ -97,6 +97,16 @@ class DapManager {
         // logMessage.
         std::string hitCondition;
         bool        verified = true;
+        // DAP round 4: the adapter's own snapped location from the last
+        // setBreakpoints response ("line" per entry), when it differs from
+        // the requested `line` above (e.g. a breakpoint toggled on a
+        // comment/blank line, moved to the next real statement). 0 means
+        // "not yet known, or the adapter didn't move it" -- a safe sentinel
+        // since DAP lines are always 1-based. Editing operations (toggle/
+        // condition/logMessage/hitCondition) stay addressed by the
+        // requested `line`, matching where the user's cursor was; only the
+        // gutter's display row follows actualLine when set.
+        std::size_t actualLine = 0;
     };
 
     // Slice 4: sets/clears (empty string) the condition or log message on
@@ -176,6 +186,16 @@ class DapManager {
     std::string StepOver();
     std::string StepInto();
     std::string StepOut();
+
+    // DAP round 4: DAP's own `restartFrame` request -- reruns the stopped
+    // thread from the top of the named frame instead of stepping through it.
+    // Same shape as StepOver/StepInto/StepOut (Stopped-only, the new
+    // position arrives via the next `stopped` event) but takes an explicit
+    // frameId rather than always targeting CurrentThreadId()'s own top frame
+    // -- BufferView resolves frameId from a `[frame:N]` marker on the
+    // *debug* buffer's stack line at point (ShowDebugInfo), the same
+    // in-text-marker convention FormatDebugVariableLine's `[ref:N]` uses.
+    std::string RestartFrame(int frameId);
 
     // Slice 2, for BufferView's gutter marker + execution-line highlight:
     // where the debuggee is currently stopped, as an already-normalized
@@ -406,6 +426,8 @@ class DapManager {
         // DAP round 3.
         bool hitConditionalBreakpoints = false;
         bool functionBreakpoints       = false;
+        // DAP round 4.
+        bool restartFrame = false;
     };
     Capabilities capabilities_;
 

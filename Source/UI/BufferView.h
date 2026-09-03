@@ -2072,6 +2072,14 @@ class BufferView : public Widget {
     // and re-runs ShowDebugInfo() to refresh.
     void RemoveWatchAtPoint();
 
+    // DAP round 4: dap-restart-frame's body -- parses a "[frame:N]" trailing
+    // marker off point's own "*debug*" buffer stack line (ShowDebugInfo's
+    // own convention, ExpandVariableAtPoint's "[ref:N]" shape), then calls
+    // DapManager::RestartFrame directly -- synchronous status string, no
+    // async splice needed (the new position arrives via the next `stopped`
+    // event like every other step).
+    void RestartFrameAtPoint();
+
     // DAP round 2: dap-set-variable's body -- parses point's own "*debug*"
     // buffer line for its "[owner:M]" container-reference marker (see
     // FormatDebugVariableLine) and variable name, prompts for a new value

@@ -45,6 +45,10 @@ void DebugConsolePanel::SetDapManager(editor::dap::DapManager* dapManager) {
     dapManager_ = dapManager;
 }
 
+void DebugConsolePanel::SetPromptHistory(editor::PromptHistory* promptHistory) {
+    promptHistory_ = promptHistory;
+}
+
 void DebugConsolePanel::SetOnToggleRequest(std::function<void()> onToggle) {
     onToggleRequest_ = std::move(onToggle);
 }
@@ -67,6 +71,61 @@ bool DebugConsolePanel::CloseButtonAt(Point local) const {
         return false;
     }
     return local.x >= width - kCloseOffset && local.x <= width - kCloseOffset + 2;
+}
+
+int DebugConsolePanel::ContentRows() const {
+    return size().height - 2;
+}
+
+void DebugConsolePanel::ScrollBy(int deltaLines) {
+    const int maxOffset = std::max(0, static_cast<int>(history_.size()) - std::max(0, ContentRows()));
+    scrollbackOffset_   = std::clamp(scrollbackOffset_ + deltaLines, 0, maxOffset);
+}
+
+bool DebugConsolePanel::TryNavigateHistory(const editor::KeyChord& chord) {
+    if (!chord.Meta || chord.Control) {
+        return false;
+    }
+    if (chord.Codepoint != U'p' && chord.Codepoint != U'n') {
+        return false;
+    }
+    if (!promptHistory_) {
+        return true; // consumed -- just nothing to navigate
+    }
+
+    const std::vector<std::string>& entries = promptHistory_->Entries("debug-console");
+
+    if (chord.Codepoint == U'p') { // older
+        if (historyIndex_ == kNoHistoryIndex) {
+            if (entries.empty()) {
+                return true;
+            }
+            historyStash_ = prompt_.Text();
+            historyIndex_ = 0;
+        }
+        else if (historyIndex_ + 1 < entries.size()) {
+            ++historyIndex_;
+        }
+        else {
+            return true; // already at the oldest entry
+        }
+        prompt_.SetText(entries[historyIndex_]);
+        return true;
+    }
+
+    // 'n', newer
+    if (historyIndex_ == kNoHistoryIndex) {
+        return true; // already at the live edit -- nothing to do
+    }
+    if (historyIndex_ > 0) {
+        --historyIndex_;
+        prompt_.SetText(entries[historyIndex_]);
+    }
+    else {
+        prompt_.SetText(historyStash_);
+        historyIndex_ = kNoHistoryIndex;
+    }
+    return true;
 }
 
 void DebugConsolePanel::Paint(Canvas canvas) {
@@ -96,8 +155,11 @@ void DebugConsolePanel::Paint(Canvas canvas) {
         cell.character = horizontal;
         frameBrush.ApplyTo(cell);
     }
-    const std::string title =
+    std::string title =
         "Debug console [" + StateLabel(dapManager_ ? dapManager_->State() : editor::dap::DapManager::SessionState::Inactive) + "]";
+    if (scrollbackOffset_ > 0) {
+        title += " (scrollback)"; // TerminalPanel's own title-suffix convention
+    }
     DrawBorderTitle(canvas, title, frameBrush);
     if (width >= kMinWidthForCloseButton) {
         const std::string glyphs[3] = {"[", text::EncodeCodepointUtf8(kCloseIcon), "]"};
@@ -112,13 +174,12 @@ void DebugConsolePanel::Paint(Canvas canvas) {
         return;
     }
 
-    // Content rows: the tail of history_ that fits, top-aligned within the
-    // window (i.e. the window itself is anchored to the most recent lines)
-    // -- no scrollback beyond that in v1, same cut TerminalPanel/AcpPanel
-    // both carry.
+    // Content rows: a window over history_, offset lines up from the bottom
+    // (scrollbackOffset_ 0 shows exactly the live tail) -- TerminalPanel's
+    // own windowing shape.
     const int contentRows = height - 2;
     if (contentRows > 0) {
-        const int start = std::max(0, static_cast<int>(history_.size()) - contentRows);
+        const int start = std::max(0, static_cast<int>(history_.size()) - contentRows - scrollbackOffset_);
         for (int row = 0; row < contentRows; ++row) {
             const std::size_t lineIndex = static_cast<std::size_t>(start + row);
             if (lineIndex >= history_.size()) {
@@ -155,6 +216,14 @@ bool DebugConsolePanel::OnEvent(const Event& event) {
         const std::optional<MouseEvent> mouse = LocalMouseEvent(event);
         if (!mouse) {
             return false;
+        }
+        if (mouse->button == MouseEvent::Button::WheelUp) {
+            ScrollBy(3);
+            return true;
+        }
+        if (mouse->button == MouseEvent::Button::WheelDown) {
+            ScrollBy(-3);
+            return true;
         }
         if (mouse->button == MouseEvent::Button::Left && mouse->motion == MouseEvent::Motion::Pressed) {
             if (CloseButtonAt(mouse->at)) {
@@ -203,10 +272,24 @@ bool DebugConsolePanel::OnEvent(const Event& event) {
         prompt_.MoveCursorToEnd();
         return true;
     }
+    if (chord->Special == editor::SpecialKey::PageUp && chord->Shift) {
+        ScrollBy(std::max(1, ContentRows() - 1));
+        return true;
+    }
+    if (chord->Special == editor::SpecialKey::PageDown && chord->Shift) {
+        ScrollBy(-std::max(1, ContentRows() - 1));
+        return true;
+    }
     if (chord->Special == editor::SpecialKey::Enter) {
         const std::string expression = prompt_.Text();
         if (!expression.empty()) {
             prompt_.SetText("");
+            scrollbackOffset_ = 0; // submitting is this panel's "the user acted, snap to live"
+            historyIndex_     = kNoHistoryIndex;
+            historyStash_.clear();
+            if (promptHistory_) {
+                promptHistory_->Record("debug-console", expression);
+            }
             if (!dapManager_) {
                 history_.push_back({"No debugger available.", DisplayStyle::Error});
             }
@@ -220,6 +303,9 @@ bool DebugConsolePanel::OnEvent(const Event& event) {
                 });
             }
         }
+        return true;
+    }
+    if (TryNavigateHistory(*chord)) {
         return true;
     }
     if (IsPlainCharacter(*chord)) {

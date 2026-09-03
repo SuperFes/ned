@@ -18,6 +18,7 @@
 #include "Editor/Dap/DapConfig.h"
 #include "Editor/Dap/DapManager.h"
 #include "Editor/Lsp/Transport.h"
+#include "Editor/PromptHistory.h"
 #include "TestEvents.h"
 #include "UI/DebugConsolePanel.h"
 #include "UI/EventLoop.h"
@@ -36,7 +37,11 @@ using ned::ui::DebugConsolePanel;
 using ned::ui::Screen;
 using ned::ui::Theme;
 
-constexpr int kWidth  = 40;
+// DAP round 4: wide enough that "Debug console [<state>] (scrollback)" never
+// gets truncated by DrawBorderTitle's own maxTextColumns cap (width - 4) --
+// the longest combination ("[inactive]" + " (scrollback)") needs 38 columns
+// of title text alone.
+constexpr int kWidth  = 60;
 constexpr int kHeight = 6; // 1 title + 4 content + 1 input
 
 // Mirrors DapManagerTest.cpp's own FrameReader exactly (duplicated rather
@@ -141,6 +146,17 @@ struct Fixture {
         }
     }
 };
+
+// DAP round 4: mirrors TerminalPanelTest.cpp's own ShiftPage exactly -- no
+// TestEvents.h factory for Shift+PageUp/Down exists yet, so both scrollback
+// tests build the ncinput directly.
+ned::ui::Event ShiftPage(bool up) {
+    ncinput input{};
+    input.id        = up ? NCKEY_PGUP : NCKEY_PGDOWN;
+    input.modifiers = NCKEY_MOD_SHIFT;
+    input.evtype    = NCTYPE_PRESS;
+    return ned::ui::Event(input);
+}
 
 } // namespace
 
@@ -268,4 +284,123 @@ TEST_CASE("DebugConsolePanel's Escape and its close (x) button both invoke the t
     fixture.panel.OnEvent(
         ned::ui::test::Mouse(kWidth - 3, 0, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Pressed));
     REQUIRE(toggles == 2);
+}
+
+// DAP round 4 below.
+
+TEST_CASE("DebugConsolePanel scrolls back via wheel/Shift-PageUp and Enter snaps back to live", "[DebugConsolePanel]") {
+    Fixture fixture; // no session -- Evaluate's "No debug session." error fires synchronously, enough to build history
+
+    // kHeight == 6 -> contentRows == 4. Five round trips push 10 lines
+    // ("> e1".."> e5" interleaved with the synchronous error line each),
+    // well past what fits on screen.
+    for (const char label : {'1', '2', '3', '4', '5'}) {
+        fixture.panel.OnEvent(ned::ui::test::Character('e'));
+        fixture.panel.OnEvent(ned::ui::test::Character(label));
+        REQUIRE(fixture.panel.OnEvent(ned::ui::test::Return()));
+    }
+    fixture.Paint();
+    REQUIRE(fixture.RowText(0).find("(scrollback)") == std::string::npos); // live tail by default
+
+    REQUIRE(fixture.panel.OnEvent(
+        ned::ui::test::Mouse(0, 0, ned::ui::MouseEvent::Button::WheelUp, ned::ui::MouseEvent::Motion::Pressed)));
+    fixture.Paint();
+    REQUIRE(fixture.RowText(0).find("(scrollback)") != std::string::npos);
+    // ScrollBy(3): start becomes size(10) - contentRows(4) - offset(3) = 3,
+    // so the second content row (canvas y=2) lands on history_[4] == "> e3".
+    REQUIRE(fixture.RowText(2).find("e3") != std::string::npos);
+
+    // Shift+PageDown scrolls back toward live.
+    REQUIRE(fixture.panel.OnEvent(ShiftPage(false)));
+    fixture.Paint();
+    REQUIRE(fixture.RowText(0).find("(scrollback)") == std::string::npos);
+
+    // Scroll back up, then confirm Enter -- not just typing -- snaps back to live.
+    fixture.panel.OnEvent(ShiftPage(true));
+    fixture.Paint();
+    REQUIRE(fixture.RowText(0).find("(scrollback)") != std::string::npos);
+    fixture.panel.OnEvent(ned::ui::test::Character('z'));
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Return()));
+    fixture.Paint();
+    REQUIRE(fixture.RowText(0).find("(scrollback)") == std::string::npos);
+}
+
+TEST_CASE("DebugConsolePanel's new output doesn't yank a scrolled-back view to live", "[DebugConsolePanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartRunningSession("debug-console-test-scrollback-output");
+    fixture.client->DispatchFrame(Json{{"seq", 999}, {"type", "event"}, {"event", "stopped"}, {"body", {{"threadId", 1}}}}.dump());
+    const Json autoStackTrace = fixture.reader.Next();
+    fixture.client->DispatchFrame(ResponseFrame(autoStackTrace["seq"].get<int>(), "stackTrace", true, Json{{"stackFrames", Json::array()}}));
+
+    // Fill past the content window with completed round trips (each Enter
+    // resets scrollbackOffset_, so this leaves it at 0).
+    for (const char label : {'1', '2', '3', '4', '5'}) {
+        fixture.panel.OnEvent(ned::ui::test::Character(label));
+        fixture.panel.OnEvent(ned::ui::test::Return());
+        const Json evaluate = fixture.reader.Next();
+        fixture.client->DispatchFrame(ResponseFrame(evaluate["seq"].get<int>(), "evaluate", true, Json{{"result", "ok"}}));
+    }
+
+    REQUIRE(fixture.panel.OnEvent(
+        ned::ui::test::Mouse(0, 0, ned::ui::MouseEvent::Button::WheelUp, ned::ui::MouseEvent::Motion::Pressed)));
+    fixture.Paint();
+    REQUIRE(fixture.RowText(0).find("(scrollback)") != std::string::npos);
+
+    // One more expression, deliberately left unanswered until after
+    // confirming the scrolled state, then answered -- the response landing
+    // must not snap the view back to live on its own.
+    fixture.panel.OnEvent(ned::ui::test::Character('z'));
+    fixture.panel.OnEvent(ned::ui::test::Return()); // Enter itself resets to live...
+    fixture.Paint();
+    REQUIRE(fixture.RowText(0).find("(scrollback)") == std::string::npos); // ...confirmed
+
+    // Scroll back again (no Enter this time), then let the pending
+    // response's own history_ append land while scrolled back.
+    fixture.panel.OnEvent(ned::ui::test::Mouse(0, 0, ned::ui::MouseEvent::Button::WheelUp, ned::ui::MouseEvent::Motion::Pressed));
+    fixture.Paint();
+    REQUIRE(fixture.RowText(0).find("(scrollback)") != std::string::npos);
+
+    const Json lastEvaluate = fixture.reader.Next();
+    fixture.client->DispatchFrame(ResponseFrame(lastEvaluate["seq"].get<int>(), "evaluate", true, Json{{"result", "ok"}}));
+    fixture.Paint();
+    REQUIRE(fixture.RowText(0).find("(scrollback)") != std::string::npos); // still scrolled -- not yanked to live
+}
+
+TEST_CASE("M-p/M-n recall previously submitted expressions, newest first", "[DebugConsolePanel]") {
+    Fixture                    fixture;
+    ned::editor::PromptHistory promptHistory;
+    fixture.panel.SetPromptHistory(&promptHistory);
+
+    fixture.panel.OnEvent(ned::ui::test::Character('a'));
+    fixture.panel.OnEvent(ned::ui::test::Character('b'));
+    fixture.panel.OnEvent(ned::ui::test::Character('c'));
+    fixture.panel.OnEvent(ned::ui::test::Return());
+
+    fixture.panel.OnEvent(ned::ui::test::Character('x'));
+    fixture.panel.OnEvent(ned::ui::test::Character('y'));
+    fixture.panel.OnEvent(ned::ui::test::Character('z'));
+    fixture.panel.OnEvent(ned::ui::test::Return());
+
+    fixture.panel.OnEvent(ned::ui::test::Alt('p'));
+    fixture.Paint();
+    REQUIRE(fixture.RowText(kHeight - 1).find("xyz") != std::string::npos);
+
+    fixture.panel.OnEvent(ned::ui::test::Alt('p'));
+    fixture.Paint();
+    REQUIRE(fixture.RowText(kHeight - 1).find("abc") != std::string::npos);
+
+    // Already at the oldest entry -- a boundary press is a silent no-op.
+    fixture.panel.OnEvent(ned::ui::test::Alt('p'));
+    fixture.Paint();
+    REQUIRE(fixture.RowText(kHeight - 1).find("abc") != std::string::npos);
+
+    fixture.panel.OnEvent(ned::ui::test::Alt('n'));
+    fixture.Paint();
+    REQUIRE(fixture.RowText(kHeight - 1).find("xyz") != std::string::npos);
+
+    // Past the newest entry lands back on the live (empty, post-Enter) edit.
+    fixture.panel.OnEvent(ned::ui::test::Alt('n'));
+    fixture.Paint();
+    REQUIRE(fixture.RowText(kHeight - 1) == "debug>");
 }
