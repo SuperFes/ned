@@ -165,19 +165,6 @@ Notcurses.
       multiple terminals/tabs, no terminal-side mouse forwarding to the shell (clicks
       focus the panel, wheel scrolls the ring — TUI apps inside don't receive mouse
       events), no OSC 52/title integration.
-- [ ] **Sticky scroll for Markdown/Org headings** (main-editor-sticky-scroll follow-up,
-      raised 2026-09-01) — the shipped sticky scroll (`Editor/StickyScroll.h`,
-      `BufferView::PaintStickyScrollRows`) is generic over `SymbolMarker`, but pins
-      namespace/class/method context from a language's tags.scm query, which relies on a
-      real AST containment guarantee (a method's range is genuinely nested inside its
-      class's). A heading outline isn't LSP-provided and isn't shaped like that: in
-      Markdown/Org's own parse tree, `# H1`/`## H2` are flat siblings, not parent/child —
-      "H2 belongs under H1" is a heading-level *convention*, the same one
-      `org::ParseOutline`/subtree-extent logic already has to compute by hand rather than
-      reading off the tree directly. Doable, but needs synthesized ranges (each heading's
-      range runs until the next heading of equal-or-shallower level), not a direct
-      tags.scm capture — a different marker source feeding the same
-      `StickyChainForViewportTop`/rendering machinery, not a rewrite of it.
 - [ ] **Vim-mode gaps**: no jumplist/changelist ring beyond the single `` ` ``/`''`
       toggle (no `C-o`/`C-i` ring); mark letters limited to `a`-`z`/`A`-`Z`/`'<`/`'>`
       (`A`-`Z` are buffer-local here, not vim's cross-file global marks); macros record
@@ -659,9 +646,6 @@ these accumulate detail in place.
       only if the content-gate default proves too lossy in practice (i.e. people
       habitually edit files outside ned in ways that touch none of a session's own undo
       states and lose history often enough to complain).
-- [ ] **Sticky scroll** — a pinned enclosing-function/class header row while scrolling a
-      long body, Zed/VSCode's readability feature. No Emacs precedent; a conscious yes/no
-      against the Emacs-class-parity vision rather than an obvious extension of it.
 - [ ] **Peek definition** — a floating inline preview of a definition's source without
       leaving the buffer (Zed/VSCode's "peek"), rather than `lsp-goto-definition`'s real
       buffer switch. `Overlay.h`'s `OverlayHost` (already generic, used by
