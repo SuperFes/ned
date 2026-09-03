@@ -10,19 +10,17 @@
 #include <system_error>
 
 #include "AutoPair.h"
-#include "Backup.h"
 #include "BlankLineCleanup.h"
+#include "BufferSave.h"
 #include "Clipboard.h"
 #include "CodeFold.h"
 #include "EmbeddedDocuments.h"
 #include "Fill.h"
 #include "FillColumn.h"
-#include "FinalNewline.h"
 #include "FormatOnSave.h"
 #include "Indent.h"
 #include "IndentStyle.h"
 #include "InlineDiagnostics.h"
-#include "LineEndingPolicy.h"
 #include "Lsp/LspManager.h"
 #include "Lsp/LspServerConfig.h"
 #include "Markdown.h"
@@ -40,7 +38,6 @@
 #include "Text/ThreeWayMerge.h"
 #include "Text/Utf8.h"
 #include "ToolchainIncludePaths.h"
-#include "TrimOnSave.h"
 #include "Vcs/VcsRunner.h"
 
 namespace ned::editor {
@@ -1029,10 +1026,7 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                 continue;
             }
             try {
-                // Same backup/autosave pair as save-buffer's own body.
-                BackupFileBeforeSave(*buffer->Path());
-                buffer->Save();
-                RemoveAutoSave(*buffer->Path());
+                WriteBufferToDisk(*buffer);
                 ++saved;
             }
             catch (const std::exception&) {
@@ -1617,15 +1611,11 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     // anyway" escape hatch).
     const auto saveBufferBody = [](CommandContext& context) {
         try {
-            // binary-safety-guardrails follow-up: a buffer opened via a
-            // confirmed "open anyway?" binary override gets none of the
-            // byte-level, content-changing save-time behaviors below by
-            // default -- auto-formatting, ensuring a final newline, and
-            // forced line-ending conversion are all safe/expected for real
-            // text but can silently corrupt binary content. Overridable
-            // per-buffer via toggle-binary-safeguards; a buffer that merely
-            // passed allowBinary but never actually looked binary is
-            // unaffected (BinarySafeguardsActive() stays false for it).
+            // binary-safety-guardrails follow-up: BinarySafeguardsActive()
+            // also gates the format-on-save step immediately below (auto-
+            // formatting can corrupt binary content just as much as the
+            // final-newline/line-ending behaviors WriteBufferToDisk itself
+            // gates) -- overridable per-buffer via toggle-binary-safeguards.
             const bool binarySafeguards = context.buffer.BinarySafeguardsActive();
 
             // Only attempted when a command is actually configured (format-
@@ -1648,22 +1638,7 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                 }
             }
 
-            // backup-and-recovery follow-up: preserve the file's prior
-            // on-disk content before the save's rename clobbers it, and
-            // drop the now-obsolete crash-recovery autosave once the save
-            // has actually succeeded. Both swallow their own failures --
-            // hooked here rather than inside Buffer::Save so Text/ stays
-            // policy-free and scratch auto-save (which calls Buffer::Save
-            // directly) never creates backup versions.
-            if (context.buffer.Path()) {
-                BackupFileBeforeSave(*context.buffer.Path());
-            }
-            context.buffer.Save(EnsureFinalNewline() && !binarySafeguards, TrimTrailingWhitespaceOnSave() && !binarySafeguards,
-                                binarySafeguards ? std::optional<text::LineEnding>{}
-                                                 : std::optional<text::LineEnding>(ResolveLineEndingForSave(context.buffer.LineEndingKind())));
-            if (context.buffer.Path()) {
-                RemoveAutoSave(*context.buffer.Path());
-            }
+            WriteBufferToDisk(context.buffer);
             if (context.message) {
                 *context.message = "Wrote " + context.buffer.Name() + (formatFailed ? " (format command failed)" : "");
             }

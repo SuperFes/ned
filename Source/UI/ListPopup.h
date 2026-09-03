@@ -139,6 +139,17 @@ class ListPopup : public Widget {
     void SetOnCancel(std::function<void()> onCancel);
     void SetOnKey(std::function<void(const editor::KeyChord&)> onKey);
 
+    // buffer-list-panel-mouse-mark follow-up: a click landing within a
+    // row's own `left` column (BufferListPanel's mark-glyph prefix) fires
+    // this instead of onActivate_ -- onHighlightChange_ still fires first,
+    // same as any other click, so the row is selected either way. The
+    // callback receives the row index and the 0-based column offset into
+    // that row's `left` string (BufferListPanel uses the offset to tell its
+    // kill-mark glyph apart from its save-mark glyph). Unset (every
+    // consumer but the buffer-list panel) keeps a left-column click
+    // activating the row exactly as before this existed.
+    void SetOnLeftColumnClick(std::function<void(std::size_t, int)> onLeftColumnClick);
+
     void Paint(Canvas c) override;
     bool OnEvent(const Event& event) override;
 
@@ -151,6 +162,7 @@ class ListPopup : public Widget {
     std::function<void(std::size_t)>               onActivate_;
     std::function<void()>                           onCancel_;
     std::function<void(const editor::KeyChord&)>    onKey_;
+    std::function<void(std::size_t, int)>           onLeftColumnClick_;
 
     bool HandleKeyEvent(const Event& event);
 
