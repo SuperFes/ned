@@ -11231,24 +11231,84 @@ void BufferView::HandleRenameFileKey(const editor::KeyChord& chord) {
 
         // EnteringDestination
         const std::filesystem::path destination = input;
-        try {
-            // Snapshot every open buffer's canonical path *before* the actual
-            // rename happens on disk -- weakly_canonical needs real ancestors
-            // to resolve symlinks through, and once renameSource_ (or an
-            // ancestor of a buffer nested inside it, for a directory rename)
-            // is gone, there's nothing left on disk at the old location to
-            // resolve against.
-            std::vector<std::pair<text::Buffer*, std::filesystem::path>> openBuffers;
-            for (const auto& candidate : bufferList_.Buffers()) {
-                if (candidate->Path().has_value()) {
-                    openBuffers.emplace_back(candidate.get(), std::filesystem::weakly_canonical(*candidate->Path()));
-                }
+        const std::filesystem::path source      = renameSource_;
+        EndInteractiveSession();
+        PerformProjectRename(source, destination);
+        return;
+    }
+    if (IsQuit(chord)) {
+        statusMessage_ = "Rename cancelled.";
+        EndInteractiveSession();
+        return;
+    }
+    (void)HandlePromptEditingKey(chord);
+    statusMessage_ = prompt_->StatusText();
+}
+
+void BufferView::PerformProjectRename(const std::filesystem::path& source, const std::filesystem::path& destination) {
+    std::error_code ec;
+    if (!std::filesystem::exists(source, ec)) {
+        ReportError("ned: does not exist: " + source.string());
+        return;
+    }
+
+    // Snapshot every open buffer's canonical path *before* the actual
+    // rename happens on disk -- weakly_canonical needs real ancestors to
+    // resolve symlinks through, and once source (or an ancestor of a
+    // buffer nested inside it, for a directory rename) is gone, there's
+    // nothing left on disk at the old location to resolve against.
+    std::vector<std::pair<text::Buffer*, std::filesystem::path>> openBuffers;
+    for (const auto& candidate : bufferList_.Buffers()) {
+        if (candidate->Path().has_value()) {
+            openBuffers.emplace_back(candidate.get(), std::filesystem::weakly_canonical(*candidate->Path()));
+        }
+    }
+    const std::filesystem::path sourceCanonical = std::filesystem::weakly_canonical(source);
+
+    // rename-file-notifications follow-up: one (oldPath, newPath) pair per
+    // real file this rename touches -- a directory rename touches every
+    // file nested inside it, each needing its own pair for
+    // LspManager::RequestWillRenameFiles/NotifyFilesRenamed's per-file glob
+    // matching (a server's filter is typically an extension glob like
+    // "**/*.ts", which only makes sense matched per file, not against the
+    // renamed directory's own path). Walked from source, which must still
+    // exist on disk at this point -- see the existence check above.
+    std::vector<editor::lsp::LspManager::FileRenameEntry> renamedFiles;
+    if (std::filesystem::is_directory(source, ec)) {
+        std::error_code walkEc;
+        for (const auto& entry : std::filesystem::recursive_directory_iterator(
+                 source, std::filesystem::directory_options::skip_permission_denied, walkEc)) {
+            if (entry.is_regular_file(walkEc)) {
+                const std::filesystem::path relative = entry.path().lexically_relative(source);
+                renamedFiles.push_back({entry.path(), destination / relative});
             }
-            const std::filesystem::path sourceCanonical = std::filesystem::weakly_canonical(renameSource_);
+        }
+    }
+    else {
+        renamedFiles.push_back({source, destination});
+    }
 
-            editor::RenameProjectPath(renameSource_, destination);
+    // rename-file-notifications follow-up: the actual rename+buffer-
+    // bookkeeping, deferred behind LspManager::RequestWillRenameFiles below
+    // -- captured by value since source/destination/openBuffers/
+    // sourceCanonical/renamedFiles must all outlive this call, and a fresh
+    // rename session started before this one's round trip completes must
+    // not be able to invalidate any of them (they're locals here, not the
+    // renameSource_/renameStage_ members EndInteractiveSession already
+    // reset before this method was ever called).
+    auto finishRename = [this, source, destination, sourceCanonical, openBuffers, renamedFiles](
+                            std::optional<editor::lsp::LspManager::ResolvedRename> willRenameEdit) {
+        // Applied BEFORE the actual rename below, per spec's intended use:
+        // a server's willRenameFiles response typically fixes up *other*
+        // files' import paths while source still exists at its pre-rename
+        // location.
+        if (willRenameEdit) {
+            ApplyResolvedWorkspaceEdit(*willRenameEdit, "Fixed up references before rename");
+        }
+        try {
+            editor::RenameProjectPath(source, destination);
 
-            // Any open buffer whose file *was* renameSource_ itself, or was
+            // Any open buffer whose file *was* source itself, or was
             // nested inside it (renaming a directory that has open buffers
             // somewhere underneath it), follows to its new location so it
             // doesn't end up silently pointing at a now-nonexistent path.
@@ -11279,20 +11339,21 @@ void BufferView::HandleRenameFileKey(const editor::KeyChord& chord) {
             if (projectSidebar_) {
                 projectSidebar_->InvalidateTree();
             }
+            if (lspManager_) {
+                lspManager_->NotifyFilesRenamed(renamedFiles);
+            }
         }
         catch (const std::exception& e) {
             ReportError(e.what());
         }
-        EndInteractiveSession();
-        return;
+    };
+
+    if (lspManager_) {
+        lspManager_->RequestWillRenameFiles(renamedFiles, std::move(finishRename));
     }
-    if (IsQuit(chord)) {
-        statusMessage_ = "Rename cancelled.";
-        EndInteractiveSession();
-        return;
+    else {
+        finishRename(std::nullopt);
     }
-    (void)HandlePromptEditingKey(chord);
-    statusMessage_ = prompt_->StatusText();
 }
 
 void BufferView::HandleSetPropertyKey(const editor::KeyChord& chord) {

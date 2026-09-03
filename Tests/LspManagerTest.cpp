@@ -2338,6 +2338,146 @@ TEST_CASE("LspManager::RequestRename sends newName and resolves a multi-file Wor
     REQUIRE(got->edits.size() == 2);
 }
 
+TEST_CASE("LspManager::RequestWillRenameFiles sends oldUri/newUri only to a server whose filter matches, and resolves its WorkspaceEdit",
+         "[Lsp]") {
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    manager.SetFileOperationFiltersForTesting("test-lang", {.willRenameGlobs = {"**/*.ts"}, .didRenameGlobs = {}});
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+
+    const std::filesystem::path oldPath = std::filesystem::temp_directory_path() / "ned-will-rename-old.ts";
+    const std::filesystem::path newPath = std::filesystem::temp_directory_path() / "ned-will-rename-new.ts";
+
+    bool                                      invoked = false;
+    std::optional<LspManager::ResolvedRename> got;
+    manager.RequestWillRenameFiles({LspManager::FileRenameEntry{.oldPath = oldPath, .newPath = newPath}},
+                                   [&](std::optional<LspManager::ResolvedRename> result) {
+                                       invoked = true;
+                                       got     = std::move(result);
+                                   });
+
+    const std::string raw     = ReadRawFrame(server.serverStdinRead);
+    const Json        request = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(request["method"] == "workspace/willRenameFiles");
+    REQUIRE(request["params"]["files"].size() == 1);
+    const std::string oldUri = request["params"]["files"][0]["oldUri"].get<std::string>();
+    const std::string newUri = request["params"]["files"][0]["newUri"].get<std::string>();
+    REQUIRE(oldUri.find(oldPath.filename().string()) != std::string::npos);
+    REQUIRE(newUri.find(newPath.filename().string()) != std::string::npos);
+
+    const Json response = {
+        {"jsonrpc", "2.0"},
+        {"id", RequestIdFromFrame(raw)},
+        {"result",
+         {{"changes",
+           {{oldUri, Json::array({{{"range", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 1}}}}},
+                                  {"newText", "x"}}})}}}}},
+    };
+    client->DispatchFrame(response.dump());
+
+    REQUIRE(invoked);
+    REQUIRE(got.has_value());
+    REQUIRE(got->hasEdit);
+    REQUIRE(got->edits.size() == 1);
+}
+
+TEST_CASE("LspManager::RequestWillRenameFiles resolves to nullopt synchronously when no connected server's filter matches", "[Lsp]") {
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    manager.SetFileOperationFiltersForTesting("test-lang", {.willRenameGlobs = {"**/*.rs"}, .didRenameGlobs = {}});
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+
+    bool                                      invoked = false;
+    std::optional<LspManager::ResolvedRename> got;
+    manager.RequestWillRenameFiles(
+        {LspManager::FileRenameEntry{.oldPath = "/tmp/a.ts", .newPath = "/tmp/b.ts"}},
+        [&](std::optional<LspManager::ResolvedRename> result) {
+            invoked = true;
+            got     = std::move(result);
+        });
+
+    REQUIRE(invoked); // no matching server -- resolved synchronously, no frame sent
+    REQUIRE_FALSE(got.has_value());
+    REQUIRE(NoFrameArrives(server.serverStdinRead));
+}
+
+TEST_CASE("LspManager::RequestWillRenameFiles merges edits from every matching server", "[Lsp]") {
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    manager.SetFileOperationFiltersForTesting("lang-a", {.willRenameGlobs = {"**/*.ts"}, .didRenameGlobs = {}});
+    manager.SetFileOperationFiltersForTesting("lang-b", {.willRenameGlobs = {"**/*.ts"}, .didRenameGlobs = {}});
+
+    LspClient* clientA = nullptr;
+    LspClient* clientB = nullptr;
+    FakeServer serverA = FakeServer::Create(manager, "lang-a", eventLoop, clientA);
+    FakeServer serverB = FakeServer::Create(manager, "lang-b", eventLoop, clientB);
+
+    const std::filesystem::path oldPath = "/tmp/ned-will-rename-multi-old.ts";
+    const std::filesystem::path newPath = "/tmp/ned-will-rename-multi-new.ts";
+
+    bool                                      invoked = false;
+    std::optional<LspManager::ResolvedRename> got;
+    manager.RequestWillRenameFiles({LspManager::FileRenameEntry{.oldPath = oldPath, .newPath = newPath}},
+                                   [&](std::optional<LspManager::ResolvedRename> result) {
+                                       invoked = true;
+                                       got     = std::move(result);
+                                   });
+
+    const std::string rawA = ReadRawFrame(serverA.serverStdinRead);
+    const std::string rawB = ReadRawFrame(serverB.serverStdinRead);
+    const std::string uriA = Json::parse(rawA.substr(rawA.find("\r\n\r\n") + 4))["params"]["files"][0]["oldUri"].get<std::string>();
+    const std::string uriB = Json::parse(rawB.substr(rawB.find("\r\n\r\n") + 4))["params"]["files"][0]["oldUri"].get<std::string>();
+
+    const auto responseWith = [](int id, const std::string& uri, const std::string& newText) {
+        return Json{
+            {"jsonrpc", "2.0"},
+            {"id", id},
+            {"result",
+             {{"changes",
+               {{uri, Json::array({{{"range", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 1}}}}},
+                                    {"newText", newText}}})}}}}},
+        };
+    };
+    clientA->DispatchFrame(responseWith(RequestIdFromFrame(rawA), uriA, "a").dump());
+    REQUIRE_FALSE(invoked); // one of two servers has answered -- still waiting on the other
+    clientB->DispatchFrame(responseWith(RequestIdFromFrame(rawB), uriB, "b").dump());
+
+    REQUIRE(invoked);
+    REQUIRE(got.has_value());
+    REQUIRE(got->hasEdit);
+    REQUIRE(got->edits.size() == 2);
+}
+
+TEST_CASE("LspManager::NotifyFilesRenamed sends workspace/didRenameFiles only to a server whose filter matches", "[Lsp]") {
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    manager.SetFileOperationFiltersForTesting("ts-lang", {.willRenameGlobs = {}, .didRenameGlobs = {"**/*.ts"}});
+    manager.SetFileOperationFiltersForTesting("rs-lang", {.willRenameGlobs = {}, .didRenameGlobs = {"**/*.rs"}});
+
+    LspClient* tsClient = nullptr;
+    LspClient* rsClient = nullptr;
+    FakeServer tsServer = FakeServer::Create(manager, "ts-lang", eventLoop, tsClient);
+    FakeServer rsServer = FakeServer::Create(manager, "rs-lang", eventLoop, rsClient);
+
+    manager.NotifyFilesRenamed(
+        {LspManager::FileRenameEntry{.oldPath = "/tmp/ned-did-rename-old.ts", .newPath = "/tmp/ned-did-rename-new.ts"}});
+
+    const std::string raw     = ReadRawFrame(tsServer.serverStdinRead);
+    const Json        request = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(request["method"] == "workspace/didRenameFiles");
+    REQUIRE_FALSE(request.contains("id")); // a notification, not a request
+
+    REQUIRE(NoFrameArrives(rsServer.serverStdinRead));
+}
+
 TEST_CASE("LspManager::RequestRename resolves to nullopt when the buffer was never synced", "[Lsp]") {
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;

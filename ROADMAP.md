@@ -79,10 +79,11 @@ Notcurses.
       windowing or incremental delta support yet.
 - LSP edit-application gaps (`documentChanges` file create/rename/delete resource ops,
   server-pushed `workspace/applyEdit`) closed 2026-09-02 — see `git log --grep=edit-application-gaps`.
-- [ ] `rename-project-path` never tells an open LSP server about the rename (no
-      `prepareRename`, `linkedEditingRange`, or `workspace/willRenameFiles`/
-      `didRenameFiles`) — import paths elsewhere go stale until the server notices on
-      its own.
+- `rename-project-path`/`workspace/willRenameFiles`+`didRenameFiles` closed
+  2026-09-03 — see `git log --grep=rename-file-notifications`. `prepareRename`/
+  `linkedEditingRange` (symbol-rename-at-point and tag-pair-editing features, unrelated
+  to a file-path rename despite sharing this bullet before) remain unaddressed, not
+  gated on anything above.
 - [ ] **LSP multi-root, remainder** — the per-buffer-resolved-root half (a monorepo
       subpackage's own `package.json`/`pyproject.toml`/`Cargo.toml`/
       `compile_commands.json`/... earning its own server connection distinct from the

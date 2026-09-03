@@ -467,6 +467,40 @@ class LspManager {
         applyEditHandler_ = std::move(handler);
     }
 
+    // rename-file-notifications follow-up. One file's old/new path, as
+    // touched by a user-initiated project rename (ProjectFileOps.h's
+    // RenameProjectPath) -- a directory rename expands to one entry per
+    // real file nested inside it, since a server's advertised filter glob
+    // (e.g. "**/*.ts") only makes sense matched per file.
+    struct FileRenameEntry {
+        std::filesystem::path oldPath;
+        std::filesystem::path newPath;
+    };
+
+    // Sent BEFORE the actual filesystem rename happens, per spec's intended
+    // use: a server gets one last look at the pre-rename state to compute
+    // fix-up edits elsewhere (e.g. updating another file's import path),
+    // which the caller should apply before performing the rename itself.
+    // Fanned out to every currently-connected client whose advertised
+    // willRename filter (FileOperationFiltersFor) matches at least one
+    // entry's oldPath (MatchesFileOperationGlob) -- most projects have at
+    // most one such server for a given file's language, but nothing here
+    // assumes exactly one. Each matching server's own response is resolved
+    // the same all-or-nothing way RequestRename's callback resolves a
+    // single response (see ExtractRenameEdits/ResolveDocumentChangeOps); a
+    // response that fails to resolve is dropped rather than failing every
+    // other server's already-good response. callback receives nullopt when
+    // no server matched, every match declined (result: null), or every
+    // match's response failed to resolve -- the same "nothing to apply"
+    // signal RequestRename's own nullopt already carries.
+    void RequestWillRenameFiles(const std::vector<FileRenameEntry>& files, RenameCallback callback);
+
+    // Sent AFTER the rename has actually happened on disk -- a
+    // fire-and-forget workspace/didRenameFiles notification (no response to
+    // wait for) to every currently-connected client whose advertised
+    // didRename filter matches at least one entry's newPath.
+    void NotifyFilesRenamed(const std::vector<FileRenameEntry>& files);
+
     // formatting follow-up. Same callback shape for both -- nullopt on any
     // failure (buffer never synced, no running client, or an error
     // response), a (possibly empty) edit list otherwise. Unlike rename, a
@@ -701,6 +735,14 @@ class LspManager {
     // populate it.
     void SetTextDocumentSyncKindForTesting(std::string language, TextDocumentSyncKind kind) {
         textDocumentSyncKind_[std::move(language)] = kind;
+    }
+
+    // rename-file-notifications follow-up: same test-only injection point as
+    // SetTextDocumentSyncKindForTesting just above, for
+    // RequestWillRenameFiles/NotifyFilesRenamed's own piece of
+    // `initialize`-response state.
+    void SetFileOperationFiltersForTesting(std::string language, FileOperationFilters filters) {
+        fileOperationFilters_[std::move(language)] = std::move(filters);
     }
 
     // LspManagerTest-broker-hermeticity follow-up: routes ClientForLanguage's
@@ -1291,6 +1333,12 @@ class LspManager {
     // above for why these exist instead of a general capability store.
     std::unordered_map<std::string, SemanticTokensLegend>     semanticTokensLegend_;
     std::unordered_map<std::string, OnTypeFormattingTriggers> onTypeFormattingTriggers_;
+
+    // rename-file-notifications follow-up: same lifetime/erasure convention
+    // as the two caches just above -- see RequestWillRenameFiles/
+    // NotifyFilesRenamed's own doc comments in the public section for what
+    // this drives.
+    std::unordered_map<std::string, FileOperationFilters> fileOperationFilters_;
 
     // incremental-sync follow-up: same role/lifetime as the two caches just
     // above -- captured from `initialize`'s own response, erased in

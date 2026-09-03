@@ -740,6 +740,64 @@ std::optional<TextDocumentSyncKind> ExtractTextDocumentSyncKind(const Json& init
     return static_cast<TextDocumentSyncKind>(*change);
 }
 
+namespace {
+
+// rename-file-notifications follow-up: shared by ExtractFileOperationFilters'
+// willRename/didRename halves -- both read the identical
+// {filters: [{pattern: {glob: "..."}}]} shape.
+[[nodiscard]] std::vector<std::string> FileOperationGlobs(const Json& capabilities, std::string_view operationName) {
+    std::vector<std::string> globs;
+    const auto               opIt = capabilities.find(operationName);
+    if (opIt == capabilities.end() || !opIt->is_object()) {
+        return globs;
+    }
+    const auto filtersIt = opIt->find("filters");
+    if (filtersIt == opIt->end() || !filtersIt->is_array()) {
+        return globs;
+    }
+    for (const Json& filter : *filtersIt) {
+        if (!filter.is_object()) {
+            continue;
+        }
+        const auto patternIt = filter.find("pattern");
+        if (patternIt == filter.end() || !patternIt->is_object()) {
+            continue;
+        }
+        const auto globIt = patternIt->find("glob");
+        if (globIt != patternIt->end() && globIt->is_string()) {
+            globs.push_back(globIt->get<std::string>());
+        }
+    }
+    return globs;
+}
+
+} // namespace
+
+std::optional<FileOperationFilters> ExtractFileOperationFilters(const Json& initializeResult) {
+    if (!initializeResult.is_object()) {
+        return std::nullopt;
+    }
+    const auto capabilitiesIt = initializeResult.find("capabilities");
+    if (capabilitiesIt == initializeResult.end() || !capabilitiesIt->is_object()) {
+        return std::nullopt;
+    }
+    const auto workspaceIt = capabilitiesIt->find("workspace");
+    if (workspaceIt == capabilitiesIt->end() || !workspaceIt->is_object()) {
+        return std::nullopt;
+    }
+    const auto fileOpsIt = workspaceIt->find("fileOperations");
+    if (fileOpsIt == workspaceIt->end() || !fileOpsIt->is_object()) {
+        return std::nullopt;
+    }
+    FileOperationFilters filters;
+    filters.willRenameGlobs = FileOperationGlobs(*fileOpsIt, "willRename");
+    filters.didRenameGlobs  = FileOperationGlobs(*fileOpsIt, "didRename");
+    if (filters.willRenameGlobs.empty() && filters.didRenameGlobs.empty()) {
+        return std::nullopt;
+    }
+    return filters;
+}
+
 std::optional<std::vector<PullDiagnosticItem>> ExtractPullDiagnosticReport(const Json& result) {
     if (!result.is_object()) {
         return std::nullopt;

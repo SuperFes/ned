@@ -421,6 +421,30 @@ enum class TextDocumentSyncKind {
 // None" default).
 [[nodiscard]] std::optional<TextDocumentSyncKind> ExtractTextDocumentSyncKind(const Json& initializeResult);
 
+// rename-file-notifications follow-up. capabilities.workspace.fileOperations.
+// {willRename,didRename}.filters[].pattern.glob -- the one field of each
+// filter this client reads (pattern.matches' file/folder distinction and
+// pattern.options.ignoreCase are ignored, a documented v1 simplification:
+// every glob is matched against a renamed file's own path uniformly,
+// case-sensitively). Either vector empty means the server didn't advertise
+// that operation at all -- the same "empty means unsupported" convention
+// SemanticTokensLegend/OnTypeFormattingTriggers use.
+struct FileOperationFilters {
+    std::vector<std::string> willRenameGlobs;
+    std::vector<std::string> didRenameGlobs;
+
+    bool operator==(const FileOperationFilters&) const = default;
+};
+
+// Parses `capabilities.workspace.fileOperations.{willRename,didRename}` out
+// of a full `initialize` response. nullopt when neither operation is
+// advertised at all (as opposed to advertised-but-empty-filters, which
+// would produce a present-but-all-empty struct -- callers treat both the
+// same way via the vectors' own emptiness, so this distinction only matters
+// to LspManager's decision of whether to keep an entry in its per-server
+// map at all).
+[[nodiscard]] std::optional<FileOperationFilters> ExtractFileOperationFilters(const Json& initializeResult);
+
 // pull-diagnostics follow-up. One entry from a textDocument/diagnostic
 // response's "items" array -- same range/severity/message shape
 // LspManager::HandlePublishDiagnostics already parses inline for the push
