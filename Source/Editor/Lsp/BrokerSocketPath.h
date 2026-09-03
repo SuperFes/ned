@@ -50,6 +50,15 @@ void EnsureBrokerRuntimeDirectory();
 // separate stale-lock cleanup is needed.
 [[nodiscard]] std::filesystem::path BrokerLockPath();
 
+// broker-log-redirect follow-up. BrokerRuntimeDirectory() / "broker.log" -- where
+// LspBrokerMain.cpp's own timestamped Log() writes once TryBecomeBrokerSpawner
+// (LspBrokerConnect.cpp) redirects the daemon's stdout/stderr here right after fork(),
+// before exec. A manually-launched `ned --lsp-broker` still inherits its caller's own
+// stdout/stderr unmodified (that redirect only happens in the auto-spawn path) -- this
+// is just where the auto-spawned daemon's log ends up so it stops leaking into whichever
+// terminal happened to trigger the very first LSP connection after a fresh boot/login.
+[[nodiscard]] std::filesystem::path BrokerLogPath();
+
 } // namespace ned::editor::lsp
 
 #endif // NED_EDITOR_LSP_BROKERSOCKETPATH_H

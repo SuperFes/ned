@@ -47,11 +47,19 @@ namespace {
 
     // lsp-broker verification follow-up. Plain timestamped stderr logging
     // -- the daemon has no config file of its own, so there's no on/off
-    // switch here; a caller who wants a persistent record just redirects
-    // stderr (`ned --lsp-broker >broker.log 2>&1 &`), same as any ordinary
-    // Unix daemon. Deliberately coarse (attach/spawn/evict-or-idle-close/
-    // shutdown, not every relayed frame) -- enough to reconstruct what
-    // happened without turning this into a full protocol trace.
+    // switch here. A manually-launched `ned --lsp-broker` inherits its
+    // caller's own stderr unmodified, same as any ordinary Unix command
+    // (redirect it yourself: `ned --lsp-broker >broker.log 2>&1 &`); the
+    // auto-spawned daemon (the common case -- LspBrokerConnect.cpp's own
+    // TryBecomeBrokerSpawner) redirects stdout/stderr to
+    // BrokerLogPath() (BrokerSocketPath.h) right after fork(), before
+    // exec, so this output lands there instead of leaking indefinitely
+    // into whichever terminal happened to trigger the first LSP
+    // connection after a fresh boot/login (broker-log-redirect
+    // follow-up -- confirmed live, not hypothetical). Deliberately coarse
+    // (attach/spawn/evict-or-idle-close/shutdown, not every relayed
+    // frame) -- enough to reconstruct what happened without turning this
+    // into a full protocol trace.
     void Log(const std::string& message) {
         const auto      now = std::chrono::system_clock::now();
         const std::time_t t  = std::chrono::system_clock::to_time_t(now);
