@@ -36,6 +36,7 @@ using ned::editor::lsp::LspClient;
 using ned::editor::lsp::LspManager;
 using ned::editor::lsp::SemanticTokensLegend;
 using ned::editor::lsp::SetLspRootMarkers;
+using ned::editor::lsp::TextDocumentSyncKind;
 using ned::editor::lsp::Transport;
 using ned::text::Buffer;
 using ned::text::BufferList;
@@ -563,6 +564,158 @@ TEST_CASE("SyncBuffer sends a separate didChange for edits spaced further apart 
     REQUIRE(Json::parse(secondRaw.substr(secondRaw.find("\r\n\r\n") + 4))["params"]["contentChanges"][0]["text"] == "abc");
 }
 
+TEST_CASE("SyncBuffer sends a full-document didChange when the server never advertised textDocumentSync",
+          "[Lsp]") {
+    // incremental-sync follow-up: regression guard for the default-to-Full
+    // decision -- a server this client has never heard a sync-kind
+    // capability from must keep getting the exact full-text shape it always
+    // has, with no "range"/"rangeLength" keys at all.
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    Buffer&            buffer = bufferList.OpenOrCreateFile(
+        std::filesystem::temp_directory_path() / "ned-lsp-manager-incremental-default-full-test.txt");
+    buffer.InsertAtPoint("a");
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    buffer.InsertAtPoint("b");
+    manager.SyncBuffer(buffer, "test-lang");
+    WaitUntil(eventLoop, [&] { return !NoFrameArrives(server.serverStdinRead); });
+    const std::string raw   = ReadRawFrame(server.serverStdinRead);
+    const Json        frame = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(frame["params"]["contentChanges"][0]["text"] == "ab");
+    REQUIRE_FALSE(frame["params"]["contentChanges"][0].contains("range"));
+    REQUIRE_FALSE(frame["params"]["contentChanges"][0].contains("rangeLength"));
+}
+
+TEST_CASE("SyncBuffer sends an incremental didChange containing only the changed span for an Incremental-capable "
+          "server",
+          "[Lsp]") {
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    Buffer&            buffer = bufferList.OpenOrCreateFile(
+        std::filesystem::temp_directory_path() / "ned-lsp-manager-incremental-append-test.txt");
+    buffer.InsertAtPoint("abcde");
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SetTextDocumentSyncKindForTesting("test-lang", TextDocumentSyncKind::Incremental);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    buffer.InsertAtPoint("z"); // point is at end of "abcde" -- appends "z"
+    manager.SyncBuffer(buffer, "test-lang");
+    WaitUntil(eventLoop, [&] { return !NoFrameArrives(server.serverStdinRead); });
+    const std::string raw    = ReadRawFrame(server.serverStdinRead);
+    const Json        frame  = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    const Json&       change = frame["params"]["contentChanges"][0];
+    REQUIRE(change["text"] == "z");
+    REQUIRE(change["rangeLength"] == 0);
+    REQUIRE(change["range"]["start"]["line"] == 0);
+    REQUIRE(change["range"]["start"]["character"] == 5);
+    REQUIRE(change["range"]["end"]["line"] == 0);
+    REQUIRE(change["range"]["end"]["character"] == 5);
+}
+
+TEST_CASE("SyncBuffer's incremental didChange has rangeLength matching the replaced span's UTF-16 length", "[Lsp]") {
+    // Uses a non-ASCII replaced character so byte length and UTF-16 length
+    // genuinely diverge -- a bug computing rangeLength in bytes instead of
+    // UTF-16 units would still pass a plain-ASCII test.
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    Buffer&            buffer = bufferList.OpenOrCreateFile(
+        std::filesystem::temp_directory_path() / "ned-lsp-manager-incremental-rangelength-test.txt");
+    buffer.InsertAtPoint("caf\xc3\xa9!"); // "café!" -- é is 2 bytes UTF-8, 1 UTF-16 unit
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SetTextDocumentSyncKindForTesting("test-lang", TextDocumentSyncKind::Incremental);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    // Replace "é" (byte offset 3, 2 bytes) with "e": delete then insert at the same point.
+    buffer.SetPoint(3);
+    buffer.DeleteRange(3, 2); // byteOffset, byteLength -- deletes just "é"'s 2 bytes
+    buffer.InsertAtPoint("e");
+    manager.SyncBuffer(buffer, "test-lang");
+    WaitUntil(eventLoop, [&] { return !NoFrameArrives(server.serverStdinRead); });
+    const std::string raw    = ReadRawFrame(server.serverStdinRead);
+    const Json        frame  = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    const Json&       change = frame["params"]["contentChanges"][0];
+    REQUIRE(change["text"] == "e");
+    REQUIRE(change["rangeLength"] == 1); // "é" is 1 UTF-16 unit, not 2 bytes
+}
+
+TEST_CASE("SyncBuffer's incremental diff widens to the outer span across a burst of debounced edits", "[Lsp]") {
+    // Mirrors "SyncBuffer debounces a rapid burst of edits..." above, but
+    // with Incremental set -- a burst legitimately coalesces into one
+    // didChange whose diffed span may widen across the whole burst; what
+    // matters is that applying it to the old text reproduces the final
+    // content, not that the span is minimal.
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    Buffer&            buffer = bufferList.OpenOrCreateFile(
+        std::filesystem::temp_directory_path() / "ned-lsp-manager-incremental-burst-test.txt");
+    buffer.InsertAtPoint("a");
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SetTextDocumentSyncKindForTesting("test-lang", TextDocumentSyncKind::Incremental);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    for (const char c : std::string("bcdefghij")) {
+        buffer.InsertAtPoint(std::string(1, c));
+        manager.SyncBuffer(buffer, "test-lang");
+    }
+    WaitUntil(eventLoop, [&] { return !NoFrameArrives(server.serverStdinRead); });
+    const std::string raw    = ReadRawFrame(server.serverStdinRead);
+    const Json        frame  = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    const Json&       change = frame["params"]["contentChanges"][0];
+    REQUIRE(change.contains("range")); // still incremental, just a wide one
+    // Reconstructing "abcdefghij" from the pre-burst text "a" plus this
+    // change's own start/end character offsets on the single line confirms
+    // the diff is self-consistent, whatever its exact width turned out to be.
+    const std::string oldText   = "a";
+    const std::size_t startChar = change["range"]["start"]["character"].get<std::size_t>();
+    const std::size_t endChar   = change["range"]["end"]["character"].get<std::size_t>();
+    const std::string reconstructed =
+        oldText.substr(0, startChar) + change["text"].get<std::string>() + oldText.substr(std::min(endChar, oldText.size()));
+    REQUIRE(reconstructed == "abcdefghij");
+}
+
+TEST_CASE("SyncBuffer falls back to a full-text didChange when textDocumentSync capability is None", "[Lsp]") {
+    // Confirms the fallback path is keyed on "!= Incremental", not just
+    // "unset" -- an explicit None must also take the full-text path.
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    Buffer&            buffer = bufferList.OpenOrCreateFile(
+        std::filesystem::temp_directory_path() / "ned-lsp-manager-incremental-none-fallback-test.txt");
+    buffer.InsertAtPoint("a");
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SetTextDocumentSyncKindForTesting("test-lang", TextDocumentSyncKind::None);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    buffer.InsertAtPoint("b");
+    manager.SyncBuffer(buffer, "test-lang");
+    WaitUntil(eventLoop, [&] { return !NoFrameArrives(server.serverStdinRead); });
+    const std::string raw   = ReadRawFrame(server.serverStdinRead);
+    const Json        frame = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(frame["params"]["contentChanges"][0]["text"] == "ab");
+    REQUIRE_FALSE(frame["params"]["contentChanges"][0].contains("range"));
+}
+
 TEST_CASE("NotifyBufferClosed cancels a pending sync debounce cleanly", "[Lsp]") {
     // sync-debounce follow-up: a buffer closed while a debounced didChange
     // is still pending must not crash, and the stale send must never reach
@@ -907,6 +1060,24 @@ TEST_CASE("LspManager::ClientDisconnected removes the client and updates status 
     server.reset(); // closes the fake server's write end -- EOF, the real disconnect path
     WaitUntil(eventLoop, [&] { return manager.StatusForLanguage("disconnect-test-lang") != LspManager::LspStatus::Running; });
     REQUIRE(manager.StatusForLanguage("disconnect-test-lang") == LspManager::LspStatus::Disconnected);
+}
+
+TEST_CASE("ClientDisconnected erases the cached textDocumentSync capability, re-defaulting to Full", "[Lsp]") {
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+
+    LspClient* client = nullptr;
+    auto       server = std::make_optional<FakeServer>(FakeServer::Create(manager, "disconnect-sync-kind-test-lang", eventLoop, client));
+    REQUIRE(client != nullptr);
+    manager.SetTextDocumentSyncKindForTesting("disconnect-sync-kind-test-lang", TextDocumentSyncKind::Incremental);
+    REQUIRE(manager.TextDocumentSyncKindFor("disconnect-sync-kind-test-lang") == TextDocumentSyncKind::Incremental);
+
+    server.reset(); // closes the fake server's write end -- EOF, the real disconnect path
+    WaitUntil(eventLoop, [&] {
+        return manager.StatusForLanguage("disconnect-sync-kind-test-lang") != LspManager::LspStatus::Running;
+    });
+    REQUIRE(manager.TextDocumentSyncKindFor("disconnect-sync-kind-test-lang") == TextDocumentSyncKind::Full);
 }
 
 TEST_CASE("LspManager::ClientDisconnected gives up after a burst of immediate disconnects (crash-loop guard)", "[Lsp]") {
@@ -2965,6 +3136,62 @@ TEST_CASE("SyncEmbeddedDocuments opens an embedded server independently of the p
     const auto activeKeys = manager.ActiveServerKeysForBuffer(buffer);
     REQUIRE(std::find(activeKeys.begin(), activeKeys.end(), "html") != activeKeys.end());
     REQUIRE(std::find(activeKeys.begin(), activeKeys.end(), "javascript") != activeKeys.end());
+}
+
+TEST_CASE("SyncEmbeddedDocuments sends an incremental didChange against the embedded document's own previous text",
+          "[Lsp]") {
+    // incremental-sync follow-up: the embedded key's own bufferState_ entry
+    // must diff against *its own* lastSyncedText (the previously padded
+    // virtual document), never the host buffer's.
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path =
+        std::filesystem::temp_directory_path() / "ned-lsp-manager-embedded-incremental-test.html";
+    Buffer& buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("<script>let x = 1;</script>");
+
+    LspClient* htmlClient = nullptr;
+    LspClient* jsClient   = nullptr;
+    FakeServer htmlServer = FakeServer::Create(manager, "html", eventLoop, htmlClient);
+    FakeServer jsServer   = FakeServer::Create(manager, "javascript", eventLoop, jsClient);
+    manager.SetTextDocumentSyncKindForTesting("javascript", TextDocumentSyncKind::Incremental);
+
+    manager.SyncBuffer(buffer, "html");
+    (void)ReadRawFrame(htmlServer.serverStdinRead); // drain html's own didOpen
+
+    const std::string firstPadded = "        let x = 1;          ";
+    manager.SyncEmbeddedDocuments(
+        buffer, {LspManager::EmbeddedDocumentSync{.language = "javascript", .documentText = firstPadded, .ownedRanges = {{8, 19}}}});
+    (void)ReadRawFrame(jsServer.serverStdinRead); // drain javascript's own didOpen
+
+    // SyncTextToServer's own generation gate is keyed on the *host buffer's*
+    // ContentGeneration(), not documentText -- a real caller always re-edits
+    // the buffer before resolving new embedded regions and calling this
+    // again (BufferView::Paint()), so this edit (content irrelevant, only
+    // its generation bump matters) mirrors that, otherwise the second call
+    // below is silently skipped as "nothing changed since the last sync".
+    buffer.InsertAtPoint(" ");
+
+    // A different padding of a slightly longer real edit -- differs from
+    // firstPadded both inside and outside its "real" content span.
+    const std::string secondPadded = "        let x = 12;           ";
+    manager.SyncEmbeddedDocuments(
+        buffer,
+        {LspManager::EmbeddedDocumentSync{.language = "javascript", .documentText = secondPadded, .ownedRanges = {{8, 20}}}});
+
+    const std::string raw   = ReadRawFrame(jsServer.serverStdinRead);
+    const Json        frame = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(frame["method"] == "textDocument/didChange");
+    const Json& change = frame["params"]["contentChanges"][0];
+    REQUIRE(change.contains("range")); // diffed against firstPadded, not the host buffer's own text
+    // Applying the reported change to firstPadded (the embedded document's
+    // own previous text) must reproduce secondPadded exactly.
+    const std::size_t startChar = change["range"]["start"]["character"].get<std::size_t>();
+    const std::size_t endChar   = change["range"]["end"]["character"].get<std::size_t>();
+    const std::string reconstructed =
+        firstPadded.substr(0, startChar) + change["text"].get<std::string>() + firstPadded.substr(std::min(endChar, firstPadded.size()));
+    REQUIRE(reconstructed == secondPadded);
 }
 
 TEST_CASE("SyncEmbeddedDocuments tears down a server key whose region disappeared: didClose sent, its diagnostics dropped",
