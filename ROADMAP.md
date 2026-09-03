@@ -154,14 +154,22 @@ Notcurses.
       multiple terminals/tabs, no terminal-side mouse forwarding to the shell (clicks
       focus the panel, wheel scrolls the ring — TUI apps inside don't receive mouse
       events), no OSC 52/title integration.
-- [ ] **Vim-mode gaps**: no jumplist/changelist ring beyond the single `` ` ``/`''`
-      toggle (no `C-o`/`C-i` ring); mark letters limited to `a`-`z`/`A`-`Z`/`'<`/`'>`
-      (`A`-`Z` are buffer-local here, not vim's cross-file global marks); macros record
-      raw keystrokes rather than vim's editable-register-text form; `.` replays
-      verbatim (a count typed before it doesn't override the recorded one);
-      search/`:s`/`:g` patterns pass straight to PCRE2 rather than translating vim's
-      default "magic" escaping convention; Insert-mode `C-o`'s one-shot dot-repeat/
-      register bookkeeping isn't unified with the interrupted session's own.
+- Vim-mode gaps closed 2026-09-03 (see `git log --grep=jumplist-ring`,
+  `--grep=changelist-ring`, `--grep=dot-repeat-count-override`, `--grep=vim-global-marks`,
+  `--grep=vim-magic-translation`, `--grep=vim-macro-register`): the `C-o`/`C-i` jumplist
+  ring; the `g;`/`g,` changelist ring; dot-repeat count override; real cross-file `A`-`Z`
+  marks (`Editor/Vim/VimGlobalMarks.h`) plus a fixed latent bug where `marks_`/
+  `jumpList_`/`changeList_` (pane-scoped engine state) leaked stale byte offsets across a
+  buffer switch; `/`/`:s`/`:g` translate vim's own default "magic" escaping to PCRE2
+  (`Editor/Vim/VimMagic.h`, both the pattern and the `:s` replacement-backreference
+  halves); macros are real, editable register text (`VimRegisters::SetRaw`, spelled in
+  this codebase's own Emacs kbd notation rather than vim's own `<key>` bracket notation --
+  a deliberate reuse of existing infrastructure). Audited and left as-is: Insert-mode
+  `C-o`'s one-shot dot-repeat/register bookkeeping not being "unified" with the
+  interrupted session — real vim's own documented behavior for the specific edge case
+  (a one-shot command that itself opens a new mode, e.g. `C-o A`) is "stay in the new
+  mode, don't resume Insert," which is exactly what this codebase's existing defensive
+  `oneShotNormalPending_` clear already does.
 - [ ] **DAP gaps**: attach mode; remapping a breakpoint to the adapter's snapped line
       (only verified/dimming is tracked today); hit-count/`hitCondition` breakpoints;
       cross-restart persistence of conditions/logMessage/watches/thread focus (session

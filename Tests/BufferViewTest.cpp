@@ -22,6 +22,8 @@
 #include "Editor/Dap/DapConfig.h"
 #include "Editor/Dap/DapManager.h"
 #include "Editor/DiagnosticsLog.h"
+#include "Editor/Vim/VimGlobalMarks.h"
+#include "Editor/Vim/VimSettings.h"
 #include "Editor/Dispatcher.h"
 #include "Editor/FormatOnSave.h"
 #include "Editor/InlineDiagnostics.h"
@@ -96,6 +98,24 @@ struct TabWidthGuard {
     ~TabWidthGuard() {
         ned::editor::SetTabWidth(4);
     }
+};
+
+// VimModeEnabled is process-wide state too (Editor/Vim/VimSettings.h's own
+// TabWidth.h-shaped pattern) -- restores whatever was configured before the
+// test ran (default false) rather than unconditionally disabling it.
+class VimModeGuard {
+  public:
+    VimModeGuard() : previous_(ned::editor::vim::VimModeEnabled()) {
+        ned::editor::vim::SetVimModeEnabled(true);
+    }
+    ~VimModeGuard() {
+        ned::editor::vim::SetVimModeEnabled(previous_);
+    }
+    VimModeGuard(const VimModeGuard&)            = delete;
+    VimModeGuard& operator=(const VimModeGuard&) = delete;
+
+  private:
+    bool previous_;
 };
 
 // UrlOpenCommand is process-wide state too (see Editor/Link.h's own doc
@@ -10039,4 +10059,39 @@ TEST_CASE("Accepting a snippet-format LSP completion starts a tabstop session", 
     view.OnEvent(ned::ui::test::Tab()); // to the final stop -- session ends
     REQUIRE(buffer.SnippetRanges().empty());
     REQUIRE(buffer.Point() == 10); // implicit $0 at the expansion's end
+}
+
+TEST_CASE("Vim: jumping to an uppercase mark set in a different file opens it and moves point there",
+          "[BufferView]") {
+    ned::editor::vim::ClearGlobalMarksForTesting();
+    VimModeGuard vimGuard;
+
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_bufferview_vim_global_mark";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    const std::filesystem::path pathA = dir / "a.txt";
+    const std::filesystem::path pathB = dir / "b.txt";
+    {
+        std::ofstream(pathA) << "hello world";
+        std::ofstream(pathB) << "something else";
+    }
+
+    Fixture                  fixture;
+    ned::text::Buffer&       openedA = fixture.bufferList.OpenOrCreateFile(pathA);
+    ned::ui::ActiveBuffer    activeBuffer(openedA);
+    ned::ui::BufferView      view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList,
+                                  fixture.dispatcher, fixture.statusMessage, fixture.mode, fixture.theme);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
+
+    TypeText(view, "llmB"); // mark 'B' at point 2 in a.txt ("hello world")
+
+    ned::text::Buffer& openedB = fixture.bufferList.OpenOrCreateFile(pathB);
+    activeBuffer.Set(openedB);
+
+    TypeText(view, "`B");
+
+    REQUIRE(&activeBuffer.Get() == &openedA); // switched back to a.txt
+    REQUIRE(activeBuffer.Get().Point() == 2);
+
+    std::filesystem::remove_all(dir);
 }

@@ -58,6 +58,16 @@ class VimRegisters {
     // any other unset register.
     [[nodiscard]] std::optional<RegisterEntry> Get(char32_t name) const;
 
+    // vim-macro-register follow-up: a direct, unrouted write -- unlike Store, doesn't
+    // mirror into the unnamed register or apply uppercase-append semantics. Real vim's
+    // own macro recording (`q{register}...q`) writes its named register exactly this
+    // way, distinct from a yank/delete; VimEngine::StopMacroRecording is the sole
+    // caller. name must already be a plain lowercase a-z (an uppercase *recording*
+    // name's append semantics are handled by VimEngine itself, seeding
+    // macroRecordingBuffer_ from the existing register before recording starts, not by
+    // this method).
+    void SetRaw(char32_t name, RegisterEntry entry);
+
   private:
     void RouteNamed(char32_t name, RegisterEntry entry);
     void RouteUnnamed(RegisterEntry entry, bool isDelete);

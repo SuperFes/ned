@@ -97,6 +97,10 @@ void VimRegisters::Store(char32_t name, RegisterEntry entry, bool isDelete) {
     RouteNamed(name, std::move(entry));
 }
 
+void VimRegisters::SetRaw(char32_t name, RegisterEntry entry) {
+    registers_[name] = std::move(entry);
+}
+
 std::optional<RegisterEntry> VimRegisters::Get(char32_t name) const {
     if (name == U'+' || name == U'*') {
         const std::optional<std::string> clip = PasteFromSystemClipboard();
