@@ -229,13 +229,18 @@ Notcurses.
   scrollback (`TerminalPanel`'s own `scrollbackOffset_` mechanism) + input history-recall
   (M-p/M-n over the same `Editor/PromptHistory.h` ring `BufferView`'s prompts use) closed
   2026-09-03 — see `git log --grep=dap-round-4`.
-- [ ] **DAP gaps, remainder**: cross-restart persistence of conditions/logMessage/
-      hitCondition/watches (session storage deliberately stayed the old line-only shape;
-      thread focus deliberately excluded even if this is revisited -- a fresh session has
-      entirely new thread IDs, nothing meaningful to reattach it to); debug console has no
-      search over its own history (no established "search a list of lines" pattern to
-      reuse, and neither sibling overlay panel has one either); no disassembly/memory view
-      (2026-08-25 audit, updated 2026-09-03).
+- Cross-restart persistence of breakpoint conditions/logMessage/hitCondition and watch
+  expressions closed 2026-09-03 (session-persistence round 2) — `DapManager::
+  PersistedBreakpoint`/`RestoreWatches`, `ProjectSessionData::BreakpointState`/`watches`;
+  session files from before this change (bare-line-number breakpoints, no `watches` key)
+  still load, one malformed entry skipped rather than discarding the file. `verified`/
+  `actualLine` deliberately still don't round-trip (live-adapter-derived, meaningless
+  before a session reconnects) — see `git log --grep=session-persistence-round-2`.
+- [ ] **DAP gaps, remainder**: thread focus deliberately excluded even if this is
+      revisited -- a fresh session has entirely new thread IDs, nothing meaningful to
+      reattach it to; debug console has no search over its own history (no established
+      "search a list of lines" pattern to reuse, and neither sibling overlay panel has
+      one either); no disassembly/memory view (2026-08-25 audit, updated 2026-09-03).
 - [ ] **No server/daemon mode** — no `emacsclient`-equivalent; one process per terminal,
       no way to keep a warm process (buffers, LSP connections, undo history) alive and
       attach a new terminal client to it.
