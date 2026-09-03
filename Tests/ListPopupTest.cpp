@@ -1,5 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <utility>
+
 #include "Editor/Key.h"
 #include "TestEvents.h"
 #include "UI/ListPopup.h"
@@ -246,6 +248,34 @@ TEST_CASE("ListPopup click activates the row in non-focusable mode without ever 
     REQUIRE(highlighted == 1);
     REQUIRE(activated == 1);
     REQUIRE_FALSE(popup.Focused()); // never took focus -- BufferView (or nothing) still owns it
+}
+
+TEST_CASE("ListPopup a click within the left column fires onLeftColumnClick instead of onActivate",
+          "[ListPopup]") {
+    // buffer-list-panel-mouse-mark follow-up.
+    ned::ui::Theme     theme = ned::ui::DarkTheme();
+    ned::ui::ListPopup popup(theme);
+    popup.SetModel(ned::ui::ListPopupModel{.rows = {{.left = "D ", .main = "one"}, {.left = " S", .main = "two"}}});
+    popup.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 29, .y_min = 0, .y_max = 5});
+
+    std::optional<std::size_t> highlighted;
+    popup.SetOnHighlightChange([&](std::size_t index) { highlighted = index; });
+    std::optional<std::size_t> activated;
+    popup.SetOnActivate([&](std::size_t index) { activated = index; });
+    std::optional<std::pair<std::size_t, int>> leftClicked;
+    popup.SetOnLeftColumnClick([&](std::size_t index, int columnOffset) { leftClicked = {index, columnOffset}; });
+
+    // Row 1 (local y=2) is "two", whose `left` is " S" -- local x=3 is
+    // column offset 1, the S glyph.
+    REQUIRE(popup.OnEvent(ned::ui::test::Mouse(3, 2, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Pressed)));
+    REQUIRE(highlighted == 1); // still selects the row, same as any click
+    REQUIRE(leftClicked == std::make_pair(std::size_t{1}, 1));
+    REQUIRE_FALSE(activated.has_value()); // consumed by onLeftColumnClick_, not onActivate_
+
+    // x=6 on the same row is past `left`'s own 2-column width -- falls
+    // through to the ordinary activate path.
+    REQUIRE(popup.OnEvent(ned::ui::test::Mouse(6, 2, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Pressed)));
+    REQUIRE(activated == 1);
 }
 
 TEST_CASE("ListPopup click on the border or past the last row is a no-op", "[ListPopup]") {

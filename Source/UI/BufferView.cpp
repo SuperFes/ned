@@ -17,13 +17,12 @@
 #include "Border.h"
 #include "EchoArea.h"
 #include "Editor/Acp/AcpConfig.h"
-#include "Editor/Backup.h"
 #include "Editor/Bookmark.h"
+#include "Editor/BufferSave.h"
 #include "Editor/Clipboard.h"
 #include "Editor/CodeFoldSettings.h"
 #include "Editor/DabbrevComplete.h"
 #include "Editor/DiagnosticsLog.h"
-#include "Editor/FinalNewline.h"
 #include "Editor/FuzzyMatch.h"
 #include "Editor/HeaderSource.h"
 #include "Editor/HighlightSettings.h"
@@ -31,7 +30,6 @@
 #include "Editor/ImportResolutionConfig.h"
 #include "Editor/InlineDiagnostics.h"
 #include "Editor/JanetSymbolComplete.h"
-#include "Editor/LineEndingPolicy.h"
 #include "Editor/Link.h"
 #include "Editor/Lsp/LspManager.h"
 #include "Editor/Lsp/LspServerConfig.h"
@@ -62,7 +60,6 @@
 #include "Editor/TestRun/TestResultsBuffer.h"
 #include "Editor/TestRun/TestRunConfig.h"
 #include "Editor/ToolchainIncludePaths.h"
-#include "Editor/TrimOnSave.h"
 #include "Editor/Variables.h"
 #include "Editor/Vcs/DiffPatch.h"
 #include "Editor/Vim/VimSettings.h"
@@ -5804,14 +5801,7 @@ void BufferView::RequestLspFormatThenSaveBuffer() {
                 ApplyWorkspaceTextEdits(buffer, *edits); // one undo group -- see Step 0's fix
             }
             try {
-                if (buffer.Path()) {
-                    editor::BackupFileBeforeSave(*buffer.Path());
-                }
-                buffer.Save(editor::EnsureFinalNewline(), editor::TrimTrailingWhitespaceOnSave(),
-                           editor::ResolveLineEndingForSave(buffer.LineEndingKind()));
-                if (buffer.Path()) {
-                    editor::RemoveAutoSave(*buffer.Path());
-                }
+                editor::WriteBufferToDisk(buffer);
                 statusMessage_ = "Wrote " + buffer.Name() + (formatFailed ? " (LSP format failed)" : "");
             }
             catch (const std::exception& e) {

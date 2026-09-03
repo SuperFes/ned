@@ -1465,6 +1465,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
         [&overlays, panel = &bufferListPanel] { overlays.Hide(panel->Popup()); });
     bufferListPanel.SetOnBufferClosing(
         [wm = windowManager.get()](ned::text::Buffer& buffer) { wm->NotifyBufferClosing(buffer); });
+    bufferListPanel.SetOnMessage([&statusMessage](std::string message) { statusMessage = std::move(message); });
     windowManager->SetOnBufferListToggle([&overlays, panel = &bufferListPanel] {
         if (!overlays.IsVisible(panel->Popup())) {
             panel->Show();

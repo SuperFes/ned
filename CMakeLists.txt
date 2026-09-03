@@ -632,6 +632,7 @@ add_library(ned_lib STATIC
         Source/Editor/InlineDiagnostics.cpp
         Source/Editor/ScratchPad.cpp
         Source/Editor/Backup.cpp
+        Source/Editor/BufferSave.cpp
         Source/Editor/PersistentUndo.cpp
         Source/Editor/ProjectUndo.cpp
         Source/Editor/DiagnosticsLog.cpp

@@ -173,9 +173,6 @@ Notcurses.
       function or data breakpoints; no `restartFrame`; no disassembly/memory view; every
       stop sends `disconnect`+`terminateDebuggee:true` rather than distinguishing a real
       `terminate` from a detach, which some adapters expect (2026-08-25 audit).
-- [ ] **No buffer-list/ibuffer-style management** — `switch-to-buffer` is a
-      name-completion prompt only; no dedicated buffer-list buffer with mark/save/kill
-      batch operations.
 - [ ] **No server/daemon mode** — no `emacsclient`-equivalent; one process per terminal,
       no way to keep a warm process (buffers, LSP connections, undo history) alive and
       attach a new terminal client to it.

@@ -150,6 +150,10 @@ void ListPopup::SetOnKey(std::function<void(const editor::KeyChord&)> onKey) {
     onKey_ = std::move(onKey);
 }
 
+void ListPopup::SetOnLeftColumnClick(std::function<void(std::size_t, int)> onLeftColumnClick) {
+    onLeftColumnClick_ = std::move(onLeftColumnClick);
+}
+
 void ListPopup::Paint(Canvas c) {
     const int width  = c.size().width;
     const int height = c.size().height;
@@ -351,6 +355,19 @@ bool ListPopup::HandleMouseEvent(const Event& event) {
     if (onHighlightChange_) {
         onHighlightChange_(index);
     }
+
+    // buffer-list-panel-mouse-mark follow-up: a click at or past x=2 (the
+    // left column's own start -- see Paint's `PaintRowText(c, 2, ...)`) and
+    // still within that row's `left` text width targets the mark glyph
+    // itself rather than the row as a whole.
+    if (onLeftColumnClick_) {
+        const int leftWidth = DisplayColumnCount(model_.rows[index].left);
+        if (leftWidth > 0 && mouse->at.x >= 2 && mouse->at.x < 2 + leftWidth) {
+            onLeftColumnClick_(index, mouse->at.x - 2);
+            return true;
+        }
+    }
+
     if (onActivate_) {
         onActivate_(index);
     }

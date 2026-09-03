@@ -1,9 +1,38 @@
 #include "BufferListPanel.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <utility>
 
+#include "Editor/BufferSave.h"
+
 namespace ned::ui {
+
+namespace {
+
+    // buffer-list-panel-columns follow-up: a plain "N B"/"N.NK"/"N.NM"
+    // formatter for the row's own `right` column -- Editor/BufferSave.h's
+    // callers don't need one, and Buffer.cpp's own FormatBytesHuman is
+    // GiB/MiB-only (tuned for disk-space-error messages, not a typical open
+    // buffer's much smaller size), so this stays a small local helper
+    // rather than reaching for either.
+    std::string FormatBufferSize(std::size_t bytes) {
+        constexpr double kKiB = 1024.0;
+        constexpr double kMiB = 1024.0 * 1024.0;
+        char             buf[16];
+        if (bytes < static_cast<std::size_t>(kKiB)) {
+            std::snprintf(buf, sizeof(buf), "%zuB", bytes);
+        }
+        else if (bytes < static_cast<std::size_t>(kMiB)) {
+            std::snprintf(buf, sizeof(buf), "%.1fK", static_cast<double>(bytes) / kKiB);
+        }
+        else {
+            std::snprintf(buf, sizeof(buf), "%.1fM", static_cast<double>(bytes) / kMiB);
+        }
+        return buf;
+    }
+
+} // namespace
 
 BufferListPanel::BufferListPanel(const Theme& theme, text::BufferList& bufferList)
     : bufferList_(bufferList), popup_(theme) {
@@ -12,6 +41,7 @@ BufferListPanel::BufferListPanel(const Theme& theme, text::BufferList& bufferLis
     popup_.SetOnActivate([this](std::size_t index) { HandleActivate(index); });
     popup_.SetOnCancel([this] { HandleCancel(); });
     popup_.SetOnKey([this](const editor::KeyChord& chord) { HandleKey(chord); });
+    popup_.SetOnLeftColumnClick([this](std::size_t index, int columnOffset) { ToggleMarkAt(index, columnOffset); });
 }
 
 ListPopup& BufferListPanel::Popup() {
@@ -30,6 +60,10 @@ void BufferListPanel::SetOnBufferClosing(std::function<void(text::Buffer&)> hand
     onBufferClosing_ = std::move(handler);
 }
 
+void BufferListPanel::SetOnMessage(std::function<void(std::string)> handler) {
+    onMessage_ = std::move(handler);
+}
+
 void BufferListPanel::Show() {
     confirming_ = false;
     pendingKill_.clear();
@@ -37,21 +71,26 @@ void BufferListPanel::Show() {
 }
 
 void BufferListPanel::Refresh() {
-    const std::vector<text::Buffer*> previousRows   = rows_;
-    const std::vector<bool>          previousMarked = marked_;
+    const std::vector<text::Buffer*> previousRows = rows_;
+    const std::vector<bool>          previousKill = markedKill_;
+    const std::vector<bool>          previousSave = markedSave_;
 
     rows_.clear();
-    marked_.clear();
+    markedKill_.clear();
+    markedSave_.clear();
     for (const auto& buffer : bufferList_.Buffers()) {
         rows_.push_back(buffer.get());
-        bool wasMarked = false;
+        bool wasKill = false;
+        bool wasSave = false;
         for (std::size_t i = 0; i < previousRows.size(); ++i) {
-            if (previousRows[i] == buffer.get() && i < previousMarked.size()) {
-                wasMarked = previousMarked[i];
+            if (previousRows[i] == buffer.get()) {
+                wasKill = i < previousKill.size() && previousKill[i];
+                wasSave = i < previousSave.size() && previousSave[i];
                 break;
             }
         }
-        marked_.push_back(wasMarked);
+        markedKill_.push_back(wasKill);
+        markedSave_.push_back(wasSave);
     }
 
     selectedIndex_ = rows_.empty() ? 0 : std::min(selectedIndex_, rows_.size() - 1);
@@ -65,9 +104,17 @@ void BufferListPanel::RefreshDisplay() {
     for (std::size_t i = 0; i < rows_.size(); ++i) {
         const text::Buffer& buffer = *rows_[i];
         std::string          left;
-        left += marked_[i] ? 'D' : ' ';
+        left += markedKill_[i] ? 'D' : ' ';
+        left += markedSave_[i] ? 'S' : ' ';
         left += buffer.Modified() ? '*' : ' ';
-        model.rows.push_back({.left = left, .main = buffer.Name(), .accented = marked_[i]});
+
+        std::string right = FormatBufferSize(buffer.Size());
+        if (buffer.ReadOnly()) {
+            right += " RO";
+        }
+
+        model.rows.push_back(
+            {.left = left, .main = buffer.Name(), .accented = markedKill_[i] || markedSave_[i], .right = right});
     }
     if (!rows_.empty()) {
         model.selectedIndex = selectedIndex_;
@@ -112,13 +159,19 @@ void BufferListPanel::HandleKey(const editor::KeyChord& chord) {
     }
 
     if (chord.Codepoint == U'd') {
-        marked_[selectedIndex_] = true;
-        selectedIndex_          = std::min(selectedIndex_ + 1, rows_.size() - 1);
+        markedKill_[selectedIndex_] = true;
+        selectedIndex_              = std::min(selectedIndex_ + 1, rows_.size() - 1);
+        RefreshDisplay();
+    }
+    else if (chord.Codepoint == U's') {
+        markedSave_[selectedIndex_] = true;
+        selectedIndex_              = std::min(selectedIndex_ + 1, rows_.size() - 1);
         RefreshDisplay();
     }
     else if (chord.Codepoint == U'u') {
-        marked_[selectedIndex_] = false;
-        selectedIndex_          = std::min(selectedIndex_ + 1, rows_.size() - 1);
+        markedKill_[selectedIndex_] = false;
+        markedSave_[selectedIndex_] = false;
+        selectedIndex_              = std::min(selectedIndex_ + 1, rows_.size() - 1);
         RefreshDisplay();
     }
     else if (chord.Codepoint == U'x') {
@@ -129,10 +182,69 @@ void BufferListPanel::HandleKey(const editor::KeyChord& chord) {
     }
 }
 
+void BufferListPanel::ToggleMarkAt(std::size_t index, int columnOffset) {
+    // Mid-confirmation, a click's only sane targets are y/n, which the
+    // mouse doesn't drive at all -- ignore rather than let a mark toggle
+    // silently invalidate pendingKill_ underneath the pending y/n prompt.
+    if (confirming_ || index >= rows_.size()) {
+        return;
+    }
+    selectedIndex_ = index;
+    if (columnOffset == 0) {
+        markedKill_[index] = !markedKill_[index];
+    }
+    else if (columnOffset == 1) {
+        markedSave_[index] = !markedSave_[index];
+    }
+    else {
+        return; // the modified `*` glyph -- not a mark, not a click target
+    }
+    RefreshDisplay();
+}
+
 void BufferListPanel::BeginExecute() {
+    // Saves are immediate and non-destructive -- no confirmation needed,
+    // unlike the kill half below. Doing this first also means a buffer
+    // marked both S and D saves before its own kill confirmation is
+    // evaluated, so a since-modified buffer that just got saved no longer
+    // forces that confirmation.
+    std::size_t savedCount = 0;
+    std::string saveFailures;
+    for (std::size_t i = 0; i < rows_.size(); ++i) {
+        if (!markedSave_[i]) {
+            continue;
+        }
+        markedSave_[i]            = false;
+        text::Buffer& buffer      = *rows_[i];
+        const auto    noteFailure = [&](const std::string& reason) {
+            saveFailures += (saveFailures.empty() ? "" : ", ") + buffer.Name() + " (" + reason + ")";
+        };
+        if (!buffer.Path()) {
+            noteFailure("no file");
+            continue;
+        }
+        try {
+            editor::WriteBufferToDisk(buffer);
+            ++savedCount;
+        }
+        catch (const std::exception& e) {
+            noteFailure(e.what());
+        }
+    }
+    if (savedCount > 0 || !saveFailures.empty()) {
+        std::string message = "Saved " + std::to_string(savedCount) + " buffer" + (savedCount == 1 ? "" : "s");
+        if (!saveFailures.empty()) {
+            message += " (failed: " + saveFailures + ")";
+        }
+        if (onMessage_) {
+            onMessage_(std::move(message));
+        }
+        RefreshDisplay(); // modified/size flags may have just changed
+    }
+
     pendingKill_.clear();
     for (std::size_t i = 0; i < rows_.size(); ++i) {
-        if (marked_[i]) {
+        if (markedKill_[i]) {
             pendingKill_.push_back(rows_[i]);
         }
     }
