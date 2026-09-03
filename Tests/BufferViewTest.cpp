@@ -8577,6 +8577,77 @@ TEST_CASE("jump-back skips a mark whose buffer has since been closed", "[BufferV
     REQUIRE(fixture.statusMessage.empty());
 }
 
+// --- jump-back-stack follow-up, forward direction: jump-forward (C-x C-j) --
+
+TEST_CASE("jump-forward retraces a jump-back to the position it left", "[BufferView]") {
+    Fixture               fixture;
+    ned::text::Buffer&    scratch = fixture.bufferList.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
+                               fixture.statusMessage, fixture.mode, fixture.theme);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    scratch.InsertAtPoint("one\ntwo\nthree\nfour\nfive");
+    scratch.SetPoint(scratch.Content().LineToByteOffset(1)); // line 2 ("two")
+
+    view.OnEvent(ned::ui::test::Alt('g'));
+    view.OnEvent(ned::ui::test::Character("g"));
+    TypeText(view, "4");
+    view.OnEvent(ned::ui::test::Return());
+    REQUIRE(scratch.Point() == scratch.Content().LineToByteOffset(3)); // line 4 ("four")
+
+    view.OnEvent(ned::ui::test::Ctrl('x'));
+    view.OnEvent(ned::ui::test::CtrlSpace());
+    REQUIRE(scratch.Point() == scratch.Content().LineToByteOffset(1)); // back at line 2
+
+    view.OnEvent(ned::ui::test::Ctrl('x'));
+    view.OnEvent(ned::ui::test::Ctrl('n'));
+    REQUIRE(scratch.Point() == scratch.Content().LineToByteOffset(3)); // forward to line 4 again
+    REQUIRE(fixture.statusMessage.empty());
+}
+
+TEST_CASE("jump-forward with no forward history reports a status message and doesn't crash", "[BufferView]") {
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Ctrl('x'));
+    view.OnEvent(ned::ui::test::Ctrl('n'));
+    REQUIRE(fixture.statusMessage == "No further jump history.");
+}
+
+TEST_CASE("a fresh jump after jump-back clears the forward stack", "[BufferView]") {
+    Fixture               fixture;
+    ned::text::Buffer&    scratch = fixture.bufferList.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
+                               fixture.statusMessage, fixture.mode, fixture.theme);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    scratch.InsertAtPoint("one\ntwo\nthree\nfour\nfive");
+    scratch.SetPoint(scratch.Content().LineToByteOffset(1)); // line 2 ("two")
+
+    view.OnEvent(ned::ui::test::Alt('g'));
+    view.OnEvent(ned::ui::test::Character("g"));
+    TypeText(view, "4");
+    view.OnEvent(ned::ui::test::Return());
+
+    view.OnEvent(ned::ui::test::Ctrl('x'));
+    view.OnEvent(ned::ui::test::CtrlSpace()); // jump-back to line 2, pushes line 4 onto the forward stack
+
+    // A brand-new jump branches off the history -- the forward entry that
+    // would've retraced to line 4 is no longer reachable.
+    view.OnEvent(ned::ui::test::Alt('g'));
+    view.OnEvent(ned::ui::test::Character("g"));
+    TypeText(view, "5");
+    view.OnEvent(ned::ui::test::Return());
+    REQUIRE(scratch.Point() == scratch.Content().LineToByteOffset(4)); // line 5 ("five")
+
+    view.OnEvent(ned::ui::test::Ctrl('x'));
+    view.OnEvent(ned::ui::test::Ctrl('n'));
+    REQUIRE(fixture.statusMessage == "No further jump history.");
+}
+
 TEST_CASE("jump-back stack evicts the oldest mark past its cap", "[BufferView]") {
     Fixture               fixture;
     ned::text::Buffer&    scratch = fixture.bufferList.CreateBuffer("scratch");
