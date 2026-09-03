@@ -8130,20 +8130,21 @@ std::string BufferView::SearchStatusText() const {
 
     // partial-match-highlighting follow-up: a failing search's query is
     // split at MatchedPrefixLength() -- the still-matching prefix rendered
-    // emphasized (bold), the rest plain -- so it's visible at a glance how
-    // much of what's typed so far still corresponds to real buffer content,
-    // rather than only learning that from the "Failing " label. Falls back
-    // to the whole query plain whenever there's nothing meaningful to split
-    // (a successful search, an empty query, or MatchedPrefixLength()
-    // reporting "not available" for a huge buffer -- see its own doc
-    // comment).
+    // emphasized (bold), the broken remainder rendered in the same error
+    // color the gutter uses for an LSP error -- so it's visible at a glance
+    // both how much of what's typed still corresponds to real buffer
+    // content and exactly which bytes broke it, rather than only learning
+    // that from the "Failing " label. Falls back to the whole query plain
+    // whenever there's nothing meaningful to split (a successful search, an
+    // empty query, or MatchedPrefixLength() reporting "not available" for a
+    // huge buffer -- see its own doc comment).
     const std::size_t matchedLen = search_->MatchedPrefixLength();
     if (search_->Found() || query.empty() || matchedLen >= query.size()) {
         text += query;
     }
     else {
         text += EmphasizeForEchoArea(query.substr(0, matchedLen));
-        text += query.substr(matchedLen);
+        text += ErrorForEchoArea(query.substr(matchedLen));
     }
 
     if (query.empty() && !lastSearchQuery_.empty()) {
@@ -8304,17 +8305,20 @@ void BufferView::HandleSearchKey(const editor::KeyChord& chord) {
     else if (IsPlainCharacter(chord)) {
         search_->AppendChar(chord.Codepoint);
     }
-    else if (!chord.Control && !chord.Meta &&
-             (chord.Special == editor::SpecialKey::Up || chord.Special == editor::SpecialKey::Down ||
-              chord.Special == editor::SpecialKey::Left || chord.Special == editor::SpecialKey::Right ||
-              chord.Special == editor::SpecialKey::Home || chord.Special == editor::SpecialKey::End ||
-              chord.Special == editor::SpecialKey::PageUp || chord.Special == editor::SpecialKey::PageDown)) {
+    else {
         // isearch-motion-key-exits follow-up: real Emacs isearch behavior --
-        // none of these are isearch commands, so rather than being silently
-        // swallowed (this branch's old behavior), the key ends the search
-        // (keeping the current match position, same as Enter) and
-        // re-dispatches itself through the normal keymap, applying the
-        // motion instead of requiring an explicit Enter/Escape first.
+        // anything reaching this branch (arrows, Home/End/PageUp/PageDown,
+        // and the plain Emacs motion chords -- C-f/C-b/C-n/C-p/C-a/C-e,
+        // M-f/M-b/M-</M->, C-v/M-v, ...) isn't an isearch command, so rather
+        // than being silently swallowed (this branch's old behavior), the
+        // key ends the search (keeping the current match position, same as
+        // Enter) and re-dispatches itself through the normal keymap,
+        // applying whatever it would ordinarily do instead of requiring an
+        // explicit Enter/Escape first. Deliberately unconditional -- every
+        // isearch-specific chord (C-s/C-r/C-w/C-y, Backspace, a plain
+        // character, Enter, Escape/C-g) was already claimed by an earlier
+        // branch above, so nothing legitimate is lost by treating whatever
+        // remains as "not ours."
         if (!search_->Query().empty()) {
             lastSearchQuery_ = search_->Query();
         }
@@ -8323,7 +8327,6 @@ void BufferView::HandleSearchKey(const editor::KeyChord& chord) {
         DispatchChordNormally(chord);
         return;
     }
-    // Anything else (unrelated control combos) is ignored mid-search.
 
     statusMessage_ = SearchStatusText();
     ScrollToShowPoint();
@@ -11257,6 +11260,27 @@ bool BufferView::OnMouseEvent(const Event& event) {
             }
         }
         return true;
+    }
+
+    // isearch-positional-click-exits follow-up: a left/middle-button press
+    // during isearch isn't a search command either -- the same "not ours,
+    // end the session and let it happen" treatment the motion-key catch-all
+    // in HandleSearchKey just got. Checked here, before the
+    // InputMode::Normal gates the middle-click-paste and plain-left-click
+    // blocks below both have, so the very same click that ends the session
+    // also places point (or pastes), in one motion, rather than requiring a
+    // first click to dismiss and a second to actually act. Motion::Moved/
+    // Released (a drag, or a button release with no matching press seen)
+    // deliberately isn't included -- only a fresh press carries a clear
+    // "the user meant to click here" position.
+    if ((inputMode_ == InputMode::IsearchForward || inputMode_ == InputMode::IsearchBackward) &&
+        mouse->motion == MouseEvent::Motion::Pressed &&
+        (mouse->button == MouseEvent::Button::Left || mouse->button == MouseEvent::Button::Middle)) {
+        if (!search_->Query().empty()) {
+            lastSearchQuery_ = search_->Query();
+        }
+        search_->Accept();
+        EndInteractiveSession();
     }
 
     // Middle-click-paste follow-up: X11/Wayland's own "click to insert the
