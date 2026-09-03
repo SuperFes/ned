@@ -653,6 +653,8 @@ add_library(ned_lib STATIC
         Source/Editor/Vim/VimRegisters.cpp
         Source/Editor/Vim/VimExCommand.cpp
         Source/Editor/Vim/VimEngine.cpp
+        Source/Editor/Vim/VimGlobalMarks.cpp
+        Source/Editor/Vim/VimMagic.cpp
         Source/Editor/Vcs/DiffPatch.cpp
         Source/Editor/Vcs/VcsProviderRegistry.cpp
         Source/Editor/Vcs/VcsRowStatus.cpp
@@ -1070,6 +1072,7 @@ if (NED_BUILD_TESTS)
             Tests/VimSurroundTest.cpp
             Tests/VimRegistersTest.cpp
             Tests/VimExCommandTest.cpp
+            Tests/VimMagicTest.cpp
             Tests/VimEngineTest.cpp
     )
 
