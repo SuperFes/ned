@@ -19,9 +19,11 @@
 #ifndef NED_UI_ACPPANEL_H
 #define NED_UI_ACPPANEL_H
 
+#include <cstddef>
 #include <functional>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "Editor/Acp/AcpManager.h"
@@ -100,10 +102,54 @@ class AcpPanel : public Widget {
                               Warning,
                               Accent,
                               Hint };
-    struct DisplayLine {
-        std::string  text;
-        DisplayStyle style;
+
+    // ACP Markdown rendering follow-up: a byte range of a *plain, already
+    // markup-stripped* DisplayLine::text carrying styling beyond
+    // DisplayLine::style itself. startColumn/columnCount are codepoint
+    // columns (WordWrap/PaintUtf8Row's own convention), so a span survives
+    // being re-based onto whichever WrappedRow it lands in after word-wrap
+    // (see SpansForRow). `code` paints a subtle Theme::
+    // documentHighlightBackground tint over the existing foreground rather
+    // than picking a new foreground outright -- that field's own doc
+    // comment's "keep the glyph foreground, overlay only" contract.
+    struct InlineSpan {
+        int  startColumn;
+        int  columnCount;
+        bool bold;
+        bool code;
     };
+    struct DisplayLine {
+        std::string             text;
+        DisplayStyle            style;
+        std::vector<InlineSpan> spans;
+    };
+    struct InlineMarkdownResult {
+        std::string             text;
+        std::vector<InlineSpan> spans;
+    };
+
+    // Strips **bold**/`code` markup and a leading "- "/"* "/"+ " bullet
+    // marker from one logical line of agent-authored text, returning the
+    // plain text plus the spans marking what to restyle. Only called for
+    // Kind::AgentText/AgentThought/Plan lines (FormatTranscript's own call
+    // sites) -- deliberately not run over structural lines this panel
+    // itself writes (UserMessage's "> " prefix, ToolCall's "* "/status
+    // marker, Permission/SessionEvent chrome), since those aren't Markdown
+    // and running this over them would mis-render their own literal
+    // "* "/backtick-free punctuation. No nesting, no escapes, unmatched
+    // delimiters pass through literally -- deliberately lightweight per
+    // ROADMAP.md's own framing of this item.
+    [[nodiscard]] static InlineMarkdownResult ApplyInlineMarkdown(std::string_view raw);
+    // Re-bases `spans` (a logical DisplayLine's own plain-text column space)
+    // onto one WrappedRow's local [0, rowColumnCount) space, clipping
+    // anything that doesn't overlap this row at all.
+    [[nodiscard]] static std::vector<InlineSpan> SpansForRow(const std::vector<InlineSpan>& spans, int rowStartColumn, int rowColumnCount);
+    // PaintUtf8Row's multi-segment sibling: paints `text` in `baseBrush`
+    // except where `spans` says otherwise (bold / a documentHighlightBackground
+    // tint for inline code). Falls back to a single PaintUtf8Row call when
+    // spans is empty -- the common case for every non-agent-authored line.
+    void PaintStyledRow(Canvas& canvas, int x, int y, std::string_view text, const std::vector<InlineSpan>& spans, const Brush& baseBrush,
+                         int maxColumns) const;
 
     [[nodiscard]] std::vector<DisplayLine> FormatTranscript(int width) const;
     // ACP checkpoint/rewind follow-up: rewindPickerOpen_'s own content,
@@ -146,6 +192,37 @@ class AcpPanel : public Widget {
     void HistoryPrevious();
     void HistoryNext();
 
+    // @-style file-mention autocomplete follow-up: re-derives mention state
+    // purely from (prompt_.Text(), prompt_.CursorByteOffset()) -- called
+    // after every composer edit (character insert, backspace/delete, cursor
+    // motion, history recall) rather than tracked incrementally, so it can
+    // never drift from what's actually in the composer. Opens whenever the
+    // cursor sits inside/just past a word that starts with '@' (the word
+    // being the run of non-whitespace immediately before the cursor, so
+    // "foo@bar" mid-word never triggers -- matches Slack/GitHub/Discord's
+    // own "@ must start a word" convention); closes otherwise. Lazily
+    // (re)populates mentionCandidates_ only on the closed->open transition,
+    // not per keystroke -- ProjectFindFile's own "recursive walk once per
+    // session" precedent (BufferView.cpp's InteractiveRequest::
+    // ProjectFindFile case), since re-walking the whole project tree on
+    // every typed character would be wasteful.
+    void RefreshMentionState();
+    void RefreshMentionCandidates();
+    // Splices the currently-selected ranked candidate into the composer in
+    // place of "@" + the typed query, replacing [mentionStartByte_,
+    // cursorByteOffset) with "@<path> " -- MinibufferPrompt::SetText's own
+    // documented "cursor moves to the end of the replacement" behavior
+    // applies here too (same as Tab-completion elsewhere in this codebase),
+    // so a mention accepted with trailing text already typed after the
+    // cursor loses that trailing text's own cursor position, a deliberate,
+    // pre-existing SetText limitation, not a new one.
+    void AcceptMentionCandidate();
+    // mentionPickerOpen_'s own content, FormatRewindPicker's shape: a
+    // fuzzy-ranked (Editor/FuzzyMatch.h) list of mentionCandidates_ against
+    // mentionQuery_, capped at a handful of rows with a "N more" tail line
+    // beyond that, the current selection marked "> ".
+    [[nodiscard]] std::vector<DisplayLine> FormatMentionPicker(int width) const;
+
     const Theme&             theme_;
     editor::acp::AcpManager* acpManager_ = nullptr;
     editor::MinibufferPrompt prompt_;
@@ -164,6 +241,19 @@ class AcpPanel : public Widget {
 
     // ACP checkpoint/rewind follow-up: see OpenRewindPicker/FormatRewindPicker.
     bool rewindPickerOpen_ = false;
+
+    // @-style file-mention autocomplete follow-up -- see RefreshMentionState's
+    // own doc comment. mentionStartByte_ is the byte offset of '@' itself
+    // within prompt_.Text(); mentionQuery_ is everything typed after it, up
+    // to the cursor. mentionCandidates_ is project-relative file paths
+    // (BuildProjectTree's own output shape, ProjectFindFile's precedent),
+    // re-walked fresh each time the picker opens rather than kept forever,
+    // so a file the agent creates mid-conversation is still mentionable.
+    bool                     mentionPickerOpen_ = false;
+    std::size_t              mentionStartByte_  = 0;
+    std::string              mentionQuery_;
+    std::vector<std::string> mentionCandidates_;
+    std::size_t              mentionSelection_ = 0;
 };
 
 } // namespace ned::ui

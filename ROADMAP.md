@@ -507,14 +507,12 @@ LSP-against-the-wrong-toolchain prove it's needed in practice, not speculatively
 - [ ] **ACP chat-feel UX backlog** (round 1 + round 2 shipped 2026-08-26/2026-09-01 —
       interrupt/spinner, thought/text split, streaming debounce, collapsed tool-call
       lines, composer word-motion + history, minimize/resize, auto-reconnect to last
-      agent, transcript/composer word-wrap; checkpoint/rewind shipped 2026-09-03, see
-      below; see `git log --grep=ACP` for detail). Still open, roughly in order of
-      impact:
-      - **Lightweight Markdown rendering** (bold, inline code, bullet markers) instead of
-        showing `**`/backtick markup literally in `AgentText`/`Kind::Plan` lines.
-      - **`@`-style file-mention autocomplete in the composer** — reuse
-        `Editor/FuzzyMatch.h` + `Editor/ProjectTree.h` to fuzzy-complete a project-
-        relative path inline while typing a prompt.
+      agent, transcript/composer word-wrap; checkpoint/rewind shipped 2026-09-03,
+      lightweight Markdown rendering (bold/inline code/bullet markers) shipped
+      2026-09-03; @-style file-mention autocomplete in the composer shipped
+      2026-09-03 (fuzzy-completes a project-relative path inline while typing,
+      `Editor/FuzzyMatch.h` + `Editor/ProjectTree.h`); see below; see
+      `git log --grep=ACP` for detail). Still open, roughly in order of impact:
       - **Tabbed bottom-dock overlays** (floated 2026-09-01, not scoped) — unify
         `TerminalPanel`/`AcpPanel`/`DebugConsolePanel`'s three independent `OverlayHost`
         overlays behind one shared tab strip; a real architectural change versus today's

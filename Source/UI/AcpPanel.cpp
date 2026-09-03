@@ -3,9 +3,13 @@
 #include <algorithm>
 #include <cstdio>
 #include <ctime>
+#include <filesystem>
 
 #include "Border.h"
 #include "Editor/Acp/AcpPanelConfig.h"
+#include "Editor/FuzzyMatch.h"
+#include "Editor/ProjectRoot.h"
+#include "Editor/ProjectTree.h"
 #include "KeyTranslation.h"
 #include "Text/Utf8.h"
 
@@ -54,6 +58,12 @@ namespace {
     // of the shown 9 first, then reopening the picker again, still reaches
     // anything further back one hop at a time.
     constexpr std::size_t kMaxRewindChoices = 9;
+    // @-file-mention autocomplete follow-up: an arbitrary small cap keeping
+    // the suggestion list from crowding out the transcript beneath it on a
+    // short panel -- ranked[0] is always the best fuzzy match regardless of
+    // how many total candidates exist, so this only ever hides the weaker
+    // tail of the ranking, never the top pick.
+    constexpr std::size_t kMaxMentionChoices = 6;
 
     // Matches Editor/Backup.cpp's own LocalTimeLabel format exactly (not
     // shared -- that one's private to its .cpp) so a rewind checkpoint's
@@ -325,13 +335,17 @@ std::vector<AcpPanel::DisplayLine> AcpPanel::FormatTranscript(int width) const {
                 const DisplayStyle style = entry.kind == Kind::AgentThought ? DisplayStyle::Dim : DisplayStyle::Accent;
                 // Word-wrap happens once, generically, over every logical
                 // line in Paint()'s own loop below -- only literal newlines
-                // the agent itself sent are split here.
+                // the agent itself sent are split here. ACP Markdown
+                // rendering follow-up: each split line's own **bold**/
+                // `code`/bullet markup is stripped here too, before it ever
+                // reaches WordWrap.
                 std::size_t start = 0;
                 while (start <= entry.text.size()) {
                     const std::size_t newlinePos = entry.text.find('\n', start);
-                    const std::string line =
+                    const std::string rawLine =
                         newlinePos == std::string::npos ? entry.text.substr(start) : entry.text.substr(start, newlinePos - start);
-                    lines.push_back({line, style});
+                    const InlineMarkdownResult formatted = ApplyInlineMarkdown(rawLine);
+                    lines.push_back({formatted.text, style, formatted.spans});
                     if (newlinePos == std::string::npos) {
                         break;
                     }
@@ -375,7 +389,8 @@ std::vector<AcpPanel::DisplayLine> AcpPanel::FormatTranscript(int width) const {
             }
             case Kind::Plan: {
                 for (const std::string& step : entry.planSteps) {
-                    lines.push_back({step, DisplayStyle::Hint});
+                    const InlineMarkdownResult formatted = ApplyInlineMarkdown(step);
+                    lines.push_back({formatted.text, DisplayStyle::Hint, formatted.spans});
                 }
                 break;
             }
@@ -404,6 +419,130 @@ std::vector<AcpPanel::DisplayLine> AcpPanel::FormatTranscript(int width) const {
     return lines;
 }
 
+AcpPanel::InlineMarkdownResult AcpPanel::ApplyInlineMarkdown(std::string_view raw) {
+    InlineMarkdownResult result;
+    std::string&         out = result.text;
+    out.reserve(raw.size());
+
+    // Leading bullet marker: "- "/"* "/"+ " after optional indentation,
+    // Markdown's own unordered-list convention -- indentation is preserved
+    // verbatim (nested lists stay nested), only the marker byte itself
+    // becomes a bullet glyph. Never matches Kind::Plan's own "[x] "/"[~] "/
+    // "[ ] " checkbox prefix (PushOrReplacePlan, AcpManager.cpp), so this
+    // doesn't collide with that convention.
+    std::size_t bodyStart = 0;
+    {
+        std::size_t indent = 0;
+        while (indent < raw.size() && raw[indent] == ' ') {
+            ++indent;
+        }
+        if (indent + 1 < raw.size() && (raw[indent] == '-' || raw[indent] == '*' || raw[indent] == '+') && raw[indent + 1] == ' ') {
+            out.append(raw.substr(0, indent));
+            out += text::EncodeCodepointUtf8(U'•');
+            out += ' ';
+            bodyStart = indent + 2;
+        }
+    }
+
+    int         col = ColumnCount(out);
+    std::size_t pos = bodyStart;
+    while (pos < raw.size()) {
+        if (pos + 1 < raw.size() && raw[pos] == '*' && raw[pos + 1] == '*') {
+            const std::size_t close = raw.find("**", pos + 2);
+            if (close != std::string_view::npos && close > pos + 2) {
+                const std::string_view inner    = raw.substr(pos + 2, close - (pos + 2));
+                const int              startCol = col;
+                out.append(inner);
+                col += ColumnCount(inner);
+                result.spans.push_back({.startColumn = startCol, .columnCount = col - startCol, .bold = true, .code = false});
+                pos = close + 2;
+                continue;
+            }
+        }
+        if (raw[pos] == '`') {
+            const std::size_t close = raw.find('`', pos + 1);
+            if (close != std::string_view::npos && close > pos + 1) {
+                const std::string_view inner    = raw.substr(pos + 1, close - (pos + 1));
+                const int              startCol = col;
+                out.append(inner);
+                col += ColumnCount(inner);
+                result.spans.push_back({.startColumn = startCol, .columnCount = col - startCol, .bold = false, .code = true});
+                pos = close + 1;
+                continue;
+            }
+        }
+        const std::size_t next = text::NextCodepointBoundary(raw, pos);
+        out.append(raw.substr(pos, next - pos));
+        ++col;
+        pos = next;
+    }
+    return result;
+}
+
+std::vector<AcpPanel::InlineSpan> AcpPanel::SpansForRow(const std::vector<InlineSpan>& spans, int rowStartColumn, int rowColumnCount) {
+    std::vector<InlineSpan> result;
+    const int               rowEnd = rowStartColumn + rowColumnCount;
+    for (const InlineSpan& span : spans) {
+        const int start = std::max(span.startColumn, rowStartColumn);
+        const int end   = std::min(span.startColumn + span.columnCount, rowEnd);
+        if (start < end) {
+            result.push_back({.startColumn = start - rowStartColumn, .columnCount = end - start, .bold = span.bold, .code = span.code});
+        }
+    }
+    return result;
+}
+
+void AcpPanel::PaintStyledRow(Canvas& canvas, int x, int y, std::string_view text, const std::vector<InlineSpan>& spans,
+                               const Brush& baseBrush, int maxColumns) const {
+    if (spans.empty() || maxColumns <= 0) {
+        PaintUtf8Row(canvas, x, y, text, baseBrush, maxColumns);
+        return;
+    }
+    // Column -> byte offset table (ColumnCount's own one-codepoint-per-column
+    // convention), built once per row so each span's substr is a direct
+    // lookup rather than a fresh scan from the row's own start.
+    std::vector<std::size_t> offsets;
+    offsets.reserve(text.size() + 1);
+    std::size_t pos = 0;
+    while (pos < text.size()) {
+        offsets.push_back(pos);
+        pos = text::NextCodepointBoundary(text, pos);
+    }
+    offsets.push_back(text.size());
+    const int totalColumns = static_cast<int>(offsets.size()) - 1;
+
+    int painted = 0; // columns painted so far, i.e. the x offset relative to `x`
+    int col     = 0;
+    for (const InlineSpan& span : spans) {
+        if (painted >= maxColumns) {
+            break;
+        }
+        const int plainEnd = std::min(span.startColumn, totalColumns);
+        if (col < plainEnd) {
+            const std::string_view segment = text.substr(offsets[col], offsets[plainEnd] - offsets[col]);
+            painted += PaintUtf8Row(canvas, x + painted, y, segment, baseBrush, maxColumns - painted);
+            col = plainEnd;
+        }
+        const int spanEnd = std::min(span.startColumn + span.columnCount, totalColumns);
+        if (col < spanEnd && painted < maxColumns) {
+            Brush spanBrush = baseBrush;
+            if (span.code) {
+                spanBrush.background = theme_.documentHighlightBackground;
+            }
+            if (span.bold) {
+                spanBrush.bold = true;
+            }
+            const std::string_view segment = text.substr(offsets[col], offsets[spanEnd] - offsets[col]);
+            painted += PaintUtf8Row(canvas, x + painted, y, segment, spanBrush, maxColumns - painted);
+            col = spanEnd;
+        }
+    }
+    if (col < totalColumns && painted < maxColumns) {
+        const std::string_view segment = text.substr(offsets[col], offsets[totalColumns] - offsets[col]);
+        PaintUtf8Row(canvas, x + painted, y, segment, baseBrush, maxColumns - painted);
+    }
+}
+
 std::vector<AcpPanel::DisplayLine> AcpPanel::FormatRewindPicker(int /*width*/) const {
     std::vector<DisplayLine> lines;
     lines.push_back({"Rewind to before which turn?", DisplayStyle::Warning});
@@ -426,6 +565,76 @@ std::vector<AcpPanel::DisplayLine> AcpPanel::FormatRewindPicker(int /*width*/) c
                          DisplayStyle::Plain});
     }
     lines.push_back({"  [Esc] cancel", DisplayStyle::Dim});
+    return lines;
+}
+
+// @-file-mention autocomplete follow-up -- see this method's own doc comment
+// in AcpPanel.h. Purely derived from (prompt_.Text(), prompt_.CursorByteOffset()):
+// the current "word" is the run of non-whitespace immediately before the
+// cursor; a mention is active iff that word starts with '@'.
+void AcpPanel::RefreshMentionState() {
+    const std::string& text   = prompt_.Text();
+    const std::size_t  cursor = prompt_.CursorByteOffset();
+    std::size_t         start  = cursor;
+    while (start > 0 && text[start - 1] != ' ' && text[start - 1] != '\n' && text[start - 1] != '\t') {
+        --start;
+    }
+    if (start >= cursor || text[start] != '@') {
+        mentionPickerOpen_ = false;
+        return;
+    }
+    const bool wasOpen = mentionPickerOpen_;
+    mentionStartByte_  = start;
+    mentionQuery_      = text.substr(start + 1, cursor - start - 1);
+    mentionPickerOpen_ = true;
+    if (!wasOpen) {
+        RefreshMentionCandidates(); // fresh walk each time the picker (re)opens -- see its own doc comment
+    }
+    const std::size_t count = editor::FuzzyFilterAndRank(mentionCandidates_, mentionQuery_).size();
+    mentionSelection_        = count == 0 ? 0 : std::min(mentionSelection_, count - 1);
+}
+
+void AcpPanel::RefreshMentionCandidates() {
+    mentionCandidates_.clear();
+    mentionSelection_          = 0;
+    const std::filesystem::path root = editor::ProjectRoot();
+    for (const editor::ProjectTreeEntry& entry : editor::BuildProjectTree(root)) {
+        if (!entry.isDirectory) {
+            mentionCandidates_.push_back(std::filesystem::relative(entry.path, root).generic_string());
+        }
+    }
+}
+
+void AcpPanel::AcceptMentionCandidate() {
+    const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(mentionCandidates_, mentionQuery_);
+    mentionPickerOpen_                    = false;
+    if (ranked.empty()) {
+        return;
+    }
+    const std::size_t  index = std::min(mentionSelection_, ranked.size() - 1);
+    const std::string& text  = prompt_.Text();
+    const std::size_t  cursor = prompt_.CursorByteOffset();
+    // MinibufferPrompt::SetText's own documented "cursor moves to the end"
+    // behavior applies here (see AcpPanel.h's own doc comment on this method).
+    prompt_.SetText(text.substr(0, mentionStartByte_) + "@" + ranked[index] + " " + text.substr(cursor));
+}
+
+std::vector<AcpPanel::DisplayLine> AcpPanel::FormatMentionPicker(int /*width*/) const {
+    std::vector<DisplayLine> lines;
+    lines.push_back({"Mention a file (Enter/Tab to insert, Esc to cancel):", DisplayStyle::Warning});
+    const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(mentionCandidates_, mentionQuery_);
+    if (ranked.empty()) {
+        lines.push_back({"  (no matching files)", DisplayStyle::Dim});
+        return lines;
+    }
+    const std::size_t shown = std::min(ranked.size(), kMaxMentionChoices);
+    for (std::size_t i = 0; i < shown; ++i) {
+        const bool selected = i == mentionSelection_;
+        lines.push_back({(selected ? "> " : "  ") + ranked[i], selected ? DisplayStyle::Accent : DisplayStyle::Plain});
+    }
+    if (ranked.size() > shown) {
+        lines.push_back({"  (" + std::to_string(ranked.size() - shown) + " more...)", DisplayStyle::Dim});
+    }
     return lines;
 }
 
@@ -619,10 +828,23 @@ void AcpPanel::Paint(Canvas canvas) {
     // comment.
     const int contentRows = std::max(0, height - 1 - allottedInputRows);
     if (contentRows > 0) {
-        std::vector<DisplayLine> lines;
-        for (const DisplayLine& logical : rewindPickerOpen_ ? FormatRewindPicker(width) : FormatTranscript(width)) {
+        // ACP Markdown rendering follow-up: each logical DisplayLine's own
+        // spans (in its plain-text column space) are re-based onto whichever
+        // WrappedRow they land in via SpansForRow, so PaintStyledRow below
+        // still lands bold/inline-code styling on the right glyphs after
+        // word-wrap splits a long agent reply across several physical rows.
+        struct PhysicalLine {
+            std::string             text;
+            DisplayStyle            style;
+            std::vector<InlineSpan> spans;
+        };
+        std::vector<PhysicalLine> lines;
+        const std::vector<DisplayLine> content = rewindPickerOpen_    ? FormatRewindPicker(width)
+                                                 : mentionPickerOpen_ ? FormatMentionPicker(width)
+                                                                      : FormatTranscript(width);
+        for (const DisplayLine& logical : content) {
             for (const WrappedRow& row : WordWrap(logical.text, width)) {
-                lines.push_back({row.text, logical.style});
+                lines.push_back({row.text, logical.style, SpansForRow(logical.spans, row.startColumn, row.columnCount)});
             }
         }
         const int start = std::max(0, static_cast<int>(lines.size()) - contentRows);
@@ -631,9 +853,9 @@ void AcpPanel::Paint(Canvas canvas) {
             if (lineIndex >= lines.size()) {
                 continue;
             }
-            const DisplayLine& line  = lines[lineIndex];
-            const Brush        brush = BrushForStyle(line.style);
-            PaintUtf8Row(canvas, 0, row + 1, line.text, brush, width);
+            const PhysicalLine& line  = lines[lineIndex];
+            const Brush          brush = BrushForStyle(line.style);
+            PaintStyledRow(canvas, 0, row + 1, line.text, line.spans, brush, width);
         }
     }
 
@@ -798,6 +1020,34 @@ bool AcpPanel::OnEvent(const Event& event) {
         return true;
     }
 
+    // @-file-mention autocomplete follow-up: while a mention query is active
+    // (RefreshMentionState, called after every composer edit below), Up/Down/
+    // Enter/Tab/Escape are claimed for narrowing/accepting/dismissing the
+    // suggestion list instead of their usual composer meaning (history
+    // recall / send / panel-close). Deliberately no unconditional catch-all
+    // `return true` at the bottom of this block, unlike rewindPickerOpen_
+    // above -- anything else (more query characters, Backspace, cursor
+    // motion) must still fall through to the ordinary composer handling
+    // below, which re-derives mention state itself after every edit.
+    if (mentionPickerOpen_) {
+        if (chord->Special == editor::SpecialKey::Escape) {
+            mentionPickerOpen_ = false;
+            return true;
+        }
+        if (chord->Special == editor::SpecialKey::Down || chord->Special == editor::SpecialKey::Up) {
+            const std::size_t count = editor::FuzzyFilterAndRank(mentionCandidates_, mentionQuery_).size();
+            if (count > 0) {
+                mentionSelection_ = chord->Special == editor::SpecialKey::Down ? (mentionSelection_ + 1) % count
+                                                                                : (mentionSelection_ + count - 1) % count;
+            }
+            return true;
+        }
+        if (chord->Special == editor::SpecialKey::Enter || chord->Special == editor::SpecialKey::Tab) {
+            AcceptMentionCandidate();
+            return true;
+        }
+    }
+
     if (chord->Special == editor::SpecialKey::Escape) {
         // chat-feel follow-up: interrupt a still-streaming reply first,
         // keeping whatever partial output already arrived (Claude Code's
@@ -814,10 +1064,12 @@ bool AcpPanel::OnEvent(const Event& event) {
     }
     if (chord->Special == editor::SpecialKey::Backspace) {
         prompt_.DeleteBackward();
+        RefreshMentionState();
         return true;
     }
     if (chord->Special == editor::SpecialKey::Delete) {
         prompt_.DeleteForward();
+        RefreshMentionState();
         return true;
     }
     // minibuffer-composer-cursor-editing round 2: word-wise motion, checked
@@ -825,26 +1077,32 @@ bool AcpPanel::OnEvent(const Event& event) {
     // don't fall through to a single-codepoint move.
     if (chord->Special == editor::SpecialKey::Left && chord->Control) {
         prompt_.MoveCursorWordLeft();
+        RefreshMentionState();
         return true;
     }
     if (chord->Special == editor::SpecialKey::Right && chord->Control) {
         prompt_.MoveCursorWordRight();
+        RefreshMentionState();
         return true;
     }
     if (chord->Special == editor::SpecialKey::Left) {
         prompt_.MoveCursorLeft();
+        RefreshMentionState();
         return true;
     }
     if (chord->Special == editor::SpecialKey::Right) {
         prompt_.MoveCursorRight();
+        RefreshMentionState();
         return true;
     }
     if (chord->Special == editor::SpecialKey::Home) {
         prompt_.MoveCursorToStart();
+        RefreshMentionState();
         return true;
     }
     if (chord->Special == editor::SpecialKey::End) {
         prompt_.MoveCursorToEnd();
+        RefreshMentionState();
         return true;
     }
     // Keyboard resize fallback, alongside the border-drag in the mouse
@@ -872,10 +1130,12 @@ bool AcpPanel::OnEvent(const Event& event) {
     // affordance this takes away.
     if (chord->Special == editor::SpecialKey::Up) {
         HistoryPrevious();
+        RefreshMentionState();
         return true;
     }
     if (chord->Special == editor::SpecialKey::Down) {
         HistoryNext();
+        RefreshMentionState();
         return true;
     }
     if (chord->Special == editor::SpecialKey::Enter) {
@@ -884,11 +1144,13 @@ bool AcpPanel::OnEvent(const Event& event) {
             prompt_.SetText("");
             historyIndex_.reset();
             historyDraft_.clear();
+            mentionPickerOpen_ = false;
         }
         return true;
     }
     if (IsPlainCharacter(*chord)) {
         prompt_.InsertChar(chord->Codepoint);
+        RefreshMentionState();
         return true;
     }
     return false;
