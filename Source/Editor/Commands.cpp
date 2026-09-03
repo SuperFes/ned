@@ -2759,6 +2759,19 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           context.interactiveRequest = InteractiveRequest::DapRestartFrame;
                       });
 
+    // DAP round 5: disassembly/memory view -- M-x only, same policy as every
+    // other DAP inspection command beyond the core F-key quartet.
+    registry.Register("dap-show-disassembly",
+                      "Show instructions around the stopped frame's program counter in a *disassembly* buffer.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::DapShowDisassembly;
+                      });
+    registry.Register("dap-show-memory-at-point",
+                      "Show a hex dump of memory for the variable on the current *debug* buffer line in a *memory* buffer.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::DapShowMemoryAtPoint;
+                      });
+
     // ACP client slice 2: same "just set interactiveRequest" shape as
     // run-task/dap-continue above -- BufferView holds the shared AcpManager
     // and does the actual work (see Editor/Acp/AcpManager.h). Agent and

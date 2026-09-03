@@ -404,3 +404,60 @@ TEST_CASE("M-p/M-n recall previously submitted expressions, newest first", "[Deb
     fixture.Paint();
     REQUIRE(fixture.RowText(kHeight - 1) == "debug>");
 }
+
+TEST_CASE("C-s searches the transcript and Enter keeps the jumped-to scroll position", "[DebugConsolePanel]") {
+    Fixture fixture; // no session -- same synchronous-error setup as the scrollback test above
+
+    // Same "e1".."e5" round trips as the scrollback test: history_ ends up
+    // ["> e1", "No debug session.", "> e2", "No debug session.", "> e3", ...],
+    // 10 lines total, "> e3" at index 4.
+    for (const char label : {'1', '2', '3', '4', '5'}) {
+        fixture.panel.OnEvent(ned::ui::test::Character('e'));
+        fixture.panel.OnEvent(ned::ui::test::Character(label));
+        REQUIRE(fixture.panel.OnEvent(ned::ui::test::Return()));
+    }
+
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Ctrl('s')));
+    fixture.panel.OnEvent(ned::ui::test::Character('e'));
+    fixture.panel.OnEvent(ned::ui::test::Character('3'));
+    fixture.Paint();
+    REQUIRE(fixture.RowText(0).find("I-search: e3") != std::string::npos);
+    // kHeight == 6 -> contentRows == 4; "> e3" (index 4) lands as the
+    // bottom-most content row (canvas y == height - 2 == 4).
+    REQUIRE(fixture.RowText(4).find("e3") != std::string::npos);
+
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Return()));
+    fixture.Paint();
+    REQUIRE(fixture.RowText(0).find("I-search:") == std::string::npos);
+    REQUIRE(fixture.RowText(0).find("(scrollback)") != std::string::npos); // position kept, not snapped to live
+    REQUIRE(fixture.RowText(4).find("e3") != std::string::npos);
+}
+
+TEST_CASE("Escape cancels a search, restores the prior scroll position, and doesn't close the panel", "[DebugConsolePanel]") {
+    Fixture fixture;
+    bool    toggled = false;
+    fixture.panel.SetOnToggleRequest([&toggled] { toggled = true; });
+
+    for (const char label : {'1', '2', '3', '4', '5'}) {
+        fixture.panel.OnEvent(ned::ui::test::Character('e'));
+        fixture.panel.OnEvent(ned::ui::test::Character(label));
+        REQUIRE(fixture.panel.OnEvent(ned::ui::test::Return()));
+    }
+    fixture.Paint();
+    REQUIRE(fixture.RowText(0).find("(scrollback)") == std::string::npos); // live tail before searching
+
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Ctrl('s')));
+    fixture.panel.OnEvent(ned::ui::test::Character('e'));
+    fixture.panel.OnEvent(ned::ui::test::Character('1')); // matches only the oldest line ("> e1", index 0)
+    fixture.Paint();
+    // Index 0 is near the start of a 10-line history with a 4-row content
+    // window -- ScrollToShowIndex clamps rather than pushing it all the way
+    // to the bottom row, so it lands as the topmost visible content row.
+    REQUIRE(fixture.RowText(1).find("e1") != std::string::npos);
+
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Escape()));
+    fixture.Paint();
+    REQUIRE_FALSE(toggled); // Escape mid-search cancels the search, not the panel
+    REQUIRE(fixture.RowText(0).find("I-search:") == std::string::npos);
+    REQUIRE(fixture.RowText(0).find("(scrollback)") == std::string::npos); // back to live, same as before the search
+}

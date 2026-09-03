@@ -902,6 +902,14 @@ class BufferView : public Widget {
                            DapBreakpointHitCondition,
                            DapFunctionBreakpointName,
                            DapExceptionFilterSelect,
+                           // DAP round 5: DapMemoryByteCount is one more
+                           // HandlePromptKey-routed plain-text prompt
+                           // (dap-show-memory-at-point, ShowMemoryAtPoint's
+                           // second half) -- empty/unparsable input defaults
+                           // to a fixed byte count rather than failing,
+                           // unlike the breakpoint-field prompts above where
+                           // empty is itself meaningful (clears the field).
+                           DapMemoryByteCount,
                            // editor-ergonomics follow-up: FindRecentFile is
                            // ProjectFindFile's own fuzzy-narrowed-picker shape, over
                            // Editor/RecentFiles.h's candidate list instead of a directory
@@ -2089,6 +2097,29 @@ class BufferView : public Widget {
     // uses.
     void SetVariableAtPoint();
 
+    // DAP round 5: dap-show-disassembly's body -- reuses RestartFrameAtPoint's
+    // own "[frame:N]" marker parse (point's current line, any buffer -- no
+    // check that it's actually the *debug* buffer, same lack of a check
+    // every other marker-parsing Dap method here has) to pick a frame,
+    // falling back to RequestStackTrace's top frame when there's no marker
+    // or it names an id RequestStackTrace's own fresh result doesn't
+    // contain. Chains stackTrace -> disassemble (a fixed 64-instruction
+    // window centered on the frame's instructionPointerReference) and
+    // builds/switches to a read-only "*disassembly*" buffer.
+    void ShowDisassemblyAtPoint();
+    void BuildDisassemblyBuffer(const std::vector<editor::dap::DapManager::DisassembledInstruction>& instructions,
+                                const std::string&                                                   pcAddress);
+
+    // DAP round 5: dap-show-memory-at-point's body -- parses a "[mem:<ref>]"
+    // trailing marker off point's own "*debug*" buffer variable line
+    // (FormatDebugVariableLine's fourth marker, alongside "[ref:N]"/
+    // "[owner:M]"), then prompts for a byte count (InputMode::
+    // DapMemoryByteCount, empty/unparsable input defaults to 128) before
+    // sending the DAP readMemory request and building a read-only
+    // "*memory*" hex-dump buffer.
+    void ShowMemoryAtPoint();
+    void BuildMemoryBuffer(const std::string& memoryReference, const editor::dap::DapManager::MemoryBlock& block);
+
     // DAP round 2: dap-select-thread's entry point -- fetches the current
     // thread list (RequestThreads) and, when non-empty, enters
     // InputMode::DapThreadSelect (LspCodeActionSelect's numbered-choice
@@ -2409,6 +2440,13 @@ class BufferView : public Widget {
         std::string    name;
     };
     std::optional<PendingDapSetVariable> pendingDapSetVariable_;
+
+    // DAP round 5: dap-show-memory-at-point's captured target -- just the
+    // memory reference string itself (unlike PendingDapSetVariable, the
+    // result lands in a brand-new "*memory*" buffer, not spliced back into
+    // the source line, so no buffer/line/staleness bookkeeping is needed).
+    // Valid only while inputMode_ == DapMemoryByteCount.
+    std::optional<std::string> pendingDapMemoryReference_;
 
     EventLoop* eventLoop_ = nullptr; // see SetEventLoop
 

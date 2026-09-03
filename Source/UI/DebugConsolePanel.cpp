@@ -82,6 +82,16 @@ void DebugConsolePanel::ScrollBy(int deltaLines) {
     scrollbackOffset_   = std::clamp(scrollbackOffset_ + deltaLines, 0, maxOffset);
 }
 
+void DebugConsolePanel::ScrollToShowIndex(std::size_t index) {
+    if (history_.empty()) {
+        scrollbackOffset_ = 0;
+        return;
+    }
+    const int maxOffset = std::max(0, static_cast<int>(history_.size()) - std::max(0, ContentRows()));
+    const int target    = static_cast<int>(history_.size()) - 1 - static_cast<int>(index);
+    scrollbackOffset_   = std::clamp(target, 0, maxOffset);
+}
+
 bool DebugConsolePanel::TryNavigateHistory(const editor::KeyChord& chord) {
     if (!chord.Meta || chord.Control) {
         return false;
@@ -128,6 +138,52 @@ bool DebugConsolePanel::TryNavigateHistory(const editor::KeyChord& chord) {
     return true;
 }
 
+bool DebugConsolePanel::HandleSearchKey(const editor::KeyChord& chord) {
+    if (chord.Special == editor::SpecialKey::Enter) {
+        search_->Accept();
+        search_.reset();
+        return true;
+    }
+    if (chord.Special == editor::SpecialKey::Escape) {
+        search_->Cancel();
+        scrollbackOffset_ = searchOriginalScrollback_;
+        search_.reset();
+        return true;
+    }
+
+    if (chord.Special == editor::SpecialKey::Backspace) {
+        search_->DeleteChar();
+    }
+    else if (chord.Control && chord.Codepoint == U's') {
+        // Same Emacs isearch convention BufferView::HandleSearchKey uses:
+        // C-s while already searching backward reverses instead of
+        // repeating forward past a match the user hasn't seen yet.
+        if (search_->CurrentDirection() == editor::LineListSearch::Direction::Backward) {
+            search_->ReverseDirection();
+        }
+        else {
+            search_->RepeatSearch();
+        }
+    }
+    else if (chord.Control && chord.Codepoint == U'r') {
+        if (search_->CurrentDirection() == editor::LineListSearch::Direction::Forward) {
+            search_->ReverseDirection();
+        }
+        else {
+            search_->RepeatSearch();
+        }
+    }
+    else if (IsPlainCharacter(chord)) {
+        search_->AppendChar(chord.Codepoint);
+    }
+    // Anything else (arrow keys, unrelated control combos) is ignored mid-search.
+
+    if (const std::optional<std::size_t> index = search_->CurrentIndex()) {
+        ScrollToShowIndex(*index);
+    }
+    return true;
+}
+
 void DebugConsolePanel::Paint(Canvas canvas) {
     const int width  = canvas.size().width;
     const int height = canvas.size().height;
@@ -157,7 +213,10 @@ void DebugConsolePanel::Paint(Canvas canvas) {
     }
     std::string title =
         "Debug console [" + StateLabel(dapManager_ ? dapManager_->State() : editor::dap::DapManager::SessionState::Inactive) + "]";
-    if (scrollbackOffset_ > 0) {
+    if (search_) {
+        title += "  " + search_->StatusText();
+    }
+    else if (scrollbackOffset_ > 0) {
         title += " (scrollback)"; // TerminalPanel's own title-suffix convention
     }
     DrawBorderTitle(canvas, title, frameBrush);
@@ -186,7 +245,10 @@ void DebugConsolePanel::Paint(Canvas canvas) {
                 continue;
             }
             const DisplayLine& line  = history_[lineIndex];
-            const Brush        brush = BrushForStyle(line.style);
+            Brush              brush = BrushForStyle(line.style);
+            if (search_ && search_->CurrentIndex() == lineIndex) {
+                brush.background = theme_.isearchMatchBackground;
+            }
             PaintUtf8Row(canvas, 0, row + 1, line.text, brush, width);
         }
     }
@@ -242,6 +304,25 @@ bool DebugConsolePanel::OnEvent(const Event& event) {
     if (!chord) {
         return false;
     }
+
+    if (search_) {
+        return HandleSearchKey(*chord);
+    }
+    if (chord->Control && !chord->Meta && (chord->Codepoint == U's' || chord->Codepoint == U'r')) {
+        searchOriginalScrollback_ = scrollbackOffset_;
+        searchLines_.clear();
+        searchLines_.reserve(history_.size());
+        for (const DisplayLine& line : history_) {
+            searchLines_.push_back(line.text);
+        }
+        const std::size_t startIndex =
+            history_.empty() ? 0 : history_.size() - 1 - std::min<std::size_t>(static_cast<std::size_t>(scrollbackOffset_), history_.size() - 1);
+        search_.emplace(searchLines_,
+                        chord->Codepoint == U's' ? editor::LineListSearch::Direction::Forward : editor::LineListSearch::Direction::Backward,
+                        startIndex);
+        return true;
+    }
+
     if (chord->Special == editor::SpecialKey::Escape) {
         if (onToggleRequest_) {
             onToggleRequest_();
