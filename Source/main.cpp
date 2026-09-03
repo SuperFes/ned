@@ -1452,6 +1452,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     // was asked for, unlike the ACP chat panel's left/right choice).
     ned::ui::DebugConsolePanel dapConsolePanel(theme);
     dapConsolePanel.SetDapManager(&dapManager);
+    dapConsolePanel.SetPromptHistory(&promptHistory); // DAP round 4: M-p/M-n recall, same ring BufferView's prompts use
     overlays.Add(dapConsolePanel, [](Size size) {
         const int yMax   = std::max(1, size.height - 2); // above the echo area row
         const int height = std::max(4, size.height * 30 / 100);

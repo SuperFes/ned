@@ -447,6 +447,10 @@ enum class InteractiveRequest { None,
                                 DapToggleFunctionBreakpoint,
                                 DapSelectExceptionBreakpoints,
                                 DapAttach,
+                                // DAP round 4: dap-restart-frame -- one-shot like
+                                // DapExpandVariable, operating on point's own *debug*
+                                // buffer stack line (see RestartFrameAtPoint).
+                                DapRestartFrame,
                                 // VCS blame gutter follow-up: one-shot direct actions, same
                                 // shape as ProjectAgenda/LspShowLog. VcsShowBlame is the
                                 // primary, inline-in-place one: populates the gutter for the

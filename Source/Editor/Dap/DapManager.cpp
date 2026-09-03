@@ -315,6 +315,9 @@ std::string DapManager::BeginSession(const std::string& language, bool attach) {
                              if (body.contains("supportsFunctionBreakpoints") && body["supportsFunctionBreakpoints"].is_boolean()) {
                                  capabilities_.functionBreakpoints = body["supportsFunctionBreakpoints"].get<bool>();
                              }
+                             if (body.contains("supportsRestartFrame") && body["supportsRestartFrame"].is_boolean()) {
+                                 capabilities_.restartFrame = body["supportsRestartFrame"].get<bool>();
+                             }
                              if (body.contains("exceptionBreakpointFilters") && body["exceptionBreakpointFilters"].is_array()) {
                                  for (const Json& filterJson : body["exceptionBreakpointFilters"]) {
                                      ExceptionFilter filter;
@@ -434,13 +437,15 @@ void DapManager::SendBreakpointsForFile(const std::string& pathKey) {
                              {"breakpoints", std::move(breakpointsJson)},
                          },
                          [this, pathKey](bool success, const Json& body, const std::string&) {
-                             // Adjusted (snapped) positions in the response are still
-                             // ignored -- the gutter shows where the user toggled, not
-                             // where the adapter moved it to (documented cut, ROADMAP.md).
                              // "verified" IS tracked now, matched back by index (the
                              // response array is the same order as the request, per
                              // spec) -- it dims the gutter glyph rather than being
-                             // dropped on the floor.
+                             // dropped on the floor. DAP round 4: the adapter's own
+                             // snapped "line" per entry is tracked too (actualLine) --
+                             // the gutter shows it in place of the requested line when
+                             // it differs; editing operations still address the
+                             // requested line (see Breakpoint::actualLine's own doc
+                             // comment).
                              if (!success || !body.contains("breakpoints") || !body["breakpoints"].is_array()) {
                                  return;
                              }
@@ -452,6 +457,9 @@ void DapManager::SendBreakpointsForFile(const std::string& pathKey) {
                              for (std::size_t i = 0; i < it->second.size() && i < results.size(); ++i) {
                                  if (results[i].contains("verified") && results[i]["verified"].is_boolean()) {
                                      it->second[i].verified = results[i]["verified"].get<bool>();
+                                 }
+                                 if (results[i].contains("line") && results[i]["line"].is_number_integer()) {
+                                     it->second[i].actualLine = static_cast<std::size_t>(std::max(results[i]["line"].get<int>(), 1));
                                  }
                              }
                          });
@@ -565,6 +573,26 @@ std::string DapManager::StepInto() {
 
 std::string DapManager::StepOut() {
     return SendStep("stepOut", "Stepping out");
+}
+
+std::string DapManager::RestartFrame(int frameId) {
+    if (state_ != SessionState::Stopped) {
+        return "Not stopped (nothing to restart).";
+    }
+    client_->SendRequest("restartFrame", Json{{"frameId", frameId}},
+                         [this](bool success, const Json&, const std::string& message) {
+                             if (success) {
+                                 MarkResumed(); // the landing spot arrives as the next `stopped` event
+                             }
+                             else {
+                                 EndSession("restartFrame failed: " + message);
+                             }
+                         });
+    std::string status = "Restarting frame...";
+    if (!capabilities_.restartFrame) {
+        status += " (adapter did not advertise restart-frame support -- may be ignored)";
+    }
+    return status;
 }
 
 std::optional<std::pair<std::string, std::size_t>> DapManager::CurrentStopKeyAndLine() const {
