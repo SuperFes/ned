@@ -4379,6 +4379,21 @@ bool BufferView::HandleVimKey(const editor::KeyChord& chord) {
         return true;
     }
 
+    // vim-global-marks follow-up: an uppercase-mark jump into a different file than the
+    // one currently open -- VimEngine can't switch buffers itself (deliberately
+    // UI-free), so it hands the target back here. Same open-then-jump shape
+    // HandleBookmarkJumpKey already uses for its own (path, line, column) targets.
+    if (const auto jump = vimEngine_.TakePendingBufferJump()) {
+        try {
+            text::Buffer& opened = bufferList_.OpenOrCreateFile(jump->path);
+            activeBuffer_.Set(opened);
+            opened.SetPoint(opened.ByteOffsetForLineAndColumn(jump->line, jump->column, static_cast<std::size_t>(editor::TabWidth())));
+        }
+        catch (const std::exception& e) {
+            ReportError(e.what());
+        }
+    }
+
     if (!vimEngine_.StatusText().empty()) {
         statusMessage_ = vimEngine_.StatusText();
     }

@@ -5,6 +5,7 @@
 #include <cstring>
 #include <fstream>
 #include <iterator>
+#include <string_view>
 
 #include "Editor/HugeRegexScan.h"
 #include "Editor/Keymap.h"
@@ -12,7 +13,9 @@
 #include "Editor/TabWidth.h"
 #include "Text/Grapheme.h"
 #include "Text/Utf8.h"
+#include "VimGlobalMarks.h"
 #include "VimLineUtil.h"
+#include "VimMagic.h"
 #include "VimMotion.h"
 #include "VimSurround.h"
 #include "VimTextObject.h"
@@ -44,6 +47,20 @@ namespace {
 
     bool IsDigitChord(const KeyChord& chord) {
         return IsPlainCharChord(chord) && chord.Codepoint >= U'0' && chord.Codepoint <= U'9';
+    }
+
+    // vim-macro-register follow-up: ParseKeySequence's own tokenizer only splits on a
+    // literal space -- a linewise-yanked register's Joined() text (RegisterEntry's own
+    // "every piece newline-joined, with a trailing newline" contract) would otherwise
+    // glue that trailing '\n' onto the last real token (e.g. "ESC\n"), which then fails
+    // to parse as any recognized key at all. Trimmed here rather than changed in
+    // ParseKeySequence itself, which has its own, unrelated Emacs-kbd-notation callers
+    // that have no reason to expect or tolerate trailing whitespace.
+    std::string_view TrimTrailingWhitespace(std::string_view s) {
+        while (!s.empty() && (s.back() == ' ' || s.back() == '\n' || s.back() == '\t' || s.back() == '\r')) {
+            s.remove_suffix(1);
+        }
+        return s;
     }
 
     std::vector<std::string> SplitLines(const std::string& text) {
@@ -184,6 +201,12 @@ std::optional<std::size_t> VimEngine::TakePendingTopLine() {
     return line;
 }
 
+std::optional<VimEngine::PendingBufferJump> VimEngine::TakePendingBufferJump() {
+    std::optional<PendingBufferJump> jump = std::move(pendingBufferJump_);
+    pendingBufferJump_                    = std::nullopt;
+    return jump;
+}
+
 std::string VimEngine::ModeIndicator() const {
     switch (mode_) {
         case Mode::Normal:
@@ -232,6 +255,7 @@ void VimEngine::FinishCommand(text::Buffer& buffer) {
     }
     if (buffer.ContentGeneration() != generationBeforeCommand_) {
         lastChange_ = currentCommandChords_;
+        PushChangeListEntry(buffer);
     }
     currentCommandChords_.clear();
     pendingOperator_.reset();
@@ -252,6 +276,22 @@ void VimEngine::UpdateGoalColumn(const text::Buffer& buffer) {
 
 void VimEngine::HandleKey(text::Buffer& buffer, const KeyChord& chord) {
     statusText_.clear();
+
+    // buffer-scoped-marks follow-up: see currentBufferIdentity_'s own doc comment --
+    // marks_ (a-z, '</'>. and the ``/'' kJumpMark toggle) must not silently carry over
+    // from whatever buffer this pane last showed. jumpList_/changeList_ have the exact
+    // same problem (raw byte offsets with no buffer/file identity of their own) --
+    // cleared here too rather than given real vim's own cross-file jumplist capability,
+    // a documented v1 cut (jumpList_/changeList_ stay buffer-scoped, not global, unlike
+    // uppercase marks -- see VimGlobalMarks.h).
+    if (&buffer != currentBufferIdentity_) {
+        currentBufferIdentity_ = &buffer;
+        marks_.clear();
+        jumpList_.clear();
+        jumpListPos_ = 0;
+        changeList_.clear();
+        changeListPos_ = 0;
+    }
 
     if (pendingCharHandler_) {
         CharHandler handler = std::move(pendingCharHandler_);
@@ -780,6 +820,7 @@ std::optional<MotionResult> VimEngine::TryImmediateMotion(const text::Buffer& bu
             return std::nullopt; // count% (goto file-percentage) -- deliberate v1 cut
         case U'G':
             marks_[kJumpMark] = buffer.Point();
+            PushJumpListEntry(buffer);
             return GotoLastLine(buffer, hasCount_ ? countBuffer_ : 0);
         case U'H':
             return ScreenTop(buffer, topLine_, viewportHeight_);
@@ -1033,7 +1074,8 @@ void VimEngine::HandleGPrefixed(text::Buffer& buffer, const KeyChord& chord) {
         return;
     }
     if (chord.Codepoint == U'g') {
-        marks_[kJumpMark]    = buffer.Point();
+        marks_[kJumpMark] = buffer.Point();
+        PushJumpListEntry(buffer);
         const MotionResult m = GotoFirstLine(buffer, hasCount_ ? countBuffer_ : 0);
         ResolveMotionAndAct(buffer, m, true);
         return;
@@ -1046,6 +1088,14 @@ void VimEngine::HandleGPrefixed(text::Buffer& buffer, const KeyChord& chord) {
     if (chord.Codepoint == U'J') { // gJ -- join without inserting a space
         JoinLines(buffer, EffectiveCount(), /*insertSpace=*/false);
         FinishCommand(buffer);
+        return;
+    }
+    if (chord.Codepoint == U';') { // g; -- older changelist entry
+        ChangeListOlder(buffer);
+        return;
+    }
+    if (chord.Codepoint == U',') { // g, -- newer changelist entry
+        ChangeListNewer(buffer);
         return;
     }
     if (chord.Codepoint == U'i') { // gi -- resume Insert where it was last exited
@@ -1362,6 +1412,20 @@ void VimEngine::HandleAction(text::Buffer& buffer, const KeyChord& chord, long c
             FinishCommand(buffer);
             return;
         }
+        // jumplist-ring follow-up: C-o/C-i walk jumpList_ -- see its own doc comment in
+        // VimEngine.h. Normal mode only, matching real vim (Visual/Insert don't bind
+        // these). C-i is byte-identical to plain Tab over a raw terminal without an
+        // extended keyboard protocol (kitty/etc.) telling them apart -- real vim has this
+        // exact same ambiguity and a bare Tab keypress genuinely does jump forward in
+        // real terminal vim too, so this isn't a regression, just inherited behavior.
+        if (chord.Codepoint == U'o' && mode_ == Mode::Normal) {
+            JumpListBack(buffer);
+            return;
+        }
+        if (chord.Codepoint == U'i' && mode_ == Mode::Normal) {
+            JumpListForward(buffer);
+            return;
+        }
         // Half/full-page point motions -- ScrollToShowPoint() (BufferView.cpp, called
         // right after HandleKey returns) scrolls the viewport into view on its own, the
         // same way scroll-page-down/-up already work; no pendingTopLine_ channel needed
@@ -1410,6 +1474,17 @@ void VimEngine::HandleAction(text::Buffer& buffer, const KeyChord& chord, long c
             FinishCommand(buffer);
             return;
         }
+    }
+
+    // jumplist-ring follow-up: a bare Tab keypress arrives with Control unset (it's
+    // SpecialKey::Tab, not a Control chord) but is the exact same byte a real terminal
+    // sends for C-i -- there is no way to tell them apart without an extended keyboard
+    // protocol, so real terminal vim treats plain Tab in Normal mode as C-i too. Matched
+    // here rather than in the Control-chord block above since Control is false for this
+    // shape.
+    if (chord.Special == SpecialKey::Tab && !chord.Control && !chord.Meta && mode_ == Mode::Normal) {
+        JumpListForward(buffer);
+        return;
     }
 
     if (mode_ != Mode::Normal || !IsPlainCharChord(chord)) {
@@ -1924,13 +1999,43 @@ void VimEngine::RepeatLastFind(text::Buffer& buffer, bool sameDirection) {
 }
 
 void VimEngine::RepeatLastChange(text::Buffer& buffer) {
+    // dot-repeat-count-override follow-up: a count typed right before "." (e.g. "5.")
+    // replaces the recorded command's own count rather than combining with it -- real
+    // vim's own rule. Captured before clearing hasCount_/countBuffer_ below, which must
+    // still happen unconditionally (a bare "." with no fresh count must start the replay
+    // itself with none pending, exactly as before this follow-up).
+    const bool overridden     = hasCount_;
+    const long overrideCount  = countBuffer_;
     hasCount_    = false;
     countBuffer_ = 0;
     if (lastChange_.empty()) {
         return;
     }
-    const std::vector<KeyChord> chords = lastChange_;
+    std::vector<KeyChord> chords = lastChange_;
     currentCommandChords_.clear();
+    if (overridden) {
+        // Strip the recorded command's own leading count digits (if any -- a leading '0'
+        // is never a count digit, matching the live-typing rule at this same check's
+        // other call site) and seed hasCount_/countBuffer_ with the override instead.
+        std::size_t skip = 0;
+        while (skip < chords.size() && IsDigitChord(chords[skip]) && !(chords[skip].Codepoint == U'0' && skip == 0)) {
+            ++skip;
+        }
+        chords.erase(chords.begin(), chords.begin() + static_cast<std::ptrdiff_t>(skip));
+        hasCount_    = true;
+        countBuffer_ = overrideCount;
+        // Recorded directly into currentCommandChords_ (rather than replayed through
+        // HandleKey's own digit-accumulation branch) so a later bare "." inherits this
+        // override as its own new recorded count -- real vim's own persistent-override-
+        // count behavior. Also stands in for the "currentCommandChords_ was empty"
+        // check (HandleNormalOrVisualKey) that would otherwise capture
+        // generationBeforeCommand_ on the first replayed chord below -- done explicitly
+        // here since that check won't fire once these are pushed.
+        generationBeforeCommand_ = buffer.ContentGeneration();
+        for (char digit : std::to_string(overrideCount)) {
+            currentCommandChords_.push_back(KeyChord{false, false, false, SpecialKey::None, static_cast<char32_t>(digit)});
+        }
+    }
     if (replayDepth_ > 50) {
         return;
     }
@@ -1942,7 +2047,111 @@ void VimEngine::RepeatLastChange(text::Buffer& buffer) {
 }
 
 void VimEngine::SetMarkAt(text::Buffer& buffer, char32_t name) {
+    // vim-global-marks follow-up: an uppercase mark is cross-file -- recorded into the
+    // process-wide store by (path, line, column), not a byte offset (see
+    // VimGlobalMarks.h's own doc comment for why), instead of the ordinary buffer-local
+    // marks_ map. A buffer with no path (a scratch/new-file buffer) can't be resolved
+    // from a different pane later, so it's silently skipped -- a documented v1 cut,
+    // consistent with this engine already requiring a real file for other
+    // filesystem-facing operations.
+    if (name >= U'A' && name <= U'Z' && buffer.Path()) {
+        std::error_code             ec;
+        const std::filesystem::path normalized = std::filesystem::weakly_canonical(*buffer.Path(), ec);
+        const std::size_t           line       = LineOf(buffer, buffer.Point());
+        const std::size_t           column = buffer.VisualColumnForByteOffset(LineStart(buffer, line), buffer.Point(), TabWidth());
+        SetGlobalMark(name, GlobalMark{.path = ec ? *buffer.Path() : normalized, .line = line, .column = column});
+        return;
+    }
     marks_[name] = buffer.Point();
+}
+
+namespace {
+// real vim's own 'jumps' option default.
+constexpr std::size_t kMaxJumpList = 100;
+} // namespace
+
+void VimEngine::PushJumpListEntry(const text::Buffer& buffer) {
+    // A new jump branches off -- any forward history past the current navigation
+    // position is discarded, mirroring a browser's own back/forward truncation-on-branch
+    // rule (BufferView's unrelated, Emacs-flavored jumpBackStack_/jumpForwardStack_ pair
+    // follows the identical rule for its own separate ring).
+    if (jumpListPos_ < jumpList_.size()) {
+        jumpList_.resize(jumpListPos_);
+    }
+    const std::size_t point = buffer.Point();
+    if (jumpList_.empty() || jumpList_.back() != point) {
+        jumpList_.push_back(point);
+        if (jumpList_.size() > kMaxJumpList) {
+            jumpList_.erase(jumpList_.begin());
+        }
+    }
+    jumpListPos_ = jumpList_.size(); // back to "live"
+}
+
+void VimEngine::JumpListBack(text::Buffer& buffer) {
+    if (jumpListPos_ == 0) {
+        FinishCommand(buffer); // no earlier jumps -- a silent no-op, matching real vim
+        return;
+    }
+    if (jumpListPos_ == jumpList_.size()) {
+        // Leaving the live position for the first time since the last new jump -- record
+        // it so a later jump-forward (C-i) can return here, this ring's version of the
+        // ``/'' toggle's own kJumpMark overwrite.
+        jumpList_.push_back(buffer.Point());
+    }
+    --jumpListPos_;
+    buffer.SetPoint(std::min(jumpList_[jumpListPos_], buffer.Content().ByteLength()));
+    UpdateGoalColumn(buffer);
+    FinishCommand(buffer);
+}
+
+void VimEngine::JumpListForward(text::Buffer& buffer) {
+    if (jumpListPos_ + 1 >= jumpList_.size()) {
+        FinishCommand(buffer); // already at the newest recorded entry -- silent no-op
+        return;
+    }
+    ++jumpListPos_;
+    buffer.SetPoint(std::min(jumpList_[jumpListPos_], buffer.Content().ByteLength()));
+    UpdateGoalColumn(buffer);
+    FinishCommand(buffer);
+}
+
+void VimEngine::PushChangeListEntry(text::Buffer& buffer) {
+    const std::size_t point = buffer.Point();
+    // Consecutive changes on the same line collapse into one, updated entry -- real
+    // vim's own documented changelist behavior -- rather than one entry per edit.
+    if (!changeList_.empty() && LineOf(buffer, changeList_.back()) == LineOf(buffer, point)) {
+        changeList_.back() = point;
+    }
+    else {
+        changeList_.push_back(point);
+        if (changeList_.size() > kMaxJumpList) { // same cap as jumpList_ -- real vim's own 'jumps' default
+            changeList_.erase(changeList_.begin());
+        }
+    }
+    changeListPos_ = changeList_.size() - 1; // always points at the newest entry after a push
+}
+
+void VimEngine::ChangeListOlder(text::Buffer& buffer) {
+    if (changeList_.empty() || changeListPos_ == 0) {
+        FinishCommand(buffer); // nothing recorded, or already at the oldest -- silent no-op
+        return;
+    }
+    --changeListPos_;
+    buffer.SetPoint(std::min(changeList_[changeListPos_], buffer.Content().ByteLength()));
+    UpdateGoalColumn(buffer);
+    FinishCommand(buffer);
+}
+
+void VimEngine::ChangeListNewer(text::Buffer& buffer) {
+    if (changeList_.empty() || changeListPos_ + 1 >= changeList_.size()) {
+        FinishCommand(buffer); // already at the newest entry -- silent no-op
+        return;
+    }
+    ++changeListPos_;
+    buffer.SetPoint(std::min(changeList_[changeListPos_], buffer.Content().ByteLength()));
+    UpdateGoalColumn(buffer);
+    FinishCommand(buffer);
 }
 
 void VimEngine::GotoMark(text::Buffer& buffer, char32_t name, bool linewise) {
@@ -1953,6 +2162,32 @@ void VimEngine::GotoMark(text::Buffer& buffer, char32_t name, bool linewise) {
             return;
         }
         target = LineStart(buffer, name == U'<' ? lastVisualRange_->startLine : lastVisualRange_->endLine);
+    }
+    else if (name >= U'A' && name <= U'Z') {
+        // vim-global-marks follow-up: resolved from the process-wide store, not marks_ --
+        // see SetMarkAt's own doc comment for why an uppercase mark never lives there.
+        const std::optional<GlobalMark> mark = GetGlobalMark(name);
+        if (!mark) {
+            statusText_ = "E20: Mark not set";
+            FinishCommand(buffer);
+            return;
+        }
+        std::error_code             ec;
+        const std::filesystem::path currentNormalized =
+            buffer.Path() ? std::filesystem::weakly_canonical(*buffer.Path(), ec) : std::filesystem::path();
+        if (buffer.Path() && !ec && currentNormalized == mark->path) {
+            // The mark's file is already open right here -- resolve directly, no buffer
+            // switch needed.
+            target = std::min(buffer.ByteOffsetForLineAndColumn(mark->line, mark->column, TabWidth()), buffer.Content().ByteLength());
+        }
+        else {
+            // A different file -- can't switch to it here (this engine is deliberately
+            // UI-free), so hand it to BufferView instead. See
+            // TakePendingBufferJump's own doc comment.
+            pendingBufferJump_ = PendingBufferJump{.path = mark->path, .line = mark->line, .column = mark->column};
+            FinishCommand(buffer);
+            return;
+        }
     }
     else {
         // `` and '' (a repeated backtick/quote) jump to the position before the last
@@ -1970,6 +2205,7 @@ void VimEngine::GotoMark(text::Buffer& buffer, char32_t name, bool linewise) {
     // Every successful jump -- including through kJumpMark itself -- overwrites kJumpMark
     // with the position being left, so `` / '' toggles between the last two positions.
     marks_[kJumpMark] = buffer.Point();
+    PushJumpListEntry(buffer);
     if (linewise) {
         target = FirstNonBlankOffset(buffer, LineOf(buffer, target));
     }
@@ -1988,9 +2224,19 @@ void VimEngine::StartMacroRecording(char32_t name) {
     recordingMacroRegister_ = lower;
     macroRecordingBuffer_.clear();
     if (isUpper) {
-        const auto it = macros_.find(lower);
-        if (it != macros_.end()) {
-            macroRecordingBuffer_ = it->second;
+        // Appending -- seed from whatever's already in the register (vim-macro-register
+        // follow-up: real vim's own register text, not this engine's private cache
+        // anymore), so recording continues onto it rather than replacing it outright.
+        // A register holding something that doesn't parse as a chord sequence (hand-
+        // edited into garbage, or never a macro to begin with) just starts empty rather
+        // than losing the recording session entirely.
+        if (const std::optional<RegisterEntry> existing = registers_.Get(lower)) {
+            try {
+                macroRecordingBuffer_ = ParseKeySequence(TrimTrailingWhitespace(existing->Joined()));
+            }
+            catch (const std::invalid_argument&) {
+                macroRecordingBuffer_.clear();
+            }
         }
     }
     statusText_ = "recording @" + std::string(1, static_cast<char>(lower));
@@ -2000,8 +2246,22 @@ void VimEngine::StopMacroRecording() {
     if (!isRecordingMacro_) {
         return;
     }
-    macros_[recordingMacroRegister_] = macroRecordingBuffer_;
-    isRecordingMacro_                = false;
+    // vim-macro-register follow-up: recorded as real, editable register text -- Emacs
+    // kbd notation (Editor/Key.h's FormatKeySequence/ParseKeySequence, already used
+    // throughout this codebase for every other keybinding), not real vim's own <key>
+    // bracket notation. A deliberate simplification: it reuses proven, already-tested
+    // infrastructure instead of a second codec, and delivers the actual point of this
+    // follow-up (a macro is now genuinely inspectable/editable register text, e.g. via
+    // "qp/"qy, and PlayMacro below always replays whatever text currently lives in the
+    // register, hand-edited or not) -- just with a different textual spelling than real
+    // vim's own registers would show for the same recording. SetRaw, not Store: macro
+    // recording is a direct register write, not a yank/delete (no unnamed-register
+    // mirroring, no uppercase-append -- that's handled by the seeding above instead).
+    RegisterEntry entry;
+    entry.kind   = RegisterKind::Char;
+    entry.pieces = {FormatKeySequence(macroRecordingBuffer_)};
+    registers_.SetRaw(recordingMacroRegister_, entry);
+    isRecordingMacro_ = false;
     statusText_.clear();
 }
 
@@ -2011,14 +2271,26 @@ void VimEngine::PlayMacro(text::Buffer& buffer, char32_t name, long count) {
         FinishCommand(buffer);
         return;
     }
-    const auto it = macros_.find(reg);
-    if (it == macros_.end()) {
+    const std::optional<RegisterEntry> entry = registers_.Get(reg);
+    if (!entry) {
         statusText_ = "E354: Invalid register name";
         FinishCommand(buffer);
         return;
     }
-    lastMacroRegister_                 = reg;
-    const std::vector<KeyChord> chords = it->second;
+    std::vector<KeyChord> chords;
+    try {
+        chords = ParseKeySequence(TrimTrailingWhitespace(entry->Joined()));
+    }
+    catch (const std::invalid_argument&) {
+        // The register's current text doesn't parse as a chord sequence -- either
+        // hand-edited into something invalid, or never a macro recording to begin with
+        // (e.g. a plain yanked word). Report and do nothing, never crash the session
+        // over untrusted register content.
+        statusText_ = "Register @" + std::string(1, static_cast<char>(reg)) + " is not a valid macro";
+        FinishCommand(buffer);
+        return;
+    }
+    lastMacroRegister_ = reg;
     currentCommandChords_.clear();
     if (replayDepth_ > 50) {
         FinishCommand(buffer);
@@ -2082,6 +2354,7 @@ namespace {
 
 void VimEngine::RunSearch(text::Buffer& buffer, bool forward, const std::string& pattern) {
     marks_[kJumpMark] = buffer.Point(); // /, ?, n, N, *, # all funnel through here
+    PushJumpListEntry(buffer);
     try {
         const RegexPattern re(pattern);
 
@@ -2157,7 +2430,11 @@ void VimEngine::PerformSearch(text::Buffer& buffer, bool forward, const std::str
         }
     }
     else {
-        lastSearchPattern_ = pattern;
+        // vim-magic-translation follow-up: the one point a search pattern is read from
+        // typed command-line text -- translated here, once, so RunSearch/RepeatSearch
+        // (and SearchWordUnderPoint's own already-PCRE2-formatted pattern, which never
+        // passes through here at all) always see an already-PCRE2-ready pattern.
+        lastSearchPattern_ = TranslateVimMagicPattern(pattern);
     }
     lastSearchForward_ = forward;
     RunSearch(buffer, forward, *lastSearchPattern_);
@@ -2372,11 +2649,17 @@ void VimEngine::SubstituteLineRange(text::Buffer& buffer, const ExSubstituteArgs
 }
 
 void VimEngine::ExecuteSubstitute(text::Buffer& buffer, const ExCommand& cmd) {
-    const auto args = ParseSubstituteArgs(cmd.rest);
+    auto args = ParseSubstituteArgs(cmd.rest);
     if (!args || args->pattern.empty()) {
         statusText_ = "E486: Pattern not found";
         return;
     }
+    // vim-magic-translation follow-up: translated once here, right off the raw
+    // command-line text -- lastSubstitute_ (below) and every downstream consumer
+    // (SubstituteLineRange, the "&" repeat-last-substitute command) then always see an
+    // already-PCRE2-ready pattern and an already-FormatReplacement-ready replacement.
+    args->pattern     = TranslateVimMagicPattern(args->pattern);
+    args->replacement = TranslateVimMagicReplacement(args->replacement);
     const std::size_t startLine = cmd.range.present ? cmd.range.startLine : LineOf(buffer, buffer.Point());
     const std::size_t endLine   = cmd.range.present ? cmd.range.endLine : startLine;
     try {
@@ -2389,11 +2672,15 @@ void VimEngine::ExecuteSubstitute(text::Buffer& buffer, const ExCommand& cmd) {
 }
 
 void VimEngine::ExecuteGlobal(text::Buffer& buffer, const ExCommand& cmd) {
-    const auto args = ParseGlobalArgs(cmd.rest);
+    auto args = ParseGlobalArgs(cmd.rest);
     if (!args || args->pattern.empty()) {
         statusText_ = "E471: Argument required";
         return;
     }
+    // vim-magic-translation follow-up: translated once here -- args->command (a nested
+    // sub-command, e.g. ":s/x/y/" for ":g/pat/s/x/y/") isn't touched, since it goes
+    // through ExecuteExCommand's own full parse/translate path independently below.
+    args->pattern = TranslateVimMagicPattern(args->pattern);
 
     const std::size_t startLine = cmd.range.present ? cmd.range.startLine : 0;
     const std::size_t endLine   = cmd.range.present ? cmd.range.endLine : EffectiveLastLine(buffer);

@@ -5,15 +5,18 @@
 // it stays exactly as UI-free as the rest of Editor/.
 //
 // Deliberate v1 cuts, documented here once rather than scattered across every method
-// that would otherwise need its own caveat: no jumplist/changelist (C-o/C-i) beyond the
-// single toggle `` / '' provides, no mark letters beyond a-z/A-Z and '</'> (the
-// visual-selection marks) -- A-Z are buffer-local here, not real vim's cross-file global
-// marks, since this engine has no notion of "other buffers", macros are recorded as raw
-// keystrokes (not vim's own editable-register-text form), "." replays verbatim (a count
-// typed before "." is accepted but does not override the recorded one), search/:s use
-// PCRE2 syntax passed straight through (Editor/RegexPattern.h) rather than translating
-// vim's own default "magic" escaping convention -- closer to vim's \v very-magic mode
-// than its default. Insert-mode typing itself is not handled here at all: BufferView
+// that would otherwise need its own caveat: no mark letters beyond a-z/A-Z and '</'> (the
+// visual-selection marks) -- a-z stay buffer-scoped (see currentBufferIdentity_'s own
+// doc comment), A-Z are real cross-file marks (VimGlobalMarks.h), but this engine has no
+// notion of "other buffers" beyond that one seam, so nothing else (registers, macros,
+// jumpList_/changeList_) is cross-file; macros are real, editable register text
+// (StopMacroRecording/PlayMacro, VimRegisters::SetRaw/Get) but spelled in this
+// codebase's own Emacs kbd notation (Editor/Key.h's FormatKeySequence/ParseKeySequence)
+// rather than real vim's own <key> bracket notation -- a deliberate reuse of existing,
+// already-tested infrastructure over a second codec; search/:s/:g translate vim's own default "magic"
+// escaping convention to PCRE2 syntax for the common core (VimMagic.h has the exact rule
+// table and its own documented cuts -- \ze, \%[...], mid-pattern \m/\M/\V). Insert-mode
+// typing itself is not handled here at all: BufferView
 // forwards those keystrokes straight through its ordinary Dispatcher path (self-insert-
 // command, auto-pair, snippets, ghost completion all keep working unmodified) and only
 // calls RecordInsertKey so "." can replay them later -- HandleKey's own Mode::Insert
@@ -25,6 +28,7 @@
 #define NED_EDITOR_VIM_VIMENGINE_H
 
 #include <cstddef>
+#include <filesystem>
 #include <functional>
 #include <map>
 #include <optional>
@@ -90,6 +94,20 @@ class VimEngine {
     // ScrollToShowPoint() call, since that call only nudges topLine_ far enough to keep
     // point visible and would otherwise silently undo an explicit recenter.
     [[nodiscard]] std::optional<std::size_t> TakePendingTopLine();
+
+    // vim-global-marks follow-up: jumping to an uppercase (A-Z) mark set in a different
+    // file than the one currently open needs to switch the active buffer -- something
+    // this engine, deliberately UI-free, can't do itself (see VimGlobalMarks.h's own doc
+    // comment). Set by GotoMark when the resolved global mark's path doesn't match the
+    // current buffer's; BufferView must consume this the same way it already does
+    // TakePendingIntent -- open (or find) the target file and move point to (line,
+    // column) there.
+    struct PendingBufferJump {
+        std::filesystem::path path;
+        std::size_t           line   = 0;
+        std::size_t           column = 0;
+    };
+    [[nodiscard]] std::optional<PendingBufferJump> TakePendingBufferJump();
 
   private:
     using CharHandler = std::function<void(text::Buffer&, const KeyChord&)>;
@@ -251,6 +269,39 @@ class VimEngine {
 
     std::map<char32_t, std::size_t> marks_;
 
+    // jumplist-ring follow-up: generalizes kJumpMark's single-slot ``/'' toggle (still
+    // unchanged -- see GotoMark) into a real back/forward ring, navigated by C-o/C-i.
+    // jumpList_ holds byte offsets in the order they were left; jumpListPos_ is an index
+    // into it in [0, jumpList_.size()] where == size() means "at the live position,
+    // nothing navigated since the last new jump" (real vim's own jumplist model: the
+    // current line is a virtual entry past the end until C-o forces it in). Pushed from
+    // every site that already stamps kJumpMark (G, gg, GotoMark, RunSearch -- so /, ?, n,
+    // N, *, # all count too, a deliberate simplification vs. real vim, which doesn't
+    // treat every n/N repeat as its own jump) via PushJumpListEntry.
+    std::vector<std::size_t> jumpList_;
+    std::size_t              jumpListPos_ = 0;
+    void                     PushJumpListEntry(const text::Buffer& buffer);
+    void                     JumpListBack(text::Buffer& buffer);
+    void                     JumpListForward(text::Buffer& buffer);
+
+    // changelist-ring follow-up: g;/g, walk changeList_ -- real vim's changelist, a
+    // simpler cousin of jumpList_ above. Every entry is already a position an edit
+    // actually happened at (unlike jumpList_'s "position being left"), so there's no
+    // jumpList_-style "live" out-of-bounds index -- changeListPos_ is always a valid
+    // index into changeList_ whenever it's non-empty, reset to the newest entry
+    // (size() - 1) on every push. Pushed from FinishCommand, the same site that updates
+    // lastChange_ (its own "did content actually change" gate is exactly the granularity
+    // real vim's changelist uses too: one entry per whole Insert/Replace/Visual-change
+    // session, not per keystroke, since FinishCommand only runs that check once mode_
+    // genuinely returns to Normal). Consecutive changes on the same line collapse into
+    // one updated entry rather than accumulating, matching real vim's own documented
+    // behavior.
+    std::vector<std::size_t> changeList_;
+    std::size_t              changeListPos_ = 0;
+    void                     PushChangeListEntry(text::Buffer& buffer);
+    void                     ChangeListOlder(text::Buffer& buffer);
+    void                     ChangeListNewer(text::Buffer& buffer);
+
     VimRegisters registers_;
 
     std::vector<KeyChord> currentCommandChords_;
@@ -258,11 +309,14 @@ class VimEngine {
     std::vector<KeyChord> lastChange_;
     int                   replayDepth_ = 0; // guards against runaway recursive "."/@ replay
 
-    bool                                      isRecordingMacro_       = false;
-    char32_t                                  recordingMacroRegister_ = 0;
-    std::vector<KeyChord>                     macroRecordingBuffer_;
-    std::map<char32_t, std::vector<KeyChord>> macros_;
-    char32_t                                  lastMacroRegister_ = 0;
+    // vim-macro-register follow-up: macros are stored as real register text now
+    // (registers_, via VimRegisters::SetRaw/Get) rather than a private cache here --
+    // isRecordingMacro_/recordingMacroRegister_/macroRecordingBuffer_ are just the
+    // in-flight recording state, not the macro's storage.
+    bool                   isRecordingMacro_       = false;
+    char32_t               recordingMacroRegister_ = 0;
+    std::vector<KeyChord>  macroRecordingBuffer_;
+    char32_t               lastMacroRegister_ = 0;
 
     std::size_t topLine_        = 0;
     std::size_t viewportHeight_ = 0;
@@ -276,6 +330,21 @@ class VimEngine {
 
     std::string   statusText_;
     PendingIntent pendingIntent_ = PendingIntent::None;
+
+    // vim-global-marks follow-up: see TakePendingBufferJump's own doc comment above.
+    std::optional<PendingBufferJump> pendingBufferJump_;
+
+    // buffer-scoped-marks follow-up: this engine is one-per-pane (BufferView.h), not
+    // one-per-buffer, but real vim's lowercase/''/`` marks (and, unlike real vim,
+    // jumpList_/changeList_ too -- see their own doc comments) are meant to be
+    // buffer-scoped -- switching which buffer a pane shows (switch-to-buffer, a tab
+    // click, ...) previously left them holding stale byte offsets from whatever buffer
+    // was active when they were set, silently misapplied to a *different* buffer's
+    // content if that buffer happened to be long enough. Noted (and all three cleared)
+    // the moment HandleKey sees a different Buffer& than last time -- a raw, non-owning
+    // identity pointer is safe here since it's only ever compared against a live Buffer&
+    // handed in per call, never dereferenced.
+    const text::Buffer* currentBufferIdentity_ = nullptr;
 };
 
 } // namespace ned::editor::vim

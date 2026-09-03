@@ -5,10 +5,12 @@
 
 #include "Editor/TabWidth.h"
 #include "Editor/Vim/VimEngine.h"
+#include "Editor/Vim/VimGlobalMarks.h"
 #include "Text/Buffer.h"
 
 using ned::editor::KeyChord;
 using ned::editor::SpecialKey;
+using ned::editor::vim::ClearGlobalMarksForTesting;
 using ned::editor::vim::Mode;
 using ned::editor::vim::PendingIntent;
 using ned::editor::vim::VimEngine;
@@ -245,6 +247,27 @@ TEST_CASE("Dot repeats the last change", "[VimEngine]") {
     REQUIRE(buffer.Text() == "baz qux");
 }
 
+TEST_CASE("A count typed before dot overrides the recorded change's own count", "[VimEngine]") {
+    Buffer    buffer = MakeBuffer("aaaa bbbb cccc dddd eeee ffff");
+    VimEngine engine;
+
+    Feed(engine, buffer, "dw"); // deletes one word ("aaaa ")
+    REQUIRE(buffer.Text() == "bbbb cccc dddd eeee ffff");
+    Feed(engine, buffer, "3."); // overridden: delete 3 words, not the recorded 1
+    REQUIRE(buffer.Text() == "eeee ffff");
+}
+
+TEST_CASE("An override count typed before dot becomes the new recorded count for a later bare dot", "[VimEngine]") {
+    Buffer    buffer = MakeBuffer("a b c d e f g h i j");
+    VimEngine engine;
+
+    Feed(engine, buffer, "dw");  // deletes "a "
+    Feed(engine, buffer, "2."); // overridden: delete 2 words ("b c ")
+    REQUIRE(buffer.Text() == "d e f g h i j");
+    Feed(engine, buffer, ".");  // bare dot -- real vim reuses the override (2), not the original 1
+    REQUIRE(buffer.Text() == "f g h i j");
+}
+
 TEST_CASE("Dot repeats an insert-causing change verbatim", "[VimEngine]") {
     Buffer    buffer = MakeBuffer("foo\nbar\n");
     VimEngine engine;
@@ -297,6 +320,42 @@ TEST_CASE("Search with / finds the next match and n repeats", "[VimEngine]") {
     REQUIRE(buffer.Point() == 0);
 }
 
+TEST_CASE("Search with / accepts vim's own default-magic escaping for grouping/quantifiers", "[VimEngine]") {
+    Buffer    buffer = MakeBuffer("xx foobar yy foobarbar zz");
+    VimEngine engine;
+
+    // \(foo\|baz\)\(bar\)\+ -- vim-magic source; real PCRE2 spelling would be
+    // (foo|baz)(bar)+.
+    Feed(engine, buffer, "/\\(foo\\|baz\\)\\(bar\\)\\+\n");
+    REQUIRE(buffer.Point() == 3); // the first "foobar"
+    Feed(engine, buffer, "n");
+    REQUIRE(buffer.Point() == 13); // "foobarbar", which \(bar\)\+ also matches
+}
+
+TEST_CASE(":s accepts vim's own default-magic escaping for grouping/quantifiers", "[VimEngine]") {
+    Buffer    buffer = MakeBuffer("foobar\n");
+    VimEngine engine;
+
+    Feed(engine, buffer, ":s/\\(foo\\)\\(bar\\)/\\2\\1/\n");
+    REQUIRE(buffer.Text() == "barfoo\n");
+}
+
+TEST_CASE(":g accepts vim's own default-magic escaping for grouping/quantifiers", "[VimEngine]") {
+    Buffer    buffer = MakeBuffer("foo\nbar\nfoobar\nbaz\n");
+    VimEngine engine;
+
+    Feed(engine, buffer, ":g/foo\\|baz/d\n");
+    REQUIRE(buffer.Text() == "bar\n");
+}
+
+TEST_CASE(":s accepts vim's own \\{n,m} interval quantifier", "[VimEngine]") {
+    Buffer    buffer = MakeBuffer("aaaa\n");
+    VimEngine engine;
+
+    Feed(engine, buffer, ":s/a\\{2,3}/X/\n");
+    REQUIRE(buffer.Text() == "Xa\n"); // greedy -- consumes 3 of the 4 a's
+}
+
 TEST_CASE(":d deletes the addressed range", "[VimEngine]") {
     Buffer    buffer = MakeBuffer("one\ntwo\nthree\nfour\n");
     VimEngine engine;
@@ -341,6 +400,42 @@ TEST_CASE("Macro recording and playback via qX ... q and @X", "[VimEngine]") {
     REQUIRE(buffer.Text() == "a!\na!\na!\n");
 }
 
+TEST_CASE("Hand-edited register text drives @ playback, not just qX...q's own recording", "[VimEngine]") {
+    Buffer    buffer = MakeBuffer("a\nA ? ESC\n");
+    VimEngine engine;
+
+    // Yanks the second line's own literal text ("A ? ESC", valid Emacs kbd notation for
+    // append-'?'-then-escape) into register 'a', the way a user could hand-craft or
+    // hand-edit a macro by typing kbd tokens into a scratch buffer and yanking them --
+    // proving register *content* drives playback, not a private recording-only cache.
+    Feed(engine, buffer, "j\"ayy");
+    Feed(engine, buffer, "gg@a");
+    REQUIRE(buffer.Text() == "a?\nA ? ESC\n");
+}
+
+TEST_CASE("Uppercase-name recording appends onto the register's existing text", "[VimEngine]") {
+    Buffer    buffer = MakeBuffer("a\n");
+    VimEngine engine;
+
+    Feed(engine, buffer, "qaA1\x1bq");  // record 'a': append "1"
+    Feed(engine, buffer, "qAA2\x1bq"); // append-record 'A' onto 'a': append "2"
+    REQUIRE(buffer.Text() == "a12\n");
+
+    Buffer fresh = MakeBuffer("b\n");
+    Feed(engine, fresh, "@a"); // replays both appends in sequence
+    REQUIRE(fresh.Text() == "b12\n");
+}
+
+TEST_CASE("Playing a register that isn't valid kbd notation reports an error instead of crashing", "[VimEngine]") {
+    Buffer    buffer = MakeBuffer("<not valid!\n");
+    VimEngine engine;
+
+    Feed(engine, buffer, "\"ayy"); // yank a line that can't parse as a chord sequence
+    Feed(engine, buffer, "@a");
+    REQUIRE(engine.StatusText().find("not a valid macro") != std::string::npos);
+    REQUIRE(buffer.Text() == "<not valid!\n"); // untouched
+}
+
 TEST_CASE("gUU uppercases the current line", "[VimEngine]") {
     Buffer    buffer = MakeBuffer("hello world");
     VimEngine engine;
@@ -371,6 +466,180 @@ TEST_CASE("`` toggles between the last two jump positions", "[VimEngine]") {
     REQUIRE(buffer.Point() == 0);
     Feed(engine, buffer, "``"); // toggles forward again
     REQUIRE(buffer.Point() == afterG);
+}
+
+TEST_CASE("An uppercase mark resolves locally when the target file is already the open buffer", "[VimEngine]") {
+    ClearGlobalMarksForTesting();
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_vim_global_mark_local.txt";
+    Buffer                      buffer = Buffer::NewFile(path);
+    buffer.InsertAtPoint("abcdefghij");
+    buffer.SetPoint(0);
+    VimEngine engine;
+
+    Feed(engine, buffer, "llmA"); // mark 'A' at point 2
+    Feed(engine, buffer, "$");
+    REQUIRE(buffer.Point() == 9);
+    Feed(engine, buffer, "`A");
+    REQUIRE(buffer.Point() == 2);
+    REQUIRE_FALSE(engine.TakePendingBufferJump().has_value()); // resolved locally, no cross-file signal
+}
+
+TEST_CASE("An uppercase mark set in one file signals a pending buffer jump when read from another", "[VimEngine]") {
+    ClearGlobalMarksForTesting();
+    const std::filesystem::path pathA = std::filesystem::temp_directory_path() / "ned_vim_global_mark_a.txt";
+    const std::filesystem::path pathB = std::filesystem::temp_directory_path() / "ned_vim_global_mark_b.txt";
+
+    Buffer bufferA = Buffer::NewFile(pathA);
+    bufferA.InsertAtPoint("hello world");
+    bufferA.SetPoint(6); // start of "world"
+    VimEngine engine;
+    Feed(engine, bufferA, "mB");
+    REQUIRE_FALSE(engine.TakePendingBufferJump().has_value()); // setting a mark never itself jumps
+
+    Buffer bufferB = Buffer::NewFile(pathB);
+    bufferB.InsertAtPoint("something else");
+    bufferB.SetPoint(0);
+    engine.HandleKey(bufferB, Ch(U'`'));
+    engine.HandleKey(bufferB, Ch(U'B'));
+
+    REQUIRE(bufferB.Point() == 0); // unaffected -- not resolved in this buffer
+    const auto jump = engine.TakePendingBufferJump();
+    REQUIRE(jump.has_value());
+    REQUIRE(std::filesystem::weakly_canonical(jump->path) == std::filesystem::weakly_canonical(pathA));
+    REQUIRE(jump->line == 0);
+    REQUIRE(jump->column == 6);
+    REQUIRE_FALSE(engine.TakePendingBufferJump().has_value()); // one-shot -- already consumed
+}
+
+TEST_CASE("An unset uppercase mark reports E20 like any other unset mark", "[VimEngine]") {
+    ClearGlobalMarksForTesting();
+    Buffer    buffer = MakeBuffer("abcdefghij");
+    VimEngine engine;
+
+    Feed(engine, buffer, "`Z");
+    REQUIRE(engine.StatusText() == "E20: Mark not set");
+    REQUIRE(buffer.Point() == 0);
+    REQUIRE_FALSE(engine.TakePendingBufferJump().has_value());
+}
+
+TEST_CASE("Lowercase marks don't leak across a buffer switch in the same pane", "[VimEngine]") {
+    Buffer    bufferA = MakeBuffer("abcdefghij");
+    VimEngine engine;
+    Feed(engine, bufferA, "llma"); // mark 'a' at point 2 in bufferA
+
+    Buffer bufferB = MakeBuffer("0123456789012345");
+    engine.HandleKey(bufferB, Ch(U'`'));
+    engine.HandleKey(bufferB, Ch(U'a'));
+
+    REQUIRE(engine.StatusText() == "E20: Mark not set");
+    REQUIRE(bufferB.Point() == 0); // the stale mark from bufferA must not silently apply here
+}
+
+TEST_CASE("g; and g, walk the changelist back and forward through edit positions", "[VimEngine]") {
+    Buffer    buffer = MakeBuffer("aaaa\nbbbb\ncccc\ndddd\n");
+    VimEngine engine;
+
+    Feed(engine, buffer, "x");  // edit on line 0
+    Feed(engine, buffer, "jx"); // edit on line 1
+    Feed(engine, buffer, "jx"); // edit on line 2
+    const std::size_t line2Point = buffer.Point();
+
+    Feed(engine, buffer, "g;");
+    const std::size_t line1Point = buffer.Point();
+    REQUIRE(line1Point != line2Point);
+    Feed(engine, buffer, "g;");
+    const std::size_t line0Point = buffer.Point();
+    REQUIRE(line0Point != line1Point);
+    Feed(engine, buffer, "g;"); // already at the oldest -- silent no-op
+    REQUIRE(buffer.Point() == line0Point);
+
+    Feed(engine, buffer, "g,");
+    REQUIRE(buffer.Point() == line1Point);
+    Feed(engine, buffer, "g,");
+    REQUIRE(buffer.Point() == line2Point);
+    Feed(engine, buffer, "g,"); // already at the newest -- silent no-op
+    REQUIRE(buffer.Point() == line2Point);
+}
+
+TEST_CASE("Consecutive edits on the same line collapse into one changelist entry", "[VimEngine]") {
+    Buffer    buffer = MakeBuffer("abcabc\ndef\n");
+    VimEngine engine;
+
+    Feed(engine, buffer, "x");   // edit on line 0 at byte 0
+    Feed(engine, buffer, "llx"); // a second edit, still on line 0, at byte 2 -- collapses
+    Feed(engine, buffer, "jx");  // a genuinely new line -- its own entry
+
+    Feed(engine, buffer, "g;");
+    REQUIRE(buffer.Point() == 2); // the line-0 entry's updated (not original) position
+    Feed(engine, buffer, "g;");   // only 2 entries total -- already at the oldest, silent no-op
+    REQUIRE(buffer.Point() == 2);
+}
+
+TEST_CASE("C-o/C-i walk the jumplist back and forward through G/gg jumps", "[VimEngine]") {
+    Buffer    buffer = MakeBuffer("a\nb\nc\nd\ne\n");
+    VimEngine engine;
+
+    const std::size_t start = buffer.Point();
+    Feed(engine, buffer, "G"); // jump to the last line
+    const std::size_t afterG = buffer.Point();
+    REQUIRE(afterG != start);
+    Feed(engine, buffer, "gg"); // jump back to the first line
+    REQUIRE(buffer.Point() == start);
+
+    engine.HandleKey(buffer, Ctrl(U'o')); // back to the position before "gg" (afterG)
+    REQUIRE(buffer.Point() == afterG);
+    engine.HandleKey(buffer, Ctrl(U'o')); // back to the position before "G" (start)
+    REQUIRE(buffer.Point() == start);
+    engine.HandleKey(buffer, Ctrl(U'o')); // nothing earlier -- silent no-op
+    REQUIRE(buffer.Point() == start);
+
+    engine.HandleKey(buffer, Ctrl(U'i')); // forward to afterG
+    REQUIRE(buffer.Point() == afterG);
+    engine.HandleKey(buffer, Ctrl(U'i')); // forward to the live position "gg" left off at (start)
+    REQUIRE(buffer.Point() == start);
+    engine.HandleKey(buffer, Ctrl(U'i')); // nothing further -- silent no-op
+    REQUIRE(buffer.Point() == start);
+}
+
+TEST_CASE("C-o records the live position on first use, like ``'s own toggle", "[VimEngine]") {
+    Buffer    buffer = MakeBuffer("a\nb\nc\nd\ne\n");
+    VimEngine engine;
+
+    Feed(engine, buffer, "G");
+    const std::size_t afterG = buffer.Point();
+    Feed(engine, buffer, "k"); // move up a line, not through a jump command
+    const std::size_t liveBeforeJump = buffer.Point();
+    REQUIRE(liveBeforeJump != afterG);
+
+    engine.HandleKey(buffer, Ctrl(U'o')); // first C-o: records the live position, jumps to 0
+    REQUIRE(buffer.Point() == 0);
+    engine.HandleKey(buffer, Ctrl(U'i')); // returns to the position C-o recorded
+    REQUIRE(buffer.Point() == liveBeforeJump);
+}
+
+TEST_CASE("A new jump after C-o truncates the jumplist's forward history", "[VimEngine]") {
+    Buffer    buffer = MakeBuffer("abcdefghij");
+    VimEngine engine;
+
+    // marks a=1, b=2, c=3, d=4; back to point 0 to jump from.
+    Feed(engine, buffer, "lmalmblmclmd0");
+
+    Feed(engine, buffer, "`a`b`c"); // jumpList_ becomes [0, 1, 2], landing on mark c (3)
+    REQUIRE(buffer.Point() == 3);
+
+    engine.HandleKey(buffer, Ctrl(U'o')); // -> 2
+    engine.HandleKey(buffer, Ctrl(U'o')); // -> 1
+    REQUIRE(buffer.Point() == 1);
+
+    Feed(engine, buffer, "`d"); // a fresh jump from here discards the [2, 3] entries ahead of us
+    REQUIRE(buffer.Point() == 4);
+
+    engine.HandleKey(buffer, Ctrl(U'o')); // -> 1 (the live position just before "`d")
+    REQUIRE(buffer.Point() == 1);
+    engine.HandleKey(buffer, Ctrl(U'o')); // -> 0 (the very first recorded position)
+    REQUIRE(buffer.Point() == 0);
+    engine.HandleKey(buffer, Ctrl(U'o')); // nothing earlier -- the discarded 2/3 never resurface
+    REQUIRE(buffer.Point() == 0);
 }
 
 TEST_CASE("ge moves to the end of the previous word", "[VimEngine]") {
