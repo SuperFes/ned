@@ -297,7 +297,12 @@ Json BuildInitializeParams(const std::filesystem::path& projectRoot, const Json&
                  {{"valueSet", Json::array({"", "quickfix", "refactor", "refactor.extract", "refactor.inline", "refactor.rewrite",
                                             "source", "source.organizeImports", "source.fixAll"})}}}}},
               {"dataSupport", true},
-              {"resolveSupport", {{"properties", Json::array({"edit"})}}}}}}},
+              {"resolveSupport", {{"properties", Json::array({"edit"})}}}}},
+            // call/type-hierarchy follow-up: both are bare {} like every
+            // other capabilities-hygiene entry above -- no optional
+            // refinement (no "dynamicRegistration") this client needs.
+            {"callHierarchy", Json::object()},
+            {"typeHierarchy", Json::object()}}},
           // capabilities-hygiene follow-up: workspace/configuration and
           // workspace/executeCommand are both handled/sent (see
           // WireNotificationHandlers/ExecuteCommand) but this object
@@ -2178,6 +2183,186 @@ void LspManager::RequestWorkspaceSymbols(text::Buffer& buffer, const std::string
                             }
                             callback(std::move(resolved));
                         });
+}
+
+namespace {
+
+    // call/type-hierarchy follow-up: shared by RequestPrepareCallHierarchy/
+    // RequestPrepareTypeHierarchy's own resolve-uri-to-path step and
+    // RequestIncomingCalls/RequestOutgoingCalls/RequestSupertypes/
+    // RequestSubtypes' own -- SymbolResult's own "drop, don't keep with a
+    // nonsense path" convention.
+    std::vector<LspManager::ResolvedHierarchyItem> ResolveHierarchyItems(std::vector<HierarchyItem> items) {
+        std::vector<LspManager::ResolvedHierarchyItem> resolved;
+        resolved.reserve(items.size());
+        for (HierarchyItem& item : items) {
+            if (const std::optional<std::filesystem::path> path = UriToPath(item.uri)) {
+                resolved.push_back(LspManager::ResolvedHierarchyItem{.item = std::move(item), .path = *path});
+            }
+        }
+        return resolved;
+    }
+
+} // namespace
+
+void LspManager::SendHierarchyPrepareRequest(const std::string& method, text::Buffer& buffer, std::size_t byteOffset,
+                                             HierarchyItemsCallback callback, const std::string& serverKey) {
+    BufferSyncState* state = ResolveSyncState(buffer, serverKey);
+    if (!state || !state->opened) {
+        callback({});
+        return;
+    }
+    LspClient* client = ExistingClientForLanguage(state->connectionKey);
+    if (!client) {
+        callback({});
+        return;
+    }
+
+    const std::string language = state->connectionKey;
+    const LspPosition position = BytePositionToLsp(buffer.Content(), byteOffset);
+    const Json        params   = {
+        {"textDocument", {{"uri", state->uri}}},
+        {"position", {{"line", position.line}, {"character", position.character}}},
+    };
+    client->SendRequest(method, params,
+                        [this, language, callback = std::move(callback)](std::optional<Json> result, std::optional<Json> error) {
+                            if (error) {
+                                LogError(language, ExtractErrorMessage(*error));
+                                callback({});
+                                return;
+                            }
+                            if (!result) {
+                                callback({});
+                                return;
+                            }
+                            callback(ResolveHierarchyItems(ExtractHierarchyItems(*result)));
+                        });
+}
+
+void LspManager::RequestPrepareCallHierarchy(text::Buffer& buffer, std::size_t byteOffset, HierarchyItemsCallback callback,
+                                             const std::string& serverKey) {
+    SendHierarchyPrepareRequest("textDocument/prepareCallHierarchy", buffer, byteOffset, std::move(callback), serverKey);
+}
+
+void LspManager::RequestPrepareTypeHierarchy(text::Buffer& buffer, std::size_t byteOffset, HierarchyItemsCallback callback,
+                                             const std::string& serverKey) {
+    SendHierarchyPrepareRequest("textDocument/prepareTypeHierarchy", buffer, byteOffset, std::move(callback), serverKey);
+}
+
+void LspManager::RequestIncomingCalls(text::Buffer& buffer, const HierarchyItem& item, HierarchyCallsCallback callback,
+                                      const std::string& serverKey) {
+    BufferSyncState* state = ResolveSyncState(buffer, serverKey);
+    if (!state || !state->opened) {
+        callback({});
+        return;
+    }
+    LspClient* client = ExistingClientForLanguage(state->connectionKey);
+    if (!client) {
+        callback({});
+        return;
+    }
+
+    const std::string language = state->connectionKey;
+    const Json        params   = {{"item", item.raw}};
+    client->SendRequest("callHierarchy/incomingCalls", params,
+                        [this, language, callback = std::move(callback)](std::optional<Json> result, std::optional<Json> error) {
+                            if (error) {
+                                LogError(language, ExtractErrorMessage(*error));
+                                callback({});
+                                return;
+                            }
+                            if (!result) {
+                                callback({});
+                                return;
+                            }
+                            std::vector<ResolvedHierarchyCall> resolved;
+                            for (HierarchyCall& call : ExtractIncomingCalls(*result)) {
+                                if (const std::optional<std::filesystem::path> path = UriToPath(call.item.uri)) {
+                                    resolved.push_back(ResolvedHierarchyCall{
+                                        .item      = ResolvedHierarchyItem{.item = std::move(call.item), .path = *path},
+                                        .callSites = std::move(call.callSites)});
+                                }
+                            }
+                            callback(std::move(resolved));
+                        });
+}
+
+void LspManager::RequestOutgoingCalls(text::Buffer& buffer, const HierarchyItem& item, HierarchyCallsCallback callback,
+                                      const std::string& serverKey) {
+    BufferSyncState* state = ResolveSyncState(buffer, serverKey);
+    if (!state || !state->opened) {
+        callback({});
+        return;
+    }
+    LspClient* client = ExistingClientForLanguage(state->connectionKey);
+    if (!client) {
+        callback({});
+        return;
+    }
+
+    const std::string language = state->connectionKey;
+    const Json        params   = {{"item", item.raw}};
+    client->SendRequest("callHierarchy/outgoingCalls", params,
+                        [this, language, callback = std::move(callback)](std::optional<Json> result, std::optional<Json> error) {
+                            if (error) {
+                                LogError(language, ExtractErrorMessage(*error));
+                                callback({});
+                                return;
+                            }
+                            if (!result) {
+                                callback({});
+                                return;
+                            }
+                            std::vector<ResolvedHierarchyCall> resolved;
+                            for (HierarchyCall& call : ExtractOutgoingCalls(*result)) {
+                                if (const std::optional<std::filesystem::path> path = UriToPath(call.item.uri)) {
+                                    resolved.push_back(ResolvedHierarchyCall{
+                                        .item      = ResolvedHierarchyItem{.item = std::move(call.item), .path = *path},
+                                        .callSites = std::move(call.callSites)});
+                                }
+                            }
+                            callback(std::move(resolved));
+                        });
+}
+
+void LspManager::SendTypeHierarchyStepRequest(const std::string& method, text::Buffer& buffer, const HierarchyItem& item,
+                                              HierarchyItemsCallback callback, const std::string& serverKey) {
+    BufferSyncState* state = ResolveSyncState(buffer, serverKey);
+    if (!state || !state->opened) {
+        callback({});
+        return;
+    }
+    LspClient* client = ExistingClientForLanguage(state->connectionKey);
+    if (!client) {
+        callback({});
+        return;
+    }
+
+    const std::string language = state->connectionKey;
+    const Json        params   = {{"item", item.raw}};
+    client->SendRequest(method, params,
+                        [this, language, callback = std::move(callback)](std::optional<Json> result, std::optional<Json> error) {
+                            if (error) {
+                                LogError(language, ExtractErrorMessage(*error));
+                                callback({});
+                                return;
+                            }
+                            if (!result) {
+                                callback({});
+                                return;
+                            }
+                            callback(ResolveHierarchyItems(ExtractHierarchyItems(*result)));
+                        });
+}
+
+void LspManager::RequestSupertypes(text::Buffer& buffer, const HierarchyItem& item, HierarchyItemsCallback callback,
+                                   const std::string& serverKey) {
+    SendTypeHierarchyStepRequest("typeHierarchy/supertypes", buffer, item, std::move(callback), serverKey);
+}
+
+void LspManager::RequestSubtypes(text::Buffer& buffer, const HierarchyItem& item, HierarchyItemsCallback callback,
+                                 const std::string& serverKey) {
+    SendTypeHierarchyStepRequest("typeHierarchy/subtypes", buffer, item, std::move(callback), serverKey);
 }
 
 void LspManager::Shutdown() {

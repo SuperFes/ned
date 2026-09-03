@@ -714,6 +714,7 @@ add_library(ned_lib STATIC
         Source/UI/AcpPanel.cpp
         Source/UI/DebugConsolePanel.cpp
         Source/UI/ListPopup.cpp
+        Source/UI/TreeView.cpp
         Source/UI/BufferListPanel.cpp
         Source/UI/BufferView.cpp
         Source/UI/WindowManager.cpp
@@ -976,6 +977,7 @@ if (NED_BUILD_TESTS)
             Tests/RelativeLineNumberSettingsTest.cpp
             Tests/WhichKeySettingsTest.cpp
             Tests/ListPopupTest.cpp
+            Tests/TreeViewTest.cpp
             Tests/BufferListPanelTest.cpp
             Tests/MinimapTest.cpp
             Tests/OverlayTest.cpp
@@ -1026,6 +1028,7 @@ if (NED_BUILD_TESTS)
             Tests/LspPositionTest.cpp
             Tests/LspContentTest.cpp
             Tests/LspManagerTest.cpp
+            Tests/ExpandableTreeTest.cpp
             Tests/LspBrokerTest.cpp
             Tests/LspBrokerConnectTest.cpp
             Tests/DapConfigTest.cpp
@@ -1055,6 +1058,7 @@ if (NED_BUILD_TESTS)
             Tests/BufferViewDiagnosticsBufferTest.cpp
             Tests/BufferViewEmbeddedLspTest.cpp
             Tests/BufferViewProjectFindReferencesTest.cpp
+            Tests/BufferViewHierarchyTest.cpp
             Tests/WrapOverridesTest.cpp
             Tests/BorderTest.cpp
             Tests/ProjectSidebarTest.cpp
