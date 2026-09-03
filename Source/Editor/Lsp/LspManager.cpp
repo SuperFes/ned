@@ -6,6 +6,7 @@
 #include <ctime>
 #include <filesystem>
 
+#include <fnmatch.h>
 #include <unistd.h>
 
 #include "Editor/BackgroundActivity.h"
@@ -190,6 +191,23 @@ namespace {
         return error.value("message", error.dump());
     }
 
+    // rename-file-notifications follow-up. Matches path against every glob
+    // in globs via POSIX fnmatch with no flags -- without FNM_PATHNAME, '*'
+    // matches '/' too, which is what makes a "**/*.ts"-shaped LSP filter
+    // (rust-analyzer/typescript-language-server's own convention) actually
+    // match a nested path the way a real "**" component would: this isn't a
+    // literal globstar implementation, but the redundant leading "**"
+    // collapses to an ordinary "*" under fnmatch's rules and produces the
+    // same match here regardless. A reasonable v1 approximation of LSP's
+    // glob grammar, not a complete implementation of it (no brace
+    // expansion, no character-class edge cases beyond what fnmatch itself
+    // supports).
+    bool MatchesFileOperationGlob(const std::filesystem::path& path, const std::vector<std::string>& globs) {
+        const std::string pathStr = path.string();
+        return std::any_of(globs.begin(), globs.end(),
+                           [&pathStr](const std::string& glob) { return ::fnmatch(glob.c_str(), pathStr.c_str(), 0) == 0; });
+    }
+
     // background-activity-spinner follow-up: same std::string materialization
     // of the shared constant LspClient.cpp's own copy makes.
     const std::string kLspActivity{kLspActivityName};
@@ -316,12 +334,19 @@ Json BuildInitializeParams(const std::filesystem::path& projectRoot, const Json&
           // create/rename/delete, not just edits to existing files) rather
           // than staying on the plain "changes" map some servers default to
           // for an undeclared client.
+          // rename-file-notifications follow-up: bare {} for both, same as
+          // every other capabilities-hygiene entry -- this client needs no
+          // dynamicRegistration, it just wants a server's own advertised
+          // willRename/didRename filters (FileOperationFiltersFor) so it
+          // knows which servers to fan RequestWillRenameFiles/
+          // NotifyFilesRenamed out to.
           {"workspace",
            {{"applyEdit", true},
             {"workspaceEdit", {{"documentChanges", true}}},
             {"configuration", true},
             {"didChangeConfiguration", Json::object()},
-            {"executeCommand", Json::object()}}},
+            {"executeCommand", Json::object()},
+            {"fileOperations", {{"willRename", Json::object()}, {"didRename", Json::object()}}}}},
           {"window", {{"workDoneProgress", true}}}}},
     };
     if (!initializationOptions.empty()) {
@@ -568,6 +593,9 @@ LspClient* LspManager::ClientForLanguage(const std::string& serverKey, const std
                 }
                 if (const auto syncKind = ExtractTextDocumentSyncKind(*result)) {
                     textDocumentSyncKind_[serverKey] = *syncKind;
+                }
+                if (const auto fileOpFilters = ExtractFileOperationFilters(*result)) {
+                    fileOperationFilters_[serverKey] = *fileOpFilters;
                 }
             }
             rawClient->SendNotification("initialized", Json::object());
@@ -960,6 +988,7 @@ void LspManager::ClientDisconnected(const std::string& serverKey, const std::str
     semanticTokensLegend_.erase(languageCopy);
     onTypeFormattingTriggers_.erase(languageCopy);
     textDocumentSyncKind_.erase(languageCopy);       // ditto -- a respawned server may advertise a different sync kind
+    fileOperationFilters_.erase(languageCopy);        // ditto -- a respawned server may advertise different willRename/didRename filters
     pullDiagnosticsUnsupported_.erase(languageCopy); // a respawned server gets one fresh attempt
     inlayHintsUnsupported_.erase(languageCopy);       // ditto
     codeLensUnsupported_.erase(languageCopy);         // ditto
@@ -2091,6 +2120,119 @@ void LspManager::RequestRename(text::Buffer& buffer, std::size_t byteOffset, con
                             resolved.hasEdit = !resolved.edits.empty() || !resolved.documentChangeOps.empty();
                             callback(std::move(resolved));
                         });
+}
+
+void LspManager::RequestWillRenameFiles(const std::vector<FileRenameEntry>& files, RenameCallback callback) {
+    std::vector<std::pair<std::string, LspClient*>> targets;
+    for (const auto& [serverKey, client] : clients_) {
+        const auto capsIt = fileOperationFilters_.find(serverKey);
+        if (capsIt == fileOperationFilters_.end() || capsIt->second.willRenameGlobs.empty()) {
+            continue;
+        }
+        const bool matchesAny = std::any_of(files.begin(), files.end(), [&](const FileRenameEntry& entry) {
+            return MatchesFileOperationGlob(entry.oldPath, capsIt->second.willRenameGlobs);
+        });
+        if (matchesAny) {
+            targets.emplace_back(serverKey, client.get());
+        }
+    }
+    if (targets.empty()) {
+        callback(std::nullopt);
+        return;
+    }
+
+    Json fileList = Json::array();
+    for (const FileRenameEntry& entry : files) {
+        fileList.push_back({{"oldUri", PathToUri(entry.oldPath)}, {"newUri", PathToUri(entry.newPath)}});
+    }
+    const Json params = {{"files", fileList}};
+
+    // Every matching server's response is resolved/merged into one shared
+    // ResolvedRename as it arrives; callback fires only once the last one
+    // in flight has answered (order-independent, since outstanding is a
+    // plain countdown). A response that fails to resolve (an unresolvable
+    // uri, an unsupported edit form) is dropped silently rather than
+    // failing every other server's already-good response -- unlike
+    // RequestRename's single-server refuse-wholesale contract, this is
+    // fundamentally a fan-out across independent servers, so one server's
+    // bad answer shouldn't cost every other server's good one.
+    struct PendingWillRename {
+        int            outstanding = 0;
+        ResolvedRename merged;
+        bool           anyEdit = false;
+    };
+    auto pending          = std::make_shared<PendingWillRename>();
+    pending->outstanding  = static_cast<int>(targets.size());
+    for (auto& [serverKey, client] : targets) {
+        client->SendRequest(
+            "workspace/willRenameFiles", params,
+            [this, serverKey, pending, callback](std::optional<Json> result, std::optional<Json> error) {
+                if (error) {
+                    LogError(serverKey, ExtractErrorMessage(*error));
+                }
+                else if (result && !result->is_null()) {
+                    const RenameResult parsed = ExtractRenameEdits(*result);
+                    if (!parsed.touchesUnsupportedForm) {
+                        std::vector<ResolvedRenameEdit> edits;
+                        bool                             ok = true;
+                        for (const RenameEdit& edit : parsed.edits) {
+                            const std::optional<std::filesystem::path> path = UriToPath(edit.uri);
+                            if (!path) {
+                                ok = false;
+                                break;
+                            }
+                            edits.push_back(ResolvedRenameEdit{.path = *path, .edits = edit.edits});
+                        }
+                        std::vector<ResolvedDocumentChangeOp> ops;
+                        if (ok && !parsed.documentChangeOps.empty()) {
+                            const std::optional<std::vector<ResolvedDocumentChangeOp>> resolvedOps =
+                                ResolveDocumentChangeOps(parsed.documentChangeOps);
+                            if (!resolvedOps) {
+                                ok = false;
+                            }
+                            else {
+                                ops = std::move(*resolvedOps);
+                            }
+                        }
+                        if (ok && (!edits.empty() || !ops.empty())) {
+                            pending->merged.edits.insert(pending->merged.edits.end(), std::make_move_iterator(edits.begin()),
+                                                         std::make_move_iterator(edits.end()));
+                            pending->merged.documentChangeOps.insert(pending->merged.documentChangeOps.end(),
+                                                                     std::make_move_iterator(ops.begin()), std::make_move_iterator(ops.end()));
+                            pending->anyEdit = true;
+                        }
+                    }
+                }
+                if (--pending->outstanding == 0) {
+                    if (!pending->anyEdit) {
+                        callback(std::nullopt);
+                        return;
+                    }
+                    pending->merged.hasEdit = true;
+                    callback(std::move(pending->merged));
+                }
+            });
+    }
+}
+
+void LspManager::NotifyFilesRenamed(const std::vector<FileRenameEntry>& files) {
+    Json fileList = Json::array();
+    for (const FileRenameEntry& entry : files) {
+        fileList.push_back({{"oldUri", PathToUri(entry.oldPath)}, {"newUri", PathToUri(entry.newPath)}});
+    }
+    const Json params = {{"files", fileList}};
+    for (const auto& [serverKey, client] : clients_) {
+        const auto capsIt = fileOperationFilters_.find(serverKey);
+        if (capsIt == fileOperationFilters_.end() || capsIt->second.didRenameGlobs.empty()) {
+            continue;
+        }
+        const bool matchesAny = std::any_of(files.begin(), files.end(), [&](const FileRenameEntry& entry) {
+            return MatchesFileOperationGlob(entry.newPath, capsIt->second.didRenameGlobs);
+        });
+        if (matchesAny) {
+            client->SendNotification("workspace/didRenameFiles", params);
+        }
+    }
 }
 
 std::optional<std::vector<LspManager::ResolvedRenameEdit>> LspManager::ResolveCodeActionEdits(const CodeAction& action) {
