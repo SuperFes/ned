@@ -6252,6 +6252,10 @@ void BufferView::PushJumpMark() {
     if (jumpBackStack_.size() > kMaxJumpBackStack) {
         jumpBackStack_.erase(jumpBackStack_.begin());
     }
+    // A fresh jump branches off the navigation history -- the old forward
+    // path is no longer reachable, same as a browser discarding forward
+    // history on a new navigation.
+    jumpForwardStack_.clear();
 }
 
 void BufferView::JumpBack() {
@@ -6259,6 +6263,13 @@ void BufferView::JumpBack() {
         const JumpMark mark = jumpBackStack_.back();
         jumpBackStack_.pop_back();
         if (text::Buffer* target = bufferList_.Find(mark.bufferName)) {
+            // Leave a trail for jump-forward to retrace -- pushed directly,
+            // not via PushJumpMark, since that would clear the very stack
+            // being populated here.
+            jumpForwardStack_.push_back(JumpMark{activeBuffer_.Get().Name(), activeBuffer_.Get().Point()});
+            if (jumpForwardStack_.size() > kMaxJumpBackStack) {
+                jumpForwardStack_.erase(jumpForwardStack_.begin());
+            }
             activeBuffer_.Set(*target);
             target->SetPoint(mark.byteOffset); // Buffer::SetPoint already clamps out-of-range offsets
             statusMessage_.clear();
@@ -6268,6 +6279,26 @@ void BufferView::JumpBack() {
         // buffer closed since the mark was pushed -- skip it, try the next one
     }
     statusMessage_ = "No more jump history.";
+}
+
+void BufferView::JumpForward() {
+    while (!jumpForwardStack_.empty()) {
+        const JumpMark mark = jumpForwardStack_.back();
+        jumpForwardStack_.pop_back();
+        if (text::Buffer* target = bufferList_.Find(mark.bufferName)) {
+            jumpBackStack_.push_back(JumpMark{activeBuffer_.Get().Name(), activeBuffer_.Get().Point()});
+            if (jumpBackStack_.size() > kMaxJumpBackStack) {
+                jumpBackStack_.erase(jumpBackStack_.begin());
+            }
+            activeBuffer_.Set(*target);
+            target->SetPoint(mark.byteOffset);
+            statusMessage_.clear();
+            ScrollToShowPoint();
+            return;
+        }
+        // buffer closed since the mark was pushed -- skip it, try the next one
+    }
+    statusMessage_ = "No further jump history.";
 }
 
 void BufferView::RequestDocumentSymbolsAtPoint() {
@@ -6962,6 +6993,9 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             return;
         case editor::InteractiveRequest::JumpBack:
             JumpBack();
+            return;
+        case editor::InteractiveRequest::JumpForward:
+            JumpForward();
             return;
         case editor::InteractiveRequest::LspRename:
             inputMode_ = InputMode::LspRenameNewName;

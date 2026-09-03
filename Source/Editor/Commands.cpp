@@ -2597,6 +2597,15 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           context.interactiveRequest = InteractiveRequest::JumpBack;
                       });
 
+    // jump-back-stack follow-up, forward direction: jump-back's redo --
+    // BufferView::JumpForward owns the actual pop/restore, retracing
+    // whatever jump-back most recently backed out of.
+    registry.Register("jump-forward",
+                      "Jump forward again after jump-back -- the redo direction of jump-back.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::JumpForward;
+                      });
+
     // task-runner follow-up: two more prompt-shaped one-shot requests, same
     // "just signal intent" shape as every InteractiveRequest-routed command
     // above -- BufferView::HandlePromptKey's InputMode::TaskName case is
@@ -3926,6 +3935,22 @@ Keymap BuildDefaultGlobalKeymap() {
     // the closest match, since this is a cross-buffer jump stack, not the
     // local-buffer mark-ring plain pop-mark/C-u C-SPC covers.
     keymap.Bind(ParseKeySequence("C-x C-SPC"), "jump-back");
+    // jump-back-stack follow-up, forward direction: no stock Emacs binding
+    // pairs with pop-global-mark (same gap noted at redo/M-/ above). Modern
+    // Emacs' own xref-go-back/xref-go-forward convention (M-,/C-M-,) was
+    // the first instinct, but C-M-, needs Ctrl+comma specifically, and
+    // comma has no C0 control-byte mapping at all -- the same
+    // real-terminal unreachability class already documented at C-x (/C-x )
+    // above, just for a different punctuation. Co-locating under the same
+    // C-x prefix as jump-back instead, on a plain Ctrl+letter suffix chord.
+    // C-x C-j (the obvious mnemonic) turned out to be a second unreachable
+    // chord, this time in this codebase's own vendored Notcurses, not a
+    // real terminal: found live, not assumed -- in.c's final-normalization
+    // pass (`/* ned patch: ... */`) collapses raw '\n' (Ctrl+J's own C0
+    // byte) into the exact same NCKEY_ENTER as a real Enter/Return press,
+    // same file, same block that already collapses '\r'. C-x C-n instead;
+    // 'n' isn't one of that block's collapsed bytes (0/DEL/BS/LF/CR/TAB).
+    keymap.Bind(ParseKeySequence("C-x C-n"), "jump-forward");
     keymap.Bind(ParseKeySequence("C-x r SPC"), "point-to-register");
     keymap.Bind(ParseKeySequence("C-x r j"), "jump-to-register");
     keymap.Bind(ParseKeySequence("C-x r s"), "copy-to-register");
