@@ -451,6 +451,15 @@ class WindowManager {
     // HandlePromptKey already offers, instead of just reporting a refusal.
     void RequestOpenBinaryFile(const std::filesystem::path& path);
 
+    // edit-application-gaps follow-up: same "route to whichever pane is
+    // currently focused" shape as RequestOpenBinaryFile just above -- wired
+    // to LspManager::SetApplyEditHandler (see SetLspManager below) so a
+    // server-pushed workspace/applyEdit request applies against the focused
+    // pane's own BufferView. Returns false (never applied) if no pane is
+    // focused anywhere, the honest "nowhere to route this" answer the
+    // spec's own {applied: bool} response expects.
+    [[nodiscard]] bool ApplyServerPushedWorkspaceEdit(const editor::lsp::LspManager::ResolvedRename& edit, const std::string& label);
+
     // VCS side panel: same "route to whichever pane is currently focused"
     // shape as RequestOpenBinaryFile just above -- wired to
     // VcsPanel::SetOnAction so a panel-triggered commit/branch-switch/

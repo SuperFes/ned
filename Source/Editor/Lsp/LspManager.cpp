@@ -308,7 +308,20 @@ Json BuildInitializeParams(const std::filesystem::path& projectRoot, const Json&
           // WireNotificationHandlers/ExecuteCommand) but this object
           // previously had no "workspace" key at all -- "configuration" is a
           // bare boolean per spec, unlike every textDocument.* entry above.
-          {"workspace", {{"configuration", true}, {"didChangeConfiguration", Json::object()}, {"executeCommand", Json::object()}}},
+          // edit-application-gaps follow-up: "applyEdit" advertises this
+          // client now handles a server-pushed workspace/applyEdit request
+          // (see WireNotificationHandlers' own handler for it);
+          // "workspaceEdit.documentChanges" tells a server it's safe to send
+          // the richer "documentChanges" WorkspaceEdit form (file
+          // create/rename/delete, not just edits to existing files) rather
+          // than staying on the plain "changes" map some servers default to
+          // for an undeclared client.
+          {"workspace",
+           {{"applyEdit", true},
+            {"workspaceEdit", {{"documentChanges", true}}},
+            {"configuration", true},
+            {"didChangeConfiguration", Json::object()},
+            {"executeCommand", Json::object()}}},
           {"window", {{"workDoneProgress", true}}}}},
     };
     if (!initializationOptions.empty()) {
@@ -365,6 +378,45 @@ void LspManager::WireNotificationHandlers(LspClient& client, const std::string& 
                                          : Json(nullptr));
         }
         return Json(results);
+    });
+    // edit-application-gaps follow-up: see SetApplyEditHandler's own doc
+    // comment. Per spec, "params.edit" is required and the response is
+    // always {applied: bool, failureReason?: string} -- never an error
+    // response, even on failure.
+    client.SetRequestHandler("workspace/applyEdit", [this](const Json& params) -> Json {
+        const auto editIt = params.find("edit");
+        if (editIt == params.end()) {
+            return Json{{"applied", false}, {"failureReason", "missing \"edit\""}};
+        }
+        const RenameResult parsed = ExtractRenameEdits(*editIt);
+        if (parsed.touchesUnsupportedForm) {
+            return Json{{"applied", false}, {"failureReason", "unsupported edit form"}};
+        }
+        ResolvedRename resolved;
+        for (const RenameEdit& edit : parsed.edits) {
+            const std::optional<std::filesystem::path> path = UriToPath(edit.uri);
+            if (!path) {
+                return Json{{"applied", false}, {"failureReason", "unresolvable uri"}};
+            }
+            resolved.edits.push_back(ResolvedRenameEdit{.path = *path, .edits = edit.edits});
+        }
+        if (!parsed.documentChangeOps.empty()) {
+            const std::optional<std::vector<ResolvedDocumentChangeOp>> resolvedOps =
+                ResolveDocumentChangeOps(parsed.documentChangeOps);
+            if (!resolvedOps) {
+                return Json{{"applied", false}, {"failureReason", "unresolvable uri"}};
+            }
+            resolved.documentChangeOps = std::move(*resolvedOps);
+        }
+        resolved.hasEdit = !resolved.edits.empty() || !resolved.documentChangeOps.empty();
+        if (!resolved.hasEdit) {
+            return Json{{"applied", false}, {"failureReason", "empty edit"}};
+        }
+        if (!applyEditHandler_) {
+            return Json{{"applied", false}, {"failureReason", "not supported"}};
+        }
+        const std::string label = params.value("label", std::string("workspace edit"));
+        return Json{{"applied", applyEditHandler_(resolved, label)}};
     });
     client.SetNotificationHandler("$/progress", [this, serverKey](const Json& params) { HandleProgress(serverKey, params); });
     client.SetOnDisconnected([this, serverKey, connectionKey](std::string reason) {
@@ -2027,7 +2079,16 @@ void LspManager::RequestRename(text::Buffer& buffer, std::size_t byteOffset, con
                                 }
                                 resolved.edits.push_back(ResolvedRenameEdit{.path = *path, .edits = edit.edits});
                             }
-                            resolved.hasEdit = !resolved.edits.empty();
+                            if (!parsed.documentChangeOps.empty()) {
+                                const std::optional<std::vector<ResolvedDocumentChangeOp>> resolvedOps =
+                                    ResolveDocumentChangeOps(parsed.documentChangeOps);
+                                if (!resolvedOps) {
+                                    callback(std::nullopt); // see ResolvedDocumentChangeOp's own doc comment -- same refuse-wholesale contract
+                                    return;
+                                }
+                                resolved.documentChangeOps = std::move(*resolvedOps);
+                            }
+                            resolved.hasEdit = !resolved.edits.empty() || !resolved.documentChangeOps.empty();
                             callback(std::move(resolved));
                         });
 }
@@ -2044,6 +2105,35 @@ std::optional<std::vector<LspManager::ResolvedRenameEdit>> LspManager::ResolveCo
             return std::nullopt; // see ResolvedRenameEdit's own doc comment -- refused wholesale, not partially
         }
         resolved.push_back(ResolvedRenameEdit{.path = *path, .edits = edit.edits});
+    }
+    return resolved;
+}
+
+std::optional<std::vector<LspManager::ResolvedDocumentChangeOp>>
+LspManager::ResolveDocumentChangeOps(const std::vector<DocumentChangeOp>& ops) {
+    std::vector<ResolvedDocumentChangeOp> resolved;
+    resolved.reserve(ops.size());
+    for (const DocumentChangeOp& op : ops) {
+        const std::optional<std::filesystem::path> path = UriToPath(op.uri);
+        if (!path) {
+            return std::nullopt; // refused wholesale -- see ResolvedDocumentChangeOp's own doc comment
+        }
+        ResolvedDocumentChangeOp resolvedOp{
+            .kind              = op.kind,
+            .path              = *path,
+            .edits             = op.edits,
+            .overwrite         = op.overwrite,
+            .ignoreIfExists    = op.ignoreIfExists,
+            .ignoreIfNotExists = op.ignoreIfNotExists,
+        };
+        if (op.kind == DocumentChangeOp::Kind::RenameFile) {
+            const std::optional<std::filesystem::path> oldPath = UriToPath(op.oldUri);
+            if (!oldPath) {
+                return std::nullopt;
+            }
+            resolvedOp.oldPath = *oldPath;
+        }
+        resolved.push_back(std::move(resolvedOp));
     }
     return resolved;
 }

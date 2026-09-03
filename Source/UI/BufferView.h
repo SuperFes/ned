@@ -470,6 +470,20 @@ class BufferView : public Widget {
     // progress -- same guard RequestCloseBuffer uses.
     void RequestOpenBinaryFile(const std::filesystem::path& path);
 
+    // edit-application-gaps follow-up: entry point for a server-pushed
+    // workspace/applyEdit request (LspManager::SetApplyEditHandler,
+    // WindowManager::ApplyServerPushedWorkspaceEdit) -- unlike ApplyRename/
+    // ApplyCodeAction, there's no particular buffer/point this originates
+    // from, so it's routed to whichever pane has focus, the same "no single
+    // owner, route to focus" shape RequestOpenBinaryFile/
+    // RequestTrustProjectInit already establish (see WindowManager.cpp).
+    // Shares ApplyRename's own all-or-nothing-open/refuse-on-
+    // touchesUnsupportedForm contract (both fold into the same private
+    // ApplyResolvedWorkspaceEdit helper) and returns whether it actually
+    // applied, which the caller reports back to the server as the spec's
+    // own {applied: bool} response.
+    [[nodiscard]] bool ApplyServerPushedWorkspaceEdit(const editor::lsp::LspManager::ResolvedRename& edit, const std::string& label);
+
     // session-persistence slice 3: asks the user whether to load a
     // project's own .ned/init.janet -- a y/n/a prompt in the
     // RequestOpenBinaryFile mold (deferred from startup to here because
@@ -1321,22 +1335,30 @@ class BufferView : public Widget {
     // guard shape once again, but resolves to a full ResolvedRename
     // (potentially many files) rather than a single buffer's edits.
     void RequestRenameAtPoint(const std::string& newName);
-    // Refuses (statusMessage_, no mutation anywhere) if
-    // result.touchesUnsupportedForm or it has no edit at all. Otherwise
-    // opens/finds every touched file first (BufferList::FindByPath, else
-    // BufferList::OpenFile) and bails out -- applying nothing -- the moment
-    // any one of them fails to open, so a rename either fully applies
-    // across every file or leaves every buffer untouched, never a partial
-    // rename across only some of the affected files. Once every buffer is
-    // confirmed open, hands every buffer's own edits to ApplyProjectEdit
-    // below, which applies each (the same resolve-LspPositions-against-
-    // current-content + descending-sort-by-start-byte + DeleteRange/InsertAt
-    // sequence ApplyCodeAction also uses) and records the whole set as one
-    // project-wide undo/redo transaction. Every affected buffer is left
-    // modified-but-unsaved, exactly like any other in-editor edit -- no
-    // auto-save-across-files behavior, matching this codebase's existing
-    // "saves are always user-initiated" convention.
+    // Thin wrapper over ApplyResolvedWorkspaceEdit below (statusMessage_-only
+    // reporting, no return value -- callers driven from a rename response
+    // don't need a bool the way the server-push path does).
     void ApplyRename(const editor::lsp::LspManager::ResolvedRename& result);
+
+    // edit-application-gaps follow-up: the shared tail ApplyRename,
+    // ApplyCodeAction, and ApplyServerPushedWorkspaceEdit all fold into.
+    // Refuses (statusMessage_, no mutation anywhere) if
+    // edit.touchesUnsupportedForm or it has no edit at all. Otherwise walks
+    // edit.edits ("changes" form) and edit.documentChangeOps
+    // ("documentChanges" form) IN ORDER: a CreateFile/RenameFile/DeleteFile
+    // op takes effect immediately (via BufferList::OpenOrCreateFile/
+    // Editor/ProjectFileOps.h, since a later EditFile op in the same
+    // sequence may target the file it just created or renamed), while every
+    // EditFile op's own edits are collected per-buffer alongside edit.edits
+    // and applied together at the end via ApplyProjectEdit -- one
+    // undo/project-undo transaction for the whole operation, resource ops
+    // included. Bails out -- applying nothing -- the moment any one step
+    // fails (an unresolvable/already-existing/missing target), reported via
+    // ReportError; returns whether anything was actually applied. Every
+    // affected buffer is left modified-but-unsaved like any other in-editor
+    // edit -- no auto-save-across-files behavior, matching this codebase's
+    // existing "saves are always user-initiated" convention.
+    bool ApplyResolvedWorkspaceEdit(const editor::lsp::LspManager::ResolvedRename& edit, std::string description);
 
     // project-undo follow-up: applies one WorkspaceTextEdit list per buffer
     // (via the file-local ApplyWorkspaceTextEdits helper, one undo group
