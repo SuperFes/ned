@@ -170,15 +170,16 @@ Notcurses.
   (a one-shot command that itself opens a new mode, e.g. `C-o A`) is "stay in the new
   mode, don't resume Insert," which is exactly what this codebase's existing defensive
   `oneShotNormalPending_` clear already does.
-- [ ] **DAP gaps**: attach mode; remapping a breakpoint to the adapter's snapped line
-      (only verified/dimming is tracked today); hit-count/`hitCondition` breakpoints;
-      cross-restart persistence of conditions/logMessage/watches/thread focus (session
-      storage deliberately stayed the old line-only shape); debug console has no
-      scrollback/search/history-recall; no exception breakpoints
-      (`setExceptionBreakpoints`/`exceptionInfo` — can't break on throw/uncaught); no
-      function or data breakpoints; no `restartFrame`; no disassembly/memory view; every
-      stop sends `disconnect`+`terminateDebuggee:true` rather than distinguishing a real
-      `terminate` from a detach, which some adapters expect (2026-08-25 audit).
+- Attach mode, hit-count/`hitCondition` breakpoints, function breakpoints, exception
+  breakpoints (`setExceptionBreakpoints`, filters seeded from the adapter's advertised
+  defaults), and `terminateDebuggee` now distinguishing attach (false) from launch (true)
+  closed 2026-09-03 — see `git log --grep=dap-round-3`. Data breakpoints stayed out
+  (tied to a live variable rather than a source line, no natural entry point yet).
+- [ ] **DAP gaps, remainder**: remapping a breakpoint to the adapter's snapped line (only
+      verified/dimming is tracked today); cross-restart persistence of conditions/
+      logMessage/watches/thread focus (session storage deliberately stayed the old
+      line-only shape); debug console has no scrollback/search/history-recall; no
+      `restartFrame`; no disassembly/memory view (2026-08-25 audit, updated 2026-09-03).
 - [ ] **No server/daemon mode** — no `emacsclient`-equivalent; one process per terminal,
       no way to keep a warm process (buffers, LSP connections, undo history) alive and
       attach a new terminal client to it.

@@ -2729,6 +2729,29 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
         context.interactiveRequest = InteractiveRequest::DapToggleConsole;
     });
 
+    // DAP round 3: hit-count/function/exception breakpoints (SetBreakpointCondition's own
+    // pattern extended to two more DAP breakpoint kinds) and attach mode (StartOrContinue's
+    // own launch path, sibling entry point) -- M-x only, same policy as DAP round 2 above.
+    registry.Register("dap-set-breakpoint-hit-condition",
+                      "Set or clear a hit-count condition on the breakpoint at the current line "
+                      "(e.g. \"> 5\" -- only stops once satisfied).",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::DapSetBreakpointHitCondition;
+                      });
+    registry.Register("dap-toggle-function-breakpoint", "Toggle a breakpoint on a named function, by prompted name.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::DapToggleFunctionBreakpoint;
+                      });
+    registry.Register("dap-select-exception-breakpoints",
+                      "Toggle which of the adapter's advertised exception filters halt the debuggee.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::DapSelectExceptionBreakpoints;
+                      });
+    registry.Register("dap-attach", "Attach a debug session to a running process for the active language (ned/set-dap-attach).",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::DapAttach;
+                      });
+
     // ACP client slice 2: same "just set interactiveRequest" shape as
     // run-task/dap-continue above -- BufferView holds the shared AcpManager
     // and does the actual work (see Editor/Acp/AcpManager.h). Agent and

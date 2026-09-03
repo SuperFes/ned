@@ -2912,11 +2912,13 @@ void BufferView::Paint(Canvas paneCanvas) {
                 // execution arrow where the debuggee is stopped (winning
                 // over a breakpoint marker on the same line: "you are
                 // here" beats "you asked to stop here"), else a glyph by
-                // breakpoint kind (plain/conditional/logpoint) colored by
-                // verified state. Same plain-single-width-Unicode
+                // breakpoint kind (plain/conditional/hit-count/logpoint)
+                // colored by verified state. Same plain-single-width-Unicode
                 // discipline as the diagnostic glyphs (▸ is the sidebar's
-                // own proven disclosure triangle; ●/◆/○ are from the same
-                // geometric-shapes range as the scroll arrows).
+                // own proven disclosure triangle; ●/◆/◇/○ are from the same
+                // geometric-shapes range as the scroll arrows -- DAP round 3
+                // adds ◇, the open-diamond hit-count sibling of ◆'s filled
+                // condition glyph).
                 if (dapColumnWidth > 0) {
                     Cell& cell = c[{.x = 0, .y = row}];
                     if (currentLineIsExecutionLine) {
@@ -2928,7 +2930,10 @@ void BufferView::Paint(Canvas paneCanvas) {
                             dapBreakpoints.begin(), dapBreakpoints.end(), line + 1,
                             [](const editor::dap::DapManager::Breakpoint& bp, std::size_t targetLine) { return bp.line < targetLine; });
                         if (bpIt != dapBreakpoints.end() && bpIt->line == line + 1) {
-                            cell.character   = !bpIt->logMessage.empty() ? "○" : (!bpIt->condition.empty() ? "◆" : "●");
+                            cell.character    = !bpIt->logMessage.empty()     ? "○"
+                                                : !bpIt->condition.empty()    ? "◆"
+                                                : !bpIt->hitCondition.empty() ? "◇"
+                                                                              : "●";
                             const Color color = bpIt->verified ? theme_.breakpointMarker : theme_.unverifiedBreakpointMarker;
                             Brush{.background = theme_.background, .foreground = color}.ApplyTo(cell);
                         }
@@ -4137,9 +4142,11 @@ bool BufferView::OnKeyEvent(const Event& event) {
         inputMode_ == InputMode::VcsCreateBranch || inputMode_ == InputMode::DeleteProperty ||
         inputMode_ == InputMode::OrgSchedule || inputMode_ == InputMode::OrgDeadline ||
         // DAP round 2: same dispatch-gap fix as DapEvaluate above -- these
-        // four are HandlePromptKey-routed plain-text prompts too.
+        // four are HandlePromptKey-routed plain-text prompts too. DAP round
+        // 3 adds two more of the same shape.
         inputMode_ == InputMode::DapBreakpointCondition || inputMode_ == InputMode::DapBreakpointLogMessage ||
         inputMode_ == InputMode::DapAddWatch || inputMode_ == InputMode::DapSetVariableValue ||
+        inputMode_ == InputMode::DapBreakpointHitCondition || inputMode_ == InputMode::DapFunctionBreakpointName ||
         // editor-ergonomics follow-up: BookmarkSetName is a plain-text
         // prompt too, TaskName/GotoLine's own shape.
         inputMode_ == InputMode::BookmarkSetName ||
@@ -4249,6 +4256,11 @@ bool BufferView::OnKeyEvent(const Event& event) {
     }
     if (inputMode_ == InputMode::DapThreadSelect) {
         HandleDapThreadSelectKey(*chord);
+        ClampPointToNarrowing();
+        return true;
+    }
+    if (inputMode_ == InputMode::DapExceptionFilterSelect) {
+        HandleDapExceptionFilterSelectKey(*chord);
         ClampPointToNarrowing();
         return true;
     }
@@ -7242,6 +7254,9 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         case editor::InteractiveRequest::DapContinue:
             statusMessage_ = dapManager_ ? dapManager_->StartOrContinue(editor::LanguageKeyForMode(mode_)) : "No debugger available.";
             return;
+        case editor::InteractiveRequest::DapAttach:
+            statusMessage_ = dapManager_ ? dapManager_->Attach(editor::LanguageKeyForMode(mode_)) : "No debugger available.";
+            return;
         case editor::InteractiveRequest::DapStop:
             statusMessage_ = dapManager_ ? dapManager_->StopSession() : "No debugger available.";
             return;
@@ -7305,10 +7320,11 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         // DAP round 2: SetBreakpointCondition/LogMessage capture point's own
         // line (dap-toggle-breakpoint's own convention) into
         // pendingDapBreakpointTarget_ before entering their prompt --
-        // HandlePromptKey's DapBreakpointCondition/DapBreakpointLogMessage
-        // branches consume it on Enter.
+        // HandlePromptKey's DapBreakpointCondition/DapBreakpointLogMessage/
+        // DapBreakpointHitCondition (round 3) branches consume it on Enter.
         case editor::InteractiveRequest::DapSetBreakpointCondition:
-        case editor::InteractiveRequest::DapSetBreakpointLogMessage: {
+        case editor::InteractiveRequest::DapSetBreakpointLogMessage:
+        case editor::InteractiveRequest::DapSetBreakpointHitCondition: {
             if (!dapManager_) {
                 statusMessage_ = "No debugger available.";
                 return;
@@ -7320,12 +7336,40 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             }
             const std::size_t line = buffer.Content().ByteOffsetToLine(buffer.Point()) + 1;
             pendingDapBreakpointTarget_ = PendingDapBreakpointTarget{.path = *buffer.Path(), .line = line};
-            const bool isCondition      = request == editor::InteractiveRequest::DapSetBreakpointCondition;
-            inputMode_                  = isCondition ? InputMode::DapBreakpointCondition : InputMode::DapBreakpointLogMessage;
-            prompt_.emplace(isCondition ? "Condition (empty to clear): " : "Log message (empty to clear): ");
+            switch (request) {
+                case editor::InteractiveRequest::DapSetBreakpointCondition:
+                    inputMode_ = InputMode::DapBreakpointCondition;
+                    prompt_.emplace("Condition (empty to clear): ");
+                    break;
+                case editor::InteractiveRequest::DapSetBreakpointLogMessage:
+                    inputMode_ = InputMode::DapBreakpointLogMessage;
+                    prompt_.emplace("Log message (empty to clear): ");
+                    break;
+                default: // DapSetBreakpointHitCondition
+                    inputMode_ = InputMode::DapBreakpointHitCondition;
+                    prompt_.emplace("Hit condition (empty to clear): ");
+                    break;
+            }
             statusMessage_ = prompt_->StatusText();
             return;
         }
+        case editor::InteractiveRequest::DapToggleFunctionBreakpoint:
+            if (!dapManager_) {
+                statusMessage_ = "No debugger available.";
+                return;
+            }
+            inputMode_ = InputMode::DapFunctionBreakpointName;
+            prompt_.emplace("Function breakpoint name: ");
+            statusMessage_ = prompt_->StatusText();
+            return;
+        case editor::InteractiveRequest::DapSelectExceptionBreakpoints:
+            if (!dapManager_) {
+                statusMessage_ = "No debugger available.";
+            }
+            else {
+                BeginDapExceptionFilterSelect();
+            }
+            return;
         case editor::InteractiveRequest::DapAddWatch:
             if (!dapManager_) {
                 statusMessage_ = "No debugger available.";
@@ -8307,6 +8351,10 @@ std::string_view BufferView::HistoryKeyForInputMode(InputMode mode) {
             return "dap-add-watch";
         case InputMode::DapSetVariableValue:
             return "dap-set-variable";
+        case InputMode::DapBreakpointHitCondition:
+            return "dap-breakpoint-hit-condition";
+        case InputMode::DapFunctionBreakpointName:
+            return "dap-function-breakpoint-name";
         case InputMode::VcsCreateBranch:
             return "vcs-create-branch";
         case InputMode::AcpPromptText:
@@ -8596,7 +8644,8 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
                 });
             }
         }
-        else if (inputMode_ == InputMode::DapBreakpointCondition || inputMode_ == InputMode::DapBreakpointLogMessage) {
+        else if (inputMode_ == InputMode::DapBreakpointCondition || inputMode_ == InputMode::DapBreakpointLogMessage ||
+                 inputMode_ == InputMode::DapBreakpointHitCondition) {
             // Empty input is meaningful here (clears the field), unlike
             // DapEvaluate above -- no early-return on it.
             if (!dapManager_ || !pendingDapBreakpointTarget_) {
@@ -8605,10 +8654,25 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
             else if (inputMode_ == InputMode::DapBreakpointCondition) {
                 statusMessage_ = dapManager_->SetBreakpointCondition(pendingDapBreakpointTarget_->path, pendingDapBreakpointTarget_->line, input);
             }
-            else {
+            else if (inputMode_ == InputMode::DapBreakpointLogMessage) {
                 statusMessage_ = dapManager_->SetBreakpointLogMessage(pendingDapBreakpointTarget_->path, pendingDapBreakpointTarget_->line, input);
             }
+            else {
+                statusMessage_ = dapManager_->SetBreakpointHitCondition(pendingDapBreakpointTarget_->path, pendingDapBreakpointTarget_->line, input);
+            }
             pendingDapBreakpointTarget_.reset();
+        }
+        else if (inputMode_ == InputMode::DapFunctionBreakpointName) {
+            if (input.empty()) {
+                statusMessage_ = "No function name given.";
+            }
+            else if (!dapManager_) {
+                statusMessage_ = "No debugger available.";
+            }
+            else {
+                const bool nowSet = dapManager_->ToggleFunctionBreakpoint(input);
+                statusMessage_    = (nowSet ? "Function breakpoint added: " : "Function breakpoint removed: ") + input;
+            }
         }
         else if (inputMode_ == InputMode::DapAddWatch) {
             if (input.empty()) {
@@ -8826,6 +8890,13 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
                 label = "Set variable";
                 pendingDapSetVariable_.reset();
                 break;
+            case InputMode::DapBreakpointHitCondition:
+                label = "Breakpoint hit condition";
+                pendingDapBreakpointTarget_.reset();
+                break;
+            case InputMode::DapFunctionBreakpointName:
+                label = "Function breakpoint name";
+                break;
             case InputMode::VcsCreateBranch:
                 label = "Create branch";
                 break;
@@ -8891,6 +8962,7 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
         inputMode_ != InputMode::OrgSchedule && inputMode_ != InputMode::OrgDeadline &&
         inputMode_ != InputMode::DapBreakpointCondition && inputMode_ != InputMode::DapBreakpointLogMessage &&
         inputMode_ != InputMode::DapAddWatch && inputMode_ != InputMode::DapSetVariableValue &&
+        inputMode_ != InputMode::DapBreakpointHitCondition && inputMode_ != InputMode::DapFunctionBreakpointName &&
         inputMode_ != InputMode::GotoLine &&
         // dropdown-path-completion follow-up: Tab is fully handled by the
         // dedicated block above for these three (accept-highlighted, never
@@ -10503,6 +10575,84 @@ void BufferView::HandleDapThreadSelectKey(const editor::KeyChord& chord) {
         statusMessage_ = success ? ("Selected thread: " + name) : "Failed to select thread.";
     });
     EndInteractiveSession();
+}
+
+// DAP round 3: BeginDapThreadSelect's own shape, but a live/local toggle set
+// (pendingDapEnabledExceptionFilters_) rather than a single pick -- nothing
+// reaches the adapter until Enter commits it via
+// DapManager::SetExceptionBreakpointFilters.
+void BufferView::BeginDapExceptionFilterSelect() {
+    const std::vector<editor::dap::DapManager::ExceptionFilter>& filters = dapManager_->AvailableExceptionFilters();
+    if (filters.empty()) {
+        statusMessage_ = "No exception breakpoint filters available (no session, or the adapter doesn't advertise any).";
+        return;
+    }
+    pendingDapExceptionFilters_        = filters;
+    pendingDapEnabledExceptionFilters_ = dapManager_->EnabledExceptionFilters();
+    dapExceptionFilterSelection_       = 0;
+    inputMode_                         = InputMode::DapExceptionFilterSelect;
+    RefreshDapExceptionFilterStatus();
+}
+
+void BufferView::RefreshDapExceptionFilterStatus() {
+    std::string status = "Exception breakpoints (space/digit toggle, enter apply): ";
+    for (std::size_t i = 0; i < pendingDapExceptionFilters_.size(); ++i) {
+        if (i > 0) {
+            status += "  ";
+        }
+        const editor::dap::DapManager::ExceptionFilter& filter   = pendingDapExceptionFilters_[i];
+        const bool                                      checked  = pendingDapEnabledExceptionFilters_.contains(filter.id);
+        const bool                                      selected = (i == dapExceptionFilterSelection_);
+        status += (selected ? "[" : "") + std::string(checked ? "✓" : " ") + std::to_string(i + 1) + ") " + filter.label +
+                  (selected ? "]" : "");
+    }
+    statusMessage_ = status;
+}
+
+void BufferView::HandleDapExceptionFilterSelectKey(const editor::KeyChord& chord) {
+    if (IsQuit(chord)) {
+        statusMessage_ = "Exception breakpoint selection cancelled.";
+        EndInteractiveSession();
+        return;
+    }
+    if (chord.Special == editor::SpecialKey::Down) {
+        dapExceptionFilterSelection_ = (dapExceptionFilterSelection_ + 1) % pendingDapExceptionFilters_.size();
+        RefreshDapExceptionFilterStatus();
+        return;
+    }
+    if (chord.Special == editor::SpecialKey::Up) {
+        dapExceptionFilterSelection_ =
+            (dapExceptionFilterSelection_ + pendingDapExceptionFilters_.size() - 1) % pendingDapExceptionFilters_.size();
+        RefreshDapExceptionFilterStatus();
+        return;
+    }
+    if (chord.Special == editor::SpecialKey::Enter) {
+        dapManager_->SetExceptionBreakpointFilters(pendingDapEnabledExceptionFilters_);
+        statusMessage_ =
+            "Exception breakpoints: " + std::to_string(pendingDapEnabledExceptionFilters_.size()) + " enabled.";
+        EndInteractiveSession();
+        return;
+    }
+    std::optional<std::size_t> toggled;
+    if (IsPlainCharacter(chord) && chord.Codepoint == U' ') {
+        toggled = dapExceptionFilterSelection_;
+    }
+    else if (IsPlainCharacter(chord) && chord.Codepoint >= U'1' && chord.Codepoint <= U'9') {
+        const std::size_t index = static_cast<std::size_t>(chord.Codepoint - U'1');
+        if (index >= pendingDapExceptionFilters_.size()) {
+            return; // out of range -- stay in the selection list
+        }
+        dapExceptionFilterSelection_ = index;
+        toggled                      = index;
+    }
+    else {
+        return; // anything else is ignored -- stay in the selection list
+    }
+    const std::string& id = pendingDapExceptionFilters_[*toggled].id;
+    if (!pendingDapEnabledExceptionFilters_.insert(id).second) {
+        pendingDapEnabledExceptionFilters_.erase(id); // was already enabled -- insert reported no-op, so toggle off
+    }
+    RefreshDapExceptionFilterStatus();
 }
 
 void BufferView::HandleProjectReplaceKey(const editor::KeyChord& chord) {

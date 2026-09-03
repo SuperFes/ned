@@ -6,8 +6,10 @@
 #include "Editor/Dap/DapConfig.h"
 
 using ned::editor::dap::DapAdapterCommand;
+using ned::editor::dap::DapAttachConfig;
 using ned::editor::dap::DapLaunchConfig;
 using ned::editor::dap::SetDapAdapterCommand;
+using ned::editor::dap::SetDapAttachConfig;
 using ned::editor::dap::SetDapLaunchConfig;
 
 // DapConfig is process-wide state (mutex-guarded statics, same as
@@ -38,4 +40,16 @@ TEST_CASE("SetDapLaunchConfig stores and clears the launch JSON verbatim", "[Dap
 
     SetDapLaunchConfig("dap-config-test-launch", ""); // empty clears
     REQUIRE_FALSE(DapLaunchConfig("dap-config-test-launch").has_value());
+}
+
+// DAP round 3: SetDapLaunchConfig's exact sibling.
+TEST_CASE("SetDapAttachConfig stores and clears the attach JSON verbatim", "[Dap]") {
+    const std::string json = R"({"processId": 1234})";
+    SetDapAttachConfig("dap-config-test-attach", json);
+    const auto stored = DapAttachConfig("dap-config-test-attach");
+    REQUIRE(stored.has_value());
+    REQUIRE(*stored == json); // verbatim -- not parsed/normalized here
+
+    SetDapAttachConfig("dap-config-test-attach", ""); // empty clears
+    REQUIRE_FALSE(DapAttachConfig("dap-config-test-attach").has_value());
 }

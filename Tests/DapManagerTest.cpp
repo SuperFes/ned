@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -16,6 +17,7 @@
 using ned::editor::dap::DapClient;
 using ned::editor::dap::DapManager;
 using ned::editor::dap::Json;
+using ned::editor::dap::SetDapAttachConfig;
 using ned::editor::dap::SetDapLaunchConfig;
 using ned::editor::lsp::Transport;
 
@@ -118,6 +120,23 @@ struct ManagerFixture {
         REQUIRE(manager.State() == DapManager::SessionState::Running);
     }
 
+    // DAP round 3: StartRunningSession's own shape, but through
+    // DapManager::Attach -- an "attach" request instead of "launch".
+    void StartAttachedSession(const std::string& language) {
+        SetDapAttachConfig(language, R"({"processId": 4242})");
+        REQUIRE(manager.Attach(language) == "Starting debug session (" + language + ")...");
+
+        const Json initialize = reader.Next();
+        REQUIRE(initialize["command"] == "initialize");
+        client->DispatchFrame(ResponseFrame(initialize["seq"].get<int>(), "initialize", true));
+
+        const Json attach = reader.Next();
+        REQUIRE(attach["command"] == "attach");
+        REQUIRE(attach["arguments"]["processId"] == 4242);
+        client->DispatchFrame(ResponseFrame(attach["seq"].get<int>(), "attach", true));
+        REQUIRE(manager.State() == DapManager::SessionState::Running);
+    }
+
     ~ManagerFixture() {
         if (adapterStdoutWrite >= 0) {
             ::close(adapterStdoutWrite);
@@ -180,6 +199,16 @@ TEST_CASE("The initialized event pushes configured breakpoints then configuratio
     REQUIRE(setBreakpoints["arguments"]["source"]["path"].get<std::string>().ends_with("dap-test-main.c"));
     REQUIRE(setBreakpoints["arguments"]["breakpoints"] ==
             Json::array({Json{{"line", 2}}, Json{{"line", 7}}})); // sorted
+
+    // DAP round 3: setFunctionBreakpoints/setExceptionBreakpoints go out
+    // next, empty here (nothing registered), before configurationDone.
+    const Json setFunctionBreakpoints = fixture.reader.Next();
+    REQUIRE(setFunctionBreakpoints["command"] == "setFunctionBreakpoints");
+    REQUIRE(setFunctionBreakpoints["arguments"]["breakpoints"] == Json::array());
+
+    const Json setExceptionBreakpoints = fixture.reader.Next();
+    REQUIRE(setExceptionBreakpoints["command"] == "setExceptionBreakpoints");
+    REQUIRE(setExceptionBreakpoints["arguments"]["filters"] == Json::array());
 
     const Json configurationDone = fixture.reader.Next();
     REQUIRE(configurationDone["command"] == "configurationDone");
@@ -595,4 +624,136 @@ TEST_CASE("SetVariable sends variablesReference/name/value and parses the result
     REQUIRE_FALSE(failure.success);
     REQUIRE(failure.errorMessage == "no such variable");
     SetDapLaunchConfig("dap-manager-test-set-variable", "");
+}
+
+// DAP round 3 below.
+
+TEST_CASE("SetBreakpointHitCondition create-or-updates and sends hitCondition, capability-gated warning", "[Dap]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartRunningSession("dap-manager-test-hit-condition");
+
+    const std::filesystem::path path   = std::filesystem::current_path() / "dap-test-hit-condition.c";
+    const std::string           status = fixture.manager.SetBreakpointHitCondition(path, 9, "> 5");
+    REQUIRE(status.starts_with("Hit condition set at dap-test-hit-condition.c:9"));
+    // No capability parsed yet in this fixture -- warns, same as
+    // SetBreakpointCondition's own default-false behavior.
+    REQUIRE(status.find("did not advertise hit-conditional-breakpoint") != std::string::npos);
+
+    const Json setBreakpoints = fixture.reader.Next();
+    REQUIRE(setBreakpoints["command"] == "setBreakpoints");
+    REQUIRE(setBreakpoints["arguments"]["breakpoints"] == Json::array({Json{{"line", 9}, {"hitCondition", "> 5"}}}));
+
+    const auto breakpoints = fixture.manager.BreakpointsForKey(DapManager::NormalizePathKey(path));
+    REQUIRE(breakpoints.size() == 1);
+    REQUIRE(breakpoints[0].hitCondition == "> 5");
+
+    const std::string cleared = fixture.manager.SetBreakpointHitCondition(path, 9, "");
+    REQUIRE(cleared.starts_with("Hit condition cleared"));
+    const Json afterClear = fixture.reader.Next();
+    REQUIRE(afterClear["arguments"]["breakpoints"] == Json::array({Json{{"line", 9}}}));
+    SetDapLaunchConfig("dap-manager-test-hit-condition", "");
+}
+
+TEST_CASE("ToggleFunctionBreakpoint adds/removes and pushes setFunctionBreakpoints immediately", "[Dap]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartRunningSession("dap-manager-test-function-breakpoint");
+
+    REQUIRE(fixture.manager.FunctionBreakpoints().empty());
+    REQUIRE(fixture.manager.ToggleFunctionBreakpoint("main"));
+    REQUIRE(fixture.manager.FunctionBreakpoints() == std::vector<std::string>{"main"});
+
+    const Json added = fixture.reader.Next();
+    REQUIRE(added["command"] == "setFunctionBreakpoints");
+    REQUIRE(added["arguments"]["breakpoints"] == Json::array({Json{{"name", "main"}}}));
+
+    REQUIRE_FALSE(fixture.manager.ToggleFunctionBreakpoint("main")); // now removed
+    REQUIRE(fixture.manager.FunctionBreakpoints().empty());
+    const Json removed = fixture.reader.Next();
+    REQUIRE(removed["command"] == "setFunctionBreakpoints");
+    REQUIRE(removed["arguments"]["breakpoints"] == Json::array());
+    SetDapLaunchConfig("dap-manager-test-function-breakpoint", "");
+}
+
+TEST_CASE("Exception breakpoint filters seed from initialize defaults and SetExceptionBreakpointFilters pushes live",
+          "[Dap]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    SetDapLaunchConfig("dap-manager-test-exception-filters", R"({"program": "./fake"})");
+    fixture.manager.StartOrContinue("dap-manager-test-exception-filters");
+    const Json initialize = fixture.reader.Next();
+    fixture.client->DispatchFrame(ResponseFrame(
+        initialize["seq"].get<int>(), "initialize", true,
+        Json{{"exceptionBreakpointFilters", Json::array({Json{{"filter", "raised"}, {"label", "Raised"}, {"default", true}},
+                                                         Json{{"filter", "uncaught"}, {"label", "Uncaught"}, {"default", false}}})}}));
+    const Json launch = fixture.reader.Next();
+    REQUIRE(launch["command"] == "launch");
+    fixture.client->DispatchFrame(ResponseFrame(launch["seq"].get<int>(), "launch", true));
+
+    REQUIRE(fixture.manager.AvailableExceptionFilters().size() == 2);
+    REQUIRE(fixture.manager.EnabledExceptionFilters() == std::set<std::string>{"raised"}); // only the default-true one
+
+    fixture.manager.SetExceptionBreakpointFilters({"raised", "uncaught"});
+    const Json setExceptionBreakpoints = fixture.reader.Next();
+    REQUIRE(setExceptionBreakpoints["command"] == "setExceptionBreakpoints");
+    const std::set<std::string> sentIds(setExceptionBreakpoints["arguments"]["filters"].begin(),
+                                        setExceptionBreakpoints["arguments"]["filters"].end());
+    REQUIRE(sentIds == std::set<std::string>{"raised", "uncaught"});
+    SetDapLaunchConfig("dap-manager-test-exception-filters", "");
+}
+
+TEST_CASE("StartOrContinue parses hit-conditional/function-breakpoint capabilities from the initialize response", "[Dap]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    SetDapLaunchConfig("dap-manager-test-caps-round3", R"({"program": "./fake"})");
+    fixture.manager.StartOrContinue("dap-manager-test-caps-round3");
+    const Json initialize = fixture.reader.Next();
+    fixture.client->DispatchFrame(ResponseFrame(initialize["seq"].get<int>(), "initialize", true,
+                                                Json{{"supportsHitConditionalBreakpoints", true}, {"supportsFunctionBreakpoints", false}}));
+    fixture.reader.Next(); // launch
+
+    const std::filesystem::path path = std::filesystem::current_path() / "dap-test-caps-round3.c";
+    REQUIRE(fixture.manager.SetBreakpointHitCondition(path, 1, "> 1").find("did not advertise") == std::string::npos);
+    SetDapLaunchConfig("dap-manager-test-caps-round3", "");
+}
+
+TEST_CASE("Attach refuses without an attach configuration", "[Dap]") {
+    ned::ui::EventLoop eventLoop;
+    DapManager         manager(eventLoop);
+
+    const std::string status = manager.Attach("dap-manager-test-unconfigured-attach");
+    REQUIRE(status == "No attach configuration for dap-manager-test-unconfigured-attach (ned/set-dap-attach).");
+}
+
+TEST_CASE("Attach sends an attach request (not launch) and StopSession never terminates the debuggee", "[Dap]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartAttachedSession("dap-manager-test-attach");
+
+    std::string endedReason;
+    fixture.manager.SetOnSessionEnded([&](std::string reason) { endedReason = std::move(reason); });
+    ::close(fixture.adapterStdoutWrite); // see "StopSession sends a disconnect..." for why
+    fixture.adapterStdoutWrite = -1;
+
+    REQUIRE(fixture.manager.StopSession() == "Debug session stopped.");
+    REQUIRE(endedReason == "Debug session stopped.");
+    const Json disconnect = fixture.reader.Next();
+    REQUIRE(disconnect["command"] == "disconnect");
+    REQUIRE(disconnect["arguments"]["terminateDebuggee"] == false); // attach never kills a process ned didn't start
+    SetDapAttachConfig("dap-manager-test-attach", "");
+}
+
+TEST_CASE("A launched session's StopSession still terminates the debuggee", "[Dap]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartRunningSession("dap-manager-test-launch-terminate");
+
+    ::close(fixture.adapterStdoutWrite);
+    fixture.adapterStdoutWrite = -1;
+
+    fixture.manager.StopSession();
+    const Json disconnect = fixture.reader.Next();
+    REQUIRE(disconnect["arguments"]["terminateDebuggee"] == true);
+    SetDapLaunchConfig("dap-manager-test-launch-terminate", "");
 }
