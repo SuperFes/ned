@@ -42,6 +42,15 @@ namespace ned::ui {
 // tuning it for the ghost-text look would over-fade those too.
 [[nodiscard]] std::string GhostForEchoArea(std::string_view text);
 
+// partial-match-highlighting follow-up: another separate sentinel pair
+// (isearch's failing-suffix styling -- the part of the query past
+// MatchedPrefixLength() that has no match anywhere) -- foreground set to
+// Theme::diagnosticError, the same color the gutter already uses for an
+// LSP error, so "this doesn't match" reads with the same visual weight as
+// any other error in the editor rather than inventing a second color for
+// the same meaning.
+[[nodiscard]] std::string ErrorForEchoArea(std::string_view text);
+
 class EchoArea : public Widget {
   public:
     // theme must outlive this EchoArea (same requirement as message).

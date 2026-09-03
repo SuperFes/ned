@@ -87,6 +87,23 @@ TEST_CASE("EchoArea::Paint renders a dimmed span with a blended foreground and s
     REQUIRE(screen.PixelAt(11, 0).foreground_color == theme.echoArea.foreground); // 'a' of "after" -- back to normal
 }
 
+TEST_CASE("EchoArea::Paint renders an error span in the diagnostic-error color and strips its sentinel bytes",
+          "[EchoArea]") {
+    const std::string message = "before " + ned::ui::ErrorForEchoArea("BAD") + " after";
+    ned::ui::Theme    theme   = ned::ui::DarkTheme();
+    ned::ui::EchoArea echoArea(message, theme);
+
+    ned::ui::Screen screen(30, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 29, .y_min = 0, .y_max = 0});
+    echoArea.Paint(canvas);
+
+    REQUIRE(RowText(screen, 0, 16) == "before BAD after");
+    REQUIRE(screen.PixelAt(0, 0).foreground_color == theme.echoArea.foreground); // 'b' -- untouched
+    REQUIRE(screen.PixelAt(7, 0).foreground_color == theme.diagnosticError);     // 'B' of "BAD"
+    REQUIRE(screen.PixelAt(9, 0).foreground_color == theme.diagnosticError);     // 'D' of "BAD"
+    REQUIRE(screen.PixelAt(11, 0).foreground_color == theme.echoArea.foreground); // 'a' of "after" -- back to normal
+}
+
 TEST_CASE("EchoArea::Paint renders a ghosted span italic, more faded than a dimmed span, and strips its sentinel bytes",
           "[EchoArea]") {
     const std::string message = "before " + ned::ui::DimForEchoArea("DIM") + " " + ned::ui::GhostForEchoArea("GHOST") +

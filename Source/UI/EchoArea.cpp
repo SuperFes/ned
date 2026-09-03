@@ -18,6 +18,10 @@ namespace {
     constexpr char kDimEnd        = '\x04';
     constexpr char kGhostStart    = '\x05';
     constexpr char kGhostEnd      = '\x06';
+    // partial-match-highlighting follow-up: next free pair in the same
+    // never-legitimately-present-in-a-status-message C0 range above.
+    constexpr char kErrorStart = '\x07';
+    constexpr char kErrorEnd   = '\x08';
 
 } // namespace
 
@@ -31,6 +35,10 @@ std::string DimForEchoArea(std::string_view text) {
 
 std::string GhostForEchoArea(std::string_view text) {
     return kGhostStart + std::string(text) + kGhostEnd;
+}
+
+std::string ErrorForEchoArea(std::string_view text) {
+    return kErrorStart + std::string(text) + kErrorEnd;
 }
 
 EchoArea::EchoArea(const std::string& message, const Theme& theme) : message_(message), theme_(theme) {
@@ -58,6 +66,7 @@ void EchoArea::Paint(Canvas c) {
     bool        emphasize = false;
     bool        dim       = false;
     bool        ghost     = false;
+    bool        error     = false;
     std::size_t i         = 0;
     while (i < message_.size()) {
         const std::size_t next = text::NextCodepointBoundary(message_, i);
@@ -93,6 +102,16 @@ void EchoArea::Paint(Canvas c) {
                 i     = next;
                 continue;
             }
+            if (ch == kErrorStart) {
+                error = true;
+                i     = next;
+                continue;
+            }
+            if (ch == kErrorEnd) {
+                error = false;
+                i     = next;
+                continue;
+            }
         }
         if (x >= c.size().width) {
             break; // rest of the message doesn't fit -- truncated, same as the pre-sentinel version
@@ -110,6 +129,9 @@ void EchoArea::Paint(Canvas c) {
         if (ghost) {
             cell.foreground_color = ghostedForeground;
             cell.italic           = true;
+        }
+        if (error) {
+            cell.foreground_color = theme_.diagnosticError;
         }
         ++x;
         i = next;
