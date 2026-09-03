@@ -40,4 +40,8 @@ std::filesystem::path BrokerLockPath() {
     return BrokerRuntimeDirectory() / "broker.lock";
 }
 
+std::filesystem::path BrokerLogPath() {
+    return BrokerRuntimeDirectory() / "broker.log";
+}
+
 } // namespace ned::editor::lsp

@@ -131,10 +131,12 @@ namespace {
     void TryBecomeBrokerSpawner() {
         std::string           socketPathStr;
         std::filesystem::path lockPath;
+        std::string           logPathStr;
         try {
             EnsureBrokerRuntimeDirectory();
             socketPathStr = BrokerSocketPath().string();
             lockPath      = BrokerLockPath();
+            logPathStr    = BrokerLogPath().string();
         }
         catch (const std::exception&) {
             return;
@@ -191,12 +193,42 @@ namespace {
             // whichever `ned` happened to spawn it, not be tied to its
             // controlling terminal), then exec straight into the daemon
             // entry point -- nothing else after fork() is async-signal-
-            // safe in a still-multithreaded parent image, so this is
-            // deliberately the only thing the child does before exec.
-            // exePathBuf is filled fresh here (not reused from either
-            // branch above) so the child's own argv[0] is unambiguous
-            // regardless of which resolution path succeeded.
+            // safe in a still-multithreaded parent image, so everything
+            // here is limited to plain syscalls (open/dup2/close), no
+            // allocation. exePathBuf is filled fresh here (not reused
+            // from either branch above) so the child's own argv[0] is
+            // unambiguous regardless of which resolution path succeeded.
+            //
+            // broker-log-redirect follow-up: setsid() alone detaches the
+            // daemon's *session* but leaves fds 0/1/2 pointing at
+            // whichever terminal this spawning `ned` inherited -- found
+            // live: LspBrokerMain.cpp's own Log() writes to std::cerr, so
+            // every attach/disconnect/spawn line was leaking straight
+            // into the user's actual terminal, indefinitely, from a
+            // daemon that had otherwise successfully detached. Redirected
+            // to BrokerLogPath() (logPathStr, resolved in the parent
+            // before fork -- std::filesystem::path construction isn't
+            // async-signal-safe either) instead, the same "a caller who
+            // wants a persistent record redirects stderr" contract
+            // LspBrokerMain.cpp's own Log() doc comment already promises,
+            // just applied automatically for the auto-spawned case
+            // instead of only when someone runs `--lsp-broker` by hand.
             ::setsid();
+            const int devNullFd = ::open("/dev/null", O_RDONLY);
+            if (devNullFd >= 0) {
+                ::dup2(devNullFd, STDIN_FILENO);
+                if (devNullFd != STDIN_FILENO) {
+                    ::close(devNullFd);
+                }
+            }
+            const int logFd = ::open(logPathStr.c_str(), O_CREAT | O_WRONLY | O_APPEND, 0600);
+            if (logFd >= 0) {
+                ::dup2(logFd, STDOUT_FILENO);
+                ::dup2(logFd, STDERR_FILENO);
+                if (logFd != STDOUT_FILENO && logFd != STDERR_FILENO) {
+                    ::close(logFd);
+                }
+            }
             std::strncpy(exePathBuf, exePath.c_str(), sizeof(exePathBuf) - 1);
             exePathBuf[sizeof(exePathBuf) - 1] = '\0';
             char* childArgv[] = {exePathBuf, const_cast<char*>("--lsp-broker"), nullptr};
