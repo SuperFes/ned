@@ -1700,7 +1700,30 @@ int BufferView::PaintStickyScrollRows(Canvas& c, std::size_t gutterWidth) const 
         return 0;
     }
 
-    const int width = c.size().width;
+    const text::ITextStorage& content = activeBuffer_.Get().Content();
+    const int                 width   = c.size().width;
+
+    // sticky-scroll-gutter-alignment follow-up: mirrors GutterWidth()/
+    // Paint()'s own [dap][diff][status][diagnostic][gap][digits][gap][test]
+    // [symbol][fold][blame] column layout (see those methods' own doc
+    // comments), recomputed here from the same Active()-flag primitives
+    // rather than trusting gutterWidth as a second source of truth -- the
+    // same "recompute, don't unpack" precedent OnMouseEvent's own foldStart
+    // derivation already follows. Only digitsStart/gutterDigits and
+    // symbolStart are needed: those are the two columns a sticky row
+    // actually paints into, so its line number and glyph land in the exact
+    // same screen columns an ordinary content row's own digits/symbol glyph
+    // do -- a sticky row reads as a frozen real gutter row, not a
+    // synthesized label. Fold/blame never get anything drawn into them here.
+    const std::size_t diffColumnWidth    = DiffGutterActive() ? kDiffWidth : 0;
+    const std::size_t dapColumnWidth     = DapGutterActive() ? kDapWidth : 0;
+    const std::size_t diagnosticStart    = dapColumnWidth + diffColumnWidth + kStatusWidth;
+    const std::size_t lineNumberGapWidth = LineNumberGutterActive() ? kLineNumberGap : 0;
+    const std::size_t digitsStart        = diagnosticStart + kDiagnosticWidth + lineNumberGapWidth;
+    const std::size_t gutterDigits       = LineNumberGutterActive() ? std::to_string(content.LineCount()).size() : 0;
+    const std::size_t testColumnWidth    = TestGutterActive() ? kTestWidth : 0;
+    const std::size_t symbolStart        = digitsStart + gutterDigits + lineNumberGapWidth + testColumnWidth;
+
     for (std::size_t i = 0; i < chain.size(); ++i) {
         const editor::SymbolMarker& marker = chain[i];
         const int                   row    = static_cast<int>(i);
@@ -1711,34 +1734,80 @@ int BufferView::PaintStickyScrollRows(Canvas& c, std::size_t gutterWidth) const 
             theme_.tabBar.ApplyTo(cell);
         }
 
-        // Staircase indent, one level per ancestor row -- same "clustered
-        // structure column" spirit the gutter's own symbol column uses,
-        // just written inline here since there's no separate column for it.
+        const std::size_t line = content.ByteOffsetToLine(marker.startByte);
+
+        // Line number -- the real gutter's own digits column, right-aligned
+        // to gutterDigits exactly like an ordinary content row. Always
+        // absolute (not vim relativenumber-aware): this names "where this
+        // header lives," not a motion distance from point.
+        if (LineNumberGutterActive()) {
+            const std::string lineNumber = std::to_string(line + 1);
+            const std::size_t padding    = gutterDigits > lineNumber.size() ? gutterDigits - lineNumber.size() : 0;
+            const Brush lineNumberBrush{.background = theme_.tabBar.background, .foreground = theme_.lineNumberForeground};
+            for (std::size_t k = 0; k < lineNumber.size() && static_cast<int>(digitsStart + padding + k) < width; ++k) {
+                Cell& cell     = c[{.x = static_cast<int>(digitsStart + padding + k), .y = row}];
+                cell.character = std::string(1, lineNumber[k]);
+                lineNumberBrush.ApplyTo(cell);
+            }
+        }
+
+        // Glyph -- the real gutter's own symbol column, one fixed column
+        // (not staircased with depth -- the content text's own indent below
+        // carries that cue instead), matching an ordinary content row's
+        // symbol glyph exactly.
+        if (static_cast<int>(symbolStart) < width) {
+            const Brush glyphBrush{.background = theme_.tabBar.background,
+                                   .foreground = theme_.BrushFor(editor::SyntaxClassFor(marker.kind)).foreground,
+                                   .bold       = true};
+            Cell& glyphCell     = c[{.x = static_cast<int>(symbolStart), .y = row}];
+            glyphCell.character = SymbolGlyphFor(marker.kind);
+            glyphBrush.ApplyTo(glyphCell);
+        }
+
+        // sticky-scroll-signature follow-up: content area (starting at the
+        // real gutterWidth, exactly where an ordinary row's own text
+        // starts) shows a trimmed copy of the marker's own source line (its
+        // "reduced signature") rather than just the bare identifier -- more
+        // informative at a glance, and reads as real code (a template-param/
+        // base-class list, return type, etc.) instead of a synthesized
+        // label. Deliberately just the marker's own start LINE, verbatim
+        // minus leading indentation -- not a joined/flattened multi-line
+        // signature; "the line it's sticky on" is exactly that, one real
+        // source line, same as every other sticky-scroll implementation
+        // (VSCode/Zed) shows. Staircase-indented one level per ancestor row
+        // -- the depth cue the glyph used to carry back when it lived here
+        // instead of the real symbol column above.
         int col = static_cast<int>(gutterWidth) + static_cast<int>(i) * 2;
         if (col >= width) {
             continue;
         }
-        const Brush glyphBrush{.background = theme_.tabBar.background,
-                               .foreground = theme_.BrushFor(editor::SyntaxClassFor(marker.kind)).foreground,
-                               .bold       = true};
-        Cell& glyphCell     = c[{.x = col, .y = row}];
-        glyphCell.character = SymbolGlyphFor(marker.kind);
-        glyphBrush.ApplyTo(glyphCell);
-        ++col;
-        if (col < width) {
-            ++col; // one blank column between the glyph and the name
-        }
-        // Names are effectively-always-ASCII identifiers in every bundled
-        // tags.scm; a raw byte-per-cell walk here mirrors PaintCodeLensRow's
-        // own established (same-file) precedent for arbitrary title text.
-        for (const char ch : marker.name) {
-            if (col >= width) {
+        const std::size_t lineStart = content.LineToByteOffset(line);
+        const std::size_t lineEnd =
+            (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
+        const std::string rawLine       = content.Substring(lineStart, lineEnd - lineStart);
+        const std::size_t firstNonBlank = rawLine.find_first_not_of(" \t");
+        const std::string trimmedLine   = (firstNonBlank == std::string::npos) ? std::string() : rawLine.substr(firstNonBlank);
+
+        // Signature text keeps whatever brush the row's own blank fill above
+        // already applied (theme_.tabBar) -- plain chrome-text color, not
+        // colored/bolded by symbol kind; only cell.character changes here.
+        // Names/signatures in every bundled tags.scm are effectively-always-
+        // ASCII source text; a raw byte-per-cell walk here mirrors
+        // PaintCodeLensRow's own established (same-file) precedent.
+        // Reserves the row's own last column for a "…" marker when the
+        // trimmed line doesn't fit, rather than silently cutting off
+        // mid-signature (ListPopup's own convention).
+        const bool truncated = col + static_cast<int>(trimmedLine.size()) > width;
+        const int  textLimit = truncated ? width - 1 : width;
+        for (const char ch : trimmedLine) {
+            if (col >= textLimit) {
                 break;
             }
-            Cell& cell     = c[{.x = col, .y = row}];
-            cell.character = std::string(1, ch);
-            glyphBrush.ApplyTo(cell);
+            c[{.x = col, .y = row}].character = std::string(1, ch);
             ++col;
+        }
+        if (truncated && col < width) {
+            c[{.x = col, .y = row}].character = "…";
         }
     }
     return static_cast<int>(chain.size());

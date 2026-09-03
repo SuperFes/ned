@@ -225,3 +225,114 @@ TEST_CASE("Clicking a pinned sticky row jumps to that ancestor's own header line
     const std::size_t line = fixture.buffer.Content().ByteOffsetToLine(fixture.buffer.Point());
     REQUIRE(line == 1); // "class Widget {"
 }
+
+// main-editor-sticky-scroll-markdown follow-up. Mirrors kSource's own
+// 10-line/box-height-5 shape above -- MaxTopLine() clamps a requested
+// SetTopLine() back down to 0 once the whole document already fits inside
+// the viewport, so (unlike the plain unit tests in ModeTest.cpp/
+// StickyScrollTest.cpp) an integration test needs enough trailing filler
+// lines for line 5 to actually be scrollable to at all.
+const char* kMarkdownSource =
+    "# Top\n"    // line 0
+    "intro\n"    // line 1
+    "## Sub\n"   // line 2
+    "line1\n"    // line 3
+    "line2\n"    // line 4
+    "line3\n"    // line 5
+    "line4\n"    // line 6
+    "line5\n"    // line 7
+    "line6\n"    // line 8
+    "line7\n";   // line 9
+
+TEST_CASE("Sticky scroll pins the enclosing Markdown heading chain once scrolled into a section's body",
+          "[BufferView][StickyScroll][Markdown]") {
+    const StickyScrollSettingsGuard guard;
+    Fixture fixture;
+    fixture.mode = ned::editor::MarkdownMode();
+    fixture.buffer.InsertAtPoint(kMarkdownSource);
+    BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 5});
+    view.SetTopLine(5); // "line3" -- deep inside both Top's and Sub's own body
+
+    ned::ui::Screen screen = ned::ui::Screen(40, 6);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 5});
+    view.Paint(canvas);
+
+    // Two pinned rows -- Top (H1), Sub (H2) -- each showing its own real
+    // source line (the "reduced signature"), "#"/"##" markers included, not
+    // just a bare title.
+    REQUIRE(RowText(screen, 0, 40).find("# Top") != std::string::npos);
+    REQUIRE(RowText(screen, 1, 40).find("## Sub") != std::string::npos);
+}
+
+TEST_CASE("Clicking a pinned Markdown sticky row jumps to that heading's own line",
+          "[BufferView][StickyScroll][Markdown]") {
+    const StickyScrollSettingsGuard guard;
+    Fixture fixture;
+    fixture.mode = ned::editor::MarkdownMode();
+    fixture.buffer.InsertAtPoint(kMarkdownSource);
+    BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 5});
+    view.SetTopLine(5);
+
+    ned::ui::Screen screen = ned::ui::Screen(40, 6);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 5});
+    view.Paint(canvas); // stickyRowCount_ (2: Top/Sub) is now live
+
+    view.OnEvent(MousePress(5, 1)); // row 1 of the pinned band is "## Sub"
+
+    const std::size_t line = fixture.buffer.Content().ByteOffsetToLine(fixture.buffer.Point());
+    REQUIRE(line == 2); // "## Sub"
+}
+
+// main-editor-sticky-scroll-markdown follow-up. Same shape as
+// kMarkdownSource above, for the same MaxTopLine() reason.
+const char* kOrgSource =
+    "* Top\n"    // line 0
+    "intro\n"    // line 1
+    "** Sub\n"   // line 2
+    "line1\n"    // line 3
+    "line2\n"    // line 4
+    "line3\n"    // line 5
+    "line4\n"    // line 6
+    "line5\n"    // line 7
+    "line6\n"    // line 8
+    "line7\n";   // line 9
+
+TEST_CASE("Sticky scroll pins the enclosing Org headline chain once scrolled into a subtree's body",
+          "[BufferView][StickyScroll][Org]") {
+    const StickyScrollSettingsGuard guard;
+    Fixture fixture;
+    fixture.mode = ned::editor::OrgMode();
+    fixture.buffer.InsertAtPoint(kOrgSource);
+    BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 5});
+    view.SetTopLine(5); // "line3" -- deep inside both Top's and Sub's own body
+
+    ned::ui::Screen screen = ned::ui::Screen(40, 6);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 5});
+    view.Paint(canvas);
+
+    REQUIRE(RowText(screen, 0, 40).find("* Top") != std::string::npos);
+    REQUIRE(RowText(screen, 1, 40).find("** Sub") != std::string::npos);
+}
+
+TEST_CASE("Clicking a pinned Org sticky row jumps to that headline's own line",
+          "[BufferView][StickyScroll][Org]") {
+    const StickyScrollSettingsGuard guard;
+    Fixture fixture;
+    fixture.mode = ned::editor::OrgMode();
+    fixture.buffer.InsertAtPoint(kOrgSource);
+    BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 5});
+    view.SetTopLine(5);
+
+    ned::ui::Screen screen = ned::ui::Screen(40, 6);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 5});
+    view.Paint(canvas); // stickyRowCount_ (2: Top/Sub) is now live
+
+    view.OnEvent(MousePress(5, 1)); // row 1 of the pinned band is "** Sub"
+
+    const std::size_t line = fixture.buffer.Content().ByteOffsetToLine(fixture.buffer.Point());
+    REQUIRE(line == 2); // "** Sub"
+}
