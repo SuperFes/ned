@@ -121,9 +121,24 @@ Notcurses.
       real-LSP-sync treatment HTML `<script>`/`<style>` embedded documents already have
       is an open question — spawning a live language server per code fence in an
       ordinary notes file could be noisy for illustrative/incomplete snippets.
-- [ ] **`semanticTokens/range` and delta requests** — the semantic-highlighting client
-      only ever sends the full-document `semanticTokens/full` request; no huge-buffer
-      windowing or incremental delta support yet.
+- `semanticTokens/range` and `full/delta` requests closed — see
+  `git log --grep=semantic-tokens-range-and-delta`. `RequestSemanticTokens` (renamed
+  from `RequestSemanticTokensFull`, now viewport-parameterized like `RequestInlayHints`)
+  picks among three requests per what the server's `semanticTokensProvider` legend
+  advertises (`SemanticTokensLegend::rangeSupported`/`fullDeltaSupported`, parsed
+  alongside `legend` in `LspContent.h`'s `ExtractSemanticTokensLegend`) and has proven
+  it doesn't honor (`semanticTokensRangeUnsupported_`/`semanticTokensFullDeltaUnsupported_`,
+  the same learned-once latch `inlayHintsUnsupported_` already established): `range`
+  scoped to the visible viewport (preferred whenever available -- `SemanticTokenSpans`
+  covers just the last-requested viewport under this mode, the same tradeoff
+  `RequestInlayHints`'s own spans already accept), `full/delta` with a cached
+  `previousResultId` once a baseline exists (`previousSemanticTokens_`, edits applied via
+  `ApplySemanticTokensDeltaEdits`'s reverse-order splice), falling back to the original
+  whole-document `full` otherwise. Investigated first: "huge-buffer windowing" turned out
+  to be moot as originally framed -- a huge buffer never reaches this code at all
+  (`LspManager::SyncBuffer` gates on `Buffer::Content().IsHuge()` and skips LSP sync
+  entirely), so range requests are scoped to *every* buffer's viewport instead, not
+  conditioned on size.
 - LSP edit-application gaps (`documentChanges` file create/rename/delete resource ops,
   server-pushed `workspace/applyEdit`) closed 2026-09-02 — see `git log --grep=edit-application-gaps`.
 - `rename-project-path`/`workspace/willRenameFiles`+`didRenameFiles` closed

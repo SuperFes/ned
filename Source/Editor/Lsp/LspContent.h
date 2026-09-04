@@ -368,18 +368,29 @@ struct SymbolEntry {
 // corresponding provider at all -- that absence is what tells the caller
 // not to bother asking, the same "empty means unsupported" signal every
 // other ExtractX result already carries.
+// semanticTokens range/delta follow-up: fullDeltaSupported/rangeSupported
+// read capabilities.semanticTokensProvider.{full,range} alongside legend --
+// per spec, `full` is `boolean | {delta?: boolean}` (fullDeltaSupported is
+// only ever true for the object form's own `delta: true`; a bare `true`/
+// `false` means no delta) and `range` is `boolean | {}` (any present,
+// non-false value -- bare `true` or an empty object -- means supported;
+// the object form carries no fields this client reads).
 struct SemanticTokensLegend {
     std::vector<std::string> tokenTypes;
     std::vector<std::string> tokenModifiers;
+    bool                     fullDeltaSupported = false;
+    bool                     rangeSupported     = false;
 
     bool operator==(const SemanticTokensLegend&) const = default;
 };
 
-// Parses `capabilities.semanticTokensProvider.legend` out of a full
-// `initialize` response. Per spec, semanticTokensProvider is always an
+// Parses `capabilities.semanticTokensProvider.{legend,full,range}` out of a
+// full `initialize` response. Per spec, semanticTokensProvider is always an
 // object (never a bare boolean) and legend is required within it whenever
 // the provider is present at all; a present-but-malformed legend (either
 // array missing or not an array) is treated the same as an absent provider.
+// full/range are independently optional -- their absence just leaves the
+// corresponding *Supported field false, it doesn't invalidate the legend.
 [[nodiscard]] std::optional<SemanticTokensLegend> ExtractSemanticTokensLegend(const Json& initializeResult);
 
 struct OnTypeFormattingTriggers {
@@ -488,14 +499,81 @@ struct SemanticToken {
     bool operator==(const SemanticToken&) const = default;
 };
 
-// Decodes a textDocument/semanticTokens/full (or /range) response's "data"
-// array: quintuples of (deltaLine, deltaStartChar, length, tokenType,
-// tokenModifiers) per the spec's relative encoding -- deltaLine is relative
-// to the previous token's line, deltaStartChar is relative to the previous
-// token's start character *only when deltaLine is 0* (an absolute column
-// otherwise), exactly as the spec defines it. Empty for a null/missing/
-// non-array "data", or one whose length isn't a multiple of 5.
+// semanticTokens range/delta follow-up. Pulls the raw, still-encoded "data"
+// quintuples straight out of a textDocument/semanticTokens/{full,range}
+// response, without the deltaLine/deltaStartChar decode -- the shape a
+// full/delta response's edits (SemanticTokensDeltaEdit, below) are applied
+// against via ApplySemanticTokensDeltaEdits, and DecodeSemanticTokenData's
+// own input either way. Empty for a null/missing/non-array "data", or one
+// whose length isn't a multiple of 5.
+[[nodiscard]] std::vector<std::uint32_t> ExtractSemanticTokensRawData(const Json& result);
+
+// Decodes a raw "data" quintuple array (ExtractSemanticTokensRawData's own
+// output, or a full/delta response's edits already reconstructed via
+// ApplySemanticTokensDeltaEdits) into real tokens: (deltaLine,
+// deltaStartChar, length, tokenType, tokenModifiers) per the spec's
+// relative encoding -- deltaLine is relative to the previous token's line,
+// deltaStartChar is relative to the previous token's start character *only
+// when deltaLine is 0* (an absolute column otherwise), exactly as the spec
+// defines it. Empty if data's length isn't a multiple of 5.
+[[nodiscard]] std::vector<SemanticToken> DecodeSemanticTokenData(const std::vector<std::uint32_t>& data);
+
+// Convenience composition of the two functions just above --
+// DecodeSemanticTokenData(ExtractSemanticTokensRawData(result)) -- for the
+// common case (a plain full or range response) where nothing needs the raw
+// array on its own. The full/delta path uses the two halves separately
+// instead, since a delta response's reconstructed array has to be decoded
+// the same way but never comes from a fresh ExtractSemanticTokensRawData
+// call.
 [[nodiscard]] std::vector<SemanticToken> ExtractSemanticTokens(const Json& result);
+
+// semanticTokens range/delta follow-up. One entry of a
+// textDocument/semanticTokens/full/delta response's "edits" array -- data
+// is empty for a pure deletion (deleteCount old entries removed, nothing
+// inserted in their place).
+struct SemanticTokensDeltaEdit {
+    std::size_t                start       = 0;
+    std::size_t                deleteCount = 0;
+    std::vector<std::uint32_t> data;
+
+    bool operator==(const SemanticTokensDeltaEdit&) const = default;
+};
+
+// Parses a textDocument/semanticTokens/full/delta response as a
+// SemanticTokensDelta (`{resultId?, edits: [...]}`). nullopt when the
+// response isn't delta-shaped at all -- no "edits" array, or result isn't
+// an object -- which is exactly the case when the server decided to resend
+// the whole document instead: that response is a plain SemanticTokens
+// result carrying "data", read via ExtractSemanticTokensRawData/
+// ExtractSemanticTokens as always, not this function. A malformed
+// individual edit entry (non-object, or missing start/deleteCount) is
+// skipped rather than aborting the whole parse.
+[[nodiscard]] std::optional<std::vector<SemanticTokensDeltaEdit>> ExtractSemanticTokensDeltaEdits(const Json& result);
+
+// Pulls "resultId" out of a semanticTokens/{full,range,full/delta} response
+// -- present whenever the server intends this response to seed a later
+// full/delta request's own previousResultId (LspManager's own cache; this
+// file has no opinion about caching, only parsing). nullopt if absent,
+// non-string, or result isn't an object -- callers treat that as "don't
+// cache anything for delta later," the same as a server that never
+// advertised delta support at all.
+[[nodiscard]] std::optional<std::string> ExtractSemanticTokensResultId(const Json& result);
+
+// Applies a full/delta response's edits to the previously-cached raw
+// "data" array (LspManager's own cache, seeded from an earlier full/range/
+// delta response's own ExtractSemanticTokensRawData/reconstructed result),
+// reconstructing what a fresh full response would have contained. Per
+// spec, each edit's start/deleteCount addresses previousData as it stood
+// *before* any of these edits were applied -- so edits are spliced in
+// reverse order (last edit first): a well-formed edit list is sorted
+// ascending by start, so applying back-to-front means every edit still
+// earlier in the array hasn't been touched yet when its own turn comes, no
+// index-shift bookkeeping needed. Malformed input (an edit's start/
+// deleteCount reaching past previousData's current size, e.g. a
+// previousResultId this cache no longer matches exactly) clamps
+// deleteCount down to what's actually available rather than throwing.
+[[nodiscard]] std::vector<std::uint32_t> ApplySemanticTokensDeltaEdits(const std::vector<std::uint32_t>&           previousData,
+                                                                       const std::vector<SemanticTokensDeltaEdit>& edits);
 
 // inlayHint follow-up. One entry from a textDocument/inlayHint response --
 // position stays an LspPosition (not yet resolved to a byte offset; the
