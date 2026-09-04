@@ -1754,6 +1754,95 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
         });
     contextMenu.SetOnActivate([wm = windowManager.get()](std::size_t index) { wm->ActivateContextMenuAt(index); });
 
+    // TabBar-context-menu follow-up: TabBar's own right-click menu (Close/
+    // Close Others/Close to the Right/Reveal in Sidebar). Unlike contextMenu
+    // just above -- driven by BufferView, which keeps keyboard focus and
+    // drives the popup's displayed content via HandleContextMenuKey --
+    // TabBar takes no keyboard focus at all, so this one runs in ListPopup's
+    // other, focusable mode instead (DapThreadsPanel/hierarchyTreeView's own
+    // precedent: the popup drives its own selection/activation/cancel
+    // entirely via OnEvent once shown). tabContextMenuActions is a parallel
+    // vector of closures, one per row in the same order SetModel was given
+    // -- simpler than threading a ContextMenuEntry-style tagged-union
+    // through main.cpp for four fixed, always-static rows.
+    std::vector<std::function<void()>> tabContextMenuActions;
+    ned::ui::ListPopup tabContextMenu(theme);
+    tabContextMenu.SetFocusable(true);
+    overlays.Add(tabContextMenu, [panel = &tabContextMenu](Size size) {
+        const ned::ui::Point origin = panel->Anchor().value_or(ned::ui::Point{});
+        const int            width  = std::min(28, size.width);
+        const int            height = std::clamp(panel->ContentRowCount(), 3, std::min(8, size.height));
+
+        const int xMin = std::clamp(origin.x, 0, std::max(0, size.width - width));
+        const int xMax = std::min(size.width - 1, xMin + width - 1);
+
+        int yMin, yMax;
+        if (origin.y + height - 1 <= size.height - 1) {
+            yMin = origin.y;
+            yMax = yMin + height - 1;
+        }
+        else {
+            // Flip upward, same as contextMenu/completionPopup/peekPopup's
+            // own placement -- TabBar's row sits at the very top of the
+            // screen, so a click there always needs this branch.
+            yMax = std::max(0, origin.y - 1);
+            yMin = std::max(0, yMax - height + 1);
+        }
+        return Box{.x_min = xMin, .x_max = xMax, .y_min = yMin, .y_max = yMax};
+    });
+    tabBar->SetOnContextMenuRequest([&overlays, panel = &tabContextMenu, &tabContextMenuActions,
+                                     wm = windowManager.get(), sidebar = projectSidebar.get()](
+                                        ned::text::Buffer& target, ned::ui::Point anchor) {
+        ned::ui::ListPopupModel model;
+        model.title  = "Tab";
+        model.anchor = anchor;
+        tabContextMenuActions.clear();
+
+        auto addRow = [&](std::string label, std::function<void()> action) {
+            model.rows.push_back({.left = "", .main = std::move(label)});
+            tabContextMenuActions.push_back(std::move(action));
+        };
+        addRow("Close", [wm, target = &target] { wm->RequestCloseBuffer(*target); });
+        addRow("Close Others", [wm, target = &target] { wm->CloseOtherTabs(*target); });
+        addRow("Close to the Right", [wm, target = &target] { wm->CloseTabsToTheRight(*target); });
+        if (target.Path()) {
+            addRow("Reveal in Sidebar", [sidebar, path = *target.Path()] { sidebar->RevealPath(path); });
+        }
+
+        model.selectedIndex = 0;
+        panel->SetModel(std::move(model));
+        overlays.Show(*panel);
+        panel->TakeFocus();
+    });
+    tabContextMenu.SetOnActivate([&tabContextMenuActions, &overlays, panel = &tabContextMenu,
+                                  wm = windowManager.get()](std::size_t index) {
+        // Focus must come back to a pane *before* the action runs, not
+        // after -- every action closure routes through WindowManager's own
+        // "whichever pane is currently focused" lookup (RequestCloseBuffer/
+        // CloseOtherTabs/CloseTabsToTheRight), which sees no pane focused
+        // at all while this popup still holds it (a real bug caught live:
+        // running the action first made every one of these a silent no-op).
+        overlays.Hide(*panel);
+        wm->TakeFocus();
+        if (index < tabContextMenuActions.size()) {
+            tabContextMenuActions[index]();
+        }
+    });
+    tabContextMenu.SetOnCancel([&overlays, panel = &tabContextMenu, wm = windowManager.get()] {
+        overlays.Hide(*panel);
+        wm->TakeFocus();
+    });
+    // Any key this popup doesn't already handle itself (Up/Down/digit/
+    // Enter/Escape -- see ListPopup::HandleKeyEvent) dismisses it too,
+    // same "don't survive an unrelated interaction" reasoning as the
+    // outside-click handling in callbacks.onEvent below -- otherwise an
+    // ordinary keystroke meant for whatever has focus next is silently
+    // swallowed by this popup instead, with no visible effect at all.
+    tabContextMenu.SetOnKey([&overlays, panel = &tabContextMenu, wm = windowManager.get()](const ned::editor::KeyChord&) {
+        overlays.Hide(*panel);
+        wm->TakeFocus();
+    });
+
     // call/type-hierarchy follow-up: the shared TreeView overlay behind
     // lsp-call-hierarchy-incoming/-outgoing/lsp-type-hierarchy-supertypes/
     // -subtypes -- unlike candidatePopup/completionPopup above, this one
@@ -1900,6 +1989,23 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
             // forwards to every active leaf) several widgets actively
             // depend on -- see Overlay.h's header comment.
             if (!overlays.OnMouseEvent(event)) {
+                // TabBar-context-menu follow-up: unlike every other
+                // focus-taking overlay in this file (hierarchyTreeView,
+                // pointerGraphTreeView, memoryImageView, DapThreadsPanel --
+                // each dismissed by its own driving BufferView on the very
+                // next thing that would otherwise conflict with it), this
+                // popup has no such owner watching for "something else just
+                // happened" -- a click that missed its Box fell all the way
+                // through to whatever was underneath while the popup stayed
+                // up, stuck, on top of it (live user report). Dismissed
+                // here instead, right before the click is delivered
+                // normally -- so switching to a different tab, or clicking
+                // into the buffer, both closes the menu and does its own
+                // ordinary thing in one motion.
+                if (overlays.IsVisible(tabContextMenu)) {
+                    overlays.Hide(tabContextMenu);
+                    windowManager->TakeFocus();
+                }
                 head.OnEvent(event);
             }
         }

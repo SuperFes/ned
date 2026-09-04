@@ -311,13 +311,29 @@ commands, never a replacement for them.
       the real fix. Deliberately BufferView-only — see the follow-up below for the
       remaining surfaces, each of which needs genuinely new capabilities first, not
       just menu wiring.
-- [ ] **Right-click context menus: TabBar/ProjectSidebar/VcsPanel** — descoped from
+- [ ] **Right-click context menus: ProjectSidebar/VcsPanel** — descoped from
       the BufferView v1 above because each needs real new capabilities, not just
-      exposing an existing command:
-      - TabBar: `close-other-tabs`/`close-to-the-right` don't exist as commands at
-        all yet (new `BufferList`-level operations needed), plus wiring a menu row to
-        the already-existing but never-live-wired `ProjectSidebar::RevealPath` for
-        reveal-in-sidebar.
+      exposing an existing command. TabBar's own right-click menu (Close/Close
+      Others/Close to the Right/Reveal in Sidebar) shipped 2026-09-04 --
+      `BufferView::CloseOtherTabs`/`CloseTabsToTheRight` (never prompt: a
+      modified, non-read-only buffer in the target set is just left open and
+      the outcome reported via statusMessage_, rather than queuing N sequential
+      y/n confirmations through `RequestCloseBuffer`'s single `pendingClose_`
+      slot) plus `WindowManager`'s own same-shape routing to whichever pane is
+      focused. `TabBar::SetOnContextMenuRequest` reports the right-clicked
+      buffer without switching to it (unlike a left click) so bulk-closing
+      background tabs doesn't disturb the current view. The popup itself runs
+      in `ListPopup`'s focusable mode (`DapThreadsPanel`/hierarchyTreeView's own
+      precedent), not BufferView's non-focusable/keeps-focus contextMenu shape,
+      since TabBar takes no keyboard focus at all to drive one. Live-verified
+      over a real pty: a real bug caught this way and fixed before shipping --
+      the activate handler ran the chosen action *before* calling
+      `WindowManager::TakeFocus()`, so `FocusedPane()` inside CloseOtherTabs/
+      CloseTabsToTheRight/RequestCloseBuffer saw no pane focused at all (the
+      popup itself still held it) and every action silently no-opped; unit
+      tests alone didn't catch this since they call `BufferView::
+      CloseOtherTabs` directly, bypassing WindowManager's focused-pane lookup
+      entirely.
       - `ProjectSidebar`: has no `SelectedPath()`/`FocusedPath()`-style accessor for
         a menu to act on yet; its existing create/rename/delete flows are blind
         prompts (would need to be prefilled from the right-clicked row instead);

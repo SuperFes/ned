@@ -26,6 +26,10 @@ ned::ui::Event MouseWheel(int x, int y, ned::ui::MouseEvent::Button button) {
     return ned::ui::test::Mouse(x, y, button, ned::ui::MouseEvent::Motion::Pressed);
 }
 
+ned::ui::Event RightPress(int x, int y) {
+    return ned::ui::test::Mouse(x, y, ned::ui::MouseEvent::Button::Right, ned::ui::MouseEvent::Motion::Pressed);
+}
+
 void PlaceRow(ned::ui::TabBar& tabBar, int width) {
     tabBar.SetBox_(ned::ui::Box{.x_min = 0, .x_max = width - 1, .y_min = 0, .y_max = 0});
 }
@@ -463,6 +467,65 @@ TEST_CASE("Dragging a tab past the last tab moves it to the end", "[TabBar]") {
                                         ned::ui::MouseEvent::Motion::Moved)); // past every tab
 
     REQUIRE(list.Buffers().back().get() == &alpha);
+}
+
+TEST_CASE("A right-press on a tab reports that tab and the click's absolute position, without switching to it",
+          "[TabBar]") {
+    ned::text::BufferList list;
+    ned::text::Buffer&    alpha = list.CreateBuffer("alpha");
+    ned::text::Buffer&    beta  = list.CreateBuffer("beta");
+
+    ned::ui::ActiveBuffer activeBuffer(alpha);
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    ned::ui::TabBar       tabBar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, theme);
+    PlaceRow(tabBar, 40);
+
+    ned::text::Buffer*    requested = nullptr;
+    std::optional<ned::ui::Point> anchor;
+    tabBar.SetOnContextMenuRequest([&](ned::text::Buffer& buffer, ned::ui::Point point) {
+        requested = &buffer;
+        anchor    = point;
+    });
+
+    // " alpha ×" spans 0-7 (cap 8); " beta ×" starts at col 9 -- same layout
+    // the left-click test above uses.
+    tabBar.OnEvent(RightPress(9, 0));
+
+    REQUIRE(requested == &beta);
+    REQUIRE(anchor == ned::ui::Point{.x = 9, .y = 0});
+    // Unlike a left click, right-clicking a background tab doesn't switch
+    // to it -- bulk-closing around it shouldn't disturb the current view.
+    REQUIRE(&activeBuffer.Get() == &alpha);
+}
+
+TEST_CASE("A right-press outside any tab is a no-op", "[TabBar]") {
+    ned::text::BufferList list;
+    ned::text::Buffer&    alpha = list.CreateBuffer("alpha");
+    list.CreateBuffer("beta");
+
+    ned::ui::ActiveBuffer activeBuffer(alpha);
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    ned::ui::TabBar       tabBar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, theme);
+    PlaceRow(tabBar, 40);
+
+    bool requested = false;
+    tabBar.SetOnContextMenuRequest([&](ned::text::Buffer&, ned::ui::Point) { requested = true; });
+
+    tabBar.OnEvent(RightPress(39, 0));
+
+    REQUIRE_FALSE(requested);
+}
+
+TEST_CASE("A right-press with no handler registered is a safe no-op", "[TabBar]") {
+    ned::text::BufferList list;
+    ned::text::Buffer&    alpha = list.CreateBuffer("alpha");
+
+    ned::ui::ActiveBuffer activeBuffer(alpha);
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    ned::ui::TabBar       tabBar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, theme);
+    PlaceRow(tabBar, 40);
+
+    tabBar.OnEvent(RightPress(2, 0)); // must not crash
 }
 
 TEST_CASE("Dragging with no reorder handler registered is a safe no-op", "[TabBar]") {

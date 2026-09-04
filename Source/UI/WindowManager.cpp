@@ -942,6 +942,18 @@ void WindowManager::RequestCloseBuffer(text::Buffer& buffer) {
     }
 }
 
+void WindowManager::CloseOtherTabs(text::Buffer& keep) {
+    if (Pane* pane = FocusedPane()) {
+        pane->Buffer().CloseOtherTabs(keep);
+    }
+}
+
+void WindowManager::CloseTabsToTheRight(text::Buffer& from) {
+    if (Pane* pane = FocusedPane()) {
+        pane->Buffer().CloseTabsToTheRight(from);
+    }
+}
+
 void WindowManager::RequestVcsPanelAction(VcsPanelAction action) {
     if (Pane* pane = FocusedPane()) {
         pane->Buffer().RequestVcsAction(action);

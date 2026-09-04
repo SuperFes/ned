@@ -4992,6 +4992,80 @@ TEST_CASE("RequestCloseBuffer closes a modified, read-only ('tossable') buffer i
     REQUIRE(fixture.bufferList.Find("*search results*") == nullptr);
 }
 
+TEST_CASE("CloseOtherTabs closes every unmodified buffer except the kept one", "[BufferView]") {
+    Fixture               fixture;
+    ned::text::Buffer&    a = fixture.bufferList.CreateBuffer("a");
+    ned::text::Buffer&    b = fixture.bufferList.CreateBuffer("b");
+    ned::text::Buffer&    c = fixture.bufferList.CreateBuffer("c");
+    ned::ui::ActiveBuffer activeBuffer(a);
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
+                               fixture.statusMessage, fixture.mode, fixture.theme);
+
+    // The kept buffer need not be the active one -- TabBar's context menu
+    // targets whichever tab was right-clicked, which may be a background
+    // tab.
+    view.CloseOtherTabs(b);
+
+    REQUIRE(fixture.bufferList.Count() == 1);
+    REQUIRE(fixture.bufferList.Find("b") != nullptr);
+    REQUIRE(fixture.bufferList.Find("a") == nullptr);
+    REQUIRE(fixture.bufferList.Find("c") == nullptr);
+    REQUIRE(fixture.statusMessage == "Closed 2 tab(s).");
+}
+
+TEST_CASE("CloseOtherTabs leaves modified buffers open and reports how many were skipped", "[BufferView]") {
+    Fixture               fixture;
+    ned::text::Buffer&    a = fixture.bufferList.CreateBuffer("a");
+    a.InsertAtPoint("x");
+    ned::text::Buffer&    b = fixture.bufferList.CreateBuffer("b");
+    ned::text::Buffer&    c = fixture.bufferList.CreateBuffer("c");
+    c.InsertAtPoint("y");
+    ned::ui::ActiveBuffer activeBuffer(b);
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
+                               fixture.statusMessage, fixture.mode, fixture.theme);
+
+    view.CloseOtherTabs(b);
+
+    // Never prompts -- a and c both have unsaved changes, so both are left
+    // open rather than starting a y/n confirmation for each in turn.
+    REQUIRE(fixture.bufferList.Count() == 3);
+    REQUIRE(fixture.statusMessage == "Closed 0 tab(s); 2 left open (unsaved changes).");
+}
+
+TEST_CASE("CloseTabsToTheRight closes only buffers positioned after the target in list order", "[BufferView]") {
+    Fixture               fixture;
+    ned::text::Buffer&    a = fixture.bufferList.CreateBuffer("a");
+    ned::text::Buffer&    b = fixture.bufferList.CreateBuffer("b");
+    fixture.bufferList.CreateBuffer("c");
+    fixture.bufferList.CreateBuffer("d");
+    ned::ui::ActiveBuffer activeBuffer(a);
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
+                               fixture.statusMessage, fixture.mode, fixture.theme);
+
+    view.CloseTabsToTheRight(b);
+
+    REQUIRE(fixture.bufferList.Count() == 2);
+    REQUIRE(fixture.bufferList.Find("a") != nullptr);
+    REQUIRE(fixture.bufferList.Find("b") != nullptr);
+    REQUIRE(fixture.bufferList.Find("c") == nullptr);
+    REQUIRE(fixture.bufferList.Find("d") == nullptr);
+    REQUIRE(fixture.statusMessage == "Closed 2 tab(s).");
+}
+
+TEST_CASE("CloseTabsToTheRight on the last tab reports nothing to close", "[BufferView]") {
+    Fixture               fixture;
+    fixture.bufferList.CreateBuffer("a");
+    ned::text::Buffer&    b = fixture.bufferList.CreateBuffer("b");
+    ned::ui::ActiveBuffer activeBuffer(b);
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
+                               fixture.statusMessage, fixture.mode, fixture.theme);
+
+    view.CloseTabsToTheRight(b);
+
+    REQUIRE(fixture.bufferList.Count() == 2);
+    REQUIRE(fixture.statusMessage == "No other tabs to close.");
+}
+
 TEST_CASE("quit doesn't prompt when the only modified buffer is read-only", "[BufferView]") {
     Fixture            fixture;
     ned::text::Buffer& results = fixture.bufferList.CreateBuffer("*search results*");

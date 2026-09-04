@@ -510,6 +510,13 @@ class WindowManager {
     // fixed BufferView.
     void RequestCloseBuffer(text::Buffer& buffer);
 
+    // TabBar-context-menu follow-up: same "route to whichever pane is
+    // currently focused" shape as RequestCloseBuffer above, for the
+    // right-click menu's bulk-close rows -- see BufferView::CloseOtherTabs/
+    // CloseTabsToTheRight's own doc comments for why these never prompt.
+    void CloseOtherTabs(text::Buffer& keep);
+    void CloseTabsToTheRight(text::Buffer& from);
+
     // open-binary-anyway follow-up: same "route to whichever pane is
     // currently focused" shape as RequestCloseBuffer just above -- wired to
     // ProjectSidebar::SetOnBinaryFileOpenRequest so a sidebar click on a

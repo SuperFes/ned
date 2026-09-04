@@ -83,6 +83,15 @@ class TabBar : public Widget {
     // WindowManager::HasFocusedPane.
     void SetFocusProvider(std::function<bool()> provider);
 
+    // TabBar-context-menu follow-up: called with the right-clicked tab's
+    // buffer and the click's absolute screen position -- TabBar only ever
+    // signals *which* tab and *where*, the same "mouse-driven widget hands
+    // off" shape SetOnCloseRequest/SetOnReorder already establish, since
+    // building/showing the actual menu needs main.cpp's own
+    // OverlayHost/ListPopup and WindowManager, neither of which TabBar
+    // knows about. Unset (the default) means right-click is a no-op.
+    void SetOnContextMenuRequest(std::function<void(text::Buffer&, Point)> handler);
+
   private:
     // One tab's horizontal extent in unscrolled column space (i.e. before
     // subtracting scrollOffset_), plus which buffer it represents. Recomputed
@@ -119,6 +128,7 @@ class TabBar : public Widget {
     std::function<void(text::Buffer&)>              onCloseRequest_;
     std::function<void(text::Buffer&, std::size_t)> onReorder_;     // see SetOnReorder
     std::function<bool()>                           focusProvider_; // see SetFocusProvider
+    std::function<void(text::Buffer&, Point)>       onContextMenuRequest_; // see SetOnContextMenuRequest
 };
 
 } // namespace ned::ui
