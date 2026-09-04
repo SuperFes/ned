@@ -34,6 +34,7 @@
 #include "Editor/Backup.h"
 #include "Editor/Bookmark.h"
 #include "Editor/BundledSnippets.h"
+#include "Editor/Clipboard.h"
 #include "Editor/Commands.h"
 #include "Editor/Dap/DapManager.h"
 #include "Editor/Keymap.h"
@@ -61,6 +62,7 @@
 #include "Editor/TabWidth.h"
 #include "Editor/Tasks/TaskRunner.h"
 #include "Editor/Terminal/Config.h"
+#include "Editor/TerminalTabLauncher.h"
 #include "Editor/TestRun/TestResultsBuffer.h"
 #include "Editor/TestRun/TestRunner.h"
 #include "Editor/ThemeSetting.h"
@@ -1843,6 +1845,105 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
         wm->TakeFocus();
     });
 
+    // sidebar-context-menu follow-up: ProjectSidebar's own right-click menu
+    // -- New File/New Folder scoped to the right-clicked directory (or its
+    // parent, for a file row), Rename/Delete (each prefilled/skipped
+    // straight to the stage BufferView::StartCreateFileAt/
+    // StartCreateDirectoryAt/StartRenameFileAt/StartDeleteFileAt now offer,
+    // instead of a blind path prompt), plus two wholly new capabilities
+    // neither BufferView nor any existing command has: Reveal in Terminal
+    // (starts/shows the embedded terminal panel if needed, then types a
+    // `cd` into its live shell -- TerminalPanel::SendText, TerminalTabLauncher's
+    // own ShellQuoteSingle reused verbatim for the same "typing a path into
+    // a real shell prompt" escaping problem) and Copy Path
+    // (editor::CopyToSystemClipboard directly, no BufferView involvement at
+    // all). Same focusable-ListPopup/parallel-action-vector shape
+    // tabContextMenu above uses and for the same reason -- ProjectSidebar
+    // takes no keyboard focus of its own to drive the anchored/BufferView-
+    // keeps-focus shape contextMenu/completionPopup/peekPopup use instead.
+    std::vector<std::function<void()>> sidebarContextMenuActions;
+    ned::ui::ListPopup sidebarContextMenu(theme);
+    sidebarContextMenu.SetFocusable(true);
+    overlays.Add(sidebarContextMenu, [panel = &sidebarContextMenu](Size size) {
+        const ned::ui::Point origin = panel->Anchor().value_or(ned::ui::Point{});
+        const int            width  = std::min(30, size.width);
+        const int            height = std::clamp(panel->ContentRowCount(), 3, std::min(9, size.height));
+
+        const int xMin = std::clamp(origin.x, 0, std::max(0, size.width - width));
+        const int xMax = std::min(size.width - 1, xMin + width - 1);
+
+        int yMin, yMax;
+        if (origin.y + height - 1 <= size.height - 1) {
+            yMin = origin.y;
+            yMax = yMin + height - 1;
+        }
+        else {
+            // Flip upward, same as tabContextMenu/contextMenu/completionPopup/
+            // peekPopup's own placement.
+            yMax = std::max(0, origin.y - 1);
+            yMin = std::max(0, yMax - height + 1);
+        }
+        return Box{.x_min = xMin, .x_max = xMax, .y_min = yMin, .y_max = yMax};
+    });
+    projectSidebar->SetOnContextMenuRequest(
+        [&overlays, panel = &sidebarContextMenu, &sidebarContextMenuActions, wm = windowManager.get(),
+         terminal = terminalPanel.get()](const std::filesystem::path& path, bool isDirectory, ned::ui::Point anchor) {
+            ned::ui::ListPopupModel model;
+            model.title  = isDirectory ? "Directory" : "File";
+            model.anchor = anchor;
+            sidebarContextMenuActions.clear();
+
+            auto addRow = [&](std::string label, std::function<void()> action) {
+                model.rows.push_back({.left = "", .main = std::move(label)});
+                sidebarContextMenuActions.push_back(std::move(action));
+            };
+
+            const std::filesystem::path targetDir = isDirectory ? path : path.parent_path();
+            addRow("New File...", [wm, targetDir] { wm->StartCreateFileAt(targetDir); });
+            addRow("New Folder...", [wm, targetDir] { wm->StartCreateDirectoryAt(targetDir); });
+            addRow("Rename...", [wm, path] { wm->StartRenameFileAt(path); });
+            addRow("Delete", [wm, path] { wm->StartDeleteFileAt(path); });
+            addRow("Reveal in Terminal", [terminal, &overlays, path] {
+                terminal->EnsureStarted();
+                if (!overlays.IsVisible(*terminal)) {
+                    overlays.Show(*terminal);
+                }
+                terminal->TakeFocus();
+                terminal->SendText("cd " + ned::editor::ShellQuoteSingle(path) + "\n");
+            });
+            addRow("Copy Path", [path] { ned::editor::CopyToSystemClipboard(path.string()); });
+
+            model.selectedIndex = 0;
+            panel->SetModel(std::move(model));
+            overlays.Show(*panel);
+            panel->TakeFocus();
+        });
+    sidebarContextMenu.SetOnActivate([&sidebarContextMenuActions, &overlays, panel = &sidebarContextMenu,
+                                      wm = windowManager.get()](std::size_t index) {
+        // Focus must return to a pane before the action runs -- tabContextMenu's
+        // own live-caught bug (see its comment above) applies identically
+        // here: StartCreateFileAt/StartRenameFileAt/StartDeleteFileAt all
+        // route through WindowManager's own focused-pane lookup, which sees
+        // nothing focused while this popup still holds the keyboard.
+        overlays.Hide(*panel);
+        wm->TakeFocus();
+        if (index < sidebarContextMenuActions.size()) {
+            sidebarContextMenuActions[index]();
+        }
+    });
+    sidebarContextMenu.SetOnCancel([&overlays, panel = &sidebarContextMenu, wm = windowManager.get()] {
+        overlays.Hide(*panel);
+        wm->TakeFocus();
+    });
+    // TabBar-context-menu's own precedent: any key this popup doesn't
+    // already handle itself dismisses it too, so an ordinary keystroke
+    // meant for whatever has focus next isn't silently swallowed.
+    sidebarContextMenu.SetOnKey(
+        [&overlays, panel = &sidebarContextMenu, wm = windowManager.get()](const ned::editor::KeyChord&) {
+            overlays.Hide(*panel);
+            wm->TakeFocus();
+        });
+
     // call/type-hierarchy follow-up: the shared TreeView overlay behind
     // lsp-call-hierarchy-incoming/-outgoing/lsp-type-hierarchy-supertypes/
     // -subtypes -- unlike candidatePopup/completionPopup above, this one
@@ -2004,6 +2105,12 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
                 // ordinary thing in one motion.
                 if (overlays.IsVisible(tabContextMenu)) {
                     overlays.Hide(tabContextMenu);
+                    windowManager->TakeFocus();
+                }
+                // sidebar-context-menu follow-up: same reasoning, same fix
+                // -- sidebarContextMenu has no owner of its own either.
+                if (overlays.IsVisible(sidebarContextMenu)) {
+                    overlays.Hide(sidebarContextMenu);
                     windowManager->TakeFocus();
                 }
                 head.OnEvent(event);

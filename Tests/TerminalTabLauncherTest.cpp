@@ -114,3 +114,14 @@ TEST_CASE("BuildKonsoleRunCommandArgv escapes an embedded single quote", "[Termi
         BuildKonsoleRunCommandArgv("qdbus6", ":1.93", "11", "/usr/local/bin/ned", "/home/user/o'brien's project");
     REQUIRE(argv[4] == "'/usr/local/bin/ned' '/home/user/o'\\''brien'\\''s project'");
 }
+
+TEST_CASE("ShellQuoteSingle wraps a plain path in single quotes", "[TerminalTabLauncher]") {
+    REQUIRE(ned::editor::ShellQuoteSingle("/home/user/myproject") == "'/home/user/myproject'");
+}
+
+TEST_CASE("ShellQuoteSingle escapes an embedded single quote", "[TerminalTabLauncher]") {
+    // sidebar-context-menu follow-up: TerminalPanel's reveal-in-terminal
+    // action reuses this directly (not just through Konsole's own
+    // BuildKonsoleRunCommandArgv) to type a `cd` command into a live shell.
+    REQUIRE(ned::editor::ShellQuoteSingle("/home/user/o'brien's project") == "'/home/user/o'\\''brien'\\''s project'");
+}

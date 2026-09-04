@@ -148,6 +148,22 @@ TEST_CASE("TerminalPanel forwards keys to the write sink", "[TerminalPanel]") {
     REQUIRE(sent == "\x03");
 }
 
+TEST_CASE("SendText writes raw bytes straight to the write sink, no key encoding involved", "[TerminalPanel]") {
+    Fixture     f;
+    std::string sent;
+    f.panel.SetWriteSinkForTesting([&sent](std::string_view data) { sent += data; });
+
+    f.panel.SendText("cd '/some/dir'\n");
+
+    REQUIRE(sent == "cd '/some/dir'\n");
+}
+
+TEST_CASE("SendText is a safe no-op with no write sink set", "[TerminalPanel]") {
+    Fixture f;
+
+    f.panel.SendText("cd /tmp\n"); // must not crash
+}
+
 TEST_CASE("TerminalPanel reserves the toggle chord and never forwards it", "[TerminalPanel]") {
     Fixture     f;
     std::string sent;

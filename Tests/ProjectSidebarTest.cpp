@@ -3,6 +3,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -1294,6 +1295,127 @@ TEST_CASE("changed-files-highlight: rows are tinted by VCS status, directories b
     REQUIRE(screen.PixelAt(1, 4).foreground_color == ned::ui::Color::BrightBlue);   // a.txt: Modified
     REQUIRE(screen.PixelAt(1, 5).foreground_color == ned::ui::Color::BrightCyan);   // b.txt: Untracked
     REQUIRE(screen.PixelAt(1, 6).foreground_color == theme.defaultForeground);      // c.txt: clean, untouched
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("A right-press on a file entry reports its path/isDirectory and the click's absolute position, without opening it",
+          "[ProjectSidebar]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_sidebar_test_context_menu_file";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    {
+        std::ofstream(dir / "target.txt") << "hello from disk";
+    }
+    const CurrentPathGuard cwdGuard(dir);
+
+    ned::text::BufferList   list;
+    ned::text::Buffer&      scratch = list.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer   activeBuffer(scratch);
+    ned::ui::Theme          theme = ned::ui::DarkTheme();
+    std::string             statusMessage;
+    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    PlaceSidebar(sidebar, 28, 5);
+
+    std::optional<std::filesystem::path> requestedPath;
+    std::optional<bool>                  requestedIsDirectory;
+    std::optional<ned::ui::Point>        requestedAnchor;
+    sidebar.SetOnContextMenuRequest([&](const std::filesystem::path& path, bool isDirectory, ned::ui::Point anchor) {
+        requestedPath        = path;
+        requestedIsDirectory = isDirectory;
+        requestedAnchor      = anchor;
+    });
+
+    sidebar.OnEvent(MousePress(3, 1, ned::ui::MouseEvent::Button::Right)); // row 0 is the header
+
+    REQUIRE(requestedPath.has_value());
+    REQUIRE(requestedPath->filename() == "target.txt");
+    REQUIRE(requestedIsDirectory == false);
+    REQUIRE(requestedAnchor == ned::ui::Point{.x = 3, .y = 1});
+    // Unlike a left click, this never opens the file.
+    REQUIRE(&activeBuffer.Get() == &scratch);
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("A right-press on a directory entry reports isDirectory true, without toggling it", "[ProjectSidebar]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_sidebar_test_context_menu_dir";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir / "sub");
+    const CurrentPathGuard cwdGuard(dir);
+
+    ned::text::BufferList   list;
+    ned::text::Buffer&      scratch = list.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer   activeBuffer(scratch);
+    ned::ui::Theme          theme = ned::ui::DarkTheme();
+    std::string             statusMessage;
+    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    PlaceSidebar(sidebar, 28, 5);
+
+    std::optional<bool> requestedIsDirectory;
+    sidebar.SetOnContextMenuRequest(
+        [&](const std::filesystem::path&, bool isDirectory, ned::ui::Point) { requestedIsDirectory = isDirectory; });
+
+    sidebar.OnEvent(MousePress(0, 1, ned::ui::MouseEvent::Button::Right)); // "sub/" (row 0 is the header)
+
+    REQUIRE(requestedIsDirectory == true);
+    // Unlike a left click, this never expands the directory.
+    ned::ui::Screen screen = ned::ui::Screen(28, 5);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 27, .y_min = 0, .y_max = 4});
+    sidebar.Paint(canvas);
+    REQUIRE(RowText(screen, 1, 28).find("▸") != std::string::npos); // still collapsed
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("A right-press over chrome (header, divider, bottom border) never fires the context-menu handler",
+          "[ProjectSidebar]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_sidebar_test_context_menu_chrome";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    {
+        std::ofstream(dir / "a.txt") << "x";
+    }
+    const CurrentPathGuard cwdGuard(dir);
+
+    ned::text::BufferList   list;
+    ned::text::Buffer&      scratch = list.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer   activeBuffer(scratch);
+    ned::ui::Theme          theme = ned::ui::DarkTheme();
+    std::string             statusMessage;
+    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    PlaceSidebar(sidebar, 28, 5);
+
+    bool requested = false;
+    sidebar.SetOnContextMenuRequest([&](const std::filesystem::path&, bool, ned::ui::Point) { requested = true; });
+
+    sidebar.OnEvent(MousePress(3, 0, ned::ui::MouseEvent::Button::Right));  // header row
+    sidebar.OnEvent(MousePress(27, 1, ned::ui::MouseEvent::Button::Right)); // divider column
+    sidebar.OnEvent(MousePress(3, 4, ned::ui::MouseEvent::Button::Right));  // bottom border row
+
+    REQUIRE_FALSE(requested);
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("A right-press with no handler registered is a safe no-op", "[ProjectSidebar]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_sidebar_test_context_menu_nohandler";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    {
+        std::ofstream(dir / "a.txt") << "x";
+    }
+    const CurrentPathGuard cwdGuard(dir);
+
+    ned::text::BufferList   list;
+    ned::text::Buffer&      scratch = list.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer   activeBuffer(scratch);
+    ned::ui::Theme          theme = ned::ui::DarkTheme();
+    std::string             statusMessage;
+    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    PlaceSidebar(sidebar, 28, 5);
+
+    sidebar.OnEvent(MousePress(3, 1, ned::ui::MouseEvent::Button::Right)); // must not crash
 
     std::filesystem::remove_all(dir);
 }
