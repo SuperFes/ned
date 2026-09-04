@@ -3079,7 +3079,8 @@ TEST_CASE("No textDocument/diagnostic request is sent when lsp-pull-diagnostics 
     REQUIRE(NoFrameArrives(server.serverStdinRead));
 }
 
-TEST_CASE("RequestSemanticTokensFull sends a request when a legend is set and applies decoded, byte-resolved spans",
+TEST_CASE("RequestSemanticTokens sends a plain full request when a legend is set and applies decoded, byte-resolved "
+          "spans",
           "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
@@ -3096,7 +3097,7 @@ TEST_CASE("RequestSemanticTokensFull sends a request when a legend is set and ap
     (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
 
     REQUIRE(manager.SemanticTokensGeneration(buffer) == 0);
-    manager.RequestSemanticTokensFull(buffer, "test-lang");
+    manager.RequestSemanticTokens(buffer, 0, buffer.Size(), "test-lang");
     const std::string raw     = ReadRawFrame(server.serverStdinRead);
     const auto        request = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
     REQUIRE(request["method"] == "textDocument/semanticTokens/full");
@@ -3122,7 +3123,7 @@ TEST_CASE("RequestSemanticTokensFull sends a request when a legend is set and ap
     REQUIRE(spans[1].syntaxClass == SyntaxClass::Variable);
 }
 
-TEST_CASE("RequestSemanticTokensFull sends nothing when the server never advertised a legend", "[Lsp]") {
+TEST_CASE("RequestSemanticTokens sends nothing when the server never advertised a legend", "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
     LspManager                  manager(bufferList, eventLoop);
@@ -3135,12 +3136,12 @@ TEST_CASE("RequestSemanticTokensFull sends nothing when the server never adverti
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead); // drain didOpen -- nothing else was ever queued behind it
 
-    manager.RequestSemanticTokensFull(buffer, "test-lang");
+    manager.RequestSemanticTokens(buffer, 0, buffer.Size(), "test-lang");
     REQUIRE(NoFrameArrives(server.serverStdinRead));
     REQUIRE(manager.SemanticTokenSpans(buffer).empty());
 }
 
-TEST_CASE("RequestSemanticTokensFull does not resend for unchanged content", "[Lsp]") {
+TEST_CASE("RequestSemanticTokens does not resend for unchanged content", "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
     LspManager                  manager(bufferList, eventLoop);
@@ -3154,16 +3155,16 @@ TEST_CASE("RequestSemanticTokensFull does not resend for unchanged content", "[L
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
 
-    manager.RequestSemanticTokensFull(buffer, "test-lang");
+    manager.RequestSemanticTokens(buffer, 0, buffer.Size(), "test-lang");
     (void)ReadRawFrame(server.serverStdinRead); // the one real request
 
     // Called again with no intervening edit -- BufferView calls this once
     // per Paint(), and a cursor-blink/scroll-only repaint must not resend.
-    manager.RequestSemanticTokensFull(buffer, "test-lang");
+    manager.RequestSemanticTokens(buffer, 0, buffer.Size(), "test-lang");
     REQUIRE(NoFrameArrives(server.serverStdinRead));
 }
 
-TEST_CASE("RequestSemanticTokensFull sends nothing when semantic highlighting is disabled", "[Lsp]") {
+TEST_CASE("RequestSemanticTokens sends nothing when semantic highlighting is disabled", "[Lsp]") {
     ned::editor::lsp::SetLspSemanticHighlightingEnabled(false);
     struct RestoreGuard {
         ~RestoreGuard() {
@@ -3184,8 +3185,191 @@ TEST_CASE("RequestSemanticTokensFull sends nothing when semantic highlighting is
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
 
-    manager.RequestSemanticTokensFull(buffer, "test-lang");
+    manager.RequestSemanticTokens(buffer, 0, buffer.Size(), "test-lang");
     REQUIRE(NoFrameArrives(server.serverStdinRead));
+}
+
+TEST_CASE("RequestSemanticTokens prefers textDocument/semanticTokens/range when the server advertises range support, "
+          "and dedups on (content, viewport) not generation alone",
+          "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-semantic-tokens-range-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("int x = 1;\nint y = 2;\n");
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SetSemanticTokensLegendForTesting(
+        "test-lang", SemanticTokensLegend{.tokenTypes = {"keyword"}, .tokenModifiers = {}, .rangeSupported = true});
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    manager.RequestSemanticTokens(buffer, 0, 11, "test-lang");
+    const std::string raw     = ReadRawFrame(server.serverStdinRead);
+    const auto        request = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(request["method"] == "textDocument/semanticTokens/range");
+    REQUIRE(request["params"]["range"]["start"]["line"] == 0);
+
+    const auto response = Json{
+        {"jsonrpc", "2.0"}, {"id", RequestIdFromFrame(raw)}, {"result", {{"data", Json::array({0, 0, 3, 0, 0})}}}};
+    client->DispatchFrame(response.dump());
+    REQUIRE(manager.SemanticTokenSpans(buffer).size() == 1);
+
+    // Same (content, viewport) -- a repaint, must not resend.
+    manager.RequestSemanticTokens(buffer, 0, 11, "test-lang");
+    REQUIRE(NoFrameArrives(server.serverStdinRead));
+
+    // Scrolled to reveal new content -- same generation, different
+    // viewport, must resend.
+    manager.RequestSemanticTokens(buffer, 11, 22, "test-lang");
+    const std::string thirdRaw = ReadRawFrame(server.serverStdinRead);
+    REQUIRE(Json::parse(thirdRaw.substr(thirdRaw.find("\r\n\r\n") + 4))["method"] == "textDocument/semanticTokens/range");
+}
+
+TEST_CASE("RequestSemanticTokens falls back to full after a real error response to a range request, latching "
+          "semanticTokensRangeUnsupported_ for the rest of the connection",
+          "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-semantic-tokens-range-unsupported-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("int x = 1;");
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SetSemanticTokensLegendForTesting(
+        "test-lang", SemanticTokensLegend{.tokenTypes = {"keyword"}, .tokenModifiers = {}, .rangeSupported = true});
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    manager.RequestSemanticTokens(buffer, 0, buffer.Size(), "test-lang");
+    const std::string raw = ReadRawFrame(server.serverStdinRead);
+    REQUIRE(Json::parse(raw.substr(raw.find("\r\n\r\n") + 4))["method"] == "textDocument/semanticTokens/range");
+    client->DispatchFrame(
+        Json{{"jsonrpc", "2.0"}, {"id", RequestIdFromFrame(raw)}, {"error", {{"code", -32601}, {"message", "not implemented"}}}}.dump());
+
+    // Buffer never edited (still the same content generation the failed
+    // range request was for), so RequestSemanticTokens' own dedup would
+    // normally no-op -- but the failure just switched this buffer onto the
+    // full/delta path entirely, whose own dedup key is keyed on generation
+    // alone and was never populated by the failed range attempt, so a
+    // fresh call still sends the fallback request.
+    manager.RequestSemanticTokens(buffer, 0, buffer.Size(), "test-lang");
+    const std::string fallbackRaw = ReadRawFrame(server.serverStdinRead);
+    REQUIRE(Json::parse(fallbackRaw.substr(fallbackRaw.find("\r\n\r\n") + 4))["method"] == "textDocument/semanticTokens/full");
+}
+
+TEST_CASE("RequestSemanticTokens sends textDocument/semanticTokens/full/delta with previousResultId once a baseline "
+          "exists, and applies the response's edits against the cached raw data",
+          "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-semantic-tokens-delta-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("int x = 1;");
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SetSemanticTokensLegendForTesting(
+        "test-lang", SemanticTokensLegend{.tokenTypes = {"keyword", "variable"}, .tokenModifiers = {}, .fullDeltaSupported = true});
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    // First request: no baseline yet -- plain full, response seeds one.
+    manager.RequestSemanticTokens(buffer, 0, buffer.Size(), "test-lang");
+    const std::string firstRaw = ReadRawFrame(server.serverStdinRead);
+    REQUIRE(Json::parse(firstRaw.substr(firstRaw.find("\r\n\r\n") + 4))["method"] == "textDocument/semanticTokens/full");
+    // One token: "int" (keyword, type 0) at [0,3).
+    client->DispatchFrame(Json{{"jsonrpc", "2.0"},
+                               {"id", RequestIdFromFrame(firstRaw)},
+                               {"result", {{"resultId", "v1"}, {"data", Json::array({0, 0, 3, 0, 0})}}}}
+                              .dump());
+    REQUIRE(manager.SemanticTokenSpans(buffer).size() == 1);
+
+    // Content edited -- re-sync (didChange is debounced, see
+    // LspSyncDebounceMs/SyncBuffer's own doc comment; the sibling
+    // pull-diagnostics test above uses this exact WaitUntil+drain idiom) so
+    // RequestSemanticTokens' own state->lastSyncedGeneration guard actually
+    // lets the second request through. The second request now has a
+    // baseline to delta against.
+    buffer.InsertAtPoint(" ");
+    manager.SyncBuffer(buffer, "test-lang");
+    WaitUntil(eventLoop, [&] { return !NoFrameArrives(server.serverStdinRead); });
+    const std::string didChange = ReadRawFrame(server.serverStdinRead);
+    REQUIRE(Json::parse(didChange.substr(didChange.find("\r\n\r\n") + 4))["method"] == "textDocument/didChange");
+
+    manager.RequestSemanticTokens(buffer, 0, buffer.Size(), "test-lang");
+    const std::string secondRaw     = ReadRawFrame(server.serverStdinRead);
+    const auto        secondRequest = Json::parse(secondRaw.substr(secondRaw.find("\r\n\r\n") + 4));
+    REQUIRE(secondRequest["method"] == "textDocument/semanticTokens/full/delta");
+    REQUIRE(secondRequest["params"]["previousResultId"] == "v1");
+
+    // Delta response: insert one more quintuple (a "variable" token, type
+    // 1) after the cached one via an edit rather than resending "data".
+    client->DispatchFrame(Json{{"jsonrpc", "2.0"},
+                               {"id", RequestIdFromFrame(secondRaw)},
+                               {"result",
+                                {{"resultId", "v2"},
+                                 {"edits", Json::array({{{"start", 5}, {"deleteCount", 0}, {"data", Json::array({0, 5, 1, 1, 0})}}})}}}}
+                              .dump());
+    const std::vector<HighlightSpan>& spans = manager.SemanticTokenSpans(buffer);
+    REQUIRE(spans.size() == 2);
+    REQUIRE(spans[0].syntaxClass == SyntaxClass::Keyword);
+    REQUIRE(spans[1].syntaxClass == SyntaxClass::Variable);
+    REQUIRE(spans[1].startByte == 5);
+}
+
+TEST_CASE("RequestSemanticTokens falls back to plain full requests after a real error response to a full/delta "
+          "request, latching semanticTokensFullDeltaUnsupported_",
+          "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    LspManager                  manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-semantic-tokens-delta-unsupported-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("int x = 1;");
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SetSemanticTokensLegendForTesting(
+        "test-lang", SemanticTokensLegend{.tokenTypes = {"keyword"}, .tokenModifiers = {}, .fullDeltaSupported = true});
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    manager.RequestSemanticTokens(buffer, 0, buffer.Size(), "test-lang");
+    const std::string firstRaw = ReadRawFrame(server.serverStdinRead);
+    client->DispatchFrame(Json{{"jsonrpc", "2.0"},
+                               {"id", RequestIdFromFrame(firstRaw)},
+                               {"result", {{"resultId", "v1"}, {"data", Json::array({0, 0, 3, 0, 0})}}}}
+                              .dump());
+
+    // Re-sync after the edit -- see the sibling delta-application test's own
+    // comment on why (debounced didChange, WaitUntil+drain idiom).
+    buffer.InsertAtPoint(" ");
+    manager.SyncBuffer(buffer, "test-lang");
+    WaitUntil(eventLoop, [&] { return !NoFrameArrives(server.serverStdinRead); });
+    const std::string firstDidChange = ReadRawFrame(server.serverStdinRead);
+    REQUIRE(Json::parse(firstDidChange.substr(firstDidChange.find("\r\n\r\n") + 4))["method"] == "textDocument/didChange");
+
+    manager.RequestSemanticTokens(buffer, 0, buffer.Size(), "test-lang");
+    const std::string secondRaw = ReadRawFrame(server.serverStdinRead);
+    REQUIRE(Json::parse(secondRaw.substr(secondRaw.find("\r\n\r\n") + 4))["method"] == "textDocument/semanticTokens/full/delta");
+    client->DispatchFrame(
+        Json{{"jsonrpc", "2.0"}, {"id", RequestIdFromFrame(secondRaw)}, {"error", {{"code", -32601}, {"message", "not implemented"}}}}.dump());
+
+    buffer.InsertAtPoint(" ");
+    manager.SyncBuffer(buffer, "test-lang");
+    WaitUntil(eventLoop, [&] { return !NoFrameArrives(server.serverStdinRead); });
+    const std::string secondDidChange = ReadRawFrame(server.serverStdinRead);
+    REQUIRE(Json::parse(secondDidChange.substr(secondDidChange.find("\r\n\r\n") + 4))["method"] == "textDocument/didChange");
+
+    manager.RequestSemanticTokens(buffer, 0, buffer.Size(), "test-lang");
+    const std::string thirdRaw = ReadRawFrame(server.serverStdinRead);
+    REQUIRE(Json::parse(thirdRaw.substr(thirdRaw.find("\r\n\r\n") + 4))["method"] == "textDocument/semanticTokens/full");
 }
 
 TEST_CASE("RequestInlayHints sends the viewport range and applies byte-resolved, sorted hints", "[Lsp]") {

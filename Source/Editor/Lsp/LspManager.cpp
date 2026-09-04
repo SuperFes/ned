@@ -295,17 +295,22 @@ Json BuildInitializeParams(const std::filesystem::path& projectRoot, const Json&
             {"formatting", Json::object()},
             {"rangeFormatting", Json::object()},
             {"onTypeFormatting", Json::object()},
-            // semanticTokens follow-up: tokenTypes/tokenModifiers here are
-            // spec-required but purely informational (the client's own
-            // decode is index-based against the server's own legend, not
-            // filtered against this list) -- declares every standard type
+            // semanticTokens follow-up, extended by the range/delta
+            // follow-up: tokenTypes/tokenModifiers here are spec-required
+            // but purely informational (the client's own decode is
+            // index-based against the server's own legend, not filtered
+            // against this list) -- declares every standard type
             // SyntaxClassForSemanticTokenType actually maps, so a
             // capability-strict server has no reason to omit any of them
-            // from its own legend. requests.full only (no range/delta yet
-            // -- see ROADMAP.md); formats always ["relative"], the only
-            // value the spec defines.
+            // from its own legend. requests.full advertises delta support
+            // (the object form, not a bare true -- RequestSemanticTokens
+            // only ever sends a full/delta request once
+            // SemanticTokensLegend::fullDeltaSupported says the server
+            // reciprocated in its own semanticTokensProvider.full);
+            // requests.range is declared too. formats always ["relative"],
+            // the only value the spec defines.
             {"semanticTokens",
-             {{"requests", {{"full", true}}},
+             {{"requests", {{"full", {{"delta", true}}}, {"range", true}}},
               {"tokenTypes", Json::array({"namespace", "class", "enum", "interface", "struct", "type", "typeParameter",
                                           "parameter", "variable", "property", "enumMember", "function", "method", "macro",
                                           "keyword", "modifier", "comment", "string", "number", "regexp", "operator",
@@ -995,9 +1000,11 @@ void LspManager::ClientDisconnected(const std::string& serverKey, const std::str
     onTypeFormattingTriggers_.erase(languageCopy);
     textDocumentSyncKind_.erase(languageCopy);       // ditto -- a respawned server may advertise a different sync kind
     fileOperationFilters_.erase(languageCopy);        // ditto -- a respawned server may advertise different willRename/didRename filters
-    pullDiagnosticsUnsupported_.erase(languageCopy); // a respawned server gets one fresh attempt
+    pullDiagnosticsUnsupported_.erase(languageCopy);  // a respawned server gets one fresh attempt
     inlayHintsUnsupported_.erase(languageCopy);       // ditto
     codeLensUnsupported_.erase(languageCopy);         // ditto
+    semanticTokensRangeUnsupported_.erase(languageCopy);     // ditto
+    semanticTokensFullDeltaUnsupported_.erase(languageCopy); // ditto
     // mode-line-lsp-status-round-2 follow-up: latch the disconnect so
     // StatusForLanguage can report it, distinct from "never configured" --
     // cleared the moment a fresh spawn succeeds (ClientForLanguage) or the
@@ -1163,6 +1170,8 @@ void LspManager::NotifyBufferClosed(text::Buffer& buffer) {
     semanticTokensRequestCounter_.erase(&buffer);
     semanticTokenSpans_.erase(&buffer);
     semanticTokensGeneration_.erase(&buffer);
+    semanticTokensRequestedRange_.erase(&buffer);
+    previousSemanticTokens_.erase(&buffer);
     inlayHintsRequestedRange_.erase(&buffer);
     inlayHintsRequestCounter_.erase(&buffer);
     inlayHintSpans_.erase(&buffer);
@@ -1373,7 +1382,34 @@ void LspManager::RequestPullDiagnostics(text::Buffer& buffer, const std::string&
         });
 }
 
-void LspManager::RequestSemanticTokensFull(text::Buffer& buffer, const std::string& serverKey) {
+void LspManager::ApplyDecodedSemanticTokens(text::Buffer& buffer, const std::vector<SemanticToken>& tokens,
+                                            const SemanticTokensLegend& legend) {
+    const text::ITextStorage&          content = buffer.Content();
+    std::vector<editor::HighlightSpan> spans;
+    spans.reserve(tokens.size());
+    for (const SemanticToken& token : tokens) {
+        if (token.tokenTypeIndex >= legend.tokenTypes.size()) {
+            continue; // out-of-range index -- a malformed/mismatched-legend response, skip rather than crash
+        }
+        const std::optional<editor::SyntaxClass> syntaxClass = SyntaxClassForSemanticTokenType(legend.tokenTypes[token.tokenTypeIndex]);
+        if (!syntaxClass) {
+            continue; // no sensible existing class for this token type -- dropped, not force-fit
+        }
+        // A semantic token never spans multiple lines (per spec) -- its end
+        // is always {start.line, start.character + length}.
+        const LspPosition end{.line = token.start.line, .character = token.start.character + token.length};
+        spans.push_back(editor::HighlightSpan{
+            .startByte   = LspPositionToByte(content, token.start),
+            .endByte     = LspPositionToByte(content, end),
+            .syntaxClass = *syntaxClass,
+        });
+    }
+    semanticTokenSpans_[&buffer] = std::move(spans);
+    ++semanticTokensGeneration_[&buffer];
+}
+
+void LspManager::RequestSemanticTokens(text::Buffer& buffer, std::size_t viewportStartByte, std::size_t viewportEndByte,
+                                       const std::string& serverKey) {
     if (!LspSemanticHighlightingEnabled()) {
         return;
     }
@@ -1389,29 +1425,156 @@ void LspManager::RequestSemanticTokensFull(text::Buffer& buffer, const std::stri
     if (state->lastSyncedGeneration != buffer.ContentGeneration()) {
         return;
     }
-    if (const auto it = semanticTokensRequestedGeneration_.find(&buffer);
-        it != semanticTokensRequestedGeneration_.end() && it->second == buffer.ContentGeneration()) {
-        return; // already requested for this exact content -- a cursor-blink/scroll-only repaint, not a real change
-    }
     // LSP multi-root follow-up: serverKey (plain), not state->connectionKey
     // -- SemanticTokensLegendFor's own store is deliberately still
     // plain-keyed, see this class's own header comment.
     const std::optional<SemanticTokensLegend> legend = SemanticTokensLegendFor(serverKey);
     if (!legend) {
-        return; // server never advertised a legend -- the response would be undecodable anyway
+        return; // server never advertised a legend -- any of the three responses would be undecodable anyway
     }
     LspClient* client = ExistingClientForLanguage(state->connectionKey);
     if (!client) {
         return;
     }
 
-    const std::size_t requestedGeneration       = buffer.ContentGeneration();
-    semanticTokensRequestedGeneration_[&buffer] = requestedGeneration;
-    const std::size_t requestId                 = ++semanticTokensRequestCounter_[&buffer];
-
-    text::Buffer* const        bufferPtr  = &buffer;
-    const Json                 params     = {{"textDocument", {{"uri", state->uri}}}};
     const SemanticTokensLegend legendCopy = *legend;
+    text::Buffer* const        bufferPtr  = &buffer;
+
+    // range/delta follow-up: range is preferred whenever the server both
+    // advertised it and hasn't since proven (a real error response) that it
+    // doesn't actually honor it -- see RequestSemanticTokens' own header
+    // doc comment for the full three-way decision this mirrors.
+    if (legendCopy.rangeSupported && !semanticTokensRangeUnsupported_.contains(serverKey)) {
+        const auto requestedRange = std::make_tuple(buffer.ContentGeneration(), viewportStartByte, viewportEndByte);
+        if (const auto it = semanticTokensRequestedRange_.find(&buffer);
+            it != semanticTokensRequestedRange_.end() && it->second == requestedRange) {
+            return; // already requested for this exact (content, viewport) -- a cursor-blink/scroll-into-the-same-view repaint
+        }
+        semanticTokensRequestedRange_[&buffer] = requestedRange;
+        const std::size_t requestId            = ++semanticTokensRequestCounter_[&buffer];
+        const std::size_t requestedGeneration  = buffer.ContentGeneration();
+
+        const text::ITextStorage& content = buffer.Content();
+        const LspPosition         start   = BytePositionToLsp(content, viewportStartByte);
+        const LspPosition         end     = BytePositionToLsp(content, viewportEndByte);
+        const Json                params  = {
+            {"textDocument", {{"uri", state->uri}}},
+            {"range", {{"start", {{"line", start.line}, {"character", start.character}}}, {"end", {{"line", end.line}, {"character", end.character}}}}},
+        };
+        client->SendRequest(
+            "textDocument/semanticTokens/range", params,
+            [this, bufferPtr, requestId, requestedGeneration, legendCopy, serverKey](std::optional<Json> result, std::optional<Json> error) {
+                const auto counterIt = semanticTokensRequestCounter_.find(bufferPtr);
+                if (counterIt == semanticTokensRequestCounter_.end() || counterIt->second != requestId) {
+                    return; // superseded by a newer request for this buffer
+                }
+                if (error) {
+                    // A real error response is this server's own proof it
+                    // doesn't actually honor a capability it advertised --
+                    // stop asking for the rest of this connection's
+                    // lifetime rather than re-erroring on every viewport
+                    // change. The next request for this buffer falls
+                    // through to the full/delta path below instead.
+                    semanticTokensRangeUnsupported_.insert(serverKey);
+                    return;
+                }
+                if (!result) {
+                    return;
+                }
+                // stale-position-race follow-up: see the full/delta branch
+                // below's own comment on requestedGeneration -- same race,
+                // same fix.
+                if (bufferPtr->ContentGeneration() != requestedGeneration) {
+                    return;
+                }
+                ApplyDecodedSemanticTokens(*bufferPtr, DecodeSemanticTokenData(ExtractSemanticTokensRawData(*result)), legendCopy);
+            });
+        return;
+    }
+
+    // Full / full-delta path -- generation-only dedup (whole-document
+    // scope, no viewport to also key on).
+    if (const auto it = semanticTokensRequestedGeneration_.find(&buffer);
+        it != semanticTokensRequestedGeneration_.end() && it->second == buffer.ContentGeneration()) {
+        return; // already requested for this exact content -- a cursor-blink/scroll-only repaint, not a real change
+    }
+    semanticTokensRequestedGeneration_[&buffer] = buffer.ContentGeneration();
+    const std::size_t requestId                 = ++semanticTokensRequestCounter_[&buffer];
+    const std::size_t requestedGeneration       = buffer.ContentGeneration();
+
+    const bool useDelta = legendCopy.fullDeltaSupported && !semanticTokensFullDeltaUnsupported_.contains(serverKey) &&
+                          previousSemanticTokens_.contains(&buffer);
+    if (useDelta) {
+        const Json params = {
+            {"textDocument", {{"uri", state->uri}}},
+            {"previousResultId", previousSemanticTokens_.at(&buffer).resultId},
+        };
+        client->SendRequest(
+            "textDocument/semanticTokens/full/delta", params,
+            [this, bufferPtr, requestId, requestedGeneration, legendCopy, serverKey](std::optional<Json> result, std::optional<Json> error) {
+                const auto counterIt = semanticTokensRequestCounter_.find(bufferPtr);
+                if (counterIt == semanticTokensRequestCounter_.end() || counterIt->second != requestId) {
+                    return; // superseded by a newer request for this buffer
+                }
+                if (error) {
+                    // Same "learned once, stop asking" latch as the range
+                    // branch above -- a server that advertised
+                    // full.delta:true but errors on the actual request
+                    // falls back to plain full requests for the rest of
+                    // this connection's lifetime.
+                    semanticTokensFullDeltaUnsupported_.insert(serverKey);
+                    return;
+                }
+                if (!result) {
+                    return;
+                }
+                // stale-position-race follow-up: the response's LspPosition
+                // values were computed by the server against the document as
+                // it stood AT REQUEST TIME -- if a local edit landed while
+                // this was in flight, bufferPtr->Content() below is already
+                // the EDITED text, and converting the server's now-stale
+                // positions against it silently lands on the wrong bytes
+                // (off by however much the document shifted), not an
+                // out-of-range failure that would be caught some other way.
+                // A real, live-reported bug: syntax coloring visibly
+                // detached from the characters it belonged to for a moment
+                // after every keystroke. Discarding here is safe --
+                // RequestSemanticTokens' own debounce-aware re-request gate
+                // guarantees a fresh request for the new generation follows
+                // once SyncToServer's debounced didChange actually lands
+                // (see that function's own doc comment), so this is never a
+                // permanent gap, just a stale response correctly thrown
+                // away instead of misapplied.
+                if (bufferPtr->ContentGeneration() != requestedGeneration) {
+                    return;
+                }
+                // A SemanticTokensDelta response carries "edits" (applied
+                // against the cached baseline); a server that decided to
+                // resend the whole document instead carries "data" like any
+                // plain full response -- ExtractSemanticTokensDeltaEdits
+                // returning nullopt is exactly that "not delta-shaped" case.
+                std::vector<std::uint32_t> rawData;
+                if (const auto edits = ExtractSemanticTokensDeltaEdits(*result)) {
+                    const auto                        prevIt = previousSemanticTokens_.find(bufferPtr);
+                    const std::vector<std::uint32_t>& previousData =
+                        prevIt != previousSemanticTokens_.end() ? prevIt->second.rawData : std::vector<std::uint32_t>{};
+                    rawData = ApplySemanticTokensDeltaEdits(previousData, *edits);
+                }
+                else {
+                    rawData = ExtractSemanticTokensRawData(*result);
+                }
+                if (const auto resultId = ExtractSemanticTokensResultId(*result)) {
+                    previousSemanticTokens_[bufferPtr] = PreviousSemanticTokens{.resultId = *resultId, .rawData = rawData};
+                }
+                else {
+                    previousSemanticTokens_.erase(bufferPtr); // server stopped offering a resultId -- start fresh next time
+                }
+                ApplyDecodedSemanticTokens(*bufferPtr, DecodeSemanticTokenData(rawData), legendCopy);
+            });
+        return;
+    }
+
+    const Json params = {{"textDocument", {{"uri", state->uri}}}};
     client->SendRequest(
         "textDocument/semanticTokens/full", params,
         [this, bufferPtr, requestId, requestedGeneration, legendCopy](std::optional<Json> result, std::optional<Json> error) {
@@ -1422,48 +1585,19 @@ void LspManager::RequestSemanticTokensFull(text::Buffer& buffer, const std::stri
             if (error || !result) {
                 return; // leave whatever spans were already applied in place
             }
-            // stale-position-race follow-up: the response's LspPosition
-            // values were computed by the server against the document as it
-            // stood AT REQUEST TIME -- if a local edit landed while this was
-            // in flight, bufferPtr->Content() below is already the EDITED
-            // text, and converting the server's now-stale positions against
-            // it silently lands on the wrong bytes (off by however much the
-            // document shifted), not an out-of-range failure that would be
-            // caught some other way. A real, live-reported bug: syntax
-            // coloring visibly detached from the characters it belonged to
-            // for a moment after every keystroke. Discarding here is safe --
-            // RequestSemanticTokensFull's own debounce-aware re-request gate
-            // guarantees a fresh request for the new generation follows once
-            // SyncToServer's debounced didChange actually lands (see that
-            // function's own doc comment), so this is never a permanent gap,
-            // just a stale response correctly thrown away instead of misapplied.
             if (bufferPtr->ContentGeneration() != requestedGeneration) {
-                return;
+                return; // stale-position-race follow-up -- see the full/delta branch's own comment above
             }
-            const std::vector<SemanticToken>   tokens  = ExtractSemanticTokens(*result);
-            const text::ITextStorage&          content = bufferPtr->Content();
-            std::vector<editor::HighlightSpan> spans;
-            spans.reserve(tokens.size());
-            for (const SemanticToken& token : tokens) {
-                if (token.tokenTypeIndex >= legendCopy.tokenTypes.size()) {
-                    continue; // out-of-range index -- a malformed/mismatched-legend response, skip rather than crash
-                }
-                const std::optional<editor::SyntaxClass> syntaxClass =
-                    SyntaxClassForSemanticTokenType(legendCopy.tokenTypes[token.tokenTypeIndex]);
-                if (!syntaxClass) {
-                    continue; // no sensible existing class for this token type -- dropped, not force-fit
-                }
-                // A semantic token never spans multiple lines (per spec) --
-                // its end is always {start.line, start.character + length}.
-                const LspPosition end{.line = token.start.line, .character = token.start.character + token.length};
-                spans.push_back(editor::HighlightSpan{
-                    .startByte   = LspPositionToByte(content, token.start),
-                    .endByte     = LspPositionToByte(content, end),
-                    .syntaxClass = *syntaxClass,
-                });
+            const std::vector<std::uint32_t> rawData = ExtractSemanticTokensRawData(*result);
+            // range/delta follow-up: seed the delta baseline here too, not
+            // just in the full/delta branch above -- this is the very
+            // first request for a buffer whose server supports delta (no
+            // previousResultId to send yet), and its response is the
+            // baseline the *next* request deltas against.
+            if (const auto resultId = ExtractSemanticTokensResultId(*result)) {
+                previousSemanticTokens_[bufferPtr] = PreviousSemanticTokens{.resultId = *resultId, .rawData = rawData};
             }
-            semanticTokenSpans_[bufferPtr] = std::move(spans);
-            ++semanticTokensGeneration_[bufferPtr];
+            ApplyDecodedSemanticTokens(*bufferPtr, DecodeSemanticTokenData(rawData), legendCopy);
         });
 }
 
@@ -1490,7 +1624,7 @@ void LspManager::RequestInlayHints(text::Buffer& buffer, std::size_t viewportSta
     if (!state || !state->opened) {
         return;
     }
-    // sync-debounce follow-up: see RequestSemanticTokensFull's own doc
+    // sync-debounce follow-up: see RequestSemanticTokens' own doc
     // comment for why this guard exists now.
     if (state->lastSyncedGeneration != buffer.ContentGeneration()) {
         return;
@@ -1534,7 +1668,7 @@ void LspManager::RequestInlayHints(text::Buffer& buffer, std::size_t viewportSta
             if (!result) {
                 return;
             }
-            // stale-position-race follow-up: see RequestSemanticTokensFull's
+            // stale-position-race follow-up: see RequestSemanticTokens' full/delta branch's
             // own doc comment on requestedGeneration -- same race, same fix:
             // a hint position computed against the document as it stood at
             // request time must not be converted against a since-edited
@@ -1574,7 +1708,7 @@ void LspManager::RequestCodeLenses(text::Buffer& buffer, const std::string& serv
     if (!state || !state->opened) {
         return;
     }
-    // sync-debounce follow-up: see RequestSemanticTokensFull's own doc
+    // sync-debounce follow-up: see RequestSemanticTokens' own doc
     // comment for why this guard exists now.
     if (state->lastSyncedGeneration != buffer.ContentGeneration()) {
         return;

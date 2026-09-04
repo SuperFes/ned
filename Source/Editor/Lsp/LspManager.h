@@ -862,30 +862,62 @@ class LspManager {
     // caller to distinguish "unset" from "explicitly Full."
     [[nodiscard]] TextDocumentSyncKind TextDocumentSyncKindFor(const std::string& serverKey) const;
 
-    // semanticTokens follow-up. Called once per Paint() for the active
-    // buffer (BufferView.cpp, alongside the existing SyncBuffer call, not
-    // from inside SyncBuffer/SyncToServer itself -- see this method's own
-    // definition comment for why keeping it out of LspManager's core sync
-    // path matters, a real lesson learned fixing pull-diagnostics' own test
+    // semanticTokens follow-up, extended by the range/delta follow-up.
+    // Called once per Paint() for the active buffer (BufferView.cpp,
+    // alongside the existing SyncBuffer call, not from inside
+    // SyncBuffer/SyncToServer itself -- see this method's own definition
+    // comment for why keeping it out of LspManager's core sync path
+    // matters, a real lesson learned fixing pull-diagnostics' own test
     // regression above). No-ops when semantic highlighting is disabled
     // (LspSemanticHighlightingEnabled), when serverKey never advertised a
     // legend (SemanticTokensLegendFor -- the response would be
-    // undecodable), or when buffer's content hasn't changed since this was
-    // last called for it (a cursor-blink/scroll-only repaint must not
-    // resend the request every single frame). Result lands in
-    // SemanticTokenSpans(buffer)/SemanticTokensGeneration(buffer) below,
-    // not a caller-supplied callback -- BufferView's highlight cache is
-    // this method's only real consumer, and it polls the generation counter
-    // the same way it already polls Buffer::ContentGeneration(), rather
-    // than being pushed to.
-    void RequestSemanticTokensFull(text::Buffer& buffer, const std::string& serverKey);
+    // undecodable), or when the exact same request would already be in
+    // flight for the buffer's current content (a cursor-blink/scroll-only
+    // repaint must not resend every single frame).
+    //
+    // Chooses among three requests, per what serverKey's legend advertises
+    // (SemanticTokensLegend::rangeSupported/fullDeltaSupported) and has
+    // separately proven it doesn't really support (a real error response
+    // latches semanticTokensRangeUnsupported_/semanticTokensFullDeltaUnsupported_
+    // the same way inlayHintsUnsupported_ does, so a capability advertised
+    // but not honored isn't retried every frame):
+    //  1. textDocument/semanticTokens/range, scoped to
+    //     [viewportStartByte, viewportEndByte) -- preferred whenever
+    //     available, the same "only ask for what's on screen" reasoning
+    //     RequestInlayHints already applies; dedup keys on (generation,
+    //     viewport) instead of generation alone, since scrolling into new
+    //     content is worth a fresh request even without an edit.
+    //  2. textDocument/semanticTokens/full/delta, sent with the buffer's
+    //     cached previousResultId once one exists -- the response is
+    //     either a fresh SemanticTokensDelta (edits applied against the
+    //     cached raw data via ApplySemanticTokensDeltaEdits) or the server
+    //     deciding to resend a plain full result anyway; either way the
+    //     cache (previousSemanticTokens_) is refreshed from whatever
+    //     resultId/data actually came back.
+    //  3. textDocument/semanticTokens/full -- the original whole-document
+    //     request, used until a resultId exists to delta against, or
+    //     whenever neither of the above is available/supported.
+    // Result lands in SemanticTokenSpans(buffer)/SemanticTokensGeneration(buffer)
+    // below, not a caller-supplied callback -- BufferView's highlight cache
+    // is this method's only real consumer, and it polls the generation
+    // counter the same way it already polls Buffer::ContentGeneration(),
+    // rather than being pushed to. Note that under range mode,
+    // SemanticTokenSpans only ever covers the last-requested viewport, not
+    // the whole document -- the same tradeoff RequestInlayHints' own spans
+    // already accept, and the only consumer (BufferView's per-frame,
+    // per-visible-line highlight merge) never needed whole-document
+    // coverage in the first place.
+    void RequestSemanticTokens(text::Buffer& buffer, std::size_t viewportStartByte, std::size_t viewportEndByte,
+                               const std::string& serverKey);
 
-    // The most recently applied full-document semantic-token spans for
-    // buffer, already resolved to byte offsets/SyntaxClass -- empty if
-    // never requested, not yet answered, or the server has no legend at
-    // all. captureId is always kNoCapture on every span (see
-    // SyntaxClassForSemanticTokenType's own doc comment for why this
-    // reuses SyntaxClass rather than adding a new styling axis).
+    // The most recently applied semantic-token spans for buffer, already
+    // resolved to byte offsets/SyntaxClass -- empty if never requested, not
+    // yet answered, or the server has no legend at all. Covers the whole
+    // document when RequestSemanticTokens last used the full/delta path,
+    // or just the last-requested viewport when it used range -- see that
+    // method's own doc comment. captureId is always kNoCapture on every
+    // span (see SyntaxClassForSemanticTokenType's own doc comment for why
+    // this reuses SyntaxClass rather than adding a new styling axis).
     [[nodiscard]] const std::vector<editor::HighlightSpan>& SemanticTokenSpans(const text::Buffer& buffer) const;
 
     // Bumped every time SemanticTokenSpans(buffer) actually changes --
@@ -906,14 +938,14 @@ class LspManager {
     };
 
     // Called once per Paint() for the active buffer (BufferView.cpp,
-    // alongside SyncBuffer/RequestSemanticTokensFull), scoped to
+    // alongside SyncBuffer/RequestSemanticTokens), scoped to
     // [viewportStartByte, viewportEndByte) -- unlike semanticTokens'
     // whole-document request, the LSP spec's own "range" param on this
     // method exists specifically so a client only asks for what's visible,
     // since a large file can carry far more hints than are ever on screen
     // at once. No legend/data precondition to gate on (inlay hints aren't
     // index-encoded) -- this is a plain recurring background request, so
-    // (matching RequestPullDiagnostics'/RequestSemanticTokensFull's own
+    // (matching RequestPullDiagnostics'/RequestSemanticTokens' own
     // precedent) it no-ops when disabled (LspInlayHintsEnabled), when the
     // exact same [buffer, viewport range, content generation] triple was
     // already requested (a cursor-blink/scroll-into-the-same-view repaint
@@ -942,10 +974,10 @@ class LspManager {
     };
 
     // Called once per Paint() for the active buffer, alongside
-    // RequestSemanticTokensFull/RequestInlayHints -- whole-document scope
+    // RequestSemanticTokens/RequestInlayHints -- whole-document scope
     // (codeLens has no "range" param, unlike inlayHint), so the dedup gate
     // is just buffer.ContentGeneration(), the same shape
-    // RequestSemanticTokensFull's own gate is. No legend/data precondition
+    // RequestSemanticTokens' own full/delta-path gate is. No legend/data precondition
     // (codeLens ranges aren't index-encoded) -- a plain recurring
     // background request, so (matching RequestPullDiagnostics'/
     // RequestInlayHints' own precedent) it no-ops when disabled
@@ -1148,6 +1180,15 @@ class LspManager {
     // Called after any publish, and after a source's slice is dropped
     // (disconnect) so stale diagnostics from a dead server don't linger.
     void PushMergedDiagnostics(text::Buffer& buffer);
+
+    // semanticTokens range/delta follow-up. Shared tail of all three
+    // RequestSemanticTokens response branches (range/full-delta/full):
+    // resolves already-decoded tokens against legend into byte-offset
+    // HighlightSpans, replacing semanticTokenSpans_[&buffer] wholesale and
+    // bumping semanticTokensGeneration_ -- the exact loop
+    // RequestSemanticTokensFull used to do inline, pulled out so all three
+    // branches share one implementation instead of three copies.
+    void ApplyDecodedSemanticTokens(text::Buffer& buffer, const std::vector<SemanticToken>& tokens, const SemanticTokensLegend& legend);
 
     // pull-diagnostics follow-up. Called from SyncTextToServer right after
     // each real didOpen/didChange it sends -- no separate debounce timer,
@@ -1383,7 +1424,7 @@ class LspManager {
     std::unordered_set<std::string> pullDiagnosticsUnsupported_;
 
     // semanticTokens follow-up. requestedGeneration_ is buffer's own
-    // ContentGeneration() at the moment RequestSemanticTokensFull last sent
+    // ContentGeneration() at the moment RequestSemanticTokens last sent
     // a request for it -- the dedup gate that keeps a cursor-blink/scroll-
     // only repaint (content unchanged) from resending the request every
     // frame, the same role bufferState_'s own lastSyncedGeneration plays
@@ -1394,11 +1435,44 @@ class LspManager {
     // already sent is just discarded, matching
     // BufferView::signatureHelpRequestGeneration_'s own precedent). spans_/
     // generation_ are the applied result BufferView actually reads. All
-    // four erased together in NotifyBufferClosed.
-    std::unordered_map<text::Buffer*, std::size_t>                     semanticTokensRequestedGeneration_;
-    std::unordered_map<text::Buffer*, std::size_t>                     semanticTokensRequestCounter_;
+    // four erased together in NotifyBufferClosed. requestedGeneration_ is
+    // only consulted by the full/delta path (generation alone is enough to
+    // dedup a whole-document request); range mode has its own
+    // requestedRange_ triple just below, mirroring inlayHintsRequestedRange_.
+    std::unordered_map<text::Buffer*, std::size_t>                        semanticTokensRequestedGeneration_;
+    std::unordered_map<text::Buffer*, std::size_t>                        semanticTokensRequestCounter_;
     std::unordered_map<text::Buffer*, std::vector<editor::HighlightSpan>> semanticTokenSpans_;
-    std::unordered_map<text::Buffer*, std::size_t>                     semanticTokensGeneration_;
+    std::unordered_map<text::Buffer*, std::size_t>                        semanticTokensGeneration_;
+
+    // semanticTokens range/delta follow-up. requestedRange_ mirrors
+    // inlayHintsRequestedRange_ exactly (same (generation, viewportStart,
+    // viewportEnd) dedup triple, same rationale) -- only populated/consulted
+    // when RequestSemanticTokens is actually using the range path for this
+    // buffer. rangeUnsupported_/fullDeltaUnsupported_ are the same
+    // "learned once from a real error response, stop asking" latches
+    // inlayHintsUnsupported_/pullDiagnosticsUnsupported_/codeLensUnsupported_
+    // already establish, keyed by serverKey, erased in ClientDisconnected
+    // (a respawned server gets one fresh attempt at both).
+    std::unordered_map<text::Buffer*, std::tuple<std::size_t, std::size_t, std::size_t>> semanticTokensRequestedRange_;
+    std::unordered_set<std::string>                                                      semanticTokensRangeUnsupported_;
+    std::unordered_set<std::string>                                                      semanticTokensFullDeltaUnsupported_;
+
+    // semanticTokens delta follow-up. One buffer's cached baseline for the
+    // next textDocument/semanticTokens/full/delta request: resultId is
+    // what's sent as previousResultId, rawData is the flat, still-encoded
+    // quintuple array that response's edits (if any) get applied against
+    // via ApplySemanticTokensDeltaEdits. Populated from any successful
+    // full/range/full-delta response that carried a resultId (the range
+    // path deliberately never touches this -- see RequestSemanticTokens'
+    // own doc comment on why range responses don't seed the whole-document
+    // delta baseline); erased whenever a response arrives with no
+    // resultId at all (the server stopped offering one to delta against)
+    // or the buffer closes (NotifyBufferClosed).
+    struct PreviousSemanticTokens {
+        std::string                resultId;
+        std::vector<std::uint32_t> rawData;
+    };
+    std::unordered_map<text::Buffer*, PreviousSemanticTokens> previousSemanticTokens_;
 
     // inlayHint follow-up. requestedRange_ is the (contentGeneration,
     // viewportStartByte, viewportEndByte) triple last requested for a

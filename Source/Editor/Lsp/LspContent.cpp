@@ -685,6 +685,17 @@ std::optional<SemanticTokensLegend> ExtractSemanticTokensLegend(const Json& init
     if (const auto modifiersIt = legendIt->find("tokenModifiers"); modifiersIt != legendIt->end()) {
         legend.tokenModifiers = StringArray(*modifiersIt);
     }
+    // semanticTokens range/delta follow-up: full is `boolean | {delta?:
+    // bool}` -- only the object form's own "delta" field ever sets
+    // fullDeltaSupported; a bare true/false means "supports full requests,
+    // no delta." range is `boolean | {}` -- any present, non-false value
+    // means supported.
+    if (const auto fullIt = providerIt->find("full"); fullIt != providerIt->end() && fullIt->is_object()) {
+        legend.fullDeltaSupported = fullIt->value("delta", false);
+    }
+    if (const auto rangeIt = providerIt->find("range"); rangeIt != providerIt->end()) {
+        legend.rangeSupported = (rangeIt->is_boolean() && rangeIt->get<bool>()) || rangeIt->is_object();
+    }
     return legend;
 }
 
@@ -834,31 +845,102 @@ std::optional<std::vector<PullDiagnosticItem>> ExtractPullDiagnosticReport(const
     return items;
 }
 
-std::vector<SemanticToken> ExtractSemanticTokens(const Json& result) {
-    std::vector<SemanticToken> tokens;
+std::vector<std::uint32_t> ExtractSemanticTokensRawData(const Json& result) {
+    std::vector<std::uint32_t> data;
     if (!result.is_object()) {
-        return tokens;
+        return data;
     }
     const auto dataIt = result.find("data");
     if (dataIt == result.end() || !dataIt->is_array() || dataIt->size() % 5 != 0) {
+        return data;
+    }
+    data.reserve(dataIt->size());
+    for (const Json& entry : *dataIt) {
+        data.push_back(entry.get<std::uint32_t>());
+    }
+    return data;
+}
+
+std::vector<SemanticToken> DecodeSemanticTokenData(const std::vector<std::uint32_t>& data) {
+    std::vector<SemanticToken> tokens;
+    if (data.size() % 5 != 0) {
         return tokens;
     }
-    tokens.reserve(dataIt->size() / 5);
+    tokens.reserve(data.size() / 5);
     std::size_t line      = 0;
     std::size_t character = 0;
-    for (std::size_t i = 0; i < dataIt->size(); i += 5) {
-        const std::size_t deltaLine      = (*dataIt)[i].get<std::size_t>();
-        const std::size_t deltaStartChar = (*dataIt)[i + 1].get<std::size_t>();
+    for (std::size_t i = 0; i < data.size(); i += 5) {
+        const std::size_t deltaLine      = data[i];
+        const std::size_t deltaStartChar = data[i + 1];
         line += deltaLine;
         character = (deltaLine == 0) ? character + deltaStartChar : deltaStartChar;
         tokens.push_back(SemanticToken{
             .start          = LspPosition{.line = line, .character = character},
-            .length         = (*dataIt)[i + 2].get<std::size_t>(),
-            .tokenTypeIndex = (*dataIt)[i + 3].get<std::size_t>(),
-            .tokenModifiers = (*dataIt)[i + 4].get<std::uint32_t>(),
+            .length         = data[i + 2],
+            .tokenTypeIndex = data[i + 3],
+            .tokenModifiers = data[i + 4],
         });
     }
     return tokens;
+}
+
+std::vector<SemanticToken> ExtractSemanticTokens(const Json& result) {
+    return DecodeSemanticTokenData(ExtractSemanticTokensRawData(result));
+}
+
+std::optional<std::vector<SemanticTokensDeltaEdit>> ExtractSemanticTokensDeltaEdits(const Json& result) {
+    if (!result.is_object()) {
+        return std::nullopt;
+    }
+    const auto editsIt = result.find("edits");
+    if (editsIt == result.end() || !editsIt->is_array()) {
+        return std::nullopt;
+    }
+    std::vector<SemanticTokensDeltaEdit> edits;
+    edits.reserve(editsIt->size());
+    for (const Json& entry : *editsIt) {
+        if (!entry.is_object() || !entry.contains("start") || !entry.contains("deleteCount")) {
+            continue;
+        }
+        SemanticTokensDeltaEdit edit;
+        edit.start       = entry["start"].get<std::size_t>();
+        edit.deleteCount = entry["deleteCount"].get<std::size_t>();
+        if (const auto dataIt = entry.find("data"); dataIt != entry.end() && dataIt->is_array()) {
+            edit.data.reserve(dataIt->size());
+            for (const Json& value : *dataIt) {
+                edit.data.push_back(value.get<std::uint32_t>());
+            }
+        }
+        edits.push_back(std::move(edit));
+    }
+    return edits;
+}
+
+std::optional<std::string> ExtractSemanticTokensResultId(const Json& result) {
+    if (!result.is_object()) {
+        return std::nullopt;
+    }
+    const auto it = result.find("resultId");
+    if (it == result.end() || !it->is_string()) {
+        return std::nullopt;
+    }
+    return it->get<std::string>();
+}
+
+std::vector<std::uint32_t> ApplySemanticTokensDeltaEdits(const std::vector<std::uint32_t>&           previousData,
+                                                         const std::vector<SemanticTokensDeltaEdit>& edits) {
+    std::vector<std::uint32_t> data = previousData;
+    // Reverse order -- see this function's own header comment for why:
+    // edits are computed against the original (pre-edit) array, so
+    // splicing from the last edit backward keeps every not-yet-applied
+    // edit's own start index valid.
+    for (auto it = edits.rbegin(); it != edits.rend(); ++it) {
+        const std::size_t start       = std::min(it->start, data.size());
+        const std::size_t deleteCount = std::min(it->deleteCount, data.size() - start);
+        data.erase(data.begin() + static_cast<std::ptrdiff_t>(start), data.begin() + static_cast<std::ptrdiff_t>(start + deleteCount));
+        data.insert(data.begin() + static_cast<std::ptrdiff_t>(start), it->data.begin(), it->data.end());
+    }
+    return data;
 }
 
 std::vector<InlayHint> ExtractInlayHints(const Json& result) {
