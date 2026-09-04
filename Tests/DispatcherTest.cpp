@@ -328,6 +328,75 @@ TEST_CASE("An unbound key cancels a pending prefix arg", "[Dispatcher]") {
     REQUIRE_FALSE(context.prefixArg.has_value());
 }
 
+// keyboard-quit (cancel-issues-audit follow-up): C-g must abort a pending
+// multi-chord prefix or numeric prefix argument outright, never be looked up
+// as their tail (which would report "<prefix> C-g is undefined" and skip
+// keyboard-quit's own real effect) or be replayed a prefix-arg's own repeat
+// count times.
+
+TEST_CASE("C-g mid multi-chord prefix aborts and runs keyboard-quit instead of an undefined lookup",
+          "[Dispatcher]") {
+    bool            quitRan = false;
+    CommandRegistry registry;
+    registry.Register("keyboard-quit", "", [&quitRan](CommandContext&) { quitRan = true; });
+    Keymap keymap;
+    keymap.Bind(ParseKeySequence("C-x C-s"), "save-buffer"); // gives C-x a real Prefix node; deliberately unregistered
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    REQUIRE(dispatcher.Feed(ParseKeyChord("C-x"), context) == Dispatcher::Outcome::Pending);
+    REQUIRE(dispatcher.Feed(ParseKeyChord("C-g"), context) == Dispatcher::Outcome::Invoked);
+    REQUIRE(quitRan);
+    REQUIRE(dispatcher.Pending().empty());
+}
+
+TEST_CASE("C-g right after a numeric prefix argument aborts instead of repeating keyboard-quit", "[Dispatcher]") {
+    int             quitCount = 0;
+    CommandRegistry registry;
+    registry.Register("keyboard-quit", "", [&quitCount](CommandContext&) { ++quitCount; });
+    Keymap     keymap; // nothing bound -- irrelevant to this path
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    context.prefixArg      = 5; // e.g. "C-u 5" already read and terminated by a C-g keypress
+
+    REQUIRE(dispatcher.Feed(ParseKeyChord("C-g"), context) == Dispatcher::Outcome::Invoked);
+    REQUIRE(quitCount == 1); // not 5
+    REQUIRE_FALSE(context.prefixArg.has_value());
+}
+
+TEST_CASE("A bare C-g with nothing pending still resolves through the ordinary keymap binding", "[Dispatcher]") {
+    CommandRegistry registry;
+    registry.Register("keyboard-quit", "", [](CommandContext& context) { context.buffer.InsertAtPoint("q"); });
+    Keymap keymap;
+    keymap.Bind(ParseKeySequence("C-g"), "keyboard-quit");
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    REQUIRE(dispatcher.Feed(ParseKeyChord("C-g"), context) == Dispatcher::Outcome::Invoked);
+    REQUIRE(fixture.buffer.Text() == "q");
+}
+
+TEST_CASE("C-g mid-prefix reports Unbound rather than Invoked when keyboard-quit isn't registered",
+          "[Dispatcher]") {
+    CommandRegistry registry; // deliberately no keyboard-quit entry
+    Keymap          keymap;
+    keymap.Bind(ParseKeySequence("C-x C-s"), "save-buffer");
+    Dispatcher dispatcher(registry, KeymapStack({&keymap}));
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    REQUIRE(dispatcher.Feed(ParseKeyChord("C-x"), context) == Dispatcher::Outcome::Pending);
+    REQUIRE(dispatcher.Feed(ParseKeyChord("C-g"), context) == Dispatcher::Outcome::Unbound);
+    REQUIRE(dispatcher.Pending().empty());
+}
+
 // self-insert-fallback follow-up: the default global keymap only gives
 // printable ASCII (0x20-0x7E) its own real self-insert-command entry (see
 // BuildDefaultGlobalKeymap's own comment in Commands.cpp) -- everything
