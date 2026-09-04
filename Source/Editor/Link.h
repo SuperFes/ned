@@ -31,6 +31,15 @@ struct DetectedLink {
     std::string target;
     std::size_t startByte;
     std::size_t endByte; // exclusive
+    // resolver-gaps follow-up: Python's own leading-dot relative-import
+    // level (Mode.h's ImportTarget::relativeLevel doc comment has the full
+    // explanation) -- 0 (the default) for every ordinary link, unaffected.
+    // Only BufferView::OpenDetectedLink reads this today.
+    int relativeLevel = 0;
+    // resolver-gaps follow-up: Rust's own bodyless "mod foo;" declaration
+    // (Mode.h's ImportTarget::isModDeclaration doc comment) -- false (the
+    // default) for every ordinary link, unaffected.
+    bool isModDeclaration = false;
 };
 
 // Scans only the line containing point (bufferText may be the whole buffer --

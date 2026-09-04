@@ -6,11 +6,12 @@ using ned::editor::BashMode;
 using ned::editor::ClojureMode;
 using ned::editor::CppMode;
 using ned::editor::CssMode;
-using ned::editor::JankMode;
 using ned::editor::JanetMode;
+using ned::editor::JankMode;
 using ned::editor::JavaScriptMode;
 using ned::editor::PhpMode;
 using ned::editor::PythonMode;
+using ned::editor::RustMode;
 using ned::editor::TsxMode;
 using ned::editor::TypeScriptMode;
 
@@ -90,10 +91,42 @@ TEST_CASE("PythonMode importTarget resolves each comma-separated \"import a.b, c
     CHECK(onSecond->target == "baz.qux");
 }
 
-TEST_CASE("PythonMode importTarget does not match a leading-dot relative import", "[ImportTarget]") {
+TEST_CASE("PythonMode importTarget resolves \"from . import foo\" as a level-1 relative import", "[ImportTarget]") {
     const auto  mode  = PythonMode();
     const std::string text  = "from . import foo\n";
-    CHECK_FALSE(mode.importTarget(text, text.find("foo")).has_value());
+    const auto        found = mode.importTarget(text, text.find("foo"));
+    REQUIRE(found.has_value());
+    CHECK(found->target.empty());
+    CHECK(found->isModulePath);
+    CHECK(found->relativeLevel == 1);
+}
+
+TEST_CASE("PythonMode importTarget resolves \"from .foo import bar\" as a level-1 relative import with a module suffix",
+          "[ImportTarget]") {
+    const auto        mode  = PythonMode();
+    const std::string text  = "from .foo import bar\n";
+    const auto        found = mode.importTarget(text, text.find("bar"));
+    REQUIRE(found.has_value());
+    CHECK(found->target == "foo");
+    CHECK(found->isModulePath);
+    CHECK(found->relativeLevel == 1);
+}
+
+TEST_CASE("PythonMode importTarget resolves \"from ..foo.bar import baz\" as a level-2 relative import", "[ImportTarget]") {
+    const auto        mode  = PythonMode();
+    const std::string text  = "from ..foo.bar import baz\n";
+    const auto        found = mode.importTarget(text, text.find("baz"));
+    REQUIRE(found.has_value());
+    CHECK(found->target == "foo.bar");
+    CHECK(found->relativeLevel == 2);
+}
+
+TEST_CASE("PythonMode importTarget leaves relativeLevel at 0 for an ordinary absolute import", "[ImportTarget]") {
+    const auto        mode  = PythonMode();
+    const std::string text  = "import foo.bar\n";
+    const auto        found = mode.importTarget(text, text.find("foo.bar"));
+    REQUIRE(found.has_value());
+    CHECK(found->relativeLevel == 0);
 }
 
 TEST_CASE("JavaScriptMode importTarget resolves a quoted import source without quotes", "[ImportTarget]") {
@@ -119,6 +152,15 @@ TEST_CASE("JavaScriptMode importTarget does not match an unrelated call", "[Impo
     CHECK_FALSE(mode.importTarget(text, text.find("lodash")).has_value());
 }
 
+TEST_CASE("JavaScriptMode importTarget resolves a dynamic import(...)", "[ImportTarget]") {
+    const auto        mode  = JavaScriptMode();
+    const std::string text  = "const x = import('./foo');\n";
+    const auto        found = mode.importTarget(text, text.find("./foo"));
+    REQUIRE(found.has_value());
+    CHECK(found->target == "./foo");
+    CHECK_FALSE(found->isModulePath);
+}
+
 TEST_CASE("TypeScriptMode importTarget resolves \"import x = require(...)\"", "[ImportTarget]") {
     const auto  mode  = TypeScriptMode();
     const std::string text  = "import x = require(\"./foo\");\n";
@@ -135,12 +177,30 @@ TEST_CASE("TsxMode importTarget resolves an ordinary import source", "[ImportTar
     CHECK(found->target == "./foo");
 }
 
+TEST_CASE("TypeScriptMode importTarget resolves a dynamic import(...)", "[ImportTarget]") {
+    const auto        mode  = TypeScriptMode();
+    const std::string text  = "const x = import('./foo');\n";
+    const auto        found = mode.importTarget(text, text.find("./foo"));
+    REQUIRE(found.has_value());
+    CHECK(found->target == "./foo");
+}
+
 TEST_CASE("PhpMode importTarget resolves require_once with a single-quoted string", "[ImportTarget]") {
     const auto  mode  = PhpMode();
     const std::string text  = "<?php\nrequire_once 'foo.php';\n";
     const auto         found = mode.importTarget(text, text.find("foo.php"));
     REQUIRE(found.has_value());
     CHECK(found->target == "foo.php");
+}
+
+TEST_CASE("PhpMode importTarget resolves a \"use\" namespace as a namespace path", "[ImportTarget]") {
+    const auto        mode  = PhpMode();
+    const std::string text  = "<?php\nuse App\\Models\\User;\n";
+    const auto        found = mode.importTarget(text, text.find("User"));
+    REQUIRE(found.has_value());
+    CHECK(found->target == "App\\Models\\User");
+    CHECK(found->isNamespacePath);
+    CHECK_FALSE(found->isModulePath);
 }
 
 TEST_CASE("BashMode importTarget resolves \"source ./foo.sh\"", "[ImportTarget]") {
@@ -205,4 +265,27 @@ TEST_CASE("JanetMode importTarget resolves (require \"foo\")", "[ImportTarget]")
     const auto         found = mode.importTarget(text, text.find("foo"));
     REQUIRE(found.has_value());
     CHECK(found->target == "foo");
+}
+
+TEST_CASE("RustMode importTarget resolves a bodyless \"mod foo;\" declaration", "[ImportTarget]") {
+    const auto        mode  = RustMode();
+    const std::string text  = "mod foo;\n";
+    const auto        found = mode.importTarget(text, text.find("foo"));
+    REQUIRE(found.has_value());
+    CHECK(found->target == "foo");
+    CHECK(found->isModDeclaration);
+    CHECK_FALSE(found->isModulePath);
+    CHECK_FALSE(found->isNamespacePath);
+}
+
+TEST_CASE("RustMode importTarget does not match an inline \"mod foo { ... }\" definition", "[ImportTarget]") {
+    const auto        mode = RustMode();
+    const std::string text = "mod foo {\n    fn bar() {}\n}\n";
+    CHECK_FALSE(mode.importTarget(text, text.find("foo")).has_value());
+}
+
+TEST_CASE("RustMode importTarget does not match a \"use\" path", "[ImportTarget]") {
+    const auto        mode = RustMode();
+    const std::string text = "use foo::bar::Baz;\n";
+    CHECK_FALSE(mode.importTarget(text, text.find("Baz")).has_value());
 }

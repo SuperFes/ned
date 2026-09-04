@@ -38,6 +38,7 @@ namespace {
             {"typescript", {"package.json", "tsconfig.json"}},
             {"tsx", {"package.json", "tsconfig.json"}},
             {"php", {"composer.json"}},
+            {"rust", {"Cargo.toml"}},
         };
         return defaults;
     }
