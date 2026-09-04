@@ -67,7 +67,52 @@ namespace {
 Dispatcher::Dispatcher(const CommandRegistry& registry, KeymapStack keymaps) : registry_(registry), keymaps_(std::move(keymaps)) {
 }
 
+namespace {
+    bool IsBareCtrlG(const KeyChord& chord) {
+        return chord.Control && !chord.Meta && chord.Special == SpecialKey::None && chord.Codepoint == U'g';
+    }
+} // namespace
+
 Dispatcher::Outcome Dispatcher::Feed(const KeyChord& chord, CommandContext& context) {
+    // keyboard-quit follow-up (cancel-issues-audit): real Emacs treats C-g as
+    // a hardcoded abort the input reader intercepts ahead of any keymap
+    // lookup or prefix-argument application -- it is never looked up as the
+    // tail of a pending multi-chord sequence, and never subject to a pending
+    // numeric prefix argument. Without this, C-g mid-sequence (e.g. right
+    // after C-x, or after a literal Escape, which this keymap also treats as
+    // a real prefix chord -- see BuildDefaultGlobalKeymap's "ESC ..."
+    // bindings) fell through to an ordinary NoMatch lookup of "<prefix> C-g",
+    // which is never bound: pending_ still got cleared (so nothing was
+    // actually *stuck*), but the session-ending message was a confusing
+    // "<prefix> C-g is undefined" instead of the real keyboard-quit
+    // effect (ClearMark/ClearSecondaryCursors, Commands.cpp) actually
+    // running. Confirmed live: C-x, then C-g, reported "C-x C-g is
+    // undefined". Similarly, "C-u 5" then C-g re-dispatches C-g through here
+    // with context.prefixArg already set to 5 (HandlePrefixArgumentKey's own
+    // Terminate path in BufferView.cpp) -- without this check, that would
+    // run keyboard-quit five times (harmless in practice since it's
+    // idempotent, but not what a prefix count means for an abort key).
+    // A bare C-g with nothing pending is intentionally left to fall through
+    // to the ordinary Match path below unchanged -- it already invokes
+    // keyboard-quit correctly via the real "C-g" keymap binding, and taking
+    // that path (rather than duplicating it here) preserves existing
+    // keyboard-macro-recording behavior for the ordinary case.
+    if (IsBareCtrlG(chord) && (!pending_.empty() || context.prefixArg)) {
+        pending_.clear();
+        context.prefixArg.reset();
+        // Mirrors the self-insert-fallback's own "stand-in not registered"
+        // tolerance just below -- a minimal test registry with no
+        // "keyboard-quit" entry still gets the abort (pending_/prefixArg
+        // cleared) but reports Unbound rather than claiming a command ran.
+        if (const Command* keyboardQuit = registry_.Find("keyboard-quit")) {
+            context.lastCommand = lastInvokedCommand_;
+            keyboardQuit->Invoke(context);
+            lastInvokedCommand_ = "keyboard-quit";
+            return Outcome::Invoked;
+        }
+        return Outcome::Unbound;
+    }
+
     pending_.push_back(chord);
     context.triggeringKey = chord;
 
