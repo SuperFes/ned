@@ -5,10 +5,17 @@
 #include <utility>
 
 #include "DapConfig.h"
+#include "Editor/Sparkline.h"
 
 namespace ned::editor::dap {
 
 namespace {
+
+    // Debugging wishlist: watch-history sparkline -- caps how many recent
+    // stops' values are kept per watch, matching Editor/Sparkline.h's own
+    // default maxWidth so a full history renders one glyph per point with
+    // no downsampling in the common case.
+    constexpr std::size_t kMaxWatchHistoryPoints = 40;
 
     // DAP round 5: readMemory's response `data` field is base64. No shared
     // base64 helper exists in this codebase -- Clipboard.cpp keeps its own
@@ -326,6 +333,10 @@ std::string DapManager::BeginSession(const std::string& language, bool attach) {
     exceptionFilters_.clear();
     enabledExceptionFilters_.clear();
     isAttach_ = attach;
+    // Debugging wishlist: watch-history sparkline -- a fresh session's
+    // values aren't comparable to a prior run's (WatchHistoryAt's own doc
+    // comment), so every watch starts this session with an empty history.
+    watchHistory_.assign(watches_.size(), {});
 
     if (!client_) {
         const auto argv = DapAdapterCommand(language);
@@ -574,10 +585,33 @@ void DapManager::HandleStoppedEvent(const Json& body) {
                                      currentStop_ = std::make_pair(NormalizePathKey(*info.path), info.line);
                                  }
                              }
+                             RefreshWatchHistory(); // stoppedFrameId_ is set by now, same scoping Evaluate itself uses
                              if (onStopped_) {
                                  onStopped_(info);
                              }
                          });
+}
+
+void DapManager::RefreshWatchHistory() {
+    for (std::size_t i = 0; i < watches_.size(); ++i) {
+        Evaluate(
+            watches_[i],
+            [this, i](bool success, std::string text) {
+                if (!success || i >= watchHistory_.size()) {
+                    return; // failed evaluation, or the watch was removed while this request was in flight
+                }
+                double value = 0.0;
+                if (!TryParseNumeric(text, value)) {
+                    return; // non-numeric result -- skipped, not recorded as a gap
+                }
+                std::vector<double>& history = watchHistory_[i];
+                history.push_back(value);
+                if (history.size() > kMaxWatchHistoryPoints) {
+                    history.erase(history.begin());
+                }
+            },
+            "watch");
+    }
 }
 
 std::string DapManager::Pause() {
@@ -963,13 +997,35 @@ void DapManager::Evaluate(const std::string& expression, std::function<void(bool
                          });
 }
 
+void DapManager::EvaluateWithReference(const std::string& expression, std::function<void(EvaluateResult)> callback,
+                                       std::string context) {
+    if (!client_ || state_ == SessionState::Inactive || state_ == SessionState::Starting) {
+        callback(EvaluateResult{});
+        return;
+    }
+    Json arguments = {{"expression", expression}, {"context", std::move(context)}};
+    if (stoppedFrameId_) {
+        arguments["frameId"] = *stoppedFrameId_;
+    }
+    client_->SendRequest("evaluate", std::move(arguments),
+                         [callback = std::move(callback)](bool success, const Json& body, const std::string& message) {
+                             EvaluateResult result;
+                             result.success            = success;
+                             result.text               = success ? body.value("result", "") : message;
+                             result.variablesReference = success ? body.value("variablesReference", 0) : 0;
+                             callback(std::move(result));
+                         });
+}
+
 void DapManager::AddWatch(std::string expression) {
     watches_.push_back(std::move(expression));
+    watchHistory_.emplace_back();
 }
 
 void DapManager::RemoveWatchAt(std::size_t index) {
     if (index < watches_.size()) {
         watches_.erase(watches_.begin() + static_cast<std::ptrdiff_t>(index));
+        watchHistory_.erase(watchHistory_.begin() + static_cast<std::ptrdiff_t>(index));
     }
 }
 
@@ -979,6 +1035,12 @@ const std::vector<std::string>& DapManager::Watches() const {
 
 void DapManager::RestoreWatches(std::vector<std::string> watches) {
     watches_ = std::move(watches);
+    watchHistory_.assign(watches_.size(), {});
+}
+
+const std::vector<double>& DapManager::WatchHistoryAt(std::size_t index) const {
+    static const std::vector<double> kEmpty;
+    return index < watchHistory_.size() ? watchHistory_[index] : kEmpty;
 }
 
 void DapManager::RequestThreads(std::function<void(std::vector<Thread>)> callback) {

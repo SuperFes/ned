@@ -800,6 +800,134 @@ TEST_CASE("Evaluate's context parameter defaults to repl and is overridable for 
     SetDapLaunchConfig("dap-manager-test-watch-context", "");
 }
 
+TEST_CASE("Watch history accumulates a numeric value per stop, skipping non-numeric evaluations", "[Dap]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartRunningSession("dap-manager-test-watch-history");
+
+    fixture.manager.AddWatch("counter");
+    REQUIRE(fixture.manager.WatchHistoryAt(0).empty());
+
+    auto stop = [&](int threadId) {
+        fixture.client->DispatchFrame(EventFrame("stopped", Json{{"reason", "breakpoint"}, {"threadId", threadId}}));
+        const Json stackTrace = fixture.reader.Next();
+        fixture.client->DispatchFrame(
+            ResponseFrame(stackTrace["seq"].get<int>(), "stackTrace", true, Json{{"stackFrames", Json::array()}}));
+    };
+    auto answerWatchEvaluate = [&](const std::string& value) {
+        const Json evaluate = fixture.reader.Next();
+        REQUIRE(evaluate["command"] == "evaluate");
+        REQUIRE(evaluate["arguments"]["expression"] == "counter");
+        REQUIRE(evaluate["arguments"]["context"] == "watch");
+        fixture.client->DispatchFrame(ResponseFrame(evaluate["seq"].get<int>(), "evaluate", true, Json{{"result", value}}));
+    };
+    auto resume = [&]() {
+        REQUIRE(fixture.manager.StartOrContinue("dap-manager-test-watch-history") == "Continuing.");
+        const Json cont = fixture.reader.Next();
+        REQUIRE(cont["command"] == "continue");
+        fixture.client->DispatchFrame(ResponseFrame(cont["seq"].get<int>(), "continue", true));
+    };
+
+    stop(1);
+    answerWatchEvaluate("1");
+    REQUIRE(fixture.manager.WatchHistoryAt(0) == std::vector<double>{1.0});
+
+    resume();
+    stop(1);
+    answerWatchEvaluate("<optimized out>"); // non-numeric -- skipped, not recorded as a gap
+    REQUIRE(fixture.manager.WatchHistoryAt(0) == std::vector<double>{1.0});
+
+    resume();
+    stop(1);
+    answerWatchEvaluate("2.5");
+    REQUIRE(fixture.manager.WatchHistoryAt(0) == std::vector<double>{1.0, 2.5});
+
+    REQUIRE(fixture.manager.WatchHistoryAt(99).empty()); // out-of-range index -- safe empty
+
+    SetDapLaunchConfig("dap-manager-test-watch-history", "");
+}
+
+TEST_CASE("RemoveWatchAt keeps watch history indices in sync with Watches()", "[Dap]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartRunningSession("dap-manager-test-watch-history-remove");
+
+    fixture.manager.AddWatch("a");
+    fixture.manager.AddWatch("b");
+
+    fixture.client->DispatchFrame(EventFrame("stopped", Json{{"reason", "breakpoint"}, {"threadId", 1}}));
+    const Json stackTrace = fixture.reader.Next();
+    fixture.client->DispatchFrame(
+        ResponseFrame(stackTrace["seq"].get<int>(), "stackTrace", true, Json{{"stackFrames", Json::array()}}));
+
+    const Json evalA = fixture.reader.Next();
+    REQUIRE(evalA["arguments"]["expression"] == "a");
+    fixture.client->DispatchFrame(ResponseFrame(evalA["seq"].get<int>(), "evaluate", true, Json{{"result", "10"}}));
+    const Json evalB = fixture.reader.Next();
+    REQUIRE(evalB["arguments"]["expression"] == "b");
+    fixture.client->DispatchFrame(ResponseFrame(evalB["seq"].get<int>(), "evaluate", true, Json{{"result", "20"}}));
+
+    REQUIRE(fixture.manager.WatchHistoryAt(0) == std::vector<double>{10.0});
+    REQUIRE(fixture.manager.WatchHistoryAt(1) == std::vector<double>{20.0});
+
+    fixture.manager.RemoveWatchAt(0);
+    REQUIRE(fixture.manager.Watches() == std::vector<std::string>{"b"});
+    REQUIRE(fixture.manager.WatchHistoryAt(0) == std::vector<double>{20.0}); // "b"'s own history, shifted down with it
+
+    SetDapLaunchConfig("dap-manager-test-watch-history-remove", "");
+}
+
+TEST_CASE("A fresh session starts every watch with an empty history", "[Dap]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.manager.AddWatch("x");
+    fixture.StartRunningSession("dap-manager-test-watch-history-fresh-session");
+
+    fixture.client->DispatchFrame(EventFrame("stopped", Json{{"reason", "breakpoint"}, {"threadId", 1}}));
+    const Json stackTrace = fixture.reader.Next();
+    fixture.client->DispatchFrame(
+        ResponseFrame(stackTrace["seq"].get<int>(), "stackTrace", true, Json{{"stackFrames", Json::array()}}));
+    const Json evaluate = fixture.reader.Next();
+    fixture.client->DispatchFrame(ResponseFrame(evaluate["seq"].get<int>(), "evaluate", true, Json{{"result", "1"}}));
+    REQUIRE(fixture.manager.WatchHistoryAt(0) == std::vector<double>{1.0});
+
+    SetDapLaunchConfig("dap-manager-test-watch-history-fresh-session", "");
+}
+
+TEST_CASE("EvaluateWithReference exposes the response's variablesReference for graphable-value detection", "[Dap]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartRunningSession("dap-manager-test-evaluate-with-reference");
+    fixture.client->DispatchFrame(EventFrame("stopped", Json{{"reason", "breakpoint"}, {"threadId", 1}}));
+    fixture.reader.Next(); // stackTrace, left unanswered -- frameId isn't under test here
+
+    DapManager::EvaluateResult result;
+    fixture.manager.EvaluateWithReference("arr", [&](DapManager::EvaluateResult r) { result = r; });
+    const Json evaluate = fixture.reader.Next();
+    REQUIRE(evaluate["arguments"]["expression"] == "arr");
+    REQUIRE(evaluate["arguments"]["context"] == "watch");
+    fixture.client->DispatchFrame(
+        ResponseFrame(evaluate["seq"].get<int>(), "evaluate", true, Json{{"result", "{...}"}, {"variablesReference", 77}}));
+
+    REQUIRE(result.success);
+    REQUIRE(result.text == "{...}");
+    REQUIRE(result.variablesReference == 77);
+
+    SetDapLaunchConfig("dap-manager-test-evaluate-with-reference", "");
+}
+
+TEST_CASE("EvaluateWithReference fails gracefully without a session", "[Dap]") {
+    ned::ui::EventLoop eventLoop;
+    DapManager         manager(eventLoop);
+
+    DapManager::EvaluateResult result;
+    result.success            = true;
+    result.variablesReference = 1;
+    manager.EvaluateWithReference("x", [&](DapManager::EvaluateResult r) { result = r; });
+    REQUIRE_FALSE(result.success);
+    REQUIRE(result.variablesReference == 0);
+}
+
 TEST_CASE("RequestThreads parses the adapter's thread list", "[Dap]") {
     ManagerFixture fixture;
     fixture.InjectClient();

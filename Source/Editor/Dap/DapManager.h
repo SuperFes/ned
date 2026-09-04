@@ -391,6 +391,21 @@ class DapManager {
     void Evaluate(const std::string& expression, std::function<void(bool, std::string)> callback,
                   std::string context = "repl", bool hex = false);
 
+    // Debugging wishlist: array-value graph -- Evaluate's callback shape
+    // (bool, std::string) discards the response's own variablesReference,
+    // which BufferView::ToggleWatchGraphAtPoint needs to tell "a plain
+    // scalar" from "an expandable value" (a numeric array, graphable as a
+    // bar chart via RequestVariables) apart. A separate, narrow entry point
+    // rather than widening Evaluate's signature across its five existing
+    // call sites, none of which need this.
+    struct EvaluateResult {
+        bool        success = false;
+        std::string text;
+        int         variablesReference = 0; // > 0 means expandable, Variable's own convention
+    };
+    void EvaluateWithReference(const std::string& expression, std::function<void(EvaluateResult)> callback,
+                               std::string context = "watch");
+
     // Slice 4: watch expressions -- a plain ordered list, re-evaluated
     // (via Evaluate, "watch" context) by BufferView::ShowDebugInfo every
     // time the *debug* buffer is rebuilt. Kept across sessions the same way
@@ -404,6 +419,19 @@ class DapManager {
     // as RestoreBreakpoints. No live re-evaluation happens here -- the next
     // ShowDebugInfo rebuild picks the restored list up on its own.
     void RestoreWatches(std::vector<std::string> watches);
+
+    // Debugging wishlist: watch-history sparkline -- one numeric value per
+    // stop where the watch's expression evaluated to something
+    // Editor/Sparkline.h's TryParseNumeric accepts (see RefreshWatchHistory,
+    // called automatically from HandleStoppedEvent); a failed or
+    // non-numeric evaluation is silently skipped, not recorded as a gap.
+    // Indices parallel Watches() exactly (kept in sync by AddWatch/
+    // RemoveWatchAt/RestoreWatches); an out-of-range index returns a shared
+    // empty vector rather than throwing. Never persisted -- a fresh
+    // session's values aren't comparable to a prior run's, so this resets
+    // (to one empty history per current watch) at the start of every new
+    // session, same as capabilities_.
+    [[nodiscard]] const std::vector<double>& WatchHistoryAt(std::size_t index) const;
 
     // Slice 4: the thread picker. RequestThreads lists every thread the
     // adapter currently reports (graceful [] on no session/adapter error,
@@ -476,6 +504,12 @@ class DapManager {
     void SendExceptionBreakpoints();
     void HandleInitializedEvent();
     void HandleStoppedEvent(const Json& body);
+    // Debugging wishlist: watch-history sparkline -- fans out one Evaluate
+    // per watch (context "watch", ShowDebugInfo's own fan-out convention),
+    // called from HandleStoppedEvent's stackTrace response once
+    // stoppedFrameId_ is set. A non-numeric or failed evaluation is
+    // silently skipped -- see WatchHistoryAt's own doc comment.
+    void RefreshWatchHistory();
     // RunToCursor's own cleanup: erases the pending temporary breakpoint (if
     // any) from the store, pushing the change to a live adapter when
     // pushToAdapter is set (HandleStoppedEvent's case -- the session is
@@ -570,6 +604,10 @@ class DapManager {
     Capabilities capabilities_;
 
     std::vector<std::string> watches_; // slice 4; persisted across restarts (round 2) -- see AddWatch/Watches/RestoreWatches
+    // Debugging wishlist: watch-history sparkline -- parallel to watches_
+    // (same index, kept in sync by AddWatch/RemoveWatchAt/RestoreWatches),
+    // never persisted -- see WatchHistoryAt/RefreshWatchHistory.
+    std::vector<std::vector<double>> watchHistory_;
 
     std::function<void(const StoppedInfo&)> onStopped_;
     std::function<void(std::string)>        onSessionEnded_;
