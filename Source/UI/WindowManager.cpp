@@ -532,6 +532,7 @@ std::unique_ptr<Pane> WindowManager::MakePane(text::Buffer& buffer, editor::Mode
     pane->Buffer().SetOnCandidatesChanged(onCandidatesChanged_);
     pane->Buffer().SetOnCompletionChanged(onCompletionChanged_);
     pane->Buffer().SetOnHierarchyChanged(WireHierarchyCallback(pane.get()));
+    pane->Buffer().SetOnPointerGraphChanged(WirePointerGraphCallback(pane.get()));
     // Split-resize follow-up: see WindowManager.h's own resizingSplit_
     // comment and BufferView::SetSplitResizeQuery's own doc comment.
     pane->Buffer().SetSplitResizeQuery([this] { return resizingSplit_; });
@@ -679,6 +680,52 @@ void WindowManager::HierarchyCancel() {
 void WindowManager::HierarchySelectionChanged(std::size_t index) {
     if (hierarchyOwnerPane_) {
         hierarchyOwnerPane_->Buffer().HierarchySelectionChanged(index);
+    }
+}
+
+std::function<void(std::optional<TreeViewModel>)> WindowManager::WirePointerGraphCallback(Pane* pane) {
+    return [this, pane](std::optional<TreeViewModel> model) {
+        pointerGraphOwnerPane_ = model ? pane : nullptr;
+        if (onPointerGraphChanged_) {
+            onPointerGraphChanged_(std::move(model));
+        }
+    };
+}
+
+void WindowManager::SetOnPointerGraphChanged(std::function<void(std::optional<TreeViewModel>)> onPointerGraphChanged) {
+    onPointerGraphChanged_ = std::move(onPointerGraphChanged);
+    for (Pane* pane : Leaves()) {
+        pane->Buffer().SetOnPointerGraphChanged(WirePointerGraphCallback(pane));
+    }
+}
+
+void WindowManager::PointerGraphActivate(std::size_t index) {
+    if (pointerGraphOwnerPane_) {
+        pointerGraphOwnerPane_->Buffer().PointerGraphActivate(index);
+    }
+}
+
+void WindowManager::PointerGraphToggleExpand(std::size_t index) {
+    if (pointerGraphOwnerPane_) {
+        pointerGraphOwnerPane_->Buffer().PointerGraphToggleExpand(index);
+    }
+}
+
+void WindowManager::PointerGraphCollapse(std::size_t index) {
+    if (pointerGraphOwnerPane_) {
+        pointerGraphOwnerPane_->Buffer().PointerGraphCollapse(index);
+    }
+}
+
+void WindowManager::PointerGraphCancel() {
+    if (pointerGraphOwnerPane_) {
+        pointerGraphOwnerPane_->Buffer().PointerGraphCancel();
+    }
+}
+
+void WindowManager::PointerGraphSelectionChanged(std::size_t index) {
+    if (pointerGraphOwnerPane_) {
+        pointerGraphOwnerPane_->Buffer().PointerGraphSelectionChanged(index);
     }
 }
 

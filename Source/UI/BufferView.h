@@ -45,6 +45,7 @@
 #include "Editor/MinibufferPrompt.h"
 #include "Editor/Mode.h"
 #include "Editor/Org.h"
+#include "Editor/PointerGraphNode.h"
 #include "Editor/PrefixArgument.h"
 #include "Editor/ProjectRegistry.h"
 #include "Editor/ProjectReplace.h"
@@ -61,15 +62,15 @@
 #include "EventLoop.h"
 #include "ListPopup.h"
 #include "Minimap.h"
-#include "TreeView.h"
 #include "ProjectSidebar.h"
-#include "VcsPanel.h"
 #include "ScrollArrowButton.h"
 #include "ScrollBar.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
 #include "Text/KillRing.h"
 #include "Theme.h"
+#include "TreeView.h"
+#include "VcsPanel.h"
 #include "WhichKeyHint.h"
 
 namespace ned::janet {
@@ -437,6 +438,12 @@ class BufferView : public Widget {
     // keybinding reaches it only via StartInteractiveSession's own switch.
     void RequestHierarchyAtPointForTesting(HierarchyDirection direction);
 
+    // Debugging wishlist follow-up: same "public primarily for tests" seam
+    // as RequestHierarchyAtPointForTesting above -- RequestPointerGraphAtPoint
+    // itself is private since a real keybinding reaches it only via
+    // StartInteractiveSession's own switch (dap-show-pointer-graph, M-x only).
+    void RequestPointerGraphAtPointForTesting();
+
     // Registers the EventLoop used to end the whole app on `quit`/confirmed
     // ConfirmQuit, and to back completionDebounceDeadline_/
     // statusMessageChangedAt_'s own DeadlineTimer-based deadlines (see their
@@ -655,6 +662,31 @@ class BufferView : public Widget {
     void HierarchyCollapse(std::size_t index);
     void HierarchyCancel();
     void HierarchySelectionChanged(std::size_t index);
+
+    // Debugging wishlist follow-up (pointer/linked-list graph view):
+    // SetOnHierarchyChanged's own mirror, for the pointer-graph session's own
+    // shared TreeView overlay (a second, independent overlay from the
+    // hierarchy browser's -- see main.cpp's own wiring). Fired with a
+    // populated TreeViewModel every time PushPointerGraphModel runs, and with
+    // std::nullopt when EndPointerGraphSession clears the session. Wired via
+    // WindowManager::SetOnPointerGraphChanged. Unset is a safe no-op.
+    void SetOnPointerGraphChanged(std::function<void(std::optional<ui::TreeViewModel>)> handler);
+
+    // The five methods a pointer-graph session's TreeView overlay drives --
+    // Hierarchy{Activate,ToggleExpand,Collapse,Cancel,SelectionChanged}'s own
+    // mirror, same no-op-when-no-session/out-of-range tolerance. Reached via
+    // WindowManager::PointerGraph{Activate,ToggleExpand,Collapse,Cancel,
+    // SelectionChanged}, which route to whichever pane's BufferView currently
+    // owns the visible session the same way the hierarchy routers do. Per
+    // this feature's own v1 scope cut, Activate just toggles expand/collapse
+    // (like ToggleExpand) -- there's no natural "jump to source" target for a
+    // plain runtime variable the way there is for a hierarchy item's
+    // definition site.
+    void PointerGraphActivate(std::size_t index);
+    void PointerGraphToggleExpand(std::size_t index);
+    void PointerGraphCollapse(std::size_t index);
+    void PointerGraphCancel();
+    void PointerGraphSelectionChanged(std::size_t index);
 
     // named-projects follow-up: AcceptActiveCompletionAt's own "public
     // because the trigger arrives from outside this class" shape --
@@ -1299,6 +1331,55 @@ class BufferView : public Widget {
     // the session the same way, only differing in whether a jump happens
     // first.
     void EndHierarchySession();
+
+    // Debugging wishlist follow-up (pointer/linked-list graph view). Same
+    // ExpandableTree-backed, TreeView-rendered browse-session shape as
+    // HierarchySession above, over DAP variables instead of LSP hierarchy
+    // items -- see Editor/PointerGraphNode.h's own doc comment for why that
+    // type (not DapManager::Variable directly) is the tree's NodeData.
+    // visitedMemoryRefs is the one thing this session needs that
+    // HierarchySession doesn't: a real linked/circular list can point back
+    // into itself, unlike an LSP call/type hierarchy (acyclic by
+    // construction), so every memoryReference seen so far in this session is
+    // tracked to detect and stop a cycle rather than expanding forever.
+    struct PointerGraphSession {
+        editor::ExpandableTree<editor::PointerGraphNode> tree;
+        std::string                                      rootName; // for the TreeView's own border title
+        std::set<std::string>                            visitedMemoryRefs;
+    };
+
+    // Sent for dap-show-pointer-graph. Guarded on the session being Stopped
+    // (LineInspectAtPoint's own guard) and on the current *debug* buffer
+    // line parsing to a ParseDebugVariableLine result with
+    // variablesReference > 0 (ExpandVariableAtPoint's own "No expandable
+    // variable on this line." status message on failure -- this is the same
+    // marker every dap-expand-variable invocation already requires). Seeds a
+    // fresh PointerGraphSession with that one root node, seeds
+    // visitedMemoryRefs with the root's own memoryReference when non-empty,
+    // and immediately expands it (ExpandPointerGraphNode) -- same
+    // "auto-expand the root" precedent as RequestHierarchyAtPoint.
+    void RequestPointerGraphAtPoint();
+
+    // Sends DapManager::RequestVariables against
+    // pointerGraphSession_->tree.At(index).data.variablesReference -- a
+    // no-op if there's no active session, index is out of range, or the
+    // node is already loading. A node whose children were already fetched
+    // is expanded without a new request, same as ExpandHierarchyNode. Each
+    // returned DapManager::Variable becomes a PointerGraphNode; one whose
+    // memoryReference is non-empty and already in visitedMemoryRefs is
+    // marked cyclic (and its variablesReference forced to 0, so the tree
+    // never offers to expand it again) instead of being added to
+    // visitedMemoryRefs and recursed into like every other child.
+    void ExpandPointerGraphNode(std::size_t index);
+
+    // Rebuilds a ui::TreeViewModel from pointerGraphSession_->tree.FlattenVisible()
+    // (FormatPointerGraphLabel per row) and fires onPointerGraphChanged_ --
+    // PushHierarchyModel's own mirror.
+    void PushPointerGraphModel();
+
+    // EndHierarchySession's own mirror: clears pointerGraphSession_, fires
+    // onPointerGraphChanged_(nullopt), reclaims keyboard focus.
+    void EndPointerGraphSession();
 
     // symbol-search follow-up. Bumps documentSymbolRequestGeneration_ and
     // calls LspManager::RequestDocumentSymbols; discards a stale response
@@ -2712,6 +2793,14 @@ class BufferView : public Widget {
     std::optional<HierarchySession>                       hierarchySession_;
     std::size_t                                           hierarchySelectedIndex_    = 0;
     std::size_t                                           hierarchyRequestGeneration_ = 0;
+
+    // Debugging wishlist follow-up (pointer/linked-list graph view): the
+    // above five fields' own mirror for PointerGraphSession -- see that
+    // struct's own doc comment.
+    std::function<void(std::optional<ui::TreeViewModel>)> onPointerGraphChanged_;
+    std::optional<PointerGraphSession>                    pointerGraphSession_;
+    std::size_t                                           pointerGraphSelectedIndex_     = 0;
+    std::size_t                                           pointerGraphRequestGeneration_ = 0;
 
     // Caches mode_.highlight's result across Paint() calls (tree-sitter
     // foundation follow-up) -- Paint() runs far more often than the buffer's
