@@ -640,9 +640,17 @@ Real, reproduced, non-urgent — each is safe to leave as-is for now, but worth 
 opportunistically rather than re-discovering from scratch. Add to this list instead of
 just fixing-and-forgetting or letting it fade from memory between sessions. Fixed entries
 are removed once shipped rather than kept as a writeup here — see `git log --grep=flak`
-for closed-issue history. Nothing currently open: the full suite reruns clean under
-`ctest -j8`/`-j16`/`-j32 --repeat until-fail:3` and under the ASan/UBSan
-(`build-sanitize`) configuration alike (verified 2026-09-02).
+for closed-issue history.
+
+- [ ] **`PerformanceTest.cpp`'s huge-buffer point-navigation test under
+      `build-sanitize`** (found 2026-09-03, unrelated to whatever change was in flight
+      at the time — reproduces on a clean stash of the tree too): "Point navigation
+      across a huge (piece-table-backed) buffer stays fast" fails its `< 500ms`
+      threshold under the ASan/UBSan configuration specifically (~3.2-3.5s observed,
+      consistently, across repeated runs), passing fine under the plain `build` preset.
+      Likely just sanitizer instrumentation overhead on a tight wall-clock threshold
+      rather than a real regression — the threshold was presumably tuned against an
+      uninstrumented build. Not reproduced under plain `ctest -j8`/`build`.
 
 ### Named Non-Goals (Leaning "Won't Do", Kept Visible So It's a Conscious Call)
 
@@ -806,12 +814,15 @@ these accumulate detail in place.
         of a new test framework. Massif's heap-snapshot-over-time output is a genuine
         graphing use case too — same sparkline/chart substrate as the array-value
         graph above, fed by `ms_print`-format parsing instead of a live watch.
-      - **Sanitizer (ASan/UBSan) output parsing**, sibling to the valgrind XML parser
-        above and worth building alongside it since this codebase already builds and
-        tests itself under both (`-DNED_ENABLE_SANITIZERS=ON`, see CLAUDE.md's Build
-        section) — a generic "crash/report output to a diagnostics buffer" parser
-        would immediately pay for itself on ned's own development, not just as a
-        feature for ned's users.
+      - Sanitizer (ASan/UBSan/TSan/MSan/LSan) output parsing closed 2026-09-03 — see
+        `git log --grep=sanitizer-output-parser`. `Editor/SanitizerOutputParser.h`'s
+        `ParseSanitizerOutput` keys on the shared `SUMMARY:` report line every
+        sanitizer runtime emits, pairing a UBSan report with its richer adjacent
+        `runtime error:` line for a better message; wired into `TestRunner`'s and
+        `TaskRunner`'s own process-exit handling, logging each finding to
+        `DiagnosticsLog` (`LogCategory::Subprocess`) with a clickable path:line when
+        the report carries a location. The valgrind XML parser sibling noted above
+        stays open.
       - **Docker/embedded/OpenOCD targets** (GDBFrontend's bespoke UI for these) —
         already possible today with zero new code: `Attach`'s adapter/config is
         opaque argv + JSON (`DapConfig.h`), so pointing `ned/set-dap-adapter`/

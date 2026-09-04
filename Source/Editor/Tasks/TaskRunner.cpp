@@ -1,8 +1,11 @@
 #include "TaskRunner.h"
 
+#include <memory>
+#include <optional>
 #include <utility>
 
 #include "Editor/DiagnosticsLog.h"
+#include "Editor/SanitizerOutputParser.h"
 #include "TaskConfig.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
@@ -39,10 +42,19 @@ text::Buffer* TaskRunner::RunTask(const std::string& name) {
     }
 
     try {
-        running_[name] = std::make_unique<TaskProcess>(
+        // sanitizer-output-parser follow-up: accumulated alongside the
+        // streamed buffer append (not read back from buffer->Text(), which
+        // may already carry prior runs' own "--- re-run ---"-separated
+        // history) so a nonzero-exit run's own output can be scanned for an
+        // ASan/UBSan/TSan/MSan/LSan report on exit.
+        auto accumulated = std::make_shared<std::string>();
+        running_[name]   = std::make_unique<TaskProcess>(
             *argv, eventLoop_,
-            [buffer](std::string_view chunk) { buffer->AppendWhileReadOnly(chunk); },
-            [this, name, buffer](std::optional<int> exitCode) {
+            [buffer, accumulated](std::string_view chunk) {
+                buffer->AppendWhileReadOnly(chunk);
+                *accumulated += chunk;
+            },
+            [this, name, buffer, accumulated](std::optional<int> exitCode) {
                 if (exitCode) {
                     buffer->AppendWhileReadOnly("\n[exited " + std::to_string(*exitCode) + "]\n");
                     // diagnostics-log-round-2 follow-up: a durable record of
@@ -52,6 +64,15 @@ text::Buffer* TaskRunner::RunTask(const std::string& name) {
                     if (*exitCode != 0) {
                         LogMessage(LogCategory::Task, LogSeverity::Error,
                                    "task \"" + name + "\" exited " + std::to_string(*exitCode));
+                    }
+                    for (SanitizerFinding& finding : ParseSanitizerOutput(*accumulated)) {
+                        std::string message = finding.tool + ": " + finding.message;
+                        if (!finding.symbol.empty()) {
+                            message += " (in " + finding.symbol + ")";
+                        }
+                        LogMessage(LogCategory::Task, LogSeverity::Error, "task \"" + name + "\": " + message,
+                                   finding.file.empty() ? std::nullopt : std::make_optional(std::move(finding.file)),
+                                   finding.line == 0 ? std::nullopt : std::make_optional(finding.line));
                     }
                 }
                 else {

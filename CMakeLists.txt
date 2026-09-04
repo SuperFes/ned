@@ -637,6 +637,7 @@ add_library(ned_lib STATIC
         Source/Editor/PersistentUndo.cpp
         Source/Editor/ProjectUndo.cpp
         Source/Editor/DiagnosticsLog.cpp
+        Source/Editor/SanitizerOutputParser.cpp
         Source/Editor/Session.cpp
         Source/Editor/RecentFiles.cpp
         Source/Editor/Bookmark.cpp
@@ -1004,6 +1005,7 @@ if (NED_BUILD_TESTS)
             Tests/PersistentUndoTest.cpp
             Tests/ProjectUndoTest.cpp
             Tests/DiagnosticsLogTest.cpp
+            Tests/SanitizerOutputParserTest.cpp
             Tests/SessionTest.cpp
             Tests/RecentFilesTest.cpp
             Tests/BookmarkTest.cpp
