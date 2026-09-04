@@ -2805,6 +2805,12 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                       [](CommandContext& context) {
                           context.interactiveRequest = InteractiveRequest::DapToggleHexFormat;
                       });
+    registry.Register("dap-toggle-watch-graph",
+                      "Toggle a sparkline (scalar watch history) or bar chart (numeric array watch) on the "
+                      "current *debug* buffer watch line.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::DapToggleWatchGraph;
+                      });
     registry.Register("dap-line-inspect",
                       "Evaluate every sub-expression on the current line in the stopped debug session at once.",
                       [](CommandContext& context) {

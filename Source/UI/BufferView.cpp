@@ -54,6 +54,7 @@
 #include "Editor/RelativeLineNumberSettings.h"
 #include "Editor/ScratchPad.h"
 #include "Editor/Session.h"
+#include "Editor/Sparkline.h"
 #include "Editor/StickyScroll.h"
 #include "Editor/StickyScrollSettings.h"
 #include "Editor/SyntaxTheme.h"
@@ -7585,6 +7586,14 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
                 ToggleHexFormatAtPoint();
             }
             return;
+        case editor::InteractiveRequest::DapToggleWatchGraph:
+            if (!dapManager_) {
+                statusMessage_ = "No debugger available.";
+            }
+            else {
+                ToggleWatchGraphAtPoint();
+            }
+            return;
         case editor::InteractiveRequest::DapLineInspect:
             if (!dapManager_) {
                 statusMessage_ = "No debugger available.";
@@ -11370,6 +11379,112 @@ void BufferView::ToggleHexFormatAtPoint() {
             spliceIfUnchanged(FormatDebugVariableLine(*it, indent, ownerRef, wantHex));
         },
         wantHex);
+}
+
+void BufferView::ToggleWatchGraphAtPoint() {
+    text::Buffer&             buffer    = activeBuffer_.Get();
+    const text::ITextStorage& content   = buffer.Content();
+    const std::size_t         line      = content.ByteOffsetToLine(buffer.Point());
+    const std::size_t         lineStart = content.LineToByteOffset(line);
+    const std::size_t         lineEnd =
+        (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
+    const std::string lineText = content.Substring(lineStart, lineEnd - lineStart);
+
+    const std::size_t watchMarkerPos = lineText.rfind("[watch:");
+    if (watchMarkerPos == std::string::npos) {
+        statusMessage_ = "Not a watch line -- graphing only applies to watch expressions.";
+        return;
+    }
+    std::size_t watchIndex = 0;
+    try {
+        watchIndex = static_cast<std::size_t>(std::stoul(lineText.substr(watchMarkerPos + 7))); // stoul stops at ']'
+    }
+    catch (const std::exception&) {
+        statusMessage_ = "No watch on this line.";
+        return;
+    }
+    const std::vector<std::string>& watches = dapManager_->Watches();
+    if (watchIndex >= watches.size()) {
+        statusMessage_ = "Watch no longer exists.";
+        return;
+    }
+    const std::string expression = watches[watchIndex];
+
+    text::Buffer* const bufferPtr = &buffer;
+    // ExpandVariableAtPoint/ToggleHexFormatAtPoint's own staleness-guarded
+    // splice shape -- reject a splice if the line changed underneath an
+    // in-flight request.
+    auto spliceIfUnchanged = [this, bufferPtr, line, lineText](const std::string& replacement) {
+        if (bufferPtr != &activeBuffer_.Get()) {
+            return; // switched away while the request was in flight
+        }
+        const text::ITextStorage& targetContent = bufferPtr->Content();
+        if (line >= targetContent.LineCount()) {
+            return;
+        }
+        const std::size_t targetLineStart = targetContent.LineToByteOffset(line);
+        const std::size_t targetLineEnd =
+            (line + 1 < targetContent.LineCount()) ? targetContent.LineToByteOffset(line + 1) - 1 : targetContent.ByteLength();
+        if (targetContent.Substring(targetLineStart, targetLineEnd - targetLineStart) != lineText) {
+            statusMessage_ = "Debug line changed -- not graphing.";
+            return;
+        }
+        const bool wasReadOnly = bufferPtr->ReadOnly();
+        bufferPtr->SetReadOnly(false);
+        bufferPtr->DeleteRange(targetLineStart, targetLineEnd - targetLineStart);
+        bufferPtr->InsertAt(targetLineStart, replacement);
+        bufferPtr->SetReadOnly(wasReadOnly);
+        statusMessage_.clear();
+    };
+
+    // A trailing "[graph]" marker is this toggle's only state -- present
+    // means strip it back to the plain line, absent means append a graph.
+    if (lineText.find("  [graph]") != std::string::npos) {
+        spliceIfUnchanged(lineText.substr(0, watchMarkerPos) + "[watch:" + std::to_string(watchIndex) + "]");
+        return;
+    }
+
+    const std::vector<double>& history = dapManager_->WatchHistoryAt(watchIndex);
+    if (history.size() >= 2) {
+        spliceIfUnchanged(lineText + "  " + editor::BuildBlockSparkline(history) + "  [graph]");
+        return;
+    }
+
+    // No scalar history yet -- try a one-shot numeric-array snapshot of the
+    // watch's current value instead (an expandable value, every child
+    // numeric).
+    statusMessage_ = "Graphing...";
+    dapManager_->EvaluateWithReference(
+        expression,
+        [this, bufferPtr, spliceIfUnchanged, lineText](editor::dap::DapManager::EvaluateResult result) {
+            if (bufferPtr != &activeBuffer_.Get()) {
+                return; // switched away while the request was in flight
+            }
+            if (!result.success || result.variablesReference <= 0) {
+                statusMessage_ = "Not enough history yet, and not an expandable/numeric-array value.";
+                return;
+            }
+            dapManager_->RequestVariables(
+                result.variablesReference,
+                [this, spliceIfUnchanged, lineText](std::vector<editor::dap::DapManager::Variable> variables) {
+                    if (variables.empty()) {
+                        statusMessage_ = "No elements to graph.";
+                        return;
+                    }
+                    std::vector<double> values;
+                    values.reserve(variables.size());
+                    for (const auto& v : variables) {
+                        double parsed = 0.0;
+                        if (!editor::TryParseNumeric(v.value, parsed)) {
+                            statusMessage_ = "Not every element is numeric -- can't graph.";
+                            return;
+                        }
+                        values.push_back(parsed);
+                    }
+                    spliceIfUnchanged(lineText + "  " + editor::BuildBlockSparkline(values) + "  [graph]");
+                });
+        },
+        "watch");
 }
 
 void BufferView::LineInspectAtPoint() {

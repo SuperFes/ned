@@ -502,6 +502,14 @@ enum class InteractiveRequest { None,
                                 // the toggle's own state and what makes a second invocation
                                 // flip back to decimal.
                                 DapToggleHexFormat,
+                                // Debugging wishlist: dap-toggle-watch-graph -- operates on
+                                // point's own *debug* buffer watch line only (unlike
+                                // DapToggleHexFormat, which also handles plain variable
+                                // lines), same trailing-marker toggle shape ("[graph]"
+                                // instead of "[hex]"). See BufferView::
+                                // ToggleWatchGraphAtPoint's own doc comment for the scalar-
+                                // history-vs-array-snapshot split.
+                                DapToggleWatchGraph,
                                 // Debugging wishlist: dap-line-inspect (gf's backtick key) --
                                 // one-shot like DapRunToCursor, operating on point's own line,
                                 // but fans out one DapManager::Evaluate per candidate

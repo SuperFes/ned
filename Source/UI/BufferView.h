@@ -2218,6 +2218,22 @@ class BufferView : public Widget {
     // means "switch to hex."
     void ToggleHexFormatAtPoint();
 
+    // Debugging wishlist: dap-toggle-watch-graph's body -- parses point's
+    // own "*debug*" buffer line for a "[watch:N]" marker (RemoveWatchAtPoint's
+    // convention); unlike ToggleHexFormatAtPoint this only applies to watch
+    // lines, not arbitrary variable lines -- "graph this" only makes sense
+    // for a user-named watch expression. A watch with recorded scalar
+    // history (DapManager::WatchHistoryAt) gets Editor/Sparkline.h's
+    // block-glyph sparkline of its values across recent stops appended; a
+    // watch with no history yet but an expandable current value
+    // (variablesReference > 0, via EvaluateWithReference) instead does a
+    // one-shot RequestVariables expansion and, if every child value parses
+    // as numeric, renders the same helper as a bar chart of the array's
+    // current elements. A trailing "[graph]" marker is this toggle's only
+    // state, ToggleHexFormatAtPoint's own "present means flip back off"
+    // convention.
+    void ToggleWatchGraphAtPoint();
+
     // DAP round 5: dap-show-disassembly's body -- reuses RestartFrameAtPoint's
     // own "[frame:N]" marker parse (point's current line, any buffer -- no
     // check that it's actually the *debug* buffer, same lack of a check
