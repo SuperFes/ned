@@ -640,6 +640,8 @@ add_library(ned_lib STATIC
         Source/Editor/DiagnosticsLog.cpp
         Source/Editor/SanitizerOutputParser.cpp
         Source/Editor/ValgrindOutputParser.cpp
+        Source/Editor/MassifOutputParser.cpp
+        Source/Editor/MassifReportBuffer.cpp
         Source/Editor/Session.cpp
         Source/Editor/RecentFiles.cpp
         Source/Editor/Bookmark.cpp
@@ -1015,6 +1017,8 @@ if (NED_BUILD_TESTS)
             Tests/DiagnosticsLogTest.cpp
             Tests/SanitizerOutputParserTest.cpp
             Tests/ValgrindOutputParserTest.cpp
+            Tests/MassifOutputParserTest.cpp
+            Tests/MassifReportBufferTest.cpp
             Tests/SessionTest.cpp
             Tests/RecentFilesTest.cpp
             Tests/BookmarkTest.cpp

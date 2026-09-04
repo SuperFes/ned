@@ -33,6 +33,8 @@
 #include "Editor/Link.h"
 #include "Editor/Lsp/LspManager.h"
 #include "Editor/Lsp/LspServerConfig.h"
+#include "Editor/MassifOutputParser.h"
+#include "Editor/MassifReportBuffer.h"
 #include "Editor/ModeOverrides.h"
 #include "Editor/Multibuffer.h"
 #include "Editor/NextError.h"
@@ -4174,6 +4176,9 @@ bool BufferView::OnKeyEvent(const Event& event) {
         inputMode_ == InputMode::DapAddWatch || inputMode_ == InputMode::DapSetVariableValue ||
         inputMode_ == InputMode::DapBreakpointHitCondition || inputMode_ == InputMode::DapFunctionBreakpointName ||
         inputMode_ == InputMode::DapMemoryByteCount ||
+        // Debugging wishlist: ShowMassifGraphPath is a plain-text prompt too,
+        // DapAddWatch's own shape.
+        inputMode_ == InputMode::ShowMassifGraphPath ||
         // editor-ergonomics follow-up: BookmarkSetName is a plain-text
         // prompt too, TaskName/GotoLine's own shape.
         inputMode_ == InputMode::BookmarkSetName ||
@@ -7740,6 +7745,11 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
                 onDapThreadsToggle_();
             }
             return;
+        case editor::InteractiveRequest::ShowMassifGraph:
+            inputMode_ = InputMode::ShowMassifGraphPath;
+            prompt_.emplace("Massif output file: ");
+            statusMessage_ = prompt_->StatusText();
+            return;
         // ACP client slice 2: AcpStartSession/AcpSendPrompt are prompt-shaped
         // (HandlePromptKey), same "just enter the mode and prime the
         // prompt" shape as DapEvaluate above; AcpStopSession is a one-shot
@@ -8733,6 +8743,8 @@ std::string_view BufferView::HistoryKeyForInputMode(InputMode mode) {
             return "dap-function-breakpoint-name";
         case InputMode::DapMemoryByteCount:
             return "dap-memory-byte-count";
+        case InputMode::ShowMassifGraphPath:
+            return "show-massif-graph";
         case InputMode::VcsCreateBranch:
             return "vcs-create-branch";
         case InputMode::AcpPromptText:
@@ -9169,6 +9181,30 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
             pendingDapMemoryReference_.reset();
             pendingDapMemoryAsImage_ = false;
         }
+        else if (inputMode_ == InputMode::ShowMassifGraphPath) {
+            if (input.empty()) {
+                statusMessage_ = "No massif output file given.";
+            }
+            else {
+                std::ifstream file(input, std::ios::binary);
+                if (!file) {
+                    ReportError("Cannot open " + input);
+                }
+                else {
+                    std::ostringstream contents;
+                    contents << file.rdbuf();
+                    const editor::MassifProfile profile = editor::ParseMassifOutput(contents.str());
+                    if (profile.snapshots.empty()) {
+                        statusMessage_ = "No massif snapshots found in " + input;
+                    }
+                    else {
+                        text::Buffer& report = editor::RebuildMassifReportBuffer(bufferList_, profile, input);
+                        activeBuffer_.Set(report);
+                        statusMessage_ = "Massif report: " + std::to_string(profile.snapshots.size()) + " snapshots";
+                    }
+                }
+            }
+        }
         else if (inputMode_ == InputMode::VcsCreateBranch) {
             if (input.empty()) {
                 statusMessage_ = "No branch name given.";
@@ -9317,6 +9353,9 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
             case InputMode::DapFunctionBreakpointName:
                 label = "Function breakpoint name";
                 break;
+            case InputMode::ShowMassifGraphPath:
+                label = "Massif output file";
+                break;
             case InputMode::DapMemoryByteCount:
                 label = "Memory byte count";
                 pendingDapMemoryReference_.reset();
@@ -9389,6 +9428,7 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
         inputMode_ != InputMode::DapAddWatch && inputMode_ != InputMode::DapSetVariableValue &&
         inputMode_ != InputMode::DapBreakpointHitCondition && inputMode_ != InputMode::DapFunctionBreakpointName &&
         inputMode_ != InputMode::DapMemoryByteCount &&
+        inputMode_ != InputMode::ShowMassifGraphPath &&
         inputMode_ != InputMode::GotoLine &&
         // dropdown-path-completion follow-up: Tab is fully handled by the
         // dedicated block above for these three (accept-highlighted, never
@@ -9405,6 +9445,11 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
         // against file/buffer names would be meaningless. The four new DAP
         // round-2 prompts (condition/log-message/watch expression/variable
         // value) are all free-text against debuggee state, same reasoning.
+        // ShowMassifGraphPath is a real filesystem path but stays plain
+        // free-text too -- unlike FindFile/OpenProjectPath/FindScratch, this
+        // one wasn't given the dropdown-path-completion treatment (a v1 cut,
+        // not a correctness issue); completing it against buffer names here
+        // would still be meaningless either way.
         CompletePrompt();
         return;
     }

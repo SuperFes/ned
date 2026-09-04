@@ -843,9 +843,19 @@ these accumulate detail in place.
         `DapManager` code — `Attach`/`ned/set-dap-attach` already do exactly this,
         memcheck errors arrive as ordinary `stopped` events; this half is still open
         (a cookbook/config entry, not a code gap, same as the Docker/embedded entry
-        below). Massif's heap-snapshot-over-time output is a genuine graphing use case
-        too — same sparkline/chart substrate as the array-value graph above, fed by
-        `ms_print`-format parsing instead of a live watch; also still open.
+        below). Massif heap-snapshot graphing closed 2026-09-04 — see
+        `git log --grep=massif-output-parser`. `Editor/MassifOutputParser.h`'s
+        `ParseMassifOutput` scans the raw `massif.out.<pid>` file directly (a
+        stable, documented `key=value`/`key: value` line format) rather than
+        shelling out to `ms_print` and reparsing its already-rendered ASCII
+        graph. `show-massif-graph` (M-x only) prompts for the file path,
+        renders a heap-usage-over-time sparkline (`Editor/Sparkline.h`, the
+        same substrate the DAP watch-history graph uses) plus a per-snapshot
+        summary table into the read-only "*massif report*" buffer
+        (`Editor/MassifReportBuffer.h`) and switches to it. The allocation
+        call-tree (`heap_tree=detailed`/`peak`'s indented `nN: ...` lines) is
+        deliberately not parsed — a real call-tree browser is a separably
+        scoped, bigger feature, left for a future follow-up if needed.
       - Sanitizer (ASan/UBSan/TSan/MSan/LSan) output parsing closed 2026-09-03 — see
         `git log --grep=sanitizer-output-parser`. `Editor/SanitizerOutputParser.h`'s
         `ParseSanitizerOutput` keys on the shared `SUMMARY:` report line every
