@@ -1704,6 +1704,32 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     pointerGraphTreeView.SetOnSelectionChanged(
         [wm = windowManager.get()](std::size_t index) { wm->PointerGraphSelectionChanged(index); });
 
+    // Debugging wishlist follow-up (memory-as-image viewer):
+    // pointerGraphTreeView's own overlay-registration shape, for the
+    // read-only MemoryImageView -- no Activate/ToggleExpand/Collapse/
+    // SelectionChanged wiring since there's nothing to navigate, just
+    // SetOnCancel.
+    ned::ui::MemoryImageView memoryImageView(theme);
+    overlays.Add(memoryImageView, [panel = &memoryImageView](Size size) {
+        const int width  = std::max(20, std::min(100, size.width - 4));
+        const int height = std::max(6, std::min(34, size.height - 4));
+        const int xMin   = std::max(0, (size.width - width) / 2);
+        const int yMin   = std::max(0, (size.height - height) / 2);
+        return Box{.x_min = xMin, .x_max = xMin + width - 1, .y_min = yMin, .y_max = yMin + height - 1};
+    });
+    windowManager->SetOnMemoryImageChanged(
+        [&overlays, panel = &memoryImageView](std::optional<ned::ui::MemoryImageModel> model) {
+            if (model) {
+                panel->SetModel(std::move(*model));
+                overlays.Show(*panel);
+                panel->TakeFocus();
+            }
+            else {
+                overlays.Hide(*panel);
+            }
+        });
+    memoryImageView.SetOnCancel([wm = windowManager.get()] { wm->MemoryImageCancel(); });
+
     // terminal-title follow-up: Ned::Application::SetTitle/GetTitle
     // (Application.h) predate this and were otherwise dead beyond the one
     // static "Ned" call at the top of this function -- this is what

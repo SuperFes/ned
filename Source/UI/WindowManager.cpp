@@ -533,6 +533,7 @@ std::unique_ptr<Pane> WindowManager::MakePane(text::Buffer& buffer, editor::Mode
     pane->Buffer().SetOnCompletionChanged(onCompletionChanged_);
     pane->Buffer().SetOnHierarchyChanged(WireHierarchyCallback(pane.get()));
     pane->Buffer().SetOnPointerGraphChanged(WirePointerGraphCallback(pane.get()));
+    pane->Buffer().SetOnMemoryImageChanged(WireMemoryImageCallback(pane.get()));
     // Split-resize follow-up: see WindowManager.h's own resizingSplit_
     // comment and BufferView::SetSplitResizeQuery's own doc comment.
     pane->Buffer().SetSplitResizeQuery([this] { return resizingSplit_; });
@@ -726,6 +727,28 @@ void WindowManager::PointerGraphCancel() {
 void WindowManager::PointerGraphSelectionChanged(std::size_t index) {
     if (pointerGraphOwnerPane_) {
         pointerGraphOwnerPane_->Buffer().PointerGraphSelectionChanged(index);
+    }
+}
+
+std::function<void(std::optional<MemoryImageModel>)> WindowManager::WireMemoryImageCallback(Pane* pane) {
+    return [this, pane](std::optional<MemoryImageModel> model) {
+        memoryImageOwnerPane_ = model ? pane : nullptr;
+        if (onMemoryImageChanged_) {
+            onMemoryImageChanged_(std::move(model));
+        }
+    };
+}
+
+void WindowManager::SetOnMemoryImageChanged(std::function<void(std::optional<MemoryImageModel>)> onMemoryImageChanged) {
+    onMemoryImageChanged_ = std::move(onMemoryImageChanged);
+    for (Pane* pane : Leaves()) {
+        pane->Buffer().SetOnMemoryImageChanged(WireMemoryImageCallback(pane));
+    }
+}
+
+void WindowManager::MemoryImageCancel() {
+    if (memoryImageOwnerPane_) {
+        memoryImageOwnerPane_->Buffer().MemoryImageCancel();
     }
 }
 

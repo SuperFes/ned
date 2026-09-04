@@ -61,6 +61,7 @@
 #include "Editor/Vim/VimEngine.h"
 #include "EventLoop.h"
 #include "ListPopup.h"
+#include "MemoryImageView.h"
 #include "Minimap.h"
 #include "ProjectSidebar.h"
 #include "ScrollArrowButton.h"
@@ -687,6 +688,20 @@ class BufferView : public Widget {
     void PointerGraphCollapse(std::size_t index);
     void PointerGraphCancel();
     void PointerGraphSelectionChanged(std::size_t index);
+
+    // Debugging wishlist follow-up (memory-as-image viewer):
+    // SetOnPointerGraphChanged's own mirror for the read-only image overlay
+    // -- fired with a populated MemoryImageModel once ShowMemoryImageAtPoint's
+    // readMemory request completes, and with std::nullopt when
+    // MemoryImageCancel dismisses it. Wired via
+    // WindowManager::SetOnMemoryImageChanged. Unset is a safe no-op.
+    void SetOnMemoryImageChanged(std::function<void(std::optional<ui::MemoryImageModel>)> handler);
+
+    // The overlay's own dismiss path -- any keystroke while it holds focus.
+    // Reached via WindowManager::MemoryImageCancel, which routes to
+    // whichever pane's BufferView currently owns the visible overlay, same
+    // as PointerGraphCancel.
+    void MemoryImageCancel();
 
     // named-projects follow-up: AcceptActiveCompletionAt's own "public
     // because the trigger arrives from outside this class" shape --
@@ -2257,6 +2272,13 @@ class BufferView : public Widget {
     void ShowMemoryAtPoint();
     void BuildMemoryBuffer(const std::string& memoryReference, const editor::dap::DapManager::MemoryBlock& block);
 
+    // Debugging wishlist follow-up (memory-as-image viewer): ShowMemoryAtPoint's
+    // own marker-parse-then-prompt body, but sets pendingDapMemoryAsImage_ so
+    // the shared DapMemoryByteCount prompt's completion routes to
+    // PushMemoryImageModel instead of BuildMemoryBuffer.
+    void ShowMemoryImageAtPoint();
+    void PushMemoryImageModel(const std::string& memoryReference, const editor::dap::DapManager::MemoryBlock& block);
+
     // DAP round 2: dap-select-thread's entry point -- fetches the current
     // thread list (RequestThreads) and, when non-empty, enters
     // InputMode::DapThreadSelect (LspCodeActionSelect's numbered-choice
@@ -2590,6 +2612,13 @@ class BufferView : public Widget {
     // Valid only while inputMode_ == DapMemoryByteCount.
     std::optional<std::string> pendingDapMemoryReference_;
 
+    // Memory-as-image viewer follow-up: distinguishes which of the two
+    // "*mem:<ref>]-then-prompt" sessions above set pendingDapMemoryReference_
+    // -- ShowMemoryAtPoint (false, the hex-dump *memory* buffer) or
+    // ShowMemoryImageAtPoint (true, the MemoryImageView overlay). Read once,
+    // by the shared DapMemoryByteCount prompt's Enter handler.
+    bool pendingDapMemoryAsImage_ = false;
+
     EventLoop* eventLoop_ = nullptr; // see SetEventLoop
 
     InputMode                                inputMode_ = InputMode::Normal;
@@ -2817,6 +2846,13 @@ class BufferView : public Widget {
     std::optional<PointerGraphSession>                    pointerGraphSession_;
     std::size_t                                           pointerGraphSelectedIndex_     = 0;
     std::size_t                                           pointerGraphRequestGeneration_ = 0;
+
+    // Memory-as-image viewer follow-up: onPointerGraphChanged_'s own mirror
+    // for the read-only MemoryImageView overlay -- no session struct needed
+    // (unlike PointerGraphSession, there's nothing to lazily expand; the
+    // whole image arrives in one readMemory response and never changes
+    // again until the next invocation replaces it outright).
+    std::function<void(std::optional<ui::MemoryImageModel>)> onMemoryImageChanged_;
 
     // Caches mode_.highlight's result across Paint() calls (tree-sitter
     // foundation follow-up) -- Paint() runs far more often than the buffer's
