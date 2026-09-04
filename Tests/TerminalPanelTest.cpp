@@ -9,8 +9,11 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <filesystem>
+#include <fstream>
 #include <string>
 
+#include "Editor/Clipboard.h"
 #include "Editor/Terminal/Config.h"
 #include "TestEvents.h"
 #include "UI/TerminalPanel.h"
@@ -20,11 +23,24 @@ namespace {
 
 using ned::ui::Box;
 using ned::ui::Canvas;
+using ned::ui::MouseEvent;
 using ned::ui::Screen;
 using ned::ui::TerminalPanel;
 using ned::ui::Theme;
 
-constexpr int kWidth  = 44; // wide enough for the longest title suffix plus the [▼][▲][×] buttons
+// scrollback-search-and-selection follow-up: Tests/ClipboardTestGuard.cpp
+// forces ClipboardEnabled() false for the whole ned_tests binary -- mirrors
+// ClipboardTest.cpp's own RestoreClipboardDisabled exactly (kept file-local
+// here too, the same small-duplication precedent BufferViewTest.cpp's own
+// RestorePrimaryPasteDisabled follows).
+struct RestoreClipboardDisabled {
+    ~RestoreClipboardDisabled() {
+        ned::editor::SetClipboardCopyCommand({});
+        ned::editor::SetClipboardEnabled(false);
+    }
+};
+
+constexpr int kWidth  = 60; // wide enough for the longest title suffix (a search query) plus the [/][▼][▲][×] buttons
 constexpr int kHeight = 5; // 1 title row + 4 content rows
 
 struct Fixture {
@@ -290,4 +306,124 @@ TEST_CASE("TerminalPanel forwards terminal-query replies without waiting for a k
     sent.clear();
     f.panel.Feed("\x1b[6n"); // cursor-position report
     REQUIRE(sent.find('R') != std::string::npos);
+}
+
+TEST_CASE("TerminalPanel drag-selects text, highlights it, and copies it on release", "[TerminalPanel]") {
+    const RestoreClipboardDisabled restore;
+
+    Fixture f;
+    f.panel.Feed("hello world");
+
+    // "world" spans columns 6-10 on content row 1 (screen row 1).
+    REQUIRE(f.panel.OnEvent(ned::ui::test::Mouse(6, 1, MouseEvent::Button::Left, MouseEvent::Motion::Pressed)));
+    REQUIRE(f.panel.OnEvent(ned::ui::test::Mouse(10, 1, MouseEvent::Button::Left, MouseEvent::Motion::Moved)));
+
+    f.Paint();
+    REQUIRE(f.screen.PixelAt(6, 1).background_color == f.theme.selectionBackground);
+    REQUIRE(f.screen.PixelAt(10, 1).background_color == f.theme.selectionBackground);
+    // Outside the dragged range: untouched.
+    REQUIRE(f.screen.PixelAt(5, 1).background_color != f.theme.selectionBackground);
+
+    const std::filesystem::path fakeClipboard = std::filesystem::temp_directory_path() / "ned_terminal_panel_test_fake_clipboard";
+    std::filesystem::remove(fakeClipboard);
+    ned::editor::SetClipboardEnabled(true);
+    ned::editor::SetClipboardCopyCommand({"sh", "-c", "cat > " + fakeClipboard.string()});
+
+    REQUIRE(f.panel.OnEvent(ned::ui::test::Mouse(10, 1, MouseEvent::Button::Left, MouseEvent::Motion::Released)));
+
+    REQUIRE(std::filesystem::exists(fakeClipboard));
+    std::ifstream copied(fakeClipboard);
+    std::string   copiedText((std::istreambuf_iterator<char>(copied)), std::istreambuf_iterator<char>());
+    REQUIRE(copiedText == "world");
+    std::filesystem::remove(fakeClipboard);
+
+    // The highlight survives the release (real-terminal convention) and
+    // only clears once the user types again.
+    f.Paint();
+    REQUIRE(f.screen.PixelAt(6, 1).background_color == f.theme.selectionBackground);
+    f.panel.SetWriteSinkForTesting([](std::string_view) {});
+    f.panel.OnEvent(ned::ui::test::Character('x'));
+    f.Paint();
+    REQUIRE(f.screen.PixelAt(6, 1).background_color != f.theme.selectionBackground);
+}
+
+TEST_CASE("TerminalPanel selection spans multiple lines in reading order", "[TerminalPanel]") {
+    const RestoreClipboardDisabled restore;
+
+    Fixture f;
+    f.panel.Feed("ab\r\ncd\r\nef");
+
+    // Drag from column 1 of row 1 ('b') down to column 0 of row 3 ('e').
+    REQUIRE(f.panel.OnEvent(ned::ui::test::Mouse(1, 1, MouseEvent::Button::Left, MouseEvent::Motion::Pressed)));
+    REQUIRE(f.panel.OnEvent(ned::ui::test::Mouse(0, 3, MouseEvent::Button::Left, MouseEvent::Motion::Moved)));
+
+    const std::filesystem::path fakeClipboard = std::filesystem::temp_directory_path() / "ned_terminal_panel_test_fake_clipboard_multiline";
+    std::filesystem::remove(fakeClipboard);
+    ned::editor::SetClipboardEnabled(true);
+    ned::editor::SetClipboardCopyCommand({"sh", "-c", "cat > " + fakeClipboard.string()});
+
+    REQUIRE(f.panel.OnEvent(ned::ui::test::Mouse(0, 3, MouseEvent::Button::Left, MouseEvent::Motion::Released)));
+
+    std::ifstream copied(fakeClipboard);
+    std::string   copiedText((std::istreambuf_iterator<char>(copied)), std::istreambuf_iterator<char>());
+    REQUIRE(copiedText == "b\ncd\ne");
+    std::filesystem::remove(fakeClipboard);
+}
+
+TEST_CASE("TerminalPanel plain click clears any prior selection without copying", "[TerminalPanel]") {
+    const RestoreClipboardDisabled restore;
+
+    Fixture f;
+    f.panel.Feed("hello world");
+    f.panel.OnEvent(ned::ui::test::Mouse(6, 1, MouseEvent::Button::Left, MouseEvent::Motion::Pressed));
+    f.panel.OnEvent(ned::ui::test::Mouse(10, 1, MouseEvent::Button::Left, MouseEvent::Motion::Moved));
+    f.panel.OnEvent(ned::ui::test::Mouse(10, 1, MouseEvent::Button::Left, MouseEvent::Motion::Released));
+
+    // A fresh press-and-release with no drag in between is a plain click --
+    // it must not re-copy the stale selection, and it clears the highlight.
+    const std::filesystem::path fakeClipboard = std::filesystem::temp_directory_path() / "ned_terminal_panel_test_fake_clipboard_no_copy";
+    std::filesystem::remove(fakeClipboard);
+    ned::editor::SetClipboardEnabled(true);
+    ned::editor::SetClipboardCopyCommand({"sh", "-c", "cat > " + fakeClipboard.string()});
+    f.panel.OnEvent(ned::ui::test::Mouse(2, 2, MouseEvent::Button::Left, MouseEvent::Motion::Pressed));
+    f.panel.OnEvent(ned::ui::test::Mouse(2, 2, MouseEvent::Button::Left, MouseEvent::Motion::Released));
+
+    REQUIRE_FALSE(std::filesystem::exists(fakeClipboard));
+    f.Paint();
+    REQUIRE(f.screen.PixelAt(6, 1).background_color != f.theme.selectionBackground);
+}
+
+TEST_CASE("TerminalPanel search button finds a scrolled-back line and Escape restores the view", "[TerminalPanel]") {
+    Fixture f;
+    // 4 content rows; 8 lines pushes l1-l4 into the ring, l5-l8 stay live.
+    f.panel.Feed("l1\r\nl2\r\nl3\r\nl4\r\nl5\r\nl6\r\nl7\r\nl8");
+    f.Paint();
+    REQUIRE(f.RowText(1) == "l5");
+
+    // The search button is the leftmost of the four, at width-13/-12/-11.
+    REQUIRE(f.panel.OnEvent(ned::ui::test::Mouse(kWidth - 12, 0, MouseEvent::Button::Left, MouseEvent::Motion::Pressed)));
+
+    REQUIRE(f.panel.OnEvent(ned::ui::test::Character('l')));
+    REQUIRE(f.panel.OnEvent(ned::ui::test::Character('3')));
+
+    f.Paint();
+    REQUIRE(f.RowText(0).find("Backward I-search: l3") != std::string::npos);
+    REQUIRE(f.RowText(3) == "l3");
+    REQUIRE(f.screen.PixelAt(0, 3).background_color == f.theme.isearchMatchBackground);
+
+    // While a session is active, every key is consumed rather than
+    // forwarded to the shell -- see the header comment's modality rule.
+    std::string sent;
+    f.panel.SetWriteSinkForTesting([&sent](std::string_view data) { sent += data; });
+    REQUIRE(f.panel.OnEvent(ned::ui::test::Character('z')));
+    REQUIRE(sent.empty());
+
+    REQUIRE(f.panel.OnEvent(ned::ui::test::Escape()));
+    f.Paint();
+    REQUIRE(f.RowText(1) == "l5"); // back to the live view
+    REQUIRE(f.RowText(0).find("I-search") == std::string::npos);
+
+    // Now that the session ended, typing forwards to the shell again.
+    REQUIRE(f.panel.OnEvent(ned::ui::test::Character('z')));
+    REQUIRE(sent == "z");
 }
