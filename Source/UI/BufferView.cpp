@@ -2409,32 +2409,36 @@ void BufferView::Paint(Canvas paneCanvas) {
     // itself).
     if (lspManager_) {
         lspManager_->SyncBuffer(buffer, editor::LanguageKeyForMode(mode_));
-        // semanticTokens follow-up: same per-frame, active-buffer-only
-        // cadence as SyncBuffer just above, deliberately called from here
-        // (BufferView's own per-frame decision point) rather than from
-        // inside LspManager::SyncToServer -- see RequestSemanticTokensFull's
-        // own doc comment in LspManager.h for why keeping it out of that
-        // hot path matters (a real lesson from pull-diagnostics' own
-        // test-regression fix). No-ops internally when disabled, unopened,
-        // or content unchanged since the last request.
-        lspManager_->RequestSemanticTokensFull(buffer, editor::LanguageKeyForMode(mode_));
 
-        // inlayHint follow-up: same per-frame cadence as the two calls just
-        // above, scoped to the currently visible line range -- unlike
-        // semanticTokens' whole-document request, inlayHint's own "range"
-        // param exists specifically so a client only asks for what's on
-        // screen. Same viewport computation HugeStructuralWindow uses,
-        // minus its huge-buffer-only parse-safety margin (not needed here
-        // -- there's no parser to desync, just a request scope).
-        {
-            const std::size_t lastLine    = totalLines > 0 ? totalLines - 1 : 0;
-            const std::size_t viewportTop = std::min(topLine_, lastLine);
-            const std::size_t viewportHeight = size().height > 0 ? static_cast<std::size_t>(size().height) : 1;
-            const std::size_t viewportBottom    = std::min(viewportTop + viewportHeight, lastLine);
-            const std::size_t viewportStartByte = content.LineToByteOffset(viewportTop);
-            const std::size_t viewportEndByte   = std::min(content.LineToByteOffset(viewportBottom) + 1, content.ByteLength());
-            lspManager_->RequestInlayHints(buffer, viewportStartByte, viewportEndByte, editor::LanguageKeyForMode(mode_));
-        }
+        // Shared viewport-as-byte-range computation for both requests just
+        // below -- unlike HugeStructuralWindow, no huge-buffer-only
+        // parse-safety margin (there's no parser to desync here, just a
+        // request scope).
+        const std::size_t lastLine          = totalLines > 0 ? totalLines - 1 : 0;
+        const std::size_t viewportTop       = std::min(topLine_, lastLine);
+        const std::size_t viewportHeight    = size().height > 0 ? static_cast<std::size_t>(size().height) : 1;
+        const std::size_t viewportBottom    = std::min(viewportTop + viewportHeight, lastLine);
+        const std::size_t viewportStartByte = content.LineToByteOffset(viewportTop);
+        const std::size_t viewportEndByte   = std::min(content.LineToByteOffset(viewportBottom) + 1, content.ByteLength());
+
+        // semanticTokens follow-up, extended by the range/delta follow-up:
+        // same per-frame, active-buffer-only cadence as SyncBuffer just
+        // above, deliberately called from here (BufferView's own per-frame
+        // decision point) rather than from inside LspManager::SyncToServer
+        // -- see RequestSemanticTokens' own doc comment in LspManager.h for
+        // why keeping it out of that hot path matters (a real lesson from
+        // pull-diagnostics' own test-regression fix), and for how it
+        // chooses among range/full-delta/full internally. No-ops
+        // internally when disabled, unopened, or the exact same request
+        // would already be in flight.
+        lspManager_->RequestSemanticTokens(buffer, viewportStartByte, viewportEndByte, editor::LanguageKeyForMode(mode_));
+
+        // inlayHint follow-up: same per-frame cadence as the calls above,
+        // scoped to the currently visible line range -- unlike
+        // semanticTokens' original whole-document request, inlayHint's own
+        // "range" param exists specifically so a client only asks for
+        // what's on screen.
+        lspManager_->RequestInlayHints(buffer, viewportStartByte, viewportEndByte, editor::LanguageKeyForMode(mode_));
 
         // codeLens follow-up: same per-frame cadence as the calls above,
         // whole-document scope (codeLens has no "range" param, unlike

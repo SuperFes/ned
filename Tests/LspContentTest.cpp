@@ -2,9 +2,11 @@
 
 #include "Editor/Lsp/LspContent.h"
 
+using ned::editor::lsp::ApplySemanticTokensDeltaEdits;
 using ned::editor::lsp::CodeAction;
 using ned::editor::lsp::CodeLens;
 using ned::editor::lsp::CompletionItem;
+using ned::editor::lsp::DecodeSemanticTokenData;
 using ned::editor::lsp::DefinitionLocation;
 using ned::editor::lsp::DocumentChangeOp;
 using ned::editor::lsp::DocumentHighlight;
@@ -26,7 +28,10 @@ using ned::editor::lsp::ExtractPrepareRenameResult;
 using ned::editor::lsp::ExtractPullDiagnosticReport;
 using ned::editor::lsp::ExtractRenameEdits;
 using ned::editor::lsp::ExtractSemanticTokens;
+using ned::editor::lsp::ExtractSemanticTokensDeltaEdits;
 using ned::editor::lsp::ExtractSemanticTokensLegend;
+using ned::editor::lsp::ExtractSemanticTokensRawData;
+using ned::editor::lsp::ExtractSemanticTokensResultId;
 using ned::editor::lsp::ExtractSignatureHelp;
 using ned::editor::lsp::ExtractSingleCodeAction;
 using ned::editor::lsp::ExtractSingleCodeLens;
@@ -38,6 +43,7 @@ using ned::editor::lsp::Json;
 using ned::editor::lsp::LspPosition;
 using ned::editor::lsp::OnTypeFormattingTriggers;
 using ned::editor::lsp::RenameResult;
+using ned::editor::lsp::SemanticTokensDeltaEdit;
 using ned::editor::lsp::SemanticTokensLegend;
 using ned::editor::lsp::SymbolEntry;
 using ned::editor::lsp::SymbolKindLabel;
@@ -739,6 +745,49 @@ TEST_CASE("ExtractSemanticTokensLegend returns nullopt when the provider is abse
     REQUIRE_FALSE(ExtractSemanticTokensLegend(Json(nullptr)).has_value());
 }
 
+TEST_CASE("ExtractSemanticTokensLegend reads full.delta and range from semanticTokensProvider", "[Lsp]") {
+    const Json legendOnly = {{"tokenTypes", Json::array({"class"})}};
+
+    // full: {delta: true}, range: true -- both supported.
+    {
+        const Json result = {
+            {"capabilities", {{"semanticTokensProvider", {{"legend", legendOnly}, {"full", {{"delta", true}}}, {"range", true}}}}},
+        };
+        const auto legend = ExtractSemanticTokensLegend(result);
+        REQUIRE(legend.has_value());
+        REQUIRE(legend->fullDeltaSupported);
+        REQUIRE(legend->rangeSupported);
+    }
+    // full: true (bare, no delta), range: {} (an empty object still counts as supported).
+    {
+        const Json result = {
+            {"capabilities", {{"semanticTokensProvider", {{"legend", legendOnly}, {"full", true}, {"range", Json::object()}}}}},
+        };
+        const auto legend = ExtractSemanticTokensLegend(result);
+        REQUIRE(legend.has_value());
+        REQUIRE_FALSE(legend->fullDeltaSupported);
+        REQUIRE(legend->rangeSupported);
+    }
+    // full: {delta: false}, range: false -- neither supported.
+    {
+        const Json result = {
+            {"capabilities", {{"semanticTokensProvider", {{"legend", legendOnly}, {"full", {{"delta", false}}}, {"range", false}}}}},
+        };
+        const auto legend = ExtractSemanticTokensLegend(result);
+        REQUIRE(legend.has_value());
+        REQUIRE_FALSE(legend->fullDeltaSupported);
+        REQUIRE_FALSE(legend->rangeSupported);
+    }
+    // Neither field present at all -- both default false, legend itself still parses.
+    {
+        const Json result = {{"capabilities", {{"semanticTokensProvider", {{"legend", legendOnly}}}}}};
+        const auto legend = ExtractSemanticTokensLegend(result);
+        REQUIRE(legend.has_value());
+        REQUIRE_FALSE(legend->fullDeltaSupported);
+        REQUIRE_FALSE(legend->rangeSupported);
+    }
+}
+
 TEST_CASE("ExtractOnTypeFormattingTriggers parses firstTriggerCharacter and moreTriggerCharacter", "[Lsp]") {
     const Json result = {
         {"capabilities",
@@ -909,6 +958,118 @@ TEST_CASE("ExtractSemanticTokens returns empty for a missing/non-array/malformed
     REQUIRE(ExtractSemanticTokens(Json{{"data", "not an array"}}).empty());
     REQUIRE(ExtractSemanticTokens(Json{{"data", Json::array({0, 0, 3, 5})}}).empty()); // 4 entries, not a multiple of 5
     REQUIRE(ExtractSemanticTokens(Json(nullptr)).empty());
+}
+
+TEST_CASE("ExtractSemanticTokensRawData pulls the flat quintuple array without decoding it", "[Lsp]") {
+    const Json result = {{"data", Json::array({0, 0, 3, 5, 0, 0, 4, 1, 8, 1})}};
+    REQUIRE(ExtractSemanticTokensRawData(result) == std::vector<std::uint32_t>{0, 0, 3, 5, 0, 0, 4, 1, 8, 1});
+    REQUIRE(ExtractSemanticTokensRawData(Json{{"data", Json::array({1, 2, 3})}}).empty()); // 3 entries, not a multiple of 5
+    REQUIRE(ExtractSemanticTokensRawData(Json::object()).empty());
+}
+
+TEST_CASE("DecodeSemanticTokenData decodes the same way ExtractSemanticTokens does, given the raw array directly",
+          "[Lsp]") {
+    const std::vector<std::uint32_t> data   = {0, 0, 3, 5, 0, 0, 4, 1, 8, 1};
+    const auto                       tokens = DecodeSemanticTokenData(data);
+    REQUIRE(tokens.size() == 2);
+    REQUIRE(tokens[0].start.character == 0);
+    REQUIRE(tokens[1].start.character == 4);
+    REQUIRE(DecodeSemanticTokenData({0, 0, 3, 5}).empty()); // 4 entries, not a multiple of 5
+}
+
+TEST_CASE("ExtractSemanticTokensResultId reads a string resultId, nullopt otherwise", "[Lsp]") {
+    REQUIRE(ExtractSemanticTokensResultId(Json{{"resultId", "abc"}}) == "abc");
+    REQUIRE_FALSE(ExtractSemanticTokensResultId(Json::object()).has_value());
+    REQUIRE_FALSE(ExtractSemanticTokensResultId(Json{{"resultId", 42}}).has_value()); // wrong type
+    REQUIRE_FALSE(ExtractSemanticTokensResultId(Json(nullptr)).has_value());
+}
+
+TEST_CASE("ExtractSemanticTokensDeltaEdits parses a SemanticTokensDelta's edits array", "[Lsp]") {
+    const Json result = {
+        {"resultId", "v2"},
+        {"edits", Json::array({
+                      {{"start", 5}, {"deleteCount", 2}, {"data", Json::array({9, 9})}},
+                      {{"start", 0}, {"deleteCount", 0}}, // no "data" -- pure insertion-of-nothing is a legal, if pointless, edit
+                  })},
+    };
+    const auto edits = ExtractSemanticTokensDeltaEdits(result);
+    REQUIRE(edits.has_value());
+    REQUIRE(edits->size() == 2);
+    REQUIRE((*edits)[0].start == 5);
+    REQUIRE((*edits)[0].deleteCount == 2);
+    REQUIRE((*edits)[0].data == std::vector<std::uint32_t>{9, 9});
+    REQUIRE((*edits)[1].data.empty());
+}
+
+TEST_CASE("ExtractSemanticTokensDeltaEdits returns nullopt for a plain full-shaped response (no \"edits\")",
+          "[Lsp]") {
+    REQUIRE_FALSE(ExtractSemanticTokensDeltaEdits(Json{{"resultId", "v1"}, {"data", Json::array({0, 0, 3, 0, 0})}}).has_value());
+    REQUIRE_FALSE(ExtractSemanticTokensDeltaEdits(Json::object()).has_value());
+    REQUIRE_FALSE(ExtractSemanticTokensDeltaEdits(Json(nullptr)).has_value());
+}
+
+TEST_CASE("ExtractSemanticTokensDeltaEdits skips a malformed edit entry (missing start/deleteCount)", "[Lsp]") {
+    const Json result = {{"edits", Json::array({Json::object(), {{"start", 1}, {"deleteCount", 1}}})}};
+    const auto edits  = ExtractSemanticTokensDeltaEdits(result);
+    REQUIRE(edits.has_value());
+    REQUIRE(edits->size() == 1);
+    REQUIRE((*edits)[0].start == 1);
+}
+
+TEST_CASE("ApplySemanticTokensDeltaEdits splices a pure insertion at the end", "[Lsp]") {
+    const std::vector<std::uint32_t>           previous = {0, 0, 3, 0, 0}; // one quintuple
+    const std::vector<SemanticTokensDeltaEdit> edits    = {{.start = 5, .deleteCount = 0, .data = {0, 5, 1, 1, 0}}};
+    const std::vector<std::uint32_t>           result   = ApplySemanticTokensDeltaEdits(previous, edits);
+    REQUIRE(result == std::vector<std::uint32_t>{0, 0, 3, 0, 0, 0, 5, 1, 1, 0});
+}
+
+TEST_CASE("ApplySemanticTokensDeltaEdits splices a pure deletion (empty data)", "[Lsp]") {
+    const std::vector<std::uint32_t>           previous = {0, 0, 3, 0, 0, 0, 5, 1, 1, 0}; // two quintuples
+    const std::vector<SemanticTokensDeltaEdit> edits    = {{.start = 5, .deleteCount = 5, .data = {}}};
+    const std::vector<std::uint32_t>           result   = ApplySemanticTokensDeltaEdits(previous, edits);
+    REQUIRE(result == std::vector<std::uint32_t>{0, 0, 3, 0, 0});
+}
+
+TEST_CASE("ApplySemanticTokensDeltaEdits applies several edits in one pass, each addressing the ORIGINAL array",
+          "[Lsp]") {
+    // Three quintuples: [A][B][C]. Edit 1 replaces B (index 5..10) with a
+    // longer replacement; edit 2 replaces C (index 10..15, in the
+    // ORIGINAL array -- must not be shifted by edit 1's own length change)
+    // with a single value. Reverse-order application (this function's own
+    // documented approach) is exactly what makes both edits' start indices
+    // valid without any manual index-shift math.
+    const std::vector<std::uint32_t> previous = {
+        1,
+        1,
+        1,
+        1,
+        1, // A
+        2,
+        2,
+        2,
+        2,
+        2, // B
+        3,
+        3,
+        3,
+        3,
+        3, // C
+    };
+    const std::vector<SemanticTokensDeltaEdit> edits = {
+        {.start = 5, .deleteCount = 5, .data = {9, 9, 9, 9, 9, 9}}, // B -> 6 values
+        {.start = 10, .deleteCount = 5, .data = {8}},               // C -> 1 value
+    };
+    const std::vector<std::uint32_t> result = ApplySemanticTokensDeltaEdits(previous, edits);
+    REQUIRE(result == std::vector<std::uint32_t>{1, 1, 1, 1, 1, 9, 9, 9, 9, 9, 9, 8});
+}
+
+TEST_CASE("ApplySemanticTokensDeltaEdits clamps an out-of-range edit rather than throwing", "[Lsp]") {
+    const std::vector<std::uint32_t>           previous = {1, 2, 3};
+    const std::vector<SemanticTokensDeltaEdit> edits    = {{.start = 100, .deleteCount = 100, .data = {9}}};
+    // start clamps to previous.size() (3), deleteCount clamps to 0 (nothing
+    // left to delete from there) -- the edit becomes a pure append.
+    const std::vector<std::uint32_t> result = ApplySemanticTokensDeltaEdits(previous, edits);
+    REQUIRE(result == std::vector<std::uint32_t>{1, 2, 3, 9});
 }
 
 TEST_CASE("ExtractInlayHints parses a bare-string label", "[Lsp]") {
