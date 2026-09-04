@@ -207,6 +207,19 @@ class DapManager {
     std::string StepInto();
     std::string StepOut();
 
+    // Debugging wishlist: reverse debugging -- DAP's own `reverseContinue`/
+    // `stepBack` requests, both gated by the single `supportsStepBack`
+    // capability the adapter advertises on `initialize` (see Capabilities
+    // below). Same Stopped-only gating and "landing spot arrives via the
+    // next `stopped` event" shape as StepOver/Into/Out; sent regardless of
+    // the advertised capability (an adapter may honor it without
+    // advertising it) with a soft warning appended when it wasn't
+    // advertised, RestartFrame's own convention. Only meaningful against an
+    // adapter that itself replays a recording (e.g. rr) -- most adapters
+    // simply never advertise support and these become no-ops.
+    std::string ReverseContinue();
+    std::string StepBack();
+
     // DAP round 4: DAP's own `restartFrame` request -- reruns the stopped
     // thread from the top of the named frame instead of stepping through it.
     // Same shape as StepOver/StepInto/StepOut (Stopped-only, the new
@@ -549,6 +562,10 @@ class DapManager {
         bool readMemory  = false;
         // Debugging wishlist: jump-to-line -- see JumpToLine.
         bool gotoTargets = false;
+        // Debugging wishlist: reverse debugging -- DAP's single
+        // `supportsStepBack` capability covers both `stepBack` and
+        // `reverseContinue` (see ReverseContinue/StepBack).
+        bool stepBack = false;
     };
     Capabilities capabilities_;
 

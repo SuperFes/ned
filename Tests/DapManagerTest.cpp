@@ -1242,3 +1242,67 @@ TEST_CASE("RequestMemory is a graceful failure without a stopped session", "[Dap
     });
     REQUIRE(called);
 }
+
+// Debugging wishlist: reverse debugging below.
+
+TEST_CASE("ReverseContinue and StepBack refuse when the session is not stopped", "[Dap]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartRunningSession("dap-manager-test-reverse-not-stopped");
+
+    REQUIRE(fixture.manager.ReverseContinue() == "Not stopped (nothing to step).");
+    REQUIRE(fixture.manager.StepBack() == "Not stopped (nothing to step).");
+}
+
+TEST_CASE("ReverseContinue sends reverseContinue and resumes on success, warning when unadvertised", "[Dap]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartRunningSession("dap-manager-test-reverse-continue"); // no supportsStepBack in the initialize response
+
+    fixture.client->DispatchFrame(EventFrame("stopped", Json{{"reason", "breakpoint"}, {"threadId", 1}}));
+    const Json stackTrace = fixture.reader.Next();
+    fixture.client->DispatchFrame(ResponseFrame(stackTrace["seq"].get<int>(), "stackTrace", true, Json{{"stackFrames", Json::array()}}));
+
+    REQUIRE(fixture.manager.ReverseContinue() ==
+            "Reverse-continuing... (adapter did not advertise reverse-debugging support -- may be ignored)");
+    const Json reverseContinue = fixture.reader.Next();
+    REQUIRE(reverseContinue["command"] == "reverseContinue");
+    REQUIRE(reverseContinue["arguments"]["threadId"] == 1);
+    fixture.client->DispatchFrame(ResponseFrame(reverseContinue["seq"].get<int>(), "reverseContinue", true));
+    REQUIRE(fixture.manager.State() == DapManager::SessionState::Running);
+}
+
+TEST_CASE("StepBack sends stepBack and resumes on success", "[Dap]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartRunningSession("dap-manager-test-step-back");
+
+    fixture.client->DispatchFrame(EventFrame("stopped", Json{{"reason", "breakpoint"}, {"threadId", 1}}));
+    const Json stackTrace = fixture.reader.Next();
+    fixture.client->DispatchFrame(ResponseFrame(stackTrace["seq"].get<int>(), "stackTrace", true, Json{{"stackFrames", Json::array()}}));
+
+    REQUIRE(fixture.manager.StepBack() == "Stepping back... (adapter did not advertise reverse-debugging support -- may be ignored)");
+    const Json stepBack = fixture.reader.Next();
+    REQUIRE(stepBack["command"] == "stepBack");
+    REQUIRE(stepBack["arguments"]["threadId"] == 1);
+    fixture.client->DispatchFrame(ResponseFrame(stepBack["seq"].get<int>(), "stepBack", true));
+    REQUIRE(fixture.manager.State() == DapManager::SessionState::Running);
+}
+
+TEST_CASE("StartOrContinue parses supportsStepBack, dropping the warning suffix for both requests", "[Dap]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    SetDapLaunchConfig("dap-manager-test-stepback-caps", R"({"program": "./fake"})");
+    fixture.manager.StartOrContinue("dap-manager-test-stepback-caps");
+    const Json initialize = fixture.reader.Next();
+    fixture.client->DispatchFrame(ResponseFrame(initialize["seq"].get<int>(), "initialize", true, Json{{"supportsStepBack", true}}));
+    fixture.reader.Next(); // launch
+
+    fixture.client->DispatchFrame(EventFrame("stopped", Json{{"reason", "breakpoint"}, {"threadId", 1}}));
+    const Json stackTrace = fixture.reader.Next();
+    fixture.client->DispatchFrame(ResponseFrame(stackTrace["seq"].get<int>(), "stackTrace", true, Json{{"stackFrames", Json::array()}}));
+
+    REQUIRE(fixture.manager.StepBack() == "Stepping back...");
+    fixture.reader.Next(); // stepBack
+    SetDapLaunchConfig("dap-manager-test-stepback-caps", "");
+}

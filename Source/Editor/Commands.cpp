@@ -2800,6 +2800,19 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           context.interactiveRequest = InteractiveRequest::DapLineInspect;
                       });
 
+    // Debugging wishlist: reverse debugging -- M-x only, same policy as
+    // every other DAP command beyond the core F-key quartet. Only useful
+    // against an adapter that itself replays a recording (e.g. rr); a
+    // typical adapter just never advertises support and these no-op.
+    registry.Register("dap-reverse-continue", "Continue the stopped debug session backwards (adapter support required).",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::DapReverseContinue;
+                      });
+    registry.Register("dap-step-back", "Step the stopped debug session backwards one line (adapter support required).",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::DapStepBack;
+                      });
+
     // ACP client slice 2: same "just set interactiveRequest" shape as
     // run-task/dap-continue above -- BufferView holds the shared AcpManager
     // and does the actual work (see Editor/Acp/AcpManager.h). Agent and

@@ -7427,6 +7427,14 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
                 LineInspectAtPoint();
             }
             return;
+        // Debugging wishlist: reverse debugging -- same immediate-status
+        // shape as DapStepOver/DapStepInto/DapStepOut above.
+        case editor::InteractiveRequest::DapReverseContinue:
+            statusMessage_ = dapManager_ ? dapManager_->ReverseContinue() : "No debugger available.";
+            return;
+        case editor::InteractiveRequest::DapStepBack:
+            statusMessage_ = dapManager_ ? dapManager_->StepBack() : "No debugger available.";
+            return;
         case editor::InteractiveRequest::DapEvaluate:
             if (!dapManager_) {
                 statusMessage_ = "No debugger available.";
