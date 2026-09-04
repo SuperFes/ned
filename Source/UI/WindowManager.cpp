@@ -966,6 +966,30 @@ void WindowManager::RequestOpenBinaryFile(const std::filesystem::path& path) {
     }
 }
 
+void WindowManager::StartCreateFileAt(const std::filesystem::path& directory) {
+    if (Pane* pane = FocusedPane()) {
+        pane->Buffer().StartCreateFileAt(directory);
+    }
+}
+
+void WindowManager::StartCreateDirectoryAt(const std::filesystem::path& directory) {
+    if (Pane* pane = FocusedPane()) {
+        pane->Buffer().StartCreateDirectoryAt(directory);
+    }
+}
+
+void WindowManager::StartRenameFileAt(const std::filesystem::path& path) {
+    if (Pane* pane = FocusedPane()) {
+        pane->Buffer().StartRenameFileAt(path);
+    }
+}
+
+void WindowManager::StartDeleteFileAt(const std::filesystem::path& path) {
+    if (Pane* pane = FocusedPane()) {
+        pane->Buffer().StartDeleteFileAt(path);
+    }
+}
+
 bool WindowManager::ApplyServerPushedWorkspaceEdit(const editor::lsp::LspManager::ResolvedRename& edit, const std::string& label) {
     if (Pane* pane = FocusedPane()) {
         return pane->Buffer().ApplyServerPushedWorkspaceEdit(edit, label);

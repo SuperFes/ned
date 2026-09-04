@@ -22,24 +22,6 @@ namespace {
         return text.substr(start, end - start);
     }
 
-    // POSIX single-quote shell escaping -- Konsole's runCommand is the one
-    // mechanism in this whole file that has no choice but to go through a
-    // real shell (it works by typing text into a terminal prompt), unlike
-    // every other handler here, which spawns a real argv directly.
-    std::string ShellQuoteSingle(const std::filesystem::path& path) {
-        std::string quoted = "'";
-        for (const char c : path.string()) {
-            if (c == '\'') {
-                quoted += "'\\''";
-            }
-            else {
-                quoted += c;
-            }
-        }
-        quoted += "'";
-        return quoted;
-    }
-
     std::optional<std::string> RealEnvLookup(std::string_view name) {
         const std::string key(name);
         const char*       value = std::getenv(key.c_str());
@@ -232,6 +214,20 @@ std::vector<std::string> BuildLaunchArgv(TerminalKind kind, const std::filesyste
 std::vector<std::string> BuildKonsoleNewSessionArgv(std::string_view qdbusBinary, std::string_view dbusService,
                                                     std::string_view dbusWindow, const std::filesystem::path& root) {
     return {std::string(qdbusBinary), std::string(dbusService), std::string(dbusWindow), "newSession", "", root.string()};
+}
+
+std::string ShellQuoteSingle(const std::filesystem::path& path) {
+    std::string quoted = "'";
+    for (const char c : path.string()) {
+        if (c == '\'') {
+            quoted += "'\\''";
+        }
+        else {
+            quoted += c;
+        }
+    }
+    quoted += "'";
+    return quoted;
 }
 
 std::vector<std::string> BuildKonsoleRunCommandArgv(std::string_view qdbusBinary, std::string_view dbusService,
