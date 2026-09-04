@@ -14645,6 +14645,52 @@ void BufferView::CloseBufferNow(text::Buffer& buffer) {
     statusMessage_.clear();
 }
 
+void BufferView::CloseEligibleBuffers(const std::vector<text::Buffer*>& targets) {
+    std::size_t closed  = 0;
+    std::size_t skipped = 0;
+    for (text::Buffer* target : targets) {
+        if (target->Modified() && !target->ReadOnly()) {
+            ++skipped;
+            continue;
+        }
+        CloseBufferNow(*target);
+        ++closed;
+    }
+    if (skipped > 0) {
+        statusMessage_ = "Closed " + std::to_string(closed) + " tab(s); " + std::to_string(skipped) +
+                          " left open (unsaved changes).";
+    }
+    else if (closed > 0) {
+        statusMessage_ = "Closed " + std::to_string(closed) + " tab(s).";
+    }
+    else {
+        statusMessage_ = "No other tabs to close.";
+    }
+}
+
+void BufferView::CloseOtherTabs(text::Buffer& keep) {
+    std::vector<text::Buffer*> targets;
+    for (const auto& candidate : bufferList_.Buffers()) {
+        if (candidate.get() != &keep) {
+            targets.push_back(candidate.get());
+        }
+    }
+    CloseEligibleBuffers(targets);
+}
+
+void BufferView::CloseTabsToTheRight(text::Buffer& from) {
+    const auto& buffers = bufferList_.Buffers();
+    const auto  it       = std::find_if(buffers.begin(), buffers.end(),
+                                        [&](const std::unique_ptr<text::Buffer>& candidate) { return candidate.get() == &from; });
+    std::vector<text::Buffer*> targets;
+    if (it != buffers.end()) {
+        for (auto rest = std::next(it); rest != buffers.end(); ++rest) {
+            targets.push_back(rest->get());
+        }
+    }
+    CloseEligibleBuffers(targets);
+}
+
 void BufferView::EnsureTopLineValidForActiveBuffer() {
     text::Buffer& buffer = activeBuffer_.Get();
     if (topLineValidatedBuffer_ == &buffer) {
