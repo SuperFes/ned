@@ -560,6 +560,14 @@ std::vector<ned::editor::lsp::Json> ReadLspFrames(int fd, std::size_t frameCount
 struct FakeDapAdapter {
     int adapterStdinRead;
     int adapterStdoutWrite;
+    // dap-line-inspect follow-up: leftover bytes from a previous NextRequest()
+    // read, when the pipe already held more than one frame -- DapManagerTest.cpp's
+    // own FrameReader shape. Every DAP test this struct originally served kept
+    // exactly one request in flight at a time (send, wait for its response, send
+    // the next), so ReadRawLspFrame's stateless single-read-call shape was never
+    // exercised with two frames already sitting in the pipe before the first is
+    // ever read -- dap-line-inspect's fan-out is the first to do that.
+    std::string pendingBuffer_;
 
     FakeDapAdapter(int readFd, int writeFd) : adapterStdinRead(readFd), adapterStdoutWrite(writeFd) {
     }
@@ -583,10 +591,32 @@ struct FakeDapAdapter {
         return FakeDapAdapter(clientWritesHere[0], clientReadsHere[1]);
     }
 
-    // Reads the next request frame and returns its parsed body.
-    ned::editor::dap::Json NextRequest() const {
-        const std::string raw = ReadRawLspFrame(adapterStdinRead);
-        return ned::editor::dap::Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    // Reads the next request frame and returns its parsed body. Buffers
+    // leftover bytes across calls (see pendingBuffer_'s own doc comment).
+    ned::editor::dap::Json NextRequest() {
+        for (int i = 0; i < 16; ++i) {
+            const auto headerEnd = pendingBuffer_.find("\r\n\r\n");
+            if (headerEnd != std::string::npos) {
+                const std::string_view kPrefix   = "Content-Length: ";
+                const auto             prefixPos = pendingBuffer_.find(kPrefix);
+                if (prefixPos != std::string::npos) {
+                    const std::size_t contentLength = std::stoul(pendingBuffer_.substr(prefixPos + kPrefix.size()));
+                    if (pendingBuffer_.size() >= headerEnd + 4 + contentLength) {
+                        const std::string body = pendingBuffer_.substr(headerEnd + 4, contentLength);
+                        pendingBuffer_.erase(0, headerEnd + 4 + contentLength);
+                        return ned::editor::dap::Json::parse(body);
+                    }
+                }
+            }
+            char          chunk[512];
+            const ssize_t n = ::read(adapterStdinRead, chunk, sizeof(chunk));
+            if (n <= 0) {
+                break;
+            }
+            pendingBuffer_.append(chunk, static_cast<std::size_t>(n));
+        }
+        FAIL("no complete DAP frame available on fd");
+        return ned::editor::dap::Json::object();
     }
 };
 
@@ -2549,6 +2579,101 @@ TEST_CASE("dap-toggle-hex-format toggles a watch line's display format and back"
 
     REQUIRE(debugBuffer.Text().find("1 + 1 = 2  [watch:0]") != std::string::npos);
     REQUIRE(debugBuffer.Text().find("[hex]") == std::string::npos);
+}
+
+TEST_CASE("dap-line-inspect refuses when the session is not stopped", "[BufferView]") {
+    Fixture                      fixture;
+    fixture.mode                 = ned::editor::PythonMode();
+    fixture.buffer.InsertAtPoint("total = x");
+    fixture.buffer.SetPoint(0);
+
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::dap::DapManager manager(eventLoop);
+    ned::ui::BufferView          view = fixture.View();
+    view.SetDapManager(&manager);
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "dap-line-inspect");
+    view.OnEvent(ned::ui::test::Return());
+    REQUIRE(fixture.statusMessage == "Not stopped (nothing to inspect).");
+}
+
+// Debugging wishlist (line-inspect follow-up). PythonMode (Tier 1 only) is
+// deliberately used here, not CppMode -- keeps the fan-out to exactly the
+// line's two bare identifiers (no compound-expression candidates to also
+// drive through the fake adapter), since Tier 2's richer extraction is
+// already covered directly against Mode::lineInspect in ModeTest.cpp.
+TEST_CASE("dap-line-inspect evaluates every identifier on the line, highlights them, and clears on edit",
+          "[BufferView]") {
+    Fixture                      fixture;
+    fixture.mode                 = ned::editor::PythonMode();
+    fixture.buffer.InsertAtPoint("total = x");
+    fixture.buffer.SetPoint(0);
+
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::dap::DapManager manager(eventLoop);
+    ned::editor::dap::DapClient* client  = nullptr;
+    FakeDapAdapter                adapter = FakeDapAdapter::Create(manager, eventLoop, client);
+
+    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-line-inspect", "{}");
+    manager.StartOrContinue("bufferview-dap-line-inspect");
+    const auto initialize = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(initialize["seq"].get<int>(), "initialize", ned::editor::dap::Json::object()));
+    const auto launch = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(launch["seq"].get<int>(), "launch", ned::editor::dap::Json::object()));
+
+    client->DispatchFrame(DapEventFrame("stopped", {{"reason", "breakpoint"}, {"threadId", 1}}));
+    const auto autoStackTrace = adapter.NextRequest();
+    client->DispatchFrame(
+        DapResponseFrame(autoStackTrace["seq"].get<int>(), "stackTrace", {{"stackFrames", ned::editor::dap::Json::array()}}));
+    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-line-inspect", "");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetDapManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
+    ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "dap-line-inspect");
+    view.OnEvent(ned::ui::test::Return());
+
+    // Source order: "total" first, then "x".
+    const auto totalRequest = adapter.NextRequest();
+    REQUIRE(totalRequest["command"] == "evaluate");
+    REQUIRE(totalRequest["arguments"]["expression"] == "total");
+    client->DispatchFrame(DapResponseFrame(totalRequest["seq"].get<int>(), "evaluate", {{"result", "1"}}));
+
+    const auto xRequest = adapter.NextRequest();
+    REQUIRE(xRequest["command"] == "evaluate");
+    REQUIRE(xRequest["arguments"]["expression"] == "x");
+    client->DispatchFrame(DapResponseFrame(xRequest["seq"].get<int>(), "evaluate", {{"result", "2"}}));
+
+    REQUIRE(fixture.statusMessage == "total = 1  x = 2");
+
+    view.Paint(canvas);
+    // Counted across the whole row rather than at hand-computed gutter+column
+    // offsets -- PythonMode's own fold/symbol-kind/test-discovery gutter
+    // columns (unrelated to this feature) make the exact gutter width here
+    // brittle to hardcode; the highlighted cell *count* is what this feature
+    // actually promises ("total" + "x" = 6 highlighted columns).
+    auto countLineInspectHighlighted = [&] {
+        int count = 0;
+        for (int col = 0; col < 40; ++col) {
+            if (screenBuf.PixelAt(col, 0).background_color == fixture.theme.lineInspectBackground) {
+                ++count;
+            }
+        }
+        return count;
+    };
+    REQUIRE(countLineInspectHighlighted() == 6); // "total" (5) + "x" (1)
+
+    // An edit invalidates the highlight entirely, not just moves it.
+    view.OnEvent(ned::ui::test::Character('!'));
+    view.Paint(canvas);
+    REQUIRE(countLineInspectHighlighted() == 0);
 }
 
 TEST_CASE("dap-show-disassembly builds a *disassembly* buffer around the stopped frame's PC", "[BufferView]") {

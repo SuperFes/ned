@@ -2794,6 +2794,11 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                       [](CommandContext& context) {
                           context.interactiveRequest = InteractiveRequest::DapToggleHexFormat;
                       });
+    registry.Register("dap-line-inspect",
+                      "Evaluate every sub-expression on the current line in the stopped debug session at once.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::DapLineInspect;
+                      });
 
     // ACP client slice 2: same "just set interactiveRequest" shape as
     // run-task/dap-continue above -- BufferView holds the shared AcpManager
