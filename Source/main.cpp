@@ -1287,7 +1287,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
                         path, !stage,
                         [&vcsDiffPreview, path, stage](std::string rawDiff) {
                             vcsDiffPreview.SetModel(ned::ui::VcsDiffPreviewModel{
-                                path, !stage, ned::editor::vcs::ParseDiffHunks(rawDiff)});
+                                .path=path, .staged=!stage, .hunks=ned::editor::vcs::ParseDiffHunks(rawDiff)});
                         },
                         [&vcsDiffPreview](const std::string&) { vcsDiffPreview.SetModel(std::nullopt); });
                 },
@@ -1713,6 +1713,46 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
             }
         });
     peekPopup.SetOnActivate([wm = windowManager.get()](std::size_t index) { wm->ActivatePeekDefinition(index); });
+
+    // right-click-context-menu follow-up: same anchored, non-focusable shape
+    // as completionPopup/peekPopup above (BufferView keeps focus, drives
+    // content via HandleContextMenuKey) -- anchored at the click point
+    // rather than point's own on-screen position. Small and short-lived
+    // (max 8 rows, short fixed labels), so capped tighter than
+    // completionPopup/peekPopup. No SetFocusReturn needed -- never
+    // focusable, same as completionPopup/peekPopup.
+    ned::ui::ListPopup contextMenu(theme);
+    overlays.Add(contextMenu, [panel = &contextMenu](Size size) {
+        const ned::ui::Point origin = panel->Anchor().value_or(ned::ui::Point{});
+        const int            width  = std::min(32, size.width);
+        const int            height = std::clamp(panel->ContentRowCount(), 3, std::min(13, size.height));
+
+        const int xMin = std::clamp(origin.x, 0, std::max(0, size.width - width));
+        const int xMax = std::min(size.width - 1, xMin + width - 1);
+
+        int yMin, yMax;
+        if (origin.y + height - 1 <= size.height - 1) {
+            yMin = origin.y;
+            yMax = yMin + height - 1;
+        }
+        else {
+            // Flip upward, same as completionPopup/peekPopup's own placement.
+            yMax = std::max(0, origin.y - 2);
+            yMin = std::max(0, yMax - height + 1);
+        }
+        return Box{.x_min = xMin, .x_max = xMax, .y_min = yMin, .y_max = yMax};
+    });
+    windowManager->SetOnContextMenuChanged(
+        [&overlays, panel = &contextMenu](std::optional<ned::ui::ListPopupModel> model) {
+            if (model) {
+                panel->SetModel(std::move(*model));
+                overlays.Show(*panel);
+            }
+            else {
+                overlays.Hide(*panel);
+            }
+        });
+    contextMenu.SetOnActivate([wm = windowManager.get()](std::size_t index) { wm->ActivateContextMenuAt(index); });
 
     // call/type-hierarchy follow-up: the shared TreeView overlay behind
     // lsp-call-hierarchy-incoming/-outgoing/lsp-type-hierarchy-supertypes/
