@@ -549,6 +549,17 @@ enum class InteractiveRequest { None,
                                 // WindowManager re-fetches its row list on every stop event, not
                                 // only when explicitly invoked.
                                 DapToggleThreadsPanel,
+                                // Debugging wishlist: show-massif-graph -- prompts for a raw
+                                // massif.out.<pid> file path (Editor/MassifOutputParser.h),
+                                // then renders a heap-usage-over-time sparkline (Editor/
+                                // Sparkline.h, DAP's own watch-history graph substrate) plus
+                                // a per-snapshot summary table into the read-only "*massif
+                                // report*" buffer (Editor/MassifReportBuffer.h) and switches
+                                // to it. Prompt-shaped like DapAddWatch, not tied to point or
+                                // a live debug session -- Valgrind's massif tool runs
+                                // standalone, writing its own output file rather than
+                                // streaming through DapManager.
+                                ShowMassifGraph,
                                 // VCS blame gutter follow-up: one-shot direct actions, same
                                 // shape as ProjectAgenda/LspShowLog. VcsShowBlame is the
                                 // primary, inline-in-place one: populates the gutter for the

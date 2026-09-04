@@ -2748,6 +2748,16 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           context.interactiveRequest = InteractiveRequest::DapToggleThreadsPanel;
                       });
 
+    // Debugging wishlist: show-massif-graph -- prompts for a massif.out.<pid> file
+    // (Valgrind's --tool=massif output), then renders a heap-usage-over-time
+    // sparkline plus a per-snapshot summary table. M-x only, no keybinding --
+    // standalone against Valgrind's own output file, not tied to a live debug
+    // session (unlike everything else on this dap-* list).
+    registry.Register("show-massif-graph", "Parse a Valgrind massif.out file and show a heap-usage-over-time graph.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::ShowMassifGraph;
+                      });
+
     // DAP round 3: hit-count/function/exception breakpoints (SetBreakpointCondition's own
     // pattern extended to two more DAP breakpoint kinds) and attach mode (StartOrContinue's
     // own launch path, sibling entry point) -- M-x only, same policy as DAP round 2 above.
