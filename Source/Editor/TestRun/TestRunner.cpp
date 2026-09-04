@@ -6,6 +6,8 @@
 #include <utility>
 
 #include "Editor/BackgroundActivity.h"
+#include "Editor/DiagnosticsLog.h"
+#include "Editor/SanitizerOutputParser.h"
 #include "TestOutputParser.h"
 #include "TestRunConfig.h"
 #include "Text/Buffer.h"
@@ -144,6 +146,21 @@ void TestRunner::DispatchProcessExit(std::optional<int> exitCode) {
         buffer->AppendWhileReadOnly("\n[cancelled]\n");
         rerunQueue_.clear(); // a cancel abandons any pending rerun-failed sequence too
         return;              // a cancelled run's partial output would parse misleadingly
+    }
+
+    // sanitizer-output-parser follow-up: a durable, clickable record of any
+    // ASan/UBSan/TSan/MSan/LSan report in this run's own output, alongside
+    // the transient "*test output*" scroll -- scanned regardless of
+    // exitCode, since a recoverable UBSan finding (-fsanitize-recover=all)
+    // can still exit 0.
+    for (SanitizerFinding& finding : ParseSanitizerOutput(accumulated_)) {
+        std::string message = finding.tool + ": " + finding.message;
+        if (!finding.symbol.empty()) {
+            message += " (in " + finding.symbol + ")";
+        }
+        LogMessage(LogCategory::Subprocess, LogSeverity::Error, "test run: " + message,
+                   finding.file.empty() ? std::nullopt : std::make_optional(std::move(finding.file)),
+                   finding.line == 0 ? std::nullopt : std::make_optional(finding.line));
     }
 
     const std::optional<TestCommandConfig> config = TestCommand();

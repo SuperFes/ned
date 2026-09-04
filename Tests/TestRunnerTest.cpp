@@ -7,12 +7,16 @@
 #include <stdexcept>
 #include <string>
 
+#include "Editor/DiagnosticsLog.h"
 #include "Editor/TestRun/TestRunConfig.h"
 #include "Editor/TestRun/TestRunner.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
 #include "UI/EventLoop.h"
 
+using ned::editor::LogCategory;
+using ned::editor::LogEntries;
+using ned::editor::ResetDiagnosticsLogForTesting;
 using ned::editor::testrun::SetTestCommand;
 using ned::editor::testrun::SetTestFilterCommand;
 using ned::editor::testrun::SetTestResultsFile;
@@ -63,6 +67,50 @@ TEST_CASE("RunAll without a configured command reports the gap in the output buf
     REQUIRE(buffer->Text().find("No test command configured") != std::string::npos);
     REQUIRE_FALSE(runner.IsRunning());
     REQUIRE_FALSE(runner.LatestOutcome().has_value());
+}
+
+TEST_CASE("A sanitizer report in the run's output is logged to DiagnosticsLog with its source location", "[TestRun]") {
+    ConfigResetGuard   guard;
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    TestRunner         runner(bufferList, eventLoop);
+    SetTestCommand({"true"}, "ctest");
+    ResetDiagnosticsLogForTesting();
+
+    runner.DispatchProcessOutput("2/2 Test #2: SomeTest ......................***Failed    0.00 sec\n"
+                                  "==12345==ERROR: AddressSanitizer: heap-use-after-free on address 0x1\n"
+                                  "SUMMARY: AddressSanitizer: heap-use-after-free /a/file.cpp:12:3 in main\n"
+                                  "0% tests passed, 1 tests failed out of 1\n");
+    runner.DispatchProcessExit(1);
+
+    const auto entries = LogEntries();
+    const auto it       = std::ranges::find_if(entries, [](const auto& e) { return e.category == LogCategory::Subprocess; });
+    REQUIRE(it != entries.end());
+    CHECK(it->message.find("AddressSanitizer") != std::string::npos);
+    CHECK(it->message.find("heap-use-after-free") != std::string::npos);
+    REQUIRE(it->path.has_value());
+    CHECK(*it->path == "/a/file.cpp");
+    REQUIRE(it->line.has_value());
+    CHECK(*it->line == 12);
+
+    ResetDiagnosticsLogForTesting();
+}
+
+TEST_CASE("Sanitizer-free output logs nothing to DiagnosticsLog", "[TestRun]") {
+    ConfigResetGuard   guard;
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    TestRunner         runner(bufferList, eventLoop);
+    SetTestCommand({"true"}, "ctest");
+    ResetDiagnosticsLogForTesting();
+
+    runner.DispatchProcessOutput(kCtestFixture);
+    runner.DispatchProcessExit(0);
+
+    const auto entries = LogEntries();
+    CHECK(std::ranges::none_of(entries, [](const auto& e) { return e.category == LogCategory::Subprocess; }));
+
+    ResetDiagnosticsLogForTesting();
 }
 
 TEST_CASE("RunFiltered without a filter template reports the gap in the output buffer", "[TestRun]") {
