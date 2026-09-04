@@ -92,6 +92,17 @@ class Dispatcher {
     // nothing's been recorded yet.
     void DiscardMostRecentlyRecordedChords();
 
+    // snippet-macro-replay follow-up: appends chord directly to the
+    // in-progress recording, for a caller that consumes a chord itself
+    // without ever routing it through Feed -- BufferView's snippet-session
+    // Tab/S-Tab field navigation, a pristine-placeholder Backspace, and ESC
+    // ending the session are the one place in this codebase that does this.
+    // Mirrors Feed's own self-insert-command recording shape (one chord,
+    // lastRecordedChordCount_ = 1, so DiscardMostRecentlyRecordedChords'
+    // "however many chords the most recent append added" contract still
+    // holds). A safe no-op when not recording.
+    void RecordChord(const KeyChord& chord);
+
     // The name of the most recent command Feed invoked -- Emacs'
     // `last-command`, tracked so a command can behave differently when it
     // directly follows a specific other one (yank-pop after yank is the

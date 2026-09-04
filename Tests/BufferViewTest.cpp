@@ -10813,6 +10813,42 @@ TEST_CASE("Snippet fields navigate with Tab and M-p/M-n", "[BufferView]") {
     REQUIRE(fixture.buffer.Point() == 7); // the implicit final stop
 }
 
+// snippet-macro-replay follow-up: Tab/S-Tab field navigation, a pristine-
+// placeholder Backspace, and ESC all get recorded now (Dispatcher::
+// RecordChord, since none of them ever reach Dispatcher::Feed on their
+// own), and ReplayMacro drives a live snippet session through
+// HandleSnippetNavigationKey instead of stopping the instant inputMode_
+// leaves Normal -- unlike isearch (see the F3/F4 tests above this section),
+// which is still cut off deliberately with no comparable replay-driving path.
+TEST_CASE("Replaying a macro continues through a live snippet session", "[BufferView]") {
+    const SnippetRegistryTestGuard guard;
+    ned::editor::RegisterSnippet("", "for", "for (${1:i}; $1 < n; ++$1)");
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::F(3)); // start recording
+    TypeText(view, "for");
+    view.OnEvent(ned::ui::test::Tab()); // expand -- lands on pristine field 1 ("i")
+    TypeText(view, "j");                // replaces the placeholder; mirrors follow
+    view.OnEvent(ned::ui::test::Tab()); // -> implicit final stop, session ends
+    view.OnEvent(ned::ui::test::F(4));  // stop recording
+
+    REQUIRE(fixture.buffer.Text() == "for (j; j < n; ++j)");
+    REQUIRE(fixture.buffer.SnippetRanges().empty());
+
+    // Clear the buffer and replay from scratch -- a fresh expansion should
+    // reach the exact same end state via the recorded macro alone.
+    fixture.buffer.DeleteRange(0, fixture.buffer.Content().ByteLength());
+    fixture.buffer.SetPoint(0);
+
+    view.OnEvent(ned::ui::test::F(4)); // replay
+
+    REQUIRE(fixture.buffer.Text() == "for (j; j < n; ++j)");
+    REQUIRE(fixture.buffer.SnippetRanges().empty()); // the session ended cleanly during replay too
+    REQUIRE(fixture.statusMessage.empty());          // no stray "Snippet field .../..." left showing
+}
+
 TEST_CASE("A command-driven delete inside a field syncs mirrors too", "[BufferView]") {
     const SnippetRegistryTestGuard guard;
     ned::editor::RegisterSnippet("", "v", "${1:val} = $1");
