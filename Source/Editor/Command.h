@@ -533,6 +533,14 @@ enum class InteractiveRequest { None,
                                 // text -- the natural way to walk a pointer/linked-list chain
                                 // node by node.
                                 DapShowPointerGraph,
+                                // Debugging wishlist: dap-show-memory-image-at-point --
+                                // ShowMemoryAtPoint's own [mem:<ref>]-parse-then-prompt-for-
+                                // a-byte-count shape (reuses the same DapMemoryByteCount
+                                // prompt session), but renders the fetched MemoryBlock as a
+                                // grayscale image (UI/MemoryImageView.h) instead of a hex
+                                // dump -- gf's RGBA bitmap Data tab, useful for spotting
+                                // repeating structures/zero-fill/embedded text at a glance.
+                                DapShowMemoryImageAtPoint,
                                 // VCS blame gutter follow-up: one-shot direct actions, same
                                 // shape as ProjectAgenda/LspShowLog. VcsShowBlame is the
                                 // primary, inline-in-place one: populates the gutter for the

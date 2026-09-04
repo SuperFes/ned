@@ -695,6 +695,7 @@ add_library(ned_lib STATIC
         Source/Editor/Dap/DapManager.cpp
         Source/Editor/PointerGraphNode.cpp
         Source/Editor/Sparkline.cpp
+        Source/Editor/MemoryImage.cpp
         Source/Editor/Terminal/Config.cpp
         Source/Editor/Terminal/Emulator.cpp
         Source/Editor/Terminal/PtyProcess.cpp
@@ -724,6 +725,7 @@ add_library(ned_lib STATIC
         Source/UI/DebugConsolePanel.cpp
         Source/UI/ListPopup.cpp
         Source/UI/TreeView.cpp
+        Source/UI/MemoryImageView.cpp
         Source/UI/BufferListPanel.cpp
         Source/UI/BufferView.cpp
         Source/UI/WindowManager.cpp
@@ -1049,6 +1051,8 @@ if (NED_BUILD_TESTS)
             Tests/DapManagerTest.cpp
             Tests/PointerGraphNodeTest.cpp
             Tests/SparklineTest.cpp
+            Tests/MemoryImageTest.cpp
+            Tests/MemoryImageViewTest.cpp
             Tests/DebugConsolePanelTest.cpp
             Tests/ChildProcessTest.cpp
             Tests/TaskConfigTest.cpp

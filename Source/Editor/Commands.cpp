@@ -2785,6 +2785,12 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                       [](CommandContext& context) {
                           context.interactiveRequest = InteractiveRequest::DapShowMemoryAtPoint;
                       });
+    registry.Register("dap-show-memory-image-at-point",
+                      "Show a grayscale image of memory for the variable on the current *debug* buffer line "
+                      "(repeating structures/zero-fill/embedded text visible at a glance, gf's Data tab).",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::DapShowMemoryImageAtPoint;
+                      });
 
     // Debugging wishlist: run-to-cursor -- M-x only, same policy as every
     // other DAP command beyond the core F-key quartet.

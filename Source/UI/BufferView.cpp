@@ -7541,6 +7541,14 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
                 ShowMemoryAtPoint();
             }
             return;
+        case editor::InteractiveRequest::DapShowMemoryImageAtPoint:
+            if (!dapManager_) {
+                statusMessage_ = "No debugger available.";
+            }
+            else {
+                ShowMemoryImageAtPoint();
+            }
+            return;
         // Debugging wishlist: run-to-cursor -- same path/line resolution as
         // DapToggleBreakpoint above, forwarded straight to DapManager (no
         // InputMode session, same as every other one-shot Dap* case).
@@ -9130,17 +9138,25 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
                     }
                 }
                 const std::string memoryReference = *pendingDapMemoryReference_;
+                const bool        asImage         = pendingDapMemoryAsImage_;
                 statusMessage_                    = "Fetching memory...";
-                dapManager_->RequestMemory(memoryReference, 0, count,
-                                           [this, memoryReference](bool success, editor::dap::DapManager::MemoryBlock block) {
-                                               if (!success) {
-                                                   statusMessage_ = "Read memory failed (adapter may not support readMemory).";
-                                                   return;
-                                               }
-                                               BuildMemoryBuffer(memoryReference, block);
-                                           });
+                dapManager_->RequestMemory(
+                    memoryReference, 0, count,
+                    [this, memoryReference, asImage](bool success, editor::dap::DapManager::MemoryBlock block) {
+                        if (!success) {
+                            statusMessage_ = "Read memory failed (adapter may not support readMemory).";
+                            return;
+                        }
+                        if (asImage) {
+                            PushMemoryImageModel(memoryReference, block);
+                        }
+                        else {
+                            BuildMemoryBuffer(memoryReference, block);
+                        }
+                    });
             }
             pendingDapMemoryReference_.reset();
+            pendingDapMemoryAsImage_ = false;
         }
         else if (inputMode_ == InputMode::VcsCreateBranch) {
             if (input.empty()) {
@@ -9293,6 +9309,7 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
             case InputMode::DapMemoryByteCount:
                 label = "Memory byte count";
                 pendingDapMemoryReference_.reset();
+                pendingDapMemoryAsImage_ = false;
                 break;
             case InputMode::VcsCreateBranch:
                 label = "Create branch";
@@ -11121,6 +11138,17 @@ void BufferView::PointerGraphSelectionChanged(std::size_t index) {
     pointerGraphSelectedIndex_ = index;
 }
 
+void BufferView::SetOnMemoryImageChanged(std::function<void(std::optional<ui::MemoryImageModel>)> handler) {
+    onMemoryImageChanged_ = std::move(handler);
+}
+
+void BufferView::MemoryImageCancel() {
+    if (onMemoryImageChanged_) {
+        onMemoryImageChanged_(std::nullopt);
+    }
+    TakeFocus(); // reclaim keyboard focus from the MemoryImageView overlay
+}
+
 void BufferView::RestartFrameAtPoint() {
     text::Buffer&             buffer    = activeBuffer_.Get();
     const text::ITextStorage& content   = buffer.Content();
@@ -11567,6 +11595,35 @@ void BufferView::ShowMemoryAtPoint() {
     }
 
     pendingDapMemoryReference_ = lineText.substr(markerPos + 5, closePos - (markerPos + 5));
+    pendingDapMemoryAsImage_   = false;
+    inputMode_                 = InputMode::DapMemoryByteCount;
+    prompt_.emplace("Byte count (default 128): ");
+    statusMessage_ = prompt_->StatusText();
+}
+
+void BufferView::ShowMemoryImageAtPoint() {
+    // ShowMemoryAtPoint's own "[mem:<ref>]"-parse body, duplicated rather
+    // than shared (TreeView.cpp's own PaintRowText precedent -- small
+    // enough that a new shared helper isn't worth it), differing only in
+    // which flag it sets before entering the shared DapMemoryByteCount
+    // prompt.
+    text::Buffer&             buffer    = activeBuffer_.Get();
+    const text::ITextStorage& content   = buffer.Content();
+    const std::size_t         line      = content.ByteOffsetToLine(buffer.Point());
+    const std::size_t         lineStart = content.LineToByteOffset(line);
+    const std::size_t         lineEnd =
+        (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
+    const std::string lineText = content.Substring(lineStart, lineEnd - lineStart);
+
+    const std::size_t markerPos = lineText.rfind("[mem:");
+    const std::size_t closePos  = (markerPos == std::string::npos) ? std::string::npos : lineText.find(']', markerPos + 5);
+    if (markerPos == std::string::npos || closePos == std::string::npos) {
+        statusMessage_ = "No memory reference on this line.";
+        return;
+    }
+
+    pendingDapMemoryReference_ = lineText.substr(markerPos + 5, closePos - (markerPos + 5));
+    pendingDapMemoryAsImage_   = true;
     inputMode_                 = InputMode::DapMemoryByteCount;
     prompt_.emplace("Byte count (default 128): ");
     statusMessage_ = prompt_->StatusText();
@@ -11606,6 +11663,20 @@ void BufferView::BuildMemoryBuffer(const std::string& memoryReference, const edi
     memory.SetPoint(0);
     memory.SetReadOnly(true); // same tossable-read-only reasoning as BuildDebugBuffer
     activeBuffer_.Set(memory);
+    statusMessage_.clear();
+}
+
+void BufferView::PushMemoryImageModel(const std::string& memoryReference, const editor::dap::DapManager::MemoryBlock& block) {
+    ui::MemoryImageModel model;
+    model.title = "Memory image: " + memoryReference + " (" + std::to_string(block.data.size()) + " bytes)";
+    if (!block.address.empty() && block.address != memoryReference) {
+        model.title += " [" + block.address + "]";
+    }
+    model.bytes = block.data;
+
+    if (onMemoryImageChanged_) {
+        onMemoryImageChanged_(model);
+    }
     statusMessage_.clear();
 }
 

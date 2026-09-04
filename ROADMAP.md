@@ -812,10 +812,19 @@ these accumulate detail in place.
         graph` (M-x only) toggles it on the current *debug* buffer watch
         line, `ToggleHexFormatAtPoint`'s own trailing-marker-is-the-only-
         state shape (`[graph]` instead of `[hex]`).
-      - **Memory-as-image viewer** (`gf`'s RGBA bitmap Data tab) — a `dap-show-memory`
-        variant rendering a fetched `MemoryBlock` as pixels instead of the hex dump
-        `BuildMemoryBuffer` already produces, same pixel-vs-braille-fallback split as
-        the array graph above.
+      - Memory-as-image viewer closed 2026-09-03 — see
+        `git log --grep=memory-image-viewer`. `dap-show-memory-image-at-point`
+        renders a fetched `MemoryBlock` as a grayscale image
+        (`Editor/MemoryImage.h`'s pure square-layout/byte-to-grayscale helpers)
+        via a new focus-taking `UI/MemoryImageView.h` overlay (the
+        pointer-graph `TreeView` overlay's own registration shape, minus the
+        navigation methods it doesn't need) instead of `BuildMemoryBuffer`'s
+        hex dump. Like the array graph/sparkline above, this ended up *not*
+        needing Minimap's real `NCBLIT_PIXEL` path: the half-block glyph
+        (U+2580, foreground/background as two stacked pixel rows) packs a
+        genuine per-cell color image directly into the existing Cell-grid
+        Widget model, with none of the sixel/Kitty capability probing or
+        pixel-plane z-order interactions that path carries.
       - **A dedicated live thread window** vs. today's one-shot numbered-choice
         `dap-select-thread` picker (`BeginDapThreadSelect`) — an `OverlayHost` panel in
         `DebugConsolePanel`/`AcpPanel`'s own shape, refreshing `RequestThreads` on each
