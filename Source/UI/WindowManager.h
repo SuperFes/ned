@@ -349,6 +349,26 @@ class WindowManager {
     void HierarchyCancel();
     void HierarchySelectionChanged(std::size_t index);
 
+    // Debugging wishlist follow-up (pointer/linked-list graph view):
+    // SetOnHierarchyChanged's own mirror, for the pointer-graph session's own
+    // shared TreeView overlay -- a second, independent overlay from the
+    // hierarchy browser's (see main.cpp), not a reuse of the same one, since
+    // DapManager is a single global session rather than per-buffer/per-pane
+    // the way LSP is; still needs the same owner-pane bookkeeping
+    // (pointerGraphOwnerPane_) for the same reason SetOnHierarchyChanged
+    // does -- see that method's own doc comment above.
+    void SetOnPointerGraphChanged(std::function<void(std::optional<TreeViewModel>)> onPointerGraphChanged);
+
+    // Routes to pointerGraphOwnerPane_ (see SetOnPointerGraphChanged above),
+    // not FocusedPane() -- HierarchyActivate/etc.'s own mirror, wired to the
+    // pointer-graph TreeView overlay's own SetOnActivate/SetOnToggleExpand/
+    // SetOnCollapseRequested/SetOnCancel/SetOnSelectionChanged in main.cpp.
+    void PointerGraphActivate(std::size_t index);
+    void PointerGraphToggleExpand(std::size_t index);
+    void PointerGraphCollapse(std::size_t index);
+    void PointerGraphCancel();
+    void PointerGraphSelectionChanged(std::size_t index);
+
     // task-runner follow-up: same "forwarded to every pane, present and
     // future" shape as SetProjectSidebar/SetLspManager above.
     void SetTaskRunner(editor::tasks::TaskRunner* taskRunner);
@@ -757,6 +777,13 @@ class WindowManager {
     // Builds the per-pane wrapper SetOnHierarchyChanged/MakePane both need
     // -- factored out so the two call sites can't drift apart.
     [[nodiscard]] std::function<void(std::optional<TreeViewModel>)> WireHierarchyCallback(Pane* pane);
+
+    // Debugging wishlist follow-up (pointer/linked-list graph view): the
+    // above pair's own mirror, for the pointer-graph session's own shared
+    // TreeView overlay.
+    std::function<void(std::optional<TreeViewModel>)>               onPointerGraphChanged_;
+    Pane*                                                           pointerGraphOwnerPane_ = nullptr;
+    [[nodiscard]] std::function<void(std::optional<TreeViewModel>)> WirePointerGraphCallback(Pane* pane);
 
     std::unique_ptr<WindowNode> root_;
     Container                   rootComponent_{Axis::Vertical, {}};

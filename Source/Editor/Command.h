@@ -517,6 +517,14 @@ enum class InteractiveRequest { None,
                                 // capability-warning convention as DapRestartFrame.
                                 DapReverseContinue,
                                 DapStepBack,
+                                // Debugging wishlist: dap-show-pointer-graph -- one-shot,
+                                // operating on point's own *debug* buffer line (like
+                                // DapExpandVariable), but opens the composite variable as a
+                                // lazily-expandable TreeView graph (BufferView::
+                                // RequestPointerGraphAtPoint) instead of splicing more inline
+                                // text -- the natural way to walk a pointer/linked-list chain
+                                // node by node.
+                                DapShowPointerGraph,
                                 // VCS blame gutter follow-up: one-shot direct actions, same
                                 // shape as ProjectAgenda/LspShowLog. VcsShowBlame is the
                                 // primary, inline-in-place one: populates the gutter for the

@@ -2824,6 +2824,16 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           context.interactiveRequest = InteractiveRequest::DapStepBack;
                       });
 
+    // Debugging wishlist: pointer/linked-list graph view -- same "just set
+    // interactiveRequest" shape as dap-expand-variable, operating on the
+    // same [ref:N] *debug* buffer line, but opens it as a lazily-expandable
+    // TreeView graph instead of splicing more inline text.
+    registry.Register("dap-show-pointer-graph",
+                      "Browse the composite variable on the current *debug* buffer line as an expandable pointer/field graph.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::DapShowPointerGraph;
+                      });
+
     // ACP client slice 2: same "just set interactiveRequest" shape as
     // run-task/dap-continue above -- BufferView holds the shared AcpManager
     // and does the actual work (see Editor/Acp/AcpManager.h). Agent and

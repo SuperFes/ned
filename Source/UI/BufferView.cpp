@@ -39,6 +39,7 @@
 #include "Editor/NodeModules.h"
 #include "Editor/Org.h"
 #include "Editor/OrgCapture.h"
+#include "Editor/PointerGraphNode.h"
 #include "Editor/ProjectAgenda.h"
 #include "Editor/ProjectFileOps.h"
 #include "Editor/ProjectRegistry.h"
@@ -7600,6 +7601,14 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         case editor::InteractiveRequest::DapStepBack:
             statusMessage_ = dapManager_ ? dapManager_->StepBack() : "No debugger available.";
             return;
+        case editor::InteractiveRequest::DapShowPointerGraph:
+            if (!dapManager_) {
+                statusMessage_ = "No debugger available.";
+            }
+            else {
+                RequestPointerGraphAtPoint();
+            }
+            return;
         case editor::InteractiveRequest::DapEvaluate:
             if (!dapManager_) {
                 statusMessage_ = "No debugger available.";
@@ -10368,6 +10377,10 @@ void BufferView::RequestHierarchyAtPointForTesting(HierarchyDirection direction)
     RequestHierarchyAtPoint(direction);
 }
 
+void BufferView::RequestPointerGraphAtPointForTesting() {
+    RequestPointerGraphAtPoint();
+}
+
 void BufferView::BeginVcsCommitMessageForTesting() {
     BeginVcsCommitMessage();
 }
@@ -10644,6 +10657,101 @@ namespace {
         return line;
     }
 
+    // Pointer-graph follow-up: the inverse of FormatDebugVariableLine above,
+    // extracting whatever a caller needs from a
+    // "name[: type] = value  [ref:N]?  [owner:M]?  [mem:<ref>]?  [hex]?"
+    // *debug* buffer line -- replaces what used to be three near-identical
+    // ad-hoc rfind blocks in ExpandVariableAtPoint/SetVariableAtPoint/
+    // ToggleHexFormatAtPoint, and is what RequestPointerGraphAtPoint uses
+    // too. A field a real line doesn't carry is simply left at its default
+    // (0/empty) rather than treated as a parse failure -- e.g. a watch line
+    // ("expr = value  [watch:N]") has no [ref:]/[owner:]/[mem:] at all and
+    // still parses fine. Returns std::nullopt only when the line isn't even
+    // "name ... = value"-shaped at all (SetVariableAtPoint/
+    // ToggleHexFormatAtPoint's own prior "Not an editable variable line."/
+    // "No formattable value on this line." guard).
+    struct ParsedDebugVariableLine {
+        std::size_t indent = 0;
+        std::string name;
+        std::string type; // empty if the line carried none
+        std::string value;
+        int         variablesReference = 0; // 0 if no [ref:N] marker
+        int         ownerRef           = 0; // 0 if no [owner:M] marker
+        std::string memoryReference;        // empty if no [mem:<ref>] marker
+    };
+
+    std::optional<ParsedDebugVariableLine> ParseDebugVariableLine(const std::string& lineText) {
+        ParsedDebugVariableLine parsed;
+        while (parsed.indent < lineText.size() && lineText[parsed.indent] == ' ') {
+            ++parsed.indent;
+        }
+
+        auto extractInt = [&lineText](const char* marker, std::size_t markerLen) -> int {
+            const std::size_t pos = lineText.rfind(marker);
+            if (pos == std::string::npos) {
+                return 0;
+            }
+            try {
+                return std::stoi(lineText.substr(pos + markerLen)); // stoi stops at the closing ']'
+            }
+            catch (const std::exception&) {
+                return 0;
+            }
+        };
+        parsed.variablesReference = extractInt("[ref:", 5);
+        parsed.ownerRef           = extractInt("[owner:", 7);
+
+        const std::size_t memPos   = lineText.rfind("[mem:");
+        const std::size_t memClose = (memPos == std::string::npos) ? std::string::npos : lineText.find(']', memPos + 5);
+        if (memPos != std::string::npos && memClose != std::string::npos) {
+            parsed.memoryReference = lineText.substr(memPos + 5, memClose - (memPos + 5));
+        }
+
+        // Same ": "/" = " separator convention FormatDebugVariableLine
+        // always writes -- look for those literal two-character separators,
+        // not the first bare ':'/'=' (a variable named e.g. "operator=" must
+        // not be split mid-name).
+        const std::size_t colonPos = lineText.find(": ", parsed.indent);
+        const std::size_t eqPos    = lineText.find(" = ", parsed.indent);
+        const std::size_t nameEnd  = (colonPos != std::string::npos && (eqPos == std::string::npos || colonPos < eqPos))
+                                         ? colonPos
+                                         : eqPos;
+        if (nameEnd == std::string::npos || nameEnd <= parsed.indent) {
+            return std::nullopt;
+        }
+        parsed.name = lineText.substr(parsed.indent, nameEnd - parsed.indent);
+
+        std::size_t valueStart;
+        if (nameEnd == colonPos) {
+            const std::size_t typeEqPos = lineText.find(" = ", colonPos + 2);
+            if (typeEqPos == std::string::npos) {
+                return std::nullopt;
+            }
+            parsed.type = lineText.substr(colonPos + 2, typeEqPos - (colonPos + 2));
+            valueStart  = typeEqPos + 3;
+        }
+        else {
+            valueStart = eqPos + 3;
+        }
+
+        std::size_t valueEnd = lineText.size();
+        for (const std::size_t markerPos :
+             {lineText.rfind("[ref:"), lineText.rfind("[owner:"), memPos, lineText.rfind("[hex]")}) {
+            if (markerPos != std::string::npos && markerPos < valueEnd) {
+                valueEnd = markerPos;
+            }
+        }
+        while (valueEnd > 0 && lineText[valueEnd - 1] == ' ') {
+            --valueEnd;
+        }
+        if (valueEnd <= valueStart) {
+            return std::nullopt;
+        }
+        parsed.value = lineText.substr(valueStart, valueEnd - valueStart);
+
+        return parsed;
+    }
+
 } // namespace
 
 void BufferView::ShowDebugInfo() {
@@ -10754,25 +10862,14 @@ void BufferView::ExpandVariableAtPoint() {
         (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
     const std::string lineText = content.Substring(lineStart, lineEnd - lineStart);
 
-    const std::size_t markerPos = lineText.rfind("[ref:");
-    int               reference = 0;
-    if (markerPos != std::string::npos) {
-        try {
-            reference = std::stoi(lineText.substr(markerPos + 5)); // stoi stops at the closing ']'
-        }
-        catch (const std::exception&) {
-            reference = 0;
-        }
-    }
+    const std::optional<ParsedDebugVariableLine> parsed    = ParseDebugVariableLine(lineText);
+    const int                                    reference = parsed ? parsed->variablesReference : 0;
     if (reference <= 0) {
         statusMessage_ = "No expandable variable on this line.";
         return;
     }
-
-    std::size_t indent = 0;
-    while (indent < lineText.size() && lineText[indent] == ' ') {
-        ++indent;
-    }
+    const std::size_t indent    = parsed->indent;
+    const std::size_t markerPos = lineText.rfind("[ref:"); // splice target -- guaranteed present, reference > 0 above
 
     text::Buffer* const bufferPtr = &buffer;
     statusMessage_                = "Expanding...";
@@ -10829,6 +10926,190 @@ void BufferView::ExpandVariableAtPoint() {
             target.SetReadOnly(wasReadOnly);
             statusMessage_.clear();
         });
+}
+
+// Debugging wishlist follow-up (pointer/linked-list graph view). See
+// PointerGraphSession's own doc comment in BufferView.h for the overall
+// session shape -- this block mirrors RequestHierarchyAtPoint/
+// ExpandHierarchyNode/PushHierarchyModel/EndHierarchySession/the five
+// Hierarchy* routers exactly, over DAP variables instead of LSP hierarchy
+// items, plus the cycle-detection ExpandPointerGraphNode adds. Placed here
+// (not alongside the hierarchy block) so it can use ParseDebugVariableLine/
+// FormatDebugVariableLine, both file-local to this translation unit.
+void BufferView::RequestPointerGraphAtPoint() {
+    if (!dapManager_ || dapManager_->State() != editor::dap::DapManager::SessionState::Stopped) {
+        statusMessage_ = "Not stopped (nothing to inspect).";
+        return;
+    }
+    text::Buffer&             buffer    = activeBuffer_.Get();
+    const text::ITextStorage& content   = buffer.Content();
+    const std::size_t         line      = content.ByteOffsetToLine(buffer.Point());
+    const std::size_t         lineStart = content.LineToByteOffset(line);
+    const std::size_t         lineEnd =
+        (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
+    const std::string lineText = content.Substring(lineStart, lineEnd - lineStart);
+
+    const std::optional<ParsedDebugVariableLine> parsed = ParseDebugVariableLine(lineText);
+    if (!parsed || parsed->variablesReference <= 0) {
+        statusMessage_ = "No expandable variable on this line.";
+        return;
+    }
+
+    editor::PointerGraphNode root{.name               = parsed->name,
+                                  .type               = parsed->type,
+                                  .value              = parsed->value,
+                                  .memoryReference    = parsed->memoryReference,
+                                  .variablesReference = parsed->variablesReference};
+    PointerGraphSession      session{.rootName = root.name};
+    if (!root.memoryReference.empty()) {
+        session.visitedMemoryRefs.insert(root.memoryReference);
+    }
+    session.tree.Reset({std::move(root)});
+    pointerGraphSession_       = std::move(session);
+    pointerGraphSelectedIndex_ = 0;
+    ExpandPointerGraphNode(0); // auto-expand the root -- RequestHierarchyAtPoint's own precedent
+}
+
+void BufferView::ExpandPointerGraphNode(std::size_t index) {
+    if (!pointerGraphSession_ || !dapManager_ || index >= pointerGraphSession_->tree.Size()) {
+        return;
+    }
+    PointerGraphSession& session = *pointerGraphSession_;
+    if (session.tree.IsLoading(index)) {
+        return;
+    }
+    if (session.tree.ChildrenFetched(index)) {
+        // Already explored -- just reveal it again, no request needed --
+        // ExpandHierarchyNode's own reasoning.
+        session.tree.SetExpanded(index, true);
+        PushPointerGraphModel();
+        return;
+    }
+    const editor::PointerGraphNode& node = session.tree.At(index).data;
+    if (node.variablesReference <= 0) {
+        return; // a cyclic node (or otherwise not expandable) -- nothing to fetch
+    }
+
+    session.tree.BeginLoading(index);
+    PushPointerGraphModel(); // shows the loading glyph immediately
+
+    const int         variablesReference = node.variablesReference;
+    const std::size_t generation         = ++pointerGraphRequestGeneration_;
+    dapManager_->RequestVariables(
+        variablesReference,
+        [this, index, generation](std::vector<editor::dap::DapManager::Variable> variables) {
+            if (!pointerGraphSession_ || generation != pointerGraphRequestGeneration_) {
+                return; // superseded by a newer request, or the session ended -- ExpandHierarchyNode's own guard
+            }
+            PointerGraphSession&                  session = *pointerGraphSession_;
+            std::vector<editor::PointerGraphNode> children;
+            children.reserve(variables.size());
+            for (editor::dap::DapManager::Variable& variable : variables) {
+                editor::PointerGraphNode child{.name               = std::move(variable.name),
+                                               .type               = std::move(variable.type),
+                                               .value              = std::move(variable.value),
+                                               .memoryReference    = std::move(variable.memoryReference),
+                                               .variablesReference = variable.variablesReference};
+                // A real linked/circular list can point back into a node
+                // already shown above it in this same session -- unlike an
+                // LSP call/type hierarchy (acyclic by construction), so this
+                // is the one thing ExpandHierarchyNode never had to guard
+                // against. Forcing variablesReference to 0 here (rather than
+                // just setting cyclic) is what actually stops the tree from
+                // growing forever; cyclic only exists so the row label can
+                // say why it stopped.
+                if (!child.memoryReference.empty() && session.visitedMemoryRefs.contains(child.memoryReference)) {
+                    child.cyclic             = true;
+                    child.variablesReference = 0;
+                }
+                else if (!child.memoryReference.empty()) {
+                    session.visitedMemoryRefs.insert(child.memoryReference);
+                }
+                children.push_back(std::move(child));
+            }
+            session.tree.Expand(index, std::move(children));
+            PushPointerGraphModel();
+        });
+}
+
+void BufferView::PushPointerGraphModel() {
+    if (!pointerGraphSession_) {
+        if (onPointerGraphChanged_) {
+            onPointerGraphChanged_(std::nullopt);
+        }
+        return;
+    }
+
+    const PointerGraphSession& session = *pointerGraphSession_;
+    ui::TreeViewModel          model;
+    model.title = "Pointer graph: " + session.rootName;
+
+    const std::vector<editor::ExpandableTree<editor::PointerGraphNode>::VisibleRow> rows = session.tree.FlattenVisible();
+    model.rows.reserve(rows.size());
+    for (const auto& row : rows) {
+        const auto& node = session.tree.At(row.index);
+        model.rows.push_back(ui::TreeRow{
+            .label = editor::FormatPointerGraphLabel(node.data),
+            .depth = row.depth,
+            // A cyclic node's variablesReference is forced to 0 the moment
+            // it's detected (see ExpandPointerGraphNode), but a freshly
+            // appended ExpandableTree child always starts childrenFetched
+            // == false regardless -- without this explicit check a cyclic
+            // leaf would still show a (dead) expand affordance.
+            .hasChildren = !node.data.cyclic && (!node.childrenFetched || !node.children.empty()),
+            .expanded    = node.expanded,
+            .loading     = node.loading,
+        });
+    }
+    if (!model.rows.empty()) {
+        model.selectedIndex = std::min(pointerGraphSelectedIndex_, model.rows.size() - 1);
+    }
+
+    if (onPointerGraphChanged_) {
+        onPointerGraphChanged_(std::move(model));
+    }
+}
+
+void BufferView::EndPointerGraphSession() {
+    pointerGraphSession_.reset();
+    pointerGraphSelectedIndex_ = 0;
+    if (onPointerGraphChanged_) {
+        onPointerGraphChanged_(std::nullopt);
+    }
+    TakeFocus(); // reclaim keyboard focus from the TreeView overlay
+}
+
+void BufferView::SetOnPointerGraphChanged(std::function<void(std::optional<ui::TreeViewModel>)> handler) {
+    onPointerGraphChanged_ = std::move(handler);
+}
+
+void BufferView::PointerGraphActivate(std::size_t index) {
+    // v1 scope cut (see this method's own doc comment in BufferView.h): no
+    // natural "jump to source" target for a plain runtime variable, so
+    // Activate just toggles expand/collapse like ToggleExpand does.
+    PointerGraphToggleExpand(index);
+}
+
+void BufferView::PointerGraphToggleExpand(std::size_t index) {
+    pointerGraphSelectedIndex_ = index;
+    ExpandPointerGraphNode(index);
+}
+
+void BufferView::PointerGraphCollapse(std::size_t index) {
+    if (!pointerGraphSession_ || index >= pointerGraphSession_->tree.Size()) {
+        return;
+    }
+    pointerGraphSelectedIndex_ = index;
+    pointerGraphSession_->tree.SetExpanded(index, false);
+    PushPointerGraphModel();
+}
+
+void BufferView::PointerGraphCancel() {
+    EndPointerGraphSession();
+}
+
+void BufferView::PointerGraphSelectionChanged(std::size_t index) {
+    pointerGraphSelectedIndex_ = index;
 }
 
 void BufferView::RestartFrameAtPoint() {
@@ -10976,39 +11257,13 @@ void BufferView::SetVariableAtPoint() {
         (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
     const std::string lineText = content.Substring(lineStart, lineEnd - lineStart);
 
-    const std::size_t ownerMarkerPos = lineText.rfind("[owner:");
-    int                ownerRef      = 0;
-    if (ownerMarkerPos != std::string::npos) {
-        try {
-            ownerRef = std::stoi(lineText.substr(ownerMarkerPos + 7)); // stoi stops at the closing ']'
-        }
-        catch (const std::exception&) {
-            ownerRef = 0;
-        }
-    }
-    if (ownerRef <= 0) {
+    const std::optional<ParsedDebugVariableLine> parsed = ParseDebugVariableLine(lineText);
+    if (!parsed || parsed->ownerRef <= 0) {
         statusMessage_ = "Not an editable variable line.";
         return;
     }
-
-    std::size_t indent = 0;
-    while (indent < lineText.size() && lineText[indent] == ' ') {
-        ++indent;
-    }
-    const std::size_t colonPos = lineText.find(": ", indent);
-    const std::size_t eqPos    = lineText.find(" = ", indent);
-    std::size_t       nameEnd  = std::string::npos;
-    if (colonPos != std::string::npos && (eqPos == std::string::npos || colonPos < eqPos)) {
-        nameEnd = colonPos;
-    }
-    else {
-        nameEnd = eqPos;
-    }
-    if (nameEnd == std::string::npos || nameEnd <= indent) {
-        statusMessage_ = "Not an editable variable line.";
-        return;
-    }
-    const std::string name = lineText.substr(indent, nameEnd - indent);
+    const int         ownerRef = parsed->ownerRef;
+    const std::string name     = parsed->name;
 
     pendingDapSetVariable_ = PendingDapSetVariable{
         .buffer = &buffer, .line = line, .lineText = lineText, .ownerRef = ownerRef, .name = name};
@@ -11090,46 +11345,14 @@ void BufferView::ToggleHexFormatAtPoint() {
         return;
     }
 
-    const std::size_t ownerMarkerPos = lineText.rfind("[owner:");
-    if (ownerMarkerPos == std::string::npos) {
+    const std::optional<ParsedDebugVariableLine> parsed = ParseDebugVariableLine(lineText);
+    if (!parsed || parsed->ownerRef <= 0) {
         statusMessage_ = "No formattable value on this line.";
         return;
     }
-    int ownerRef = 0;
-    try {
-        ownerRef = std::stoi(lineText.substr(ownerMarkerPos + 7)); // stoi stops at the closing ']'
-    }
-    catch (const std::exception&) {
-        statusMessage_ = "No formattable value on this line.";
-        return;
-    }
-    if (ownerRef <= 0) {
-        statusMessage_ = "No formattable value on this line.";
-        return;
-    }
-
-    // Same name-extraction convention SetVariableAtPoint uses -- look for
-    // the literal ": "/" = " separators FormatDebugVariableLine always
-    // writes, not the first bare ':'/'=' (a variable named e.g. "operator="
-    // must not be split mid-name).
-    std::size_t indent = 0;
-    while (indent < lineText.size() && lineText[indent] == ' ') {
-        ++indent;
-    }
-    const std::size_t colonPos = lineText.find(": ", indent);
-    const std::size_t eqPos    = lineText.find(" = ", indent);
-    std::size_t       nameEnd  = std::string::npos;
-    if (colonPos != std::string::npos && (eqPos == std::string::npos || colonPos < eqPos)) {
-        nameEnd = colonPos;
-    }
-    else {
-        nameEnd = eqPos;
-    }
-    if (nameEnd == std::string::npos || nameEnd <= indent) {
-        statusMessage_ = "No formattable value on this line.";
-        return;
-    }
-    const std::string name = lineText.substr(indent, nameEnd - indent);
+    const int         ownerRef = parsed->ownerRef;
+    const std::size_t indent   = parsed->indent;
+    const std::string name     = parsed->name;
 
     statusMessage_ = "Formatting...";
     dapManager_->RequestVariables(

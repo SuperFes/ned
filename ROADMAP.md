@@ -791,12 +791,13 @@ these accumulate detail in place.
         more languages is a natural, independently-sized follow-up. Evaluated spans are
         also highlighted in the buffer (`Theme::lineInspectBackground`), cleared the
         moment point leaves the inspected line or the buffer is edited.
-      - **Pointer/linked-list graph view** (GDBFrontend's stand-out feature) — walking
-        a pointer chain is already mechanical (`RequestVariables` on each node's
-        `variablesReference`, `memoryReference` for the raw address), so the new work
-        is purely the rendering: `UI/TreeView.h` (built for LSP call/type hierarchy,
-        `git log --grep=lsp-call-type-hierarchy`) is a plausible existing substrate for
-        a node graph rather than inventing a second tree/graph widget.
+      - Pointer/linked-list graph view (`dap-show-pointer-graph`) closed 2026-09-03 —
+        see `git log --grep=pointer-graph-view`. Reuses `UI/TreeView.h`/
+        `Editor/ExpandableTree.h` (built for LSP call/type hierarchy) over
+        `DapManager::RequestVariables` instead of a new widget; a field whose
+        `memoryReference` repeats an ancestor's in the same session is marked cyclic
+        rather than expanded, so a genuine circular/doubly-linked list terminates
+        instead of growing forever.
       - **Array-value graph and watch-history sparkline** (GDBFrontend's array-graph
         charting; not in `gf`, but a natural extension of "graphing" generally) — a
         numeric array watch rendered as a small bar chart, or a scalar watch's value

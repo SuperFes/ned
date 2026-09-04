@@ -22,8 +22,6 @@
 #include "Editor/Dap/DapConfig.h"
 #include "Editor/Dap/DapManager.h"
 #include "Editor/DiagnosticsLog.h"
-#include "Editor/Vim/VimGlobalMarks.h"
-#include "Editor/Vim/VimSettings.h"
 #include "Editor/Dispatcher.h"
 #include "Editor/FormatOnSave.h"
 #include "Editor/InlineDiagnostics.h"
@@ -42,6 +40,8 @@
 #include "Editor/SnippetRegistry.h"
 #include "Editor/TabWidth.h"
 #include "Editor/Variables.h"
+#include "Editor/Vim/VimGlobalMarks.h"
+#include "Editor/Vim/VimSettings.h"
 #include "Editor/WhichKeySettings.h"
 #include "Editor/WrapOverrides.h"
 #include "TestEvents.h"
@@ -56,6 +56,7 @@
 #include "UI/ScrollBar.h"
 #include "UI/Theme.h"
 #include "UI/ThemeRegistry.h"
+#include "UI/TreeView.h"
 
 namespace {
 
@@ -2419,6 +2420,283 @@ TEST_CASE("dap-set-variable edits a *debug* buffer variable line via the right o
                                            {{"value", "42"}, {"type", "int"}, {"variablesReference", 0}}));
 
     REQUIRE(fixture.bufferList.Find("*debug*")->Text().find("x: int = 42") != std::string::npos);
+}
+
+TEST_CASE("dap-show-pointer-graph seeds a session and pushes a TreeViewModel with the root expanded",
+          "[BufferView]") {
+    Fixture                      fixture;
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::dap::DapManager manager(eventLoop);
+    ned::editor::dap::DapClient* client  = nullptr;
+    FakeDapAdapter               adapter = FakeDapAdapter::Create(manager, eventLoop, client);
+
+    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-ptr-graph", "{}");
+    manager.StartOrContinue("bufferview-dap-ptr-graph");
+    const auto initialize = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(initialize["seq"].get<int>(), "initialize", ned::editor::dap::Json::object()));
+    const auto launch = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(launch["seq"].get<int>(), "launch", ned::editor::dap::Json::object()));
+    client->DispatchFrame(DapEventFrame("stopped", {{"reason", "breakpoint"}, {"threadId", 1}}));
+    const auto autoStackTrace = adapter.NextRequest();
+    client->DispatchFrame(
+        DapResponseFrame(autoStackTrace["seq"].get<int>(), "stackTrace", {{"stackFrames", ned::editor::dap::Json::array()}}));
+    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-ptr-graph", "");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetDapManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 20});
+
+    std::vector<std::optional<ned::ui::TreeViewModel>> pushedModels;
+    view.SetOnPointerGraphChanged(
+        [&](std::optional<ned::ui::TreeViewModel> model) { pushedModels.push_back(std::move(model)); });
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "dap-show-debug");
+    view.OnEvent(ned::ui::test::Return());
+    const auto showDebugStackTrace = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(
+        showDebugStackTrace["seq"].get<int>(), "stackTrace",
+        {{"stackFrames", ned::editor::dap::Json::array({{{"id", 1}, {"name", "main"}}})}}));
+    const auto scopesRequest = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(
+        scopesRequest["seq"].get<int>(), "scopes",
+        {{"scopes", ned::editor::dap::Json::array({{{"name", "Locals"}, {"variablesReference", 100}}})}}));
+    const auto localsRequest = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(
+        localsRequest["seq"].get<int>(), "variables",
+        {{"variables", ned::editor::dap::Json::array(
+                           {{{"name", "head"}, {"value", "0x1000"}, {"type", "Node *"}, {"variablesReference", 200}, {"memoryReference", "0x1000"}}})}}));
+
+    ned::text::Buffer* debugBuffer = fixture.bufferList.Find("*debug*");
+    REQUIRE(debugBuffer != nullptr);
+    const std::size_t headLineByte = debugBuffer->Text().find("head: Node * = 0x1000");
+    REQUIRE(headLineByte != std::string::npos);
+    debugBuffer->SetPoint(headLineByte);
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "dap-show-pointer-graph");
+    view.OnEvent(ned::ui::test::Return());
+
+    const auto headRequest = adapter.NextRequest();
+    REQUIRE(headRequest["command"] == "variables");
+    REQUIRE(headRequest["arguments"]["variablesReference"] == 200);
+    client->DispatchFrame(DapResponseFrame(
+        headRequest["seq"].get<int>(), "variables",
+        {{"variables", ned::editor::dap::Json::array(
+                           {{{"name", "value"}, {"value", "42"}, {"type", "int"}, {"variablesReference", 0}},
+                            {{"name", "next"}, {"value", "0x0"}, {"type", "Node *"}, {"variablesReference", 0}}})}}));
+
+    REQUIRE_FALSE(pushedModels.empty());
+    const ned::ui::TreeViewModel& model = *pushedModels.back();
+    REQUIRE(model.title == "Pointer graph: head");
+    REQUIRE(model.rows.size() == 3);
+    REQUIRE(model.rows[0].label == "head: Node * = 0x1000");
+    REQUIRE(model.rows[0].expanded);
+    REQUIRE(model.rows[1].label == "value: int = 42");
+    REQUIRE(model.rows[1].depth == 1);
+    REQUIRE(model.rows[2].label == "next: Node * = 0x0");
+}
+
+TEST_CASE("dap-show-pointer-graph expands a nested composite field via a second variables request",
+          "[BufferView]") {
+    Fixture                      fixture;
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::dap::DapManager manager(eventLoop);
+    ned::editor::dap::DapClient* client  = nullptr;
+    FakeDapAdapter               adapter = FakeDapAdapter::Create(manager, eventLoop, client);
+
+    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-ptr-graph-nested", "{}");
+    manager.StartOrContinue("bufferview-dap-ptr-graph-nested");
+    const auto initialize = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(initialize["seq"].get<int>(), "initialize", ned::editor::dap::Json::object()));
+    const auto launch = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(launch["seq"].get<int>(), "launch", ned::editor::dap::Json::object()));
+    client->DispatchFrame(DapEventFrame("stopped", {{"reason", "breakpoint"}, {"threadId", 1}}));
+    const auto autoStackTrace = adapter.NextRequest();
+    client->DispatchFrame(
+        DapResponseFrame(autoStackTrace["seq"].get<int>(), "stackTrace", {{"stackFrames", ned::editor::dap::Json::array()}}));
+    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-ptr-graph-nested", "");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetDapManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 20});
+
+    std::vector<std::optional<ned::ui::TreeViewModel>> pushedModels;
+    view.SetOnPointerGraphChanged(
+        [&](std::optional<ned::ui::TreeViewModel> model) { pushedModels.push_back(std::move(model)); });
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "dap-show-debug");
+    view.OnEvent(ned::ui::test::Return());
+    const auto showDebugStackTrace = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(
+        showDebugStackTrace["seq"].get<int>(), "stackTrace",
+        {{"stackFrames", ned::editor::dap::Json::array({{{"id", 1}, {"name", "main"}}})}}));
+    const auto scopesRequest = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(
+        scopesRequest["seq"].get<int>(), "scopes",
+        {{"scopes", ned::editor::dap::Json::array({{{"name", "Locals"}, {"variablesReference", 100}}})}}));
+    const auto localsRequest = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(
+        localsRequest["seq"].get<int>(), "variables",
+        {{"variables", ned::editor::dap::Json::array(
+                           {{{"name", "head"}, {"value", "0x1000"}, {"type", "Node *"}, {"variablesReference", 200}, {"memoryReference", "0x1000"}}})}}));
+
+    ned::text::Buffer* debugBuffer = fixture.bufferList.Find("*debug*");
+    REQUIRE(debugBuffer != nullptr);
+    debugBuffer->SetPoint(debugBuffer->Text().find("head: Node * = 0x1000"));
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "dap-show-pointer-graph");
+    view.OnEvent(ned::ui::test::Return());
+
+    const auto headRequest = adapter.NextRequest();
+    // "next" is itself composite (a genuinely different node, not a cycle) --
+    // variablesReference 201, a memoryReference distinct from head's own.
+    client->DispatchFrame(DapResponseFrame(
+        headRequest["seq"].get<int>(), "variables",
+        {{"variables", ned::editor::dap::Json::array(
+                           {{{"name", "next"}, {"value", "0x2000"}, {"type", "Node *"}, {"variablesReference", 201}, {"memoryReference", "0x2000"}}})}}));
+
+    REQUIRE(pushedModels.back()->rows.size() == 2);
+    REQUIRE(pushedModels.back()->rows[1].label == "next: Node * = 0x2000");
+    REQUIRE(pushedModels.back()->rows[1].hasChildren);
+    REQUIRE_FALSE(pushedModels.back()->rows[1].expanded);
+
+    view.PointerGraphToggleExpand(1);
+    const auto nextRequest = adapter.NextRequest();
+    REQUIRE(nextRequest["command"] == "variables");
+    REQUIRE(nextRequest["arguments"]["variablesReference"] == 201);
+    client->DispatchFrame(DapResponseFrame(
+        nextRequest["seq"].get<int>(), "variables",
+        {{"variables",
+          ned::editor::dap::Json::array({{{"name", "value"}, {"value", "7"}, {"type", "int"}, {"variablesReference", 0}}})}}));
+
+    REQUIRE(pushedModels.back()->rows.size() == 3);
+    REQUIRE(pushedModels.back()->rows[1].expanded);
+    REQUIRE(pushedModels.back()->rows[2].label == "value: int = 7");
+    REQUIRE(pushedModels.back()->rows[2].depth == 2);
+}
+
+TEST_CASE("dap-show-pointer-graph marks a field whose memoryReference repeats an ancestor's as a cycle",
+          "[BufferView]") {
+    Fixture                      fixture;
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::dap::DapManager manager(eventLoop);
+    ned::editor::dap::DapClient* client  = nullptr;
+    FakeDapAdapter               adapter = FakeDapAdapter::Create(manager, eventLoop, client);
+
+    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-ptr-graph-cycle", "{}");
+    manager.StartOrContinue("bufferview-dap-ptr-graph-cycle");
+    const auto initialize = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(initialize["seq"].get<int>(), "initialize", ned::editor::dap::Json::object()));
+    const auto launch = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(launch["seq"].get<int>(), "launch", ned::editor::dap::Json::object()));
+    client->DispatchFrame(DapEventFrame("stopped", {{"reason", "breakpoint"}, {"threadId", 1}}));
+    const auto autoStackTrace = adapter.NextRequest();
+    client->DispatchFrame(
+        DapResponseFrame(autoStackTrace["seq"].get<int>(), "stackTrace", {{"stackFrames", ned::editor::dap::Json::array()}}));
+    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-ptr-graph-cycle", "");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetDapManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 20});
+
+    std::vector<std::optional<ned::ui::TreeViewModel>> pushedModels;
+    view.SetOnPointerGraphChanged(
+        [&](std::optional<ned::ui::TreeViewModel> model) { pushedModels.push_back(std::move(model)); });
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "dap-show-debug");
+    view.OnEvent(ned::ui::test::Return());
+    const auto showDebugStackTrace = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(
+        showDebugStackTrace["seq"].get<int>(), "stackTrace",
+        {{"stackFrames", ned::editor::dap::Json::array({{{"id", 1}, {"name", "main"}}})}}));
+    const auto scopesRequest = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(
+        scopesRequest["seq"].get<int>(), "scopes",
+        {{"scopes", ned::editor::dap::Json::array({{{"name", "Locals"}, {"variablesReference", 100}}})}}));
+    const auto localsRequest = adapter.NextRequest();
+    // A self-referencing node -- "head" and its own memoryReference 0x1000.
+    client->DispatchFrame(DapResponseFrame(
+        localsRequest["seq"].get<int>(), "variables",
+        {{"variables", ned::editor::dap::Json::array(
+                           {{{"name", "head"}, {"value", "0x1000"}, {"type", "Node *"}, {"variablesReference", 200}, {"memoryReference", "0x1000"}}})}}));
+
+    ned::text::Buffer* debugBuffer = fixture.bufferList.Find("*debug*");
+    REQUIRE(debugBuffer != nullptr);
+    debugBuffer->SetPoint(debugBuffer->Text().find("head: Node * = 0x1000"));
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "dap-show-pointer-graph");
+    view.OnEvent(ned::ui::test::Return());
+
+    const auto headRequest = adapter.NextRequest();
+    // "next" points right back at head's own address -- a single-node
+    // circular list. The adapter still hands back a variablesReference for
+    // it (a real adapter has no reason not to), but the pointer-graph
+    // session must refuse to expand it regardless.
+    client->DispatchFrame(DapResponseFrame(
+        headRequest["seq"].get<int>(), "variables",
+        {{"variables", ned::editor::dap::Json::array(
+                           {{{"name", "next"}, {"value", "0x1000"}, {"type", "Node *"}, {"variablesReference", 200}, {"memoryReference", "0x1000"}}})}}));
+
+    REQUIRE(pushedModels.back()->rows.size() == 2);
+    const ned::ui::TreeRow& cycleRow = pushedModels.back()->rows[1];
+    REQUIRE(cycleRow.label == "next: Node * = 0x1000 (cycle)");
+    REQUIRE_FALSE(cycleRow.hasChildren);
+
+    // Trying to expand it anyway is a documented no-op (ExpandPointerGraphNode's
+    // own "not expandable" early return) -- no further request is sent, and
+    // no model is pushed by the attempt.
+    const std::size_t modelCountBefore = pushedModels.size();
+    view.PointerGraphToggleExpand(1);
+    REQUIRE(pushedModels.size() == modelCountBefore);
+}
+
+TEST_CASE("dap-show-pointer-graph refuses when point isn't on an expandable *debug* buffer line", "[BufferView]") {
+    Fixture                      fixture;
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::dap::DapManager manager(eventLoop);
+    ned::editor::dap::DapClient* client  = nullptr;
+    FakeDapAdapter               adapter = FakeDapAdapter::Create(manager, eventLoop, client);
+
+    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-ptr-graph-refuse", "{}");
+    manager.StartOrContinue("bufferview-dap-ptr-graph-refuse");
+    const auto initialize = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(initialize["seq"].get<int>(), "initialize", ned::editor::dap::Json::object()));
+    const auto launch = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(launch["seq"].get<int>(), "launch", ned::editor::dap::Json::object()));
+    client->DispatchFrame(DapEventFrame("stopped", {{"reason", "breakpoint"}, {"threadId", 1}}));
+    const auto autoStackTrace = adapter.NextRequest();
+    client->DispatchFrame(
+        DapResponseFrame(autoStackTrace["seq"].get<int>(), "stackTrace", {{"stackFrames", ned::editor::dap::Json::array()}}));
+    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-ptr-graph-refuse", "");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetDapManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 20});
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "dap-show-debug");
+    view.OnEvent(ned::ui::test::Return());
+    const auto showDebugStackTrace = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(
+        showDebugStackTrace["seq"].get<int>(), "stackTrace",
+        {{"stackFrames", ned::editor::dap::Json::array({{{"id", 1}, {"name", "main"}}})}}));
+    const auto scopesRequest = adapter.NextRequest();
+    client->DispatchFrame(
+        DapResponseFrame(scopesRequest["seq"].get<int>(), "scopes", {{"scopes", ned::editor::dap::Json::array()}}));
+
+    ned::text::Buffer* debugBuffer = fixture.bufferList.Find("*debug*");
+    REQUIRE(debugBuffer != nullptr);
+    debugBuffer->SetPoint(0); // "== Stack ==" -- no [ref:] marker at all
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "dap-show-pointer-graph");
+    view.OnEvent(ned::ui::test::Return());
+    REQUIRE(fixture.statusMessage == "No expandable variable on this line.");
 }
 
 TEST_CASE("dap-toggle-hex-format toggles a variable line's display format and back", "[BufferView]") {

@@ -1670,6 +1670,40 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     hierarchyTreeView.SetOnCancel([wm = windowManager.get()] { wm->HierarchyCancel(); });
     hierarchyTreeView.SetOnSelectionChanged([wm = windowManager.get()](std::size_t index) { wm->HierarchySelectionChanged(index); });
 
+    // Debugging wishlist follow-up (pointer/linked-list graph view):
+    // hierarchyTreeView's own mirror, for dap-show-pointer-graph -- a
+    // second, independent TreeView overlay rather than a reuse of the one
+    // above, since DapManager is a single global session rather than
+    // per-buffer/per-pane the way LSP is (WindowManager::
+    // SetOnPointerGraphChanged's own doc comment). Same sizing/focus-taking
+    // shape as hierarchyTreeView.
+    ned::ui::TreeView pointerGraphTreeView(theme);
+    overlays.Add(pointerGraphTreeView, [panel = &pointerGraphTreeView](Size size) {
+        const int width  = std::max(20, std::min(100, size.width - 4));
+        const int height = std::max(6, std::min(34, size.height - 4));
+        const int xMin   = std::max(0, (size.width - width) / 2);
+        const int yMin   = std::max(0, (size.height - height) / 2);
+        return Box{.x_min = xMin, .x_max = xMin + width - 1, .y_min = yMin, .y_max = yMin + height - 1};
+    });
+    windowManager->SetOnPointerGraphChanged(
+        [&overlays, panel = &pointerGraphTreeView](std::optional<ned::ui::TreeViewModel> model) {
+            if (model) {
+                panel->SetModel(std::move(*model));
+                overlays.Show(*panel);
+                panel->TakeFocus();
+            }
+            else {
+                overlays.Hide(*panel);
+            }
+        });
+    pointerGraphTreeView.SetOnActivate([wm = windowManager.get()](std::size_t index) { wm->PointerGraphActivate(index); });
+    pointerGraphTreeView.SetOnToggleExpand([wm = windowManager.get()](std::size_t index) { wm->PointerGraphToggleExpand(index); });
+    pointerGraphTreeView.SetOnCollapseRequested(
+        [wm = windowManager.get()](std::size_t index) { wm->PointerGraphCollapse(index); });
+    pointerGraphTreeView.SetOnCancel([wm = windowManager.get()] { wm->PointerGraphCancel(); });
+    pointerGraphTreeView.SetOnSelectionChanged(
+        [wm = windowManager.get()](std::size_t index) { wm->PointerGraphSelectionChanged(index); });
+
     // terminal-title follow-up: Ned::Application::SetTitle/GetTitle
     // (Application.h) predate this and were otherwise dead beyond the one
     // static "Ned" call at the top of this function -- this is what
