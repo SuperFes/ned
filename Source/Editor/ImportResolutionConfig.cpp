@@ -21,6 +21,13 @@ namespace {
             {"jank", {.extensions = {"clj", "cljc", "cljs"}}},
             {"css", {.extensions = {"css"}}},
             {"janet", {.extensions = {"janet"}}},
+            // resolver-gaps follow-up: only ever consulted for Rust's own
+            // "mod foo;" file-per-module declaration (rust-imports.scm's
+            // @import.moddecl) -- "foo" tried as "foo.rs" (extension) or
+            // "foo/mod.rs" (indexBasename), against a baseDirectory
+            // BufferView has already adjusted for the importing file's own
+            // stem (Mode.h's ImportTarget::isModDeclaration doc comment).
+            {"rust", {.extensions = {"rs"}, .indexBasenames = {"mod"}}},
         };
         return defaults;
     }

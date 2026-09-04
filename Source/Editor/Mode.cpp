@@ -767,6 +767,31 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
                                    .kind      = *kind,
                                    .name      = std::move(name)});
             }
+            // resolver-gaps follow-up (Rust bundling): a query can also
+            // double-match one definition onto the exact same range, not
+            // just a nested one -- tree-sitter-rust's own upstream tags.scm
+            // has no distinct node type for "a method" the way JS/TS/PHP's
+            // own method_definition/method_declaration do; it tags any
+            // function_item as both "@definition.function" (unconditional)
+            // and, separately, "@definition.method" whenever it happens to
+            // sit inside a declaration_list (an ancestor check on the SAME
+            // node, not a different one) -- confirmed live via a direct
+            // Mode::symbolKind probe against an ordinary `impl` method.
+            // Collapse exact duplicates (identical range/name/kind) down to
+            // one marker before the nested-range collapse below even runs,
+            // since that pass's own last clause deliberately excludes an
+            // exact-range pair (by design, for the cpp-tags.scm case right
+            // below) and would otherwise keep both.
+            std::sort(markers.begin(), markers.end(), [](const SymbolMarker& a, const SymbolMarker& b) {
+                return std::tie(a.startByte, a.endByte, a.kind, a.name) < std::tie(b.startByte, b.endByte, b.kind, b.name);
+            });
+            markers.erase(std::unique(markers.begin(), markers.end(),
+                                      [](const SymbolMarker& a, const SymbolMarker& b) {
+                                          return a.startByte == b.startByte && a.endByte == b.endByte &&
+                                                 a.kind == b.kind && a.name == b.name;
+                                      }),
+                          markers.end());
+
             // main-editor-sticky-scroll follow-up: a query can legitimately
             // double-match one definition -- cpp-tags.scm's own bodyless-
             // prototype pattern (the only range a real prototype can ever
@@ -931,9 +956,14 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
                 return std::nullopt;
             }
 
+            enum class TargetKind { Literal,
+                                    Module,
+                                    Relative,
+                                    Namespace,
+                                    ModDeclaration };
             struct TargetCapture {
                 std::size_t targetStart, targetEnd;
-                bool        isModule;
+                TargetKind  kind;
             };
             std::vector<TargetCapture>                       targets;
             std::vector<std::pair<std::size_t, std::size_t>> statements;
@@ -942,10 +972,30 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
                     statements.emplace_back(capture.startByte, capture.endByte);
                 }
                 else if (capture.name == "import.target") {
-                    targets.push_back({capture.startByte, capture.endByte, false});
+                    targets.push_back({capture.startByte, capture.endByte, TargetKind::Literal});
                 }
                 else if (capture.name == "import.module") {
-                    targets.push_back({capture.startByte, capture.endByte, true});
+                    targets.push_back({capture.startByte, capture.endByte, TargetKind::Module});
+                }
+                else if (capture.name == "import.relative") {
+                    // resolver-gaps follow-up: Python's own leading-dot
+                    // relative import ("from . import x", "from ..foo
+                    // import x") -- the captured node is the whole
+                    // relative_import, e.g. ".foo.bar"/"..", dots included.
+                    targets.push_back({capture.startByte, capture.endByte, TargetKind::Relative});
+                }
+                else if (capture.name == "import.namespace") {
+                    // resolver-gaps follow-up: PHP's own backslash-separated
+                    // `use` namespace -- resolved via PSR-4, not a dotted
+                    // module path.
+                    targets.push_back({capture.startByte, capture.endByte, TargetKind::Namespace});
+                }
+                else if (capture.name == "import.moddecl") {
+                    // resolver-gaps follow-up: Rust's own bodyless "mod
+                    // foo;" file-per-module declaration -- resolved via a
+                    // baseDirectory adjustment (the importing file's own
+                    // stem), not a dotted module path.
+                    targets.push_back({capture.startByte, capture.endByte, TargetKind::ModDeclaration});
                 }
             }
 
@@ -982,11 +1032,36 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
             }
 
             std::string text(bufferText.substr(best->targetStart, best->targetEnd - best->targetStart));
-            if (!best->isModule) {
-                text = std::string(link::StripDelimiters(text));
+            int         relativeLevel = 0;
+            switch (best->kind) {
+                case TargetKind::Literal:
+                    text = std::string(link::StripDelimiters(text));
+                    break;
+                case TargetKind::Module:
+                case TargetKind::Namespace:
+                case TargetKind::ModDeclaration:
+                    break; // kept as raw captured text
+                case TargetKind::Relative:
+                    // "from . import x" / "from ..foo import x" -- the
+                    // captured relative_import node's own text starts with
+                    // one-or-more literal '.' characters (import_prefix);
+                    // strip them into relativeLevel, leaving just the
+                    // remaining dotted module suffix, if any ("" for a bare
+                    // "from . import x").
+                    while (relativeLevel < static_cast<int>(text.size()) && text[relativeLevel] == '.') {
+                        ++relativeLevel;
+                    }
+                    text.erase(0, relativeLevel);
+                    break;
             }
-            return ImportTarget{
-                .target = std::move(text), .isModulePath = best->isModule, .startByte = bestStart, .endByte = bestEnd};
+            const bool isModulePath = best->kind == TargetKind::Module || best->kind == TargetKind::Relative;
+            return ImportTarget{.target           = std::move(text),
+                                .isModulePath     = isModulePath,
+                                .startByte        = bestStart,
+                                .endByte          = bestEnd,
+                                .relativeLevel    = relativeLevel,
+                                .isNamespacePath  = best->kind == TargetKind::Namespace,
+                                .isModDeclaration = best->kind == TargetKind::ModDeclaration};
         };
     }
 
@@ -1301,6 +1376,14 @@ Mode XmlMode() {
     // reasoning as HtmlMode/CssMode above.
     return TreeSitterMode("xml-mode", "xml", treesitter::queries::kXml, nullptr, nullptr, nullptr, nullptr,
                           treesitter::queries::kXmlIndents);
+}
+
+Mode RustMode() {
+    Mode mode              = TreeSitterMode("rust-mode", "rust", treesitter::queries::kRust, treesitter::queries::kRustFolds,
+                                            treesitter::queries::kRustImports, treesitter::queries::kRustTags,
+                                            treesitter::queries::kRustTests, treesitter::queries::kRustIndents);
+    mode.lineCommentPrefix = "//";
+    return mode;
 }
 
 Mode YamlMode() {

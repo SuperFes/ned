@@ -12,3 +12,11 @@
   function: (identifier) @_callee
   arguments: (arguments (string (string_fragment) @import.target))
   (#eq? @_callee "require")) @import.statement
+; go-to-file-at-point resolver gaps follow-up: dynamic import("./foo") --
+; checked against tree-sitter-javascript's own node-types.json, call_expression's
+; "function:" field accepts a dedicated (unfielded) "import" node for exactly
+; this syntax, distinct from an ordinary (identifier) callee, so no #eq?
+; predicate is needed the way require(...) above needs one.
+(call_expression
+  function: (import)
+  arguments: (arguments (string (string_fragment) @import.target))) @import.statement

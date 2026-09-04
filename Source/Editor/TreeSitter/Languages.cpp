@@ -30,6 +30,7 @@ const TSLanguage* tree_sitter_toml(void);
 const TSLanguage* tree_sitter_clojure(void);
 const TSLanguage* tree_sitter_fish(void);
 const TSLanguage* tree_sitter_xml(void);
+const TSLanguage* tree_sitter_rust(void);
 }
 
 namespace ned::editor::treesitter {
@@ -118,6 +119,11 @@ std::optional<Language> LanguageByName(std::string_view name) {
     // repo (xml/ and dtd/); only xml/ is built, see CMakeLists.txt.
     if (name == "xml") {
         return Language(tree_sitter_xml());
+    }
+    // tree-sitter/tree-sitter-rust -- the tree-sitter org's own official
+    // grammar, same provenance as c/cpp/python/javascript above.
+    if (name == "rust") {
+        return Language(tree_sitter_rust());
     }
     return std::nullopt;
 }

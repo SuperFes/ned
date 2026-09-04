@@ -10,6 +10,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "NodeModules.h"
 #include "ProjectRoot.h"
 
 namespace ned::editor::link {
@@ -281,7 +282,8 @@ namespace {
     std::optional<std::filesystem::path> TryVariants(const std::filesystem::path&    candidate,
                                                       const std::vector<std::string>& candidateExtensions,
                                                       const std::vector<std::string>& indexBasenames) {
-        const bool preferIndexOverDirectory = !indexBasenames.empty() && std::filesystem::is_directory(candidate);
+        const bool isDirectory              = std::filesystem::is_directory(candidate);
+        const bool preferIndexOverDirectory = !indexBasenames.empty() && isDirectory;
         if (!preferIndexOverDirectory && std::filesystem::exists(candidate)) {
             return candidate;
         }
@@ -290,6 +292,17 @@ namespace {
             withExtension += ("." + extension);
             if (std::filesystem::exists(withExtension)) {
                 return withExtension;
+            }
+        }
+        // resolver-gaps follow-up: a real package.json "main"/"exports"
+        // entry point (NodeModules.h's ResolvePackageEntryPoint) wins over
+        // the bare "index.<ext>" guess below -- gated on indexBasenames
+        // being configured at all (this project's own "package/directory
+        // import" signal, ImportResolutionConfig.h) so a language with no
+        // notion of a directory import never pays for a package.json stat.
+        if (isDirectory && !indexBasenames.empty()) {
+            if (const auto packageEntry = ResolvePackageEntryPoint(candidate, candidateExtensions)) {
+                return packageEntry;
             }
         }
         for (const std::string& basename : indexBasenames) {

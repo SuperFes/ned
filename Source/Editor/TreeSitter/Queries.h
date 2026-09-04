@@ -49,6 +49,7 @@ extern const char* const kToml;
 extern const char* const kClojure;
 extern const char* const kFish;
 extern const char* const kXml;
+extern const char* const kRust; // tree-sitter/tree-sitter-rust's own real queries/highlights.scm, unmodified
 
 // generic-code-folding follow-up: hand-written "@fold" queries, one per
 // in-scope language (Source/Editor/TreeSitter/queries/*-folds.scm) -- no
@@ -65,6 +66,7 @@ extern const char* const kPythonFolds;
 extern const char* const kJavaScriptFolds;
 extern const char* const kTypeScriptFolds;
 extern const char* const kClojureFolds; // shared by ClojureMode and JankMode, same as kClojure above
+extern const char* const kRustFolds;
 
 // import-target-tree-sitter follow-up: hand-written "@import.target"/
 // "@import.module"/"@import.statement" queries, one per in-scope language
@@ -88,6 +90,10 @@ extern const char* const kBashImports;
 extern const char* const kCssImports;
 extern const char* const kClojureImports;
 extern const char* const kJanetImports;
+// go-to-file-at-point resolver gaps follow-up: Rust's own bodyless "mod
+// foo;" file-per-module declaration only -- see rust-imports.scm's own
+// header comment for why a real "use" path isn't matched here at all.
+extern const char* const kRustImports;
 
 // gutter-symbol-kind follow-up: each bundled grammar's own real
 // queries/tags.scm, consumed directly and unmodified -- the ctags/
@@ -115,6 +121,7 @@ extern const char* const kPhpTags;
 extern const char* const kJavaScriptTags;
 extern const char* const kTypeScriptTags;
 extern const char* const kPythonTags;
+extern const char* const kRustTags; // tree-sitter/tree-sitter-rust's own real queries/tags.scm, unmodified
 
 // test-runner integration: repo-local test-discovery queries
 // (Source/Editor/TreeSitter/queries/*-tests.scm) using the ned-local
@@ -125,14 +132,16 @@ extern const char* const kPythonTags;
 // whose definitions are query-recognizable get one: C++ (Catch2/gtest),
 // Python (pytest/unittest), JavaScript/TypeScript (jest/vitest/mocha --
 // kTypeScriptTests shared by TsxMode, the standing sharing convention),
-// PHP (PHPUnit). Go/Rust have no bundled mode at all (their test *output*
-// still parses -- see Editor/TestRun/TestOutputParser.h -- only discovery
-// is absent); C has no dominant query-recognizable framework convention.
+// PHP (PHPUnit), Rust (`#[test]`/`#[<framework>::test]`, kRustTests). Go has
+// no bundled mode at all (its test *output* still parses -- see
+// Editor/TestRun/TestOutputParser.h -- only discovery is absent); C has no
+// dominant query-recognizable framework convention.
 extern const char* const kCppTests;
 extern const char* const kPhpTests;
 extern const char* const kJavaScriptTests;
 extern const char* const kTypeScriptTests;
 extern const char* const kPythonTests;
+extern const char* const kRustTests; // #[test]/#[<framework>::test], rust-tests.scm's own header comment
 
 // smart-indentation follow-up: hand-written "indent"/"dedent" queries, one
 // per in-scope language (Source/Editor/TreeSitter/queries/*-indents.scm),
@@ -171,6 +180,7 @@ extern const char* const kJanetIndents;
 extern const char* const kClojureIndents;
 extern const char* const kYamlIndents;
 extern const char* const kTomlIndents;
+extern const char* const kRustIndents;
 
 } // namespace ned::editor::treesitter::queries
 

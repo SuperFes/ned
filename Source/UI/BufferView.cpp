@@ -43,6 +43,7 @@
 #include "Editor/NodeModules.h"
 #include "Editor/Org.h"
 #include "Editor/OrgCapture.h"
+#include "Editor/Php.h"
 #include "Editor/PointerGraphNode.h"
 #include "Editor/ProjectAgenda.h"
 #include "Editor/ProjectFileOps.h"
@@ -10862,17 +10863,45 @@ void BufferView::OpenLinkAtPoint() {
     // whether the function is set, never on mode_.name.
     if (mode_.importTarget) {
         if (const auto imported = mode_.importTarget(buffer.Text(), buffer.Point())) {
-            std::string target = imported->target;
-            if (imported->isModulePath) {
-                std::replace(target.begin(), target.end(), '.', '/');
+            // resolver-gaps follow-up: PHP's own `use` namespace resolves
+            // via a dedicated PSR-4 lookup against composer.json, not
+            // ResolveFileLink's generic baseDirectory/ProjectRoot/
+            // includePaths search at all -- an empty/whitespace-only
+            // namespace (a malformed capture) falls through to the generic
+            // link detection below rather than looking anything up.
+            if (imported->isNamespacePath) {
+                if (!imported->target.empty()) {
+                    if (const auto resolved = editor::php::ResolvePsr4Namespace(imported->target, editor::ProjectRoot())) {
+                        try {
+                            text::Buffer& opened = bufferList_.OpenOrCreateFile(*resolved);
+                            activeBuffer_.Set(opened);
+                            statusMessage_.clear();
+                        }
+                        catch (const std::exception& e) {
+                            ReportError(e.what());
+                        }
+                    }
+                    else {
+                        statusMessage_ = "No PSR-4 mapping found for: " + imported->target;
+                    }
+                    return;
+                }
             }
-            OpenDetectedLink(editor::link::DetectedLink{
-                .kind      = editor::link::LinkKind::File,
-                .target    = std::move(target),
-                .startByte = imported->startByte,
-                .endByte   = imported->endByte,
-            });
-            return;
+            else {
+                std::string target = imported->target;
+                if (imported->isModulePath) {
+                    std::replace(target.begin(), target.end(), '.', '/');
+                }
+                OpenDetectedLink(editor::link::DetectedLink{
+                    .kind             = editor::link::LinkKind::File,
+                    .target           = std::move(target),
+                    .startByte        = imported->startByte,
+                    .endByte          = imported->endByte,
+                    .relativeLevel    = imported->relativeLevel,
+                    .isModDeclaration = imported->isModDeclaration,
+                });
+                return;
+            }
         }
         // No import at point under this mode's own query -- fall through to
         // the generic path below (e.g. a URL or bare file path elsewhere on
@@ -10898,9 +10927,37 @@ void BufferView::OpenDetectedLink(const editor::link::DetectedLink& detected) {
         return;
     }
 
-    text::Buffer&               buffer = activeBuffer_.Get();
-    const std::filesystem::path baseDirectory =
+    text::Buffer&         buffer = activeBuffer_.Get();
+    std::filesystem::path baseDirectory =
         buffer.Path() ? buffer.Path()->parent_path() : editor::ProjectRoot();
+    // resolver-gaps follow-up: Python's own leading-dot relative-import
+    // level -- 1 dot means "this file's own directory" (baseDirectory
+    // already computed above, no ascension), each additional dot ascends
+    // one more parent directory (Mode.h's ImportTarget::relativeLevel doc
+    // comment has the full semantics). Stops early if parent_path() stops
+    // making progress (the filesystem root), the same guard
+    // NodeModules.cpp's own upward walk uses.
+    for (int level = 1; level < detected.relativeLevel; ++level) {
+        const std::filesystem::path parent = baseDirectory.parent_path();
+        if (parent == baseDirectory) {
+            break;
+        }
+        baseDirectory = parent;
+    }
+    // resolver-gaps follow-up: Rust's own bodyless "mod foo;" declaration
+    // (Mode.h's ImportTarget::isModDeclaration doc comment) -- a submodule
+    // of any file other than a crate root/mod.rs lives one directory level
+    // below the importing file, under a subdirectory named after that
+    // file's own stem (e.g. "src/foo.rs"'s own "mod bar;" resolves against
+    // "src/foo/bar.rs", not "src/bar.rs"). "main"/"lib"/"mod" are Rust's own
+    // three file-name conventions where the importing file already sits at
+    // the level its submodules resolve from, so no adjustment applies.
+    if (detected.isModDeclaration && buffer.Path()) {
+        const std::string stem = buffer.Path()->stem().string();
+        if (stem != "main" && stem != "lib" && stem != "mod") {
+            baseDirectory /= stem;
+        }
+    }
     const editor::ProjectSettings projectSettings = editor::LoadProjectSettings(editor::ProjectRoot());
 
     // toolchain-include-paths follow-up: project-configured includePaths
