@@ -36,6 +36,28 @@
 // inside its own onExit callback would tear down the std::function currently
 // being executed.
 //
+// terminal-panel-scrollback-search-and-selection follow-up: two more
+// escape hatches alongside the title row's existing minimize/maximize/close
+// buttons. Click-drag over a content row selects text (real-terminal
+// convention); releasing with a non-empty range copies it via
+// editor::CopyToSystemClipboard -- deliberately not routed through
+// KillRing, since this widget has no Buffer/kill-ring wiring and a raw
+// system-clipboard copy is what every other terminal emulator does for a
+// mouse selection. A new `[/]` title button (chosen over a reserved Ctrl
+// chord: this codebase's own KeyChord model doesn't track Shift on a plain
+// codepoint at all -- DecodeBaseKey normalizes Ctrl+F and Ctrl+Shift+F to
+// the identical chord -- and every unshifted Ctrl+letter is plausibly
+// claimed by the shell's own readline bindings, unlike the deliberately
+// obscure backtick chosen for kToggleChord) starts a search session over
+// the combined scrollback+live-screen text via Editor/LineListSearch.h --
+// DebugConsolePanel's own debug-console-search precedent, materializing a
+// text snapshot once per session since Emulator's cells aren't already
+// plain strings. While a search session is active, every key is consumed
+// by the session (same "fully modal" precedent as the exited_ branch
+// below) rather than forwarded to the shell, so reusing Emacs isearch's
+// C-s/C-r/Enter/Escape convention inside the session is safe -- it's only
+// entering the session that couldn't reuse a Ctrl chord.
+//
 
 #ifndef NED_UI_TERMINALPANEL_H
 #define NED_UI_TERMINALPANEL_H
@@ -43,9 +65,12 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <string>
 #include <string_view>
+#include <vector>
 
 #include "Editor/Key.h"
+#include "Editor/LineListSearch.h"
 #include "Editor/Terminal/Emulator.h"
 #include "Editor/Terminal/PtyProcess.h"
 #include "Theme.h"
@@ -126,14 +151,24 @@ class TerminalPanel : public Widget {
     void CloseSession();
 
   private:
-    // Title-row buttons, drawn right-aligned as [▼][▲][×] (minimize/
-    // maximize/close). Minimum width for them to be drawn/hittable.
-    static constexpr int kMinWidthForTitleButtons = 14;
+    // Title-row buttons, drawn right-aligned as [/][▼][▲][×] (search/
+    // minimize/maximize/close). Minimum width for them to be drawn/hittable.
+    static constexpr int kMinWidthForTitleButtons = 17;
 
     enum class TitleButton { None,
+                             Search,
                              Minimize,
                              Maximize,
                              Close };
+
+    // Absolute coordinate into the combined scrollback+live-screen line
+    // space Paint()'s own `lineIndex` already uses: 0 is the oldest
+    // retained scrollback line, ScrollbackSize()+row is live screen row
+    // `row`. Used by both selection (below) and search (below).
+    struct SelectionPoint {
+        int line = 0;
+        int col  = 0;
+    };
 
     [[nodiscard]] int         ContentRows() const;
     [[nodiscard]] int         ContentCols() const;
@@ -142,6 +177,25 @@ class TerminalPanel : public Widget {
     void HandleExit();
     void ForwardPendingOutput();
     void ScrollBy(int deltaLines);
+
+    // scrollback-search-and-selection follow-up:
+    [[nodiscard]] std::vector<std::string> CellCharsForLine(int lineIndex) const;
+    [[nodiscard]] std::string              TextForLine(int lineIndex) const;
+    [[nodiscard]] std::string              LineRangeText(int lineIndex, int fromCol, int toColInclusive) const;
+    [[nodiscard]] SelectionPoint           PointForLocal(Point local) const;
+    [[nodiscard]] bool                     InSelection(int lineIndex, int col) const;
+    [[nodiscard]] std::string              SelectedText() const;
+    void                                   ClearSelection();
+
+    void EnterSearch();
+    // DebugConsolePanel::ScrollToShowIndex's exact sibling, adapted to this
+    // panel's own scrollbackOffset_-from-the-bottom convention rather than
+    // history_'s plain index-from-the-front.
+    void ScrollToShowLine(int lineIndex);
+    // DebugConsolePanel::HandleSearchKey's exact shape -- only called while
+    // search_ already has a value; always returns true (every key is
+    // consumed mid-search, see header comment).
+    bool HandleSearchKey(const editor::KeyChord& chord);
 
     const Theme& theme_;
 
@@ -159,6 +213,20 @@ class TerminalPanel : public Widget {
     // any forwarded keypress (not by output arriving -- reading scrollback
     // while a command streams shouldn't fight the user).
     int scrollbackOffset_ = 0;
+
+    // scrollback-search-and-selection follow-up.
+    std::optional<SelectionPoint> selectionAnchor_;
+    std::optional<SelectionPoint> selectionEnd_;
+    bool                          selecting_ = false; // dragging a selection right now
+
+    // A snapshot of the combined scrollback+live text, taken once per
+    // search session -- DebugConsolePanel::searchLines_'s exact precedent,
+    // for the same reason (LineListSearch holds a reference into it).
+    // Declared before search_ so it outlives the LineListSearch holding a
+    // reference into it.
+    std::vector<std::string>              searchLines_;
+    std::optional<editor::LineListSearch> search_;
+    int                                   searchOriginalScrollback_ = 0;
 };
 
 } // namespace ned::ui

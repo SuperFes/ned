@@ -204,12 +204,25 @@ Notcurses.
 
 ### Editor Ergonomics
 
-- [ ] **Terminal panel gaps**: no drag-resize of the drawer height (needs overlay
-      mouse-capture semantics; height is Janet-configurable instead via
-      `ned/set-terminal-height-percent`), no scrollback search/selection/copy, no
-      multiple terminals/tabs, no terminal-side mouse forwarding to the shell (clicks
-      focus the panel, wheel scrolls the ring — TUI apps inside don't receive mouse
-      events), no OSC 52/title integration.
+- Scrollback search/selection/copy closed 2026-09-04 — see
+  `git log --grep=terminal-panel-scrollback-search-and-selection`. A new `[/]`
+  title-row button (not a reserved Ctrl chord: this codebase's own KeyChord
+  model doesn't track Shift on a plain codepoint at all, so Ctrl+Shift+F is
+  indistinguishable from Ctrl+F here, and every unshifted Ctrl+letter is
+  plausibly claimed by the shell's own readline bindings) starts an
+  Emacs-isearch-style session over the combined scrollback+live-screen text
+  (`Editor/LineListSearch.h`, `DebugConsolePanel`'s own precedent) — fully
+  modal while active, so C-s/C-r/Enter/Escape are safe to reuse without
+  colliding with the shell. Click-drag over a content row selects text
+  (real-terminal convention) and copies it via `editor::CopyToSystemClipboard`
+  on release; multi-line selections join in reading order
+  (first-line-tail/middle-lines/last-line-head), trimming each row's
+  padding blanks. Still open: drag-resize of the drawer height (needs overlay
+  mouse-capture semantics; height is Janet-configurable instead via
+  `ned/set-terminal-height-percent`), no multiple terminals/tabs, no
+  terminal-side mouse forwarding to the shell (clicks focus the panel, wheel
+  scrolls the ring — TUI apps inside don't receive mouse events), no OSC
+  52/title integration.
 - Vim-mode gaps closed 2026-09-03 (see `git log --grep=jumplist-ring`,
   `--grep=changelist-ring`, `--grep=dot-repeat-count-override`, `--grep=vim-global-marks`,
   `--grep=vim-magic-translation`, `--grep=vim-macro-register`): the `C-o`/`C-i` jumplist
