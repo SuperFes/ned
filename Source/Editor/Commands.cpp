@@ -2581,6 +2581,17 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           context.interactiveRequest = InteractiveRequest::LspRename;
                       });
 
+    // prepareRename/linkedEditingRange follow-up: see InteractiveRequest::
+    // LspLinkedEditingRange's own doc comment in Command.h -- BufferView::
+    // RequestLinkedEditingRangeAtPoint owns the actual request and the
+    // resulting live-mirroring session.
+    registry.Register("lsp-linked-editing-range",
+                      "Start live-mirrored editing across every range the language server reports as linked to "
+                      "the one at point (e.g. a markup element's matching opening/closing tag name).",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::LspLinkedEditingRange;
+                      });
+
     // header-source-switching follow-up: one more one-shot direct action
     // (see InteractiveRequest::SwitchHeaderSource's own doc comment in
     // Command.h) -- BufferView::SwitchHeaderSource owns the actual
@@ -3765,6 +3776,11 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("C-c l C"), "lsp-call-hierarchy-outgoing");
     keymap.Bind(ParseKeySequence("C-c l s"), "lsp-type-hierarchy-supertypes");
     keymap.Bind(ParseKeySequence("C-c l S"), "lsp-type-hierarchy-subtypes");
+    // prepareRename/linkedEditingRange follow-up: continues the "C-c l"
+    // mnemonic prefix -- "r" for "related"/"linked range," distinct from
+    // lsp-rename's own unprefixed "C-c C-M-r" binding below (a different
+    // command: this one mirrors edits live, it never renames across files).
+    keymap.Bind(ParseKeySequence("C-c l r"), "lsp-linked-editing-range");
     // header-source-switching follow-up: "M-o" is free (grepped the full
     // bind list in this function) and matches the VS Code/CLion C/C++
     // extensions' own Alt+O convention for this exact action -- no

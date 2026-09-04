@@ -603,6 +603,49 @@ struct HierarchyCall {
 // "from" per spec.
 [[nodiscard]] std::vector<HierarchyCall> ExtractOutgoingCalls(const Json& result);
 
+// prepareRename follow-up. Per the spec, textDocument/prepareRename answers
+// with one of four shapes: a bare Range, {range, placeholder}, {defaultBehavior:
+// true}, or null. null is the server's own considered answer that the symbol
+// at this position can't be renamed at all (a keyword, whitespace, a syntax
+// error) -- valid is false only for that case. hasRange distinguishes the
+// first two forms (a concrete span the client can highlight/prefill) from
+// defaultBehavior (renameable, but the client must work out the range
+// itself); placeholder is set only by the {range, placeholder} form, empty
+// otherwise.
+struct PrepareRenameResult {
+    bool        valid = false;
+    bool        hasRange = false;
+    LspPosition start{};
+    LspPosition end{};
+    std::string placeholder;
+
+    bool operator==(const PrepareRenameResult&) const = default;
+};
+
+// Parses a textDocument/prepareRename response. A malformed non-null result
+// (an object matching none of the three recognized shapes) is treated the
+// same as null -- valid stays false -- rather than a parse error, matching
+// every other ExtractX function in this file.
+[[nodiscard]] PrepareRenameResult ExtractPrepareRenameResult(const Json& result);
+
+// linked-editing-range follow-up. One range that must be kept textually
+// identical to every other range in the same response while the user edits
+// any of them (e.g. a markup element's opening and closing tag name) --
+// always within the requesting document, the same "no per-item URI" shape
+// DocumentHighlight already has.
+struct LinkedEditingRange {
+    LspPosition start;
+    LspPosition end;
+
+    bool operator==(const LinkedEditingRange&) const = default;
+};
+
+// Parses a textDocument/linkedEditingRange response: {ranges: Range[],
+// wordPattern?: string} | null. wordPattern is intentionally not extracted --
+// see Editor/LinkedEditingSession.h's own doc comment for why. Empty for a
+// null result or fewer than 2 ranges (nothing to mirror).
+[[nodiscard]] std::vector<LinkedEditingRange> ExtractLinkedEditingRanges(const Json& result);
+
 } // namespace ned::editor::lsp
 
 #endif // NED_EDITOR_LSP_LSPCONTENT_H

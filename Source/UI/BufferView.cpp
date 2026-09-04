@@ -4656,6 +4656,18 @@ bool BufferView::RunCommandAndHandleOutcome(editor::CommandContext& context, con
         }
         snippetPendingPristineDelete_ = false;
     }
+    // linked-editing-range follow-up (pre-dispatch hook): same "wrap the
+    // dispatched command and its own mirror sync into one undo group" shape
+    // as the snippet hook just above, but armed purely on
+    // linkedEditingSession_ itself rather than an InputMode -- this session
+    // must keep mirroring during ordinary Normal-mode typing, not a distinct
+    // mode a caller has to be in.
+    const bool linkedEditingHookArmed = linkedEditingSession_.has_value();
+    if (linkedEditingHookArmed) {
+        if (text::Buffer* linkedBuffer = ResolveLinkedEditingBuffer()) {
+            linkedBuffer->BeginUndoGroup();
+        }
+    }
     bool ran = false;
     try {
         ran = invoke();
@@ -4704,6 +4716,31 @@ bool BufferView::RunCommandAndHandleOutcome(editor::CommandContext& context, con
         }
         else if (statusMessage_.empty()) {
             statusMessage_ = snippetSession_->StatusText();
+        }
+    }
+
+    // linked-editing-range follow-up (post-dispatch hook): same placement
+    // reasoning as the snippet post-dispatch block above -- balances the
+    // pre-hook's undo group on every path, and runs before the
+    // interactiveRequest block so a pane-destroying request never leaves
+    // orphaned ranges behind. C-g/Escape always ends the session outright
+    // (IsQuit), the one exit this class's own PointStillInside/RangesValid
+    // checks can't catch by themselves since neither moves point nor
+    // touches undo.
+    if (linkedEditingHookArmed && linkedEditingSession_) {
+        text::Buffer* linkedBuffer = ResolveLinkedEditingBuffer();
+        if (linkedBuffer != nullptr) {
+            linkedEditingSession_->SyncMirrors(*linkedBuffer);
+            linkedBuffer->EndUndoGroup();
+        }
+        if (linkedBuffer == nullptr || (triggeringChord && IsQuit(*triggeringChord)) ||
+            !linkedEditingSession_->RangesValid(*linkedBuffer) || &activeBuffer_.Get() != linkedBuffer ||
+            !linkedEditingSession_->PointStillInside(*linkedBuffer) ||
+            context.interactiveRequest != editor::InteractiveRequest::None) {
+            EndLinkedEditingSession();
+        }
+        else if (statusMessage_.empty()) {
+            statusMessage_ = linkedEditingSession_->StatusText();
         }
     }
 
@@ -5225,6 +5262,79 @@ void BufferView::RequestDocumentHighlightAtPoint() {
                 .buffer = bufferPtr, .contentGeneration = contentGenerationAtRequest, .requestPoint = point, .ranges = std::move(ranges)};
         },
         serverKey);
+}
+
+void BufferView::RequestLinkedEditingRangeAtPoint() {
+    if (snippetSession_) {
+        // Both sessions use Buffer::SnippetRanges_ as their storage -- see
+        // linkedEditingSession_'s own doc comment for why they can never
+        // coexist.
+        statusMessage_ = "Cannot start linked editing during an active snippet session.";
+        return;
+    }
+    if (!lspManager_) {
+        statusMessage_ = "No LSP manager available.";
+        return;
+    }
+    text::Buffer&       buffer     = activeBuffer_.Get();
+    text::Buffer* const bufferPtr  = &buffer;
+    const std::size_t   point      = buffer.Point();
+    const std::size_t   generation = ++linkedEditingRequestGeneration_;
+    const std::string   serverKey  = ResolvedLspServerKey(point);
+    const std::size_t   contentGenerationAtRequest = buffer.ContentGeneration();
+
+    lspManager_->RequestLinkedEditingRange(
+        buffer, point,
+        [this, bufferPtr, point, generation, contentGenerationAtRequest](std::vector<editor::lsp::LinkedEditingRange> ranges) {
+            if (generation != linkedEditingRequestGeneration_) {
+                return; // superseded by a newer request
+            }
+            if (bufferPtr != &activeBuffer_.Get() || activeBuffer_.Get().Point() != point ||
+                activeBuffer_.Get().ContentGeneration() != contentGenerationAtRequest || snippetSession_) {
+                return; // buffer/point/content changed, or a snippet session started meanwhile
+            }
+            if (ranges.empty()) {
+                statusMessage_ = "No linked ranges at point.";
+                return;
+            }
+            const text::ITextStorage&                         content = bufferPtr->Content();
+            std::vector<std::pair<std::size_t, std::size_t>> byteRanges;
+            byteRanges.reserve(ranges.size());
+            for (const editor::lsp::LinkedEditingRange& range : ranges) {
+                byteRanges.emplace_back(editor::lsp::LspPositionToByte(content, range.start),
+                                        editor::lsp::LspPositionToByte(content, range.end));
+            }
+            auto session = editor::LinkedEditingSession::Start(*bufferPtr, bufferPtr->Name(), byteRanges);
+            if (!session) {
+                statusMessage_ = "No linked ranges at point.";
+                return;
+            }
+            linkedEditingSession_ = std::move(session);
+            statusMessage_        = linkedEditingSession_->StatusText();
+        },
+        serverKey);
+}
+
+text::Buffer* BufferView::ResolveLinkedEditingBuffer() {
+    if (!linkedEditingSession_) {
+        return nullptr;
+    }
+    if (text::Buffer* buffer = bufferList_.Find(linkedEditingSession_->BufferName())) {
+        return buffer;
+    }
+    if (activeBuffer_.Get().Name() == linkedEditingSession_->BufferName()) {
+        return &activeBuffer_.Get();
+    }
+    return nullptr;
+}
+
+void BufferView::EndLinkedEditingSession() {
+    if (linkedEditingSession_) {
+        if (text::Buffer* buffer = ResolveLinkedEditingBuffer()) {
+            linkedEditingSession_->Finish(*buffer);
+        }
+        linkedEditingSession_.reset();
+    }
 }
 
 void BufferView::MaybeScheduleSignatureHelp(const editor::KeyChord& chord, std::size_t generationBefore) {
@@ -6609,6 +6719,60 @@ void BufferView::OpenHeaderSourceCounterpart(const std::filesystem::path& path) 
     }
 }
 
+void BufferView::RequestPrepareRenameAtPoint() {
+    const auto openPrompt = [this](const std::string& prefill) {
+        inputMode_ = InputMode::LspRenameNewName;
+        prompt_.emplace("New name: ");
+        if (!prefill.empty()) {
+            prompt_->SetText(prefill);
+        }
+        statusMessage_ = prompt_->StatusText();
+    };
+    if (!lspManager_) {
+        openPrompt({}); // no LSP manager at all -- same unprefilled prompt lsp-rename always opened before this existed
+        return;
+    }
+    text::Buffer&       buffer     = activeBuffer_.Get();
+    text::Buffer* const bufferPtr  = &buffer;
+    const std::size_t   point      = buffer.Point();
+    const std::size_t   generation = ++prepareRenameRequestGeneration_;
+    const std::string   serverKey  = ResolvedLspServerKey(point);
+    const std::size_t   contentGenerationAtRequest = buffer.ContentGeneration();
+
+    lspManager_->RequestPrepareRename(
+        buffer, point,
+        [this, bufferPtr, point, generation, contentGenerationAtRequest, openPrompt](
+            std::optional<editor::lsp::PrepareRenameResult> result) {
+            if (generation != prepareRenameRequestGeneration_) {
+                return; // superseded by a newer request
+            }
+            if (bufferPtr != &activeBuffer_.Get() || activeBuffer_.Get().Point() != point ||
+                activeBuffer_.Get().ContentGeneration() != contentGenerationAtRequest) {
+                return; // buffer/point/content changed since the request was sent
+            }
+            if (!result) {
+                openPrompt({}); // transport error or an unimplemented method -- fall back, don't block renaming
+                return;
+            }
+            if (!result->valid) {
+                statusMessage_ = "Cannot rename the symbol at point.";
+                return;
+            }
+            if (!result->hasRange) {
+                openPrompt({}); // {defaultBehavior: true} -- renameable, but no range of its own to prefill from
+                return;
+            }
+            const std::size_t rangeStart = editor::lsp::LspPositionToByte(bufferPtr->Content(), result->start);
+            const std::size_t rangeEnd   = editor::lsp::LspPositionToByte(bufferPtr->Content(), result->end);
+            const std::string prefill    = !result->placeholder.empty()
+                                             ? result->placeholder
+                                             : (rangeEnd > rangeStart ? bufferPtr->Content().Substring(rangeStart, rangeEnd - rangeStart)
+                                                                      : std::string());
+            openPrompt(prefill);
+        },
+        serverKey);
+}
+
 void BufferView::RequestRenameAtPoint(const std::string& newName) {
     if (!lspManager_) {
         statusMessage_ = "No LSP manager available.";
@@ -7067,9 +7231,10 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             JumpForward();
             return;
         case editor::InteractiveRequest::LspRename:
-            inputMode_ = InputMode::LspRenameNewName;
-            prompt_.emplace("New name: ");
-            statusMessage_ = prompt_->StatusText();
+            RequestPrepareRenameAtPoint();
+            return;
+        case editor::InteractiveRequest::LspLinkedEditingRange:
+            RequestLinkedEditingRangeAtPoint();
             return;
         case editor::InteractiveRequest::LspShowLog: {
             const std::string logName = std::string(editor::lsp::kLspLogBufferName);
@@ -8239,6 +8404,9 @@ void BufferView::BeginSnippetExpansion(std::size_t replaceStart, std::size_t rep
     // (unreachable through TAB, which a live session consumes, but the LSP
     // accept path and M-x expand-snippet land here too).
     EndSnippetSession();
+    // linked-editing-range follow-up: same storage collision reasoning --
+    // see linkedEditingSession_'s own doc comment.
+    EndLinkedEditingSession();
     text::Buffer& buffer  = activeBuffer_.Get();
     auto          session = editor::SnippetSession::Start(buffer, buffer.Name(), replaceStart, replaceEnd,
                                                           editor::ParseSnippet(body));
@@ -8291,6 +8459,8 @@ void BufferView::EndInteractiveSession() {
     // shared reset (any other session's own end path) clears its
     // buffer-side ranges too, not just the members.
     EndSnippetSession();
+    // linked-editing-range follow-up: same reasoning, same place.
+    EndLinkedEditingSession();
     search_.reset();
     queryReplace_.reset();
     prompt_.reset();
