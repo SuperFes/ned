@@ -965,6 +965,12 @@ class BufferView : public Widget {
                            // unlike the breakpoint-field prompts above where
                            // empty is itself meaningful (clears the field).
                            DapMemoryByteCount,
+                           // Debugging wishlist: ShowMassifGraphPath is one more
+                           // HandlePromptKey-routed plain-text prompt (show-massif-graph) --
+                           // a file path rather than a debuggee expression, standalone
+                           // against Valgrind's own output file, not the pendingDap*-style
+                           // state the DAP prompts above carry.
+                           ShowMassifGraphPath,
                            // editor-ergonomics follow-up: FindRecentFile is
                            // ProjectFindFile's own fuzzy-narrowed-picker shape, over
                            // Editor/RecentFiles.h's candidate list instead of a directory
