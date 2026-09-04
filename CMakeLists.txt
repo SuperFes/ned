@@ -694,6 +694,7 @@ add_library(ned_lib STATIC
         Source/Editor/Dap/DapClient.cpp
         Source/Editor/Dap/DapManager.cpp
         Source/Editor/PointerGraphNode.cpp
+        Source/Editor/Sparkline.cpp
         Source/Editor/Terminal/Config.cpp
         Source/Editor/Terminal/Emulator.cpp
         Source/Editor/Terminal/PtyProcess.cpp
@@ -1047,6 +1048,7 @@ if (NED_BUILD_TESTS)
             Tests/DapClientTest.cpp
             Tests/DapManagerTest.cpp
             Tests/PointerGraphNodeTest.cpp
+            Tests/SparklineTest.cpp
             Tests/DebugConsolePanelTest.cpp
             Tests/ChildProcessTest.cpp
             Tests/TaskConfigTest.cpp

@@ -798,13 +798,20 @@ these accumulate detail in place.
         `memoryReference` repeats an ancestor's in the same session is marked cyclic
         rather than expanded, so a genuine circular/doubly-linked list terminates
         instead of growing forever.
-      - **Array-value graph and watch-history sparkline** (GDBFrontend's array-graph
-        charting; not in `gf`, but a natural extension of "graphing" generally) — a
-        numeric array watch rendered as a small bar chart, or a scalar watch's value
-        plotted across successive stops, both fit `Minimap.h`'s existing
-        braille-glyph-over-`Screen`-cells rendering technique (no new low-level drawing
-        primitive needed) with a real-pixel (`NCBLIT_PIXEL`) upgrade on capable
-        terminals following the Minimap's own precedent (`project_pixel_minimap_decision`).
+      - Array-value graph and watch-history sparkline closed 2026-09-03 — see
+        `git log --grep=watch-history-sparkline`. `Editor/Sparkline.h`'s
+        `BuildBlockSparkline` (a Unicode block-glyph sparkline, not
+        `Minimap.h`'s pixel-raster/`ncvisual` technique this item originally
+        proposed reusing -- the *debug* buffer is plain `Cell`-grid text, not
+        a pixel-capable widget, so there's no ncplane to blit an arbitrary
+        line into) renders both a scalar watch's history across successive
+        stops (`DapManager::RefreshWatchHistory`, auto-collected on every
+        `stopped` event, capped at 40 points, never persisted) and a numeric
+        array watch's current elements (one-shot `RequestVariables`
+        expansion via the new `EvaluateWithReference`). `dap-toggle-watch-
+        graph` (M-x only) toggles it on the current *debug* buffer watch
+        line, `ToggleHexFormatAtPoint`'s own trailing-marker-is-the-only-
+        state shape (`[graph]` instead of `[hex]`).
       - **Memory-as-image viewer** (`gf`'s RGBA bitmap Data tab) — a `dap-show-memory`
         variant rendering a fetched `MemoryBlock` as pixels instead of the hex dump
         `BuildMemoryBuffer` already produces, same pixel-vs-braille-fallback split as
