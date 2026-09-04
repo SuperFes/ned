@@ -852,10 +852,15 @@ these accumulate detail in place.
       only if the content-gate default proves too lossy in practice (i.e. people
       habitually edit files outside ned in ways that touch none of a session's own undo
       states and lose history often enough to complain).
-- [ ] **Peek definition** — a floating inline preview of a definition's source without
-      leaving the buffer (Zed/VSCode's "peek"), rather than `lsp-goto-definition`'s real
-      buffer switch. `Overlay.h`'s `OverlayHost` (already generic, used by
-      `TerminalPanel`/`AcpPanel`) is a plausible cheap substrate if this is ever pursued.
+- **Peek definition** shipped 2026-09-04 (see `git log --grep=peek-definition`) —
+      `lsp-peek-definition` (`C-c l p`) shows the definition's source in a `ListPopup`
+      anchored under point (`Overlay.h`'s `OverlayHost`, the plausible substrate this
+      entry originally named, confirmed out in practice), reusing `LspManager::
+      RequestDefinition` and `editor::multibuffer::ReadExcerptText` rather than adding new
+      machinery. `Enter`/click jumps to the real location; `Esc`/`C-g` dismisses with no
+      side effects. Definition only, v1 scope — no peek-declaration/-type-definition/
+      -implementation variants yet, same "M-x/explicit-bind only" precedent the three
+      `lsp-goto-*` variants already set for those.
 - [ ] **AI edit-prediction** (Zed's Zeta: predicting the next multi-line edit from
       cursor/edit history, distinct from LSP-driven completion or ACP's chat) has no
       equivalent here. A different feature from everything `Acp/` already provides, and
