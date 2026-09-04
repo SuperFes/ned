@@ -298,6 +298,25 @@ class WindowManager {
     // class entirely.
     void SetOnDapConsoleToggle(std::function<void()> onToggle);
 
+    // Debugging wishlist: same "forwarded to every pane, present and future"
+    // shape as SetOnDapConsoleToggle immediately above -- dap-toggle-threads
+    // can fire from whichever pane has focus, and the handler (main.cpp's
+    // toggle over the OverlayHost-owned DapThreadsPanel) lives above this
+    // class entirely.
+    void SetOnDapThreadsToggle(std::function<void()> onToggle);
+
+    // Debugging wishlist: fired right after SetDapManager's own SetOnStopped
+    // handler finishes its status/jump-to-source work on every stop event --
+    // lets main.cpp's DapThreadsPanel re-fetch its row list live, without
+    // this class needing to know the panel exists (same "single real owner
+    // of the DapManager callback fans out internally" reasoning as
+    // SetAcpPanelFocusChecker's own comment above; DapManager::SetOnStopped
+    // itself is single-slot, so a second caller registering directly would
+    // silently clobber SetDapManager's own handler instead of composing with
+    // it). Unset is a safe no-op. Call after SetDapManager (this handler is
+    // (re)installed by that method, not by this setter).
+    void SetOnDapThreadsRefreshNeeded(std::function<void()> onStopped);
+
     // generic-popup follow-up: same "forwarded to every pane, present and
     // future" shape as SetOnDapConsoleToggle immediately above --
     // list-buffers can fire from whichever pane has focus, and the handler
@@ -767,6 +786,8 @@ class WindowManager {
     std::function<void()>             onAcpRewindRequest_;       // see SetOnAcpRewindRequest
     std::function<bool()>             acpPanelFocused_;          // see SetAcpPanelFocusChecker
     std::function<void()>             onDapConsoleToggle_;       // see SetOnDapConsoleToggle
+    std::function<void()>                              onDapThreadsToggle_;       // see SetOnDapThreadsToggle
+    std::function<void()>                              onDapThreadsRefreshNeeded_; // see SetOnDapThreadsRefreshNeeded
     std::function<void()>             onBufferListToggle_;       // see SetOnBufferListToggle
     std::function<void(std::optional<WhichKeyHint>)> onPrefixHintChanged_; // see SetOnPrefixHintChanged
     std::function<void(std::optional<ListPopupModel>)> onCandidatesChanged_; // see SetOnCandidatesChanged
