@@ -6,6 +6,7 @@
 
 #include "Editor/DiagnosticsLog.h"
 #include "Editor/SanitizerOutputParser.h"
+#include "Editor/ValgrindOutputParser.h"
 #include "TaskConfig.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
@@ -69,6 +70,22 @@ text::Buffer* TaskRunner::RunTask(const std::string& name) {
                         std::string message = finding.tool + ": " + finding.message;
                         if (!finding.symbol.empty()) {
                             message += " (in " + finding.symbol + ")";
+                        }
+                        LogMessage(LogCategory::Task, LogSeverity::Error, "task \"" + name + "\": " + message,
+                                   finding.file.empty() ? std::nullopt : std::make_optional(std::move(finding.file)),
+                                   finding.line == 0 ? std::nullopt : std::make_optional(finding.line));
+                    }
+                    // valgrind-xml-parser follow-up: a task pointed at
+                    // `valgrind --xml=yes ...` gets the same durable,
+                    // clickable finding record the sanitizer parser above
+                    // already gives a `-fsanitize=...` build.
+                    for (ValgrindFinding& finding : ParseValgrindXml(*accumulated)) {
+                        std::string message = finding.tool.empty() ? "valgrind" : finding.tool;
+                        if (!finding.kind.empty()) {
+                            message += ": " + finding.kind;
+                        }
+                        if (!finding.message.empty()) {
+                            message += " (" + finding.message + ")";
                         }
                         LogMessage(LogCategory::Task, LogSeverity::Error, "task \"" + name + "\": " + message,
                                    finding.file.empty() ? std::nullopt : std::make_optional(std::move(finding.file)),

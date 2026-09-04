@@ -812,17 +812,14 @@ these accumulate detail in place.
         `dap-select-thread` picker (`BeginDapThreadSelect`) — an `OverlayHost` panel in
         `DebugConsolePanel`/`AcpPanel`'s own shape, refreshing `RequestThreads` on each
         stop instead of only when explicitly invoked.
-      - **Valgrind integration** (the concrete cheap win first): launching the target
-        under `valgrind --vgdb=yes --vgdb-error=0` and DAP-`Attach`ing to its vgdb
-        stub needs zero new `DapManager` code — `Attach`/`ned/set-dap-attach` already
-        do exactly this, memcheck errors arrive as ordinary `stopped` events. The
-        richer version is a structured one: `--xml=yes` memcheck/helgrind output
-        parsed into a synthetic diagnostics buffer, `TestRun/TestOutputParser.h` +
-        `TestResultsBuffer.h`'s own pattern (one `Buffer::Diagnostic` per leak/race,
-        `path:line:` convention for free jump-to-source) applied to a new tool instead
-        of a new test framework. Massif's heap-snapshot-over-time output is a genuine
-        graphing use case too — same sparkline/chart substrate as the array-value
-        graph above, fed by `ms_print`-format parsing instead of a live watch.
+      - **Valgrind integration**: launching the target under `valgrind --vgdb=yes
+        --vgdb-error=0` and DAP-`Attach`ing to its vgdb stub needs zero new
+        `DapManager` code — `Attach`/`ned/set-dap-attach` already do exactly this,
+        memcheck errors arrive as ordinary `stopped` events; this half is still open
+        (a cookbook/config entry, not a code gap, same as the Docker/embedded entry
+        below). Massif's heap-snapshot-over-time output is a genuine graphing use case
+        too — same sparkline/chart substrate as the array-value graph above, fed by
+        `ms_print`-format parsing instead of a live watch; also still open.
       - Sanitizer (ASan/UBSan/TSan/MSan/LSan) output parsing closed 2026-09-03 — see
         `git log --grep=sanitizer-output-parser`. `Editor/SanitizerOutputParser.h`'s
         `ParseSanitizerOutput` keys on the shared `SUMMARY:` report line every
@@ -830,8 +827,21 @@ these accumulate detail in place.
         `runtime error:` line for a better message; wired into `TestRunner`'s and
         `TaskRunner`'s own process-exit handling, logging each finding to
         `DiagnosticsLog` (`LogCategory::Subprocess`) with a clickable path:line when
-        the report carries a location. The valgrind XML parser sibling noted above
-        stays open.
+        the report carries a location.
+      - Valgrind `--xml=yes` (memcheck/helgrind) output parsing closed 2026-09-03 —
+        see `git log --grep=valgrind-xml-parser`. `Editor/ValgrindOutputParser.h`'s
+        `ParseValgrindXml` is a hand-rolled attribute-free-tag scanner (no XML
+        library dependency, `TestOutputParser.h`'s own junit-xml precedent) over
+        `<error>` blocks: `<kind>` + `<xwhat><text>`/`<what>` for the message, the
+        first frame in the error's first `<stack>` block carrying both `<file>` and
+        `<line>` for the location (a library frame with no debug info is skipped in
+        favor of the next one). Wired into `TestRunner`'s and `TaskRunner`'s own
+        process-exit handling alongside the sanitizer parser, same
+        `DiagnosticsLog`/clickable-path:line treatment. Deliberately not chased
+        further: only the first `<stack>` per error (a leak's allocation site, or a
+        race's second "previous access" stack, aren't a second surfaced location);
+        `<auxwhat>`/`<xauxwhat>` text and `<leakedbytes>`/`<leakedblocks>` aren't
+        folded in.
       - **Docker/embedded/OpenOCD targets** (GDBFrontend's bespoke UI for these) —
         already possible today with zero new code: `Attach`'s adapter/config is
         opaque argv + JSON (`DapConfig.h`), so pointing `ned/set-dap-adapter`/
