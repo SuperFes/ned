@@ -590,6 +590,7 @@ add_library(ned_lib STATIC
         Source/Editor/OrgCapture.cpp
         Source/Editor/Snippet.cpp
         Source/Editor/SnippetRegistry.cpp
+        Source/Editor/BundledSnippets.cpp
         Source/Editor/LinkedEditingSession.cpp
         Source/Editor/Table.cpp
         Source/Editor/Markdown.cpp
@@ -891,6 +892,7 @@ if (NED_BUILD_TESTS)
             Tests/DabbrevCompleteTest.cpp
             Tests/SnippetTest.cpp
             Tests/SnippetRegistryTest.cpp
+            Tests/BundledSnippetsTest.cpp
             Tests/LinkedEditingSessionTest.cpp
             Tests/JanetSymbolCompleteTest.cpp
             Tests/AutoRevertTest.cpp

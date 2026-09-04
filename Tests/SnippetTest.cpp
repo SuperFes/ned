@@ -124,12 +124,82 @@ TEST_CASE("ParseSnippet honors a brace escape inside a placeholder", "[Snippet]"
 
 TEST_CASE("ParseSnippet passes ill-formed syntax through as literal text", "[Snippet]") {
     REQUIRE(ParseSnippet("${").text == "${");
-    REQUIRE(ParseSnippet("${x}").text == "${x}");
     REQUIRE(ParseSnippet("${1:unterminated").text == "${1:unterminated");
     REQUIRE(ParseSnippet("$").text == "$");
-    REQUIRE(ParseSnippet("${1|a,b|}").text == "${1|a,b|}");
-    // Ill-formed bodies still get the implicit final stop and nothing else.
-    REQUIRE(ParseSnippet("${1|a,b|}").fields.size() == 1);
+    // A genuinely unterminated choice/transform still passes through whole.
+    REQUIRE(ParseSnippet("${1|a,b").text == "${1|a,b");
+    REQUIRE(ParseSnippet("${1/a/b").text == "${1/a/b");
+}
+
+// --- Choices ---------------------------------------------------------------
+
+TEST_CASE("ParseSnippet resolves a choice field to its first option as a placeholder", "[Snippet]") {
+    const ParsedSnippet parsed = ParseSnippet("${1|foo,bar,baz|}");
+    REQUIRE(parsed.text == "foo");
+    REQUIRE(parsed.fields.size() == 2);
+    REQUIRE(FieldEquals(parsed.fields[0], 1, 0, 3));
+}
+
+TEST_CASE("ParseSnippet honors comma/pipe escapes inside a choice list", "[Snippet]") {
+    const ParsedSnippet parsed = ParseSnippet("${1|a\\,b,c|}");
+    REQUIRE(parsed.text == "a,b");
+}
+
+// --- $TM_*/other editor-context variables -----------------------------------
+
+TEST_CASE("ParseSnippet resolves a known variable to its supplied value", "[Snippet]") {
+    ned::editor::SnippetVariables vars;
+    vars.filename              = "main.cpp";
+    const ParsedSnippet parsed = ParseSnippet("// $TM_FILENAME", vars);
+    REQUIRE(parsed.text == "// main.cpp");
+    REQUIRE(parsed.fields.size() == 1); // just the implicit final stop -- variables aren't fields
+}
+
+TEST_CASE("ParseSnippet resolves the braced ${VAR} form identically to bare $VAR", "[Snippet]") {
+    ned::editor::SnippetVariables vars;
+    vars.lineNumber = "42";
+    REQUIRE(ParseSnippet("L${TM_LINE_NUMBER}", vars).text == "L42");
+}
+
+TEST_CASE("ParseSnippet falls back to a variable's own default when unset", "[Snippet]") {
+    REQUIRE(ParseSnippet("${TM_SELECTED_TEXT:fallback}").text == "fallback");
+}
+
+TEST_CASE("ParseSnippet inserts an unknown variable's bare name with no default", "[Snippet]") {
+    REQUIRE(ParseSnippet("$NOT_A_REAL_VAR").text == "NOT_A_REAL_VAR");
+    REQUIRE(ParseSnippet("${NOT_A_REAL_VAR}").text == "NOT_A_REAL_VAR");
+}
+
+TEST_CASE("ParseSnippet applies a transform to a variable", "[Snippet]") {
+    ned::editor::SnippetVariables vars;
+    vars.filenameBase          = "MyClass";
+    const ParsedSnippet parsed = ParseSnippet("${TM_FILENAME_BASE/(.*)/${1:/upcase}/}", vars);
+    REQUIRE(parsed.text == "MYCLASS");
+}
+
+// --- Tabstop transforms (`${N/regex/format/flags}`) -------------------------
+
+TEST_CASE("ParseSnippet applies an upcase transform to a tabstop mirror", "[Snippet]") {
+    const ParsedSnippet parsed = ParseSnippet("${1:hello} ${1/(.*)/${1:/upcase}/}");
+    REQUIRE(parsed.text == "hello HELLO");
+}
+
+TEST_CASE("ParseSnippet transform only replaces the first match without the g flag", "[Snippet]") {
+    const ParsedSnippet parsed = ParseSnippet("${1:aXaXa} ${1/a/b/}");
+    REQUIRE(parsed.text == "aXaXa bXaXa");
+}
+
+TEST_CASE("ParseSnippet transform replaces every match with the g flag", "[Snippet]") {
+    const ParsedSnippet parsed = ParseSnippet("${1:aXaXa} ${1/a/b/g}");
+    REQUIRE(parsed.text == "aXaXa bXbXb");
+}
+
+TEST_CASE("ParseSnippet transform's :+/:-/bare conditional forms follow group participation", "[Snippet]") {
+    // (a)? against "b" leaves group 1 unmatched.
+    REQUIRE(ParseSnippet("${1:b} ${1/(a)?(b)/${1:+yes}/}").text == "b ");
+    REQUIRE(ParseSnippet("${1:b} ${1/(a)?(b)/${1:-no}/}").text == "b no");
+    REQUIRE(ParseSnippet("${1:b} ${1/(a)?(b)/${1:no}/}").text == "b no");
+    REQUIRE(ParseSnippet("${1:ab} ${1/(a)?(b)/${1:+yes}/}").text == "ab yes");
 }
 
 TEST_CASE("ParseSnippet treats a plain-dollar-digits run as a real stop", "[Snippet]") {

@@ -33,6 +33,7 @@
 #include "Editor/BackgroundActivity.h"
 #include "Editor/Backup.h"
 #include "Editor/Bookmark.h"
+#include "Editor/BundledSnippets.h"
 #include "Editor/Commands.h"
 #include "Editor/Dap/DapManager.h"
 #include "Editor/Keymap.h"
@@ -385,6 +386,13 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     catch (const std::exception& e) {
         statusMessage = std::string("bundled vcs plugin error: ") + e.what();
     }
+
+    // Same placement reasoning as LoadBundledPlugins above -- before
+    // LoadInitFile so a user's own ned/register-snippet call there can
+    // override or (with an empty body) erase a bundled default. Pure C++
+    // registration against a hardcoded table (Editor/BundledSnippets.h);
+    // never throws.
+    ned::editor::RegisterBundledSnippets();
 
     try {
         ned::janet::LoadInitFile(janetEnv);

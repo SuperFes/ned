@@ -4,9 +4,16 @@
 // ned/set-lsp-command keys on ("cpp", "python", ...; LanguageKeyForMode in
 // Mode.h derives it from a Mode's name on the lookup side), with "" meaning
 // "every mode". Process-wide, mutex-guarded (OrgCapture.h's exact registry
-// pattern); Janet-only surface (ned/register-snippet) -- no bundled
-// defaults, matching the LSP/DAP/task-config "nothing bundled or
-// auto-detected" posture.
+// pattern); ned/register-snippet is the Janet-facing surface, and
+// Editor/BundledSnippets.h registers a curated default set through this
+// same C++ function (called from main.cpp before LoadInitFile) -- a
+// deliberate departure from the LSP/DAP/task-config "nothing bundled or
+// auto-detected" posture those subsystems keep, since a snippet body is
+// inert user-facing content, not an executable command/argv the way a
+// language server or debug adapter is. A user's own ned/register-snippet
+// call for the same (languageKey, trigger) still overrides a bundled entry
+// outright (this file's own "re-registering overwrites" rule), and an
+// explicit empty-body call erases it.
 //
 
 #ifndef NED_EDITOR_SNIPPETREGISTRY_H

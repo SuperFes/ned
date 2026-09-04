@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cstdio>
 #include <cstdlib>
+#include <ctime>
 #include <exception>
 #include <filesystem>
 #include <fstream>
@@ -4576,17 +4578,18 @@ void BufferView::HandlePrefixArgumentKey(const editor::KeyChord& chord) {
     DispatchChordNormally(chord);
 }
 
-void BufferView::HandleSnippetKey(const editor::KeyChord& chord) {
+bool BufferView::HandleSnippetNavigationKey(const editor::KeyChord& chord) {
     text::Buffer* buffer = ResolveSnippetBuffer();
     if (buffer == nullptr) {
         // Session buffer closed out from under the session (or no session at
         // all -- shouldn't happen, but never leave the mode wedged).
         EndSnippetSession();
-        return;
+        return true;
     }
 
     const bool plainTab = chord.Special == editor::SpecialKey::Tab && !chord.Control && !chord.Meta;
     if ((plainTab && !chord.Shift) || (chord.Meta && !chord.Control && chord.Codepoint == U'n')) {
+        dispatcher_.RecordChord(chord);
         if (snippetSession_->NextField(*buffer) == editor::SnippetSession::NavResult::Finished) {
             EndSnippetSession();
             statusMessage_.clear();
@@ -4596,28 +4599,31 @@ void BufferView::HandleSnippetKey(const editor::KeyChord& chord) {
         }
         ClampPointToNarrowing();
         ScrollToShowPoint();
-        return;
+        return true;
     }
     // S-TAB's arrival as a shifted Tab chord is terminal-dependent (see
     // KeyTranslation.cpp's special-key shift handling) -- M-p is the
     // always-available fallback, M-n its forward twin above.
     if ((plainTab && chord.Shift) || (chord.Meta && !chord.Control && chord.Codepoint == U'p')) {
+        dispatcher_.RecordChord(chord);
         snippetSession_->PreviousField(*buffer);
         statusMessage_ = snippetSession_->StatusText();
         ClampPointToNarrowing();
         ScrollToShowPoint();
-        return;
+        return true;
     }
     if (IsQuit(chord)) {
         // Done -- the expanded text stays exactly as it is.
+        dispatcher_.RecordChord(chord);
         EndSnippetSession();
         statusMessage_.clear();
-        return;
+        return true;
     }
     if (chord.Special == editor::SpecialKey::Backspace && !chord.Control && !chord.Meta &&
         snippetSession_->Pristine()) {
         // Backspace on a pristine placeholder deletes the whole placeholder
         // and is consumed -- one undo step including the mirror sync.
+        dispatcher_.RecordChord(chord);
         buffer->BeginUndoGroup();
         snippetSession_->DeleteActiveFieldContent(*buffer);
         snippetSession_->ClearPristine();
@@ -4625,7 +4631,7 @@ void BufferView::HandleSnippetKey(const editor::KeyChord& chord) {
         buffer->EndUndoGroup();
         ClampPointToNarrowing();
         ScrollToShowPoint();
-        return;
+        return true;
     }
     if (snippetSession_->Pristine()) {
         if (IsPlainCharacter(chord)) {
@@ -4637,6 +4643,13 @@ void BufferView::HandleSnippetKey(const editor::KeyChord& chord) {
         else {
             snippetSession_->ClearPristine();
         }
+    }
+    return false;
+}
+
+void BufferView::HandleSnippetKey(const editor::KeyChord& chord) {
+    if (HandleSnippetNavigationKey(chord)) {
+        return;
     }
     DispatchChordNormally(chord);
 }
@@ -6982,22 +6995,48 @@ void BufferView::ReplayMacro() {
 
     replayingMacro_ = true;
     for (const editor::KeyChord& chord : macro) {
-        editor::CommandContext context = MakeContext();
-        context.viewportHeight         = size().height > 0 ? static_cast<std::size_t>(size().height) : 0;
-        RunCommandAndHandleOutcome(context, [&] { return dispatcher_.Feed(chord, context) == editor::Dispatcher::Outcome::Invoked; });
-
-        // context.quit/interactiveRequest are the caller's own local copies
-        // (see RunCommandAndHandleOutcome's own doc comment), always safe to
-        // read even if *this* was just destroyed -- checked first and
-        // exclusively in that case. A recorded macro can perfectly well
-        // contain a delete-window/split/other-window step, and touching
-        // inputMode_ below afterward would otherwise be a real, if narrow,
-        // use-after-free (this bug predates narrowing -- found and fixed
-        // alongside it, not introduced by it).
-        if (context.quit || IsWindowManagementRequest(context.interactiveRequest)) {
-            break;
+        // snippet-macro-replay follow-up: a chord the live session would
+        // consume itself (Tab/S-Tab field navigation, ESC, a pristine-
+        // placeholder Backspace) gets the identical treatment here --
+        // HandleSnippetNavigationKey never invokes an arbitrary command, so
+        // *this* can't have been destroyed by it and there's nothing to
+        // dispatch afterward. Anything it doesn't consume (plain typing,
+        // kill-line, ...) falls through to the same Feed-with-a-locally-
+        // owned-context dispatch every other replayed chord already uses --
+        // required, not just simpler, since that's also what makes a
+        // window-management command reachable this way (delete-window is
+        // bound globally, still resolvable from inside a snippet field)
+        // safe to detect without ever touching *this* afterward.
+        if (inputMode_ == InputMode::Snippet && HandleSnippetNavigationKey(chord)) {
+            // handled entirely above -- fall to the trailing inputMode_
+            // check below like any other iteration.
         }
-        if (inputMode_ != InputMode::Normal) {
+        else {
+            editor::CommandContext context = MakeContext();
+            context.viewportHeight         = size().height > 0 ? static_cast<std::size_t>(size().height) : 0;
+            RunCommandAndHandleOutcome(context, [&] { return dispatcher_.Feed(chord, context) == editor::Dispatcher::Outcome::Invoked; });
+
+            // context.quit/interactiveRequest are the caller's own local
+            // copies (see RunCommandAndHandleOutcome's own doc comment),
+            // always safe to read even if *this* was just destroyed --
+            // checked first and exclusively in that case. A recorded macro
+            // can perfectly well contain a delete-window/split/other-window
+            // step -- IsWindowManagementRequest alone gets the immediate
+            // `return` (touching inputMode_/replayingMacro_ below would
+            // otherwise be a real, if narrow, use-after-free -- this bug
+            // predates the snippet-replay branch above, found and fixed
+            // alongside it, not introduced by it); context.quit doesn't
+            // destroy the pane (eventLoop_->Exit() already happened inside
+            // RunCommandAndHandleOutcome regardless of this check), so it's
+            // still safe to fall through to replayingMacro_ = false below.
+            if (IsWindowManagementRequest(context.interactiveRequest)) {
+                return;
+            }
+            if (context.quit) {
+                break;
+            }
+        }
+        if (inputMode_ != InputMode::Normal && inputMode_ != InputMode::Snippet) {
             break;
         }
     }
@@ -8450,6 +8489,74 @@ std::string BufferView::SearchStatusText() const {
     return text;
 }
 
+namespace {
+
+    // snippet-variables follow-up: resolves the practical $TM_*/CLIPBOARD/
+    // CURRENT_*/RANDOM* subset SnippetVariables documents as supported --
+    // TM_CURRENT_WORD, BLOCK_COMMENT_*, LINE_COMMENT, and WORKSPACE_* are
+    // deliberate v1 cuts (no word-boundary helper at the Buffer level to
+    // reuse for the former; Mode isn't threaded into BeginSnippetExpansion
+    // for the latter two/three).
+    editor::SnippetVariables BuildSnippetVariables(text::Buffer& buffer) {
+        editor::SnippetVariables  vars;
+        const text::ITextStorage& content = buffer.Content();
+        const std::size_t         point   = buffer.Point();
+
+        if (buffer.HasMark()) {
+            const auto [start, end] = buffer.Region();
+            vars.selectedText       = content.Substring(start, end - start);
+        }
+
+        const std::size_t line      = content.ByteOffsetToLine(point);
+        vars.lineNumber             = std::to_string(line + 1);
+        vars.lineIndex              = std::to_string(line);
+        const std::size_t lineStart = content.LineToByteOffset(line);
+        // Bounded the same way Buffer.cpp's kMaxTabAwareColumnScan is --
+        // this is a preview value for one snippet field, not worth an
+        // unbounded scan on a pathologically long line.
+        constexpr std::size_t kMaxLineScan = 8192;
+        const std::size_t     scanEnd      = std::min(content.ByteLength(), lineStart + kMaxLineScan);
+        const std::string     chunk        = content.Substring(lineStart, scanEnd - lineStart);
+        const std::size_t     newline      = chunk.find('\n');
+        vars.currentLine                   = newline == std::string::npos ? chunk : chunk.substr(0, newline);
+
+        if (const auto& path = buffer.Path()) {
+            vars.filename     = path->filename().string();
+            vars.filenameBase = path->stem().string();
+            vars.directory    = path->parent_path().string();
+            vars.filepath     = path->string();
+            std::error_code ec;
+            const auto      relative = std::filesystem::relative(*path, editor::ProjectRoot(), ec);
+            vars.relativeFilepath    = ec ? vars.filepath : relative.string();
+        }
+
+        if (const auto clip = editor::PasteFromSystemClipboard()) {
+            vars.clipboard = *clip;
+        }
+
+        const auto        now     = std::chrono::system_clock::now();
+        const std::time_t nowTime = std::chrono::system_clock::to_time_t(now);
+        std::tm           local{};
+        localtime_r(&nowTime, &local);
+        char buf[8];
+        std::snprintf(buf, sizeof(buf), "%04d", local.tm_year + 1900);
+        vars.year = buf;
+        std::snprintf(buf, sizeof(buf), "%02d", local.tm_mon + 1);
+        vars.month = buf;
+        std::snprintf(buf, sizeof(buf), "%02d", local.tm_mday);
+        vars.date = buf;
+        std::snprintf(buf, sizeof(buf), "%02d", local.tm_hour);
+        vars.hour = buf;
+        std::snprintf(buf, sizeof(buf), "%02d", local.tm_min);
+        vars.minute = buf;
+        std::snprintf(buf, sizeof(buf), "%02d", local.tm_sec);
+        vars.second = buf;
+
+        return vars;
+    }
+
+} // namespace
+
 void BufferView::BeginSnippetExpansion(std::size_t replaceStart, std::size_t replaceEnd, const std::string& body) {
     // Any prior session's ranges must never leak into a fresh expansion
     // (unreachable through TAB, which a live session consumes, but the LSP
@@ -8460,7 +8567,7 @@ void BufferView::BeginSnippetExpansion(std::size_t replaceStart, std::size_t rep
     EndLinkedEditingSession();
     text::Buffer& buffer  = activeBuffer_.Get();
     auto          session = editor::SnippetSession::Start(buffer, buffer.Name(), replaceStart, replaceEnd,
-                                                          editor::ParseSnippet(body));
+                                                          editor::ParseSnippet(body, BuildSnippetVariables(buffer)));
     if (session) {
         snippetSession_.emplace(std::move(*session));
         inputMode_     = InputMode::Snippet;

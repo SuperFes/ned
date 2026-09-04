@@ -16,12 +16,16 @@
 // never an error -- LSP servers send this syntax and a bad body must degrade
 // to visible text, not a refusal.
 //
-// Deliberate v1 cuts, documented so they're a decision rather than a gap:
-// `$TM_*` variables, `${1|a,b|}` choices, and `${1/regex/fmt/}` transforms
-// all pass through literally (the `${1|`/`${1/` forms are "ill-formed" per
-// the rule above); a nested placeholder (`${1:foo ${2:bar}}`) contributes its
-// literal text ("foo bar") but the inner tabstop is dropped -- overlapping
-// field ranges are a relocation-semantics can of worms v1 stays out of.
+// snippet-expansion-gaps follow-up: `$TM_*`/other editor-context variables,
+// `${1|a,b|}` choices, and `${1/regex/format/flags}` tabstop transforms are
+// all real support now -- see SnippetVariables/SnippetTransform below and
+// TryParseVariable/ParseTransformSuffix in the .cpp. A nested placeholder
+// (`${1:foo ${2:bar}}`) still contributes only its literal text ("foo bar")
+// with the inner tabstop dropped, and a variable reference nested inside
+// another placeholder's own default text doesn't resolve (only a top-level
+// `$`/`${` reference does) -- both stay documented v1 cuts: overlapping
+// field ranges are a relocation-semantics can of worms, and the nested-
+// variable case is rare enough not to be worth it either.
 //
 
 #ifndef NED_EDITOR_SNIPPET_H
@@ -31,6 +35,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -38,11 +43,52 @@
 
 namespace ned::editor {
 
+// $TM_*/CLIPBOARD/CURRENT_*/etc. editor-context values a caller resolves
+// once, before parsing -- ParseSnippet itself has no buffer/filesystem
+// access, matching this file's "pure parsing" positioning. An empty field
+// is treated as "unset" (falls back to the variable's own `${VAR:default}`
+// clause when the body supplies one, else ""); RANDOM/RANDOM_HEX/UUID are
+// the one genuinely nondeterministic exception and are generated directly
+// in Snippet.cpp rather than threaded through here. See Snippet.cpp's
+// LookupKnownVariable for the exact supported name list.
+struct SnippetVariables {
+    std::string selectedText;                            // TM_SELECTED_TEXT
+    std::string currentLine;                             // TM_CURRENT_LINE
+    std::string lineNumber;                              // TM_LINE_NUMBER (1-based)
+    std::string lineIndex;                               // TM_LINE_INDEX (0-based)
+    std::string filename;                                // TM_FILENAME
+    std::string filenameBase;                            // TM_FILENAME_BASE
+    std::string directory;                               // TM_DIRECTORY
+    std::string filepath;                                // TM_FILEPATH
+    std::string relativeFilepath;                        // RELATIVE_FILEPATH (relative to ProjectRoot())
+    std::string clipboard;                               // CLIPBOARD
+    std::string year, month, date, hour, minute, second; // CURRENT_YEAR/MONTH/DATE/HOUR/MINUTE/SECOND
+};
+
+// A tabstop mirror's live regex transform (`${1/regex/format/flags}` -- the
+// LSP snippet grammar's own transform production, VSCode's `${n:/upcase}`-
+// style format mini-language, not TextMate's older `\U...\E` convention).
+// Recomputed from the primary tabstop's current content on every
+// SnippetSession::SyncMirrors call (and once, against the primary's initial
+// text, by ParseSnippet itself) -- never diffed/cached, the same
+// "recompute don't diff" shape ContentGeneration()-gated caches elsewhere in
+// this codebase use for a much larger cost, unneeded here since a single
+// field's content is tiny.
+struct SnippetTransform {
+    std::string pattern;        // PCRE2 source; "(?i)" already prefixed when the /i flag was present
+    std::string format;         // the format mini-language string, applied per match
+    bool        global = false; // the /g flag -- every match transformed, not just the first
+};
+
 // One field occurrence in ParsedSnippet::text. index 0 is the final stop.
 struct SnippetField {
     int         index;
     std::size_t start; // byte offsets into ParsedSnippet::text; start <= end
     std::size_t end;
+    // Set only on an occurrence that was itself written as
+    // `${N/regex/format/flags}` -- a plain mirror (bare `$N`/`${N}`) or the
+    // placeholder-carrying primary never carries one.
+    std::optional<SnippetTransform> transform;
 };
 
 // fields is ordered by visit order -- ascending index with 0 sorted last --
@@ -55,7 +101,7 @@ struct ParsedSnippet {
     std::vector<SnippetField> fields; // every occurrence, mirrors included; never empty (implicit $0)
 };
 
-[[nodiscard]] ParsedSnippet ParseSnippet(std::string_view body);
+[[nodiscard]] ParsedSnippet ParseSnippet(std::string_view body, const SnippetVariables& variables = {});
 
 // One live snippet-expansion session over one buffer -- the state machine
 // BufferView drives key-by-key, mirroring IncrementalSearch/
@@ -138,6 +184,12 @@ class SnippetSession {
     std::size_t      activeRangeId_ = 0; // the active index's primary range
     bool             pristine_      = false;
     std::string      lastSyncedText_; // active primary's content as of the last sync
+    // Range id -> its own live transform, populated from ParsedSnippet's
+    // fields at Start() time. Only a mirror's id is ever looked up (see
+    // SyncMirrors), but populated for every id that has one regardless of
+    // whether it turned out to be the primary -- harmless, since the
+    // primary's own id is never looked up here.
+    std::unordered_map<std::size_t, SnippetTransform> transforms_;
 };
 
 } // namespace ned::editor
