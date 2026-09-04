@@ -2542,6 +2542,17 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           context.interactiveRequest = InteractiveRequest::LspGotoImplementation;
                       });
 
+    // peek-definition follow-up: JetBrains/VSCode-style "look without leaving" --
+    // shows the definition's source in a floating popup rather than jumping the
+    // buffer (see InteractiveRequest::LspPeekDefinition's own doc comment in
+    // Command.h). Definition only, v1 scope -- no peek-declaration/-type-
+    // definition/-implementation variants yet, same "unbound, M-x/explicit-bind
+    // only" precedent as the three lsp-goto-* variants above for those.
+    registry.Register("lsp-peek-definition", "Preview the definition of the symbol at point without leaving the buffer, via the language server.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::LspPeekDefinition;
+                      });
+
     // symbol-search follow-up: two more one-shot direct actions --
     // BufferView owns the actual request/picker session for both (see
     // InteractiveRequest::LspGotoSymbol/LspWorkspaceSymbol's own doc
@@ -3795,6 +3806,10 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("C-c l d"), "lsp-goto-declaration");
     keymap.Bind(ParseKeySequence("C-c l t"), "lsp-goto-type-definition");
     keymap.Bind(ParseKeySequence("C-c l i"), "lsp-goto-implementation");
+    // peek-definition follow-up: same "C-c l" mnemonic prefix, "p" for peek --
+    // JetBrains' own default (Ctrl+Shift+I) has no vanilla-Emacs analog to align
+    // with either, same reasoning as C-c l d/t/i just above.
+    keymap.Bind(ParseKeySequence("C-c l p"), "lsp-peek-definition");
     // symbol-search follow-up: "M-g i" is real Emacs' own default binding
     // for `imenu` (goto-map, Emacs 28+) -- lsp-goto-symbol is this
     // codebase's in-buffer symbol picker, the same role. lsp-workspace-symbol

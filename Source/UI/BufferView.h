@@ -637,6 +637,32 @@ class BufferView : public Widget {
     // ListPopup::SetOnActivate in main.cpp.
     void AcceptActiveCompletionAt(std::size_t index);
 
+    // peek-definition follow-up: a modal EchoArea-prompt-driven session the same
+    // way SetOnCandidatesChanged's sessions are (entered only from inside
+    // RequestPeekDefinitionAtPoint's async callback, ended by
+    // EndInteractiveSession), but anchored under point the way
+    // SetOnCompletionChanged's popup is (ListPopupModel::anchor set via
+    // CompletionAnchorNow(), reused as-is -- point doesn't move while a peek
+    // session is open, so no live re-anchoring is needed the way completion's
+    // is). Fired with a populated model from RefreshPeekDefinitionStatus, and
+    // with std::nullopt from EndInteractiveSession. Wired via
+    // WindowManager::SetOnPeekChanged fanning out to every pane; main.cpp's
+    // registrant shows/hides its own shared, anchor-aware ListPopup overlay.
+    // Unset is a safe no-op.
+    void SetOnPeekChanged(std::function<void(std::optional<ListPopupModel>)> handler);
+
+    // peek-definition follow-up: the click-driven counterpart to Enter in
+    // HandlePeekDefinitionKey -- jumps to whichever location the popup is
+    // currently showing (index is accepted for signature symmetry with
+    // AcceptActiveCompletionAt/ActivateCompletionAt, but is otherwise unused --
+    // every row in a peek popup is a line of the *same* location's source, not a
+    // list of alternatives to pick between, so a click anywhere in it means "open
+    // this one"). A no-op outside InputMode::LspPeekDefinition (a stale click
+    // racing an already-ended session). Public for the same reason
+    // AcceptActiveCompletionAt is -- WindowManager::ActivatePeekDefinition
+    // forwards here from the peek popup's own ListPopup::SetOnActivate.
+    void ActivatePeekDefinitionAt(std::size_t index);
+
     // call/type-hierarchy follow-up: same OverlayHost-owned-above-this-
     // class shape as SetOnCandidatesChanged/SetOnCompletionChanged above,
     // for the one shared ui::TreeView overlay every hierarchy-browse
@@ -838,6 +864,15 @@ class BufferView : public Widget {
                            // location (a real, if less common, case -- e.g. a virtual/overridden
                            // method with several implementations).
                            LspGotoDefinitionSelect,
+                           // peek-definition follow-up: entered from inside
+                           // RequestPeekDefinitionAtPoint's async response callback the same way
+                           // LspGotoDefinitionSelect is, but unconditionally (even a single
+                           // location shows the preview popup -- the entire point is to look
+                           // without navigating away, unlike lsp-goto-definition's "jump straight
+                           // there if there's only one candidate"). Driven via onPeekChanged_
+                           // (a ListPopupModel, main.cpp's own anchored peekPopup) rather than
+                           // statusMessage_ text the way LspGotoDefinitionSelect still is.
+                           LspPeekDefinition,
                            // symbol-search follow-up: LspGotoSymbol is entered only once
                            // RequestDocumentSymbolsAtPoint's async response arrives (same
                            // "entered from inside the callback" shape as LspGotoDefinitionSelect
@@ -1317,6 +1352,24 @@ class BufferView : public Widget {
     // and moves point to location.position, resolved against the newly-
     // opened buffer's own content.
     void JumpToDefinition(const editor::lsp::LspManager::ResolvedLocation& location);
+
+    // peek-definition follow-up: JetBrains/VSCode-style "look without leaving" --
+    // requests LspManager::RequestDefinition the same way RequestDefinitionAtPoint
+    // does (LspLocationKind::Definition only, v1 scope -- declaration/type-
+    // definition/implementation stay goto-only for now), but on response always
+    // enters LspPeekDefinition and shows a source excerpt via onPeekChanged_
+    // rather than ever jumping automatically, even for a single location.
+    void RequestPeekDefinitionAtPoint();
+    // Rebuilds the ListPopupModel for pendingPeekDefinitions_[peekDefinitionSelection_]
+    // (editor::multibuffer::ReadExcerptText around the target line, target row
+    // marked via ListPopupModel::selectedIndex) and fires it through
+    // onPeekChanged_ -- called once when the session starts and again on every
+    // Up/Down/digit reselection among multiple locations. Also refreshes
+    // statusMessage_ with the same "[i/N]" wording RefreshDefinitionSelectStatus
+    // uses, so the multi-location case is discoverable without relying on the
+    // popup title alone.
+    void RefreshPeekDefinitionStatus();
+    void HandlePeekDefinitionKey(const editor::KeyChord& chord);
 
     // One browse session's state: the tree itself (Editor/ExpandableTree.h,
     // NodeData = LspManager::ResolvedHierarchyItem so every node keeps both
@@ -2850,6 +2903,7 @@ class BufferView : public Widget {
     std::function<void(std::optional<WhichKeyHint>)> onPrefixHintChanged_;  // see SetOnPrefixHintChanged
     std::function<void(std::optional<ListPopupModel>)> onCandidatesChanged_; // see SetOnCandidatesChanged
     std::function<void(std::optional<ListPopupModel>)> onCompletionChanged_; // see SetOnCompletionChanged
+    std::function<void(std::optional<ListPopupModel>)> onPeekChanged_; // see SetOnPeekChanged
 
     // call/type-hierarchy follow-up: onHierarchyChanged_ mirrors
     // onCandidatesChanged_'s own role, for the shared TreeView overlay
@@ -3675,6 +3729,16 @@ class BufferView : public Widget {
     // the request that's actually pending rather than always saying
     // "Definition" regardless of kind.
     std::string pendingLocationLabel_ = "definition";
+
+    // peek-definition follow-up: same staleness-guard/selection shape as
+    // pendingDefinitions_/definitionSelection_/definitionRequestGeneration_ just
+    // above, valid only while inputMode_ == LspPeekDefinition. Kept as its own
+    // separate set (not reusing pendingDefinitions_) since a peek session and a
+    // goto-definition select session are never simultaneously live but do use
+    // independently-generationed async requests.
+    std::vector<editor::lsp::LspManager::ResolvedLocation> pendingPeekDefinitions_;
+    std::size_t                                            peekDefinitionSelection_         = 0;
+    std::size_t                                            peekDefinitionRequestGeneration_ = 0;
 
     // find-references follow-up: same staleness-guard shape as
     // definitionRequestGeneration_, kept separate (rather than sharing that
