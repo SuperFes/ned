@@ -4312,6 +4312,11 @@ bool BufferView::OnKeyEvent(const Event& event) {
         ClampPointToNarrowing();
         return true;
     }
+    if (inputMode_ == InputMode::LspPeekDefinition) {
+        HandlePeekDefinitionKey(*chord);
+        ClampPointToNarrowing();
+        return true;
+    }
     if (inputMode_ == InputMode::LspGotoSymbol) {
         // Same "Enter jumps directly, no RunCommandAndHandleOutcome routing"
         // shape as ProjectFindFile above.
@@ -6229,6 +6234,140 @@ void BufferView::JumpToDefinition(const editor::lsp::LspManager::ResolvedLocatio
     }
 }
 
+namespace {
+    // peek-definition follow-up: how many lines of context to pull around the
+    // target line -- asymmetric (more after than before) since a definition's own
+    // doc comment/attributes usually sit directly above it and the body the user
+    // actually wants to glance at follows. Kept small enough that the popup never
+    // needs to scroll -- HandlePeekDefinitionKey has no scroll handling, by design
+    // (a peek is meant to be a glance; Enter opens the real buffer for anything
+    // needing more).
+    constexpr std::size_t kPeekContextLinesBefore = 4;
+    constexpr std::size_t kPeekContextLinesAfter  = 10;
+} // namespace
+
+void BufferView::RequestPeekDefinitionAtPoint() {
+    if (!lspManager_) {
+        statusMessage_ = "No LSP manager available.";
+        return;
+    }
+    text::Buffer&       buffer     = activeBuffer_.Get();
+    text::Buffer* const bufferPtr  = &buffer;
+    const std::size_t   point      = buffer.Point();
+    const std::size_t   generation = ++peekDefinitionRequestGeneration_;
+    const std::string   serverKey  = ResolvedLspServerKey(point);
+
+    statusMessage_ = "Requesting definition...";
+    auto callback  = [this, bufferPtr, point, generation](std::vector<editor::lsp::LspManager::ResolvedLocation> locations) {
+        if (generation != peekDefinitionRequestGeneration_) {
+            return; // superseded by a newer request
+        }
+        if (bufferPtr != &activeBuffer_.Get() || activeBuffer_.Get().Point() != point) {
+            return; // buffer/point changed since the request was sent -- see RequestDefinitionAtPoint's own identical guard
+        }
+        if (locations.empty()) {
+            statusMessage_ = "No definition found.";
+            return;
+        }
+        pendingPeekDefinitions_  = std::move(locations);
+        peekDefinitionSelection_ = 0;
+        inputMode_               = InputMode::LspPeekDefinition;
+        RefreshPeekDefinitionStatus();
+    };
+    lspManager_->RequestDefinition(buffer, point, std::move(callback), serverKey);
+}
+
+void BufferView::RefreshPeekDefinitionStatus() {
+    const editor::lsp::LspManager::ResolvedLocation& location = pendingPeekDefinitions_[peekDefinitionSelection_];
+    const std::size_t targetLine = location.position.line + 1; // LSP lines are 0-indexed
+    const std::size_t startLine  = targetLine > kPeekContextLinesBefore ? targetLine - kPeekContextLinesBefore : 1;
+    const std::size_t endLine    = targetLine + kPeekContextLinesAfter;
+    const std::string excerpt    = editor::multibuffer::ReadExcerptText(bufferList_, location.path, startLine, endLine);
+
+    ListPopupModel model;
+    model.title = location.path.filename().string() + ":" + std::to_string(targetLine);
+    if (pendingPeekDefinitions_.size() > 1) {
+        model.title += "  [" + std::to_string(peekDefinitionSelection_ + 1) + "/" +
+                       std::to_string(pendingPeekDefinitions_.size()) + "]";
+    }
+
+    if (excerpt.empty()) {
+        model.rows.push_back({.main = "(source unavailable)"});
+    }
+    else {
+        std::size_t lineNumber = startLine;
+        std::size_t pos        = 0;
+        while (pos < excerpt.size()) {
+            const std::size_t eol     = excerpt.find('\n', pos);
+            const std::size_t lineEnd = (eol == std::string::npos) ? excerpt.size() : eol;
+            std::string       text    = excerpt.substr(pos, lineEnd - pos);
+            // Tabs would otherwise misalign the popup's own fixed-width box --
+            // this codebase's real tab-aware column math (Buffer.h) isn't worth
+            // pulling in for a plain read-only preview.
+            std::replace(text.begin(), text.end(), '\t', ' ');
+            if (lineNumber == targetLine) {
+                model.selectedIndex = model.rows.size();
+            }
+            model.rows.push_back({.left = std::to_string(lineNumber), .main = std::move(text)});
+            ++lineNumber;
+            pos = (eol == std::string::npos) ? excerpt.size() : eol + 1;
+        }
+    }
+    model.anchor = CompletionAnchorNow();
+
+    statusMessage_ = "Peek definition: Enter opens, Esc closes" +
+                     std::string(pendingPeekDefinitions_.size() > 1 ? ", Up/Down cycles" : "");
+    if (onPeekChanged_) {
+        onPeekChanged_(std::move(model));
+    }
+}
+
+void BufferView::HandlePeekDefinitionKey(const editor::KeyChord& chord) {
+    if (IsQuit(chord)) {
+        statusMessage_ = "Peek cancelled.";
+        EndInteractiveSession();
+        return;
+    }
+    if (chord.Special == editor::SpecialKey::Down) {
+        peekDefinitionSelection_ = (peekDefinitionSelection_ + 1) % pendingPeekDefinitions_.size();
+        RefreshPeekDefinitionStatus();
+        return;
+    }
+    if (chord.Special == editor::SpecialKey::Up) {
+        peekDefinitionSelection_ =
+            (peekDefinitionSelection_ + pendingPeekDefinitions_.size() - 1) % pendingPeekDefinitions_.size();
+        RefreshPeekDefinitionStatus();
+        return;
+    }
+    if (IsPlainCharacter(chord) && chord.Codepoint >= U'1' && chord.Codepoint <= U'9') {
+        const std::size_t index = static_cast<std::size_t>(chord.Codepoint - U'1');
+        if (index < pendingPeekDefinitions_.size()) {
+            peekDefinitionSelection_ = index;
+        }
+        // falls through to the same jump Enter performs below
+    }
+    else if (chord.Special != editor::SpecialKey::Enter) {
+        return; // anything else is ignored -- stay in the peek popup
+    }
+
+    const editor::lsp::LspManager::ResolvedLocation location = pendingPeekDefinitions_[peekDefinitionSelection_];
+    EndInteractiveSession();
+    JumpToDefinition(location);
+}
+
+void BufferView::SetOnPeekChanged(std::function<void(std::optional<ListPopupModel>)> handler) {
+    onPeekChanged_ = std::move(handler);
+}
+
+void BufferView::ActivatePeekDefinitionAt(std::size_t /*index*/) {
+    if (inputMode_ != InputMode::LspPeekDefinition || pendingPeekDefinitions_.empty()) {
+        return;
+    }
+    const editor::lsp::LspManager::ResolvedLocation location = pendingPeekDefinitions_[peekDefinitionSelection_];
+    EndInteractiveSession();
+    JumpToDefinition(location);
+}
+
 // call/type-hierarchy follow-up. See HierarchyDirection/HierarchySession's
 // own doc comments in BufferView.h for the overall session shape.
 void BufferView::RequestHierarchyAtPoint(HierarchyDirection direction) {
@@ -7239,6 +7378,9 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             return;
         case editor::InteractiveRequest::LspGotoImplementation:
             RequestDefinitionAtPoint(LspLocationKind::Implementation);
+            return;
+        case editor::InteractiveRequest::LspPeekDefinition:
+            RequestPeekDefinitionAtPoint();
             return;
         case editor::InteractiveRequest::LspGotoSymbol:
             RequestDocumentSymbolsAtPoint();
@@ -8648,6 +8790,14 @@ void BufferView::EndInteractiveSession() {
     codeActionSelection_ = 0;
     pendingDefinitions_.clear();
     definitionSelection_ = 0;
+    // peek-definition follow-up: unconditional, same tolerance
+    // onCandidatesChanged_'s own reset above has -- hides the peek popup
+    // whether or not this session ever showed it.
+    if (onPeekChanged_) {
+        onPeekChanged_(std::nullopt);
+    }
+    pendingPeekDefinitions_.clear();
+    peekDefinitionSelection_ = 0;
     renameTitle_.clear();
     ScrollToShowPoint();
 }

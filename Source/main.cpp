@@ -1676,6 +1676,44 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     // ever shown for the focused pane).
     completionPopup.SetOnActivate([wm = windowManager.get()](std::size_t index) { wm->ActivateCompletionAt(index); });
 
+    // peek-definition follow-up: same anchored-under-point, non-focusable shape
+    // as completionPopup just above (BufferView keeps focus, drives content via
+    // HandlePeekDefinitionKey) -- wider, since a source line needs real room
+    // unlike a short candidate label, but capped the same way so it never
+    // dwarfs the buffer it's floating over.
+    ned::ui::ListPopup peekPopup(theme);
+    overlays.Add(peekPopup, [panel = &peekPopup](Size size) {
+        const ned::ui::Point origin = panel->Anchor().value_or(ned::ui::Point{});
+        const int            width  = std::min(90, size.width);
+        const int            height = std::clamp(panel->ContentRowCount(), 3, std::min(17, size.height));
+
+        const int xMin = std::clamp(origin.x, 0, std::max(0, size.width - width));
+        const int xMax = std::min(size.width - 1, xMin + width - 1);
+
+        int yMin, yMax;
+        if (origin.y + height - 1 <= size.height - 1) {
+            yMin = origin.y;
+            yMax = yMin + height - 1;
+        }
+        else {
+            // Flip upward, same as completionPopup's own placement function.
+            yMax = std::max(0, origin.y - 2);
+            yMin = std::max(0, yMax - height + 1);
+        }
+        return Box{.x_min = xMin, .x_max = xMax, .y_min = yMin, .y_max = yMax};
+    });
+    windowManager->SetOnPeekChanged(
+        [&overlays, panel = &peekPopup](std::optional<ned::ui::ListPopupModel> model) {
+            if (model) {
+                panel->SetModel(std::move(*model));
+                overlays.Show(*panel);
+            }
+            else {
+                overlays.Hide(*panel);
+            }
+        });
+    peekPopup.SetOnActivate([wm = windowManager.get()](std::size_t index) { wm->ActivatePeekDefinition(index); });
+
     // call/type-hierarchy follow-up: the shared TreeView overlay behind
     // lsp-call-hierarchy-incoming/-outgoing/lsp-type-hierarchy-supertypes/
     // -subtypes -- unlike candidatePopup/completionPopup above, this one

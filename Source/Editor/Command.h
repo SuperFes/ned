@@ -343,6 +343,13 @@ enum class InteractiveRequest { None,
                                 LspGotoDeclaration,
                                 LspGotoTypeDefinition,
                                 LspGotoImplementation,
+                                // peek-definition follow-up: same one-shot-action shape as
+                                // LspGotoDefinition above, but BufferView::
+                                // RequestPeekDefinitionAtPoint always enters its own
+                                // LspPeekDefinition session (a floating source-excerpt popup) on
+                                // response rather than ever jumping automatically -- the point is
+                                // to look without navigating away.
+                                LspPeekDefinition,
                                 // symbol-search follow-up: LspGotoSymbol is one more async
                                 // request/own-session action, same "async request, own
                                 // response" shape as LspGotoDefinition above --

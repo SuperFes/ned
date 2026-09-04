@@ -341,6 +341,11 @@ class WindowManager {
     // a distinct hook rather than a reuse of that one.
     void SetOnCompletionChanged(std::function<void(std::optional<ListPopupModel>)> onCompletionChanged);
 
+    // peek-definition follow-up: same "forwarded to every pane, present and
+    // future" shape as SetOnCandidatesChanged/SetOnCompletionChanged above --
+    // see BufferView::SetOnPeekChanged's own doc comment.
+    void SetOnPeekChanged(std::function<void(std::optional<ListPopupModel>)> onPeekChanged);
+
     // call/type-hierarchy follow-up: NOT a plain "forwarded to every pane"
     // shape the way SetOnCandidatesChanged/SetOnCompletionChanged above
     // are -- each pane's BufferView is wrapped in its own small forwarding
@@ -533,6 +538,13 @@ class WindowManager {
     // main.cpp, so a click on a completion row accepts it the same way
     // Tab does. See BufferView::AcceptActiveCompletionAt's own doc comment.
     void ActivateCompletionAt(std::size_t index);
+
+    // peek-definition follow-up: same "route to whichever pane is currently
+    // focused" shape as ActivateCompletionAt above -- wired to the peek popup's
+    // own ListPopup::SetOnActivate in main.cpp, so a click on the popup jumps to
+    // the previewed location the same way Enter does. See BufferView::
+    // ActivatePeekDefinitionAt's own doc comment.
+    void ActivatePeekDefinition(std::size_t index);
 
     // session-persistence slice 3: routes the .ned/init.janet trust prompt
     // to whichever pane has focus -- RequestOpenBinaryFile's exact shape;
@@ -792,6 +804,7 @@ class WindowManager {
     std::function<void(std::optional<WhichKeyHint>)> onPrefixHintChanged_; // see SetOnPrefixHintChanged
     std::function<void(std::optional<ListPopupModel>)> onCandidatesChanged_; // see SetOnCandidatesChanged
     std::function<void(std::optional<ListPopupModel>)> onCompletionChanged_; // see SetOnCompletionChanged
+    std::function<void(std::optional<ListPopupModel>)> onPeekChanged_; // see SetOnPeekChanged
 
     // call/type-hierarchy follow-up: onHierarchyChanged_ is the handler
     // main.cpp gave SetOnHierarchyChanged, called from inside each pane's
