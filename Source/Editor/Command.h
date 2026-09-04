@@ -465,6 +465,28 @@ enum class InteractiveRequest { None,
                                 // request and switching to a synthesized "*memory*" buffer.
                                 DapShowDisassembly,
                                 DapShowMemoryAtPoint,
+                                // Debugging wishlist (gf/GDBFrontend audit): dap-run-to-cursor
+                                // -- one-shot like DapContinue, operating on point's own line
+                                // like DapToggleBreakpoint (DapManager::RunToCursor sets a
+                                // temporary breakpoint there if none exists yet, continues,
+                                // and clears it again on the next stop).
+                                DapRunToCursor,
+                                // Debugging wishlist: dap-jump-to-line (gf's Shift+Click "skip
+                                // to line") -- operates on point's own line like
+                                // DapRunToCursor, but chains DapManager::JumpToLine's async
+                                // gotoTargets/goto exchange instead of returning a status
+                                // string immediately (see BufferView's handling).
+                                DapJumpToLine,
+                                // Debugging wishlist: dap-toggle-hex-format (gf's `/` key) --
+                                // operates on point's own *debug* buffer line (a watch or a
+                                // plain variable, distinguished by which marker it carries),
+                                // re-fetching just that one value with DAP's `format: {hex:
+                                // true}` hint and splicing the reformatted line back in place
+                                // (ExpandVariableAtPoint/SetVariableAtPoint's own single-line-
+                                // splice shape). A trailing "[hex]" marker on the line is both
+                                // the toggle's own state and what makes a second invocation
+                                // flip back to decimal.
+                                DapToggleHexFormat,
                                 // VCS blame gutter follow-up: one-shot direct actions, same
                                 // shape as ProjectAgenda/LspShowLog. VcsShowBlame is the
                                 // primary, inline-in-place one: populates the gutter for the

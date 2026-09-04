@@ -2097,6 +2097,18 @@ class BufferView : public Widget {
     // uses.
     void SetVariableAtPoint();
 
+    // Debugging wishlist: dap-toggle-hex-format's body -- parses point's own
+    // "*debug*" buffer line for either a "[watch:N]" or a "[owner:M]"
+    // marker (RemoveWatchAtPoint's/SetVariableAtPoint's own marker
+    // conventions), re-fetches just that one value with DAP's `format:
+    // {hex: true}` hint (Evaluate/RequestVariables's new hex parameter),
+    // and splices the reformatted line back in place -- the exact
+    // staleness-guarded DeleteRange+InsertAt shape SetVariableAtPoint's own
+    // callback uses. A trailing "[hex]" marker this appends is the toggle's
+    // only state: present means "flip back to decimal next time," absent
+    // means "switch to hex."
+    void ToggleHexFormatAtPoint();
+
     // DAP round 5: dap-show-disassembly's body -- reuses RestartFrameAtPoint's
     // own "[frame:N]" marker parse (point's current line, any buffer -- no
     // check that it's actually the *debug* buffer, same lack of a check

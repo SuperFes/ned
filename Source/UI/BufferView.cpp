@@ -7354,6 +7354,51 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
                 ShowMemoryAtPoint();
             }
             return;
+        // Debugging wishlist: run-to-cursor -- same path/line resolution as
+        // DapToggleBreakpoint above, forwarded straight to DapManager (no
+        // InputMode session, same as every other one-shot Dap* case).
+        case editor::InteractiveRequest::DapRunToCursor: {
+            if (!dapManager_) {
+                statusMessage_ = "No debugger available.";
+                return;
+            }
+            text::Buffer& buffer = activeBuffer_.Get();
+            if (!buffer.Path()) {
+                statusMessage_ = "Buffer has no file to run to.";
+                return;
+            }
+            const std::size_t line = buffer.Content().ByteOffsetToLine(buffer.Point()) + 1; // 1-based, DAP's own convention
+            statusMessage_          = dapManager_->RunToCursor(*buffer.Path(), line);
+            return;
+        }
+        // Debugging wishlist: jump-to-line -- same path/line resolution as
+        // DapRunToCursor above, but async (DapManager::JumpToLine chains
+        // gotoTargets/goto): an immediate placeholder status, then the real
+        // outcome lands in the callback, same shape as DapEvaluate/
+        // ShowDebugInfo's own async status updates.
+        case editor::InteractiveRequest::DapJumpToLine: {
+            if (!dapManager_) {
+                statusMessage_ = "No debugger available.";
+                return;
+            }
+            text::Buffer& buffer = activeBuffer_.Get();
+            if (!buffer.Path()) {
+                statusMessage_ = "Buffer has no file to jump within.";
+                return;
+            }
+            const std::size_t line = buffer.Content().ByteOffsetToLine(buffer.Point()) + 1;
+            statusMessage_          = "Jumping to line...";
+            dapManager_->JumpToLine(*buffer.Path(), line, [this](bool, std::string message) { statusMessage_ = std::move(message); });
+            return;
+        }
+        case editor::InteractiveRequest::DapToggleHexFormat:
+            if (!dapManager_) {
+                statusMessage_ = "No debugger available.";
+            }
+            else {
+                ToggleHexFormatAtPoint();
+            }
+            return;
         case editor::InteractiveRequest::DapEvaluate:
             if (!dapManager_) {
                 statusMessage_ = "No debugger available.";
@@ -8516,7 +8561,11 @@ namespace {
     // HandlePromptKey's DapSetVariableValue branch -- which runs earlier in
     // this file -- can reuse it rather than duplicating the "[ref:N]"/
     // "[owner:M]"-marker line format.
-    std::string FormatDebugVariableLine(const ned::editor::dap::DapManager::Variable& variable, std::size_t indent, int ownerRef = 0);
+    // Debugging wishlist: hex appends a trailing "[hex]" marker -- both the
+    // display hint the value itself was fetched with, and (ToggleHexFormatAtPoint's
+    // own read of it back) the toggle's persisted state.
+    std::string FormatDebugVariableLine(const ned::editor::dap::DapManager::Variable& variable, std::size_t indent, int ownerRef = 0,
+                                        bool hex = false);
 } // namespace
 
 void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
@@ -10366,7 +10415,8 @@ namespace {
     // sent a memoryReference for this variable -- ShowMemoryAtPoint's own
     // target marker, an opaque string rather than a small int like the other
     // two (see DapManager::Variable::memoryReference's own doc comment).
-    std::string FormatDebugVariableLine(const ned::editor::dap::DapManager::Variable& variable, std::size_t indent, int ownerRef) {
+    std::string FormatDebugVariableLine(const ned::editor::dap::DapManager::Variable& variable, std::size_t indent, int ownerRef,
+                                        bool hex) {
         std::string line(indent, ' ');
         line += variable.name;
         if (!variable.type.empty()) {
@@ -10381,6 +10431,9 @@ namespace {
         }
         if (!variable.memoryReference.empty()) {
             line += "  [mem:" + variable.memoryReference + "]";
+        }
+        if (hex) {
+            line += "  [hex]";
         }
         return line;
     }
@@ -10756,6 +10809,138 @@ void BufferView::SetVariableAtPoint() {
     inputMode_ = InputMode::DapSetVariableValue;
     prompt_.emplace("New value for " + name + ": ");
     statusMessage_ = prompt_->StatusText();
+}
+
+void BufferView::ToggleHexFormatAtPoint() {
+    text::Buffer&             buffer    = activeBuffer_.Get();
+    const text::ITextStorage& content   = buffer.Content();
+    const std::size_t         line      = content.ByteOffsetToLine(buffer.Point());
+    const std::size_t         lineStart = content.LineToByteOffset(line);
+    const std::size_t         lineEnd =
+        (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
+    const std::string lineText = content.Substring(lineStart, lineEnd - lineStart);
+
+    // A trailing "[hex]" marker (this method's own addition, never present
+    // on a freshly-built ShowDebugInfo line) is both the display hint the
+    // line was last fetched with and this toggle's only state -- present
+    // means flip back to decimal, absent means switch to hex.
+    const bool wantHex = lineText.find("  [hex]") == std::string::npos;
+
+    text::Buffer* const bufferPtr = &buffer;
+    // Shared staleness guard both branches below use before splicing --
+    // ExpandVariableAtPoint/SetVariableAtPoint's own "did the line change
+    // while the request was in flight" check.
+    auto spliceIfUnchanged = [this, bufferPtr, line, lineText](const std::string& replacement) {
+        if (bufferPtr != &activeBuffer_.Get()) {
+            return; // switched away while the request was in flight
+        }
+        const text::ITextStorage& targetContent = bufferPtr->Content();
+        if (line >= targetContent.LineCount()) {
+            return;
+        }
+        const std::size_t targetLineStart = targetContent.LineToByteOffset(line);
+        const std::size_t targetLineEnd =
+            (line + 1 < targetContent.LineCount()) ? targetContent.LineToByteOffset(line + 1) - 1 : targetContent.ByteLength();
+        if (targetContent.Substring(targetLineStart, targetLineEnd - targetLineStart) != lineText) {
+            statusMessage_ = "Debug line changed -- not reformatting.";
+            return;
+        }
+        const bool wasReadOnly = bufferPtr->ReadOnly();
+        bufferPtr->SetReadOnly(false);
+        bufferPtr->DeleteRange(targetLineStart, targetLineEnd - targetLineStart);
+        bufferPtr->InsertAt(targetLineStart, replacement);
+        bufferPtr->SetReadOnly(wasReadOnly);
+        statusMessage_.clear();
+    };
+
+    const std::size_t watchMarkerPos = lineText.rfind("[watch:");
+    if (watchMarkerPos != std::string::npos) {
+        std::size_t watchIndex = 0;
+        try {
+            watchIndex = static_cast<std::size_t>(std::stoul(lineText.substr(watchMarkerPos + 7))); // stoul stops at ']'
+        }
+        catch (const std::exception&) {
+            statusMessage_ = "No watch on this line.";
+            return;
+        }
+        const std::vector<std::string>& watches = dapManager_->Watches();
+        if (watchIndex >= watches.size()) {
+            statusMessage_ = "Watch no longer exists.";
+            return;
+        }
+        const std::string expression = watches[watchIndex];
+        statusMessage_               = "Formatting...";
+        dapManager_->Evaluate(
+            expression,
+            [spliceIfUnchanged, watchIndex, expression, wantHex](bool success, std::string text) {
+                std::string replacement = "  " + expression + " = " + (success ? text : ("<" + text + ">")) + "  [watch:" +
+                                          std::to_string(watchIndex) + "]";
+                if (wantHex) {
+                    replacement += "  [hex]";
+                }
+                spliceIfUnchanged(replacement);
+            },
+            "watch", wantHex);
+        return;
+    }
+
+    const std::size_t ownerMarkerPos = lineText.rfind("[owner:");
+    if (ownerMarkerPos == std::string::npos) {
+        statusMessage_ = "No formattable value on this line.";
+        return;
+    }
+    int ownerRef = 0;
+    try {
+        ownerRef = std::stoi(lineText.substr(ownerMarkerPos + 7)); // stoi stops at the closing ']'
+    }
+    catch (const std::exception&) {
+        statusMessage_ = "No formattable value on this line.";
+        return;
+    }
+    if (ownerRef <= 0) {
+        statusMessage_ = "No formattable value on this line.";
+        return;
+    }
+
+    // Same name-extraction convention SetVariableAtPoint uses -- look for
+    // the literal ": "/" = " separators FormatDebugVariableLine always
+    // writes, not the first bare ':'/'=' (a variable named e.g. "operator="
+    // must not be split mid-name).
+    std::size_t indent = 0;
+    while (indent < lineText.size() && lineText[indent] == ' ') {
+        ++indent;
+    }
+    const std::size_t colonPos = lineText.find(": ", indent);
+    const std::size_t eqPos    = lineText.find(" = ", indent);
+    std::size_t       nameEnd  = std::string::npos;
+    if (colonPos != std::string::npos && (eqPos == std::string::npos || colonPos < eqPos)) {
+        nameEnd = colonPos;
+    }
+    else {
+        nameEnd = eqPos;
+    }
+    if (nameEnd == std::string::npos || nameEnd <= indent) {
+        statusMessage_ = "No formattable value on this line.";
+        return;
+    }
+    const std::string name = lineText.substr(indent, nameEnd - indent);
+
+    statusMessage_ = "Formatting...";
+    dapManager_->RequestVariables(
+        ownerRef,
+        [this, bufferPtr, spliceIfUnchanged, name, ownerRef, indent, wantHex](std::vector<editor::dap::DapManager::Variable> variables) {
+            if (bufferPtr != &activeBuffer_.Get()) {
+                return; // switched away while the request was in flight
+            }
+            const auto it = std::find_if(variables.begin(), variables.end(),
+                                         [&name](const editor::dap::DapManager::Variable& v) { return v.name == name; });
+            if (it == variables.end()) {
+                statusMessage_ = "Variable no longer available (or the session already resumed).";
+                return;
+            }
+            spliceIfUnchanged(FormatDebugVariableLine(*it, indent, ownerRef, wantHex));
+        },
+        wantHex);
 }
 
 void BufferView::ShowMemoryAtPoint() {

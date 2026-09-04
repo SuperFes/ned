@@ -2775,6 +2775,26 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           context.interactiveRequest = InteractiveRequest::DapShowMemoryAtPoint;
                       });
 
+    // Debugging wishlist: run-to-cursor -- M-x only, same policy as every
+    // other DAP command beyond the core F-key quartet.
+    registry.Register("dap-run-to-cursor",
+                      "Run the stopped debug session until it reaches the current line (a temporary breakpoint, "
+                      "cleared again on the next stop).",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::DapRunToCursor;
+                      });
+    registry.Register("dap-jump-to-line",
+                      "Move the stopped thread's execution point directly to the current line, without running "
+                      "through the skipped code (adapter support required, DAP's gotoTargets/goto requests).",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::DapJumpToLine;
+                      });
+    registry.Register("dap-toggle-hex-format",
+                      "Toggle hex display for the watch or variable value on the current *debug* buffer line.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::DapToggleHexFormat;
+                      });
+
     // ACP client slice 2: same "just set interactiveRequest" shape as
     // run-task/dap-continue above -- BufferView holds the shared AcpManager
     // and does the actual work (see Editor/Acp/AcpManager.h). Agent and
