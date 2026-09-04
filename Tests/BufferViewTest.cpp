@@ -2391,6 +2391,166 @@ TEST_CASE("dap-set-variable edits a *debug* buffer variable line via the right o
     REQUIRE(fixture.bufferList.Find("*debug*")->Text().find("x: int = 42") != std::string::npos);
 }
 
+TEST_CASE("dap-toggle-hex-format toggles a variable line's display format and back", "[BufferView]") {
+    Fixture                      fixture;
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::dap::DapManager manager(eventLoop);
+    ned::editor::dap::DapClient* client  = nullptr;
+    FakeDapAdapter               adapter = FakeDapAdapter::Create(manager, eventLoop, client);
+
+    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-hex-var", "{}");
+    manager.StartOrContinue("bufferview-dap-hex-var");
+    const auto initialize = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(initialize["seq"].get<int>(), "initialize", ned::editor::dap::Json::object()));
+    const auto launch = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(launch["seq"].get<int>(), "launch", ned::editor::dap::Json::object()));
+
+    client->DispatchFrame(DapEventFrame("stopped", {{"reason", "breakpoint"}, {"threadId", 1}}));
+    const auto autoStackTrace = adapter.NextRequest();
+    client->DispatchFrame(
+        DapResponseFrame(autoStackTrace["seq"].get<int>(), "stackTrace", {{"stackFrames", ned::editor::dap::Json::array()}}));
+    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-hex-var", "");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetDapManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 20});
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "dap-show-debug");
+    view.OnEvent(ned::ui::test::Return());
+
+    const auto showDebugStackTrace = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(
+        showDebugStackTrace["seq"].get<int>(), "stackTrace",
+        {{"stackFrames", ned::editor::dap::Json::array({{{"id", 1}, {"name", "main"}}})}}));
+    const auto scopesRequest = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(
+        scopesRequest["seq"].get<int>(), "scopes",
+        {{"scopes", ned::editor::dap::Json::array({{{"name", "Locals"}, {"variablesReference", 100}}})}}));
+    const auto variablesRequest = adapter.NextRequest();
+    REQUIRE_FALSE(variablesRequest["arguments"].contains("format"));
+    client->DispatchFrame(DapResponseFrame(
+        variablesRequest["seq"].get<int>(), "variables",
+        {{"variables", ned::editor::dap::Json::array({{{"name", "x"}, {"value", "1"}, {"type", "int"}, {"variablesReference", 0}}})}}));
+
+    ned::text::Buffer* debugBuffer = fixture.bufferList.Find("*debug*");
+    REQUIRE(debugBuffer != nullptr);
+    const std::size_t variableLineByte = debugBuffer->Text().find("x: int = 1");
+    REQUIRE(variableLineByte != std::string::npos);
+    debugBuffer->SetPoint(variableLineByte);
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "dap-toggle-hex-format");
+    view.OnEvent(ned::ui::test::Return());
+
+    const auto hexRequest = adapter.NextRequest();
+    REQUIRE(hexRequest["command"] == "variables");
+    REQUIRE(hexRequest["arguments"]["variablesReference"] == 100);
+    REQUIRE(hexRequest["arguments"]["format"]["hex"] == true);
+    client->DispatchFrame(DapResponseFrame(
+        hexRequest["seq"].get<int>(), "variables",
+        {{"variables", ned::editor::dap::Json::array({{{"name", "x"}, {"value", "0x1"}, {"type", "int"}, {"variablesReference", 0}}})}}));
+
+    REQUIRE(debugBuffer->Text().find("x: int = 0x1  [owner:100]  [hex]") != std::string::npos);
+
+    const std::size_t hexLineByte = debugBuffer->Text().find("x: int = 0x1");
+    REQUIRE(hexLineByte != std::string::npos);
+    debugBuffer->SetPoint(hexLineByte);
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "dap-toggle-hex-format");
+    view.OnEvent(ned::ui::test::Return());
+
+    const auto decimalRequest = adapter.NextRequest();
+    REQUIRE(decimalRequest["command"] == "variables");
+    REQUIRE_FALSE(decimalRequest["arguments"].contains("format"));
+    client->DispatchFrame(DapResponseFrame(
+        decimalRequest["seq"].get<int>(), "variables",
+        {{"variables", ned::editor::dap::Json::array({{{"name", "x"}, {"value", "1"}, {"type", "int"}, {"variablesReference", 0}}})}}));
+
+    REQUIRE(debugBuffer->Text().find("x: int = 1  [owner:100]") != std::string::npos);
+    REQUIRE(debugBuffer->Text().find("[hex]") == std::string::npos);
+}
+
+TEST_CASE("dap-toggle-hex-format toggles a watch line's display format and back", "[BufferView]") {
+    Fixture                      fixture;
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::dap::DapManager manager(eventLoop);
+    ned::editor::dap::DapClient* client  = nullptr;
+    FakeDapAdapter               adapter = FakeDapAdapter::Create(manager, eventLoop, client);
+
+    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-hex-watch", "{}");
+    manager.StartOrContinue("bufferview-dap-hex-watch");
+    const auto initialize = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(initialize["seq"].get<int>(), "initialize", ned::editor::dap::Json::object()));
+    const auto launch = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(launch["seq"].get<int>(), "launch", ned::editor::dap::Json::object()));
+
+    client->DispatchFrame(DapEventFrame("stopped", {{"reason", "breakpoint"}, {"threadId", 1}}));
+    const auto autoStackTrace = adapter.NextRequest();
+    client->DispatchFrame(
+        DapResponseFrame(autoStackTrace["seq"].get<int>(), "stackTrace", {{"stackFrames", ned::editor::dap::Json::array()}}));
+    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-hex-watch", "");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetDapManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 20});
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "dap-add-watch");
+    view.OnEvent(ned::ui::test::Return());
+    TypeText(view, "1 + 1");
+    view.OnEvent(ned::ui::test::Return());
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "dap-show-debug");
+    view.OnEvent(ned::ui::test::Return());
+
+    const auto showDebugStackTrace = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(
+        showDebugStackTrace["seq"].get<int>(), "stackTrace",
+        {{"stackFrames", ned::editor::dap::Json::array({{{"id", 1}, {"name", "main"}}})}}));
+    const auto scopesRequest = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(scopesRequest["seq"].get<int>(), "scopes", {{"scopes", ned::editor::dap::Json::array()}}));
+    const auto evaluateRequest = adapter.NextRequest();
+    REQUIRE_FALSE(evaluateRequest["arguments"].contains("format"));
+    client->DispatchFrame(DapResponseFrame(evaluateRequest["seq"].get<int>(), "evaluate", {{"result", "2"}}));
+
+    ned::text::Buffer& debugBuffer = fixture.activeBuffer.Get();
+    const std::size_t  watchLineByte = debugBuffer.Text().find("1 + 1 = 2");
+    REQUIRE(watchLineByte != std::string::npos);
+    debugBuffer.SetPoint(watchLineByte);
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "dap-toggle-hex-format");
+    view.OnEvent(ned::ui::test::Return());
+
+    const auto hexEvaluate = adapter.NextRequest();
+    REQUIRE(hexEvaluate["command"] == "evaluate");
+    REQUIRE(hexEvaluate["arguments"]["expression"] == "1 + 1");
+    REQUIRE(hexEvaluate["arguments"]["context"] == "watch");
+    REQUIRE(hexEvaluate["arguments"]["format"]["hex"] == true);
+    client->DispatchFrame(DapResponseFrame(hexEvaluate["seq"].get<int>(), "evaluate", {{"result", "0x2"}}));
+
+    REQUIRE(debugBuffer.Text().find("1 + 1 = 0x2  [watch:0]  [hex]") != std::string::npos);
+
+    const std::size_t hexLineByte = debugBuffer.Text().find("1 + 1 = 0x2");
+    REQUIRE(hexLineByte != std::string::npos);
+    debugBuffer.SetPoint(hexLineByte);
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "dap-toggle-hex-format");
+    view.OnEvent(ned::ui::test::Return());
+
+    const auto decimalEvaluate = adapter.NextRequest();
+    REQUIRE(decimalEvaluate["command"] == "evaluate");
+    REQUIRE_FALSE(decimalEvaluate["arguments"].contains("format"));
+    client->DispatchFrame(DapResponseFrame(decimalEvaluate["seq"].get<int>(), "evaluate", {{"result", "2"}}));
+
+    REQUIRE(debugBuffer.Text().find("1 + 1 = 2  [watch:0]") != std::string::npos);
+    REQUIRE(debugBuffer.Text().find("[hex]") == std::string::npos);
+}
+
 TEST_CASE("dap-show-disassembly builds a *disassembly* buffer around the stopped frame's PC", "[BufferView]") {
     Fixture                      fixture;
     ned::ui::EventLoop           eventLoop;

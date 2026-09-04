@@ -217,6 +217,32 @@ class DapManager {
     // in-text-marker convention FormatDebugVariableLine's `[ref:N]` uses.
     std::string RestartFrame(int frameId);
 
+    // Debugging wishlist (gf/GDBFrontend audit): run-to-cursor -- a
+    // temporary breakpoint at path:line, continued past immediately, and
+    // cleared again the moment the debuggee next stops for any reason
+    // (only one continue was issued, so that next stop is deterministically
+    // "wherever this landed" -- gf's/vim's own run-to-cursor semantics). If
+    // a real breakpoint already exists at that line, it's left in place
+    // untouched -- nothing temporary to clean up. Stopped-only, same gating
+    // as StepOver/Into/Out: a debuggee that isn't paused has nothing
+    // meaningful to run *to* yet.
+    std::string RunToCursor(const std::filesystem::path& path, std::size_t line);
+
+    // Debugging wishlist: jump-to-line (gf's Shift+Click "skip to line") --
+    // moves the stopped thread's execution point directly to path:line
+    // without running through the skipped code, via DAP's own two-request
+    // dance: `gotoTargets` asks the adapter which jump target ids exist at
+    // that source line (an arbitrary line isn't necessarily a valid jump
+    // target -- the adapter answers with whatever it can actually land on,
+    // typically the nearest statement), then `goto` jumps the thread to the
+    // first one. Stopped-only, same gating as StepOver/Into/Out. Unlike
+    // those, no DapManager state changes here even on success -- the new
+    // position arrives the same way a step's does, via the following
+    // `stopped` event (reason "goto") flowing through HandleStoppedEvent.
+    // callback(success, message) once the whole exchange lands (or fails at
+    // either step) -- message is a short, user-facing status either way.
+    void JumpToLine(const std::filesystem::path& path, std::size_t line, std::function<void(bool, std::string)> callback);
+
     // Slice 2, for BufferView's gutter marker + execution-line highlight:
     // where the debuggee is currently stopped, as an already-normalized
     // path key (same normalization ToggleBreakpoint applies, so callers
@@ -302,7 +328,12 @@ class DapManager {
         // carry one). Fed straight into RequestMemory, never parsed.
         std::string memoryReference;
     };
-    void RequestVariables(int variablesReference, std::function<void(std::vector<Variable>)> callback);
+    // Debugging wishlist: hex is DAP's own `format: {hex: true}` request
+    // argument -- a display-only hint (the adapter renders the numeric
+    // `value` field in hex instead of decimal; nothing else about the
+    // variable changes). Defaults false, matching every existing call site's
+    // behavior unchanged.
+    void RequestVariables(int variablesReference, std::function<void(std::vector<Variable>)> callback, bool hex = false);
 
     // DAP round 5: one disassembled instruction, backing dap-show-disassembly.
     struct DisassembledInstruction {
@@ -341,8 +372,11 @@ class DapManager {
     // "repl" (default) is dap-evaluate's/the debug console's own manual
     // evaluation, "watch" is what ShowDebugInfo's watch-expression fan-out
     // passes (some adapters suppress side effects only for "watch").
+    // Debugging wishlist: hex is RequestVariables's own `format: {hex: true}`
+    // hint, applied to evaluate's `result` field the same way. Defaults
+    // false, matching every existing call site's behavior unchanged.
     void Evaluate(const std::string& expression, std::function<void(bool, std::string)> callback,
-                  std::string context = "repl");
+                  std::string context = "repl", bool hex = false);
 
     // Slice 4: watch expressions -- a plain ordered list, re-evaluated
     // (via Evaluate, "watch" context) by BufferView::ShowDebugInfo every
@@ -429,6 +463,12 @@ class DapManager {
     void SendExceptionBreakpoints();
     void HandleInitializedEvent();
     void HandleStoppedEvent(const Json& body);
+    // RunToCursor's own cleanup: erases the pending temporary breakpoint (if
+    // any) from the store, pushing the change to a live adapter when
+    // pushToAdapter is set (HandleStoppedEvent's case -- the session is
+    // still alive) but not when it isn't (EndSession's case -- client_ is
+    // about to be torn down, nothing to push to).
+    void ClearPendingRunToCursor(bool pushToAdapter);
     // The shared body of StepOver/StepInto/StepOut -- command is the DAP
     // request name, label the human-readable status verb.
     std::string SendStep(const std::string& command, const std::string& label);
@@ -466,6 +506,12 @@ class DapManager {
 
     std::map<std::string, std::vector<Breakpoint>> breakpoints_; // normalized path -> sorted-by-line breakpoints
 
+    // Run-to-cursor's own temporary breakpoint, when RunToCursor had to
+    // create one (normalized key, line) -- unset when the current/last
+    // run-to-cursor landed on an already-existing breakpoint, since there's
+    // nothing temporary to clear afterward. See RunToCursor/ClearPendingRunToCursor.
+    std::optional<std::pair<std::string, std::size_t>> pendingRunToCursor_;
+
     // DAP round 3: sorted+deduped function-breakpoint names -- see
     // ToggleFunctionBreakpoint.
     std::vector<std::string> functionBreakpoints_;
@@ -501,6 +547,8 @@ class DapManager {
         // DAP round 5.
         bool disassemble = false;
         bool readMemory  = false;
+        // Debugging wishlist: jump-to-line -- see JumpToLine.
+        bool gotoTargets = false;
     };
     Capabilities capabilities_;
 
