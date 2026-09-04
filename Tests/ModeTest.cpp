@@ -59,6 +59,25 @@ std::vector<ned::editor::SymbolKind> KindsInOrder(const std::vector<ned::editor:
     return kinds;
 }
 
+// Debugging wishlist (line-inspect follow-up): true if some candidate range
+// exactly matches where `substring` actually occurs in `text` -- substring-
+// based rather than hand-computed byte offsets, so a test doesn't have to
+// (mis-)compute a real grammar's exact byte math itself.
+bool HasLineInspectRange(const std::vector<std::pair<std::size_t, std::size_t>>& candidates, std::string_view text,
+                         std::string_view substring, std::size_t searchFrom = 0) {
+    const std::size_t pos = text.find(substring, searchFrom);
+    if (pos == std::string_view::npos) {
+        return false; // test bug, not product bug -- the substring must actually be in the sample
+    }
+    const std::size_t end = pos + substring.size();
+    for (const auto& [start, candidateEnd] : candidates) {
+        if (start == pos && candidateEnd == end) {
+            return true;
+        }
+    }
+    return false;
+}
+
 } // namespace
 
 TEST_CASE("FundamentalMode has no keybindings and no highlighting", "[Mode]") {
@@ -338,6 +357,75 @@ TEST_CASE("CMode also gets the richer query -- an access specifier isn't valid C
 
     REQUIRE(HasSpan(spans, 0, 3, SyntaxClass::ReturnType));
     REQUIRE(HasSpan(spans, 12, 13, SyntaxClass::Parameter));
+}
+
+TEST_CASE("CppMode's lineInspect (Tier 2) finds identifiers and compound sub-expressions, deepest-in first",
+          "[Mode]") {
+    const auto              mode = CppMode();
+    const std::string_view  text = "void f() {\n    total = price * qty + a.b.c[i];\n}\n";
+    const std::size_t       lineStart = text.find("total");
+    const std::size_t       lineEnd   = text.find(';', lineStart);
+    const auto candidates = mode.lineInspect(text, lineStart, lineEnd);
+
+    // Bare identifiers -- Tier 1's own default, still present under Tier 2.
+    REQUIRE(HasLineInspectRange(candidates, text, "total"));
+    REQUIRE(HasLineInspectRange(candidates, text, "price"));
+    REQUIRE(HasLineInspectRange(candidates, text, "qty"));
+    // "i" alone would false-match the 'i' in "void" via plain substring
+    // search -- searching from just past "[i]"'s own '[' disambiguates.
+    REQUIRE(HasLineInspectRange(candidates, text, "i", text.find("[i]") + 1));
+    // Compound sub-expressions the richer, grammar-verified predicate adds.
+    REQUIRE(HasLineInspectRange(candidates, text, "price * qty"));
+    REQUIRE(HasLineInspectRange(candidates, text, "a.b"));
+    REQUIRE(HasLineInspectRange(candidates, text, "a.b.c"));
+    REQUIRE(HasLineInspectRange(candidates, text, "a.b.c[i]"));
+    REQUIRE(HasLineInspectRange(candidates, text, "total = price * qty + a.b.c[i]"));
+}
+
+TEST_CASE("CMode's lineInspect (Tier 2) works the same as CppMode's for plain C expressions", "[Mode]") {
+    const auto             mode      = CMode();
+    const std::string_view text      = "void f(void) {\n    total = a.b[i];\n}\n";
+    const std::size_t      lineStart = text.find("total");
+    const std::size_t      lineEnd   = text.find(';', lineStart);
+    const auto             candidates = mode.lineInspect(text, lineStart, lineEnd);
+
+    REQUIRE(HasLineInspectRange(candidates, text, "total"));
+    REQUIRE(HasLineInspectRange(candidates, text, "a.b[i]"));
+    REQUIRE(HasLineInspectRange(candidates, text, "total = a.b[i]"));
+}
+
+TEST_CASE("PythonMode's lineInspect (Tier 1 only) finds identifiers but not the compound expression around them",
+          "[Mode]") {
+    const auto             mode      = PythonMode();
+    const std::string_view text      = "total = price * qty\n";
+    const std::size_t      lineEnd   = text.find('\n');
+    const auto             candidates = mode.lineInspect(text, 0, lineEnd);
+
+    REQUIRE(HasLineInspectRange(candidates, text, "total"));
+    REQUIRE(HasLineInspectRange(candidates, text, "price"));
+    REQUIRE(HasLineInspectRange(candidates, text, "qty"));
+    REQUIRE(candidates.size() == 3); // no "price * qty" (binary_operator) or the assignment itself
+}
+
+TEST_CASE("lineInspect returns nothing for a line with no identifiers on it", "[Mode]") {
+    const auto             mode      = CppMode();
+    const std::string_view text      = "void f() {\n    ;\n}\n";
+    const std::size_t      lineStart = text.find(';');
+    const auto             candidates = mode.lineInspect(text, lineStart, lineStart + 1);
+    REQUIRE(candidates.empty());
+}
+
+TEST_CASE("lineInspect caps its result count on a dense line", "[Mode]") {
+    const auto  mode = CppMode();
+    std::string text = "void f() {\n    a0";
+    for (int i = 1; i < 40; ++i) {
+        text += " + a" + std::to_string(i);
+    }
+    text += ";\n}\n";
+    const std::size_t lineStart = text.find("a0");
+    const std::size_t lineEnd   = text.find(';', lineStart);
+    const auto         candidates = mode.lineInspect(text, lineStart, lineEnd);
+    REQUIRE(candidates.size() == ned::editor::kMaxLineInspectExpressions);
 }
 
 TEST_CASE("JsonMode highlights nothing for a JSON value with no strings/numbers/literals", "[Mode]") {
