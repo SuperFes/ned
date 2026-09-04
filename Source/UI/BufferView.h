@@ -1047,15 +1047,33 @@ class BufferView : public Widget {
     // this call's own return, nothing after.
     bool HandleVimKey(const editor::KeyChord& chord);
     void HandlePrefixArgumentKey(const editor::KeyChord& chord);
-    // snippet-expansion follow-up. HandleSnippetKey classifies only: the
-    // navigation/end chords it consumes, everything else falls through to
-    // DispatchChordNormally as its last statement (nothing after -- the
-    // dispatched command can destroy *this*, HandlePrefixArgumentKey's
-    // exact constraint); the per-keystroke buffer work (undo group, armed
-    // pristine-placeholder delete, mirror sync, end-of-session checks)
-    // lives in RunCommandAndHandleOutcome's snippet hooks, where *this* is
-    // provably alive and command-driven edits (kill-line, yank, C-u
-    // repeats) get identical treatment to plain typing.
+    // snippet-macro-replay follow-up: the navigation/end chords a live
+    // snippet session consumes itself (Tab/S-Tab field hop, ESC, a
+    // pristine-placeholder Backspace) -- factored out of HandleSnippetKey so
+    // ReplayMacro can drive the identical state-machine transitions during
+    // macro replay without going through DispatchChordNormally (which owns
+    // its own private CommandContext, exposing no way for a caller to check
+    // whether the dispatched command was window-management and may have
+    // destroyed *this* -- see ReplayMacro's own doc comment). Also records
+    // each consumed chord via Dispatcher::RecordChord when a macro is being
+    // defined, since none of these chords ever reach Dispatcher::Feed on
+    // their own. Returns true when chord was fully consumed (nothing left
+    // to dispatch); false means the caller must dispatch it through its own
+    // ordinary path (DispatchChordNormally live, Dispatcher::Feed directly
+    // during replay) -- pristine-placeholder bookkeeping for that path
+    // (arming snippetPendingPristineDelete_) still happens here either way,
+    // read by RunCommandAndHandleOutcome's own snippet hooks regardless of
+    // which path reaches them.
+    bool HandleSnippetNavigationKey(const editor::KeyChord& chord);
+    // Classifies via HandleSnippetNavigationKey; anything it doesn't
+    // consume falls through to DispatchChordNormally as this method's own
+    // last statement (nothing after -- the dispatched command can destroy
+    // *this*, HandlePrefixArgumentKey's exact constraint). The per-keystroke
+    // buffer work (undo group, armed pristine-placeholder delete, mirror
+    // sync, end-of-session checks) lives in RunCommandAndHandleOutcome's
+    // snippet hooks, where *this* is provably alive and command-driven
+    // edits (kill-line, yank, C-u repeats) get identical treatment to plain
+    // typing.
     void HandleSnippetKey(const editor::KeyChord& chord);
     // Performs a requested expansion (parse, replace [replaceStart,
     // replaceEnd), start the session) against the active buffer -- the

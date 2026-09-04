@@ -291,9 +291,47 @@ Notcurses.
       bundled modes — their output still parses); pytest needs `-v` or junit-xml for
       per-test pass marks; Go's basename-only `file:line` can miss jump-to-source in
       multi-directory modules.
-- [ ] **Snippet expansion gaps**: `$TM_*` variables, choices, transforms, nested
-      placeholders' inner stops, bundled default snippets, macro-replay continuation
-      through a session.
+- `$TM_*`/CLIPBOARD/CURRENT_*/RANDOM*/UUID variables, `${1|a,b|}` choices (first
+  choice as placeholder text -- no picker UI yet, see `ListPopup` mouse-support's
+  own precedent above for why that's a separably-sized follow-up), `${1/regex/
+  format/flags}` tabstop *and* variable transforms (VSCode's `${n:/upcase}`-style
+  format mini-language, live-recomputed via `Editor/RegexPattern.h`'s PCRE2, not
+  TextMate's older `\U...\E`), and macro-replay continuation through a live
+  session (`Dispatcher::RecordChord` + `BufferView::HandleSnippetNavigationKey`,
+  factored out of `HandleSnippetKey` so `ReplayMacro` can drive Tab/S-Tab/ESC/
+  pristine-Backspace itself instead of stopping the instant `inputMode_` left
+  Normal -- fixed a related latent post-loop-touch-after-a-window-management-
+  command UAF in `ReplayMacro` along the way) closed 2026-09-04 -- see
+  `git log --grep=snippet-expansion-gaps`. Nested placeholders' inner stops are
+  a separate remaining gap, see below.
+
+- [ ] **Nested snippet placeholders' inner stops** (`${1:foo ${2:bar}}` keeps
+      only the literal text "foo bar", the inner `$2` tabstop is dropped).
+      Verified this is *not* reachable via the tree-sitter fold-depth machinery
+      (`CodeFold.h`) -- fold nesting works by storing one point and re-deriving
+      the fold's actual extent from a fresh AST parse whenever it's needed
+      (`FoldableBlocks`); a snippet body has no grammar/parser behind it to
+      re-derive anything from, so nothing there transfers. The real problem is
+      that field 2's range would need to sit properly *contained inside* field
+      1's range, and `Buffer::SnippetRange`'s relocation/gravity model
+      currently only understands "disjoint or adjacent" (its own doc comment:
+      "adjacent fields never overlap") -- true nesting is new relocation-
+      semantics work in `Text/Buffer.h`, not a parser gap. Not attempted.
+
+- **Bundled default snippets** shipped 2026-09-04 (`Editor/BundledSnippets.h`,
+  ~75 entries across c/cpp/python/javascript/typescript/tsx/html/css/bash/
+  markdown/janet -- common control-flow/definition skeletons, not exhaustive)
+  -- see `git log --grep=bundled-snippets`. A deliberate reversal of
+  `SnippetRegistry.h`'s previously-stated "nothing bundled or auto-detected"
+  posture, per explicit user request ("make it magical where we can"); a
+  user's own `ned/register-snippet` for the same (language, trigger) still
+  overrides a bundled entry, or erases it with an empty body. Data-format/
+  config languages (json/yaml/toml/xml), niche ones (fish/clojure/jank), and
+  Org (already has its own, stronger capture-template mechanism -- OrgCapture.h)
+  were left out as a judgment call, not an oversight. The bundled C/C++
+  `guard` trigger doubles as a live showcase of the variable+transform feature
+  above (`$TM_FILENAME_BASE` through `/upcase`, resolved once at expansion
+  time, not a live tabstop).
 - [ ] Hunk unstage matches point against the *cached* staged diff, which drifts when
       unstaged edits exist earlier in the file — exact in the common stage-then-undo
       flow; revisit only if it bites.

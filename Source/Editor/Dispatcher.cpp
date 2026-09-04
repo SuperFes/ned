@@ -195,6 +195,14 @@ bool Dispatcher::IsRecording() const {
     return recording_;
 }
 
+void Dispatcher::RecordChord(const KeyChord& chord) {
+    if (!recording_) {
+        return;
+    }
+    currentMacro_.push_back(chord);
+    lastRecordedChordCount_ = 1;
+}
+
 const std::vector<KeyChord>& Dispatcher::LastMacro() const {
     return lastMacro_;
 }
