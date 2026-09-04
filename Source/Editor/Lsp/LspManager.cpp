@@ -269,13 +269,18 @@ Json BuildInitializeParams(const std::filesystem::path& projectRoot, const Json&
            // client already sends/handles (see LspManager's own Request*
            // methods and HandlePublishDiagnostics) but never previously
            // declared -- bare {} advertises plain support with no optional
-           // refinement (no prepareSupport on rename since PrepareRename is
-           // never sent, no tagSupport/relatedInformation on
+           // refinement (no tagSupport/relatedInformation on
            // publishDiagnostics since neither is parsed). Harmless against a
            // permissive server (confirmed live against clangd either way),
            // but a capability-strict one is entitled to assume a client that
            // never declares e.g. "rename" doesn't want rename requests at
            // all.
+           //
+           // prepareRename/linkedEditingRange follow-up: rename now declares
+           // prepareSupport (RequestPrepareRename is sent, see that method's
+           // own doc comment), and linkedEditingRange is declared bare, the
+           // same "plain support, no optional refinement" shape as
+           // documentHighlight just below it.
            {{"completion", {{"completionItem", {{"snippetSupport", true}}}}},
             {"hover", Json::object()},
             {"signatureHelp", Json::object()},
@@ -285,7 +290,8 @@ Json BuildInitializeParams(const std::filesystem::path& projectRoot, const Json&
             {"implementation", Json::object()},
             {"references", Json::object()},
             {"documentHighlight", Json::object()},
-            {"rename", Json::object()},
+            {"linkedEditingRange", Json::object()},
+            {"rename", {{"prepareSupport", true}}},
             {"formatting", Json::object()},
             {"rangeFormatting", Json::object()},
             {"onTypeFormatting", Json::object()},
@@ -2034,6 +2040,40 @@ void LspManager::RequestDocumentHighlight(text::Buffer& buffer, std::size_t byte
                         });
 }
 
+void LspManager::RequestLinkedEditingRange(text::Buffer& buffer, std::size_t byteOffset, LinkedEditingRangeCallback callback,
+                                           const std::string& serverKey) {
+    BufferSyncState* state = ResolveSyncState(buffer, serverKey);
+    if (!state || !state->opened) {
+        callback({});
+        return;
+    }
+    LspClient* client = ExistingClientForLanguage(state->connectionKey);
+    if (!client) {
+        callback({});
+        return;
+    }
+
+    const std::string language = state->connectionKey;
+    const LspPosition position = BytePositionToLsp(buffer.Content(), byteOffset);
+    const Json        params   = {
+        {"textDocument", {{"uri", state->uri}}},
+        {"position", {{"line", position.line}, {"character", position.character}}},
+    };
+    client->SendRequest("textDocument/linkedEditingRange", params,
+                        [this, language, callback = std::move(callback)](std::optional<Json> result, std::optional<Json> error) {
+                            if (error) {
+                                LogError(language, ExtractErrorMessage(*error));
+                                callback({});
+                                return;
+                            }
+                            if (!result) {
+                                callback({});
+                                return;
+                            }
+                            callback(ExtractLinkedEditingRanges(*result));
+                        });
+}
+
 void LspManager::RequestSwitchSourceHeader(text::Buffer& buffer, SwitchHeaderCallback callback) {
     BufferSyncState* state = PrimarySyncState(buffer);
     if (!state || !state->opened) {
@@ -2060,6 +2100,40 @@ void LspManager::RequestSwitchSourceHeader(text::Buffer& buffer, SwitchHeaderCal
                                 return;
                             }
                             callback(UriToPath(result->get<std::string>()));
+                        });
+}
+
+void LspManager::RequestPrepareRename(text::Buffer& buffer, std::size_t byteOffset, PrepareRenameCallback callback,
+                                      const std::string& serverKey) {
+    BufferSyncState* state = ResolveSyncState(buffer, serverKey);
+    if (!state || !state->opened) {
+        callback(std::nullopt);
+        return;
+    }
+    LspClient* client = ExistingClientForLanguage(state->connectionKey);
+    if (!client) {
+        callback(std::nullopt);
+        return;
+    }
+
+    const std::string language = state->connectionKey;
+    const LspPosition position = BytePositionToLsp(buffer.Content(), byteOffset);
+    const Json        params   = {
+        {"textDocument", {{"uri", state->uri}}},
+        {"position", {{"line", position.line}, {"character", position.character}}},
+    };
+    client->SendRequest("textDocument/prepareRename", params,
+                        [this, language, callback = std::move(callback)](std::optional<Json> result, std::optional<Json> error) {
+                            if (error) {
+                                LogError(language, ExtractErrorMessage(*error));
+                                callback(std::nullopt);
+                                return;
+                            }
+                            if (!result) {
+                                callback(std::nullopt);
+                                return;
+                            }
+                            callback(ExtractPrepareRenameResult(*result));
                         });
 }
 

@@ -8472,6 +8472,17 @@ TEST_CASE("C-c C-M-r prompts for a new name, then applies a multi-file rename ac
 
     view.OnEvent(ned::ui::test::Ctrl('c'));
     view.OnEvent(ManualRenameEvent());
+
+    // prepareRename follow-up: lsp-rename now sends textDocument/
+    // prepareRename before opening its prompt -- respond with
+    // {defaultBehavior: true} (renameable, no range/placeholder of its own)
+    // so the prompt opens exactly as unprefilled as it always did.
+    const std::string prepareRaw = ReadRawLspFrame(server.serverStdinRead);
+    const auto        prepareReq = ned::editor::lsp::Json::parse(prepareRaw.substr(prepareRaw.find("\r\n\r\n") + 4));
+    REQUIRE(prepareReq["method"] == "textDocument/prepareRename");
+    client->DispatchFrame(ned::editor::lsp::Json{
+        {"jsonrpc", "2.0"}, {"id", LspRequestIdFromFrame(prepareRaw)}, {"result", ned::editor::lsp::Json{{"defaultBehavior", true}}}}
+                              .dump());
     REQUIRE(fixture.statusMessage == "New name: ");
 
     TypeText(view, "new_name");

@@ -19,8 +19,10 @@ using ned::editor::lsp::ExtractHierarchyItems;
 using ned::editor::lsp::ExtractHoverText;
 using ned::editor::lsp::ExtractIncomingCalls;
 using ned::editor::lsp::ExtractInlayHints;
+using ned::editor::lsp::ExtractLinkedEditingRanges;
 using ned::editor::lsp::ExtractOnTypeFormattingTriggers;
 using ned::editor::lsp::ExtractOutgoingCalls;
+using ned::editor::lsp::ExtractPrepareRenameResult;
 using ned::editor::lsp::ExtractPullDiagnosticReport;
 using ned::editor::lsp::ExtractRenameEdits;
 using ned::editor::lsp::ExtractSemanticTokens;
@@ -1067,4 +1069,54 @@ TEST_CASE("ExtractIncomingCalls/ExtractOutgoingCalls skip an entry with a malfor
     REQUIRE(ExtractIncomingCalls(badItem).empty());
     REQUIRE(ExtractIncomingCalls(Json(nullptr)).empty());
     REQUIRE(ExtractOutgoingCalls(Json(nullptr)).empty());
+}
+
+TEST_CASE("ExtractPrepareRenameResult parses the bare Range form", "[Lsp]") {
+    const Json          result = MakeRange(2, 4, 2, 7);
+    const auto          parsed = ExtractPrepareRenameResult(result);
+    REQUIRE(parsed.valid);
+    REQUIRE(parsed.hasRange);
+    REQUIRE(parsed.start.line == 2);
+    REQUIRE(parsed.start.character == 4);
+    REQUIRE(parsed.end.character == 7);
+    REQUIRE(parsed.placeholder.empty());
+}
+
+TEST_CASE("ExtractPrepareRenameResult parses the {range, placeholder} form", "[Lsp]") {
+    const Json result = Json{{"range", MakeRange(1, 0, 1, 3)}, {"placeholder", "foo"}};
+    const auto parsed = ExtractPrepareRenameResult(result);
+    REQUIRE(parsed.valid);
+    REQUIRE(parsed.hasRange);
+    REQUIRE(parsed.placeholder == "foo");
+}
+
+TEST_CASE("ExtractPrepareRenameResult parses {defaultBehavior: true} as valid with no range", "[Lsp]") {
+    const auto parsed = ExtractPrepareRenameResult(Json{{"defaultBehavior", true}});
+    REQUIRE(parsed.valid);
+    REQUIRE_FALSE(parsed.hasRange);
+}
+
+TEST_CASE("ExtractPrepareRenameResult treats null and malformed objects as not renameable", "[Lsp]") {
+    REQUIRE_FALSE(ExtractPrepareRenameResult(Json(nullptr)).valid);
+    REQUIRE_FALSE(ExtractPrepareRenameResult(Json{{"defaultBehavior", false}}).valid);
+    REQUIRE_FALSE(ExtractPrepareRenameResult(Json::object()).valid);
+}
+
+TEST_CASE("ExtractLinkedEditingRanges parses every range in \"ranges\"", "[Lsp]") {
+    const Json result = Json{{"ranges", Json::array({MakeRange(0, 1, 0, 4), MakeRange(2, 1, 2, 4)})}};
+    const auto ranges = ExtractLinkedEditingRanges(result);
+    REQUIRE(ranges.size() == 2);
+    REQUIRE(ranges[0].start.line == 0);
+    REQUIRE(ranges[1].start.line == 2);
+}
+
+TEST_CASE("ExtractLinkedEditingRanges collapses a single range to empty -- nothing to mirror", "[Lsp]") {
+    const Json result = Json{{"ranges", Json::array({MakeRange(0, 1, 0, 4)})}};
+    REQUIRE(ExtractLinkedEditingRanges(result).empty());
+}
+
+TEST_CASE("ExtractLinkedEditingRanges returns empty for null or a missing/malformed \"ranges\"", "[Lsp]") {
+    REQUIRE(ExtractLinkedEditingRanges(Json(nullptr)).empty());
+    REQUIRE(ExtractLinkedEditingRanges(Json::object()).empty());
+    REQUIRE(ExtractLinkedEditingRanges(Json{{"ranges", "not-an-array"}}).empty());
 }

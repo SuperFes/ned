@@ -1011,4 +1011,59 @@ std::vector<HierarchyCall> ExtractOutgoingCalls(const Json& result) {
     return ExtractHierarchyCalls(result, "to");
 }
 
+PrepareRenameResult ExtractPrepareRenameResult(const Json& result) {
+    if (!result.is_object()) {
+        return {}; // null (or any other non-object) -- not renameable here
+    }
+    // Bare Range form: {start, end} directly on the result.
+    if (result.contains("start") && result.contains("end")) {
+        return PrepareRenameResult{
+            .valid    = true,
+            .hasRange = true,
+            .start    = PositionFromJson(result["start"]),
+            .end      = PositionFromJson(result["end"]),
+        };
+    }
+    // {range, placeholder} form.
+    if (const auto rangeIt = result.find("range"); rangeIt != result.end() && rangeIt->is_object() &&
+                                                   rangeIt->contains("start") && rangeIt->contains("end")) {
+        return PrepareRenameResult{
+            .valid       = true,
+            .hasRange    = true,
+            .start       = PositionFromJson((*rangeIt)["start"]),
+            .end         = PositionFromJson((*rangeIt)["end"]),
+            .placeholder = result.value("placeholder", std::string()),
+        };
+    }
+    // {defaultBehavior: true} form -- renameable, but no range of its own.
+    if (result.value("defaultBehavior", false)) {
+        return PrepareRenameResult{.valid = true};
+    }
+    return {}; // none of the three recognized shapes -- treat as not renameable
+}
+
+std::vector<LinkedEditingRange> ExtractLinkedEditingRanges(const Json& result) {
+    std::vector<LinkedEditingRange> ranges;
+    if (!result.is_object()) {
+        return ranges;
+    }
+    const auto rangesIt = result.find("ranges");
+    if (rangesIt == result.end() || !rangesIt->is_array()) {
+        return ranges;
+    }
+    for (const Json& range : *rangesIt) {
+        if (!range.is_object() || !range.contains("start") || !range.contains("end")) {
+            continue;
+        }
+        ranges.push_back(LinkedEditingRange{
+            .start = PositionFromJson(range["start"]),
+            .end   = PositionFromJson(range["end"]),
+        });
+    }
+    if (ranges.size() < 2) {
+        ranges.clear(); // nothing to mirror
+    }
+    return ranges;
+}
+
 } // namespace ned::editor::lsp

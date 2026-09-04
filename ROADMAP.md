@@ -127,10 +127,19 @@ Notcurses.
 - LSP edit-application gaps (`documentChanges` file create/rename/delete resource ops,
   server-pushed `workspace/applyEdit`) closed 2026-09-02 — see `git log --grep=edit-application-gaps`.
 - `rename-project-path`/`workspace/willRenameFiles`+`didRenameFiles` closed
-  2026-09-03 — see `git log --grep=rename-file-notifications`. `prepareRename`/
-  `linkedEditingRange` (symbol-rename-at-point and tag-pair-editing features, unrelated
-  to a file-path rename despite sharing this bullet before) remain unaddressed, not
-  gated on anything above.
+  2026-09-03 — see `git log --grep=rename-file-notifications`.
+- `prepareRename`/`linkedEditingRange` closed 2026-09-03 — see
+  `git log --grep=prepare-rename-and-linked-editing`. `lsp-rename` sends
+  `textDocument/prepareRename` first (prefilling the "New name:" prompt from the
+  symbol's own text/placeholder, or skipping the prompt outright on a real "not
+  renameable here" answer); `lsp-linked-editing-range` (`C-c l r`) starts a live
+  mirror-editing session across every range the server reports as linked (an HTML/
+  JSX element's matching tag name), built on `Editor/LinkedEditingSession.h` reusing
+  `Buffer::SnippetRange` as its storage the same way `Editor/Snippet.h` does --
+  mutually exclusive with a real snippet session since both share that storage.
+  `linkedEditingRange` is entered explicitly rather than automatically on cursor
+  move (unlike `DocumentHighlight`'s passive highlighting, this is live Buffer
+  mutation) -- see that class's own header comment for the reasoning.
 - [ ] **LSP multi-root, remainder** — the per-buffer-resolved-root half (a monorepo
       subpackage's own `package.json`/`pyproject.toml`/`Cargo.toml`/
       `compile_commands.json`/... earning its own server connection distinct from the

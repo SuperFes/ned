@@ -358,6 +358,19 @@ class LspManager {
     void RequestDocumentHighlight(text::Buffer& buffer, std::size_t byteOffset, DocumentHighlightCallback callback,
                                   const std::string& serverKey = {});
 
+    // linked-editing-range follow-up. Same "resolve purely from
+    // bufferState_, single buffer, no URI resolution" shape as
+    // RequestDocumentHighlight just above. Empty vector on any failure
+    // (buffer never synced, no running client, a server that doesn't
+    // implement this optional method, or fewer than 2 ranges in a real
+    // response -- ExtractLinkedEditingRanges already collapses that last
+    // case to empty) -- BufferView::RequestLinkedEditingRangeAtPoint treats
+    // empty uniformly as "nothing to link here," same as
+    // RequestDocumentHighlight's own empty-highlights convention.
+    using LinkedEditingRangeCallback = std::function<void(std::vector<LinkedEditingRange> ranges)>;
+    void RequestLinkedEditingRange(text::Buffer& buffer, std::size_t byteOffset, LinkedEditingRangeCallback callback,
+                                   const std::string& serverKey = {});
+
     // header-source-switching follow-up. clangd's own custom LSP extension
     // (not in the base spec -- no textDocument/definition-style position
     // needed, just the document itself) for jumping between a C/C++ header
@@ -436,6 +449,22 @@ class LspManager {
     // ops is empty or any one uri/oldUri fails to resolve.
     [[nodiscard]] static std::optional<std::vector<ResolvedDocumentChangeOp>>
     ResolveDocumentChangeOps(const std::vector<DocumentChangeOp>& ops);
+
+    // prepareRename follow-up. Sent before lsp-rename opens its "New name:"
+    // prompt, so the prompt can be prefilled with the symbol's own current
+    // text and skipped entirely when the server has a considered opinion
+    // that the position isn't renameable at all. nullopt on any failure
+    // (buffer never synced, no running client, or an error response --
+    // including a server that simply doesn't implement this optional
+    // method) is deliberately distinct from a present PrepareRenameResult
+    // with valid == false: nullopt means "this diagnostic step failed, fall
+    // back to lsp-rename's own pre-prepareRename behavior" (an unprefilled
+    // prompt), while valid == false is the server's own real "not
+    // renameable here" answer. serverKey: see RequestHover's own doc
+    // comment above.
+    using PrepareRenameCallback = std::function<void(std::optional<PrepareRenameResult> result)>;
+    void RequestPrepareRename(text::Buffer& buffer, std::size_t byteOffset, PrepareRenameCallback callback,
+                              const std::string& serverKey = {});
 
     // Sent for lsp-rename. nullopt on any failure (buffer never synced, no
     // running client, or an error response) -- mirrors ResolveCallback's
