@@ -104,6 +104,14 @@ using EnvLookup = std::function<std::optional<std::string>(std::string_view name
                                                                   const std::filesystem::path& nedExecutable,
                                                                   const std::filesystem::path& root);
 
+// POSIX single-quote shell escaping -- BuildKonsoleRunCommandArgv's own
+// helper (Konsole's runCommand works by typing text into a live shell
+// prompt, the one mechanism in this file that has no choice but to go
+// through a real shell), exposed here so ProjectSidebar's reveal-in-terminal
+// context-menu action (TerminalPanel::SendText's own "type a `cd` command
+// into the running shell" case) can reuse it rather than duplicating it.
+[[nodiscard]] std::string ShellQuoteSingle(const std::filesystem::path& path);
+
 // The real priority chain: DetectTerminal(), then actually run the
 // resulting handler's command(s) via ChildProcess. False if nothing was
 // detected, or the detected handler's spawn/D-Bus call failed -- the

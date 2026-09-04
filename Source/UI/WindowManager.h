@@ -524,6 +524,16 @@ class WindowManager {
     // HandlePromptKey already offers, instead of just reporting a refusal.
     void RequestOpenBinaryFile(const std::filesystem::path& path);
 
+    // sidebar-context-menu follow-up: same "route to whichever pane is
+    // currently focused" shape as RequestOpenBinaryFile just above -- wired
+    // to ProjectSidebar::SetOnContextMenuRequest's own popup actions in
+    // main.cpp. See BufferView::StartCreateFileAt/StartCreateDirectoryAt/
+    // StartRenameFileAt/StartDeleteFileAt's own doc comments.
+    void StartCreateFileAt(const std::filesystem::path& directory);
+    void StartCreateDirectoryAt(const std::filesystem::path& directory);
+    void StartRenameFileAt(const std::filesystem::path& path);
+    void StartDeleteFileAt(const std::filesystem::path& path);
+
     // edit-application-gaps follow-up: same "route to whichever pane is
     // currently focused" shape as RequestOpenBinaryFile just above -- wired
     // to LspManager::SetApplyEditHandler (see SetLspManager below) so a

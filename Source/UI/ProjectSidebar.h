@@ -263,6 +263,15 @@ class ProjectSidebar : public Widget {
     // colors without a live git repo.
     void DispatchVcsStatusForTesting(const std::vector<editor::vcs::VcsStatusEntry>& entries);
 
+    // sidebar-context-menu follow-up: a right-press on a tree row reports
+    // that entry's path/isDirectory plus the click's absolute screen
+    // position -- TabBar's own SetOnContextMenuRequest shape, since building
+    // the actual popup needs main.cpp's OverlayHost/ListPopup and
+    // WindowManager, neither of which this widget knows about. Unlike a left
+    // click, this never toggles/opens the entry itself. Unset (the default)
+    // means right-click is a no-op, matching every other Set* hook here.
+    void SetOnContextMenuRequest(std::function<void(const std::filesystem::path&, bool isDirectory, Point anchor)> handler);
+
   private:
     std::function<ActiveBuffer&()>                    activeBufferProvider_;
     text::BufferList&                                 bufferList_;
@@ -270,6 +279,7 @@ class ProjectSidebar : public Widget {
     const Theme&                                      theme_;
     std::function<void(text::Buffer&)>                onBufferClosed_;
     std::function<void(const std::filesystem::path&)> onBinaryFileOpenRequest_; // see SetOnBinaryFileOpenRequest()
+    std::function<void(const std::filesystem::path&, bool, Point)> onContextMenuRequest_; // see SetOnContextMenuRequest
 
     int scrollOffset_ = 0; // first visible row (post-sticky-headers), in *visible* (post-collapse) tree-entry units
 

@@ -311,37 +311,49 @@ commands, never a replacement for them.
       the real fix. Deliberately BufferView-only — see the follow-up below for the
       remaining surfaces, each of which needs genuinely new capabilities first, not
       just menu wiring.
-- [ ] **Right-click context menus: ProjectSidebar/VcsPanel** — descoped from
-      the BufferView v1 above because each needs real new capabilities, not just
-      exposing an existing command. TabBar's own right-click menu (Close/Close
-      Others/Close to the Right/Reveal in Sidebar) shipped 2026-09-04 --
-      `BufferView::CloseOtherTabs`/`CloseTabsToTheRight` (never prompt: a
-      modified, non-read-only buffer in the target set is just left open and
-      the outcome reported via statusMessage_, rather than queuing N sequential
-      y/n confirmations through `RequestCloseBuffer`'s single `pendingClose_`
-      slot) plus `WindowManager`'s own same-shape routing to whichever pane is
-      focused. `TabBar::SetOnContextMenuRequest` reports the right-clicked
-      buffer without switching to it (unlike a left click) so bulk-closing
-      background tabs doesn't disturb the current view. The popup itself runs
-      in `ListPopup`'s focusable mode (`DapThreadsPanel`/hierarchyTreeView's own
-      precedent), not BufferView's non-focusable/keeps-focus contextMenu shape,
-      since TabBar takes no keyboard focus at all to drive one. Live-verified
-      over a real pty: a real bug caught this way and fixed before shipping --
-      the activate handler ran the chosen action *before* calling
-      `WindowManager::TakeFocus()`, so `FocusedPane()` inside CloseOtherTabs/
-      CloseTabsToTheRight/RequestCloseBuffer saw no pane focused at all (the
-      popup itself still held it) and every action silently no-opped; unit
-      tests alone didn't catch this since they call `BufferView::
-      CloseOtherTabs` directly, bypassing WindowManager's focused-pane lookup
-      entirely.
-      - `ProjectSidebar`: has no `SelectedPath()`/`FocusedPath()`-style accessor for
-        a menu to act on yet; its existing create/rename/delete flows are blind
-        prompts (would need to be prefilled from the right-clicked row instead);
-        reveal-in-terminal and copy-path-to-clipboard are wholly new capabilities
-        with no existing command to reuse.
-      - VCS panel: no hunk-level revert command exists today (only whole-file
-        revert); the existing stage/unstage-hunk commands are point-based and would
-        need re-scoping to act on a right-clicked row instead of buffer point.
+- TabBar's own right-click menu (Close/Close Others/Close to the Right/Reveal
+  in Sidebar) shipped 2026-09-04 -- `BufferView::CloseOtherTabs`/
+  `CloseTabsToTheRight` (never prompt: a modified, non-read-only buffer in the
+  target set is just left open and the outcome reported via statusMessage_,
+  rather than queuing N sequential y/n confirmations through
+  `RequestCloseBuffer`'s single `pendingClose_` slot) plus `WindowManager`'s
+  own same-shape routing to whichever pane is focused. `TabBar::
+  SetOnContextMenuRequest` reports the right-clicked buffer without switching
+  to it (unlike a left click) so bulk-closing background tabs doesn't disturb
+  the current view. The popup itself runs in `ListPopup`'s focusable mode
+  (`DapThreadsPanel`/hierarchyTreeView's own precedent), not BufferView's
+  non-focusable/keeps-focus contextMenu shape, since TabBar takes no keyboard
+  focus at all to drive one. Live-verified over a real pty: a real bug caught
+  this way and fixed before shipping -- the activate handler ran the chosen
+  action *before* calling `WindowManager::TakeFocus()`, so `FocusedPane()`
+  inside CloseOtherTabs/CloseTabsToTheRight/RequestCloseBuffer saw no pane
+  focused at all (the popup itself still held it) and every action silently
+  no-opped; unit tests alone didn't catch this since they call `BufferView::
+  CloseOtherTabs` directly, bypassing WindowManager's focused-pane lookup
+  entirely.
+- **ProjectSidebar's own right-click menu** shipped 2026-09-04 --
+  `ProjectSidebar::SetOnContextMenuRequest` (TabBar's own shape: reports the
+  right-clicked entry's path/isDirectory plus the click's absolute position,
+  never toggles/opens it itself) drives New File.../New Folder... (scoped to
+  the right-clicked directory, or its parent for a file row)/Rename.../Delete,
+  each now a `BufferView::StartCreateFileAt`/`StartCreateDirectoryAt`/
+  `StartRenameFileAt`/`StartDeleteFileAt` entry point that prefills/skips
+  straight to the stage a blind `C-c C-d`/`C-c C-n`/`C-c C-k` keybinding would
+  otherwise make the user type out by hand, plus two wholly new capabilities:
+  Reveal in Terminal (starts/shows the embedded terminal panel, then types a
+  `cd` into its live shell via a new `TerminalPanel::SendText`, reusing
+  `TerminalTabLauncher.h`'s own `ShellQuoteSingle` -- exposed from its prior
+  file-local scope -- for the same "typing a path into a real shell prompt"
+  escaping problem) and Copy Path (`editor::CopyToSystemClipboard` directly,
+  no BufferView involvement). Same focusable-`ListPopup`/parallel-action-
+  vector shape TabBar's own menu uses, for the same reason. Live-verified
+  over a real pty (right-click on both a file row and a directory row, the
+  Rename prompt's prefill, and Reveal in Terminal's typed `cd`).
+- [ ] **Right-click context menu: VcsPanel** -- still descoped, same reasoning
+      as ProjectSidebar's own entry above before it shipped: no hunk-level
+      revert command exists today (only whole-file revert); the existing
+      stage/unstage-hunk commands are point-based and would need re-scoping to
+      act on a right-clicked row instead of buffer point.
 - [ ] **Drag-and-drop from `ProjectSidebar` into a pane** to open a file there
       (dragging already exists for tab reorder, sidebar resize, scrollbar/minimap
       thumb, terminal-panel scrollback selection — this would be a new drag *source*

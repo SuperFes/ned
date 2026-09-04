@@ -493,6 +493,41 @@ class BufferView : public Widget {
     // progress -- same guard RequestCloseBuffer uses.
     void RequestOpenBinaryFile(const std::filesystem::path& path);
 
+    // sidebar-context-menu follow-up: entry points for ProjectSidebar's
+    // right-click menu -- each prefills/skips straight to the stage a blind
+    // C-c C-d/C-c C-n/C-c C-k keybinding would otherwise make the user type
+    // out by hand, since the menu already knows the exact path/directory the
+    // user right-clicked. Routed the same "no single owner, act on whichever
+    // pane is focused" way RequestOpenBinaryFile is (see WindowManager.cpp).
+    //
+    // StartCreateFileAt/StartCreateDirectoryAt prefill the ordinary
+    // find-file/create-directory prompt with directory's own path (plus a
+    // trailing separator) rather than adding a distinct "create file in
+    // this exact directory" primitive -- ProjectFileOps.h has no file-create
+    // op of its own for the same reason find-file already covers it (see
+    // CLAUDE.md's own note: a nonexistent find-file path just creates the
+    // buffer via Buffer::NewFile on save). A no-op (reports via
+    // statusMessage_) if another interactive session is already in
+    // progress, same guard every entry point above uses.
+    void StartCreateFileAt(const std::filesystem::path& directory);
+    void StartCreateDirectoryAt(const std::filesystem::path& directory);
+
+    // Skips RenameFileStage::EnteringSource entirely -- prefills the
+    // destination prompt with path's own text (cursor at the end, ready to
+    // edit just the filename) rather than making the user retype the whole
+    // path first. Reports and refuses (statusMessage_, no session started)
+    // if path no longer exists -- same "fail loud, don't guess" precedent
+    // HandleRenameFileKey's own EnteringSource branch already establishes,
+    // needed here since the right-clicked row could in principle be stale
+    // (ProjectSidebar's own tree cache lags real disk state by up to
+    // kTreeCacheThrottle).
+    void StartRenameFileAt(const std::filesystem::path& path);
+
+    // Skips DeleteFileStage::EnteringPath entirely -- goes straight to the
+    // y/n confirmation, StartRenameFileAt's own existence-check precedent
+    // and reasoning.
+    void StartDeleteFileAt(const std::filesystem::path& path);
+
     // edit-application-gaps follow-up: entry point for a server-pushed
     // workspace/applyEdit request (LspManager::SetApplyEditHandler,
     // WindowManager::ApplyServerPushedWorkspaceEdit) -- unlike ApplyRename/

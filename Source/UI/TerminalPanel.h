@@ -104,6 +104,15 @@ class TerminalPanel : public Widget {
 
     [[nodiscard]] bool ShellRunning() const;
 
+    // Reveal-in-terminal follow-up (ProjectSidebar's context menu): writes
+    // raw bytes straight to the shell's stdin via writeSink_, bypassing
+    // Emulator::SendKey's own key-to-byte-sequence encoding entirely -- this
+    // is already-encoded text (e.g. a `cd <path>\n` line), not a single
+    // keystroke to translate. A safe no-op if the shell isn't running
+    // (writeSink_ unset), same tolerance every other writeSink_ use already
+    // has.
+    void SendText(std::string_view text);
+
     // Routes pty output into the emulator -- public because it's also the
     // deterministic output-injection seam every headless test uses, the
     // TaskProcess::DispatchOutput precedent.

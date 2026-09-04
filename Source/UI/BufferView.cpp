@@ -13248,6 +13248,69 @@ void BufferView::HandleConfirmTrustProjectInitKey(const editor::KeyChord& chord)
     }
 }
 
+void BufferView::StartCreateFileAt(const std::filesystem::path& directory) {
+    if (inputMode_ != InputMode::Normal) {
+        statusMessage_ = "Finish the current prompt first.";
+        return;
+    }
+    std::string prefill = directory.string();
+    if (!prefill.empty() && prefill.back() != '/') {
+        prefill += '/';
+    }
+    inputMode_ = InputMode::FindFile;
+    prompt_.emplace("Find file: ");
+    prompt_->SetText(prefill);
+    pathCompletionSelection_ = 0;
+    RefreshPathCompletionPopup();
+}
+
+void BufferView::StartCreateDirectoryAt(const std::filesystem::path& directory) {
+    if (inputMode_ != InputMode::Normal) {
+        statusMessage_ = "Finish the current prompt first.";
+        return;
+    }
+    std::string prefill = directory.string();
+    if (!prefill.empty() && prefill.back() != '/') {
+        prefill += '/';
+    }
+    inputMode_ = InputMode::CreateDirectory;
+    prompt_.emplace("Create directory: ");
+    prompt_->SetText(prefill);
+    statusMessage_ = prompt_->StatusText();
+}
+
+void BufferView::StartRenameFileAt(const std::filesystem::path& path) {
+    if (inputMode_ != InputMode::Normal) {
+        statusMessage_ = "Finish the current prompt first.";
+        return;
+    }
+    if (!std::filesystem::exists(path)) {
+        statusMessage_ = "No such file or directory: " + path.string();
+        return;
+    }
+    inputMode_    = InputMode::RenameFile;
+    renameStage_  = RenameFileStage::EnteringDestination;
+    renameSource_ = path;
+    prompt_.emplace("Rename \"" + path.string() + "\" to: ");
+    prompt_->SetText(path.string());
+    statusMessage_ = prompt_->StatusText();
+}
+
+void BufferView::StartDeleteFileAt(const std::filesystem::path& path) {
+    if (inputMode_ != InputMode::Normal) {
+        statusMessage_ = "Finish the current prompt first.";
+        return;
+    }
+    if (!std::filesystem::exists(path)) {
+        statusMessage_ = "No such file or directory: " + path.string();
+        return;
+    }
+    inputMode_     = InputMode::DeleteFile;
+    deleteStage_   = DeleteFileStage::Confirming;
+    deleteTarget_  = path;
+    statusMessage_ = "Delete \"" + path.string() + "\"? (y/n)";
+}
+
 void BufferView::HandleDeleteFileKey(const editor::KeyChord& chord) {
     if (deleteStage_ == DeleteFileStage::EnteringPath) {
         if (chord.Special == editor::SpecialKey::Enter) {

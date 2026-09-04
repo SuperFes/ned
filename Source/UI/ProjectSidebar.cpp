@@ -405,6 +405,11 @@ void ProjectSidebar::SetOnBinaryFileOpenRequest(std::function<void(const std::fi
     onBinaryFileOpenRequest_ = std::move(handler);
 }
 
+void ProjectSidebar::SetOnContextMenuRequest(
+    std::function<void(const std::filesystem::path&, bool, Point)> handler) {
+    onContextMenuRequest_ = std::move(handler);
+}
+
 void ProjectSidebar::SetOnFocusReturn(std::function<void()> handler) {
     onFocusReturn_ = std::move(handler);
 }
@@ -586,6 +591,33 @@ bool ProjectSidebar::OnEvent(const Event& event) {
         }
         else {
             scrollOffset_ = std::max(scrollOffset_ - kWheelScrollLines, 0);
+        }
+        return true;
+    }
+
+    // sidebar-context-menu follow-up: a right-press resolves to the same
+    // row a left-press would (chrome rows -- header/bottom-border/divider --
+    // are excluded the same way, no menu opens over them), reports the
+    // entry's path/isDirectory plus the click's absolute screen position,
+    // and stops there -- unlike a left click, this never toggles a
+    // directory or opens a file; building/showing the actual popup is
+    // main.cpp's job (TabBar::SetOnContextMenuRequest's own shape).
+    if (mouse->button == MouseEvent::Button::Right && mouse->motion == MouseEvent::Motion::Pressed) {
+        if (onContextMenuRequest_ && mouse->at.x != size().width - 1 && mouse->at.y >= kHeaderHeight &&
+            mouse->at.y < size().height - kBottomBorderHeight) {
+            const std::vector<editor::ProjectTreeEntry> entries = VisibleEntries(CachedTree());
+            if (!entries.empty()) {
+                const RowLayout                  layout = ComputeRowLayout(entries, scrollOffset_);
+                const std::optional<std::size_t> index =
+                    EntryIndexAtRow(layout, entries, ContentHeight(), std::max(mouse->at.y - kHeaderHeight, 0));
+                if (index) {
+                    const editor::ProjectTreeEntry& entry = entries[*index];
+                    selectedIndex_                         = static_cast<int>(*index);
+                    const Box& box                         = Box_();
+                    onContextMenuRequest_(entry.path, entry.isDirectory,
+                                          Point{.x = box.x_min + mouse->at.x, .y = box.y_min + mouse->at.y});
+                }
+            }
         }
         return true;
     }

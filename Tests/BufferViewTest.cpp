@@ -5228,6 +5228,170 @@ TEST_CASE("RequestOpenBinaryFile is a no-op while another interactive session is
     std::filesystem::remove(path);
 }
 
+TEST_CASE("StartCreateFileAt prefills find-file with the directory, and Enter creates a file there", "[BufferView]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_bufferview_start_create_file";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+
+    Fixture               fixture;
+    ned::text::Buffer&    scratch = fixture.bufferList.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
+                               fixture.statusMessage, fixture.mode, fixture.theme);
+
+    view.StartCreateFileAt(dir);
+    REQUIRE(fixture.statusMessage.find(dir.string()) != std::string::npos);
+
+    for (const char c : std::string("new.txt")) {
+        view.OnEvent(ned::ui::test::Character(std::string(1, c)));
+    }
+    view.OnEvent(ned::ui::test::Return());
+
+    // find-file on a nonexistent path creates an in-memory buffer only --
+    // no disk I/O until the buffer is actually saved (BufferList::
+    // OpenOrCreateFile's own doc comment).
+    REQUIRE(&activeBuffer.Get() != &scratch);
+    REQUIRE(activeBuffer.Get().Path() == dir / "new.txt");
+    REQUIRE(fixture.statusMessage.find("New file") != std::string::npos);
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("StartCreateDirectoryAt prefills create-directory with the directory, and Enter creates a subdirectory",
+          "[BufferView]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_bufferview_start_create_dir";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+
+    Fixture               fixture;
+    ned::text::Buffer&    scratch = fixture.bufferList.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
+                               fixture.statusMessage, fixture.mode, fixture.theme);
+
+    view.StartCreateDirectoryAt(dir);
+    REQUIRE(fixture.statusMessage.find(dir.string()) != std::string::npos);
+
+    for (const char c : std::string("sub")) {
+        view.OnEvent(ned::ui::test::Character(std::string(1, c)));
+    }
+    view.OnEvent(ned::ui::test::Return());
+
+    REQUIRE(std::filesystem::is_directory(dir / "sub"));
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("StartRenameFileAt skips straight to the destination prompt, prefilled with the old path", "[BufferView]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_bufferview_start_rename";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    const std::filesystem::path source = dir / "old.txt";
+    { std::ofstream(source) << "hello"; }
+
+    Fixture               fixture;
+    ned::text::Buffer&    scratch = fixture.bufferList.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
+                               fixture.statusMessage, fixture.mode, fixture.theme);
+
+    view.StartRenameFileAt(source);
+    REQUIRE(fixture.statusMessage.find(source.string()) != std::string::npos);
+
+    // The prompt is prefilled with the full old path, cursor at the end --
+    // backspace off the filename and type a new one rather than the whole
+    // path, mirroring how a user would actually edit it.
+    for (int i = 0; i < 7; ++i) { // "old.txt" is 7 characters
+        view.OnEvent(ned::ui::test::Backspace());
+    }
+    for (const char c : std::string("new.txt")) {
+        view.OnEvent(ned::ui::test::Character(std::string(1, c)));
+    }
+    view.OnEvent(ned::ui::test::Return());
+
+    REQUIRE_FALSE(std::filesystem::exists(source));
+    REQUIRE(std::filesystem::exists(dir / "new.txt"));
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("StartRenameFileAt reports and refuses for a path that no longer exists", "[BufferView]") {
+    const std::filesystem::path missing = std::filesystem::temp_directory_path() / "ned_bufferview_rename_missing.txt";
+    std::filesystem::remove(missing);
+
+    Fixture               fixture;
+    ned::text::Buffer&    scratch = fixture.bufferList.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
+                               fixture.statusMessage, fixture.mode, fixture.theme);
+
+    view.StartRenameFileAt(missing);
+
+    REQUIRE(fixture.statusMessage.find("No such file") != std::string::npos);
+}
+
+TEST_CASE("StartDeleteFileAt skips straight to the y/n confirmation", "[BufferView]") {
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_bufferview_start_delete.txt";
+    { std::ofstream(path) << "x"; }
+
+    Fixture               fixture;
+    ned::text::Buffer&    scratch = fixture.bufferList.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
+                               fixture.statusMessage, fixture.mode, fixture.theme);
+
+    view.StartDeleteFileAt(path);
+    REQUIRE(fixture.statusMessage.find("Delete") != std::string::npos);
+    REQUIRE(std::filesystem::exists(path)); // awaiting confirmation
+
+    view.OnEvent(ned::ui::test::Character("y"));
+
+    REQUIRE_FALSE(std::filesystem::exists(path));
+}
+
+TEST_CASE("StartDeleteFileAt reports and refuses for a path that no longer exists", "[BufferView]") {
+    const std::filesystem::path missing = std::filesystem::temp_directory_path() / "ned_bufferview_delete_missing.txt";
+    std::filesystem::remove(missing);
+
+    Fixture               fixture;
+    ned::text::Buffer&    scratch = fixture.bufferList.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
+                               fixture.statusMessage, fixture.mode, fixture.theme);
+
+    view.StartDeleteFileAt(missing);
+
+    REQUIRE(fixture.statusMessage.find("No such file") != std::string::npos);
+}
+
+TEST_CASE("StartCreateFileAt/StartCreateDirectoryAt/StartRenameFileAt/StartDeleteFileAt are no-ops while another interactive session is already active",
+          "[BufferView]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_bufferview_start_busy";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    const std::filesystem::path existing = dir / "existing.txt";
+    { std::ofstream(existing) << "x"; }
+
+    Fixture               fixture;
+    ned::text::Buffer&    scratch = fixture.bufferList.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
+                               fixture.statusMessage, fixture.mode, fixture.theme);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Ctrl('s')); // isearch-forward -- an interactive session is now active
+
+    view.StartCreateFileAt(dir);
+    view.StartCreateDirectoryAt(dir);
+    view.StartRenameFileAt(existing);
+    view.StartDeleteFileAt(existing);
+
+    REQUIRE(std::filesystem::exists(existing)); // untouched by any of the four
+    REQUIRE(fixture.bufferList.Count() == 1);
+
+    std::filesystem::remove_all(dir);
+}
+
 TEST_CASE("Window-splitting keybindings each invoke the registered onWindowRequest handler",
           "[BufferView]") {
     Fixture             fixture;

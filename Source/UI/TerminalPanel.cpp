@@ -97,6 +97,12 @@ void TerminalPanel::Feed(std::string_view bytes) {
     scrollbackOffset_ = std::clamp(scrollbackOffset_, 0, emulator_.ScrollbackSize());
 }
 
+void TerminalPanel::SendText(std::string_view text) {
+    if (writeSink_) {
+        writeSink_(text);
+    }
+}
+
 void TerminalPanel::SetWriteSinkForTesting(std::function<void(std::string_view)> sink) {
     writeSink_ = std::move(sink);
 }
