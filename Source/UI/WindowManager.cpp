@@ -533,6 +533,7 @@ std::unique_ptr<Pane> WindowManager::MakePane(text::Buffer& buffer, editor::Mode
     pane->Buffer().SetOnCandidatesChanged(onCandidatesChanged_);
     pane->Buffer().SetOnCompletionChanged(onCompletionChanged_);
     pane->Buffer().SetOnPeekChanged(onPeekChanged_);
+    pane->Buffer().SetOnContextMenuChanged(onContextMenuChanged_);
     pane->Buffer().SetOnHierarchyChanged(WireHierarchyCallback(pane.get()));
     pane->Buffer().SetOnPointerGraphChanged(WirePointerGraphCallback(pane.get()));
     pane->Buffer().SetOnMemoryImageChanged(WireMemoryImageCallback(pane.get()));
@@ -655,6 +656,13 @@ void WindowManager::SetOnPeekChanged(std::function<void(std::optional<ListPopupM
     onPeekChanged_ = std::move(onPeekChanged);
     for (Pane* pane : Leaves()) {
         pane->Buffer().SetOnPeekChanged(onPeekChanged_);
+    }
+}
+
+void WindowManager::SetOnContextMenuChanged(std::function<void(std::optional<ListPopupModel>)> onContextMenuChanged) {
+    onContextMenuChanged_ = std::move(onContextMenuChanged);
+    for (Pane* pane : Leaves()) {
+        pane->Buffer().SetOnContextMenuChanged(onContextMenuChanged_);
     }
 }
 
@@ -968,6 +976,12 @@ void WindowManager::ActivateCompletionAt(std::size_t index) {
 void WindowManager::ActivatePeekDefinition(std::size_t index) {
     if (Pane* pane = FocusedPane()) {
         pane->Buffer().ActivatePeekDefinitionAt(index);
+    }
+}
+
+void WindowManager::ActivateContextMenuAt(std::size_t index) {
+    if (Pane* pane = FocusedPane()) {
+        pane->Buffer().ActivateContextMenuAt(index);
     }
 }
 

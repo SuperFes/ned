@@ -40,6 +40,7 @@
 #include "Editor/SnippetRegistry.h"
 #include "Editor/TabWidth.h"
 #include "Editor/Variables.h"
+#include "Editor/Vcs/VcsProvider.h"
 #include "Editor/Vim/VimGlobalMarks.h"
 #include "Editor/Vim/VimSettings.h"
 #include "Editor/WhichKeySettings.h"
@@ -237,6 +238,10 @@ struct Fixture {
     // popup -- wired via CaptureCompletion(view, fixture.completion).
     std::optional<ned::ui::ListPopupModel> completion;
 
+    // right-click-context-menu follow-up: same shape as `candidates`/
+    // `completion` above -- wired via CaptureContextMenu(view, fixture.contextMenu).
+    std::optional<ned::ui::ListPopupModel> contextMenu;
+
     ned::ui::BufferView View() {
         return ned::ui::BufferView(activeBuffer, killRing, registers, promptHistory, bufferList, dispatcher,
                                    statusMessage, mode, theme);
@@ -254,6 +259,24 @@ void CaptureCandidates(ned::ui::BufferView& view, std::optional<ned::ui::ListPop
 // SetOnCompletionChanged.
 void CaptureCompletion(ned::ui::BufferView& view, std::optional<ned::ui::ListPopupModel>& out) {
     view.SetOnCompletionChanged([&out](std::optional<ned::ui::ListPopupModel> model) { out = std::move(model); });
+}
+
+// right-click-context-menu follow-up: same wiring as CaptureCandidates/
+// CaptureCompletion above, for SetOnContextMenuChanged.
+void CaptureContextMenu(ned::ui::BufferView& view, std::optional<ned::ui::ListPopupModel>& out) {
+    view.SetOnContextMenuChanged([&out](std::optional<ned::ui::ListPopupModel> model) { out = std::move(model); });
+}
+
+std::vector<std::string> ContextMenuLabels(const std::optional<ned::ui::ListPopupModel>& model) {
+    std::vector<std::string> labels;
+    if (!model) {
+        return labels;
+    }
+    labels.reserve(model->rows.size());
+    for (const ned::ui::ListPopupRow& row : model->rows) {
+        labels.push_back(row.main);
+    }
+    return labels;
 }
 
 std::optional<std::string> CompletionSelectedLabel(const std::optional<ned::ui::ListPopupModel>& model) {
@@ -1671,6 +1694,310 @@ TEST_CASE("Isearch: a positional mouse click ends the search and places point th
     // Back to normal editing: this must self-insert, not feed the search.
     view.OnEvent(ned::ui::test::Character("!"));
     REQUIRE(fixture.buffer.Text() == "the! quick brown fox");
+}
+
+TEST_CASE("Right-click in the content area opens the context menu and moves point to the click",
+          "[BufferView][ContextMenu]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("the quick brown fox");
+    fixture.buffer.SetPoint(0);
+
+    ned::ui::BufferView view = fixture.View();
+    CaptureContextMenu(view, fixture.contextMenu);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    const int gutter = GutterWidth(1);
+    view.OnEvent(MousePress(gutter + 4, 0, ned::ui::MouseEvent::Button::Right)); // right after "the "
+
+    REQUIRE(fixture.buffer.Point() == 4);
+    REQUIRE(fixture.contextMenu.has_value());
+    // context-aware-menu follow-up: this Fixture wires no LspManager, so
+    // the three purely-LSP rows (Go to Definition/Rename Symbol/Code
+    // Actions...) are hidden -- see the dedicated "shows the LSP-only
+    // rows" test below for the connected case.
+    REQUIRE(ContextMenuLabels(fixture.contextMenu) ==
+           std::vector<std::string>{"Cut", "Copy", "Paste", "Find References", "Format Buffer"});
+}
+
+TEST_CASE("Right-click in the content area shows the LSP-only rows once this buffer has a real connection",
+          "[BufferView][ContextMenu]") {
+    Fixture                     fixture;
+    fixture.mode                        = ned::editor::CMode();
+    const std::filesystem::path path    = std::filesystem::temp_directory_path() / "ned_context_menu_lsp_gate_test.c";
+    ned::text::Buffer&          buffer  = fixture.bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("int x;");
+    fixture.activeBuffer.Set(buffer);
+
+    ned::ui::EventLoop            eventLoop;
+    ned::editor::lsp::LspManager  manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::LspClient*  client = nullptr;
+    FakeLspServer                 server = FakeLspServer::Create(manager, "c", eventLoop, client);
+
+    ned::ui::BufferView view = fixture.View();
+    CaptureContextMenu(view, fixture.contextMenu);
+    view.SetLspManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    ned::ui::Screen screen = ned::ui::Screen(40, 3);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    view.Paint(canvas); // drives BufferView::SyncBuffer -> LspManager::SyncBuffer, populating ActiveServerKeysForBuffer
+
+    const int gutter = GutterWidth(1, /*foldColumn=*/4);
+    view.OnEvent(MousePress(gutter + 1, 0, ned::ui::MouseEvent::Button::Right));
+
+    REQUIRE(fixture.contextMenu.has_value());
+    // context-aware-menu-round-2 follow-up: the old standalone "Code
+    // Actions..." row is gone -- with no code-action response drained/sent
+    // here, the async fetch this Fixture also triggers (see
+    // RequestContextMenuCodeActions) simply never resolves within this
+    // test, leaving the menu exactly as its static rows alone would show.
+    REQUIRE(ContextMenuLabels(fixture.contextMenu) ==
+           std::vector<std::string>{"Cut", "Copy", "Paste", "Go to Definition", "Find References", "Rename Symbol",
+                                    "Format Buffer"});
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("Right-click in the content area auto-fills real LSP quick-fixes above a divider once they arrive",
+          "[BufferView][ContextMenu]") {
+    Fixture                     fixture;
+    fixture.mode                       = ned::editor::CMode();
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_context_menu_code_action_test.c";
+    ned::text::Buffer&          buffer = fixture.bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("int x;");
+    fixture.activeBuffer.Set(buffer);
+
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::LspClient* client = nullptr;
+    FakeLspServer                server = FakeLspServer::Create(manager, "c", eventLoop, client);
+
+    ned::ui::BufferView view = fixture.View();
+    CaptureContextMenu(view, fixture.contextMenu);
+    view.SetLspManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    ned::ui::Screen screen = ned::ui::Screen(40, 3);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    view.Paint(canvas); // drives SyncBuffer, so ActiveServerKeysForBuffer/hasLsp is true below
+
+    const int gutter = GutterWidth(1, /*foldColumn=*/4);
+    view.OnEvent(MousePress(gutter + 1, 0, ned::ui::MouseEvent::Button::Right)); // fires RequestContextMenuCodeActions
+    REQUIRE(fixture.contextMenu.has_value());
+    REQUIRE(ContextMenuLabels(fixture.contextMenu) ==
+           std::vector<std::string>{"Cut", "Copy", "Paste", "Go to Definition", "Find References", "Rename Symbol",
+                                    "Format Buffer"}); // no fixes have arrived yet
+
+    // didOpen and an unconditional per-Paint() inlayHint request both land
+    // ahead of the codeAction request my right-click fires (confirmed by
+    // inspection -- inlay hints, unlike semanticTokens/codeLens, fire on
+    // every Paint() with no extra per-test setup needed) -- same "several
+    // frames can land in one read()" precedent the semantic-tokens test
+    // above documents, just three deep here instead of two.
+    const std::vector<ned::editor::lsp::Json> frames    = ReadLspFrames(server.serverStdinRead, 3);
+    const auto                                requestIt = std::find_if(frames.begin(), frames.end(), [](const ned::editor::lsp::Json& f) {
+        return f["method"] == "textDocument/codeAction";
+    });
+    REQUIRE(requestIt != frames.end());
+    const ned::editor::lsp::Json& request = *requestIt;
+    const ned::editor::lsp::Json  response = {
+        {"jsonrpc", "2.0"},
+        {"id", request["id"]},
+        {"result", ned::editor::lsp::Json::array({{{"title", "Add missing semicolon"}}, {{"title", "Insert cast"}}})},
+    };
+    client->DispatchFrame(response.dump());
+
+    REQUIRE(fixture.contextMenu.has_value());
+    const std::vector<std::string> labels = ContextMenuLabels(fixture.contextMenu);
+    // Two fixes, then the divider's rule text, then every static row unchanged
+    // -- see ContextMenuDividerRule's own doc comment for why its exact
+    // content isn't asserted here.
+    REQUIRE(labels.size() == 10);
+    REQUIRE(labels[0] == "Add missing semicolon");
+    REQUIRE(labels[1] == "Insert cast");
+    REQUIRE(labels[2].find("─") == 0); // the divider row
+    REQUIRE(std::vector<std::string>(labels.begin() + 3, labels.end()) ==
+           std::vector<std::string>{"Cut", "Copy", "Paste", "Go to Definition", "Find References", "Rename Symbol",
+                                    "Format Buffer"});
+    // Selection landed on the first (highest-priority) live fix, and the
+    // divider itself carries no "N)" ordinal -- only the real rows do.
+    REQUIRE(fixture.contextMenu->selectedIndex == 0u);
+    REQUIRE(fixture.contextMenu->rows[0].left == "1)");
+    REQUIRE(fixture.contextMenu->rows[1].left == "2)");
+    REQUIRE(fixture.contextMenu->rows[2].left.empty());
+    REQUIRE(fixture.contextMenu->rows[3].left == "3)"); // "Cut" -- numbering continues past the divider
+
+    // Digit '1' activates the first fix directly, no "Code Actions..."
+    // click-through needed.
+    view.OnEvent(ned::ui::test::Character("1"));
+    REQUIRE_FALSE(fixture.contextMenu.has_value()); // session ended
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("Right-click in the content area preserves an existing mark/selection instead of clearing it",
+          "[BufferView][ContextMenu]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("the quick brown fox");
+    fixture.buffer.SetPoint(0);
+    fixture.buffer.SetMark(4); // "the " selected
+
+    ned::ui::BufferView view = fixture.View();
+    CaptureContextMenu(view, fixture.contextMenu);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    const int gutter = GutterWidth(1);
+    view.OnEvent(MousePress(gutter + 10, 0, ned::ui::MouseEvent::Button::Right)); // inside "quick"
+
+    REQUIRE(fixture.buffer.HasMark()); // unlike plain left-click, the mark survives
+}
+
+TEST_CASE("Digit key in the context menu invokes the matching command and ends the session",
+          "[BufferView][ContextMenu]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("the quick brown fox");
+    fixture.buffer.SetMark(0); // left edge of the eventual "the" selection
+
+    ned::ui::BufferView view = fixture.View();
+    CaptureContextMenu(view, fixture.contextMenu);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    const int gutter = GutterWidth(1);
+    // Right-clicking right after "the" moves point to byte 3, leaving
+    // mark at 0 -- region (0,3) == "the", the region a real "select then
+    // right-click at its far edge" workflow produces.
+    view.OnEvent(MousePress(gutter + 3, 0, ned::ui::MouseEvent::Button::Right));
+    REQUIRE(fixture.contextMenu.has_value());
+
+    view.OnEvent(ned::ui::test::Character("2")); // "Copy" is row 2
+
+    REQUIRE(fixture.killRing.Current() == "the");
+    REQUIRE_FALSE(fixture.contextMenu.has_value()); // session ended
+}
+
+TEST_CASE("Up/Down cycle the context menu selection with wraparound", "[BufferView][ContextMenu]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("the quick brown fox");
+    fixture.buffer.SetPoint(0);
+
+    ned::ui::BufferView view = fixture.View();
+    CaptureContextMenu(view, fixture.contextMenu);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    const int gutter = GutterWidth(1);
+    view.OnEvent(MousePress(gutter + 1, 0, ned::ui::MouseEvent::Button::Right));
+    REQUIRE(fixture.contextMenu->selectedIndex == 0u);
+
+    view.OnEvent(ned::ui::test::ArrowUp()); // wraps to the last row
+    REQUIRE(fixture.contextMenu->selectedIndex == fixture.contextMenu->rows.size() - 1);
+
+    view.OnEvent(ned::ui::test::ArrowDown()); // wraps back to the first
+    REQUIRE(fixture.contextMenu->selectedIndex == 0u);
+}
+
+TEST_CASE("Escape cancels the context menu without invoking anything", "[BufferView][ContextMenu]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("the quick brown fox");
+    fixture.buffer.SetPoint(0);
+    fixture.buffer.SetMark(3);
+
+    ned::ui::BufferView view = fixture.View();
+    CaptureContextMenu(view, fixture.contextMenu);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    const int gutter = GutterWidth(1);
+    view.OnEvent(MousePress(gutter + 1, 0, ned::ui::MouseEvent::Button::Right));
+    REQUIRE(fixture.contextMenu.has_value());
+
+    view.OnEvent(ned::ui::test::Escape());
+
+    REQUIRE(fixture.buffer.Text() == "the quick brown fox"); // unchanged
+    REQUIRE(fixture.killRing.Current().empty());
+    REQUIRE_FALSE(fixture.contextMenu.has_value());
+}
+
+TEST_CASE("A left click elsewhere while the context menu is open dismisses it and places point there",
+          "[BufferView][ContextMenu]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("the quick brown fox");
+    fixture.buffer.SetPoint(0);
+
+    ned::ui::BufferView view = fixture.View();
+    CaptureContextMenu(view, fixture.contextMenu);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    const int gutter = GutterWidth(1);
+    view.OnEvent(MousePress(gutter + 1, 0, ned::ui::MouseEvent::Button::Right));
+    REQUIRE(fixture.contextMenu.has_value());
+
+    view.OnEvent(MousePress(gutter + 10, 0)); // plain left click elsewhere
+
+    REQUIRE_FALSE(fixture.contextMenu.has_value());
+    REQUIRE(fixture.buffer.Point() == 10);
+}
+
+TEST_CASE("Right-click in the gutter offers only the active gutter actions, at the clicked line",
+          "[BufferView][ContextMenu]") {
+    Fixture fixture;
+    fixture.mode = ned::editor::CMode(); // gives FoldGutterActive() a real fold query -- Org's own headline
+                                          // fold/unfold is a separate, hand-rolled mechanism (Buffer::FoldMarker
+                                          // directly), OrgMode() sets no Mode::fold query at all.
+    fixture.buffer.InsertAtPoint("one\ntwo\nthree\n");
+
+    ned::ui::BufferView view = fixture.View();
+    CaptureContextMenu(view, fixture.contextMenu);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(MousePress(0, 1, ned::ui::MouseEvent::Button::Right)); // gutter, screen row 1 ("two")
+
+    REQUIRE(fixture.contextMenu.has_value());
+    REQUIRE(ContextMenuLabels(fixture.contextMenu) == std::vector<std::string>{"Toggle Fold"});
+    REQUIRE(fixture.buffer.Content().ByteOffsetToLine(fixture.buffer.Point()) == 1);
+}
+
+TEST_CASE("Right-click in the gutter offers fold/breakpoint/blame rows once all three are active",
+          "[BufferView][ContextMenu]") {
+    Fixture fixture;
+    fixture.mode = ned::editor::CMode();
+    fixture.buffer.InsertAtPoint("one\ntwo\nthree\n");
+    fixture.buffer.SetPath("/tmp/ned-context-menu-gutter-test.c");
+
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::dap::DapManager manager(eventLoop);
+    manager.ToggleBreakpoint("/tmp/ned-context-menu-gutter-test.c", 2); // 1-based, DAP's own convention -- buffer line 1 ("two")
+
+    ned::ui::BufferView view = fixture.View();
+    CaptureContextMenu(view, fixture.contextMenu);
+    view.SetDapManager(&manager);
+    view.DispatchBlameForTesting(
+        {ned::editor::vcs::VcsBlameLine{"abcdef1234567890abcdef1234567890abcdef12", "Ada", "2026-01-01", "did a thing"}});
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(MousePress(0, 1, ned::ui::MouseEvent::Button::Right)); // gutter, screen row 1 ("body", line 1)
+
+    REQUIRE(fixture.contextMenu.has_value());
+    REQUIRE(ContextMenuLabels(fixture.contextMenu) ==
+           std::vector<std::string>{"Toggle Fold", "Toggle Breakpoint", "Show Blame"});
+}
+
+TEST_CASE("Right-click during an unrelated modal session is not consumed", "[BufferView][ContextMenu]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("the quick brown fox");
+    fixture.buffer.SetPoint(0);
+
+    ned::ui::BufferView view = fixture.View();
+    CaptureContextMenu(view, fixture.contextMenu);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Ctrl('s')); // start isearch-forward
+    view.OnEvent(ned::ui::test::Character("f"));
+    const std::size_t pointDuringSearch = fixture.buffer.Point(); // wherever isearch's own live match landed it
+
+    const int gutter = GutterWidth(1);
+    view.OnEvent(MousePress(gutter + 10, 0, ned::ui::MouseEvent::Button::Right));
+
+    REQUIRE_FALSE(fixture.contextMenu.has_value());
+    REQUIRE(fixture.buffer.Point() == pointDuringSearch); // the right-click left isearch's own state untouched
 }
 
 TEST_CASE("The line-number gutter shows right-aligned, 1-indexed line numbers", "[BufferView]") {

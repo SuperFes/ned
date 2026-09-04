@@ -273,25 +273,59 @@ faster than keyboarding to a location and running a named command, even for a
 keyboard-first user. Treat mouse work as an accelerant layered on top of existing
 commands, never a replacement for them.
 
-- [ ] **Right-click context menus** — the real gap: `MouseEvent::Button::Right` is
-      already decoded end-to-end (`Widget.cpp`) but has exactly zero consumers
-      anywhere in this codebase today (confirmed by grep — nothing branches on it).
-      A stale comment in `BufferView.h` (near `HandleExecuteCommandKey`) says a
-      dropdown was descoped for lack of "any floating/popup widget concept" — that
-      was true when written but no longer is: `ListPopup` + `OverlayHost` (built for
-      completion/M-x/symbol-search/call-hierarchy since) is exactly that substrate,
-      already supports click-to-activate and digit jump-select. A context menu would
-      be a `ListPopup` anchored at the click point via `OverlayHost`'s placement-fn
-      mechanism, populated per-surface with rows that just invoke existing
-      `CommandRegistry` commands — no new functionality, pure discoverability/
-      acceleration:
-      - In-buffer: cut/copy/paste, go-to-definition/references/rename, code actions,
-        format-buffer — whatever's already bound, surfaced contextually.
-      - Gutter: toggle fold, toggle breakpoint, blame-at-line.
-      - Tab bar: close/close-others/close-to-the-right/reveal-in-sidebar.
-      - `ProjectSidebar`: new file/dir, rename, delete, reveal-in-terminal, copy path.
-      - VCS panel: stage/unstage hunk, revert hunk, view diff.
-      Not started — no menu-row-schema or per-surface wiring drafted yet.
+- **Right-click context menus (BufferView v1)** shipped — content-area
+      (cut/copy/paste, go-to-definition/references/rename, code actions,
+      format-buffer) and gutter (toggle fold/breakpoint, blame) menus, a `ListPopup`
+      anchored at the click point via `OverlayHost`'s placement-fn mechanism, driven
+      by a new `BufferView::InputMode::ContextMenu`/`HandleContextMenuKey` the same
+      numbered-list/BufferView-keeps-focus shape `LspCodeActionSelect`/
+      `HandleCodeActionSelectKey` already established — every row just invokes an
+      already-registered `CommandRegistry` command, no new editing functionality.
+      Point moves to the click (or the clicked line, in the gutter) before the menu
+      opens; the content-area menu deliberately leaves an existing mark/selection
+      untouched (unlike a plain left-click's `ClearMark()`) so Cut/Copy from the menu
+      can act on it. The stale `BufferView.h` comment claiming "no floating/popup
+      widget concept" (near `HandleExecuteCommandKey`) is fixed. Context-aware
+      follow-up: the purely-LSP content-area rows (go-to-definition/rename — no
+      non-LSP fallback exists for either, unlike project-find-references' RE2 scan
+      or format-buffer's separate `FormatCommand()`) are hidden unless this buffer
+      actually has a connection for its own primary language, checked via
+      `LspManager::ActiveServerKeysForBuffer` containing `editor::LanguageKeyForMode(mode_)`
+      (the same signal `ModeLine`'s own status glyph already uses; `PrimarySyncState`
+      itself is `LspManager`-private). Context-aware follow-up round 2: the old
+      standalone "Code Actions..." row is gone — when connected,
+      `RequestContextMenuCodeActions` fires the same `textDocument/codeAction`
+      request `RequestCodeActionsAtPoint` does (diagnostic-at-point range/
+      server-routing reused verbatim) right after the static rows already show, and
+      splices real quick-fix titles in above a plain rule-text divider row once the
+      async response lands (own staleness guard: generation + still-`ContextMenu`
+      + buffer/point unchanged; zero actions leaves the menu exactly as it already
+      is). `BufferView::ContextMenuEntry` replaced the old plain command-name list
+      to carry the three real row kinds (named command / live `CodeAction`, applied
+      via `ResolveAndApplyCodeAction` / non-interactive divider) — Up/Down and
+      digit-select both skip the divider (`NextContextMenuIndex`/
+      `ContextMenuIndexForDigit`), and activation (`RunContextMenuEntry`, shared by
+      the keyboard and mouse-click paths) branches on which kind an entry carries.
+      Live-verified against a real running `clangd`: right-clicking a missing-`;`
+      diagnostic shows "1) insert ';'" above the divider, and choosing it applies
+      the real fix. Deliberately BufferView-only — see the follow-up below for the
+      remaining surfaces, each of which needs genuinely new capabilities first, not
+      just menu wiring.
+- [ ] **Right-click context menus: TabBar/ProjectSidebar/VcsPanel** — descoped from
+      the BufferView v1 above because each needs real new capabilities, not just
+      exposing an existing command:
+      - TabBar: `close-other-tabs`/`close-to-the-right` don't exist as commands at
+        all yet (new `BufferList`-level operations needed), plus wiring a menu row to
+        the already-existing but never-live-wired `ProjectSidebar::RevealPath` for
+        reveal-in-sidebar.
+      - `ProjectSidebar`: has no `SelectedPath()`/`FocusedPath()`-style accessor for
+        a menu to act on yet; its existing create/rename/delete flows are blind
+        prompts (would need to be prefilled from the right-clicked row instead);
+        reveal-in-terminal and copy-path-to-clipboard are wholly new capabilities
+        with no existing command to reuse.
+      - VCS panel: no hunk-level revert command exists today (only whole-file
+        revert); the existing stage/unstage-hunk commands are point-based and would
+        need re-scoping to act on a right-clicked row instead of buffer point.
 - [ ] **Drag-and-drop from `ProjectSidebar` into a pane** to open a file there
       (dragging already exists for tab reorder, sidebar resize, scrollbar/minimap
       thumb, terminal-panel scrollback selection — this would be a new drag *source*

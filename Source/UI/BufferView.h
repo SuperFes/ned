@@ -651,6 +651,28 @@ class BufferView : public Widget {
     // Unset is a safe no-op.
     void SetOnPeekChanged(std::function<void(std::optional<ListPopupModel>)> handler);
 
+    // right-click-context-menu follow-up: same OverlayHost-owned-above-this-
+    // class, anchored shape as SetOnPeekChanged/SetOnCompletionChanged
+    // above -- NOT SetOnCandidatesChanged's docked shape, since this popup
+    // must open at the click position, not a fixed bottom-left box. Fired
+    // with a populated ListPopupModel (anchor set to the click's screen
+    // position) from ShowContextMenuAt/RefreshContextMenuStatus, and with
+    // std::nullopt from EndInteractiveSession. Wired via
+    // WindowManager::SetOnContextMenuChanged fanning out to every pane;
+    // main.cpp's registrant shows/hides its own shared, anchor-aware
+    // ListPopup overlay. Unset is a safe no-op.
+    void SetOnContextMenuChanged(std::function<void(std::optional<ListPopupModel>)> handler);
+
+    // right-click-context-menu follow-up: the click-driven counterpart to
+    // Enter in HandleContextMenuKey -- runs contextMenuEntries_[index] via
+    // RunContextMenuEntry. A no-op outside InputMode::ContextMenu (a stale
+    // click racing an already-ended session, same guard
+    // ActivatePeekDefinitionAt has) or if index is out of range. Public
+    // for the same reason AcceptActiveCompletionAt/ActivatePeekDefinitionAt
+    // are -- WindowManager::ActivateContextMenuAt forwards here from the
+    // popup's own ListPopup::SetOnActivate.
+    void ActivateContextMenuAt(std::size_t index);
+
     // peek-definition follow-up: the click-driven counterpart to Enter in
     // HandlePeekDefinitionKey -- jumps to whichever location the popup is
     // currently showing (index is accepted for signature symmetry with
@@ -1021,7 +1043,17 @@ class BufferView : public Widget {
                            // bookmarkPromptAction_ (TaskName's own precedent for
                            // RunTask/CancelTask). See RefreshBookmarkJumpStatus/
                            // HandleBookmarkJumpKey.
-                           BookmarkJump };
+                           BookmarkJump,
+                           // right-click-context-menu follow-up: driven by
+                           // HandleContextMenuKey, LspCodeActionSelect's own
+                           // numbered-list/BufferView-keeps-focus shape -- see that
+                           // mode's own doc comment above for the shape this mirrors.
+                           // Entered directly from OnMouseEvent on a right-press (not
+                           // via StartInteractiveSession/InteractiveRequest -- there's
+                           // no command dispatch that triggers this, only a raw mouse
+                           // event, the same "mouse handler sets inputMode_ directly"
+                           // shape the fold-gutter left-click already has).
+                           ContextMenu };
 
     enum class DeleteFileStage { EnteringPath,
                                  Confirming };
@@ -1262,6 +1294,99 @@ class BufferView : public Widget {
     // confirmation -- see RequestCodeActionsAtPoint's doc comment); Escape/C-g
     // cancels back to Normal.
     void HandleCodeActionSelectKey(const editor::KeyChord& chord);
+
+    // right-click-context-menu follow-up: one row of the context menu --
+    // see contextMenuEntries_'s own doc comment (near its declaration,
+    // further down this class) for what each field means and how the
+    // three kinds of row (named command / live LSP quick-fix / divider)
+    // are told apart.
+    struct ContextMenuEntry {
+        std::string                            label;
+        std::string                            commandName; // empty if codeAction is set or isDivider
+        std::optional<editor::lsp::CodeAction> codeAction;
+        bool                                    isDivider = false;
+    };
+
+    // right-click-context-menu follow-up: builds contextMenuEntries_ for
+    // either the content area or the gutter (mutually exclusive -- decided
+    // by whether localClick.x falls at or before GutterWidth(), the same
+    // boundary ByteOffsetForPoint's own gutter-click snap uses), moves point
+    // to the resolved offset/line first (mirroring the plain left-click
+    // path -- mark is left untouched in the content-area case, unlike plain
+    // left-click's ClearMark(), so Cut/Copy from the menu can act on an
+    // existing selection), sets inputMode_ = ContextMenu, and fires
+    // onContextMenuChanged_ with a model anchored at the click's
+    // screen-absolute position. context-aware-menu follow-up: the
+    // content-area menu's two purely-LSP commands (goto-definition/rename --
+    // no non-LSP fallback exists for either, unlike project-find-references'
+    // RE2 scan or format-buffer's separate FormatCommand()) are hidden when
+    // there's no real connection for this buffer's own primary language --
+    // checked via LspManager::ActiveServerKeysForBuffer containing
+    // editor::LanguageKeyForMode(mode_) (ModeLine's own status-glyph source;
+    // PrimarySyncState itself is LspManager-private), not merely
+    // lspManager_ being wired to this pane at all. context-aware-menu-
+    // round-2 follow-up: the old standalone "Code Actions..." row is gone --
+    // when connected, this instead fires RequestContextMenuCodeActions
+    // (after the static rows are already shown, so a fast/synchronous
+    // response's own inputMode_ guard sees ContextMenu already set) to
+    // auto-fill real quick-fix titles above a divider once they arrive,
+    // rather than requiring a second click-through. A no-op (no mode
+    // change, no popup shown) if the resulting row list is empty -- can't
+    // currently happen (kill-region/kill-ring-save/yank are always present)
+    // but kept as a defensive guard the same way RequestCodeActionsAtPoint's
+    // own empty-list handling is.
+    void ShowContextMenuAt(Point localClick);
+    // context-aware-menu-round-2 follow-up: RequestCodeActionsAtPoint's own
+    // diagnostic-at-point range/server-routing logic, but targeting
+    // contextMenuCodeActionGeneration_ and splicing the response into
+    // contextMenuEntries_ (one entry per returned CodeAction, plus one
+    // divider, prepended ahead of the existing static rows) instead of
+    // entering LspCodeActionSelect. Discards a stale response the same way
+    // RequestCodeActionsAtPoint does (generation/buffer/point all still
+    // matching) plus one more check specific to this session: inputMode_
+    // must still be ContextMenu (the menu wasn't cancelled/reopened
+    // elsewhere since). A response with zero actions leaves the menu
+    // exactly as it already is -- no divider, no empty section.
+    void RequestContextMenuCodeActions(std::size_t point);
+    // Renders contextMenuEntries_ as a numbered list into a ListPopupModel
+    // via onContextMenuChanged_ (a divider entry gets no number, just its
+    // own literal rule text as `main`), contextMenuSelection_ visually
+    // marked -- called by ShowContextMenuAt, by RequestContextMenuCodeActions'
+    // own callback once new rows are spliced in, and again by
+    // HandleContextMenuKey whenever Up/Down changes the selection.
+    // RefreshCodeActionSelectStatus's own shape, except the model's anchor
+    // is re-set to the same click point on every refresh, not just the
+    // first.
+    void RefreshContextMenuStatus();
+    // The next/previous non-divider index from `from`, wrapping around --
+    // Up/Down's own shared step, factored out since both directions need
+    // the same "skip any isDivider entry" rule and there's always at least
+    // one real (non-divider) entry to land on.
+    [[nodiscard]] std::size_t NextContextMenuIndex(std::size_t from, bool forward) const;
+    // The contextMenuEntries_ index of the digit-th non-divider row
+    // (1-based, matching the "N)" label RefreshContextMenuStatus paints),
+    // or nullopt past the end -- digits count only real rows, a divider
+    // consumes a display row but no number.
+    [[nodiscard]] std::optional<std::size_t> ContextMenuIndexForDigit(std::size_t digit) const;
+    // Shared tail for HandleContextMenuKey's digit/Enter branch and
+    // ActivateContextMenuAt: a no-op for an out-of-range index or a
+    // divider row (a stray click landing on the rule itself); otherwise
+    // ends the session and either applies contextMenuEntries_[index]'s
+    // CodeAction via ResolveAndApplyCodeAction or invokes its commandName
+    // via dispatcher_.Registry().Invoke, whichever this entry carries.
+    void RunContextMenuEntry(std::size_t index);
+    // A plain named-command row, its label resolved from the static table
+    // (a free function in BufferView.cpp's own anonymous namespace) --
+    // a private member only because ContextMenuEntry itself is private;
+    // ShowContextMenuAt's own row-building calls this once per command.
+    [[nodiscard]] ContextMenuEntry ContextMenuCommandEntry(const std::string& commandName) const;
+    // Up/Down move contextMenuSelection_ via NextContextMenuIndex and
+    // refresh; a digit '1'-'9' resolves to a row via ContextMenuIndexForDigit
+    // and, if valid, updates contextMenuSelection_ (out-of-range leaves it
+    // unchanged) -- either way falling through to the same RunContextMenuEntry
+    // confirmation Enter performs; Escape/C-g cancels back to Normal.
+    // HandleCodeActionSelectKey's own structure.
+    void HandleContextMenuKey(const editor::KeyChord& chord);
     // ACP client slice 2: same numbered-list rendering as
     // RefreshCodeActionSelectStatus, over pendingAcpPermissionOptions_/
     // acpPermissionSelection_ instead -- called by ShowAcpPermissionPrompt
@@ -1671,9 +1796,11 @@ class BufferView : public Widget {
     // dispatcher_.Registry().Names() and re-ranked on every keystroke; Enter
     // invokes whichever ranked candidate is currently selected. Shown inline
     // via statusMessage_ using the same "label + text + {candidates}"
-    // convention CompletePrompt already established, since this codebase has
-    // no floating/popup widget concept to show a real dropdown in (see
-    // ProjectSidebar's own context-menu descoping history).
+    // convention CompletePrompt already established. (This method itself
+    // isn't being converted -- but note `ListPopup`+`OverlayHost` now exist
+    // and back several sessions, including the right-click context menu
+    // below, so the "no floating/popup widget concept" claim this comment
+    // used to make no longer holds.)
     void HandleExecuteCommandKey(const editor::KeyChord& chord);
 
     // Refreshes statusMessage_ from the current prompt_ text and
@@ -2904,6 +3031,7 @@ class BufferView : public Widget {
     std::function<void(std::optional<ListPopupModel>)> onCandidatesChanged_; // see SetOnCandidatesChanged
     std::function<void(std::optional<ListPopupModel>)> onCompletionChanged_; // see SetOnCompletionChanged
     std::function<void(std::optional<ListPopupModel>)> onPeekChanged_; // see SetOnPeekChanged
+    std::function<void(std::optional<ListPopupModel>)> onContextMenuChanged_; // see SetOnContextMenuChanged
 
     // call/type-hierarchy follow-up: onHierarchyChanged_ mirrors
     // onCandidatesChanged_'s own role, for the shared TreeView overlay
@@ -3704,6 +3832,43 @@ class BufferView : public Widget {
     std::vector<editor::lsp::CodeAction> pendingCodeActions_;
     std::size_t                          codeActionSelection_         = 0;
     std::size_t                          codeActionRequestGeneration_ = 0;
+
+    // right-click-context-menu follow-up: contextMenuEntries_/
+    // contextMenuSelection_ are valid only while inputMode_ is ContextMenu
+    // (pendingCodeActions_'s own shape above, except entered directly from
+    // OnMouseEvent rather than an async callback). Every row reduces to one
+    // of three things: an already-registered CommandRegistry command
+    // (commandName set, invoked against MakeContext() -- all position-
+    // dependent work, moving point/preserving mark, already done once, up
+    // front, in ShowContextMenuAt, before the menu is even shown), a live
+    // LSP quick-fix (codeAction set, applied via ResolveAndApplyCodeAction
+    // -- context-aware-menu-round-2 follow-up: auto-filled in place above a
+    // divider once RequestContextMenuCodeActions' async response arrives,
+    // rather than requiring a separate "Code Actions..." click-through), or
+    // a non-interactive horizontal-rule row (isDivider set, skipped by
+    // Up/Down/digit selection and by ActivateContextMenuAt -- see
+    // RunContextMenuEntry). contextMenuAnchor_ is the click's screen-
+    // absolute position, set once by ShowContextMenuAt and re-read by
+    // every RefreshContextMenuStatus (fixed at the moment of the
+    // right-click, unlike CompletionAnchorNow's point-relative,
+    // live-recomputed anchor).
+    // ContextMenuEntry itself is declared earlier, alongside the private
+    // methods that reference it in their own signatures (ContextMenuCommandEntry/
+    // RunContextMenuEntry/RequestContextMenuCodeActions) -- an unqualified
+    // return/parameter type in a member function *declaration* needs the
+    // type already visible at that point in the class body, unlike a
+    // function *body*, which gets complete-class lookup.
+    std::vector<ContextMenuEntry> contextMenuEntries_;
+    std::size_t                   contextMenuSelection_ = 0;
+    std::optional<Point>          contextMenuAnchor_;
+    // context-aware-menu-round-2 follow-up: staleness guard for
+    // RequestContextMenuCodeActions' async response -- codeActionRequestGeneration_
+    // above is LspCodeActionSelect's own counter, not reusable here since the
+    // two sessions (right-click menu vs. lsp-code-action's numbered list) can't
+    // overlap in time but do need independently-scoped generations to keep
+    // each session's own staleness check simple (no shared-counter cross-talk
+    // to reason about between them).
+    std::size_t contextMenuCodeActionGeneration_ = 0;
 
     // executeCommand/prose-code-actions follow-up: which LspManager
     // serverKey pendingCodeActions_ was requested from -- empty for the

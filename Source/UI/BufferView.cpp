@@ -4318,6 +4318,11 @@ bool BufferView::OnKeyEvent(const Event& event) {
         ClampPointToNarrowing();
         return true;
     }
+    if (inputMode_ == InputMode::ContextMenu) {
+        HandleContextMenuKey(*chord);
+        ClampPointToNarrowing();
+        return true;
+    }
     if (inputMode_ == InputMode::LspGotoSymbol) {
         // Same "Enter jumps directly, no RunCommandAndHandleOutcome routing"
         // shape as ProjectFindFile above.
@@ -6367,6 +6372,317 @@ void BufferView::ActivatePeekDefinitionAt(std::size_t /*index*/) {
     const editor::lsp::LspManager::ResolvedLocation location = pendingPeekDefinitions_[peekDefinitionSelection_];
     EndInteractiveSession();
     JumpToDefinition(location);
+}
+
+void BufferView::SetOnContextMenuChanged(std::function<void(std::optional<ListPopupModel>)> handler) {
+    onContextMenuChanged_ = std::move(handler);
+}
+
+namespace {
+    // right-click-context-menu follow-up: short menu labels for a fixed,
+    // closed set of command names -- Command::Docstring() is a full
+    // sentence meant for M-x/help text ("Kill (cut) the region between
+    // point and mark into the kill ring."), not a menu row. Resolved once,
+    // at push time, into ContextMenuEntry::label -- a code-action entry
+    // carries its own dynamic title instead, so this map only ever needs
+    // to cover the fixed set of named commands the menu can offer.
+    std::string StaticContextMenuLabel(const std::string& commandName) {
+        static const std::unordered_map<std::string, std::string> kLabels = {
+            {"kill-region", "Cut"},
+            {"kill-ring-save", "Copy"},
+            {"yank", "Paste"},
+            {"lsp-goto-definition", "Go to Definition"},
+            {"project-find-references", "Find References"},
+            {"lsp-rename", "Rename Symbol"},
+            {"format-buffer", "Format Buffer"},
+            {"code-fold-toggle", "Toggle Fold"},
+            {"dap-toggle-breakpoint", "Toggle Breakpoint"},
+            {"vcs-blame-detail-at-point", "Show Blame"},
+        };
+        const auto it = kLabels.find(commandName);
+        return it != kLabels.end() ? it->second : commandName;
+    }
+
+    // context-aware-menu-round-2 follow-up: the rule ListPopup's own
+    // preview-footer divider paints (Border.h's RoundedBorderGlyphs().horizontal,
+    // U+2500), long enough to span any reasonable popup width -- PaintRowText
+    // truncates the rest, the same "silently truncate" convention every other
+    // row already follows, so a narrower popup is harmless.
+    std::string ContextMenuDividerRule() {
+        std::string rule;
+        for (int i = 0; i < 40; ++i) {
+            rule += "─";
+        }
+        return rule;
+    }
+} // namespace
+
+BufferView::ContextMenuEntry BufferView::ContextMenuCommandEntry(const std::string& commandName) const {
+    return ContextMenuEntry{.label = StaticContextMenuLabel(commandName), .commandName = commandName};
+}
+
+void BufferView::ShowContextMenuAt(Point localClick) {
+    text::Buffer&      buffer      = activeBuffer_.Get();
+    const std::size_t  gutterWidth = GutterWidth();
+    const bool         inGutter    = localClick.x <= static_cast<int>(gutterWidth); // mirrors
+                                      // ByteOffsetForPoint's own "x > gutterWidth is content" boundary
+
+    contextMenuEntries_.clear();
+    bool        requestCodeActions = false;
+    std::size_t codeActionPoint    = 0;
+
+    if (inGutter) {
+        // Gutter menu: line-resolve the same way the existing fold-gutter
+        // click does (AdvanceVisibleLines(topLine_, y, totalLines)), not
+        // ByteOffsetForPoint's fancier column-aware walk -- matching that
+        // precedent exactly rather than introducing a second,
+        // slightly-different line-resolution path for the gutter.
+        const text::ITextStorage& content    = buffer.Content();
+        const std::size_t         totalLines = content.LineCount();
+        const std::size_t         line       = std::min(
+            AdvanceVisibleLines(topLine_, static_cast<std::size_t>(std::max(localClick.y, 0)), totalLines),
+            totalLines - 1);
+        buffer.SetPoint(content.LineToByteOffset(line));
+
+        // v1 simplification: gate each row by that command's own already-
+        // active/inactive precondition, not by precisely which gutter
+        // sub-column was clicked -- see ShowContextMenuAt's own doc
+        // comment in BufferView.h.
+        if (FoldGutterActive()) {
+            contextMenuEntries_.push_back(ContextMenuCommandEntry("code-fold-toggle"));
+        }
+        if (DapGutterActive()) {
+            contextMenuEntries_.push_back(ContextMenuCommandEntry("dap-toggle-breakpoint"));
+        }
+        if (BlameGutterActive()) {
+            contextMenuEntries_.push_back(ContextMenuCommandEntry("vcs-blame-detail-at-point"));
+        }
+    }
+    else {
+        const std::size_t offset = ByteOffsetForPoint(localClick);
+        // Deliberately does NOT ClearMark() the way a plain left click does
+        // -- kill-region/kill-ring-save are documented no-ops without an
+        // existing mark, and a right-click that silently discarded a
+        // just-made selection before the user can even choose Cut/Copy
+        // from it would be actively hostile.
+        buffer.SetPoint(offset);
+
+        // format-buffer/project-find-references are deliberately outside
+        // this gate -- FormatCommand() is a separate, non-LSP configured
+        // formatter, and project-find-references falls back to a
+        // project-wide RE2 text scan when no server is running (see
+        // ROADMAP's own note on that fallback path). Only the two commands
+        // with no non-LSP fallback at all (goto-definition/rename --
+        // exactly what RequestDefinitionAtPoint/RequestRenameAtPoint would
+        // themselves hit a dead end against) are hidden without a real
+        // connection for this buffer's own primary language --
+        // lspManager_ merely being wired to this pane isn't that signal.
+        // ActiveServerKeysForBuffer (ModeLine's own status-glyph source)
+        // is the public surface for this; PrimarySyncState itself is
+        // LspManager-private, so this checks for the buffer's own primary
+        // language key among the *active* keys directly rather than
+        // kProseLanguageKey (which never supports either) alone being
+        // enough.
+        bool hasLsp = false;
+        if (lspManager_) {
+            const std::string              primaryKey = editor::LanguageKeyForMode(mode_);
+            const std::vector<std::string> active      = lspManager_->ActiveServerKeysForBuffer(buffer);
+            hasLsp                                     = std::find(active.begin(), active.end(), primaryKey) != active.end();
+        }
+        contextMenuEntries_.push_back(ContextMenuCommandEntry("kill-region"));
+        contextMenuEntries_.push_back(ContextMenuCommandEntry("kill-ring-save"));
+        contextMenuEntries_.push_back(ContextMenuCommandEntry("yank"));
+        if (hasLsp) {
+            contextMenuEntries_.push_back(ContextMenuCommandEntry("lsp-goto-definition"));
+        }
+        contextMenuEntries_.push_back(ContextMenuCommandEntry("project-find-references"));
+        if (hasLsp) {
+            contextMenuEntries_.push_back(ContextMenuCommandEntry("lsp-rename"));
+        }
+        contextMenuEntries_.push_back(ContextMenuCommandEntry("format-buffer"));
+
+        // context-aware-menu-round-2 follow-up: fired after the static rows
+        // above are already committed (see below) rather than here, so a
+        // fast/synchronous response's own inputMode_ guard already sees
+        // ContextMenu set -- see RequestContextMenuCodeActions' own doc
+        // comment.
+        if (hasLsp) {
+            requestCodeActions = true;
+            codeActionPoint     = offset;
+        }
+    }
+
+    if (contextMenuEntries_.empty()) {
+        return; // defensive -- can't currently happen, see ShowContextMenuAt's own doc comment
+    }
+
+    contextMenuSelection_ = 0;
+    const Box& box        = Box_();
+    contextMenuAnchor_     = Point{.x = box.x_min + localClick.x, .y = box.y_min + localClick.y};
+    inputMode_             = InputMode::ContextMenu;
+    RefreshContextMenuStatus();
+
+    if (requestCodeActions) {
+        RequestContextMenuCodeActions(codeActionPoint);
+    }
+}
+
+void BufferView::RequestContextMenuCodeActions(std::size_t point) {
+    if (!lspManager_) {
+        return;
+    }
+    text::Buffer&       buffer     = activeBuffer_.Get();
+    text::Buffer* const bufferPtr  = &buffer;
+    const std::size_t   generation = ++contextMenuCodeActionGeneration_;
+
+    // Same diagnostic-at-point range/server-routing preference as
+    // RequestCodeActionsAtPoint -- see that method's own doc comment.
+    std::size_t rangeStart = point;
+    std::size_t rangeEnd   = point;
+    std::string serverKey  = ResolvedLspServerKey(point);
+    for (const text::Buffer::Diagnostic& diagnostic : buffer.Diagnostics()) {
+        const bool atPoint = (diagnostic.startByte == diagnostic.endByte) ? (point == diagnostic.startByte)
+                                                                          : (diagnostic.startByte <= point && point < diagnostic.endByte);
+        if (atPoint) {
+            rangeStart = diagnostic.startByte;
+            rangeEnd   = diagnostic.endByte;
+            if (diagnostic.origin == text::Buffer::Diagnostic::Origin::Prose) {
+                serverKey = editor::lsp::kProseLanguageKey;
+            }
+            break;
+        }
+    }
+
+    lspManager_->RequestCodeActions(
+        buffer, rangeStart, rangeEnd,
+        [this, bufferPtr, point, generation, serverKey](std::vector<editor::lsp::CodeAction> actions) {
+            if (generation != contextMenuCodeActionGeneration_) {
+                return; // superseded by a newer right-click
+            }
+            if (inputMode_ != InputMode::ContextMenu) {
+                return; // menu cancelled/reopened elsewhere since
+            }
+            if (bufferPtr != &activeBuffer_.Get() || activeBuffer_.Get().Point() != point) {
+                return; // buffer/point changed since the request was sent -- see RequestCompletionAtPoint's own identical guard
+            }
+            if (actions.empty()) {
+                return; // nothing to splice in -- leave the static menu exactly as it already is
+            }
+            codeActionServerKey_ = serverKey; // read by ResolveAndApplyCodeAction when one of these is chosen
+            std::vector<ContextMenuEntry> fixRows;
+            fixRows.reserve(actions.size() + 1);
+            for (editor::lsp::CodeAction& action : actions) {
+                ContextMenuEntry entry;
+                entry.label = action.title;
+                entry.codeAction = std::move(action);
+                fixRows.push_back(std::move(entry));
+            }
+            fixRows.push_back(ContextMenuEntry{.label = ContextMenuDividerRule(), .isDivider = true});
+
+            contextMenuEntries_.insert(contextMenuEntries_.begin(), std::make_move_iterator(fixRows.begin()),
+                                       std::make_move_iterator(fixRows.end()));
+            contextMenuSelection_ = 0; // land on the first (highest-priority) live fix
+            RefreshContextMenuStatus();
+        },
+        serverKey);
+}
+
+void BufferView::RefreshContextMenuStatus() {
+    if (!onContextMenuChanged_) {
+        return;
+    }
+    ListPopupModel model;
+    model.title = "Menu";
+    model.rows.reserve(contextMenuEntries_.size());
+    std::size_t ordinal = 0;
+    for (const ContextMenuEntry& entry : contextMenuEntries_) {
+        if (entry.isDivider) {
+            model.rows.push_back({.left = "", .main = entry.label});
+            continue;
+        }
+        ++ordinal;
+        model.rows.push_back({.left = std::to_string(ordinal) + ")", .main = entry.label});
+    }
+    model.selectedIndex = contextMenuSelection_;
+    model.anchor         = contextMenuAnchor_;
+    onContextMenuChanged_(std::move(model));
+}
+
+std::size_t BufferView::NextContextMenuIndex(std::size_t from, bool forward) const {
+    const std::size_t count = contextMenuEntries_.size();
+    std::size_t        index = from;
+    do {
+        index = forward ? (index + 1) % count : (index + count - 1) % count;
+    } while (contextMenuEntries_[index].isDivider);
+    return index;
+}
+
+std::optional<std::size_t> BufferView::ContextMenuIndexForDigit(std::size_t digit) const {
+    std::size_t ordinal = 0;
+    for (std::size_t i = 0; i < contextMenuEntries_.size(); ++i) {
+        if (contextMenuEntries_[i].isDivider) {
+            continue;
+        }
+        if (++ordinal == digit) {
+            return i;
+        }
+    }
+    return std::nullopt;
+}
+
+void BufferView::RunContextMenuEntry(std::size_t index) {
+    if (index >= contextMenuEntries_.size() || contextMenuEntries_[index].isDivider) {
+        return;
+    }
+    const ContextMenuEntry entry = contextMenuEntries_[index]; // copy -- EndInteractiveSession clears contextMenuEntries_ below
+    EndInteractiveSession();
+    if (entry.codeAction) {
+        ResolveAndApplyCodeAction(*entry.codeAction);
+        return;
+    }
+    editor::CommandContext context = MakeContext();
+    context.viewportHeight         = size().height > 0 ? static_cast<std::size_t>(size().height) : 0;
+    RunCommandAndHandleOutcome(context, [&] {
+        dispatcher_.Registry().Invoke(entry.commandName, context);
+        return true;
+    });
+}
+
+void BufferView::HandleContextMenuKey(const editor::KeyChord& chord) {
+    if (IsQuit(chord)) {
+        statusMessage_ = "Context menu cancelled.";
+        EndInteractiveSession();
+        return;
+    }
+    if (chord.Special == editor::SpecialKey::Down) {
+        contextMenuSelection_ = NextContextMenuIndex(contextMenuSelection_, /*forward=*/true);
+        RefreshContextMenuStatus();
+        return;
+    }
+    if (chord.Special == editor::SpecialKey::Up) {
+        contextMenuSelection_ = NextContextMenuIndex(contextMenuSelection_, /*forward=*/false);
+        RefreshContextMenuStatus();
+        return;
+    }
+    if (IsPlainCharacter(chord) && chord.Codepoint >= U'1' && chord.Codepoint <= U'9') {
+        const std::size_t digit = static_cast<std::size_t>(chord.Codepoint - U'0');
+        if (const std::optional<std::size_t> index = ContextMenuIndexForDigit(digit)) {
+            contextMenuSelection_ = *index;
+        }
+        // falls through to the same Confirm transition Enter performs below
+    }
+    else if (chord.Special != editor::SpecialKey::Enter) {
+        return; // anything else is ignored -- stay in the menu
+    }
+
+    RunContextMenuEntry(contextMenuSelection_);
+}
+
+void BufferView::ActivateContextMenuAt(std::size_t index) {
+    if (inputMode_ != InputMode::ContextMenu || index >= contextMenuEntries_.size()) {
+        return;
+    }
+    RunContextMenuEntry(index);
 }
 
 // call/type-hierarchy follow-up. See HierarchyDirection/HierarchySession's
@@ -8799,6 +9115,15 @@ void BufferView::EndInteractiveSession() {
     }
     pendingPeekDefinitions_.clear();
     peekDefinitionSelection_ = 0;
+    // right-click-context-menu follow-up: same unconditional tolerance
+    // onPeekChanged_'s own reset above has -- hides the context menu popup
+    // whether or not this session ever showed it.
+    if (onContextMenuChanged_) {
+        onContextMenuChanged_(std::nullopt);
+    }
+    contextMenuEntries_.clear();
+    contextMenuSelection_ = 0;
+    contextMenuAnchor_.reset();
     renameTitle_.clear();
     ScrollToShowPoint();
 }
@@ -12518,6 +12843,37 @@ bool BufferView::OnMouseEvent(const Event& event) {
         }
         search_->Accept();
         EndInteractiveSession();
+    }
+
+    // context-menu-mouse-dismiss follow-up: a left or middle press elsewhere
+    // while the context menu is open ends the session first, then falls
+    // through so the very same click also places point (or pastes) at the
+    // new location -- same "click both ends the session and acts" shape as
+    // the isearch positional-click block just above. (A click *on* the
+    // popup itself never reaches here at all -- OverlayHost::OnMouseEvent
+    // intercepts it before BufferView's own OnEvent runs.)
+    if (inputMode_ == InputMode::ContextMenu && mouse->motion == MouseEvent::Motion::Pressed &&
+        (mouse->button == MouseEvent::Button::Left || mouse->button == MouseEvent::Button::Middle)) {
+        statusMessage_ = "Context menu cancelled.";
+        EndInteractiveSession();
+    }
+
+    // right-click-context-menu follow-up: a right press in Normal mode opens
+    // the menu at the click; a right press while the menu is already open
+    // (inputMode_ == ContextMenu, possibly just re-entered Normal by the
+    // dismiss block above) rebuilds it at the new click location instead,
+    // the same "right-click elsewhere moves the menu" convention every
+    // mainstream editor already has. Any other modal session (isearch,
+    // M-x, ...) leaves right-click unhandled, same guard the middle-click
+    // block below already has -- it isn't this feature's job to interpret a
+    // stray right-click during an unrelated session.
+    if (mouse->button == MouseEvent::Button::Right && mouse->motion == MouseEvent::Motion::Pressed) {
+        if (inputMode_ != InputMode::Normal && inputMode_ != InputMode::ContextMenu) {
+            return false;
+        }
+        TakeFocus();
+        ShowContextMenuAt(mouse->at);
+        return true;
     }
 
     // Middle-click-paste follow-up: X11/Wayland's own "click to insert the

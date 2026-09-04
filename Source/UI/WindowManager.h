@@ -346,6 +346,12 @@ class WindowManager {
     // see BufferView::SetOnPeekChanged's own doc comment.
     void SetOnPeekChanged(std::function<void(std::optional<ListPopupModel>)> onPeekChanged);
 
+    // right-click-context-menu follow-up: same "forwarded to every pane,
+    // present and future" shape as SetOnCandidatesChanged/SetOnCompletionChanged/
+    // SetOnPeekChanged above -- see BufferView::SetOnContextMenuChanged's own
+    // doc comment.
+    void SetOnContextMenuChanged(std::function<void(std::optional<ListPopupModel>)> onContextMenuChanged);
+
     // call/type-hierarchy follow-up: NOT a plain "forwarded to every pane"
     // shape the way SetOnCandidatesChanged/SetOnCompletionChanged above
     // are -- each pane's BufferView is wrapped in its own small forwarding
@@ -545,6 +551,12 @@ class WindowManager {
     // the previewed location the same way Enter does. See BufferView::
     // ActivatePeekDefinitionAt's own doc comment.
     void ActivatePeekDefinition(std::size_t index);
+
+    // right-click-context-menu follow-up: same "route to whichever pane is
+    // currently focused" shape as ActivateCompletionAt/ActivatePeekDefinition
+    // above -- wired to the context menu popup's own ListPopup::SetOnActivate
+    // in main.cpp. See BufferView::ActivateContextMenuAt's own doc comment.
+    void ActivateContextMenuAt(std::size_t index);
 
     // session-persistence slice 3: routes the .ned/init.janet trust prompt
     // to whichever pane has focus -- RequestOpenBinaryFile's exact shape;
@@ -805,6 +817,7 @@ class WindowManager {
     std::function<void(std::optional<ListPopupModel>)> onCandidatesChanged_; // see SetOnCandidatesChanged
     std::function<void(std::optional<ListPopupModel>)> onCompletionChanged_; // see SetOnCompletionChanged
     std::function<void(std::optional<ListPopupModel>)> onPeekChanged_; // see SetOnPeekChanged
+    std::function<void(std::optional<ListPopupModel>)> onContextMenuChanged_; // see SetOnContextMenuChanged
 
     // call/type-hierarchy follow-up: onHierarchyChanged_ is the handler
     // main.cpp gave SetOnHierarchyChanged, called from inside each pane's
