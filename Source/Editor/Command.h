@@ -487,6 +487,12 @@ enum class InteractiveRequest { None,
                                 // the toggle's own state and what makes a second invocation
                                 // flip back to decimal.
                                 DapToggleHexFormat,
+                                // Debugging wishlist: dap-line-inspect (gf's backtick key) --
+                                // one-shot like DapRunToCursor, operating on point's own line,
+                                // but fans out one DapManager::Evaluate per candidate
+                                // sub-expression Mode::lineInspect finds on it (see
+                                // BufferView::LineInspectAtPoint) rather than a single value.
+                                DapLineInspect,
                                 // VCS blame gutter follow-up: one-shot direct actions, same
                                 // shape as ProjectAgenda/LspShowLog. VcsShowBlame is the
                                 // primary, inline-in-place one: populates the gutter for the

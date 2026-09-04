@@ -770,12 +770,14 @@ these accumulate detail in place.
         2026-09-03 — see `git log --grep=hex-format-toggle`. Per-line, not persisted: a
         trailing `[hex]` marker on the *debug* buffer line is the toggle's only state.
         Decimal/binary beyond hex, and a bound key (`gf`'s `/`), stay unaddressed.
-      - **Line-inspect mode** (`gf`'s backtick key: evaluate every sub-expression on
-        the current source line at once) — needs a per-language "extract candidate
-        expressions from this line" step (a small tree-sitter walk over the line's own
-        parsed node, `Editor/TreeSitter/`'s existing query/predicate machinery) feeding
-        a batch of `Evaluate` calls; moderate, the one item here needing real new
-        per-language logic rather than just a new DAP request.
+      - Line-inspect mode (`dap-line-inspect`, M-x only) closed 2026-09-03 — see
+        `git log --grep=line-inspect`. Two tiers: every tree-sitter-backed mode gets a
+        generic, universal default (bare identifiers, `Mode::lineInspect`'s Tier 1, no
+        per-language authoring); `CMode`/`CppMode` override it with a richer,
+        grammar-verified compound-expression predicate (Tier 2) — extending Tier 2 to
+        more languages is a natural, independently-sized follow-up. Evaluated spans are
+        also highlighted in the buffer (`Theme::lineInspectBackground`), cleared the
+        moment point leaves the inspected line or the buffer is edited.
       - **Pointer/linked-list graph view** (GDBFrontend's stand-out feature) — walking
         a pointer chain is already mechanical (`RequestVariables` on each node's
         `variablesReference`, `memoryReference` for the raw address), so the new work

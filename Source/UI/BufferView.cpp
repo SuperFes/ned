@@ -3389,6 +3389,15 @@ void BufferView::Paint(Canvas paneCanvas) {
                     // mean", a stronger signal than those cosmetic washes).
                     brush.background = theme_.documentHighlightBackground;
                 }
+                else if (InLineInspectHighlight(offset)) {
+                    // Debugging wishlist (line-inspect follow-up): same
+                    // read-only-cue priority tier as documentHighlight above
+                    // -- the direct, explicit result of a dap-line-inspect
+                    // the user just ran, so it still wins over the more
+                    // ambient execution-line/multibuffer/trailing-whitespace
+                    // washes below.
+                    brush.background = theme_.lineInspectBackground;
+                }
                 else if (currentLineIsExecutionLine) {
                     // DAP client slice 2: the stopped line's own wash --
                     // loses to isearch/selection above (both are explicit
@@ -4833,6 +4842,17 @@ bool BufferView::RunCommandAndHandleOutcome(editor::CommandContext& context, con
     // must refresh the highlighted-occurrences set too, not just organic
     // typing (the completion-popup precedent this otherwise mirrors).
     MaybeScheduleDocumentHighlight(pointBefore, generationBefore);
+
+    // Debugging wishlist (line-inspect follow-up): dap-line-inspect is
+    // on-demand, not live-refreshed like documentHighlight above -- this
+    // just clears the stale highlight once the buffer switched, its content
+    // changed, or point left the inspected line, rather than scheduling a
+    // fresh request.
+    if (lineInspect_ && (lineInspect_->buffer != &activeBuffer_.Get() ||
+                         lineInspect_->contentGeneration != activeBuffer_.Get().ContentGeneration() ||
+                         activeBuffer_.Get().Content().ByteOffsetToLine(activeBuffer_.Get().Point()) != lineInspect_->line)) {
+        lineInspect_.reset();
+    }
 
     ClampPointToNarrowing();
     // multi-cursor-round-2 follow-up: a command that just added a secondary
@@ -7397,6 +7417,14 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             }
             else {
                 ToggleHexFormatAtPoint();
+            }
+            return;
+        case editor::InteractiveRequest::DapLineInspect:
+            if (!dapManager_) {
+                statusMessage_ = "No debugger available.";
+            }
+            else {
+                LineInspectAtPoint();
             }
             return;
         case editor::InteractiveRequest::DapEvaluate:
@@ -10943,6 +10971,69 @@ void BufferView::ToggleHexFormatAtPoint() {
         wantHex);
 }
 
+void BufferView::LineInspectAtPoint() {
+    if (dapManager_->State() != editor::dap::DapManager::SessionState::Stopped) {
+        statusMessage_ = "Not stopped (nothing to inspect).";
+        return;
+    }
+    text::Buffer&             buffer    = activeBuffer_.Get();
+    const text::ITextStorage& content   = buffer.Content();
+    const std::size_t         line      = content.ByteOffsetToLine(buffer.Point());
+    const std::size_t         lineStart = content.LineToByteOffset(line);
+    const std::size_t         lineEnd =
+        (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
+
+    if (!mode_.lineInspect) {
+        statusMessage_ = "No expression extraction available for this mode.";
+        return;
+    }
+    const std::vector<std::pair<std::size_t, std::size_t>> candidates = mode_.lineInspect(buffer.Text(), lineStart, lineEnd);
+    if (candidates.empty()) {
+        statusMessage_ = "No expressions found on this line.";
+        return;
+    }
+
+    text::Buffer* const bufferPtr = &buffer;
+    lineInspect_                  = LineInspectState{
+        .buffer = bufferPtr, .contentGeneration = buffer.ContentGeneration(), .line = line, .ranges = candidates};
+
+    statusMessage_ = "Inspecting...";
+    // Same shared-counter fan-out-then-assemble shape ShowDebugInfo's own
+    // watch/scope evaluation uses -- every callback runs on the main thread
+    // (DapClient's own threading contract), so a plain shared counter
+    // covering every candidate is race-free; results land in a fixed slot
+    // per candidate so the final message reads left-to-right regardless of
+    // response interleaving. A failed evaluation is wrapped in "<...>",
+    // ShowDebugInfo's watch-fan-out convention.
+    auto texts    = std::make_shared<std::vector<std::string>>(candidates.size());
+    auto remaining = std::make_shared<std::size_t>(candidates.size());
+    const bool capped = candidates.size() >= editor::kMaxLineInspectExpressions;
+    for (std::size_t i = 0; i < candidates.size(); ++i) {
+        const auto [start, end] = candidates[i];
+        const std::string expression = std::string(content.Substring(start, end - start));
+        dapManager_->Evaluate(expression, [this, bufferPtr, texts, remaining, i, expression, capped](bool success, std::string text) {
+            (*texts)[i] = expression + " = " + (success ? text : ("<" + text + ">"));
+            if (--*remaining != 0) {
+                return;
+            }
+            if (bufferPtr != &activeBuffer_.Get()) {
+                return; // switched away while the requests were in flight
+            }
+            std::string message;
+            for (std::size_t j = 0; j < texts->size(); ++j) {
+                if (j > 0) {
+                    message += "  ";
+                }
+                message += (*texts)[j];
+            }
+            if (capped) {
+                message += "  (showing first " + std::to_string(editor::kMaxLineInspectExpressions) + ")";
+            }
+            statusMessage_ = std::move(message);
+        });
+    }
+}
+
 void BufferView::ShowMemoryAtPoint() {
     text::Buffer&             buffer    = activeBuffer_.Get();
     const text::ITextStorage& content   = buffer.Content();
@@ -13679,6 +13770,19 @@ bool BufferView::InActiveSnippetField(std::size_t byteOffset) const {
     // its range set is empty and this simply reports false.
     const auto range = snippetSession_->ActiveFieldRange(activeBuffer_.Get());
     return range && byteOffset >= range->first && byteOffset < range->second;
+}
+
+bool BufferView::InLineInspectHighlight(std::size_t byteOffset) const {
+    if (!lineInspect_ || lineInspect_->buffer != &activeBuffer_.Get() ||
+        lineInspect_->contentGeneration != activeBuffer_.Get().ContentGeneration()) {
+        return false; // stale: buffer switched or content changed since dap-line-inspect ran
+    }
+    for (const auto& [start, end] : lineInspect_->ranges) {
+        if (byteOffset >= start && byteOffset < end) {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool BufferView::InIsearchMatch(std::size_t byteOffset) const {

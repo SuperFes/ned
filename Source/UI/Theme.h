@@ -156,6 +156,11 @@ struct Theme {
     // same keep-the-glyph-foreground overlay contract as the three above,
     // meant to read as a subtler cue than an active selection/search match.
     Color documentHighlightBackground;
+    // Debugging wishlist (line-inspect follow-up): every sub-expression
+    // dap-line-inspect fanned out an evaluate request for on the current
+    // line -- same keep-the-glyph-foreground overlay contract as the four
+    // above.
+    Color lineInspectBackground;
 
     // Tab bar (tab-bar follow-up): tabBar is the brush for inactive tabs and
     // the row's own fill; activeTab is the visually distinct brush for

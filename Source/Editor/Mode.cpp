@@ -1,6 +1,7 @@
 #include "Mode.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <map>
 #include <memory>
@@ -488,6 +489,68 @@ namespace {
         for (std::size_t i = 0; i < node.ChildCount(); ++i) {
             CollectMarkdownSectionMarkers(node.Child(i), markers);
         }
+    }
+
+    // The shared engine behind Mode::lineInspect's two tiers (see Mode.h's
+    // own doc comment): descends from the smallest named node containing the
+    // whole line (skips unrelated top-level siblings before ever reaching
+    // it), pruning any subtree whose own byte range doesn't overlap the line
+    // at all, and collects the byte range of every *named* node overlapping
+    // the line whose Type() satisfies `matches` -- natural DFS pre-order,
+    // already source order (outermost-first for a node sharing a start byte
+    // with its own child, left-to-right across siblings), so no separate
+    // sort is needed. Stops recursing (but keeps whatever was already
+    // collected) once the cap is hit.
+    void CollectLineInspectCandidates(const treesitter::Node& node, std::size_t lineStart, std::size_t lineEnd,
+                                      const std::function<bool(std::string_view)>& matches,
+                                      std::vector<std::pair<std::size_t, std::size_t>>& out) {
+        if (out.size() >= kMaxLineInspectExpressions || node.IsNull() || node.EndByte() <= lineStart || node.StartByte() >= lineEnd) {
+            return; // no overlap with the line at all, or already at the cap
+        }
+        if (node.IsNamed() && node.StartByte() >= lineStart && node.EndByte() <= lineEnd && matches(node.Type())) {
+            out.emplace_back(node.StartByte(), node.EndByte());
+        }
+        for (std::size_t i = 0; i < node.ChildCount() && out.size() < kMaxLineInspectExpressions; ++i) {
+            CollectLineInspectCandidates(node.Child(i), lineStart, lineEnd, matches, out);
+        }
+    }
+
+    // Debugging wishlist (line-inspect follow-up), Tier 2: real, grammar-
+    // verified compound-expression node types C and C++ share (confirmed
+    // against both vendored grammars' own node-types.json directly, not
+    // guessed) -- CMode()/CppMode() override the generic Tier-1
+    // identifier-only default with this richer predicate.
+    bool IsCLikeExpressionNodeType(std::string_view type) {
+        static constexpr std::array<std::string_view, 11> kTypes = {
+            "identifier",          "call_expression",     "field_expression",  "subscript_expression",  "binary_expression",
+            "unary_expression",    "pointer_expression",   "cast_expression",   "conditional_expression",
+            "assignment_expression", "parenthesized_expression",
+        };
+        return std::find(kTypes.begin(), kTypes.end(), type) != kTypes.end();
+    }
+
+    // Builds a Mode::lineInspect closure over its own independent Parser/
+    // IncrementalParseCache pair (this runs only on an explicit, on-demand
+    // dap-line-inspect invocation, never per-Paint(), so a second parse of
+    // the same buffer text alongside highlight/fold/symbolKind's own shared
+    // cache costs nothing worth avoiding). `matches` decides which named
+    // node types count as candidate sub-expressions -- see the Tier 1
+    // (identifier-only) and Tier 2 (CMode/CppMode's richer set) call sites.
+    LineInspectFunction BuildLineInspectFunction(const treesitter::Language& language, std::function<bool(std::string_view)> matches) {
+        const auto parser     = std::make_shared<treesitter::Parser>(language);
+        const auto sharedParse = std::make_shared<treesitter::IncrementalParseCache>();
+        return [parser, sharedParse, matches = std::move(matches)](
+                   std::string_view bufferText, std::size_t lineStart,
+                   std::size_t lineEnd) -> std::vector<std::pair<std::size_t, std::size_t>> {
+            const treesitter::Tree& tree = sharedParse->Update(*parser, bufferText);
+            if (tree.IsNull()) {
+                return {};
+            }
+            const treesitter::Node entry = tree.RootNode().NamedDescendantForByteRange(lineStart, lineEnd);
+            std::vector<std::pair<std::size_t, std::size_t>> candidates;
+            CollectLineInspectCandidates(entry.IsNull() ? tree.RootNode() : entry, lineStart, lineEnd, matches, candidates);
+            return candidates;
+        };
     }
 
 } // namespace
@@ -1025,6 +1088,16 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
         indentColumn            = BuildIndentFunction(parser, indentQuery, sharedParse, name);
     }
 
+    // Debugging wishlist (line-inspect follow-up): Tier 1 -- unconditional,
+    // every TreeSitterModeFromLanguage-built mode gets this generic default
+    // (bare identifiers only, no per-language query authoring). Its own
+    // independent Parser/IncrementalParseCache pair (BuildLineInspectFunction),
+    // not sharedParse above -- this only ever runs on an explicit,
+    // infrequent dap-line-inspect invocation, never per-Paint(), so sharing
+    // would buy nothing.
+    LineInspectFunction lineInspect =
+        BuildLineInspectFunction(language, [](std::string_view type) { return type == "identifier"; });
+
     return Mode{.name            = std::move(name),
                 .keymap          = Keymap(),
                 .highlight       = std::move(highlight),
@@ -1035,7 +1108,8 @@ Mode TreeSitterModeFromLanguage(std::string name, const treesitter::Language& la
                 .symbolKind      = std::move(symbolKind),
                 .importTarget    = std::move(importTarget),
                 .testDiscovery   = std::move(testDiscovery),
-                .indentColumn    = std::move(indentColumn)};
+                .indentColumn    = std::move(indentColumn),
+                .lineInspect     = std::move(lineInspect)};
 }
 
 Mode TreeSitterMode(std::string name, std::string_view languageName, const char* querySource,
@@ -1076,6 +1150,12 @@ Mode CMode() {
                                             treesitter::queries::kCImports, treesitter::queries::kCTags, nullptr,
                                             treesitter::queries::kCIndents);
     mode.lineCommentPrefix = "//";
+    // Debugging wishlist (line-inspect follow-up), Tier 2: overrides the
+    // generic identifier-only default with IsCLikeExpressionNodeType's
+    // richer, grammar-verified set.
+    if (const auto language = treesitter::LanguageByName("c")) {
+        mode.lineInspect = BuildLineInspectFunction(*language, IsCLikeExpressionNodeType);
+    }
     return mode;
 }
 
@@ -1084,6 +1164,10 @@ Mode CppMode() {
                                             treesitter::queries::kCImports, treesitter::queries::kCppTags,
                                             treesitter::queries::kCppTests, treesitter::queries::kCppIndents);
     mode.lineCommentPrefix = "//";
+    // Debugging wishlist (line-inspect follow-up), Tier 2 -- see CMode's own.
+    if (const auto language = treesitter::LanguageByName("cpp")) {
+        mode.lineInspect = BuildLineInspectFunction(*language, IsCLikeExpressionNodeType);
+    }
     return mode;
 }
 

@@ -365,6 +365,28 @@ using EmbeddedRegionFunction = std::function<std::vector<InjectionRegion>(std::s
 // own content column, not a multiple of one fixed indent width).
 using IndentFunction = std::function<std::optional<int>(std::string_view bufferText, std::size_t lineStart, std::size_t lineEnd)>;
 
+// Debugging wishlist (line-inspect follow-up): same 3-arg per-line shape as
+// IndentFunction above, returning byte ranges of candidate sub-expressions
+// on [lineStart, lineEnd) worth evaluating in a stopped debug session
+// (dap-line-inspect), in source order. Two implementation tiers share this
+// one type (see Mode.cpp's shared tree-walk helper): every
+// TreeSitterModeFromLanguage-built mode gets a generic, universal default
+// (bare identifiers only -- "identifier" is a near-universal tree-sitter
+// node-type name, needing no per-language query authoring at all); CMode/
+// CppMode override it with a richer version additionally matching real,
+// grammar-verified compound-expression node types (member access, calls,
+// indexing, ...). Empty function (JanetMode/OrgMode, the two hand-built
+// exceptions) means the same "not configured" signal as everything above.
+using LineInspectFunction =
+    std::function<std::vector<std::pair<std::size_t, std::size_t>>(std::string_view bufferText, std::size_t lineStart, std::size_t lineEnd)>;
+
+// A dense line can otherwise fan out unboundedly many DAP evaluate requests
+// -- LineInspectFunction never returns more than this many candidates.
+// Public (not Mode.cpp-private) so BufferView can tell "capped" apart from
+// "this really was every candidate on the line" when a result hits exactly
+// this count.
+inline constexpr std::size_t kMaxLineInspectExpressions = 16;
+
 struct Mode {
     std::string       name;
     Keymap            keymap;
@@ -426,6 +448,11 @@ struct Mode {
     // fall back to their pre-existing literal-tab/bare-newline behavior
     // unchanged.
     IndentFunction indentColumn;
+    // Debugging wishlist (line-inspect follow-up): empty function (the
+    // default) means dap-line-inspect reports there's no expression
+    // extraction configured for this mode, same "empty means not
+    // configured" convention as everything above.
+    LineInspectFunction lineInspect;
     // line-wrap follow-up: this mode's own default for whether BufferView
     // should soft-wrap long lines at word boundaries instead of scrolling
     // horizontally -- false (matching every bundled mode except the two

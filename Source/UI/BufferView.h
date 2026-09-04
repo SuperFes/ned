@@ -2278,6 +2278,11 @@ class BufferView : public Widget {
     // session's active tabstop field -- InIsearchMatch's exact per-cell
     // paint-loop shape, backing the snippetFieldBackground wash.
     [[nodiscard]] bool InActiveSnippetField(std::size_t byteOffset) const;
+    // Debugging wishlist (line-inspect follow-up): whether byteOffset falls
+    // inside one of the sub-expression spans dap-line-inspect last fanned
+    // out evaluate requests for -- InIsearchMatch's exact per-cell paint-loop
+    // shape, backing the lineInspectBackground wash.
+    [[nodiscard]] bool InLineInspectHighlight(std::size_t byteOffset) const;
 
     // exhaustive-highlighting follow-up: theme_.BrushFor(cls, captureId)
     // through brushCache_ (below) -- the render loop's only path to a
@@ -3325,6 +3330,23 @@ class BufferView : public Widget {
 
     void RequestDocumentHighlightAtPoint();
     void MaybeScheduleDocumentHighlight(std::size_t pointBefore, std::size_t generationBefore);
+
+    // Debugging wishlist (line-inspect follow-up): DocumentHighlightState's
+    // own shape -- buffer/contentGeneration guard Paint()'s read against a
+    // stale set landing after the buffer switched or was edited; line is the
+    // 0-based line dap-line-inspect ran against, invalidated (see
+    // RunCommandAndHandleOutcome) the moment point leaves it. ranges are
+    // every candidate span it fanned out an evaluate request for, regardless
+    // of that request's own success/failure -- the highlight shows what was
+    // inspected, not what resolved.
+    struct LineInspectState {
+        text::Buffer* buffer            = nullptr;
+        std::size_t   contentGeneration = 0;
+        std::size_t   line              = 0;
+        std::vector<std::pair<std::size_t, std::size_t>> ranges;
+    };
+    std::optional<LineInspectState> lineInspect_;
+    void                            LineInspectAtPoint();
 
     // signature-help-auto-trigger follow-up. Same debounce shape as
     // completionDebounceTimer_ above, entirely independent of it -- both can
