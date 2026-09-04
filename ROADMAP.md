@@ -825,10 +825,19 @@ these accumulate detail in place.
         genuine per-cell color image directly into the existing Cell-grid
         Widget model, with none of the sixel/Kitty capability probing or
         pixel-plane z-order interactions that path carries.
-      - **A dedicated live thread window** vs. today's one-shot numbered-choice
-        `dap-select-thread` picker (`BeginDapThreadSelect`) — an `OverlayHost` panel in
-        `DebugConsolePanel`/`AcpPanel`'s own shape, refreshing `RequestThreads` on each
-        stop instead of only when explicitly invoked.
+      - Live thread window (`dap-toggle-threads`) closed 2026-09-03 — see
+        `git log --grep=live-thread-window`. `UI/DapThreadsPanel.h`, right-docked,
+        `BufferListPanel`'s controller-plus-focus-mode-`ListPopup` shape rather than a
+        bespoke `Widget` — reuses `ListPopup` instead of the `OverlayHost`-panel shape
+        this bullet originally sketched (`DebugConsolePanel`/`AcpPanel`'s own, a bespoke
+        `Paint()`/`OnEvent()` override), since a live selectable row list is exactly what
+        `ListPopup`'s existing focus mode already provides. `WindowManager::
+        SetOnDapThreadsRefreshNeeded` re-fetches the row list from inside the existing
+        `SetOnStopped` handler on every stop (`DapManager::SetOnStopped` is single-slot,
+        so this fans out internally rather than registering a second handler); `Enter`/
+        digit-pick/click select a thread via `DapManager::SelectThread` (a new public
+        `FocusedThreadId()` echoes the previously-private `CurrentThreadId()` for the
+        current-thread `→` marker), `'g'` manually re-fetches.
       - **Valgrind integration**: launching the target under `valgrind --vgdb=yes
         --vgdb-error=0` and DAP-`Attach`ing to its vgdb stub needs zero new
         `DapManager` code — `Attach`/`ned/set-dap-attach` already do exactly this,

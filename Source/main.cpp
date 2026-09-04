@@ -78,6 +78,7 @@
 #include "UI/AcpPanel.h"
 #include "UI/ActiveBuffer.h"
 #include "UI/BufferListPanel.h"
+#include "UI/DapThreadsPanel.h"
 #include "UI/DebugConsolePanel.h"
 #include "UI/DesktopThemeProbe.h"
 #include "UI/EchoArea.h"
@@ -86,14 +87,14 @@
 #include "UI/ListPopup.h"
 #include "UI/Overlay.h"
 #include "UI/ProjectSidebar.h"
-#include "UI/VcsDiffPreview.h"
-#include "UI/VcsPanel.h"
 #include "UI/TabBar.h"
 #include "UI/TerminalColorProbe.h"
 #include "UI/TerminalPanel.h"
 #include "UI/Theme.h"
 #include "UI/ThemeFile.h"
 #include "UI/ThemeRegistry.h"
+#include "UI/VcsDiffPreview.h"
+#include "UI/VcsPanel.h"
 #include "UI/WindowManager.h"
 
 using namespace ned::ui;
@@ -1491,6 +1492,38 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     };
     windowManager->SetOnDapConsoleToggle(toggleDapConsole);
     dapConsolePanel.SetOnToggleRequest(toggleDapConsole);
+
+    // Debugging wishlist: the live thread window (BufferListPanel's own
+    // controller-plus-ListPopup shape, see UI/DapThreadsPanel.h) -- right-
+    // docked, fixed narrow width like a sidebar (a thread list is naturally
+    // vertical; no dock-side config, same v1 cut DebugConsolePanel's own
+    // comment above documents for itself).
+    ned::ui::DapThreadsPanel dapThreadsPanel(theme, dapManager);
+    overlays.Add(dapThreadsPanel.Popup(), [](Size size) {
+        const int yMax  = std::max(1, size.height - 2); // above the echo area row
+        const int width = std::clamp(size.width / 5, 24, 40);
+        const int xMin  = std::max(0, size.width - width - MinimapOverlayReserve());
+        return Box{.x_min = xMin, .x_max = std::max(xMin, size.width - 1 - MinimapOverlayReserve()), .y_min = 1, .y_max = yMax};
+    });
+    overlays.SetFocusReturn(dapThreadsPanel.Popup(), [wm = windowManager.get()] { wm->TakeFocus(); });
+    dapThreadsPanel.SetOnMessage([&statusMessage](std::string message) { statusMessage = std::move(message); });
+    auto toggleDapThreads = [&overlays, panel = &dapThreadsPanel] {
+        if (!overlays.IsVisible(panel->Popup())) {
+            panel->Show();
+            overlays.Show(panel->Popup());
+            panel->Popup().TakeFocus();
+        }
+        else {
+            overlays.Hide(panel->Popup());
+        }
+    };
+    windowManager->SetOnDapThreadsToggle(toggleDapThreads);
+    dapThreadsPanel.SetOnCancel([&overlays, panel = &dapThreadsPanel] { overlays.Hide(panel->Popup()); });
+    windowManager->SetOnDapThreadsRefreshNeeded([&overlays, panel = &dapThreadsPanel] {
+        if (overlays.IsVisible(panel->Popup())) {
+            panel->Refresh();
+        }
+    });
 
     // generic-popup follow-up: list-buffers (C-x C-b), the focus-mode
     // ListPopup's first real consumer -- same OverlayHost-overlay shape as

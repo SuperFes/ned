@@ -527,6 +527,7 @@ std::unique_ptr<Pane> WindowManager::MakePane(text::Buffer& buffer, editor::Mode
     pane->Buffer().SetOnAcpPanelToggle(onAcpPanelToggle_);
     pane->Buffer().SetOnAcpRewindRequest(onAcpRewindRequest_);
     pane->Buffer().SetOnDapConsoleToggle(onDapConsoleToggle_);
+    pane->Buffer().SetOnDapThreadsToggle(onDapThreadsToggle_);
     pane->Buffer().SetOnBufferListToggle(onBufferListToggle_);
     pane->Buffer().SetOnPrefixHintChanged(onPrefixHintChanged_);
     pane->Buffer().SetOnCandidatesChanged(onCandidatesChanged_);
@@ -608,6 +609,17 @@ void WindowManager::SetOnDapConsoleToggle(std::function<void()> onToggle) {
     for (Pane* pane : Leaves()) {
         pane->Buffer().SetOnDapConsoleToggle(onDapConsoleToggle_);
     }
+}
+
+void WindowManager::SetOnDapThreadsToggle(std::function<void()> onToggle) {
+    onDapThreadsToggle_ = std::move(onToggle);
+    for (Pane* pane : Leaves()) {
+        pane->Buffer().SetOnDapThreadsToggle(onDapThreadsToggle_);
+    }
+}
+
+void WindowManager::SetOnDapThreadsRefreshNeeded(std::function<void()> onStopped) {
+    onDapThreadsRefreshNeeded_ = std::move(onStopped);
 }
 
 void WindowManager::SetOnBufferListToggle(std::function<void()> onToggle) {
@@ -818,6 +830,9 @@ void WindowManager::SetDapManager(editor::dap::DapManager* dapManager) {
         }
         else {
             statusMessage_ = "Stopped (" + info.reason + ") -- no source location.";
+        }
+        if (onDapThreadsRefreshNeeded_) {
+            onDapThreadsRefreshNeeded_();
         }
     });
     dapManager->SetOnSessionEnded([this](std::string reason) { statusMessage_ = std::move(reason); });

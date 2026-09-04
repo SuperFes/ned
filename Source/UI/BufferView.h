@@ -566,6 +566,13 @@ class BufferView : public Widget {
     // out to every pane. Unset is a safe no-op.
     void SetOnDapConsoleToggle(std::function<void()> handler);
 
+    // Debugging wishlist: dap-toggle-threads' forwarding hook, same shape
+    // and reasoning as SetOnDapConsoleToggle immediately above -- the live
+    // threads panel is another OverlayHost overlay owned by main.cpp's
+    // composition, wired via WindowManager::SetOnDapThreadsToggle fanning
+    // out to every pane. Unset is a safe no-op.
+    void SetOnDapThreadsToggle(std::function<void()> handler);
+
     // generic-popup follow-up: list-buffers' forwarding hook, same shape and
     // reasoning as SetOnDapConsoleToggle immediately above -- the buffer-list
     // panel is another OverlayHost overlay owned by main.cpp's composition,
@@ -2813,6 +2820,7 @@ class BufferView : public Widget {
     std::function<void()>                           onAcpPanelToggle_;      // see SetOnAcpPanelToggle
     std::function<void()>                           onAcpRewindRequest_;    // see SetOnAcpRewindRequest
     std::function<void()>                           onDapConsoleToggle_;    // see SetOnDapConsoleToggle
+    std::function<void()>                           onDapThreadsToggle_;    // see SetOnDapThreadsToggle
     std::function<void()>                           onBufferListToggle_;    // see SetOnBufferListToggle
     std::function<void(text::Buffer&)>              onActiveBufferChanged_; // see SetOnActiveBufferChanged
     std::function<void(std::optional<WhichKeyHint>)> onPrefixHintChanged_;  // see SetOnPrefixHintChanged

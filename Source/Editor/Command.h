@@ -541,6 +541,14 @@ enum class InteractiveRequest { None,
                                 // dump -- gf's RGBA bitmap Data tab, useful for spotting
                                 // repeating structures/zero-fill/embedded text at a glance.
                                 DapShowMemoryImageAtPoint,
+                                // Debugging wishlist: dap-toggle-threads -- one-shot forward
+                                // like DapToggleConsole/AcpTogglePanel/ToggleTerminal, but for
+                                // the live threads panel (UI/DapThreadsPanel.h): unlike
+                                // DapSelectThread's one-shot numbered-choice picker
+                                // (BeginDapThreadSelect), this panel stays open and
+                                // WindowManager re-fetches its row list on every stop event, not
+                                // only when explicitly invoked.
+                                DapToggleThreadsPanel,
                                 // VCS blame gutter follow-up: one-shot direct actions, same
                                 // shape as ProjectAgenda/LspShowLog. VcsShowBlame is the
                                 // primary, inline-in-place one: populates the gutter for the

@@ -445,6 +445,13 @@ class DapManager {
     };
     void RequestThreads(std::function<void(std::vector<Thread>)> callback);
     void SelectThread(int threadId, std::function<void(bool)> callback);
+    // Debugging wishlist: a public read-only echo of the private
+    // CurrentThreadId() below, for UI/DapThreadsPanel.h's own "mark the
+    // current thread's row" need -- every other consumer resolves it only
+    // implicitly, via RequestThreads()/SelectThread()'s own internal use.
+    [[nodiscard]] int FocusedThreadId() const {
+        return CurrentThreadId();
+    }
 
     // Slice 4: edits a variable in place via DAP's setVariable request.
     // variablesReference is the *container's* reference (the scope or
