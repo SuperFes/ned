@@ -493,6 +493,15 @@ enum class InteractiveRequest { None,
                                 // sub-expression Mode::lineInspect finds on it (see
                                 // BufferView::LineInspectAtPoint) rather than a single value.
                                 DapLineInspect,
+                                // Debugging wishlist: reverse debugging (DAP's own
+                                // `reverseContinue`/`stepBack` requests, gated by the adapter's
+                                // advertised `supportsStepBack` capability) -- same one-shot,
+                                // Stopped-only, immediate-status shape as DapContinue/DapStepOver
+                                // above. Only useful against an adapter that itself replays a
+                                // recording (e.g. rr); harmless to send regardless, same soft
+                                // capability-warning convention as DapRestartFrame.
+                                DapReverseContinue,
+                                DapStepBack,
                                 // VCS blame gutter follow-up: one-shot direct actions, same
                                 // shape as ProjectAgenda/LspShowLog. VcsShowBlame is the
                                 // primary, inline-in-place one: populates the gutter for the

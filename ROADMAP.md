@@ -754,14 +754,10 @@ these accumulate detail in place.
       roughly cheapest-to-scope first; each entry notes what already-shipped
       `DapManager`/`BufferView` machinery it would build on, since none of this needs
       new architecture, only new DAP requests and (mostly) new M-x commands.
-      - **Reverse debugging** (`gf`'s rr-replay integration) — DAP has real protocol
-        support for this (`reverseContinue`/`stepBack` requests,
-        `supportsStepBack` capability), and it's the same shape `StepOver`/`StepInto`/
-        `StepOut` already are: `dap-reverse-continue`/`dap-step-back`, gated by a new
-        `Capabilities::stepBack` field parsed the same way `restartFrame` is. Only
-        useful against an adapter that itself replays a recording (`rr`, some native
-        adapters) — nothing to build if the active adapter never advertises it, but
-        cheap to wire regardless.
+      - Reverse debugging (`dap-reverse-continue`/`dap-step-back`, M-x only) closed
+        2026-09-03 — see `git log --grep=reverse-debugging`. Both gated on the
+        adapter's single `supportsStepBack` capability (DAP's own convention covering
+        both requests), same soft-warning-when-unadvertised shape as `restartFrame`.
       - Run-to-cursor (`dap-run-to-cursor`, M-x only) closed 2026-09-03 — see
         `git log --grep=run-to-cursor`.
       - Jump to line (`dap-jump-to-line`, M-x only) closed 2026-09-03 — see

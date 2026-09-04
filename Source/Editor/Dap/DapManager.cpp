@@ -390,6 +390,9 @@ std::string DapManager::BeginSession(const std::string& language, bool attach) {
                              if (body.contains("supportsGotoTargetsRequest") && body["supportsGotoTargetsRequest"].is_boolean()) {
                                  capabilities_.gotoTargets = body["supportsGotoTargetsRequest"].get<bool>();
                              }
+                             if (body.contains("supportsStepBack") && body["supportsStepBack"].is_boolean()) {
+                                 capabilities_.stepBack = body["supportsStepBack"].get<bool>();
+                             }
                              if (body.contains("exceptionBreakpointFilters") && body["exceptionBreakpointFilters"].is_array()) {
                                  for (const Json& filterJson : body["exceptionBreakpointFilters"]) {
                                      ExceptionFilter filter;
@@ -648,6 +651,22 @@ std::string DapManager::StepInto() {
 
 std::string DapManager::StepOut() {
     return SendStep("stepOut", "Stepping out");
+}
+
+std::string DapManager::ReverseContinue() {
+    std::string status = SendStep("reverseContinue", "Reverse-continuing");
+    if (!capabilities_.stepBack && status == "Reverse-continuing...") {
+        status += " (adapter did not advertise reverse-debugging support -- may be ignored)";
+    }
+    return status;
+}
+
+std::string DapManager::StepBack() {
+    std::string status = SendStep("stepBack", "Stepping back");
+    if (!capabilities_.stepBack && status == "Stepping back...") {
+        status += " (adapter did not advertise reverse-debugging support -- may be ignored)";
+    }
+    return status;
 }
 
 std::string DapManager::RunToCursor(const std::filesystem::path& path, std::size_t line) {
