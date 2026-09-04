@@ -26,6 +26,7 @@ using ned::editor::OrgMode;
 using ned::editor::ParseKeySequence;
 using ned::editor::PhpMode;
 using ned::editor::PythonMode;
+using ned::editor::RustMode;
 using ned::editor::SyntaxClass;
 using ned::editor::TsxMode;
 using ned::editor::TypeScriptMode;
@@ -934,6 +935,25 @@ TEST_CASE("PhpMode's symbolKind classifies a class definition and one of its met
     REQUIRE(static_cast<bool>(mode.symbolKind));
 
     const auto markers = mode.symbolKind("<?php\nclass Foo {\n    public function bar() {}\n}\n");
+    REQUIRE(KindsInOrder(markers) == std::vector{SymbolKind::TypeLike, SymbolKind::Callable});
+}
+
+// resolver-gaps follow-up (Rust bundling): tree-sitter-rust's own upstream
+// tags.scm tags a method with BOTH "@definition.method" (an ancestor-gated
+// pattern: a function_item inside a declaration_list) and unconditionally
+// "@definition.function" -- the exact same node matching two patterns, not
+// a nested-range case (the pre-existing dedup this file's own CppMode/
+// PhpMode tests already exercise). This locks in that Mode.cpp's
+// symbolKind closure collapses that exact-range duplicate down to one
+// marker rather than showing "getValue" twice.
+TEST_CASE("RustMode's symbolKind classifies a struct and one of an impl block's methods, without duplicating it",
+          "[Mode]") {
+    using ned::editor::SymbolKind;
+    const auto mode = RustMode();
+    REQUIRE(static_cast<bool>(mode.symbolKind));
+
+    const auto markers =
+        mode.symbolKind("struct Widget {\n    value: i32,\n}\n\nimpl Widget {\n    fn get_value(&self) -> i32 { self.value }\n}\n");
     REQUIRE(KindsInOrder(markers) == std::vector{SymbolKind::TypeLike, SymbolKind::Callable});
 }
 

@@ -1,11 +1,13 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <filesystem>
+#include <fstream>
 #include <string>
 
 #include "Editor/NodeModules.h"
 
 using ned::editor::NodeModulesSearchPaths;
+using ned::editor::ResolvePackageEntryPoint;
 
 namespace {
 
@@ -24,6 +26,12 @@ struct TempTree {
         std::filesystem::remove_all(root);
     }
 };
+
+void WriteFile(const std::filesystem::path& path, const std::string& content) {
+    std::filesystem::create_directories(path.parent_path());
+    std::ofstream file(path);
+    file << content;
+}
 
 } // namespace
 
@@ -70,4 +78,83 @@ TEST_CASE("NodeModulesSearchPaths stops at the filesystem root when baseDirector
     // so this should just come back empty without hanging).
     const auto paths = NodeModulesSearchPaths(tree1.root / "a", tree2.root);
     CHECK(paths.empty());
+}
+
+TEST_CASE("ResolvePackageEntryPoint follows a package.json \"main\" field", "[NodeModules]") {
+    TempTree tree;
+    WriteFile(tree.root / "package.json", R"({"main": "lib/entry.js"})");
+    WriteFile(tree.root / "lib" / "entry.js", "module.exports = {};\n");
+
+    const auto resolved = ResolvePackageEntryPoint(tree.root, {"js"});
+    REQUIRE(resolved.has_value());
+    CHECK(*resolved == tree.root / "lib" / "entry.js");
+}
+
+TEST_CASE("ResolvePackageEntryPoint prefers a string \"exports\" field over \"main\"", "[NodeModules]") {
+    TempTree tree;
+    WriteFile(tree.root / "package.json", R"({"main": "lib/old.js", "exports": "./lib/new.js"})");
+    WriteFile(tree.root / "lib" / "new.js", "module.exports = {};\n");
+
+    const auto resolved = ResolvePackageEntryPoint(tree.root, {"js"});
+    REQUIRE(resolved.has_value());
+    CHECK(*resolved == tree.root / "lib" / "new.js");
+}
+
+TEST_CASE("ResolvePackageEntryPoint resolves \"exports\" with a \".\" subpath key", "[NodeModules]") {
+    TempTree tree;
+    WriteFile(tree.root / "package.json", R"({"exports": {".": "./lib/index.js"}})");
+    WriteFile(tree.root / "lib" / "index.js", "module.exports = {};\n");
+
+    const auto resolved = ResolvePackageEntryPoint(tree.root, {"js"});
+    REQUIRE(resolved.has_value());
+    CHECK(*resolved == tree.root / "lib" / "index.js");
+}
+
+TEST_CASE("ResolvePackageEntryPoint resolves \"exports\" conditions in preference order", "[NodeModules]") {
+    TempTree tree;
+    WriteFile(tree.root / "package.json",
+              R"({"exports": {".": {"require": "./lib/cjs.js", "import": "./lib/esm.js"}}})");
+    WriteFile(tree.root / "lib" / "esm.js", "export default {};\n");
+    WriteFile(tree.root / "lib" / "cjs.js", "module.exports = {};\n");
+
+    const auto resolved = ResolvePackageEntryPoint(tree.root, {"js"});
+    REQUIRE(resolved.has_value());
+    CHECK(*resolved == tree.root / "lib" / "esm.js");
+}
+
+TEST_CASE("ResolvePackageEntryPoint appends a candidate extension when the exact entry is missing", "[NodeModules]") {
+    TempTree tree;
+    WriteFile(tree.root / "package.json", R"({"main": "lib/entry"})");
+    WriteFile(tree.root / "lib" / "entry.js", "module.exports = {};\n");
+
+    const auto resolved = ResolvePackageEntryPoint(tree.root, {"js"});
+    REQUIRE(resolved.has_value());
+    CHECK(*resolved == tree.root / "lib" / "entry.js");
+}
+
+TEST_CASE("ResolvePackageEntryPoint resolves a directory \"main\" via its own index file", "[NodeModules]") {
+    TempTree tree;
+    WriteFile(tree.root / "package.json", R"({"main": "lib"})");
+    WriteFile(tree.root / "lib" / "index.js", "module.exports = {};\n");
+
+    const auto resolved = ResolvePackageEntryPoint(tree.root, {"js"});
+    REQUIRE(resolved.has_value());
+    CHECK(*resolved == tree.root / "lib" / "index.js");
+}
+
+TEST_CASE("ResolvePackageEntryPoint returns nullopt when there is no package.json", "[NodeModules]") {
+    TempTree tree;
+    CHECK_FALSE(ResolvePackageEntryPoint(tree.root, {"js"}).has_value());
+}
+
+TEST_CASE("ResolvePackageEntryPoint returns nullopt when neither exports nor main is set", "[NodeModules]") {
+    TempTree tree;
+    WriteFile(tree.root / "package.json", R"({"name": "some-package"})");
+    CHECK_FALSE(ResolvePackageEntryPoint(tree.root, {"js"}).has_value());
+}
+
+TEST_CASE("ResolvePackageEntryPoint returns nullopt when the declared entry file doesn't exist", "[NodeModules]") {
+    TempTree tree;
+    WriteFile(tree.root / "package.json", R"({"main": "lib/missing.js"})");
+    CHECK_FALSE(ResolvePackageEntryPoint(tree.root, {"js"}).has_value());
 }

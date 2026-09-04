@@ -222,11 +222,39 @@ using SexpMotionFunction = std::function<std::optional<std::size_t>(std::string_
 // statement resolves, not just on the target's own bytes -- e.g. point on
 // an imported *name* in Python's "from foo.bar import baz" still resolves
 // to "foo.bar"), else the target/module capture's own range.
+//
+// go-to-file-at-point resolver gaps follow-up: two more orthogonal fields,
+// each defaulting to "not this kind" so every existing @import.target/
+// @import.module producer (every query file except python-imports.scm's new
+// @import.relative rule and php-imports.scm's new @import.namespace rule)
+// is unaffected. `relativeLevel` (isModulePath == true, > 0) is Python's own
+// leading-dot relative-import count ("from . import x" == 1, "from ..foo
+// import x" == 2, ...) -- BufferView ascends that many-minus-one parent
+// directories from the importing file's own directory before resolving
+// `target` (already dot-to-slash converted, empty for a bare "from . import
+// x"), rather than searching baseDirectory/ProjectRoot()/includePaths the
+// way an ordinary module path does. `isNamespacePath` is PHP's own
+// backslash-separated `use` namespace (never dot-to-slash converted --
+// resolved by a dedicated PSR-4 lookup, Editor/Php.h's ResolvePsr4Namespace,
+// not ResolveFileLink's generic search at all). `isModDeclaration` is
+// Rust's own bodyless `mod foo;` file-per-module declaration -- `target` is
+// the bare module identifier (no delimiters, isModulePath stays false); the
+// real per-language wrinkle is *where* it resolves from, not its own text:
+// a submodule of any file other than a crate root/mod.rs (main.rs, lib.rs,
+// or a directory's own mod.rs) lives one directory level *below* the
+// importing file, under a subdirectory named after that file's own stem
+// (rust-imports.scm's own header comment has the full "why not `use`"
+// reasoning) -- BufferView prepends that stem to baseDirectory before
+// resolving, the same "per-language baseDirectory adjustment" shape
+// relativeLevel above already establishes for Python.
 struct ImportTarget {
     std::string target;
     bool        isModulePath;
     std::size_t startByte;
     std::size_t endByte;
+    int         relativeLevel    = 0;
+    bool        isNamespacePath  = false;
+    bool        isModDeclaration = false;
 };
 using ImportTargetFunction =
     std::function<std::optional<ImportTarget>(std::string_view bufferText, std::size_t point)>;
@@ -588,6 +616,12 @@ struct Mode {
 // attributes, entities, CDATA, DOCTYPE, processing instructions), not a
 // reuse of HtmlMode's HTML-specific one.
 [[nodiscard]] Mode XmlMode();
+// tree-sitter/tree-sitter-rust -- the tree-sitter org's own official
+// grammar, same provenance bar as CMode/CppMode/PythonMode/
+// JavaScriptMode above. Ships a real queries/highlights.scm and
+// queries/tags.scm, both consumed unmodified (no c-tags.scm/cpp-tags.scm-
+// style vendoring needed -- checked directly, no ambiguity found).
+[[nodiscard]] Mode RustMode();
 // yaml/toml follow-up: tree-sitter-grammars/tree-sitter-yaml and
 // tree-sitter-grammars/tree-sitter-toml, both community-maintained, both
 // ship a pre-generated src/parser.c and a real queries/highlights.scm --

@@ -513,6 +513,22 @@ ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter
 ned_add_treesitter_grammar(tree-sitter-xml https://github.com/tree-sitter-grammars/tree-sitter-xml.git v0.7.0 xml)
 
 ned_embed_treesitter_query("${tree-sitter-xml_SOURCE_DIR}/queries/xml/highlights.scm" Xml)
+
+# go-to-file-at-point resolver gaps follow-up: tree-sitter/tree-sitter-rust,
+# the tree-sitter org's own official grammar (same provenance bar as c/cpp/
+# python/javascript above) -- ships real queries/highlights.scm and
+# queries/tags.scm, consumed unmodified like PHP/JS/Python's own (no
+# vendoring needed, unlike c-tags.scm/cpp-tags.scm). folds/imports/indents/
+# tests are, as with every other bundled language, hand-written locally --
+# no upstream grammar repo ships those ned-local capture conventions.
+ned_add_treesitter_grammar(tree-sitter-rust https://github.com/tree-sitter/tree-sitter-rust.git v0.24.2)
+
+ned_embed_treesitter_query("${tree-sitter-rust_SOURCE_DIR}/queries/highlights.scm" Rust)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/rust-folds.scm" RustFolds)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/rust-imports.scm" RustImports)
+ned_embed_treesitter_query("${tree-sitter-rust_SOURCE_DIR}/queries/tags.scm" RustTags)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/rust-tests.scm" RustTests)
+ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/rust-indents.scm" RustIndents)
 ned_embed_treesitter_query("${CMAKE_CURRENT_SOURCE_DIR}/Source/Editor/TreeSitter/queries/xml-indents.scm" XmlIndents)
 #------------------------------------------------------------------------------
 
@@ -595,6 +611,7 @@ add_library(ned_lib STATIC
         Source/Editor/Table.cpp
         Source/Editor/Markdown.cpp
         Source/Editor/Link.cpp
+        Source/Editor/Php.cpp
         Source/Editor/HeaderSource.cpp
         Source/Editor/FinalNewline.cpp
         Source/Editor/TrimOnSave.cpp
@@ -801,6 +818,7 @@ target_link_libraries(ned_lib
         PUBLIC tree-sitter-clojure
         PUBLIC tree-sitter-fish
         PUBLIC tree-sitter-xml
+        PUBLIC tree-sitter-rust
         PRIVATE ${CMAKE_DL_LIBS}
         # internal-project-search follow-up: only ProjectSearch.cpp's own
         # implementation includes RE2 headers, so this stays off the public
@@ -1011,6 +1029,7 @@ if (NED_BUILD_TESTS)
             Tests/NodeModulesTest.cpp
             Tests/ImportResolutionConfigTest.cpp
             Tests/ImportTargetTest.cpp
+            Tests/PhpTest.cpp
             Tests/ProjectFileOpsTest.cpp
             Tests/ScratchPadTest.cpp
             Tests/BackupTest.cpp

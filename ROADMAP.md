@@ -85,13 +85,75 @@ Notcurses.
         interactive shell isn't really an "install and launch" primitive) — worth
         scoping only if plain shelled-out `adb`/`gradlew` tasks prove too manual in
         practice, not speculatively.
-- [ ] **Go-to-file-at-point resolver gaps** (`Mode::importTarget`, the hand-rolled
-      import/include resolver): LSP should be tried first where a server can answer it
-      (clangd's `textDocument/documentLink` for `#include`); Python's leading-dot
-      relative imports (`from . import x`) aren't handled; PHP namespace `use` needs a
-      PSR-4 autoloader parse; JS dynamic `import(...)` isn't resolved; node_modules
-      `package.json` main/exports resolution goes no further than `index.*` inference;
-      Rust has no bundled mode yet to resolve at all.
+- Go-to-file-at-point resolver gaps, four of six, closed 2026-09-04 -- see
+  `git log --grep=resolver-gaps`. Python's leading-dot relative imports
+  (`from . import x`, `from ..foo import x`) now resolve: a new
+  `@import.relative` capture (python-imports.scm) tags the whole
+  `relative_import` node, and `Mode::ImportTarget::relativeLevel` (Mode.h)
+  carries the dot count for `BufferView::OpenDetectedLink` to ascend that
+  many-minus-one parent directories from the importing file before
+  resolving the (already dot-stripped) remainder. PHP namespace `use`
+  resolves via a real PSR-4 lookup (`Editor/Php.h`'s `ResolvePsr4Namespace`,
+  longest-prefix-wins against `composer.json`'s `autoload`/`autoload-dev`
+  `psr-4` map) -- a dedicated resolution path, not a `ResolveFileLink`
+  widening, since PSR-4 is a prefix-rewrite, not a directory search. JS/TS
+  dynamic `import(...)` resolves (`call_expression` with a dedicated
+  `(import)` function-node, distinct from `require(...)`'s ordinary
+  identifier callee -- no `#eq?` predicate needed). node_modules
+  `package.json` "main"/"exports" resolution
+  (`NodeModules.h`'s `ResolvePackageEntryPoint`, tried in `Link.cpp`'s
+  `TryVariants` before the bare `index.<ext>` guess; "exports" conditions
+  tried in `import`/`node`/`default`/`require` order, bounded two levels
+  deep, not a spec-exhaustive resolver). Rust's own bodyless `mod foo;`
+  file-per-module declaration also resolves now (part of the Rust bundling
+  below, not this bullet's own scope) -- see that entry for why a real
+  `use` path is deliberately left to rust-analyzer instead. Still open:
+  LSP-first resolution (`textDocument/documentLink`, e.g. clangd's own
+  `#include` support) would need new request/response plumbing and an
+  async-aware call site -- `OpenLinkAtPoint` is synchronous today, and every
+  other async LSP feature in this codebase (`RequestDefinition`,
+  `RequestCodeActions`, `RequestCodeLenses`) already establishes the
+  fire-request/generation-guarded-callback idiom this would need to adopt,
+  so this is a restructuring, not a new architecture.
+- **Rust bundled language support** (raised 2026-09-04 alongside the
+  resolver-gaps item above, ahead of the user installing rust-analyzer)
+  shipped: `tree-sitter/tree-sitter-rust` (the tree-sitter org's own official
+  grammar, `CMakeLists.txt`'s `ned_add_treesitter_grammar`), `RustMode()`
+  registered for `.rs`. `queries/highlights.scm` and `queries/tags.scm` are
+  the grammar's own real files, consumed unmodified (no c-tags.scm/
+  cpp-tags.scm-style vendoring needed -- checked directly). `rust-folds.scm`/
+  `rust-imports.scm`/`rust-indents.scm`/`rust-tests.scm` are hand-written
+  locally, the same "no upstream convention to vendor" reasoning every other
+  bundled language's own fold/import/indent/test query already carries.
+  `rust-imports.scm` matches only a bodyless `mod foo;` declaration (real
+  file-per-module resolution) -- a `use` path is deliberately unmatched, left
+  to rust-analyzer's own `textDocument/definition` (semantic crate-tree
+  knowledge a syntax-only query can't reconstruct: which file declared which
+  `mod`, `pub use` re-exports, external-crate dependencies in Cargo's own
+  registry). `mod_item::isModDeclaration` (Mode.h) signals
+  `BufferView::OpenDetectedLink` to prepend the importing file's own stem as
+  a subdirectory before resolving (Rust's own "a submodule lives one level
+  below any file except a crate root/mod.rs" rule) -- `main`/`lib`/`mod` are
+  the three file names exempted from that adjustment. `rust-tests.scm`
+  matches `#[test]`/`#[<framework>::test]` (tokio, async_std, ...) via
+  sibling-adjacency to a `function_item` (Rust's attribute_item is an
+  ordinary preceding statement, not a field the way PHP's own attributed
+  method_declaration is), covering up to one other attribute stacked between
+  the marker and the function in either order -- two or more stacked
+  attributes between them is a real, narrower v1 cut. LSP (`rust-analyzer`),
+  DAP (`lldb-dap`/`codelldb`), and test running (`TestOutputParser.h`'s
+  existing `"cargo"` format) needed zero new code -- `Cargo.toml` is Rust's
+  own `LspRootMarkers` entry, everything else is user-facing `ned/set-*`
+  config, this project's standing "nothing bundled/auto-detected for
+  external tools" policy. Found and fixed along the way: tree-sitter-rust's
+  own upstream `tags.scm` double-tags a method inside an `impl`/`trait`/`mod`
+  body as both `@definition.function` (unconditional) and
+  `@definition.method` (an ancestor-gated pattern on the *same* node, not a
+  different one) -- `Mode.cpp`'s `symbolKind` closure only collapsed
+  *nested*-range duplicates before this (cpp-tags.scm's own bodyless-
+  prototype case), never an *exact*-range pair, so every Rust method was
+  showing up twice in the gutter/sticky-scroll; now collapsed first via an
+  exact dedup pass ahead of the existing nested-range one.
 - [ ] **Sync outgoing payload size, remainder** (sync-debounce follow-up: a real,
       gdb-confirmed live freeze — the main thread blocked inside `ChildProcess::
       WriteAll`, stuck writing a full-document `textDocument/didChange` to a server
@@ -883,10 +945,12 @@ these accumulate detail in place.
         (a raw-socket `Transport`), not just a `ned/set-lsp-command` entry. Confirm before
         scoping. The C#-via-Mono path shares C#'s own gap below.
       - **Bevy** (Rust, no visual editor — code-first ECS) — needs nothing
-        Bevy-specific; entirely gated on general Rust language support, already a named
-        gap above (`Go-to-file-at-point resolver gaps`' "Rust has no bundled mode yet").
-        The natural highest-leverage pick if the goal is "unlock the most engines per
-        unit of work," since Rust support pays for itself outside game dev too.
+        Bevy-specific; general Rust language support shipped 2026-09-04 (see
+        "Rust bundled language support" above), so this is now just
+        `rust-analyzer` + `lldb-dap`/`codelldb` config, the same as any other
+        already-bundled language. The natural highest-leverage pick if the
+        goal was "unlock the most engines per unit of work" — Rust support
+        pays for itself outside game dev too.
       - **LÖVE (Love2D)** and **Defold** (both Lua-based, open source, no bundled mode
         for Lua at all today) — same shape as Bevy/Rust: gated on general Lua support,
         not engine-specific work. `lua-language-server` already understands both

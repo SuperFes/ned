@@ -7,22 +7,23 @@
 // 'lodash'") isn't found relative to the importing file or the project root
 // alone.
 //
-// v1 scope: Node's own directory-walk algorithm only -- no package.json
-// "main"/"exports"/scoped-package ("@scope/name") resolution. A bare
-// specifier that resolves to a real node_modules/<pkg> directory still needs
-// ResolveFileLink's own index-file inference (ImportResolutionConfig's
-// indexBasenames, "index") to find its entry point; a package whose real
-// entry point isn't "index.<ext>" (i.e. anything using package.json "main")
-// won't resolve. Good enough for the common case without a JSON-parsing,
-// package-manager-aware resolver -- the same "hand-rolled resolver as a
-// fallback, not a full implementation" scope every other cut in this
-// follow-up shares.
+// v1 scope was Node's own directory-walk algorithm only -- no package.json
+// "main"/"exports" resolution, just ResolveFileLink's own generic index-file
+// inference ("index.<ext>"). ResolvePackageEntryPoint below (resolver-gaps
+// follow-up) widens that: real package.json "main"/"exports" support, tried
+// by Editor/Link.cpp's TryVariants before falling back to the bare
+// "index.<ext>" guess. Scoped-package ("@scope/name") resolution still needs
+// no special handling here -- it's already just another path segment
+// (node_modules/@scope/name) as far as this walk and TryVariants are
+// concerned.
 //
 
 #ifndef NED_EDITOR_NODEMODULES_H
 #define NED_EDITOR_NODEMODULES_H
 
 #include <filesystem>
+#include <optional>
+#include <string>
 #include <vector>
 
 namespace ned::editor {
@@ -39,6 +40,26 @@ namespace ned::editor {
 // root's own single remaining component rather than looping forever.
 [[nodiscard]] std::vector<std::filesystem::path> NodeModulesSearchPaths(const std::filesystem::path& baseDirectory,
                                                                         const std::filesystem::path& projectRoot);
+
+// resolver-gaps follow-up: given a real package directory (e.g.
+// node_modules/lodash, already confirmed to exist by the caller), reads its
+// own package.json and resolves its real entry-point file -- "exports"
+// (preferred, Node's modern resolution field: a bare string, or an object
+// keyed by subpath with "." as the package root, itself either a string or a
+// nested per-condition object tried in "import"/"node"/"default"/"require"
+// order -- a best-effort, non-spec-exhaustive walk, not a full Node
+// resolution algorithm) falling back to the older "main" string field.
+// candidateExtensions (ImportResolutionConfig's own per-language list) is
+// tried appended to the resolved path when it doesn't exist verbatim, and
+// once more as "<resolved>/index.<ext>" when the resolved path is itself a
+// directory (a package whose "main" points at a subdirectory rather than a
+// file). nullopt when there's no package.json, neither field resolves to an
+// existing file, or the file named doesn't actually exist on disk --
+// Editor/Link.cpp's TryVariants falls back to its own bare index-file
+// inference in every such case, so this is a pure widening, never a
+// regression versus the pre-existing behavior.
+[[nodiscard]] std::optional<std::filesystem::path>
+ResolvePackageEntryPoint(const std::filesystem::path& packageDirectory, const std::vector<std::string>& candidateExtensions);
 
 } // namespace ned::editor
 
