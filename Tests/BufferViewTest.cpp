@@ -3075,6 +3075,88 @@ TEST_CASE("dap-show-memory-at-point reads the [mem:] marker, prompts for a count
     REQUIRE(memory->Text().find("|....|") != std::string::npos);
 }
 
+TEST_CASE("dap-show-memory-image-at-point reads the [mem:] marker, prompts for a count, and pushes a MemoryImageModel",
+          "[BufferView]") {
+    Fixture                      fixture;
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::dap::DapManager manager(eventLoop);
+    ned::editor::dap::DapClient* client  = nullptr;
+    FakeDapAdapter               adapter = FakeDapAdapter::Create(manager, eventLoop, client);
+
+    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-memory-image", "{}");
+    manager.StartOrContinue("bufferview-dap-memory-image");
+    const auto initialize = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(initialize["seq"].get<int>(), "initialize", ned::editor::dap::Json::object()));
+    const auto launch = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(launch["seq"].get<int>(), "launch", ned::editor::dap::Json::object()));
+
+    client->DispatchFrame(DapEventFrame("stopped", {{"reason", "breakpoint"}, {"threadId", 1}}));
+    const auto autoStackTrace = adapter.NextRequest();
+    client->DispatchFrame(
+        DapResponseFrame(autoStackTrace["seq"].get<int>(), "stackTrace", {{"stackFrames", ned::editor::dap::Json::array()}}));
+    ned::editor::dap::SetDapLaunchConfig("bufferview-dap-memory-image", "");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetDapManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 20});
+
+    std::vector<std::optional<ned::ui::MemoryImageModel>> pushed;
+    view.SetOnMemoryImageChanged([&pushed](std::optional<ned::ui::MemoryImageModel> model) { pushed.push_back(std::move(model)); });
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "dap-show-debug");
+    view.OnEvent(ned::ui::test::Return());
+
+    const auto showDebugStackTrace = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(
+        showDebugStackTrace["seq"].get<int>(), "stackTrace",
+        {{"stackFrames", ned::editor::dap::Json::array({{{"id", 1}, {"name", "main"}}})}}));
+    const auto scopesRequest = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(
+        scopesRequest["seq"].get<int>(), "scopes",
+        {{"scopes", ned::editor::dap::Json::array({{{"name", "Locals"}, {"variablesReference", 100}}})}}));
+    const auto variablesRequest = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(
+        variablesRequest["seq"].get<int>(), "variables",
+        {{"variables", ned::editor::dap::Json::array(
+                           {{{"name", "p"}, {"value", "0x3000"}, {"type", "int*"}, {"memoryReference", "0x3000"}}})}}));
+
+    ned::text::Buffer* debugBuffer = fixture.bufferList.Find("*debug*");
+    REQUIRE(debugBuffer != nullptr);
+    const std::size_t variableLineByte = debugBuffer->Text().find("p: int*");
+    REQUIRE(variableLineByte != std::string::npos);
+    debugBuffer->SetPoint(variableLineByte);
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "dap-show-memory-image-at-point");
+    view.OnEvent(ned::ui::test::Return());
+    REQUIRE(fixture.statusMessage == "Byte count (default 128): ");
+    TypeText(view, "4");
+    view.OnEvent(ned::ui::test::Return());
+
+    const auto readMemory = adapter.NextRequest();
+    REQUIRE(readMemory["command"] == "readMemory");
+    REQUIRE(readMemory["arguments"]["memoryReference"] == "0x3000");
+    REQUIRE(readMemory["arguments"]["count"] == 4);
+    // "AQIDBA==" is the base64 encoding of bytes {1, 2, 3, 4}.
+    client->DispatchFrame(
+        DapResponseFrame(readMemory["seq"].get<int>(), "readMemory", {{"address", "0x3000"}, {"data", "AQIDBA=="}}));
+
+    // No *memory* hex-dump buffer this time -- the image path pushes a model
+    // through onMemoryImageChanged_ instead of building a text buffer.
+    REQUIRE(fixture.bufferList.Find("*memory*") == nullptr);
+
+    REQUIRE(pushed.size() == 1);
+    REQUIRE(pushed[0].has_value());
+    REQUIRE(pushed[0]->title.find("0x3000") != std::string::npos);
+    REQUIRE(pushed[0]->title.find("4 bytes") != std::string::npos);
+    REQUIRE(pushed[0]->bytes == std::vector<std::uint8_t>{1, 2, 3, 4});
+
+    view.MemoryImageCancel();
+    REQUIRE(pushed.size() == 2);
+    REQUIRE_FALSE(pushed[1].has_value());
+}
+
 TEST_CASE("dap-toggle-console reaches the registered callback", "[BufferView]") {
     Fixture             fixture;
     ned::ui::BufferView view = fixture.View();

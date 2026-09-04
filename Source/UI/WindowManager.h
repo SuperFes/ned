@@ -369,6 +369,15 @@ class WindowManager {
     void PointerGraphCancel();
     void PointerGraphSelectionChanged(std::size_t index);
 
+    // Debugging wishlist follow-up (memory-as-image viewer):
+    // SetOnPointerGraphChanged's own mirror for the read-only MemoryImageView
+    // overlay -- same owner-pane bookkeeping (memoryImageOwnerPane_), just a
+    // single Cancel router instead of the five-method activate/expand/
+    // collapse/selection set (there's nothing else to route: the overlay is
+    // a static display, not a navigable list).
+    void SetOnMemoryImageChanged(std::function<void(std::optional<MemoryImageModel>)> onMemoryImageChanged);
+    void MemoryImageCancel();
+
     // task-runner follow-up: same "forwarded to every pane, present and
     // future" shape as SetProjectSidebar/SetLspManager above.
     void SetTaskRunner(editor::tasks::TaskRunner* taskRunner);
@@ -784,6 +793,12 @@ class WindowManager {
     std::function<void(std::optional<TreeViewModel>)>               onPointerGraphChanged_;
     Pane*                                                           pointerGraphOwnerPane_ = nullptr;
     [[nodiscard]] std::function<void(std::optional<TreeViewModel>)> WirePointerGraphCallback(Pane* pane);
+
+    // Debugging wishlist follow-up (memory-as-image viewer): the pair
+    // above's own mirror, for the read-only MemoryImageView overlay.
+    std::function<void(std::optional<MemoryImageModel>)>               onMemoryImageChanged_;
+    Pane*                                                              memoryImageOwnerPane_ = nullptr;
+    [[nodiscard]] std::function<void(std::optional<MemoryImageModel>)> WireMemoryImageCallback(Pane* pane);
 
     std::unique_ptr<WindowNode> root_;
     Container                   rootComponent_{Axis::Vertical, {}};
