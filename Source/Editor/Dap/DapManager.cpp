@@ -387,6 +387,9 @@ std::string DapManager::BeginSession(const std::string& language, bool attach) {
                              if (body.contains("supportsReadMemoryRequest") && body["supportsReadMemoryRequest"].is_boolean()) {
                                  capabilities_.readMemory = body["supportsReadMemoryRequest"].get<bool>();
                              }
+                             if (body.contains("supportsGotoTargetsRequest") && body["supportsGotoTargetsRequest"].is_boolean()) {
+                                 capabilities_.gotoTargets = body["supportsGotoTargetsRequest"].get<bool>();
+                             }
                              if (body.contains("exceptionBreakpointFilters") && body["exceptionBreakpointFilters"].is_array()) {
                                  for (const Json& filterJson : body["exceptionBreakpointFilters"]) {
                                      ExceptionFilter filter;
@@ -535,6 +538,9 @@ void DapManager::SendBreakpointsForFile(const std::string& pathKey) {
 }
 
 void DapManager::HandleStoppedEvent(const Json& body) {
+    // Run-to-cursor's temporary breakpoint (if any) is cleared on the very
+    // next stop for any reason -- only one continue was ever issued for it.
+    ClearPendingRunToCursor(/*pushToAdapter=*/true);
     state_                   = SessionState::Stopped;
     stoppedThreadId_         = body.value("threadId", 1);
     focusedThreadId_.reset(); // re-seeded from stoppedThreadId_ via CurrentThreadId() until SelectThread overrides it
@@ -644,6 +650,94 @@ std::string DapManager::StepOut() {
     return SendStep("stepOut", "Stepping out");
 }
 
+std::string DapManager::RunToCursor(const std::filesystem::path& path, std::size_t line) {
+    if (state_ != SessionState::Stopped) {
+        return "Not stopped (nothing to run to cursor from).";
+    }
+    const std::string key = NormalizePathKey(path);
+    const auto         it = breakpoints_.find(key);
+    const bool alreadySet = it != breakpoints_.end() &&
+                            std::any_of(it->second.begin(), it->second.end(), [line](const Breakpoint& bp) { return bp.line == line; });
+    if (!alreadySet) {
+        ToggleBreakpoint(path, line); // pushes setBreakpoints immediately (state_ != Inactive)
+        pendingRunToCursor_ = std::make_pair(key, line);
+    }
+    client_->SendRequest("continue", Json{{"threadId", CurrentThreadId()}},
+                         [this](bool success, const Json&, const std::string& message) {
+                             if (success) {
+                                 MarkResumed();
+                             }
+                             else {
+                                 EndSession("continue failed: " + message);
+                             }
+                         });
+    return "Running to cursor...";
+}
+
+void DapManager::ClearPendingRunToCursor(bool pushToAdapter) {
+    if (!pendingRunToCursor_) {
+        return;
+    }
+    const auto [key, line] = *pendingRunToCursor_;
+    pendingRunToCursor_.reset();
+    const auto it = breakpoints_.find(key);
+    if (it == breakpoints_.end()) {
+        return; // toggled off some other way already
+    }
+    const auto lineIt = std::find_if(it->second.begin(), it->second.end(), [line](const Breakpoint& bp) { return bp.line == line; });
+    if (lineIt == it->second.end()) {
+        return;
+    }
+    it->second.erase(lineIt);
+    if (it->second.empty()) {
+        breakpoints_.erase(it);
+    }
+    if (pushToAdapter && client_ && state_ != SessionState::Inactive) {
+        SendBreakpointsForFile(key);
+    }
+}
+
+void DapManager::JumpToLine(const std::filesystem::path& path, std::size_t line, std::function<void(bool, std::string)> callback) {
+    if (state_ != SessionState::Stopped) {
+        callback(false, "Not stopped (nothing to jump from).");
+        return;
+    }
+    const int threadId = CurrentThreadId();
+    client_->SendRequest(
+        "gotoTargets", Json{{"source", Json{{"path", path.string()}}}, {"line", line}},
+        [this, threadId, callback](bool success, const Json& body, const std::string& message) {
+            if (!success) {
+                std::string status = "gotoTargets failed: " + message;
+                if (!capabilities_.gotoTargets) {
+                    status += " (adapter did not advertise jump-to-line support)";
+                }
+                callback(false, status);
+                return;
+            }
+            if (!body.contains("targets") || !body["targets"].is_array() || body["targets"].empty()) {
+                callback(false, "No jump target available at that line.");
+                return;
+            }
+            const Json& firstTarget = body["targets"][0];
+            if (!firstTarget.contains("id") || !firstTarget["id"].is_number_integer()) {
+                callback(false, "Adapter returned a malformed jump target.");
+                return;
+            }
+            const int targetId = firstTarget["id"].get<int>();
+            client_->SendRequest("goto", Json{{"threadId", threadId}, {"targetId", targetId}},
+                                 [callback](bool success, const Json&, const std::string& message) {
+                                     if (!success) {
+                                         callback(false, "goto failed: " + message);
+                                         return;
+                                     }
+                                     // The new position arrives via the following `stopped`
+                                     // event (reason "goto"), same as continue/step -- nothing
+                                     // else to update here.
+                                     callback(true, "Jumped to line.");
+                                 });
+        });
+}
+
 std::string DapManager::RestartFrame(int frameId) {
     if (state_ != SessionState::Stopped) {
         return "Not stopped (nothing to restart).";
@@ -738,12 +832,16 @@ void DapManager::RequestScopes(int frameId, std::function<void(std::vector<Scope
                          });
 }
 
-void DapManager::RequestVariables(int variablesReference, std::function<void(std::vector<Variable>)> callback) {
+void DapManager::RequestVariables(int variablesReference, std::function<void(std::vector<Variable>)> callback, bool hex) {
     if (!client_ || state_ != SessionState::Stopped) {
         callback({});
         return;
     }
-    client_->SendRequest("variables", Json{{"variablesReference", variablesReference}},
+    Json arguments = {{"variablesReference", variablesReference}};
+    if (hex) {
+        arguments["format"] = Json{{"hex", true}};
+    }
+    client_->SendRequest("variables", std::move(arguments),
                          [callback = std::move(callback)](bool success, const Json& body, const std::string&) {
                              std::vector<Variable> variables;
                              if (success && body.contains("variables") && body["variables"].is_array()) {
@@ -822,7 +920,8 @@ void DapManager::RequestMemory(const std::string& memoryReference, long offset, 
                          });
 }
 
-void DapManager::Evaluate(const std::string& expression, std::function<void(bool, std::string)> callback, std::string context) {
+void DapManager::Evaluate(const std::string& expression, std::function<void(bool, std::string)> callback, std::string context,
+                          bool hex) {
     if (!client_ || state_ == SessionState::Inactive || state_ == SessionState::Starting) {
         callback(false, "No debug session.");
         return;
@@ -830,6 +929,9 @@ void DapManager::Evaluate(const std::string& expression, std::function<void(bool
     Json arguments = {{"expression", expression}, {"context", std::move(context)}};
     if (stoppedFrameId_) {
         arguments["frameId"] = *stoppedFrameId_;
+    }
+    if (hex) {
+        arguments["format"] = Json{{"hex", true}};
     }
     client_->SendRequest("evaluate", std::move(arguments),
                          [callback = std::move(callback)](bool success, const Json& body, const std::string& message) {
@@ -923,6 +1025,11 @@ void DapManager::EndSession(std::string reason) {
     if (state_ == SessionState::Inactive) {
         return; // e.g. disconnect EOF arriving after an explicit StopSession already tore down
     }
+    // The session is ending before the next stop ever arrived to clear this
+    // itself -- erase it locally so it doesn't leak into the next session as
+    // a permanent breakpoint the user never actually asked to keep. No live
+    // adapter left worth telling (client_ is torn down just below).
+    ClearPendingRunToCursor(/*pushToAdapter=*/false);
     state_           = SessionState::Inactive;
     stoppedThreadId_ = 0;
     currentStop_.reset();

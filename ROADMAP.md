@@ -762,19 +762,14 @@ these accumulate detail in place.
         useful against an adapter that itself replays a recording (`rr`, some native
         adapters) — nothing to build if the active adapter never advertises it, but
         cheap to wire regardless.
-      - **Run-to-cursor** (`gf`'s Ctrl+Click) — a temporary breakpoint at point,
-        `continue`, then clear it on the next stop; entirely composable from
-        `ToggleBreakpoint`/`StartOrContinue`/`SetOnStopped` as they exist today, no new
-        DAP request needed.
-      - **Jump to line** (`gf`'s Shift+Click "skip to line") — DAP's `goto`/
-        `gotoTargets` requests (`supportsGotoTargetsRequest`), a real but
-        adapter-support-dependent protocol feature; moves the stopped thread's
-        execution point without running through the skipped code.
-      - **Watch/variable display-format toggle** (`gf`'s `/` key, hex/decimal/binary) —
-        DAP's `evaluate`/`variables` requests both take an optional `format: {hex:
-        true}` argument the current `Evaluate`/`RequestVariables` never sends; a
-        per-watch or per-line format flag threaded through would be a small, contained
-        addition.
+      - Run-to-cursor (`dap-run-to-cursor`, M-x only) closed 2026-09-03 — see
+        `git log --grep=run-to-cursor`.
+      - Jump to line (`dap-jump-to-line`, M-x only) closed 2026-09-03 — see
+        `git log --grep=jump-to-line`.
+      - Watch/variable display-format toggle (`dap-toggle-hex-format`, M-x only) closed
+        2026-09-03 — see `git log --grep=hex-format-toggle`. Per-line, not persisted: a
+        trailing `[hex]` marker on the *debug* buffer line is the toggle's only state.
+        Decimal/binary beyond hex, and a bound key (`gf`'s `/`), stay unaddressed.
       - **Line-inspect mode** (`gf`'s backtick key: evaluate every sub-expression on
         the current source line at once) — needs a per-language "extract candidate
         expressions from this line" step (a small tree-sitter walk over the line's own
