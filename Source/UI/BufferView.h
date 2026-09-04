@@ -469,6 +469,19 @@ class BufferView : public Widget {
     // already in progress.
     void RequestCloseBuffer(text::Buffer& buffer);
 
+    // TabBar-context-menu follow-up: bulk-close entry points for the
+    // right-click menu's "Close Others"/"Close to the Right" rows. Unlike
+    // RequestCloseBuffer, these never prompt -- a buffer with unsaved
+    // changes (and not read-only) is simply left open rather than starting
+    // N sequential y/n confirmations (RequestCloseBuffer's single
+    // pendingClose_ slot has no queue to hold more than one at a time), and
+    // the outcome (how many closed, how many skipped) is reported via
+    // statusMessage_ instead. keep/from need not be this pane's own
+    // activeBuffer_ -- TabBar's context menu targets whichever tab was
+    // right-clicked, which may be a background tab.
+    void CloseOtherTabs(text::Buffer& keep);
+    void CloseTabsToTheRight(text::Buffer& from);
+
     // open-binary-anyway follow-up: entry point for ProjectSidebar's click
     // handler (mouse-only, same "hands off to BufferView for anything
     // needing keyboard y/n" shape RequestCloseBuffer's own doc comment
@@ -1979,6 +1992,13 @@ class BufferView : public Widget {
     // HandleConfirmCloseBufferKey) is responsible for the modified-buffer
     // confirmation decision; this always closes unconditionally.
     void CloseBufferNow(text::Buffer& buffer);
+
+    // Shared tail for CloseOtherTabs/CloseTabsToTheRight: closes every
+    // buffer in targets that isn't modified (or is read-only), skipping the
+    // rest, then reports a summary via statusMessage_ -- CloseBufferNow
+    // clears statusMessage_ itself on every call, so the summary is only
+    // safe to assign after the whole loop finishes.
+    void CloseEligibleBuffers(const std::vector<text::Buffer*>& targets);
 
     // Builds a results buffer (path:line: text per line, name uniquified
     // Emacs-style like any other buffer) from matches and switches to it --

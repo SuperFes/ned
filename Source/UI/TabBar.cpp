@@ -251,6 +251,29 @@ bool TabBar::OnEvent(const Event& event) {
         return true;
     }
 
+    // TabBar-context-menu follow-up: a right-press on a tab's body reports
+    // that tab (not necessarily the active one -- unlike a left click, this
+    // deliberately does not switch to it, so bulk-closing background tabs
+    // doesn't disturb whatever's currently being edited) and the click's
+    // absolute screen position to onContextMenuRequest_, which main.cpp
+    // uses to anchor/build the actual popup (TabBar has no OverlayHost/
+    // ListPopup of its own to show one with). A right-press outside any
+    // tab's extent (the row's own background) is a no-op, same as a left
+    // click there.
+    if (mouse->button == MouseEvent::Button::Right && mouse->motion == MouseEvent::Motion::Pressed) {
+        const int clickedColumn = mouse->at.x + scrollOffset_;
+        if (onContextMenuRequest_) {
+            for (const TabLayout& tab : ComputeTabLayout()) {
+                if (clickedColumn >= tab.startColumn && clickedColumn < tab.endColumn) {
+                    const Box& box = Box_();
+                    onContextMenuRequest_(*tab.buffer, Point{.x = box.x_min + mouse->at.x, .y = box.y_min + mouse->at.y});
+                    break;
+                }
+            }
+        }
+        return true;
+    }
+
     if (mouse->button != MouseEvent::Button::Left || mouse->motion != MouseEvent::Motion::Pressed) {
         return false;
     }
@@ -283,6 +306,10 @@ void TabBar::SetOnCloseRequest(std::function<void(text::Buffer&)> handler) {
 
 void TabBar::SetFocusProvider(std::function<bool()> provider) {
     focusProvider_ = std::move(provider);
+}
+
+void TabBar::SetOnContextMenuRequest(std::function<void(text::Buffer&, Point)> handler) {
+    onContextMenuRequest_ = std::move(handler);
 }
 
 } // namespace ned::ui
