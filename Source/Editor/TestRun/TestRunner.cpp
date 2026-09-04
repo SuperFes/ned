@@ -8,6 +8,7 @@
 #include "Editor/BackgroundActivity.h"
 #include "Editor/DiagnosticsLog.h"
 #include "Editor/SanitizerOutputParser.h"
+#include "Editor/ValgrindOutputParser.h"
 #include "TestOutputParser.h"
 #include "TestRunConfig.h"
 #include "Text/Buffer.h"
@@ -157,6 +158,22 @@ void TestRunner::DispatchProcessExit(std::optional<int> exitCode) {
         std::string message = finding.tool + ": " + finding.message;
         if (!finding.symbol.empty()) {
             message += " (in " + finding.symbol + ")";
+        }
+        LogMessage(LogCategory::Subprocess, LogSeverity::Error, "test run: " + message,
+                   finding.file.empty() ? std::nullopt : std::make_optional(std::move(finding.file)),
+                   finding.line == 0 ? std::nullopt : std::make_optional(finding.line));
+    }
+
+    // valgrind-xml-parser follow-up: same durable, clickable finding record
+    // for a test command pointed at `valgrind --xml=yes ...` -- see the
+    // sanitizer loop above.
+    for (ValgrindFinding& finding : ParseValgrindXml(accumulated_)) {
+        std::string message = finding.tool.empty() ? "valgrind" : finding.tool;
+        if (!finding.kind.empty()) {
+            message += ": " + finding.kind;
+        }
+        if (!finding.message.empty()) {
+            message += " (" + finding.message + ")";
         }
         LogMessage(LogCategory::Subprocess, LogSeverity::Error, "test run: " + message,
                    finding.file.empty() ? std::nullopt : std::make_optional(std::move(finding.file)),
