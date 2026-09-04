@@ -197,6 +197,53 @@ Notcurses.
       more above/below" rows baked in — scrolling it is session-level, not something
       `ListPopup` itself does).
 
+### Mouse Ergonomics
+
+Raised 2026-09-04. Design stance going in: over SSH/tmux/a bare terminal, mouse
+support is genuinely unreliable (no capture semantics, no motion events confirmed
+on this backend, TUI subprocesses inside `TerminalPanel` don't receive forwarded
+clicks at all — see that widget's own open items) — so the mouse must never be the
+*only* path to a control, every mouse action needs a keyboard equivalent that
+already exists or gets added alongside it. That said, "unreliable as the sole
+path" doesn't mean "not worth it" — a lot of genuinely mouse-native, context-rich
+interactions (a right-click menu scoped to exactly what's under the cursor) are
+faster than keyboarding to a location and running a named command, even for a
+keyboard-first user. Treat mouse work as an accelerant layered on top of existing
+commands, never a replacement for them.
+
+- [ ] **Right-click context menus** — the real gap: `MouseEvent::Button::Right` is
+      already decoded end-to-end (`Widget.cpp`) but has exactly zero consumers
+      anywhere in this codebase today (confirmed by grep — nothing branches on it).
+      A stale comment in `BufferView.h` (near `HandleExecuteCommandKey`) says a
+      dropdown was descoped for lack of "any floating/popup widget concept" — that
+      was true when written but no longer is: `ListPopup` + `OverlayHost` (built for
+      completion/M-x/symbol-search/call-hierarchy since) is exactly that substrate,
+      already supports click-to-activate and digit jump-select. A context menu would
+      be a `ListPopup` anchored at the click point via `OverlayHost`'s placement-fn
+      mechanism, populated per-surface with rows that just invoke existing
+      `CommandRegistry` commands — no new functionality, pure discoverability/
+      acceleration:
+      - In-buffer: cut/copy/paste, go-to-definition/references/rename, code actions,
+        format-buffer — whatever's already bound, surfaced contextually.
+      - Gutter: toggle fold, toggle breakpoint, blame-at-line.
+      - Tab bar: close/close-others/close-to-the-right/reveal-in-sidebar.
+      - `ProjectSidebar`: new file/dir, rename, delete, reveal-in-terminal, copy path.
+      - VCS panel: stage/unstage hunk, revert hunk, view diff.
+      Not started — no menu-row-schema or per-surface wiring drafted yet.
+- [ ] **Drag-and-drop from `ProjectSidebar` into a pane** to open a file there
+      (dragging already exists for tab reorder, sidebar resize, scrollbar/minimap
+      thumb, terminal-panel scrollback selection — this would be a new drag *source*
+      distinct from all of those, not a new mechanism).
+- [ ] **Hover tooltips** (mouse hover, not click, triggering `lsp-hover`'s content) —
+      blocked on the same open question `ListPopup` mouse-support's own remainder
+      item already flagged: bare motion events (no button held) reaching a widget's
+      `OnEvent` aren't confirmed to arrive at all on this Notcurses backend. Needs a
+      small probe before this is even known feasible, not just a wiring task.
+- [ ] Double/triple-click word/line select, gutter click (fold/breakpoint toggle),
+      middle-click paste (X11/Wayland primary-selection convention), and click-drag
+      selection in the terminal-panel scrollback are already shipped — listed here
+      only so this section isn't mistaken for a from-scratch mouse-support effort.
+
 ### Navigation & Search
 
 - [ ] **Multibuffer gaps**: no full-commit diff view (browsing one commit's whole diff
@@ -344,6 +391,25 @@ Notcurses.
       beyond hand-writing `init.janet` — real live-editing already exists for themes
       specifically (`save-theme`/`ned/theme-set`); a general settings surface would
       generalize that. Vague, unscoped.
+- [ ] **Alternate "modern" keymap (VS Code/JetBrains-style)** — tabled 2026-09-04
+      discussion. The itch: Emacs's C-w/M-w/C-y read as arbitrary next to the
+      now-universal C-x/C-c/C-v cut/copy/paste convention. Audited and found to be a
+      real structural conflict, not a simple rebind: C-x and C-c are Emacs *prefix*
+      keys here (C-x owns file/window ops — C-x C-s, C-x C-f, C-x 2/3/0/1, C-x b —
+      and C-c is this codebase's own mode/user prefix — `C-c p/t/T/k/v/A/c`, dozens
+      of bindings), and C-v is already bound (scroll-page-down, M-v the complement).
+      Retrofitting the default keymap would evict all of those, not just rename two
+      keys. C-w/C-y also aren't plain cut/paste — they're `KillRing` ops (a ring, not
+      a single slot; `yank-pop`/M-y cycle prior kills), so a literal rebind needs to
+      keep kill-ring semantics under new trigger keys, not just alias them. (Separately
+      confirmed: C-z already backgrounds the process, same as real Emacs — ned
+      captures/handles this manually already, nothing new needed there.) Right
+      approach if this gets picked back up: a third selectable full keymap
+      (`ned/set-keymap-style` or similar: `emacs` default, `vim`, `modern`) reusing
+      the existing command set wholesale, the same shape `ned/set-vim-mode` already
+      proves out — not a patch on the Emacs default, since that default stays
+      load-bearing for `C-c`'s existing feature bindings either way. Not started;
+      no keymap table drafted yet.
 
 ### VCS Side Panel
 
