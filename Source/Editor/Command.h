@@ -376,6 +376,21 @@ enum class InteractiveRequest { None,
                                 LspTypeHierarchySupertypes,
                                 LspTypeHierarchySubtypes,
                                 LspRename,
+                                // prepareRename/linkedEditingRange follow-up: one more one-shot
+                                // async direct action, same "async request, own session" shape
+                                // as LspGotoSymbol above -- BufferView::
+                                // RequestLinkedEditingRangeAtPoint sends textDocument/
+                                // linkedEditingRange and, once the response arrives, starts a
+                                // live LinkedEditingSession (Editor/LinkedEditingSession.h)
+                                // rather than opening a prompt or a picker: unlike every other
+                                // Lsp* entry here, this one's "session" is background live
+                                // editing inside ordinary Normal-mode typing, not a distinct
+                                // InputMode a caller has to navigate. LspRename itself doesn't
+                                // gain a distinct enum entry for prepareRename -- that request
+                                // is folded into the existing LspRename flow (BufferView::
+                                // RequestRenameAtPoint's own new pre-step), since it's a
+                                // refinement of the same command, not a separate one.
+                                LspLinkedEditingRange,
                                 // task-runner follow-up: prompt-shaped requests, same "New
                                 // name" -> HandlePromptKey shape LspRename established above --
                                 // RunTask prompts for a task name and, on Enter, calls

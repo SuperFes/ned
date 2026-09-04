@@ -40,6 +40,7 @@
 #include "Editor/ExpandableTree.h"
 #include "Editor/IncrementalSearch.h"
 #include "Editor/Link.h"
+#include "Editor/LinkedEditingSession.h"
 #include "Editor/Lsp/LspManager.h"
 #include "Editor/MinibufferPrompt.h"
 #include "Editor/Mode.h"
@@ -1392,6 +1393,33 @@ class BufferView : public Widget {
     // don't need a bool the way the server-push path does).
     void ApplyRename(const editor::lsp::LspManager::ResolvedRename& result);
 
+    // prepareRename follow-up. StartInteractiveSession's LspRename case
+    // calls this instead of opening the "New name:" prompt directly: sends
+    // textDocument/prepareRename first, then either opens the prompt
+    // (prefilled with the symbol's current text when the server returned a
+    // usable range/placeholder), reports "not renameable here" without
+    // opening it at all (a real, considered server answer), or falls back to
+    // the old unprefilled-prompt behavior (a transport error, or a server
+    // that simply doesn't implement this optional method).
+    void RequestPrepareRenameAtPoint();
+
+    // linked-editing-range follow-up. StartInteractiveSession's
+    // LspLinkedEditingRange case calls this: sends textDocument/
+    // linkedEditingRange and, on a usable response, starts linkedEditingSession_.
+    // Refuses outright (statusMessage_, no request sent) while a real
+    // snippet session is live -- see linkedEditingSession_'s own doc
+    // comment for why the two can never coexist.
+    void RequestLinkedEditingRangeAtPoint();
+    // Resolve-by-name, not-a-raw-pointer lookup mirroring ResolveSnippetBuffer's
+    // own contract exactly -- a buffer closed mid-session is a safe no-op.
+    text::Buffer* ResolveLinkedEditingBuffer();
+    // Clears linkedEditingSession_ (and its buffer-side ranges, if the
+    // buffer is still resolvable) -- called from EndInteractiveSession
+    // (mirroring EndSnippetSession's own inclusion there) and from
+    // RunCommandAndHandleOutcome's post-dispatch hook once the session's own
+    // end conditions are met.
+    void EndLinkedEditingSession();
+
     // edit-application-gaps follow-up: the shared tail ApplyRename,
     // ApplyCodeAction, and ApplyServerPushedWorkspaceEdit all fold into.
     // Refuses (statusMessage_, no mutation anywhere) if
@@ -2499,6 +2527,18 @@ class BufferView : public Widget {
     std::optional<editor::SnippetSession>                          snippetSession_;
     std::optional<editor::CommandContext::SnippetExpansionRequest> pendingSnippetExpansion_;
     bool                                                           snippetPendingPristineDelete_ = false;
+    // linked-editing-range follow-up: the live mirror session lsp-linked-
+    // editing-range starts (see InteractiveRequest::LspLinkedEditingRange's
+    // own doc comment in Command.h). Deliberately not gated behind a
+    // distinct InputMode the way InputMode::Snippet gates snippetSession_ --
+    // this must keep mirroring edits during ordinary Normal-mode typing, so
+    // RunCommandAndHandleOutcome's own post-dispatch hook checks
+    // linkedEditingSession_.has_value() directly instead. Mutually exclusive
+    // with snippetSession_ (both use Buffer::SnippetRanges_ as their
+    // storage) -- RequestLinkedEditingRangeAtPoint refuses to start one
+    // while a real snippet session is live, and BeginSnippetExpansion ends
+    // any live linked-editing session first.
+    std::optional<editor::LinkedEditingSession> linkedEditingSession_;
     // The most recent non-empty isearch query, kept across sessions
     // (Accept and Cancel both record it, matching real Emacs' search ring
     // remembering a search string regardless of how the session ended).
@@ -3510,6 +3550,12 @@ class BufferView : public Widget {
     // runs, applied with no separate confirmation step.
     std::string   renameTitle_;
     std::size_t   renameRequestGeneration_ = 0;
+    // prepareRename follow-up: same staleness-guard shape once more, for the
+    // request RequestPrepareRenameAtPoint sends before lsp-rename opens its
+    // prompt.
+    std::size_t prepareRenameRequestGeneration_ = 0;
+    // linked-editing-range follow-up: same staleness-guard shape once more.
+    std::size_t linkedEditingRequestGeneration_ = 0;
 
     // status-message-lifecycle follow-up. A uniform rule for statusMessage_,
     // regardless of who wrote it (any command via CommandContext::message,
