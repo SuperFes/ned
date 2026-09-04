@@ -862,6 +862,10 @@ void BufferView::SetOnDapConsoleToggle(std::function<void()> handler) {
     onDapConsoleToggle_ = std::move(handler);
 }
 
+void BufferView::SetOnDapThreadsToggle(std::function<void()> handler) {
+    onDapThreadsToggle_ = std::move(handler);
+}
+
 void BufferView::SetOnBufferListToggle(std::function<void()> handler) {
     onBufferListToggle_ = std::move(handler);
 }
@@ -7727,6 +7731,13 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             // AcpTogglePanel above -- only forward.
             if (onDapConsoleToggle_) {
                 onDapConsoleToggle_();
+            }
+            return;
+        case editor::InteractiveRequest::DapToggleThreadsPanel:
+            // DapToggleConsole's own shape -- another OverlayHost overlay
+            // above WindowManager's level, only forward.
+            if (onDapThreadsToggle_) {
+                onDapThreadsToggle_();
             }
             return;
         // ACP client slice 2: AcpStartSession/AcpSendPrompt are prompt-shaped

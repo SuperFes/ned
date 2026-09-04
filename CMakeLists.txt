@@ -727,6 +727,7 @@ add_library(ned_lib STATIC
         Source/UI/TreeView.cpp
         Source/UI/MemoryImageView.cpp
         Source/UI/BufferListPanel.cpp
+        Source/UI/DapThreadsPanel.cpp
         Source/UI/BufferView.cpp
         Source/UI/WindowManager.cpp
         Source/UI/AsyncFileLoader.cpp
@@ -1054,6 +1055,7 @@ if (NED_BUILD_TESTS)
             Tests/MemoryImageTest.cpp
             Tests/MemoryImageViewTest.cpp
             Tests/DebugConsolePanelTest.cpp
+            Tests/DapThreadsPanelTest.cpp
             Tests/ChildProcessTest.cpp
             Tests/TaskConfigTest.cpp
             Tests/TaskProcessTest.cpp

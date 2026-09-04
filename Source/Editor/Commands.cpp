@@ -2742,6 +2742,11 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     registry.Register("dap-toggle-console", "Show or hide the debug console (REPL) panel.", [](CommandContext& context) {
         context.interactiveRequest = InteractiveRequest::DapToggleConsole;
     });
+    registry.Register("dap-toggle-threads",
+                      "Show or hide the live threads panel (refreshes on every stop, unlike dap-select-thread's one-shot picker).",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::DapToggleThreadsPanel;
+                      });
 
     // DAP round 3: hit-count/function/exception breakpoints (SetBreakpointCondition's own
     // pattern extended to two more DAP breakpoint kinds) and attach mode (StartOrContinue's
