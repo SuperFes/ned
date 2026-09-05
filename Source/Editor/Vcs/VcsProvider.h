@@ -177,6 +177,20 @@ class VcsProvider {
         throw std::runtime_error("full diff not supported by this provider");
     }
 
+    // Full commit diff view follow-up: one commit's whole changeset,
+    // WorkingDiffArgv's own real-context-lines-for-reading spirit scoped to
+    // commitHash instead of the working tree. commitHash is whatever the
+    // provider's own LogArgv/ParseLog produced (git: the abbreviated hash
+    // BuildVcsLogBuffer displays) -- resolving an abbreviated hash to the
+    // right commit is left entirely to the underlying VCS, not reconstructed
+    // here. No parse half, same reasoning as WorkingDiffArgv: the raw diff
+    // text is consumed directly by Vcs/DiffPatch.h's ParseDiffHunks.
+    [[nodiscard]] virtual VcsCommandSpec CommitDiffArgv(const std::filesystem::path& root, const std::string& commitHash) const {
+        (void)root;
+        (void)commitHash;
+        throw std::runtime_error("commit diff not supported by this provider");
+    }
+
     // Everything below is the vocabulary-completion follow-up's optional
     // half: default-throwing rather than pure virtual (see this header's
     // own top comment). Operations without a parse counterpart

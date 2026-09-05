@@ -207,4 +207,17 @@ std::vector<DiffHunkText> ParseDiffHunks(const std::string& diffOutput) {
     return hunks;
 }
 
+std::size_t CountBinaryFileDiffs(const std::string& diffOutput) {
+    std::size_t count = 0;
+    std::size_t pos   = 0;
+    while (pos < diffOutput.size()) {
+        const auto line = LineAt(diffOutput, pos);
+        if (line.text.starts_with("Binary files ")) {
+            ++count;
+        }
+        pos = line.nextPos;
+    }
+    return count;
+}
+
 } // namespace ned::editor::vcs

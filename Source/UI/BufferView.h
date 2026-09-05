@@ -2117,7 +2117,10 @@ class BufferView : public Widget {
     // One line per commit ("<hash> <date> <author>: <summary>"), oldest-to-
     // newest order preserved as returned by the provider. Log entries don't
     // map to a specific source line -- VisitVcsResult on one of these lines
-    // is a silent no-op, same as any other non-matching line.
+    // instead shows that commit's own full diff (full commit diff view
+    // follow-up: RequestVcsCommitDiffBuffer, keyed off the line's leading
+    // hash token) rather than being a no-op, same shape as any other
+    // results buffer VisitResultUnderPoint knows how to visit.
     void BuildVcsLogBuffer(const std::filesystem::path& path, const std::vector<editor::vcs::VcsLogEntry>& entries);
 
     // Multibuffers follow-up: vcs-full-diff-buffer's entry point -- async
@@ -2127,8 +2130,28 @@ class BufferView : public Widget {
     // carrying its own file/line provenance for vcs-visit-result to jump
     // to). Empty result (a clean working tree) still switches to the
     // buffer -- an explicit "nothing changed" is more informative than a
-    // silent no-op.
+    // silent no-op. Delegates the actual hunks-to-multibuffer construction
+    // to BuildDiffHunksMultibuffer, shared with RequestVcsCommitDiffBuffer
+    // below.
     void RequestVcsFullDiffBuffer();
+
+    // Full commit diff view follow-up: VisitResultUnderPoint's entry point
+    // for a *vcs log <name>* buffer -- async VcsRunner::RequestCommitDiff
+    // (`git show`-shaped: one commit's whole changeset, real context lines)
+    // through the same BuildDiffHunksMultibuffer tail RequestVcsFullDiffBuffer
+    // uses, into a "*vcs commit <hash>*" multibuffer. commitHash is whatever
+    // VisitResultUnderPoint parsed off the log line's own leading token (the
+    // abbreviated hash BuildVcsLogBuffer wrote there) -- passed straight
+    // through to the provider, no validation here.
+    void RequestVcsCommitDiffBuffer(const std::string& commitHash);
+
+    // The shared tail both RequestVcsFullDiffBuffer and
+    // RequestVcsCommitDiffBuffer delegate to once their respective VcsRunner
+    // request completes: ParseDiffHunks + BuildMultibuffer, differing only in
+    // the resulting buffer's name and what to say when rawDiff carries no
+    // hunks at all.
+    void BuildDiffHunksMultibuffer(const std::string& rawDiff, const std::filesystem::path& root,
+                                   const std::string& bufferName, const std::string& emptyMessage);
 
     // Diagnostics-multibuffer follow-up: lsp-diagnostics-buffer's entry
     // point -- synchronous (every diagnostic is already resident on its own

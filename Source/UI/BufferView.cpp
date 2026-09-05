@@ -2072,6 +2072,18 @@ void BufferView::EnsureHiddenLineRangesCache() const {
         return;
     }
 
+    // Auto-collapse-on-build follow-up: a multibuffer (*vcs diff*/*vcs
+    // commit*/*references*/*diagnostics*/...) is checked first -- its
+    // mode_ is always a plain FundamentalMode (no fold query, path-less
+    // buffer), so it would otherwise fall through to the org branch below
+    // and never show any of BuildMultibuffer's own auto-collapsed excerpts.
+    // FoldableExcerptBlocks derives codefold::FoldedLineRanges' own "blocks"
+    // shape from the excerpt spans themselves -- no tree-sitter/mode
+    // involved, same function either way.
+    if (editor::multibuffer::MultibufferIndex* index = editor::multibuffer::MultibufferIndexFor(buffer)) {
+        hiddenLineRanges_ =
+            editor::codefold::FoldedLineRanges(buffer, buffer.Content(), editor::multibuffer::FoldableExcerptBlocks(*index));
+    }
     // generic-code-folding follow-up: only a mode with a real fold query
     // goes through the new generic tree-sitter-block path -- every other
     // mode (org-mode included, which has none: it drives FoldMarkers_
@@ -2082,7 +2094,7 @@ void BufferView::EnsureHiddenLineRangesCache() const {
     // less buffer is what keeps pre-existing direct-FoldMarkers_ usage
     // (e.g. a plain FundamentalMode buffer with a marker set by hand)
     // working exactly as it always has.
-    if (mode_.fold) {
+    else if (mode_.fold) {
         EnsureFoldableBlocksCache();
         hiddenLineRanges_ = editor::codefold::FoldedLineRanges(buffer, buffer.Content(), foldableBlocksCache_);
     }
@@ -10200,6 +10212,26 @@ void BufferView::VisitResultUnderPoint() {
         return;
     }
 
+    // Full commit diff view follow-up: a *vcs log <name>* buffer has no
+    // per-line source location (BuildVcsLogBuffer's own doc comment already
+    // says as much) -- but its line does carry the one thing a commit diff
+    // needs, the commit's own hash as the line's leading whitespace-
+    // delimited token ("<hash> <date> <author>: <summary>"). A silent no-op
+    // on a blank/malformed line, same posture as the regex fallback below.
+    if (buffer.Name().starts_with("*vcs log ")) {
+        const text::ITextStorage& logContent   = buffer.Content();
+        const std::size_t         logLine      = logContent.ByteOffsetToLine(buffer.Point());
+        const std::size_t         logLineStart = logContent.LineToByteOffset(logLine);
+        const std::size_t         logLineEnd =
+            (logLine + 1 < logContent.LineCount()) ? logContent.LineToByteOffset(logLine + 1) - 1 : logContent.ByteLength();
+        const std::string  logLineText = logContent.Substring(logLineStart, logLineEnd - logLineStart);
+        const std::size_t  hashEnd     = logLineText.find(' ');
+        if (hashEnd != std::string::npos && hashEnd > 0) {
+            RequestVcsCommitDiffBuffer(logLineText.substr(0, hashEnd));
+        }
+        return;
+    }
+
     const text::ITextStorage& content   = buffer.Content();
     const std::size_t point     = buffer.Point();
     const std::size_t line      = content.ByteOffsetToLine(point);
@@ -10213,8 +10245,8 @@ void BufferView::VisitResultUnderPoint() {
     // path and BuildVcsBlameBuffer's own format both write this shape.
     // Greedy .* correctly handles the rare case of a ':' inside the path
     // itself, by backing off to find the *last* plausible ":<digits>:" split.
-    // A *vcs log* buffer's lines never match this (no per-line source
-    // location), so this is correctly a silent no-op there too.
+    // A *vcs log* buffer is special-cased above instead (no per-line source
+    // location, just a commit hash) -- never reaches here.
     static const std::regex resultLinePattern(R"(^(.*):(\d+):)");
 
     std::smatch match;
@@ -10376,6 +10408,50 @@ namespace {
 
 } // namespace
 
+// Full commit diff view follow-up: the shared tail of RequestVcsFullDiffBuffer
+// and RequestVcsCommitDiffBuffer -- both hand this the same shape of raw
+// `git diff`-style text (the whole working tree, or one commit's own
+// changeset via `git show`), so turning it into a stitched multibuffer is
+// identical either way, only the buffer name/empty-result message differ.
+// Always switches activeBuffer_, even for an empty result (an explicit
+// "nothing changed" is more informative than a silent no-op).
+void BufferView::BuildDiffHunksMultibuffer(const std::string& rawDiff, const std::filesystem::path& root,
+                                           const std::string& bufferName, const std::string& emptyMessage) {
+    const std::vector<editor::vcs::DiffHunkText> hunks = editor::vcs::ParseDiffHunks(rawDiff);
+
+    std::vector<editor::multibuffer::ExcerptSource> excerpts;
+    excerpts.reserve(hunks.size());
+    for (const editor::vcs::DiffHunkText& hunk : hunks) {
+        std::vector<editor::multibuffer::LineTint> tints;
+        std::string                                formattedBody = FormatDiffHunkBody(hunk, tints);
+
+        // newCount == 0 is a pure deletion (see DiffPatch.h's own doc
+        // comment on Covers) -- there's no real new-side line to jump to, so
+        // this excerpt's header is still shown but sourceStartLine stays 0
+        // ("no single source line applies", ExcerptSource's own documented
+        // convention).
+        const std::size_t sourceLine = hunk.newCount > 0 ? hunk.newStart : 0;
+        excerpts.push_back(editor::multibuffer::ExcerptSource{
+            root / hunk.filePath, sourceLine, sourceLine + (hunk.newCount > 0 ? hunk.newCount - 1 : 0),
+            "▸ " + hunk.filePath + "  " + hunk.hunkHeader, // U+25B8 -- ProjectSidebar's own disclosure triangle
+            std::move(formattedBody), std::move(tints)});
+    }
+
+    text::Buffer& results = editor::multibuffer::BuildMultibuffer(bufferList_, bufferName, excerpts);
+    editor::SetLastResultsBuffer(bufferName);
+    activeBuffer_.Set(results);
+    statusMessage_ = excerpts.empty() ? emptyMessage : std::to_string(excerpts.size()) + " changed hunk" + (excerpts.size() == 1 ? "" : "s");
+
+    // Auto-collapse-on-build follow-up: a binary file's own diff produces
+    // zero hunks (see CountBinaryFileDiffs' own doc comment), so it's
+    // already silently absent from excerpts above with no code needed for
+    // that -- this just says so, rather than leaving the omission
+    // unexplained when git's own file count doesn't match what's shown.
+    if (const std::size_t binaryCount = editor::vcs::CountBinaryFileDiffs(rawDiff); binaryCount > 0) {
+        statusMessage_ += " (" + std::to_string(binaryCount) + " binary file" + (binaryCount == 1 ? "" : "s") + " not shown)";
+    }
+}
+
 void BufferView::RequestVcsFullDiffBuffer() {
     if (!vcsRunner_) {
         statusMessage_ = "no vcs runner configured";
@@ -10383,33 +10459,23 @@ void BufferView::RequestVcsFullDiffBuffer() {
     }
     const std::filesystem::path root = editor::ProjectRoot();
     vcsRunner_->RequestFullDiff(
-        [this, root](std::string rawDiff) {
-            const std::vector<editor::vcs::DiffHunkText> hunks = editor::vcs::ParseDiffHunks(rawDiff);
-
-            std::vector<editor::multibuffer::ExcerptSource> excerpts;
-            excerpts.reserve(hunks.size());
-            for (const editor::vcs::DiffHunkText& hunk : hunks) {
-                std::vector<editor::multibuffer::LineTint> tints;
-                std::string                                formattedBody = FormatDiffHunkBody(hunk, tints);
-
-                // newCount == 0 is a pure deletion (see DiffPatch.h's own
-                // doc comment on Covers) -- there's no real new-side line to
-                // jump to, so this excerpt's header is still shown but
-                // sourceStartLine stays 0 ("no single source line applies",
-                // ExcerptSource's own documented convention).
-                const std::size_t sourceLine = hunk.newCount > 0 ? hunk.newStart : 0;
-                excerpts.push_back(editor::multibuffer::ExcerptSource{
-                    root / hunk.filePath, sourceLine, sourceLine + (hunk.newCount > 0 ? hunk.newCount - 1 : 0),
-                    "▸ " + hunk.filePath + "  " + hunk.hunkHeader, // U+25B8 -- ProjectSidebar's own disclosure triangle
-                    std::move(formattedBody), std::move(tints)});
-            }
-
-            text::Buffer& results = editor::multibuffer::BuildMultibuffer(bufferList_, "*vcs diff*", excerpts);
-            editor::SetLastResultsBuffer("*vcs diff*");
-            activeBuffer_.Set(results);
-            statusMessage_ = excerpts.empty() ? "Working tree clean." : std::to_string(excerpts.size()) + " changed hunk" + (excerpts.size() == 1 ? "" : "s");
-        },
+        [this, root](std::string rawDiff) { BuildDiffHunksMultibuffer(rawDiff, root, "*vcs diff*", "Working tree clean."); },
         [this](std::string error) { statusMessage_ = "vcs full diff: " + error; });
+}
+
+void BufferView::RequestVcsCommitDiffBuffer(const std::string& commitHash) {
+    if (!vcsRunner_) {
+        statusMessage_ = "no vcs runner configured";
+        return;
+    }
+    const std::filesystem::path root = editor::ProjectRoot();
+    vcsRunner_->RequestCommitDiff(
+        commitHash,
+        [this, root, commitHash](std::string rawDiff) {
+            BuildDiffHunksMultibuffer(rawDiff, root, "*vcs commit " + commitHash + "*",
+                                      "Commit " + commitHash + " touched no files.");
+        },
+        [this](std::string error) { statusMessage_ = "vcs commit diff: " + error; });
 }
 
 void BufferView::RequestDiagnosticsBuffer() {

@@ -266,6 +266,12 @@ TEST_CASE("VcsRunner surfaces the provider's own 'not supported' answer for unim
                            [&error](std::string message) { error = message; });
     REQUIRE(error == "full diff not supported by this provider");
 
+    error.clear();
+    runner.RequestCommitDiff(
+        "abc1234", [](std::string) { FAIL("onComplete should not be called"); },
+        [&error](std::string message) { error = message; });
+    REQUIRE(error == "commit diff not supported by this provider");
+
     // VCS side panel follow-up: revert/stash/push-pull-fetch/ahead-behind.
     error.clear();
     runner.RequestRevert(

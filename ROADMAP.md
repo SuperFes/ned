@@ -393,15 +393,48 @@ commands, never a replacement for them.
 
 ### Navigation & Search
 
-- [ ] **Multibuffer gaps**: no full-commit diff view (browsing one commit's whole diff
-      from `*vcs log*`, not just the working tree); no result cap/warning on
-      `project-find-references` for a very common identifier (a huge match set builds a
-      proportionally huge composite buffer) — still true for its RE2 text-scan fallback
-      path (no LSP server running for the buffer); the real `textDocument/references` path
-      added 2026-08-26 has the same gap in principle but is bounded by whatever the server
-      itself returns, not a raw project-wide regex sweep. `VisitResultUnderPoint`'s jump-to-source
-      stays line-granularity even though `Buffer::ExcerptRange` already carries the
-      exact source byte range that would let it preserve the intra-line column.
+- Full-commit diff view (browsing one commit's whole diff from `*vcs log*`) closed
+  2026-09-04 — see `git log --grep=full-commit-diff-view`. `VcsProvider::CommitDiffArgv(root,
+  commitHash)` (git: `git show --no-color <hash>`) is `WorkingDiffArgv`'s single-commit
+  sibling — same no-parse-half, raw-stdout-through-`ParseDiffHunks` shape (a commit's
+  message header before the real diff is silently skipped, the same way `ParseDiffHunks`
+  already ignores anything before the first "diff --git"/"@@ " line). `VisitResultUnderPoint`
+  special-cases a `*vcs log <name>*` buffer's line (no per-line source location the
+  generic "path:line:" regex expects) by parsing its own leading hash token and routing to
+  the new `RequestVcsCommitDiffBuffer`, sharing `RequestVcsFullDiffBuffer`'s own
+  hunks-to-multibuffer tail (factored out as `BuildDiffHunksMultibuffer`) into a
+  "*vcs commit <hash>*" buffer — so both `vcs-visit-result` (`C-c v v`) and plain Enter on
+  a read-only `*vcs log*` line (already routed there) now show that commit's real diff
+  instead of silently no-opping.
+- Auto-collapse-on-build (the no-result-cap/warning gap above) closed 2026-09-04 —
+  see `git log --grep=auto-collapse-on-build`. Rather than warning on a huge result set,
+  `BuildMultibuffer` (Editor/Multibuffer.h) now collapses an excerpt by default —
+  `text::Buffer::FoldMarker::Collapsed` at its own header line, the same primitive
+  `CodeFold.h`/Org build on — when its own body passes
+  `MultibufferAutoCollapseLineThreshold()`/`...ByteThreshold()` (a single huge/minified
+  hunk, either line count or byte length) or its ordinal passes
+  `MultibufferAutoCollapseExcerptCap()` (default 100 — a plain-large result set, e.g.
+  `project-find-references` on a very common identifier); all three configurable via
+  `ned/set-multibuffer-auto-collapse-*` (Editor/MultibufferFoldSettings.h). One policy
+  applied centrally, so every `BuildMultibuffer` caller (full-diff, commit-diff,
+  references, diagnostics, agenda, clock-report) gets it for free. `FoldableExcerptBlocks`
+  derives `codefold::FoldedLineRanges`/`ToggleFoldAtLine`'s own "blocks" shape from the
+  excerpt spans directly (no tree-sitter/Mode involved) — `code-fold-toggle` now checks
+  `MultibufferIndexFor` first so the same command expands/collapses one excerpt at point;
+  the new generic `unfold-all` command (not tied to multibuffers specifically — clears
+  every `FoldMarker` in the current buffer, code folds and Org subtrees included) is the
+  "expand everything, I need to review every change" escape hatch. Separately, a binary
+  file in a diff already produced zero hunks from `ParseDiffHunks` with no code change
+  needed (git's own "Binary files ... differ" line has no `@@` hunk to find) — the new
+  `CountBinaryFileDiffs` (Vcs/DiffPatch.h) just lets `BuildDiffHunksMultibuffer` say so
+  ("N binary file(s) not shown") instead of leaving the omission unexplained.
+- [ ] **Multibuffer gaps, remainder**: `project-find-references`' RE2 text-scan fallback
+      path (no LSP server running for the buffer) and the real `textDocument/references`
+      path both still build one excerpt per match with no upper bound on total work done
+      (only display now degrades gracefully via auto-collapse above, not the search
+      itself). `VisitResultUnderPoint`'s jump-to-source stays line-granularity even though
+      `Buffer::ExcerptRange` already carries the exact source byte range that would let it
+      preserve the intra-line column.
 - [ ] A real visual side-by-side 3-way merge/diff view. `AutoMerge` auto-resolves the
       common case and drops real `<<<<<<<`/`=======`/`>>>>>>>` conflict markers into the
       buffer for a genuine divergence, but a real conflict is still hand-edited text,

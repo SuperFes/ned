@@ -35,6 +35,7 @@
 #include "Editor/Lsp/ProseChecker.h"
 #include "Editor/MinimapSettings.h"
 #include "Editor/ModeOverrides.h"
+#include "Editor/MultibufferFoldSettings.h"
 #include "Editor/OrgCapture.h"
 #include "Editor/PageScroll.h"
 #include "Editor/PersistentUndo.h"
@@ -447,6 +448,18 @@ namespace {
 
     void NedSetCodeFoldingEnabled(bool enabled) {
         editor::SetCodeFoldingEnabled(enabled);
+    }
+
+    void NedSetMultibufferAutoCollapseLineThreshold(std::int64_t lines) {
+        editor::SetMultibufferAutoCollapseLineThreshold(lines > 0 ? static_cast<std::size_t>(lines) : 0);
+    }
+
+    void NedSetMultibufferAutoCollapseByteThreshold(std::int64_t bytes) {
+        editor::SetMultibufferAutoCollapseByteThreshold(bytes > 0 ? static_cast<std::size_t>(bytes) : 0);
+    }
+
+    void NedSetMultibufferAutoCollapseExcerptCap(std::int64_t count) {
+        editor::SetMultibufferAutoCollapseExcerptCap(count > 0 ? static_cast<std::size_t>(count) : 0);
     }
 
     void NedSetStickyScrollEnabled(bool enabled) {
@@ -1286,6 +1299,20 @@ void InstallEditorBindings(Environment& env) {
     env.Register<&NedSetCodeFoldingEnabled>(
         "ned", "set-code-folding-enabled",
         "Enable/disable the gutter code-folding affordance for modes with a fold query (default true).");
+    env.Register<&NedSetMultibufferAutoCollapseLineThreshold>(
+        "ned", "set-multibuffer-auto-collapse-line-threshold",
+        "An excerpt (diff hunk, reference, ...) in a *vcs diff*/*vcs commit*/*references*/*diagnostics*/... "
+        "multibuffer whose own body has more lines than this collapses by default when the multibuffer is built "
+        "(default 40) -- code-fold-toggle/unfold-all still work on it from there like any other fold.");
+    env.Register<&NedSetMultibufferAutoCollapseByteThreshold>(
+        "ned", "set-multibuffer-auto-collapse-byte-threshold",
+        "Same as set-multibuffer-auto-collapse-line-threshold, but measured in bytes (default 2000) -- catches a "
+        "single huge/minified line a line-count threshold alone would miss.");
+    env.Register<&NedSetMultibufferAutoCollapseExcerptCap>(
+        "ned", "set-multibuffer-auto-collapse-excerpt-cap",
+        "Once a multibuffer's own excerpt count passes this (default 100), every remaining excerpt collapses by "
+        "default regardless of its own size -- catches a plain-large result set (e.g. project-find-references on a "
+        "very common identifier) rather than dumping hundreds of expanded excerpts into view at once.");
     env.Register<&NedSetStickyScrollEnabled>(
         "ned", "set-sticky-scroll-enabled",
         "Enable/disable pinned namespace/class/method breadcrumb rows at the top of a pane while scrolled into "

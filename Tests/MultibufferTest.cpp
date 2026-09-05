@@ -6,6 +6,7 @@
 #include <string>
 
 #include "Editor/Multibuffer.h"
+#include "Editor/MultibufferFoldSettings.h"
 #include "Text/BufferList.h"
 
 using ned::editor::multibuffer::BuildMultibuffer;
@@ -13,6 +14,7 @@ using ned::editor::multibuffer::ClearMultibufferIndexFor;
 using ned::editor::multibuffer::ClearRegistryForTesting;
 using ned::editor::multibuffer::CommitExcerptChanges;
 using ned::editor::multibuffer::ExcerptSource;
+using ned::editor::multibuffer::FoldableExcerptBlocks;
 using ned::editor::multibuffer::MultibufferIndexFor;
 using ned::editor::multibuffer::ReadExcerptText;
 using ned::text::Buffer;
@@ -33,6 +35,18 @@ struct RegistryResetGuard {
     }
     ~RegistryResetGuard() {
         ClearRegistryForTesting();
+    }
+};
+
+// Auto-collapse-on-build follow-up: the three thresholds are process-wide
+// state (Editor/MultibufferFoldSettings.h); every test that sets one must
+// restore the real defaults for the next test, the same RAII convention
+// RegistryResetGuard above already follows for its own global state.
+struct FoldSettingsResetGuard {
+    ~FoldSettingsResetGuard() {
+        ned::editor::SetMultibufferAutoCollapseLineThreshold(40);
+        ned::editor::SetMultibufferAutoCollapseByteThreshold(2000);
+        ned::editor::SetMultibufferAutoCollapseExcerptCap(100);
     }
 };
 
@@ -554,4 +568,79 @@ TEST_CASE("CommitExcerptChanges skips a file changed on disk since build, and st
     Buffer* cleanBuffer = bufferList.FindByPath(clean.path);
     REQUIRE(cleanBuffer != nullptr);
     REQUIRE(cleanBuffer->Text() == "foo1\nmy other edit\nfoo3\n");
+}
+
+// Auto-collapse-on-build follow-up.
+
+TEST_CASE("BuildMultibuffer auto-collapses an excerpt whose body passes the line-count threshold", "[Multibuffer]") {
+    RegistryResetGuard     guard;
+    FoldSettingsResetGuard settingsGuard;
+    ned::editor::SetMultibufferAutoCollapseLineThreshold(2);
+
+    BufferList bufferList;
+    Buffer&    multibuffer = BuildMultibuffer(
+        bufferList, "*test multibuffer*",
+        {ExcerptSource{"/repo/small.cpp", 1, 2, "small.cpp:1-2", "line1\nline2\n"},
+         ExcerptSource{"/repo/big.cpp", 1, 3, "big.cpp:1-3", "line1\nline2\nline3\n"}});
+
+    const std::string text = multibuffer.Text();
+    REQUIRE_FALSE(multibuffer.FoldMarkerAt(text.find("small.cpp:1-2")).has_value()); // 2 lines, not > 2
+    REQUIRE(multibuffer.FoldMarkerAt(text.find("big.cpp:1-3")) == Buffer::FoldMarker::Collapsed); // 3 lines > 2
+}
+
+TEST_CASE("BuildMultibuffer auto-collapses an excerpt whose body passes the byte-length threshold, even at one line",
+          "[Multibuffer]") {
+    RegistryResetGuard     guard;
+    FoldSettingsResetGuard settingsGuard;
+    ned::editor::SetMultibufferAutoCollapseByteThreshold(10);
+
+    BufferList         bufferList;
+    const std::string  longLine    = std::string(50, 'x') + "\n"; // one line, well past the byte threshold
+    Buffer&            multibuffer = BuildMultibuffer(bufferList, "*test multibuffer*",
+                                                       {ExcerptSource{"/repo/min.js", 1, 1, "min.js:1", longLine}});
+
+    REQUIRE(multibuffer.FoldMarkerAt(multibuffer.Text().find("min.js:1")) == Buffer::FoldMarker::Collapsed);
+}
+
+TEST_CASE("BuildMultibuffer auto-collapses every excerpt past the excerpt-count cap, regardless of its own size",
+          "[Multibuffer]") {
+    RegistryResetGuard     guard;
+    FoldSettingsResetGuard settingsGuard;
+    ned::editor::SetMultibufferAutoCollapseExcerptCap(1);
+
+    BufferList bufferList;
+    Buffer&    multibuffer = BuildMultibuffer(bufferList, "*test multibuffer*",
+                                              {ExcerptSource{"/repo/a.cpp", 1, 1, "a.cpp:1", "x\n"},
+                                               ExcerptSource{"/repo/b.cpp", 1, 1, "b.cpp:1", "x\n"}});
+
+    const std::string text = multibuffer.Text();
+    REQUIRE_FALSE(multibuffer.FoldMarkerAt(text.find("a.cpp:1")).has_value()); // 1st excerpt, at the cap
+    REQUIRE(multibuffer.FoldMarkerAt(text.find("b.cpp:1")) == Buffer::FoldMarker::Collapsed); // 2nd, past it
+}
+
+TEST_CASE("An excerpt with no header line is never auto-collapsed, even past every threshold", "[Multibuffer]") {
+    RegistryResetGuard     guard;
+    FoldSettingsResetGuard settingsGuard;
+    ned::editor::SetMultibufferAutoCollapseLineThreshold(1);
+
+    BufferList bufferList;
+    // headerText left empty -- nothing would stay visible to mark a fold if
+    // this collapsed (see ExcerptSpan::bodyStartByte's own doc comment).
+    Buffer& multibuffer = BuildMultibuffer(bufferList, "*test multibuffer*",
+                                           {ExcerptSource{"/repo/a.cpp", 1, 3, "", "line1\nline2\nline3\n"}});
+
+    REQUIRE(multibuffer.FoldMarkers().empty());
+}
+
+TEST_CASE("FoldableExcerptBlocks excludes an excerpt with no header line", "[Multibuffer]") {
+    RegistryResetGuard guard;
+    BufferList         bufferList;
+    Buffer&            multibuffer = BuildMultibuffer(bufferList, "*test multibuffer*",
+                                                       {ExcerptSource{"/repo/a.cpp", 1, 1, "a.cpp:1", "x\n"},
+                                                        ExcerptSource{"/repo/b.cpp", 1, 1, "", "y\n"}});
+
+    auto* index = MultibufferIndexFor(multibuffer);
+    REQUIRE(index != nullptr);
+    const auto blocks = FoldableExcerptBlocks(*index);
+    REQUIRE(blocks.size() == 1); // only the headered excerpt offered
 }

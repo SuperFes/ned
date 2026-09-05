@@ -107,6 +107,15 @@ class VcsRunner {
     // ParseDiffHunks, not a provider-side structured parse.
     void RequestFullDiff(std::function<void(std::string rawDiff)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
 
+    // Full commit diff view follow-up: RequestFullDiff's own single-commit
+    // sibling -- calls VcsProvider::CommitDiffArgv(root, commitHash) instead
+    // of WorkingDiffArgv, same "no parse half, hand back raw stdout" shape
+    // (Vcs/DiffPatch.h's ParseDiffHunks consumes it either way). commitHash
+    // is passed through verbatim to whatever the active provider considers
+    // an addressable commit (git: an abbreviated or full hash) -- this
+    // method does no interpretation of it itself.
+    void RequestCommitDiff(const std::string& commitHash, std::function<void(std::string rawDiff)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
+
     // Vocabulary-completion follow-up: the status/stage/unstage/commit/
     // branch operations, same provider-resolution/duplicate-guard/error
     // conventions as the three above. Root-scoped operations (status,

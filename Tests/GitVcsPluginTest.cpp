@@ -124,6 +124,23 @@ TEST_CASE("bundled git plugin blames a real, minimal temp git repo end to end", 
     REQUIRE(logEntries[0].author == "Ned Test");
     REQUIRE(logEntries[0].summary == "initial commit");
 
+    // Full commit diff view follow-up: `git show`'s own real, non-U0 diff
+    // for "initial commit" -- a pure new-file addition, run through
+    // ParseDiffHunks end to end exactly like WorkingDiffArgv's own case
+    // below, just scoped to one commit instead of the whole working tree.
+    const auto commitDiffSpec = provider->CommitDiffArgv(repoRoot, logEntries[0].commitHash);
+    REQUIRE_FALSE(commitDiffSpec.argv.empty());
+
+    const std::string commitDiffOutput = RunToCompletion(commitDiffSpec.argv);
+    const auto        commitHunks      = ned::editor::vcs::ParseDiffHunks(commitDiffOutput);
+
+    REQUIRE(commitHunks.size() == 1);
+    REQUIRE(commitHunks[0].filePath == "file.txt");
+    REQUIRE(commitHunks[0].oldCount == 0); // pure addition -- nothing on the old side
+    REQUIRE(commitHunks[0].newStart == 1);
+    REQUIRE(commitHunks[0].newCount == 1);
+    REQUIRE(commitHunks[0].bodyText.find("+hello world") != std::string::npos);
+
     // Diff gutter follow-up: modify the tracked file (uncommitted) and
     // confirm the real `git diff -U0` hunk header parses correctly end to
     // end -- a single-line modification, "@@ -1 +1 @@" (no comma on either

@@ -68,6 +68,7 @@ class JanetVcsProvider : public editor::vcs::VcsProvider {
     [[nodiscard]] std::vector<editor::vcs::VcsDiffHunk> ParseDiff(const std::string& stdout_) const override;
 
     [[nodiscard]] editor::vcs::VcsCommandSpec WorkingDiffArgv(const std::filesystem::path& root) const override;
+    [[nodiscard]] editor::vcs::VcsCommandSpec CommitDiffArgv(const std::filesystem::path& root, const std::string& commitHash) const override;
 
     [[nodiscard]] editor::vcs::VcsCommandSpec              StatusArgv(const std::filesystem::path& root) const override;
     [[nodiscard]] std::vector<editor::vcs::VcsStatusEntry> ParseStatus(const std::string& stdout_) const override;

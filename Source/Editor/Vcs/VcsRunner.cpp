@@ -310,6 +310,16 @@ void VcsRunner::RequestFullDiff(std::function<void(std::string)> onComplete, std
         std::move(onError));
 }
 
+void VcsRunner::RequestCommitDiff(const std::string& commitHash, std::function<void(std::string)> onComplete,
+                                  std::function<void(std::string)> onError) {
+    const std::filesystem::path root = ProjectRoot();
+    RunProviderOperation(
+        "commit diff", "commit-diff:" + commitHash,
+        [&root, &commitHash](VcsProvider& provider) { return provider.CommitDiffArgv(root, commitHash); },
+        [onComplete = std::move(onComplete)](VcsProvider&, std::string output) { onComplete(std::move(output)); },
+        std::move(onError));
+}
+
 void VcsRunner::RunProviderOperation(const char* operation, const std::string& key,
                                      const std::function<VcsCommandSpec(VcsProvider&)>& buildSpec,
                                      std::function<void(VcsProvider&, std::string)>     onOutput,
