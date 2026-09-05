@@ -215,6 +215,10 @@ void VcsPanel::SetOnSelectionChanged(std::function<void(std::optional<std::files
     onSelectionChanged_ = std::move(handler);
 }
 
+void VcsPanel::SetOnContextMenuRequest(std::function<void(const VcsPanelContextMenuTarget&, Point)> handler) {
+    onContextMenuRequest_ = std::move(handler);
+}
+
 void VcsPanel::ForceRefresh() {
     RefreshStatus(/*force=*/true);
 }
@@ -630,6 +634,43 @@ bool VcsPanel::OnEvent(const Event& event) {
         return true;
     }
 
+    // vcs-panel-context-menu follow-up: a right-press resolves to the same
+    // row a left-press would (chrome/resize-column excluded the same way),
+    // reports the target plus the click's absolute screen position, and
+    // stops there -- unlike a left click, this never toggles/opens/stages
+    // the row itself. Building/showing the actual popup is main.cpp's job
+    // (TabBar/ProjectSidebar's own SetOnContextMenuRequest shape).
+    if (mouse->button == MouseEvent::Button::Right && mouse->motion == MouseEvent::Motion::Pressed) {
+        if (onContextMenuRequest_ && mouse->at.x != size().width - 1 && mouse->at.y >= kHeaderHeight &&
+            mouse->at.y < size().height - kBottomBorderHeight) {
+            const std::vector<Row>           rows         = BuildRows();
+            const std::optional<std::size_t> stickyHeader = StickyHeaderIndex(rows);
+            const std::optional<std::size_t> index = RowIndexForContentRow(mouse->at.y - kHeaderHeight, rows, stickyHeader);
+            if (index) {
+                const Row& row = rows[*index];
+                if (row.kind != Row::Kind::SectionHeader) {
+                    selectedIndex_ = static_cast<int>(*index);
+                    NotifySelectionChanged();
+                    VcsPanelContextMenuTarget target;
+                    if (row.kind == Row::Kind::StashEntry) {
+                        target.kind  = VcsPanelContextMenuTarget::Kind::StashEntry;
+                        target.stash = row.stash;
+                    }
+                    else {
+                        target.kind        = VcsPanelContextMenuTarget::Kind::Entry;
+                        target.path        = row.entry.path;
+                        target.isDirectory = row.entry.isDirectory;
+                        target.section     = row.section;
+                        target.conflicted  = row.conflicted;
+                    }
+                    const Box& box = Box_();
+                    onContextMenuRequest_(target, Point{.x = box.x_min + mouse->at.x, .y = box.y_min + mouse->at.y});
+                }
+            }
+        }
+        return true;
+    }
+
     if (mouse->button != MouseEvent::Button::Left || mouse->motion != MouseEvent::Motion::Pressed) {
         return false;
     }
@@ -645,18 +686,12 @@ bool VcsPanel::OnEvent(const Event& event) {
 
     const std::vector<Row>           rows         = BuildRows();
     const std::optional<std::size_t> stickyHeader = StickyHeaderIndex(rows);
-    const int                        contentRow   = mouse->at.y - kHeaderHeight;
-    std::size_t                      index;
-    if (stickyHeader && contentRow == 0) {
-        index = *stickyHeader; // clicking the pinned header acts on the real row it stands in for
-    }
-    else {
-        index = static_cast<std::size_t>(scrollOffset_ + contentRow - (stickyHeader ? 1 : 0));
-    }
-    if (index >= rows.size()) {
+    const std::optional<std::size_t> clickedIndex = RowIndexForContentRow(mouse->at.y - kHeaderHeight, rows, stickyHeader);
+    if (!clickedIndex) {
         return true;
     }
-    selectedIndex_ = static_cast<int>(index);
+    const std::size_t index = *clickedIndex;
+    selectedIndex_           = static_cast<int>(index);
     NotifySelectionChanged();
     const Row& row = rows[index];
 
@@ -696,6 +731,21 @@ bool VcsPanel::OnEvent(const Event& event) {
         }
     }
     return true;
+}
+
+std::optional<std::size_t> VcsPanel::RowIndexForContentRow(int contentRow, const std::vector<Row>& rows,
+                                                            std::optional<std::size_t> stickyHeader) const {
+    std::size_t index;
+    if (stickyHeader && contentRow == 0) {
+        index = *stickyHeader; // the pinned header stands in for the real row it mirrors
+    }
+    else {
+        index = static_cast<std::size_t>(scrollOffset_ + contentRow - (stickyHeader ? 1 : 0));
+    }
+    if (index >= rows.size()) {
+        return std::nullopt;
+    }
+    return index;
 }
 
 void VcsPanel::ToggleDirectory(const std::filesystem::path& path) {
@@ -810,6 +860,18 @@ void VcsPanel::StageOrUnstageSelectionOrFocused(bool stage) {
             }
         }
     }
+    StagePaths(std::move(targets), stage);
+}
+
+void VcsPanel::RequestStageOrUnstage(const std::filesystem::path& path, bool stage) {
+    if (!vcsRunner_) {
+        statusMessage_ = "no vcs runner configured";
+        return;
+    }
+    StagePaths({path}, stage);
+}
+
+void VcsPanel::StagePaths(std::vector<std::filesystem::path> targets, bool stage) {
     if (targets.empty()) {
         return;
     }
@@ -839,6 +901,10 @@ void VcsPanel::StageOrUnstageSelectionOrFocused(bool stage) {
             vcsRunner_->RequestUnstage(path, onDone, onError);
         }
     }
+}
+
+void VcsPanel::RequestDiscardConfirm(const std::filesystem::path& path) {
+    pendingRevertConfirm_ = path;
 }
 
 void VcsPanel::EnsureSelectionVisible() {

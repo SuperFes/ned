@@ -1944,6 +1944,118 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
             wm->TakeFocus();
         });
 
+    // vcs-panel-context-menu follow-up (ROADMAP's "Right-click context menu:
+    // VcsPanel" -- unblocked once the panel's own stage/unstage/revert/stash
+    // ops were re-scoped to take an explicit path/ref, see VcsPanel::
+    // RequestStageOrUnstage/RequestDiscardConfirm/PopStash/DropStash's own
+    // doc comments): same focusable-ListPopup/parallel-action-vector shape
+    // tabContextMenu/sidebarContextMenu above use, for the same reason --
+    // VcsPanel doesn't need keyboard focus to drive its own mouse actions
+    // either, so the confirm-anchored exception is Discard Changes... below.
+    std::vector<std::function<void()>> vcsContextMenuActions;
+    ned::ui::ListPopup vcsContextMenu(theme);
+    vcsContextMenu.SetFocusable(true);
+    overlays.Add(vcsContextMenu, [panel = &vcsContextMenu](Size size) {
+        const ned::ui::Point origin = panel->Anchor().value_or(ned::ui::Point{});
+        const int            width  = std::min(30, size.width);
+        const int            height = std::clamp(panel->ContentRowCount(), 3, std::min(9, size.height));
+
+        const int xMin = std::clamp(origin.x, 0, std::max(0, size.width - width));
+        const int xMax = std::min(size.width - 1, xMin + width - 1);
+
+        int yMin, yMax;
+        if (origin.y + height - 1 <= size.height - 1) {
+            yMin = origin.y;
+            yMax = yMin + height - 1;
+        }
+        else {
+            // Flip upward, same as every other anchored popup's own placement.
+            yMax = std::max(0, origin.y - 1);
+            yMin = std::max(0, yMax - height + 1);
+        }
+        return Box{.x_min = xMin, .x_max = xMax, .y_min = yMin, .y_max = yMax};
+    });
+    vcsPanel->SetOnContextMenuRequest(
+        [&overlays, panel = &vcsContextMenu, &vcsContextMenuActions, terminal = terminalPanel.get(),
+         vp = vcsPanel.get()](const ned::ui::VcsPanelContextMenuTarget& target, ned::ui::Point anchor) {
+            ned::ui::ListPopupModel model;
+            model.anchor = anchor;
+            vcsContextMenuActions.clear();
+
+            auto addRow = [&](std::string label, std::function<void()> action) {
+                model.rows.push_back({.left = "", .main = std::move(label)});
+                vcsContextMenuActions.push_back(std::move(action));
+            };
+
+            if (target.kind == ned::ui::VcsPanelContextMenuTarget::Kind::StashEntry) {
+                model.title            = "Stash";
+                const std::string ref = target.stash.ref;
+                addRow("Pop Stash", [vp, ref] { vp->PopStash(ref); });
+                addRow("Drop Stash", [vp, ref] { vp->DropStash(ref); });
+            }
+            else {
+                model.title                        = target.isDirectory ? "Directory" : "File";
+                const std::filesystem::path path   = target.path;
+                const bool                  isDirectory = target.isDirectory;
+                if (!isDirectory) {
+                    addRow("Open", [vp, path] { vp->OpenFileEntry(path); });
+                    if (target.section != ned::ui::VcsPanelSection::Staged) {
+                        addRow("Stage", [vp, path] { vp->RequestStageOrUnstage(path, /*stage=*/true); });
+                    }
+                    if (target.section == ned::ui::VcsPanelSection::Staged) {
+                        addRow("Unstage", [vp, path] { vp->RequestStageOrUnstage(path, /*stage=*/false); });
+                    }
+                    if (target.section != ned::ui::VcsPanelSection::Untracked) {
+                        // Discard/revert: reuses the same y/n confirm state
+                        // 'x' drives -- this widget (not a BufferView pane)
+                        // needs keyboard focus for that keystroke to land,
+                        // so TakeKeyboardFocus() first, mirroring how a
+                        // context-menu delete hands focus to a pane before
+                        // BufferView::StartDeleteFileAt shows its own prompt.
+                        addRow("Discard Changes...", [vp, path] {
+                            vp->TakeKeyboardFocus();
+                            vp->RequestDiscardConfirm(path);
+                        });
+                    }
+                }
+                addRow("Reveal in Terminal", [terminal, &overlays, path, isDirectory] {
+                    terminal->EnsureStarted();
+                    if (!overlays.IsVisible(*terminal)) {
+                        overlays.Show(*terminal);
+                    }
+                    terminal->TakeFocus();
+                    const std::filesystem::path dir = isDirectory ? path : path.parent_path();
+                    terminal->SendText("cd " + ned::editor::ShellQuoteSingle(dir) + "\n");
+                });
+                addRow("Copy Path", [path] { ned::editor::CopyToSystemClipboard(path.string()); });
+            }
+
+            model.selectedIndex = 0;
+            panel->SetModel(std::move(model));
+            overlays.Show(*panel);
+            panel->TakeFocus();
+        });
+    vcsContextMenu.SetOnActivate([&vcsContextMenuActions, &overlays, panel = &vcsContextMenu,
+                                  wm = windowManager.get()](std::size_t index) {
+        // Focus must return to a pane before the action runs -- tabContextMenu's
+        // own live-caught bug (see its comment above) applies identically
+        // here; the one action that needs VcsPanel itself focused instead
+        // (Discard Changes...) explicitly re-takes it afterward.
+        overlays.Hide(*panel);
+        wm->TakeFocus();
+        if (index < vcsContextMenuActions.size()) {
+            vcsContextMenuActions[index]();
+        }
+    });
+    vcsContextMenu.SetOnCancel([&overlays, panel = &vcsContextMenu, wm = windowManager.get()] {
+        overlays.Hide(*panel);
+        wm->TakeFocus();
+    });
+    vcsContextMenu.SetOnKey([&overlays, panel = &vcsContextMenu, wm = windowManager.get()](const ned::editor::KeyChord&) {
+        overlays.Hide(*panel);
+        wm->TakeFocus();
+    });
+
     // call/type-hierarchy follow-up: the shared TreeView overlay behind
     // lsp-call-hierarchy-incoming/-outgoing/lsp-type-hierarchy-supertypes/
     // -subtypes -- unlike candidatePopup/completionPopup above, this one
@@ -2111,6 +2223,12 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
                 // -- sidebarContextMenu has no owner of its own either.
                 if (overlays.IsVisible(sidebarContextMenu)) {
                     overlays.Hide(sidebarContextMenu);
+                    windowManager->TakeFocus();
+                }
+                // vcs-panel-context-menu follow-up: same reasoning, same fix
+                // -- vcsContextMenu has no owner of its own either.
+                if (overlays.IsVisible(vcsContextMenu)) {
+                    overlays.Hide(vcsContextMenu);
                     windowManager->TakeFocus();
                 }
                 head.OnEvent(event);

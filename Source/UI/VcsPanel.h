@@ -57,6 +57,22 @@ enum class VcsPanelAction { Commit, SwitchBranch, CreateBranch };
 // VcsPanel::BuildRows's own comment).
 enum class VcsPanelSection { Staged, Unstaged, Untracked, Stash };
 
+// vcs-panel-context-menu follow-up: what a right-click landed on, reported
+// via SetOnContextMenuRequest below -- TabBar/ProjectSidebar's own
+// "report the target, let main.cpp build the popup" shape, since this
+// widget has no OverlayHost/ListPopup access of its own. A SectionHeader
+// row never reaches this (no menu makes sense on it, same exclusion
+// ProjectSidebar applies to its own chrome rows).
+struct VcsPanelContextMenuTarget {
+    enum class Kind { Entry, StashEntry };
+    Kind                        kind        = Kind::Entry;
+    std::filesystem::path       path;                                   // Entry only
+    bool                        isDirectory = false;                    // Entry only
+    VcsPanelSection             section     = VcsPanelSection::Staged;  // Entry only
+    bool                        conflicted  = false;                    // Entry only
+    editor::vcs::VcsStashEntry  stash;                                  // StashEntry only
+};
+
 class VcsPanel : public Widget {
   public:
     // activeBufferProvider/bufferList/statusMessage/theme: same contract as
@@ -101,6 +117,36 @@ class VcsPanel : public Widget {
     // VcsDiffPreview, showing/hiding its overlay on Some/nullopt. Unset
     // (the default) is a safe no-op, matching every other Set* hook here.
     void SetOnSelectionChanged(std::function<void(std::optional<std::filesystem::path>, bool staged)> handler);
+
+    // vcs-panel-context-menu follow-up: a right-press on a file/directory or
+    // stash row reports the target plus the click's absolute screen
+    // position, same as above -- never toggles/opens/stages the row itself.
+    // Unset (the default) means right-click is a no-op, matching every
+    // other Set* hook here.
+    void SetOnContextMenuRequest(std::function<void(const VcsPanelContextMenuTarget&, Point anchor)> handler);
+
+    // Entry points the context-menu wiring in main.cpp drives -- each reuses
+    // an already-working keyboard/mouse code path unchanged, just re-scoped
+    // to an explicit path/ref instead of the focused row or selected_ set.
+    // OpenFileEntry/PopStash/DropStash already had exactly this shape
+    // (self-contained, no dependency on which row is focused) and are
+    // exposed here rather than duplicated.
+    void OpenFileEntry(const std::filesystem::path& path);
+    void PopStash(const std::string& ref);
+    void DropStash(const std::string& ref);
+
+    // Stage/unstage a specific path regardless of focus/multi-select state
+    // -- StageOrUnstageSelectionOrFocused's own single-target case, exposed
+    // directly for the context menu.
+    void RequestStageOrUnstage(const std::filesystem::path& path, bool stage);
+
+    // Discard/revert: enters the same y/n confirm state 'x' does
+    // (pendingRevertConfirm_) -- the caller (main.cpp) must give this widget
+    // keyboard focus first (TakeKeyboardFocus()) so the confirm keystroke
+    // has somewhere to land, the same way a context-menu-driven delete hands
+    // focus to a BufferView pane before BufferView::StartDeleteFileAt shows
+    // its own y/n prompt.
+    void RequestDiscardConfirm(const std::filesystem::path& path);
 
     // Inline diff preview: forces an immediate status refresh, the same
     // "force=true" path stage/unstage/commit/etc. already use internally --
@@ -215,6 +261,10 @@ class VcsPanel : public Widget {
     std::optional<std::pair<std::filesystem::path, bool>>           lastNotifiedSelection_;
     void                                                              NotifySelectionChanged();
 
+    // vcs-panel-context-menu follow-up: see SetOnContextMenuRequest's own
+    // doc comment.
+    std::function<void(const VcsPanelContextMenuTarget&, Point)> onContextMenuRequest_;
+
     editor::vcs::VcsRunner*        vcsRunner_ = nullptr;
     editor::vcs::VcsStatusSections sections_;
     bool                           haveStatus_ = false;
@@ -230,10 +280,9 @@ class VcsPanel : public Widget {
     void                            RefreshConflictedPaths();
 
     // Stash support: refreshed on the same throttled cadence as sections_.
+    // PopStash/DropStash are declared public above (context-menu reuse).
     std::vector<editor::vcs::VcsStashEntry> stashes_;
     void                                    PushStash();
-    void                                    PopStash(const std::string& ref);
-    void                                    DropStash(const std::string& ref);
 
     // Branch switcher/creator inline: the checked-out branch, shown in the
     // border title (ProjectSidebar's own header-row precedent) rather than
@@ -264,6 +313,9 @@ class VcsPanel : public Widget {
     // once this drops back to 0.
     int  pendingBatchOps_ = 0;
     void StageOrUnstageSelectionOrFocused(bool stage);
+    // Shared by StageOrUnstageSelectionOrFocused and the public
+    // RequestStageOrUnstage (context-menu single-target case) below.
+    void StagePaths(std::vector<std::filesystem::path> targets, bool stage);
 
     // Discard/revert: the one destructive action in this panel -- 'x' on a
     // file row enters this confirm state (rendered in place of the border
@@ -298,8 +350,14 @@ class VcsPanel : public Widget {
     // agrees between what's drawn and what a click resolves to.
     [[nodiscard]] std::optional<std::size_t> StickyHeaderIndex(const std::vector<Row>& rows) const;
 
+    // vcs-panel-context-menu follow-up: the row-index-from-mouse-y math
+    // Paint()'s own loop and OnEvent()'s left-click handler both already
+    // did inline -- factored out so the new right-click handler doesn't
+    // duplicate it a third time.
+    [[nodiscard]] std::optional<std::size_t> RowIndexForContentRow(int contentRow, const std::vector<Row>& rows,
+                                                                    std::optional<std::size_t> stickyHeader) const;
+
     void ToggleDirectory(const std::filesystem::path& path);
-    void OpenFileEntry(const std::filesystem::path& path);
     bool HandleKeyEvent(const Event& event);
     void EnsureSelectionVisible();
 };
