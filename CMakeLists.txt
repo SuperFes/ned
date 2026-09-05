@@ -594,6 +594,7 @@ add_library(ned_lib STATIC
         Source/Editor/ModeOverrides.cpp
         Source/Editor/ModePrewarm.cpp
         Source/Editor/Multibuffer.cpp
+        Source/Editor/MultibufferFoldSettings.cpp
         Source/Editor/NextError.cpp
         Source/Editor/WrapOverrides.cpp
         Source/Editor/CodeFold.cpp

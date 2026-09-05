@@ -192,3 +192,33 @@ TEST_CASE("ParseDiffHunks returns nothing for empty, hunkless, or fileless input
     REQUIRE(ParseDiffHunks("@@ -1 +1 @@\n-x\n+y\n").empty());
     REQUIRE(ParseDiffHunks("@@ garbage @@\n+x\n").empty());
 }
+
+TEST_CASE("A binary file's diff block produces no hunks from ParseDiffHunks", "[DiffPatch]") {
+    // Confirms binary files are already silently absent from ParseDiffHunks'
+    // own output with no special-casing needed -- real git output for a
+    // binary file has no "--- "/"+++ "/"@@ " lines at all, just this one
+    // summary line after the "diff --git" header.
+    REQUIRE(ParseDiffHunks("diff --git a/image.png b/image.png\n"
+                           "index 1234567..89abcde 100644\n"
+                           "Binary files a/image.png and b/image.png differ\n")
+               .empty());
+}
+
+TEST_CASE("CountBinaryFileDiffs counts binary-file summary lines across a mixed diff", "[DiffPatch]") {
+    using ned::editor::vcs::CountBinaryFileDiffs;
+
+    REQUIRE(CountBinaryFileDiffs("") == 0);
+    REQUIRE(CountBinaryFileDiffs(kTwoHunkDiff) == 0);
+
+    const std::string mixed = "diff --git a/a.txt b/a.txt\n"
+                              "@@ -1 +1 @@\n"
+                              "-old\n"
+                              "+new\n"
+                              "diff --git a/logo.png b/logo.png\n"
+                              "index 1111111..2222222 100644\n"
+                              "Binary files a/logo.png and b/logo.png differ\n"
+                              "diff --git a/data.bin b/data.bin\n"
+                              "index 3333333..4444444 100644\n"
+                              "Binary files a/data.bin and b/data.bin differ\n";
+    REQUIRE(CountBinaryFileDiffs(mixed) == 2);
+}

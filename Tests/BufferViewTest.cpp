@@ -11587,3 +11587,55 @@ TEST_CASE("Vim: jumping to an uppercase mark set in a different file opens it an
 
     std::filesystem::remove_all(dir);
 }
+
+// Full commit diff view follow-up: a *vcs log <name>* buffer's line has no
+// per-line source location the generic "path:line:" regex fallback expects
+// (BuildVcsLogBuffer writes "<hash> <date> <author>: <summary>" instead) --
+// vcs-visit-result/VisitResultUnderPoint special-cases this buffer shape,
+// parsing the leading hash token and routing it to
+// RequestVcsCommitDiffBuffer. No VcsRunner is wired in this fixture, so its
+// own "no vcs runner configured" message is what proves the hash was
+// actually parsed and routed there rather than the line silently matching
+// nothing (see RequestVcsFullDiffBuffer's own identical guard).
+TEST_CASE("vcs-visit-result on a *vcs log* line requests that commit's diff", "[BufferView]") {
+    Fixture             fixture;
+    ned::text::Buffer&  log = fixture.bufferList.CreateBuffer("*vcs log file.txt*");
+    log.InsertAtPoint("d6bb069 2026-09-04 Aaron Doom: Add VcsPanel right-click context menu\n");
+    log.SetPoint(0);
+    log.SetReadOnly(true);
+
+    ned::ui::ActiveBuffer activeBuffer(log);
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList,
+                               fixture.dispatcher, fixture.statusMessage, fixture.mode, fixture.theme);
+
+    fixture.statusMessage = "sentinel";
+    view.OnEvent(ned::ui::test::Ctrl('c'));
+    view.OnEvent(ned::ui::test::Character("v"));
+    view.OnEvent(ned::ui::test::Character("v"));
+
+    REQUIRE(fixture.statusMessage == "no vcs runner configured");
+}
+
+TEST_CASE("vcs-visit-result on a blank *vcs log* line is a safe no-op", "[BufferView]") {
+    Fixture             fixture;
+    ned::text::Buffer&  log = fixture.bufferList.CreateBuffer("*vcs log file.txt*");
+    log.InsertAtPoint("\n"); // BuildVcsLogBuffer never actually writes a blank line, but this must still degrade safely
+    log.SetPoint(0);
+    log.SetReadOnly(true);
+
+    ned::ui::ActiveBuffer activeBuffer(log);
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList,
+                               fixture.dispatcher, fixture.statusMessage, fixture.mode, fixture.theme);
+
+    fixture.statusMessage = "sentinel";
+    view.OnEvent(ned::ui::test::Ctrl('c'));
+    view.OnEvent(ned::ui::test::Character("v"));
+    view.OnEvent(ned::ui::test::Character("v"));
+
+    // Not "sentinel": RunCommandAndHandleOutcome's own status-message-lifecycle
+    // rule clears a stale message once a real command has run without
+    // reporting anything new itself (see its doc comment) -- "" is what
+    // proves this no-op'd rather than somehow still matching the "path:line:"
+    // regex fallback.
+    REQUIRE(fixture.statusMessage.empty());
+}

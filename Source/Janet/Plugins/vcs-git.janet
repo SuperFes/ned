@@ -45,6 +45,15 @@
 (defn working-diff-argv [root]
   ["git" "-C" root "diff" "--no-color"])
 
+## Full commit diff view follow-up: one commit's whole changeset, same
+## real-context-lines spirit as working-diff-argv above. `git show` prints
+## the commit's own message header before its diff -- Editor/Vcs/DiffPatch.h's
+## ParseDiffHunks only ever looks for "diff --git"/"@@ " lines, so that
+## header text is silently skipped rather than needing to be stripped here
+## (the same reason working-diff-argv's own raw output needs no parse half).
+(defn commit-diff-argv [root commit-hash]
+  ["git" "-C" root "show" "--no-color" commit-hash])
+
 ## --- status/stage/unstage/commit/branch (vocabulary-completion) ----------
 ##
 ## The root-scoped operations get the project root as their argument (see
@@ -328,6 +337,7 @@
    :diff-argv diff-argv
    :parse-diff parse-diff
    :working-diff-argv working-diff-argv
+   :commit-diff-argv commit-diff-argv
    :status-argv status-argv
    :parse-status parse-status
    :stage-argv stage-argv

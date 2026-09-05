@@ -100,6 +100,15 @@ struct ExcerptSpan {
     std::size_t           sourceEndLine      = 0;
     std::size_t           compositeStartByte = 0;
     std::size_t           compositeEndByte   = 0;
+    // Auto-collapse-on-build follow-up: where this excerpt's own body text
+    // starts within the composite buffer -- equal to compositeStartByte
+    // when the excerpt carried no headerText (ExcerptSource::headerText
+    // empty), strictly greater otherwise (past the header's own line and
+    // its newline). FoldableExcerptBlocks below uses the gap between the
+    // two to tell whether this excerpt has a visible header line to fold
+    // *under* -- one with none is never offered for folding, since nothing
+    // would stay visible to mark that a fold exists.
+    std::size_t bodyStartByte = 0;
 };
 
 // A real multibuffer has at most a few hundred excerpts (one per diff
@@ -134,6 +143,21 @@ class MultibufferIndex {
 // alongside its other per-buffer cleanup.
 [[nodiscard]] MultibufferIndex* MultibufferIndexFor(const text::Buffer& buffer);
 void                            SetMultibufferIndexFor(text::Buffer& buffer, MultibufferIndex index);
+
+// Auto-collapse-on-build follow-up: codefold::FoldableBlocks' own
+// multibuffer-shaped sibling -- returns exactly the (startByte, endByte)
+// "blocks" shape codefold::FoldedLineRanges/ToggleFoldAtLine already expect
+// (Editor/CodeFold.h), derived from index's own excerpt spans instead of a
+// fresh tree-sitter parse: a span's compositeStartByte (its header line's
+// own start, the same "line a fold is keyed by" convention CodeFold's own
+// blocks use) paired with its compositeEndByte. An excerpt with no header
+// line (ExcerptSpan::bodyStartByte == compositeStartByte) is excluded --
+// see that field's own doc comment for why. What lets both
+// BufferView::EnsureHiddenLineRangesCache and code-fold-toggle
+// (Commands.cpp) treat a multibuffer exactly like an ordinary foldable
+// buffer, via the same two CodeFold.h functions, with no multibuffer-
+// specific fold logic of their own.
+[[nodiscard]] std::vector<std::pair<std::size_t, std::size_t>> FoldableExcerptBlocks(const MultibufferIndex& index);
 void                            ClearMultibufferIndexFor(const text::Buffer& buffer);
 
 // Test-only: drops every registered index, regardless of buffer. Needed
@@ -166,6 +190,18 @@ void ClearRegistryForTesting();
 // does that refill itself the way RefillSingletonBuffer already does).
 // Registers the resulting MultibufferIndex via SetMultibufferIndexFor --
 // callers don't need to build one by hand.
+//
+// Auto-collapse-on-build follow-up: an excerpt with a header line
+// (ExcerptSource::headerText non-empty) is collapsed by default -- via an
+// ordinary text::Buffer::FoldMarker::Collapsed at its own header line, the
+// same one FoldableExcerptBlocks/code-fold-toggle later toggle -- when
+// either its own body passes MultibufferAutoCollapseLineThreshold()'s line
+// count or MultibufferAutoCollapseByteThreshold()'s byte length (a single
+// huge/minified hunk), or its ordinal among excerpts passes
+// MultibufferAutoCollapseExcerptCap() (a plain-large result set, e.g. very
+// many references). One caller-agnostic policy applied here rather than
+// duplicated in every BuildMultibuffer caller -- see
+// Editor/MultibufferFoldSettings.h for the thresholds themselves.
 text::Buffer& BuildMultibuffer(text::BufferList& bufferList, const std::string& name,
                                const std::vector<ExcerptSource>& excerpts);
 

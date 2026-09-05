@@ -7,6 +7,7 @@
 #include <stdexcept>
 #include <unordered_map>
 
+#include "MultibufferFoldSettings.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
 
@@ -70,6 +71,17 @@ void ClearMultibufferIndexFor(const text::Buffer& buffer) {
 
 void ClearRegistryForTesting() {
     Registry().clear();
+}
+
+std::vector<std::pair<std::size_t, std::size_t>> FoldableExcerptBlocks(const MultibufferIndex& index) {
+    std::vector<std::pair<std::size_t, std::size_t>> blocks;
+    blocks.reserve(index.Spans().size());
+    for (const ExcerptSpan& span : index.Spans()) {
+        if (span.bodyStartByte != span.compositeStartByte) {
+            blocks.emplace_back(span.compositeStartByte, span.compositeEndByte);
+        }
+    }
+    return blocks;
 }
 
 namespace {
@@ -182,13 +194,25 @@ text::Buffer& BuildMultibuffer(text::BufferList& bufferList, const std::string& 
     std::vector<text::Buffer::ExcerptRange>       excerptRanges; // editable-multibuffer follow-up
     spans.reserve(excerpts.size());
 
+    // Auto-collapse-on-build follow-up: header-line startBytes to mark
+    // Buffer::FoldMarker::Collapsed once the composite Buffer exists below
+    // (it doesn't yet -- results isn't created until after this loop) --
+    // see BuildMultibuffer's own doc comment for the policy these
+    // thresholds implement.
+    std::vector<std::size_t> collapseOffsets;
+    const std::size_t        lineThreshold = editor::MultibufferAutoCollapseLineThreshold();
+    const std::size_t        byteThreshold = editor::MultibufferAutoCollapseByteThreshold();
+    const std::size_t        excerptCap     = editor::MultibufferAutoCollapseExcerptCap();
+
     // 0-indexed, matching Rope::ByteOffsetToLine's own convention -- the
     // running composite line number as text is appended, so each body
     // line's LineTint can be recorded against the exact line it lands on
     // without a second pass over the finished text.
     std::size_t compositeLine = 0;
 
+    std::size_t excerptOrdinal = 0; // 1-based, for MultibufferAutoCollapseExcerptCap()
     for (const ExcerptSource& excerpt : excerpts) {
+        ++excerptOrdinal;
         // A rule line ahead of every excerpt (including the first) --
         // doubles as the separator from whatever came before, and gives
         // each excerpt's own title line a visible top edge. Outside every
@@ -236,7 +260,17 @@ text::Buffer& BuildMultibuffer(text::BufferList& bufferList, const std::string& 
             composite += '\n';
         }
         const std::size_t spanEnd = composite.size();
-        spans.push_back(ExcerptSpan{excerpt.sourcePath, excerpt.sourceStartLine, excerpt.sourceEndLine, spanStart, spanEnd});
+        spans.push_back(
+            ExcerptSpan{excerpt.sourcePath, excerpt.sourceStartLine, excerpt.sourceEndLine, spanStart, spanEnd, bodyStart});
+
+        // Auto-collapse-on-build follow-up: only an excerpt with its own
+        // header line is ever offered -- one with none (bodyStart == spanStart)
+        // would have nothing left visible to mark that a fold exists if
+        // collapsed. Any one of the three thresholds is enough on its own.
+        if (bodyStart != spanStart &&
+            (bodyLineIndex > lineThreshold || excerpt.bodyText.size() > byteThreshold || excerptOrdinal > excerptCap)) {
+            collapseOffsets.push_back(spanStart);
+        }
 
         // Editable-multibuffer follow-up: resolve this excerpt's byte-exact
         // source range and register it as an ExcerptRange, so a later edit
@@ -289,6 +323,15 @@ text::Buffer& BuildMultibuffer(text::BufferList& bufferList, const std::string& 
     text::Buffer& results = bufferList.CreateBuffer(name);
     results.InsertAtPoint(composite);
     results.SetPoint(0);
+    // Auto-collapse-on-build follow-up: an ordinary FoldMarker per offset
+    // collected above -- the composite Buffer has to exist first, which is
+    // why this couldn't happen inside the loop itself. From here on this is
+    // exactly like any other fold (code-fold-toggle/unfold-all included);
+    // nothing distinguishes an auto-collapsed excerpt from a manually
+    // collapsed one.
+    for (const std::size_t offset : collapseOffsets) {
+        results.SetFoldMarker(offset, text::Buffer::FoldMarker::Collapsed);
+    }
     if (excerptRanges.empty()) {
         // read-only-buffers follow-up: same reasoning as BuildResultsBuffer's
         // own doc comment -- a synthesized, no-file-to-save-to buffer.
