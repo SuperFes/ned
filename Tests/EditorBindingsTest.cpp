@@ -20,6 +20,7 @@
 #include "Editor/Keymap.h"
 #include "Editor/Link.h"
 #include "Editor/Lsp/LspServerConfig.h"
+#include "Editor/MultibufferFoldSettings.h"
 #include "Editor/PageScroll.h"
 #include "Editor/ProjectRoot.h"
 #include "Editor/ScratchPad.h"
@@ -287,6 +288,36 @@ TEST_CASE("ned/set-code-folding-enabled configures the process-wide toggle", "[E
 
     env.DoString(R"((ned/set-code-folding-enabled true))");
     REQUIRE(ned::editor::CodeFoldingEnabled());
+}
+
+TEST_CASE("ned/set-multibuffer-auto-collapse-* bindings configure the three process-wide thresholds",
+          "[EditorBindings]") {
+    // Auto-collapse-on-build follow-up: MultibufferAutoCollapse* is
+    // process-wide state (see MultibufferFoldSettings.h); guaranteed reset
+    // via RAII so this doesn't leak into other tests.
+    struct MultibufferFoldSettingsGuard {
+        ~MultibufferFoldSettingsGuard() {
+            ned::editor::SetMultibufferAutoCollapseLineThreshold(40);
+            ned::editor::SetMultibufferAutoCollapseByteThreshold(2000);
+            ned::editor::SetMultibufferAutoCollapseExcerptCap(100);
+        }
+    } guard;
+
+    Environment& env = ned_tests::TestEnvironment();
+    InstallEditorBindings(env);
+
+    env.DoString(R"((ned/set-multibuffer-auto-collapse-line-threshold 7))");
+    REQUIRE(ned::editor::MultibufferAutoCollapseLineThreshold() == 7);
+
+    env.DoString(R"((ned/set-multibuffer-auto-collapse-byte-threshold 512))");
+    REQUIRE(ned::editor::MultibufferAutoCollapseByteThreshold() == 512);
+
+    env.DoString(R"((ned/set-multibuffer-auto-collapse-excerpt-cap 25))");
+    REQUIRE(ned::editor::MultibufferAutoCollapseExcerptCap() == 25);
+
+    // A non-positive value clamps to 0, same as set-huge-structural-window-bytes.
+    env.DoString(R"((ned/set-multibuffer-auto-collapse-line-threshold -1))");
+    REQUIRE(ned::editor::MultibufferAutoCollapseLineThreshold() == 0);
 }
 
 TEST_CASE("ned/syntax-* bindings set/get/clear overrides, with nil for an unset field", "[EditorBindings]") {

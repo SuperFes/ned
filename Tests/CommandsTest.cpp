@@ -16,6 +16,7 @@
 #include "Editor/FormatOnSave.h"
 #include "Editor/LineEndingPolicy.h"
 #include "Editor/Mode.h"
+#include "Editor/Multibuffer.h"
 #include "Editor/ProjectRoot.h"
 #include "Editor/ProjectSession.h"
 #include "Editor/SnippetRegistry.h"
@@ -2064,6 +2065,68 @@ TEST_CASE("code-fold-toggle folds the block starting at point when context.mode 
     fixture.buffer.SetPoint(fixture.buffer.Text().find("return")); // not a block's own opening line
     registry.Invoke("code-fold-toggle", context);
     REQUIRE(message == "No foldable block starts here.");
+}
+
+// Auto-collapse-on-build follow-up.
+TEST_CASE("code-fold-toggle folds/unfolds a multibuffer excerpt at point, checked ahead of context.mode",
+          "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture fixture;
+
+    const std::vector<multibuffer::ExcerptSource> excerpts = {
+        multibuffer::ExcerptSource{"/tmp/a.txt", 1, 1, "a.txt:1", "line one\n", {}},
+    };
+    ned::text::Buffer& composite = multibuffer::BuildMultibuffer(fixture.bufferList, "*test multibuffer*", excerpts);
+    // BuildMultibuffer always prepends a rule line ahead of every excerpt
+    // (including the first), so offset 0 is that rule line, not the header
+    // -- point needs to land on the header line itself ("a.txt:1") to match
+    // its own fold block's start.
+    composite.SetPoint(composite.Text().find("a.txt:1"));
+
+    CommandContext context{composite, fixture.killRing, fixture.bufferList};
+    std::string    message;
+    context.message = &message;
+    // context.mode left unset -- must not matter at all for the multibuffer
+    // path, unlike the ordinary code-fold-toggle path above.
+
+    registry.Invoke("code-fold-toggle", context);
+    REQUIRE(message.empty());
+    REQUIRE(composite.FoldMarkers().size() == 1);
+
+    registry.Invoke("code-fold-toggle", context); // toggles back off
+    REQUIRE(composite.FoldMarkers().empty());
+
+    composite.SetPoint(composite.Text().find("line one")); // not the header line
+    registry.Invoke("code-fold-toggle", context);
+    REQUIRE(message == "No foldable excerpt starts here.");
+}
+
+TEST_CASE("unfold-all clears every fold marker and reports how many, or that there were none", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    const Mode mode = CMode();
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    std::string    message;
+    context.message = &message;
+    context.mode    = &mode;
+
+    fixture.buffer.InsertAtPoint("int main(void) {\n    return 0;\n}\n");
+    fixture.buffer.SetPoint(0);
+
+    registry.Invoke("unfold-all", context);
+    REQUIRE(message == "No folds in this buffer.");
+
+    registry.Invoke("code-fold-toggle", context);
+    REQUIRE(fixture.buffer.FoldMarkers().size() == 1);
+
+    registry.Invoke("unfold-all", context);
+    REQUIRE(message == "Unfolded 1 fold.");
+    REQUIRE(fixture.buffer.FoldMarkers().empty());
 }
 
 TEST_CASE("toggle-line-comment reports explicitly when no mode/comment syntax is configured", "[Commands]") {

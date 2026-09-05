@@ -21,6 +21,7 @@ namespace {
         "diff-argv",
         "parse-diff",
         "working-diff-argv",
+        "commit-diff-argv",
         "status-argv",
         "parse-status",
         "stage-argv",
@@ -323,6 +324,14 @@ editor::vcs::VcsCommandSpec JanetVcsProvider::WorkingDiffArgv(const std::filesys
         return VcsProvider::WorkingDiffArgv(root);
     }
     return ParseCommandSpec(CallWithString(*fn, root.string()));
+}
+
+editor::vcs::VcsCommandSpec JanetVcsProvider::CommitDiffArgv(const std::filesystem::path& root, const std::string& commitHash) const {
+    const std::string* fn = InternalName("commit-diff-argv");
+    if (!fn) {
+        return VcsProvider::CommitDiffArgv(root, commitHash);
+    }
+    return ParseCommandSpec(CallWithStrings(*fn, root.string(), commitHash));
 }
 
 editor::vcs::VcsCommandSpec JanetVcsProvider::StatusArgv(const std::filesystem::path& root) const {

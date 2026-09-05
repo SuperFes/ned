@@ -59,6 +59,17 @@ struct DiffHunkText {
 };
 std::vector<DiffHunkText> ParseDiffHunks(const std::string& diffOutput);
 
+// Auto-collapse-on-build follow-up: counts how many files in diffOutput are
+// binary (git's own "Binary files a/<path> and b/<path> differ" line,
+// emitted in place of any "@@ " hunk) -- these already produce zero
+// DiffHunkText entries from ParseDiffHunks above (there's no hunk header to
+// find), so a binary file is silently absent from a *vcs diff*/*vcs commit*
+// multibuffer's excerpts with no code change needed for that; this is just
+// what lets a caller mention the omission ("N binary file(s) not shown")
+// instead of leaving it fully unexplained. A plain substring/line scan, not
+// tied to ParseDiffHunks' own per-file bookkeeping.
+std::size_t CountBinaryFileDiffs(const std::string& diffOutput);
+
 } // namespace ned::editor::vcs
 
 #endif // NED_EDITOR_VCS_DIFFPATCH_H

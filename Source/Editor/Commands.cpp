@@ -3127,20 +3127,60 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     // the active Mode's own fold query -- see CommandContext::mode's own
     // doc comment.
     registry.Register(
-        "code-fold-toggle", "Toggle folding the code block starting on the line at point.", [](CommandContext& context) {
+        "code-fold-toggle", "Toggle folding the code block (or, in a multibuffer, the excerpt) starting on the line at point.",
+        [](CommandContext& context) {
+            const text::ITextStorage& content = context.buffer.Content();
+            const std::size_t         line    = content.ByteOffsetToLine(context.buffer.Point());
+
+            // Auto-collapse-on-build follow-up: a multibuffer (*vcs diff*/
+            // *vcs commit*/*references*/*diagnostics*/...) has no Mode::fold
+            // query at all (a path-less buffer always resolves to
+            // FundamentalMode) -- checked first so toggling one of
+            // BuildMultibuffer's own auto-collapsed excerpts works the same
+            // way toggling a real code block does, via the same two
+            // CodeFold.h functions either way.
+            if (editor::multibuffer::MultibufferIndex* index = editor::multibuffer::MultibufferIndexFor(context.buffer)) {
+                const auto blocks = editor::multibuffer::FoldableExcerptBlocks(*index);
+                if (!codefold::ToggleFoldAtLine(context.buffer, content, blocks, line) && context.message) {
+                    *context.message = "No foldable excerpt starts here.";
+                }
+                return;
+            }
+
             if (context.mode == nullptr || !context.mode->fold) {
                 if (context.message) {
                     *context.message = "No folding available in this mode.";
                 }
                 return;
             }
-            const text::ITextStorage& content = context.buffer.Content();
-            const std::size_t line    = content.ByteOffsetToLine(context.buffer.Point());
-            const auto        blocks  = codefold::FoldableBlocks(*context.mode, context.buffer.Text());
+            const auto blocks = codefold::FoldableBlocks(*context.mode, context.buffer.Text());
             if (!codefold::ToggleFoldAtLine(context.buffer, content, blocks, line) && context.message) {
                 *context.message = "No foldable block starts here.";
             }
         });
+    // Auto-collapse-on-build follow-up: the "expand all" side of
+    // BuildMultibuffer's default-collapsed excerpts -- generic over any
+    // fold source (code folds, Org subtrees, multibuffer excerpts), since
+    // it only ever clears FoldMarker entries, never interprets them. Not
+    // bound to any default key, same "M-x/ned/define-key only" precedent
+    // code-fold-toggle above already sets.
+    registry.Register("unfold-all", "Remove every fold in the current buffer, revealing all hidden lines.",
+                      [](CommandContext& context) {
+                          const auto markers = context.buffer.FoldMarkers(); // a copy -- mutated below while iterating
+                          if (markers.empty()) {
+                              if (context.message) {
+                                  *context.message = "No folds in this buffer.";
+                              }
+                              return;
+                          }
+                          for (const auto& [offset, marker] : markers) {
+                              context.buffer.SetFoldMarker(offset, std::nullopt);
+                          }
+                          if (context.message) {
+                              *context.message =
+                                  "Unfolded " + std::to_string(markers.size()) + " fold" + (markers.size() == 1 ? "" : "s") + ".";
+                          }
+                      });
     // Emacs-keymap-round-2 follow-up: needs context.mode for the same
     // reason code-fold-toggle above does -- structural motion depends on
     // the active Mode's own parsed syntax tree (Mode::sexpMotion), not
