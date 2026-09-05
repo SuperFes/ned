@@ -593,3 +593,181 @@ TEST_CASE("Scrolling past a section header pins it as a sticky row", "[VcsPanel]
 
     std::filesystem::remove_all(dir);
 }
+
+TEST_CASE("Right-click reports the target row and never toggles/opens it", "[VcsPanel]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_vcs_panel_test_context_menu";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir / "sub");
+    const CurrentPathGuard cwdGuard(dir);
+
+    ned::text::BufferList list;
+    ned::text::Buffer&    scratch = list.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    std::string           statusMessage;
+    ned::ui::VcsPanel      panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    PlacePanel(panel, 30, 12);
+
+    // Rows: 0 border, 1 "Staged (1)", 2 a.txt, 3 "Unstaged (1)", 4 sub/
+    // (collapsed dir), 5 "Untracked (1)", 6 c.txt.
+    panel.DispatchVcsStatusForTesting({
+        {"M ", "a.txt"    },
+        {" M", "sub/b.txt"},
+        {"??", "c.txt"    },
+    });
+
+    std::vector<ned::ui::VcsPanelContextMenuTarget> requested;
+    std::vector<ned::ui::Point>                     anchors;
+    panel.SetOnContextMenuRequest([&](const ned::ui::VcsPanelContextMenuTarget& target, ned::ui::Point anchor) {
+        requested.push_back(target);
+        anchors.push_back(anchor);
+    });
+
+    const auto rightClick = [](int x, int y) {
+        return ned::ui::test::Mouse(x, y, ned::ui::MouseEvent::Button::Right, ned::ui::MouseEvent::Motion::Pressed);
+    };
+
+    // A section header never gets a menu.
+    panel.OnEvent(rightClick(1, 1));
+    REQUIRE(requested.empty());
+
+    // A staged file row.
+    panel.OnEvent(rightClick(5, 2));
+    REQUIRE(requested.size() == 1);
+    REQUIRE(requested[0].kind == ned::ui::VcsPanelContextMenuTarget::Kind::Entry);
+    REQUIRE(requested[0].path == dir / "a.txt");
+    REQUIRE_FALSE(requested[0].isDirectory);
+    REQUIRE(requested[0].section == ned::ui::VcsPanelSection::Staged);
+    REQUIRE(anchors[0].x == 5);
+    REQUIRE(anchors[0].y == 2);
+    // Never opens the file -- unlike a left click, activeBuffer stays put.
+    REQUIRE(activeBuffer.Get().Name() == "scratch");
+
+    // A directory row (still collapsed -- right-click doesn't expand it).
+    panel.OnEvent(rightClick(1, 4));
+    REQUIRE(requested.size() == 2);
+    REQUIRE(requested[1].isDirectory);
+    REQUIRE(requested[1].path == dir / "sub");
+    REQUIRE(requested[1].section == ned::ui::VcsPanelSection::Unstaged);
+
+    // An untracked file row (row 5 is "Untracked (1)"'s own header; c.txt is row 6).
+    panel.OnEvent(rightClick(5, 6));
+    REQUIRE(requested.size() == 3);
+    REQUIRE(requested[2].path == dir / "c.txt");
+    REQUIRE(requested[2].section == ned::ui::VcsPanelSection::Untracked);
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("Right-click on a stash row reports a StashEntry target", "[VcsPanel]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_vcs_panel_test_context_menu_stash";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    const CurrentPathGuard cwdGuard(dir);
+
+    ned::text::BufferList list;
+    ned::text::Buffer&    scratch = list.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    std::string           statusMessage;
+    ned::ui::VcsPanel      panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    PlacePanel(panel, 30, 12);
+    panel.DispatchStashesForTesting({
+        {"stash@{0}", "WIP on main: a test stash"},
+    });
+
+    std::optional<ned::ui::VcsPanelContextMenuTarget> requested;
+    panel.SetOnContextMenuRequest(
+        [&](const ned::ui::VcsPanelContextMenuTarget& target, ned::ui::Point) { requested = target; });
+
+    // Rows: 0 border, 1 Staged(0), 2 Unstaged(0), 3 Untracked(0), 4 Stashes(1), 5 entry.
+    panel.OnEvent(ned::ui::test::Mouse(1, 5, ned::ui::MouseEvent::Button::Right, ned::ui::MouseEvent::Motion::Pressed));
+
+    REQUIRE(requested.has_value());
+    REQUIRE(requested->kind == ned::ui::VcsPanelContextMenuTarget::Kind::StashEntry);
+    REQUIRE(requested->stash.ref == "stash@{0}");
+    REQUIRE(requested->stash.message == "WIP on main: a test stash");
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("RequestStageOrUnstage/RequestDiscardConfirm/PopStash/DropStash act on an explicit path/ref",
+          "[VcsPanel]") {
+    RegistryResetGuard guard;
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_vcs_panel_test_context_menu_actions";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    const CurrentPathGuard cwdGuard(dir);
+
+    ned::text::BufferList list;
+    ned::text::Buffer&    scratch = list.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    std::string           statusMessage;
+    ned::ui::VcsPanel      panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    PlacePanel(panel, 50, 12);
+
+    // No VcsRunner yet -- same "report, don't crash" guard the keyboard path uses.
+    panel.RequestStageOrUnstage("a.txt", /*stage=*/true);
+    REQUIRE(statusMessage == "no vcs runner configured");
+    statusMessage.clear();
+
+    ned::editor::vcs::RegisterProvider("throwing", std::make_unique<ThrowingProvider>());
+    ned::ui::EventLoop eventLoop;
+    VcsRunner          runner(eventLoop);
+    panel.SetVcsRunner(&runner);
+
+    // ThrowingProvider's Stage/UnstageArgv default-throw synchronously,
+    // confirming a real RequestStage/RequestUnstage call was made for the
+    // exact path passed in, regardless of focus/selection state.
+    panel.RequestStageOrUnstage("a.txt", /*stage=*/true);
+    REQUIRE(statusMessage.find("stage not supported") != std::string::npos);
+    statusMessage.clear();
+
+    panel.RequestStageOrUnstage("a.txt", /*stage=*/false);
+    REQUIRE(statusMessage.find("unstage not supported") != std::string::npos);
+    statusMessage.clear();
+
+    // RequestDiscardConfirm enters the same y/n state 'x' does -- the caller
+    // (main.cpp's context-menu wiring) is expected to give this widget
+    // keyboard focus first, same as the real wiring does.
+    panel.TakeKeyboardFocus();
+    panel.RequestDiscardConfirm("a.txt");
+    ned::ui::Screen screen = ned::ui::Screen(50, 12);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 49, .y_min = 0, .y_max = 11});
+    panel.Paint(canvas);
+    REQUIRE(RowText(screen, 0, 50).find("Discard changes to a.txt? y/n") != std::string::npos);
+    panel.OnEvent(ned::ui::test::Character('y'));
+    REQUIRE(statusMessage.find("revert not supported") != std::string::npos);
+    statusMessage.clear();
+
+    panel.PopStash("stash@{0}");
+    REQUIRE(statusMessage.find("stash pop not supported") != std::string::npos);
+    statusMessage.clear();
+
+    panel.DropStash("stash@{0}");
+    REQUIRE(statusMessage.find("stash drop not supported") != std::string::npos);
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("OpenFileEntry opens the given path without requiring focus", "[VcsPanel]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_vcs_panel_test_open_file_entry";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    { std::ofstream(dir / "a.txt") << "hello\n"; }
+    const CurrentPathGuard cwdGuard(dir);
+
+    ned::text::BufferList list;
+    ned::text::Buffer&    scratch = list.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    std::string           statusMessage;
+    ned::ui::VcsPanel      panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    PlacePanel(panel, 30, 12);
+
+    panel.OpenFileEntry(dir / "a.txt");
+    REQUIRE(activeBuffer.Get().Name() == "a.txt");
+
+    std::filesystem::remove_all(dir);
+}

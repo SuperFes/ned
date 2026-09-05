@@ -349,11 +349,34 @@ commands, never a replacement for them.
   vector shape TabBar's own menu uses, for the same reason. Live-verified
   over a real pty (right-click on both a file row and a directory row, the
   Rename prompt's prefill, and Reveal in Terminal's typed `cd`).
-- [ ] **Right-click context menu: VcsPanel** -- still descoped, same reasoning
-      as ProjectSidebar's own entry above before it shipped: no hunk-level
-      revert command exists today (only whole-file revert); the existing
-      stage/unstage-hunk commands are point-based and would need re-scoping to
-      act on a right-clicked row instead of buffer point.
+- **VcsPanel's own right-click menu** shipped 2026-09-04 -- scoped to
+  whole-file/stash operations only (hunk-level stage/unstage/revert stays
+  point-based, unaddressed by this entry -- see below). `VcsPanel::
+  SetOnContextMenuRequest` reports a `VcsPanelContextMenuTarget` (an Entry's
+  path/isDirectory/section/conflicted, or a StashEntry's ref/message) plus
+  the click's absolute screen position -- TabBar/ProjectSidebar's own
+  "report the target, let main.cpp build the popup" shape, since this
+  widget has no OverlayHost/ListPopup access of its own; a SectionHeader
+  row is excluded, same as ProjectSidebar's own chrome-row exclusion. Three
+  existing single-path/single-ref entry points already had the right shape
+  and are exposed directly rather than duplicated: `OpenFileEntry`/
+  `PopStash`/`DropStash`. Two more are new re-scopings of what was
+  previously only reachable via the focused row or `selected_`:
+  `RequestStageOrUnstage(path, stage)` factors `StageOrUnstageSelectionOrFocused`'s
+  per-target loop into a shared `StagePaths` helper; `RequestDiscardConfirm(path)`
+  sets the same `pendingRevertConfirm_` y/n state `'x'` does, with the caller
+  (main.cpp) giving this widget keyboard focus first via `TakeKeyboardFocus()`
+  so the confirm keystroke has somewhere to land -- the same hand-off
+  `BufferView::StartDeleteFileAt`'s own context-menu entry point relies on,
+  just re-targeted at this widget instead of a pane. Menu contents: a file
+  row gets Open + (Stage or Unstage, by section) + Discard Changes... (staged/
+  unstaged only, not untracked -- nothing to revert to) + Reveal in Terminal +
+  Copy Path; a directory row gets Reveal in Terminal + Copy Path only, matching
+  the keyboard path's own directory exclusion from stage/unstage/discard; a
+  stash row gets Pop Stash + Drop Stash. Live-verified over a real pty against
+  a real git repo: right-click Stage/Unstage, the Discard Changes... y/n
+  confirm actually reverting a file, Pop Stash/Drop Stash on a real stash
+  entry, and Reveal in Terminal typing a real `cd`.
 - [ ] **Drag-and-drop from `ProjectSidebar` into a pane** to open a file there
       (dragging already exists for tab reorder, sidebar resize, scrollbar/minimap
       thumb, terminal-panel scrollback selection — this would be a new drag *source*
