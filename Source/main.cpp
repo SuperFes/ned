@@ -1159,6 +1159,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
             // Best-effort, same as the synchronous half of this loop above.
         }
     }
+
     if (restoredSession) {
         windowManager->RestoreWindowLayout(*restoredSession);
         // cli-open-focus-vs-restored-layout follow-up: RestoreWindowLayout
