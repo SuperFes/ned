@@ -652,6 +652,51 @@ TEST_CASE("SyncBuffer's incremental didChange has rangeLength matching the repla
     REQUIRE(change["rangeLength"] == 1); // "é" is 1 UTF-16 unit, not 2 bytes
 }
 
+TEST_CASE("SyncBuffer's incremental diff snaps a diverging multi-byte character to its codepoint boundary", "[Lsp]") {
+    // Regression test for a real bug: two different 3-byte UTF-8 characters
+    // that share their first two bytes (the left/right "smart quote" pair,
+    // E2 80 9C vs E2 80 9D -- exactly the kind of edit prose text is full
+    // of) make the byte-level common-prefix scan stop mid-codepoint.
+    // Unsnapped, that produced a corrupted range whose start silently
+    // defaulted to {0, 0} instead of the real position -- verified to
+    // desync/crash a real Incremental-capable server (harper-ls) over a
+    // long editing session. This buffer is otherwise plain ASCII so the
+    // full range must be exactly the width of the one changed character.
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    LspManager         manager(bufferList, eventLoop);
+    Buffer&            buffer = bufferList.OpenOrCreateFile(
+        std::filesystem::temp_directory_path() / "ned-lsp-manager-incremental-utf8-boundary-test.txt");
+    buffer.InsertAtPoint("abc\xe2\x80\x9c"
+                          "def"); // "abc" + U+201C (“) + "def"
+
+    LspClient* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SetTextDocumentSyncKindForTesting("test-lang", TextDocumentSyncKind::Incremental);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    // Replace “ (U+201C, bytes 3-5) with ” (U+201D, bytes 3-5) -- differs
+    // only in the final continuation byte (0x9C vs 0x9D), so the forward
+    // byte scan matches through "abc" + the first two bytes of the
+    // character before diverging mid-codepoint.
+    buffer.SetPoint(3);
+    buffer.DeleteRange(3, 3);
+    buffer.InsertAtPoint("\xe2\x80\x9d");
+    manager.SyncBuffer(buffer, "test-lang");
+    WaitUntil(eventLoop, [&] { return !NoFrameArrives(server.serverStdinRead); });
+    const std::string raw    = ReadRawFrame(server.serverStdinRead);
+    const Json        frame  = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    const Json&       change = frame["params"]["contentChanges"][0];
+
+    REQUIRE(change["text"] == "\xe2\x80\x9d");
+    REQUIRE(change["rangeLength"] == 1); // one UTF-16 unit -- the replaced BMP character
+    REQUIRE(change["range"]["start"]["line"] == 0);
+    REQUIRE(change["range"]["start"]["character"] == 3); // must NOT have defaulted to 0
+    REQUIRE(change["range"]["end"]["line"] == 0);
+    REQUIRE(change["range"]["end"]["character"] == 4);
+}
+
 TEST_CASE("SyncBuffer's incremental diff widens to the outer span across a burst of debounced edits", "[Lsp]") {
     // Mirrors "SyncBuffer debounces a rapid burst of edits..." above, but
     // with Incremental set -- a burst legitimately coalesces into one

@@ -21,6 +21,7 @@
 #include "Text/BinaryDetect.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
+#include "Text/Utf8.h"
 
 namespace ned::editor::lsp {
 
@@ -890,10 +891,25 @@ void LspManager::SyncTextToServer(text::Buffer& buffer, const std::string& serve
         while (suffix < maxSuffix && oldText[oldText.size() - 1 - suffix] == documentText[documentText.size() - 1 - suffix]) {
             ++suffix;
         }
-        const std::size_t oldStartByte = prefix;
-        const std::size_t oldEndByte   = oldText.size() - suffix;
-        const std::size_t newStartByte = prefix;
-        const std::size_t newEndByte   = documentText.size() - suffix;
+
+        // A byte-identical prefix/suffix scan has no notion of UTF-8
+        // codepoint boundaries -- two different multi-byte characters that
+        // happen to share a leading or trailing byte (e.g. the left/right
+        // "smart quote" pair E2 80 9C / E2 80 9D, sharing their first two
+        // bytes) can make prefix/suffix stop mid-codepoint. Sent as-is,
+        // ByteRangeToLspRange can't represent that offset at all -- its
+        // walk steps whole codepoints and skips straight over a
+        // non-boundary target, silently leaving `start` at its default
+        // {0, 0} instead of the real position. Snapping outward (backward
+        // for the start, forward for the end) only ever widens the diffed
+        // span, which stays spec-legal per this function's own "correct, if
+        // not always maximally minimal" contract above.
+        const std::size_t oldStartByte = text::SnapDownToCodepointBoundary(oldText, prefix);
+        std::size_t       oldEndByte   = text::SnapUpToCodepointBoundary(oldText, oldText.size() - suffix);
+        oldEndByte                     = std::max(oldEndByte, oldStartByte);
+        const std::size_t newStartByte = oldStartByte; // shared prefix bytes are identical in both texts at this offset
+        std::size_t       newEndByte   = documentText.size() - (oldText.size() - oldEndByte);
+        newEndByte                     = std::max(newEndByte, newStartByte);
 
         const LspRange    range       = ByteRangeToLspRange(oldText, oldStartByte, oldEndByte);
         const std::size_t rangeLength = Utf16LengthOfByteRange(oldText, oldStartByte, oldEndByte);
