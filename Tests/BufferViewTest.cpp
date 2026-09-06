@@ -8305,7 +8305,9 @@ TEST_CASE("C-M-i (lsp-complete) shows a completion popup from a real completion 
     REQUIRE(fixture.completion->anchor.has_value());
     REQUIRE(fixture.completion->anchor->x == static_cast<int>(GutterWidth(1)) + 2); // right after "fo"
     REQUIRE(fixture.completion->anchor->y == 1);                                    // one row below point's own row (0)
-    REQUIRE(ContentRowText(screenBuf, 0, 6, 1) == "fo    ");                        // the buffer row itself is untouched
+    REQUIRE(ContentRowText(screenBuf, 0, 6, 1) == "fo\xc2\xac   ");                 // the buffer row itself is untouched
+                                                                                     // ("fo" has no trailing newline, so it
+                                                                                     // carries its own "¬" end-of-buffer marker)
 
     view.OnEvent(ned::ui::test::Tab());
     REQUIRE(buffer.Text() == "foobar");
@@ -9926,12 +9928,16 @@ TEST_CASE("A wrap-enabled buffer breaks a long line at a word boundary, not mid-
     ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 14, .y_min = 0, .y_max = 4});
     view.Paint(canvas);
 
-    const int gutter = GutterWidth(1);
-    // Content width is 15 - gutter columns -- "aaaa bbbb " (10 cols) fits,
-    // "cccc" (4 more) would push past it, so the break lands after "bbbb ".
-    REQUIRE(ContentRowText(screen, 0, 15 - gutter, 1).find("cccc") == std::string::npos);
+    // Content width is 15 - gutter columns (10), minus one more column
+    // wrap-continuation-indicator's own caller reserves for "↵" once a line
+    // is known to wrap at all (9) -- "aaaa " (5 cols) fits, "bbbb" (4 more)
+    // would push past it, so the break lands after "aaaa ", then again
+    // after "bbbb ", leaving "cccc dddd" (9 cols) as the third row.
     REQUIRE(RowText(screen, 0, 15).find("aaaa") != std::string::npos);
-    REQUIRE(RowText(screen, 1, 15).find("cccc") != std::string::npos);
+    REQUIRE(RowText(screen, 0, 15).find("bbbb") == std::string::npos);
+    REQUIRE(RowText(screen, 1, 15).find("bbbb") != std::string::npos);
+    REQUIRE(RowText(screen, 1, 15).find("cccc") == std::string::npos);
+    REQUIRE(RowText(screen, 2, 15).find("cccc") != std::string::npos);
 }
 
 TEST_CASE("A wrap-enabled buffer hard-breaks a single token wider than the whole viewport", "[BufferView]") {
@@ -10069,8 +10075,11 @@ TEST_CASE("Line numbers appear only on a wrapped line's first row, not its conti
     const int         gutter             = GutterWidth(2);
     const std::string continuationGutter = RowText(screen, 1, gutter);
     REQUIRE(continuationGutter.find_first_not_of(' ') == std::string::npos);
-    // Row 2 (the next real buffer line, "second line") shows its own "2".
-    REQUIRE(RowText(screen, 2, 15).find('2') != std::string::npos);
+    // Row 3 (the next real buffer line, "second line") shows its own "2" --
+    // line 1's own content now spans three rows (wrap-continuation-
+    // indicator's own reserved column pushes its break points earlier: rows
+    // 0/1 are "aaaa "/"bbbb ", row 2 is "cccc dddd").
+    REQUIRE(RowText(screen, 3, 15).find('2') != std::string::npos);
 }
 
 TEST_CASE("A per-extension wrap override changes the effective behavior for a buffer whose Mode says otherwise",
