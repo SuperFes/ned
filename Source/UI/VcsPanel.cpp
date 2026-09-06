@@ -30,6 +30,77 @@ namespace {
     constexpr char32_t kCollapsedTriangle = U'▸'; // matches ProjectSidebar's own collapsed-strip hint glyph
     constexpr char32_t kExpandedTriangle  = U'▾';
 
+    // ProjectSidebar's own box-drawing tree-connector glyphs and layout
+    // (ProjectSidebar.cpp's own doc comment) -- kept as a separate copy here
+    // rather than shared, same "free to diverge" precedent VcsStatusColor
+    // below already establishes for this file.
+    constexpr char32_t kTreeContinue = U'│';
+    constexpr char32_t kTreeBranch   = U'├';
+    constexpr char32_t kTreeLast     = U'└';
+    constexpr char32_t kTreeDash     = U'─';
+
+    // Whether the ancestor at `level` still has a sibling entry appearing
+    // later in `entries`, scanning forward from `fromIndex` -- identical
+    // logic to ProjectSidebar.cpp's own LevelContinues, operating here over
+    // one section's own collapse-filtered entry list rather than a whole
+    // disk-walked tree.
+    bool LevelContinues(const std::vector<editor::ProjectTreeEntry>& entries, std::size_t fromIndex, int level) {
+        for (std::size_t j = fromIndex; j < entries.size(); ++j) {
+            if (entries[j].depth < level) {
+                return false;
+            }
+            if (entries[j].depth == level) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool IsLastSibling(const std::vector<editor::ProjectTreeEntry>& entries, std::size_t index) {
+        return !LevelContinues(entries, index + 1, entries[index].depth);
+    }
+
+    // e.g. "│  │  ├─" for a third-level entry whose grandparent still has
+    // more siblings coming but whose parent doesn't -- ProjectSidebar's own
+    // TreePrefix, byte-for-byte.
+    std::u32string TreePrefix(const std::vector<editor::ProjectTreeEntry>& entries, std::size_t index) {
+        const editor::ProjectTreeEntry& entry = entries[index];
+
+        std::u32string prefix;
+        for (int level = 0; level < entry.depth; ++level) {
+            prefix += LevelContinues(entries, index + 1, level) ? kTreeContinue : U' ';
+            prefix += U' ';
+        }
+        prefix += IsLastSibling(entries, index) ? kTreeLast : kTreeBranch;
+        prefix += kTreeDash;
+        return prefix;
+    }
+
+    // Drops subtrees under a collapsed directory from `flat` -- the same
+    // filtering rule BuildRows used to apply inline while pushing rows
+    // directly; pulled out so TreePrefix above can see the actual *visible*
+    // sibling list (ProjectSidebar's own VisibleEntries precedent: filtering
+    // only ever drops whole subtrees, never reorders or partially-drops a
+    // directory's own direct children, so sibling order is preserved).
+    std::vector<editor::ProjectTreeEntry> FilterCollapsed(const std::vector<editor::ProjectTreeEntry>& flat,
+                                                           const std::set<std::filesystem::path>& expandedDirs) {
+        std::vector<editor::ProjectTreeEntry> visible;
+        int                                   skipBelowDepth = -1;
+        for (const editor::ProjectTreeEntry& entry : flat) {
+            if (skipBelowDepth != -1) {
+                if (entry.depth > skipBelowDepth) {
+                    continue;
+                }
+                skipBelowDepth = -1;
+            }
+            visible.push_back(entry);
+            if (entry.isDirectory && !expandedDirs.contains(entry.path)) {
+                skipBelowDepth = entry.depth;
+            }
+        }
+        return visible;
+    }
+
     // A directory-tree node built from a known status-entry path list rather
     // than a disk walk -- see this file's own header comment on
     // BuildStatusTree below.
@@ -370,30 +441,21 @@ std::vector<VcsPanel::Row> VcsPanel::BuildRows() const {
         }
 
         const auto [flat, statusByPath] = BuildStatusTree(entries, root);
+        const std::vector<editor::ProjectTreeEntry> visible = FilterCollapsed(flat, expandedDirs_);
 
-        // Skip subtrees under a collapsed directory -- VisibleEntries'
-        // exact filtering rule (ProjectSidebar.cpp).
-        int skipBelowDepth = -1;
-        for (const editor::ProjectTreeEntry& entry : flat) {
-            if (skipBelowDepth != -1) {
-                if (entry.depth > skipBelowDepth) {
-                    continue;
-                }
-                skipBelowDepth = -1;
-            }
-            Row row;
-            row.kind    = Row::Kind::Entry;
-            row.section = section;
-            row.entry   = entry;
+        for (std::size_t i = 0; i < visible.size(); ++i) {
+            const editor::ProjectTreeEntry& entry = visible[i];
+            Row                             row;
+            row.kind       = Row::Kind::Entry;
+            row.section    = section;
+            row.entry      = entry;
+            row.treePrefix = TreePrefix(visible, i);
             if (!entry.isDirectory) {
                 const auto it = statusByPath.find(entry.path);
                 row.status     = it != statusByPath.end() ? it->second : editor::vcs::VcsRowStatus::None;
                 row.conflicted = conflictedPaths_.contains(entry.path);
             }
             rows.push_back(row);
-            if (entry.isDirectory && !expandedDirs_.contains(entry.path)) {
-                skipBelowDepth = entry.depth;
-            }
         }
     };
 
@@ -548,8 +610,8 @@ void VcsPanel::Paint(Canvas c) {
         }
         else {
             const bool marked = !row.entry.isDirectory && selected_.contains(row.entry.path);
-            std::u32string indent(static_cast<std::size_t>(row.entry.depth) * 2, U' ');
-            label = indent;
+            label             = row.treePrefix;
+            label += U' ';
             // Real ballot-box glyphs (U+2610/U+2611 -- single-column BMP,
             // the same "plain Unicode box-drawing family, no Nerd Font
             // dependency" convention ProjectSidebar's own disclosure
@@ -566,9 +628,9 @@ void VcsPanel::Paint(Canvas c) {
                 label += U'/';
             }
             if (row.conflicted) {
-                // Appended, not prefixed -- keeps OnEvent's fixed checkbox-
-                // column math (contentLeft + depth*2) undisturbed regardless
-                // of conflict state.
+                // Appended, not prefixed -- keeps OnEvent's checkbox-column
+                // math (contentLeft + treePrefix width) undisturbed
+                // regardless of conflict state.
                 label += U" ⚠";
             }
             const std::optional<Color> statusColor = VcsStatusColor(row.status);
@@ -742,10 +804,10 @@ bool VcsPanel::OnEvent(const Event& event) {
     else {
         // A click squarely on the ☐/☑ glyph toggles the mark instead of
         // opening the file -- same column math Paint() builds the label
-        // with (contentLeft=1, then depth*2 columns of indent before the
-        // checkbox glyph itself).
+        // with (contentLeft=1, then the row's own tree-connector prefix
+        // plus its trailing space, before the checkbox glyph itself).
         constexpr int contentLeft    = 1;
-        const int     checkboxColumn = contentLeft + row.entry.depth * 2;
+        const int     checkboxColumn = contentLeft + static_cast<int>(row.treePrefix.size()) + 1;
         if (mouse->at.x == checkboxColumn) {
             if (selected_.contains(row.entry.path)) {
                 selected_.erase(row.entry.path);

@@ -204,16 +204,18 @@ TEST_CASE("Clicking the checkbox glyph toggles selection; clicking elsewhere on 
         {"M ", "a.txt"},
     });
 
-    // a.txt is row 2 (row 0 border, row 1 "Staged (1)" header); the
-    // checkbox glyph sits at contentLeft(1) + depth(0)*2 == column 1.
-    panel.OnEvent(MousePress(1, 2));
+    // a.txt is row 2 (row 0 border, row 1 "Staged (1)" header); a.txt is the
+    // only (and thus last) sibling at depth 0, so its tree-connector prefix
+    // is "└─" (2 columns) plus a trailing space -- the checkbox glyph sits
+    // at contentLeft(1) + 2 + 1 == column 4.
+    panel.OnEvent(MousePress(4, 2));
     REQUIRE(panel.SelectedPathsForTesting().size() == 1);
     REQUIRE_FALSE(activeBuffer.Get().Name() == "a.txt"); // a click on the checkbox never opens the file
 
-    panel.OnEvent(MousePress(1, 2)); // toggles back off
+    panel.OnEvent(MousePress(4, 2)); // toggles back off
     REQUIRE(panel.SelectedPathsForTesting().empty());
 
-    panel.OnEvent(MousePress(5, 2)); // anywhere past the checkbox opens the file
+    panel.OnEvent(MousePress(8, 2)); // anywhere past the checkbox opens the file
     REQUIRE(activeBuffer.Get().Name() == "a.txt");
 
     std::filesystem::remove_all(dir);

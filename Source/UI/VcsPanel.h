@@ -17,8 +17,9 @@
 // directory tree, not a flat list, mirroring ProjectSidebar's own
 // BuildProjectTree-backed rendering -- built here from a known path list
 // (VcsStatusEntry paths) rather than a disk walk, via VcsPanel.cpp's own
-// BuildStatusTree. Row indentation only, no box-drawing tree connectors --
-// a deliberate v1 simplification, see VcsPanel.cpp's own comment.
+// BuildStatusTree. Rows carry ProjectSidebar's own box-drawing tree
+// connectors (`├─└─│`), computed the same way (VcsPanel.cpp's own
+// TreePrefix, over each section's own collapse-filtered entry list).
 //
 
 #ifndef NED_UI_VCSPANEL_H
@@ -341,6 +342,7 @@ class VcsPanel : public Widget {
         VcsPanelSection           section;
         std::size_t               fileCount = 0; // SectionHeader only
         editor::ProjectTreeEntry  entry{};        // Entry only
+        std::u32string            treePrefix;     // Entry only -- ProjectSidebar's own box-drawing tree connectors
         editor::vcs::VcsRowStatus status = editor::vcs::VcsRowStatus::None; // Entry (file rows) only
         bool                      conflicted = false; // Entry (file rows) only -- see conflictedPaths_
         editor::vcs::VcsStashEntry stash{};      // StashEntry only
