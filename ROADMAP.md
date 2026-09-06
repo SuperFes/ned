@@ -1,13 +1,16 @@
 # Ned Roadmap
 
 What's still open. Completed work is deliberately not tracked here — the detailed
-per-feature design/decision records this file used to carry were pruned 2026-08-20 and
-again 2026-08-25 (re-accumulated in between); full history lives in git
-(`git log --follow ROADMAP.md`, `git show <rev>:ROADMAP.md`, or just `git log` for the
-feature's own commit). Current architecture is documented in `CLAUDE.md`. When an item
-here ships, replace its entry with a one-line pointer to the shipping commit (or delete
-it outright) rather than writing up what was done — the writeup belongs in the commit
-message, this file is a todo list, not an archive.
+per-feature design/decision records this file used to carry were pruned 2026-08-20,
+2026-08-25, and again in this pass (2026-09-06); full history lives in git
+(`git log --follow ROADMAP.md`, `git show <rev>:ROADMAP.md`, or `git log --grep=<slug>`
+for a specific feature — most shipped items below name the slug to search for). Current
+architecture is documented in `CLAUDE.md`. When an item here ships, replace its entry
+with a one-line pointer to the shipping commit (or delete it outright) rather than
+writing up what was done — the writeup belongs in the commit message, this file is a
+todo list, not an archive. A shipped feature that left behind a genuine gap gets its own
+short, standalone `- [ ]` item under the relevant section, not a paragraph of "here's
+what shipped" with the gap buried at the end of it.
 
 ## Vision
 
@@ -47,7 +50,7 @@ Notcurses.
       not a Java-specific gap. `DynamicGrammar.h`'s `dlopen`/runtime-load path (currently
       the only way to reach a non-bundled grammar via `init.janet`) would still need
       those query files sourced from somewhere, so it doesn't actually save the real
-      work. The clean path is instead the same one every one of the ~19 bundled
+      work. The clean path is instead the same one every one of the ~20 bundled
       languages already takes: a real `ned_add_treesitter_grammar(tree-sitter-java
       https://github.com/tree-sitter/tree-sitter-java.git <tag>)` `FetchContent` entry in
       `CMakeLists.txt` (pulls the grammar's own `queries/highlights.scm` etc. with it,
@@ -66,8 +69,8 @@ Notcurses.
         newer official LSP, verify current recommendation) for Kotlin — both configured
         the ordinary `ned/set-lsp-command` way, nothing bundled/auto-detected (this
         project's own stated policy). `Editor/Lsp/LspRootResolver.cpp`'s per-language
-        root-marker table (`c`/`cpp`/`python`/`javascript`/... today) gets `java`/`kotlin`
-        entries: `pom.xml`/`build.gradle`/`build.gradle.kts`/`settings.gradle.kts`.
+        root-marker table gets `java`/`kotlin` entries: `pom.xml`/`build.gradle`/
+        `build.gradle.kts`/`settings.gradle.kts`.
       - Test running: `TestOutputParser.h` already has a `"junit-xml"` parser (Maven
         Surefire/Gradle both emit JUnit XML reports) — Java/Kotlin projects need zero new
         parser work, just `ned/set-test-command`/`ned/set-test-results-file` pointed at
@@ -81,375 +84,132 @@ Notcurses.
         Android-specific engineering needed for editing/building/testing an Android
         project. A real gap worth naming separately: `adb logcat` streaming and a
         one-click "install + run on device/emulator" flow have no natural home in
-        anything that exists today (closest precedent is `TerminalPanel`, but a raw
-        interactive shell isn't really an "install and launch" primitive) — worth
-        scoping only if plain shelled-out `adb`/`gradlew` tasks prove too manual in
-        practice, not speculatively.
-- Go-to-file-at-point resolver gaps, four of six, closed 2026-09-04 -- see
-  `git log --grep=resolver-gaps`. Python's leading-dot relative imports
-  (`from . import x`, `from ..foo import x`) now resolve: a new
-  `@import.relative` capture (python-imports.scm) tags the whole
-  `relative_import` node, and `Mode::ImportTarget::relativeLevel` (Mode.h)
-  carries the dot count for `BufferView::OpenDetectedLink` to ascend that
-  many-minus-one parent directories from the importing file before
-  resolving the (already dot-stripped) remainder. PHP namespace `use`
-  resolves via a real PSR-4 lookup (`Editor/Php.h`'s `ResolvePsr4Namespace`,
-  longest-prefix-wins against `composer.json`'s `autoload`/`autoload-dev`
-  `psr-4` map) -- a dedicated resolution path, not a `ResolveFileLink`
-  widening, since PSR-4 is a prefix-rewrite, not a directory search. JS/TS
-  dynamic `import(...)` resolves (`call_expression` with a dedicated
-  `(import)` function-node, distinct from `require(...)`'s ordinary
-  identifier callee -- no `#eq?` predicate needed). node_modules
-  `package.json` "main"/"exports" resolution
-  (`NodeModules.h`'s `ResolvePackageEntryPoint`, tried in `Link.cpp`'s
-  `TryVariants` before the bare `index.<ext>` guess; "exports" conditions
-  tried in `import`/`node`/`default`/`require` order, bounded two levels
-  deep, not a spec-exhaustive resolver). Rust's own bodyless `mod foo;`
-  file-per-module declaration also resolves now (part of the Rust bundling
-  below, not this bullet's own scope) -- see that entry for why a real
-  `use` path is deliberately left to rust-analyzer instead. Still open:
-  LSP-first resolution (`textDocument/documentLink`, e.g. clangd's own
-  `#include` support) would need new request/response plumbing and an
-  async-aware call site -- `OpenLinkAtPoint` is synchronous today, and every
-  other async LSP feature in this codebase (`RequestDefinition`,
-  `RequestCodeActions`, `RequestCodeLenses`) already establishes the
-  fire-request/generation-guarded-callback idiom this would need to adopt,
-  so this is a restructuring, not a new architecture.
-- **Rust bundled language support** (raised 2026-09-04 alongside the
-  resolver-gaps item above, ahead of the user installing rust-analyzer)
-  shipped: `tree-sitter/tree-sitter-rust` (the tree-sitter org's own official
-  grammar, `CMakeLists.txt`'s `ned_add_treesitter_grammar`), `RustMode()`
-  registered for `.rs`. `queries/highlights.scm` and `queries/tags.scm` are
-  the grammar's own real files, consumed unmodified (no c-tags.scm/
-  cpp-tags.scm-style vendoring needed -- checked directly). `rust-folds.scm`/
-  `rust-imports.scm`/`rust-indents.scm`/`rust-tests.scm` are hand-written
-  locally, the same "no upstream convention to vendor" reasoning every other
-  bundled language's own fold/import/indent/test query already carries.
-  `rust-imports.scm` matches only a bodyless `mod foo;` declaration (real
-  file-per-module resolution) -- a `use` path is deliberately unmatched, left
-  to rust-analyzer's own `textDocument/definition` (semantic crate-tree
-  knowledge a syntax-only query can't reconstruct: which file declared which
-  `mod`, `pub use` re-exports, external-crate dependencies in Cargo's own
-  registry). `mod_item::isModDeclaration` (Mode.h) signals
-  `BufferView::OpenDetectedLink` to prepend the importing file's own stem as
-  a subdirectory before resolving (Rust's own "a submodule lives one level
-  below any file except a crate root/mod.rs" rule) -- `main`/`lib`/`mod` are
-  the three file names exempted from that adjustment. `rust-tests.scm`
-  matches `#[test]`/`#[<framework>::test]` (tokio, async_std, ...) via
-  sibling-adjacency to a `function_item` (Rust's attribute_item is an
-  ordinary preceding statement, not a field the way PHP's own attributed
-  method_declaration is), covering up to one other attribute stacked between
-  the marker and the function in either order -- two or more stacked
-  attributes between them is a real, narrower v1 cut. LSP (`rust-analyzer`),
-  DAP (`lldb-dap`/`codelldb`), and test running (`TestOutputParser.h`'s
-  existing `"cargo"` format) needed zero new code -- `Cargo.toml` is Rust's
-  own `LspRootMarkers` entry, everything else is user-facing `ned/set-*`
-  config, this project's standing "nothing bundled/auto-detected for
-  external tools" policy. Found and fixed along the way: tree-sitter-rust's
-  own upstream `tags.scm` double-tags a method inside an `impl`/`trait`/`mod`
-  body as both `@definition.function` (unconditional) and
-  `@definition.method` (an ancestor-gated pattern on the *same* node, not a
-  different one) -- `Mode.cpp`'s `symbolKind` closure only collapsed
-  *nested*-range duplicates before this (cpp-tags.scm's own bodyless-
-  prototype case), never an *exact*-range pair, so every Rust method was
-  showing up twice in the gutter/sticky-scroll; now collapsed first via an
-  exact dedup pass ahead of the existing nested-range one.
-- [ ] **Sync outgoing payload size, remainder** (sync-debounce follow-up: a real,
-      gdb-confirmed live freeze — the main thread blocked inside `ChildProcess::
-      WriteAll`, stuck writing a full-document `textDocument/didChange` to a server
-      whose stdin pipe couldn't drain fast enough, because `SyncBuffer` sent one
-      full-document sync per keystroke with no debounce at all — fixed by debouncing
-      the actual send, `LspSyncDebounceMs()`, default 150ms, shorter than every other
-      LSP debounce so it lands before they fire their own requests. Incremental sync
-      — `TextDocumentSyncKind.Incremental`, sending only the changed span instead of
-      the whole document — shipped as the complementary follow-up: `LspContent.h`'s
-      `ExtractTextDocumentSyncKind` parses the server's advertised
-      `textDocumentSync.change` capability, `LspManager::SyncTextToServer` diffs
-      `BufferSyncState::lastSyncedText` against the new content via a common-prefix/
-      common-suffix walk and sends a ranged `contentChanges[0]` for an
-      Incremental-capable server, falling back to the original full-document form
-      otherwise — a server that never advertises a sync kind defaults to Full, not
-      the spec's technical None, to keep every already-working server's behavior
-      unchanged) — one follow-up deliberately left out of both fixes:
-      - **`ProtocolStallTimeoutMs()`'s 30s default** (`Transport.h`) is shared by both
-        the write side and the read side (where a genuinely slow response — a large
-        workspace-wide rename, say — legitimately needs tolerance). Superseded as a
-        main-thread-freeze concern by the async write queue below (a stalled write no
-        longer blocks the main thread at all, regardless of this value), but splitting
-        it into separate write/read timeouts would still be a reasonable defense-in-
-        depth hardening on top — a healthy server should never take long just to
-        *accept* a notification.
+        anything that exists today — worth scoping only if plain shelled-out
+        `adb`/`gradlew` tasks prove too manual in practice, not speculatively.
+
+- [ ] **Go bundled language support** (audit finding, 2026-09-06 — Go has no bundled
+      mode at all today, unlike every other mainstream language now covered. The only
+      existing Go awareness in the tree is `TestOutputParser.h`'s `"go-json"` output
+      parser, which works fine with no mode behind it). Same checklist Rust's own
+      bundled support just proved out (`git log --grep=rust-bundled-language`):
+      `tree-sitter/tree-sitter-go` (the tree-sitter org's own grammar) via
+      `ned_add_treesitter_grammar`, a one-line `GoMode()` factory, and
+      `go-tags.scm`/`go-folds.scm`/`go-imports.scm`/`go-indents.scm`/`go-tests.scm`
+      (check which of the grammar's own `queries/*.scm` are directly reusable the way
+      Rust's `highlights.scm`/`tags.scm` were, vs. needing a hand-written local query the
+      way Rust's fold/import/indent/test queries did — and re-check for the same
+      exact-range tag-duplication bug that surfaced in `tree-sitter-rust`'s own
+      `tags.scm`, since it's plausible other grammars share the same upstream pattern).
+      `gopls` via `ned/set-lsp-command` plus a `go.mod` entry in `LspRootMarkers`;
+      `dlv dap` for DAP. Test running needs zero new parser work — `TestOutputParser.h`'s
+      `"go-json"` format already exists, just wire `ned/set-test-command` to
+      `go test -json ./...`. Once a real mode exists, Go's basename-only `file:line`
+      resolution gap (Editor Ergonomics' test-runner-gaps item, below) is worth
+      revisiting too.
+
+- [ ] Go-to-file-at-point resolver: LSP-first resolution (`textDocument/documentLink`,
+      e.g. clangd's own `#include` support) — the one item left open from the
+      resolver-gaps sweep (Python relative imports, PHP PSR-4, JS/TS dynamic
+      `import()`, node_modules `package.json` resolution, and Rust's `mod` declarations
+      all closed, see `git log --grep=resolver-gaps`). Needs new request/response
+      plumbing and an async-aware call site — `OpenLinkAtPoint` is synchronous today,
+      and every other async LSP feature (`RequestDefinition`, `RequestCodeActions`,
+      `RequestCodeLenses`) already establishes the fire-request/generation-guarded-
+      callback idiom this would need to adopt, so this is a restructuring, not a new
+      architecture.
+
+- [ ] **LSP write/read protocol-stall timeout split** (`Transport.h`'s
+      `ProtocolStallTimeoutMs()`, currently one 30s value shared by both directions) — a
+      stalled *write* no longer blocks the main thread at all now that writes go through
+      an async queue (`git log --grep=async-write-queue`), but splitting read vs. write
+      timeouts would still be reasonable defense-in-depth: a healthy server should never
+      take long just to *accept* a notification, even if a slow read (a large
+      workspace-wide rename) legitimately needs more tolerance.
+
 - [ ] Whether Markdown fenced code blocks / Org `#+BEGIN_SRC` blocks should get the same
       real-LSP-sync treatment HTML `<script>`/`<style>` embedded documents already have
       is an open question — spawning a live language server per code fence in an
       ordinary notes file could be noisy for illustrative/incomplete snippets.
-- `semanticTokens/range` and `full/delta` requests closed — see
-  `git log --grep=semantic-tokens-range-and-delta`. `RequestSemanticTokens` (renamed
-  from `RequestSemanticTokensFull`, now viewport-parameterized like `RequestInlayHints`)
-  picks among three requests per what the server's `semanticTokensProvider` legend
-  advertises (`SemanticTokensLegend::rangeSupported`/`fullDeltaSupported`, parsed
-  alongside `legend` in `LspContent.h`'s `ExtractSemanticTokensLegend`) and has proven
-  it doesn't honor (`semanticTokensRangeUnsupported_`/`semanticTokensFullDeltaUnsupported_`,
-  the same learned-once latch `inlayHintsUnsupported_` already established): `range`
-  scoped to the visible viewport (preferred whenever available -- `SemanticTokenSpans`
-  covers just the last-requested viewport under this mode, the same tradeoff
-  `RequestInlayHints`'s own spans already accept), `full/delta` with a cached
-  `previousResultId` once a baseline exists (`previousSemanticTokens_`, edits applied via
-  `ApplySemanticTokensDeltaEdits`'s reverse-order splice), falling back to the original
-  whole-document `full` otherwise. Investigated first: "huge-buffer windowing" turned out
-  to be moot as originally framed -- a huge buffer never reaches this code at all
-  (`LspManager::SyncBuffer` gates on `Buffer::Content().IsHuge()` and skips LSP sync
-  entirely), so range requests are scoped to *every* buffer's viewport instead, not
-  conditioned on size.
-- LSP edit-application gaps (`documentChanges` file create/rename/delete resource ops,
-  server-pushed `workspace/applyEdit`) closed 2026-09-02 — see `git log --grep=edit-application-gaps`.
-- `rename-project-path`/`workspace/willRenameFiles`+`didRenameFiles` closed
-  2026-09-03 — see `git log --grep=rename-file-notifications`.
-- `prepareRename`/`linkedEditingRange` closed 2026-09-03 — see
-  `git log --grep=prepare-rename-and-linked-editing`. `lsp-rename` sends
-  `textDocument/prepareRename` first (prefilling the "New name:" prompt from the
-  symbol's own text/placeholder, or skipping the prompt outright on a real "not
-  renameable here" answer); `lsp-linked-editing-range` (`C-c l r`) starts a live
-  mirror-editing session across every range the server reports as linked (an HTML/
-  JSX element's matching tag name), built on `Editor/LinkedEditingSession.h` reusing
-  `Buffer::SnippetRange` as its storage the same way `Editor/Snippet.h` does --
-  mutually exclusive with a real snippet session since both share that storage.
-  `linkedEditingRange` is entered explicitly rather than automatically on cursor
-  move (unlike `DocumentHighlight`'s passive highlighting, this is live Buffer
-  mutation) -- see that class's own header comment for the reasoning.
-- [ ] **LSP multi-root, remainder** — the per-buffer-resolved-root half (a monorepo
-      subpackage's own `package.json`/`pyproject.toml`/`Cargo.toml`/
-      `compile_commands.json`/... earning its own server connection distinct from the
-      outer repo's single `ProjectRoot()`, via `Editor/Lsp/LspRootResolver.h` +
-      `LspManager`'s `ConnectionKey`) shipped. Still open: a server that itself supports
-      the LSP `workspaceFolders` protocol (one process, multiple folders) is never used
-      that way — this client always spawns a separate process per resolved root instead,
-      consistent with `LspManager`'s existing "one connection per key" design, but a
-      genuinely heavier footprint for a server that would rather multiplex folders
-      itself. Also: five connection-scoped caches (`semanticTokensLegend_`,
-      `onTypeFormattingTriggers_`, `pullDiagnosticsUnsupported_`,
-      `inlayHintsUnsupported_`, `codeLensUnsupported_`, `activeProgress_`, and the
-      `failedCommands_`/`disconnected*` status-latch group) stay keyed by the plain
-      language string rather than the per-root connection identity — two
-      *simultaneously running* servers for the same language against two different
-      roots can shadow each other's legend/status/progress-label; every actual request
-      still routes to the correct per-root connection regardless (see `LspManager.h`'s
-      own header comment).
-- `ListPopup` mouse support, remainder, closed 2026-09-05 — the shared M-x/
-  find-file/open-project-path/find-scratch/find-recent-file/switch-to-buffer/
-  switch-project/vcs-switch-branch/bookmark-jump/select-theme/lsp-goto-symbol/
-  lsp-workspace-symbol/lsp-code-action-select candidate popup (`candidatePopup`
-  in `main.cpp`) now has click support, via a new `BufferView::
-  ActivateCandidatePopupAt`/`WindowManager::ActivateCandidatePopupAt` pair
-  (`AcceptActiveCompletionAt`/`ActivateCompletionAt`'s own shape). Dispatches
-  on `inputMode_` since, unlike `ActiveCompletion`, there's no single shared
-  state struct behind this popup — each fuzzy-ranked session recomputes its
-  own ranked/candidate list (cheap, and deterministic between a popup render
-  and a click landing on one of its rows) and re-dispatches a synthetic Enter
-  through its own existing `Handle*Key`, rather than duplicating that
-  method's commit logic; `lsp-code-action-select`'s plain numbered list
-  (no window/divider rows) resolves a clicked row directly. A raw `ListPopup`
-  row index can land on a synthetic "N more above/below" divider row
-  (`BuildFuzzyCandidatePopupModel`'s own windowing) — `ResolveFuzzyCandidateRowIndex`
-  reproduces that same window (factored out as `ComputeCandidatePopupWindow`)
-  to map a clicked row back to a real candidate index, or `nullopt` for a
-  divider row/stale click. `find-file`/`open-project-path`/`find-scratch` are
-  the one exception: like Tab, a click fills the prompt from the candidate
-  without submitting, since Enter finalizes on literal prompt text for those.
-  `lsp-goto-definition-select` turned out not to render into this popup at
-  all (echo-area status text only, unlike `lsp-code-action-select`) — this
-  item's own original framing listed it in error; left out rather than
-  converting its rendering as an unrelated scope add. Live-verified over a
-  real pty: a real SGR mouse click on an M-x popup row (index 1, not the
-  arrow-highlighted index 0) invoked that exact command end-to-end through
-  the real `OverlayHost`/`ListPopup` mouse pipeline. which-key's own popup
-  stays intentionally mouse-free (read-only hint, no row is a sensible click
-  target). Still out of scope: hover-highlight-on-mouse-move (bare motion
-  events reaching `ListPopup::OnEvent` isn't confirmed for this terminal
-  backend) and wheel-scroll (a driving session's `rows` is already a
-  pre-truncated window — scrolling it is session-level, not something
-  `ListPopup` itself does).
+
+- [ ] **LSP multi-root, remainder** (per-buffer root resolution itself shipped, see
+      `git log --grep=lsp-multiroot`) — a server that itself supports the LSP
+      `workspaceFolders` protocol (one process, multiple folders) is never used that
+      way; this client always spawns a separate process per resolved root instead. Also,
+      several connection-scoped caches (`semanticTokensLegend_`,
+      `onTypeFormattingTriggers_`, `pullDiagnosticsUnsupported_`, `inlayHintsUnsupported_`,
+      `codeLensUnsupported_`, `activeProgress_`, the `failedCommands_`/`disconnected*`
+      status-latch group) stay keyed by the plain language string rather than the
+      per-root connection identity — two *simultaneously running* servers for the same
+      language against two different roots can shadow each other's legend/status/
+      progress-label (every actual request still routes to the correct per-root
+      connection regardless).
+
+- [ ] **Candidate-popup hover-highlight and wheel-scroll** (click-to-activate shipped
+      for every fuzzy candidate popup and `lsp-code-action-select`, see
+      `git log --grep=listpopup-mouse`) — hover-highlight-on-mouse-move is blocked on
+      the same open question Mouse Ergonomics' hover-tooltips item names below (bare
+      motion events with no button held aren't confirmed to reach a widget's `OnEvent`
+      on this Notcurses backend); wheel-scroll is session-level, not something
+      `ListPopup` itself does, since a driving session's `rows` is already a
+      pre-truncated window.
 
 ### Mouse Ergonomics
 
-Raised 2026-09-04. Design stance going in: over SSH/tmux/a bare terminal, mouse
-support is genuinely unreliable (no capture semantics, no motion events confirmed
-on this backend, TUI subprocesses inside `TerminalPanel` don't receive forwarded
-clicks at all — see that widget's own open items) — so the mouse must never be the
-*only* path to a control, every mouse action needs a keyboard equivalent that
-already exists or gets added alongside it. That said, "unreliable as the sole
-path" doesn't mean "not worth it" — a lot of genuinely mouse-native, context-rich
-interactions (a right-click menu scoped to exactly what's under the cursor) are
-faster than keyboarding to a location and running a named command, even for a
-keyboard-first user. Treat mouse work as an accelerant layered on top of existing
+Design stance: over SSH/tmux/a bare terminal, mouse support is genuinely unreliable (no
+capture semantics, no bare-hover-motion confirmed on this backend, TUI subprocesses
+inside `TerminalPanel` don't receive forwarded clicks at all) — so the mouse must never
+be the *only* path to a control; every mouse action needs a keyboard equivalent that
+already exists or gets added alongside it. That said, "unreliable as the sole path"
+doesn't mean "not worth it" — a right-click menu scoped to exactly what's under the
+cursor is often faster than keyboarding to a location and running a named command, even
+for a keyboard-first user. Treat mouse work as an accelerant layered on existing
 commands, never a replacement for them.
 
-- **Right-click context menus (BufferView v1)** shipped — content-area
-      (cut/copy/paste, go-to-definition/references/rename, code actions,
-      format-buffer) and gutter (toggle fold/breakpoint, blame) menus, a `ListPopup`
-      anchored at the click point via `OverlayHost`'s placement-fn mechanism, driven
-      by a new `BufferView::InputMode::ContextMenu`/`HandleContextMenuKey` the same
-      numbered-list/BufferView-keeps-focus shape `LspCodeActionSelect`/
-      `HandleCodeActionSelectKey` already established — every row just invokes an
-      already-registered `CommandRegistry` command, no new editing functionality.
-      Point moves to the click (or the clicked line, in the gutter) before the menu
-      opens; the content-area menu deliberately leaves an existing mark/selection
-      untouched (unlike a plain left-click's `ClearMark()`) so Cut/Copy from the menu
-      can act on it. The stale `BufferView.h` comment claiming "no floating/popup
-      widget concept" (near `HandleExecuteCommandKey`) is fixed. Context-aware
-      follow-up: the purely-LSP content-area rows (go-to-definition/rename — no
-      non-LSP fallback exists for either, unlike project-find-references' RE2 scan
-      or format-buffer's separate `FormatCommand()`) are hidden unless this buffer
-      actually has a connection for its own primary language, checked via
-      `LspManager::ActiveServerKeysForBuffer` containing `editor::LanguageKeyForMode(mode_)`
-      (the same signal `ModeLine`'s own status glyph already uses; `PrimarySyncState`
-      itself is `LspManager`-private). Context-aware follow-up round 2: the old
-      standalone "Code Actions..." row is gone — when connected,
-      `RequestContextMenuCodeActions` fires the same `textDocument/codeAction`
-      request `RequestCodeActionsAtPoint` does (diagnostic-at-point range/
-      server-routing reused verbatim) right after the static rows already show, and
-      splices real quick-fix titles in above a plain rule-text divider row once the
-      async response lands (own staleness guard: generation + still-`ContextMenu`
-      + buffer/point unchanged; zero actions leaves the menu exactly as it already
-      is). `BufferView::ContextMenuEntry` replaced the old plain command-name list
-      to carry the three real row kinds (named command / live `CodeAction`, applied
-      via `ResolveAndApplyCodeAction` / non-interactive divider) — Up/Down and
-      digit-select both skip the divider (`NextContextMenuIndex`/
-      `ContextMenuIndexForDigit`), and activation (`RunContextMenuEntry`, shared by
-      the keyboard and mouse-click paths) branches on which kind an entry carries.
-      Live-verified against a real running `clangd`: right-clicking a missing-`;`
-      diagnostic shows "1) insert ';'" above the divider, and choosing it applies
-      the real fix. Deliberately BufferView-only — see the follow-up below for the
-      remaining surfaces, each of which needs genuinely new capabilities first, not
-      just menu wiring.
-- TabBar's own right-click menu (Close/Close Others/Close to the Right/Reveal
-  in Sidebar) shipped 2026-09-04 -- `BufferView::CloseOtherTabs`/
-  `CloseTabsToTheRight` (never prompt: a modified, non-read-only buffer in the
-  target set is just left open and the outcome reported via statusMessage_,
-  rather than queuing N sequential y/n confirmations through
-  `RequestCloseBuffer`'s single `pendingClose_` slot) plus `WindowManager`'s
-  own same-shape routing to whichever pane is focused. `TabBar::
-  SetOnContextMenuRequest` reports the right-clicked buffer without switching
-  to it (unlike a left click) so bulk-closing background tabs doesn't disturb
-  the current view. The popup itself runs in `ListPopup`'s focusable mode
-  (`DapThreadsPanel`/hierarchyTreeView's own precedent), not BufferView's
-  non-focusable/keeps-focus contextMenu shape, since TabBar takes no keyboard
-  focus at all to drive one. Live-verified over a real pty: a real bug caught
-  this way and fixed before shipping -- the activate handler ran the chosen
-  action *before* calling `WindowManager::TakeFocus()`, so `FocusedPane()`
-  inside CloseOtherTabs/CloseTabsToTheRight/RequestCloseBuffer saw no pane
-  focused at all (the popup itself still held it) and every action silently
-  no-opped; unit tests alone didn't catch this since they call `BufferView::
-  CloseOtherTabs` directly, bypassing WindowManager's focused-pane lookup
-  entirely.
-- **ProjectSidebar's own right-click menu** shipped 2026-09-04 --
-  `ProjectSidebar::SetOnContextMenuRequest` (TabBar's own shape: reports the
-  right-clicked entry's path/isDirectory plus the click's absolute position,
-  never toggles/opens it itself) drives New File.../New Folder... (scoped to
-  the right-clicked directory, or its parent for a file row)/Rename.../Delete,
-  each now a `BufferView::StartCreateFileAt`/`StartCreateDirectoryAt`/
-  `StartRenameFileAt`/`StartDeleteFileAt` entry point that prefills/skips
-  straight to the stage a blind `C-c C-d`/`C-c C-n`/`C-c C-k` keybinding would
-  otherwise make the user type out by hand, plus two wholly new capabilities:
-  Reveal in Terminal (starts/shows the embedded terminal panel, then types a
-  `cd` into its live shell via a new `TerminalPanel::SendText`, reusing
-  `TerminalTabLauncher.h`'s own `ShellQuoteSingle` -- exposed from its prior
-  file-local scope -- for the same "typing a path into a real shell prompt"
-  escaping problem) and Copy Path (`editor::CopyToSystemClipboard` directly,
-  no BufferView involvement). Same focusable-`ListPopup`/parallel-action-
-  vector shape TabBar's own menu uses, for the same reason. Live-verified
-  over a real pty (right-click on both a file row and a directory row, the
-  Rename prompt's prefill, and Reveal in Terminal's typed `cd`).
-- **VcsPanel's own right-click menu** shipped 2026-09-04 -- scoped to
-  whole-file/stash operations only (hunk-level stage/unstage/revert stays
-  point-based, unaddressed by this entry -- see below). `VcsPanel::
-  SetOnContextMenuRequest` reports a `VcsPanelContextMenuTarget` (an Entry's
-  path/isDirectory/section/conflicted, or a StashEntry's ref/message) plus
-  the click's absolute screen position -- TabBar/ProjectSidebar's own
-  "report the target, let main.cpp build the popup" shape, since this
-  widget has no OverlayHost/ListPopup access of its own; a SectionHeader
-  row is excluded, same as ProjectSidebar's own chrome-row exclusion. Three
-  existing single-path/single-ref entry points already had the right shape
-  and are exposed directly rather than duplicated: `OpenFileEntry`/
-  `PopStash`/`DropStash`. Two more are new re-scopings of what was
-  previously only reachable via the focused row or `selected_`:
-  `RequestStageOrUnstage(path, stage)` factors `StageOrUnstageSelectionOrFocused`'s
-  per-target loop into a shared `StagePaths` helper; `RequestDiscardConfirm(path)`
-  sets the same `pendingRevertConfirm_` y/n state `'x'` does, with the caller
-  (main.cpp) giving this widget keyboard focus first via `TakeKeyboardFocus()`
-  so the confirm keystroke has somewhere to land -- the same hand-off
-  `BufferView::StartDeleteFileAt`'s own context-menu entry point relies on,
-  just re-targeted at this widget instead of a pane. Menu contents: a file
-  row gets Open + (Stage or Unstage, by section) + Discard Changes... (staged/
-  unstaged only, not untracked -- nothing to revert to) + Reveal in Terminal +
-  Copy Path; a directory row gets Reveal in Terminal + Copy Path only, matching
-  the keyboard path's own directory exclusion from stage/unstage/discard; a
-  stash row gets Pop Stash + Drop Stash. Live-verified over a real pty against
-  a real git repo: right-click Stage/Unstage, the Discard Changes... y/n
-  confirm actually reverting a file, Pop Stash/Drop Stash on a real stash
-  entry, and Reveal in Terminal typing a real `cd`.
+Right-click context menus for `BufferView` (content + gutter), `TabBar`, `ProjectSidebar`,
+and `VcsPanel` (whole-file/stash scope) are all shipped — see `git log --grep=context-menu`
+for the sweep. So are double/triple-click word/line select, gutter click (fold/breakpoint
+toggle), middle-click paste (Wayland primary-selection), and click-drag selection in the
+terminal-panel scrollback.
+
+- [ ] **Hunk-level stage/unstage/revert via `VcsPanel`'s right-click menu** — the
+      shipped context menu covers whole-file/stash operations only; hunk-level ops stay
+      keyboard/point-based.
 - [ ] **Drag-and-drop from `ProjectSidebar` into a pane** to open a file there
       (dragging already exists for tab reorder, sidebar resize, scrollbar/minimap
       thumb, terminal-panel scrollback selection — this would be a new drag *source*
       distinct from all of those, not a new mechanism).
 - [ ] **Hover tooltips** (mouse hover, not click, triggering `lsp-hover`'s content) —
-      blocked on the same open question `ListPopup` mouse-support's own remainder
-      item already flagged: bare motion events (no button held) reaching a widget's
-      `OnEvent` aren't confirmed to arrive at all on this Notcurses backend. Needs a
-      small probe before this is even known feasible, not just a wiring task.
-- [ ] Double/triple-click word/line select, gutter click (fold/breakpoint toggle),
-      middle-click paste (X11/Wayland primary-selection convention), and click-drag
-      selection in the terminal-panel scrollback are already shipped — listed here
-      only so this section isn't mistaken for a from-scratch mouse-support effort.
+      blocked on whether bare motion events (no button held) reach a widget's `OnEvent`
+      at all on this Notcurses backend. Needs a small probe before this is even known
+      feasible, not just a wiring task.
+
+### Window Layout
+
+- [ ] **Drag-resize of window splits** — `WindowNode` splits are fixed 50/50 only today
+      (`WindowManager.h`'s own documented simplification); no way to drag a split's
+      divider, unlike every panel's own divider (`ProjectSidebar`/`VcsPanel`/`AcpPanel`/
+      `PanelDock` all support drag-resize).
 
 ### Navigation & Search
 
-- Full-commit diff view (browsing one commit's whole diff from `*vcs log*`) closed
-  2026-09-04 — see `git log --grep=full-commit-diff-view`. `VcsProvider::CommitDiffArgv(root,
-  commitHash)` (git: `git show --no-color <hash>`) is `WorkingDiffArgv`'s single-commit
-  sibling — same no-parse-half, raw-stdout-through-`ParseDiffHunks` shape (a commit's
-  message header before the real diff is silently skipped, the same way `ParseDiffHunks`
-  already ignores anything before the first "diff --git"/"@@ " line). `VisitResultUnderPoint`
-  special-cases a `*vcs log <name>*` buffer's line (no per-line source location the
-  generic "path:line:" regex expects) by parsing its own leading hash token and routing to
-  the new `RequestVcsCommitDiffBuffer`, sharing `RequestVcsFullDiffBuffer`'s own
-  hunks-to-multibuffer tail (factored out as `BuildDiffHunksMultibuffer`) into a
-  "*vcs commit <hash>*" buffer — so both `vcs-visit-result` (`C-c v v`) and plain Enter on
-  a read-only `*vcs log*` line (already routed there) now show that commit's real diff
-  instead of silently no-opping.
-- Auto-collapse-on-build (the no-result-cap/warning gap above) closed 2026-09-04 —
-  see `git log --grep=auto-collapse-on-build`. Rather than warning on a huge result set,
-  `BuildMultibuffer` (Editor/Multibuffer.h) now collapses an excerpt by default —
-  `text::Buffer::FoldMarker::Collapsed` at its own header line, the same primitive
-  `CodeFold.h`/Org build on — when its own body passes
-  `MultibufferAutoCollapseLineThreshold()`/`...ByteThreshold()` (a single huge/minified
-  hunk, either line count or byte length) or its ordinal passes
-  `MultibufferAutoCollapseExcerptCap()` (default 100 — a plain-large result set, e.g.
-  `project-find-references` on a very common identifier); all three configurable via
-  `ned/set-multibuffer-auto-collapse-*` (Editor/MultibufferFoldSettings.h). One policy
-  applied centrally, so every `BuildMultibuffer` caller (full-diff, commit-diff,
-  references, diagnostics, agenda, clock-report) gets it for free. `FoldableExcerptBlocks`
-  derives `codefold::FoldedLineRanges`/`ToggleFoldAtLine`'s own "blocks" shape from the
-  excerpt spans directly (no tree-sitter/Mode involved) — `code-fold-toggle` now checks
-  `MultibufferIndexFor` first so the same command expands/collapses one excerpt at point;
-  the new generic `unfold-all` command (not tied to multibuffers specifically — clears
-  every `FoldMarker` in the current buffer, code folds and Org subtrees included) is the
-  "expand everything, I need to review every change" escape hatch. Separately, a binary
-  file in a diff already produced zero hunks from `ParseDiffHunks` with no code change
-  needed (git's own "Binary files ... differ" line has no `@@` hunk to find) — the new
-  `CountBinaryFileDiffs` (Vcs/DiffPatch.h) just lets `BuildDiffHunksMultibuffer` say so
-  ("N binary file(s) not shown") instead of leaving the omission unexplained.
-- [ ] **Multibuffer gaps, remainder**: `project-find-references`' RE2 text-scan fallback
-      path (no LSP server running for the buffer) and the real `textDocument/references`
-      path both still build one excerpt per match with no upper bound on total work done
-      (only display now degrades gracefully via auto-collapse above, not the search
-      itself). `VisitResultUnderPoint`'s jump-to-source stays line-granularity even though
-      `Buffer::ExcerptRange` already carries the exact source byte range that would let it
-      preserve the intra-line column.
+Full-commit diff view (`*vcs log*` → a commit's whole diff) and multibuffer
+auto-collapse-on-build (large excerpt/result sets fold by default, configurable via
+`ned/set-multibuffer-auto-collapse-*`) are shipped — see
+`git log --grep=full-commit-diff-view`/`--grep=auto-collapse-on-build`.
+
+- [ ] **Multibuffer gaps, remainder**: `project-find-references`' RE2 text-scan
+      fallback path (no LSP server running for the buffer) and the real
+      `textDocument/references` path both still build one excerpt per match with no
+      upper bound on total work done — auto-collapse only degrades *display*
+      gracefully, not the search itself. `VisitResultUnderPoint`'s jump-to-source also
+      stays line-granularity even though `Buffer::ExcerptRange` already carries the
+      exact source byte range that would let it preserve the intra-line column.
 - [ ] A real visual side-by-side 3-way merge/diff view. `AutoMerge` auto-resolves the
       common case and drops real `<<<<<<<`/`=======`/`>>>>>>>` conflict markers into the
       buffer for a genuine divergence, but a real conflict is still hand-edited text,
-      not a visual diff.
+      not a visual diff — see "Merge Conflict Resolution Mode" below, which scopes a
+      chord/mouse-driven *resolution* workflow over these same markers without needing
+      this visual diff first.
 - [ ] Native Vim-mode `]c`/`[c` binding (gitsigns' own convention) for
       `vcs-next-hunk`/`vcs-previous-hunk` — the global `C-c v N`/`P` binding already
       works under Vim mode via the shared keymap-stack fallthrough, so this is polish,
@@ -457,141 +217,67 @@ commands, never a replacement for them.
 
 ### Editor Ergonomics
 
-- Scrollback search/selection/copy closed 2026-09-04 — see
-  `git log --grep=terminal-panel-scrollback-search-and-selection`. A new `[/]`
-  title-row button (not a reserved Ctrl chord: this codebase's own KeyChord
-  model doesn't track Shift on a plain codepoint at all, so Ctrl+Shift+F is
-  indistinguishable from Ctrl+F here, and every unshifted Ctrl+letter is
-  plausibly claimed by the shell's own readline bindings) starts an
-  Emacs-isearch-style session over the combined scrollback+live-screen text
-  (`Editor/LineListSearch.h`, `DebugConsolePanel`'s own precedent) — fully
-  modal while active, so C-s/C-r/Enter/Escape are safe to reuse without
-  colliding with the shell. Click-drag over a content row selects text
-  (real-terminal convention) and copies it via `editor::CopyToSystemClipboard`
-  on release; multi-line selections join in reading order
-  (first-line-tail/middle-lines/last-line-head), trimming each row's
-  padding blanks. Still open: drag-resize of the drawer height (needs overlay
-  mouse-capture semantics; height is Janet-configurable instead via
-  `ned/set-terminal-height-percent`), no multiple terminals/tabs, no
-  terminal-side mouse forwarding to the shell (clicks focus the panel, wheel
-  scrolls the ring — TUI apps inside don't receive mouse events), no OSC
-  52/title integration.
-- Vim-mode gaps closed 2026-09-03 (see `git log --grep=jumplist-ring`,
-  `--grep=changelist-ring`, `--grep=dot-repeat-count-override`, `--grep=vim-global-marks`,
-  `--grep=vim-magic-translation`, `--grep=vim-macro-register`): the `C-o`/`C-i` jumplist
-  ring; the `g;`/`g,` changelist ring; dot-repeat count override; real cross-file `A`-`Z`
-  marks (`Editor/Vim/VimGlobalMarks.h`) plus a fixed latent bug where `marks_`/
-  `jumpList_`/`changeList_` (pane-scoped engine state) leaked stale byte offsets across a
-  buffer switch; `/`/`:s`/`:g` translate vim's own default "magic" escaping to PCRE2
-  (`Editor/Vim/VimMagic.h`, both the pattern and the `:s` replacement-backreference
-  halves); macros are real, editable register text (`VimRegisters::SetRaw`, spelled in
-  this codebase's own Emacs kbd notation rather than vim's own `<key>` bracket notation --
-  a deliberate reuse of existing infrastructure). Audited and left as-is: Insert-mode
-  `C-o`'s one-shot dot-repeat/register bookkeeping not being "unified" with the
-  interrupted session — real vim's own documented behavior for the specific edge case
-  (a one-shot command that itself opens a new mode, e.g. `C-o A`) is "stay in the new
-  mode, don't resume Insert," which is exactly what this codebase's existing defensive
-  `oneShotNormalPending_` clear already does.
-- Attach mode, hit-count/`hitCondition` breakpoints, function breakpoints, exception
-  breakpoints (`setExceptionBreakpoints`, filters seeded from the adapter's advertised
-  defaults), and `terminateDebuggee` now distinguishing attach (false) from launch (true)
-  closed 2026-09-03 — see `git log --grep=dap-round-3`. Data breakpoints stayed out
-  (tied to a live variable rather than a source line, no natural entry point yet).
-- `restartFrame` (dap-restart-frame, a `[frame:N]` marker on *debug* buffer stack lines,
-  `ShowDebugInfo`'s own convention), breakpoint-line remapping (the gutter glyph now
-  follows the adapter's snapped `actualLine` when it differs from the requested one --
-  editing operations still address the requested line), and the debug console's
-  scrollback (`TerminalPanel`'s own `scrollbackOffset_` mechanism) + input history-recall
-  (M-p/M-n over the same `Editor/PromptHistory.h` ring `BufferView`'s prompts use) closed
-  2026-09-03 — see `git log --grep=dap-round-4`.
-- Cross-restart persistence of breakpoint conditions/logMessage/hitCondition and watch
-  expressions closed 2026-09-03 (session-persistence round 2) — `DapManager::
-  PersistedBreakpoint`/`RestoreWatches`, `ProjectSessionData::BreakpointState`/`watches`;
-  session files from before this change (bare-line-number breakpoints, no `watches` key)
-  still load, one malformed entry skipped rather than discarding the file. `verified`/
-  `actualLine` deliberately still don't round-trip (live-adapter-derived, meaningless
-  before a session reconnects) — see `git log --grep=session-persistence-round-2`.
-- Debug console history search (`Editor/LineListSearch.h`, `IncrementalSearch.h`'s
-  shape adapted to a plain line list instead of a `text::Buffer`) and disassembly/memory
-  view (`dap-show-disassembly`/`dap-show-memory-at-point`, DAP's own `disassemble`/
-  `readMemory` requests, a `[mem:<ref>]` fourth marker alongside `FormatDebugVariableLine`'s
-  `[ref:N]`/`[owner:M]`) closed 2026-09-03 — see `git log --grep=debug-console-search`,
-  `--grep=dap-round-5`.
-- [ ] **DAP gaps, remainder**: thread focus deliberately excluded even if this is
-      revisited -- a fresh session has entirely new thread IDs, nothing meaningful to
-      reattach it to. Data breakpoints (tied to a live variable rather than a source
-      line) also stay out -- no natural entry point yet, same reasoning as round 3's
-      own note above.
+Scrollback search/selection/copy, the Vim-mode gaps sweep (jumplist ring, changelist
+ring, dot-repeat count override, cross-file `A`-`Z` marks, magic-regex translation,
+macro registers), DAP rounds 3-5 (attach mode, hit-count/function/exception breakpoints,
+restart-frame, breakpoint-line remapping, debug-console history + scrollback,
+disassembly/memory view, cross-restart breakpoint/watch persistence), snippet
+variables/choices/transforms/macro-replay, and bundled default snippets are all
+shipped — see `git log --grep=<topic>` for each (`terminal-panel-scrollback`,
+`jumplist-ring`, `changelist-ring`, `dot-repeat-count-override`, `vim-global-marks`,
+`vim-magic-translation`, `vim-macro-register`, `dap-round-3` through `dap-round-5`,
+`session-persistence-round-2`, `snippet-expansion-gaps`, `bundled-snippets`).
+
+- [ ] **Multiple terminal tabs/instances in `TerminalPanel`** — one embedded shell at a
+      time today; `PanelDock`'s tab strip switches between *different panel types*
+      (Terminal/ACP/Debug Console), not between multiple concurrent shells.
+- [ ] **Terminal-side mouse forwarding** — clicks/wheel inside `TerminalPanel` are
+      consumed by the panel itself (focus, scrollback ring); a TUI subprocess running
+      inside it (e.g. `htop`, `vim`) never receives a forwarded mouse event.
+- [ ] **OSC 52/title integration inside the embedded terminal** — a program running
+      inside `TerminalPanel` that emits its own OSC 52 clipboard/title sequences isn't
+      relayed anywhere; unrelated to `Editor/Clipboard.h`'s own OSC 52 *write* path for
+      ned's own copy/paste commands, which already works.
+- [ ] **DAP gaps, remainder**: data breakpoints (tied to a live variable rather than a
+      source line) have no natural entry point yet. Thread-focus reattachment across a
+      session restart is deliberately excluded even if revisited — a fresh session has
+      entirely new thread IDs, nothing meaningful to reattach it to.
 - [ ] **No server/daemon mode** — no `emacsclient`-equivalent; one process per terminal,
       no way to keep a warm process (buffers, LSP connections, undo history) alive and
       attach a new terminal client to it.
-- [ ] **Test-runner gaps**: no gutter-click run-this-test; no Go/Rust test discovery (no
-      bundled modes — their output still parses); pytest needs `-v` or junit-xml for
-      per-test pass marks; Go's basename-only `file:line` can miss jump-to-source in
-      multi-directory modules.
-- `$TM_*`/CLIPBOARD/CURRENT_*/RANDOM*/UUID variables, `${1|a,b|}` choices (first
-  choice as placeholder text -- no picker UI yet, see `ListPopup` mouse-support's
-  own precedent above for why that's a separably-sized follow-up), `${1/regex/
-  format/flags}` tabstop *and* variable transforms (VSCode's `${n:/upcase}`-style
-  format mini-language, live-recomputed via `Editor/RegexPattern.h`'s PCRE2, not
-  TextMate's older `\U...\E`), and macro-replay continuation through a live
-  session (`Dispatcher::RecordChord` + `BufferView::HandleSnippetNavigationKey`,
-  factored out of `HandleSnippetKey` so `ReplayMacro` can drive Tab/S-Tab/ESC/
-  pristine-Backspace itself instead of stopping the instant `inputMode_` left
-  Normal -- fixed a related latent post-loop-touch-after-a-window-management-
-  command UAF in `ReplayMacro` along the way) closed 2026-09-04 -- see
-  `git log --grep=snippet-expansion-gaps`. Nested placeholders' inner stops are
-  a separate remaining gap, see below.
-
-- [ ] **Nested snippet placeholders' inner stops** (`${1:foo ${2:bar}}` keeps
-      only the literal text "foo bar", the inner `$2` tabstop is dropped).
-      Verified this is *not* reachable via the tree-sitter fold-depth machinery
-      (`CodeFold.h`) -- fold nesting works by storing one point and re-deriving
-      the fold's actual extent from a fresh AST parse whenever it's needed
-      (`FoldableBlocks`); a snippet body has no grammar/parser behind it to
-      re-derive anything from, so nothing there transfers. The real problem is
-      that field 2's range would need to sit properly *contained inside* field
-      1's range, and `Buffer::SnippetRange`'s relocation/gravity model
-      currently only understands "disjoint or adjacent" (its own doc comment:
-      "adjacent fields never overlap") -- true nesting is new relocation-
-      semantics work in `Text/Buffer.h`, not a parser gap. Not attempted.
-
-- **Bundled default snippets** shipped 2026-09-04 (`Editor/BundledSnippets.h`,
-  ~75 entries across c/cpp/python/javascript/typescript/tsx/html/css/bash/
-  markdown/janet -- common control-flow/definition skeletons, not exhaustive)
-  -- see `git log --grep=bundled-snippets`. A deliberate reversal of
-  `SnippetRegistry.h`'s previously-stated "nothing bundled or auto-detected"
-  posture, per explicit user request ("make it magical where we can"); a
-  user's own `ned/register-snippet` for the same (language, trigger) still
-  overrides a bundled entry, or erases it with an empty body. Data-format/
-  config languages (json/yaml/toml/xml), niche ones (fish/clojure/jank), and
-  Org (already has its own, stronger capture-template mechanism -- OrgCapture.h)
-  were left out as a judgment call, not an oversight. The bundled C/C++
-  `guard` trigger doubles as a live showcase of the variable+transform feature
-  above (`$TM_FILENAME_BASE` through `/upcase`, resolved once at expansion
-  time, not a live tabstop).
+- [ ] **Test-runner gaps**: no gutter-click run-this-test; no Go test discovery (no
+      bundled Go mode yet — see the new item above; Rust itself now has full discovery
+      via `rust-tests.scm`); pytest needs `-v` or junit-xml for per-test pass marks;
+      Go's basename-only `file:line` can miss jump-to-source in multi-directory modules.
+- [ ] **Nested snippet placeholders' inner stops** (`${1:foo ${2:bar}}` keeps only the
+      literal text "foo bar", the inner `$2` tabstop is dropped). Confirmed *not*
+      reachable via the tree-sitter fold-depth machinery (`CodeFold.h` re-derives a
+      fold's extent from a fresh AST parse on demand; a snippet body has no
+      grammar/parser behind it to re-derive anything from). The real blocker: field 2's
+      range would need to sit properly *contained inside* field 1's range, and
+      `Buffer::SnippetRange`'s relocation/gravity model currently only understands
+      "disjoint or adjacent" — true nesting needs new relocation semantics in
+      `Text/Buffer.h`, not a parser gap. Not attempted.
 - [ ] Hunk unstage matches point against the *cached* staged diff, which drifts when
       unstaged edits exist earlier in the file — exact in the common stage-then-undo
       flow; revisit only if it bites.
 - [ ] **Persistent left-side glyph rail for toggling panels** (raised 2026-09-06).
       Divider-double-click-to-collapse was inconsistent across panels — only
-      `ProjectSidebar` had it; `VcsPanel` explicitly modeled its own collapse on
-      `ProjectSidebar`'s convention but never wired the double-click check on its
-      divider press, and standalone `AcpPanel` had no mouse divider-collapse at all
-      (button + `M-m` only) — all three now share the same
-      `dividerClickPending_`/`kDoubleClickWindow` divider-press pattern (see
+      `ProjectSidebar` had it; `VcsPanel` modeled its own collapse on `ProjectSidebar`'s
+      convention but never wired the double-click check, and standalone `AcpPanel` had
+      no mouse divider-collapse at all — all three now share the same
+      `dividerClickPending_`/`kDoubleClickWindow` pattern (see
       `git log --grep=divider-double-click-collapse-gap`). The bigger idea that
-      prompted this: `ProjectSidebar` already collapses to a 1-column border strip
-      with a glyph hint — generalize that strip into an always-visible, VS
-      Code-style "activity bar" holding one glyph per togglable panel (files, VCS,
-      terminal, ACP chat, debug console), rather than collapse-to-a-strip being
+      prompted this: `ProjectSidebar` already collapses to a 1-column border strip with
+      a glyph hint — generalize that strip into an always-visible, VS Code-style
+      "activity bar" holding one glyph per togglable panel (files, VCS, terminal, ACP
+      chat, debug console), rather than collapse-to-a-strip being
       `ProjectSidebar`/`VcsPanel`-only chrome. Open design question before starting:
-      whether the rail *replaces* `PanelDock`'s own tab strip for the
-      bottom-docked panels too, or stays left-side-only for the
-      `ProjectSidebar`/`VcsPanel` pair — deciding this up front matters so the
-      rail doesn't become a third parallel "which panel is where" bookkeeping
-      system alongside `PanelDock` and `AcpPanel`'s own right-dock mode. Not
-      designed in detail yet, just scoped.
+      whether the rail *replaces* `PanelDock`'s own tab strip for the bottom-docked
+      panels too, or stays left-side-only for the `ProjectSidebar`/`VcsPanel` pair —
+      deciding this up front matters so the rail doesn't become a third parallel "which
+      panel is where" bookkeeping system alongside `PanelDock` and `AcpPanel`'s own
+      right-dock mode. Not designed in detail yet, just scoped.
 - [ ] **`libned` as a real shared library** — `ned_lib` (static today) exists solely so
       `ned_tests` can link real editor code without pulling in `main()`; a static lib
       already does that job. Worth revisiting only if a second real consumer shows up
@@ -605,30 +291,21 @@ commands, never a replacement for them.
       discussion. The itch: Emacs's C-w/M-w/C-y read as arbitrary next to the
       now-universal C-x/C-c/C-v cut/copy/paste convention. Audited and found to be a
       real structural conflict, not a simple rebind: C-x and C-c are Emacs *prefix*
-      keys here (C-x owns file/window ops — C-x C-s, C-x C-f, C-x 2/3/0/1, C-x b —
-      and C-c is this codebase's own mode/user prefix — `C-c p/t/T/k/v/A/c`, dozens
-      of bindings), and C-v is already bound (scroll-page-down, M-v the complement).
-      Retrofitting the default keymap would evict all of those, not just rename two
-      keys. C-w/C-y also aren't plain cut/paste — they're `KillRing` ops (a ring, not
-      a single slot; `yank-pop`/M-y cycle prior kills), so a literal rebind needs to
-      keep kill-ring semantics under new trigger keys, not just alias them. (Separately
-      confirmed: C-z already backgrounds the process, same as real Emacs — ned
-      captures/handles this manually already, nothing new needed there.) Right
-      approach if this gets picked back up: a third selectable full keymap
-      (`ned/set-keymap-style` or similar: `emacs` default, `vim`, `modern`) reusing
-      the existing command set wholesale, the same shape `ned/set-vim-mode` already
-      proves out — not a patch on the Emacs default, since that default stays
-      load-bearing for `C-c`'s existing feature bindings either way. Not started;
-      no keymap table drafted yet.
+      keys here (C-x owns file/window ops, C-c is this codebase's own mode/user prefix
+      with dozens of bindings), and C-v is already bound (scroll-page-down). Retrofitting
+      the default keymap would evict all of those, not just rename two keys. C-w/C-y
+      also aren't plain cut/paste — they're `KillRing` ops (a ring, not a single slot),
+      so a literal rebind needs to keep kill-ring semantics under new trigger keys, not
+      just alias them. Right approach if this gets picked back up: a third selectable
+      full keymap (`ned/set-keymap-style` or similar: `emacs` default, `vim`, `modern`)
+      reusing the existing command set wholesale, the same shape `ned/set-vim-mode`
+      already proves out — not a patch on the Emacs default, since that default stays
+      load-bearing for `C-c`'s existing feature bindings either way. Not started; no
+      keymap table drafted yet.
 
 ### VCS Side Panel
 
-Shipped 2026-09-01 (`decd881`, `53b8054`) — `UI/VcsPanel.h/.cpp`, a persistent left-side
-panel (`toggle-vcs-panel` on `C-c V`, mutually exclusive with `ProjectSidebar` on the
-same slot) covering: tree view of staged/unstaged/untracked with multi-select batch
-stage/unstage, inline diff preview with per-hunk stage/unstage, commit/branch compose,
-discard-with-confirm, stash, push/pull/fetch, ahead/behind summary, and a conflict-marker
-affordance. Built entirely on existing `VcsRunner`/`VcsProvider` plumbing.
+Shipped 2026-09-01 (`UI/VcsPanel.h/.cpp`) — see `git log --grep=vcs-side-panel`.
 
 - [ ] Directory-tree rows use indentation only, no box-drawing tree-connector glyphs
       (`ProjectSidebar`'s `├─└─│`) — revisit if the plain-indent tree reads as too flat.
@@ -804,12 +481,10 @@ rather than embedding it directly in `NotebookView` for exactly this reason.
 
 ### Named Projects & Multi-Project Sidebar (New Feature)
 
-Local-only slice shipped: `Editor/ProjectRegistry.h` (named-project catalog),
-`switch-project`/`open-project` (`C-c P s`/`C-c P o`), and `Editor/TerminalTabLauncher.h`
-(opens a picked project in a new terminal tab/window — tmux, screen, Konsole, WezTerm,
-Ghostty, kitty live-verified; GNOME Terminal's handler shipped but unverified, not
-installed in that environment) falling back to a configured
-`ned/set-project-open-command` or an in-place `execv()` re-exec.
+Local-only slice shipped (`Editor/ProjectRegistry.h`, `switch-project`/`open-project`
+on `C-c P s`/`C-c P o`, `Editor/TerminalTabLauncher.h` for opening a picked project in a
+new terminal tab — tmux, screen, Konsole, WezTerm, Ghostty, kitty live-verified; GNOME
+Terminal shipped but unverified) — see `git log --grep=named-projects`.
 
 Still open, all genuinely gated on Remote Development below (a registry entry's root
 staying local-only for now is a storage-shape choice, not a hole in what shipped):
@@ -942,7 +617,6 @@ LSP-against-the-wrong-toolchain prove it's needed in practice, not speculatively
       particularly useful for things like PHP, and the like, where we could remotely
       debug something that's happening live in production.
 
-
 **Connect UX**
 - [ ] A connect dialog/command (`ned-connect` or similar): host, user, port, key/agent
       selection, jump-host/bastion support. Sourcing defaults from `~/.ssh/config` and
@@ -966,55 +640,112 @@ LSP-against-the-wrong-toolchain prove it's needed in practice, not speculatively
 
 ### Collaboration & AI
 
-- [ ] **AI-assisted editing (ACP) gaps** (validated live 2026-08-26 against Claude Code's
-      own ACP adapter — see `git log --grep=ACP` for the fix history). Still open: no
-      scrollback in the panel; a real diff view (actual +/- lines, not just a line-count
-      delta) has no reusable line-diff utility yet (`ThreeWayMerge.h`'s LCS diff is a
-      private implementation detail); `terminal/*` tool-call support and
-      `elicitation/create` structured forms are undeclared as client capabilities; no
-      multiple concurrent agents/sessions (still one at a time, `Dap/`'s own precedent);
-      no `session/load` history replay; `session/set_config_option`/`session/set_mode`
-      aren't surfaced to the user; no MCP server passthrough (`session/new`'s
-      `mcpServers` is always `[]`); no per-agent environment-variable override —
-      `ChildProcess`'s `posix_spawn` always forwards the parent's global `environ`, so
-      multiple registered agents needing different credentials need a shell-wrapper argv
-      rather than anything first-class; no per-agent "character" (display-name/accent
-      color distinguishing agents beyond the existing thought-vs-text style split).
-      Separately: `Keymap::AmbiguousBindings()` is diagnostic-only (a `CommandsTest.cpp`
-      regression test), not enforcement — `Keymap::Bind` still lets a caller construct an
-      unreachable-by-typing binding; a real structural fix (Emacs' own `define-key`
-      semantics: reject/restructure a bind that would shadow an existing command) would
-      change `Bind`'s signature across every call site including `ned/define-key`.
-- [ ] **ACP chat-feel UX backlog** (round 1 + round 2 shipped 2026-08-26/2026-09-01 —
-      interrupt/spinner, thought/text split, streaming debounce, collapsed tool-call
-      lines, composer word-motion + history, minimize/resize, auto-reconnect to last
-      agent, transcript/composer word-wrap; checkpoint/rewind shipped 2026-09-03,
-      lightweight Markdown rendering (bold/inline code/bullet markers) shipped
-      2026-09-03; @-style file-mention autocomplete in the composer shipped
-      2026-09-03 (fuzzy-completes a project-relative path inline while typing,
-      `Editor/FuzzyMatch.h` + `Editor/ProjectTree.h`); see below; see
-      `git log --grep=ACP` for detail). Still open, roughly in order of impact:
-      - Tabbed bottom-dock overlays closed 2026-09-06 — see
-        `git log --grep=panel-dock`. `UI/PanelDock.h/.cpp` is the single `OverlayHost`
-        overlay now hosting `TerminalPanel`/`AcpPanel` (bottom-docked)/`DebugConsolePanel`
-        as tabs behind one shared tab strip (close/maximize/resize-drag all promoted to
-        the dock; each panel keeps its own content-row rendering and real keyboard focus
-        unchanged, since keyboard dispatch bypasses the dock entirely -- see that class's
-        own header comment). `AcpPanel::SetDockHosted` keeps right-dock mode a fully
-        separate, byte-for-byte-unchanged standalone overlay (not unified; the dock-side
-        setting is read once at startup, not live). ACP's collapse-to-strip feature was
-        dropped in dock-hosted mode (switching tabs already supersedes it); Terminal's
-        former standalone close button became a dock tab-strip "restart session" action
-        alongside its search icon, since the shared `[x]` now only hides the whole dock.
-      - Known rough edge: a right-docked `AcpPanel`'s resize handle has no visually
-        reserved border the way `ProjectSidebar`'s divider column does.
-      - Explicitly *not* pulled from prior research: OpenCode's session-sharing (needs a
-        hosted backend, out of scope for a local-first editor) and a unified command
-        palette (already a stated non-goal below).
+Interrupt/spinner, thought/text split, streaming debounce, collapsed tool-call lines,
+composer word-motion/history, minimize/resize, auto-reconnect, transcript/composer
+word-wrap, checkpoint/rewind, lightweight Markdown rendering, @-mention file
+autocomplete, and the tabbed `PanelDock` bottom-dock overlay (Terminal/ACP/Debug
+Console sharing one tab strip, close/maximize/resize-drag promoted to the dock) are all
+shipped — see `git log --grep=ACP`/`--grep=panel-dock` for the history.
+
+- [ ] **AI-assisted editing (ACP) gaps** (validated live 2026-08-26 against Claude
+      Code's own ACP adapter): no scrollback in the panel; a real diff view (actual +/-
+      lines, not just a line-count delta) has no reusable line-diff utility yet
+      (`ThreeWayMerge.h`'s LCS diff is a private implementation detail); `terminal/*`
+      tool-call support and `elicitation/create` structured forms are undeclared as
+      client capabilities; no multiple concurrent agents/sessions (still one at a time,
+      `Dap/`'s own precedent); no `session/load` history replay;
+      `session/set_config_option`/`session/set_mode` aren't surfaced to the user; no MCP
+      server passthrough (`session/new`'s `mcpServers` is always `[]` — see the
+      tool-bridge item below for what that would actually unlock); no per-agent
+      environment-variable override (`ChildProcess`'s `posix_spawn` always forwards the
+      parent's global `environ`); no per-agent "character" (display-name/accent color).
+      Separately: `Keymap::AmbiguousBindings()` is diagnostic-only (a
+      `CommandsTest.cpp` regression test), not enforcement — `Keymap::Bind` still lets a
+      caller construct an unreachable-by-typing binding; a real structural fix (Emacs'
+      own `define-key` semantics: reject/restructure a bind that would shadow an
+      existing command) would change `Bind`'s signature across every call site
+      including `ned/define-key`.
+- [ ] **Known rough edge**: a right-docked `AcpPanel`'s resize handle has no visually
+      reserved border the way `ProjectSidebar`'s divider column does (right-dock mode
+      stays a fully separate, byte-for-byte-unchanged standalone overlay from the
+      `PanelDock`-hosted bottom-dock mode).
+
+- [ ] **ACP MCP tool-server bridge** (raised 2026-09-06 — the single highest-leverage
+      lever on this whole list). Today the agent's only structured capability is
+      `fs.readTextFile`/`writeTextFile`; everything else it does, it either can't do or
+      has to infer/shell out for blind to ned's own state. `session/new` already has
+      an `mcpServers` field for exactly this and ned always sends `[]`. A small
+      ned-hosted MCP server exposing `ned_lib`'s own operations as structured tools
+      turns every item below from "teach the agent to shell out correctly" into "add
+      one more tool definition":
+      - **LSP**: `goto_definition`, `find_references`, `rename_symbol`, `code_actions`,
+        `hover`, `workspace_symbols`, `format_buffer`, `get_diagnostics`. Thin wrappers
+        over requests `LspManager` already exposes.
+      - **DAP** (the flagship case — see the dedicated item just below).
+      - **VCS**: `git_status`, `git_diff`, `stage`/`unstage`, `commit`, `branch_list`/
+        `switch`, `blame(file, line)` — thin wrappers over `VcsRunner`.
+      - **Tasks/TestRun**: `run_tests(filter?)`, `get_test_results()` (the structured
+        `TestResult`, not raw stdout), `rerun_failed` — lets the agent drive its own
+        fix→test→fix loop instead of being told the results in prose.
+      - **Diagnostics/Sanitizer/Valgrind/Massif**: `get_diagnostics_log(category?)`
+        surfacing the already-parsed structured findings from `SanitizerOutputParser`/
+        `ValgrindOutputParser`/`MassifOutputParser` — currently produced only for a
+        human reading `DiagnosticsLog`, wasted on an agent that would otherwise have to
+        re-parse raw tool output from a shell command.
+      - **Project**: `search(pattern)`, `find_file(query)`, `list_todos()` (Org agenda
+        scan) — respects `.gitignore`/binary-detection the way a blind `grep` wouldn't.
+      - **Org**: `capture_note(template, text)`, `clock_in`/`clock_out` — lets the agent
+        journal its own actions into the user's existing Org workflow.
+      - **Navigation**: a `goto(file, line)` tool so the agent can point the human's
+        cursor somewhere directly, instead of only describing a location in prose.
+      Needs a decision on transport (an in-process call surface vs. a real local MCP
+      server the agent connects to over the `mcpServers` field, the more
+      spec-faithful option) before any individual tool gets built.
+- [ ] **DAP↔ACP debugging bridge** (raised 2026-09-06, the concrete flagship use of the
+      tool-bridge above). Structured tools (`dap_set_breakpoint`, `dap_continue`/
+      `step_over`/`step_into`/`step_out`, `dap_get_stack_trace`,
+      `dap_get_variables(frame)`, `dap_evaluate(expr)`) would let the agent act as a
+      real pair-debugger — "set a breakpoint at line 42 and tell me what `x` is when we
+      hit it" actually happens against the live session, with the agent reasoning over
+      real runtime state (`RequestVariables`, watch-history, the pointer-graph view's
+      cycle-safe traversal — all already structured, not scraped from a hex dump)
+      rather than guessing from source alone. Separately, **debug-session context
+      injection**: a one-click "ask agent about this state" from a stopped breakpoint
+      that ships the real stack/variables into the prompt, the same shape the
+      diagnostic/test-failure quick actions below use.
+- [ ] **ACP context auto-attach** (raised 2026-09-06) — `AcpManager::SendPrompt` sends
+      exactly one plain `{"type": "text", ...}` block today; there's no resource
+      attachment of any kind, even for the shipped `@`-file-mention (which just inlines
+      a path as text). Two related wins:
+      - **Auto-attach current buffer + selection** as a resource block on every prompt
+        (or a manual `@buffer`/`@selection`, the same shape `@`-file-mention already
+        proves out) — stop re-explaining what's on screen every message.
+      - **One-click "ask agent" from a diagnostic/test-failure/sanitizer-log line** —
+        pre-fills a structured prompt (location + message + surrounding source) and
+        fires `SendPrompt` directly from `DiagnosticsLog`/`TestResultsBuffer`, instead
+        of manual copy-paste into the composer.
+- [ ] **Diff preview before an agent edit's permission grant** — `session/request_
+      permission` is a bare y/n today; showing the actual diff first needs a reusable
+      line-diff utility (`ThreeWayMerge.h`'s LCS diff is currently a private
+      implementation detail, per the gaps bullet above). Worth building alongside
+      "Merge Conflict Resolution Mode"'s per-hunk take/reject UI (above) rather than as
+      a second bespoke widget — reviewing an agent's proposed edit and resolving a
+      merge conflict are the same interaction shape (a hunk, shown, accepted or
+      rejected).
+- [ ] **Prose-check the ACP composer** (raised 2026-09-06, cheap and independent of
+      everything else here) — `ProseChecker` (harper-ls) is already wired generically
+      as a diagnostics-only LSP connection keyed by `kProseLanguageKey`; pointing it at
+      the `AcpPanel` composer's `MinibufferPrompt` text live (spelling/grammar
+      squiggles before hitting Enter) needs no new subsystem, just feeding it a second
+      piece of text.
 - [ ] **Real-time collaborative editing** (CRDT-based) — the biggest lift in this file;
       last.
 - [ ] VCS: "generalize the two-callback plugin shape past version control" (cloud CLIs,
       Terraform, Docker) remains an open idea, not a plan.
+
+Explicitly *not* pulled from prior research: OpenCode's session-sharing (needs a hosted
+backend, out of scope for a local-first editor) and a unified command palette (a stated
+non-goal, see below).
 
 ### Documentation & Companion Tooling
 
@@ -1048,6 +779,13 @@ LSP-against-the-wrong-toolchain prove it's needed in practice, not speculatively
 - [ ] **Tree-sitter-assisted formatter** with JetBrains-level per-rule configurability
       ("a dprint clone that is actually awesome") — a substantial project per language,
       not a utility. Scope it once concrete gaps left by external formatters are known.
+- [ ] **Cookbook entries for debugger-adjacent tools that already work with zero new
+      code** (audit finding, 2026-09-06 — a documentation gap, not a code gap):
+      Valgrind (`valgrind --vgdb=yes --vgdb-error=0` + DAP `Attach`, memcheck errors
+      arrive as ordinary `stopped` events) and Docker/embedded/OpenOCD targets
+      (`Attach`'s adapter/config is opaque argv + JSON, so `cortex-debug`-style or
+      Docker-aware adapters already work via `ned/set-dap-adapter`/`ned/set-dap-attach`)
+      both need a worked example in the docs, not new `DapManager` code.
 
 ### Known Test Flakiness / Non-Critical Issues (Watch List)
 
@@ -1102,19 +840,18 @@ call sites, so "port" means replacing the platform layer wholesale:
   committing, since ned's `UI/` layer sits directly on it with no abstraction gap.
 - A PowerShell-flavored bundled theme would be a small addition once the port exists —
   `UI/ThemeRegistry.h`'s fixed name→factory table is exactly the extension point.
+- **LSP broker self-staleness detection** (`Editor/Lsp/LspBrokerMain.cpp`'s executable-
+  identity check) is Linux-specific (`/proc/self/exe`, and depends on rename-over-a-
+  running-binary being legal at all — the exact thing that lets a rebuild replace
+  `build/ned` while the broker daemon still has the old inode mapped). Windows
+  generally can't do that swap in the first place — the OS locks a running executable's
+  file, so a rebuild while the broker is up would fail outright rather than silently
+  going stale. A native port needs a different mechanism entirely (or may not need one,
+  if Windows' own lock makes the failure mode "rebuild fails with a clear error"
+  instead of "silent staleness").
 
 Unscoped beyond this sketch — process spawning is the obvious dependency root; nothing
 else works without it.
-
-- **LSP broker self-staleness detection** (`Editor/Lsp/LspBrokerMain.cpp`'s executable-
-  identity check, added alongside the "LSP broker server mode" Maybelist entry above)
-  is Linux-specific (`/proc/self/exe`, and depends on rename-over-a-running-binary being
-  legal at all -- the exact thing that lets a rebuild replace `build/ned` while the
-  broker daemon still has the old inode mapped). Windows generally can't do that swap in
-  the first place -- the OS locks a running executable's file, so a rebuild while the
-  broker is up would fail outright rather than silently going stale. A native port needs
-  a different mechanism entirely (or may not need one, if Windows' own lock makes the
-  failure mode "rebuild fails with a clear error" instead of "silent staleness").
 
 ## Maybelist (Speculative — Neither Committed nor Rejected)
 
@@ -1125,7 +862,7 @@ these accumulate detail in place.
 - [ ] **Merge-aware cross-session undo** — persistent undo (`Editor/PersistentUndo.h`,
       shipped 2026-08-25) content-gates: on reopen, restores the full tree only if the
       file's current on-disk content exactly matches some node already in the persisted
-      tree (any node, not just the tip -- covers "quit without saving" for free); no
+      tree (any node, not just the tip — covers "quit without saving" for free); no
       match at all just discards the persisted history outright and the buffer starts
       fresh. The fancier version would three-way-merge a genuinely novel external change
       into the persisted history instead of discarding it (base = last-persisted content,
@@ -1133,18 +870,7 @@ these accumulate detail in place.
       `Editor/AutoMerge.h`'s existing machinery to splice one merge node onto the old tip.
       Deferred because it means synthesizing an undo node for content the user never
       actually typed — a real risk of `undo` doing something surprising later — worth it
-      only if the content-gate default proves too lossy in practice (i.e. people
-      habitually edit files outside ned in ways that touch none of a session's own undo
-      states and lose history often enough to complain).
-- **Peek definition** shipped 2026-09-04 (see `git log --grep=peek-definition`) —
-      `lsp-peek-definition` (`C-c l p`) shows the definition's source in a `ListPopup`
-      anchored under point (`Overlay.h`'s `OverlayHost`, the plausible substrate this
-      entry originally named, confirmed out in practice), reusing `LspManager::
-      RequestDefinition` and `editor::multibuffer::ReadExcerptText` rather than adding new
-      machinery. `Enter`/click jumps to the real location; `Esc`/`C-g` dismisses with no
-      side effects. Definition only, v1 scope — no peek-declaration/-type-definition/
-      -implementation variants yet, same "M-x/explicit-bind only" precedent the three
-      `lsp-goto-*` variants already set for those.
+      only if the content-gate default proves too lossy in practice.
 - [ ] **AI edit-prediction** (Zed's Zeta: predicting the next multi-line edit from
       cursor/edit history, distinct from LSP-driven completion or ACP's chat) has no
       equivalent here. A different feature from everything `Acp/` already provides, and
@@ -1155,192 +881,73 @@ these accumulate detail in place.
       whether it needs a *new base language* ned doesn't speak yet, or whether it rides
       on one already planned above — worth deciding by language, not by engine:
       - **Godot** (GDScript, optionally C# via Mono) — the most popular open-source
-        engine, so the strongest adoption case (see
-        [[project_design_priority_adoption_over_taste]]'s own precedent for weighing
-        that). Needs a GDScript tree-sitter grammar (a community one exists; verify
-        current maintainer/repo before wiring it in, same caveat as Kotlin's above) plus
-        the same highlight/fold/indent/tags checklist. Real open question, not yet
-        verified live: Godot 4's built-in GDScript language server reportedly speaks LSP
-        over a TCP socket to a *running Godot editor instance*, not as a spawned stdio
-        subprocess — if true, that's a genuine mismatch with `Lsp/Transport.h`'s
-        subprocess-+-pipes assumption and would need a real transport-layer addition
-        (a raw-socket `Transport`), not just a `ned/set-lsp-command` entry. Confirm before
-        scoping. The C#-via-Mono path shares C#'s own gap below.
+        engine, so the strongest adoption case. Needs a GDScript tree-sitter grammar (a
+        community one exists; verify current maintainer/repo before wiring it in, same
+        caveat as Kotlin's above) plus the same highlight/fold/indent/tags checklist.
+        Real open question, not yet verified live: Godot 4's built-in GDScript language
+        server reportedly speaks LSP over a TCP socket to a *running Godot editor
+        instance*, not as a spawned stdio subprocess — if true, that's a genuine
+        mismatch with `Lsp/Transport.h`'s subprocess-+-pipes assumption and would need a
+        real transport-layer addition (a raw-socket `Transport`), not just a
+        `ned/set-lsp-command` entry. Confirm before scoping.
       - **Bevy** (Rust, no visual editor — code-first ECS) — needs nothing
-        Bevy-specific; general Rust language support shipped 2026-09-04 (see
-        "Rust bundled language support" above), so this is now just
-        `rust-analyzer` + `lldb-dap`/`codelldb` config, the same as any other
-        already-bundled language. The natural highest-leverage pick if the
-        goal was "unlock the most engines per unit of work" — Rust support
-        pays for itself outside game dev too.
+        Bevy-specific; general Rust language support shipped 2026-09-04, so this is now
+        just `rust-analyzer` + `lldb-dap`/`codelldb` config, the same as any other
+        already-bundled language.
       - **LÖVE (Love2D)** and **Defold** (both Lua-based, open source, no bundled mode
-        for Lua at all today) — same shape as Bevy/Rust: gated on general Lua support,
-        not engine-specific work. `lua-language-server` already understands both
-        frameworks' APIs via community-maintained meta/addon files, so ned's own LSP
-        client needs no framework awareness once Lua itself works.
-      - **C#** (needed for Godot-via-Mono, and the prerequisite for ever considering
-        Unity despite it being closed-source and outside this list's own "open source"
-        framing) — no bundled mode today; `OmniSharp`/`csharp-ls` are the LSP options.
-        Named here because it's the one language gap shared by the most candidates, not
-        as an endorsement of any specific engine.
+        for Lua at all today) — gated on general Lua support, not engine-specific work.
+        `lua-language-server` already understands both frameworks' APIs via
+        community-maintained meta/addon files.
+      - **C#** (needed for Godot-via-Mono) — no bundled mode today; `OmniSharp`/
+        `csharp-ls` are the LSP options.
       - **GDevelop** — event-based, largely no-code; not a natural fit for a text editor
         regardless of open-source status. Listed only to record it was considered and
-        set aside, not as a live candidate.
-- [ ] **Debugging feature wishlist** (raised 2026-09-03, after auditing `gf`
-      (nakst/gf, a native GDB frontend) and GDBFrontend (rohanrhu/gdb-frontend, a
-      web-based one) against DAP round 1-5's current feature set — see
-      `git log --grep=dap-round` for everything already shipped). Framed the same way
-      as the game-dev list above: a list to pick from, not a commitment. Sorted
-      roughly cheapest-to-scope first; each entry notes what already-shipped
-      `DapManager`/`BufferView` machinery it would build on, since none of this needs
-      new architecture, only new DAP requests and (mostly) new M-x commands.
-      - Reverse debugging (`dap-reverse-continue`/`dap-step-back`, M-x only) closed
-        2026-09-03 — see `git log --grep=reverse-debugging`. Both gated on the
-        adapter's single `supportsStepBack` capability (DAP's own convention covering
-        both requests), same soft-warning-when-unadvertised shape as `restartFrame`.
-      - Run-to-cursor (`dap-run-to-cursor`, M-x only) closed 2026-09-03 — see
-        `git log --grep=run-to-cursor`.
-      - Jump to line (`dap-jump-to-line`, M-x only) closed 2026-09-03 — see
-        `git log --grep=jump-to-line`.
-      - Watch/variable display-format toggle (`dap-toggle-hex-format`, M-x only) closed
-        2026-09-03 — see `git log --grep=hex-format-toggle`. Per-line, not persisted: a
-        trailing `[hex]` marker on the *debug* buffer line is the toggle's only state.
-        Decimal/binary beyond hex, and a bound key (`gf`'s `/`), stay unaddressed.
-      - Line-inspect mode (`dap-line-inspect`, M-x only) closed 2026-09-03 — see
-        `git log --grep=line-inspect`. Two tiers: every tree-sitter-backed mode gets a
-        generic, universal default (bare identifiers, `Mode::lineInspect`'s Tier 1, no
-        per-language authoring); `CMode`/`CppMode` override it with a richer,
-        grammar-verified compound-expression predicate (Tier 2) — extending Tier 2 to
-        more languages is a natural, independently-sized follow-up. Evaluated spans are
-        also highlighted in the buffer (`Theme::lineInspectBackground`), cleared the
-        moment point leaves the inspected line or the buffer is edited.
-      - Pointer/linked-list graph view (`dap-show-pointer-graph`) closed 2026-09-03 —
-        see `git log --grep=pointer-graph-view`. Reuses `UI/TreeView.h`/
-        `Editor/ExpandableTree.h` (built for LSP call/type hierarchy) over
-        `DapManager::RequestVariables` instead of a new widget; a field whose
-        `memoryReference` repeats an ancestor's in the same session is marked cyclic
-        rather than expanded, so a genuine circular/doubly-linked list terminates
-        instead of growing forever.
-      - Array-value graph and watch-history sparkline closed 2026-09-03 — see
-        `git log --grep=watch-history-sparkline`. `Editor/Sparkline.h`'s
-        `BuildBlockSparkline` (a Unicode block-glyph sparkline, not
-        `Minimap.h`'s pixel-raster/`ncvisual` technique this item originally
-        proposed reusing -- the *debug* buffer is plain `Cell`-grid text, not
-        a pixel-capable widget, so there's no ncplane to blit an arbitrary
-        line into) renders both a scalar watch's history across successive
-        stops (`DapManager::RefreshWatchHistory`, auto-collected on every
-        `stopped` event, capped at 40 points, never persisted) and a numeric
-        array watch's current elements (one-shot `RequestVariables`
-        expansion via the new `EvaluateWithReference`). `dap-toggle-watch-
-        graph` (M-x only) toggles it on the current *debug* buffer watch
-        line, `ToggleHexFormatAtPoint`'s own trailing-marker-is-the-only-
-        state shape (`[graph]` instead of `[hex]`).
-      - Memory-as-image viewer closed 2026-09-03 — see
-        `git log --grep=memory-image-viewer`. `dap-show-memory-image-at-point`
-        renders a fetched `MemoryBlock` as a grayscale image
-        (`Editor/MemoryImage.h`'s pure square-layout/byte-to-grayscale helpers)
-        via a new focus-taking `UI/MemoryImageView.h` overlay (the
-        pointer-graph `TreeView` overlay's own registration shape, minus the
-        navigation methods it doesn't need) instead of `BuildMemoryBuffer`'s
-        hex dump. Like the array graph/sparkline above, this ended up *not*
-        needing Minimap's real `NCBLIT_PIXEL` path: the half-block glyph
-        (U+2580, foreground/background as two stacked pixel rows) packs a
-        genuine per-cell color image directly into the existing Cell-grid
-        Widget model, with none of the sixel/Kitty capability probing or
-        pixel-plane z-order interactions that path carries.
-      - Live thread window (`dap-toggle-threads`) closed 2026-09-03 — see
-        `git log --grep=live-thread-window`. `UI/DapThreadsPanel.h`, right-docked,
-        `BufferListPanel`'s controller-plus-focus-mode-`ListPopup` shape rather than a
-        bespoke `Widget` — reuses `ListPopup` instead of the `OverlayHost`-panel shape
-        this bullet originally sketched (`DebugConsolePanel`/`AcpPanel`'s own, a bespoke
-        `Paint()`/`OnEvent()` override), since a live selectable row list is exactly what
-        `ListPopup`'s existing focus mode already provides. `WindowManager::
-        SetOnDapThreadsRefreshNeeded` re-fetches the row list from inside the existing
-        `SetOnStopped` handler on every stop (`DapManager::SetOnStopped` is single-slot,
-        so this fans out internally rather than registering a second handler); `Enter`/
-        digit-pick/click select a thread via `DapManager::SelectThread` (a new public
-        `FocusedThreadId()` echoes the previously-private `CurrentThreadId()` for the
-        current-thread `→` marker), `'g'` manually re-fetches.
-      - **Valgrind integration**: launching the target under `valgrind --vgdb=yes
-        --vgdb-error=0` and DAP-`Attach`ing to its vgdb stub needs zero new
-        `DapManager` code — `Attach`/`ned/set-dap-attach` already do exactly this,
-        memcheck errors arrive as ordinary `stopped` events; this half is still open
-        (a cookbook/config entry, not a code gap, same as the Docker/embedded entry
-        below). Massif heap-snapshot graphing closed 2026-09-04 — see
-        `git log --grep=massif-output-parser`. `Editor/MassifOutputParser.h`'s
-        `ParseMassifOutput` scans the raw `massif.out.<pid>` file directly (a
-        stable, documented `key=value`/`key: value` line format) rather than
-        shelling out to `ms_print` and reparsing its already-rendered ASCII
-        graph. `show-massif-graph` (M-x only) prompts for the file path,
-        renders a heap-usage-over-time sparkline (`Editor/Sparkline.h`, the
-        same substrate the DAP watch-history graph uses) plus a per-snapshot
-        summary table into the read-only "*massif report*" buffer
-        (`Editor/MassifReportBuffer.h`) and switches to it. The allocation
-        call-tree (`heap_tree=detailed`/`peak`'s indented `nN: ...` lines) is
-        deliberately not parsed — a real call-tree browser is a separably
-        scoped, bigger feature, left for a future follow-up if needed.
-      - Sanitizer (ASan/UBSan/TSan/MSan/LSan) output parsing closed 2026-09-03 — see
-        `git log --grep=sanitizer-output-parser`. `Editor/SanitizerOutputParser.h`'s
-        `ParseSanitizerOutput` keys on the shared `SUMMARY:` report line every
-        sanitizer runtime emits, pairing a UBSan report with its richer adjacent
-        `runtime error:` line for a better message; wired into `TestRunner`'s and
-        `TaskRunner`'s own process-exit handling, logging each finding to
-        `DiagnosticsLog` (`LogCategory::Subprocess`) with a clickable path:line when
-        the report carries a location.
-      - Valgrind `--xml=yes` (memcheck/helgrind) output parsing closed 2026-09-03 —
-        see `git log --grep=valgrind-xml-parser`. `Editor/ValgrindOutputParser.h`'s
-        `ParseValgrindXml` is a hand-rolled attribute-free-tag scanner (no XML
-        library dependency, `TestOutputParser.h`'s own junit-xml precedent) over
-        `<error>` blocks: `<kind>` + `<xwhat><text>`/`<what>` for the message, the
-        first frame in the error's first `<stack>` block carrying both `<file>` and
-        `<line>` for the location (a library frame with no debug info is skipped in
-        favor of the next one). Wired into `TestRunner`'s and `TaskRunner`'s own
-        process-exit handling alongside the sanitizer parser, same
-        `DiagnosticsLog`/clickable-path:line treatment. Deliberately not chased
-        further: only the first `<stack>` per error (a leak's allocation site, or a
-        race's second "previous access" stack, aren't a second surfaced location);
-        `<auxwhat>`/`<xauxwhat>` text and `<leakedbytes>`/`<leakedblocks>` aren't
-        folded in.
-      - **Docker/embedded/OpenOCD targets** (GDBFrontend's bespoke UI for these) —
-        already possible today with zero new code: `Attach`'s adapter/config is
-        opaque argv + JSON (`DapConfig.h`), so pointing `ned/set-dap-adapter`/
-        `ned/set-dap-attach` at `cortex-debug`-style or Docker-aware adapters already
-        works. A documentation gap (a cookbook entry), not a code gap — worth noting
-        specifically *because* GDBFrontend had to hand-build this while a generic DAP
-        client gets it for free.
-      - **Game-dev debugging** (raised live, following on from the game-dev platform
-        list above) — same "already covered vs. real gap" split: Bevy (Rust) debugs
-        via ordinary `lldb-dap`/`gdb` once Rust language support itself lands, nothing
-        game-specific needed; LÖVE/Defold (Lua) need a real Lua DAP adapter
-        (`local-lua-debugger-vscode` is the common one) wired via the existing
-        `ned/set-dap-adapter` mechanism, not new `DapManager` code; Godot/GDScript is
-        the only genuine unknown — verify whether Godot 4 exposes a real DAP-speaking
-        debug adapter at all (its LSP's own reported TCP-socket-to-a-running-editor
-        transport quirk, noted in the game-dev list above, may recur here) before
-        assuming this is just a config entry like the other two.
-      - **Collaboration / multi-client synced debugging** (GDBFrontend's sketch-
-        annotation, synced-viewing feature) — doesn't fit ned's single-user terminal
-        model at all; listed only to record it was considered and set aside, the
-        game-dev list's own "GDevelop" precedent above.
-
+        set aside.
+      - **Game-dev debugging**: Bevy (Rust) and LÖVE/Defold (Lua, via
+        `local-lua-debugger-vscode`) both debug through the ordinary
+        `ned/set-dap-adapter` mechanism once their language support lands, nothing
+        game-specific needed; Godot/GDScript is the one real unknown — verify whether
+        Godot 4 exposes a real DAP-speaking debug adapter at all before assuming this is
+        just a config entry (may share the LSP transport quirk noted above).
+        Collaboration/multi-client synced debugging (a bespoke sketch-annotation,
+        synced-viewing feature seen in some existing GDB frontends) doesn't fit ned's
+        single-user terminal model — considered and set aside, not planned.
 - [ ] **LSP broker "server mode"** (raised 2026-09-06, following the fileOperations
       capabilities fix and its live fallout) — today's `Editor/Lsp/LspBroker*` daemon
       always self-terminates ~1 minute after its last attached client disconnects
       (`LspBrokerMain.cpp`'s `kWholeDaemonIdleTimeout`), specifically so a stale process
       never outlives a `ned` binary rebuild for long: `BrokerRouter` caches one real
-      `initialize` handshake result -- success *or* failure -- per `(root, language)` key
-      for its own process lifetime (see `LspBroker.h`'s header comment), and a live bug
-      showed this can otherwise strand every future attacher on a failure cached from a
-      client-capabilities bug that was already fixed and rebuilt. A real "server mode"
-      (deliberately kept warm regardless of client presence -- e.g. a systemd user
-      service, so a fresh `ned` launch never pays even the broker's own startup cost)
-      would disable or greatly lengthen that idle timeout, which reopens exactly this
-      staleness risk on a much longer timescale. Needed alongside it: the daemon noticing
-      its own on-disk executable has changed (mtime/inode of `/proc/self/exe`, checked on
-      the same periodic sweep this idle timeout already uses) and restarting itself --
-      without that, a "keep warm forever" daemon would never pick up a rebuilt binary’s
-      fix on its own, the identical bug in a longer-lived package. Not scoped further than
-      that; no server-mode design exists yet.
+      `initialize` handshake result — success *or* failure — per `(root, language)` key
+      for its own process lifetime, and a live bug showed this can otherwise strand every
+      future attacher on a failure cached from a client-capabilities bug that was already
+      fixed and rebuilt. A real "server mode" (deliberately kept warm regardless of
+      client presence — e.g. a systemd user service, so a fresh `ned` launch never pays
+      even the broker's own startup cost) would disable or greatly lengthen that idle
+      timeout, which reopens exactly this staleness risk on a much longer timescale.
+      Needed alongside it: the daemon noticing its own on-disk executable has changed
+      (mtime/inode of `/proc/self/exe`, checked on the same periodic sweep this idle
+      timeout already uses) and restarting itself — without that, a "keep warm forever"
+      daemon would never pick up a rebuilt binary's fix on its own, the identical bug in
+      a longer-lived package. Not scoped further than that; no server-mode design exists
+      yet.
+- [ ] **Code coverage gutter** (audit finding, 2026-09-06). Parse `gcov`/`lcov .info`
+      (and, for the sanitizer-adjacent case, `llvm-cov`) output into a per-line
+      covered/uncovered/partial marker, rendered as a new gutter column the same way the
+      existing blame/diagnostic/symbol-kind/test-status gutters already work
+      (`BufferView`'s established data-driven-gutter pattern — no new rendering
+      mechanism needed, just a parser and a data source). A natural pairing with the
+      sanitizer/Valgrind-XML/massif output parsers already wired into
+      `DiagnosticsLog`/`TestRunner`, and a common request in an editor with this much
+      test/debug tooling already built out.
+- [ ] **A Janet REPL / scratch-eval buffer** (audit finding, 2026-09-06). Emacs'
+      `ielm`/SLIME-style "evaluate an expression, see the result inline or in a
+      transcript" has no equivalent here — `Environment::DoFile`/`ned/register-command`
+      are the only ways to run Janet code today (load a whole file, or bind it to a
+      command first). A live buffer for iteratively evaluating Janet expressions against
+      the running editor's own environment would be a natural companion to the existing
+      `ScratchPad.h` notes feature, and would make ned's own "the editor is a
+      Janet-scriptable environment" pitch (see Vision, above) much more discoverable for
+      someone writing `init.janet` for the first time.
 
 ## Won't Do (at Least Not Soon)
 
