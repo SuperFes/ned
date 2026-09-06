@@ -22,6 +22,7 @@ namespace {
 
     constexpr int                       kMinPanelWidth = 4; // ProjectSidebar's own kMinSidebarWidth floor
     constexpr std::chrono::milliseconds kRefreshThrottle{1000}; // own poll cadence, independent of ProjectSidebar's
+    constexpr std::chrono::milliseconds kDoubleClickWindow{400}; // ProjectSidebar's own kDoubleClickWindow
 
     constexpr int kHeaderHeight       = 1;
     constexpr int kBottomBorderHeight = 1;
@@ -615,8 +616,21 @@ bool VcsPanel::OnEvent(const Event& event) {
     }
 
     if (collapsed_) {
+        // The whole 1-column strip is the divider -- a double-press expands,
+        // matching ProjectSidebar's own collapsed-strip convention; a single
+        // press previously expanded immediately, but that made the strip
+        // inconsistent with the expanded divider below (which requires a
+        // double-press to collapse).
         if (mouse->button == MouseEvent::Button::Left && mouse->motion == MouseEvent::Motion::Pressed) {
-            CommitCollapsed(false);
+            const auto now = std::chrono::steady_clock::now();
+            if (dividerClickPending_ && (now - lastDividerPressTime_) < kDoubleClickWindow) {
+                dividerClickPending_ = false;
+                CommitCollapsed(false);
+            }
+            else {
+                dividerClickPending_  = true;
+                lastDividerPressTime_ = now;
+            }
         }
         return true;
     }
@@ -676,6 +690,20 @@ bool VcsPanel::OnEvent(const Event& event) {
     }
 
     if (mouse->at.x == size().width - 1) {
+        // The right border column is the divider: a second press within the
+        // double-click window collapses (the just-started resize session
+        // from the first press dies with it via SetCollapsed); a single
+        // press starts a resize session as always. A real drag clears the
+        // pending double-click -- see UpdateResize. ProjectSidebar's own
+        // divider handling, previously missing here.
+        const auto now = std::chrono::steady_clock::now();
+        if (dividerClickPending_ && (now - lastDividerPressTime_) < kDoubleClickWindow) {
+            dividerClickPending_ = false;
+            CommitCollapsed(true);
+            return true;
+        }
+        dividerClickPending_  = true;
+        lastDividerPressTime_ = now;
         BeginResize(rawMouse.at.x);
         return true;
     }
@@ -1106,6 +1134,11 @@ void VcsPanel::BeginResize(int globalMouseX) {
 void VcsPanel::UpdateResize(int globalMouseX) {
     const int delta = globalMouseX - resizeAnchorGlobalX_;
     width_          = std::max(kMinPanelWidth, resizeAnchorWidth_ + delta);
+    if (delta < -1 || delta > 1) {
+        // A real drag, not a slightly-wobbly click -- stop it counting as
+        // the first half of a collapse double-click (see OnEvent).
+        dividerClickPending_ = false;
+    }
 }
 
 void VcsPanel::EndResize() {

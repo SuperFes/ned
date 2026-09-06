@@ -17,6 +17,8 @@ namespace ned::ui {
 
 namespace {
 
+    constexpr std::chrono::milliseconds kDoubleClickWindow{400}; // ProjectSidebar/VcsPanel's own kDoubleClickWindow
+
     // Mirrors BufferView.cpp's own anonymous-namespace IsPlainCharacter --
     // not shared, it's a one-line predicate private to each consumer there
     // too.
@@ -737,6 +739,11 @@ void AcpPanel::UpdateResize(Point globalMouse) {
     }
     const int deltaPercent = deltaPixels * 100 / terminalDimension;
     editor::acp::SetAcpPanelSizePercent(resizeStartPercent_ + deltaPercent);
+    if (deltaPixels < -1 || deltaPixels > 1) {
+        // A real drag, not a slightly-wobbly click -- stop it counting as
+        // the first half of a collapse double-click (see OnEvent).
+        dividerClickPending_ = false;
+    }
 }
 
 void AcpPanel::EndResize() {
@@ -973,6 +980,18 @@ bool AcpPanel::OnEvent(const Event& event) {
                 // ProjectSidebar's own right-edge divider, mirrored).
                 const bool rightDock = editor::acp::GetAcpPanelDock() == editor::acp::AcpPanelDock::Right;
                 if (rightDock ? mouse->at.x == 0 : mouse->at.y == 0) {
+                    // A second press within the double-click window
+                    // collapses instead of starting a resize -- ProjectSidebar/
+                    // VcsPanel's own divider convention, previously missing
+                    // here (this panel only had the explicit [-] button/M-m).
+                    const auto now = std::chrono::steady_clock::now();
+                    if (dividerClickPending_ && (now - lastDividerPressTime_) < kDoubleClickWindow) {
+                        dividerClickPending_ = false;
+                        SetCollapsed(true);
+                        return true;
+                    }
+                    dividerClickPending_  = true;
+                    lastDividerPressTime_ = now;
                     BeginResize(rawMouse.at);
                     TakeFocus();
                     return true;

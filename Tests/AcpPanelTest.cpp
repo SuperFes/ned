@@ -548,6 +548,43 @@ TEST_CASE("AcpPanel's minimize button and M-m both collapse the panel to a thin 
     REQUIRE_FALSE(fixture.panel.Collapsed());
 }
 
+TEST_CASE("Double-clicking the resize divider also collapses the standalone AcpPanel (ProjectSidebar/VcsPanel's own convention)",
+          "[AcpPanel]") {
+    Fixture fixture;
+    REQUIRE_FALSE(fixture.panel.Collapsed());
+
+    // Bottom dock (the default): the divider is the title row, at any column
+    // the close/minimize buttons don't already claim.
+    fixture.panel.OnEvent(ned::ui::test::Mouse(5, 0, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Pressed));
+    REQUIRE_FALSE(fixture.panel.Collapsed()); // first press starts a resize, not a collapse
+
+    fixture.panel.OnEvent(ned::ui::test::Mouse(5, 0, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Pressed));
+    REQUIRE(fixture.panel.Collapsed()); // ...the rapid second press collapses instead
+}
+
+TEST_CASE("A real drag on the AcpPanel resize divider never counts as the first half of a collapse double-click",
+          "[AcpPanel]") {
+    Fixture fixture;
+    fixture.panel.SetTerminalSize(ned::ui::Size{.width = 100, .height = 100});
+    const int original = ned::editor::acp::AcpPanelSizePercent();
+
+    fixture.panel.OnEvent(ned::ui::test::Mouse(5, 0, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Pressed));
+    fixture.panel.OnEvent(
+        ned::ui::test::Mouse(5, 10, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Moved)); // a genuine drag
+    REQUIRE(ned::editor::acp::AcpPanelSizePercent() != original);
+    fixture.panel.OnEvent(
+        ned::ui::test::Mouse(5, 10, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Released));
+
+    // A prompt new press on the divider (well within the drag's own initial
+    // press's double-click window) must start a fresh resize, not collapse.
+    fixture.panel.OnEvent(ned::ui::test::Mouse(5, 0, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Pressed));
+    REQUIRE_FALSE(fixture.panel.Collapsed());
+    fixture.panel.OnEvent(
+        ned::ui::test::Mouse(5, 0, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Released));
+
+    ned::editor::acp::SetAcpPanelSizePercent(original); // cleanup -- process-wide state
+}
+
 TEST_CASE("AcpPanel::SetOnCollapseChanged fires only on an actual state change", "[AcpPanel]") {
     // panel-resize/minimize regression: OverlayHost only recomputes this
     // panel's on-screen Box from Show()/Reflow(), never on every Paint() --

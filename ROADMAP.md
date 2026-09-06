@@ -573,6 +573,25 @@ commands, never a replacement for them.
 - [ ] Hunk unstage matches point against the *cached* staged diff, which drifts when
       unstaged edits exist earlier in the file — exact in the common stage-then-undo
       flow; revisit only if it bites.
+- [ ] **Persistent left-side glyph rail for toggling panels** (raised 2026-09-06).
+      Divider-double-click-to-collapse was inconsistent across panels — only
+      `ProjectSidebar` had it; `VcsPanel` explicitly modeled its own collapse on
+      `ProjectSidebar`'s convention but never wired the double-click check on its
+      divider press, and standalone `AcpPanel` had no mouse divider-collapse at all
+      (button + `M-m` only) — all three now share the same
+      `dividerClickPending_`/`kDoubleClickWindow` divider-press pattern (see
+      `git log --grep=divider-double-click-collapse-gap`). The bigger idea that
+      prompted this: `ProjectSidebar` already collapses to a 1-column border strip
+      with a glyph hint — generalize that strip into an always-visible, VS
+      Code-style "activity bar" holding one glyph per togglable panel (files, VCS,
+      terminal, ACP chat, debug console), rather than collapse-to-a-strip being
+      `ProjectSidebar`/`VcsPanel`-only chrome. Open design question before starting:
+      whether the rail *replaces* `PanelDock`'s own tab strip for the
+      bottom-docked panels too, or stays left-side-only for the
+      `ProjectSidebar`/`VcsPanel` pair — deciding this up front matters so the
+      rail doesn't become a third parallel "which panel is where" bookkeeping
+      system alongside `PanelDock` and `AcpPanel`'s own right-dock mode. Not
+      designed in detail yet, just scoped.
 - [ ] **`libned` as a real shared library** — `ned_lib` (static today) exists solely so
       `ned_tests` can link real editor code without pulling in `main()`; a static lib
       already does that job. Worth revisiting only if a second real consumer shows up
