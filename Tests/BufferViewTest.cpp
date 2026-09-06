@@ -3934,6 +3934,50 @@ TEST_CASE("Switching to a shorter buffer clamps the viewport instead of renderin
     REQUIRE(ContentRowText(screen, 0, 12, shortBuffer.Content().LineCount()) == "short line 0");
 }
 
+TEST_CASE("Switching to a shorter buffer whose point sits on its own last line still clamps to the top",
+          "[BufferView]") {
+    // Real reported bug, distinct from the sibling case just above (which
+    // leaves point at 0): a read-only log-style buffer (LspManager's own
+    // "*lsp log*") keeps point pinned to its own end via
+    // AppendWhileReadOnly's insert-at-point-position relocation, so point's
+    // line is never 0. Switching to it from a deeply-scrolled long buffer
+    // left topLine_ far past this buffer's own last line; the "point is
+    // above topLine_" branch then set topLine_ = pointLine exactly --
+    // pinning the last line to the viewport's literal top row and leaving
+    // every row beneath it blank, instead of clamping down to 0 first and
+    // showing the whole short buffer (point included) the way a log should
+    // read.
+    Fixture fixture;
+
+    std::string longContent;
+    for (int i = 0; i < 50; ++i) {
+        longContent += "long line " + std::to_string(i) + "\n";
+    }
+    fixture.buffer.InsertAtPoint(longContent);
+
+    ned::text::Buffer& logBuffer = fixture.bufferList.CreateBuffer("*lsp log*");
+    logBuffer.SetReadOnly(true);
+    logBuffer.AppendWhileReadOnly("[10:37:14] prose: line one\n");
+    logBuffer.AppendWhileReadOnly("[10:37:15] prose: line two\n");
+    logBuffer.AppendWhileReadOnly("[10:37:16] prose: line three\n"); // point trails every append, never at 0
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 9});
+
+    ned::ui::Screen screen = ned::ui::Screen(40, 10);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 9});
+
+    view.SetTopLine(40); // scroll deep into the long buffer
+    view.Paint(canvas);
+    REQUIRE(view.TopLine() > 30); // sanity check: genuinely scrolled down first
+
+    fixture.activeBuffer.Set(logBuffer);
+    view.Paint(canvas);
+
+    REQUIRE(view.TopLine() == 0);
+    REQUIRE(ContentRowText(screen, 0, 12, logBuffer.Content().LineCount()) == "[10:37:14] p");
+}
+
 TEST_CASE("A stored file place's topLine is restored when its buffer becomes active", "[BufferView][Session]") {
     // session-persistence slice 1: the EnsureTopLineValidForActiveBuffer
     // seam must apply a stored viewport, both for the startup buffer (a
