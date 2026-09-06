@@ -1050,6 +1050,16 @@ call sites, so "port" means replacing the platform layer wholesale:
 Unscoped beyond this sketch — process spawning is the obvious dependency root; nothing
 else works without it.
 
+- **LSP broker self-staleness detection** (`Editor/Lsp/LspBrokerMain.cpp`'s executable-
+  identity check, added alongside the "LSP broker server mode" Maybelist entry above)
+  is Linux-specific (`/proc/self/exe`, and depends on rename-over-a-running-binary being
+  legal at all -- the exact thing that lets a rebuild replace `build/ned` while the
+  broker daemon still has the old inode mapped). Windows generally can't do that swap in
+  the first place -- the OS locks a running executable's file, so a rebuild while the
+  broker is up would fail outright rather than silently going stale. A native port needs
+  a different mechanism entirely (or may not need one, if Windows' own lock makes the
+  failure mode "rebuild fails with a clear error" instead of "silent staleness").
+
 ## Maybelist (Speculative — Neither Committed nor Rejected)
 
 Ideas worth remembering but not worth scoping yet — too undecided for "Open Items",
@@ -1256,6 +1266,25 @@ these accumulate detail in place.
         annotation, synced-viewing feature) — doesn't fit ned's single-user terminal
         model at all; listed only to record it was considered and set aside, the
         game-dev list's own "GDevelop" precedent above.
+
+- [ ] **LSP broker "server mode"** (raised 2026-09-06, following the fileOperations
+      capabilities fix and its live fallout) — today's `Editor/Lsp/LspBroker*` daemon
+      always self-terminates ~1 minute after its last attached client disconnects
+      (`LspBrokerMain.cpp`'s `kWholeDaemonIdleTimeout`), specifically so a stale process
+      never outlives a `ned` binary rebuild for long: `BrokerRouter` caches one real
+      `initialize` handshake result -- success *or* failure -- per `(root, language)` key
+      for its own process lifetime (see `LspBroker.h`'s header comment), and a live bug
+      showed this can otherwise strand every future attacher on a failure cached from a
+      client-capabilities bug that was already fixed and rebuilt. A real "server mode"
+      (deliberately kept warm regardless of client presence -- e.g. a systemd user
+      service, so a fresh `ned` launch never pays even the broker's own startup cost)
+      would disable or greatly lengthen that idle timeout, which reopens exactly this
+      staleness risk on a much longer timescale. Needed alongside it: the daemon noticing
+      its own on-disk executable has changed (mtime/inode of `/proc/self/exe`, checked on
+      the same periodic sweep this idle timeout already uses) and restarting itself --
+      without that, a "keep warm forever" daemon would never pick up a rebuilt binary’s
+      fix on its own, the identical bug in a longer-lived package. Not scoped further than
+      that; no server-mode design exists yet.
 
 ## Won't Do (at Least Not Soon)
 

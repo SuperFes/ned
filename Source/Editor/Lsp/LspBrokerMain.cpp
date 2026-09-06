@@ -6,6 +6,7 @@
 #include <csignal>
 #include <cstring>
 #include <ctime>
+#include <filesystem>
 #include <iostream>
 #include <mutex>
 #include <optional>
@@ -15,6 +16,7 @@
 #include <vector>
 
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/un.h>
 #include <unistd.h>
 
@@ -70,10 +72,74 @@ namespace {
         std::cerr << '[' << timeBuf << "] " << message << '\n';
     }
 
-    constexpr auto kIdleSweepInterval      = std::chrono::seconds(60);
+    constexpr auto kIdleSweepInterval      = std::chrono::seconds(10);
     constexpr auto kPerEntryIdleTimeout    = std::chrono::minutes(30);
-    constexpr auto kWholeDaemonIdleTimeout = std::chrono::hours(24);
+    // stale-broker-shutdown follow-up: was 24 hours, back when this daemon's
+    // only real cost of staying alive too long was memory. That stopped
+    // being true the moment BrokerRouter started caching a per-(root,
+    // language) handshake result for its own process lifetime (see
+    // LspBroker.h's own header comment) -- a real live bug: a `ned` binary
+    // rebuild that fixes a client-capabilities bug is invisible to an
+    // already-running daemon, which keeps replaying whatever it cached
+    // (success *or* failure) from its very first handshake attempt,
+    // indefinitely, to every new attacher. With no "server mode" (a
+    // deliberately kept-warm daemon, unstarted -- see ROADMAP.md's
+    // Maybelist) to protect against, there's no reason for this daemon to
+    // outlive the last `ned` session using it by more than about a minute:
+    // once every client has disconnected, the next launch gets a fresh
+    // daemon (current on-disk binary, empty cache) almost immediately
+    // instead of inheriting whatever an hours-old process still remembers.
+    // kIdleSweepInterval above is 10s (was 60s) so this is actually checked
+    // often enough to matter at a 1-minute target -- the old 60s sweep
+    // granularity was fine measured against a 24h timeout but would have let
+    // "about a minute" mean anywhere up to two.
+    constexpr auto kWholeDaemonIdleTimeout = std::chrono::minutes(1);
     constexpr int  kClientSendTimeoutSec   = 3;
+
+    // stale-broker-shutdown follow-up: the whole-daemon idle timeout above
+    // only helps once every client has disconnected -- a project left open
+    // in a long-running `ned` session keeps the broker's own connection
+    // count above zero indefinitely, so a rebuild's fix never reaches that
+    // daemon until the user closes it manually. This is the general form:
+    // notice the on-disk executable itself has been replaced (a rebuild) and
+    // self-shut-down regardless of connection count, trusting the existing
+    // "auto-spawn on demand" path (LspBrokerConnect.cpp) to bring up a fresh
+    // daemon -- running the just-rebuilt binary -- the moment any client
+    // next needs one.
+    //
+    // Linux-specific (see ROADMAP.md's Native Windows Port sketch for why):
+    // `/proc/self/exe` is a magic symlink tracking the specific inode this
+    // process is actually executing, independent of what a later rename/
+    // overwrite does to the pathname. Resolved once at startup to a real
+    // path, then re-`stat`ed on every idle sweep and compared against the
+    // (device, inode, mtime) recorded at startup -- comparing all three
+    // catches both a linker's typical "write to a temp file, rename over
+    // the target" (changes the inode) and a build process that instead
+    // truncates and overwrites the same inode in place (leaves the inode
+    // alone but bumps mtime). A missing/unstattable path is treated as
+    // "changed" too (rare, but more likely a sign something's wrong than a
+    // reason to keep running silently).
+    struct ExecutableIdentity {
+        dev_t  device = 0;
+        ino_t  inode  = 0;
+        time_t modifiedAt = 0;
+
+        bool operator==(const ExecutableIdentity&) const = default;
+    };
+
+    std::optional<std::filesystem::path> ResolveOwnExecutablePath() {
+        std::error_code       ec;
+        std::filesystem::path path = std::filesystem::read_symlink("/proc/self/exe", ec);
+        return ec ? std::nullopt : std::make_optional(std::move(path));
+    }
+
+    std::optional<ExecutableIdentity> StatExecutable(const std::filesystem::path& path) {
+        struct stat info {};
+        if (::stat(path.c_str(), &info) != 0) {
+            return std::nullopt;
+        }
+        return ExecutableIdentity{.device = info.st_dev, .inode = info.st_ino, .modifiedAt = info.st_mtime};
+    }
 
     // silent-relay-failure-visibility follow-up: a shutdown's own
     // "shutdown"/"exit" writes go through the same ApplySendToServer path
@@ -133,6 +199,18 @@ namespace {
         }
 
         int Run() {
+            // stale-broker-shutdown follow-up: captured before anything else
+            // so the baseline reflects the exact binary this process is
+            // executing, not whatever happens to be at that path by the time
+            // the first idle sweep runs. A resolution/stat failure (no
+            // /proc, sandboxed environment, ...) just disables this check
+            // silently -- the whole-daemon idle timeout above still applies
+            // regardless.
+            exePath_ = ResolveOwnExecutablePath();
+            if (exePath_) {
+                exeIdentityAtStartup_ = StatExecutable(*exePath_);
+            }
+
             EnsureBrokerRuntimeDirectory();
             listenFd_ = ::socket(AF_UNIX, SOCK_STREAM, 0);
             if (listenFd_ < 0) {
@@ -507,7 +585,8 @@ namespace {
 
                 if (now - lastActivitySeen > kWholeDaemonIdleTimeout) {
                     Log("whole-daemon idle timeout reached (no connections for " +
-                        std::to_string(std::chrono::duration_cast<std::chrono::hours>(kWholeDaemonIdleTimeout).count()) + "h) -- shutting down");
+                        std::to_string(std::chrono::duration_cast<std::chrono::seconds>(kWholeDaemonIdleTimeout).count()) +
+                        "s) -- shutting down");
                     std::vector<BrokerAction> shutdownActions;
                     {
                         std::lock_guard<std::mutex> lock(mutex_);
@@ -516,6 +595,26 @@ namespace {
                     LogShutdownEta(shutdownActions);
                     ApplyActions(std::move(shutdownActions));
                     break;
+                }
+
+                // stale-broker-shutdown follow-up: unlike the idle timeout
+                // above, checked regardless of connection count -- a project
+                // left open in a long-running `ned` session must not block
+                // this daemon from noticing its own binary was rebuilt out
+                // from under it (see this class's own exePath_ doc comment).
+                if (exePath_ && exeIdentityAtStartup_) {
+                    if (const std::optional<ExecutableIdentity> current = StatExecutable(*exePath_);
+                        !current || !(*current == *exeIdentityAtStartup_)) {
+                        Log("executable changed on disk (" + exePath_->string() + ") -- shutting down for restart");
+                        std::vector<BrokerAction> shutdownActions;
+                        {
+                            std::lock_guard<std::mutex> lock(mutex_);
+                            shutdownActions = router_.Shutdown();
+                        }
+                        LogShutdownEta(shutdownActions);
+                        ApplyActions(std::move(shutdownActions));
+                        break;
+                    }
                 }
             }
         }
@@ -529,6 +628,8 @@ namespace {
         std::atomic<ConnectionId>                                 nextConnectionId_{1};
         int                                                        listenFd_ = -1;
         std::atomic<bool>                                         shuttingDown_{false};
+        std::optional<std::filesystem::path>                      exePath_;              // stale-broker-shutdown follow-up
+        std::optional<ExecutableIdentity>                         exeIdentityAtStartup_; // ditto -- only meaningful if exePath_ is set
     };
 
 } // namespace
