@@ -15032,6 +15032,21 @@ void BufferView::EnsureTopLineValidForActiveBuffer() {
     if (const auto place = editor::StoredFilePlaceFor(buffer); place && place->topLine) {
         topLine_ = std::min(*place->topLine, MaxTopLine());
     }
+    else {
+        // Real reported bug (LSP log buffer): topLine_ left behind by a
+        // much longer previous buffer (say line 50) could exceed this
+        // buffer's own MaxTopLine() (0, if its whole handful of lines
+        // fits in one viewport). ScrollToShowPoint()'s "point is above
+        // topLine_" branch below then set topLine_ = pointLine exactly --
+        // pinning point to the viewport's literal top row and leaving
+        // every row beneath it blank, instead of clamping down to 0 and
+        // showing the whole short buffer with point at its natural
+        // (bottom) position. Clamping here first preserves the "leave
+        // topLine_ alone when it already suits the new buffer" case just
+        // below (topLine_ <= MaxTopLine() already, so this is a no-op)
+        // while fixing the case where it doesn't.
+        topLine_ = std::min(topLine_, MaxTopLine());
+    }
     // ScrollToShowPoint() alone (no need to reset topLine_ to 0 first) is
     // already safe against topLine_ being an arbitrary leftover value from
     // whichever buffer was active before: its own "point is above topLine_"
