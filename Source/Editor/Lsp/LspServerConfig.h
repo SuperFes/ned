@@ -94,6 +94,15 @@ void              SetLspSyncDebounceMs(int milliseconds); // default 150
 void              SetLspSignatureHelpAutoTriggerEnabled(bool enabled); // default true
 [[nodiscard]] bool LspSignatureHelpAutoTriggerEnabled();
 
+// hover-tooltips follow-up. Same shape as SetLspSignatureHelpAutoTriggerEnabled
+// immediately above (a single editor-wide toggle, not per-language) --
+// BufferView::MaybeScheduleHover checks this before ever arming its debounce
+// timer, so turning it off is a true no-op, not just a hidden popup (no
+// wasted textDocument/hover requests either). Keyboard-triggered lsp-hover
+// (C-c C-j) is unaffected either way -- this only gates the mouse-move path.
+void              SetLspHoverOnMouseMoveEnabled(bool enabled); // default true
+[[nodiscard]] bool LspHoverOnMouseMoveEnabled();
+
 // lsp-format-on-save follow-up. Opt-in (default false): turning this on
 // silently for every existing installation would be a surprise behavior
 // change, unlike the two toggles above (which only add a passive UI cue).

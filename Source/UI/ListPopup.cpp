@@ -121,7 +121,11 @@ void ListPopup::SetModel(ListPopupModel model) {
 int ListPopup::ContentRowCount() const {
     int rows = static_cast<int>(model_.rows.size()) + 2; // + top/bottom border rows
     if (model_.previewText) {
-        rows += 1 + kPreviewMaxLines; // + one divider row + the fixed preview budget
+        // hover-tooltips follow-up: a rows-empty model (the hover-tooltip
+        // shape -- previewText is the entire content) has nothing for a
+        // divider to separate from, so it's skipped rather than opening
+        // right under the top border for no reason.
+        rows += model_.rows.empty() ? kPreviewMaxLines : 1 + kPreviewMaxLines;
     }
     return rows;
 }
@@ -230,13 +234,18 @@ void ListPopup::Paint(Canvas c) {
     // completion-popup-preview follow-up: the wrapped-text footer, drawn
     // below whatever rows fit (skipped entirely once there's no room left
     // for even the divider row -- same "silently truncate" convention the
-    // row loop above already follows for its own overflow).
+    // row loop above already follows for its own overflow). hover-tooltips
+    // follow-up: a rows-empty model skips the divider outright (see
+    // ContentRowCount's own comment) -- there's nothing above it to separate
+    // from, so the preview text starts right under the top border.
     if (model_.previewText && row < height - 1) {
-        for (int x = 1; x < width - 1; ++x) {
-            c[{.x = x, .y = row}].character = text::EncodeCodepointUtf8(RoundedBorderGlyphs().horizontal);
-            labelBrush.ApplyTo(c[{.x = x, .y = row}]);
+        if (!model_.rows.empty()) {
+            for (int x = 1; x < width - 1; ++x) {
+                c[{.x = x, .y = row}].character = text::EncodeCodepointUtf8(RoundedBorderGlyphs().horizontal);
+                labelBrush.ApplyTo(c[{.x = x, .y = row}]);
+            }
+            ++row;
         }
-        ++row;
 
         const std::vector<std::string> lines = WrapText(*model_.previewText, width - 3); // 1-col margin each side + border
         for (std::size_t i = 0; i < lines.size() && i < static_cast<std::size_t>(kPreviewMaxLines) && row < height - 1; ++i) {

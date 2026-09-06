@@ -718,6 +718,20 @@ class BufferView : public Widget {
     // ListPopup overlay. Unset is a safe no-op.
     void SetOnCompletionChanged(std::function<void(std::optional<ListPopupModel>)> handler);
 
+    // hover-tooltips follow-up: same OverlayHost-owned-above-this-class,
+    // anchored shape as SetOnCompletionChanged above, for a mouse-hover
+    // (not click, not point-driven) `lsp-hover` popup. Fired with a
+    // populated ListPopupModel (rows empty, previewText the hover text,
+    // anchor one row below the hovered mouse position) once
+    // MaybeScheduleHover's debounce settles and a non-empty response
+    // arrives, and with std::nullopt the moment the mouse moves off that
+    // spot, a key is pressed, or the buffer switches (see DismissHover's
+    // own call sites). Wired via WindowManager::SetOnHoverChanged fanning
+    // out to every pane; main.cpp's registrant shows/hides its own shared,
+    // anchor-aware ListPopup overlay. Unset is a safe no-op (MaybeScheduleHover
+    // never even arms its debounce timer without a handler).
+    void SetOnHoverChanged(std::function<void(std::optional<ListPopupModel>)> handler);
+
     // mouse-support follow-up: the click-driven counterpart to
     // AcceptActiveCompletion() -- accepts whichever row was clicked rather
     // than whatever's currently selected (a click and the current selection
@@ -3179,6 +3193,7 @@ class BufferView : public Widget {
     std::function<void(std::optional<WhichKeyHint>)> onPrefixHintChanged_;  // see SetOnPrefixHintChanged
     std::function<void(std::optional<ListPopupModel>)> onCandidatesChanged_; // see SetOnCandidatesChanged
     std::function<void(std::optional<ListPopupModel>)> onCompletionChanged_; // see SetOnCompletionChanged
+    std::function<void(std::optional<ListPopupModel>)> onHoverChanged_; // see SetOnHoverChanged
     std::function<void(std::optional<ListPopupModel>)> onPeekChanged_; // see SetOnPeekChanged
     std::function<void(std::optional<ListPopupModel>)> onContextMenuChanged_; // see SetOnContextMenuChanged
 
@@ -3874,6 +3889,29 @@ class BufferView : public Widget {
 
     void RequestDocumentHighlightAtPoint();
     void MaybeScheduleDocumentHighlight(std::size_t pointBefore, std::size_t generationBefore);
+
+    // hover-tooltips follow-up. The buffer byte offset a hover request is
+    // pending or currently shown for -- std::nullopt means no hover
+    // activity at all. Reset (via DismissHover) the instant the mouse moves
+    // to a different offset, a key is pressed, or the buffer switches, so a
+    // stale popup never lingers past the spot it described.
+    std::optional<std::size_t> hoverOffset_;
+    // Same debounce shape as completionDebounceTimer_/documentHighlightDebounceTimer_
+    // above -- MaybeScheduleHover re-arms this on every qualifying mouse
+    // move, so only the mouse's final resting spot ever fires a real
+    // textDocument/hover request. Reuses editor::lsp::LspCompletionDebounceMs()
+    // rather than a dedicated setting, the same "typing/motion just settled"
+    // heuristic LspSignatureHelpAutoTriggerEnabled's own doc comment already
+    // reuses it for.
+    DeadlineTimer hoverDebounceTimer_;
+    // Bumped by MaybeScheduleHover/DismissHover before every request or
+    // reset -- same staleness-guard shape as completionRequestGeneration_/
+    // documentHighlightRequestGeneration_.
+    std::size_t hoverRequestGeneration_ = 0;
+
+    void MaybeScheduleHover(Point localMousePoint);
+    void RequestHoverAtOffset(std::size_t byteOffset, Point screenAnchor, std::size_t generation);
+    void DismissHover();
 
     // Debugging wishlist (line-inspect follow-up): DocumentHighlightState's
     // own shape -- buffer/contentGeneration guard Paint()'s read against a

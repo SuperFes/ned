@@ -784,6 +784,12 @@ namespace {
         editor::lsp::SetLspSignatureHelpAutoTriggerEnabled(enabled);
     }
 
+    // hover-tooltips follow-up: same "just forward to the process-wide
+    // setter" shape as NedSetLspSignatureHelpAutoTrigger above.
+    void NedSetLspHoverOnMouseMove(bool enabled) {
+        editor::lsp::SetLspHoverOnMouseMoveEnabled(enabled);
+    }
+
     // lsp-format-on-save follow-up: same "just forward to the process-wide
     // setter" shape as NedSetLspAutoComplete above.
     void NedSetLspFormatOnSave(bool enabled) {
@@ -1517,6 +1523,11 @@ void InstallEditorBindings(Environment& env) {
         "ned", "set-lsp-signature-help-auto-trigger",
         "Enable or disable automatically requesting signature help after typing ( or , inside a call (default "
         "true). Manual invocation (lsp-signature-help) works regardless of this setting.");
+    env.Register<&NedSetLspHoverOnMouseMove>(
+        "ned", "set-lsp-hover-on-mouse-move",
+        "Enable or disable showing an lsp-hover tooltip when the mouse rests over a symbol (default true). "
+        "Disabling this skips the debounce/request entirely, not just the popup. Manual invocation (lsp-hover, "
+        "C-c C-j) works regardless of this setting.");
     env.Register<&NedSetLspFormatOnSave>(
         "ned", "set-lsp-format-on-save",
         "Enable or disable formatting the buffer via the language server on save (default false). Ignored "

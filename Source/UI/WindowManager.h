@@ -355,6 +355,11 @@ class WindowManager {
     // a distinct hook rather than a reuse of that one.
     void SetOnCompletionChanged(std::function<void(std::optional<ListPopupModel>)> onCompletionChanged);
 
+    // hover-tooltips follow-up: same "forwarded to every pane, present and
+    // future" shape as SetOnCandidatesChanged/SetOnCompletionChanged above --
+    // see BufferView::SetOnHoverChanged's own doc comment.
+    void SetOnHoverChanged(std::function<void(std::optional<ListPopupModel>)> onHoverChanged);
+
     // peek-definition follow-up: same "forwarded to every pane, present and
     // future" shape as SetOnCandidatesChanged/SetOnCompletionChanged above --
     // see BufferView::SetOnPeekChanged's own doc comment.
@@ -856,6 +861,7 @@ class WindowManager {
     std::function<void(std::optional<WhichKeyHint>)> onPrefixHintChanged_; // see SetOnPrefixHintChanged
     std::function<void(std::optional<ListPopupModel>)> onCandidatesChanged_; // see SetOnCandidatesChanged
     std::function<void(std::optional<ListPopupModel>)> onCompletionChanged_; // see SetOnCompletionChanged
+    std::function<void(std::optional<ListPopupModel>)> onHoverChanged_; // see SetOnHoverChanged
     std::function<void(std::optional<ListPopupModel>)> onPeekChanged_; // see SetOnPeekChanged
     std::function<void(std::optional<ListPopupModel>)> onContextMenuChanged_; // see SetOnContextMenuChanged
 
