@@ -99,6 +99,27 @@ TEST_CASE("TerminalPanel paints fed content starting at row 0", "[TerminalPanel]
     REQUIRE(f.panel.TitleText() == "Terminal");
 }
 
+// REPL-engine follow-up: the argv/label constructor generalization. No
+// EventLoop is set here either (this test only cares about TitleText, which
+// doesn't touch EnsureStarted at all), same no-op-safe convention every
+// other headless TerminalPanel test in this file relies on.
+TEST_CASE("TerminalPanel's argv/label constructor names itself via TitleText instead of \"Terminal\"", "[TerminalPanel]") {
+    Theme         theme = ned::ui::DarkTheme();
+    TerminalPanel panel(theme, {"python3", "-i"}, "python");
+
+    REQUIRE(panel.TitleText() == "python");
+}
+
+// An empty argv (the default, and every existing call site) must still fall
+// back to ShellArgv() unchanged -- this constructor overload must not alter
+// the built-in terminal drawer's own behavior.
+TEST_CASE("TerminalPanel's default constructor still names itself \"Terminal\"", "[TerminalPanel]") {
+    Theme         theme = ned::ui::DarkTheme();
+    TerminalPanel panel(theme);
+
+    REQUIRE(panel.TitleText() == "Terminal");
+}
+
 TEST_CASE("TerminalPanel resolves colors against the theme and passes SGR through", "[TerminalPanel]") {
     Fixture f;
     f.panel.Feed("\x1b[31mr\x1b[0md");

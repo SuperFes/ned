@@ -711,6 +711,7 @@ add_library(ned_lib STATIC
         Source/Editor/Tasks/TaskConfig.cpp
         Source/Editor/Tasks/TaskProcess.cpp
         Source/Editor/Tasks/TaskRunner.cpp
+        Source/Editor/Repl/ReplConfig.cpp
         Source/Editor/TestRun/TestOutputParser.cpp
         Source/Editor/TestRun/TestResult.cpp
         Source/Editor/TestRun/TestResultsBuffer.cpp
@@ -750,6 +751,7 @@ add_library(ned_lib STATIC
         Source/UI/TerminalPanel.cpp
         Source/UI/AcpPanel.cpp
         Source/UI/DebugConsolePanel.cpp
+        Source/UI/JanetReplPanel.cpp
         Source/UI/ListPopup.cpp
         Source/UI/TreeView.cpp
         Source/UI/MemoryImageView.cpp
@@ -1088,11 +1090,13 @@ if (NED_BUILD_TESTS)
             Tests/MemoryImageTest.cpp
             Tests/MemoryImageViewTest.cpp
             Tests/DebugConsolePanelTest.cpp
+            Tests/JanetReplPanelTest.cpp
             Tests/DapThreadsPanelTest.cpp
             Tests/ChildProcessTest.cpp
             Tests/TaskConfigTest.cpp
             Tests/TaskProcessTest.cpp
             Tests/TaskRunnerTest.cpp
+            Tests/ReplConfigTest.cpp
             Tests/TestOutputParserTest.cpp
             Tests/BufferViewTestGutterTest.cpp
             Tests/TestDiscoveryTest.cpp
