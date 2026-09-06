@@ -34,6 +34,24 @@ void RemoveLastCodepoint(std::string& utf8Text);
 // NextCodepointBoundary -- never retreats past a lead byte.
 [[nodiscard]] std::size_t PreviousCodepointBoundary(std::string_view utf8Text, std::size_t offset);
 
+// Clamps an arbitrary/untrusted byte offset -- one not known to already sit
+// on a codepoint boundary, e.g. produced by a byte-level diff that isn't
+// itself UTF-8-aware -- backward to the start of whichever codepoint it
+// falls inside. A no-op if offset is already a boundary (including
+// offset == utf8Text.size()). Unlike PreviousCodepointBoundary (which always
+// steps back one whole codepoint, for "delete the codepoint before the
+// cursor"-style callers that know their input is already aligned), this
+// never moves an already-aligned offset at all. Bounded to at most 3 steps
+// back (the longest possible run of UTF-8 continuation bytes), so malformed
+// input can't walk it arbitrarily far.
+[[nodiscard]] std::size_t SnapDownToCodepointBoundary(std::string_view utf8Text, std::size_t offset);
+
+// The forward-snapping counterpart: moves offset forward past the
+// remaining continuation bytes of whichever codepoint it falls inside. A
+// no-op if offset is already a boundary. Same malformed-input bound as
+// SnapDownToCodepointBoundary.
+[[nodiscard]] std::size_t SnapUpToCodepointBoundary(std::string_view utf8Text, std::size_t offset);
+
 } // namespace ned::text
 
 #endif // NED_TEXT_UTF8_H
