@@ -536,6 +536,63 @@ TEST_CASE("ToggleCollapsed collapses to a 1-column strip and back", "[VcsPanel]"
     REQUIRE(panel.Width() == 24);
 }
 
+TEST_CASE("Double-clicking the divider collapses the VCS panel to a 1-column strip; double-clicking the strip expands again",
+          "[VcsPanel]") {
+    ned::text::BufferList list;
+    ned::text::Buffer&    scratch = list.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    std::string           statusMessage;
+    ned::ui::VcsPanel      panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    PlacePanel(panel, 20, 12);
+    REQUIRE_FALSE(panel.Collapsed());
+    REQUIRE(panel.Width() == 30); // the default expanded width
+
+    panel.OnEvent(MousePress(19, 5)); // first press starts a resize...
+    REQUIRE(panel.IsResizing());
+    panel.OnEvent(MousePress(19, 5)); // ...the rapid second press collapses instead
+
+    REQUIRE(panel.Collapsed());
+    REQUIRE_FALSE(panel.IsResizing()); // the half-started resize died with the frame
+    REQUIRE(panel.Width() == 1);
+    REQUIRE(panel.ExpandedWidth() == 30); // preserved for re-expansion
+
+    // A single press on the collapsed strip does nothing; a rapid second one expands.
+    panel.OnEvent(MousePress(0, 5));
+    REQUIRE(panel.Collapsed());
+    panel.OnEvent(MousePress(0, 5));
+    REQUIRE_FALSE(panel.Collapsed());
+    REQUIRE(panel.Width() == 30);
+}
+
+TEST_CASE("A real resize drag never counts as the first half of a VcsPanel collapse double-click", "[VcsPanel]") {
+    ned::text::BufferList list;
+    ned::text::Buffer&    scratch = list.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    std::string           statusMessage;
+    ned::ui::VcsPanel      panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    PlacePanel(panel, 20, 12);
+
+    panel.OnEvent(MousePress(19, 5));
+    panel.OnEvent(ned::ui::test::Mouse(12, 5, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Moved)); // a genuine drag
+    panel.OnEvent(
+        ned::ui::test::Mouse(12, 5, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Released));
+    REQUIRE(panel.Width() == 13);
+
+    // The composition root re-reads Width() and re-lays the box out every
+    // frame -- mirror that before pressing the (moved) divider again.
+    PlacePanel(panel, 13, 12);
+
+    // A prompt new press on the divider (well within the double-click
+    // window of the drag's own initial press) must start a fresh resize,
+    // not collapse.
+    panel.OnEvent(MousePress(12, 5));
+    REQUIRE_FALSE(panel.Collapsed());
+    REQUIRE(panel.IsResizing());
+    panel.OnEvent(ned::ui::test::Mouse(12, 5, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Released));
+}
+
 TEST_CASE("Scrolling past a section header pins it as a sticky row", "[VcsPanel]") {
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_vcs_panel_test_sticky_header";
     std::filesystem::remove_all(dir);

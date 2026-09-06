@@ -19,6 +19,7 @@
 #ifndef NED_UI_ACPPANEL_H
 #define NED_UI_ACPPANEL_H
 
+#include <chrono>
 #include <cstddef>
 #include <functional>
 #include <optional>
@@ -261,6 +262,14 @@ class AcpPanel : public Widget {
     bool  resizing_ = false;
     Point resizeAnchorGlobal_{.x = 0, .y = 0};
     int   resizeStartPercent_ = 0;
+
+    // Double-click detection for the resize divider, ProjectSidebar/VcsPanel's
+    // own precedent: a second press within kDoubleClickWindow collapses
+    // instead of starting a resize; a real drag clears the pending state
+    // (see UpdateResize). Standalone mode only, alongside every other
+    // divider-hit-test this panel does -- see SetDockHosted's doc comment.
+    bool                                  dividerClickPending_ = false;
+    std::chrono::steady_clock::time_point lastDividerPressTime_;
 
     std::optional<std::size_t> historyIndex_;
     std::string                historyDraft_;

@@ -224,6 +224,14 @@ class VcsPanel : public Widget {
     int  resizeStartWidth_    = 0;
     void BeginResize(int globalMouseX);
 
+    // Double-click detection for the divider/collapsed strip,
+    // ProjectSidebar::dividerClickPending_'s own precedent: a second press
+    // within kDoubleClickWindow toggles the collapse; a real drag (movement
+    // past +-1 column, see UpdateResize) clears the pending state so
+    // drag-resize never accidentally collapses.
+    bool                                  dividerClickPending_ = false;
+    std::chrono::steady_clock::time_point lastDividerPressTime_;
+
     std::function<void(int)>  onWidthCommitted_;
     std::function<void(bool)> onCollapseCommitted_;
     void                      CommitCollapsed(bool collapsed);
