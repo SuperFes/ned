@@ -575,6 +575,13 @@ class WindowManager {
     // in main.cpp. See BufferView::ActivateContextMenuAt's own doc comment.
     void ActivateContextMenuAt(std::size_t index);
 
+    // ListPopup-mouse-support-remainder follow-up: same "route to whichever
+    // pane is currently focused" shape as ActivateCompletionAt/
+    // ActivateContextMenuAt above -- wired to the shared M-x/find-file/
+    // switch-to-buffer/etc. candidate popup's own ListPopup::SetOnActivate
+    // in main.cpp. See BufferView::ActivateCandidatePopupAt's own doc comment.
+    void ActivateCandidatePopupAt(std::size_t index);
+
     // session-persistence slice 3: routes the .ned/init.janet trust prompt
     // to whichever pane has focus -- RequestOpenBinaryFile's exact shape;
     // see BufferView::RequestTrustProjectInit for the prompt's own

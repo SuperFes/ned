@@ -4324,6 +4324,44 @@ TEST_CASE("Tab in find-file with ambiguous matches accepts the highlighted candi
     std::filesystem::remove_all(dir);
 }
 
+TEST_CASE("A click on a find-file candidate row fills the prompt like Tab, without submitting", "[BufferView]") {
+    // ListPopup-mouse-support-remainder follow-up: find-file/open-project-path/
+    // find-scratch finalize on literal prompt text (RefreshPathCompletionPopup's
+    // own doc comment), so a click here is Tab's behavior, not Enter's -- it
+    // fills the prompt from whichever row was clicked without opening anything.
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_bufferview_test_click_ambiguous";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    {
+        std::ofstream(dir / "apple.txt") << "x";
+    }
+    {
+        std::ofstream(dir / "apricot.txt") << "x";
+    }
+
+    Fixture            fixture;
+    ned::text::Buffer& scratch = fixture.bufferList.CreateBuffer("scratch");
+
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
+                               fixture.statusMessage, fixture.mode, fixture.theme);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Ctrl('x'));
+    view.OnEvent(ned::ui::test::Ctrl('f'));
+    TypeText(view, (dir / "ap").string());
+
+    view.ActivateCandidatePopupAt(1); // click apricot.txt -- apple.txt is the highlighted row
+    REQUIRE(fixture.statusMessage == "Find file: " + (dir / "apricot.txt").string());
+    REQUIRE(&activeBuffer.Get() == &scratch); // not opened yet -- click fills, doesn't submit
+
+    view.OnEvent(ned::ui::test::Return());
+    REQUIRE(&activeBuffer.Get() != &scratch);
+    REQUIRE(activeBuffer.Get().Text() == "x");
+
+    std::filesystem::remove_all(dir);
+}
+
 TEST_CASE("SetTopLine clamps so the buffer's last line stops at the bottom of the viewport, not past it",
           "[BufferView]") {
     Fixture fixture;
@@ -6209,6 +6247,57 @@ TEST_CASE("Down in M-x moves the selection, and Enter invokes whichever candidat
 
     REQUIRE_FALSE(alphaInvoked);
     REQUIRE(betaInvoked);
+}
+
+TEST_CASE("A click on an M-x candidate row invokes it directly, regardless of the current arrow-key selection",
+          "[BufferView]") {
+    // ListPopup-mouse-support-remainder follow-up: a click supplies its own
+    // row index rather than acting on whatever's currently highlighted --
+    // AcceptActiveCompletionAt's own precedent, generalized to this popup.
+    Fixture fixture;
+    bool    alphaInvoked = false;
+    bool    betaInvoked  = false;
+    fixture.registry.Register("zzz-alpha", "", [&](ned::editor::CommandContext&) { alphaInvoked = true; });
+    fixture.registry.Register("zzz-beta", "", [&](ned::editor::CommandContext&) { betaInvoked = true; });
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+    CaptureCandidates(view, fixture.candidates);
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "zzz");
+    REQUIRE(CandidateSelected(fixture.candidates, "zzz-alpha")); // still the top-ranked/highlighted row
+
+    view.ActivateCandidatePopupAt(1); // click the *second* row (zzz-beta), never arrow-selected
+    REQUIRE_FALSE(alphaInvoked);
+    REQUIRE(betaInvoked);
+
+    view.OnEvent(ned::ui::test::Character("z")); // back to normal editing, proves inputMode_ is Normal again
+    REQUIRE(fixture.buffer.Text() == "z");
+}
+
+TEST_CASE("Clicking the \"N more below\" divider row in M-x is a no-op", "[BufferView]") {
+    // ListPopup-mouse-support-remainder follow-up: a raw ListPopup row index
+    // can land on a synthetic divider row BuildFuzzyCandidatePopupModel
+    // splices in -- ResolveFuzzyCandidateRowIndex must recognize that and
+    // not resolve it to a real (mis-shifted) candidate.
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+    CaptureCandidates(view, fixture.candidates);
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    REQUIRE(CandidatesHaveMoreTail(fixture.candidates)); // more than kMaxPopupRows commands are registered
+    const std::size_t dividerRow = fixture.candidates->rows.size() - 1;
+
+    view.ActivateCandidatePopupAt(dividerRow);
+
+    // Still in the M-x session, nothing invoked -- proven by typing still
+    // filtering the command list instead of editing the buffer.
+    TypeText(view, "nonexistentcommandxyz");
+    REQUIRE(fixture.buffer.Text().empty());
+    REQUIRE_FALSE(CandidatesContain(fixture.candidates, "acp-rewind"));
+    view.OnEvent(ned::ui::test::Escape());
 }
 
 TEST_CASE("Enter in M-x invokes the matched command and returns to normal editing", "[BufferView]") {
@@ -8682,6 +8771,62 @@ TEST_CASE("C-c C-a with multiple code actions: digit-select applies the right on
     REQUIRE(CandidateRowExists(fixture.candidates, "2)", "Second fix"));
 
     view.OnEvent(ned::ui::test::Character("2")); // jump directly to the second action, applying it with no confirmation
+    REQUIRE(buffer.Text() == "second");
+}
+
+TEST_CASE("A click on a code-action row applies it directly, by row index, no confirmation", "[BufferView]") {
+    // ListPopup-mouse-support-remainder follow-up: RefreshCodeActionSelectStatus
+    // builds a plain 1:1 numbered list (no window/divider rows), so a clicked
+    // row is already the real index into pendingCodeActions_.
+    Fixture                     fixture;
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_bufferview_code_action_click_test.txt";
+    ned::text::Buffer&          buffer = fixture.bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("bad_code");
+    fixture.activeBuffer.Set(buffer);
+
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::lsp::LspManager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::LspClient* client = nullptr;
+    FakeLspServer                server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    CaptureCandidates(view, fixture.candidates);
+
+    ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
+    ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+    DrainAllPendingFrames(server.serverStdinRead);
+
+    view.OnEvent(ned::ui::test::Ctrl('c'));
+    view.OnEvent(ned::ui::test::Ctrl('a'));
+
+    const std::string raw     = ReadRawLspFrame(server.serverStdinRead);
+    const auto        request = ned::editor::lsp::Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    const std::string ownUri  = request["params"]["textDocument"]["uri"].get<std::string>();
+
+    auto makeAction = [&](const std::string& title, const std::string& newText) {
+        return ned::editor::lsp::Json{
+            {"title", title},
+            {"edit",
+             {{"changes",
+               {{ownUri, ned::editor::lsp::Json::array(
+                             {{{"range", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 8}}}}},
+                               {"newText", newText}}})}}}}},
+        };
+    };
+    const auto response = ned::editor::lsp::Json{
+        {"jsonrpc", "2.0"},
+        {"id", LspRequestIdFromFrame(raw)},
+        {"result", ned::editor::lsp::Json::array({makeAction("First fix", "first"), makeAction("Second fix", "second")})},
+    };
+    client->DispatchFrame(response.dump());
+
+    REQUIRE(CandidateRowExists(fixture.candidates, "1)", "First fix"));
+    REQUIRE(CandidateRowExists(fixture.candidates, "2)", "Second fix"));
+
+    view.ActivateCandidatePopupAt(1); // click the second row (0-based) -- never digit/arrow-selected
     REQUIRE(buffer.Text() == "second");
 }
 

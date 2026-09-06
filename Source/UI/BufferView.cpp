@@ -239,21 +239,23 @@ namespace {
     // path candidate masked down to its last segment) while `ranked` itself
     // stays the real value Enter/Tab resolve against -- every pre-existing
     // caller passes nullptr and is unaffected.
-    ListPopupModel BuildFuzzyCandidatePopupModel(const std::string& title, const std::vector<std::string>& ranked,
-                                                 std::size_t selected,
-                                                 const std::function<std::string(const std::string&)>& display = nullptr) {
-        ListPopupModel model;
-        model.title = title;
-        if (ranked.empty()) {
-            return model;
-        }
-        selected = std::min(selected, ranked.size() - 1);
+    struct CandidatePopupWindow {
+        std::size_t start;
+        std::size_t end;
+    };
+
+    // The sliding-window math BuildFuzzyCandidatePopupModel renders from,
+    // factored out so ResolveFuzzyCandidateRowIndex below can reproduce the
+    // exact same window a click is landing on without duplicating it.
+    // `total` must be nonzero; `selected` is clamped internally.
+    CandidatePopupWindow ComputeCandidatePopupWindow(std::size_t selected, std::size_t total) {
+        selected = std::min(selected, total - 1);
 
         std::size_t       windowStart = selected;
         std::size_t       windowEnd   = selected + 1;
-        const std::size_t maxRows     = std::min(kMaxPopupRows, ranked.size());
+        const std::size_t maxRows     = std::min(kMaxPopupRows, total);
         while (windowEnd - windowStart < maxRows) {
-            if (windowEnd < ranked.size()) {
+            if (windowEnd < total) {
                 ++windowEnd;
             }
             else if (windowStart > 0) {
@@ -263,6 +265,20 @@ namespace {
                 break;
             }
         }
+        return CandidatePopupWindow{.start = windowStart, .end = windowEnd};
+    }
+
+    ListPopupModel BuildFuzzyCandidatePopupModel(const std::string& title, const std::vector<std::string>& ranked,
+                                                 std::size_t                                           selected,
+                                                 const std::function<std::string(const std::string&)>& display = nullptr) {
+        ListPopupModel model;
+        model.title = title;
+        if (ranked.empty()) {
+            return model;
+        }
+        selected = std::min(selected, ranked.size() - 1);
+
+        const auto [windowStart, windowEnd] = ComputeCandidatePopupWindow(selected, ranked.size());
 
         model.rows.reserve(windowEnd - windowStart + 2);
         if (windowStart > 0) {
@@ -278,6 +294,31 @@ namespace {
             model.rows.push_back({.main = "↓ " + std::to_string(hiddenBelow) + " more below"});
         }
         return model;
+    }
+
+    // click-to-activate follow-up: maps a raw row index from ListPopup's own
+    // click handler (which knows nothing about the "N more above/below"
+    // synthetic rows BuildFuzzyCandidatePopupModel splices in) back to a real
+    // index into the `total`-sized ranked/candidate list it was built from --
+    // `selected` must be the same value the popup was last rendered with, so
+    // this reproduces that exact window. A click landing on a synthetic
+    // divider row (or past the end -- a stale click racing a just-changed
+    // list) resolves to nullopt, not a clamped guess.
+    std::optional<std::size_t> ResolveFuzzyCandidateRowIndex(std::size_t rowIndex, std::size_t selected,
+                                                             std::size_t total) {
+        if (total == 0) {
+            return std::nullopt;
+        }
+        const auto [windowStart, windowEnd] = ComputeCandidatePopupWindow(selected, total);
+        const std::size_t offset            = windowStart > 0 ? 1 : 0;
+        if (rowIndex < offset) {
+            return std::nullopt; // the "more above" divider row
+        }
+        const std::size_t withinWindow = rowIndex - offset;
+        if (withinWindow >= windowEnd - windowStart) {
+            return std::nullopt; // the "more below" divider row, or past it
+        }
+        return windowStart + withinWindow;
     }
 
     // dropdown-path-completion follow-up: turns an accumulated
@@ -14727,6 +14768,159 @@ void BufferView::HandleSelectThemeKey(const editor::KeyChord& chord) {
         ApplySelectedThemePreview();
     }
     // CursorMoved/NotHandled: nothing else consumes a key here -- stay in the prompt.
+}
+
+// ListPopup-mouse-support-remainder follow-up: see this method's own doc
+// comment in BufferView.h for the overall shape. Each fuzzy-ranked branch
+// recomputes the same ranked/candidate list its own Refresh*Status does --
+// safe because nothing about the session (prompt_->Text(), the candidate
+// source) changes between a popup render and a click landing on one of its
+// rows -- resolves the clicked row via ResolveFuzzyCandidateRowIndex, sets
+// that session's own selection member, and re-dispatches a synthetic Enter
+// through its existing Handle*Key rather than duplicating that method's
+// commit logic.
+void BufferView::ActivateCandidatePopupAt(std::size_t index) {
+    const editor::KeyChord enter{.Special = editor::SpecialKey::Enter};
+
+    switch (inputMode_) {
+        case InputMode::ExecuteCommand: {
+            const std::vector<std::string> ranked =
+                editor::FuzzyFilterAndRank(dispatcher_.Registry().Names(), prompt_->Text());
+            const auto resolved = ResolveFuzzyCandidateRowIndex(index, executeCommandSelection_, ranked.size());
+            if (!resolved) {
+                return;
+            }
+            executeCommandSelection_ = *resolved;
+            HandleExecuteCommandKey(enter);
+            return;
+        }
+        case InputMode::FindRecentFile: {
+            const std::vector<std::string> ranked   = editor::FuzzyFilterAndRank(recentFileCandidates_, prompt_->Text());
+            const auto                     resolved = ResolveFuzzyCandidateRowIndex(index, recentFileSelection_, ranked.size());
+            if (!resolved) {
+                return;
+            }
+            recentFileSelection_ = *resolved;
+            HandleFindRecentFileKey(enter);
+            return;
+        }
+        case InputMode::ProjectFindFile: {
+            const std::vector<std::string> ranked =
+                editor::FuzzyFilterAndRank(projectFindFileCandidates_, prompt_->Text());
+            const auto resolved = ResolveFuzzyCandidateRowIndex(index, projectFindFileSelection_, ranked.size());
+            if (!resolved) {
+                return;
+            }
+            projectFindFileSelection_ = *resolved;
+            HandleProjectFindFileKey(enter);
+            return;
+        }
+        case InputMode::SwitchProject: {
+            std::vector<std::string> candidates;
+            candidates.reserve(switchProjectEntries_.size());
+            for (const auto& entry : switchProjectEntries_) {
+                candidates.push_back(FormatProjectEntry(entry));
+            }
+            const std::vector<std::string> ranked   = editor::FuzzyFilterAndRank(candidates, prompt_->Text());
+            const auto                     resolved = ResolveFuzzyCandidateRowIndex(index, switchProjectSelection_, ranked.size());
+            if (!resolved) {
+                return;
+            }
+            switchProjectSelection_ = *resolved;
+            HandleSwitchProjectKey(enter);
+            return;
+        }
+        case InputMode::SwitchToBuffer: {
+            const std::vector<std::string> candidates = text::CompleteBufferNames(bufferList_, "");
+            const std::vector<std::string> ranked     = editor::FuzzyFilterAndRank(candidates, prompt_->Text());
+            const auto                     resolved   = ResolveFuzzyCandidateRowIndex(index, switchToBufferSelection_, ranked.size());
+            if (!resolved) {
+                return;
+            }
+            switchToBufferSelection_ = *resolved;
+            HandleSwitchToBufferKey(enter);
+            return;
+        }
+        case InputMode::VcsSwitchBranch: {
+            const std::vector<std::string> ranked   = editor::FuzzyFilterAndRank(vcsBranchCandidates_, prompt_->Text());
+            const auto                     resolved = ResolveFuzzyCandidateRowIndex(index, vcsSwitchBranchSelection_, ranked.size());
+            if (!resolved) {
+                return;
+            }
+            vcsSwitchBranchSelection_ = *resolved;
+            HandleVcsSwitchBranchKey(enter);
+            return;
+        }
+        case InputMode::BookmarkJump: {
+            const std::vector<std::string> ranked   = editor::FuzzyFilterAndRank(bookmarkCandidates_, prompt_->Text());
+            const auto                     resolved = ResolveFuzzyCandidateRowIndex(index, bookmarkSelection_, ranked.size());
+            if (!resolved) {
+                return;
+            }
+            bookmarkSelection_ = *resolved;
+            HandleBookmarkJumpKey(enter);
+            return;
+        }
+        case InputMode::SelectTheme: {
+            const std::vector<std::string> ranked   = editor::FuzzyFilterAndRank(selectThemeCandidates_, prompt_->Text());
+            const auto                     resolved = ResolveFuzzyCandidateRowIndex(index, selectThemeSelection_, ranked.size());
+            if (!resolved) {
+                return;
+            }
+            selectThemeSelection_ = *resolved;
+            HandleSelectThemeKey(enter);
+            return;
+        }
+        case InputMode::LspGotoSymbol: {
+            const auto resolved = ResolveFuzzyCandidateRowIndex(index, documentSymbolSelection_, documentSymbolLabels_.size());
+            if (!resolved) {
+                return;
+            }
+            documentSymbolSelection_ = *resolved;
+            HandleDocumentSymbolKey(enter);
+            return;
+        }
+        case InputMode::LspWorkspaceSymbol: {
+            const auto resolved =
+                ResolveFuzzyCandidateRowIndex(index, workspaceSymbolSelection_, pendingWorkspaceSymbols_.size());
+            if (!resolved) {
+                return;
+            }
+            workspaceSymbolSelection_ = *resolved;
+            HandleWorkspaceSymbolKey(enter);
+            return;
+        }
+        case InputMode::LspCodeActionSelect: {
+            // No window/divider rows here -- RefreshCodeActionSelectStatus
+            // builds a plain 1:1 numbered list, unlike the fuzzy-ranked
+            // sessions above, so the clicked row is already the real index.
+            if (index >= pendingCodeActions_.size()) {
+                return;
+            }
+            codeActionSelection_ = index;
+            HandleCodeActionSelectKey(enter);
+            return;
+        }
+        case InputMode::FindFile:
+        case InputMode::OpenProjectPath:
+        case InputMode::FindScratch: {
+            // Tab's own behavior, not Enter's: these three sessions finalize
+            // on literal prompt_->Text(), so a click fills the prompt from
+            // the candidate rather than submitting it -- see
+            // RefreshPathCompletionPopup's own doc comment.
+            const std::vector<std::string> candidates = GatherPathCompletionCandidates();
+            const auto                     resolved   = ResolveFuzzyCandidateRowIndex(index, pathCompletionSelection_, candidates.size());
+            if (!resolved) {
+                return;
+            }
+            prompt_->SetText(candidates[*resolved]);
+            pathCompletionSelection_ = 0;
+            RefreshPathCompletionPopup();
+            return;
+        }
+        default:
+            return; // no candidate popup active for this mode (a stale click racing an already-ended session)
+    }
 }
 
 void BufferView::CloseBufferNow(text::Buffer& buffer) {
