@@ -633,6 +633,62 @@ affordance. Built entirely on existing `VcsRunner`/`VcsProvider` plumbing.
 - [ ] Directory-tree rows use indentation only, no box-drawing tree-connector glyphs
       (`ProjectSidebar`'s `├─└─│`) — revisit if the plain-indent tree reads as too flat.
 
+### Merge Conflict Resolution Mode (New Feature)
+
+Recorded 2026-09-06. Today's conflict support is detection-only: `VcsPanel` flags a
+conflicted path (`RefreshConflictedPaths`, `text::HasConflictMarkers` over the working
+tree file) and jumps to the first marker on open; `save-buffer` separately refuses to
+write unresolved `<<<<<<<`/`=======`/`>>>>>>>` markers to disk
+(`InteractiveRequest::ConfirmSaveWithConflicts`). There is no resolution UI — a conflict
+is still resolved by hand-editing marker text. The ask: a fast, chord-and-mouse-driven
+mode for tearing through a conflicted file's hunks, without losing the ability to fall
+through to a normal manual edit at any point (never a modal trap).
+
+- [ ] **Conflict hunk model** — parse a buffer's `<<<<<<< ours` / `|||||||` (optional
+      diff3 "base" section, if `merge.conflictStyle = diff3` is set) / `=======` /
+      `>>>>>>> theirs` runs into a `ConflictHunk{startByte, endByte, oursRange,
+      baseRange (optional), theirsRange, resolved}` list, mirroring `Text/ThreeWayMerge.h`'s
+      own marker-writing convention in reverse (that file writes markers; this reads them
+      back). Lives in `Text/` (pure, buffer-free, unit-testable against crafted marker
+      text) alongside `ThreeWayMerge.h` — same layering `HasConflictMarkers` already sits at.
+- [ ] **Per-hunk resolution actions** — take-ours / take-theirs / take-both (ours then
+      theirs, or theirs then ours) / take-neither (delete the hunk entirely) / keep-base
+      (diff3 only), each a pure `Buffer` edit replacing the whole marked region with the
+      chosen content, one undo step per action so a wrong pick is a single `undo` away.
+      Manual editing inside a still-open hunk (or after a taken resolution) must stay
+      completely unblocked — this is an accelerator over hand-editing, never a
+      replacement UI that locks the buffer.
+- [ ] **Navigation** — `next-conflict-hunk`/`previous-conflict-hunk` commands (jump point
+      to the next/previous unresolved hunk in the current buffer, wrapping), the natural
+      generalization of `VcsPanel`'s existing "jump to first conflict" affordance.
+      Candidate default chords: `C-c C-n`/`C-c C-p` mirroring Org's own next/prev-heading
+      feel, or a dedicated `M-n`/`M-p`-under-conflict-mode pair — needs a keymap-collision
+      pass the way `AcpPanel`'s `C-c c`/`C-c a` split needed one (see
+      `Keymap::AmbiguousBindings()`).
+- [ ] **A visual affordance for "which hunk is under point"** — at minimum, a themed
+      background tint over the ours/theirs/base spans while a hunk is unresolved
+      (`Theme` already has this shape for isearch matches/selection/snippet fields —
+      same mechanism, a new `Theme::conflictOursBackground`/`conflictTheirsBackground`
+      pair). A per-hunk inline action row (take-ours/take-theirs/take-both/take-neither
+      as clickable text, `BufferView`'s existing gutter-click precedent) is the natural
+      mouse-driven fast path a keyboard-chord-only design would be missing; scope as a
+      follow-up once the pure model + chords land, not required for v1.
+- [ ] **Auto-entry** — opening a buffer whose on-disk content has conflict markers (or
+      `VcsPanel` jumping to one) should offer to enter this mode automatically, the same
+      spirit as `AutoRevert`/`AutoMerge`'s existing "detect the condition, offer the
+      fix" sweeps — but user-confirmed, not silent, since it changes buffer content.
+      `VcsPanel`'s existing `conflictedPaths_` set / `RefreshConflictedPaths` sweep is
+      the natural detection source to hook rather than inventing a second scanner.
+- [ ] **Whole-file / whole-hunk-run bulk actions** — "take all ours"/"take all theirs"
+      for a file with many mechanically-identical hunks (e.g. a lockfile or generated
+      file where one side is always right) — a `VcsPanel` per-file action, not a
+      per-hunk one; scope after per-hunk resolution ships and only if real usage shows
+      the per-hunk loop is too slow for that case.
+- [ ] Out of scope for v1: rebase/cherry-pick conflict *sequences* (resolve, `git rebase
+      --continue`, repeat) — the hunk-resolution primitive above is what such a sequence
+      would be built on later, but driving the sequence itself needs its own `VcsRunner`
+      plumbing (`RequestRebaseContinue`/abort/skip) not touched here.
+
 ### Jupyter Notebooks
 
 Feasible, but subsystem-sized — closer in total scope to the LSP and DAP builds
