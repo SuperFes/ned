@@ -29,6 +29,49 @@ std::string EncodeCodepointUtf8(char32_t codepoint) {
     return out;
 }
 
+char32_t DecodeCodepointUtf8(std::string_view utf8Text, std::size_t offset) {
+    if (offset >= utf8Text.size()) {
+        return 0xFFFD;
+    }
+
+    const auto b0 = static_cast<unsigned char>(utf8Text[offset]);
+    if (b0 < 0x80) {
+        return static_cast<char32_t>(b0);
+    }
+
+    std::size_t len;
+    char32_t    cp;
+    if ((b0 & 0xE0) == 0xC0) {
+        len = 2;
+        cp  = b0 & 0x1F;
+    }
+    else if ((b0 & 0xF0) == 0xE0) {
+        len = 3;
+        cp  = b0 & 0x0F;
+    }
+    else if ((b0 & 0xF8) == 0xF0) {
+        len = 4;
+        cp  = b0 & 0x07;
+    }
+    else {
+        return 0xFFFD;
+    }
+
+    if (offset + len > utf8Text.size()) {
+        return 0xFFFD;
+    }
+
+    for (std::size_t i = 1; i < len; ++i) {
+        const auto b = static_cast<unsigned char>(utf8Text[offset + i]);
+        if ((b & 0xC0) != 0x80) {
+            return 0xFFFD;
+        }
+        cp = (cp << 6) | (b & 0x3F);
+    }
+
+    return cp;
+}
+
 std::size_t NextCodepointBoundary(std::string_view utf8Text, std::size_t offset) {
     if (offset >= utf8Text.size()) {
         return utf8Text.size();

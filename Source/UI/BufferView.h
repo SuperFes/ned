@@ -106,6 +106,7 @@ class BufferView : public Widget {
 
     void Paint(Canvas c) override;
     bool OnEvent(const Event& event) override;
+    void OnPaste(std::string_view text) override;
     bool Focusable() const override;
 
     // Local cursor position for the real terminal caret. A pure, independent
@@ -1187,6 +1188,21 @@ class BufferView : public Widget {
     // window-management caution as DispatchChordNormally's own doc comment) -- always
     // this call's own return, nothing after.
     bool HandleVimKey(const editor::KeyChord& chord);
+    // paste-perf-and-drag-drop follow-up: OnPaste's own real implementation,
+    // factored out so it's directly unit-testable without needing real
+    // focus/EventLoop machinery. Fast path (inputMode_ == InputMode::Normal,
+    // and vim mode either off or in Mode::Insert): one atomic
+    // Buffer::InsertAtPoint call -- already one storage edit, one
+    // ContentGeneration() bump, one undo step, regardless of text's length.
+    // Every other case (any other modal InputMode, or vim mode active
+    // outside Insert) replays each decoded codepoint through this same
+    // per-character OnKeyEvent dispatch every ordinary keystroke already
+    // uses, preserving existing modal-paste correctness (isearch/M-x/any
+    // prompt, vim commands) at the O(n) cost this feature otherwise exists
+    // to avoid -- acceptable since a huge paste into a short modal prompt is
+    // a vanishingly rare case, unlike the reported bug (a paste into an
+    // ordinary buffer).
+    void HandleBulkPastedText(std::string_view text);
     void HandlePrefixArgumentKey(const editor::KeyChord& chord);
     // snippet-macro-replay follow-up: the navigation/end chords a live
     // snippet session consumes itself (Tab/S-Tab field hop, ESC, a

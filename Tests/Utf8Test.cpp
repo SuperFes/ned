@@ -90,3 +90,31 @@ TEST_CASE("SnapUpToCodepointBoundary bounds its walk against malformed input", "
     const std::string bad = std::string(10, '\x80');
     REQUIRE(SnapUpToCodepointBoundary(bad, 0) == 3);
 }
+
+TEST_CASE("DecodeCodepointUtf8 round-trips every width EncodeCodepointUtf8 produces", "[Utf8]") {
+    using ned::text::DecodeCodepointUtf8;
+
+    REQUIRE(DecodeCodepointUtf8("a", 0) == U'a');
+    REQUIRE(DecodeCodepointUtf8("\xC3\xA9", 0) == 0x00E9);          // 'é', 2 bytes
+    REQUIRE(DecodeCodepointUtf8("\xE4\xB8\xAD", 0) == 0x4E2D);      // '中', 3 bytes
+    REQUIRE(DecodeCodepointUtf8("\xF0\x9F\x98\x80", 0) == 0x1F600); // grinning face emoji, 4 bytes
+}
+
+TEST_CASE("DecodeCodepointUtf8 decodes the codepoint starting at an arbitrary boundary", "[Utf8]") {
+    using ned::text::DecodeCodepointUtf8;
+
+    const std::string text = "a\xC3\xA9\xE4\xB8\xAD"; // 'a' + 'é' + '中'
+    REQUIRE(DecodeCodepointUtf8(text, 0) == U'a');
+    REQUIRE(DecodeCodepointUtf8(text, 1) == 0x00E9);
+    REQUIRE(DecodeCodepointUtf8(text, 3) == 0x4E2D);
+}
+
+TEST_CASE("DecodeCodepointUtf8 is U+FFFD-tolerant of malformed/truncated input", "[Utf8]") {
+    using ned::text::DecodeCodepointUtf8;
+
+    REQUIRE(DecodeCodepointUtf8("", 0) == 0xFFFD);            // empty
+    REQUIRE(DecodeCodepointUtf8("abc", 99) == 0xFFFD);        // offset past the end
+    REQUIRE(DecodeCodepointUtf8("\xFF", 0) == 0xFFFD);        // invalid lead byte
+    REQUIRE(DecodeCodepointUtf8("\xE4\xB8", 0) == 0xFFFD);    // truncated 3-byte sequence
+    REQUIRE(DecodeCodepointUtf8("\xC3\x20", 0) == 0xFFFD);    // lead byte, non-continuation follower
+}

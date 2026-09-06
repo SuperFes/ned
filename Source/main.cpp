@@ -2281,6 +2281,15 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
         }
     };
 
+    // paste-perf-and-drag-drop follow-up: same dispatch shape as onEvent's
+    // own non-mouse branch just above -- a bracketed paste goes wherever
+    // keyboard focus already is, not through WindowManager.
+    callbacks.onPaste = [&](const std::string& text) {
+        if (Widget* focused = FocusedWidget()) {
+            focused->OnPaste(text);
+        }
+    };
+
     callbacks.render = [&]() -> std::optional<Point> {
         head.Paint(Canvas(screenBuffer, head.Box_()));
         overlays.Paint(screenBuffer);

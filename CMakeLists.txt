@@ -42,13 +42,18 @@ set(USE_STATIC OFF CACHE BOOL "" FORCE)
 # "no input" return value, so no caller-side fix exists). A second, chained
 # patch (horizontal-wheel-scroll follow-up) fixes wheel-right (SGR Cb=67)
 # being swallowed the same way -- see CMake/PatchNotcursesMouseWheel.cmake's
-# own header comment.
+# own header comment. A third, chained patch (paste-perf-and-drag-drop
+# follow-up) teaches Notcurses' own input automaton to recognize bracketed-
+# paste's \x1b[200~/\x1b[201~ markers as two new NCKEY_* special keys --
+# Notcurses has no native bracketed-paste support at all otherwise -- see
+# CMake/PatchNotcursesBracketedPaste.cmake's own header comment.
 FetchContent_Declare(notcurses
         GIT_REPOSITORY https://github.com/dankamongmen/notcurses.git
         GIT_TAG v3.0.17
         GIT_SHALLOW TRUE
         PATCH_COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/CMake/PatchNotcursesNulKey.cmake
         COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/CMake/PatchNotcursesMouseWheel.cmake
+        COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/CMake/PatchNotcursesBracketedPaste.cmake
         EXCLUDE_FROM_ALL)
 FetchContent_MakeAvailable(notcurses)
 # real-pixel-graphics-investigation follow-up: notcurses' own CMakeLists.txt

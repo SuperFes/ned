@@ -14,6 +14,15 @@ namespace ned::text {
 
 [[nodiscard]] std::string EncodeCodepointUtf8(char32_t codepoint);
 
+// Decodes the codepoint starting at offset, which must already be a
+// codepoint boundary (e.g. one returned by NextCodepointBoundary) -- unlike
+// this file's other helpers, this doesn't scan to find a boundary, it reads
+// one starting exactly there. Same malformed-input tolerance as
+// Rope::CodepointAt/ITextStorage::CodepointAt (a truncated/invalid lead byte
+// decodes as U+FFFD rather than reading past utf8Text's end); offset >=
+// utf8Text.size() also returns U+FFFD.
+[[nodiscard]] char32_t DecodeCodepointUtf8(std::string_view utf8Text, std::size_t offset);
+
 // Removes the last codepoint's worth of bytes from a well-formed UTF-8
 // string (e.g. one built exclusively via EncodeCodepointUtf8 appends).
 // No-op if empty.

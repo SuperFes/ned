@@ -24,6 +24,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <notcurses/notcurses.h>
@@ -362,6 +363,17 @@ class Widget {
     // Override for widgets that need to react to a size change explicitly
     // -- default no-op.
     virtual void OnResize(Size /*previous*/) {
+    }
+
+    // paste-perf-and-drag-drop follow-up: called once per complete
+    // bracketed paste, with the literal pasted text -- EventLoop's own
+    // drain loop accumulates everything between the terminal's own
+    // \x1b[200~/\x1b[201~ markers into one string rather than ever routing
+    // it through OnEvent per character (see EventLoopCallbacks::onPaste's
+    // own doc comment). Default no-op; only BufferView overrides this
+    // today, but any future focused widget (e.g. one recognizing a dropped
+    // file path) gets this for free.
+    virtual void OnPaste(std::string_view /*text*/) {
     }
 
     // Minimum size this widget reports -- unused by Widget itself, kept as

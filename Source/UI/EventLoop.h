@@ -17,6 +17,7 @@
 #include <functional>
 #include <mutex>
 #include <optional>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -71,6 +72,17 @@ struct EventLoopCallbacks {
     // sibling. Optional: unset is a safe no-op, same convention as
     // onResize/onEvent/render above.
     std::function<void()> onSuspend;
+
+    // paste-perf-and-drag-drop follow-up: called once per complete bracketed
+    // paste, with the fully-accumulated literal text (Run()'s own drain
+    // loop buffers everything between the terminal's \x1b[200~/\x1b[201~
+    // markers -- see PatchNotcursesBracketedPaste.cmake -- into one string
+    // rather than ever calling onEvent per pasted character). This is the
+    // seam a bulk multi-character insert has to exist for at all: without
+    // it, a long paste is N ordinary keystroke events, each independently
+    // triggering a full per-command repaint/reparse cycle. Optional: unset
+    // is a safe no-op, same convention as every hook above.
+    std::function<void(const std::string&)> onPaste;
 };
 
 // Owns exactly one Notcurses context for the process's lifetime -- like
