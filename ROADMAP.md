@@ -302,6 +302,13 @@ shipped — see `git log --grep=<topic>` for each (`terminal-panel-scrollback`,
       already proves out — not a patch on the Emacs default, since that default stays
       load-bearing for `C-c`'s existing feature bindings either way. Not started; no
       keymap table drafted yet.
+- [ ] **Bracketed-paste multi-cursor distribution** (paste-perf-and-drag-drop
+      follow-up, scoped down 2026-09-06). A real terminal paste (via
+      `BufferView::HandleBulkPastedText`/`Buffer::InsertAtPoint` fast path) inserts at
+      a single point only, even with secondary cursors active — v1 deliberately
+      matches the existing middle-click-paste precedent rather than `yank`'s
+      `ForEachCursor`-based per-cursor splitting. Revisit if multi-cursor editing and
+      real terminal paste turn out to be used together often enough to matter.
 
 ### Merge Conflict Resolution Mode (New Feature)
 
@@ -779,6 +786,29 @@ non-goal, see below).
       (`Attach`'s adapter/config is opaque argv + JSON, so `cortex-debug`-style or
       Docker-aware adapters already work via `ned/set-dap-adapter`/`ned/set-dap-attach`)
       both need a worked example in the docs, not new `DapManager` code.
+
+### Notcurses Patches Worth Upstreaming (Watch List)
+
+Not submitted anywhere yet — a deliberate choice (2026-09-06), not an oversight. Recorded
+so the research doesn't have to be redone before actually opening anything.
+
+- [ ] **`CMake/PatchNotcursesNulKey.cmake`** (Ctrl+Space/Ctrl+@ swallowed as a NUL byte)
+      and **`CMake/PatchNotcursesMouseWheel.cmake`** (SGR wheel-right, Cb=67, misdecoded
+      as a motion+release) are both still-reproducible bugs against upstream
+      `dankamongmen/notcurses` `master` as of 2026-09-06 (verified live against the
+      current `src/lib/in.c`, not just our pinned `v3.0.17`) — checked GitHub issues for
+      both ("Ctrl+Space", "NUL", "0x00", "wheel") and found nothing matching, so these
+      look like genuinely novel, unreported bugs. Both patches are already small,
+      root-caused, and general (not ned-specific workarounds), so they're close to
+      PR-ready as-is whenever we decide to open them.
+- [x] ~~Bracketed paste mode~~ — shipped 2026-09-06 (`CMake/PatchNotcursesBracketedPaste.cmake`),
+      see `git log --grep=paste-perf-and-drag-drop`. Upstream issue
+      [#2704](https://github.com/dankamongmen/notcurses/issues/2704) has been open since
+      2023 with a maintainer-endorsed design sketch from `tstack` (`lnav`'s maintainer)
+      that was never turned into a PR — our own patch deliberately took a simpler shape
+      (no `fbuf`/`paste_content` field inside Notcurses itself; all buffering happens in
+      `EventLoop::Run()`, which already owns the right place for it), so it isn't a
+      drop-in match for that sketch if we ever revisit upstreaming this specific gap.
 
 ### Known Test Flakiness / Non-Critical Issues (Watch List)
 
