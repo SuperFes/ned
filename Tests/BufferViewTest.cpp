@@ -10025,7 +10025,9 @@ TEST_CASE("CursorPosition() lands on the correct wrapped row/column for point pl
     fixture.buffer.InsertAtPoint("aaaa bbbb cccc dddd");
     fixture.buffer.SetPoint(0);
     // Move point into "cccc", which the previous test already established
-    // lands on the second wrapped row.
+    // lands on the third wrapped row (wrap-continuation-indicator's own
+    // reserved right-edge column splits this line into "aaaa "/"bbbb "/
+    // "cccc dddd" rather than two rows).
     for (int i = 0; i < 11; ++i) {
         fixture.buffer.MoveForward();
     }
@@ -10036,7 +10038,7 @@ TEST_CASE("CursorPosition() lands on the correct wrapped row/column for point pl
     view.Paint(canvas);
 
     REQUIRE(view.CursorPosition().has_value());
-    REQUIRE(view.CursorPosition()->y == 1); // second visual row
+    REQUIRE(view.CursorPosition()->y == 2); // third visual row
 }
 
 TEST_CASE("A mouse click on a wrapped continuation row resolves to the correct byte offset", "[BufferView]") {
@@ -10050,11 +10052,19 @@ TEST_CASE("A mouse click on a wrapped continuation row resolves to the correct b
     view.Paint(canvas); // establish the wrap-segment layout the click below expects
 
     const int gutter = GutterWidth(1);
-    // Row 1 is "cccc dddd" (the second wrap segment) -- clicking right at
-    // its own start should land point at the byte offset of the 'c' in
-    // "cccc" (byte 10 in the original text: "aaaa bbbb " is 10 bytes).
+    // Row 1 is "bbbb " (the second wrap segment, wrap-continuation-
+    // indicator's own reserved right-edge column splits this line into
+    // three rows rather than two) -- clicking right at its own start should
+    // land point at the byte offset of the first 'b' (byte 5).
     view.OnEvent(MousePress(gutter, 1));
     view.OnEvent(MouseRelease(gutter, 1));
+    REQUIRE(fixture.buffer.Point() == 5);
+
+    // Row 2 is "cccc dddd" (the third wrap segment) -- clicking right at
+    // its own start should land point at the byte offset of the 'c' in
+    // "cccc" (byte 10 in the original text: "aaaa bbbb " is 10 bytes).
+    view.OnEvent(MousePress(gutter, 2));
+    view.OnEvent(MouseRelease(gutter, 2));
     REQUIRE(fixture.buffer.Point() == 10);
 }
 
