@@ -422,6 +422,19 @@ namespace {
     // render loop's own use below.
     constexpr char32_t kIndentGuide = U'│';
 
+    // wrap-continuation-indicator follow-up: painted in the one column
+    // ComputeWrapSegments' own caller deliberately reserves at the right
+    // edge of every row when wrap is on -- U+21B5, the same glyph printed
+    // on a physical Return/Enter keycap, so it reads unambiguously as "this
+    // line keeps going" without being mistaken for real content.
+    constexpr char32_t kWrapContinuationIndicator = U'↵';
+
+    // trailing-blank-line-gutter follow-up: painted after the buffer's true
+    // last line when it has content but no trailing newline follows it --
+    // U+00AC NOT SIGN, distinct from kFoldEllipsis/kTruncationIndicator and
+    // not a glyph real code/prose is likely to end a line with.
+    constexpr char32_t kNoTrailingNewlineIndicator = U'¬';
+
     // Depth-colorized-indent-guides follow-up: which color a guide glyph at
     // a given display column gets. displayColumn is always a positive
     // multiple of tabWidth at every real call site (the callers' own
@@ -2927,8 +2940,22 @@ void BufferView::Paint(Canvas paneCanvas) {
                     }
                 }
                 if (wrapActive) {
-                    const int wrapWidth = std::max(1, c.size().width - static_cast<int>(gutterWidth));
-                    lineSegments        = ComputeWrapSegments(content, lineStart, lineEnd, wrapWidth, currentLineLinks);
+                    const int fullWidth = std::max(1, c.size().width - static_cast<int>(gutterWidth));
+                    lineSegments        = ComputeWrapSegments(content, lineStart, lineEnd, fullWidth, currentLineLinks);
+                    // wrap-continuation-indicator follow-up: only once a
+                    // line is known (from the full-width pass just above)
+                    // to actually wrap does it lose one column of width to
+                    // kWrapContinuationIndicator's own reserved spot at the
+                    // row's right edge -- a line that already fits on one
+                    // row keeps the exact width/wrapping it always had.
+                    // Shrinking narrows col+unitWidth>wrapWidth's own
+                    // trigger, which can only ever produce the same or MORE
+                    // segments than the full-width pass, never fewer, so
+                    // this can't oscillate between wrapped/not-wrapped.
+                    if (lineSegments.size() > 1) {
+                        const int wrapWidth = std::max(1, fullWidth - 1);
+                        lineSegments        = ComputeWrapSegments(content, lineStart, lineEnd, wrapWidth, currentLineLinks);
+                    }
                 }
                 else {
                     lineSegments = {WrapSegment{.startByte = lineStart, .endByte = lineEnd}};
@@ -3132,7 +3159,19 @@ void BufferView::Paint(Canvas paneCanvas) {
                 // digit string itself (line + 1) is never zero-width, so
                 // the write loop below has to be skipped outright rather
                 // than trusted to naturally emit nothing.
-                if (LineNumberGutterActive()) {
+                // trailing-blank-line-gutter follow-up: line totalLines-1
+                // being empty, with more than one line total, means it
+                // exists purely because the buffer's own final byte is a
+                // newline (ITextStorage::LineCount()'s own "newline count +
+                // 1" contract) -- not a line anyone ever typed into.
+                // Numbering it like a real line is misleading, so it stays
+                // unnumbered until it actually holds content (typing into
+                // it makes lineStart != lineEnd, and it renders normally
+                // from that point on). A brand new, genuinely empty buffer
+                // (totalLines == 1) is excluded -- that lone line is real
+                // and still gets "1".
+                const bool isEmptyTrailingPhantomLine = line + 1 == totalLines && lineStart == lineEnd && totalLines > 1;
+                if (LineNumberGutterActive() && !isEmptyTrailingPhantomLine) {
                     // Vim's "relativenumber": current line keeps its real
                     // (1-indexed) number, every other visible line shows its
                     // distance from it instead.
@@ -3610,6 +3649,21 @@ void BufferView::Paint(Canvas paneCanvas) {
                 offset += decoded.byteLength;
             }
 
+            // wrap-continuation-indicator follow-up: every row that hands
+            // off to another wrap segment of the same line gets this glyph
+            // pinned to the true right edge (the column ComputeWrapSegments'
+            // own caller reserved above) rather than trailing wherever the
+            // segment's own last word happened to end -- a smart/word-aware
+            // wrap segment routinely ends well short of the edge, and the
+            // point is a clearly-positioned "this continues" cue, not a
+            // caret glued to the last rendered word.
+            if (segmentIndex + 1 < lineSegments.size()) {
+                const Brush wrapContinuationBrush{.background = theme_.background, .foreground = theme_.lineNumberForeground};
+                Cell&       cell = c[{.x = c.size().width - 1, .y = row}];
+                cell.character   = text::EncodeCodepointUtf8(kWrapContinuationIndicator);
+                wrapContinuationBrush.ApplyTo(cell);
+            }
+
             // line-truncation-indicator follow-up: offset < endByte here
             // means the content loop above stopped because it ran out of
             // viewport width, not because it reached the end of what this
@@ -3718,6 +3772,32 @@ void BufferView::Paint(Canvas paneCanvas) {
                     break;
                 }
             } // if (segmentIndex + 1 == lineSegments.size()) -- fold ellipsis/preview
+
+            // trailing-blank-line-gutter follow-up: the buffer's own true
+            // last line (line + 1 == totalLines) never gets a phantom empty
+            // line after it when it has content -- lineEnd > lineStart here
+            // is only possible when the buffer's own final byte is NOT a
+            // newline (see ITextStorage::LineCount()'s "newline count + 1"
+            // contract, and isEmptyTrailingPhantomLine's own doc comment
+            // above). Marks that clearly rather than leaving the reader to
+            // guess whether an invisible blank line follows. Reflects the
+            // LIVE buffer only -- Editor/FinalNewline.h's own
+            // EnsureFinalNewline appends a trailing newline on save but,
+            // by design, never touches the in-memory Rope/undo tree, so
+            // this can still show right after a save with that setting on;
+            // a deliberate, documented gap in that subsystem, not a bug
+            // here. Skipped when there's no free column left (an
+            // already-viewport-filling last line with wrap off) rather than
+            // clobbering real content the way the truncation indicator does
+            // -- this is a much rarer case and not worth the same trade-off.
+            if (line + 1 == totalLines && lineEnd > lineStart && segmentIndex + 1 == lineSegments.size() &&
+                col < c.size().width) {
+                const Brush noNewlineBrush{.background = theme_.background, .foreground = theme_.lineNumberForeground};
+                Cell&       cell = c[{.x = col, .y = row}];
+                cell.character   = text::EncodeCodepointUtf8(kNoTrailingNewlineIndicator);
+                noNewlineBrush.ApplyTo(cell);
+                ++col;
+            }
 
             // completion-popup follow-up: completion no longer paints
             // anything inline here -- ActiveCompletion renders via a real
