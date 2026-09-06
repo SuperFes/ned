@@ -615,6 +615,24 @@ class BufferView : public Widget {
     // out to every pane. Unset is a safe no-op.
     void SetOnDapConsoleToggle(std::function<void()> handler);
 
+    // REPL-engine follow-up: toggle-janet-repl's forwarding hook, same shape
+    // and reasoning as SetOnDapConsoleToggle immediately above -- the Janet
+    // REPL panel is another PanelDock tab owned by main.cpp's composition,
+    // wired via WindowManager::SetOnJanetReplToggle fanning out to every
+    // pane. Unset is a safe no-op.
+    void SetOnJanetReplToggle(std::function<void()> handler);
+
+    // REPL-engine follow-up: run-repl's forwarding hook -- unlike the
+    // toggles above, this one carries a value (the REPL name the user
+    // typed), since main.cpp's registrant needs it to find-or-create that
+    // REPL's own PanelDock tab. Only called once BufferView itself has
+    // already confirmed the name resolves to a configured
+    // Editor/Repl/ReplConfig.h command (an unconfigured name is reported via
+    // statusMessage_ directly, never reaching this callback). Wired via
+    // WindowManager::SetOnRunReplRequest fanning out to every pane. Unset is
+    // a safe no-op (reported via statusMessage_).
+    void SetOnRunReplRequest(std::function<void(const std::string&)> handler);
+
     // Debugging wishlist: dap-toggle-threads' forwarding hook, same shape
     // and reasoning as SetOnDapConsoleToggle immediately above -- the live
     // threads panel is another OverlayHost overlay owned by main.cpp's
@@ -1006,6 +1024,15 @@ class BufferView : public Widget {
                            // by taskPromptAction_ (set alongside inputMode_ in
                            // StartInteractiveSession).
                            TaskName,
+                           // REPL-engine follow-up: TaskName's own precedent, but for
+                           // run-repl -- a "REPL name" prompt, routed through
+                           // HandlePromptKey the same way. On submit, BufferView itself
+                           // checks the name against Editor/Repl/ReplConfig.h (reporting
+                           // "not configured" via statusMessage_ if absent) before
+                           // forwarding to onRunReplRequest_ -- no separate
+                           // *PromptAction enum needed since (unlike TaskName's
+                           // run/cancel split) there's only one action here.
+                           ReplName,
                            // DAP client slice 3: the evaluate prompt (dap-evaluate) --
                            // routed through HandlePromptKey like FindFile/TaskName; Enter
                            // fires the async DAP evaluate request, the result landing in
@@ -3144,6 +3171,8 @@ class BufferView : public Widget {
     std::function<void()>                           onAcpPanelToggle_;      // see SetOnAcpPanelToggle
     std::function<void()>                           onAcpRewindRequest_;    // see SetOnAcpRewindRequest
     std::function<void()>                           onDapConsoleToggle_;    // see SetOnDapConsoleToggle
+    std::function<void()>                           onJanetReplToggle_;     // see SetOnJanetReplToggle
+    std::function<void(const std::string&)>         onRunReplRequest_;      // see SetOnRunReplRequest
     std::function<void()>                           onDapThreadsToggle_;    // see SetOnDapThreadsToggle
     std::function<void()>                           onBufferListToggle_;    // see SetOnBufferListToggle
     std::function<void(text::Buffer&)>              onActiveBufferChanged_; // see SetOnActiveBufferChanged

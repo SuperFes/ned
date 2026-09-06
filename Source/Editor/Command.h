@@ -815,7 +815,20 @@ enum class InteractiveRequest { None,
                                 // AcpManager::CheckpointCount()/CheckpointAt() to render the list
                                 // and calls AcpManager::RewindTo() on a digit keystroke -- see
                                 // Editor/Acp/AcpManager.h for the checkpoint/rewind data model).
-                                AcpRewind };
+                                AcpRewind,
+                                // REPL-engine follow-up: ToggleJanetRepl is a one-shot direct
+                                // action, same shape as DapToggleConsole/ToggleTerminal above --
+                                // BufferView shows+focuses (or hides) the Janet REPL's PanelDock
+                                // tab. RunRepl resolves to its own InputMode (RunTask/CancelTask's
+                                // own precedent for TaskName): BufferView prompts for a REPL name,
+                                // checks it against Editor/Repl/ReplConfig.h's configured table
+                                // itself (reporting "not configured" via the shared status
+                                // message when absent), then forwards to the callback main.cpp
+                                // registered (SetOnRunReplRequest) to find-or-create that REPL's
+                                // own PanelDock tab -- a plain subprocess REPL (e.g. python3 -i)
+                                // run on a real pty, unlike the in-process Janet REPL above.
+                                ToggleJanetRepl,
+                                RunRepl };
 
 // Everything a command implementation might need. Built fresh per invocation
 // from live references -- never stored, so there's no lifetime concern beyond

@@ -10,6 +10,7 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -57,6 +58,7 @@
 #include "Editor/PromptHistory.h"
 #include "Editor/RecentFiles.h"
 #include "Editor/Register.h"
+#include "Editor/Repl/ReplConfig.h"
 #include "Editor/ScriptingSession.h"
 #include "Editor/Session.h"
 #include "Editor/TabWidth.h"
@@ -86,6 +88,7 @@
 #include "UI/DesktopThemeProbe.h"
 #include "UI/EchoArea.h"
 #include "UI/EventLoop.h"
+#include "UI/JanetReplPanel.h"
 #include "UI/Layout.h"
 #include "UI/ListPopup.h"
 #include "UI/Overlay.h"
@@ -1329,6 +1332,17 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     auto terminalPanel = std::make_shared<ned::ui::TerminalPanel>(theme);
     terminalPanel->SetEventLoop(&eventLoop);
 
+    // REPL-engine follow-up: one more TerminalPanel per Janet-configured
+    // REPL name (ned/set-repl-command), spawned lazily by run-repl -- same
+    // shared_ptr/declared-after-eventLoop lifetime convention as
+    // terminalPanel immediately above, for the same reason (each owns a
+    // real PtyProcess). Keyed by REPL name so a repeat run-repl reuses the
+    // existing session instead of spawning a second interpreter; the
+    // parallel index map is this REPL's own PanelDock tab, added the first
+    // time it's actually run.
+    std::map<std::string, std::shared_ptr<ned::ui::TerminalPanel>> replPanels;
+    std::map<std::string, std::size_t>                             replTabIndices;
+
     ned::ui::AcpPanel acpPanel(theme);
     acpPanel.SetAcpManager(&acpManager);
     // ACP round-1-live-validation follow-up: lets a pending permission
@@ -1340,6 +1354,13 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     ned::ui::DebugConsolePanel dapConsolePanel(theme);
     dapConsolePanel.SetDapManager(&dapManager);
     dapConsolePanel.SetPromptHistory(&promptHistory); // DAP round 4: M-p/M-n recall, same ring BufferView's prompts use
+
+    // REPL-engine follow-up: the built-in, always-available Janet REPL --
+    // in-process, evaluating directly against janetEnv's own live
+    // JanetTable* rather than a subprocess (see UI/JanetReplPanel.h).
+    ned::ui::JanetReplPanel janetReplPanel(theme);
+    janetReplPanel.SetEnv(janetEnv.Env());
+    janetReplPanel.SetPromptHistory(&promptHistory);
 
     // AcpPanel::SetDockHosted's own doc comment: read once at startup, not
     // re-read live the way most settings in this file are -- flipping
@@ -1371,6 +1392,8 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     }
     const std::size_t debugConsoleTabIndex =
         panelDock.AddPanel("Debug console", dapConsolePanel, [panel = &dapConsolePanel] { return panel->TitleText(); });
+    const std::size_t janetReplTabIndex =
+        panelDock.AddPanel("Janet REPL", janetReplPanel, [panel = &janetReplPanel] { return panel->TitleText(); });
 
     overlays.Add(panelDock, [panel = &panelDock](Size size) {
         panel->SetTerminalSize(size);
@@ -1537,6 +1560,50 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     };
     windowManager->SetOnDapConsoleToggle(toggleDapConsole);
     dapConsolePanel.SetOnToggleRequest(toggleDapConsole);
+
+    // REPL-engine follow-up: toggleDapConsole's own shape, for the built-in
+    // Janet REPL's PanelDock tab.
+    auto toggleJanetRepl = [&overlays, &panelDock, janetReplTabIndex, wm = windowManager.get()] {
+        if (!overlays.IsVisible(panelDock) || panelDock.ActiveIndex() != janetReplTabIndex) {
+            overlays.Show(panelDock);
+            panelDock.SwitchTo(janetReplTabIndex);
+        }
+        else {
+            overlays.Hide(panelDock);
+            wm->TakeFocus();
+        }
+    };
+    windowManager->SetOnJanetReplToggle(toggleJanetRepl);
+    janetReplPanel.SetOnToggleRequest(toggleJanetRepl);
+
+    // REPL-engine follow-up: run-repl's actual find-or-create logic for a
+    // configurable subprocess REPL (e.g. "python" -> python3 -i). Unlike
+    // the fixed tabs above, one of these is spawned lazily per name the
+    // first time it's actually run, then reused (EnsureStarted() is a
+    // no-op if already running, and respawns if the process exited --
+    // TerminalPanel's own existing contract) -- terminalPanel's own
+    // shared_ptr/declared-after-eventLoop lifetime convention, so a fresh
+    // TerminalPanel here owns its own real PtyProcess exactly the same way.
+    auto runOrShowRepl = [&overlays, &panelDock, &replPanels, &replTabIndices, &theme, &eventLoop](const std::string& name) {
+        auto existing = replPanels.find(name);
+        if (existing == replPanels.end()) {
+            const std::optional<std::vector<std::string>> argv = ned::editor::repl::ReplCommand(name);
+            if (!argv) {
+                return; // BufferView already validated this before calling -- defensive only
+            }
+            auto panel = std::make_shared<ned::ui::TerminalPanel>(theme, *argv, name);
+            panel->SetEventLoop(&eventLoop);
+            const std::size_t tabIndex =
+                panelDock.AddPanel(name, *panel, [panel] { return panel->TitleText(); },
+                                   &ned::editor::terminal::TerminalHeightPercent, &ned::editor::terminal::SetTerminalHeightPercent);
+            existing                = replPanels.emplace(name, std::move(panel)).first;
+            replTabIndices[name]    = tabIndex;
+        }
+        existing->second->EnsureStarted();
+        overlays.Show(panelDock);
+        panelDock.SwitchTo(replTabIndices[name]); // SwitchTo itself takes focus for the panel
+    };
+    windowManager->SetOnRunReplRequest(runOrShowRepl);
 
     // Debugging wishlist: the live thread window (BufferListPanel's own
     // controller-plus-ListPopup shape, see UI/DapThreadsPanel.h) -- right-

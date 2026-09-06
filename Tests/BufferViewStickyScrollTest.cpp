@@ -317,6 +317,47 @@ TEST_CASE("Sticky scroll pins the enclosing Org headline chain once scrolled int
     REQUIRE(RowText(screen, 1, 40).find("** Sub") != std::string::npos);
 }
 
+// em-dash-sticky-signature-fix follow-up: a heading's own text is real
+// prose, not guaranteed ASCII -- confirmed live as a blank glyph where an
+// em-dash (U+2014, UTF-8 E2 80 94) should have rendered, traced to
+// PaintStickyScrollRows walking the signature text one raw byte per cell
+// (splitting the em-dash's 3 bytes across 3 cells, each an invalid,
+// unrenderable partial sequence on its own).
+TEST_CASE("Sticky scroll signature keeps a multi-byte codepoint in a single cell",
+          "[BufferView][StickyScroll][Markdown]") {
+    const StickyScrollSettingsGuard guard;
+    Fixture                         fixture;
+    fixture.mode = ned::editor::MarkdownMode();
+    fixture.buffer.InsertAtPoint("# Top\n"
+                                  "## Sub \xE2\x80\x94 note\n" // "## Sub — note"
+                                  "line1\n"
+                                  "line2\n"
+                                  "line3\n"
+                                  "line4\n"
+                                  "line5\n"
+                                  "line6\n"
+                                  "line7\n");
+    BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 5});
+    view.SetTopLine(5); // deep inside Sub's body
+
+    ned::ui::Screen screen = ned::ui::Screen(40, 6);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 5});
+    view.Paint(canvas);
+
+    // Row 1 is the pinned "## Sub — note" signature -- one cell must hold
+    // the whole 3-byte codepoint, not a lone continuation byte.
+    bool foundWholeCodepoint = false;
+    for (int col = 0; col < 40; ++col) {
+        if (screen.PixelAt(col, 1).character == "\xE2\x80\x94") {
+            foundWholeCodepoint = true;
+            break;
+        }
+    }
+    REQUIRE(foundWholeCodepoint);
+    REQUIRE(RowText(screen, 1, 40).find("note") != std::string::npos);
+}
+
 TEST_CASE("Clicking a pinned Org sticky row jumps to that headline's own line",
           "[BufferView][StickyScroll][Org]") {
     const StickyScrollSettingsGuard guard;

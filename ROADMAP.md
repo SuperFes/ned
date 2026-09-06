@@ -962,15 +962,6 @@ these accumulate detail in place.
       sanitizer/Valgrind-XML/massif output parsers already wired into
       `DiagnosticsLog`/`TestRunner`, and a common request in an editor with this much
       test/debug tooling already built out.
-- [ ] **A Janet REPL / scratch-eval buffer** (audit finding, 2026-09-06). Emacs'
-      `ielm`/SLIME-style "evaluate an expression, see the result inline or in a
-      transcript" has no equivalent here — `Environment::DoFile`/`ned/register-command`
-      are the only ways to run Janet code today (load a whole file, or bind it to a
-      command first). A live buffer for iteratively evaluating Janet expressions against
-      the running editor's own environment would be a natural companion to the existing
-      `ScratchPad.h` notes feature, and would make ned's own "the editor is a
-      Janet-scriptable environment" pitch (see Vision, above) much more discoverable for
-      someone writing `init.janet` for the first time.
 
 ## Won't Do (at Least Not Soon)
 
