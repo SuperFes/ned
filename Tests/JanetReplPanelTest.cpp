@@ -91,6 +91,22 @@ TEST_CASE("EvaluateForTesting reports no environment when unset", "[JanetReplPan
     REQUIRE(transcript.find("No Janet environment available.") != std::string::npos);
 }
 
+// live-smoke-test follow-up: caught interactively -- a nil result (bare
+// `nil`, or any void-returning call like ned/set-repl-command) used to
+// render as a blank transcript line instead of the text "nil", reading as
+// "nothing happened" when the call had actually succeeded.
+TEST_CASE("A nil result displays as the text \"nil\", not a blank line", "[JanetReplPanel]") {
+    Fixture fixture;
+    fixture.panel.SetEnv(ned_tests::TestEnvironment().Env());
+
+    fixture.panel.EvaluateForTesting("nil");
+    fixture.Paint();
+
+    const std::string transcript = TranscriptText(fixture.screen);
+    REQUIRE(transcript.find("> nil") != std::string::npos);
+    REQUIRE(transcript.find("\nnil") != std::string::npos);
+}
+
 TEST_CASE("TitleText is just \"Janet REPL\" with no session active", "[JanetReplPanel]") {
     Fixture fixture;
     REQUIRE(fixture.panel.TitleText() == "Janet REPL");

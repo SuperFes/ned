@@ -25,8 +25,16 @@ namespace {
     // what the janet CLI REPL itself prints, and Environment.cpp's own
     // DoStringCapturingStacktrace uses for the no-stderr-captured error
     // fallback (see that file for the exact same reinterpret_cast/
-    // janet_string_length pairing).
+    // janet_string_length pairing). janet_to_string(nil) itself returns an
+    // empty string rather than the text "nil" -- confirmed live: a void-
+    // returning call (e.g. ned/set-repl-command, or the bare literal `nil`)
+    // rendered as a blank transcript line, reading as "nothing happened"
+    // when the call had actually succeeded. Special-cased here rather than
+    // relying on the raw C API's own nil formatting.
     std::string DescribeJanetValue(Janet value) {
+        if (janet_checktype(value, JANET_NIL)) {
+            return "nil";
+        }
         const JanetString description = janet_to_string(value);
         return std::string(reinterpret_cast<const char*>(description), static_cast<std::size_t>(janet_string_length(description)));
     }
