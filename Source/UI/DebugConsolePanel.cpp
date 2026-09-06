@@ -4,7 +4,6 @@
 
 #include "Border.h"
 #include "KeyTranslation.h"
-#include "Text/Utf8.h"
 
 namespace ned::ui {
 
@@ -17,10 +16,7 @@ namespace {
         return !chord.Control && !chord.Meta && chord.Special == editor::SpecialKey::None && chord.Codepoint != 0;
     }
 
-    constexpr int      kMinWidthForCloseButton = 8;
-    constexpr int      kCloseOffset            = 4; // column of '[' counted back from width, matches TerminalPanel/AcpPanel's own offset
-    constexpr char32_t kCloseIcon              = U'×';
-    constexpr std::size_t kMaxHistoryLines      = 500; // TerminalPanel's own scrollback-cap precedent, applied here too
+    constexpr std::size_t kMaxHistoryLines = 500; // TerminalPanel's own scrollback-cap precedent, applied here too
 
     std::string StateLabel(editor::dap::DapManager::SessionState state) {
         switch (state) {
@@ -65,16 +61,20 @@ Brush DebugConsolePanel::BrushForStyle(DisplayStyle style) const {
     return Brush{.background = theme_.background, .foreground = theme_.defaultForeground};
 }
 
-bool DebugConsolePanel::CloseButtonAt(Point local) const {
-    const int width = size().width;
-    if (local.y != 0 || width < kMinWidthForCloseButton) {
-        return false;
+std::string DebugConsolePanel::TitleText() const {
+    std::string title =
+        "Debug console [" + StateLabel(dapManager_ ? dapManager_->State() : editor::dap::DapManager::SessionState::Inactive) + "]";
+    if (search_) {
+        title += "  " + search_->StatusText();
     }
-    return local.x >= width - kCloseOffset && local.x <= width - kCloseOffset + 2;
+    else if (scrollbackOffset_ > 0) {
+        title += " (scrollback)"; // TerminalPanel's own title-suffix convention
+    }
+    return title;
 }
 
 int DebugConsolePanel::ContentRows() const {
-    return size().height - 2;
+    return size().height - 1; // the input row is the only other row now -- PanelDock.h owns the title row
 }
 
 void DebugConsolePanel::ScrollBy(int deltaLines) {
@@ -203,40 +203,15 @@ void DebugConsolePanel::Paint(Canvas canvas) {
         }
     }
 
-    // Title/divider row.
-    const Brush&      frameBrush = Focused() ? theme_.borderAccent : theme_.border;
-    const std::string horizontal = text::EncodeCodepointUtf8(RoundedBorderGlyphs().horizontal);
-    for (int x = 0; x < width; ++x) {
-        Cell& cell     = canvas[{.x = x, .y = 0}];
-        cell.character = horizontal;
-        frameBrush.ApplyTo(cell);
-    }
-    std::string title =
-        "Debug console [" + StateLabel(dapManager_ ? dapManager_->State() : editor::dap::DapManager::SessionState::Inactive) + "]";
-    if (search_) {
-        title += "  " + search_->StatusText();
-    }
-    else if (scrollbackOffset_ > 0) {
-        title += " (scrollback)"; // TerminalPanel's own title-suffix convention
-    }
-    DrawBorderTitle(canvas, title, frameBrush);
-    if (width >= kMinWidthForCloseButton) {
-        const std::string glyphs[3] = {"[", text::EncodeCodepointUtf8(kCloseIcon), "]"};
-        for (int i = 0; i < 3; ++i) {
-            Cell& cell     = canvas[{.x = width - kCloseOffset + i, .y = 0}];
-            cell.character = glyphs[i];
-            frameBrush.ApplyTo(cell);
-        }
-    }
-
-    if (height < 2) {
+    if (height < 1) {
         return;
     }
 
     // Content rows: a window over history_, offset lines up from the bottom
     // (scrollbackOffset_ 0 shows exactly the live tail) -- TerminalPanel's
-    // own windowing shape.
-    const int contentRows = height - 2;
+    // own windowing shape. No title row of its own -- PanelDock.h's shared
+    // tab strip owns that chrome now.
+    const int contentRows = height - 1;
     if (contentRows > 0) {
         const int start = std::max(0, static_cast<int>(history_.size()) - contentRows - scrollbackOffset_);
         for (int row = 0; row < contentRows; ++row) {
@@ -249,7 +224,7 @@ void DebugConsolePanel::Paint(Canvas canvas) {
             if (search_ && search_->CurrentIndex() == lineIndex) {
                 brush.background = theme_.isearchMatchBackground;
             }
-            PaintUtf8Row(canvas, 0, row + 1, line.text, brush, width);
+            PaintUtf8Row(canvas, 0, row, line.text, brush, width);
         }
     }
 
@@ -288,12 +263,6 @@ bool DebugConsolePanel::OnEvent(const Event& event) {
             return true;
         }
         if (mouse->button == MouseEvent::Button::Left && mouse->motion == MouseEvent::Motion::Pressed) {
-            if (CloseButtonAt(mouse->at)) {
-                if (onToggleRequest_) {
-                    onToggleRequest_();
-                }
-                return true;
-            }
             TakeFocus();
             return true;
         }

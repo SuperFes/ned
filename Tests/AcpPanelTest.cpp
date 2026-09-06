@@ -694,3 +694,66 @@ TEST_CASE("AcpPanel does not open an @-mention picker mid-word (e.g. an email-sh
         REQUIRE(fixture.RowText(y).find("Mention a file") == std::string::npos);
     }
 }
+
+// tabbed-bottom-dock-overlays follow-up: dockHosted_ coverage. Every test
+// above exercises the default (dockHosted_ == false, standalone/right-dock)
+// path unmodified; these confirm the embedded path PanelDock.h drives
+// instead -- see AcpPanel::SetDockHosted's own doc comment for exactly what
+// changes. PanelDock's own chrome/hit-testing is covered generically in
+// PanelDockTest.cpp against fake panels; these are scoped to AcpPanel's own
+// half of the split.
+
+TEST_CASE("AcpPanel dock-hosted mode paints content starting at row 0, no title chrome", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.panel.SetDockHosted(true);
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code");
+    fixture.Paint();
+
+    // TitleText() still reports the same text the standalone title row used
+    // to draw -- PanelDock's tab strip is what renders it now.
+    REQUIRE(fixture.panel.TitleText().find("claude-code") != std::string::npos);
+    REQUIRE(fixture.panel.TitleText().find("[active]") != std::string::npos);
+    // No divider glyph drawn anywhere -- row 0 is a real content row now.
+    for (int x = 0; x < kWidth; ++x) {
+        REQUIRE(fixture.screen.PixelAt(x, 0).character != "─");
+    }
+}
+
+TEST_CASE("AcpPanel dock-hosted mode ignores the standalone close/minimize/resize-divider hit-tests", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.panel.SetDockHosted(true);
+    int toggles = 0;
+    fixture.panel.SetOnToggleRequest([&toggles] { ++toggles; });
+    fixture.Paint();
+
+    // Same screen columns the standalone-mode close/minimize buttons used to
+    // occupy (see the non-dock-hosted "close (x) button" test above) -- now
+    // just plain content-row clicks that take focus and do nothing else.
+    REQUIRE(fixture.panel.OnEvent(
+        ned::ui::test::Mouse(kWidth - 3, 0, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Pressed)));
+    REQUIRE(toggles == 0);
+    REQUIRE(fixture.panel.OnEvent(
+        ned::ui::test::Mouse(kWidth - 6, 0, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Pressed)));
+    REQUIRE_FALSE(fixture.panel.Collapsed());
+    REQUIRE(fixture.panel.Focused());
+
+    // The row-0/left-edge resize-divider carve-out is gone too -- a press at
+    // (0, 0) is just an ordinary content click, not BeginResize: resizing_
+    // never becomes true, so the drag-follow Moved event below is simply
+    // unhandled rather than adjusting AcpPanelSizePercent().
+    const int before = ned::editor::acp::AcpPanelSizePercent();
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Mouse(0, 0, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Pressed)));
+    REQUIRE_FALSE(fixture.panel.OnEvent(ned::ui::test::Mouse(0, 3, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Moved)));
+    REQUIRE(ned::editor::acp::AcpPanelSizePercent() == before);
+}
+
+TEST_CASE("AcpPanel dock-hosted mode ignores M-m and never collapses", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.panel.SetDockHosted(true);
+
+    // Falls through unhandled now -- IsPlainCharacter also rejects a Meta
+    // chord, so there's nothing left for it to do.
+    REQUIRE_FALSE(fixture.panel.OnEvent(ned::ui::test::Alt('m')));
+    REQUIRE_FALSE(fixture.panel.Collapsed());
+}

@@ -6,35 +6,13 @@
 #include <utility>
 #include <vector>
 
-#include "Border.h"
 #include "Editor/Clipboard.h"
 #include "KeyTranslation.h"
-#include "Text/Utf8.h"
 #include "UI/EventLoop.h"
 
 namespace ned::ui {
 
 namespace {
-
-    // Close matches TabBar's per-tab icon; the triangles match
-    // ScrollArrowButton's (already established there as portable without a
-    // Nerd Font). Each is drawn bracketed -- [▼][▲][×] -- so the buttons
-    // read as buttons against the plain title line rather than stray
-    // glyphs, right-aligned ending one column short of the row's edge.
-    constexpr char32_t kMinimizeIcon = U'▼';
-    constexpr char32_t kMaximizeIcon = U'▲';
-    constexpr char32_t kCloseIcon    = U'×';
-
-    // Column of each button's opening bracket, counted back from width:
-    // [/] at width-13, [▼] at width-10, [▲] at width-7, [×] at width-4.
-    // '/' rather than a magnifying-glass glyph deliberately -- vi/less's
-    // own "search" key, and guaranteed single-column (an emoji glyph would
-    // misalign the fixed 3-column bracket layout every other button uses).
-    constexpr char32_t kSearchIcon     = U'/';
-    constexpr int      kSearchOffset   = 13;
-    constexpr int      kMinimizeOffset = 10;
-    constexpr int      kMaximizeOffset = 7;
-    constexpr int      kCloseOffset    = 4;
 
     std::vector<std::string> ShellArgv() {
         // The user's own login shell -- the same trust boundary every other
@@ -118,7 +96,7 @@ void TerminalPanel::HandleExit() {
 }
 
 int TerminalPanel::ContentRows() const {
-    return std::max(1, size().height - 1);
+    return std::max(1, size().height);
 }
 
 int TerminalPanel::ContentCols() const {
@@ -143,27 +121,18 @@ void TerminalPanel::ScrollBy(int deltaLines) {
     scrollbackOffset_ = std::clamp(scrollbackOffset_ + deltaLines, 0, emulator_.ScrollbackSize());
 }
 
-TerminalPanel::TitleButton TerminalPanel::TitleButtonAt(Point local) const {
-    const int width = size().width;
-    if (local.y != 0 || width < kMinWidthForTitleButtons) {
-        return TitleButton::None;
+std::string TerminalPanel::TitleText() const {
+    std::string title = "Terminal";
+    if (exited_) {
+        title += " (exited)";
     }
-    const auto inButton = [&](int bracketColumn) {
-        return local.x >= width - bracketColumn && local.x <= width - bracketColumn + 2;
-    };
-    if (inButton(kCloseOffset)) {
-        return TitleButton::Close;
+    else if (search_) {
+        title += "  " + search_->StatusText();
     }
-    if (inButton(kMaximizeOffset)) {
-        return TitleButton::Maximize;
+    else if (scrollbackOffset_ > 0) {
+        title += " (scrollback)";
     }
-    if (inButton(kMinimizeOffset)) {
-        return TitleButton::Minimize;
-    }
-    if (inButton(kSearchOffset)) {
-        return TitleButton::Search;
-    }
-    return TitleButton::None;
+    return title;
 }
 
 std::vector<std::string> TerminalPanel::CellCharsForLine(int lineIndex) const {
@@ -211,7 +180,7 @@ std::string TerminalPanel::LineRangeText(int lineIndex, int fromCol, int toColIn
 }
 
 TerminalPanel::SelectionPoint TerminalPanel::PointForLocal(Point local) const {
-    const int contentRow     = std::max(0, local.y - 1); // -1: past the title row, CursorPosition's own offset
+    const int contentRow     = std::max(0, local.y);
     const int scrollbackSize = emulator_.ScrollbackSize();
     return SelectionPoint{
         .line = scrollbackSize - scrollbackOffset_ + contentRow,
@@ -339,10 +308,6 @@ bool TerminalPanel::HandleSearchKey(const editor::KeyChord& chord) {
     return true;
 }
 
-void TerminalPanel::SetOnLayoutChange(std::function<void()> onLayoutChange) {
-    onLayoutChange_ = std::move(onLayoutChange);
-}
-
 void TerminalPanel::CloseSession() {
     // Safe context to destroy the pty: this is only ever reached from
     // OnEvent (a click), never from inside one of the pty's own callbacks
@@ -362,7 +327,7 @@ std::optional<Point> TerminalPanel::CursorPosition() const {
     if (!cursor || cursor->x >= ContentCols() || cursor->y >= ContentRows()) {
         return std::nullopt;
     }
-    return Point{.x = cursor->x, .y = cursor->y + 1}; // +1: past the title row
+    return Point{.x = cursor->x, .y = cursor->y};
 }
 
 void TerminalPanel::Paint(Canvas canvas) {
@@ -372,49 +337,11 @@ void TerminalPanel::Paint(Canvas canvas) {
         return;
     }
 
-    // Title/divider row -- theme.border normally, borderAccent while
-    // focused, the ProjectSidebar convention.
-    const Brush&      frameBrush = Focused() ? theme_.borderAccent : theme_.border;
-    const std::string horizontal = text::EncodeCodepointUtf8(RoundedBorderGlyphs().horizontal);
-    for (int x = 0; x < width; ++x) {
-        Cell& cell     = canvas[{.x = x, .y = 0}];
-        cell.character = horizontal;
-        frameBrush.ApplyTo(cell);
-    }
-    std::string title = "Terminal";
-    if (exited_) {
-        title += " (exited)";
-    }
-    else if (search_) {
-        title += "  " + search_->StatusText();
-    }
-    else if (scrollbackOffset_ > 0) {
-        title += " (scrollback)";
-    }
-    DrawBorderTitle(canvas, title, frameBrush);
-    // Title-row buttons -- the mouse escape hatches that work on every
-    // terminal (C-` needs the kitty keyboard protocol; see the header
-    // comment). TitleButtonAt is the matching hit test, sharing the same
-    // offset constants so a click can never disagree with where this drew.
-    if (width >= kMinWidthForTitleButtons) {
-        const auto drawButton = [&](int bracketColumn, char32_t icon) {
-            const std::string glyphs[3] = {"[", text::EncodeCodepointUtf8(icon), "]"};
-            for (int i = 0; i < 3; ++i) {
-                Cell& cell     = canvas[{.x = width - bracketColumn + i, .y = 0}];
-                cell.character = glyphs[i];
-                frameBrush.ApplyTo(cell);
-            }
-        };
-        drawButton(kSearchOffset, kSearchIcon);
-        drawButton(kMinimizeOffset, kMinimizeIcon);
-        drawButton(kMaximizeOffset, kMaximizeIcon);
-        drawButton(kCloseOffset, kCloseIcon);
-    }
-
     // Content rows: a window over ring + live screen, offset lines up from
-    // the bottom (offset 0 shows exactly the live screen).
-    const int contentRows    = height - 1;
-    const int scrollbackSize = emulator_.ScrollbackSize();
+    // the bottom (offset 0 shows exactly the live screen). No title row of
+    // its own -- PanelDock.h's shared tab strip owns that chrome now.
+    const int                        contentRows     = height;
+    const int                        scrollbackSize  = emulator_.ScrollbackSize();
     const std::optional<std::size_t> searchMatchLine = search_ ? search_->CurrentIndex() : std::nullopt;
     for (int row = 0; row < contentRows; ++row) {
         const int lineIndex = scrollbackSize - scrollbackOffset_ + row;
@@ -422,7 +349,7 @@ void TerminalPanel::Paint(Canvas canvas) {
             const editor::terminal::Cell source =
                 lineIndex < scrollbackSize ? emulator_.ScrollbackCellAt(lineIndex, col) : emulator_.CellAt(lineIndex - scrollbackSize, col);
 
-            Cell& cell         = canvas[{.x = col, .y = row + 1}];
+            Cell& cell         = canvas[{.x = col, .y = row}];
             cell.character     = source.character;
             cell.bold          = source.bold;
             cell.italic        = source.italic;
@@ -467,45 +394,16 @@ bool TerminalPanel::OnEvent(const Event& event) {
                     scrollbackOffset_ = searchOriginalScrollback_;
                     search_.reset();
                 }
-                switch (TitleButtonAt(mouse->at)) {
-                    case TitleButton::Search:
-                        EnterSearch();
-                        return true;
-                    case TitleButton::Minimize:
-                        // Hide, shell kept alive -- identical to toggle-hide.
-                        if (onToggleRequest_) {
-                            onToggleRequest_();
-                        }
-                        return true;
-                    case TitleButton::Maximize:
-                        maximized_ = !maximized_;
-                        if (onLayoutChange_) {
-                            onLayoutChange_();
-                        }
-                        return true;
-                    case TitleButton::Close:
-                        // Kill the shell outright, then hide; the next show
-                        // spawns a fresh one.
-                        CloseSession();
-                        if (onToggleRequest_) {
-                            onToggleRequest_();
-                        }
-                        return true;
-                    case TitleButton::None:
-                        break;
-                }
                 TakeFocus();
-                // scrollback-search-and-selection follow-up: a press on a
-                // content row starts a drag-select (real-terminal
-                // click-and-drag-to-copy convention); a press on the title
-                // row itself (no button hit) is a plain focus click,
-                // unchanged.
+                // scrollback-search-and-selection follow-up: every press
+                // starts a drag-select (real-terminal click-and-drag-to-copy
+                // convention) -- this canvas is entirely content rows now,
+                // PanelDock.h's shared tab strip owns the title row a press
+                // there would have hit instead.
                 ClearSelection();
-                if (mouse->at.y >= 1) {
-                    selecting_       = true;
-                    selectionAnchor_ = PointForLocal(mouse->at);
-                    selectionEnd_    = selectionAnchor_;
-                }
+                selecting_       = true;
+                selectionAnchor_ = PointForLocal(mouse->at);
+                selectionEnd_    = selectionAnchor_;
                 return true;
             }
             if (mouse->motion == MouseEvent::Motion::Moved && selecting_) {

@@ -42,16 +42,16 @@ namespace {
     }
 
     constexpr int      kMinWidthForCloseButton    = 8;
-    constexpr int      kMinWidthForMinimizeButton = 12; // needs room for both 3-glyph button groups plus a gap column
-    constexpr int      kCloseOffset               = 4;  // column of '[' counted back from width, matches TerminalPanel's own offset
-    constexpr int      kMinimizeOffset            = 8;  // column of '[' for the minimize button, one 3-glyph group + gap left of close
-    constexpr char32_t kCloseIcon    = U'×'; // safe: one whole encoded glyph placed in exactly one Cell, not byte-indexed
+    constexpr int      kMinWidthForMinimizeButton = 12;   // needs room for both 3-glyph button groups plus a gap column
+    constexpr int      kCloseOffset               = 4;    // column of '[' counted back from width, matches TerminalPanel's own offset
+    constexpr int      kMinimizeOffset            = 8;    // column of '[' for the minimize button, one 3-glyph group + gap left of close
+    constexpr char32_t kCloseIcon                 = U'×'; // safe: one whole encoded glyph placed in exactly one Cell, not byte-indexed
     // Matches TerminalPanel's own minimize glyph exactly (its kMinimizeIcon)
     // -- glyph-consistency follow-up: this panel used a plain ASCII "-"
     // originally, reported live as inconsistent with the terminal drawer's
     // own title-row buttons.
     constexpr char32_t kMinimizeIcon = U'▼';
-    constexpr int       kMaxInputRows          = 6;    // cap how far the composer grows before it starts scrolling internally
+    constexpr int      kMaxInputRows = 6; // cap how far the composer grows before it starts scrolling internally
     // ACP checkpoint/rewind follow-up: the picker only ever offers a digit
     // 1-9 (PendingPermissionPrompt's own selection shape) -- older turns
     // beyond this many simply aren't reachable in one keystroke; picking one
@@ -153,7 +153,7 @@ namespace {
                     rows.push_back({std::string(text.substr(rowStartByte, pos - rowStartByte)), rowStartCol, col});
                     rowStartCol += col;
                     rowStartByte = pos;
-                    col = 0;
+                    col          = 0;
                 }
                 lastSpaceByte = std::string::npos;
             }
@@ -192,6 +192,15 @@ void AcpPanel::SetAcpManager(editor::acp::AcpManager* acpManager) {
 
 void AcpPanel::SetOnToggleRequest(std::function<void()> onToggle) {
     onToggleRequest_ = std::move(onToggle);
+}
+
+void AcpPanel::SetDockHosted(bool dockHosted) {
+    dockHosted_ = dockHosted;
+}
+
+std::string AcpPanel::TitleText() const {
+    const std::string agentName = acpManager_ && !acpManager_->AgentName().empty() ? acpManager_->AgentName() : std::string("ACP agent");
+    return agentName + " [" + StateLabel(acpManager_ ? acpManager_->State() : editor::acp::AcpManager::SessionState::Inactive) + "]";
 }
 
 void AcpPanel::OpenRewindPicker() {
@@ -299,7 +308,7 @@ std::vector<AcpPanel::DisplayLine> AcpPanel::FormatTranscript(int width) const {
 
     const auto& pending    = acpManager_->PendingPermissionPrompt();
     const auto& transcript = acpManager_->Transcript();
-    using Kind              = editor::acp::AcpManager::TranscriptEntry::Kind;
+    using Kind             = editor::acp::AcpManager::TranscriptEntry::Kind;
 
     // ACP chat-feel round 2: which ToolCall entry is the most recent one --
     // that one alone stays fully expanded (title + status + diff-line-count
@@ -358,11 +367,11 @@ std::vector<AcpPanel::DisplayLine> AcpPanel::FormatTranscript(int width) const {
                 // paint loop below places one *byte* per Cell (DrawBorderTitle's
                 // own long-standing assumption), so a multi-byte glyph here
                 // would corrupt column alignment for the rest of the line.
-                const bool terminal = entry.status == "completed" || entry.status == "failed" || entry.status == "cancelled";
-                const std::string marker = entry.status == "completed"   ? "[done]"
-                                            : entry.status == "failed"    ? "[fail]"
-                                            : entry.status == "cancelled" ? "[cancel]"
-                                            : entry.status.empty()        ? std::string()
+                const bool        terminal = entry.status == "completed" || entry.status == "failed" || entry.status == "cancelled";
+                const std::string marker   = entry.status == "completed"   ? "[done]"
+                                             : entry.status == "failed"    ? "[fail]"
+                                             : entry.status == "cancelled" ? "[cancel]"
+                                             : entry.status.empty()        ? std::string()
                                                                            : "[" + entry.status + "]";
                 lines.push_back({RightAlignMarker("* " + entry.text, marker, width), DisplayStyle::Dim});
                 // Collapse: resolved, and superseded by a later tool call --
@@ -493,7 +502,7 @@ std::vector<AcpPanel::InlineSpan> AcpPanel::SpansForRow(const std::vector<Inline
 }
 
 void AcpPanel::PaintStyledRow(Canvas& canvas, int x, int y, std::string_view text, const std::vector<InlineSpan>& spans,
-                               const Brush& baseBrush, int maxColumns) const {
+                              const Brush& baseBrush, int maxColumns) const {
     if (spans.empty() || maxColumns <= 0) {
         PaintUtf8Row(canvas, x, y, text, baseBrush, maxColumns);
         return;
@@ -575,7 +584,7 @@ std::vector<AcpPanel::DisplayLine> AcpPanel::FormatRewindPicker(int /*width*/) c
 void AcpPanel::RefreshMentionState() {
     const std::string& text   = prompt_.Text();
     const std::size_t  cursor = prompt_.CursorByteOffset();
-    std::size_t         start  = cursor;
+    std::size_t        start  = cursor;
     while (start > 0 && text[start - 1] != ' ' && text[start - 1] != '\n' && text[start - 1] != '\t') {
         --start;
     }
@@ -591,12 +600,12 @@ void AcpPanel::RefreshMentionState() {
         RefreshMentionCandidates(); // fresh walk each time the picker (re)opens -- see its own doc comment
     }
     const std::size_t count = editor::FuzzyFilterAndRank(mentionCandidates_, mentionQuery_).size();
-    mentionSelection_        = count == 0 ? 0 : std::min(mentionSelection_, count - 1);
+    mentionSelection_       = count == 0 ? 0 : std::min(mentionSelection_, count - 1);
 }
 
 void AcpPanel::RefreshMentionCandidates() {
     mentionCandidates_.clear();
-    mentionSelection_          = 0;
+    mentionSelection_                = 0;
     const std::filesystem::path root = editor::ProjectRoot();
     for (const editor::ProjectTreeEntry& entry : editor::BuildProjectTree(root)) {
         if (!entry.isDirectory) {
@@ -611,8 +620,8 @@ void AcpPanel::AcceptMentionCandidate() {
     if (ranked.empty()) {
         return;
     }
-    const std::size_t  index = std::min(mentionSelection_, ranked.size() - 1);
-    const std::string& text  = prompt_.Text();
+    const std::size_t  index  = std::min(mentionSelection_, ranked.size() - 1);
+    const std::string& text   = prompt_.Text();
     const std::size_t  cursor = prompt_.CursorByteOffset();
     // MinibufferPrompt::SetText's own documented "cursor moves to the end"
     // behavior applies here (see AcpPanel.h's own doc comment on this method).
@@ -709,20 +718,20 @@ void AcpPanel::PaintCollapsedStrip(Canvas& canvas, int width, int height) const 
 }
 
 void AcpPanel::BeginResize(Point globalMouse) {
-    resizing_            = true;
-    resizeAnchorGlobal_  = globalMouse;
-    resizeStartPercent_  = editor::acp::AcpPanelSizePercent();
+    resizing_           = true;
+    resizeAnchorGlobal_ = globalMouse;
+    resizeStartPercent_ = editor::acp::AcpPanelSizePercent();
 }
 
 void AcpPanel::UpdateResize(Point globalMouse) {
-    const bool rightDock          = editor::acp::GetAcpPanelDock() == editor::acp::AcpPanelDock::Right;
+    const bool rightDock = editor::acp::GetAcpPanelDock() == editor::acp::AcpPanelDock::Right;
     // Dragging the resize edge away from the composer grows it in both
     // docks: leftward for a right-docked panel (its own left edge is the
     // handle), upward for a bottom-docked one (its own top border is the
     // handle) -- both expressed as "anchor minus current" so a move in the
     // growing direction yields a positive delta.
-    const int deltaPixels          = rightDock ? resizeAnchorGlobal_.x - globalMouse.x : resizeAnchorGlobal_.y - globalMouse.y;
-    const int terminalDimension    = rightDock ? terminalSize_.width : terminalSize_.height;
+    const int deltaPixels       = rightDock ? resizeAnchorGlobal_.x - globalMouse.x : resizeAnchorGlobal_.y - globalMouse.y;
+    const int terminalDimension = rightDock ? terminalSize_.width : terminalSize_.height;
     if (terminalDimension <= 0) {
         return; // SetTerminalSize never called yet -- see its own doc comment
     }
@@ -758,37 +767,40 @@ void AcpPanel::Paint(Canvas canvas) {
         }
     }
 
-    // Title/divider row.
-    const Brush&      frameBrush = Focused() ? theme_.borderAccent : theme_.border;
-    const std::string horizontal = text::EncodeCodepointUtf8(RoundedBorderGlyphs().horizontal);
-    for (int x = 0; x < width; ++x) {
-        Cell& cell     = canvas[{.x = x, .y = 0}];
-        cell.character = horizontal;
-        frameBrush.ApplyTo(cell);
-    }
-    const std::string agentName = acpManager_ && !acpManager_->AgentName().empty() ? acpManager_->AgentName() : std::string("ACP agent");
-    const std::string title     = agentName + " [" + StateLabel(acpManager_ ? acpManager_->State() : editor::acp::AcpManager::SessionState::Inactive) + "]";
-    DrawBorderTitle(canvas, title, frameBrush);
-    if (width >= kMinWidthForCloseButton) {
-        const std::string glyphs[3] = {"[", text::EncodeCodepointUtf8(kCloseIcon), "]"};
-        for (int i = 0; i < 3; ++i) {
-            Cell& cell     = canvas[{.x = width - kCloseOffset + i, .y = 0}];
-            cell.character = glyphs[i];
+    // Title/divider row -- standalone mode only. PanelDock.h's shared tab
+    // strip owns this chrome (including the close/minimize buttons) when
+    // dockHosted_, and TitleText() supplies the same text this would draw.
+    if (!dockHosted_) {
+        const Brush&      frameBrush = Focused() ? theme_.borderAccent : theme_.border;
+        const std::string horizontal = text::EncodeCodepointUtf8(RoundedBorderGlyphs().horizontal);
+        for (int x = 0; x < width; ++x) {
+            Cell& cell     = canvas[{.x = x, .y = 0}];
+            cell.character = horizontal;
             frameBrush.ApplyTo(cell);
         }
-    }
-    if (width >= kMinWidthForMinimizeButton) {
-        // TerminalPanel's own kMinimizeIcon (▼), not a plain "-" -- see
-        // kMinimizeIcon's own doc comment.
-        const std::string glyphs[3] = {"[", text::EncodeCodepointUtf8(kMinimizeIcon), "]"};
-        for (int i = 0; i < 3; ++i) {
-            Cell& cell     = canvas[{.x = width - kMinimizeOffset + i, .y = 0}];
-            cell.character = glyphs[i];
-            frameBrush.ApplyTo(cell);
+        DrawBorderTitle(canvas, TitleText(), frameBrush);
+        if (width >= kMinWidthForCloseButton) {
+            const std::string glyphs[3] = {"[", text::EncodeCodepointUtf8(kCloseIcon), "]"};
+            for (int i = 0; i < 3; ++i) {
+                Cell& cell     = canvas[{.x = width - kCloseOffset + i, .y = 0}];
+                cell.character = glyphs[i];
+                frameBrush.ApplyTo(cell);
+            }
+        }
+        if (width >= kMinWidthForMinimizeButton) {
+            // TerminalPanel's own kMinimizeIcon (▼), not a plain "-" -- see
+            // kMinimizeIcon's own doc comment.
+            const std::string glyphs[3] = {"[", text::EncodeCodepointUtf8(kMinimizeIcon), "]"};
+            for (int i = 0; i < 3; ++i) {
+                Cell& cell     = canvas[{.x = width - kMinimizeOffset + i, .y = 0}];
+                cell.character = glyphs[i];
+                frameBrush.ApplyTo(cell);
+            }
         }
     }
 
-    if (height < 2) {
+    const int titleRows = dockHosted_ ? 0 : 1;
+    if (height < titleRows + 1) {
         return;
     }
 
@@ -813,7 +825,7 @@ void AcpPanel::Paint(Canvas canvas) {
     }
 
     const int allottedInputRows =
-        std::max(1, std::min({static_cast<int>(inputRows.size()), kMaxInputRows, std::max(1, height - 1)}));
+        std::max(1, std::min({static_cast<int>(inputRows.size()), kMaxInputRows, std::max(1, height - titleRows)}));
     int inputWindowStart = 0;
     if (static_cast<int>(inputRows.size()) > allottedInputRows) {
         // Scroll the visible window to always include the caret's row --
@@ -826,7 +838,7 @@ void AcpPanel::Paint(Canvas canvas) {
     // fits, top-aligned within the window (i.e. the window itself is
     // anchored to the most recent lines) -- no scrollback in v1, see header
     // comment.
-    const int contentRows = std::max(0, height - 1 - allottedInputRows);
+    const int contentRows = std::max(0, height - titleRows - allottedInputRows);
     if (contentRows > 0) {
         // ACP Markdown rendering follow-up: each logical DisplayLine's own
         // spans (in its plain-text column space) are re-based onto whichever
@@ -838,7 +850,7 @@ void AcpPanel::Paint(Canvas canvas) {
             DisplayStyle            style;
             std::vector<InlineSpan> spans;
         };
-        std::vector<PhysicalLine> lines;
+        std::vector<PhysicalLine>      lines;
         const std::vector<DisplayLine> content = rewindPickerOpen_    ? FormatRewindPicker(width)
                                                  : mentionPickerOpen_ ? FormatMentionPicker(width)
                                                                       : FormatTranscript(width);
@@ -854,8 +866,8 @@ void AcpPanel::Paint(Canvas canvas) {
                 continue;
             }
             const PhysicalLine& line  = lines[lineIndex];
-            const Brush          brush = BrushForStyle(line.style);
-            PaintStyledRow(canvas, 0, row + 1, line.text, line.spans, brush, width);
+            const Brush         brush = BrushForStyle(line.style);
+            PaintStyledRow(canvas, 0, row + titleRows, line.text, line.spans, brush, width);
         }
     }
 
@@ -927,39 +939,51 @@ bool AcpPanel::OnEvent(const Event& event) {
             return false;
         }
 
-        // Collapsed: the whole strip is a single click-to-reopen target --
-        // there's very little to aim at on a genuinely thin strip, so no
-        // separate button hit-test the way the full panel has.
-        if (collapsed_) {
-            if (mouse->button == MouseEvent::Button::Left && mouse->motion == MouseEvent::Motion::Pressed) {
-                SetCollapsed(false);
-                TakeFocus();
-            }
-            return true;
-        }
-
-        if (mouse->button == MouseEvent::Button::Left && mouse->motion == MouseEvent::Motion::Pressed) {
-            if (CloseButtonAt(mouse->at)) {
-                if (onToggleRequest_) {
-                    onToggleRequest_();
+        // Collapsed/close-button/minimize-button/resize-divider hit-testing
+        // is standalone-mode-only -- PanelDock.h's shared tab strip owns all
+        // of that when dockHosted_ (collapse has no dock-hosted equivalent
+        // at all, superseded by switching tabs).
+        if (!dockHosted_) {
+            // Collapsed: the whole strip is a single click-to-reopen target
+            // -- there's very little to aim at on a genuinely thin strip, so
+            // no separate button hit-test the way the full panel has.
+            if (collapsed_) {
+                if (mouse->button == MouseEvent::Button::Left && mouse->motion == MouseEvent::Motion::Pressed) {
+                    SetCollapsed(false);
+                    TakeFocus();
                 }
                 return true;
             }
-            if (MinimizeButtonAt(mouse->at)) {
-                SetCollapsed(true);
-                return true;
-            }
-            // The resize divider: the title row for a bottom dock (its own
-            // dedicated row, not shared with any content), the panel's own
-            // left edge column for a right dock (the boundary shared with
-            // BufferView beneath it -- ProjectSidebar's own right-edge
-            // divider, mirrored).
-            const bool rightDock = editor::acp::GetAcpPanelDock() == editor::acp::AcpPanelDock::Right;
-            if (rightDock ? mouse->at.x == 0 : mouse->at.y == 0) {
-                BeginResize(rawMouse.at);
+
+            if (mouse->button == MouseEvent::Button::Left && mouse->motion == MouseEvent::Motion::Pressed) {
+                if (CloseButtonAt(mouse->at)) {
+                    if (onToggleRequest_) {
+                        onToggleRequest_();
+                    }
+                    return true;
+                }
+                if (MinimizeButtonAt(mouse->at)) {
+                    SetCollapsed(true);
+                    return true;
+                }
+                // The resize divider: the title row for a bottom dock (its
+                // own dedicated row, not shared with any content), the
+                // panel's own left edge column for a right dock (the
+                // boundary shared with BufferView beneath it --
+                // ProjectSidebar's own right-edge divider, mirrored).
+                const bool rightDock = editor::acp::GetAcpPanelDock() == editor::acp::AcpPanelDock::Right;
+                if (rightDock ? mouse->at.x == 0 : mouse->at.y == 0) {
+                    BeginResize(rawMouse.at);
+                    TakeFocus();
+                    return true;
+                }
                 TakeFocus();
                 return true;
             }
+            return false;
+        }
+
+        if (mouse->button == MouseEvent::Button::Left && mouse->motion == MouseEvent::Motion::Pressed) {
             TakeFocus();
             return true;
         }
@@ -1038,7 +1062,7 @@ bool AcpPanel::OnEvent(const Event& event) {
             const std::size_t count = editor::FuzzyFilterAndRank(mentionCandidates_, mentionQuery_).size();
             if (count > 0) {
                 mentionSelection_ = chord->Special == editor::SpecialKey::Down ? (mentionSelection_ + 1) % count
-                                                                                : (mentionSelection_ + count - 1) % count;
+                                                                               : (mentionSelection_ + count - 1) % count;
             }
             return true;
         }
@@ -1120,7 +1144,9 @@ bool AcpPanel::OnEvent(const Event& event) {
     // Keyboard minimize toggle, alongside the [-] title-bar button above --
     // M-m, unused elsewhere in this composer (a plain "m" keystroke still
     // types the letter as always; only the Meta-modified chord is claimed).
-    if (chord->Meta && chord->Codepoint == U'm') {
+    // Standalone-mode only -- collapse has no dock-hosted equivalent (see
+    // SetDockHosted's own doc comment).
+    if (!dockHosted_ && chord->Meta && chord->Codepoint == U'm') {
         ToggleCollapsed();
         return true;
     }

@@ -741,6 +741,7 @@ add_library(ned_lib STATIC
         Source/UI/ScrollBar.cpp
         Source/UI/Minimap.cpp
         Source/UI/Overlay.cpp
+        Source/UI/PanelDock.cpp
         Source/UI/TerminalPanel.cpp
         Source/UI/AcpPanel.cpp
         Source/UI/DebugConsolePanel.cpp
@@ -1018,6 +1019,7 @@ if (NED_BUILD_TESTS)
             Tests/BufferListPanelTest.cpp
             Tests/MinimapTest.cpp
             Tests/OverlayTest.cpp
+            Tests/PanelDockTest.cpp
             Tests/GitIgnoreTest.cpp
             Tests/SearchSettingsTest.cpp
             Tests/ProjectSearchTest.cpp
