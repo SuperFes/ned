@@ -1,12 +1,15 @@
 //
-// DAP round 2: the debug console (REPL) panel -- structurally mirrors
-// AcpPanel.h exactly (same dockable OverlayHost overlay shape: an opaque
-// title row + content rows + one input row, registered with main.cpp's
-// OverlayHost, floats over BufferView without reflowing anything). Where
-// AcpPanel renders AcpManager's structured transcript, this panel keeps its
-// own small transcript (input echo / result / error) -- DapManager has no
-// transcript concept of its own, unlike AcpManager, since a debug session
-// is a request/response protocol with no persistent conversational log.
+// DAP round 2: the debug console (REPL) panel. Where AcpPanel renders
+// AcpManager's structured transcript, this panel keeps its own small
+// transcript (input echo / result / error) -- DapManager has no transcript
+// concept of its own, unlike AcpManager, since a debug session is a
+// request/response protocol with no persistent conversational log.
+//
+// tabbed-bottom-dock-overlays follow-up: this panel is hosted as one tab
+// inside PanelDock.h's shared bottom dock rather than its own OverlayHost
+// overlay -- it owns exactly its content + input rows; PanelDock owns the
+// shared tab strip, close, maximize, and resize-drag. TitleText() is this
+// tab's dynamic label.
 //
 // Enter sends the typed expression through DapManager::Evaluate with DAP's
 // default "repl" context (distinct from ShowDebugInfo's watch-expression
@@ -70,9 +73,9 @@ class DebugConsolePanel : public Widget {
     // (never crashes, just no recall).
     void SetPromptHistory(editor::PromptHistory* promptHistory);
 
-    // Invoked when the panel's own [x] close button is clicked -- wired by
-    // main.cpp to the same toggle lambda dap-toggle-console drives,
-    // mirroring TerminalPanel/AcpPanel's own SetOnToggleRequest exactly.
+    // Invoked on Esc (with no search active) -- wired by main.cpp to the
+    // same toggle lambda dap-toggle-console drives, mirroring TerminalPanel/
+    // AcpPanel's own SetOnToggleRequest exactly.
     void SetOnToggleRequest(std::function<void()> onToggle);
 
     void Paint(Canvas canvas) override;
@@ -81,6 +84,11 @@ class DebugConsolePanel : public Widget {
     [[nodiscard]] bool Focusable() const override {
         return true;
     }
+
+    // This tab's dynamic label for PanelDock's shared tab strip: "Debug
+    // console [state]" plus whichever of search-status/scrollback applies --
+    // the exact text this panel's own title row used to draw locally.
+    [[nodiscard]] std::string TitleText() const;
 
   private:
     enum class DisplayStyle { Plain,
@@ -92,10 +100,10 @@ class DebugConsolePanel : public Widget {
     };
 
     [[nodiscard]] Brush BrushForStyle(DisplayStyle style) const;
-    [[nodiscard]] bool  CloseButtonAt(Point local) const;
-    // DAP round 4: this panel's own content-row formula (height - 2, title +
-    // input rows) -- shared by Paint's render loop and ScrollBy's clamp
-    // bound, TerminalPanel::ContentRows's own precedent.
+    // DAP round 4: this panel's own content-row formula (height - 1, the
+    // input row is the only other row now -- PanelDock.h owns the title
+    // row) -- shared by Paint's render loop and ScrollBy's clamp bound,
+    // TerminalPanel::ContentRows's own precedent.
     [[nodiscard]] int ContentRows() const;
     void              ScrollBy(int deltaLines);
     // Moves scrollbackOffset_ so history_[index] lands as the bottom-most
@@ -111,13 +119,13 @@ class DebugConsolePanel : public Widget {
     // a value. Always returns true (every key is consumed mid-search).
     bool HandleSearchKey(const editor::KeyChord& chord);
 
-    const Theme&              theme_;
-    editor::dap::DapManager*  dapManager_    = nullptr;
-    editor::PromptHistory*    promptHistory_ = nullptr;
-    editor::MinibufferPrompt  prompt_;
-    std::vector<DisplayLine>  history_;
-    std::function<void()>     onToggleRequest_;
-    int                       scrollbackOffset_ = 0;
+    const Theme&             theme_;
+    editor::dap::DapManager* dapManager_    = nullptr;
+    editor::PromptHistory*   promptHistory_ = nullptr;
+    editor::MinibufferPrompt prompt_;
+    std::vector<DisplayLine> history_;
+    std::function<void()>    onToggleRequest_;
+    int                      scrollbackOffset_ = 0;
     // debug-console-search: a snapshot of history_'s text, taken when a
     // search session starts -- IncrementalSearch's own "materialize once"
     // precedent, adapted since this transcript can keep growing (a pending

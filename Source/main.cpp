@@ -89,6 +89,7 @@
 #include "UI/Layout.h"
 #include "UI/ListPopup.h"
 #include "UI/Overlay.h"
+#include "UI/PanelDock.h"
 #include "UI/ProjectSidebar.h"
 #include "UI/TabBar.h"
 #include "UI/TerminalColorProbe.h"
@@ -1289,7 +1290,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
                         path, !stage,
                         [&vcsDiffPreview, path, stage](std::string rawDiff) {
                             vcsDiffPreview.SetModel(ned::ui::VcsDiffPreviewModel{
-                                .path=path, .staged=!stage, .hunks=ned::editor::vcs::ParseDiffHunks(rawDiff)});
+                                .path = path, .staged = !stage, .hunks = ned::editor::vcs::ParseDiffHunks(rawDiff)});
                         },
                         [&vcsDiffPreview](const std::string&) { vcsDiffPreview.SetModel(std::nullopt); });
                 },
@@ -1315,68 +1316,18 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
                 });
         });
 
-    // The built-in terminal drawer: full width, bottom
-    // TerminalHeightPercent() of the screen, floating just above the echo
-    // area row -- the placement function re-reads the Janet-configurable
-    // percentage on every Reflow/Show, the same pull-fresh convention
-    // ProjectSidebar's width already follows. Declared after eventLoop so
-    // its PtyProcess (background read thread + shell) is torn down first on
-    // the way out of main, the same owner-destroys-after-Run ordering every
-    // TaskProcess/LspClient owner relies on.
+    // The built-in terminal drawer, the ACP chat panel (when bottom-docked --
+    // the default; see ned/set-acp-panel-dock), and the DAP debug console now
+    // share one tabbed bottom dock (PanelDock.h) instead of three independent
+    // OverlayHost overlays each fighting for the same screen real estate --
+    // see that class's own header comment for the full rationale. Declared
+    // after eventLoop so TerminalPanel's PtyProcess (background read thread +
+    // shell) is torn down first on the way out of main, the same
+    // owner-destroys-after-Run ordering every TaskProcess/LspClient owner
+    // relies on.
     auto terminalPanel = std::make_shared<ned::ui::TerminalPanel>(theme);
     terminalPanel->SetEventLoop(&eventLoop);
-    overlays.Add(*terminalPanel, [panel = terminalPanel.get()](Size size) {
-        // Maximized ([▲] button) covers the whole buffer area below the tab
-        // bar; otherwise the configured percentage of the screen.
-        const int yMax = std::max(1, size.height - 2); // above the echo area row
-        const int height =
-            panel->Maximized() ? yMax : std::max(4, size.height * ned::editor::terminal::TerminalHeightPercent() / 100);
-        return Box{.x_min = 0,
-                   .x_max = std::max(0, size.width - 1 - MinimapOverlayReserve()),
-                   .y_min = std::max(1, yMax - height + 1),
-                   .y_max = yMax};
-    });
-    // The maximize toggle changes what the placement above computes; Show on
-    // an already-visible overlay is exactly a re-box from the current size.
-    terminalPanel->SetOnLayoutChange([&overlays, panel = terminalPanel.get()] { overlays.Show(*panel); });
-    overlays.SetFocusReturn(*terminalPanel, [wm = windowManager.get()] { wm->TakeFocus(); });
-    // The toggle: hidden -> show+focus; visible -> hide (the focus-return
-    // above hands the keyboard back only if the panel actually held it).
-    // Deliberately NOT VS Code's three-state (visible-but-unfocused ->
-    // focus): C-` is only deliverable under the kitty keyboard protocol, so
-    // on a legacy-encoding terminal "C-c t, click into the buffer, C-c t"
-    // must be a complete keyboard show/hide cycle -- confirmed stuck-drawer
-    // feedback from real use, not a guess. Refocusing a visible panel is a
-    // click on it (or C-c t twice). Reached from the editor via
-    // toggle-terminal (C-` / C-c t), from the focused panel via its one
-    // reserved chord (C-`), and from the title row's close button (both in
-    // TerminalPanel.h).
-    auto toggleTerminal = [&overlays, panel = terminalPanel.get(), wm = windowManager.get()] {
-        if (!overlays.IsVisible(*panel)) {
-            overlays.Show(*panel);
-            panel->EnsureStarted();
-            panel->TakeFocus();
-        }
-        else {
-            overlays.Hide(*panel);
-            // vcs-diff-gutter-staleness follow-up: closing the embedded
-            // terminal is the single most likely moment a `git commit`/
-            // `git checkout` just ran from inside ned itself -- refresh
-            // every pane's diff gutter right away rather than waiting out
-            // the periodic autosave-tick sweep (WindowManager::
-            // StartAutoSaveTimer) that otherwise catches this too.
-            wm->RefreshVcsDiffGutters();
-        }
-    };
-    windowManager->SetOnTerminalToggle(toggleTerminal);
-    terminalPanel->SetOnToggleRequest(toggleTerminal);
 
-    // ACP chat panel follow-up: same OverlayHost-overlay shape as
-    // terminalPanel just above, dockable at the bottom (default, mirroring
-    // the terminal drawer's own geometry) or the right edge, per the
-    // Janet-configurable ned/set-acp-panel-dock -- re-read fresh on every
-    // Reflow/Show, the same pull-fresh convention every other percent-style
-    // setting in this file already follows.
     ned::ui::AcpPanel acpPanel(theme);
     acpPanel.SetAcpManager(&acpManager);
     // ACP round-1-live-validation follow-up: lets a pending permission
@@ -1384,120 +1335,203 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     // area whenever the panel itself has focus -- see
     // WindowManager::SetAcpPanelFocusChecker's own doc comment.
     windowManager->SetAcpPanelFocusChecker([&acpPanel] { return acpPanel.Focused(); });
-    overlays.Add(acpPanel, [panel = &acpPanel](Size size) {
-        // panel-resize/minimize follow-up: the drag-resize handler needs the
-        // full terminal size (its own Box only ever reports its *own*
-        // current dimensions) to convert a pixel delta into a size-percent
-        // delta -- refreshed here since this lambda already runs fresh every
-        // Reflow. See AcpPanel::SetTerminalSize's own doc comment.
-        panel->SetTerminalSize(size);
 
-        // acp-panel-minimap-overlap follow-up: see MinimapOverlayReserve's
-        // own comment for why this is needed at all.
-        const int minimapReserve = MinimapOverlayReserve();
-        const int yMax           = std::max(1, size.height - 2); // above the echo area row
-        const bool rightDock     = ned::editor::acp::GetAcpPanelDock() == ned::editor::acp::AcpPanelDock::Right;
-        if (panel->Collapsed()) {
-            // Thin strip: one column for a right dock, one row for a bottom
-            // dock -- PaintCollapsedStrip's own doc comment.
-            if (rightDock) {
-                const int xMin = size.width - 1 - minimapReserve;
-                return Box{.x_min = xMin, .x_max = xMin, .y_min = 1, .y_max = yMax};
-            }
-            return Box{.x_min = 0, .x_max = std::max(0, size.width - 1 - minimapReserve), .y_min = yMax, .y_max = yMax};
-        }
-        if (rightDock) {
-            const int width = std::clamp(size.width * ned::editor::acp::AcpPanelSizePercent() / 100, 20, size.width - 1);
-            const int xMin  = size.width - width;
-            return Box{.x_min = xMin, .x_max = std::max(xMin, size.width - 1 - minimapReserve), .y_min = 1, .y_max = yMax};
-        }
-        const int height = std::max(4, size.height * ned::editor::acp::AcpPanelSizePercent() / 100);
-        return Box{
-            .x_min = 0, .x_max = std::max(0, size.width - 1 - minimapReserve), .y_min = std::max(1, yMax - height + 1), .y_max = yMax};
-    });
-    overlays.SetFocusReturn(acpPanel, [wm = windowManager.get()] { wm->TakeFocus(); });
-    // Auto-opens the panel the instant a session actually produces
-    // content -- regardless of whether the session was started via the
-    // panel's own future entry points or the existing echo-area
-    // acp-start-session prompt.
-    acpManager.SetOnTranscriptChanged([&overlays, panel = &acpPanel] {
-        if (!overlays.IsVisible(*panel)) {
-            overlays.Show(*panel);
-        }
-        // panel-resize/minimize follow-up: fresh content arriving while
-        // minimized un-minimizes too -- otherwise a reply could stream in
-        // fully behind a strip showing only "(minimized)".
-        panel->SetCollapsed(false);
-    });
-    auto toggleAcpPanel = [&overlays, panel = &acpPanel, &acpManager, lastAcpAgent = restoredSession ? restoredSession->lastAcpAgent : std::nullopt] {
-        if (!overlays.IsVisible(*panel)) {
-            overlays.Show(*panel);
-            panel->SetCollapsed(false);
-            panel->TakeFocus();
-            // ACP auto-reconnect follow-up: opening the panel reconnects to
-            // whichever agent this project last used, instead of always
-            // requiring the "ACP agent:" prompt again -- a no-op if a
-            // session is already running (e.g. re-showing after a hide), if
-            // this project has never started one before, or if the
-            // remembered agent name is no longer configured (renamed/
-            // removed from init.janet since).
-            if (acpManager.State() == ned::editor::acp::AcpManager::SessionState::Inactive && lastAcpAgent &&
-                ned::editor::acp::AcpAgentCommand(*lastAcpAgent)) {
-                acpManager.StartSession(*lastAcpAgent);
-            }
-        }
-        else {
-            overlays.Hide(*panel);
-        }
-    };
-    windowManager->SetOnAcpPanelToggle(toggleAcpPanel);
-    acpPanel.SetOnToggleRequest(toggleAcpPanel);
-    // ACP checkpoint/rewind follow-up: acp-rewind (C-c A r) ensures the
-    // panel is visible/focused (no session-reconnect attempt -- unlike
-    // toggleAcpPanel's own show-branch above, there's nothing useful to
-    // rewind without an already-active or prior session, and the picker
-    // itself reports "no turns recorded yet" when checkpoints_ is empty)
-    // then opens its rewind picker.
-    windowManager->SetOnAcpRewindRequest([&overlays, panel = &acpPanel] {
-        if (!overlays.IsVisible(*panel)) {
-            overlays.Show(*panel);
-            panel->SetCollapsed(false);
-        }
-        panel->TakeFocus();
-        panel->OpenRewindPicker();
-    });
-    // panel-resize/minimize follow-up: OverlayHost only recomputes a panel's
-    // Box from its placement lambda on Show()/Reflow() (Overlay.h's own
-    // header comment), never on every Paint() -- so SetCollapsed alone would
-    // leave a stale, wrongly-sized Box in place (and Paint() would fill that
-    // whole stale area with the collapsed strip's blank fill) until the next
-    // real terminal resize. Re-invoking Show() on an already-visible widget
-    // is a safe, cheap no-op beyond recomputing its Box.
-    acpPanel.SetOnCollapseChanged([&overlays, panel = &acpPanel] { overlays.Show(*panel); });
-
-    // DAP round 2: the debug console (REPL) panel -- same OverlayHost-overlay
-    // shape as terminalPanel/acpPanel above, hardcoded bottom-dock like
-    // terminalPanel (a REPL is naturally bottom-docked; no dock-side config
-    // was asked for, unlike the ACP chat panel's left/right choice).
     ned::ui::DebugConsolePanel dapConsolePanel(theme);
     dapConsolePanel.SetDapManager(&dapManager);
     dapConsolePanel.SetPromptHistory(&promptHistory); // DAP round 4: M-p/M-n recall, same ring BufferView's prompts use
-    overlays.Add(dapConsolePanel, [](Size size) {
-        const int yMax   = std::max(1, size.height - 2); // above the echo area row
-        const int height = std::max(4, size.height * 30 / 100);
+
+    // AcpPanel::SetDockHosted's own doc comment: read once at startup, not
+    // re-read live the way most settings in this file are -- flipping
+    // ned/set-acp-panel-dock at runtime won't move ACP between the tabbed
+    // dock and its own standalone right-dock overlay without a restart.
+    const bool acpBottomDocked = ned::editor::acp::GetAcpPanelDock() != ned::editor::acp::AcpPanelDock::Right;
+
+    ned::ui::PanelDock panelDock(theme);
+    const std::size_t  terminalTabIndex = panelDock.AddPanel(
+        "Terminal", *terminalPanel, [panel = terminalPanel.get()] { return panel->TitleText(); },
+        &ned::editor::terminal::TerminalHeightPercent, &ned::editor::terminal::SetTerminalHeightPercent,
+        [panel = terminalPanel.get()] {
+            // The scrollback-search icon (this tab's own former title-row
+            // button) plus a restart icon for CloseSession() -- the "kill
+            // the shell outright" affordance the standalone close button
+            // used to provide, now that the shared [x] only ever hides the
+            // whole dock rather than a single tab's session.
+            return std::vector<ned::ui::PanelDock::TabAction>{
+                {.icon = U'/', .onClick = [panel] { panel->EnterSearch(); }},
+                {.icon = U'↻', .onClick = [panel] { panel->CloseSession(); }},
+            };
+        });
+    std::optional<std::size_t> acpTabIndex;
+    if (acpBottomDocked) {
+        acpPanel.SetDockHosted(true);
+        acpTabIndex = panelDock.AddPanel(
+            "Claude", acpPanel, [panel = &acpPanel] { return panel->TitleText(); }, &ned::editor::acp::AcpPanelSizePercent,
+            &ned::editor::acp::SetAcpPanelSizePercent);
+    }
+    const std::size_t debugConsoleTabIndex =
+        panelDock.AddPanel("Debug console", dapConsolePanel, [panel = &dapConsolePanel] { return panel->TitleText(); });
+
+    overlays.Add(panelDock, [panel = &panelDock](Size size) {
+        panel->SetTerminalSize(size);
+        const int yMax = std::max(1, size.height - 2); // above the echo area row
+        const int height =
+            panel->Maximized() ? yMax : std::max(4, size.height * panel->ActivePercent().value_or(30) / 100);
         return Box{.x_min = 0,
                    .x_max = std::max(0, size.width - 1 - MinimapOverlayReserve()),
                    .y_min = std::max(1, yMax - height + 1),
                    .y_max = yMax};
     });
-    overlays.SetFocusReturn(dapConsolePanel, [wm = windowManager.get()] { wm->TakeFocus(); });
-    auto toggleDapConsole = [&overlays, panel = &dapConsolePanel] {
-        if (!overlays.IsVisible(*panel)) {
-            overlays.Show(*panel);
-            panel->TakeFocus();
+    // The maximize toggle changes what the placement above computes; Show on
+    // an already-visible overlay is exactly a re-box from the current size.
+    panelDock.SetOnLayoutChange([&overlays, panel = &panelDock] { overlays.Show(*panel); });
+    panelDock.SetOnCloseRequest([&overlays, panel = &panelDock, wm = windowManager.get()] {
+        overlays.Hide(*panel);
+        wm->TakeFocus();
+    });
+    // Rarely fires in practice (see PanelDock.h's own header comment on why
+    // keyboard focus lives on whichever tab is active, not the dock itself)
+    // -- kept for symmetry/defence-in-depth; every toggle lambda below
+    // already calls wm->TakeFocus() explicitly on its own hide branch.
+    overlays.SetFocusReturn(panelDock, [wm = windowManager.get()] { wm->TakeFocus(); });
+
+    // The toggle: hidden or on a different tab -> show+switch+focus; already
+    // the active, visible tab -> hide (the explicit TakeFocus() below hands
+    // the keyboard back, since OverlayHost's own automatic focus-return
+    // never fires for this entry -- see PanelDock.h's header comment).
+    // Deliberately NOT VS Code's three-state (visible-but-unfocused ->
+    // focus): C-` is only deliverable under the kitty keyboard protocol, so
+    // on a legacy-encoding terminal "C-c t, click into the buffer, C-c t"
+    // must be a complete keyboard show/hide cycle -- confirmed stuck-drawer
+    // feedback from real use, not a guess. Refocusing a visible panel is a
+    // click on it (or C-c t twice). Reached from the editor via
+    // toggle-terminal (C-` / C-c t) and from the focused panel via its one
+    // reserved chord (C-`).
+    auto toggleTerminal = [&overlays, &panelDock, terminalTabIndex, panel = terminalPanel.get(), wm = windowManager.get()] {
+        if (!overlays.IsVisible(panelDock) || panelDock.ActiveIndex() != terminalTabIndex) {
+            overlays.Show(panelDock);
+            panelDock.SwitchTo(terminalTabIndex);
+            panel->EnsureStarted();
         }
         else {
-            overlays.Hide(*panel);
+            overlays.Hide(panelDock);
+            // vcs-diff-gutter-staleness follow-up: closing the embedded
+            // terminal is the single most likely moment a `git commit`/
+            // `git checkout` just ran from inside ned itself -- refresh
+            // every pane's diff gutter right away rather than waiting out
+            // the periodic autosave-tick sweep (WindowManager::
+            // StartAutoSaveTimer) that otherwise catches this too.
+            wm->RefreshVcsDiffGutters();
+            wm->TakeFocus();
+        }
+    };
+    windowManager->SetOnTerminalToggle(toggleTerminal);
+    terminalPanel->SetOnToggleRequest(toggleTerminal);
+
+    if (acpBottomDocked) {
+        const std::size_t tabIndex = *acpTabIndex;
+        // Auto-opens the panel the instant a session actually produces
+        // content -- regardless of whether the session was started via the
+        // panel's own future entry points or the existing echo-area
+        // acp-start-session prompt.
+        acpManager.SetOnTranscriptChanged([&overlays, &panelDock, tabIndex] {
+            overlays.Show(panelDock);
+            panelDock.SwitchTo(tabIndex);
+        });
+        auto toggleAcpPanel = [&overlays, &panelDock, tabIndex, &acpManager, wm = windowManager.get(),
+                               lastAcpAgent = restoredSession ? restoredSession->lastAcpAgent : std::nullopt] {
+            if (!overlays.IsVisible(panelDock) || panelDock.ActiveIndex() != tabIndex) {
+                overlays.Show(panelDock);
+                panelDock.SwitchTo(tabIndex);
+                // ACP auto-reconnect follow-up: opening the panel reconnects
+                // to whichever agent this project last used, instead of
+                // always requiring the "ACP agent:" prompt again -- a no-op
+                // if a session is already running (e.g. re-showing after a
+                // hide), if this project has never started one before, or if
+                // the remembered agent name is no longer configured
+                // (renamed/removed from init.janet since).
+                if (acpManager.State() == ned::editor::acp::AcpManager::SessionState::Inactive && lastAcpAgent &&
+                    ned::editor::acp::AcpAgentCommand(*lastAcpAgent)) {
+                    acpManager.StartSession(*lastAcpAgent);
+                }
+            }
+            else {
+                overlays.Hide(panelDock);
+                wm->TakeFocus();
+            }
+        };
+        windowManager->SetOnAcpPanelToggle(toggleAcpPanel);
+        acpPanel.SetOnToggleRequest(toggleAcpPanel);
+        // ACP checkpoint/rewind follow-up: acp-rewind (C-c A r) ensures the
+        // panel is visible/focused (no session-reconnect attempt -- unlike
+        // toggleAcpPanel's own show-branch above, there's nothing useful to
+        // rewind without an already-active or prior session, and the picker
+        // itself reports "no turns recorded yet" when checkpoints_ is empty)
+        // then opens its rewind picker.
+        windowManager->SetOnAcpRewindRequest([&overlays, &panelDock, tabIndex, panel = &acpPanel] {
+            overlays.Show(panelDock);
+            panelDock.SwitchTo(tabIndex);
+            panel->OpenRewindPicker();
+        });
+    }
+    else {
+        // Right-dock mode: a fully independent, unaffected standalone
+        // OverlayHost overlay, exactly as before PanelDock existed -- see
+        // AcpPanel::SetDockHosted's own doc comment.
+        overlays.Add(acpPanel, [panel = &acpPanel](Size size) {
+            panel->SetTerminalSize(size);
+            const int minimapReserve = MinimapOverlayReserve();
+            const int yMax           = std::max(1, size.height - 2); // above the echo area row
+            if (panel->Collapsed()) {
+                const int xMin = size.width - 1 - minimapReserve;
+                return Box{.x_min = xMin, .x_max = xMin, .y_min = 1, .y_max = yMax};
+            }
+            const int width = std::clamp(size.width * ned::editor::acp::AcpPanelSizePercent() / 100, 20, size.width - 1);
+            const int xMin  = size.width - width;
+            return Box{.x_min = xMin, .x_max = std::max(xMin, size.width - 1 - minimapReserve), .y_min = 1, .y_max = yMax};
+        });
+        overlays.SetFocusReturn(acpPanel, [wm = windowManager.get()] { wm->TakeFocus(); });
+        acpManager.SetOnTranscriptChanged([&overlays, panel = &acpPanel] {
+            if (!overlays.IsVisible(*panel)) {
+                overlays.Show(*panel);
+            }
+            panel->SetCollapsed(false);
+        });
+        auto toggleAcpPanel = [&overlays, panel = &acpPanel, &acpManager,
+                               lastAcpAgent = restoredSession ? restoredSession->lastAcpAgent : std::nullopt] {
+            if (!overlays.IsVisible(*panel)) {
+                overlays.Show(*panel);
+                panel->SetCollapsed(false);
+                panel->TakeFocus();
+                if (acpManager.State() == ned::editor::acp::AcpManager::SessionState::Inactive && lastAcpAgent &&
+                    ned::editor::acp::AcpAgentCommand(*lastAcpAgent)) {
+                    acpManager.StartSession(*lastAcpAgent);
+                }
+            }
+            else {
+                overlays.Hide(*panel);
+            }
+        };
+        windowManager->SetOnAcpPanelToggle(toggleAcpPanel);
+        acpPanel.SetOnToggleRequest(toggleAcpPanel);
+        windowManager->SetOnAcpRewindRequest([&overlays, panel = &acpPanel] {
+            if (!overlays.IsVisible(*panel)) {
+                overlays.Show(*panel);
+                panel->SetCollapsed(false);
+            }
+            panel->TakeFocus();
+            panel->OpenRewindPicker();
+        });
+        acpPanel.SetOnCollapseChanged([&overlays, panel = &acpPanel] { overlays.Show(*panel); });
+    }
+
+    auto toggleDapConsole = [&overlays, &panelDock, debugConsoleTabIndex, wm = windowManager.get()] {
+        if (!overlays.IsVisible(panelDock) || panelDock.ActiveIndex() != debugConsoleTabIndex) {
+            overlays.Show(panelDock);
+            panelDock.SwitchTo(debugConsoleTabIndex);
+        }
+        else {
+            overlays.Hide(panelDock);
+            wm->TakeFocus();
         }
     };
     windowManager->SetOnDapConsoleToggle(toggleDapConsole);
@@ -1775,7 +1809,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     // -- simpler than threading a ContextMenuEntry-style tagged-union
     // through main.cpp for four fixed, always-static rows.
     std::vector<std::function<void()>> tabContextMenuActions;
-    ned::ui::ListPopup tabContextMenu(theme);
+    ned::ui::ListPopup                 tabContextMenu(theme);
     tabContextMenu.SetFocusable(true);
     overlays.Add(tabContextMenu, [panel = &tabContextMenu](Size size) {
         const ned::ui::Point origin = panel->Anchor().value_or(ned::ui::Point{});
@@ -1869,7 +1903,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     // takes no keyboard focus of its own to drive the anchored/BufferView-
     // keeps-focus shape contextMenu/completionPopup/peekPopup use instead.
     std::vector<std::function<void()>> sidebarContextMenuActions;
-    ned::ui::ListPopup sidebarContextMenu(theme);
+    ned::ui::ListPopup                 sidebarContextMenu(theme);
     sidebarContextMenu.SetFocusable(true);
     overlays.Add(sidebarContextMenu, [panel = &sidebarContextMenu](Size size) {
         const ned::ui::Point origin = panel->Anchor().value_or(ned::ui::Point{});
@@ -1960,7 +1994,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     // VcsPanel doesn't need keyboard focus to drive its own mouse actions
     // either, so the confirm-anchored exception is Discard Changes... below.
     std::vector<std::function<void()>> vcsContextMenuActions;
-    ned::ui::ListPopup vcsContextMenu(theme);
+    ned::ui::ListPopup                 vcsContextMenu(theme);
     vcsContextMenu.SetFocusable(true);
     overlays.Add(vcsContextMenu, [panel = &vcsContextMenu](Size size) {
         const ned::ui::Point origin = panel->Anchor().value_or(ned::ui::Point{});
@@ -1995,14 +2029,14 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
             };
 
             if (target.kind == ned::ui::VcsPanelContextMenuTarget::Kind::StashEntry) {
-                model.title            = "Stash";
+                model.title           = "Stash";
                 const std::string ref = target.stash.ref;
                 addRow("Pop Stash", [vp, ref] { vp->PopStash(ref); });
                 addRow("Drop Stash", [vp, ref] { vp->DropStash(ref); });
             }
             else {
-                model.title                        = target.isDirectory ? "Directory" : "File";
-                const std::filesystem::path path   = target.path;
+                model.title                             = target.isDirectory ? "Directory" : "File";
+                const std::filesystem::path path        = target.path;
                 const bool                  isDirectory = target.isDirectory;
                 if (!isDirectory) {
                     addRow("Open", [vp, path] { vp->OpenFileEntry(path); });

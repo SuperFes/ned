@@ -41,10 +41,35 @@ class AcpPanel : public Widget {
     // usual convention. Must outlive this AcpPanel.
     void SetAcpManager(editor::acp::AcpManager* acpManager);
 
-    // Invoked when the panel's own [x] close button is clicked -- wired by
+    // tabbed-bottom-dock-overlays follow-up: whether this panel is hosted as
+    // one tab inside PanelDock.h's shared bottom dock (true, the default
+    // dock side) rather than its own standalone OverlayHost overlay (false,
+    // right-dock mode -- see ned/set-acp-panel-dock). Set once by main.cpp
+    // right after construction, from whichever mode was configured at
+    // startup; not re-read live the way most settings in this codebase are
+    // (a deliberate, documented v1 cut -- see PanelDock.h's own header
+    // comment). When true: Paint skips the title row/close/minimize
+    // chrome entirely (PanelDock's shared tab strip owns all of that) and
+    // content/input rows start at row 0 instead of row 1; OnEvent skips
+    // the close/minimize button hit-tests, the collapsed-strip click
+    // target, the title-row/left-edge resize-divider hit-test, and the
+    // M-m collapse toggle (PanelDock owns close/maximize/resize, and
+    // collapse has no meaning once switching tabs already gets a session
+    // out of the way while keeping it alive). Defaults to false so a
+    // default-constructed panel (every existing test, and the right-dock
+    // path) keeps today's exact standalone behavior.
+    void SetDockHosted(bool dockHosted);
+
+    // Invoked when the panel's own [x] close button is clicked (standalone
+    // mode) or on Esc with nothing else to do (either mode) -- wired by
     // main.cpp to the same toggle lambda acp-toggle-panel drives, mirroring
     // TerminalPanel::SetOnToggleRequest exactly.
     void SetOnToggleRequest(std::function<void()> onToggle);
+
+    // This tab's dynamic label for PanelDock's shared tab strip (dock-hosted
+    // mode only, but harmless to call either way): "<agent name> [<state>]",
+    // the exact text this panel's own title row draws in standalone mode.
+    [[nodiscard]] std::string TitleText() const;
 
     // ACP checkpoint/rewind follow-up: main.cpp's SetOnAcpRewindRequest
     // wiring calls this after showing/focusing the panel (acp-rewind, C-c A
@@ -149,7 +174,7 @@ class AcpPanel : public Widget {
     // tint for inline code). Falls back to a single PaintUtf8Row call when
     // spans is empty -- the common case for every non-agent-authored line.
     void PaintStyledRow(Canvas& canvas, int x, int y, std::string_view text, const std::vector<InlineSpan>& spans, const Brush& baseBrush,
-                         int maxColumns) const;
+                        int maxColumns) const;
 
     [[nodiscard]] std::vector<DisplayLine> FormatTranscript(int width) const;
     // ACP checkpoint/rewind follow-up: rewindPickerOpen_'s own content,
@@ -227,12 +252,13 @@ class AcpPanel : public Widget {
     editor::acp::AcpManager* acpManager_ = nullptr;
     editor::MinibufferPrompt prompt_;
     std::function<void()>    onToggleRequest_;
+    bool                     dockHosted_ = false; // see SetDockHosted
 
-    bool                   collapsed_ = false;
+    bool                  collapsed_ = false;
     std::function<void()> onCollapseChanged_;
-    Size                   terminalSize_{.width = 0, .height = 0};
+    Size                  terminalSize_{.width = 0, .height = 0};
 
-    bool  resizing_             = false;
+    bool  resizing_ = false;
     Point resizeAnchorGlobal_{.x = 0, .y = 0};
     int   resizeStartPercent_ = 0;
 

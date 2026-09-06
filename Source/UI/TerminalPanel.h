@@ -1,27 +1,26 @@
 //
-// Terminal-panel follow-up: the built-in terminal, a bottom-drawer overlay
-// composing Editor/Terminal/Emulator (libvterm emulation) with
-// Editor/Terminal/PtyProcess (the forkpty shell). Registered with main.cpp's
-// OverlayHost rather than the Container tree -- it floats over BufferView
-// without reflowing anything; see Overlay.h's header comment for the layer's
-// contract.
+// Terminal-panel follow-up: the built-in terminal, composing
+// Editor/Terminal/Emulator (libvterm emulation) with Editor/Terminal/
+// PtyProcess (the forkpty shell). Hosted as one tab inside PanelDock.h's
+// shared bottom dock rather than its own OverlayHost overlay -- see that
+// class's own header comment for the split (this panel owns exactly its
+// content rows; the dock owns the shared tab strip, close, maximize, and
+// resize-drag).
 //
 // Focus is the entire modality story: while this panel holds keyboard focus
-// (main.cpp routes keys to FocusedWidget() only), essentially every key is
+// (main.cpp routes keys to FocusedWidget() only, bypassing PanelDock
+// entirely -- see that class's own header comment), essentially every key is
 // forwarded to the shell via Emulator::SendKey -- including C-c/C-z/C-s
 // (EventLoop already disabled line signals and IXON, so they arrive as
 // ordinary bytes), which a shell genuinely needs. Exactly one chord is
 // reserved and never forwarded: C-` (kToggleChord), which invokes the
-// registered toggle callback. On terminals where C-` isn't pressable at all
-// (legacy encodings send NUL, which the Notcurses patch maps to C-Space --
-// deliberately not stolen here, shells use C-@ for set-mark; a real, live
-// stuck-drawer report drove the escape hatches below), the mouse always
-// works: the title row carries three bracketed buttons, right-aligned --
-// [▼] minimize (hide, shell kept alive -- identical to toggle-hide), [▲]
-// maximize (toggle full buffer-area height; see Maximized()), [×] close
-// (kill the shell and hide; the next show spawns a fresh one) -- and
+// registered toggle callback (PanelDock's shared close, from this panel's
+// own tab). On terminals where C-` isn't pressable at all (legacy encodings
+// send NUL, which the Notcurses patch maps to C-Space -- deliberately not
+// stolen here, shells use C-@ for set-mark; a real, live stuck-drawer report
+// drove the mouse escape hatches PanelDock's own title row now carries),
 // clicking outside the drawer refocuses the editor (OverlayHost only
-// intercepts clicks inside the drawer's Box), after which `C-c t` (the
+// intercepts clicks inside the dock's Box), after which `C-c t` (the
 // portable editor-side binding) hides the visible panel outright rather
 // than refocusing it (see main.cpp's toggle lambda for why that
 // non-VS-Code semantic is deliberate).
@@ -36,27 +35,25 @@
 // inside its own onExit callback would tear down the std::function currently
 // being executed.
 //
-// terminal-panel-scrollback-search-and-selection follow-up: two more
-// escape hatches alongside the title row's existing minimize/maximize/close
-// buttons. Click-drag over a content row selects text (real-terminal
-// convention); releasing with a non-empty range copies it via
-// editor::CopyToSystemClipboard -- deliberately not routed through
-// KillRing, since this widget has no Buffer/kill-ring wiring and a raw
-// system-clipboard copy is what every other terminal emulator does for a
-// mouse selection. A new `[/]` title button (chosen over a reserved Ctrl
-// chord: this codebase's own KeyChord model doesn't track Shift on a plain
-// codepoint at all -- DecodeBaseKey normalizes Ctrl+F and Ctrl+Shift+F to
-// the identical chord -- and every unshifted Ctrl+letter is plausibly
-// claimed by the shell's own readline bindings, unlike the deliberately
-// obscure backtick chosen for kToggleChord) starts a search session over
-// the combined scrollback+live-screen text via Editor/LineListSearch.h --
-// DebugConsolePanel's own debug-console-search precedent, materializing a
-// text snapshot once per session since Emulator's cells aren't already
-// plain strings. While a search session is active, every key is consumed
-// by the session (same "fully modal" precedent as the exited_ branch
-// below) rather than forwarded to the shell, so reusing Emacs isearch's
-// C-s/C-r/Enter/Escape convention inside the session is safe -- it's only
-// entering the session that couldn't reuse a Ctrl chord.
+// terminal-panel-scrollback-search-and-selection follow-up: click-drag over
+// a content row selects text (real-terminal convention); releasing with a
+// non-empty range copies it via editor::CopyToSystemClipboard --
+// deliberately not routed through KillRing, since this widget has no
+// Buffer/kill-ring wiring and a raw system-clipboard copy is what every
+// other terminal emulator does for a mouse selection. EnterSearch() (called
+// from PanelDock's own tab-strip search icon, this tab's one contributed
+// extra action -- chosen over a reserved Ctrl chord for the same reason
+// kToggleChord is a backtick: this codebase's own KeyChord model doesn't
+// track Shift on a plain codepoint at all, and every unshifted Ctrl+letter
+// is plausibly claimed by the shell's own readline bindings) starts a
+// search session over the combined scrollback+live-screen text via
+// Editor/LineListSearch.h -- DebugConsolePanel's own debug-console-search
+// precedent, materializing a text snapshot once per session since
+// Emulator's cells aren't already plain strings. While a search session is
+// active, every key is consumed by the session (same "fully modal"
+// precedent as the exited_ branch below) rather than forwarded to the
+// shell, so reusing Emacs isearch's C-s/C-r/Enter/Escape convention inside
+// the session is safe.
 //
 
 #ifndef NED_UI_TERMINALPANEL_H
@@ -142,34 +139,23 @@ class TerminalPanel : public Widget {
         return CursorShape::Block;
     }
 
-    // Whether the drawer is currently maximized (full buffer-area height
-    // instead of the configured percentage) -- flipped by the title row's
-    // [▲] button; main.cpp's placement function reads it fresh.
-    [[nodiscard]] bool Maximized() const {
-        return maximized_;
-    }
-
-    // Invoked whenever this panel changes something its own placement
-    // depends on (the maximize toggle) -- wired by main.cpp to re-box the
-    // overlay, since the panel can't reach the OverlayHost itself.
-    void SetOnLayoutChange(std::function<void()> onLayoutChange);
-
-    // Kills the shell and clears the session outright -- the title row's
-    // [×], as opposed to [▼]/toggle-hide which keep the shell alive. Safe
-    // headlessly (no pty to kill); public as a test seam like Feed().
+    // Kills the shell and clears the session outright -- as opposed to
+    // toggle-hide, which keeps the shell alive. Safe headlessly (no pty to
+    // kill); public as a test seam like Feed().
     void CloseSession();
 
+    // This tab's dynamic label for PanelDock's shared tab strip: "Terminal"
+    // plus whichever of exited/search-status/scrollback applies -- the
+    // exact text this panel's own title row used to draw locally.
+    [[nodiscard]] std::string TitleText() const;
+
+    // Starts a search session over the combined scrollback+live-screen
+    // text -- called from PanelDock's own tab-strip search icon (this tab's
+    // one contributed extra action), public for that reason. See header
+    // comment.
+    void EnterSearch();
+
   private:
-    // Title-row buttons, drawn right-aligned as [/][▼][▲][×] (search/
-    // minimize/maximize/close). Minimum width for them to be drawn/hittable.
-    static constexpr int kMinWidthForTitleButtons = 17;
-
-    enum class TitleButton { None,
-                             Search,
-                             Minimize,
-                             Maximize,
-                             Close };
-
     // Absolute coordinate into the combined scrollback+live-screen line
     // space Paint()'s own `lineIndex` already uses: 0 is the oldest
     // retained scrollback line, ScrollbackSize()+row is live screen row
@@ -179,9 +165,8 @@ class TerminalPanel : public Widget {
         int col  = 0;
     };
 
-    [[nodiscard]] int         ContentRows() const;
-    [[nodiscard]] int         ContentCols() const;
-    [[nodiscard]] TitleButton TitleButtonAt(Point local) const;
+    [[nodiscard]] int ContentRows() const;
+    [[nodiscard]] int ContentCols() const;
 
     void HandleExit();
     void ForwardPendingOutput();
@@ -196,7 +181,6 @@ class TerminalPanel : public Widget {
     [[nodiscard]] std::string              SelectedText() const;
     void                                   ClearSelection();
 
-    void EnterSearch();
     // DebugConsolePanel::ScrollToShowIndex's exact sibling, adapted to this
     // panel's own scrollbackOffset_-from-the-bottom convention rather than
     // history_'s plain index-from-the-front.
@@ -214,9 +198,7 @@ class TerminalPanel : public Widget {
 
     EventLoop*                            eventLoop_ = nullptr; // see SetEventLoop
     std::function<void()>                 onToggleRequest_;
-    std::function<void()>                 onLayoutChange_; // see SetOnLayoutChange
     std::function<void(std::string_view)> writeSink_;
-    bool                                  maximized_ = false;
 
     // Lines scrolled up into the ring; 0 = live view. Snapped back to 0 by
     // any forwarded keypress (not by output arriving -- reading scrollback
