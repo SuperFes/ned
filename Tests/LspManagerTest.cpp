@@ -2591,6 +2591,20 @@ TEST_CASE("BuildInitializeParams declares capabilities for every request/notific
     REQUIRE(workspace.at("workspaceEdit").at("documentChanges") == true);
 }
 
+TEST_CASE("BuildInitializeParams sends booleans, not objects, for fileOperations client capabilities", "[Lsp]") {
+    // Real live bug: harper-ls's initialize handshake failed outright with
+    // "invalid type: map, expected a boolean" (confirmed against a real
+    // harper-ls 1.8.0 process fed this exact params object). Per spec,
+    // FileOperationClientCapabilities' willRename/didRename/etc. fields are
+    // plain booleans, not objects -- clangd tolerated the previous {} shape
+    // silently, harper-ls's serde-based parser rejects it and crash-loops.
+    const Json params = ned::editor::lsp::BuildInitializeParams(std::filesystem::path("/some/project"));
+
+    const Json& fileOperations = params.at("capabilities").at("workspace").at("fileOperations");
+    REQUIRE(fileOperations.at("willRename") == true);
+    REQUIRE(fileOperations.at("didRename") == true);
+}
+
 TEST_CASE("BuildInitializeParams absolutizes a relative rootUri", "[Lsp]") {
     // PathToUri (file-local in LspManager.cpp, reached through
     // BuildInitializeParams here) must never emit a relative file:// URI --

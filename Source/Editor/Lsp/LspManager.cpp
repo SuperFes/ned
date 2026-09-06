@@ -346,19 +346,22 @@ Json BuildInitializeParams(const std::filesystem::path& projectRoot, const Json&
           // create/rename/delete, not just edits to existing files) rather
           // than staying on the plain "changes" map some servers default to
           // for an undeclared client.
-          // rename-file-notifications follow-up: bare {} for both, same as
-          // every other capabilities-hygiene entry -- this client needs no
-          // dynamicRegistration, it just wants a server's own advertised
-          // willRename/didRename filters (FileOperationFiltersFor) so it
-          // knows which servers to fan RequestWillRenameFiles/
-          // NotifyFilesRenamed out to.
+          // rename-file-notifications follow-up: unlike every other
+          // capabilities-hygiene entry above, FileOperationClientCapabilities'
+          // fields are plain booleans per spec (not objects) -- confirmed the
+          // hard way: harper-ls's serde-based parser rejects an object here
+          // with "invalid type: map, expected a boolean" and fails
+          // initialize outright, where clangd silently tolerated the
+          // malformed {} shape. `true` just means "no dynamicRegistration
+          // needed," the same thing bare {} means for every boolean-typed
+          // sibling above.
           {"workspace",
            {{"applyEdit", true},
             {"workspaceEdit", {{"documentChanges", true}}},
             {"configuration", true},
             {"didChangeConfiguration", Json::object()},
             {"executeCommand", Json::object()},
-            {"fileOperations", {{"willRename", Json::object()}, {"didRename", Json::object()}}}}},
+            {"fileOperations", {{"willRename", true}, {"didRename", true}}}}},
           {"window", {{"workDoneProgress", true}}}}},
     };
     if (!initializationOptions.empty()) {
