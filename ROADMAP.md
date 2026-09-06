@@ -919,10 +919,18 @@ LSP-against-the-wrong-toolchain prove it's needed in practice, not speculatively
       2026-09-03 (fuzzy-completes a project-relative path inline while typing,
       `Editor/FuzzyMatch.h` + `Editor/ProjectTree.h`); see below; see
       `git log --grep=ACP` for detail). Still open, roughly in order of impact:
-      - **Tabbed bottom-dock overlays** (floated 2026-09-01, not scoped) — unify
-        `TerminalPanel`/`AcpPanel`/`DebugConsolePanel`'s three independent `OverlayHost`
-        overlays behind one shared tab strip; a real architectural change versus today's
-        "each panel manages its own Box via its own placement lambda" shape.
+      - Tabbed bottom-dock overlays closed 2026-09-06 — see
+        `git log --grep=panel-dock`. `UI/PanelDock.h/.cpp` is the single `OverlayHost`
+        overlay now hosting `TerminalPanel`/`AcpPanel` (bottom-docked)/`DebugConsolePanel`
+        as tabs behind one shared tab strip (close/maximize/resize-drag all promoted to
+        the dock; each panel keeps its own content-row rendering and real keyboard focus
+        unchanged, since keyboard dispatch bypasses the dock entirely -- see that class's
+        own header comment). `AcpPanel::SetDockHosted` keeps right-dock mode a fully
+        separate, byte-for-byte-unchanged standalone overlay (not unified; the dock-side
+        setting is read once at startup, not live). ACP's collapse-to-strip feature was
+        dropped in dock-hosted mode (switching tabs already supersedes it); Terminal's
+        former standalone close button became a dock tab-strip "restart session" action
+        alongside its search icon, since the shared `[x]` now only hides the whole dock.
       - Known rough edge: a right-docked `AcpPanel`'s resize handle has no visually
         reserved border the way `ProjectSidebar`'s divider column does.
       - Explicitly *not* pulled from prior research: OpenCode's session-sharing (needs a
