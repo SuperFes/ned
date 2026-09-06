@@ -14,6 +14,7 @@
 
 #include "Editor/DiagnosticsLog.h"
 #include "Editor/Key.h"
+#include "Text/Utf8.h"
 #include "UI/KeyTranslation.h"
 
 namespace ned::ui {
@@ -63,6 +64,22 @@ namespace {
                      input.alt ? 1 : 0, input.ctrl ? 1 : 0, input.eff_text[0], input.eff_text[1], input.eff_text[2],
                      input.eff_text[3], chord ? editor::FormatKeyChord(*chord).c_str() : "(filtered)");
         std::fflush(log);
+    }
+
+    // paste-perf-and-drag-drop follow-up: DECSET/DECRST 2004 -- no Notcurses
+    // API for this at all (it has zero bracketed-paste support to build on),
+    // so these are raw bytes written directly to the terminal, the same
+    // "reach past Notcurses' own API" precedent InitializeNotcurses_'s own
+    // IXON/IXOFF termios tweak already establishes. Best-effort, matching
+    // Wake_'s own write() handling -- a write failure here just means the
+    // terminal won't send bracketed-paste markers, degrading back to
+    // today's per-character paste behavior, not a reason to crash.
+    void EnableBracketedPaste() {
+        [[maybe_unused]] const ssize_t written = write(STDOUT_FILENO, "\x1b[?2004h", 8);
+    }
+
+    void DisableBracketedPaste() {
+        [[maybe_unused]] const ssize_t written = write(STDOUT_FILENO, "\x1b[?2004l", 8);
     }
 
 } // namespace
@@ -118,6 +135,13 @@ void EventLoop::InitializeNotcurses_() {
         rawTermios.c_iflag &= ~static_cast<tcflag_t>(IXON | IXOFF);
         tcsetattr(STDIN_FILENO, TCSANOW, &rawTermios);
     }
+
+    // paste-perf-and-drag-drop follow-up: re-enabled here too so a
+    // suspend/resume cycle (this method reruns wholesale on resume) leaves
+    // bracketed-paste mode on -- the terminal was handed back to the shell
+    // in between, which doesn't preserve this any more than it preserves
+    // raw mode itself.
+    EnableBracketedPaste();
 }
 
 EventLoop::EventLoop() {
@@ -145,6 +169,7 @@ EventLoop::~EventLoop() {
     if (wakeWriteFd_ >= 0)
         close(wakeWriteFd_);
     if (nc_ != nullptr) {
+        DisableBracketedPaste();
         notcurses_stop(nc_);
     }
 }
@@ -237,6 +262,14 @@ void EventLoop::Run(const EventLoopCallbacks& callbacks) {
 
     int inputFd = notcurses_inputready_fd(nc_);
 
+    // paste-perf-and-drag-drop follow-up: accumulates one bracketed paste's
+    // worth of literal text across however many notcurses_get_nblock reads
+    // it takes to arrive -- Run()-scoped rather than member state, since
+    // there's no cross-call need (Run() itself only ever executes once per
+    // process) and every accumulation happens within this same loop.
+    bool        inPaste = false;
+    std::string pasteAccumulator;
+
     while (running_) {
         struct pollfd fds[2];
         fds[0].fd     = inputFd;
@@ -267,6 +300,64 @@ void EventLoop::Run(const EventLoopCallbacks& callbacks) {
         while ((id = notcurses_get_nblock(nc_, &input)) != 0) {
             if (id == static_cast<uint32_t>(-1)) {
                 break; // real error -- stop draining this round, try again next wakeup
+            }
+            // paste-perf-and-drag-drop follow-up: \x1b[200~/\x1b[201~ (now
+            // recognized by Notcurses' own input automaton -- see
+            // PatchNotcursesBracketedPaste.cmake) bracket a real terminal
+            // paste. Consumed here, before onEvent ever sees anything --
+            // the whole point is that a long paste never becomes N separate
+            // onEvent dispatches.
+            if (id == NCKEY_PASTE_BEGIN) {
+                inPaste = true;
+                pasteAccumulator.clear();
+                continue;
+            }
+            if (id == NCKEY_PASTE_END) {
+                if (inPaste) {
+                    inPaste = false;
+                    if (callbacks.onPaste && !pasteAccumulator.empty()) {
+                        SafeInvoke("onPaste", [&] { callbacks.onPaste(pasteAccumulator); });
+                    }
+                    pasteAccumulator.clear();
+                    needsRepaint = true;
+                }
+                continue;
+            }
+            if (inPaste) {
+                // A pasted '\n'/'\r' or Tab byte arrives as NCKEY_ENTER/
+                // NCKEY_TAB, not a plain codepoint -- Notcurses' own
+                // load_ncinput (in.c, the same final-normalization block
+                // PatchNotcursesNulKey.cmake already touches) unconditionally
+                // normalizes a raw \n/\r to NCKEY_ENTER, and NCKEY_TAB is
+                // literally 0x09, not a synthesized value -- both need
+                // explicit re-encoding here or a multi-line/tab-bearing
+                // paste silently loses content.
+                if (id == NCKEY_ENTER) {
+                    pasteAccumulator += '\n';
+                    continue;
+                }
+                if (id == NCKEY_TAB) {
+                    pasteAccumulator += '\t';
+                    continue;
+                }
+                if (id != 0 && !nckey_synthesized_p(id) && input.evtype != NCTYPE_RELEASE) {
+                    pasteAccumulator += text::EncodeCodepointUtf8(static_cast<char32_t>(id));
+                    continue;
+                }
+                // A genuinely unexpected mid-paste event (a real mouse
+                // click, resize, an actual special/function key) -- a
+                // well-behaved terminal never interleaves one of these
+                // between \x1b[200~ and \x1b[201~, but defensively: flush
+                // whatever's already accumulated (don't drop a partial
+                // paste), fall out of paste mode, and let this event fall
+                // through to ordinary handling below rather than getting
+                // stuck accumulating forever.
+                inPaste = false;
+                if (callbacks.onPaste && !pasteAccumulator.empty()) {
+                    SafeInvoke("onPaste", [&] { callbacks.onPaste(pasteAccumulator); });
+                }
+                pasteAccumulator.clear();
+                needsRepaint = true;
             }
             if (id == NCKEY_RESIZE) {
                 // NCKEY_RESIZE alone doesn't update Notcurses' own geometry
@@ -335,6 +426,7 @@ void EventLoop::Run(const EventLoopCallbacks& callbacks) {
             if (callbacks.onSuspend) {
                 SafeInvoke("onSuspend", callbacks.onSuspend);
             }
+            DisableBracketedPaste();
             notcurses_stop(nc_);
             nc_ = nullptr;
             std::raise(SIGTSTP);

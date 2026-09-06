@@ -11847,3 +11847,111 @@ TEST_CASE("vcs-visit-result on a blank *vcs log* line is a safe no-op", "[Buffer
     // regex fallback.
     REQUIRE(fixture.statusMessage.empty());
 }
+
+// paste-perf-and-drag-drop follow-up: OnPaste/HandleBulkPastedText take a
+// plain std::string_view -- no ncinput/Event construction needed, unlike
+// every other test in this file.
+
+TEST_CASE("OnPaste in Normal mode does one atomic insert, not one per character", "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("start ");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 4});
+
+    const std::string pasted(500, 'x');
+    const std::size_t generationBefore = fixture.buffer.ContentGeneration();
+    view.OnPaste(pasted);
+
+    REQUIRE(fixture.buffer.ContentGeneration() == generationBefore + 1); // one bump, not 500
+    REQUIRE(fixture.buffer.Text() == "start " + pasted);
+}
+
+TEST_CASE("OnPaste in Normal mode is one undo step regardless of length", "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("start ");
+    // Buffer::InsertAtPoint's own "consecutive calls coalesce" contract would
+    // otherwise merge this setup insert with the paste below into one step --
+    // an explicit SetPoint (even back to the same offset) clears CanAmend_,
+    // the same "cursor moved" boundary a real edit session would have.
+    fixture.buffer.SetPoint(fixture.buffer.Point());
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 4});
+
+    view.OnPaste(std::string(200, 'y'));
+    REQUIRE(fixture.buffer.Text().size() == 206);
+
+    fixture.buffer.Undo();
+    REQUIRE(fixture.buffer.Text() == "start "); // the whole paste removed in one step
+}
+
+TEST_CASE("OnPaste embeds a real line break, not a misdecoded Ctrl+J", "[BufferView]") {
+    Fixture fixture;
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 4});
+
+    view.OnPaste("line1\nline2");
+    REQUIRE(fixture.buffer.Text() == "line1\nline2");
+    REQUIRE(fixture.buffer.Content().LineCount() == 2);
+}
+
+TEST_CASE("OnPaste during an active isearch lands in the search query, not the buffer", "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("the quick brown fox");
+    fixture.buffer.SetPoint(0);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Ctrl('s')); // start isearch-forward
+    REQUIRE(fixture.statusMessage == "I-search: ");
+
+    view.OnPaste("fox");
+    REQUIRE(fixture.statusMessage == "I-search: fox");
+    REQUIRE(fixture.buffer.Text() == "the quick brown fox"); // unmodified -- the paste never touched the buffer
+    REQUIRE(fixture.buffer.Point() == 19);                   // right after the match, same as typing "f","o","x"
+}
+
+TEST_CASE("OnPaste with vim mode enabled in Normal mode runs vim commands, not literal insertion", "[BufferView]") {
+    VimModeGuard vimModeGuard;
+    Fixture      fixture;
+    fixture.buffer.InsertAtPoint("abc");
+    fixture.buffer.SetPoint(0);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    view.OnPaste("x"); // vim Normal-mode 'x': delete the character under point
+    REQUIRE(fixture.buffer.Text() == "bc");
+}
+
+TEST_CASE("OnPaste with vim mode enabled in Insert mode does one atomic insert and updates dot-repeat", "[BufferView]") {
+    VimModeGuard vimModeGuard;
+    Fixture      fixture;
+    fixture.buffer.InsertAtPoint("start ");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    fixture.buffer.SetPoint(0);
+    view.OnEvent(ned::ui::test::Character("i")); // enter vim Insert mode at the start
+    const std::size_t generationBefore = fixture.buffer.ContentGeneration();
+    view.OnPaste("pasted");
+    REQUIRE(fixture.buffer.ContentGeneration() == generationBefore + 1); // still one atomic insert
+    REQUIRE(fixture.buffer.Text() == "pastedstart ");
+
+    view.OnEvent(ned::ui::test::Escape());       // back to Normal mode
+    view.OnEvent(ned::ui::test::Character(".")); // dot-repeat: replay the paste
+    // Not asserting the exact resulting string -- vim's own real "Escape
+    // moves point back one column" convention means the repeat lands
+    // mid-word (splitting, not cleanly duplicating, the first "pasted"),
+    // the same as it would for "i<any six chars><Esc>." in real vim, paste
+    // or not. What this actually needs to prove is that dot-repeat replayed
+    // the whole 6-character recording (not zero, not a truncated/garbled
+    // one) -- the length growing by exactly len("pasted") confirms that,
+    // which is what the RecordInsertKey bookkeeping in the fast path exists
+    // to make possible.
+    REQUIRE(fixture.buffer.Text().size() == std::string("pastedstart ").size() + std::string("pasted").size());
+}

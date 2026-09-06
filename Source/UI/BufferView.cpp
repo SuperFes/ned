@@ -4554,6 +4554,77 @@ bool BufferView::OnKeyEvent(const Event& event) {
     return DispatchChordNormally(*chord);
 }
 
+void BufferView::OnPaste(std::string_view text) {
+    HandleBulkPastedText(text);
+}
+
+void BufferView::HandleBulkPastedText(std::string_view text) {
+    if (text.empty()) {
+        return;
+    }
+
+    const bool vimInsertOrOff =
+        !editor::vim::VimModeEnabled() || vimEngine_.CurrentMode() == editor::vim::Mode::Insert;
+    if (inputMode_ == InputMode::Normal && vimInsertOrOff) {
+        // Fast path: the actual fix -- one atomic InsertAtPoint call, one
+        // ContentGeneration() bump, one undo step, regardless of text's
+        // length. Same shape as the middle-click primary-selection paste
+        // above (TakeFocus/ClearMark/ReadOnly-guarded InsertAtPoint).
+        TakeFocus();
+        text::Buffer& buffer = activeBuffer_.Get();
+        buffer.ClearMark();
+        if (!buffer.ReadOnly()) {
+            buffer.InsertAtPoint(text);
+            // Vim dot-repeat (".") bookkeeping: string-append only, no
+            // buffer mutation/reparse per iteration -- so a paste landing
+            // in vim Insert-mode still replays correctly afterward. '\n'/
+            // '\t' are recorded as real Special::Enter/Tab chords (matching
+            // exactly what RecordInsertKey sees for an actual keypress),
+            // not as plain codepoints -- same reasoning as the slow path's
+            // own NCKEY_ENTER re-encoding just below.
+            if (editor::vim::VimModeEnabled()) {
+                std::size_t offset = 0;
+                while (offset < text.size()) {
+                    const std::size_t next      = text::NextCodepointBoundary(text, offset);
+                    const char32_t    codepoint = text::DecodeCodepointUtf8(text, offset);
+                    if (codepoint == U'\n') {
+                        vimEngine_.RecordInsertKey(editor::KeyChord{.Special = editor::SpecialKey::Enter});
+                    }
+                    else if (codepoint == U'\t') {
+                        vimEngine_.RecordInsertKey(editor::KeyChord{.Special = editor::SpecialKey::Tab});
+                    }
+                    else {
+                        vimEngine_.RecordInsertKey(editor::KeyChord{.Codepoint = codepoint});
+                    }
+                    offset = next;
+                }
+            }
+        }
+        return; // ScrollToShowPoint() already runs every Paint() -- no explicit call needed
+    }
+
+    // Slow path: any other modal InputMode (isearch, M-x, any prompt), or
+    // vim mode active outside Insert -- replay each decoded codepoint
+    // through the exact same per-character dispatch every ordinary
+    // keystroke already goes through, so whichever mode is active handles
+    // pasted text exactly as if it had been typed. A pasted '\n' is
+    // re-encoded back to NCKEY_ENTER (matching Notcurses' own load_ncinput
+    // normalization every real Enter keypress already goes through) so it
+    // round-trips through DecodeBaseKey's Ctrl-fallback logic correctly
+    // instead of misdecoding as Ctrl+J; a literal Tab needs no re-encoding
+    // since NCKEY_TAB is already 0x09.
+    std::size_t offset = 0;
+    while (offset < text.size()) {
+        const std::size_t next      = text::NextCodepointBoundary(text, offset);
+        const char32_t    codepoint = text::DecodeCodepointUtf8(text, offset);
+        ncinput           ni{};
+        ni.id     = (codepoint == U'\n') ? NCKEY_ENTER : static_cast<std::uint32_t>(codepoint);
+        ni.evtype = NCTYPE_PRESS;
+        OnKeyEvent(Event(ni));
+        offset = next;
+    }
+}
+
 bool BufferView::HandleVimKey(const editor::KeyChord& chord) {
     if (vimEngine_.CurrentMode() == editor::vim::Mode::Insert) {
         if (IsQuit(chord)) {
