@@ -1584,7 +1584,8 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     // TerminalPanel's own existing contract) -- terminalPanel's own
     // shared_ptr/declared-after-eventLoop lifetime convention, so a fresh
     // TerminalPanel here owns its own real PtyProcess exactly the same way.
-    auto runOrShowRepl = [&overlays, &panelDock, &replPanels, &replTabIndices, &theme, &eventLoop](const std::string& name) {
+    auto runOrShowRepl = [&overlays, &panelDock, &replPanels, &replTabIndices, &theme, &eventLoop,
+                          wm = windowManager.get()](const std::string& name) {
         auto existing = replPanels.find(name);
         if (existing == replPanels.end()) {
             const std::optional<std::vector<std::string>> argv = ned::editor::repl::ReplCommand(name);
@@ -1596,6 +1597,17 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
             const std::size_t tabIndex =
                 panelDock.AddPanel(name, *panel, [panel] { return panel->TitleText(); },
                                    &ned::editor::terminal::TerminalHeightPercent, &ned::editor::terminal::SetTerminalHeightPercent);
+            // toggleTerminal's own reserved-chord wiring: while this panel
+            // itself has focus, TerminalPanel handles `` C-` `` internally
+            // and calls this callback directly (bypassing the global
+            // keymap entirely) -- without it, the reserved chord silently
+            // did nothing on a spawned REPL tab, unlike the built-in
+            // Terminal tab (confirmed live: only the tab strip's own mouse
+            // [x] still closed the dock).
+            panel->SetOnToggleRequest([&overlays, &panelDock, wm] {
+                overlays.Hide(panelDock);
+                wm->TakeFocus();
+            });
             existing                = replPanels.emplace(name, std::move(panel)).first;
             replTabIndices[name]    = tabIndex;
         }
