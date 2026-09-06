@@ -1021,6 +1021,12 @@ void WindowManager::ActivateContextMenuAt(std::size_t index) {
     }
 }
 
+void WindowManager::ActivateCandidatePopupAt(std::size_t index) {
+    if (Pane* pane = FocusedPane()) {
+        pane->Buffer().ActivateCandidatePopupAt(index);
+    }
+}
+
 void WindowManager::RequestTrustProjectInit(
     const std::filesystem::path&                                                   initPath,
     std::function<void(const std::filesystem::path&, editor::ProjectInitDecision)> onDecision) {

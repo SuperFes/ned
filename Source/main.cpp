@@ -1624,6 +1624,13 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
                 overlays.Hide(*panel);
             }
         });
+    // ListPopup-mouse-support-remainder follow-up: a click on a candidatePopup
+    // row now activates it -- the same effect Enter has on whichever row is
+    // currently selected (or, for find-file/find-scratch/open-project-path,
+    // the same effect Tab has). WindowManager::ActivateCandidatePopupAt routes
+    // to whichever pane is focused, same as ActivateCompletionAt/
+    // ActivateContextMenuAt above.
+    candidatePopup.SetOnActivate([wm = windowManager.get()](std::size_t index) { wm->ActivateCandidatePopupAt(index); });
 
     // completion-popup follow-up: replaces LSP/dabbrev/Janet-binding ghost
     // text entirely -- a dedicated ListPopup+overlay, not a reuse of

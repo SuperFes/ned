@@ -658,6 +658,32 @@ class BufferView : public Widget {
     // is a safe no-op.
     void SetOnCandidatesChanged(std::function<void(std::optional<ListPopupModel>)> handler);
 
+    // ListPopup-mouse-support-remainder follow-up: the click-driven
+    // counterpart to Enter for every session SetOnCandidatesChanged serves
+    // (M-x, find-file/find-scratch/open-project-path, find-recent-file,
+    // switch-to-buffer, switch-project, vcs-switch-branch, bookmark-jump,
+    // select-theme, lsp-goto-symbol, lsp-workspace-symbol,
+    // lsp-code-action-select) -- dispatches on inputMode_ since, unlike
+    // ActiveCompletion, there's no single shared state struct behind this
+    // popup; each session keeps its own `<mode>Selection_`/candidate source.
+    // `index` is a raw ListPopup row index, which may land on a synthetic
+    // "N more above/below" divider row for a fuzzy-ranked session (see
+    // ResolveFuzzyCandidateRowIndex in BufferView.cpp) -- resolved to the
+    // real candidate before this sets that session's own selection member
+    // and re-dispatches a synthetic Enter through its existing Handle*Key,
+    // reusing that method's own commit logic rather than duplicating it. The
+    // three path-completion sessions (find-file/open-project-path/
+    // find-scratch) are the one exception: like Tab, a click there fills the
+    // prompt from the candidate without submitting, since Enter finalizes on
+    // literal prompt text for those (a typed path with no match is a valid
+    // "create new" action). A no-op for any other inputMode_ (e.g. a stale
+    // click racing an already-ended session, or ContextMenu/
+    // LspGotoDefinitionSelect, which don't render into this popup). Public
+    // for the same reason AcceptActiveCompletionAt is -- WindowManager::
+    // ActivateCandidatePopupAt forwards here from this popup's own
+    // ListPopup::SetOnActivate in main.cpp.
+    void ActivateCandidatePopupAt(std::size_t index);
+
     // completion-popup follow-up: same OverlayHost-owned-above-this-class
     // shape as SetOnCandidatesChanged immediately above, but for a
     // structurally different session -- ActiveCompletion (renamed from

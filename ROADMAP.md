@@ -235,29 +235,40 @@ Notcurses.
       roots can shadow each other's legend/status/progress-label; every actual request
       still routes to the correct per-root connection regardless (see `LspManager.h`'s
       own header comment).
-- [ ] **`ListPopup` mouse support, remainder** (mouse-support follow-up: click-to-
-      select-and-activate shipped for `BufferListPanel` — free, its existing
-      `SetOnHighlightChange`/`SetOnActivate` wiring just started receiving mouse events
-      too — and for the completion popup, via a new `BufferView::
-      AcceptActiveCompletionAt`/`WindowManager::ActivateCompletionAt` pair) — still open:
-      the shared M-x/find-file/find-recent-file/bookmark-jump/select-theme/document-
-      symbol/workspace-symbol/code-action-select/definition-select candidate popup
-      (`candidatePopup` in `main.cpp`) has no click support at all. Confirmed by grepping
-      `BufferView.cpp` directly: only `HandleCodeActionSelectKey`/
-      `HandleDefinitionSelectKey` (fixed short lists) special-case a plain `'1'`-`'9'`
-      keystroke as jump-select; every free-text-filtered session (M-x and the rest)
-      treats a digit as literal query text, so a "synthesize a digit chord on click"
-      shortcut isn't safely generalizable across all ~9 of its driving sessions — it
-      would misbehave (insert a digit into the filter) for most of them. Wiring this
-      properly needs a real per-session "activate index N" entry point generalized
-      across every `Handle*Key` method that drives this popup, a materially bigger
-      effort than the two consumers above. which-key's own popup stays intentionally
-      mouse-free (read-only hint, no row is a sensible click target). Also out of scope
-      for either popup: hover-highlight-on-mouse-move (bare motion events reaching
-      `ListPopup::OnEvent` isn't confirmed for this terminal backend) and wheel-scroll
-      (a driving session's `rows` is already a pre-truncated window with synthetic "N
-      more above/below" rows baked in — scrolling it is session-level, not something
-      `ListPopup` itself does).
+- `ListPopup` mouse support, remainder, closed 2026-09-05 — the shared M-x/
+  find-file/open-project-path/find-scratch/find-recent-file/switch-to-buffer/
+  switch-project/vcs-switch-branch/bookmark-jump/select-theme/lsp-goto-symbol/
+  lsp-workspace-symbol/lsp-code-action-select candidate popup (`candidatePopup`
+  in `main.cpp`) now has click support, via a new `BufferView::
+  ActivateCandidatePopupAt`/`WindowManager::ActivateCandidatePopupAt` pair
+  (`AcceptActiveCompletionAt`/`ActivateCompletionAt`'s own shape). Dispatches
+  on `inputMode_` since, unlike `ActiveCompletion`, there's no single shared
+  state struct behind this popup — each fuzzy-ranked session recomputes its
+  own ranked/candidate list (cheap, and deterministic between a popup render
+  and a click landing on one of its rows) and re-dispatches a synthetic Enter
+  through its own existing `Handle*Key`, rather than duplicating that
+  method's commit logic; `lsp-code-action-select`'s plain numbered list
+  (no window/divider rows) resolves a clicked row directly. A raw `ListPopup`
+  row index can land on a synthetic "N more above/below" divider row
+  (`BuildFuzzyCandidatePopupModel`'s own windowing) — `ResolveFuzzyCandidateRowIndex`
+  reproduces that same window (factored out as `ComputeCandidatePopupWindow`)
+  to map a clicked row back to a real candidate index, or `nullopt` for a
+  divider row/stale click. `find-file`/`open-project-path`/`find-scratch` are
+  the one exception: like Tab, a click fills the prompt from the candidate
+  without submitting, since Enter finalizes on literal prompt text for those.
+  `lsp-goto-definition-select` turned out not to render into this popup at
+  all (echo-area status text only, unlike `lsp-code-action-select`) — this
+  item's own original framing listed it in error; left out rather than
+  converting its rendering as an unrelated scope add. Live-verified over a
+  real pty: a real SGR mouse click on an M-x popup row (index 1, not the
+  arrow-highlighted index 0) invoked that exact command end-to-end through
+  the real `OverlayHost`/`ListPopup` mouse pipeline. which-key's own popup
+  stays intentionally mouse-free (read-only hint, no row is a sensible click
+  target). Still out of scope: hover-highlight-on-mouse-move (bare motion
+  events reaching `ListPopup::OnEvent` isn't confirmed for this terminal
+  backend) and wheel-scroll (a driving session's `rows` is already a
+  pre-truncated window — scrolling it is session-level, not something
+  `ListPopup` itself does).
 
 ### Mouse Ergonomics
 
