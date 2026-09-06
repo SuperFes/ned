@@ -756,6 +756,35 @@ namespace {
         return segments;
     }
 
+    // wrap-continuation-indicator follow-up: the one true source every
+    // consumer of wrap-segment row/column math shares -- Paint()'s own
+    // render loop, RowsForLine's row-count cache, CursorPosition, and
+    // ByteOffsetForPoint's click resolution. All four used to call
+    // ComputeWrapSegments directly with their own "full width" value; only
+    // Paint() knew to knock one column off once a line is confirmed to
+    // wrap (reserving the row's own right edge for
+    // kWrapContinuationIndicator), so the other three would report
+    // different segment boundaries than what was actually painted --
+    // observed live as an undercounted row total (MaxTopLine/
+    // ScrollToShowPoint couldn't scroll far enough to reveal a wrapped
+    // line's true last row), a cursor drawn past its real character (the
+    // column math still assumed the wider, unreserved layout), and motion
+    // that appeared to stop dead once the two disagreed enough. `fullWidth`
+    // here must be the same "size().width - gutterWidth" value at every
+    // call site -- see ComputeWrapSegments's own doc comment for why
+    // reducing width can only ever add segments, never remove one, so this
+    // can't oscillate.
+    std::vector<WrapSegment> ComputeWrappedLineSegments(const text::ITextStorage& content, std::size_t lineStart,
+                                                        std::size_t lineEnd, int fullWidth,
+                                                        const std::vector<RenderedLink>& lineLinks) {
+        std::vector<WrapSegment> segments = ComputeWrapSegments(content, lineStart, lineEnd, fullWidth, lineLinks);
+        if (segments.size() > 1) {
+            const int reservedWidth = std::max(1, fullWidth - 1);
+            segments                = ComputeWrapSegments(content, lineStart, lineEnd, reservedWidth, lineLinks);
+        }
+        return segments;
+    }
+
     // Filters mode_.highlight's whole-buffer HighlightSpan list down to just
     // the spans overlapping [lineStart, lineEnd) -- called once per visible
     // row from Paint(), *not* once per rendered codepoint, so SpanAtOffset
@@ -2289,7 +2318,7 @@ std::size_t BufferView::RowsForLine(std::size_t line) const {
         EnsureLinkCache();
         const std::vector<RenderedLink> lineLinks = LinksForLine(linkCache_, lineStart, lineEnd, buffer.Point());
         rowCountPerLine_[line] =
-            ComputeWrapSegments(content, lineStart, lineEnd, rowCountCacheContentWidth_, lineLinks).size();
+            ComputeWrappedLineSegments(content, lineStart, lineEnd, rowCountCacheContentWidth_, lineLinks).size();
     }
     return rowCountPerLine_[line] + leadingRows + annotationRows; // memoized value is content rows only -- annotation state changes independently of the wrap cache's keys
 }
@@ -2941,21 +2970,7 @@ void BufferView::Paint(Canvas paneCanvas) {
                 }
                 if (wrapActive) {
                     const int fullWidth = std::max(1, c.size().width - static_cast<int>(gutterWidth));
-                    lineSegments        = ComputeWrapSegments(content, lineStart, lineEnd, fullWidth, currentLineLinks);
-                    // wrap-continuation-indicator follow-up: only once a
-                    // line is known (from the full-width pass just above)
-                    // to actually wrap does it lose one column of width to
-                    // kWrapContinuationIndicator's own reserved spot at the
-                    // row's right edge -- a line that already fits on one
-                    // row keeps the exact width/wrapping it always had.
-                    // Shrinking narrows col+unitWidth>wrapWidth's own
-                    // trigger, which can only ever produce the same or MORE
-                    // segments than the full-width pass, never fewer, so
-                    // this can't oscillate between wrapped/not-wrapped.
-                    if (lineSegments.size() > 1) {
-                        const int wrapWidth = std::max(1, fullWidth - 1);
-                        lineSegments        = ComputeWrapSegments(content, lineStart, lineEnd, wrapWidth, currentLineLinks);
-                    }
+                    lineSegments = ComputeWrappedLineSegments(content, lineStart, lineEnd, fullWidth, currentLineLinks);
                 }
                 else {
                     lineSegments = {WrapSegment{.startByte = lineStart, .endByte = lineEnd}};
@@ -4186,8 +4201,8 @@ std::optional<Point> BufferView::CursorPosition() const {
     std::size_t rowWithinLine = 0;
     std::size_t segmentStart  = lineStart;
     if (EffectiveWrapLines() && sizeIsKnown) {
-        const int                      wrapWidth = std::max(1, sizeNow.width - static_cast<int>(gutterWidth));
-        const std::vector<WrapSegment> segments  = ComputeWrapSegments(content, lineStart, lineEnd, wrapWidth, lineLinks);
+        const int                      fullWidth = std::max(1, sizeNow.width - static_cast<int>(gutterWidth));
+        const std::vector<WrapSegment> segments  = ComputeWrappedLineSegments(content, lineStart, lineEnd, fullWidth, lineLinks);
         for (std::size_t i = 0; i < segments.size(); ++i) {
             const bool isLast = (i + 1 == segments.size());
             if (point >= segments[i].startByte && (point < segments[i].endByte || (isLast && point == segments[i].endByte))) {
@@ -12856,8 +12871,8 @@ std::size_t BufferView::ByteOffsetForPoint(Point at) const {
     std::size_t segStart = lineStart;
     std::size_t segEnd   = lineEnd;
     if (EffectiveWrapLines()) {
-        const int                      wrapWidth      = std::max(1, size().width - static_cast<int>(gutterWidth));
-        const std::vector<WrapSegment> segments       = ComputeWrapSegments(content, lineStart, lineEnd, wrapWidth, lineLinks);
+        const int                      fullWidth      = std::max(1, size().width - static_cast<int>(gutterWidth));
+        const std::vector<WrapSegment> segments       = ComputeWrappedLineSegments(content, lineStart, lineEnd, fullWidth, lineLinks);
         const std::size_t              clampedSegment = std::min(segmentInLine, segments.size() - 1);
         segStart                                      = segments[clampedSegment].startByte;
         segEnd                                        = segments[clampedSegment].endByte;
@@ -15155,7 +15170,9 @@ void BufferView::ScrollToShowOffset(std::size_t offset) {
         topLine_ = pointLine;
     }
     else if (size().height > 0) {
-        const auto        visibleLines  = static_cast<std::size_t>(size().height);
+        // main-editor-sticky-scroll follow-up: same stickyRowCount_
+        // deduction MaxTopLine() applies now -- see its own doc comment.
+        const auto        visibleLines  = static_cast<std::size_t>(std::max(0, size().height - stickyRowCount_));
         const std::size_t pointLineRows = RowsForLine(pointLine);
         // Org-mode fold/unfold follow-up: was `pointLine >= topLine_ +
         // visibleLines` / `topLine_ = pointLine - visibleLines + 1`, raw
@@ -15297,7 +15314,17 @@ std::pair<std::size_t, std::size_t> BufferView::NarrowedLineRange() const {
 
 std::size_t BufferView::MaxTopLine() const {
     const auto [rangeStart, rangeEnd] = NarrowedLineRange();
-    const auto visibleLines           = size().height > 0 ? static_cast<std::size_t>(size().height) : 0;
+    // main-editor-sticky-scroll follow-up: the pinned rows from the last
+    // Paint() eat into the pane's own real, drawable body height the exact
+    // same way CursorPosition()/ByteOffsetForPoint already account for --
+    // omitting this here undercounts how many rows the sticky band is
+    // currently costing, so this method thought more content fit below
+    // topLine_ than Paint() could actually draw, permanently stranding a
+    // wrapped document's true last lines just past the bottom of the
+    // viewport. One-frame-stale like every other stickyRowCount_ read
+    // (Paint() recomputes it fresh every frame, so this self-corrects).
+    const auto visibleLines =
+        size().height > 0 ? static_cast<std::size_t>(std::max(0, size().height - stickyRowCount_)) : 0;
     // Org-mode fold/unfold follow-up: was `rangeStart + (totalLines >
     // visibleLines ? totalLines - visibleLines : 0)`, plain buffer-line
     // subtraction. line-wrap follow-up: VisibleRowCountAtLeast is the
