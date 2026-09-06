@@ -303,13 +303,6 @@ shipped — see `git log --grep=<topic>` for each (`terminal-panel-scrollback`,
       load-bearing for `C-c`'s existing feature bindings either way. Not started; no
       keymap table drafted yet.
 
-### VCS Side Panel
-
-Shipped 2026-09-01 (`UI/VcsPanel.h/.cpp`) — see `git log --grep=vcs-side-panel`.
-
-- [ ] Directory-tree rows use indentation only, no box-drawing tree-connector glyphs
-      (`ProjectSidebar`'s `├─└─│`) — revisit if the plain-indent tree reads as too flat.
-
 ### Merge Conflict Resolution Mode (New Feature)
 
 Recorded 2026-09-06. Today's conflict support is detection-only: `VcsPanel` flags a
