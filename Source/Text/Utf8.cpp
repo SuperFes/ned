@@ -53,6 +53,23 @@ std::size_t PreviousCodepointBoundary(std::string_view utf8Text, std::size_t off
     return prev;
 }
 
+std::size_t SnapDownToCodepointBoundary(std::string_view utf8Text, std::size_t offset) {
+    std::size_t pos = std::min(offset, utf8Text.size());
+    for (int steps = 0; pos > 0 && pos < utf8Text.size() && steps < 3 && (static_cast<unsigned char>(utf8Text[pos]) & 0xC0) == 0x80;
+         ++steps) {
+        --pos;
+    }
+    return pos;
+}
+
+std::size_t SnapUpToCodepointBoundary(std::string_view utf8Text, std::size_t offset) {
+    std::size_t pos = std::min(offset, utf8Text.size());
+    for (int steps = 0; pos < utf8Text.size() && steps < 3 && (static_cast<unsigned char>(utf8Text[pos]) & 0xC0) == 0x80; ++steps) {
+        ++pos;
+    }
+    return pos;
+}
+
 void RemoveLastCodepoint(std::string& utf8Text) {
     if (utf8Text.empty()) {
         return;

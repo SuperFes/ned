@@ -178,6 +178,29 @@ TEST_CASE("ReplaceMatches deduplicates multiple matches referencing the same fil
     std::filesystem::remove_all(dir);
 }
 
+TEST_CASE("ReplaceMatches rewrites multi-byte UTF-8 content without corrupting surrounding codepoints",
+          "[ProjectReplace]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_replace_test_utf8";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    {
+        // "café" and "中文" bracket the ASCII match on both sides, so a
+        // byte-offset-off-by-one in the rewrite would visibly corrupt one
+        // of the surrounding multi-byte characters rather than just
+        // mis-hitting the match itself.
+        std::ofstream(dir / "file.txt") << "caf\xc3\xa9 cat \xe4\xb8\xad\xe6\x96\x87\n";
+    }
+
+    const std::vector<SearchMatch> matches{SearchMatch{dir / "file.txt", 1, "caf\xc3\xa9 cat \xe4\xb8\xad\xe6\x96\x87"}};
+    const ReplaceSummary           summary = ReplaceMatches(matches, "cat", "dog");
+
+    REQUIRE(summary.filesChanged == 1);
+    REQUIRE(summary.replacementCount == 1);
+    REQUIRE(ReadFile(dir / "file.txt") == "caf\xc3\xa9 dog \xe4\xb8\xad\xe6\x96\x87\n");
+
+    std::filesystem::remove_all(dir);
+}
+
 TEST_CASE("ReplaceMatches throws RegexPatternError for an invalid pattern", "[ProjectReplace]") {
     REQUIRE_THROWS_AS(ReplaceMatches({}, "(", "x"), RegexPatternError);
 }
