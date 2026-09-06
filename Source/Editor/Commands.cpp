@@ -2644,6 +2644,21 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
         context.interactiveRequest = InteractiveRequest::CancelTask;
     });
 
+    // REPL-engine follow-up: the built-in Janet REPL (in-process, always
+    // available -- one-shot direct action, same "just forward, the target
+    // lives above this class" shape as dap-toggle-console/toggle-terminal)
+    // and run-repl (a configurable subprocess REPL by name, e.g. "python" --
+    // run-task's own prompt-shaped precedent for TaskName/RunTask). See
+    // UI/JanetReplPanel.h and Editor/Repl/ReplConfig.h.
+    registry.Register("toggle-janet-repl", "Show or hide the built-in Janet REPL panel.", [](CommandContext& context) {
+        context.interactiveRequest = InteractiveRequest::ToggleJanetRepl;
+    });
+    registry.Register(
+        "run-repl", "Open (or switch to) a Janet-configured REPL's own interactive session (see ned/set-repl-command).",
+        [](CommandContext& context) {
+            context.interactiveRequest = InteractiveRequest::RunRepl;
+        });
+
     // test-runner integration: one-shot direct actions (no prompt -- one
     // project-wide test command, see Editor/TestRun/TestRunConfig.h), same
     // "just signal intent" shape as run-task/cancel-task above --
@@ -3888,6 +3903,10 @@ Keymap BuildDefaultGlobalKeymap() {
     // "no binding yet" precedent, this one's a "stop something running now"
     // action worth a direct key).
     keymap.Bind(ParseKeySequence("C-c C-M-b"), "cancel-task");
+    // REPL-engine follow-up: run-repl gets a plain-letter binding (unlike
+    // run-task's own C-c C-b) -- "r" for REPL was still free, and this
+    // command is meant to be reached at least as readily as run-task.
+    keymap.Bind(ParseKeySequence("C-c r"), "run-repl");
     // DAP client slices 1/2: the VS/JetBrains-standard debug F-keys (the
     // user's explicit ask -- see ROADMAP.md's DAP entry). dap-show-debug/
     // dap-expand-variable/dap-evaluate stay M-x-only -- no established
@@ -3999,6 +4018,9 @@ Keymap BuildDefaultGlobalKeymap() {
     // TerminalPanel.h's header comment).
     keymap.Bind(ParseKeySequence("C-`"), "toggle-terminal");
     keymap.Bind(ParseKeySequence("C-c t"), "toggle-terminal");
+    // REPL-engine follow-up: "j" for the built-in Janet REPL -- a distinct
+    // chord from "C-c C-j" (lsp-hover).
+    keymap.Bind(ParseKeySequence("C-c j"), "toggle-janet-repl");
     // editor-ergonomics follow-up: no vanilla-Emacs default binding for
     // recentf-open-files exists to match (menu-only upstream), so this
     // picks a free "C-c f" prefix ("f" for files) rather than squatting an

@@ -45,6 +45,7 @@
 #include "Editor/ProjectSwitch.h"
 #include "Editor/ProjectTrust.h"
 #include "Editor/RelativeLineNumberSettings.h"
+#include "Editor/Repl/ReplConfig.h"
 #include "Editor/ScratchPad.h"
 #include "Editor/ScriptingSession.h"
 #include "Editor/SearchSettings.h"
@@ -547,6 +548,16 @@ namespace {
     // name, mirroring NedSetLspCommand's own empty-clears convention.
     void NedSetTaskCommand(std::string name, std::vector<std::string> argv) {
         editor::tasks::SetTaskCommand(name, std::move(argv));
+    }
+
+    // REPL-engine follow-up: NedSetTaskCommand's own argv shape/empty-clears
+    // convention -- a REPL is keyed by an arbitrary user-chosen name, e.g.
+    // (ned/set-repl-command "python" ["python3" "-i"]). run-repl spawns this
+    // argv on a real pty (UI/TerminalPanel.h) and shows the language's own
+    // interactive CLI REPL as-is -- readline/completion/history/coloring all
+    // come from the process itself, same as running it in any terminal.
+    void NedSetReplCommand(std::string name, std::vector<std::string> argv) {
+        editor::repl::SetReplCommand(name, std::move(argv));
     }
 
     // named-projects follow-up: the escape hatch in switch-project/
@@ -1407,6 +1418,13 @@ void InstallEditorBindings(Environment& env) {
         "Set the command run by run-task for a task name: (name argv), e.g. (ned/set-task-command \"build\" "
         "[\"cmake\" \"--build\" \".\"]). argv is an array or tuple of strings -- argv[0] the executable (resolved "
         "against $PATH), the rest its arguments. An empty argv clears the configured command for name.");
+    env.Register<&NedSetReplCommand>(
+        "ned", "set-repl-command",
+        "Set the command run-repl spawns (on a real pty, its own interactive CLI REPL shown as-is) for a REPL name: "
+        "(name argv), e.g. (ned/set-repl-command \"python\" [\"python3\" \"-i\"]) or (ned/set-repl-command \"php\" "
+        "[\"php\" \"-a\"]). Same argv shape as ned/set-task-command; an empty argv clears the configured command "
+        "for name. The built-in Janet REPL (toggle-janet-repl, C-c j) needs no configuration -- it evaluates "
+        "in-process against the running editor's own environment, not a subprocess.");
     env.Register<&NedSetProjectOpenCommand>(
         "ned", "set-project-open-command",
         "Set the command switch-project/open-project run to open another project in a new tab/window when no "

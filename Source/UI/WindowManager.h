@@ -298,6 +298,20 @@ class WindowManager {
     // class entirely.
     void SetOnDapConsoleToggle(std::function<void()> onToggle);
 
+    // REPL-engine follow-up: same "forwarded to every pane, present and
+    // future" shape as SetOnDapConsoleToggle immediately above --
+    // toggle-janet-repl can fire from whichever pane has focus, and the
+    // handler (main.cpp's toggle over the PanelDock-hosted JanetReplPanel)
+    // lives above this class entirely.
+    void SetOnJanetReplToggle(std::function<void()> onToggle);
+
+    // REPL-engine follow-up: run-repl's own forwarding hook -- unlike the
+    // toggles here, this carries the REPL name BufferView already validated
+    // against Editor/Repl/ReplConfig.h. main.cpp's registrant finds-or-
+    // creates that REPL's own PanelDock tab (a TerminalPanel instance
+    // spawning the configured argv on a real pty).
+    void SetOnRunReplRequest(std::function<void(const std::string&)> onRunRepl);
+
     // Debugging wishlist: same "forwarded to every pane, present and future"
     // shape as SetOnDapConsoleToggle immediately above -- dap-toggle-threads
     // can fire from whichever pane has focus, and the handler (main.cpp's
@@ -834,6 +848,8 @@ class WindowManager {
     std::function<void()>             onAcpRewindRequest_;       // see SetOnAcpRewindRequest
     std::function<bool()>             acpPanelFocused_;          // see SetAcpPanelFocusChecker
     std::function<void()>             onDapConsoleToggle_;       // see SetOnDapConsoleToggle
+    std::function<void()>             onJanetReplToggle_;        // see SetOnJanetReplToggle
+    std::function<void(const std::string&)> onRunReplRequest_;   // see SetOnRunReplRequest
     std::function<void()>                              onDapThreadsToggle_;       // see SetOnDapThreadsToggle
     std::function<void()>                              onDapThreadsRefreshNeeded_; // see SetOnDapThreadsRefreshNeeded
     std::function<void()>             onBufferListToggle_;       // see SetOnBufferListToggle

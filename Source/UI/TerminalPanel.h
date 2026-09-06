@@ -79,7 +79,14 @@ class EventLoop;
 
 class TerminalPanel : public Widget {
   public:
-    explicit TerminalPanel(const Theme& theme);
+    // REPL-engine follow-up: argv/label generalize this beyond the built-in
+    // shell drawer -- an empty argv (the default, and every existing call
+    // site) falls back to ShellArgv()'s own $SHELL lookup unchanged; a
+    // non-empty argv spawns that command instead (e.g. a language's own
+    // interactive CLI REPL: {"python3", "-i"}), with label naming it in
+    // TitleText() in place of "Terminal". Everything else -- PtyProcess,
+    // Emulator, scrollback, search, selection -- is already fully generic.
+    explicit TerminalPanel(const Theme& theme, std::vector<std::string> argv = {}, std::string label = "Terminal");
 
     // The one chord the panel never forwards to the shell -- see header
     // comment.
@@ -191,6 +198,9 @@ class TerminalPanel : public Widget {
     bool HandleSearchKey(const editor::KeyChord& chord);
 
     const Theme& theme_;
+
+    std::vector<std::string> argv_;  // see constructor doc comment
+    std::string              label_; // see constructor doc comment
 
     editor::terminal::Emulator                    emulator_;
     std::unique_ptr<editor::terminal::PtyProcess> pty_;

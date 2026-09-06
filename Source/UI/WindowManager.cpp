@@ -527,6 +527,8 @@ std::unique_ptr<Pane> WindowManager::MakePane(text::Buffer& buffer, editor::Mode
     pane->Buffer().SetOnAcpPanelToggle(onAcpPanelToggle_);
     pane->Buffer().SetOnAcpRewindRequest(onAcpRewindRequest_);
     pane->Buffer().SetOnDapConsoleToggle(onDapConsoleToggle_);
+    pane->Buffer().SetOnJanetReplToggle(onJanetReplToggle_);
+    pane->Buffer().SetOnRunReplRequest(onRunReplRequest_);
     pane->Buffer().SetOnDapThreadsToggle(onDapThreadsToggle_);
     pane->Buffer().SetOnBufferListToggle(onBufferListToggle_);
     pane->Buffer().SetOnPrefixHintChanged(onPrefixHintChanged_);
@@ -610,6 +612,20 @@ void WindowManager::SetOnDapConsoleToggle(std::function<void()> onToggle) {
     onDapConsoleToggle_ = std::move(onToggle);
     for (Pane* pane : Leaves()) {
         pane->Buffer().SetOnDapConsoleToggle(onDapConsoleToggle_);
+    }
+}
+
+void WindowManager::SetOnJanetReplToggle(std::function<void()> onToggle) {
+    onJanetReplToggle_ = std::move(onToggle);
+    for (Pane* pane : Leaves()) {
+        pane->Buffer().SetOnJanetReplToggle(onJanetReplToggle_);
+    }
+}
+
+void WindowManager::SetOnRunReplRequest(std::function<void(const std::string&)> onRunRepl) {
+    onRunReplRequest_ = std::move(onRunRepl);
+    for (Pane* pane : Leaves()) {
+        pane->Buffer().SetOnRunReplRequest(onRunReplRequest_);
     }
 }
 

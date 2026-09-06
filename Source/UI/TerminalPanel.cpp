@@ -25,7 +25,8 @@ namespace {
 
 const editor::KeyChord TerminalPanel::kToggleChord{.Control = true, .Codepoint = U'`'};
 
-TerminalPanel::TerminalPanel(const Theme& theme) : theme_(theme), emulator_(24, 80) {
+TerminalPanel::TerminalPanel(const Theme& theme, std::vector<std::string> argv, std::string label)
+    : theme_(theme), argv_(std::move(argv)), label_(std::move(label)), emulator_(24, 80) {
 }
 
 void TerminalPanel::SetEventLoop(EventLoop* eventLoop) {
@@ -50,8 +51,8 @@ void TerminalPanel::EnsureStarted() {
         exited_   = false;
     }
     pty_ = std::make_unique<editor::terminal::PtyProcess>(
-        ShellArgv(), ContentRows(), ContentCols(), *eventLoop_, [this](std::string_view chunk) { Feed(chunk); },
-        [this](std::optional<int>) { HandleExit(); });
+        argv_.empty() ? ShellArgv() : argv_, ContentRows(), ContentCols(), *eventLoop_,
+        [this](std::string_view chunk) { Feed(chunk); }, [this](std::optional<int>) { HandleExit(); });
     writeSink_ = [this](std::string_view data) { pty_->Write(data); };
 }
 
@@ -122,7 +123,7 @@ void TerminalPanel::ScrollBy(int deltaLines) {
 }
 
 std::string TerminalPanel::TitleText() const {
-    std::string title = "Terminal";
+    std::string title = label_;
     if (exited_) {
         title += " (exited)";
     }

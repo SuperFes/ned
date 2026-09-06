@@ -57,6 +57,7 @@
 #include "Editor/RecentFiles.h"
 #include "Editor/Rectangle.h"
 #include "Editor/RelativeLineNumberSettings.h"
+#include "Editor/Repl/ReplConfig.h"
 #include "Editor/ScratchPad.h"
 #include "Editor/Session.h"
 #include "Editor/Sparkline.h"
@@ -950,6 +951,14 @@ void BufferView::SetOnDapConsoleToggle(std::function<void()> handler) {
     onDapConsoleToggle_ = std::move(handler);
 }
 
+void BufferView::SetOnJanetReplToggle(std::function<void()> handler) {
+    onJanetReplToggle_ = std::move(handler);
+}
+
+void BufferView::SetOnRunReplRequest(std::function<void(const std::string&)> handler) {
+    onRunReplRequest_ = std::move(handler);
+}
+
 void BufferView::SetOnDapThreadsToggle(std::function<void()> handler) {
     onDapThreadsToggle_ = std::move(handler);
 }
@@ -1750,15 +1759,14 @@ void BufferView::PaintCodeLensRow(Canvas& c, int row, std::size_t line, std::siz
 
     const Brush titleBrush{.background = theme_.background, .foreground = theme_.ghostTextForeground, .italic = true};
     const int   width = c.size().width;
-    int         col   = static_cast<int>(gutterWidth);
-    for (const char ch : joinedTitle) {
-        if (col >= width) {
-            break;
-        }
-        Cell& cell     = c[{.x = col, .y = row}];
-        cell.character = std::string(1, ch);
-        titleBrush.ApplyTo(cell);
-        ++col;
+    const int   col   = static_cast<int>(gutterWidth);
+    // A lens title comes from real LSP text (symbol names, reference counts,
+    // author names for a blame-style lens, ...) and isn't guaranteed ASCII --
+    // PaintUtf8Row (Border.h) steps by codepoint rather than by raw byte, so
+    // a multi-byte codepoint lands in exactly one cell instead of having its
+    // continuation bytes each claim their own (invalid, unrenderable) cell.
+    if (col < width) {
+        PaintUtf8Row(c, col, row, joinedTitle, titleBrush, width - col);
     }
 }
 
@@ -1886,20 +1894,27 @@ int BufferView::PaintStickyScrollRows(Canvas& c, std::size_t gutterWidth) const 
         // Signature text keeps whatever brush the row's own blank fill above
         // already applied (theme_.tabBar) -- plain chrome-text color, not
         // colored/bolded by symbol kind; only cell.character changes here.
-        // Names/signatures in every bundled tags.scm are effectively-always-
-        // ASCII source text; a raw byte-per-cell walk here mirrors
-        // PaintCodeLensRow's own established (same-file) precedent.
+        // A source line's own text is real prose/code, not guaranteed ASCII
+        // (a Markdown/Org heading's own text can hold an em-dash, curly
+        // quote, accented name, ...) -- PaintUtf8Row (Border.h) steps by
+        // codepoint rather than by raw byte, so a multi-byte codepoint lands
+        // in exactly one cell instead of having its continuation bytes each
+        // claim their own (invalid, unrenderable) cell -- confirmed live: an
+        // em-dash in a heading rendered as a blank glyph under the old
+        // byte-per-cell walk. Column count (for the truncation check below)
+        // is therefore counted in codepoints, not bytes, for the same
+        // reason.
         // Reserves the row's own last column for a "…" marker when the
         // trimmed line doesn't fit, rather than silently cutting off
         // mid-signature (ListPopup's own convention).
-        const bool truncated = col + static_cast<int>(trimmedLine.size()) > width;
+        std::size_t columnsNeeded = 0;
+        for (std::size_t offset = 0; offset < trimmedLine.size(); ++columnsNeeded) {
+            offset = text::NextCodepointBoundary(trimmedLine, offset);
+        }
+        const bool truncated = col + static_cast<int>(columnsNeeded) > width;
         const int  textLimit = truncated ? width - 1 : width;
-        for (const char ch : trimmedLine) {
-            if (col >= textLimit) {
-                break;
-            }
-            c[{.x = col, .y = row}].character = std::string(1, ch);
-            ++col;
+        if (col < textLimit) {
+            col += PaintUtf8Row(c, col, row, trimmedLine, theme_.tabBar, textLimit - col);
         }
         if (truncated && col < width) {
             c[{.x = col, .y = row}].character = "…";
@@ -4341,7 +4356,10 @@ bool BufferView::OnKeyEvent(const Event& event) {
         // routed through this shared chain too -- FindFile's own shape
         // (plus real path completion) and BookmarkSetName's own shape,
         // respectively.
-        inputMode_ == InputMode::OpenProjectPath || inputMode_ == InputMode::OpenProjectName) {
+        inputMode_ == InputMode::OpenProjectPath || inputMode_ == InputMode::OpenProjectName ||
+        // REPL-engine follow-up: ReplName is a plain-text prompt too,
+        // TaskName's own shape.
+        inputMode_ == InputMode::ReplName) {
         HandlePromptKey(*chord);
         ClampPointToNarrowing();
         return true;
@@ -7841,6 +7859,14 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
                 onTerminalToggle_();
             }
             return;
+        case editor::InteractiveRequest::ToggleJanetRepl:
+            // REPL-engine follow-up: ToggleTerminal/DapToggleConsole's own
+            // shape -- the Janet REPL panel lives above this class, only
+            // forward.
+            if (onJanetReplToggle_) {
+                onJanetReplToggle_();
+            }
+            return;
         case editor::InteractiveRequest::ListBuffers:
             // generic-popup follow-up: one-shot direct action, same shape as
             // ToggleTerminal above -- the buffer-list panel lives above this
@@ -8081,6 +8107,11 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             taskPromptAction_ = TaskPromptAction::Cancel;
             inputMode_        = InputMode::TaskName;
             prompt_.emplace("Cancel task: ");
+            statusMessage_ = prompt_->StatusText();
+            return;
+        case editor::InteractiveRequest::RunRepl:
+            inputMode_ = InputMode::ReplName;
+            prompt_.emplace("Run REPL: ");
             statusMessage_ = prompt_->StatusText();
             return;
         // test-runner integration: one-shot direct actions (no prompt --
@@ -9533,6 +9564,8 @@ std::string_view BufferView::HistoryKeyForInputMode(InputMode mode) {
             return "lsp-rename";
         case InputMode::TaskName:
             return "task-name";
+        case InputMode::ReplName:
+            return "repl-name";
         case InputMode::DapEvaluate:
             return "dap-evaluate";
         case InputMode::DapBreakpointCondition:
@@ -9818,6 +9851,21 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
                 else {
                     statusMessage_ = "No running task named \"" + input + "\"";
                 }
+            }
+        }
+        else if (inputMode_ == InputMode::ReplName) {
+            if (input.empty()) {
+                statusMessage_ = "No REPL name given.";
+            }
+            else if (!editor::repl::ReplCommand(input).has_value()) {
+                statusMessage_ = "No REPL command configured for \"" + input + "\" (see ned/set-repl-command).";
+            }
+            else if (!onRunReplRequest_) {
+                statusMessage_ = "No REPL host available.";
+            }
+            else {
+                onRunReplRequest_(input);
+                statusMessage_.clear();
             }
         }
         else if (inputMode_ == InputMode::AcpPromptText) {
@@ -10134,6 +10182,9 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
             case InputMode::TaskName:
                 label = (taskPromptAction_ == TaskPromptAction::Run) ? "Run task" : "Cancel task";
                 break;
+            case InputMode::ReplName:
+                label = "Run REPL";
+                break;
             case InputMode::DapEvaluate:
                 label = "Evaluate";
                 break;
@@ -10226,7 +10277,7 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
     if (chord.Special == editor::SpecialKey::Tab && inputMode_ != InputMode::ProjectSearch &&
         inputMode_ != InputMode::CreateDirectory && inputMode_ != InputMode::StringRectangle &&
         inputMode_ != InputMode::SetHeadlineTags && inputMode_ != InputMode::LspRenameNewName &&
-        inputMode_ != InputMode::TaskName && inputMode_ != InputMode::DapEvaluate &&
+        inputMode_ != InputMode::TaskName && inputMode_ != InputMode::ReplName && inputMode_ != InputMode::DapEvaluate &&
         inputMode_ != InputMode::VcsCreateBranch && inputMode_ != InputMode::AcpPromptText &&
         inputMode_ != InputMode::DeleteProperty &&
         inputMode_ != InputMode::OrgSchedule && inputMode_ != InputMode::OrgDeadline &&
