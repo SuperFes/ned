@@ -534,6 +534,7 @@ std::unique_ptr<Pane> WindowManager::MakePane(text::Buffer& buffer, editor::Mode
     pane->Buffer().SetOnPrefixHintChanged(onPrefixHintChanged_);
     pane->Buffer().SetOnCandidatesChanged(onCandidatesChanged_);
     pane->Buffer().SetOnCompletionChanged(onCompletionChanged_);
+    pane->Buffer().SetOnHoverChanged(onHoverChanged_);
     pane->Buffer().SetOnPeekChanged(onPeekChanged_);
     pane->Buffer().SetOnContextMenuChanged(onContextMenuChanged_);
     pane->Buffer().SetOnHierarchyChanged(WireHierarchyCallback(pane.get()));
@@ -665,6 +666,13 @@ void WindowManager::SetOnCompletionChanged(std::function<void(std::optional<List
     onCompletionChanged_ = std::move(onCompletionChanged);
     for (Pane* pane : Leaves()) {
         pane->Buffer().SetOnCompletionChanged(onCompletionChanged_);
+    }
+}
+
+void WindowManager::SetOnHoverChanged(std::function<void(std::optional<ListPopupModel>)> onHoverChanged) {
+    onHoverChanged_ = std::move(onHoverChanged);
+    for (Pane* pane : Leaves()) {
+        pane->Buffer().SetOnHoverChanged(onHoverChanged_);
     }
 }
 

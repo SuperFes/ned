@@ -1799,6 +1799,46 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     // ever shown for the focused pane).
     completionPopup.SetOnActivate([wm = windowManager.get()](std::size_t index) { wm->ActivateCompletionAt(index); });
 
+    // hover-tooltips follow-up: same anchored, non-focusable shape as
+    // completionPopup above, but simpler content -- rows are always empty
+    // (BufferView::RequestHoverAtOffset only ever sets previewText), so this
+    // is a plain floating text box, not a candidate list. Anchored one row
+    // below the hovered mouse position (not point -- a mouse hover has
+    // nothing to do with where point currently is) rather than opening
+    // above/below-of-point the way completionPopup/peekPopup do; a real
+    // tooltip stays narrower than either of those.
+    ned::ui::ListPopup hoverPopup(theme);
+    overlays.Add(hoverPopup, [panel = &hoverPopup](Size size) {
+        const ned::ui::Point origin = panel->Anchor().value_or(ned::ui::Point{});
+        const int            width  = std::min(60, size.width);
+        const int            height = std::clamp(panel->ContentRowCount(), 2, std::min(8, size.height));
+
+        const int xMin = std::clamp(origin.x, 0, std::max(0, size.width - width));
+        const int xMax = std::min(size.width - 1, xMin + width - 1);
+
+        int yMin, yMax;
+        if (origin.y + height - 1 <= size.height - 1) {
+            // Fits below the hovered spot -- the common case.
+            yMin = origin.y;
+            yMax = yMin + height - 1;
+        }
+        else {
+            // Flip upward, ending just above the hovered spot's own line.
+            yMax = std::max(0, origin.y - 2);
+            yMin = std::max(0, yMax - height + 1);
+        }
+        return Box{.x_min = xMin, .x_max = xMax, .y_min = yMin, .y_max = yMax};
+    });
+    windowManager->SetOnHoverChanged([&overlays, panel = &hoverPopup](std::optional<ned::ui::ListPopupModel> model) {
+        if (model) {
+            panel->SetModel(std::move(*model));
+            overlays.Show(*panel);
+        }
+        else {
+            overlays.Hide(*panel);
+        }
+    });
+
     // peek-definition follow-up: same anchored-under-point, non-focusable shape
     // as completionPopup just above (BufferView keeps focus, drives content via
     // HandlePeekDefinitionKey) -- wider, since a source line needs real room

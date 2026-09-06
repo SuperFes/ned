@@ -146,18 +146,17 @@ Notcurses.
 
 - [ ] **Candidate-popup hover-highlight and wheel-scroll** (click-to-activate shipped
       for every fuzzy candidate popup and `lsp-code-action-select`, see
-      `git log --grep=listpopup-mouse`) — hover-highlight-on-mouse-move is blocked on
-      the same open question Mouse Ergonomics' hover-tooltips item names below (bare
-      motion events with no button held aren't confirmed to reach a widget's `OnEvent`
-      on this Notcurses backend); wheel-scroll is session-level, not something
-      `ListPopup` itself does, since a driving session's `rows` is already a
-      pre-truncated window.
+      `git log --grep=listpopup-mouse`) — hover-highlight-on-mouse-move is no longer
+      blocked on feasibility (see Mouse Ergonomics' hover-tooltips item below for the
+      confirmed mechanism/gotcha), just not wired up yet; wheel-scroll is session-level,
+      not something `ListPopup` itself does, since a driving session's `rows` is already
+      a pre-truncated window.
 
 ### Mouse Ergonomics
 
 Design stance: over SSH/tmux/a bare terminal, mouse support is genuinely unreliable (no
-capture semantics, no bare-hover-motion confirmed on this backend, TUI subprocesses
-inside `TerminalPanel` don't receive forwarded clicks at all) — so the mouse must never
+capture semantics, TUI subprocesses inside `TerminalPanel` don't receive forwarded
+clicks at all) — so the mouse must never
 be the *only* path to a control; every mouse action needs a keyboard equivalent that
 already exists or gets added alongside it. That said, "unreliable as the sole path"
 doesn't mean "not worth it" — a right-click menu scoped to exactly what's under the
@@ -171,6 +170,30 @@ for the sweep. So are double/triple-click word/line select, gutter click (fold/b
 toggle), middle-click paste (Wayland primary-selection), and click-drag selection in the
 terminal-panel scrollback.
 
+Hover tooltips (mouse hover, not click, triggering `lsp-hover`'s content) are shipped —
+see `git log --grep=hover-tooltips`. The feasibility question (raised above) resolved to a
+real, confirmed mechanism: this installed Notcurses build's own SGR decoder (`in.c`'s
+`mouse_click`, `mods % 4 == 3`) hard-codes a bare no-button-held motion report's `evtype`
+to `NCTYPE_RELEASE` (the library's own comment calls this "oddly enough"), so
+`Event::mouse()` (`Widget.cpp`) decodes a hover move as `MouseEvent{button = None, motion
+= Released}`, never `Motion::Moved` — unambiguous versus a real button release (always a
+real button id), so `BufferView::MaybeScheduleHover`'s gate on exactly that combination is
+the reliable "hovering, nothing held" signal on this backend, colliding with nothing
+shipped (every existing `Motion::Released` consumer already gates on its own
+drag/resize/repeat flag first). Debounced via `EventLoop::DeadlineTimer` (reusing
+`editor::lsp::LspCompletionDebounceMs()`, the signature-help/document-highlight
+precedent), dismissed on move-away/keypress/click/buffer-switch (`BufferView::DismissHover`),
+rendered into a `ListPopup` in preview-only mode (empty `rows`, `Anchor()`-placed the same
+way the completion popup anchors under point, just under the hovered mouse position
+instead). One gotcha worth remembering for the next mouse-driven-by-position feature: a
+hover-move landing outside `BufferView`'s own `Box_()` (moved into the sidebar/tab bar/
+mode line/another pane) needed its own explicit dismiss check — there's no "mouse left me"
+event in this codebase, a widget just stops being handed positions outside its box, so
+without that check a tooltip could go stale forever once the mouse left the pane without
+an intervening keypress. Confirmed live end-to-end against a real `clangd` (tmux smoke
+test, raw SGR bytes fed into the pty): hover text renders, updates when the hovered
+symbol changes, and dismisses correctly.
+
 - [ ] **Hunk-level stage/unstage/revert via `VcsPanel`'s right-click menu** — the
       shipped context menu covers whole-file/stash operations only; hunk-level ops stay
       keyboard/point-based.
@@ -178,17 +201,6 @@ terminal-panel scrollback.
       (dragging already exists for tab reorder, sidebar resize, scrollbar/minimap
       thumb, terminal-panel scrollback selection — this would be a new drag *source*
       distinct from all of those, not a new mechanism).
-- [ ] **Hover tooltips** (mouse hover, not click, triggering `lsp-hover`'s content) —
-      blocked on whether bare motion events (no button held) reach a widget's `OnEvent`
-      at all on this Notcurses backend. Needs a small probe before this is even known
-      feasible, not just a wiring task.
-
-### Window Layout
-
-- [ ] **Drag-resize of window splits** — `WindowNode` splits are fixed 50/50 only today
-      (`WindowManager.h`'s own documented simplification); no way to drag a split's
-      divider, unlike every panel's own divider (`ProjectSidebar`/`VcsPanel`/`AcpPanel`/
-      `PanelDock` all support drag-resize).
 
 ### Navigation & Search
 

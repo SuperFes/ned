@@ -983,6 +983,10 @@ void BufferView::SetOnCompletionChanged(std::function<void(std::optional<ListPop
     onCompletionChanged_ = std::move(handler);
 }
 
+void BufferView::SetOnHoverChanged(std::function<void(std::optional<ListPopupModel>)> handler) {
+    onHoverChanged_ = std::move(handler);
+}
+
 void BufferView::ClearBufferCaches(text::Buffer& buffer) {
     highlightCacheByBuffer_.erase(&buffer);
     embeddedDocumentCacheByBuffer_.erase(&buffer);
@@ -4278,6 +4282,7 @@ bool BufferView::OnKeyEvent(const Event& event) {
     if (!chord) {
         return false;
     }
+    DismissHover(); // hover-tooltips follow-up: any real keystroke ends a pending/shown tooltip
 
     if (inputMode_ == InputMode::IsearchForward || inputMode_ == InputMode::IsearchBackward) {
         HandleSearchKey(*chord);
@@ -5538,6 +5543,88 @@ void BufferView::RequestDocumentHighlightAtPoint() {
                 .buffer = bufferPtr, .contentGeneration = contentGenerationAtRequest, .requestPoint = point, .ranges = std::move(ranges)};
         },
         serverKey);
+}
+
+// hover-tooltips follow-up. See Widget.cpp's Event::mouse() and
+// ROADMAP.md's Mouse Ergonomics section for the confirmed mechanism: this
+// installed Notcurses build's own SGR decoder hard-codes a bare
+// no-button-held motion report's evtype to NCTYPE_RELEASE (its own
+// in.c comment: "oddly enough"), so such a move arrives here as
+// MouseEvent{button = None, motion = Released} -- never Motion::Moved. That
+// combination is otherwise unreachable (a real button release always
+// carries a real button id), so it's the reliable "hovering, nothing held"
+// signal on this backend.
+void BufferView::MaybeScheduleHover(Point localMousePoint) {
+    if (!lspManager_ || !onHoverChanged_ || !eventLoop_) {
+        return;
+    }
+    if (!editor::lsp::LspHoverOnMouseMoveEnabled()) {
+        return; // ned/set-lsp-hover-on-mouse-move disabled this -- no debounce armed, no request ever sent
+    }
+    const std::size_t gutterWidth = GutterWidth();
+    if (localMousePoint.x < 0 || static_cast<std::size_t>(localMousePoint.x) <= gutterWidth) {
+        DismissHover(); // hovering the gutter, not real text -- nothing meaningful to show
+        return;
+    }
+    const std::size_t offset = ByteOffsetForPoint(localMousePoint);
+    if (hoverOffset_ == offset) {
+        return; // already pending/shown for this exact spot -- nothing to do
+    }
+    hoverDebounceTimer_.Cancel();
+    if (hoverOffset_) {
+        // Moved off the previous spot -- hide it now rather than leaving a
+        // stale tooltip floating over wherever the mouse used to be until
+        // the new debounce settles.
+        onHoverChanged_(std::nullopt);
+    }
+    hoverOffset_ = offset;
+    const std::size_t generation = ++hoverRequestGeneration_;
+    const Box&        box        = Box_();
+    const Point        anchor{.x = box.x_min + localMousePoint.x, .y = box.y_min + localMousePoint.y + 1};
+    const std::chrono::milliseconds delay(editor::lsp::LspCompletionDebounceMs());
+    hoverDebounceTimer_.Arm(*eventLoop_, delay, [this, offset, anchor, generation] {
+        RequestHoverAtOffset(offset, anchor, generation);
+    });
+}
+
+void BufferView::RequestHoverAtOffset(std::size_t byteOffset, Point screenAnchor, std::size_t generation) {
+    if (generation != hoverRequestGeneration_ || !lspManager_) {
+        return; // superseded by a newer hover, or the manager disappeared while this was pending
+    }
+    text::Buffer&       buffer    = activeBuffer_.Get();
+    text::Buffer* const bufferPtr = &buffer;
+    const std::string   serverKey = ResolvedLspServerKey(byteOffset);
+    lspManager_->RequestHover(
+        buffer, byteOffset,
+        [this, bufferPtr, generation, screenAnchor](std::optional<std::string> text) {
+            if (generation != hoverRequestGeneration_ || bufferPtr != &activeBuffer_.Get()) {
+                return; // superseded by a newer hover, or the buffer switched under us
+            }
+            if (!onHoverChanged_) {
+                return;
+            }
+            if (!text || text->empty()) {
+                onHoverChanged_(std::nullopt);
+                return;
+            }
+            ListPopupModel model;
+            model.anchor      = screenAnchor;
+            model.previewText = *text;
+            onHoverChanged_(std::move(model));
+        },
+        serverKey);
+}
+
+void BufferView::DismissHover() {
+    hoverDebounceTimer_.Cancel();
+    if (!hoverOffset_) {
+        return;
+    }
+    hoverOffset_.reset();
+    ++hoverRequestGeneration_;
+    if (onHoverChanged_) {
+        onHoverChanged_(std::nullopt);
+    }
 }
 
 void BufferView::RequestLinkedEditingRangeAtPoint() {
@@ -13083,6 +13170,26 @@ bool BufferView::OnMouseEvent(const Event& event) {
     const MouseEvent rawMouse = event.mouse();
     LogMouseEvent(MouseEventTag(rawMouse), rawMouse);
 
+    // hover-tooltips follow-up: any mouse activity except the bare
+    // no-button hover-move signal itself (see MaybeScheduleHover's own doc
+    // comment for why that specific combination is button=None/
+    // motion=Released rather than Motion::Moved) dismisses a pending/shown
+    // tooltip outright -- a click, a drag, a wheel scroll, a real button
+    // release. Checked once, up front, rather than at every one of the
+    // click/drag branches below, so a new mouse-handling branch added later
+    // can't accidentally forget it. A hover-move that lands outside this
+    // widget's own box dismisses too -- there's no separate "mouse left me"
+    // event in this codebase (every leaf just stops being handed events
+    // whose position falls outside its Box_(), see Widget.h's own
+    // LocalMouseEvent comment), so without this check, moving the mouse
+    // straight off the buffer into the sidebar/tab bar/mode line/another
+    // pane would leave a stale tooltip on screen forever -- confirmed live
+    // (tmux smoke test) before this line was added.
+    const bool isHoverMove = rawMouse.button == MouseEvent::Button::None && rawMouse.motion == MouseEvent::Motion::Released;
+    if (!isHoverMove || !Box_().Contain(rawMouse.at.x, rawMouse.at.y)) {
+        DismissHover();
+    }
+
     // A growing sidebar-resize drag (round-2 sidebar follow-up) can deliver
     // move/release events while the cursor is over BufferView, not
     // ProjectSidebar itself -- checked first, regardless of position (every
@@ -13144,6 +13251,19 @@ bool BufferView::OnMouseEvent(const Event& event) {
             else {
                 SetLeftColumn(leftColumn_ + kWheelScrollColumns);
             }
+        }
+        return true;
+    }
+
+    // hover-tooltips follow-up: the bare hover-move signal itself (every
+    // other mouse event already got DismissHover'd up front in OnMouseEvent).
+    // Only meaningful in Normal mode -- an isearch/M-x/context-menu/etc.
+    // session already dismissed any pending tooltip the moment it started
+    // (OnKeyEvent's own DismissHover call), so there's nothing to schedule
+    // here for those.
+    if (mouse->button == MouseEvent::Button::None) {
+        if (inputMode_ == InputMode::Normal) {
+            MaybeScheduleHover(mouse->at);
         }
         return true;
     }
@@ -15237,6 +15357,7 @@ void BufferView::EnsureTopLineValidForActiveBuffer() {
         return;
     }
     topLineValidatedBuffer_ = &buffer;
+    DismissHover(); // hover-tooltips follow-up: a tooltip from the previous buffer means nothing here
     // session-persistence slice 1: a stored viewport for this buffer wins
     // over whatever topLine_ the previous buffer left behind -- this seam
     // fires exactly once per buffer switch (and on a pane's very first
