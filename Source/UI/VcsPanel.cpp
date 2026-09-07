@@ -229,52 +229,6 @@ VcsPanel::VcsPanel(std::function<ActiveBuffer&()> activeBufferProvider, text::Bu
                                                                        bufferList_(bufferList), statusMessage_(statusMessage), theme_(theme) {
 }
 
-int VcsPanel::Width() const {
-    return collapsed_ ? 1 : width_;
-}
-
-void VcsPanel::SetWidth(int width) {
-    width_ = std::max(kMinPanelWidth, width);
-}
-
-bool VcsPanel::Collapsed() const {
-    return collapsed_;
-}
-
-void VcsPanel::SetCollapsed(bool collapsed) {
-    collapsed_ = collapsed;
-    if (collapsed_ && resizing_) {
-        EndResize();
-    }
-    if (collapsed_ && Focused() && onFocusReturn_) {
-        collapseOnFocusReturn_ = false;
-        onFocusReturn_();
-    }
-}
-
-void VcsPanel::ToggleCollapsed() {
-    CommitCollapsed(!collapsed_);
-}
-
-void VcsPanel::CommitCollapsed(bool collapsed) {
-    SetCollapsed(collapsed);
-    if (onCollapseCommitted_) {
-        onCollapseCommitted_(collapsed_);
-    }
-}
-
-int VcsPanel::ExpandedWidth() const {
-    return width_;
-}
-
-void VcsPanel::SetOnWidthCommitted(std::function<void(int)> handler) {
-    onWidthCommitted_ = std::move(handler);
-}
-
-void VcsPanel::SetOnCollapseCommitted(std::function<void(bool)> handler) {
-    onCollapseCommitted_ = std::move(handler);
-}
-
 void VcsPanel::SetOnFocusReturn(std::function<void()> handler) {
     onFocusReturn_ = std::move(handler);
 }
@@ -320,25 +274,14 @@ void VcsPanel::NotifySelectionChanged() {
     }
 }
 
-void VcsPanel::TakeKeyboardFocus() {
-    collapseOnFocusReturn_ = collapsed_;
-    SetCollapsed(false);
-    TakeFocus();
-}
-
 void VcsPanel::ReturnFocus() {
-    const bool recollapse  = collapseOnFocusReturn_;
-    collapseOnFocusReturn_ = false;
     if (onFocusReturn_) {
         onFocusReturn_();
-    }
-    if (recollapse) {
-        SetCollapsed(true);
     }
 }
 
 int VcsPanel::ContentHeight() const {
-    return std::max(0, size().height - kHeaderHeight - kBottomBorderHeight);
+    return std::max(0, size().height - kHeaderHeight);
 }
 
 void VcsPanel::SetVcsRunner(editor::vcs::VcsRunner* vcsRunner) {
@@ -518,22 +461,13 @@ void VcsPanel::Paint(Canvas c) {
         }
     }
 
-    if (collapsed_) {
-        const std::string line = text::EncodeCodepointUtf8(U'│');
-        for (int row = 0; row < c.size().height; ++row) {
-            Cell& cell     = c[{.x = 0, .y = row}];
-            cell.character = line;
-            theme_.border.ApplyTo(cell);
-        }
-        Cell& hint     = c[{.x = 0, .y = 0}];
-        hint.character = text::EncodeCodepointUtf8(kCollapsedTriangle);
-        theme_.borderAccent.ApplyTo(hint);
-        return;
-    }
-
-    const Brush frameBrush = (resizing_ || Focused()) ? theme_.borderAccent : theme_.border;
-    DrawBorder(c, frameBrush);
-
+    // unified-left-dock follow-up: this widget no longer owns a border or
+    // collapse-to-a-strip state of its own -- LeftDock (Source/UI/
+    // LeftDock.h) owns the frame/width/collapse for the slot this widget is
+    // hosted in. Row 0 stays this widget's own header, since the branch/
+    // ahead-behind/staged-count summary (and the discard-confirm prompt
+    // that replaces it) is dynamic content LeftDock's own fixed per-panel
+    // border title has no way to express.
     std::string title;
     if (pendingRevertConfirm_) {
         // Discard/revert: the confirm prompt replaces the title outright
@@ -543,9 +477,8 @@ void VcsPanel::Paint(Canvas c) {
     }
     else {
         // Branch switcher/creator inline: the checked-out branch and staged
-        // count ride the border title (ProjectSidebar's own header-row
-        // precedent) rather than a dedicated content row -- see
-        // currentBranch_'s own doc comment.
+        // count ride this header row rather than a dedicated content row --
+        // see currentBranch_'s own doc comment.
         title = "VCS";
         if (currentBranch_) {
             title += " · " + *currentBranch_;
@@ -559,10 +492,13 @@ void VcsPanel::Paint(Canvas c) {
             title += " · " + std::to_string(sections_.staged.size()) + " staged";
         }
     }
-    DrawBorderTitle(c, title, theme_.borderAccent);
+    const Brush headerBrush = Focused() ? theme_.borderAccent : theme_.tabBar;
+    for (int col = 0; col < c.size().width; ++col) {
+        headerBrush.ApplyTo(c[{.x = col, .y = 0}]);
+    }
+    PaintUtf8Row(c, 0, 0, title, headerBrush, c.size().width);
 
-    const int contentLeft    = 1;
-    const int contentColumns = std::max(0, c.size().width - 2);
+    const int contentColumns = c.size().width;
     const int contentHeight  = ContentHeight();
 
     const std::vector<Row> rows = BuildRows();
@@ -641,13 +577,13 @@ void VcsPanel::Paint(Canvas c) {
 
         if (isSelectedRow) {
             brush.background = theme_.selectionBackground;
-            for (int x = contentLeft; x < contentLeft + contentColumns; ++x) {
+            for (int x = 0; x < contentColumns; ++x) {
                 c[{.x = x, .y = y}].background_color = theme_.selectionBackground;
             }
         }
 
         for (std::size_t i = 0; i < label.size() && static_cast<int>(i) < contentColumns; ++i) {
-            Cell& cell     = c[{.x = contentLeft + static_cast<int>(i), .y = y}];
+            Cell& cell     = c[{.x = static_cast<int>(i), .y = y}];
             cell.character = text::EncodeCodepointUtf8(label[i]);
             brush.ApplyTo(cell);
         }
@@ -661,40 +597,9 @@ bool VcsPanel::OnEvent(const Event& event) {
         }
         return HandleKeyEvent(event);
     }
-    const MouseEvent rawMouse = event.mouse();
-
-    if (rawMouse.motion == MouseEvent::Motion::Moved && resizing_) {
-        UpdateResize(rawMouse.at.x);
-        return true;
-    }
-    if (rawMouse.motion == MouseEvent::Motion::Released && resizing_) {
-        EndResize();
-        return true;
-    }
-
     const auto mouse = LocalMouseEvent(event);
     if (!mouse) {
         return false;
-    }
-
-    if (collapsed_) {
-        // The whole 1-column strip is the divider -- a double-press expands,
-        // matching ProjectSidebar's own collapsed-strip convention; a single
-        // press previously expanded immediately, but that made the strip
-        // inconsistent with the expanded divider below (which requires a
-        // double-press to collapse).
-        if (mouse->button == MouseEvent::Button::Left && mouse->motion == MouseEvent::Motion::Pressed) {
-            const auto now = std::chrono::steady_clock::now();
-            if (dividerClickPending_ && (now - lastDividerPressTime_) < kDoubleClickWindow) {
-                dividerClickPending_ = false;
-                CommitCollapsed(false);
-            }
-            else {
-                dividerClickPending_  = true;
-                lastDividerPressTime_ = now;
-            }
-        }
-        return true;
     }
 
     if (mouse->button == MouseEvent::Button::WheelUp || mouse->button == MouseEvent::Button::WheelDown) {
@@ -711,14 +616,14 @@ bool VcsPanel::OnEvent(const Event& event) {
     }
 
     // vcs-panel-context-menu follow-up: a right-press resolves to the same
-    // row a left-press would (chrome/resize-column excluded the same way),
-    // reports the target plus the click's absolute screen position, and
-    // stops there -- unlike a left click, this never toggles/opens/stages
-    // the row itself. Building/showing the actual popup is main.cpp's job
-    // (TabBar/ProjectSidebar's own SetOnContextMenuRequest shape).
+    // row a left-press would (the header row is excluded the same way, no
+    // menu opens over it), reports the target plus the click's absolute
+    // screen position, and stops there -- unlike a left click, this never
+    // toggles/opens/stages the row itself. Building/showing the actual
+    // popup is main.cpp's job (TabBar/ProjectSidebar's own
+    // SetOnContextMenuRequest shape).
     if (mouse->button == MouseEvent::Button::Right && mouse->motion == MouseEvent::Motion::Pressed) {
-        if (onContextMenuRequest_ && mouse->at.x != size().width - 1 && mouse->at.y >= kHeaderHeight &&
-            mouse->at.y < size().height - kBottomBorderHeight) {
+        if (onContextMenuRequest_ && mouse->at.y >= kHeaderHeight) {
             const std::vector<Row>           rows         = BuildRows();
             const std::optional<std::size_t> stickyHeader = StickyHeaderIndex(rows);
             const std::optional<std::size_t> index = RowIndexForContentRow(mouse->at.y - kHeaderHeight, rows, stickyHeader);
@@ -751,27 +656,8 @@ bool VcsPanel::OnEvent(const Event& event) {
         return false;
     }
 
-    if (mouse->at.x == size().width - 1) {
-        // The right border column is the divider: a second press within the
-        // double-click window collapses (the just-started resize session
-        // from the first press dies with it via SetCollapsed); a single
-        // press starts a resize session as always. A real drag clears the
-        // pending double-click -- see UpdateResize. ProjectSidebar's own
-        // divider handling, previously missing here.
-        const auto now = std::chrono::steady_clock::now();
-        if (dividerClickPending_ && (now - lastDividerPressTime_) < kDoubleClickWindow) {
-            dividerClickPending_ = false;
-            CommitCollapsed(true);
-            return true;
-        }
-        dividerClickPending_  = true;
-        lastDividerPressTime_ = now;
-        BeginResize(rawMouse.at.x);
-        return true;
-    }
-
-    if (mouse->at.y < kHeaderHeight || mouse->at.y >= size().height - kBottomBorderHeight) {
-        return true; // chrome, not content
+    if (mouse->at.y < kHeaderHeight) {
+        return true; // this widget's own header row -- chrome, not content
     }
 
     const std::vector<Row>           rows         = BuildRows();
@@ -804,10 +690,9 @@ bool VcsPanel::OnEvent(const Event& event) {
     else {
         // A click squarely on the ☐/☑ glyph toggles the mark instead of
         // opening the file -- same column math Paint() builds the label
-        // with (contentLeft=1, then the row's own tree-connector prefix
-        // plus its trailing space, before the checkbox glyph itself).
-        constexpr int contentLeft    = 1;
-        const int     checkboxColumn = contentLeft + static_cast<int>(row.treePrefix.size()) + 1;
+        // with (the row's own tree-connector prefix plus its trailing
+        // space, before the checkbox glyph itself; no frame to inset for).
+        const int checkboxColumn = static_cast<int>(row.treePrefix.size()) + 1;
         if (mouse->at.x == checkboxColumn) {
             if (selected_.contains(row.entry.path)) {
                 selected_.erase(row.entry.path);
@@ -1185,37 +1070,6 @@ bool VcsPanel::HandleKeyEvent(const Event& event) {
         return true;
     }
     return true;
-}
-
-bool VcsPanel::IsResizing() const {
-    return resizing_;
-}
-
-void VcsPanel::BeginResize(int globalMouseX) {
-    resizing_            = true;
-    resizeAnchorGlobalX_ = globalMouseX;
-    resizeAnchorWidth_   = size().width; // see ProjectSidebar::BeginResize's own comment on why not width_ directly
-    resizeStartWidth_    = width_;
-}
-
-void VcsPanel::UpdateResize(int globalMouseX) {
-    const int delta = globalMouseX - resizeAnchorGlobalX_;
-    width_          = std::max(kMinPanelWidth, resizeAnchorWidth_ + delta);
-    if (delta < -1 || delta > 1) {
-        // A real drag, not a slightly-wobbly click -- stop it counting as
-        // the first half of a collapse double-click (see OnEvent).
-        dividerClickPending_ = false;
-    }
-}
-
-void VcsPanel::EndResize() {
-    if (!resizing_) {
-        return;
-    }
-    resizing_ = false;
-    if (width_ != resizeStartWidth_ && onWidthCommitted_) {
-        onWidthCommitted_(width_);
-    }
 }
 
 } // namespace ned::ui
