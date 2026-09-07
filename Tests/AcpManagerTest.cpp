@@ -12,6 +12,11 @@
 #include "Editor/Acp/AcpClient.h"
 #include "Editor/Acp/AcpManager.h"
 #include "Editor/Acp/Transport.h"
+#include "Editor/Lsp/LspManager.h"
+#include "Editor/Mcp/McpBridgeServer.h"
+#include "Editor/Mcp/McpToolRegistry.h"
+#include "Editor/TestRun/TestRunner.h"
+#include "Editor/Vcs/VcsRunner.h"
 #include "Editor/WrapOverrides.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
@@ -124,6 +129,40 @@ TEST_CASE("AcpManager::StartSession runs initialize then session/new and reaches
     fixture.StartActiveSession("test-agent");
 
     REQUIRE(fixture.outputBuffer->Text().find("[session ready]") != std::string::npos);
+}
+
+// ACP MCP tool-server bridge, slice 1.
+TEST_CASE("AcpManager::StartSession advertises a stdio MCP server when a bridge is wired", "[Acp][Mcp]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+
+    ned::text::BufferList          mcpBufferList;
+    ned::editor::lsp::LspManager   lspManager(mcpBufferList, fixture.eventLoop);
+    ned::editor::vcs::VcsRunner    vcsRunner(fixture.eventLoop);
+    ned::editor::testrun::TestRunner testRunner(mcpBufferList, fixture.eventLoop);
+    ned::editor::mcp::ToolRegistry  registry(mcpBufferList, lspManager, vcsRunner, testRunner);
+    ned::editor::mcp::McpBridgeServer bridge(registry, fixture.eventLoop);
+    fixture.manager.SetMcpBridgeServer(&bridge);
+
+    fixture.outputBuffer = fixture.manager.StartSession("test-agent");
+    REQUIRE(fixture.outputBuffer != nullptr);
+
+    const Json initializeRequest = fixture.reader.Next();
+    REQUIRE(initializeRequest["method"] == "initialize");
+    fixture.client->DispatchFrame(ResultFrame(initializeRequest["id"], Json::object()));
+
+    const Json sessionNewRequest = fixture.reader.Next();
+    REQUIRE(sessionNewRequest["method"] == "session/new");
+    const Json& mcpServers = sessionNewRequest["params"]["mcpServers"];
+    REQUIRE(mcpServers.size() == 1);
+    REQUIRE(mcpServers[0]["type"] == "stdio");
+    REQUIRE(mcpServers[0]["name"] == "ned");
+    REQUIRE(mcpServers[0]["args"][0] == "--mcp-stdio-relay");
+    REQUIRE(mcpServers[0]["args"][1] == bridge.SocketPath().string());
+    REQUIRE(bridge.IsListening());
+
+    fixture.client->DispatchFrame(ResultFrame(sessionNewRequest["id"], Json{{"sessionId", "s1"}}));
+    REQUIRE(fixture.manager.State() == AcpManager::SessionState::Active);
 }
 
 TEST_CASE("AcpManager::SendPrompt with no active session reports that instead of sending anything", "[Acp]") {

@@ -705,37 +705,37 @@ shipped — see `git log --grep=ACP`/`--grep=panel-dock` for the history.
       stays a fully separate, byte-for-byte-unchanged standalone overlay from the
       `PanelDock`-hosted bottom-dock mode).
 
-- [ ] **ACP MCP tool-server bridge** (raised 2026-09-06 — the single highest-leverage
-      lever on this whole list). Today the agent's only structured capability is
-      `fs.readTextFile`/`writeTextFile`; everything else it does, it either can't do or
-      has to infer/shell out for blind to ned's own state. `session/new` already has
-      an `mcpServers` field for exactly this and ned always sends `[]`. A small
-      ned-hosted MCP server exposing `ned_lib`'s own operations as structured tools
-      turns every item below from "teach the agent to shell out correctly" into "add
-      one more tool definition":
-      - **LSP**: `goto_definition`, `find_references`, `rename_symbol`, `code_actions`,
-        `hover`, `workspace_symbols`, `format_buffer`, `get_diagnostics`. Thin wrappers
-        over requests `LspManager` already exposes.
-      - **DAP** (the flagship case — see the dedicated item just below).
-      - **VCS**: `git_status`, `git_diff`, `stage`/`unstage`, `commit`, `branch_list`/
-        `switch`, `blame(file, line)` — thin wrappers over `VcsRunner`.
-      - **Tasks/TestRun**: `run_tests(filter?)`, `get_test_results()` (the structured
-        `TestResult`, not raw stdout), `rerun_failed` — lets the agent drive its own
-        fix→test→fix loop instead of being told the results in prose.
-      - **Diagnostics/Sanitizer/Valgrind/Massif**: `get_diagnostics_log(category?)`
-        surfacing the already-parsed structured findings from `SanitizerOutputParser`/
-        `ValgrindOutputParser`/`MassifOutputParser` — currently produced only for a
-        human reading `DiagnosticsLog`, wasted on an agent that would otherwise have to
-        re-parse raw tool output from a shell command.
-      - **Project**: `search(pattern)`, `find_file(query)`, `list_todos()` (Org agenda
-        scan) — respects `.gitignore`/binary-detection the way a blind `grep` wouldn't.
-      - **Org**: `capture_note(template, text)`, `clock_in`/`clock_out` — lets the agent
-        journal its own actions into the user's existing Org workflow.
-      - **Navigation**: a `goto(file, line)` tool so the agent can point the human's
-        cursor somewhere directly, instead of only describing a location in prose.
-      Needs a decision on transport (an in-process call surface vs. a real local MCP
-      server the agent connects to over the `mcpServers` field, the more
-      spec-faithful option) before any individual tool gets built.
+ACP MCP tool-server bridge, v1 slice is shipped (`Editor/Mcp/`: `McpBridgeServer` +
+`McpToolRegistry` + `McpTransport`/`McpSocketPath`, `ned/set-acp-mcp-bridge`, default
+on) — see `git log --grep=acp-mcp-tool-bridge`. The transport question the original
+item posed (in-process call surface vs. a real local MCP server) resolved to the
+latter, forced by the spec itself: stdio is the only MCP transport every agent MUST
+support (http/sse both require an agent capability that can't be assumed), and a
+stdio server is necessarily a separate OS process the agent spawns — so the live
+`ned` process listens on its own per-process Unix domain socket
+(`$XDG_RUNTIME_DIR/ned/mcp-<pid>.sock`) and `ned --mcp-stdio-relay <socket-path>` (a
+dumb stdin/stdout↔socket byte pump, no JSON parsing) is the `mcpServers` "command" the
+agent actually spawns — real protocol handling (`initialize`/`tools/list`/`tools/call`)
+happens inside the live process where `LspManager`/`VcsRunner`/`TestRunner`/open
+`Buffer`s actually live. 8 read-only tools shipped: `get_diagnostics`, `hover`,
+`goto_definition`, `find_references`, `git_status`, `git_diff`, `search_project`,
+`run_tests`+`get_test_results`. Deliberately no mutating tools yet (git stage/commit,
+LSP rename, DAP control) — see the DAP↔ACP item below for the concrete next slice.
+
+- [ ] **ACP MCP tool-server bridge, remainder** — mutating/deeper tools on the same
+      `McpToolRegistry` pattern, not attempted in the v1 read-only slice: LSP
+      `rename_symbol`/`code_actions`/`format_buffer`/`workspace_symbols`; VCS
+      `stage`/`unstage`/`commit`/`branch_list`/`branch_switch`/`blame(file, line)`;
+      `rerun_failed` alongside the shipped `run_tests`/`get_test_results`;
+      `get_diagnostics_log(category?)` surfacing `SanitizerOutputParser`/
+      `ValgrindOutputParser`/`MassifOutputParser`'s already-parsed structured findings
+      (currently produced only for a human reading `DiagnosticsLog`); Org
+      `capture_note(template, text)`/`clock_in`/`clock_out`; a `goto(file, line)`
+      navigation tool (needs a `WindowManager`/`BufferView` reference threaded into the
+      registry — `CommandContext` has no headless nav primitive, confirmed when v1 was
+      scoped). Each mutating tool also reopens the permission-gating question v1
+      sidestepped by staying read-only: whether ned needs its own confirmation on top
+      of the agent's own MCP-tool-use prompt.
 - [ ] **DAP↔ACP debugging bridge** (raised 2026-09-06, the concrete flagship use of the
       tool-bridge above). Structured tools (`dap_set_breakpoint`, `dap_continue`/
       `step_over`/`step_into`/`step_out`, `dap_get_stack_trace`,
