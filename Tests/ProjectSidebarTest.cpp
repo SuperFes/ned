@@ -1045,13 +1045,49 @@ TEST_CASE("A right-press on a directory entry reports isDirectory true, without 
     std::filesystem::remove_all(dir);
 }
 
-TEST_CASE("A right-press over the header row never fires the context-menu handler", "[ProjectSidebar]") {
+TEST_CASE("A left or right press anywhere in the widget takes keyboard focus", "[ProjectSidebar]") {
+    // click-to-focus follow-up: reverses this widget's original "mouse-only,
+    // clicking never steals keyboard focus" design.
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_sidebar_test_click_focus";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    {
+        std::ofstream(dir / "a.txt") << "x";
+    }
+    const CurrentPathGuard cwdGuard(dir);
+
+    ned::text::BufferList   list;
+    ned::text::Buffer&      scratch = list.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer   activeBuffer(scratch);
+    ned::ui::Theme          theme = ned::ui::DarkTheme();
+    std::string             statusMessage;
+    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    PlaceSidebar(sidebar, 28, 5);
+
+    // A wheel event never grabs focus -- scrolling to peek at the tree
+    // shouldn't yank focus away from whatever you were typing.
+    REQUIRE_FALSE(sidebar.Focused());
+    sidebar.OnEvent(MouseWheel(1, 1, ned::ui::MouseEvent::Button::WheelDown));
+    REQUIRE_FALSE(sidebar.Focused());
+
+    sidebar.OnEvent(MousePress(1, 1)); // a tree row, left click
+    REQUIRE(sidebar.Focused());
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("A right-press over the header row reports the project root directory",
+          "[ProjectSidebar]") {
+    // project-root-context-menu follow-up: reversed from this test's own
+    // prior "never fires" behavior -- a right-press on the header row now
+    // reports the project root (isDirectory always true) instead of being
+    // excluded as chrome, so main.cpp's context menu can offer New File/
+    // New Folder with no existing entry needed to right-click first.
     // unified-left-dock follow-up: the divider column and bottom border row
     // this test used to also check are LeftDock's own chrome now, not this
     // widget's -- a right-press at either position is just ordinary tree
     // content here (or empty space past the tree, itself excluded only by
     // there being no entry to resolve, not by any reserved column/row).
-    // The header row remains this widget's own, and stays excluded.
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_sidebar_test_context_menu_chrome";
     std::filesystem::remove_all(dir);
     std::filesystem::create_directory(dir);
@@ -1068,12 +1104,17 @@ TEST_CASE("A right-press over the header row never fires the context-menu handle
     ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlaceSidebar(sidebar, 28, 5);
 
-    bool requested = false;
-    sidebar.SetOnContextMenuRequest([&](const std::filesystem::path&, bool, ned::ui::Point) { requested = true; });
+    std::optional<std::filesystem::path> requestedPath;
+    std::optional<bool>                  requestedIsDirectory;
+    sidebar.SetOnContextMenuRequest([&](const std::filesystem::path& path, bool isDirectory, ned::ui::Point) {
+        requestedPath        = path;
+        requestedIsDirectory = isDirectory;
+    });
 
     sidebar.OnEvent(MousePress(3, 0, ned::ui::MouseEvent::Button::Right)); // header row
 
-    REQUIRE_FALSE(requested);
+    REQUIRE(requestedPath == ned::editor::ProjectRoot());
+    REQUIRE(requestedIsDirectory == true);
 
     std::filesystem::remove_all(dir);
 }

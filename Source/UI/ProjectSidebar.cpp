@@ -374,11 +374,14 @@ void ProjectSidebar::Paint(Canvas c) {
     // the live project name, click-to-switch-project (see this file's own
     // header comment for why that's an ordinary content row now rather than
     // a border title: LeftDock's own per-panel border title is a fixed
-    // label, with no way to express a value that changes at runtime). The
-    // accent tint while Focused() is the same "this has your attention"
-    // signal the old border-accent frame gave; there's no frame to tint
+    // label, with no way to express a value that changes at runtime). Bold
+    // unconditionally so the project root reads as a title rather than an
+    // ordinary tree row even when unfocused; the accent tint while
+    // Focused() is layered on top, the same "this has your attention"
+    // signal the old border-accent frame gave -- there's no frame to tint
     // anymore, so just this row carries it.
-    const Brush headerBrush = Focused() ? theme_.borderAccent : theme_.tabBar;
+    Brush headerBrush  = Focused() ? theme_.borderAccent : theme_.tabBar;
+    headerBrush.bold   = true;
     for (int col = 0; col < c.size().width; ++col) {
         headerBrush.ApplyTo(c[{.x = col, .y = 0}]);
     }
@@ -457,6 +460,18 @@ bool ProjectSidebar::OnEvent(const Event& event) {
         return false;
     }
 
+    // click-to-focus follow-up: a real press anywhere in this widget takes
+    // keyboard focus, BufferView::OnMouseEvent's own unconditional
+    // TakeFocus()-at-the-top-of-the-press-handler convention -- reverses
+    // this widget's original "mouse-only, clicking never steals focus"
+    // design (the C-c p/focus-project-sidebar command was the only way in
+    // before). Deliberately excludes wheel-scroll: scrolling to peek at the
+    // tree shouldn't yank focus away from whatever you were typing.
+    if (mouse->motion == MouseEvent::Motion::Pressed &&
+        (mouse->button == MouseEvent::Button::Left || mouse->button == MouseEvent::Button::Right)) {
+        TakeFocus();
+    }
+
     if (mouse->button == MouseEvent::Button::WheelUp || mouse->button == MouseEvent::Button::WheelDown) {
         constexpr int kWheelScrollLines = 3;
 
@@ -485,13 +500,24 @@ bool ProjectSidebar::OnEvent(const Event& event) {
     }
 
     // sidebar-context-menu follow-up: a right-press resolves to the same
-    // row a left-press would (the header row is excluded the same way, no
-    // menu opens over it), reports the entry's path/isDirectory plus the
+    // row a left-press would, reports the entry's path/isDirectory plus the
     // click's absolute screen position, and stops there -- unlike a left
     // click, this never toggles a directory or opens a file; building/
     // showing the actual popup is main.cpp's job (TabBar::
-    // SetOnContextMenuRequest's own shape).
+    // SetOnContextMenuRequest's own shape). project-root-context-menu
+    // follow-up: a right-press on the header row itself reports the
+    // project root directory (isDirectory always true) instead of being
+    // excluded as chrome -- main.cpp's own menu already offers New File/
+    // New Folder for any directory row, so this is what lets a right-click
+    // create a top-level file/directory without needing an existing entry
+    // to right-click first.
     if (mouse->button == MouseEvent::Button::Right && mouse->motion == MouseEvent::Motion::Pressed) {
+        if (onContextMenuRequest_ && mouse->at.y < kHeaderHeight) {
+            const Box& box = Box_();
+            onContextMenuRequest_(editor::ProjectRoot(), /*isDirectory=*/true,
+                                  Point{.x = box.x_min + mouse->at.x, .y = box.y_min + mouse->at.y});
+            return true;
+        }
         if (onContextMenuRequest_ && mouse->at.y >= kHeaderHeight) {
             const std::vector<editor::ProjectTreeEntry> entries = VisibleEntries(CachedTree());
             if (!entries.empty()) {

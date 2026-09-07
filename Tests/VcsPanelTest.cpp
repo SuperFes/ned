@@ -123,6 +123,26 @@ TEST_CASE("VcsPanel groups files into staged/unstaged/untracked sections, each a
     std::filesystem::remove_all(dir);
 }
 
+TEST_CASE("A left or right press anywhere in the widget takes keyboard focus", "[VcsPanel]") {
+    // click-to-focus follow-up: reverses this widget's original "mouse-only,
+    // clicking never steals keyboard focus" design (ProjectSidebar's own).
+    ned::text::BufferList list;
+    ned::text::Buffer&    scratch = list.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    std::string           statusMessage;
+    ned::ui::VcsPanel      panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    PlacePanel(panel, 30, 12);
+
+    // A wheel event never grabs focus.
+    REQUIRE_FALSE(panel.Focused());
+    panel.OnEvent(ned::ui::test::Mouse(1, 1, ned::ui::MouseEvent::Button::WheelDown, ned::ui::MouseEvent::Motion::Pressed));
+    REQUIRE_FALSE(panel.Focused());
+
+    panel.OnEvent(MousePress(1, 1));
+    REQUIRE(panel.Focused());
+}
+
 TEST_CASE("Clicking a section header collapses it, hiding its rows without touching the others", "[VcsPanel]") {
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_vcs_panel_test_collapse_section";
     std::filesystem::remove_all(dir);

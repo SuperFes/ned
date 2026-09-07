@@ -492,7 +492,11 @@ void VcsPanel::Paint(Canvas c) {
             title += " · " + std::to_string(sections_.staged.size()) + " staged";
         }
     }
-    const Brush headerBrush = Focused() ? theme_.borderAccent : theme_.tabBar;
+    // Bold unconditionally -- ProjectSidebar::Paint's own doc comment on
+    // why this widget's header row now carries that treatment always, not
+    // just while Focused().
+    Brush headerBrush  = Focused() ? theme_.borderAccent : theme_.tabBar;
+    headerBrush.bold   = true;
     for (int col = 0; col < c.size().width; ++col) {
         headerBrush.ApplyTo(c[{.x = col, .y = 0}]);
     }
@@ -600,6 +604,14 @@ bool VcsPanel::OnEvent(const Event& event) {
     const auto mouse = LocalMouseEvent(event);
     if (!mouse) {
         return false;
+    }
+
+    // click-to-focus follow-up: ProjectSidebar's own doc comment (identical
+    // reasoning applies here -- this widget was "mouse-only" by the same
+    // original design).
+    if (mouse->motion == MouseEvent::Motion::Pressed &&
+        (mouse->button == MouseEvent::Button::Left || mouse->button == MouseEvent::Button::Right)) {
+        TakeFocus();
     }
 
     if (mouse->button == MouseEvent::Button::WheelUp || mouse->button == MouseEvent::Button::WheelDown) {

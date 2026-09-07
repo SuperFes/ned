@@ -811,7 +811,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     // header comment. VcsPanel joins as the second panel further below,
     // once it's constructed.
     auto             leftDock    = std::make_shared<ned::ui::LeftDock>(theme);
-    const std::size_t filesPanelId = leftDock->AddPanel(U'F', "Files", *projectSidebar);
+    const std::size_t filesPanelId = leftDock->AddPanel(U'▤', "Files", *projectSidebar);
     windowManager->SetLeftDock(leftDock.get());
 
     // sidebar-keyboard-focus follow-up: Escape/C-g (or Enter opening a
@@ -908,7 +908,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
 
     windowManager->SetVcsPanel(vcsPanel.get());
 
-    const std::size_t vcsPanelId = leftDock->AddPanel(U'V', "VCS", *vcsPanel);
+    const std::size_t vcsPanelId = leftDock->AddPanel(U'±', "VCS", *vcsPanel);
 
     // unified-left-dock follow-up: chained with LeftDock::NoteFocusReturned,
     // ProjectSidebar's own SetOnFocusReturn precedent just above.
@@ -2271,7 +2271,13 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
         [&overlays, panel = &sidebarContextMenu, &sidebarContextMenuActions, wm = windowManager.get(),
          &revealPathInTerminal](const std::filesystem::path& path, bool isDirectory, ned::ui::Point anchor) {
             ned::ui::ListPopupModel model;
-            model.title  = isDirectory ? "Directory" : "File";
+            // project-root-context-menu follow-up: ProjectSidebar now
+            // reports a right-press on its own header row as the project
+            // root directory (see that file's own OnEvent doc comment),
+            // giving New File/New Folder a route to create a top-level
+            // entry with no existing row to right-click first.
+            const bool isProjectRoot = isDirectory && path == ned::editor::ProjectRoot();
+            model.title  = isProjectRoot ? "Project Root" : (isDirectory ? "Directory" : "File");
             model.anchor = anchor;
             sidebarContextMenuActions.clear();
 
@@ -2283,8 +2289,14 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
             const std::filesystem::path targetDir = isDirectory ? path : path.parent_path();
             addRow("New File...", [wm, targetDir] { wm->StartCreateFileAt(targetDir); });
             addRow("New Folder...", [wm, targetDir] { wm->StartCreateDirectoryAt(targetDir); });
-            addRow("Rename...", [wm, path] { wm->StartRenameFileAt(path); });
-            addRow("Delete", [wm, path] { wm->StartDeleteFileAt(path); });
+            if (!isProjectRoot) {
+                // Renaming/deleting the project root out from under the
+                // sidebar showing it is destructive and has nowhere
+                // sensible to point afterward -- every other row (a real
+                // file/directory entry) keeps both.
+                addRow("Rename...", [wm, path] { wm->StartRenameFileAt(path); });
+                addRow("Delete", [wm, path] { wm->StartDeleteFileAt(path); });
+            }
             // multiple-terminal-tabs follow-up: was cd'ing into `path`
             // itself (a real bug for a file row -- `cd` onto a file just
             // fails in the shell); `targetDir` is what every other row

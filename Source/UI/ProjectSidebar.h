@@ -2,9 +2,13 @@
 // A persistent left-side project tree (project-sidebar follow-up, the
 // user's own "Dired-like file browser" idea): lists files/directories under
 // the current working directory, click a file to open it, click a directory
-// to expand/collapse it. Mouse-only (no keyboard focus, same as
-// TabBar/ScrollArrowButton) -- clicking never steals keyboard focus from
-// BufferView.
+// to expand/collapse it. click-to-focus follow-up: a real mouse press
+// anywhere in this widget takes keyboard focus (BufferView::OnMouseEvent's
+// own convention), reversing this widget's original "mouse-only, clicking
+// never steals keyboard focus from BufferView" design -- C-c p/
+// focus-project-sidebar remains the keyboard-only entry point (see
+// SetOnFocusReturn's own doc comment for the LeftDock collapse/expand
+// pairing that path still drives).
 //
 // A single click on a file opens it as a transient *preview* (single-click-
 // preview follow-up, VS Code-style): reuses an already-open buffer for that
