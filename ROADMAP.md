@@ -291,6 +291,16 @@ overflow indicators as part of the same work) are all shipped — see `git log
 --grep=<topic>` for each (`terminal-panel-scrollback`, `jumplist-ring`, `changelist-ring`,
 `dot-repeat-count-override`, `vim-global-marks`, `vim-magic-translation`,
 `vim-macro-register`, `dap-round-3` through `dap-round-5`, `session-persistence-round-2`,
+`snippet-expansion-gaps`, `bundled-snippets`, `multiple-terminal-tabs`), and the
+unified left dock (`ProjectSidebar`/`VcsPanel` hosted as switchable panels of one
+`LeftDock` widget — a VS Code-style activity-bar rail — replacing each panel's own
+independent border/width/collapse chrome and the cross-widget exclusivity coordination
+that used to need; `Widget::OnFocusPreempted()` is the small generic addition that let
+collapse and a hosted panel's own focus-return hook live on separate objects,
+`git log --grep=unified-left-dock`) are all shipped — see `git log --grep=<topic>` for
+each (`terminal-panel-scrollback`, `jumplist-ring`, `changelist-ring`,
+`dot-repeat-count-override`, `vim-global-marks`, `vim-magic-translation`,
+`vim-macro-register`, `dap-round-3` through `dap-round-5`, `session-persistence-round-2`,
 `snippet-expansion-gaps`, `bundled-snippets`, `multiple-terminal-tabs`).
 
 - [ ] **Terminal-side mouse forwarding** — clicks/wheel inside `TerminalPanel` are
@@ -323,100 +333,6 @@ overflow indicators as part of the same work) are all shipped — see `git log
 - [ ] Hunk unstage matches point against the *cached* staged diff, which drifts when
       unstaged edits exist earlier in the file — exact in the common stage-then-undo
       flow; revisit only if it bites.
-- [ ] **Persistent left-side glyph rail for toggling panels** (raised 2026-09-06,
-      design-sketched 2026-09-07). Divider-double-click-to-collapse was inconsistent
-      across panels — only `ProjectSidebar` had it; `VcsPanel` modeled its own collapse
-      on `ProjectSidebar`'s convention but never wired the double-click check, and
-      standalone `AcpPanel` had no mouse divider-collapse at all — all three now share
-      the same `dividerClickPending_`/`kDoubleClickWindow` pattern (see
-      `git log --grep=divider-double-click-collapse-gap`). The bigger idea that
-      prompted this: `ProjectSidebar` already collapses to a 1-column border strip with
-      a glyph hint — generalize that strip into an always-visible, VS Code-style
-      "activity bar" holding one glyph per always-docked left panel (files, VCS),
-      rather than collapse-to-a-strip being `ProjectSidebar`/`VcsPanel`-only chrome.
-
-      Concretely surfaced 2026-09-07 by a real bug: `ProjectSidebar` and `VcsPanel` are
-      two fully independent `Widget`s docked in the same left slot, each owning its own
-      border, width, collapse-to-strip state, resize-drag divider, and keyboard focus —
-      kept "mutually exclusive" only by ad hoc coordination
-      (`BufferView.cpp`'s `ToggleProjectSidebar`/`ToggleVcsPanel` collapse the other
-      panel on toggle; a startup-time check, added in the same fix, collapses whichever
-      is the tie-break loser if both panels' independently persisted
-      `sidebar-visible`/`vcs-panel-visible` variables came back `true` — see
-      `git log --grep=vcs-diff-preview-and-two-left-bars`). That's a patch over the
-      structural problem this bullet already named: any future left-docked panel would
-      have to duplicate the same chrome and exclusivity dance again.
-
-      Design sketch for the rail, one level more concrete than "generalize the strip"
-      above: a `LeftDock` widget (`Source/UI/LeftDock.h/.cpp`) owning the single
-      border/width/collapse state for the left slot, plus an ordered list of registered
-      `{glyph, name, Widget* content}` panels and an `activePanel_` index — a fixed
-      ~3-column glyph strip (highlighted background for the active panel) beside a
-      single `Canvas::ForBox` sub-region for whichever content widget is active;
-      collapse-to-strip keeps only the glyph column painted, mirroring
-      `ProjectSidebar`'s existing "`Collapsed()` reports 1-column width" precedent so
-      the icons stay a click target to re-expand. `ProjectSidebar`/`VcsPanel` lose
-      `DrawBorder`/`Width()`/`Collapsed()`/`SetWidth`/`SetCollapsed`/the resize-drag
-      divider entirely and become plain content views — the real size of the change is
-      every existing call site reading those today (`BufferView`'s narrowing-clamp
-      check on drag, `WindowManager`'s `Container` `SizeSpec`, `TabBar`'s
-      reveal-in-sidebar, `ProjectSidebar`'s own sticky-scroll) repointing at
-      `LeftDock`'s width/collapsed instead of the individual panel's; `bufferRow`'s
-      `Container` in `main.cpp` drops the `projectSidebar`/`vcsPanel` two-sibling
-      entries for one `leftDock` sibling. Today's two independent
-      `sidebar-visible`/`vcs-panel-visible` variables collapse into
-      `leftDock-collapsed` + `leftDock-active-panel` — the `left-panel-active`
-      tie-break variable from the 2026-09-07 fix becomes exactly this second variable,
-      so that work carries forward rather than being thrown away.
-      Migration order to keep this reviewable rather than one big-bang commit: (1)
-      **done 2026-09-07** — `Source/UI/LeftDock.h/.cpp` built standalone (rail plus a
-      bordered content region hosting whichever registered `{glyph, name, Widget*}`
-      panel is active; `AddPanel`/`SwitchTo`/`CommitSwitchTo` mirror `PanelDock`'s own
-      stable-id shape; width/collapse/resize-drag mirror `ProjectSidebar`'s contract)
-      with `Tests/LeftDockTest.cpp` exercising it headlessly against two fake content
-      widgets, `PanelDockTest.cpp`'s own precedent (13 cases — registration, paint
-      delegation, rail-click switch/collapse/expand, resize-drag commit, mouse-event
-      forwarding into the active panel's own local coordinates) — see
-      `git log --grep=unified-left-dock`. (2) **done 2026-09-07** — `ProjectSidebar`
-      stripped of `DrawBorder`/`Width`/`SetWidth`/`Collapsed`/`SetCollapsed`/
-      `ToggleCollapsed`/`ExpandedWidth`/`IsResizing`/`UpdateResize`/`EndResize`/
-      `TakeKeyboardFocus`/`SetOnWidthCommitted`/`SetOnCollapseCommitted` entirely and
-      hosted alone in a real `LeftDock` wired into `WindowManager`/`main.cpp`'s
-      `bufferRow` (`VcsPanel` still a separate, fully chrome-owning sibling — step 3's
-      job). Row 0 stays the widget's own content row (project name, click-to-switch)
-      rather than becoming a border title, since `LeftDock`'s per-panel border title is
-      a fixed label with no way to express a live value. Surfaced one real design gap
-      the sketch hadn't covered: collapsing while the hosted content holds keyboard
-      focus needs to hand focus back, but collapse (`LeftDock`) and the focus-return
-      hook (`ProjectSidebar::SetOnFocusReturn`) now live on two different objects —
-      closed with a small generic bridge, `Widget::OnFocusPreempted()` (default no-op,
-      `ProjectSidebar` overrides it to fire `onFocusReturn_`, `LeftDock::SetCollapsed`
-      calls it on the active content when collapsing while that content is `Focused()`).
-      `LeftDock::PrepareForKeyboardFocus`/`NoteFocusReturned` (added this step, not in
-      the original step-1 sketch) replace `ProjectSidebar::TakeKeyboardFocus`'s own
-      expand-and-remember/restore pairing now that collapse state moved. Live-verified
-      in a real running session (tmux): rail-click collapse/expand, `C-c p` expanding a
-      collapsed dock and taking focus, arrow-key tree navigation, and Escape returning
-      focus *and* re-collapsing all confirmed working end to end — see
-      `git log --grep=unified-left-dock` (full test suite green throughout,
-      3654 cases). (3) strip chrome out of `VcsPanel`, register it as the second panel,
-      retire the now-dead exclusivity code in `BufferView.cpp` and the startup tie-break
-      variable in favor of the dock's own state; (4) update `C-c p`/`C-c v p`'s meaning
-      (dock-switch instead of two independent toggles) and this entry.
-
-      Design question resolved 2026-09-07: the rail stays left-side-only and does
-      *not* replace `PanelDock`'s own tab strip for the bottom-docked panels, nor
-      `AcpPanel`'s right-dock mode — `LeftDock` covers only the panels that are always
-      present in the layout (`ProjectSidebar`/`VcsPanel`), while `PanelDock` covers
-      panels that come and go (terminal, debug console, Janet REPL). Kept as three
-      distinct widgets rather than unified into one tab system, the same way `TabBar`
-      (buffer tabs, always present, top-docked) already stays separate from both —
-      "always available" vs. "toggled into existence" is a real difference in what's
-      being switched between, not just a placement difference, so collapsing them into
-      one mechanism would blur that rather than simplify anything. A genuinely
-      medium-sized refactor (new widget + retrofitting two established panels' call
-      sites) — worth its own dedicated session with real build/test checkpoints per
-      step, not a single sitting. Not started.
 - [ ] **`libned` as a real shared library** — `ned_lib` (static today) exists solely so
       `ned_tests` can link real editor code without pulling in `main()`; a static lib
       already does that job. Worth revisiting only if a second real consumer shows up
