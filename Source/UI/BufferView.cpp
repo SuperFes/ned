@@ -23,6 +23,7 @@
 #include "Editor/BufferSave.h"
 #include "Editor/Clipboard.h"
 #include "Editor/CodeFoldSettings.h"
+#include "Editor/Coverage/CoverageConfig.h"
 #include "Editor/DabbrevComplete.h"
 #include "Editor/DiagnosticsLog.h"
 #include "Editor/FuzzyMatch.h"
@@ -1671,6 +1672,39 @@ void BufferView::EnsureTestGutterCache() const {
     testGutterCacheWindowEnd_         = windowEnd;
 }
 
+void BufferView::EnsureCoverageGutterCache() const {
+    text::Buffer&     buffer           = activeBuffer_.Get();
+    const std::size_t reportGeneration = editor::coverage::CoverageReportGeneration();
+    if (coverageGutterCacheBuffer_ == &buffer && coverageGutterCacheReportGeneration_ == reportGeneration) {
+        return;
+    }
+
+    coverageGutterLineStatuses_.clear();
+    coverageGutterCacheBuffer_           = &buffer;
+    coverageGutterCacheReportGeneration_ = reportGeneration;
+
+    if (!buffer.Path()) {
+        return; // unsaved/scratch buffer -- nothing to match a coverage report's SF: path against
+    }
+
+    const editor::coverage::CoverageReport report = editor::coverage::CurrentCoverageReport();
+    const editor::coverage::FileCoverage*  file =
+        editor::coverage::FindFileCoverage(report, *buffer.Path(), editor::ProjectRoot());
+    if (file == nullptr) {
+        return;
+    }
+
+    coverageGutterLineStatuses_.reserve(file->lines.size());
+    for (const editor::coverage::LineCoverage& line : file->lines) {
+        coverageGutterLineStatuses_.emplace_back(line.line, line.Status());
+    }
+    // file->lines is already sorted-by-line/unique-per-line by construction
+    // (CoverageOutputParser.h's own merge step keeps it that way), so no
+    // sort/dedupe pass is needed here the way testGutterLineStatuses_ above
+    // needs one (multiple test markers can share a line; coverage lines
+    // can't).
+}
+
 void BufferView::EnsureInlineDiagnosticCache() const {
     text::Buffer& buffer = activeBuffer_.Get();
     if (inlineDiagnosticCacheBuffer_ == &buffer && inlineDiagnosticCacheDiagGeneration_ == buffer.DiagnosticsGeneration() &&
@@ -1826,7 +1860,7 @@ int BufferView::PaintStickyScrollRows(Canvas& c, std::size_t gutterWidth) const 
 
     // sticky-scroll-gutter-alignment follow-up: mirrors GutterWidth()/
     // Paint()'s own [dap][diff][status][diagnostic][gap][digits][gap][test]
-    // [symbol][fold][blame] column layout (see those methods' own doc
+    // [coverage][symbol][fold][blame] column layout (see those methods' own doc
     // comments), recomputed here from the same Active()-flag primitives
     // rather than trusting gutterWidth as a second source of truth -- the
     // same "recompute, don't unpack" precedent OnMouseEvent's own foldStart
@@ -1836,14 +1870,15 @@ int BufferView::PaintStickyScrollRows(Canvas& c, std::size_t gutterWidth) const 
     // same screen columns an ordinary content row's own digits/symbol glyph
     // do -- a sticky row reads as a frozen real gutter row, not a
     // synthesized label. Fold/blame never get anything drawn into them here.
-    const std::size_t diffColumnWidth    = DiffGutterActive() ? kDiffWidth : 0;
-    const std::size_t dapColumnWidth     = DapGutterActive() ? kDapWidth : 0;
-    const std::size_t diagnosticStart    = dapColumnWidth + diffColumnWidth + kStatusWidth;
-    const std::size_t lineNumberGapWidth = LineNumberGutterActive() ? kLineNumberGap : 0;
-    const std::size_t digitsStart        = diagnosticStart + kDiagnosticWidth + lineNumberGapWidth;
-    const std::size_t gutterDigits       = LineNumberGutterActive() ? std::to_string(content.LineCount()).size() : 0;
-    const std::size_t testColumnWidth    = TestGutterActive() ? kTestWidth : 0;
-    const std::size_t symbolStart        = digitsStart + gutterDigits + lineNumberGapWidth + testColumnWidth;
+    const std::size_t diffColumnWidth     = DiffGutterActive() ? kDiffWidth : 0;
+    const std::size_t dapColumnWidth      = DapGutterActive() ? kDapWidth : 0;
+    const std::size_t diagnosticStart     = dapColumnWidth + diffColumnWidth + kStatusWidth;
+    const std::size_t lineNumberGapWidth  = LineNumberGutterActive() ? kLineNumberGap : 0;
+    const std::size_t digitsStart         = diagnosticStart + kDiagnosticWidth + lineNumberGapWidth;
+    const std::size_t gutterDigits        = LineNumberGutterActive() ? std::to_string(content.LineCount()).size() : 0;
+    const std::size_t testColumnWidth     = TestGutterActive() ? kTestWidth : 0;
+    const std::size_t coverageColumnWidth = CoverageGutterActive() ? kCoverageWidth : 0;
+    const std::size_t symbolStart         = digitsStart + gutterDigits + lineNumberGapWidth + testColumnWidth + coverageColumnWidth;
 
     for (std::size_t i = 0; i < chain.size(); ++i) {
         const editor::SymbolMarker& marker = chain[i];
@@ -2483,6 +2518,10 @@ void BufferView::Paint(Canvas paneCanvas) {
     // test-runner integration: pass/fail marks, immediately left of the
     // symbol column (landmark columns clustered together).
     const std::size_t testColumnWidth = TestGutterActive() ? kTestWidth : 0;
+    // code-coverage-gutter follow-up: covered/uncovered/partial marks,
+    // between test and symbol (the third testing/structure-related landmark
+    // column in the same cluster).
+    const std::size_t coverageColumnWidth = CoverageGutterActive() ? kCoverageWidth : 0;
     // DAP client slice 2: the debug-marker column, leftmost of all when
     // active -- see kDapWidth's own doc comment for the full layout.
     const std::size_t dapColumnWidth  = DapGutterActive() ? kDapWidth : 0;
@@ -2515,7 +2554,8 @@ void BufferView::Paint(Canvas paneCanvas) {
     const std::size_t digitsStart        = diagnosticStart + kDiagnosticWidth + lineNumberGapWidth;
     const std::size_t gutterDigits       = LineNumberGutterActive() ? std::to_string(totalLines).size() : 0;
     const std::size_t testStart          = digitsStart + gutterDigits + lineNumberGapWidth;
-    const std::size_t symbolStart        = testStart + testColumnWidth;
+    const std::size_t coverageStart      = testStart + testColumnWidth;
+    const std::size_t symbolStart        = coverageStart + coverageColumnWidth;
     const std::size_t foldStart          = symbolStart + symbolColumnWidth;
     const std::size_t blameStart         = foldStart + foldColumnWidth;
 
@@ -3312,6 +3352,54 @@ void BufferView::Paint(Canvas paneCanvas) {
                         cell.character        = TestGlyphFor(it->second);
                         cell.foreground_color = TestStatusColor(it->second);
                         cell.bold             = true;
+                    }
+                }
+
+                // code-coverage-gutter follow-up: the covered/uncovered/
+                // partial-branch mark, test block's own lookup shape. A
+                // solid color swatch (character " ", status-gutter unsaved-
+                // change-indicator's own precedent) rather than a glyph --
+                // this is a per-line coverage bar, not a discrete landmark
+                // like the test/symbol columns either side of it. Cross-
+                // referenced against diffLineKinds_ (already loaded for the
+                // diff column above, no extra cache needed): an uncovered
+                // line that's also newly added/modified gets a louder "!"
+                // mark instead of the plain bar -- untested new code, not
+                // just untested code in general. DiffLineKind::Removed is
+                // excluded -- it's a deletion-boundary marker, not a real
+                // line in this version of the file.
+                if (coverageColumnWidth > 0 && static_cast<int>(coverageStart) < c.size().width) {
+                    const auto it = std::lower_bound(coverageGutterLineStatuses_.begin(), coverageGutterLineStatuses_.end(),
+                                                     line, [](const auto& entry, std::size_t l) { return entry.first < l; });
+                    if (it != coverageGutterLineStatuses_.end() && it->first == line) {
+                        const auto diffIt  = std::lower_bound(diffLineKinds_.begin(), diffLineKinds_.end(), line,
+                                                              [](const auto& entry, std::size_t l) { return entry.first < l; });
+                        const bool changed = diffIt != diffLineKinds_.end() && diffIt->first == line &&
+                                             diffIt->second != DiffLineKind::Removed;
+
+                        Cell& cell = c[{.x = static_cast<int>(coverageStart), .y = row}];
+                        if (it->second == editor::coverage::LineStatus::Uncovered && changed) {
+                            cell.character        = "!";
+                            cell.foreground_color = Color::BrightRed;
+                            cell.bold             = true;
+                        }
+                        else {
+                            Color color = Color::Green;
+                            switch (it->second) {
+                                case editor::coverage::LineStatus::Covered:
+                                    color = Color::Green;
+                                    break;
+                                case editor::coverage::LineStatus::Partial:
+                                    color = Color::BrightYellow;
+                                    break;
+                                case editor::coverage::LineStatus::Uncovered:
+                                    color = Color::BrightRed;
+                                    break;
+                            }
+                            cell.character        = " ";
+                            cell.background_color = color;
+                            cell.foreground_color = color;
+                        }
                     }
                 }
 
@@ -13239,19 +13327,20 @@ std::size_t BufferView::GutterWidth() const {
     // scrolling past a deeply nested region). symbol (gutter-symbol-kind
     // follow-up), unlike fold, IS data-driven -- see SymbolGutterActive's
     // own doc comment for why.
-    const std::size_t foldColumn   = FoldGutterActive() ? kMaxFoldDepthColumns : 0;
-    const std::size_t blameColumn  = BlameGutterActive() ? kBlameWidth : 0;
-    const std::size_t diffColumn   = DiffGutterActive() ? kDiffWidth : 0;
-    const std::size_t dapColumn    = DapGutterActive() ? kDapWidth : 0;
-    const std::size_t symbolColumn = SymbolGutterActive() ? kSymbolWidth : 0;
-    const std::size_t testColumn   = TestGutterActive() ? kTestWidth : 0;
+    const std::size_t foldColumn     = FoldGutterActive() ? kMaxFoldDepthColumns : 0;
+    const std::size_t blameColumn    = BlameGutterActive() ? kBlameWidth : 0;
+    const std::size_t diffColumn     = DiffGutterActive() ? kDiffWidth : 0;
+    const std::size_t dapColumn      = DapGutterActive() ? kDapWidth : 0;
+    const std::size_t symbolColumn   = SymbolGutterActive() ? kSymbolWidth : 0;
+    const std::size_t testColumn     = TestGutterActive() ? kTestWidth : 0;
+    const std::size_t coverageColumn = CoverageGutterActive() ? kCoverageWidth : 0;
     // Multibuffers follow-up: the line-number digits + both surrounding
     // gaps collapse to zero width together when LineNumberGutterActive()
     // is false -- see its own doc comment.
     const std::size_t lineNumberColumn =
         LineNumberGutterActive() ? (kLineNumberGap + std::to_string(totalLines).size() + kLineNumberGap) : 0;
-    return dapColumn + diffColumn + kStatusWidth + kDiagnosticWidth + lineNumberColumn + testColumn + symbolColumn +
-           foldColumn + blameColumn;
+    return dapColumn + diffColumn + kStatusWidth + kDiagnosticWidth + lineNumberColumn + testColumn + coverageColumn +
+           symbolColumn + foldColumn + blameColumn;
 }
 
 bool BufferView::SymbolGutterActive() const {
@@ -13262,6 +13351,11 @@ bool BufferView::SymbolGutterActive() const {
 bool BufferView::TestGutterActive() const {
     EnsureTestGutterCache();
     return !testGutterLineStatuses_.empty();
+}
+
+bool BufferView::CoverageGutterActive() const {
+    EnsureCoverageGutterCache();
+    return !coverageGutterLineStatuses_.empty();
 }
 
 bool BufferView::DiffGutterActive() const {
