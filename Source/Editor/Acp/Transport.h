@@ -34,9 +34,10 @@ namespace ned::editor::acp {
 // stall-timeout reasoning; ACP's messages are single lines, not multi-line
 // frames, but the same "silence is normal between messages, never
 // mid-message" policy applies. ChildProcess-hang-protection-round-2
-// follow-up: the real, no-argument call site below now reads
-// ProcessTimeouts.h's Janet-configurable ProtocolStallTimeoutMs() (the same
-// shared setting LSP's Transport uses) instead of this file's old
+// follow-up: the real, no-argument call sites below now read
+// ProcessTimeouts.h's Janet-configurable ProtocolReadStallTimeoutMs()/
+// ProtocolWriteStallTimeoutMs() (protocol-stall-timeout-split follow-up --
+// the same pair LSP's Transport uses) instead of this file's old
 // kMessageStallTimeout compile-time constant.
 
 class Transport {
@@ -73,7 +74,7 @@ class Transport {
     // follow-up) if the child stops draining its stdin for longer than
     // stallTimeout -- same rationale/default as ReadMessage's own
     // stallTimeout parameter below.
-    void WriteMessage(std::string_view jsonPayload, std::chrono::milliseconds stallTimeout = ProtocolStallTimeoutMs()) const;
+    void WriteMessage(std::string_view jsonPayload, std::chrono::milliseconds stallTimeout = ProtocolWriteStallTimeoutMs()) const;
 
     // Blocks until one full line has been read from the child's stdout,
     // returning it with the trailing newline stripped. Returns std::nullopt
@@ -85,9 +86,9 @@ class Transport {
     // std::runtime_error (subprocess-hang-protection follow-up) if a message
     // stalls mid-line for longer than stallTimeout -- a parameter, not a
     // hardcoded sleep, purely so tests can shorten it; real callers always
-    // take the ProtocolStallTimeoutMs() default (see this file's own header
-    // comment).
-    [[nodiscard]] std::optional<std::string> ReadMessage(std::chrono::milliseconds stallTimeout = ProtocolStallTimeoutMs()) const;
+    // take the ProtocolReadStallTimeoutMs() default (see this file's own
+    // header comment).
+    [[nodiscard]] std::optional<std::string> ReadMessage(std::chrono::milliseconds stallTimeout = ProtocolReadStallTimeoutMs()) const;
 
     [[nodiscard]] pid_t Pid() const noexcept;
 
