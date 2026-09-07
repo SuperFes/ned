@@ -34,6 +34,7 @@
 #include "Editor/InlineDiagnostics.h"
 #include "Editor/JanetSymbolComplete.h"
 #include "Editor/Link.h"
+#include "Editor/Lsp/LspEditApply.h"
 #include "Editor/Lsp/LspManager.h"
 #include "Editor/Lsp/LspServerConfig.h"
 #include "Editor/MassifOutputParser.h"
@@ -6344,47 +6345,6 @@ void BufferView::ResolveAndApplyCodeAction(const editor::lsp::CodeAction& action
     ApplyCodeAction(action);
 }
 
-namespace {
-
-    // Shared by ApplyCodeAction, ApplyRename, and LSP-formatting: resolves
-    // each edit's LspPositions to byte offsets against buffer's CURRENT
-    // content, sorts descending by start byte (keeps an edit not yet applied
-    // valid as an earlier-in-the-buffer one shifts positions -- LSP
-    // guarantees edits within one WorkspaceEdit/formatting response don't
-    // overlap, so a plain sort suffices), and applies each via
-    // Buffer::DeleteRange + Buffer::InsertAt as one undo group -- a
-    // formatting response can carry dozens/hundreds of edits, and without
-    // grouping each pair records its own undo step (undoing would take one
-    // press per edit instead of one for the whole operation).
-    void ApplyWorkspaceTextEdits(text::Buffer& buffer, const std::vector<editor::lsp::WorkspaceTextEdit>& edits) {
-        const text::ITextStorage& content = buffer.Content();
-
-        struct ResolvedEdit {
-            std::size_t startByte;
-            std::size_t endByte;
-            std::string newText;
-        };
-        std::vector<ResolvedEdit> resolved;
-        resolved.reserve(edits.size());
-        for (const editor::lsp::WorkspaceTextEdit& edit : edits) {
-            resolved.push_back(ResolvedEdit{
-                .startByte = editor::lsp::LspPositionToByte(content, edit.start),
-                .endByte   = editor::lsp::LspPositionToByte(content, edit.end),
-                .newText   = edit.newText,
-            });
-        }
-        std::sort(resolved.begin(), resolved.end(), [](const ResolvedEdit& a, const ResolvedEdit& b) { return a.startByte > b.startByte; });
-
-        buffer.BeginUndoGroup();
-        for (const ResolvedEdit& edit : resolved) {
-            buffer.DeleteRange(edit.startByte, edit.endByte - edit.startByte);
-            buffer.InsertAt(edit.startByte, edit.newText);
-        }
-        buffer.EndUndoGroup();
-    }
-
-} // namespace
-
 void BufferView::ApplyProjectEdit(const std::vector<std::pair<text::Buffer*, std::vector<editor::lsp::WorkspaceTextEdit>>>& perBufferEdits,
                                   std::string description) {
     editor::ProjectEditTransaction transaction;
@@ -6392,7 +6352,7 @@ void BufferView::ApplyProjectEdit(const std::vector<std::pair<text::Buffer*, std
     transaction.records.reserve(perBufferEdits.size());
     for (const auto& [buffer, edits] : perBufferEdits) {
         const std::size_t beforeSequence = buffer->CurrentUndoSequence();
-        ApplyWorkspaceTextEdits(*buffer, edits);
+        editor::lsp::ApplyWorkspaceTextEdits(*buffer, edits);
         if (buffer->Path()) {
             transaction.records.push_back(editor::ProjectUndoRecord{
                 .path           = *buffer->Path(),
@@ -6475,7 +6435,7 @@ void BufferView::MaybeScheduleOnTypeFormatting(const editor::KeyChord& chord, st
                 // synchronously within that keystroke's own dispatch, so
                 // there's no existing mechanism to join the two (see this
                 // method's own doc comment in BufferView.h).
-                ApplyWorkspaceTextEdits(*bufferPtr, *edits);
+                editor::lsp::ApplyWorkspaceTextEdits(*bufferPtr, *edits);
             }
         },
         serverKey);
@@ -6495,7 +6455,7 @@ void BufferView::RequestLspFormatThenSaveBuffer() {
             text::Buffer& buffer       = *bufferPtr;
             const bool    formatFailed = !edits.has_value();
             if (edits && !edits->empty()) {
-                ApplyWorkspaceTextEdits(buffer, *edits); // one undo group -- see Step 0's fix
+                editor::lsp::ApplyWorkspaceTextEdits(buffer, *edits); // one undo group -- see Step 0's fix
             }
             try {
                 editor::WriteBufferToDisk(buffer);

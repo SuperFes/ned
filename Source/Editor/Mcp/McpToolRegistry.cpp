@@ -1,8 +1,15 @@
 #include "McpToolRegistry.h"
 
 #include <algorithm>
+#include <cctype>
+#include <chrono>
+#include <cstring>
+#include <ctime>
 #include <system_error>
 
+#include "Editor/DiagnosticsLog.h"
+#include "Editor/Lsp/LspContent.h"
+#include "Editor/Lsp/LspEditApply.h"
 #include "Editor/Lsp/LspManager.h"
 #include "Editor/Lsp/LspPosition.h"
 #include "Editor/ProjectRoot.h"
@@ -25,6 +32,7 @@ namespace {
     // handlers below).
     constexpr std::size_t kMaxSearchResults = 200;
     constexpr std::size_t kMaxTestResults   = 500;
+    constexpr std::size_t kMaxLogEntries    = 200;
 
     std::string SeverityName(text::Buffer::Diagnostic::Severity severity) {
         switch (severity) {
@@ -50,6 +58,30 @@ namespace {
                 return "skipped";
         }
         return "unknown";
+    }
+
+    std::string LogSeverityName(LogSeverity severity) {
+        switch (severity) {
+            case LogSeverity::Info:
+                return "info";
+            case LogSeverity::Warning:
+                return "warning";
+            case LogSeverity::Error:
+                return "error";
+        }
+        return "unknown";
+    }
+
+    // "YYYY-MM-DD HH:MM:SS" local time -- a plain, unambiguous stand-in for
+    // DiagnosticsLog.cpp's own FormatLine timestamp rendering (not exported
+    // for reuse; this is a small enough duplicate to not warrant extracting).
+    std::string FormatLogTimestamp(std::chrono::system_clock::time_point timestamp) {
+        const std::time_t seconds = std::chrono::system_clock::to_time_t(timestamp);
+        std::tm            local{};
+        localtime_r(&seconds, &local);
+        char buffer[32];
+        std::strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", &local);
+        return buffer;
     }
 
     // A relative `file` argument is resolved against ProjectRoot() -- every
@@ -366,6 +398,388 @@ void ToolRegistry::RegisterBuiltinTools() {
                                              {"truncated", truncated},
                                          }
                                              .dump()));
+        });
+
+    // acp-mcp-tool-bridge-remainder follow-up. Every tool below still reuses
+    // an existing manager call unchanged -- the only new shared code this
+    // slice needed was extracting Editor/Lsp/LspEditApply.h out of
+    // BufferView.cpp (format_buffer's own apply step). Two things were
+    // deliberately NOT added here after checking the real APIs against
+    // ROADMAP's own aspirational list:
+    //   - rename_symbol/code_actions stay listing/preview-only
+    //     (preview_rename, code_actions below) rather than actually
+    //     applying anything: a real apply needs BufferView::ApplyProjectEdit's
+    //     multi-file transaction machinery (ProjectUndoManager recording,
+    //     file create/rename/delete via DocumentChangeOp) -- genuinely
+    //     BufferView/WindowManager-coupled, not a thin wrapper the way
+    //     everything else here is. Same open gap as goto(file,line)
+    //     navigation, not attempted in this slice either.
+    //   - Org capture_note was dropped entirely: OrgCapture::InsertCapture
+    //     only supports a template whose text is fixed at Janet-registration
+    //     time ("%?" just marks where point lands after expansion) -- there
+    //     is no way to inject agent-supplied free text into a capture
+    //     through the existing API, so a faithful capture_note tool needs a
+    //     small OrgCapture.h capability addition first, not just a wrapper.
+
+    RegisterTool(
+        "git_stage", "Stage a file's changes for the next commit.",
+        Json{
+            {"type", "object"},
+            {"properties", {{"file", {{"type", "string"}, {"description", "Path to the file, absolute or relative to the project root."}}}}},
+            {"required", Json::array({"file"})},
+        },
+        [this](const Json& args, const ResultCallback& callback) {
+            const auto file = RequireString(args, "file");
+            if (!file) {
+                callback(MakeTextToolResult("Missing required argument: file", true));
+                return;
+            }
+            vcsRunner_.RequestStage(
+                ResolveArgPath(*file), [callback, file] { callback(MakeTextToolResult("Staged " + *file + ".")); },
+                [callback](const std::string& error) { callback(MakeTextToolResult("git stage failed: " + error, true)); });
+        });
+
+    RegisterTool(
+        "git_unstage", "Unstage a file (keep its changes, remove them from the next commit).",
+        Json{
+            {"type", "object"},
+            {"properties", {{"file", {{"type", "string"}, {"description", "Path to the file, absolute or relative to the project root."}}}}},
+            {"required", Json::array({"file"})},
+        },
+        [this](const Json& args, const ResultCallback& callback) {
+            const auto file = RequireString(args, "file");
+            if (!file) {
+                callback(MakeTextToolResult("Missing required argument: file", true));
+                return;
+            }
+            vcsRunner_.RequestUnstage(
+                ResolveArgPath(*file), [callback, file] { callback(MakeTextToolResult("Unstaged " + *file + ".")); },
+                [callback](const std::string& error) { callback(MakeTextToolResult("git unstage failed: " + error, true)); });
+        });
+
+    RegisterTool(
+        "git_commit", "Commit the currently staged changes with the given message.",
+        Json{
+            {"type", "object"},
+            {"properties", {{"message", {{"type", "string"}, {"description", "The commit message."}}}}},
+            {"required", Json::array({"message"})},
+        },
+        [this](const Json& args, const ResultCallback& callback) {
+            const auto message = RequireString(args, "message");
+            if (!message) {
+                callback(MakeTextToolResult("Missing required argument: message", true));
+                return;
+            }
+            vcsRunner_.RequestCommit(
+                *message, [callback](std::string summary) { callback(MakeTextToolResult(summary.empty() ? "Committed." : summary)); },
+                [callback](const std::string& error) { callback(MakeTextToolResult("git commit failed: " + error, true)); });
+        });
+
+    RegisterTool(
+        "git_branch_list", "List every local branch, marking the currently checked-out one.", Json{{"type", "object"}, {"properties", Json::object()}},
+        [this](const Json&, const ResultCallback& callback) {
+            vcsRunner_.RequestBranchList(
+                [callback](std::vector<vcs::VcsBranchEntry> branches) {
+                    Json results = Json::array();
+                    for (const vcs::VcsBranchEntry& branch : branches) {
+                        results.push_back(Json{{"name", branch.name}, {"current", branch.current}});
+                    }
+                    callback(MakeTextToolResult(results.dump()));
+                },
+                [callback](const std::string& error) { callback(MakeTextToolResult("git branch list failed: " + error, true)); });
+        });
+
+    RegisterTool(
+        "git_branch_switch", "Switch (checkout) to an existing local branch.",
+        Json{
+            {"type", "object"},
+            {"properties", {{"name", {{"type", "string"}, {"description", "The branch name to switch to."}}}}},
+            {"required", Json::array({"name"})},
+        },
+        [this](const Json& args, const ResultCallback& callback) {
+            const auto name = RequireString(args, "name");
+            if (!name) {
+                callback(MakeTextToolResult("Missing required argument: name", true));
+                return;
+            }
+            vcsRunner_.RequestBranchSwitch(
+                *name, [callback, name] { callback(MakeTextToolResult("Switched to branch " + *name + ".")); },
+                [callback](const std::string& error) { callback(MakeTextToolResult("git branch switch failed: " + error, true)); });
+        });
+
+    RegisterTool(
+        "git_blame", "Get the git blame info (commit/author/date/summary) for one line of a file already open in ned.",
+        Json{
+            {"type", "object"},
+            {"properties",
+             {{"file", {{"type", "string"}, {"description", "Path to the file, absolute or relative to the project root."}}},
+              {"line", {{"type", "integer"}, {"description", "1-indexed line number."}}}}},
+            {"required", Json::array({"file", "line"})},
+        },
+        [this](const Json& args, const ResultCallback& callback) {
+            const auto file = RequireString(args, "file");
+            const auto line = RequireInt(args, "line");
+            if (!file || !line) {
+                callback(MakeTextToolResult("Missing required argument(s): file, line", true));
+                return;
+            }
+            text::Buffer* buffer = FindOpenBuffer(bufferList_, *file);
+            if (!buffer) {
+                callback(MakeTextToolResult("File is not open in ned: " + *file, true));
+                return;
+            }
+            const std::size_t lineIndex = static_cast<std::size_t>(*line - 1);
+            vcsRunner_.RequestBlame(
+                *buffer,
+                [callback, lineIndex](std::vector<vcs::VcsBlameLine> lines) {
+                    if (lineIndex >= lines.size()) {
+                        callback(MakeTextToolResult("Line out of range for this file's blame.", true));
+                        return;
+                    }
+                    const vcs::VcsBlameLine& blameLine = lines[lineIndex];
+                    callback(MakeTextToolResult(Json{
+                                                     {"commitHash", blameLine.commitHash},
+                                                     {"author", blameLine.author},
+                                                     {"date", blameLine.date},
+                                                     {"summary", blameLine.summary},
+                                                 }
+                                                     .dump()));
+                },
+                [callback](const std::string& error) { callback(MakeTextToolResult("git blame failed: " + error, true)); });
+        });
+
+    RegisterTool(
+        "rerun_failed_tests",
+        "Rerun every test that failed in the most recent run. Returns immediately -- call get_test_results afterward to see the outcome.",
+        Json{{"type", "object"}, {"properties", Json::object()}},
+        [this](const Json&, const ResultCallback& callback) {
+            const std::size_t queued = testRunner_.RerunFailed();
+            if (queued == 0) {
+                callback(MakeTextToolResult("No failed tests to rerun (or no test command configured)."));
+                return;
+            }
+            callback(MakeTextToolResult("Queued " + std::to_string(queued) + " failed test(s) for rerun. Call get_test_results to check the outcome."));
+        });
+
+    RegisterTool(
+        "workspace_symbols", "Search the project's whole workspace for symbols matching a query, via the LSP server for the given file's language.",
+        Json{
+            {"type", "object"},
+            {"properties",
+             {{"file", {{"type", "string"}, {"description", "Path to a file already open in ned, used to pick which language server to ask."}}},
+              {"query", {{"type", "string"}, {"description", "The symbol name (or substring) to search for."}}}}},
+            {"required", Json::array({"file", "query"})},
+        },
+        [this](const Json& args, const ResultCallback& callback) {
+            const auto file  = RequireString(args, "file");
+            const auto query = RequireString(args, "query");
+            if (!file || !query) {
+                callback(MakeTextToolResult("Missing required argument(s): file, query", true));
+                return;
+            }
+            text::Buffer* buffer = FindOpenBuffer(bufferList_, *file);
+            if (!buffer) {
+                callback(MakeTextToolResult("File is not open in ned: " + *file, true));
+                return;
+            }
+            lspManager_.RequestWorkspaceSymbols(*buffer, *query, [callback](std::vector<lsp::LspManager::SymbolResult> symbols) {
+                if (symbols.empty()) {
+                    callback(MakeTextToolResult("No symbols found."));
+                    return;
+                }
+                Json results = Json::array();
+                for (const lsp::LspManager::SymbolResult& symbol : symbols) {
+                    results.push_back(Json{
+                        {"name", symbol.name},
+                        {"containerName", symbol.containerName},
+                        {"kind", symbol.kind},
+                        {"file", symbol.path.string()},
+                        {"line", symbol.position.line + 1},
+                        {"column", symbol.position.character + 1},
+                    });
+                }
+                callback(MakeTextToolResult(results.dump()));
+            });
+        });
+
+    RegisterTool(
+        "format_buffer", "Format a file already open in ned using its LSP server, applying the result as one undoable edit.",
+        Json{
+            {"type", "object"},
+            {"properties", {{"file", {{"type", "string"}, {"description", "Path to the file, absolute or relative to the project root."}}}}},
+            {"required", Json::array({"file"})},
+        },
+        [this](const Json& args, const ResultCallback& callback) {
+            const auto file = RequireString(args, "file");
+            if (!file) {
+                callback(MakeTextToolResult("Missing required argument: file", true));
+                return;
+            }
+            text::Buffer* buffer = FindOpenBuffer(bufferList_, *file);
+            if (!buffer) {
+                callback(MakeTextToolResult("File is not open in ned: " + *file, true));
+                return;
+            }
+            lspManager_.RequestFormatting(*buffer, [this, callback, buffer, file = *file](std::optional<std::vector<lsp::WorkspaceTextEdit>> edits) {
+                if (!edits) {
+                    callback(MakeTextToolResult("Formatting failed or is not supported for this buffer.", true));
+                    return;
+                }
+                if (edits->empty()) {
+                    callback(MakeTextToolResult("Already formatted -- no changes."));
+                    return;
+                }
+                // buffer is a stale pointer by the time this fires if the
+                // human closed it while the request was in flight -- never
+                // dereferenced until re-confirmed still open at this exact
+                // address, the same "opaque key, re-look-up before
+                // dereferencing" idiom BufferView::RequestLspFormatThenSaveBuffer
+                // uses for this identical hazard.
+                if (FindOpenBuffer(bufferList_, file) != buffer) {
+                    callback(MakeTextToolResult("Buffer was closed before formatting completed.", true));
+                    return;
+                }
+                const std::size_t count = edits->size();
+                lsp::ApplyWorkspaceTextEdits(*buffer, *edits);
+                callback(MakeTextToolResult("Applied " + std::to_string(count) + " formatting edit(s), as one undo step."));
+            });
+        });
+
+    RegisterTool(
+        "code_actions",
+        "List the LSP code actions (quick fixes/refactorings) available at a position in a file already open in ned. Read-only -- "
+        "lists titles only, does not apply any of them.",
+        Json{
+            {"type", "object"},
+            {"properties",
+             {{"file", {{"type", "string"}, {"description", "Path to the file, absolute or relative to the project root."}}},
+              {"line", {{"type", "integer"}, {"description", "1-indexed line number."}}},
+              {"column", {{"type", "integer"}, {"description", "1-indexed column (UTF-16 code unit offset within the line)."}}}}},
+            {"required", Json::array({"file", "line", "column"})},
+        },
+        [this](const Json& args, const ResultCallback& callback) {
+            const auto file = RequireString(args, "file");
+            const auto line = RequireInt(args, "line");
+            const auto col  = RequireInt(args, "column");
+            if (!file || !line || !col) {
+                callback(MakeTextToolResult("Missing required argument(s): file, line, column", true));
+                return;
+            }
+            text::Buffer* buffer = FindOpenBuffer(bufferList_, *file);
+            if (!buffer) {
+                callback(MakeTextToolResult("File is not open in ned: " + *file, true));
+                return;
+            }
+            const std::size_t byteOffset = lsp::LspPositionToByte(
+                buffer->Content(), lsp::LspPosition{static_cast<std::size_t>(*line - 1), static_cast<std::size_t>(*col - 1)});
+            lspManager_.RequestCodeActions(*buffer, byteOffset, byteOffset, [callback](std::vector<lsp::CodeAction> actions) {
+                if (actions.empty()) {
+                    callback(MakeTextToolResult("No code actions available here."));
+                    return;
+                }
+                Json results = Json::array();
+                for (const lsp::CodeAction& action : actions) {
+                    results.push_back(Json{{"title", action.title}, {"hasEdit", action.hasEdit}});
+                }
+                callback(MakeTextToolResult(results.dump()));
+            });
+        });
+
+    RegisterTool(
+        "preview_rename",
+        "Preview an LSP rename at a position in a file already open in ned -- lists which files and how many edits would be "
+        "touched. Read-only -- does not apply the rename; use ned's own lsp-rename command (or ask the user) to actually do it.",
+        Json{
+            {"type", "object"},
+            {"properties",
+             {{"file", {{"type", "string"}, {"description", "Path to the file, absolute or relative to the project root."}}},
+              {"line", {{"type", "integer"}, {"description", "1-indexed line number."}}},
+              {"column", {{"type", "integer"}, {"description", "1-indexed column (UTF-16 code unit offset within the line)."}}},
+              {"newName", {{"type", "string"}, {"description", "The proposed new name for the symbol."}}}}},
+            {"required", Json::array({"file", "line", "column", "newName"})},
+        },
+        [this](const Json& args, const ResultCallback& callback) {
+            const auto file    = RequireString(args, "file");
+            const auto line    = RequireInt(args, "line");
+            const auto col     = RequireInt(args, "column");
+            const auto newName = RequireString(args, "newName");
+            if (!file || !line || !col || !newName) {
+                callback(MakeTextToolResult("Missing required argument(s): file, line, column, newName", true));
+                return;
+            }
+            text::Buffer* buffer = FindOpenBuffer(bufferList_, *file);
+            if (!buffer) {
+                callback(MakeTextToolResult("File is not open in ned: " + *file, true));
+                return;
+            }
+            const std::size_t byteOffset = lsp::LspPositionToByte(
+                buffer->Content(), lsp::LspPosition{static_cast<std::size_t>(*line - 1), static_cast<std::size_t>(*col - 1)});
+            lspManager_.RequestRename(*buffer, byteOffset, *newName, [callback](std::optional<lsp::LspManager::ResolvedRename> result) {
+                if (!result || !result->hasEdit) {
+                    callback(MakeTextToolResult("Rename failed, or is not supported at this position.", true));
+                    return;
+                }
+                if (result->touchesUnsupportedForm) {
+                    callback(MakeTextToolResult("The server's rename response used a form this tool can't preview.", true));
+                    return;
+                }
+                Json files = Json::array();
+                for (const lsp::LspManager::ResolvedRenameEdit& edit : result->edits) {
+                    files.push_back(Json{{"file", edit.path.string()}, {"editCount", edit.edits.size()}});
+                }
+                for (const lsp::LspManager::ResolvedDocumentChangeOp& op : result->documentChangeOps) {
+                    files.push_back(Json{{"file", op.path.string()}, {"editCount", op.edits.size()}});
+                }
+                callback(MakeTextToolResult(Json{{"preview", true}, {"filesTouched", files}}.dump()));
+            });
+        });
+
+    RegisterTool(
+        "get_diagnostics_log", "Get ned's own internal message log (LSP/DAP/ACP/VCS/task/subprocess errors and warnings, not source-file diagnostics).",
+        Json{
+            {"type", "object"},
+            {"properties",
+             {{"category",
+               {{"type", "string"},
+                {"description", "Optional: filter to one category (general, janet, lsp, dap, acp, vcs, task, subprocess -- case-insensitive)."}}}}},
+        },
+        [this](const Json& args, const ResultCallback& callback) {
+            std::optional<LogCategory> filter;
+            if (const auto categoryName = RequireString(args, "category")) {
+                std::string lowered = *categoryName;
+                std::transform(lowered.begin(), lowered.end(), lowered.begin(), [](unsigned char c) { return std::tolower(c); });
+                filter = LogCategoryFromString(lowered);
+                if (!filter) {
+                    callback(MakeTextToolResult("Unknown log category: " + *categoryName, true));
+                    return;
+                }
+            }
+            Json        results   = Json::array();
+            std::size_t total     = 0;
+            for (const LogEntry& entry : LogEntries()) {
+                if (filter && entry.category != *filter) {
+                    continue;
+                }
+                ++total;
+                if (results.size() >= kMaxLogEntries) {
+                    continue;
+                }
+                Json jsonEntry = Json{
+                    {"timestamp", FormatLogTimestamp(entry.timestamp)},
+                    {"category", std::string(LogCategoryToString(entry.category))},
+                    {"severity", LogSeverityName(entry.severity)},
+                    {"message", entry.message},
+                    {"count", entry.count},
+                };
+                if (entry.path) {
+                    jsonEntry["path"] = *entry.path;
+                }
+                if (entry.line) {
+                    jsonEntry["line"] = *entry.line;
+                }
+                results.push_back(std::move(jsonEntry));
+            }
+            callback(MakeTextToolResult(Json{{"entries", results}, {"totalMatching", total}, {"truncated", total > kMaxLogEntries}}.dump()));
         });
 }
 

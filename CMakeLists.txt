@@ -759,6 +759,7 @@ add_library(ned_lib STATIC
         Source/Editor/Lsp/ProseChecker.cpp
         Source/Editor/Lsp/LspPosition.cpp
         Source/Editor/Lsp/LspContent.cpp
+        Source/Editor/Lsp/LspEditApply.cpp
         Source/Editor/Lsp/LspManager.cpp
         Source/Editor/Lsp/LspBackgroundSync.cpp
         Source/Editor/Lsp/LspBroker.cpp
