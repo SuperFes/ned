@@ -369,11 +369,20 @@ overflow indicators as part of the same work) are all shipped — see `git log
       tie-break variable from the 2026-09-07 fix becomes exactly this second variable,
       so that work carries forward rather than being thrown away.
       Migration order to keep this reviewable rather than one big-bang commit: (1)
-      build `LeftDock` standalone with unit tests against two dummy content widgets;
-      (2) strip chrome out of `ProjectSidebar` first (the simpler, longer-established
-      one), host it alone, ship, confirm no regression; (3) strip chrome out of
-      `VcsPanel`, register it as the second panel, retire the now-dead exclusivity code
-      in `BufferView.cpp` and the startup tie-break variable in favor of the dock's own
+      **done 2026-09-07** — `Source/UI/LeftDock.h/.cpp` built standalone (rail plus a
+      bordered content region hosting whichever registered `{glyph, name, Widget*}`
+      panel is active; `AddPanel`/`SwitchTo`/`CommitSwitchTo` mirror `PanelDock`'s own
+      stable-id shape; width/collapse/resize-drag mirror `ProjectSidebar`'s contract)
+      with `Tests/LeftDockTest.cpp` exercising it headlessly against two fake content
+      widgets, `PanelDockTest.cpp`'s own precedent (13 cases — registration, paint
+      delegation, rail-click switch/collapse/expand, resize-drag commit, mouse-event
+      forwarding into the active panel's own local coordinates) — see
+      `git log --grep=unified-left-dock`. Not yet wired into `WindowManager`/`main.cpp`;
+      `ProjectSidebar`/`VcsPanel` are not yet retrofitted to be hosted by it. (2) strip
+      chrome out of `ProjectSidebar` first (the simpler, longer-established one), host
+      it alone, ship, confirm no regression; (3) strip chrome out of `VcsPanel`,
+      register it as the second panel, retire the now-dead exclusivity code in
+      `BufferView.cpp` and the startup tie-break variable in favor of the dock's own
       state; (4) update `C-c p`/`C-c v p`'s meaning (dock-switch instead of two
       independent toggles) and this entry.
 
