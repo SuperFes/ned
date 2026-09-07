@@ -20,17 +20,26 @@
 // it always has -- RepositionActivePanel keeps that Box_() correct.
 //
 // What used to be three separate per-panel affordances are now shared, one
-// level up: a single close button hides the whole dock (each panel's own
+// level up: a single button hides the whole dock (a distinct glyph from any
+// per-tab close action, see kHideDockIcon's own comment -- each panel's own
 // keyboard-driven close trigger -- TerminalPanel's reserved `` C-` ``, Esc on
 // AcpPanel/DebugConsolePanel -- is untouched, still firing that panel's own
 // SetOnToggleRequest callback exactly as before); maximize now applies to
-// whichever tab is active, not just the terminal; drag-resizing the tab-strip
-// row (AcpPanel's own former `mouse->at.y == 0` carve-out, generalized)
-// writes back to whichever (get, set)-percent pair the *active* tab
-// registered, or does nothing for a tab that registered none (DebugConsole,
-// which never had resize at all) -- deliberately no new unified percent
-// setting, every existing ned/set-*-percent binding keeps its exact current
-// meaning, so the dock's own height can visibly change across a tab switch.
+// whichever tab is active, not just the terminal.
+//
+// tab-height-unification follow-up: the dock's own height is one shared
+// value (Percent()), not per-tab -- switching tabs never changes it, since
+// the whole point of grouping panels into one dock is a consistent size
+// regardless of which is showing (a real, reported "grouped tabs, but the
+// dock still jumps around" complaint about the original per-tab-percent
+// design this replaces). Dragging the tab-strip row still writes through to
+// whichever (get, set)-percent pair the *active* tab registered (so every
+// existing ned/set-*-percent binding keeps its exact current persisted
+// meaning -- e.g. dragging while Terminal is active still updates
+// ned/set-terminal-height-percent), but the resulting *displayed* height
+// applies to the whole dock from then on, not just that one tab. A tab that
+// registered no percent at all (DebugConsole/Janet REPL) still resizes the
+// dock live while dragged, just without anything persisting across restarts.
 //
 // AcpPanel's own right-dock mode is a fully separate, unaffected code path
 // (its own standalone OverlayHost registration, own title row/collapse/
@@ -43,7 +52,6 @@
 
 #include <cstddef>
 #include <functional>
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -119,10 +127,13 @@ class PanelDock : public Widget {
         return maximized_;
     }
 
-    // The active tab's own getPercent() result, or nullopt if it registered
-    // none (DebugConsole today) -- what main.cpp's own placement lambda
-    // reads to size this dock when not maximized.
-    [[nodiscard]] std::optional<int> ActivePercent() const;
+    // The dock's own shared height percent (tab-height-unification
+    // follow-up -- replaces the former per-tab ActivePercent(); see this
+    // header's own top comment) -- what main.cpp's own placement lambda
+    // reads to size this dock when not maximized. Always a concrete value,
+    // not optional -- initialized lazily from the first tab that registers
+    // a getPercent (falling back to a plain default if none ever does).
+    [[nodiscard]] int Percent() const;
 
     // Fires whenever something this dock's own placement lambda depends on
     // changes out from under it (the maximize toggle) -- TerminalPanel's own
@@ -130,8 +141,9 @@ class PanelDock : public Widget {
     // OverlayHost recomputes its Box from the placement lambda immediately.
     void SetOnLayoutChange(std::function<void()> onLayoutChange);
 
-    // The shared `[x]` -- wired by main.cpp to hide this dock and hand focus
-    // back to the editor.
+    // The shared hide-dock button (kHideDockIcon, distinct from any per-tab
+    // close glyph -- see that constant's own comment in PanelDock.cpp) --
+    // wired by main.cpp to hide this dock and hand focus back to the editor.
     void SetOnCloseRequest(std::function<void()> onClose);
 
     // The full terminal size, refreshed by main.cpp's placement lambda every
@@ -196,12 +208,20 @@ class PanelDock : public Widget {
     void RepositionActivePanel();
 
     // Row-0 hit testing, mirroring TerminalPanel::TitleButtonAt/AcpPanel's
-    // own bracket-offset convention: tab labels first (left to right, widest
-    // to fit), then the active tab's own extraActions, then `[▲]`/`[x]`
-    // right-aligned. Returns true if `x` landed on a real target and invokes
-    // it; false means "start a resize-drag instead" (AcpPanel's own
-    // `mouse->at.y == 0` fallback, generalized to every unclaimed column).
+    // own button-offset convention: tab labels first (left to right, widest
+    // to fit), then the active tab's own extraActions, then the shared
+    // maximize/restore and hide-dock buttons, right-aligned. Returns true if
+    // `x` landed on a real target and invokes it; false means "start a
+    // resize-drag instead" (AcpPanel's own `mouse->at.y == 0` fallback,
+    // generalized to every unclaimed column).
     bool HandleTabStripClick(int x);
+
+    // Lazily seeds sharedPercent_ from the first tab that registers a
+    // getPercent, the first time Percent()/BeginResize needs a value --
+    // called from both, idempotent past the first real call. Const because
+    // Percent() itself is const; sharedPercent_/sharedPercentInitialized_
+    // are the mutable cache this seeds.
+    void EnsureSharedPercentInitialized() const;
 
     void BeginResize(Point globalMouse);
     void UpdateResize(Point globalMouse);
@@ -227,6 +247,14 @@ class PanelDock : public Widget {
     bool  resizing_ = false;
     Point resizeAnchorGlobal_{.x = 0, .y = 0};
     int   resizeStartPercent_ = 0;
+
+    // tab-height-unification follow-up: one height shared by every tab,
+    // instead of reading whichever tab happens to be active's own percent.
+    // Seeded from the first tab that registers a getPercent (so an existing
+    // persisted ned/set-*-percent value still takes effect at startup);
+    // sharedPercentInitialized_ guards that one-time seed.
+    mutable int  sharedPercent_            = 30;
+    mutable bool sharedPercentInitialized_ = false;
 };
 
 } // namespace ned::ui
