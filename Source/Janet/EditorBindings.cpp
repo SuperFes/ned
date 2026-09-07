@@ -34,6 +34,7 @@
 #include "Editor/Lsp/LspRootResolver.h"
 #include "Editor/Lsp/LspServerConfig.h"
 #include "Editor/Lsp/ProseChecker.h"
+#include "Editor/Mcp/McpBridgeSetting.h"
 #include "Editor/MinimapSettings.h"
 #include "Editor/ModeOverrides.h"
 #include "Editor/MultibufferFoldSettings.h"
@@ -371,6 +372,10 @@ namespace {
 
     void NedSetAutoRevert(bool enabled) {
         editor::SetAutoRevertEnabled(enabled);
+    }
+
+    void NedSetAcpMcpBridge(bool enabled) {
+        editor::mcp::SetAcpMcpBridgeEnabled(enabled);
     }
 
     void NedSetAutoPairEnabled(bool enabled) {
@@ -1230,6 +1235,11 @@ void InstallEditorBindings(Environment& env) {
         "ned", "set-auto-revert",
         "Enable/disable automatically reloading an open, unmodified buffer when its file changes on disk (default "
         "true). A buffer with local edits is never auto-reverted; saving it instead asks before overwriting.");
+    env.Register<&NedSetAcpMcpBridge>(
+        "ned", "set-acp-mcp-bridge",
+        "Enable/disable advertising ned's own MCP tool-server bridge (get_diagnostics/hover/goto_definition/"
+        "find_references/git_status/git_diff/search_project/run_tests/get_test_results) to an ACP agent on session "
+        "start (default true). Off falls back to sending an empty mcpServers list, as if no bridge were wired at all.");
     env.Register<&NedSetAutoPairEnabled>(
         "ned", "set-auto-pair-enabled",
         "Enable/disable auto-closing matching brackets/quotes as you type -- typing an opener inserts its "

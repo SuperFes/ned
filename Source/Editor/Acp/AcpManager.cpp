@@ -10,6 +10,8 @@
 #include "AcpConfig.h"
 #include "Editor/BackgroundActivity.h"
 #include "Editor/Backup.h"
+#include "Editor/Mcp/McpBridgeServer.h"
+#include "Editor/Mcp/McpBridgeSetting.h"
 #include "Editor/ProjectRoot.h"
 #include "Editor/WrapOverrides.h"
 #include "Text/Buffer.h"
@@ -21,6 +23,22 @@ namespace {
 
     std::string AcpOutputBufferName(std::string_view agentName) {
         return "*acp: " + std::string(agentName) + "*";
+    }
+
+    // ACP MCP tool-server bridge, slice 1. This process's own executable
+    // path, for the mcpServers "command" the agent spawns as
+    // `--mcp-stdio-relay` -- the exact same "/proc/self/exe is a magic
+    // symlink tracking the specific inode this process actually is" idiom
+    // LspBrokerMain.cpp's own self-identity check already uses. Throws if
+    // unreadable (StartSession's own try/catch around this whole block
+    // degrades to no MCP tools rather than propagating).
+    std::filesystem::path SelfExecutablePath() {
+        std::error_code        ec;
+        std::filesystem::path  path = std::filesystem::read_symlink("/proc/self/exe", ec);
+        if (ec || path.empty()) {
+            throw std::runtime_error("cannot resolve /proc/self/exe: " + ec.message());
+        }
+        return path;
     }
 
     // Mode-line spinner name for a prompt in flight -- see AcpManager::
@@ -108,6 +126,10 @@ std::size_t AcpManager::TranscriptGeneration() const {
 
 void AcpManager::SetOnTranscriptChanged(std::function<void()> handler) {
     onTranscriptChanged_ = std::move(handler);
+}
+
+void AcpManager::SetMcpBridgeServer(mcp::McpBridgeServer* server) {
+    mcpBridgeServer_ = server;
 }
 
 text::Buffer& AcpManager::OutputBuffer(const std::string& agentName) {
@@ -315,11 +337,30 @@ text::Buffer* AcpManager::StartSession(const std::string& agentName) {
                 state_ = SessionState::Inactive;
                 return;
             }
+            Json mcpServers = Json::array();
+            if (mcpBridgeServer_ && mcp::AcpMcpBridgeEnabled()) {
+                try {
+                    mcpBridgeServer_->Start(); // idempotent -- a no-op if already listening
+                    mcpServers.push_back(Json{
+                        {"type", "stdio"},
+                        {"name", "ned"},
+                        {"command", SelfExecutablePath().string()},
+                        {"args", Json::array({"--mcp-stdio-relay", mcpBridgeServer_->SocketPath().string()})},
+                        {"env", Json::array()},
+                    });
+                }
+                catch (const std::exception& e) {
+                    // A failed bridge start (runtime dir/socket trouble) shouldn't
+                    // block the session itself -- fall back to no MCP tools, same
+                    // as if no bridge were wired at all.
+                    AppendToOutputBuffer(std::string("\n[MCP bridge unavailable: ") + e.what() + "]\n");
+                }
+            }
             client_->SendRequest(
                 "session/new",
                 Json{
                     {"cwd", editor::ProjectRoot().string()},
-                    {"mcpServers", Json::array()},
+                    {"mcpServers", mcpServers},
                 },
                 [this](std::optional<Json> newResult, std::optional<Json> newError) {
                     if (newError || !newResult || !newResult->contains("sessionId")) {

@@ -765,6 +765,11 @@ add_library(ned_lib STATIC
         Source/Editor/Lsp/BrokerSocketPath.cpp
         Source/Editor/Lsp/LspBrokerMain.cpp
         Source/Editor/Lsp/LspBrokerConnect.cpp
+        Source/Editor/Mcp/McpSocketPath.cpp
+        Source/Editor/Mcp/McpTransport.cpp
+        Source/Editor/Mcp/McpToolRegistry.cpp
+        Source/Editor/Mcp/McpBridgeServer.cpp
+        Source/Editor/Mcp/McpBridgeSetting.cpp
         Source/Editor/Tasks/TaskConfig.cpp
         Source/Editor/Tasks/TaskProcess.cpp
         Source/Editor/Tasks/TaskRunner.cpp
@@ -1147,6 +1152,9 @@ if (NED_BUILD_TESTS)
             Tests/ExpandableTreeTest.cpp
             Tests/LspBrokerTest.cpp
             Tests/LspBrokerConnectTest.cpp
+            Tests/McpTransportTest.cpp
+            Tests/McpToolRegistryTest.cpp
+            Tests/McpBridgeServerTest.cpp
             Tests/DapConfigTest.cpp
             Tests/DapClientTest.cpp
             Tests/DapManagerTest.cpp
