@@ -68,6 +68,14 @@ Theme ThemeFromPalette(std::string name, const ThemePalette& p) {
         .isearchMatchBackground        = p.searchMatchBackground,
         .snippetFieldBackground        = p.selectionBackground,
         .documentHighlightBackground   = p.selectionBackground,
+        // Merge Conflict Resolution Mode: same mostly-background-wash
+        // technique diffAdded/diffRemoved/trailingWhitespace use below --
+        // green for "mine" (echoing diffAddedBackground's own role), blue
+        // for "incoming", and a neutral subtleForeground wash for the
+        // diff3-only base section.
+        .conflictOursBackground        = Color::Interpolate(0.82F, p.green, p.background),
+        .conflictTheirsBackground      = Color::Interpolate(0.82F, p.blue, p.background),
+        .conflictBaseBackground        = Color::Interpolate(0.82F, p.subtleForeground, p.background),
         .tabBar                        = Brush{.background = p.chromeBackground, .foreground = dimChromeForeground},
         .activeTab                     = Brush{.background = p.chromeBackgroundEmphasis, .foreground = p.chromeForeground, .bold = true},
         .scrollBar                     = Brush{.foreground = p.subtleForeground},

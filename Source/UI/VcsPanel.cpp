@@ -868,6 +868,11 @@ void VcsPanel::OpenFileEntry(const std::filesystem::path& path) {
             }
             if (pos != std::string::npos) {
                 opened.SetPoint(pos);
+                // Merge Conflict Resolution Mode: a nudge toward the new
+                // chords, not a y/n prompt -- there's no mode to "enter"
+                // (resolution is just ordinary commands over ordinary
+                // buffer text), so nothing needs confirming.
+                statusMessage_ = "merge conflict -- C-c x n/p to navigate, o/t/b/d/k to resolve";
             }
         }
     }

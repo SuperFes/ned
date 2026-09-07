@@ -161,6 +161,13 @@ struct Theme {
     // line -- same keep-the-glyph-foreground overlay contract as the four
     // above.
     Color lineInspectBackground;
+    // Merge Conflict Resolution Mode: the ours/theirs/(diff3) base content
+    // spans of an unresolved conflict hunk -- same keep-the-glyph-foreground
+    // overlay contract as the four above. conflictBaseBackground is used
+    // only for a diff3-style hunk's "|||||||" section; most hunks have none.
+    Color conflictOursBackground;
+    Color conflictTheirsBackground;
+    Color conflictBaseBackground;
 
     // Tab bar (tab-bar follow-up): tabBar is the brush for inactive tabs and
     // the row's own fill; activeTab is the visually distinct brush for
