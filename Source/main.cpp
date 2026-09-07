@@ -16,6 +16,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <thread>
 #include <tuple>
 #include <vector>
 
@@ -43,6 +44,8 @@
 #include "Editor/Lsp/LspBrokerMain.h"
 #include "Editor/Lsp/LspManager.h"
 #include "Editor/Lsp/Transport.h"
+#include "Editor/Mcp/McpBridgeServer.h"
+#include "Editor/Mcp/McpToolRegistry.h"
 #include "Editor/MinimapSettings.h"
 #include "Editor/Mode.h"
 #include "Editor/ModeOverrides.h"
@@ -192,6 +195,83 @@ int RunLspBrokerStop() {
         std::cerr << "ned: lsp-broker-stop: " << e.what() << '\n';
         return 1;
     }
+    return 0;
+}
+
+// `ned --mcp-stdio-relay <socket-path>`: the ACP MCP tool-server bridge's
+// relay subprocess (Editor/Mcp/McpBridgeServer.h) -- the "command" the live
+// `ned` process hands the ACP agent as its configured stdio MCP server (see
+// AcpManager::StartSession's mcpServers payload). This process is not the
+// live editor; it has no access to any buffer/manager. It's a dumb byte
+// pump: connect to the given Unix socket (the live `ned` process listening
+// on it), then relay stdin -> socket and socket -> stdout until either side
+// hits EOF -- no JSON parsing at this layer at all, mirroring PtyProcess's
+// own raw ::read-loop precedent for "just move bytes." Same early-return
+// placement as RunLspBrokerStop/RunDetectTheme -- no EventLoop/Notcurses
+// needed.
+int RunMcpStdioRelay(const std::string& socketPathStr) {
+    const int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) {
+        std::cerr << "ned: mcp-stdio-relay: socket() failed: " << std::strerror(errno) << '\n';
+        return 1;
+    }
+
+    sockaddr_un addr{};
+    addr.sun_family = AF_UNIX;
+    if (socketPathStr.size() >= sizeof(addr.sun_path)) {
+        std::cerr << "ned: mcp-stdio-relay: socket path too long: " << socketPathStr << '\n';
+        ::close(fd);
+        return 1;
+    }
+    std::strncpy(addr.sun_path, socketPathStr.c_str(), sizeof(addr.sun_path) - 1);
+
+    if (::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
+        std::cerr << "ned: mcp-stdio-relay: connect() failed: " << std::strerror(errno) << '\n';
+        ::close(fd);
+        return 1;
+    }
+
+    // Two threads, one per direction -- a single thread can't select()
+    // between "data on stdin" and "data on the socket" without extra
+    // plumbing, and this process does nothing else, so two blocking pump
+    // loops are simpler than one poll() loop for no real cost.
+    std::jthread stdinToSocket([fd] {
+        char buffer[4096];
+        while (true) {
+            const ssize_t n = ::read(STDIN_FILENO, buffer, sizeof(buffer));
+            if (n <= 0) {
+                break;
+            }
+            ssize_t written = 0;
+            while (written < n) {
+                const ssize_t result = ::write(fd, buffer + written, static_cast<std::size_t>(n - written));
+                if (result <= 0) {
+                    return;
+                }
+                written += result;
+            }
+        }
+        ::shutdown(fd, SHUT_WR);
+    });
+
+    char buffer[4096];
+    while (true) {
+        const ssize_t n = ::read(fd, buffer, sizeof(buffer));
+        if (n <= 0) {
+            break;
+        }
+        ssize_t written = 0;
+        while (written < n) {
+            const ssize_t result = ::write(STDOUT_FILENO, buffer + written, static_cast<std::size_t>(n - written));
+            if (result <= 0) {
+                break;
+            }
+            written += result;
+        }
+    }
+    ::shutdown(fd, SHUT_RD);
+    stdinToSocket.join();
+    ::close(fd);
     return 0;
 }
 
@@ -1099,6 +1179,15 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
     // windowManager, connect after construction" convention.
     ned::editor::acp::AcpManager acpManager(bufferList, eventLoop);
     windowManager->SetAcpManager(&acpManager);
+
+    // ACP MCP tool-server bridge, slice 1: registry construction is cheap
+    // (just builds the name->schema->handler table), so it's always built;
+    // the bridge socket itself is only ever actually opened lazily, from
+    // AcpManager::StartSession, and only when ned/set-acp-mcp-bridge (see
+    // Editor/Mcp/McpBridgeSetting.h, default on) allows it.
+    ned::editor::mcp::ToolRegistry     mcpToolRegistry(bufferList, lspManager, vcsRunner, testRunner);
+    ned::editor::mcp::McpBridgeServer  mcpBridgeServer(mcpToolRegistry, eventLoop);
+    acpManager.SetMcpBridgeServer(&mcpBridgeServer);
 
     // BufferView's completion-debounce/status-message-idle-timeout
     // DeadlineTimers and ScrollArrowButton's press-and-hold repeat both need
@@ -2645,6 +2734,7 @@ auto main(int argc, char** argv) -> int {
     bool                     lspBrokerStop = false;
     bool                     forceBinary   = false;
     bool                     noRestore     = false;
+    std::string              mcpStdioRelaySocketPath;
     std::vector<std::string> paths;
 
     CLI::Option* detectThemeOpt = app.add_flag(
@@ -2660,6 +2750,11 @@ auto main(int argc, char** argv) -> int {
             ->excludes(detectThemeOpt)
             ->group("Startup modes");
     app.add_flag("--lsp-broker-stop", lspBrokerStop, "Stop a running LSP broker daemon and exit")
+        ->excludes(detectThemeOpt)
+        ->excludes(lspBrokerOpt)
+        ->group("Startup modes");
+    app.add_option("--mcp-stdio-relay", mcpStdioRelaySocketPath,
+                   "Relay stdio to a running ned process's ACP MCP bridge socket, then exit (spawned by an ACP agent, not meant to be run by hand)")
         ->excludes(detectThemeOpt)
         ->excludes(lspBrokerOpt)
         ->group("Startup modes");
@@ -2694,6 +2789,10 @@ auto main(int argc, char** argv) -> int {
 
     if (lspBrokerStop) {
         return RunLspBrokerStop();
+    }
+
+    if (!mcpStdioRelaySocketPath.empty()) {
+        return RunMcpStdioRelay(mcpStdioRelaySocketPath);
     }
 
     const int exitCode = RunInteractiveEditor(forceBinary, noRestore, paths);
