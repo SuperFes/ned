@@ -288,8 +288,15 @@ void LeftDock::Paint(Canvas c) {
         return;
     }
 
-    Canvas       contentCanvas = c.ForBox(ContentBox());
-    const Brush& frameBrush    = resizing_ ? theme_.borderAccent : theme_.border;
+    // click-to-focus follow-up: the whole frame takes the accent brush
+    // while the active panel's own content widget holds keyboard focus --
+    // ProjectSidebar/VcsPanel's own former "the whole frame lights up while
+    // focused" signal, now driven from here since neither owns a frame of
+    // its own anymore (their own header row's accent tint, driven by the
+    // same Focused() check, is the other half of that signal).
+    Canvas       contentCanvas  = c.ForBox(ContentBox());
+    const bool   contentFocused = activeEntry->content != nullptr && activeEntry->content->Focused();
+    const Brush& frameBrush     = (resizing_ || contentFocused) ? theme_.borderAccent : theme_.border;
     DrawBorder(contentCanvas, frameBrush);
     DrawBorderTitle(contentCanvas, activeEntry->name, theme_.borderAccent);
 

@@ -134,6 +134,22 @@ TEST_CASE("LeftDock paints the rail plus only the active panel's content", "[Lef
     REQUIRE(f.RowText(0).find("VCS") != std::string::npos);
 }
 
+TEST_CASE("The content frame takes the accent brush while the active panel's content is focused", "[LeftDock]") {
+    // click-to-focus follow-up: ProjectSidebar/VcsPanel no longer own a
+    // frame to light up themselves -- LeftDock does this on their behalf,
+    // driven by the same Focused() check their own header row uses.
+    Fixture f;
+    f.dock.AddPanel(U'F', "Files", f.files);
+    f.Paint();
+
+    // Content region's top-left corner, at local column kRailWidth (3).
+    REQUIRE(f.screen.PixelAt(3, 0).foreground_color == f.theme.border.foreground);
+
+    f.files.TakeFocus();
+    f.Paint();
+    REQUIRE(f.screen.PixelAt(3, 0).foreground_color == f.theme.borderAccent.foreground);
+}
+
 TEST_CASE("LeftDock::CommitSwitchTo repositions the newly active content and fires the commit callback", "[LeftDock]") {
     Fixture f;
     f.dock.AddPanel(U'F', "Files", f.files);
