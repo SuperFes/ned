@@ -22,7 +22,12 @@ namespace {
         return milliseconds;
     }
 
-    int& ProtocolStallTimeoutMsStorage() {
+    int& ProtocolReadStallTimeoutMsStorage() {
+        static int milliseconds = 30000;
+        return milliseconds;
+    }
+
+    int& ProtocolWriteStallTimeoutMsStorage() {
         static int milliseconds = 30000;
         return milliseconds;
     }
@@ -54,14 +59,24 @@ std::chrono::milliseconds SubprocessWriteTimeoutMs() {
     return std::chrono::milliseconds(SubprocessWriteTimeoutMsStorage());
 }
 
-void SetProtocolStallTimeoutMs(int milliseconds) {
+void SetProtocolReadStallTimeoutMs(int milliseconds) {
     const std::lock_guard<std::mutex> lock(TimeoutsMutex());
-    ProtocolStallTimeoutMsStorage() = std::max(1, milliseconds);
+    ProtocolReadStallTimeoutMsStorage() = std::max(1, milliseconds);
 }
 
-std::chrono::milliseconds ProtocolStallTimeoutMs() {
+std::chrono::milliseconds ProtocolReadStallTimeoutMs() {
     const std::lock_guard<std::mutex> lock(TimeoutsMutex());
-    return std::chrono::milliseconds(ProtocolStallTimeoutMsStorage());
+    return std::chrono::milliseconds(ProtocolReadStallTimeoutMsStorage());
+}
+
+void SetProtocolWriteStallTimeoutMs(int milliseconds) {
+    const std::lock_guard<std::mutex> lock(TimeoutsMutex());
+    ProtocolWriteStallTimeoutMsStorage() = std::max(1, milliseconds);
+}
+
+std::chrono::milliseconds ProtocolWriteStallTimeoutMs() {
+    const std::lock_guard<std::mutex> lock(TimeoutsMutex());
+    return std::chrono::milliseconds(ProtocolWriteStallTimeoutMsStorage());
 }
 
 void SetProtocolRequestTimeoutMs(int milliseconds) {

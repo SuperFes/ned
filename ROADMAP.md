@@ -125,13 +125,14 @@ language, so leaning on one was never going to be the shortcut it looks like.
       callback idiom this would need to adopt, so this is a restructuring, not a new
       architecture.
 
-- [ ] **LSP write/read protocol-stall timeout split** (`Transport.h`'s
-      `ProtocolStallTimeoutMs()`, currently one 30s value shared by both directions) — a
-      stalled *write* no longer blocks the main thread at all now that writes go through
-      an async queue (`git log --grep=async-write-queue`), but splitting read vs. write
-      timeouts would still be reasonable defense-in-depth: a healthy server should never
-      take long just to *accept* a notification, even if a slow read (a large
-      workspace-wide rename) legitimately needs more tolerance.
+LSP write/read protocol-stall timeout split is shipped — see
+`git log --grep=protocol-stall-timeout-split`. `ProcessTimeouts.h`'s single
+`ProtocolStallTimeoutMs()` became `ProtocolReadStallTimeoutMs()`/
+`ProtocolWriteStallTimeoutMs()` (both default 30000ms, unchanged), threaded through
+`Lsp::Transport`/`Acp::Transport`/`Mcp::Transport`'s `Read*`/`Write*` default parameters
+and `LspBrokerMain.cpp`'s shutdown-ETA log; `ned/set-protocol-stall-timeout-ms` became
+two Janet bindings, `ned/set-protocol-read-stall-timeout-ms` and
+`ned/set-protocol-write-stall-timeout-ms`.
 
 - [ ] Whether Markdown fenced code blocks / Org `#+BEGIN_SRC` blocks should get the same
       real-LSP-sync treatment HTML `<script>`/`<style>` embedded documents already have

@@ -20,11 +20,17 @@
 //    reproduced full-editor lockup: a wedged LSP server left a queued
 //    full-document textDocument/didChange write with nothing on the other
 //    end to drain it). Default 5000ms.
-//  - ProtocolStallTimeoutMs: how long silence *after* an LSP/DAP/ACP
-//    frame/message has started arriving is tolerated before the connection
-//    is treated as stalled and disconnected -- idle time *between* messages
-//    stays unbounded regardless of this setting (that's the normal case).
-//    Default 30000ms.
+//  - ProtocolReadStallTimeoutMs/ProtocolWriteStallTimeoutMs
+//    (protocol-stall-timeout-split follow-up): how long silence *after* an
+//    LSP/DAP/ACP frame/message has started arriving (read) or after a write
+//    to a server's stdin stops draining (write) is tolerated before the
+//    connection is treated as stalled and disconnected -- idle time
+//    *between* messages stays unbounded regardless of either setting (that's
+//    the normal case). Originally one shared ProtocolStallTimeoutMs value;
+//    split so a legitimately slow read (a large workspace-wide rename) can be
+//    given more tolerance than a write, which a healthy server should never
+//    take long just to accept. Both default 30000ms, matching the original
+//    shared value byte-for-byte until deliberately retuned.
 //  - ProtocolRequestTimeoutMs: how long a sent LSP/DAP/ACP request is kept
 //    pending before ExpireStaleRequests resolves it with a synthetic
 //    timeout failure. Default 30000ms.
@@ -52,8 +58,11 @@ void SetSubprocessReadTimeoutMs(int milliseconds);
 void SetSubprocessWriteTimeoutMs(int milliseconds);
 [[nodiscard]] std::chrono::milliseconds SubprocessWriteTimeoutMs(); // default 5000ms
 
-void SetProtocolStallTimeoutMs(int milliseconds);
-[[nodiscard]] std::chrono::milliseconds ProtocolStallTimeoutMs(); // default 30000ms
+void SetProtocolReadStallTimeoutMs(int milliseconds);
+[[nodiscard]] std::chrono::milliseconds ProtocolReadStallTimeoutMs(); // default 30000ms
+
+void SetProtocolWriteStallTimeoutMs(int milliseconds);
+[[nodiscard]] std::chrono::milliseconds ProtocolWriteStallTimeoutMs(); // default 30000ms
 
 void SetProtocolRequestTimeoutMs(int milliseconds);
 [[nodiscard]] std::chrono::milliseconds ProtocolRequestTimeoutMs(); // default 30000ms

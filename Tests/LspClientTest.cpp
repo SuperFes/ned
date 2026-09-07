@@ -16,7 +16,7 @@
 #include "Editor/ProcessTimeouts.h"
 #include "UI/EventLoop.h"
 
-using ned::editor::SetProtocolStallTimeoutMs;
+using ned::editor::SetProtocolWriteStallTimeoutMs;
 using ned::editor::lsp::Json;
 using ned::editor::lsp::LspClient;
 using ned::editor::lsp::Transport;
@@ -187,13 +187,13 @@ std::vector<Json> ReadQueuedFrames(int fd, std::size_t count) {
     return frames;
 }
 
-// async-write-queue follow-up: ProtocolStallTimeoutMs() is process-wide
+// async-write-queue follow-up: ProtocolWriteStallTimeoutMs() is process-wide
 // state (see ProcessTimeouts.h's own doc comment) -- any test that shortens
 // it to keep a stalled-pipe test fast must restore the default afterward,
 // mirroring ProcessTimeoutsTest.cpp's own ProcessTimeoutsGuard shape.
 struct ProtocolStallTimeoutGuard {
     ~ProtocolStallTimeoutGuard() {
-        SetProtocolStallTimeoutMs(30000);
+        SetProtocolWriteStallTimeoutMs(30000);
     }
 };
 
@@ -560,7 +560,7 @@ TEST_CASE("Once the gate is open, further calls write immediately with no more q
 
 TEST_CASE("SendNotification returns immediately even while the underlying pipe is stalled", "[Lsp]") {
     const ProtocolStallTimeoutGuard guard;
-    SetProtocolStallTimeoutMs(60000); // deliberately long -- proves the *caller* never waits on it, not that it's short
+    SetProtocolWriteStallTimeoutMs(60000); // deliberately long -- proves the *caller* never waits on it, not that it's short
 
     ClientFixture fixture = ClientFixture::Create();
 
@@ -584,7 +584,7 @@ TEST_CASE("SendNotification returns immediately even while the underlying pipe i
 
 TEST_CASE("Frames enqueued while a write is stalled still arrive, in order, once drained", "[Lsp]") {
     const ProtocolStallTimeoutGuard guard;
-    SetProtocolStallTimeoutMs(60000);
+    SetProtocolWriteStallTimeoutMs(60000);
 
     ClientFixture fixture = ClientFixture::Create();
 

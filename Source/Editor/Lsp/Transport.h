@@ -36,12 +36,18 @@ namespace ned::editor::lsp {
 // against a real, working server, only a genuinely stuck one.
 //
 // ChildProcess-hang-protection-round-2 follow-up: the real, no-argument call
-// site now reads ProcessTimeouts.h's Janet-configurable
-// ProtocolStallTimeoutMs() (default 30000ms, same value the old
-// kFrameStallTimeout constant this replaced always had) instead of a fixed
-// compile-time constant -- ReadFrame's test-only override parameter below
-// still lets a test pass its own short value directly, bypassing this
-// default entirely.
+// sites now read ProcessTimeouts.h's Janet-configurable
+// ProtocolReadStallTimeoutMs()/ProtocolWriteStallTimeoutMs() (default
+// 30000ms each, same value the old kFrameStallTimeout constant this replaced
+// always had) instead of a fixed compile-time constant -- ReadFrame/
+// WriteFrame's test-only override parameter below still lets a test pass its
+// own short value directly, bypassing this default entirely.
+//
+// protocol-stall-timeout-split follow-up: originally one shared
+// ProtocolStallTimeoutMs() value bounded both directions; split so a
+// legitimately slow read (a large workspace-wide rename) can be given more
+// tolerance than a write, which a healthy server should never take long
+// just to accept.
 
 class Transport {
   public:
@@ -81,7 +87,7 @@ class Transport {
     // (write-side-hang-protection follow-up) if the child stops draining its
     // stdin for longer than stallTimeout -- same rationale/default as
     // ReadFrame's own stallTimeout parameter below.
-    void WriteFrame(std::string_view jsonPayload, std::chrono::milliseconds stallTimeout = ProtocolStallTimeoutMs()) const;
+    void WriteFrame(std::string_view jsonPayload, std::chrono::milliseconds stallTimeout = ProtocolWriteStallTimeoutMs()) const;
 
     // Blocks until one full LSP frame has been read from the child's
     // stdout. Returns std::nullopt on EOF (the server exited) rather than
@@ -91,8 +97,8 @@ class Transport {
     // (subprocess-hang-protection follow-up) if it stalls mid-frame for
     // longer than stallTimeout -- a parameter, not a hardcoded sleep, purely
     // so tests can shorten it; real callers always take the
-    // ProtocolStallTimeoutMs() default (see this file's own header comment).
-    [[nodiscard]] std::optional<std::string> ReadFrame(std::chrono::milliseconds stallTimeout = ProtocolStallTimeoutMs()) const;
+    // ProtocolReadStallTimeoutMs() default (see this file's own header comment).
+    [[nodiscard]] std::optional<std::string> ReadFrame(std::chrono::milliseconds stallTimeout = ProtocolReadStallTimeoutMs()) const;
 
     [[nodiscard]] pid_t Pid() const noexcept;
 

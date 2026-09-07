@@ -65,7 +65,7 @@ class Transport {
     // write failure (e.g. the peer already closed its end -- EPIPE) or
     // (write-side-hang-protection precedent, see Lsp/Acp Transport) if the
     // peer stops draining for longer than stallTimeout.
-    void WriteMessage(std::string_view jsonPayload, std::chrono::milliseconds stallTimeout = ProtocolStallTimeoutMs()) const;
+    void WriteMessage(std::string_view jsonPayload, std::chrono::milliseconds stallTimeout = ProtocolWriteStallTimeoutMs()) const;
 
     // Blocks until one full line has been read, returning it with the
     // trailing newline stripped. Returns std::nullopt on EOF (the peer
@@ -73,7 +73,7 @@ class Transport {
     // blank line is returned as an empty string, not treated as EOF. Throws
     // std::runtime_error if a message stalls mid-line for longer than
     // stallTimeout.
-    [[nodiscard]] std::optional<std::string> ReadMessage(std::chrono::milliseconds stallTimeout = ProtocolStallTimeoutMs()) const;
+    [[nodiscard]] std::optional<std::string> ReadMessage(std::chrono::milliseconds stallTimeout = ProtocolReadStallTimeoutMs()) const;
 
     [[nodiscard]] pid_t Pid() const noexcept;
 

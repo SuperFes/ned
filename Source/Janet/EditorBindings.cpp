@@ -254,8 +254,12 @@ namespace {
         editor::SetSubprocessWriteTimeoutMs(static_cast<int>(milliseconds));
     }
 
-    void NedSetProtocolStallTimeoutMs(std::int64_t milliseconds) {
-        editor::SetProtocolStallTimeoutMs(static_cast<int>(milliseconds));
+    void NedSetProtocolReadStallTimeoutMs(std::int64_t milliseconds) {
+        editor::SetProtocolReadStallTimeoutMs(static_cast<int>(milliseconds));
+    }
+
+    void NedSetProtocolWriteStallTimeoutMs(std::int64_t milliseconds) {
+        editor::SetProtocolWriteStallTimeoutMs(static_cast<int>(milliseconds));
     }
 
     void NedSetProtocolRequestTimeoutMs(std::int64_t milliseconds) {
@@ -1137,11 +1141,18 @@ void InstallEditorBindings(Environment& env) {
         "Set how long, in milliseconds, a blocking write to a subprocess's stdin (system-clipboard copy, an "
         "LSP/ACP frame, a terminal keystroke) waits for the child to keep draining before giving up (default 5000; "
         "non-positive values are clamped to 1).");
-    env.Register<&NedSetProtocolStallTimeoutMs>(
-        "ned", "set-protocol-stall-timeout-ms",
+    env.Register<&NedSetProtocolReadStallTimeoutMs>(
+        "ned", "set-protocol-read-stall-timeout-ms",
         "Set how long, in milliseconds, silence after an LSP/DAP/ACP frame or message has started arriving is "
         "tolerated before the connection is treated as stalled and disconnected -- idle time between messages "
-        "stays unbounded regardless (default 30000; non-positive values are clamped to 1).");
+        "stays unbounded regardless (default 30000; non-positive values are clamped to 1). See also "
+        "set-protocol-write-stall-timeout-ms for the write-side twin.");
+    env.Register<&NedSetProtocolWriteStallTimeoutMs>(
+        "ned", "set-protocol-write-stall-timeout-ms",
+        "Set how long, in milliseconds, a write of an LSP/DAP/ACP frame or message to a server's stdin waits for "
+        "it to keep draining before the connection is treated as stalled and disconnected (default 30000; "
+        "non-positive values are clamped to 1). See also set-protocol-read-stall-timeout-ms for the read-side "
+        "twin.");
     env.Register<&NedSetProtocolRequestTimeoutMs>(
         "ned", "set-protocol-request-timeout-ms",
         "Set how long, in milliseconds, a sent LSP/DAP/ACP request is kept pending before it's resolved with a "
