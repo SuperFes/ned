@@ -10,9 +10,11 @@ using ned::editor::BashMode;
 using ned::editor::ClojureMode;
 using ned::editor::CMode;
 using ned::editor::CppMode;
+using ned::editor::CSharpMode;
 using ned::editor::CssMode;
 using ned::editor::DefaultAutoPairs;
 using ned::editor::FundamentalMode;
+using ned::editor::GoMode;
 using ned::editor::HighlightSpan;
 using ned::editor::HtmlMode;
 using ned::editor::JanetMode;
@@ -955,6 +957,49 @@ TEST_CASE("RustMode's symbolKind classifies a struct and one of an impl block's 
     const auto markers =
         mode.symbolKind("struct Widget {\n    value: i32,\n}\n\nimpl Widget {\n    fn get_value(&self) -> i32 { self.value }\n}\n");
     REQUIRE(KindsInOrder(markers) == std::vector{SymbolKind::TypeLike, SymbolKind::Callable});
+}
+
+TEST_CASE("GoMode's symbolKind classifies a struct type, an interface type, and a method", "[Mode]") {
+    using ned::editor::SymbolKind;
+    const auto mode = GoMode();
+    REQUIRE(static_cast<bool>(mode.symbolKind));
+
+    const auto markers = mode.symbolKind("type Widget struct {\n"
+                                         "    Value int\n"
+                                         "}\n"
+                                         "\n"
+                                         "type Sized interface {\n"
+                                         "    Size() int\n"
+                                         "}\n"
+                                         "\n"
+                                         "func (w *Widget) Size() int {\n"
+                                         "    return w.Value\n"
+                                         "}\n");
+    REQUIRE(KindsInOrder(markers) == std::vector{SymbolKind::TypeLike, SymbolKind::TypeLike, SymbolKind::Callable});
+}
+
+TEST_CASE("CSharpMode's symbolKind classifies a class, an interface, and each method -- including an interface's "
+          "own abstract, bodyless one",
+          "[Mode]") {
+    using ned::editor::SymbolKind;
+    const auto mode = CSharpMode();
+    REQUIRE(static_cast<bool>(mode.symbolKind));
+
+    // ISized's own "int Size();" is a real method_declaration too (an
+    // interface member, just with no body) -- tree-sitter-c-sharp's own
+    // tags.scm tags it exactly like a with-body one, so it shows up here as
+    // its own Callable marker alongside Widget's later implementation.
+    const auto markers = mode.symbolKind("interface ISized {\n"
+                                         "    int Size();\n"
+                                         "}\n"
+                                         "\n"
+                                         "class Widget : ISized {\n"
+                                         "    public int Size() {\n"
+                                         "        return 1;\n"
+                                         "    }\n"
+                                         "}\n");
+    REQUIRE(KindsInOrder(markers) == std::vector{SymbolKind::TypeLike, SymbolKind::Callable, SymbolKind::TypeLike,
+                                                 SymbolKind::Callable});
 }
 
 TEST_CASE("JavaScriptMode's symbolKind classifies a function declaration", "[Mode]") {
