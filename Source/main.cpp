@@ -1614,7 +1614,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::vector<std
         panel->SetTerminalSize(size);
         const int yMax = std::max(1, size.height - 2); // above the echo area row
         const int height =
-            panel->Maximized() ? yMax : std::max(4, size.height * panel->ActivePercent().value_or(30) / 100);
+            panel->Maximized() ? yMax : std::max(4, size.height * panel->Percent() / 100);
         return Box{.x_min = 0,
                    .x_max = std::max(0, size.width - 1 - MinimapOverlayReserve()),
                    .y_min = std::max(1, yMax - height + 1),

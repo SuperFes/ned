@@ -9,8 +9,26 @@ namespace ned::ui {
 
 namespace {
 
+    // tab-glyph-redesign follow-up: maximize/restore now actually toggles
+    // (a real bug -- the button used to always paint kMaximizeIcon even
+    // once already maximized, since nothing ever consulted Maximized()
+    // when choosing which glyph to draw).
     constexpr char32_t kMaximizeIcon = U'▲';
-    constexpr char32_t kCloseIcon    = U'×';
+    constexpr char32_t kRestoreIcon  = U'▼';
+
+    // The shared "hide the whole dock" button's own glyph -- deliberately
+    // NOT kCloseIcon below. A per-tab action (Terminal's own close-this-tab
+    // TabAction, main.cpp) already uses kCloseIcon for "close this one tab";
+    // reusing it here for "hide the entire dock" put the same × in two
+    // places doing two different things, a real reported confusion
+    // ("one of the x's for the terminal just closes the terminal and not
+    // the bottom tab bar, but it should not be the same glyph in both
+    // places"). ▾ reads as "collapse/tuck away" rather than "destroy."
+    constexpr char32_t kHideDockIcon = U'▾';
+
+    // A per-tab action's own close glyph (Terminal's "close this tab"
+    // TabAction) -- distinct from kHideDockIcon above.
+    constexpr char32_t kCloseIcon = U'×';
 
     // Multiple-terminal-tabs follow-up: TabBar's own overflow-indicator
     // glyphs, reused verbatim for the same "the wheel scrolls this row but
@@ -19,11 +37,23 @@ namespace {
     constexpr char32_t kMoreLeft  = U'‹';
     constexpr char32_t kMoreRight = U'›';
 
-    // Column width of one bracketed [x]/[▲]/action-icon button, including
-    // the one-space gap before it -- TerminalPanel's own button layout,
+    // tab-glyph-redesign follow-up: TabBar.cpp's own end-cap separator,
+    // reused verbatim -- a half-filled block whose foreground matches the
+    // tab's own background and whose background matches the strip's base
+    // background, giving each tab a soft rounded-looking right edge instead
+    // of a hard color cut. Replaces the bracket-based "[ Name ]" active-tab
+    // convention this file used to share with the button cluster below (the
+    // literal cause of the "same [ ] chars used for two different parts of
+    // the tabbed interface" complaint).
+    constexpr char32_t kTabEndCap = U'▌'; // LEFT HALF BLOCK
+
+    // Column width of one action/maximize/hide button, including the
+    // one-space gap before it -- TerminalPanel's own button layout,
     // generalized so this file lays out however many buttons a tab
-    // contributes without hardcoding per-button offsets.
-    constexpr int kButtonWidth = 4; // " [x]"
+    // contributes without hardcoding per-button offsets. No longer
+    // bracketed (tab-glyph-redesign follow-up) -- the 4 columns are now
+    // [gap][pad][icon][pad], not [gap]['[']icon[']'].
+    constexpr int kButtonWidth = 4; // " " + " x "
 
     // One codepoint per column, PaintUtf8Row's own convention -- used here
     // just to measure a tab label's painted width for hit-testing, since a
@@ -116,12 +146,22 @@ void PanelDock::RemovePanel(std::size_t id) {
     }
 }
 
-std::optional<int> PanelDock::ActivePercent() const {
-    const Entry* entry = FindEntry(active_);
-    if (entry == nullptr || !entry->getPercent) {
-        return std::nullopt;
+void PanelDock::EnsureSharedPercentInitialized() const {
+    if (sharedPercentInitialized_) {
+        return;
     }
-    return entry->getPercent();
+    for (const Entry& entry : entries_) {
+        if (entry.getPercent) {
+            sharedPercent_ = entry.getPercent();
+            break;
+        }
+    }
+    sharedPercentInitialized_ = true;
+}
+
+int PanelDock::Percent() const {
+    EnsureSharedPercentInitialized();
+    return sharedPercent_;
 }
 
 Widget* PanelDock::ActivePanel() const {
@@ -133,11 +173,16 @@ std::vector<PanelDock::TabLabelSpan> PanelDock::ComputeTabLabelLayout() const {
     std::vector<TabLabelSpan> layout;
     int                       col = 0; // content-space: column 0 is the strip's 1-column left margin
     for (const Entry& entry : entries_) {
+        // tab-glyph-redesign follow-up: same padded label text regardless
+        // of active/inactive (TabBar.cpp's own convention) -- which tab is
+        // active is now a color distinction (theme_.activeTab vs.
+        // theme_.tabBar in Paint), not a bracket the label text itself
+        // grows/shrinks by, so span width no longer needs to differ either.
         const std::string text  = entry.titleText ? entry.titleText() : entry.label;
-        const std::string label = (entry.id == active_) ? ("[ " + text + " ]") : (" " + text + " ");
-        const int         width = ColumnCount(label);
+        const std::string label = " " + text + " ";
+        const int         width = ColumnCount(label) + 1; // +1: the end-cap column, TabBar's own layout
         layout.push_back(TabLabelSpan{.id = entry.id, .startColumn = col, .endColumn = col + width});
-        col += width + 1; // +1: gap before the next tab
+        col += width; // no separate gap column -- the cap's own half-empty cell is the visual separation
     }
     return layout;
 }
@@ -185,16 +230,15 @@ void PanelDock::SwitchTo(std::size_t id) {
     if (changed) {
         RevealActiveTab();
     }
-    // A different tab can resolve a different ActivePercent() -- without
-    // this, the dock's own outer Box_ (only ever recomputed by OverlayHost
-    // on Show()/Reflow(), never per-event) would keep whichever height the
-    // *previously* active tab had until the next real terminal resize.
-    // Confirmed live over a real pty: switching from Terminal to Debug
-    // console left the dock at Terminal's own configured height instead of
-    // shrinking to Debug console's, until this fix.
-    if (changed && onLayoutChange_) {
-        onLayoutChange_();
-    }
+    // tab-height-unification follow-up: switching tabs no longer changes
+    // this dock's own height (Percent() is one value shared by every tab
+    // now, not read fresh per-tab), so there's nothing here for
+    // onLayoutChange_ to react to -- the outer Box_ stays exactly where it
+    // was across a switch. This used to call onLayoutChange_ on every
+    // switch specifically because a different tab could resolve a
+    // different ActivePercent(); that's the real, reported "grouped tabs,
+    // but the dock still jumps around" behavior this whole follow-up
+    // removes.
 }
 
 void PanelDock::SetOnLayoutChange(std::function<void()> onLayoutChange) {
@@ -258,12 +302,28 @@ void PanelDock::Paint(Canvas canvas) {
         if (entry == nullptr) {
             continue; // shouldn't happen -- layout is derived from entries_ itself
         }
+        // tab-glyph-redesign follow-up: TabBar.cpp's own colored-block tab
+        // convention -- which tab is active is a brush distinction, not a
+        // bracket in the text.
         const std::string text    = entry->titleText ? entry->titleText() : entry->label;
-        const std::string label   = (span.id == active_) ? ("[ " + text + " ]") : (" " + text + " ");
+        const std::string label     = " " + text + " ";
+        const Brush&      brush     = (span.id == active_) ? theme_.activeTab : theme_.tabBar;
         const int         screenX = 1 + span.startColumn - tabScrollOffset_;
-        const int         maxCols = buttonClusterStart - screenX;
+        const int         labelCols = span.endColumn - span.startColumn - 1; // -1: the end-cap column
+        const int         maxCols   = std::min(labelCols, buttonClusterStart - screenX);
         if (maxCols > 0) {
-            PaintUtf8Row(canvas, screenX, 0, label, frameBrush, maxCols);
+            PaintUtf8Row(canvas, screenX, 0, label, brush, maxCols);
+        }
+        // The end-cap column itself -- TabBar.cpp's own half-block
+        // separator, foreground matching this tab's own background so it
+        // reads as a soft rounded right edge rather than a hard color cut.
+        const int capX = screenX + labelCols;
+        if (capX >= 0 && capX < buttonClusterStart && capX < width) {
+            Cell& cell            = canvas[{.x = capX, .y = 0}];
+            cell                  = Cell{};
+            cell.character        = text::EncodeCodepointUtf8(kTabEndCap);
+            cell.foreground_color = brush.background;
+            cell.background_color = theme_.background;
         }
     }
 
@@ -292,15 +352,25 @@ void PanelDock::Paint(Canvas canvas) {
             rightButtons.emplace_back(action.icon, action.onClick);
         }
     }
-    rightButtons.emplace_back(kMaximizeIcon, nullptr);
-    rightButtons.emplace_back(kCloseIcon, nullptr);
+    // tab-glyph-redesign follow-up: maximize toggles between kMaximizeIcon/
+    // kRestoreIcon based on actual Maximized() state (previously always
+    // painted kMaximizeIcon regardless -- a real bug, never caught because
+    // nothing compared against Maximized() at paint time). The shared hide-
+    // dock button uses kHideDockIcon, not kCloseIcon -- see that constant's
+    // own comment on why it must differ from a per-tab close action.
+    rightButtons.emplace_back(maximized_ ? kRestoreIcon : kMaximizeIcon, nullptr);
+    rightButtons.emplace_back(kHideDockIcon, nullptr);
 
     const int totalButtonsWidth = static_cast<int>(rightButtons.size()) * kButtonWidth;
     if (width >= totalButtonsWidth) {
         int bx = width - totalButtonsWidth;
         for (const auto& [icon, unused] : rightButtons) {
             (void)unused;
-            const std::string glyphs[3] = {"[", text::EncodeCodepointUtf8(icon), "]"};
+            // No brackets (tab-glyph-redesign follow-up) -- just the icon,
+            // padded, so it doesn't share the `[ ]` convention the tab
+            // labels used to use for "active" (the literal "same chars used
+            // for two different parts of the interface" complaint).
+            const std::string glyphs[3] = {" ", text::EncodeCodepointUtf8(icon), " "};
             for (int i = 0; i < 3; ++i) {
                 Cell& cell     = canvas[{.x = bx + 1 + i, .y = 0}];
                 cell.character = glyphs[i];
@@ -371,15 +441,15 @@ bool PanelDock::HandleTabStripClick(int x) {
 void PanelDock::BeginResize(Point globalMouse) {
     resizing_           = true;
     resizeAnchorGlobal_ = globalMouse;
-    const Entry* entry  = FindEntry(active_);
-    resizeStartPercent_ = (entry != nullptr && entry->getPercent) ? entry->getPercent() : 0;
+    // tab-height-unification follow-up: anchors on the dock's own shared
+    // height, not whichever percent the active tab happens to own -- a drag
+    // started while, say, Debug console (no getPercent at all) is active
+    // must still anchor on the real current height, not 0.
+    EnsureSharedPercentInitialized();
+    resizeStartPercent_ = sharedPercent_;
 }
 
 void PanelDock::UpdateResize(Point globalMouse) {
-    const Entry* entry = FindEntry(active_);
-    if (entry == nullptr || !entry->setPercent) {
-        return;
-    }
     if (terminalSize_.height <= 0) {
         return; // SetTerminalSize never called yet -- see its own doc comment
     }
@@ -388,7 +458,24 @@ void PanelDock::UpdateResize(Point globalMouse) {
     // "anchor minus current" so a move in the growing direction is positive.
     const int deltaPixels  = resizeAnchorGlobal_.y - globalMouse.y;
     const int deltaPercent = deltaPixels * 100 / terminalSize_.height;
-    entry->setPercent(resizeStartPercent_ + deltaPercent);
+    const int newPercent   = resizeStartPercent_ + deltaPercent;
+
+    // tab-height-unification follow-up: the drag still writes through
+    // whichever (get, set)-percent pair the *active* tab registered, so
+    // every existing ned/set-*-percent binding keeps persisting exactly as
+    // before -- but the shared height applies from here on regardless of
+    // which tab is later switched to, not just this one. A tab with no
+    // setPercent at all (DebugConsole/Janet REPL) still resizes the dock
+    // live for this drag, just with nothing to persist.
+    const Entry* entry = FindEntry(active_);
+    if (entry != nullptr && entry->setPercent) {
+        entry->setPercent(newPercent);
+        sharedPercent_ = entry->getPercent ? entry->getPercent() : newPercent;
+    }
+    else {
+        sharedPercent_ = std::clamp(newPercent, 10, 90);
+    }
+    sharedPercentInitialized_ = true;
 }
 
 void PanelDock::EndResize() {
