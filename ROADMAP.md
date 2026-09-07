@@ -332,9 +332,8 @@ overflow indicators as part of the same work) are all shipped — see `git log
       `git log --grep=divider-double-click-collapse-gap`). The bigger idea that
       prompted this: `ProjectSidebar` already collapses to a 1-column border strip with
       a glyph hint — generalize that strip into an always-visible, VS Code-style
-      "activity bar" holding one glyph per togglable panel (files, VCS, terminal, ACP
-      chat, debug console), rather than collapse-to-a-strip being
-      `ProjectSidebar`/`VcsPanel`-only chrome.
+      "activity bar" holding one glyph per always-docked left panel (files, VCS),
+      rather than collapse-to-a-strip being `ProjectSidebar`/`VcsPanel`-only chrome.
 
       Concretely surfaced 2026-09-07 by a real bug: `ProjectSidebar` and `VcsPanel` are
       two fully independent `Widget`s docked in the same left slot, each owning its own
@@ -378,15 +377,19 @@ overflow indicators as part of the same work) are all shipped — see `git log
       state; (4) update `C-c p`/`C-c v p`'s meaning (dock-switch instead of two
       independent toggles) and this entry.
 
-      Open design question, still unresolved: whether the rail *replaces* `PanelDock`'s
-      own tab strip for the bottom-docked panels too, or stays left-side-only for the
-      `ProjectSidebar`/`VcsPanel` pair (the sketch above assumes left-side-only) —
-      deciding this up front matters so the rail doesn't become a third parallel "which
-      panel is where" bookkeeping system alongside `PanelDock` and `AcpPanel`'s own
-      right-dock mode. A genuinely medium-sized refactor either way (new widget +
-      retrofitting two established panels' call sites) — worth its own dedicated
-      session with real build/test checkpoints per step, not a single sitting. Not
-      started.
+      Design question resolved 2026-09-07: the rail stays left-side-only and does
+      *not* replace `PanelDock`'s own tab strip for the bottom-docked panels, nor
+      `AcpPanel`'s right-dock mode — `LeftDock` covers only the panels that are always
+      present in the layout (`ProjectSidebar`/`VcsPanel`), while `PanelDock` covers
+      panels that come and go (terminal, debug console, Janet REPL). Kept as three
+      distinct widgets rather than unified into one tab system, the same way `TabBar`
+      (buffer tabs, always present, top-docked) already stays separate from both —
+      "always available" vs. "toggled into existence" is a real difference in what's
+      being switched between, not just a placement difference, so collapsing them into
+      one mechanism would blur that rather than simplify anything. A genuinely
+      medium-sized refactor (new widget + retrofitting two established panels' call
+      sites) — worth its own dedicated session with real build/test checkpoints per
+      step, not a single sitting. Not started.
 - [ ] **`libned` as a real shared library** — `ned_lib` (static today) exists solely so
       `ned_tests` can link real editor code without pulling in `main()`; a static lib
       already does that job. Worth revisiting only if a second real consumer shows up
