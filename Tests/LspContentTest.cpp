@@ -37,6 +37,7 @@ using ned::editor::lsp::ExtractSingleCodeAction;
 using ned::editor::lsp::ExtractSingleCodeLens;
 using ned::editor::lsp::ExtractSymbols;
 using ned::editor::lsp::ExtractTextDocumentSyncKind;
+using ned::editor::lsp::ExtractWorkspaceFoldersSupport;
 using ned::editor::lsp::HierarchyCall;
 using ned::editor::lsp::HierarchyItem;
 using ned::editor::lsp::Json;
@@ -868,6 +869,44 @@ TEST_CASE("ExtractFileOperationFilters parses willRename and didRename globs", "
     REQUIRE(filters.has_value());
     REQUIRE(filters->willRenameGlobs == std::vector<std::string>{"**/*.ts"});
     REQUIRE(filters->didRenameGlobs == std::vector<std::string>{"**/*.ts", "**/*.tsx"});
+}
+
+TEST_CASE("ExtractWorkspaceFoldersSupport parses supported and changeNotifications", "[Lsp]") {
+    const Json result = {
+        {"capabilities", {{"workspace", {{"workspaceFolders", {{"supported", true}, {"changeNotifications", true}}}}}}},
+    };
+    const auto support = ExtractWorkspaceFoldersSupport(result);
+    REQUIRE(support.has_value());
+    REQUIRE(support->supported);
+    REQUIRE(support->changeNotifications);
+}
+
+TEST_CASE("ExtractWorkspaceFoldersSupport accepts a registration-id string for changeNotifications", "[Lsp]") {
+    // boolean | string per spec -- clangd sends a bool, rust-analyzer sends
+    // an id string; both mean "send me the notification."
+    const Json result = {
+        {"capabilities",
+         {{"workspace", {{"workspaceFolders", {{"supported", true}, {"changeNotifications", "workspace/didChangeWorkspaceFolders"}}}}}}},
+    };
+    const auto support = ExtractWorkspaceFoldersSupport(result);
+    REQUIRE(support.has_value());
+    REQUIRE(support->changeNotifications);
+}
+
+TEST_CASE("ExtractWorkspaceFoldersSupport reports supported-without-notifications distinctly", "[Lsp]") {
+    const Json result = {
+        {"capabilities", {{"workspace", {{"workspaceFolders", {{"supported", true}}}}}}},
+    };
+    const auto support = ExtractWorkspaceFoldersSupport(result);
+    REQUIRE(support.has_value());
+    REQUIRE(support->supported);
+    REQUIRE_FALSE(support->changeNotifications); // can't be handed a folder after the handshake
+}
+
+TEST_CASE("ExtractWorkspaceFoldersSupport returns nullopt when workspaceFolders is absent", "[Lsp]") {
+    REQUIRE_FALSE(ExtractWorkspaceFoldersSupport(Json{{"capabilities", Json::object()}}).has_value());
+    REQUIRE_FALSE(ExtractWorkspaceFoldersSupport(Json{{"capabilities", {{"workspace", Json::object()}}}}).has_value());
+    REQUIRE_FALSE(ExtractWorkspaceFoldersSupport(Json(nullptr)).has_value());
 }
 
 TEST_CASE("ExtractFileOperationFilters returns nullopt when fileOperations is absent", "[Lsp]") {

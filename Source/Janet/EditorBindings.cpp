@@ -831,6 +831,10 @@ namespace {
         editor::lsp::SetLspSemanticHighlightingEnabled(enabled);
     }
 
+    void NedSetLspWorkspaceFolders(bool enabled) {
+        editor::lsp::SetLspWorkspaceFoldersEnabled(enabled);
+    }
+
     // inlayHint follow-up: same "just forward to the process-wide setter"
     // shape as NedSetLspSemanticHighlighting above.
     void NedSetLspInlayHints(bool enabled) {
@@ -1583,6 +1587,14 @@ void InstallEditorBindings(Environment& env) {
         "Enable or disable server-informed syntax highlighting (textDocument/semanticTokens/full), layered on top "
         "of tree-sitter's own highlighting rather than replacing it (default true). A server with no "
         "semanticTokensProvider legend never sends a request regardless of this setting.");
+    env.Register<&NedSetLspWorkspaceFolders>(
+        "ned", "set-lsp-workspace-folders",
+        "Enable or disable letting a buffer whose LSP root differs from an already-running same-language server "
+        "join that server as an extra workspace folder instead of spawning its own process (default true) -- one "
+        "server for a whole monorepo rather than one per subpackage. A server that doesn't advertise "
+        "workspaceFolders support is never asked, and falls back to a separate process per root. Turn this off "
+        "when isolation matters more than footprint: joined roots share one process, so one crash takes them all "
+        "down together.");
     env.Register<&NedSetLspInlayHints>(
         "ned", "set-lsp-inlay-hints",
         "Enable or disable inline parameter-name/type hints (textDocument/inlayHint), rendered as dim virtual text "

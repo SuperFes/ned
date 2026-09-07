@@ -41,6 +41,9 @@ namespace {
     std::mutex g_semanticHighlightingMutex;
     bool       g_semanticHighlightingEnabled = true;
 
+    std::mutex g_workspaceFoldersMutex;
+    bool       g_workspaceFoldersEnabled = true;
+
     std::mutex g_inlayHintsMutex;
     bool       g_inlayHintsEnabled = true;
 
@@ -166,6 +169,16 @@ void SetLspSemanticHighlightingEnabled(bool enabled) {
 bool LspSemanticHighlightingEnabled() {
     const std::lock_guard<std::mutex> lock(g_semanticHighlightingMutex);
     return g_semanticHighlightingEnabled;
+}
+
+void SetLspWorkspaceFoldersEnabled(bool enabled) {
+    const std::lock_guard<std::mutex> lock(g_workspaceFoldersMutex);
+    g_workspaceFoldersEnabled = enabled;
+}
+
+bool LspWorkspaceFoldersEnabled() {
+    const std::lock_guard<std::mutex> lock(g_workspaceFoldersMutex);
+    return g_workspaceFoldersEnabled;
 }
 
 void SetLspInlayHintsEnabled(bool enabled) {

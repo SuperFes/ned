@@ -456,6 +456,33 @@ struct FileOperationFilters {
 // map at all).
 [[nodiscard]] std::optional<FileOperationFilters> ExtractFileOperationFilters(const Json& initializeResult);
 
+// lsp-workspace-folders follow-up. `capabilities.workspace.workspaceFolders`
+// from an `initialize` response -- whether this server can serve several
+// roots from one process, and whether it wants to be told about a new one
+// after the handshake.
+//
+// `changeNotifications` is deliberately part of the same struct rather than
+// inferred: per spec it's `boolean | string` (a string being a registration
+// id for dynamic unregistration, which this client never performs -- both
+// forms mean the same "yes, send me workspace/didChangeWorkspaceFolders"
+// here). A server advertising supported:true but changeNotifications
+// absent/false can serve the folders it was handed at initialize time and
+// no others, which is useless to LspManager -- a folder is only ever
+// discovered *after* that handshake, when a buffer under it is first
+// synced -- so that combination is treated as "can't join," not as a
+// partial capability worth modelling further.
+struct WorkspaceFoldersSupport {
+    bool supported           = false;
+    bool changeNotifications = false;
+
+    bool operator==(const WorkspaceFoldersSupport&) const = default;
+};
+
+// nullopt when the server didn't advertise workspaceFolders at all,
+// matching every sibling extractor's own "absent means unsupported"
+// convention.
+[[nodiscard]] std::optional<WorkspaceFoldersSupport> ExtractWorkspaceFoldersSupport(const Json& initializeResult);
+
 // pull-diagnostics follow-up. One entry from a textDocument/diagnostic
 // response's "items" array -- same range/severity/message shape
 // LspManager::HandlePublishDiagnostics already parses inline for the push
