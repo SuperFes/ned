@@ -2207,6 +2207,23 @@ class BufferView : public Widget {
     // active.
     void VisitResultUnderPoint();
 
+    // ACP context auto-attach follow-up: VisitResultUnderPoint's own final
+    // regex-match step (the "path:line:" convention every flat results
+    // buffer writes -- project-search/-replace/agenda, vcs-blame, and
+    // DiagnosticsLog/TestResultsBuffer's own *Messages*/*test results*
+    // lines), factored out so SendResultLineToAgent can reuse the exact
+    // same parse instead of duplicating the regex. Only the plain-regex
+    // case -- MultibufferIndexFor/"*vcs log*" buffers are handled by
+    // VisitResultUnderPoint's own earlier special-case branches, which
+    // never reach this helper (and have no natural "surrounding source
+    // excerpt" shape for SendResultLineToAgent to reuse anyway).
+    struct ResultLineLocation {
+        std::filesystem::path path;
+        std::size_t           lineNumber; // 1-indexed
+        std::string           fullLineText;
+    };
+    [[nodiscard]] std::optional<ResultLineLocation> ResultLineAtPoint() const;
+
     // vcs-blame-buffer/vcs-show-log's actual entry points (see
     // StartInteractiveSession's VcsBlameBuffer/VcsShowLog cases) -- resolve
     // the active buffer's path, kick off an async VcsRunner request, and on
@@ -2660,6 +2677,16 @@ class BufferView : public Widget {
     // on dapManager_/acpManager_ both being present and the DAP session being
     // Stopped -- this method assumes both are already true.
     void SendDebugStateToAgent();
+
+    // ACP context auto-attach follow-up: ask-agent-about-line's body,
+    // SendDebugStateToAgent's sibling. Requires activeBuffer_ to be
+    // "*Messages*"/"*test results*" and ResultLineAtPoint() to match --
+    // guarded by the caller (StartInteractiveSession) on acpManager_ being
+    // present and Active the same way SendDebugStateToAgent's own callers
+    // guard on dapManager_/acpManager_; this method itself re-checks the
+    // buffer/line preconditions since those are its own, not shared with
+    // any DAP case.
+    void SendResultLineToAgent();
 
     // DAP round 2: dap-remove-watch's body -- parses a "[watch:N]" trailing
     // marker off point's own "*debug*" buffer line (ExpandVariableAtPoint's

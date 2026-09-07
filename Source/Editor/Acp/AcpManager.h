@@ -149,12 +149,43 @@ class AcpManager {
     // returns.
     text::Buffer* StartSession(const std::string& agentName);
 
+    // ACP context auto-attach follow-up: one piece of referenced context
+    // (a buffer's full text, a selection) carried alongside a prompt's own
+    // typed text. `uri` is a "file://<path>" for a file-backed buffer or a
+    // synthetic "ned-buffer://<name>" for an unsaved one -- purely an
+    // identifier, not dereferenced by this class itself. `mimeType` empty
+    // means "omit the field" (most agents infer it from the extension in
+    // `uri` anyway). See SendPrompt's own doc comment for how this is
+    // actually put on the wire.
+    struct PromptAttachment {
+        std::string uri;
+        std::string name;
+        std::string mimeType;
+        std::string text;
+    };
+
     // Sends session/prompt for the active session. Returns a short,
     // immediate status string ("Sent." or an explanation of why not) for
     // the caller's own echo-area message; the actual reply streams into the
     // output buffer asynchronously via session/update, not through this
     // return value.
-    std::string SendPrompt(const std::string& text);
+    //
+    // ACP context auto-attach follow-up: `attachments` (default empty, so
+    // every pre-existing call site is unaffected) become real ACP
+    // ContentBlock::resource blocks -- {uri, text, mimeType} -- but only
+    // once the connected agent has actually declared
+    // agentCapabilities.promptCapabilities.embeddedContext in its own
+    // initialize response (agentSupportsEmbeddedContext_, captured in
+    // StartSession); an agent that hasn't is never sent a block type it
+    // didn't advertise support for. Sending one anyway would be a protocol
+    // violation, not just impolite -- ContentBlock::text and
+    // ContentBlock::resource_link are the only two variants a conforming
+    // agent MUST accept. Falling back to folding attachment content
+    // straight into the one text block keeps this correct for every agent
+    // regardless of what it declared, at the cost of losing the
+    // attachment's own distinct rendering (a file chip vs. inlined text) on
+    // an agent that can't do better.
+    std::string SendPrompt(const std::string& text, const std::vector<PromptAttachment>& attachments = {});
 
     // Best-effort session/close, then tears the session down regardless
     // (DapManager::StopSession's own "must not depend on the agent
@@ -350,6 +381,10 @@ class AcpManager {
     std::string                sessionId_;
     SessionState               state_          = SessionState::Inactive;
     bool                       promptInFlight_ = false;
+    // ACP context auto-attach follow-up: captured from the initialize
+    // response, reset at the top of every StartSession -- see
+    // PromptAttachment/SendPrompt's own doc comments.
+    bool agentSupportsEmbeddedContext_ = false;
 
     std::optional<PermissionPrompt> pendingPermissionPrompt_;
     RespondFn                       pendingPermissionRespond_;

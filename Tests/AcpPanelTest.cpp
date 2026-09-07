@@ -250,6 +250,79 @@ TEST_CASE("AcpPanel's Enter sends the typed prompt through AcpManager and clears
     REQUIRE(fixture.RowText(kHeight - 1) == "Prompt:");
 }
 
+// ACP context auto-attach follow-up.
+TEST_CASE("AcpPanel's @buffer mention attaches the current buffer's content and replaces the token in the sent text",
+          "[AcpPanel]") {
+    const ProjectRootGuard      rootGuard;
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_acp_buffer_mention_test";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    ned::editor::SetProjectRoot(dir);
+
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code");
+
+    ned::text::Buffer contextBuffer("scratch.cpp");
+    contextBuffer.InsertAtPoint("int main() {}\n");
+    ned::ui::ActiveBuffer activeBuffer(contextBuffer);
+    fixture.panel.SetActiveBufferProvider([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; });
+
+    for (char c : std::string("@buffer")) {
+        REQUIRE(fixture.panel.OnEvent(ned::ui::test::Character(c)));
+    }
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Return())); // accepts the mention into the composer
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Return())); // sends
+
+    const Json promptRequest = fixture.reader.Next();
+    REQUIRE(promptRequest["method"] == "session/prompt");
+    // No embeddedContext support declared (StartActiveSession's
+    // Json::object() initialize result) -- the attachment folds into the
+    // single text block.
+    REQUIRE(promptRequest["params"]["prompt"].size() == 1);
+    const std::string text = promptRequest["params"]["prompt"][0]["text"].get<std::string>();
+    REQUIRE(text.find("[attached: scratch.cpp]") != std::string::npos);
+    REQUIRE(text.find("int main() {}") != std::string::npos);
+
+    // The transcript shows the compact marker only, not the folded-in
+    // content -- PushTranscriptEntry already ran synchronously inside
+    // SendPrompt, no response dispatch needed to observe it.
+    const std::string outputText = fixture.manager.Transcript().back().text;
+    REQUIRE(outputText.find("[attached: scratch.cpp]") != std::string::npos);
+    REQUIRE(outputText.find("int main() {}") == std::string::npos);
+}
+
+TEST_CASE("AcpPanel's @selection mention attaches only the current selection, not the whole buffer", "[AcpPanel]") {
+    const ProjectRootGuard      rootGuard;
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_acp_selection_mention_test";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    ned::editor::SetProjectRoot(dir);
+
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code");
+
+    ned::text::Buffer contextBuffer("scratch.cpp");
+    contextBuffer.InsertAtPoint("line one\nline two\nline three\n");
+    contextBuffer.SetMark(9);   // start of "line two"
+    contextBuffer.SetPoint(17); // end of "line two", before its newline
+    ned::ui::ActiveBuffer activeBuffer(contextBuffer);
+    fixture.panel.SetActiveBufferProvider([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; });
+
+    for (char c : std::string("@selection")) {
+        REQUIRE(fixture.panel.OnEvent(ned::ui::test::Character(c)));
+    }
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Return()));
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Return()));
+
+    const Json        promptRequest = fixture.reader.Next();
+    const std::string text          = promptRequest["params"]["prompt"][0]["text"].get<std::string>();
+    REQUIRE(text.find("line two") != std::string::npos);
+    REQUIRE(text.find("line one") == std::string::npos);
+    REQUIRE(text.find("line three") == std::string::npos);
+}
+
 TEST_CASE("AcpPanel's Escape and its close (x) button both invoke the toggle callback", "[AcpPanel]") {
     Fixture fixture;
     int     toggles = 0;

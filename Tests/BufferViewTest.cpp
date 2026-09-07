@@ -42,6 +42,7 @@
 #include "Editor/Session.h"
 #include "Editor/SnippetRegistry.h"
 #include "Editor/TabWidth.h"
+#include "Editor/TestRun/TestResultsBuffer.h"
 #include "Editor/Variables.h"
 #include "Editor/Vcs/VcsProvider.h"
 #include "Editor/Vim/VimGlobalMarks.h"
@@ -3224,6 +3225,111 @@ TEST_CASE("dap-ask-agent sends the stopped session's stack and variables to the 
     // No *debug* buffer switch happened -- dap-ask-agent gathers the same
     // data dap-show-debug does but never calls BuildDebugBuffer.
     REQUIRE(fixture.bufferList.Find("*debug*") == nullptr);
+}
+
+// ACP context auto-attach follow-up.
+TEST_CASE("ask-agent-about-line sends the diagnostic line and a source excerpt to the active ACP agent, from *Messages*",
+          "[BufferView]") {
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_bufferview_test_ask_agent_about_line.cpp";
+    {
+        std::ofstream out(path);
+        for (int i = 1; i <= 20; ++i) {
+            out << "line " << i << "\n";
+        }
+    }
+
+    Fixture            fixture;
+    ned::text::Buffer& messages = fixture.bufferList.CreateBuffer(std::string(ned::editor::MessagesBufferName()));
+    messages.InsertAtPoint("some header\n" + path.string() + ":10: [ERROR] something broke\nmore text");
+    messages.SetReadOnly(true);
+    messages.SetPoint(messages.Text().find(path.string() + ":10:")); // point on the results-shaped line
+    fixture.activeBuffer.Set(messages);
+
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::acp::AcpManager acpManager(fixture.bufferList, eventLoop);
+    ned::editor::acp::AcpClient* acpClient = nullptr;
+    FakeAcpAgent                 acpAgent  = FakeAcpAgent::Create(acpManager, eventLoop, acpClient);
+    StartActiveAcpSession(acpManager, *acpClient, acpAgent, "test-agent");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetAcpManager(&acpManager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "ask-agent-about-line");
+    view.OnEvent(ned::ui::test::Return());
+
+    const auto promptRequest = acpAgent.NextRequest();
+    REQUIRE(promptRequest["method"] == "session/prompt");
+    // No embeddedContext support declared (StartActiveAcpSession's
+    // Json::object() initialize result) -- the excerpt attachment folds
+    // into the single text block.
+    const std::string promptText = promptRequest["params"]["prompt"][0]["text"].get<std::string>();
+    REQUIRE(promptText.find(path.string() + ":10: [ERROR] something broke") != std::string::npos);
+    REQUIRE(promptText.find("line 10") != std::string::npos); // surrounding-source excerpt
+    REQUIRE(fixture.statusMessage == "Sent.");
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("ask-agent-about-line also works from *test results*", "[BufferView]") {
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_bufferview_test_ask_agent_test_results.cpp";
+    {
+        std::ofstream out(path);
+        for (int i = 1; i <= 20; ++i) {
+            out << "line " << i << "\n";
+        }
+    }
+
+    Fixture            fixture;
+    ned::text::Buffer& results = fixture.bufferList.CreateBuffer(ned::editor::testrun::TestResultsBufferName());
+    results.InsertAtPoint("Failures:\n" + path.string() + ":5: [FAILED] MyTest -- assertion failed\n");
+    results.SetReadOnly(true);
+    results.SetPoint(results.Text().find(path.string() + ":5:"));
+    fixture.activeBuffer.Set(results);
+
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::acp::AcpManager acpManager(fixture.bufferList, eventLoop);
+    ned::editor::acp::AcpClient* acpClient = nullptr;
+    FakeAcpAgent                 acpAgent  = FakeAcpAgent::Create(acpManager, eventLoop, acpClient);
+    StartActiveAcpSession(acpManager, *acpClient, acpAgent, "test-agent");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetAcpManager(&acpManager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "ask-agent-about-line");
+    view.OnEvent(ned::ui::test::Return());
+
+    const auto        promptRequest = acpAgent.NextRequest();
+    const std::string promptText    = promptRequest["params"]["prompt"][0]["text"].get<std::string>();
+    REQUIRE(promptText.find("MyTest -- assertion failed") != std::string::npos);
+    REQUIRE(fixture.statusMessage == "Sent.");
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("ask-agent-about-line is a no-op outside *Messages*/*test results*", "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("/some/file.cpp:10: not a real results buffer");
+    fixture.buffer.SetPoint(0);
+
+    ned::ui::EventLoop           eventLoop;
+    ned::editor::acp::AcpManager acpManager(fixture.bufferList, eventLoop);
+    ned::editor::acp::AcpClient* acpClient = nullptr;
+    FakeAcpAgent                 acpAgent  = FakeAcpAgent::Create(acpManager, eventLoop, acpClient);
+    StartActiveAcpSession(acpManager, *acpClient, acpAgent, "test-agent");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetAcpManager(&acpManager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "ask-agent-about-line");
+    view.OnEvent(ned::ui::test::Return());
+
+    REQUIRE(fixture.statusMessage == "Not on a diagnostic/test-result line.");
 }
 
 TEST_CASE("dap-toggle-hex-format toggles a variable line's display format and back", "[BufferView]") {

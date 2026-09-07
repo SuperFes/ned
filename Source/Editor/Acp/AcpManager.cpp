@@ -318,8 +318,9 @@ text::Buffer* AcpManager::StartSession(const std::string& agentName) {
     }
     // else: a client injected via SetClientForTesting -- run the same handshake against it.
 
-    agentName_ = agentName;
-    state_     = SessionState::Starting;
+    agentName_                    = agentName;
+    state_                        = SessionState::Starting;
+    agentSupportsEmbeddedContext_ = false; // re-negotiated below; see PromptAttachment's doc comment
     WireClient(*client_);
 
     client_->SendRequest(
@@ -329,7 +330,6 @@ text::Buffer* AcpManager::StartSession(const std::string& agentName) {
             {"clientCapabilities", {{"fs", {{"readTextFile", true}, {"writeTextFile", true}}}}},
         },
         [this](std::optional<Json> result, std::optional<Json> error) {
-            (void)result;
             if (error) {
                 const std::string message = "ACP initialize failed: " + error->value("message", std::string("unknown error"));
                 AppendToOutputBuffer("\n" + message + "\n");
@@ -337,6 +337,15 @@ text::Buffer* AcpManager::StartSession(const std::string& agentName) {
                 state_ = SessionState::Inactive;
                 return;
             }
+            // ACP context auto-attach follow-up: whether this agent accepts
+            // ContentBlock::resource on a prompt -- see PromptAttachment's
+            // own doc comment. Defensive against every field being absent
+            // or the wrong shape (an agent that predates this capability
+            // simply omits agentCapabilities entirely).
+            const Json agentCaps          = (result && result->is_object()) ? result->value("agentCapabilities", Json::object()) : Json::object();
+            const Json promptCaps         = agentCaps.is_object() ? agentCaps.value("promptCapabilities", Json::object()) : Json::object();
+            agentSupportsEmbeddedContext_ = promptCaps.is_object() && promptCaps.value("embeddedContext", false);
+
             Json mcpServers = Json::array();
             if (mcpBridgeServer_ && mcp::AcpMcpBridgeEnabled()) {
                 try {
@@ -388,12 +397,30 @@ text::Buffer* AcpManager::StartSession(const std::string& agentName) {
     return &buffer;
 }
 
-std::string AcpManager::SendPrompt(const std::string& text) {
+std::string AcpManager::SendPrompt(const std::string& text, const std::vector<PromptAttachment>& attachments) {
     if (state_ != SessionState::Active) {
         return "No active ACP session (see acp-start-session).";
     }
-    AppendToOutputBuffer("\n> " + text + "\n");
-    PushTranscriptEntry(TranscriptEntry{.kind = TranscriptEntry::Kind::UserMessage, .text = text});
+    // ACP context auto-attach follow-up: the transcript/output buffer show
+    // a compact "[attached: name, ...]" marker rather than the attachment's
+    // own (potentially large) content -- same reasoning a real chat UI
+    // renders an attachment as a small chip, not inlined text, in its own
+    // message log. The wire request below carries the real content
+    // regardless of which path (resource block vs. folded-into-text) ends
+    // up using it.
+    std::string displayText = text;
+    if (!attachments.empty()) {
+        displayText += "\n\n[attached: ";
+        for (std::size_t i = 0; i < attachments.size(); ++i) {
+            if (i > 0) {
+                displayText += ", ";
+            }
+            displayText += attachments[i].name;
+        }
+        displayText += "]";
+    }
+    AppendToOutputBuffer("\n> " + displayText + "\n");
+    PushTranscriptEntry(TranscriptEntry{.kind = TranscriptEntry::Kind::UserMessage, .text = displayText});
     // ACP checkpoint/rewind follow-up: opens this turn's checkpoint,
     // finalized by FinalizePendingCheckpoint once its response arrives
     // (below) or the session ends mid-turn (EndSession). A single-line,
@@ -401,7 +428,7 @@ std::string AcpManager::SendPrompt(const std::string& text) {
     // keeps the real text verbatim, this is only for the rewind picker's
     // compact list.
     {
-        std::string preview = text;
+        std::string preview = displayText;
         std::replace(preview.begin(), preview.end(), '\n', ' ');
         constexpr std::size_t kMaxPreviewLength = 60;
         if (preview.size() > kMaxPreviewLength) {
@@ -420,11 +447,33 @@ std::string AcpManager::SendPrompt(const std::string& text) {
     // Reuses the same mode-line spinner registry LSP already drives.
     promptInFlight_ = true;
     editor::BeginBackgroundActivity(kAcpActivity);
+
+    // ACP context auto-attach follow-up: a real ContentBlock::resource per
+    // attachment when the connected agent declared support for it
+    // (agentSupportsEmbeddedContext_, see StartSession); otherwise folded
+    // straight into the one text block so an agent that never declared the
+    // capability still receives the content, just without its own distinct
+    // rendering -- see PromptAttachment/SendPrompt's own doc comments.
+    Json promptBlocks = Json::array({Json{{"type", "text"}, {"text", text}}});
+    for (const PromptAttachment& attachment : attachments) {
+        if (agentSupportsEmbeddedContext_) {
+            Json resource{{"uri", attachment.uri}, {"text", attachment.text}};
+            if (!attachment.mimeType.empty()) {
+                resource["mimeType"] = attachment.mimeType;
+            }
+            promptBlocks.push_back(Json{{"type", "resource"}, {"resource", resource}});
+        }
+        else {
+            promptBlocks[0]["text"] =
+                promptBlocks[0]["text"].get<std::string>() + "\n\n--- " + attachment.name + " ---\n" + attachment.text;
+        }
+    }
+
     client_->SendRequest(
         "session/prompt",
         Json{
             {"sessionId", sessionId_},
-            {"prompt", Json::array({Json{{"type", "text"}, {"text", text}}})},
+            {"prompt", promptBlocks},
         },
         [this](std::optional<Json> result, std::optional<Json> error) {
             promptInFlight_ = false;

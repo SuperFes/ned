@@ -568,12 +568,27 @@ enum class InteractiveRequest { None,
                                 // extracted into a shared helper) and sends them as one plain-text
                                 // prompt via AcpManager::SendPrompt, bypassing prompt_/InputMode
                                 // entirely (AcpStopSession's own "call straight into the manager"
-                                // shape) -- there's no resource-attachment mechanism to hook into
-                                // (SendPrompt takes only a flat string), so this is pre-formatted
-                                // text, not a structured attachment. Requires both a Stopped DAP
-                                // session and an Active ACP session; guarded in BufferView the same
-                                // "no debugger"/"no ACP manager" way every sibling request is.
+                                // shape). AcpManager::SendPrompt does have a resource-attachment
+                                // mechanism now (see ACP context auto-attach, PromptAttachment) --
+                                // not used here since debug state has no natural single-file
+                                // attachment target, just plain text as before. Requires both a
+                                // Stopped DAP session and an Active ACP session; guarded in
+                                // BufferView the same "no debugger"/"no ACP manager" way every
+                                // sibling request is.
                                 DapAskAgentAboutState,
+                                // ACP context auto-attach follow-up: one-shot direct action, same
+                                // "just forward" shape as DapAskAgentAboutState above -- parses
+                                // the current line of a "*Messages*"/"*test results*" buffer via
+                                // the same "path:line: message" convention
+                                // BufferView::ResultLineAtPoint (VisitResultUnderPoint's own
+                                // regex, factored out) already understands, reads a few lines of
+                                // surrounding source from the named file, and sends it all as one
+                                // prompt (message text) plus one PromptAttachment (the excerpt) to
+                                // the active ACP agent. Requires both point being on a genuinely
+                                // result-shaped line in one of those two buffers and an Active ACP
+                                // session; guarded in BufferView the same way every sibling
+                                // request is.
+                                AcpAskAgentAboutLine,
                                 // Debugging wishlist: show-massif-graph -- prompts for a raw
                                 // massif.out.<pid> file path (Editor/MassifOutputParser.h),
                                 // then renders a heap-usage-over-time sparkline (Editor/

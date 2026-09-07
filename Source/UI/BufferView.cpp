@@ -8613,6 +8613,14 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
                 SendDebugStateToAgent();
             }
             return;
+        case editor::InteractiveRequest::AcpAskAgentAboutLine:
+            if (!acpManager_ || acpManager_->State() != editor::acp::AcpManager::SessionState::Active) {
+                statusMessage_ = "No active ACP session (see acp-start-session).";
+            }
+            else {
+                SendResultLineToAgent();
+            }
+            return;
         case editor::InteractiveRequest::DapEvaluate:
             if (!dapManager_) {
                 statusMessage_ = "No debugger available.";
@@ -10716,29 +10724,41 @@ void BufferView::VisitResultUnderPoint() {
         return;
     }
 
+    if (const std::optional<ResultLineLocation> loc = ResultLineAtPoint()) {
+        JumpToPathLine(loc->path, loc->lineNumber);
+    }
+    // else: not a results-shaped line -- silent no-op, see this method's own header comment
+}
+
+std::optional<BufferView::ResultLineLocation> BufferView::ResultLineAtPoint() const {
+    const text::Buffer&       buffer    = activeBuffer_.Get();
     const text::ITextStorage& content   = buffer.Content();
-    const std::size_t point     = buffer.Point();
-    const std::size_t line      = content.ByteOffsetToLine(point);
-    const std::size_t lineStart = content.LineToByteOffset(line);
-    const std::size_t lineEnd =
+    const std::size_t         point     = buffer.Point();
+    const std::size_t         line      = content.ByteOffsetToLine(point);
+    const std::size_t         lineStart = content.LineToByteOffset(line);
+    const std::size_t         lineEnd =
         (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
     const std::string lineText = content.Substring(lineStart, lineEnd - lineStart);
 
     // Matches every flat "path:line:" results-buffer format written here --
     // project-search/project-replace/agenda's HandlePromptKey/BuildResultsBuffer
-    // path and BuildVcsBlameBuffer's own format both write this shape.
-    // Greedy .* correctly handles the rare case of a ':' inside the path
-    // itself, by backing off to find the *last* plausible ":<digits>:" split.
-    // A *vcs log* buffer is special-cased above instead (no per-line source
-    // location, just a commit hash) -- never reaches here.
+    // path and BuildVcsBlameBuffer's own format both write this shape, plus
+    // DiagnosticsLog::RebuildMessagesBuffer/TestResultsBuffer's own
+    // "path:line: message" lines. Greedy .* correctly handles the rare case
+    // of a ':' inside the path itself, by backing off to find the *last*
+    // plausible ":<digits>:" split.
     static const std::regex resultLinePattern(R"(^(.*):(\d+):)");
 
     std::smatch match;
     if (!std::regex_search(lineText, match, resultLinePattern)) {
-        return; // not a results-shaped line -- silent no-op, see this method's own header comment
+        return std::nullopt;
     }
 
-    JumpToPathLine(match[1].str(), std::stoul(match[2].str()));
+    return ResultLineLocation{
+        .path         = match[1].str(),
+        .lineNumber   = std::stoul(match[2].str()),
+        .fullLineText = lineText,
+    };
 }
 
 void BufferView::RequestVcsBlameBuffer() {
@@ -11238,6 +11258,35 @@ namespace {
             }
         }
         return line;
+    }
+
+    // ACP context auto-attach follow-up: ReadFileLine's ranged sibling, for
+    // SendResultLineToAgent's "surrounding source" excerpt -- reads
+    // [startLine, endLine] (1-indexed, inclusive, clamped to what the file
+    // actually has), each returned line prefixed with its own 1-indexed
+    // line number for readability. Empty string on total failure (path
+    // unreadable, startLine == 0), same contract as ReadFileLine; a partial
+    // read (file shorter than endLine) simply stops early rather than
+    // failing outright.
+    std::string ReadFileLines(const std::filesystem::path& path, std::size_t startLine, std::size_t endLine) {
+        std::ifstream file(path);
+        if (!file || startLine == 0 || startLine > endLine) {
+            return {};
+        }
+        std::string line;
+        for (std::size_t i = 1; i < startLine; ++i) {
+            if (!std::getline(file, line)) {
+                return {};
+            }
+        }
+        std::string excerpt;
+        for (std::size_t lineNumber = startLine; lineNumber <= endLine; ++lineNumber) {
+            if (!std::getline(file, line)) {
+                break;
+            }
+            excerpt += "  " + std::to_string(lineNumber) + ": " + line + "\n";
+        }
+        return excerpt;
     }
 
 } // namespace
@@ -12180,6 +12229,57 @@ void BufferView::SendDebugStateToAgent() {
         prompt += "\nPlease help me understand what's happening at this point.";
         statusMessage_ = acpManager_->SendPrompt(prompt);
     });
+}
+
+void BufferView::SendResultLineToAgent() {
+    const std::string bufferName = activeBuffer_.Get().Name();
+    if (bufferName != editor::MessagesBufferName() && bufferName != editor::testrun::TestResultsBufferName()) {
+        statusMessage_ = "Not on a diagnostic/test-result line.";
+        return;
+    }
+    const std::optional<ResultLineLocation> loc = ResultLineAtPoint();
+    if (!loc) {
+        statusMessage_ = "Not on a diagnostic/test-result line.";
+        return;
+    }
+
+    // A handful of lines either side of the failing line -- enough for the
+    // agent to see the surrounding function/statement without dumping the
+    // whole file.
+    constexpr std::size_t kContextLines = 5;
+    const std::size_t     startLine     = (loc->lineNumber > kContextLines) ? (loc->lineNumber - kContextLines) : 1;
+    const std::size_t     endLine       = loc->lineNumber + kContextLines;
+
+    // Prefer an already-open buffer's live content (in case it has unsaved
+    // edits) over a disk read -- ReadFileLines' own "path need not be an
+    // open Buffer" fallback covers everything else.
+    std::string excerpt;
+    if (text::Buffer* openBuffer = bufferList_.FindByPath(loc->path)) {
+        const text::ITextStorage& openContent = openBuffer->Content();
+        const std::size_t         lineCount   = openContent.LineCount();
+        const std::size_t         clampedEnd  = std::min(endLine, lineCount);
+        for (std::size_t lineNumber = startLine; lineNumber <= clampedEnd; ++lineNumber) {
+            const std::size_t zeroIndexed = lineNumber - 1;
+            const std::size_t lineStart   = openContent.LineToByteOffset(zeroIndexed);
+            const std::size_t lineEnd =
+                (zeroIndexed + 1 < lineCount) ? openContent.LineToByteOffset(zeroIndexed + 1) - 1 : openContent.ByteLength();
+            excerpt += "  " + std::to_string(lineNumber) + ": " + openContent.Substring(lineStart, lineEnd - lineStart) + "\n";
+        }
+    }
+    else {
+        excerpt = ReadFileLines(loc->path, startLine, endLine);
+    }
+
+    const editor::acp::AcpManager::PromptAttachment attachment{
+        .uri      = "file://" + std::filesystem::absolute(loc->path).string(),
+        .name     = loc->path.string() + ":" + std::to_string(loc->lineNumber),
+        .mimeType = "",
+        .text     = excerpt.empty() ? "(source unavailable)" : excerpt,
+    };
+
+    const std::string prompt = "The following diagnostic/test failure needs help:\n\n" + loc->fullLineText +
+                               "\n\nPlease help me understand and fix this.";
+    statusMessage_           = acpManager_->SendPrompt(prompt, {attachment});
 }
 
 void BufferView::BuildDebugBuffer(const std::vector<std::string>& lines) {

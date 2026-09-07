@@ -1,6 +1,7 @@
 #include "AcpPanel.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <ctime>
 #include <filesystem>
@@ -190,6 +191,10 @@ AcpPanel::AcpPanel(const Theme& theme) : theme_(theme), prompt_("Prompt: ") {
 
 void AcpPanel::SetAcpManager(editor::acp::AcpManager* acpManager) {
     acpManager_ = acpManager;
+}
+
+void AcpPanel::SetActiveBufferProvider(std::function<ActiveBuffer&()> provider) {
+    activeBufferProvider_ = std::move(provider);
 }
 
 void AcpPanel::SetOnToggleRequest(std::function<void()> onToggle) {
@@ -607,7 +612,17 @@ void AcpPanel::RefreshMentionState() {
 
 void AcpPanel::RefreshMentionCandidates() {
     mentionCandidates_.clear();
-    mentionSelection_                = 0;
+    mentionSelection_ = 0;
+    // ACP context auto-attach follow-up: two built-in mentions alongside
+    // every real project file -- "@buffer" resolves at send time
+    // (ResolveMentionAttachments) regardless of activeBufferProvider_ being
+    // set (it just won't find anything to resolve without one); "@selection"
+    // is only offered here when there's actually a selection to attach, so
+    // it never appears as a choice with nothing behind it.
+    mentionCandidates_.push_back("buffer");
+    if (activeBufferProvider_ && activeBufferProvider_().Get().HasMark()) {
+        mentionCandidates_.push_back("selection");
+    }
     const std::filesystem::path root = editor::ProjectRoot();
     for (const editor::ProjectTreeEntry& entry : editor::BuildProjectTree(root)) {
         if (!entry.isDirectory) {
@@ -641,12 +656,94 @@ std::vector<AcpPanel::DisplayLine> AcpPanel::FormatMentionPicker(int /*width*/) 
     const std::size_t shown = std::min(ranked.size(), kMaxMentionChoices);
     for (std::size_t i = 0; i < shown; ++i) {
         const bool selected = i == mentionSelection_;
-        lines.push_back({(selected ? "> " : "  ") + ranked[i], selected ? DisplayStyle::Accent : DisplayStyle::Plain});
+        // ACP context auto-attach follow-up: the two built-in mentions get
+        // a short description instead of rendering as a bare word, so they
+        // read as distinct built-ins rather than a stray same-named file.
+        std::string label = ranked[i];
+        if (label == "buffer") {
+            label = "buffer  -- current file";
+        }
+        else if (label == "selection") {
+            label = "selection  -- current selection";
+        }
+        lines.push_back({(selected ? "> " : "  ") + label, selected ? DisplayStyle::Accent : DisplayStyle::Plain});
     }
     if (ranked.size() > shown) {
         lines.push_back({"  (" + std::to_string(ranked.size() - shown) + " more...)", DisplayStyle::Dim});
     }
     return lines;
+}
+
+namespace {
+
+    // ACP context auto-attach follow-up: finds the first occurrence of
+    // `token` (e.g. "@buffer") in `text` that starts a word -- start of
+    // string or preceded by whitespace, and followed by end of string or
+    // whitespace -- the same "@ must start a word" rule
+    // RefreshMentionState's own doc comment already states for opening the
+    // picker in the first place. Returns nullopt if no such occurrence
+    // exists.
+    std::optional<std::size_t> FindMentionToken(const std::string& text, std::string_view token) {
+        std::size_t searchFrom = 0;
+        while (true) {
+            const std::size_t pos = text.find(token, searchFrom);
+            if (pos == std::string::npos) {
+                return std::nullopt;
+            }
+            const bool        wordStart = (pos == 0) || std::isspace(static_cast<unsigned char>(text[pos - 1]));
+            const std::size_t afterPos  = pos + token.size();
+            const bool        wordEnd   = (afterPos == text.size()) || std::isspace(static_cast<unsigned char>(text[afterPos]));
+            if (wordStart && wordEnd) {
+                return pos;
+            }
+            searchFrom = pos + 1;
+        }
+    }
+
+} // namespace
+
+std::vector<editor::acp::AcpManager::PromptAttachment> AcpPanel::ResolveMentionAttachments(std::string& text) const {
+    std::vector<editor::acp::AcpManager::PromptAttachment> attachments;
+    if (!activeBufferProvider_) {
+        return attachments; // nothing to resolve against -- any "@buffer"/"@selection" token stays as literal text
+    }
+
+    // Feature-local cap, deliberately not text::ITextStorage::IsHuge()'s
+    // own much larger threshold -- "too big to hold as a Rope" and "too
+    // big to paste into one chat prompt" are different questions.
+    constexpr std::size_t kMaxAttachmentBytes = 32 * 1024;
+
+    if (const std::optional<std::size_t> pos = FindMentionToken(text, "@buffer")) {
+        text::Buffer&     buffer  = activeBufferProvider_().Get();
+        const std::string name    = buffer.Path() ? buffer.Path()->filename().string() : buffer.Name();
+        const std::string uri     = buffer.Path() ? "file://" + buffer.Path()->string() : "ned-buffer://" + buffer.Name();
+        std::string       content = buffer.Text();
+        if (content.size() > kMaxAttachmentBytes) {
+            const std::size_t totalBytes = content.size();
+            content.resize(kMaxAttachmentBytes);
+            content += "\n... [truncated, " + std::to_string(totalBytes) + " bytes total]";
+        }
+        attachments.push_back({.uri = uri, .name = name, .mimeType = "", .text = content});
+        text.replace(*pos, std::string_view("@buffer").size(), "[attached: " + name + "]");
+    }
+
+    if (const std::optional<std::size_t> pos = FindMentionToken(text, "@selection")) {
+        text::Buffer& buffer = activeBufferProvider_().Get();
+        if (buffer.HasMark()) {
+            const auto [start, end]     = buffer.Region();
+            const std::string selection = buffer.Content().Substring(start, end - start);
+            const std::size_t startLine = buffer.Content().ByteOffsetToLine(start) + 1;
+            const std::size_t endLine   = buffer.Content().ByteOffsetToLine(end) + 1;
+            const std::string fileLabel = buffer.Path() ? buffer.Path()->filename().string() : buffer.Name();
+            const std::string name      = fileLabel + "#L" + std::to_string(startLine) + "-" + std::to_string(endLine);
+            const std::string uri       = buffer.Path() ? "file://" + buffer.Path()->string() : "ned-buffer://" + buffer.Name();
+            attachments.push_back({.uri = uri, .name = name, .mimeType = "", .text = selection});
+            text.replace(*pos, std::string_view("@selection").size(), "[attached: " + name + "]");
+        }
+        // else: no active selection -- leave "@selection" as literal text, nothing to attach
+    }
+
+    return attachments;
 }
 
 bool AcpPanel::CloseButtonAt(Point local) const {
@@ -1185,7 +1282,9 @@ bool AcpPanel::OnEvent(const Event& event) {
     }
     if (chord->Special == editor::SpecialKey::Enter) {
         if (acpManager_ && !prompt_.Text().empty()) {
-            acpManager_->SendPrompt(prompt_.Text());
+            std::string text        = prompt_.Text();
+            const auto  attachments = ResolveMentionAttachments(text);
+            acpManager_->SendPrompt(text, attachments);
             prompt_.SetText("");
             historyIndex_.reset();
             historyDraft_.clear();

@@ -3010,6 +3010,15 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           context.interactiveRequest = InteractiveRequest::DapAskAgentAboutState;
                       });
 
+    // ACP context auto-attach follow-up: same "just set interactiveRequest"
+    // shape as dap-ask-agent just above -- BufferView parses the current
+    // *Messages*/*test results* line and sends it, plus a source-excerpt
+    // attachment, to the active ACP agent.
+    registry.Register("ask-agent-about-line", "Ask the active ACP agent about the diagnostic/test-failure line at point.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::AcpAskAgentAboutLine;
+                      });
+
     // ACP client slice 2: same "just set interactiveRequest" shape as
     // run-task/dap-continue above -- BufferView holds the shared AcpManager
     // and does the actual work (see Editor/Acp/AcpManager.h). Agent and
