@@ -6,6 +6,8 @@
 #include "Editor/Mode.h"
 
 using ned::editor::CppMode;
+using ned::editor::CSharpMode;
+using ned::editor::GoMode;
 using ned::editor::JavaScriptMode;
 using ned::editor::PhpMode;
 using ned::editor::PythonMode;
@@ -79,6 +81,77 @@ TEST_CASE("CppMode testDiscovery finds Catch2 and gtest definitions", "[TestRun]
     const std::size_t insideGtestBody = text.find("int x = 1;");
     CHECK(markers[4].startByte < insideGtestBody);
     CHECK(insideGtestBody < markers[4].endByte);
+}
+
+TEST_CASE("CSharpMode testDiscovery finds xUnit/NUnit/MSTest attributes, but not an unrelated helper method",
+          "[TestRun]") {
+    const auto mode = CSharpMode();
+    REQUIRE(static_cast<bool>(mode.testDiscovery));
+
+    const std::string text = "public class WidgetTests {\n"
+                             "    [Fact]\n"
+                             "    public void AddWorks() {\n"
+                             "        Assert.Equal(2, 1 + 1);\n"
+                             "    }\n"
+                             "\n"
+                             "    [Theory]\n"
+                             "    [InlineData(1, 2)]\n"
+                             "    public void AddWorksTheory(int a, int b) {\n"
+                             "    }\n"
+                             "\n"
+                             "    [TestMethod]\n"
+                             "    public void MSTestStyle() {\n"
+                             "    }\n"
+                             "\n"
+                             "    public void HelperSetup() {\n"
+                             "    }\n"
+                             "}\n";
+
+    const auto markers = mode.testDiscovery(text);
+    CHECK(MarkerNames(markers) == std::vector<std::string>{"AddWorks", "AddWorksTheory", "MSTestStyle"});
+
+    const std::size_t insideBody = text.find("Assert.Equal");
+    REQUIRE(markers[0].startByte == text.find("[Fact]"));
+    CHECK(markers[0].startByte < insideBody);
+    CHECK(insideBody < markers[0].endByte);
+}
+
+TEST_CASE("GoMode testDiscovery finds Test/Benchmark/Fuzz/Example functions, but not an unrelated helper",
+          "[TestRun]") {
+    const auto mode = GoMode();
+    REQUIRE(static_cast<bool>(mode.testDiscovery));
+
+    const std::string text = "package widget\n"
+                             "\n"
+                             "import \"testing\"\n"
+                             "\n"
+                             "func TestAdd(t *testing.T) {\n"
+                             "    if 1+1 != 2 {\n"
+                             "        t.Fail()\n"
+                             "    }\n"
+                             "}\n"
+                             "\n"
+                             "func BenchmarkAdd(b *testing.B) {\n"
+                             "}\n"
+                             "\n"
+                             "func FuzzAdd(f *testing.F) {\n"
+                             "}\n"
+                             "\n"
+                             "func ExampleAdd() {\n"
+                             "    // Output: 2\n"
+                             "}\n"
+                             "\n"
+                             "func TestHelperSetup() int {\n"
+                             "    return 0\n"
+                             "}\n";
+
+    const auto markers = mode.testDiscovery(text);
+    CHECK(MarkerNames(markers) == std::vector<std::string>{"TestAdd", "BenchmarkAdd", "FuzzAdd", "ExampleAdd"});
+
+    const std::size_t insideBody = text.find("t.Fail()");
+    REQUIRE(markers[0].startByte == text.find("func TestAdd"));
+    CHECK(markers[0].startByte < insideBody);
+    CHECK(insideBody < markers[0].endByte);
 }
 
 TEST_CASE("PythonMode testDiscovery finds test functions, methods, and Test classes", "[TestRun]") {

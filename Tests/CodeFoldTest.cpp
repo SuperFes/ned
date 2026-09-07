@@ -11,6 +11,8 @@
 
 using ned::editor::CMode;
 using ned::editor::CppMode;
+using ned::editor::CSharpMode;
+using ned::editor::GoMode;
 using ned::editor::JavaScriptMode;
 using ned::editor::JsonMode;
 using ned::editor::PythonMode;
@@ -57,6 +59,25 @@ TEST_CASE("FoldableBlocks finds a TypeScript class body", "[CodeFold]") {
     const auto mode   = TypeScriptMode();
     const auto blocks = FoldableBlocks(mode, "class C {\n    f(): void {}\n}\n");
     REQUIRE(blocks.size() >= 1);
+}
+
+TEST_CASE("FoldableBlocks finds a Go function body, a struct body, and an interface body", "[CodeFold]") {
+    const auto mode   = GoMode();
+    const auto blocks = FoldableBlocks(mode, "type S struct {\n    X int\n}\n\n"
+                                             "type I interface {\n    M()\n}\n\n"
+                                             "func f() {\n    return\n}\n");
+    REQUIRE(blocks.size() == 3);
+}
+
+TEST_CASE("FoldableBlocks finds a C# class body, a method body, and an initializer expression", "[CodeFold]") {
+    const auto mode   = CSharpMode();
+    const auto blocks = FoldableBlocks(mode, "class Widget {\n"
+                                             "    int[] Xs = new int[] { 1, 2, 3 };\n"
+                                             "    int F() {\n"
+                                             "        return 1;\n"
+                                             "    }\n"
+                                             "}\n");
+    REQUIRE(blocks.size() == 3);
 }
 
 TEST_CASE("FoldableBlocks returns nothing for a mode with no fold query", "[CodeFold]") {

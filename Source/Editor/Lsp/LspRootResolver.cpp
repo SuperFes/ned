@@ -10,6 +10,31 @@ namespace ned::editor::lsp {
 
 namespace {
 
+    // csharp-bundled-language follow-up: every marker file named so far
+    // (Cargo.toml, go.mod, package.json, compile_commands.json, ...) has one
+    // fixed, canonical name -- exists(dir / marker) is all ResolveLspRoot
+    // ever needed. .NET has no such file: a project's root marker is a
+    // *.csproj or *.sln whose own name is the project/solution's own name,
+    // never fixed. A marker of the form "*.<ext>" is this one, minimal
+    // extension: directory-scan for any entry whose own extension matches,
+    // instead of checking one exact name -- every other language's markers
+    // are untouched by this (none of them start with "*.").
+    bool MarkerExistsInDirectory(const std::filesystem::path& dir, const std::string& marker) {
+        if (marker.size() > 2 && marker[0] == '*' && marker[1] == '.') {
+            const std::string wantedExtension = marker.substr(1); // "*.csproj" -> ".csproj"
+            std::error_code   iterEc;
+            for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(dir, iterEc)) {
+                std::error_code entryEc;
+                if (entry.is_regular_file(entryEc) && !entryEc && entry.path().extension() == wantedExtension) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        std::error_code existsEc;
+        return std::filesystem::exists(dir / marker, existsEc);
+    }
+
     std::mutex& RootMarkersMutex() {
         static std::mutex mutex;
         return mutex;
@@ -39,6 +64,14 @@ namespace {
             {"tsx", {"package.json", "tsconfig.json"}},
             {"php", {"composer.json"}},
             {"rust", {"Cargo.toml"}},
+            {"go", {"go.mod"}},
+            // .NET has no fixed-name project marker -- a "*.<ext>" entry
+            // means "any file with this extension," see
+            // MarkerExistsInDirectory's own header comment. global.json (a
+            // real, if less common, fixed-name SDK-version-pin file) is
+            // checked first since it's a cheap exists() rather than a
+            // directory scan.
+            {"csharp", {"global.json", "*.csproj", "*.sln"}},
         };
         return defaults;
     }
@@ -88,8 +121,7 @@ std::filesystem::path ResolveLspRoot(const std::filesystem::path& bufferPath, co
 
             for (std::filesystem::path dir = start.parent_path();; dir = dir.parent_path()) {
                 for (const std::string& marker : markers) {
-                    std::error_code existsEc;
-                    if (std::filesystem::exists(dir / marker, existsEc)) {
+                    if (MarkerExistsInDirectory(dir, marker)) {
                         return dir;
                     }
                 }

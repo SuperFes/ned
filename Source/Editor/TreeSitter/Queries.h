@@ -50,6 +50,8 @@ extern const char* const kClojure;
 extern const char* const kFish;
 extern const char* const kXml;
 extern const char* const kRust; // tree-sitter/tree-sitter-rust's own real queries/highlights.scm, unmodified
+extern const char* const kGo;   // tree-sitter/tree-sitter-go's own real queries/highlights.scm, unmodified
+extern const char* const kCSharp; // tree-sitter/tree-sitter-c-sharp's own real queries/highlights.scm, unmodified
 
 // generic-code-folding follow-up: hand-written "@fold" queries, one per
 // in-scope language (Source/Editor/TreeSitter/queries/*-folds.scm) -- no
@@ -67,6 +69,8 @@ extern const char* const kJavaScriptFolds;
 extern const char* const kTypeScriptFolds;
 extern const char* const kClojureFolds; // shared by ClojureMode and JankMode, same as kClojure above
 extern const char* const kRustFolds;
+extern const char* const kGoFolds;
+extern const char* const kCSharpFolds;
 
 // import-target-tree-sitter follow-up: hand-written "@import.target"/
 // "@import.module"/"@import.statement" queries, one per in-scope language
@@ -94,6 +98,17 @@ extern const char* const kJanetImports;
 // foo;" file-per-module declaration only -- see rust-imports.scm's own
 // header comment for why a real "use" path isn't matched here at all.
 extern const char* const kRustImports;
+// Go bundled language support follow-up: deliberately no kGoImports at all --
+// unlike Rust's bodyless "mod foo;" (a single-file declaration), Go's own
+// `import "some/module/path"` always names a whole PACKAGE (a directory),
+// never a single file, and resolving that path needs go.mod's module-path/
+// replace-directive knowledge a syntax-only query has no way to reconstruct;
+// see CMakeLists.txt's own comment beside ned_add_treesitter_grammar(
+// tree-sitter-go ...) for the full reasoning. GoMode::importTarget stays
+// empty, same "not configured" convention every other optional Mode
+// capability already uses. Deliberately no kCSharpImports either, same
+// reasoning: a `using Some.Namespace;` directive names a whole namespace,
+// not a file.
 
 // gutter-symbol-kind follow-up: each bundled grammar's own real
 // queries/tags.scm, consumed directly and unmodified -- the ctags/
@@ -122,6 +137,8 @@ extern const char* const kJavaScriptTags;
 extern const char* const kTypeScriptTags;
 extern const char* const kPythonTags;
 extern const char* const kRustTags; // tree-sitter/tree-sitter-rust's own real queries/tags.scm, unmodified
+extern const char* const kGoTags;   // tree-sitter/tree-sitter-go's own real queries/tags.scm, unmodified
+extern const char* const kCSharpTags; // tree-sitter/tree-sitter-c-sharp's own real queries/tags.scm, unmodified
 
 // test-runner integration: repo-local test-discovery queries
 // (Source/Editor/TreeSitter/queries/*-tests.scm) using the ned-local
@@ -132,9 +149,8 @@ extern const char* const kRustTags; // tree-sitter/tree-sitter-rust's own real q
 // whose definitions are query-recognizable get one: C++ (Catch2/gtest),
 // Python (pytest/unittest), JavaScript/TypeScript (jest/vitest/mocha --
 // kTypeScriptTests shared by TsxMode, the standing sharing convention),
-// PHP (PHPUnit), Rust (`#[test]`/`#[<framework>::test]`, kRustTests). Go has
-// no bundled mode at all (its test *output* still parses -- see
-// Editor/TestRun/TestOutputParser.h -- only discovery is absent); C has no
+// PHP (PHPUnit), Rust (`#[test]`/`#[<framework>::test]`, kRustTests), Go
+// (`func TestXxx(t *testing.T)`/Benchmark/Fuzz/Example, kGoTests). C has no
 // dominant query-recognizable framework convention.
 extern const char* const kCppTests;
 extern const char* const kPhpTests;
@@ -142,6 +158,8 @@ extern const char* const kJavaScriptTests;
 extern const char* const kTypeScriptTests;
 extern const char* const kPythonTests;
 extern const char* const kRustTests; // #[test]/#[<framework>::test], rust-tests.scm's own header comment
+extern const char* const kGoTests;   // TestXxx/BenchmarkXxx/FuzzXxx/ExampleXxx, go-tests.scm's own header comment
+extern const char* const kCSharpTests; // [Fact]/[Theory]/[Test]/[TestMethod]/etc, csharp-tests.scm's own header comment
 
 // smart-indentation follow-up: hand-written "indent"/"dedent" queries, one
 // per in-scope language (Source/Editor/TreeSitter/queries/*-indents.scm),
@@ -181,6 +199,8 @@ extern const char* const kClojureIndents;
 extern const char* const kYamlIndents;
 extern const char* const kTomlIndents;
 extern const char* const kRustIndents;
+extern const char* const kGoIndents;
+extern const char* const kCSharpIndents;
 
 } // namespace ned::editor::treesitter::queries
 
