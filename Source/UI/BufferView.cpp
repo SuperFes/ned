@@ -5423,8 +5423,8 @@ void BufferView::RequestCompletionAtPoint() {
     // so this is a pure "is one currently usable" check -- NotConfigured/
     // SpawnFailed/Disconnected all fall back to scanning the buffer itself
     // rather than asking a server that isn't there.
-    const bool hasRunningLsp =
-        lspManager_ && lspManager_->StatusForLanguage(languageKey) == editor::lsp::LspManager::LspStatus::Running;
+    const bool hasRunningLsp = lspManager_ && lspManager_->StatusForLanguage(lspManager_->ConnectionKeyForBuffer(
+                                                  buffer, languageKey)) == editor::lsp::LspManager::LspStatus::Running;
     if (!hasRunningLsp) {
         // Self-hosting-completion follow-up: tried ahead of plain
         // dabbrev-expand for a Janet-mode buffer, falling through to it when
@@ -5660,8 +5660,8 @@ void BufferView::RequestDocumentHighlightAtPoint() {
 
     const std::string serverKey   = ResolvedLspServerKey(point);
     const std::string languageKey = serverKey.empty() ? editor::LanguageKeyForMode(mode_) : serverKey;
-    const bool        hasRunningLsp =
-        lspManager_ && lspManager_->StatusForLanguage(languageKey) == editor::lsp::LspManager::LspStatus::Running;
+    const bool        hasRunningLsp = lspManager_ && lspManager_->StatusForLanguage(lspManager_->ConnectionKeyForBuffer(
+                                                         buffer, languageKey)) == editor::lsp::LspManager::LspStatus::Running;
     if (!hasRunningLsp) {
         documentHighlight_.reset();
         return;
@@ -5887,7 +5887,8 @@ void BufferView::RequestSignatureHelpAtPoint() {
 
     const std::string serverKey   = ResolvedLspServerKey(point);
     const std::string languageKey = serverKey.empty() ? editor::LanguageKeyForMode(mode_) : serverKey;
-    if (!lspManager_ || lspManager_->StatusForLanguage(languageKey) != editor::lsp::LspManager::LspStatus::Running) {
+    if (!lspManager_ || lspManager_->StatusForLanguage(lspManager_->ConnectionKeyForBuffer(buffer, languageKey)) !=
+                            editor::lsp::LspManager::LspStatus::Running) {
         return;
     }
 
@@ -6409,7 +6410,8 @@ void BufferView::MaybeScheduleOnTypeFormatting(const editor::KeyChord& chord, st
     const std::size_t  point       = buffer.Point();
     const std::string  serverKey   = ResolvedLspServerKey(point);
     const std::string  languageKey = serverKey.empty() ? editor::LanguageKeyForMode(mode_) : serverKey;
-    const std::optional<editor::lsp::OnTypeFormattingTriggers> triggers = lspManager_->OnTypeFormattingTriggersFor(languageKey);
+    const std::optional<editor::lsp::OnTypeFormattingTriggers> triggers =
+        lspManager_->OnTypeFormattingTriggersFor(lspManager_->ConnectionKeyForBuffer(buffer, languageKey));
     if (!triggers) {
         return; // this server never advertised documentOnTypeFormattingProvider at all
     }
@@ -11316,7 +11318,8 @@ void BufferView::RequestProjectFindReferences() {
     const std::size_t point         = buffer.Point();
     const std::string serverKey     = ResolvedLspServerKey(point);
     const std::string languageKey   = serverKey.empty() ? editor::LanguageKeyForMode(mode_) : serverKey;
-    const bool        hasRunningLsp = lspManager_ && lspManager_->StatusForLanguage(languageKey) == editor::lsp::LspManager::LspStatus::Running;
+    const bool        hasRunningLsp = lspManager_ && lspManager_->StatusForLanguage(lspManager_->ConnectionKeyForBuffer(
+                                                         buffer, languageKey)) == editor::lsp::LspManager::LspStatus::Running;
 
     if (hasRunningLsp) {
         text::Buffer* const bufferPtr  = &buffer;

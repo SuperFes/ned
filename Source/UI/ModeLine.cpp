@@ -190,7 +190,12 @@ void ModeLine::Paint(Canvas c) {
         // mode-line-lsp-status-round-3 follow-up: same "detail text after a
         // space" shape reused by both the single-glyph and multi-glyph
         // branches below.
-        const auto glyphAndDetailFor = [this](const std::string& key, std::string_view& glyph, std::string& detail) {
+        // LSP multi-root follow-up: every status latch is keyed by connection,
+        // so a plain server key is resolved against this buffer's own root
+        // first -- two same-language servers against different roots each
+        // report their own state instead of shadowing each other's.
+        const auto glyphAndDetailFor = [this, &buffer](const std::string& serverKey, std::string_view& glyph, std::string& detail) {
+            const std::string key = lspManager_->ConnectionKeyForBuffer(buffer, serverKey);
             switch (lspManager_->StatusForLanguage(key)) {
                 case Status::Running:
                     glyph = "●";

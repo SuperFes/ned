@@ -1734,7 +1734,8 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
             return false;
         }
         const std::string languageKey = LanguageKeyForMode(*context.mode);
-        return context.lspManager->StatusForLanguage(languageKey) == lsp::LspManager::LspStatus::Running;
+        return context.lspManager->StatusForLanguage(context.lspManager->ConnectionKeyForBuffer(context.buffer, languageKey)) ==
+               lsp::LspManager::LspStatus::Running;
     };
 
     registry.Register("save-buffer", "Save the current buffer to its associated file.",
