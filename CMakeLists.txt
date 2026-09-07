@@ -830,6 +830,7 @@ add_library(ned_lib STATIC
         Source/UI/TabBar.cpp
         Source/UI/ScrollArrowButton.cpp
         Source/UI/ProjectSidebar.cpp
+        Source/UI/LeftDock.cpp
         Source/UI/VcsPanel.cpp
         Source/UI/VcsDiffPreview.cpp
         Source/UI/ModeLine.cpp
@@ -1198,6 +1199,7 @@ if (NED_BUILD_TESTS)
             Tests/WrapOverridesTest.cpp
             Tests/BorderTest.cpp
             Tests/ProjectSidebarTest.cpp
+            Tests/LeftDockTest.cpp
             Tests/VcsPanelTest.cpp
             Tests/VcsDiffPreviewTest.cpp
             Tests/VimMotionTest.cpp
