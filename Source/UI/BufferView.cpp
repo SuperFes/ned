@@ -4319,6 +4319,11 @@ bool BufferView::OnKeyEvent(const Event& event) {
         ClampPointToNarrowing();
         return true;
     }
+    if (inputMode_ == InputMode::ConfirmRevertHunk) {
+        HandleConfirmRevertHunkKey(*chord);
+        ClampPointToNarrowing();
+        return true;
+    }
     if (inputMode_ == InputMode::ConfirmOpenBinary) {
         HandleConfirmOpenBinaryKey(*chord);
         ClampPointToNarrowing();
@@ -6722,6 +6727,9 @@ namespace {
             {"code-fold-toggle", "Toggle Fold"},
             {"dap-toggle-breakpoint", "Toggle Breakpoint"},
             {"vcs-blame-detail-at-point", "Show Blame"},
+            {"vcs-stage-hunk", "Stage Hunk"},
+            {"vcs-unstage-hunk", "Unstage Hunk"},
+            {"vcs-revert-hunk", "Revert Hunk..."},
         };
         const auto it = kLabels.find(commandName);
         return it != kLabels.end() ? it->second : commandName;
@@ -6780,6 +6788,18 @@ void BufferView::ShowContextMenuAt(Point localClick) {
         }
         if (BlameGutterActive()) {
             contextMenuEntries_.push_back(ContextMenuCommandEntry("vcs-blame-detail-at-point"));
+        }
+        // mouse-ergonomics follow-up: same v1 simplification as the three
+        // gates above -- shown whenever the diff gutter is active for this
+        // buffer at all, not gated on whether this exact line is staged vs
+        // unstaged (vcs-stage-hunk/vcs-unstage-hunk each already report
+        // their own "no {un,}staged change at this line" when it doesn't
+        // apply). vcs-revert-hunk asks its own y/n first (ConfirmRevertHunk)
+        // regardless of entry point, keyboard or here.
+        if (DiffGutterActive()) {
+            contextMenuEntries_.push_back(ContextMenuCommandEntry("vcs-stage-hunk"));
+            contextMenuEntries_.push_back(ContextMenuCommandEntry("vcs-unstage-hunk"));
+            contextMenuEntries_.push_back(ContextMenuCommandEntry("vcs-revert-hunk"));
         }
     }
     else {
@@ -8137,6 +8157,10 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         case editor::InteractiveRequest::ConfirmSaveWithConflicts:
             inputMode_     = InputMode::ConfirmSaveWithConflicts;
             statusMessage_ = activeBuffer_.Get().Name() + " still has unresolved <<<<<<< conflict markers; save anyway? (y/n)";
+            return;
+        case editor::InteractiveRequest::ConfirmRevertHunk:
+            inputMode_     = InputMode::ConfirmRevertHunk;
+            statusMessage_ = "Discard this hunk's uncommitted change? This cannot be undone. (y/n)";
             return;
         case editor::InteractiveRequest::CreateDirectory:
             inputMode_ = InputMode::CreateDirectory;
@@ -11425,6 +11449,47 @@ void BufferView::StageOrUnstageHunkAtPoint(bool stage) {
         });
 }
 
+void BufferView::RevertHunkAtPoint() {
+    if (!vcsRunner_) {
+        statusMessage_ = "no vcs runner configured";
+        return;
+    }
+    text::Buffer& buffer = activeBuffer_.Get();
+    if (!buffer.Path()) {
+        statusMessage_ = "no file associated with this buffer";
+        return;
+    }
+    if (buffer.Modified()) {
+        // See StageOrUnstageHunkAtPoint's own header doc comment -- unsaved
+        // edits make the buffer's line numbers disagree with the on-disk
+        // diff's.
+        statusMessage_ = "Buffer has unsaved changes -- save first, hunk revert works from the file on disk.";
+        return;
+    }
+
+    const std::size_t targetLine = buffer.Content().ByteOffsetToLine(buffer.Point()) + 1; // 1-indexed, diff's own convention
+    vcsRunner_->RequestHunkRevert(
+        buffer, targetLine,
+        [this] {
+            statusMessage_ = "Hunk reverted.";
+            // AutoRevert/FileWatch picks up the now-changed-on-disk file on
+            // its own next sweep (this buffer is guaranteed unmodified, the
+            // gate just above) -- no explicit Buffer::Revert() call needed
+            // here, same reasoning stage/unstage's own success handler
+            // relies on for RefreshVcsStatusBuffer/RequestDiffForCurrentBuffer
+            // below to see accurate state shortly after.
+            RefreshVcsStatusBuffer();
+            RequestDiffForCurrentBuffer();
+        },
+        [this](std::string error) {
+            statusMessage_ = "vcs revert hunk: " + error;
+        });
+}
+
+void BufferView::RevertHunkAtPointForTesting() {
+    RevertHunkAtPoint();
+}
+
 void BufferView::StageHunkAtPointForTesting(bool stage) {
     StageOrUnstageHunkAtPoint(stage);
 }
@@ -13206,6 +13271,45 @@ bool BufferView::OnMouseEvent(const Event& event) {
         }
     }
 
+    // project-sidebar-drag-drop follow-up: same "checked first, regardless
+    // of position" cooperation as the resize guard just above -- a file
+    // dragged out of ProjectSidebar and released over this pane opens it
+    // here (not wherever happens to be focused), then tells ProjectSidebar
+    // the drag is over (see ProjectSidebar::DraggingFilePath's own doc
+    // comment for the full cross-widget contract, including why only the
+    // one pane whose Box_() actually contains the drop performs the open --
+    // every pane in a split layout receives this same event). A Moved event
+    // is swallowed outright, regardless of position, so it can't also
+    // start/extend this pane's own (unrelated) text selection while a file
+    // is being dragged over it.
+    if (projectSidebar_ != nullptr && projectSidebar_->DraggingFilePath()) {
+        if (rawMouse.motion == MouseEvent::Motion::Moved) {
+            return true;
+        }
+        // Real bug caught live (tmux smoke test, a two-pane split): calling
+        // EndFileDrag() unconditionally here -- regardless of whether this
+        // pane's own Box_() actually contained the drop -- meant whichever
+        // pane's OnMouseEvent happened to run first for this Released event
+        // (Container::OnEvent's fixed child order, not drop position) reset
+        // dragPath_ before the pane the file was actually dropped on ever
+        // got to check it, so the second pane's drop silently no-opped.
+        // Gating the whole branch (not just the open) on Contain() first is
+        // what makes only the one genuinely-targeted pane ever consume this.
+        if (rawMouse.motion == MouseEvent::Motion::Released && Box_().Contain(rawMouse.at.x, rawMouse.at.y)) {
+            const std::filesystem::path path = *projectSidebar_->DraggingFilePath();
+            try {
+                text::Buffer& opened = bufferList_.OpenOrCreateFile(path);
+                activeBuffer_.Set(opened);
+                statusMessage_ = "Opened " + opened.Name();
+            }
+            catch (const std::exception& e) {
+                ReportError(e.what());
+            }
+            projectSidebar_->EndFileDrag();
+            return true;
+        }
+    }
+
     // Split-resize follow-up: same "checked first, regardless of position"
     // cooperation as the ProjectSidebar guard just above -- a split divider
     // dragged past a neighboring pane's own edge delivers move/release
@@ -13614,6 +13718,22 @@ void BufferView::HandleConfirmSaveWithConflictsKey(const editor::KeyChord& chord
         return;
     }
     // Anything else is ignored -- stay in the prompt.
+}
+
+void BufferView::HandleConfirmRevertHunkKey(const editor::KeyChord& chord) {
+    if (chord.Codepoint == U'y' || chord.Codepoint == U'Y') {
+        EndInteractiveSession();
+        RevertHunkAtPoint();
+        return;
+    }
+    if (chord.Codepoint == U'n' || chord.Codepoint == U'N' || IsQuit(chord)) {
+        statusMessage_ = "Revert cancelled.";
+        EndInteractiveSession();
+        return;
+    }
+    // Anything else is ignored -- stay in the prompt, VcsPanel's own
+    // pendingRevertConfirm_ convention doesn't apply here (this is a real
+    // MinibufferPrompt-less y/n InputMode, not a locally-tracked bool).
 }
 
 void BufferView::RequestOpenBinaryFile(const std::filesystem::path& path) {
@@ -15257,6 +15377,61 @@ void BufferView::ActivateCandidatePopupAt(std::size_t index) {
         }
         default:
             return; // no candidate popup active for this mode (a stale click racing an already-ended session)
+    }
+}
+
+void BufferView::ScrollCandidatePopup(int steps) {
+    if (steps == 0) {
+        return;
+    }
+    const editor::KeyChord nav{.Special = steps > 0 ? editor::SpecialKey::Down : editor::SpecialKey::Up};
+    const int              count = steps > 0 ? steps : -steps;
+    for (int i = 0; i < count; ++i) {
+        switch (inputMode_) {
+            case InputMode::ExecuteCommand:
+                HandleExecuteCommandKey(nav);
+                break;
+            case InputMode::ProjectFindFile:
+                HandleProjectFindFileKey(nav);
+                break;
+            case InputMode::FindRecentFile:
+                HandleFindRecentFileKey(nav);
+                break;
+            case InputMode::SwitchProject:
+                HandleSwitchProjectKey(nav);
+                break;
+            case InputMode::SwitchToBuffer:
+                HandleSwitchToBufferKey(nav);
+                break;
+            case InputMode::VcsSwitchBranch:
+                HandleVcsSwitchBranchKey(nav);
+                break;
+            case InputMode::AcpAgentName:
+                HandleAcpAgentNameKey(nav);
+                break;
+            case InputMode::BookmarkJump:
+                HandleBookmarkJumpKey(nav);
+                break;
+            case InputMode::SelectTheme:
+                HandleSelectThemeKey(nav);
+                break;
+            case InputMode::LspGotoSymbol:
+                HandleDocumentSymbolKey(nav);
+                break;
+            case InputMode::LspWorkspaceSymbol:
+                HandleWorkspaceSymbolKey(nav);
+                break;
+            case InputMode::LspCodeActionSelect:
+                HandleCodeActionSelectKey(nav);
+                break;
+            case InputMode::FindFile:
+            case InputMode::OpenProjectPath:
+            case InputMode::FindScratch:
+                HandlePromptKey(nav);
+                break;
+            default:
+                return; // no candidate popup active for this mode -- nothing to scroll
+        }
     }
 }
 

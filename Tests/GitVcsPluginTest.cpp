@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <fstream>
 #include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -417,6 +418,75 @@ TEST_CASE("bundled git plugin stages and unstages a single hunk end to end", "[G
     statusEntries = provider->ParseStatus(RunToCompletion(provider->StatusArgv(repoRoot).argv));
     REQUIRE(statusEntries.size() == 1);
     REQUIRE(statusEntries[0].state == " M"); // nothing staged anymore, both edits back in the worktree only
+}
+
+TEST_CASE("bundled git plugin reverts a single hunk from the working tree end to end", "[GitVcsPlugin]") {
+    if (!GitAvailable()) {
+        SKIP("git not found on $PATH");
+    }
+
+    RegistryResetGuard guard;
+    Environment&       env = ned_tests::TestEnvironment();
+    InstallEditorBindings(env);
+    LoadBundledPlugins(env);
+
+    const std::filesystem::path repoRoot =
+        std::filesystem::temp_directory_path() / ("ned-git-vcs-revert-hunk-test-" + std::to_string(::getpid()));
+    std::filesystem::remove_all(repoRoot);
+    std::filesystem::create_directories(repoRoot);
+    const std::filesystem::path patchPath =
+        std::filesystem::temp_directory_path() / ("ned-git-vcs-revert-hunk-test-patch-" + std::to_string(::getpid()) + ".diff");
+    struct Cleanup {
+        std::filesystem::path repo;
+        std::filesystem::path patch;
+        ~Cleanup() {
+            std::filesystem::remove_all(repo);
+            std::filesystem::remove(patch);
+        }
+    } cleanup{repoRoot, patchPath};
+
+    const std::string root = repoRoot.string();
+    RunToCompletion({"git", "-C", root, "init", "-q", "-b", "main"});
+    RunToCompletion({"git", "-C", root, "config", "user.email", "ned-test@example.com"});
+    RunToCompletion({"git", "-C", root, "config", "user.name", "Ned Test"});
+
+    const std::filesystem::path filePath = repoRoot / "file.txt";
+    {
+        std::ofstream(filePath) << "line one\nline two\nline three\nline four\nline five\nline six\nline seven\n";
+    }
+    RunToCompletion({"git", "-C", root, "add", "file.txt"});
+    RunToCompletion({"git", "-C", root, "commit", "-q", "-m", "initial commit"});
+
+    // Two well-separated single-line edits -> two distinct -U0 hunks, same
+    // shape the stage/unstage test above uses.
+    {
+        std::ofstream(filePath) << "line one\nline TWO\nline three\nline four\nline five\nline six\nline SEVEN\n";
+    }
+
+    auto* provider = ned::editor::vcs::ActiveProviderFor(repoRoot);
+    REQUIRE(provider != nullptr);
+
+    // Revert only the line-2 hunk -- the exact chain VcsRunner::RequestHunkRevert runs.
+    const std::string rawDiff = RunToCompletion(provider->DiffArgv(filePath).argv);
+    const auto        patch   = ned::editor::vcs::ExtractHunkPatch(rawDiff, 2);
+    REQUIRE(patch.has_value());
+    REQUIRE(patch->find("+line TWO") != std::string::npos);
+    REQUIRE(patch->find("SEVEN") == std::string::npos);
+    {
+        std::ofstream(patchPath) << *patch;
+    }
+    RunToCompletion(provider->RevertPatchArgv(repoRoot, patchPath).argv);
+
+    // Line 2 is back to its committed content; line 7's still-unstaged edit
+    // (a separate hunk) is untouched.
+    std::ifstream     reverted(filePath);
+    std::stringstream contents;
+    contents << reverted.rdbuf();
+    REQUIRE(contents.str() == "line one\nline two\nline three\nline four\nline five\nline six\nline SEVEN\n");
+
+    auto statusEntries = provider->ParseStatus(RunToCompletion(provider->StatusArgv(repoRoot).argv));
+    REQUIRE(statusEntries.size() == 1);
+    REQUIRE(statusEntries[0].state == " M"); // still one unstaged edit -- line 7's, not reverted
 }
 
 TEST_CASE("bundled git plugin runs revert/stash against a real temp repo end to end", "[GitVcsPlugin]") {

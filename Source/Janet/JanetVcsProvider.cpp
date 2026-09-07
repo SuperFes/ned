@@ -29,6 +29,7 @@ namespace {
         "staged-diff-argv",
         "stage-patch-argv",
         "unstage-patch-argv",
+        "revert-patch-argv",
         "commit-argv",
         "branch-list-argv",
         "parse-branch-list",
@@ -388,6 +389,15 @@ editor::vcs::VcsCommandSpec JanetVcsProvider::UnstagePatchArgv(const std::filesy
     const std::string* fn = InternalName("unstage-patch-argv");
     if (!fn) {
         return VcsProvider::UnstagePatchArgv(root, patchPath);
+    }
+    return ParseCommandSpec(CallWithStrings(*fn, root.string(), patchPath.string()));
+}
+
+editor::vcs::VcsCommandSpec JanetVcsProvider::RevertPatchArgv(const std::filesystem::path& root,
+                                                              const std::filesystem::path& patchPath) const {
+    const std::string* fn = InternalName("revert-patch-argv");
+    if (!fn) {
+        return VcsProvider::RevertPatchArgv(root, patchPath);
     }
     return ParseCommandSpec(CallWithStrings(*fn, root.string(), patchPath.string()));
 }

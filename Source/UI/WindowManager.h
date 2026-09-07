@@ -601,6 +601,13 @@ class WindowManager {
     // in main.cpp. See BufferView::ActivateCandidatePopupAt's own doc comment.
     void ActivateCandidatePopupAt(std::size_t index);
 
+    // hover-highlight-and-wheel-scroll follow-up: same "route to whichever
+    // pane is currently focused" shape as ActivateCandidatePopupAt
+    // immediately above -- wired to the same shared candidate popup's
+    // ListPopup::SetOnScrollBy in main.cpp. See BufferView::
+    // ScrollCandidatePopup's own doc comment.
+    void ScrollCandidatePopup(int steps);
+
     // session-persistence slice 3: routes the .ned/init.janet trust prompt
     // to whichever pane has focus -- RequestOpenBinaryFile's exact shape;
     // see BufferView::RequestTrustProjectInit for the prompt's own
