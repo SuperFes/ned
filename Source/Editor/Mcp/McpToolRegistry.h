@@ -12,9 +12,9 @@
 // rather than just describing an action to carry out elsewhere -- but the
 // name/schema/dispatch bookkeeping here is unit-testable the same way with
 // stub handlers. Every dependency is injected by reference at construction
-// (LspManager&/VcsRunner&/TestRunner&/text::BufferList&), matching this
-// codebase's "Set*/register-then-connect" cross-manager wiring convention
-// rather than a god-object reaching for process-wide statics.
+// (LspManager&/VcsRunner&/TestRunner&/DapManager&/text::BufferList&),
+// matching this codebase's "Set*/register-then-connect" cross-manager wiring
+// convention rather than a god-object reaching for process-wide statics.
 //
 // Every manager call here already resolves/responds on the main thread
 // (LspManager/VcsRunner/TestRunner all marshal their own async I/O onto the
@@ -54,6 +54,10 @@ namespace ned::editor::testrun {
 class TestRunner;
 } // namespace ned::editor::testrun
 
+namespace ned::editor::dap {
+class DapManager;
+} // namespace ned::editor::dap
+
 namespace ned::editor::mcp {
 
 using Json = nlohmann::json;
@@ -75,7 +79,8 @@ struct ToolDescriptor {
 
 class ToolRegistry {
   public:
-    ToolRegistry(text::BufferList& bufferList, lsp::LspManager& lspManager, vcs::VcsRunner& vcsRunner, testrun::TestRunner& testRunner);
+    ToolRegistry(text::BufferList& bufferList, lsp::LspManager& lspManager, vcs::VcsRunner& vcsRunner, testrun::TestRunner& testRunner,
+                 dap::DapManager& dapManager);
 
     [[nodiscard]] std::vector<ToolDescriptor> ListTools() const;
 
@@ -110,6 +115,7 @@ class ToolRegistry {
     lsp::LspManager&      lspManager_;
     vcs::VcsRunner&       vcsRunner_;
     testrun::TestRunner&  testRunner_;
+    dap::DapManager&      dapManager_;
     std::vector<Entry>    entries_;
 };
 

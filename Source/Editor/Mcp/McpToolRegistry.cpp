@@ -7,6 +7,7 @@
 #include <ctime>
 #include <system_error>
 
+#include "Editor/Dap/DapManager.h"
 #include "Editor/DiagnosticsLog.h"
 #include "Editor/Lsp/LspContent.h"
 #include "Editor/Lsp/LspEditApply.h"
@@ -136,8 +137,8 @@ Json MakeTextToolResult(std::string text, bool isError) {
     };
 }
 
-ToolRegistry::ToolRegistry(text::BufferList& bufferList, lsp::LspManager& lspManager, vcs::VcsRunner& vcsRunner, testrun::TestRunner& testRunner)
-    : bufferList_(bufferList), lspManager_(lspManager), vcsRunner_(vcsRunner), testRunner_(testRunner) {
+ToolRegistry::ToolRegistry(text::BufferList& bufferList, lsp::LspManager& lspManager, vcs::VcsRunner& vcsRunner, testrun::TestRunner& testRunner,
+                           dap::DapManager& dapManager) : bufferList_(bufferList), lspManager_(lspManager), vcsRunner_(vcsRunner), testRunner_(testRunner), dapManager_(dapManager) {
     RegisterBuiltinTools();
 }
 
@@ -780,6 +781,277 @@ void ToolRegistry::RegisterBuiltinTools() {
                 results.push_back(std::move(jsonEntry));
             }
             callback(MakeTextToolResult(Json{{"entries", results}, {"totalMatching", total}, {"truncated", total > kMaxLogEntries}}.dump()));
+        });
+
+    // DAP<->ACP debugging bridge (ROADMAP.md's "Collaboration & AI" entry).
+    // Every DapManager::Request*/status-string method already runs on the
+    // main thread and answers gracefully (an empty result, or a short
+    // explanatory status string) when there's no session/no adapter
+    // response/an out-of-range argument, exactly like LspManager's own
+    // Request* methods do -- so these are thin wrappers, the same shape as
+    // every git_*/lsp tool above, not new DapManager capability. Debug
+    // session state (breakpoints/stack/variables/watches) is inherently
+    // single-session/single-focus, matching DapManager's own "one session at
+    // a time" design, so no buffer/file resolution is needed the way the LSP
+    // tools above need FindOpenBuffer -- an agent driving these acts on
+    // whichever session/thread/frame the human's own DAP UI would.
+    RegisterTool(
+        "dap_list_breakpoints", "List every breakpoint currently set, across every file.", Json{{"type", "object"}, {"properties", Json::object()}},
+        [this](const Json&, const ResultCallback& callback) {
+            const auto all = dapManager_.AllBreakpoints();
+            if (all.empty()) {
+                callback(MakeTextToolResult("No breakpoints set."));
+                return;
+            }
+            Json results = Json::array();
+            for (const auto& [pathKey, breakpoints] : all) {
+                for (const dap::DapManager::PersistedBreakpoint& bp : breakpoints) {
+                    Json entry = Json{{"file", pathKey}, {"line", bp.line}};
+                    if (!bp.condition.empty()) {
+                        entry["condition"] = bp.condition;
+                    }
+                    if (!bp.hitCondition.empty()) {
+                        entry["hitCondition"] = bp.hitCondition;
+                    }
+                    if (!bp.logMessage.empty()) {
+                        entry["logMessage"] = bp.logMessage;
+                    }
+                    results.push_back(std::move(entry));
+                }
+            }
+            callback(MakeTextToolResult(results.dump()));
+        });
+
+    RegisterTool(
+        "dap_set_breakpoint",
+        "Set (or update) a breakpoint at a source line. Creates a plain breakpoint if none exists there yet; an "
+        "optional condition/hitCondition/logMessage narrows it (a logMessage turns it into a non-halting logpoint).",
+        Json{
+            {"type", "object"},
+            {"properties",
+             {{"file", {{"type", "string"}, {"description", "Path to the file, absolute or relative to the project root."}}},
+              {"line", {{"type", "integer"}, {"description", "1-indexed line number."}}},
+              {"condition", {{"type", "string"}, {"description", "Optional: only stop when this expression is truthy."}}},
+              {"hitCondition",
+               {{"type", "string"}, {"description", "Optional: only stop once this adapter-evaluated hit-count expression is satisfied (e.g. \"> 5\")."}}},
+              {"logMessage",
+               {{"type", "string"}, {"description", "Optional: turn this into a logpoint -- never halts, just logs this message when hit."}}}}},
+            {"required", Json::array({"file", "line"})},
+        },
+        [this](const Json& args, const ResultCallback& callback) {
+            const auto file = RequireString(args, "file");
+            const auto line = RequireInt(args, "line");
+            if (!file || !line) {
+                callback(MakeTextToolResult("Missing required argument(s): file, line", true));
+                return;
+            }
+            const std::filesystem::path    path          = ResolveArgPath(*file);
+            const auto                     lineNum       = static_cast<std::size_t>(*line);
+            const std::vector<std::size_t> existingLines = dapManager_.BreakpointsForFile(path);
+            const bool                     alreadySet    = std::find(existingLines.begin(), existingLines.end(), lineNum) != existingLines.end();
+            if (!alreadySet) {
+                dapManager_.ToggleBreakpoint(path, lineNum);
+            }
+            std::string status = "Breakpoint set at " + *file + ":" + std::to_string(lineNum) + ".";
+            if (const auto condition = RequireString(args, "condition")) {
+                status = dapManager_.SetBreakpointCondition(path, lineNum, *condition);
+            }
+            if (const auto hitCondition = RequireString(args, "hitCondition")) {
+                status = dapManager_.SetBreakpointHitCondition(path, lineNum, *hitCondition);
+            }
+            if (const auto logMessage = RequireString(args, "logMessage")) {
+                status = dapManager_.SetBreakpointLogMessage(path, lineNum, *logMessage);
+            }
+            callback(MakeTextToolResult(status));
+        });
+
+    RegisterTool(
+        "dap_remove_breakpoint", "Remove the breakpoint at a source line, if one exists.",
+        Json{
+            {"type", "object"},
+            {"properties",
+             {{"file", {{"type", "string"}, {"description", "Path to the file, absolute or relative to the project root."}}},
+              {"line", {{"type", "integer"}, {"description", "1-indexed line number."}}}}},
+            {"required", Json::array({"file", "line"})},
+        },
+        [this](const Json& args, const ResultCallback& callback) {
+            const auto file = RequireString(args, "file");
+            const auto line = RequireInt(args, "line");
+            if (!file || !line) {
+                callback(MakeTextToolResult("Missing required argument(s): file, line", true));
+                return;
+            }
+            const std::filesystem::path    path          = ResolveArgPath(*file);
+            const auto                     lineNum       = static_cast<std::size_t>(*line);
+            const std::vector<std::size_t> existingLines = dapManager_.BreakpointsForFile(path);
+            if (std::find(existingLines.begin(), existingLines.end(), lineNum) == existingLines.end()) {
+                callback(MakeTextToolResult("No breakpoint at " + *file + ":" + std::to_string(lineNum) + "."));
+                return;
+            }
+            dapManager_.ToggleBreakpoint(path, lineNum);
+            callback(MakeTextToolResult("Removed breakpoint at " + *file + ":" + std::to_string(lineNum) + "."));
+        });
+
+    RegisterTool(
+        "dap_continue",
+        "Start a debug session for a language (if none is running yet) or continue a stopped one. Returns "
+        "immediately with a short status -- the session lands Running or Stopped asynchronously; poll "
+        "dap_get_current_location or ned's own status to see where it lands.",
+        Json{
+            {"type", "object"},
+            {"properties",
+             {{"language",
+               {{"type", "string"}, {"description", "Language key to launch (see ned/set-dap-adapter/ned/set-dap-launch) -- only used when no session is currently running."}}}}},
+        },
+        [this](const Json& args, const ResultCallback& callback) { callback(MakeTextToolResult(dapManager_.StartOrContinue(RequireString(args, "language").value_or("")))); });
+
+    RegisterTool("dap_pause", "Pause the running debuggee.", Json{{"type", "object"}, {"properties", Json::object()}},
+                 [this](const Json&, const ResultCallback& callback) { callback(MakeTextToolResult(dapManager_.Pause())); });
+
+    RegisterTool("dap_stop_session", "Stop the running debug session.", Json{{"type", "object"}, {"properties", Json::object()}},
+                 [this](const Json&, const ResultCallback& callback) { callback(MakeTextToolResult(dapManager_.StopSession())); });
+
+    RegisterTool("dap_step_over", "Step over the current line in the stopped debug session.", Json{{"type", "object"}, {"properties", Json::object()}},
+                 [this](const Json&, const ResultCallback& callback) { callback(MakeTextToolResult(dapManager_.StepOver())); });
+
+    RegisterTool("dap_step_into", "Step into the call on the current line in the stopped debug session.", Json{{"type", "object"}, {"properties", Json::object()}},
+                 [this](const Json&, const ResultCallback& callback) { callback(MakeTextToolResult(dapManager_.StepInto())); });
+
+    RegisterTool("dap_step_out", "Step out of the current function in the stopped debug session.", Json{{"type", "object"}, {"properties", Json::object()}},
+                 [this](const Json&, const ResultCallback& callback) { callback(MakeTextToolResult(dapManager_.StepOut())); });
+
+    RegisterTool(
+        "dap_get_current_location", "Get where the debug session is currently stopped, if it's stopped.", Json{{"type", "object"}, {"properties", Json::object()}},
+        [this](const Json&, const ResultCallback& callback) {
+            const auto stop = dapManager_.CurrentStopKeyAndLine();
+            if (!stop) {
+                callback(MakeTextToolResult("Debug session is not currently stopped."));
+                return;
+            }
+            callback(MakeTextToolResult(Json{{"file", stop->first}, {"line", stop->second}}.dump()));
+        });
+
+    RegisterTool(
+        "dap_get_stack_trace", "Get the call stack of the stopped debug session.", Json{{"type", "object"}, {"properties", Json::object()}},
+        [this](const Json&, const ResultCallback& callback) {
+            dapManager_.RequestStackTrace([callback](std::vector<dap::DapManager::StackFrame> frames) {
+                if (frames.empty()) {
+                    callback(MakeTextToolResult("No stack available (is the session stopped?)."));
+                    return;
+                }
+                Json results = Json::array();
+                for (const dap::DapManager::StackFrame& frame : frames) {
+                    Json entry = Json{{"frameId", frame.id}, {"name", frame.name}};
+                    if (frame.path) {
+                        entry["file"] = frame.path->string();
+                        entry["line"] = frame.line;
+                    }
+                    results.push_back(std::move(entry));
+                }
+                callback(MakeTextToolResult(results.dump()));
+            });
+        });
+
+    RegisterTool(
+        "dap_get_scopes", "Get the variable scopes (locals, arguments, ...) for a stack frame, from dap_get_stack_trace's own frameId.",
+        Json{
+            {"type", "object"},
+            {"properties", {{"frameId", {{"type", "integer"}, {"description", "A frameId from dap_get_stack_trace."}}}}},
+            {"required", Json::array({"frameId"})},
+        },
+        [this](const Json& args, const ResultCallback& callback) {
+            const auto frameId = RequireInt(args, "frameId");
+            if (!frameId) {
+                callback(MakeTextToolResult("Missing required argument: frameId", true));
+                return;
+            }
+            dapManager_.RequestScopes(static_cast<int>(*frameId), [callback](std::vector<dap::DapManager::Scope> scopes) {
+                if (scopes.empty()) {
+                    callback(MakeTextToolResult("No scopes available (is the session stopped?)."));
+                    return;
+                }
+                Json results = Json::array();
+                for (const dap::DapManager::Scope& scope : scopes) {
+                    results.push_back(Json{{"name", scope.name}, {"variablesReference", scope.variablesReference}});
+                }
+                callback(MakeTextToolResult(results.dump()));
+            });
+        });
+
+    RegisterTool(
+        "dap_get_variables",
+        "Get the variables in a scope or composite value, from dap_get_scopes' or a prior dap_get_variables' own variablesReference.",
+        Json{
+            {"type", "object"},
+            {"properties",
+             {{"variablesReference", {{"type", "integer"}, {"description", "From dap_get_scopes, or a composite variable's own variablesReference."}}},
+              {"hex", {{"type", "boolean"}, {"description", "Optional: render numeric values in hex instead of decimal."}}}}},
+            {"required", Json::array({"variablesReference"})},
+        },
+        [this](const Json& args, const ResultCallback& callback) {
+            const auto reference = RequireInt(args, "variablesReference");
+            if (!reference) {
+                callback(MakeTextToolResult("Missing required argument: variablesReference", true));
+                return;
+            }
+            const bool hex = args.contains("hex") && args["hex"].is_boolean() && args["hex"].get<bool>();
+            dapManager_.RequestVariables(
+                static_cast<int>(*reference),
+                [callback](std::vector<dap::DapManager::Variable> variables) {
+                    if (variables.empty()) {
+                        callback(MakeTextToolResult("No variables (is the session stopped?)."));
+                        return;
+                    }
+                    Json results = Json::array();
+                    for (const dap::DapManager::Variable& variable : variables) {
+                        Json entry = Json{{"name", variable.name}, {"value", variable.value}};
+                        if (!variable.type.empty()) {
+                            entry["type"] = variable.type;
+                        }
+                        if (variable.variablesReference > 0) {
+                            entry["variablesReference"] = variable.variablesReference;
+                        }
+                        results.push_back(std::move(entry));
+                    }
+                    callback(MakeTextToolResult(results.dump()));
+                },
+                hex);
+        });
+
+    RegisterTool(
+        "dap_evaluate", "Evaluate an expression in the stopped debug session's top (or focused) frame.",
+        Json{
+            {"type", "object"},
+            {"properties", {{"expression", {{"type", "string"}, {"description", "The expression to evaluate, in the adapter's own expression syntax."}}}}},
+            {"required", Json::array({"expression"})},
+        },
+        [this](const Json& args, const ResultCallback& callback) {
+            const auto expression = RequireString(args, "expression");
+            if (!expression) {
+                callback(MakeTextToolResult("Missing required argument: expression", true));
+                return;
+            }
+            dapManager_.Evaluate(*expression,
+                                 [callback](bool success, std::string text) { callback(MakeTextToolResult(std::move(text), !success)); });
+        });
+
+    RegisterTool(
+        "dap_list_watches", "List every watch expression, with its recent numeric history where available.", Json{{"type", "object"}, {"properties", Json::object()}},
+        [this](const Json&, const ResultCallback& callback) {
+            const std::vector<std::string>& watches = dapManager_.Watches();
+            if (watches.empty()) {
+                callback(MakeTextToolResult("No watches set."));
+                return;
+            }
+            Json results = Json::array();
+            for (std::size_t i = 0; i < watches.size(); ++i) {
+                Json entry = Json{{"expression", watches[i]}};
+                if (const std::vector<double>& history = dapManager_.WatchHistoryAt(i); !history.empty()) {
+                    entry["history"] = history;
+                }
+                results.push_back(std::move(entry));
+            }
+            callback(MakeTextToolResult(results.dump()));
         });
 }
 

@@ -8612,6 +8612,20 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
                 RequestPointerGraphAtPoint();
             }
             return;
+        case editor::InteractiveRequest::DapAskAgentAboutState:
+            if (!dapManager_) {
+                statusMessage_ = "No debugger available.";
+            }
+            else if (dapManager_->State() != editor::dap::DapManager::SessionState::Stopped) {
+                statusMessage_ = "Debug session is not stopped.";
+            }
+            else if (!acpManager_ || acpManager_->State() != editor::acp::AcpManager::SessionState::Active) {
+                statusMessage_ = "No active ACP session (see acp-start-session).";
+            }
+            else {
+                SendDebugStateToAgent();
+            }
+            return;
         case editor::InteractiveRequest::DapEvaluate:
             if (!dapManager_) {
                 statusMessage_ = "No debugger available.";
@@ -12069,11 +12083,10 @@ namespace {
 
 } // namespace
 
-void BufferView::ShowDebugInfo() {
-    statusMessage_ = "Fetching debug info...";
-    dapManager_->RequestStackTrace([this](std::vector<editor::dap::DapManager::StackFrame> frames) {
+void BufferView::BuildDebugInfoLines(std::function<void(std::vector<std::string>)> onComplete) {
+    dapManager_->RequestStackTrace([this, onComplete = std::move(onComplete)](std::vector<editor::dap::DapManager::StackFrame> frames) {
         if (frames.empty()) {
-            statusMessage_ = "No stack to show (is the session stopped?).";
+            onComplete({});
             return;
         }
         auto lines = std::make_shared<std::vector<std::string>>();
@@ -12095,10 +12108,10 @@ void BufferView::ShowDebugInfo() {
                 lines->push_back("#" + std::to_string(i) + " " + frame.name + " (no source)" + frameMarker);
             }
         }
-        dapManager_->RequestScopes(frames[0].id, [this, lines](std::vector<editor::dap::DapManager::Scope> scopes) {
+        dapManager_->RequestScopes(frames[0].id, [this, lines, onComplete](std::vector<editor::dap::DapManager::Scope> scopes) {
             const std::vector<std::string>& watches = dapManager_->Watches();
             if (scopes.empty() && watches.empty()) {
-                BuildDebugBuffer(*lines);
+                onComplete(*lines);
                 return;
             }
             // One variables request per scope plus one evaluate per watch,
@@ -12117,14 +12130,14 @@ void BufferView::ShowDebugInfo() {
                 for (std::size_t w = 0; w < watches.size(); ++w) {
                     dapManager_->Evaluate(
                         watches[w],
-                        [this, lines, remaining, chunks, w, expression = watches[w]](bool success, std::string text) {
+                        [this, lines, remaining, chunks, onComplete, w, expression = watches[w]](bool success, std::string text) {
                             (*chunks)[0][1 + w] = "  " + expression + " = " + (success ? text : ("<" + text + ">")) + "  [watch:" +
                                                    std::to_string(w) + "]";
                             if (--*remaining == 0) {
                                 for (const std::vector<std::string>& finishedChunk : *chunks) {
                                     lines->insert(lines->end(), finishedChunk.begin(), finishedChunk.end());
                                 }
-                                BuildDebugBuffer(*lines);
+                                onComplete(*lines);
                             }
                         },
                         "watch");
@@ -12135,7 +12148,7 @@ void BufferView::ShowDebugInfo() {
             for (std::size_t s = 0; s < scopes.size(); ++s) {
                 dapManager_->RequestVariables(
                     scopes[s].variablesReference,
-                    [this, lines, remaining, chunks, s, scopeVariablesReference = scopes[s].variablesReference,
+                    [this, lines, remaining, chunks, onComplete, s, scopeVariablesReference = scopes[s].variablesReference,
                      scopeName = scopes[s].name](std::vector<editor::dap::DapManager::Variable> variables) {
                         std::vector<std::string>& chunk = (*chunks)[1 + s];
                         chunk.push_back("");
@@ -12147,11 +12160,38 @@ void BufferView::ShowDebugInfo() {
                             for (const std::vector<std::string>& finishedChunk : *chunks) {
                                 lines->insert(lines->end(), finishedChunk.begin(), finishedChunk.end());
                             }
-                            BuildDebugBuffer(*lines);
+                            onComplete(*lines);
                         }
                     });
             }
         });
+    });
+}
+
+void BufferView::ShowDebugInfo() {
+    statusMessage_ = "Fetching debug info...";
+    BuildDebugInfoLines([this](std::vector<std::string> lines) {
+        if (lines.empty()) {
+            statusMessage_ = "No stack to show (is the session stopped?).";
+            return;
+        }
+        BuildDebugBuffer(lines);
+    });
+}
+
+void BufferView::SendDebugStateToAgent() {
+    statusMessage_ = "Gathering debug state...";
+    BuildDebugInfoLines([this](std::vector<std::string> lines) {
+        if (lines.empty()) {
+            statusMessage_ = "No stack to show (is the session stopped?).";
+            return;
+        }
+        std::string prompt = "The debugger is currently stopped. Here is the current call stack and variable state:\n\n";
+        for (const std::string& line : lines) {
+            prompt += line + "\n";
+        }
+        prompt += "\nPlease help me understand what's happening at this point.";
+        statusMessage_ = acpManager_->SendPrompt(prompt);
     });
 }
 

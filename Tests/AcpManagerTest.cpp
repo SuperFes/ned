@@ -12,6 +12,7 @@
 #include "Editor/Acp/AcpClient.h"
 #include "Editor/Acp/AcpManager.h"
 #include "Editor/Acp/Transport.h"
+#include "Editor/Dap/DapManager.h"
 #include "Editor/Lsp/LspManager.h"
 #include "Editor/Mcp/McpBridgeServer.h"
 #include "Editor/Mcp/McpToolRegistry.h"
@@ -140,7 +141,8 @@ TEST_CASE("AcpManager::StartSession advertises a stdio MCP server when a bridge 
     ned::editor::lsp::LspManager   lspManager(mcpBufferList, fixture.eventLoop);
     ned::editor::vcs::VcsRunner    vcsRunner(fixture.eventLoop);
     ned::editor::testrun::TestRunner testRunner(mcpBufferList, fixture.eventLoop);
-    ned::editor::mcp::ToolRegistry  registry(mcpBufferList, lspManager, vcsRunner, testRunner);
+    ned::editor::dap::DapManager      dapManager(fixture.eventLoop);
+    ned::editor::mcp::ToolRegistry    registry(mcpBufferList, lspManager, vcsRunner, testRunner, dapManager);
     ned::editor::mcp::McpBridgeServer bridge(registry, fixture.eventLoop);
     fixture.manager.SetMcpBridgeServer(&bridge);
 
