@@ -15,6 +15,7 @@
 #include "Clipboard.h"
 #include "CodeFold.h"
 #include "ConflictResolution.h"
+#include "Coverage/CoverageConfig.h"
 #include "EmbeddedDocuments.h"
 #include "Fill.h"
 #include "FillColumn.h"
@@ -2759,6 +2760,47 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           context.interactiveRequest = InteractiveRequest::RerunFailedTests;
                       });
 
+    // code-coverage-gutter follow-up: direct actions, no InteractiveRequest
+    // needed -- unlike run-tests above, loading a coverage report is a
+    // plain file read + parse (Editor/Coverage/CoverageConfig.h), not
+    // something BufferView needs to hold a live subprocess/runner object
+    // for. The gutter itself picks up the new report on its own next
+    // Paint() via CoverageReportGeneration(), the same "no explicit
+    // buffer-by-buffer refresh call" shape TestRunner's OutcomeGeneration()
+    // already established.
+    registry.Register(
+        "load-coverage-report",
+        "Load and parse the configured coverage report (see ned/set-coverage-file) -- an lcov .info file -- into "
+        "the per-line covered/uncovered/partial-branch gutter marks.",
+        [](CommandContext& context) {
+            try {
+                editor::coverage::LoadCoverageReport();
+            }
+            catch (const std::exception& e) {
+                if (context.message) {
+                    *context.message = std::string("Failed to load coverage report: ") + e.what();
+                }
+                return;
+            }
+            if (context.message) {
+                const editor::coverage::CoverageReport report = editor::coverage::CurrentCoverageReport();
+                std::size_t                            lineCount = 0;
+                for (const editor::coverage::FileCoverage& file : report) {
+                    lineCount += file.lines.size();
+                }
+                *context.message = "Loaded coverage for " + std::to_string(report.size()) + " file" +
+                                   (report.size() == 1 ? "" : "s") + ", " + std::to_string(lineCount) + " line" +
+                                   (lineCount == 1 ? "" : "s") + ".";
+            }
+        });
+    registry.Register("clear-coverage-report", "Clear the loaded coverage report and its gutter marks.",
+                      [](CommandContext& context) {
+                          editor::coverage::ClearCoverageReport();
+                          if (context.message) {
+                              *context.message = "Coverage report cleared.";
+                          }
+                      });
+
     // DAP client slice 1: four one-shot direct actions, same "just set
     // interactiveRequest" shape as run-task/cancel-task above --
     // BufferView holds the shared DapManager and does the actual work (see
@@ -4024,6 +4066,8 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("C-c T r"), "show-test-results");
     keymap.Bind(ParseKeySequence("C-c T ."), "run-test-at-point"); // "." for at-point
     keymap.Bind(ParseKeySequence("C-c T f"), "rerun-failed-tests");
+    // code-coverage-gutter follow-up: "c" for coverage, same prefix.
+    keymap.Bind(ParseKeySequence("C-c T c"), "load-coverage-report");
     keymap.Bind(ParseKeySequence("C-c C-v"), "project-search-visit-result");
     // Editable-multibuffer follow-up: wgrep's own real Emacs binding is
     // "C-c C-e", already taken here by lsp-show-diagnostic -- "C-c C-c" is

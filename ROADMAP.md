@@ -989,15 +989,15 @@ these accumulate detail in place.
       daemon would never pick up a rebuilt binary's fix on its own, the identical bug in
       a longer-lived package. Not scoped further than that; no server-mode design exists
       yet.
-- [ ] **Code coverage gutter** (audit finding, 2026-09-06). Parse `gcov`/`lcov .info`
-      (and, for the sanitizer-adjacent case, `llvm-cov`) output into a per-line
-      covered/uncovered/partial marker, rendered as a new gutter column the same way the
-      existing blame/diagnostic/symbol-kind/test-status gutters already work
-      (`BufferView`'s established data-driven-gutter pattern — no new rendering
-      mechanism needed, just a parser and a data source). A natural pairing with the
-      sanitizer/Valgrind-XML/massif output parsers already wired into
-      `DiagnosticsLog`/`TestRunner`, and a common request in an editor with this much
-      test/debug tooling already built out.
+Code coverage gutter is shipped (2026-09-06) — see `git log --grep=code-coverage-gutter`.
+`Editor/Coverage/CoverageOutputParser.h` parses lcov's `.info` format (covers `lcov`
+itself, `llvm-cov export -format=lcov`, and `gcovr --lcov` with one parser); the gutter
+column (`C-c T c`/`load-coverage-report`, `ned/set-coverage-file`) marks covered/partial/
+uncovered per line, cross-referenced against the VCS diff gutter's own data to flag an
+uncovered line that's also newly added/modified. Raw per-file `.gcov` output was
+deliberately left out (a directory-scan problem, not a single-document parser like every
+other format this codebase's `Editor/*OutputParser.h` files handle); revisit only if
+lcov's `.info` format proves insufficient in practice.
 
 ## Won't Do (at Least Not Soon)
 
