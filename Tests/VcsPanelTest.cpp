@@ -12,6 +12,7 @@
 #include "Text/BufferList.h"
 #include "UI/ActiveBuffer.h"
 #include "UI/EventLoop.h"
+#include "UI/LeftDock.h"
 #include "UI/VcsPanel.h"
 
 using ned::editor::vcs::VcsCommandSpec;
@@ -170,7 +171,7 @@ TEST_CASE("Space marks/unmarks the focused file for batch selection", "[VcsPanel
     panel.DispatchVcsStatusForTesting({
         {"M ", "a.txt"},
     });
-    panel.TakeKeyboardFocus();
+    panel.TakeFocus();
 
     panel.OnEvent(ned::ui::test::ArrowDown()); // move off the "Staged (1)" header onto a.txt
     REQUIRE(panel.SelectedPathsForTesting().empty());
@@ -204,18 +205,19 @@ TEST_CASE("Clicking the checkbox glyph toggles selection; clicking elsewhere on 
         {"M ", "a.txt"},
     });
 
-    // a.txt is row 2 (row 0 border, row 1 "Staged (1)" header); a.txt is the
-    // only (and thus last) sibling at depth 0, so its tree-connector prefix
-    // is "└─" (2 columns) plus a trailing space -- the checkbox glyph sits
-    // at contentLeft(1) + 2 + 1 == column 4.
-    panel.OnEvent(MousePress(4, 2));
+    // a.txt is row 2 (row 0 this widget's own header, row 1 "Staged (1)"
+    // section header); a.txt is the only (and thus last) sibling at depth
+    // 0, so its tree-connector prefix is "└─" (2 columns) plus a trailing
+    // space -- the checkbox glyph sits at 2 + 1 == column 3 (unified-
+    // left-dock follow-up: no frame to inset for anymore).
+    panel.OnEvent(MousePress(3, 2));
     REQUIRE(panel.SelectedPathsForTesting().size() == 1);
     REQUIRE_FALSE(activeBuffer.Get().Name() == "a.txt"); // a click on the checkbox never opens the file
 
-    panel.OnEvent(MousePress(4, 2)); // toggles back off
+    panel.OnEvent(MousePress(3, 2)); // toggles back off
     REQUIRE(panel.SelectedPathsForTesting().empty());
 
-    panel.OnEvent(MousePress(8, 2)); // anywhere past the checkbox opens the file
+    panel.OnEvent(MousePress(7, 2)); // anywhere past the checkbox opens the file
     REQUIRE(activeBuffer.Get().Name() == "a.txt");
 
     std::filesystem::remove_all(dir);
@@ -237,7 +239,7 @@ TEST_CASE("Staging with no VcsRunner configured reports an error rather than cra
     panel.DispatchVcsStatusForTesting({
         {"M ", "a.txt"},
     });
-    panel.TakeKeyboardFocus();
+    panel.TakeFocus();
     panel.OnEvent(ned::ui::test::ArrowDown());
 
     panel.OnEvent(ned::ui::test::Character('a')); // stage, no vcsRunner_ set
@@ -270,7 +272,7 @@ TEST_CASE("Staging targets the selection set when non-empty, else falls back to 
         {"M ", "a.txt"},
         {"M ", "b.txt"},
     });
-    panel.TakeKeyboardFocus();
+    panel.TakeFocus();
     panel.OnEvent(ned::ui::test::ArrowDown()); // a.txt
     panel.OnEvent(ned::ui::test::Character(' ')); // mark a.txt only
 
@@ -305,14 +307,14 @@ TEST_CASE("'c'/'w'/'n' fire SetOnAction with Commit/SwitchBranch/CreateBranch an
     bool focusReturned = false;
     panel.SetOnFocusReturn([&focusReturned] { focusReturned = true; });
 
-    panel.TakeKeyboardFocus();
+    panel.TakeFocus();
     panel.OnEvent(ned::ui::test::Character('c'));
     REQUIRE(focusReturned);
     focusReturned = false;
 
-    panel.TakeKeyboardFocus();
+    panel.TakeFocus();
     panel.OnEvent(ned::ui::test::Character('w'));
-    panel.TakeKeyboardFocus();
+    panel.TakeFocus();
     panel.OnEvent(ned::ui::test::Character('n'));
 
     REQUIRE(firedActions.size() == 3);
@@ -362,7 +364,7 @@ TEST_CASE("A file with real conflict markers gets a warning glyph and Enter jump
     REQUIRE(RowText(screen, 3, 30).find("⚠") != std::string::npos); // a.txt
     REQUIRE(RowText(screen, 4, 30).find("⚠") == std::string::npos); // clean.txt
 
-    panel.TakeKeyboardFocus();
+    panel.TakeFocus();
     panel.OnEvent(ned::ui::test::ArrowDown()); // "Unstaged (2)" header
     panel.OnEvent(ned::ui::test::ArrowDown()); // a.txt
     panel.OnEvent(ned::ui::test::Return());
@@ -395,7 +397,7 @@ TEST_CASE("'x' enters a discard/revert confirm state that only 'y' actually conf
     panel.DispatchVcsStatusForTesting({
         {"M ", "a.txt"},
     });
-    panel.TakeKeyboardFocus();
+    panel.TakeFocus();
     panel.OnEvent(ned::ui::test::ArrowDown()); // a.txt
 
     panel.OnEvent(ned::ui::test::Character('x'));
@@ -459,7 +461,7 @@ TEST_CASE("Stash section is hidden when empty and shows entries when not, with p
     REQUIRE(RowText(screen, 5, 40).find("stash@{0}") != std::string::npos);
     REQUIRE(RowText(screen, 5, 40).find("a test stash") != std::string::npos);
 
-    panel.TakeKeyboardFocus();
+    panel.TakeFocus();
     // 'z' pushes a new stash from anywhere -- ThrowingProvider's
     // StashPushArgv default-throws synchronously, confirming a real call.
     panel.OnEvent(ned::ui::test::Character('z'));
@@ -500,7 +502,7 @@ TEST_CASE("'f'/'F'/'P' fire fetch/pull/push", "[VcsPanel]") {
     ned::ui::VcsPanel      panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlacePanel(panel, 40, 12);
     panel.SetVcsRunner(&runner);
-    panel.TakeKeyboardFocus();
+    panel.TakeFocus();
 
     panel.OnEvent(ned::ui::test::Character('f'));
     REQUIRE(statusMessage.find("fetch not supported") != std::string::npos);
@@ -516,84 +518,6 @@ TEST_CASE("'f'/'F'/'P' fire fetch/pull/push", "[VcsPanel]") {
     std::filesystem::remove_all(dir);
 }
 
-TEST_CASE("ToggleCollapsed collapses to a 1-column strip and back", "[VcsPanel]") {
-    ned::text::BufferList list;
-    ned::text::Buffer&    scratch = list.CreateBuffer("scratch");
-    ned::ui::ActiveBuffer activeBuffer(scratch);
-    ned::ui::Theme        theme = ned::ui::DarkTheme();
-    std::string           statusMessage;
-    ned::ui::VcsPanel      panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
-
-    REQUIRE_FALSE(panel.Collapsed());
-    panel.SetWidth(24);
-    REQUIRE(panel.Width() == 24);
-
-    panel.ToggleCollapsed();
-    REQUIRE(panel.Collapsed());
-    REQUIRE(panel.Width() == 1);
-    REQUIRE(panel.ExpandedWidth() == 24); // preserved across the collapse
-
-    panel.ToggleCollapsed();
-    REQUIRE_FALSE(panel.Collapsed());
-    REQUIRE(panel.Width() == 24);
-}
-
-TEST_CASE("Double-clicking the divider collapses the VCS panel to a 1-column strip; double-clicking the strip expands again",
-          "[VcsPanel]") {
-    ned::text::BufferList list;
-    ned::text::Buffer&    scratch = list.CreateBuffer("scratch");
-    ned::ui::ActiveBuffer activeBuffer(scratch);
-    ned::ui::Theme        theme = ned::ui::DarkTheme();
-    std::string           statusMessage;
-    ned::ui::VcsPanel      panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
-    PlacePanel(panel, 20, 12);
-    REQUIRE_FALSE(panel.Collapsed());
-    REQUIRE(panel.Width() == 30); // the default expanded width
-
-    panel.OnEvent(MousePress(19, 5)); // first press starts a resize...
-    REQUIRE(panel.IsResizing());
-    panel.OnEvent(MousePress(19, 5)); // ...the rapid second press collapses instead
-
-    REQUIRE(panel.Collapsed());
-    REQUIRE_FALSE(panel.IsResizing()); // the half-started resize died with the frame
-    REQUIRE(panel.Width() == 1);
-    REQUIRE(panel.ExpandedWidth() == 30); // preserved for re-expansion
-
-    // A single press on the collapsed strip does nothing; a rapid second one expands.
-    panel.OnEvent(MousePress(0, 5));
-    REQUIRE(panel.Collapsed());
-    panel.OnEvent(MousePress(0, 5));
-    REQUIRE_FALSE(panel.Collapsed());
-    REQUIRE(panel.Width() == 30);
-}
-
-TEST_CASE("A real resize drag never counts as the first half of a VcsPanel collapse double-click", "[VcsPanel]") {
-    ned::text::BufferList list;
-    ned::text::Buffer&    scratch = list.CreateBuffer("scratch");
-    ned::ui::ActiveBuffer activeBuffer(scratch);
-    ned::ui::Theme        theme = ned::ui::DarkTheme();
-    std::string           statusMessage;
-    ned::ui::VcsPanel      panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
-    PlacePanel(panel, 20, 12);
-
-    panel.OnEvent(MousePress(19, 5));
-    panel.OnEvent(ned::ui::test::Mouse(12, 5, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Moved)); // a genuine drag
-    panel.OnEvent(
-        ned::ui::test::Mouse(12, 5, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Released));
-    REQUIRE(panel.Width() == 13);
-
-    // The composition root re-reads Width() and re-lays the box out every
-    // frame -- mirror that before pressing the (moved) divider again.
-    PlacePanel(panel, 13, 12);
-
-    // A prompt new press on the divider (well within the double-click
-    // window of the drag's own initial press) must start a fresh resize,
-    // not collapse.
-    panel.OnEvent(MousePress(12, 5));
-    REQUIRE_FALSE(panel.Collapsed());
-    REQUIRE(panel.IsResizing());
-    panel.OnEvent(ned::ui::test::Mouse(12, 5, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Released));
-}
 
 TEST_CASE("Scrolling past a section header pins it as a sticky row", "[VcsPanel]") {
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_vcs_panel_test_sticky_header";
@@ -790,7 +714,7 @@ TEST_CASE("RequestStageOrUnstage/RequestDiscardConfirm/PopStash/DropStash act on
     // RequestDiscardConfirm enters the same y/n state 'x' does -- the caller
     // (main.cpp's context-menu wiring) is expected to give this widget
     // keyboard focus first, same as the real wiring does.
-    panel.TakeKeyboardFocus();
+    panel.TakeFocus();
     panel.RequestDiscardConfirm("a.txt");
     ned::ui::Screen screen = ned::ui::Screen(50, 12);
     ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 49, .y_min = 0, .y_max = 11});
@@ -829,4 +753,26 @@ TEST_CASE("OpenFileEntry opens the given path without requiring focus", "[VcsPan
     REQUIRE(activeBuffer.Get().Name() == "a.txt");
 
     std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("Collapsing the dock while this panel is focused hands focus back via OnFocusPreempted", "[VcsPanel]") {
+    ned::text::BufferList list;
+    ned::text::Buffer&    scratch = list.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    std::string           statusMessage;
+    ned::ui::VcsPanel      panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    ned::ui::LeftDock      dock(theme);
+    dock.AddPanel(U'V', "VCS", panel);
+
+    bool focusReturned = false;
+    panel.SetOnFocusReturn([&focusReturned] { focusReturned = true; });
+    panel.TakeFocus();
+
+    // unified-left-dock follow-up (migration step 3): collapse now lives on
+    // LeftDock, not this widget -- Widget::OnFocusPreempted (overridden
+    // here to fire onFocusReturn_) is the bridge that still lets a focused
+    // hosted panel hand focus back when the dock hides it.
+    dock.SetCollapsed(true);
+    REQUIRE(focusReturned);
 }

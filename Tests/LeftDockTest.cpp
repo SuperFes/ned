@@ -182,6 +182,53 @@ TEST_CASE("A no-op SwitchTo/CommitSwitchTo with an unregistered id changes nothi
     REQUIRE(f.dock.ActivePanel() == filesId);
 }
 
+TEST_CASE("ActivateOrToggle: re-activating the active expanded panel collapses; anything else expands+switches",
+          "[LeftDock]") {
+    Fixture f;
+    f.dock.AddPanel(U'F', "Files", f.files);
+    const std::size_t vcsId = f.dock.AddPanel(U'V', "VCS", f.vcs);
+
+    // Same shape as the rail-click test below, driven programmatically --
+    // BufferView's toggle-project-sidebar/toggle-vcs-panel commands call
+    // this directly instead of simulating a mouse event.
+    f.dock.ActivateOrToggle(&f.files); // already active+expanded -> collapses
+    REQUIRE(f.dock.Collapsed());
+
+    f.dock.ActivateOrToggle(&f.vcs); // collapsed, different panel -> expands+switches
+    REQUIRE_FALSE(f.dock.Collapsed());
+    REQUIRE(f.dock.ActivePanel() == vcsId);
+
+    f.dock.ActivateOrToggle(&f.files); // expanded, different panel -> switches only
+    REQUIRE_FALSE(f.dock.Collapsed());
+    REQUIRE(f.dock.ActivePanel() != vcsId);
+}
+
+TEST_CASE("ActivateOrToggle with an unregistered widget is a safe no-op", "[LeftDock]") {
+    Fixture   f;
+    FakePanel stray{"S"};
+    f.dock.AddPanel(U'F', "Files", f.files);
+
+    f.dock.ActivateOrToggle(&stray);
+    REQUIRE_FALSE(f.dock.Collapsed());
+    REQUIRE(f.dock.ActiveContent() == &f.files);
+}
+
+TEST_CASE("PrepareForKeyboardFocus switches to the target panel if a different one is active", "[LeftDock]") {
+    Fixture f;
+    f.dock.AddPanel(U'F', "Files", f.files);
+    const std::size_t vcsId = f.dock.AddPanel(U'V', "VCS", f.vcs);
+    f.dock.SwitchTo(vcsId);
+
+    bool activeCommitted = false;
+    f.dock.SetOnActivePanelCommitted([&](std::size_t) { activeCommitted = true; });
+
+    // focus-project-sidebar while VCS is active: switches to Files, silently.
+    f.dock.PrepareForKeyboardFocus(&f.files);
+    REQUIRE(f.dock.ActiveContent() == &f.files);
+    REQUIRE_FALSE(f.dock.Collapsed());
+    REQUIRE_FALSE(activeCommitted); // a quick keyboard visit doesn't overwrite the remembered active panel
+}
+
 TEST_CASE("Clicking the active panel's rail glyph collapses; clicking another expands and switches", "[LeftDock]") {
     Fixture f;
     f.dock.AddPanel(U'F', "Files", f.files); // active by default, rail row 0
@@ -335,7 +382,7 @@ TEST_CASE("PrepareForKeyboardFocus expands a collapsed dock without committing",
     bool collapseCommitted = false;
     f.dock.SetOnCollapseCommitted([&](bool) { collapseCommitted = true; });
 
-    f.dock.PrepareForKeyboardFocus();
+    f.dock.PrepareForKeyboardFocus(&f.files);
     REQUIRE_FALSE(f.dock.Collapsed());
     REQUIRE_FALSE(collapseCommitted); // silent, ProjectSidebar::TakeKeyboardFocus's own precedent
 }
@@ -345,13 +392,13 @@ TEST_CASE("NoteFocusReturned re-collapses only if PrepareForKeyboardFocus found 
     f.dock.AddPanel(U'F', "Files", f.files);
 
     // Already expanded when focus is taken -- stays expanded afterward.
-    f.dock.PrepareForKeyboardFocus();
+    f.dock.PrepareForKeyboardFocus(&f.files);
     f.dock.NoteFocusReturned();
     REQUIRE_FALSE(f.dock.Collapsed());
 
     // Collapsed when focus is taken -- goes back to collapsed afterward.
     f.dock.SetCollapsed(true);
-    f.dock.PrepareForKeyboardFocus();
+    f.dock.PrepareForKeyboardFocus(&f.files);
     REQUIRE_FALSE(f.dock.Collapsed());
     f.dock.NoteFocusReturned();
     REQUIRE(f.dock.Collapsed());

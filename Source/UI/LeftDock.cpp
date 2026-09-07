@@ -45,6 +45,15 @@ const LeftDock::Entry* LeftDock::FindEntry(std::size_t id) const {
     return nullptr;
 }
 
+LeftDock::Entry* LeftDock::FindEntryByContent(Widget* content) {
+    for (Entry& entry : entries_) {
+        if (entry.content == content) {
+            return &entry;
+        }
+    }
+    return nullptr;
+}
+
 Widget* LeftDock::ActiveContent() const {
     const Entry* entry = FindEntry(active_);
     return entry != nullptr ? entry->content : nullptr;
@@ -65,6 +74,25 @@ void LeftDock::CommitSwitchTo(std::size_t id) {
     SwitchTo(id);
     if (onActivePanelCommitted_) {
         onActivePanelCommitted_(active_);
+    }
+}
+
+void LeftDock::ActivateOrToggle(Widget* content) {
+    const Entry* entry = FindEntryByContent(content);
+    if (entry == nullptr) {
+        return;
+    }
+    const std::size_t id = entry->id; // entry can dangle after CommitSwitchTo/CommitCollapsed reposition content
+    if (!collapsed_ && id == active_) {
+        CommitCollapsed(true); // VS Code's own convention: re-clicking the active glyph collapses
+    }
+    else {
+        if (id != active_) {
+            CommitSwitchTo(id);
+        }
+        if (collapsed_) {
+            CommitCollapsed(false);
+        }
     }
 }
 
@@ -110,7 +138,14 @@ void LeftDock::ToggleCollapsed() {
     CommitCollapsed(!collapsed_);
 }
 
-void LeftDock::PrepareForKeyboardFocus() {
+void LeftDock::PrepareForKeyboardFocus(Widget* content) {
+    const Entry* entry = FindEntryByContent(content);
+    if (entry == nullptr) {
+        return;
+    }
+    if (entry->id != active_) {
+        SwitchTo(entry->id); // silent -- a quick keyboard visit shouldn't overwrite the remembered active panel
+    }
     collapseOnFocusReturn_ = collapsed_;
     SetCollapsed(false);
 }
@@ -292,18 +327,7 @@ bool LeftDock::OnEvent(const Event& event) {
     if (mouse->at.x < kRailWidth) {
         if (mouse->button == MouseEvent::Button::Left && mouse->motion == MouseEvent::Motion::Pressed &&
             mouse->at.y >= 0 && static_cast<std::size_t>(mouse->at.y) < entries_.size()) {
-            const std::size_t clickedId = entries_[static_cast<std::size_t>(mouse->at.y)].id;
-            if (!collapsed_ && clickedId == active_) {
-                CommitCollapsed(true); // VS Code's own convention: re-clicking the active glyph collapses
-            }
-            else {
-                if (clickedId != active_) {
-                    CommitSwitchTo(clickedId);
-                }
-                if (collapsed_) {
-                    CommitCollapsed(false);
-                }
-            }
+            ActivateOrToggle(entries_[static_cast<std::size_t>(mouse->at.y)].content);
         }
         return true; // the rail consumes every event inside its own columns, whether or not it matched a row
     }

@@ -5795,6 +5795,7 @@ TEST_CASE("C-c C-p toggles the registered project sidebar's collapse state", "[B
     ned::ui::LeftDock dock(fixture.theme);
     dock.AddPanel(U'F', "Files", sidebar);
     REQUIRE_FALSE(dock.Collapsed()); // starts expanded
+    view.SetProjectSidebar(&sidebar); // unified-left-dock follow-up (step 3): ActivateOrToggle needs both
     view.SetLeftDock(&dock);
 
     view.OnEvent(ned::ui::test::Ctrl('c'));
@@ -5826,6 +5827,72 @@ TEST_CASE("C-c p expands the sidebar if needed and hands it the keyboard focus",
 
     REQUIRE_FALSE(dock.Collapsed()); // focusing an invisible tree would be meaningless
     REQUIRE(sidebar.Focused());
+}
+
+TEST_CASE("C-c V switches the dock to the VCS panel, then collapses it on a second press", "[BufferView]") {
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
+
+    ned::ui::ProjectSidebar sidebar(
+        [&fixture]() -> ned::ui::ActiveBuffer& { return fixture.activeBuffer; }, fixture.bufferList, fixture.statusMessage,
+        fixture.theme);
+    ned::ui::VcsPanel vcsPanel(
+        [&fixture]() -> ned::ui::ActiveBuffer& { return fixture.activeBuffer; }, fixture.bufferList, fixture.statusMessage,
+        fixture.theme);
+    ned::ui::LeftDock dock(fixture.theme);
+    const std::size_t filesId = dock.AddPanel(U'F', "Files", sidebar);
+    const std::size_t vcsId   = dock.AddPanel(U'V', "VCS", vcsPanel);
+    view.SetProjectSidebar(&sidebar);
+    view.SetVcsPanel(&vcsPanel);
+    view.SetLeftDock(&dock);
+
+    REQUIRE(dock.ActivePanel() == filesId);
+
+    // unified-left-dock follow-up (step 3): toggle-vcs-panel is now
+    // LeftDock::ActivateOrToggle's rail-click gesture, driven by command
+    // instead of a mouse event -- Files is active, so this switches to VCS
+    // without collapsing.
+    view.OnEvent(ned::ui::test::Ctrl('c'));
+    view.OnEvent(ned::ui::test::Character("V"));
+    REQUIRE_FALSE(dock.Collapsed());
+    REQUIRE(dock.ActivePanel() == vcsId);
+
+    // VCS is now the active, expanded panel -- a second press collapses.
+    view.OnEvent(ned::ui::test::Ctrl('c'));
+    view.OnEvent(ned::ui::test::Character("V"));
+    REQUIRE(dock.Collapsed());
+}
+
+TEST_CASE("C-c v p switches the dock to the VCS panel and hands it the keyboard focus", "[BufferView]") {
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
+
+    ned::ui::ProjectSidebar sidebar(
+        [&fixture]() -> ned::ui::ActiveBuffer& { return fixture.activeBuffer; }, fixture.bufferList, fixture.statusMessage,
+        fixture.theme);
+    ned::ui::VcsPanel vcsPanel(
+        [&fixture]() -> ned::ui::ActiveBuffer& { return fixture.activeBuffer; }, fixture.bufferList, fixture.statusMessage,
+        fixture.theme);
+    ned::ui::LeftDock dock(fixture.theme);
+    const std::size_t filesId = dock.AddPanel(U'F', "Files", sidebar);
+    const std::size_t vcsId   = dock.AddPanel(U'V', "VCS", vcsPanel);
+    dock.SetCollapsed(true);
+    view.SetProjectSidebar(&sidebar);
+    view.SetVcsPanel(&vcsPanel);
+    view.SetLeftDock(&dock);
+    view.TakeFocus();
+
+    REQUIRE(dock.ActivePanel() == filesId); // Files is the default active panel
+
+    view.OnEvent(ned::ui::test::Ctrl('c'));
+    view.OnEvent(ned::ui::test::Character("v"));
+    view.OnEvent(ned::ui::test::Character("p"));
+
+    REQUIRE_FALSE(dock.Collapsed());
+    REQUIRE(dock.ActivePanel() == vcsId); // switched from Files to VCS
+    REQUIRE(vcsPanel.Focused());
 }
 
 TEST_CASE("A growing sidebar resize drag hands off to BufferView's mouse_move/mouse_release", "[BufferView]") {

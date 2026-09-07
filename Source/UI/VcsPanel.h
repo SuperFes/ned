@@ -2,14 +2,14 @@
 // VCS side panel (core slice -- see ROADMAP.md's "VCS Side Panel (New
 // Feature)" entry): a persistent, ProjectSidebar-shaped tree of the working
 // tree's staged/unstaged/untracked files, with multi-select batch stage/
-// unstage and inline commit/branch triggers. Physically modeled directly on
-// ProjectSidebar.h/.cpp -- same rounded-border/collapse-to-a-strip/drag-
-// resize/keyboard-focus shape -- docked on the left, swappable with
-// ProjectSidebar rather than shown alongside it (see
-// BufferView::SetVcsPanel's own doc comment for how the swap is kept
-// mutually exclusive when driven by the toggle-vcs-panel/toggle-project-
-// sidebar commands; a manual divider double-click on either widget can
-// still show both at once, an accepted v1 edge case).
+// unstage and inline commit/branch triggers. unified-left-dock follow-up
+// (migration step 3): no longer owns a border/width/collapse/resize-drag of
+// its own -- hosted as a second LeftDock panel alongside ProjectSidebar
+// (LeftDock.h), which owns that chrome and the two panels' mutual
+// exclusivity structurally (only the dock's own active panel ever paints or
+// receives events at all), so the toggle-vcs-panel/toggle-project-sidebar
+// cross-widget "collapse the other one" coordination BufferView::
+// SetVcsPanel used to document is gone -- see LeftDock::ActivateOrToggle.
 //
 // Each of the three sections (staged/unstaged/untracked -- VcsRowStatus's
 // own vocabulary doesn't distinguish these, this panel adds that on top via
@@ -90,14 +90,17 @@ class VcsPanel : public Widget {
         return true;
     }
 
+    // unified-left-dock follow-up: LeftDock collapsing while this widget
+    // holds focus (keyboard toggle or a rail-glyph mouse click, see
+    // Widget::OnFocusPreempted's own doc comment) hands focus back the same
+    // way Escape/C-g does.
+    void OnFocusPreempted() override {
+        ReturnFocus();
+    }
+
     // See ProjectSidebar::SetOnFocusReturn's own doc comment -- identical
     // contract, wired to WindowManager::TakeFocus the same way.
     void SetOnFocusReturn(std::function<void()> handler);
-
-    // focus-vcs-panel's entry point -- ProjectSidebar::TakeKeyboardFocus's
-    // own contract (expands if collapsed, remembers to re-collapse on
-    // focus-return if it was).
-    void TakeKeyboardFocus();
 
     // Fired when the panel wants the focused pane's BufferView to start an
     // existing VCS interactive flow (commit compose / branch switch /
@@ -143,7 +146,7 @@ class VcsPanel : public Widget {
 
     // Discard/revert: enters the same y/n confirm state 'x' does
     // (pendingRevertConfirm_) -- the caller (main.cpp) must give this widget
-    // keyboard focus first (TakeKeyboardFocus()) so the confirm keystroke
+    // keyboard focus first (TakeFocus()) so the confirm keystroke
     // has somewhere to land, the same way a context-menu-driven delete hands
     // focus to a BufferView pane before BufferView::StartDeleteFileAt shows
     // its own y/n prompt.
@@ -155,28 +158,6 @@ class VcsPanel : public Widget {
     // SetOnHunkStageToggle) can bring this panel's section counts back in
     // sync right after a hunk apply, without waiting out the throttle.
     void ForceRefresh();
-
-    [[nodiscard]] int  Width() const;
-    void               SetWidth(int width);
-    [[nodiscard]] bool Collapsed() const;
-    void               SetCollapsed(bool collapsed);
-    void               ToggleCollapsed();
-    [[nodiscard]] int  ExpandedWidth() const;
-
-    [[nodiscard]] bool IsResizing() const;
-    void               UpdateResize(int globalMouseX);
-    void               EndResize();
-
-    // sidebar-width-memory follow-up's own precedent, this widget's
-    // sibling: fires only for a divider drag that actually moved the width
-    // (EndResize), or a deliberate collapse toggle (ToggleCollapsed) -- not
-    // for a programmatic SetWidth/SetCollapsed call (session restore,
-    // TakeKeyboardFocus's transient expand). Unset (the default) is a safe
-    // no-op; main.cpp wires these to a "vcs-panel-width"/"vcs-panel-visible"
-    // variable pair, ProjectSidebar's own "sidebar-width"/"sidebar-visible"
-    // shape.
-    void SetOnWidthCommitted(std::function<void(int)> handler);
-    void SetOnCollapseCommitted(std::function<void(bool)> handler);
 
     // changed-files-highlight/VCS-side-panel: unset (the default) leaves
     // the panel showing "no VCS provider configured" -- main.cpp wires this
@@ -216,27 +197,6 @@ class VcsPanel : public Widget {
     std::string&                   statusMessage_;
     const Theme&                   theme_;
 
-    int  width_     = 30;
-    bool collapsed_ = false;
-
-    bool resizing_            = false;
-    int  resizeAnchorGlobalX_ = 0;
-    int  resizeAnchorWidth_   = 0;
-    int  resizeStartWidth_    = 0;
-    void BeginResize(int globalMouseX);
-
-    // Double-click detection for the divider/collapsed strip,
-    // ProjectSidebar::dividerClickPending_'s own precedent: a second press
-    // within kDoubleClickWindow toggles the collapse; a real drag (movement
-    // past +-1 column, see UpdateResize) clears the pending state so
-    // drag-resize never accidentally collapses.
-    bool                                  dividerClickPending_ = false;
-    std::chrono::steady_clock::time_point lastDividerPressTime_;
-
-    std::function<void(int)>  onWidthCommitted_;
-    std::function<void(bool)> onCollapseCommitted_;
-    void                      CommitCollapsed(bool collapsed);
-
     int scrollOffset_  = 0;
     int selectedIndex_ = 0;
 
@@ -256,8 +216,7 @@ class VcsPanel : public Widget {
     std::set<std::filesystem::path> selected_;
 
     std::function<void()> onFocusReturn_;
-    bool                  collapseOnFocusReturn_ = false;
-    void                  ReturnFocus();
+    void                  ReturnFocus(); // fires onFocusReturn_ -- LeftDock::NoteFocusReturned is chained on at the wiring site
 
     std::function<void(VcsPanelAction)> onAction_;
 
